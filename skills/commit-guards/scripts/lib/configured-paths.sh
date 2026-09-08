@@ -53,7 +53,7 @@ gg_load_path_globs() { # RAW-LIST LABEL KEY — fills GG_PATH_GLOBS and _SHOWN
   # tree happens to hold — so a lane that forgot it must not run at all.
   case "$-" in
     *f*) ;;
-    *) gg_config_error "gg_load_path_globs: pathname expansion is on; the caller must run under 'set -f' or the configured globs resolve against the work tree instead of matching the index" ;;
+    *) gg_fail glob-expansion "$-" "gg_load_path_globs: pathname expansion is on; the caller must run under 'set -f' or the configured globs resolve against the work tree instead of matching the index" ;;
   esac
   # The validation loop is gg_config_path_list's, in lib/common.sh: a lane
   # that reads two configured lists calls that directly, and one scoped by a
@@ -62,7 +62,7 @@ gg_load_path_globs() { # RAW-LIST LABEL KEY — fills GG_PATH_GLOBS and _SHOWN
   GG_PATH_GLOBS_SHOWN=""
   GG_PATH_GLOBS="$(gg_config_path_list "$raw" "$label")" || return 1
   [ -n "$GG_PATH_GLOBS" ] \
-    || gg_config_error "$key names no path — name at least one, or drop this check from COMMIT_GUARDS_CHECKS"
+    || gg_fail glob-empty "$key" "$key names no path — name at least one, or drop this check from COMMIT_GUARDS_CHECKS"
   # The same list rendered for messages. Not gg_shown: %q escapes the globs
   # out of a value whose whole purpose is to be typed back into a settings
   # file, so a remedy would name a path that cannot exist. gg_scrubbed keeps
@@ -149,9 +149,9 @@ GG_BINARY_SAMPLE=8000
 gg_blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
   local total stripped
   total="$(head -c "$GG_BINARY_SAMPLE" -- "$1" | wc -c)" \
-    || gg_collection_error "could not sample $(gg_shown "$2") to classify its content"
+    || gg_fail content-sample "$2:$?" "could not sample $(gg_shown "$2") to classify its content"
   stripped="$(head -c "$GG_BINARY_SAMPLE" -- "$1" | LC_ALL=C tr -d '\000' | wc -c)" \
-    || gg_collection_error "could not sample $(gg_shown "$2") to classify its content"
+    || gg_fail content-sample "$2:$?" "could not sample $(gg_shown "$2") to classify its content"
   [ "$((total))" -ne "$((stripped))" ]
 }
 
@@ -190,19 +190,19 @@ gg_skip_seen() { # PATH — 0 when this path was already named unmeasured
   return 1
 }
 
-gg_note_skip() { # PATH REASON — a matched path this scan cannot measure
+gg_note_skip() { # PATH CODE EXPLANATION — a matched path this scan cannot measure
   if gg_skip_seen "$1"; then
     return 0
   fi
   printf '%s\0' "$1" >>"$GG_TMP/skipped.z"
-  echo "${GG_CHECK:-commit-guards}: not measured: $(gg_shown "$1") — $2"
+  gg_message unmeasured "$1:$2" "$3"
   GG_WALK_SKIPPED=$((GG_WALK_SKIPPED + 1))
 }
 
 gg_read_blob() { # SHA PATH NOUN — the blob's bytes into $GG_TMP/blob
   git cat-file blob "$1" >"$GG_TMP/blob" 2>"$GG_TMP/blob.err" \
     || { [ ! -s "$GG_TMP/blob.err" ] || cat -- "$GG_TMP/blob.err" >&2
-      gg_collection_error "cannot read blob $1 for $(gg_shown "$2") — refusing to skip an unread $3"; }
+      gg_fail blob-read "$2:$1" "cannot read blob $1 for $(gg_shown "$2") — refusing to skip an unread $3"; }
 }
 
 gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
@@ -212,7 +212,7 @@ gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
   # `ls-files -s` emits one record per STAGE for an unmerged path, so the walk
   # would read rival blobs as separate files.
   gg_require_merged_index
-  git ls-files -sz >"$GG_TMP/files.z" || gg_collection_error "git ls-files failed"
+  git ls-files -sz >"$GG_TMP/files.z" || gg_fail index-read "$?" "git ls-files failed"
   while IFS= read -r -d '' rec; do
     # Record shape: "<mode> <sha> <stage>\t<path>".
     f="${rec#*"$GG_TAB"}"
@@ -223,17 +223,17 @@ gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
     sha="${rest%% *}"
     case "$mode" in
       120000)
-        gg_note_skip "$f" "tracked as a symlink, not $noun"
+        gg_note_skip "$f" symlink "tracked as a symlink, not $noun"
         continue
         ;;
       160000)
-        gg_note_skip "$f" "tracked as a submodule gitlink, not $noun"
+        gg_note_skip "$f" gitlink "tracked as a submodule gitlink, not $noun"
         continue
         ;;
     esac
     gg_read_blob "$sha" "$f" "$unread"
     if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
-      gg_note_skip "$f" "binary content, not $noun"
+      gg_note_skip "$f" binary "binary content, not $noun"
       continue
     fi
     "$on_file" "$f" "$GG_TMP/blob" "$sha"
@@ -248,7 +248,7 @@ gg_walk_staged_paths() { # NOUN ON_FILE — callback receives PATH BLOBFILE SHA
   : >"$GG_TMP/skipped.z"
   gg_require_merged_index
   git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT >"$GG_TMP/raw.z" \
-    || gg_collection_error "could not collect the staged changes (git diff --cached --raw failed)"
+    || gg_fail staged-collect "$?" "could not collect the staged changes (git diff --cached --raw failed)"
   while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
     gg_matches_path_glob "$f" || continue
     gg_is_excluded "$f" && continue
@@ -257,17 +257,17 @@ gg_walk_staged_paths() { # NOUN ON_FILE — callback receives PATH BLOBFILE SHA
     dstsha="$4"
     case "$dstmode" in
       120000)
-        gg_note_skip "$f" "tracked as a symlink, not $noun"
+        gg_note_skip "$f" symlink "tracked as a symlink, not $noun"
         continue
         ;;
       160000)
-        gg_note_skip "$f" "tracked as a submodule gitlink, not $noun"
+        gg_note_skip "$f" gitlink "tracked as a submodule gitlink, not $noun"
         continue
         ;;
     esac
     gg_read_blob "$dstsha" "$f" "$noun file"
     if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
-      gg_note_skip "$f" "binary content, not $noun"
+      gg_note_skip "$f" binary "binary content, not $noun"
       continue
     fi
     "$on_file" "$f" "$GG_TMP/blob" "$dstsha"
@@ -286,7 +286,7 @@ source "${BASH_SOURCE[0]%/*}/generated-paths.sh"
 # never-tracked path, where the worktree copy is all there is.
 #
 # Each probe reserves one status for its one expected answer and routes every
-# other status through gg_collection_error. A probe git could not answer must
+# other status through gg_fail. A probe git could not answer must
 # not fall through to the worktree copy: that judges the commit against looser
 # policy than the index carries, and says nothing while doing it.
 gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such file
@@ -299,11 +299,11 @@ gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such f
       # `:0:`, never a bare `:$file`: git reads a leading `0:` through `3:` in
       # the path as the stage selector, so a policy file named `0:excludes`
       # would resolve to whatever blob sits at `excludes`.
-      git show ":0:$file" || gg_collection_error "could not read the staged copy of $(gg_shown "$file")"
+      git show ":0:$file" || gg_fail index-copy "$file" "could not read the staged copy of $(gg_shown "$file")"
       return 0
       ;;
     1) ;;
-    *) gg_collection_error "could not query the index for $(gg_shown "$file") (git ls-files exit $status); refusing to treat it as untracked" ;;
+    *) gg_fail index-query "$file:$status" "could not query the index for $(gg_shown "$file") (git ls-files exit $status); refusing to treat it as untracked" ;;
   esac
   # ls-tree, never `cat-file -e`: with rev:path syntax git answers "no such
   # path in HEAD" with the same 128 an operational failure returns, so only
@@ -314,15 +314,15 @@ gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such f
     0)
       entry="$(git ls-tree HEAD -- ":(literal)$file" 2>/dev/null)" || tree_status=$?
       [ "$tree_status" -eq 0 ] \
-        || gg_collection_error "could not probe HEAD for $(gg_shown "$file") (git ls-tree exit $tree_status); refusing to treat it as untracked"
+        || gg_fail head-query "$file:$tree_status" "could not probe HEAD for $(gg_shown "$file") (git ls-tree exit $tree_status); refusing to treat it as untracked"
       # Tracked in HEAD, absent from the index: staged for deletion.
       if [ -n "$entry" ]; then return 1; fi
       ;;
     1) ;;
-    *) gg_collection_error "could not resolve HEAD while reading $(gg_shown "$file") (git rev-parse exit $head_status); refusing to treat it as untracked" ;;
+    *) gg_fail head-resolve "$file:$head_status" "could not resolve HEAD while reading $(gg_shown "$file") (git rev-parse exit $head_status); refusing to treat it as untracked" ;;
   esac
   if [ -f "$file" ]; then
-    cat -- "$file" || gg_collection_error "could not read $(gg_shown "$file")"
+    cat -- "$file" || gg_fail file-read "$file" "could not read $(gg_shown "$file")"
     return 0
   fi
   return 1
@@ -338,7 +338,7 @@ gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS and GG_EXCLUDE_CARVES
   local file="$1" line lineno pat reason carve content status=0
   GG_EXCLUDE_PATTERNS=()
   GG_EXCLUDE_CARVES=()
-  # The read runs in a command substitution, so a gg_collection_error inside
+  # The read runs in a command substitution, so a gg_fail inside
   # it dies in that SUBSHELL and arrives here as a status. Only status 1 is
   # the answer "the commit has no such file" (an empty list); anything else
   # is the failed measurement that already named itself on stderr, and
@@ -347,7 +347,7 @@ gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS and GG_EXCLUDE_CARVES
   case "$status" in
     0) ;;
     1) return 0 ;;
-    *) gg_collection_error "refusing to run on an unread exclusion list: $(gg_shown "$file") (exit $status, cause above)" ;;
+    *) gg_fail exclusion-read "$file:$status" "refusing to run on an unread exclusion list: $(gg_shown "$file") (exit $status, cause above)" ;;
   esac
   lineno=0
   while IFS= read -r line || [ -n "$line" ]; do
@@ -358,13 +358,13 @@ gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS and GG_EXCLUDE_CARVES
     pat="${line%%"$GG_TAB"*}"
     reason="${line#*"$GG_TAB"}"
     if [ "$pat" = "$line" ] || [ -z "$pat" ] || [ -z "$reason" ]; then
-      gg_config_error "$(gg_shown "$file"):$lineno: expected 'pattern<TAB>reason' (every exclusion carries its justification)"
+      gg_fail exclusion-reason "$file:$lineno" "An exclusion needs a pattern and a reason separated by a tab."
     fi
     case "$pat" in
       "!"*)
         carve="${pat#!}"
         [ -n "$carve" ] \
-          || gg_config_error "$(gg_shown "$file"):$lineno: '!' carves matching paths back into the scanned set and needs a pattern after it"
+          || gg_fail exclusion-carve "$file:$lineno" "A carve needs a pattern after its exclamation mark."
         GG_EXCLUDE_CARVES+=("$carve")
         ;;
       *) GG_EXCLUDE_PATTERNS+=("$pat") ;;

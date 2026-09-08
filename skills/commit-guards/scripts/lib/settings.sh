@@ -42,6 +42,10 @@
 # whitespace: KEY=500 # ceiling assigns 500.
 set -euo pipefail
 
+# not-a-path: this standalone settings reader loads its message emitter.
+# shellcheck source=messages.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/messages.sh"
+
 gg_dotenv_value() { # RAW — value on stdout; nonzero on an unsupported shape
   local val="$1" rest
   case "$val" in
@@ -87,9 +91,9 @@ gg_settings_usable() { # PATH — 0 = readable-shaped or absent; 1 + ::error oth
   { [ -e "$1" ] || [ -L "$1" ]; } || return 0
   [ ! -f "$1" ] || return 0
   if [ ! -e "$1" ]; then
-    echo "::error::$1: settings source is a symlink that does not resolve (dangling target, cycle, or over-long chain); a source is skipped only when it is absent" >&2
+    gg_message settings-symlink "$1" "settings source is a symlink that does not resolve (dangling target, cycle, or over-long chain); a source is skipped only when it is absent" >&2
   else
-    echo "::error::$1: settings source exists but is not a regular file (directory, FIFO, socket or device); a source is skipped only when it is absent" >&2
+    gg_message settings-regular "$1" "settings source exists but is not a regular file (directory, FIFO, socket or device); a source is skipped only when it is absent" >&2
   fi
   return 1
 }
@@ -181,7 +185,7 @@ gg_settings_source() { # FILE — the path to actually read; nonzero + ::error o
           # path) can tell the two apart.
           entry="$(git ls-tree HEAD -- ":(literal)$file" 2>/dev/null)" || tree_status=$?
           if [ "$tree_status" -ne 0 ]; then
-            echo "::error::$file: could not probe HEAD while resolving a setting (git ls-tree exit $tree_status); refusing to treat it as untracked" >&2
+            gg_message settings-head-query "$file:$tree_status" "could not probe HEAD while resolving a setting (git ls-tree exit $tree_status); refusing to treat it as untracked" >&2
             return 1
           fi
           case "${entry:+tracked}" in
@@ -194,7 +198,7 @@ gg_settings_source() { # FILE — the path to actually read; nonzero + ::error o
           ;;
         1) ;;
         *)
-          echo "::error::$file: could not resolve HEAD while resolving a setting (git rev-parse exit $head_status); refusing to treat it as untracked" >&2
+          gg_message settings-head-resolve "$file:$head_status" "could not resolve HEAD while resolving a setting (git rev-parse exit $head_status); refusing to treat it as untracked" >&2
           return 1
           ;;
       esac
@@ -202,7 +206,7 @@ gg_settings_source() { # FILE — the path to actually read; nonzero + ::error o
       return 0
       ;;
     *)
-      echo "::error::$file: could not query the index while resolving a setting (git ls-files exit $status); refusing to treat it as untracked" >&2
+      gg_message settings-index-query "$file:$status" "could not query the index while resolving a setting (git ls-files exit $status); refusing to treat it as untracked" >&2
       return 1
       ;;
   esac
@@ -213,12 +217,12 @@ gg_settings_source() { # FILE — the path to actually read; nonzero + ::error o
   status=0
   entry="$(git ls-files -s -- ":(literal)$file" 2>/dev/null)" || status=$?
   if [ "$status" -ne 0 ]; then
-    echo "::error::$file: could not read its index mode while resolving a setting (git ls-files exit $status)" >&2
+    gg_message settings-index-mode "$file:$status" "could not read its index mode while resolving a setting (git ls-files exit $status)" >&2
     return 1
   fi
   case "${entry%% *}" in
     120000)
-      echo "::error::$file: tracked as a symlink; staged settings resolution cannot read through it" >&2
+      gg_message settings-index-symlink "$file" "tracked as a symlink; staged settings resolution cannot read through it" >&2
       return 1
       ;;
   esac
@@ -236,12 +240,12 @@ gg_settings_source() { # FILE — the path to actually read; nonzero + ::error o
     tmp="$copy.$$.part"
     if ! git show ":0:$file" >"$tmp" 2>/dev/null; then
       rm -f -- "$tmp"
-      echo "::error::$file: could not read the staged copy while resolving a setting" >&2
+      gg_message settings-index-read "$file" "could not read the staged copy while resolving a setting" >&2
       return 1
     fi
     if ! mv -- "$tmp" "$copy"; then
       rm -f -- "$tmp"
-      echo "::error::$file: could not materialize the staged copy while resolving a setting" >&2
+      gg_message settings-materialize "$file" "could not materialize the staged copy while resolving a setting" >&2
       return 1
     fi
   fi
@@ -254,7 +258,7 @@ gg_settings_source() { # FILE — the path to actually read; nonzero + ::error o
 # as the header rule. Read via stdin so the path is never an operand.
 gg_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
   if [ "$(head -c 3 < "$1" 2>/dev/null)" = "$(printf '\357\273\277')" ]; then
-    echo "::error::$1: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
+    gg_message settings-bom "$1" "file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
     return 1
   fi
 }
@@ -267,7 +271,7 @@ gg_settings_grep() { # REGEX FILE — matching lines on stdout; 1 = no match
   local status=0
   grep -E -- "$1" "$2" || status=$?
   if [ "$status" -gt 1 ]; then
-    echo "::error::$2: unreadable while resolving a setting (grep exit $status)" >&2
+    gg_message settings-grep "$2:$status" "unreadable while resolving a setting (grep exit $status)" >&2
     return 2
   fi
   return "$status"
@@ -287,9 +291,9 @@ gg_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
                  # malformed header or leading BOM; 2 + ::error when unreadable
   local status=0
   gg_bom_guard "$1" || return 1
-  awk -v src="$1" '
+  awk -v src="$1" -v check="${GG_CHECK:-commit-guards}" '
     /^[[:space:]]*\[/ && !/^[[:space:]]*\[[A-Za-z0-9_.-]+\][[:space:]]*$/ {
-      printf "::error::%s:%d: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)\n", src, NR > "/dev/stderr"
+      printf "%s: settings-header=%s:%d\n  unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)\n", check, src, NR > "/dev/stderr"
       exit 3
     }
     /^[[:space:]]*\[/ {
@@ -313,7 +317,7 @@ gg_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
       sub(/[[:space:]]*=.*$/, "", key)
       if (key !~ /^[A-Za-z_][A-Za-z0-9_]*$/) { print; next }
       if (key in seen) {
-        printf "::error::%s: %s is assigned more than once in [env] (each key must be unique in the table)\n", src, key > "/dev/stderr"
+        printf "%s: settings-duplicate=%s:%s\n  Each key must be unique in the table.\n", check, src, key > "/dev/stderr"
         exit 3
       }
       seen[key] = 1
@@ -321,7 +325,7 @@ gg_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
       sub(/^[^=]*=[[:space:]]*/, "", value)
       sub(/[[:space:]]+$/, "", value)
       if (value !~ /^"[^"\\]*"[[:space:]]*(#.*)?$/) {
-        printf "::error::%s: unsupported syntax for %s (expected a single-line basic string, no double quote and no backslash: %s = \"value\")\n", src, key, key > "/dev/stderr"
+        printf "%s: settings-string=%s:%s\n  Expected a single-line basic string.\n", check, src, key > "/dev/stderr"
         exit 3
       }
       print
@@ -329,7 +333,7 @@ gg_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
   ' < "$1" || status=$?
   [ "$status" -ne 3 ] || return 1
   if [ "$status" -ne 0 ]; then
-    echo "::error::$1: unreadable while resolving a setting (awk exit $status)" >&2
+    gg_message settings-awk "$1:$status" "unreadable while resolving a setting (awk exit $status)" >&2
     return 2
   fi
 }
@@ -349,7 +353,7 @@ gg_dotenv_layer() { # FILE NAME
   line="$(printf '%s\n' "$matches" | tail -n 1)"
   [ -n "$line" ] || return 1
   if ! val="$(gg_dotenv_value "${line#*=}")"; then
-    echo "::error::$file: unsupported syntax for $name (a quoted value must end at its closing quote, optionally followed by a comment)" >&2
+    gg_message settings-dotenv "$file:$name" "unsupported syntax for $name (a quoted value must end at its closing quote, optionally followed by a comment)" >&2
     return 2
   fi
   printf '%s' "$val"
@@ -363,7 +367,7 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   # misgrep nor inject pattern syntax.
   case "$name" in
     "" | [0-9]* | *[!A-Za-z0-9_]*)
-      echo "::error::gg_setting: invalid key name '$name' (shell identifier shape required: [A-Za-z_][A-Za-z0-9_]*)" >&2
+      gg_message settings-key "$name" "invalid key name '$name' (shell identifier shape required: [A-Za-z_][A-Za-z0-9_]*)" >&2
       return 1
       ;;
   esac
@@ -397,7 +401,7 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     if [ -f "$file" ]; then
       gg_bom_guard "$file" || return 1
       if [ ! -r "$file" ]; then
-        echo "::error::$file: unreadable while resolving a setting (permission denied)" >&2
+        gg_message settings-permission "$file" "unreadable while resolving a setting (permission denied)" >&2
         return 1
       fi
     fi
@@ -445,7 +449,7 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       # A re-assigned name is ambiguous — which value wins would be an
       # accident of read order, so ambiguity is a configuration error.
       if [ "$(printf '%s\n' "$matches" | grep -c .)" -gt 1 ]; then
-        echo "::error::$file: $name is assigned more than once in [env] (each key must be unique in the table)" >&2
+        gg_message settings-duplicate "$file:$name" "$name is assigned more than once in [env] (each key must be unique in the table)" >&2
         return 1
       fi
       line="$(printf '%s\n' "$matches" | head -n 1)"
@@ -454,7 +458,7 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       # quote-free, backslash-free value ([^"\]*) makes the extraction exact
       # even with a trailing TOML comment.
       if ! printf '%s\n' "$line" | grep -Eq -- "^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"[^\"\\\\]*\"[[:space:]]*(#.*)?\$"; then
-        echo "::error::$file: unsupported syntax for $name (expected a single-line basic string with no '\"' and no '\\': $name = \"value\")" >&2
+        gg_message settings-string "$file:$name" "unsupported syntax for $name (expected a single-line basic string with no '\"' and no '\\': $name = \"value\")" >&2
         return 1
       fi
       val="$(printf '%s\n' "$line" | sed -n "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*\$/\1/p")"

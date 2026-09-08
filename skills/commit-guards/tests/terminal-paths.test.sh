@@ -46,7 +46,7 @@ pty_line() { # CAP CASE_FILE ENVS
   (
     [ "${#envs[@]}" -eq 0 ] || export "${envs[@]}"
     if gg_pty_run "$1" "$2"; then
-      printf 'state=%s rc=%s out=%s' "$GG_PTY_STATE" "$GG_PTY_RC" "$(printf '%s\n' "$GG_PTY_OUT" | LC_ALL=C paste -sd ';' -)"
+      printf 'state=%s rc=%s out=%s' "$GG_PTY_STATE" "$GG_PTY_RC" "$(printf '%s\n' "$GG_PTY_OUT" | sed '/^  /d' | LC_ALL=C paste -sd ';' -)"
     else
       printf 'unstarted err=%s' "$(printf '%s' "$GG_PTY_ERR" | sed 's/mktemp: .*/mktemp: <its words>/')"
     fi
@@ -175,7 +175,7 @@ fx_hostile() {
 # way pty.bash selects its grammar.
 case "$(uname -s)" in
   Darwin) NO_F="state=ok rc=0 out=REACHED $ROOT/no-f-src.tsv / dest=NOT REPLACED mode=444 staged=1" ;;
-  *) NO_F="state=ok rc=2 out=REACHED $ROOT/no-f-src.tsv;::error::probe: could not replace the fixture at tools/dest.tsv (mv: replace 'tools/dest.tsv', overriding mode 0444 (r--r--r--)? ) — inspect the file before trusting it / dest=NOT REPLACED mode=444 staged=0" ;;
+  *) NO_F="state=ok rc=2 out=REACHED $ROOT/no-f-src.tsv;probe: replace-file=tools/dest.tsv / dest=NOT REPLACED mode=444 staged=0" ;;
 esac
 install_rows() { # label | fixture | state | expect
   local row label fx state expect actual

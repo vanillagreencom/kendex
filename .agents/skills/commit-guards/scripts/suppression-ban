@@ -57,13 +57,13 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --update) MODE="update" ;;
     --baseline)
-      [ $# -ge 2 ] || gg_config_error "--baseline requires a path"
+      [ $# -ge 2 ] || gg_fail argument-missing "--baseline" "--baseline requires a path"
       shift
       BASELINE_OPT="$1"
       ;;
     --baseline=*) BASELINE_OPT="${1#--baseline=}" ;;
     --excludes)
-      [ $# -ge 2 ] || gg_config_error "--excludes requires a path"
+      [ $# -ge 2 ] || gg_fail argument-missing "--excludes" "--excludes requires a path"
       shift
       EXCLUDES_OPT="$1"
       ;;
@@ -72,7 +72,7 @@ while [ $# -gt 0 ]; do
       usage
       exit 0
       ;;
-    *) gg_config_error "unknown argument '$1' (see --help)" ;;
+    *) gg_fail argument-unknown "$1" "unknown argument '$1' (see --help)" ;;
   esac
   shift
 done
@@ -94,7 +94,7 @@ inventory="$(gg_policy_content .kendex-generated.json)" || inventory_status=$?
 case "$inventory_status" in
   0) ;;
   1) inventory='[]' ;;
-  *) gg_collection_error "refusing to run on an unread render inventory: .kendex-generated.json (exit $inventory_status, cause above)" ;;
+  *) gg_fail inventory-read "$inventory_status" "refusing to run on an unread render inventory: .kendex-generated.json (exit $inventory_status, cause above)" ;;
 esac
 generated_paths_load "$inventory" || exit 2
 
@@ -156,11 +156,11 @@ BARE_ERE='#\[allow\([[:space:]]*([a-z_:]+[[:space:]]*,[[:space:]]*)*(dead_code|u
 # skip the gate) rather than silently splitting into garbage rows.
 NL='
 '
-git ls-files -z -- '*.rs' >"$GG_TMP/rs.z" || gg_collection_error "git ls-files failed enumerating *.rs"
+git ls-files -z -- '*.rs' >"$GG_TMP/rs.z" || gg_fail rust-paths "$?" "git ls-files failed enumerating *.rs"
 while IFS= read -r -d '' f; do
   case "$f" in
-    *"$NL"*) gg_config_error "tracked path contains a newline, unrepresentable in line-oriented records; rename the file: '$f'" ;;
-    *"$GG_TAB"*) gg_config_error "tracked path contains a tab, unrepresentable in the baseline TSV; rename the file: '$f'" ;;
+    *"$NL"*) gg_fail path-newline "$f" "tracked path contains a newline, unrepresentable in line-oriented records; rename the file: '$f'" ;;
+    *"$GG_TAB"*) gg_fail path-tab "$f" "tracked path contains a tab, unrepresentable in the baseline TSV; rename the file: '$f'" ;;
   esac
 done <"$GG_TMP/rs.z"
 
@@ -180,14 +180,14 @@ while IFS= read -r -d '' f; do
   gg_grep_guard "$cnt_status" "$GG_TMP/bare.err" "counting the bare allows in '$f'"
   # This path just listed as a carrier; anything but a clean re-scan means the
   # measurement is broken, and a count that never arrived must not read as 0.
-  [ "$cnt_status" -eq 0 ] || gg_collection_error "git grep could not count the bare allows in '$f' (exit $cnt_status)"
+  [ "$cnt_status" -eq 0 ] || gg_fail allow-count "$f:$cnt_status" "git grep could not count the bare allows in '$f' (exit $cnt_status)"
   row=""
   # `read`, not a capture: the count file is one line, and an empty file
   # must reach the parse guard below rather than aborting the run.
   IFS= read -r row <"$GG_TMP/bare.count" || true
   cnt="${row##*:}"
   case "$cnt" in
-    "" | *[!0-9]* | 0) gg_collection_error "unparseable count row from git grep: '$row'" ;;
+    "" | *[!0-9]* | 0) gg_fail allow-count-row "$row" "unparseable count row from git grep: '$row'" ;;
   esac
   printf '%s\t%s\n' "$f" "$cnt" >>"$GG_TMP/counts.raw"
 done <"$GG_TMP/bare.z"
@@ -200,18 +200,16 @@ LC_ALL=C sort "$GG_TMP/counts.raw" >"$GG_TMP/counts.tsv"
 validate_baseline() { # FILE LABEL
   local file="$1" label="$2" grep_status=0 bad_rows dup_paths
   bad_rows="$(grep -nEv "^[^${GG_TAB}]+${GG_TAB}[1-9][0-9]*\$" -- "$file")" || grep_status=$?
-  [ "$grep_status" -le 1 ] || gg_collection_error "could not validate $label (grep exit $grep_status)"
+  [ "$grep_status" -le 1 ] || gg_fail baseline-scan "$label:$grep_status" "could not validate $label (grep exit $grep_status)"
   if [ -n "$bad_rows" ]; then
-    printf '%s\n' "$bad_rows" >&2
-    gg_config_error "$label: malformed row(s) above (expected 'path<TAB>count' with a positive count)"
+    gg_fail baseline-format "$label:$bad_rows" "$label: malformed row(s) above (expected 'path<TAB>count' with a positive count)"
   fi
   if ! LC_ALL=C sort -c -- "$file" 2>/dev/null; then
-    gg_config_error "$label: rows must be LC_ALL=C sorted (LC_ALL=C sort -o $BASELINE_FILE $BASELINE_FILE)"
+    gg_fail baseline-order "$label" "$label: rows must be LC_ALL=C sorted (LC_ALL=C sort -o $BASELINE_FILE $BASELINE_FILE)"
   fi
   dup_paths="$(cut -f1 -- "$file" | LC_ALL=C uniq -d)"
   if [ -n "$dup_paths" ]; then
-    printf '%s\n' "$dup_paths" >&2
-    gg_config_error "$label: duplicate path row(s) above"
+    gg_fail baseline-duplicates "$label:$dup_paths" "$label: duplicate path row(s) above"
   fi
 }
 
@@ -233,7 +231,7 @@ else
       validate_baseline "$GG_TMP/baseline.tsv" "$BASELINE_FILE"
       ;;
     1) : >"$GG_TMP/baseline.tsv" ;;
-    *) gg_collection_error "could not read the baseline $BASELINE_FILE (exit $baseline_status, cause above)" ;;
+    *) gg_fail baseline-read "$BASELINE_FILE:$baseline_status" "could not read the baseline $BASELINE_FILE (exit $baseline_status, cause above)" ;;
   esac
 fi
 
@@ -267,14 +265,14 @@ if [ "$MODE" = "update" ]; then
       for (i = 1; i <= bn; i++) {
         p = border[i]; b = base[p]
         if (!(p in act)) {
-          printf "removed: %s (row %d)\n", p, b > "/dev/stderr"
+          printf "suppression-ban: baseline-removed=%s:%d\n  Removed a stale baseline row.\n", p, b > "/dev/stderr"
           continue
         }
         if (act[p] < b) {
-          printf "tightened: %s %d -> %d\n", p, b, act[p] > "/dev/stderr"
+          printf "suppression-ban: baseline-tightened=%s:%d:%d\n  Tightened the baseline row.\n", p, b, act[p] > "/dev/stderr"
           print p, act[p]
         } else {
-          if (act[p] > b) printf "kept (grew %d > %d — growth is a hand-edit, never --update): %s\n", act[p], b, p > "/dev/stderr"
+          if (act[p] > b) printf "suppression-ban: baseline-kept=%s:%d:%d\n  Growth needs a hand edit.\n", p, act[p], b > "/dev/stderr"
           print p, b
         }
       }
@@ -282,17 +280,17 @@ if [ "$MODE" = "update" ]; then
   ' "$GG_TMP/baseline.tsv" "$GG_TMP/counts.tsv" | LC_ALL=C sort >"$GG_TMP/baseline.new"
   if [ "$BASELINE_FROM_INDEX" = "1" ]; then
     BASELINE_QUOTED="$(printf '%q' "$BASELINE_FILE")"
-    gg_config_error "--update cannot rewrite an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git update-index --no-skip-worktree -- $BASELINE_QUOTED && git checkout-index -- $BASELINE_QUOTED, then rerun"
+    gg_fail baseline-sparse "$BASELINE_FILE" "--update cannot rewrite an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git update-index --no-skip-worktree -- $BASELINE_QUOTED && git checkout-index -- $BASELINE_QUOTED, then rerun"
   fi
   if [ -f "$BASELINE_FILE" ]; then
     # The replace is the last step: a failure before it leaves the reviewed
     # baseline byte-identical.
     rows="$(gg_count_nonempty_lines "$GG_TMP/baseline.new")"
     gg_install_file "$GG_TMP/baseline.new" "$BASELINE_FILE" "the baseline"
-    cp -- "$BASELINE_FILE" "$GG_TMP/baseline.tsv" || gg_collection_error "could not re-read the replaced baseline at $BASELINE_FILE (cp failed) — the baseline WAS replaced; rerun suppression-ban to verify it"
-    echo "suppression-ban --update: baseline tightened at $BASELINE_FILE ($rows row(s))"
+    cp -- "$BASELINE_FILE" "$GG_TMP/baseline.tsv" || gg_fail baseline-recheck "$BASELINE_FILE" "could not re-read the replaced baseline at $BASELINE_FILE (cp failed) — the baseline WAS replaced; rerun suppression-ban to verify it"
+    gg_message baseline-updated "$BASELINE_FILE:$rows" "Baseline tightened."
   else
-    echo "suppression-ban --update: no baseline at $BASELINE_FILE and --update never adds rows; nothing written"
+    gg_message baseline-absent "$BASELINE_FILE" "Update never adds rows; nothing written."
   fi
 fi
 
@@ -303,19 +301,19 @@ ratchet_violations="$(gg_count_nonempty_lines "$GG_TMP/violations.tsv")"
 while IFS="$GG_TAB" read -r kind path n b; do
   case "$kind" in
     NEW)
-      echo "suppression-ban FAIL new bare allow: $path — $n reasonless allow(dead_code)/allow(unused) attribute(s), no baseline row"
+      gg_message allow-new "$path:$n" "Reasonless allow attributes have no baseline row."
       echo "  remedies: state a reason on each attribute or fix the code; freezing a legacy count is a hand-added baseline row in this diff with justification"
       ;;
     GROW)
-      echo "suppression-ban FAIL bare allows grew: $path — $n attribute(s) > baseline $b"
+      gg_message allow-growth "$path:$n:$b" "Bare allow attributes exceed the baseline."
       echo "  remedies: state a reason on each new attribute or fix the code; raising the row is a hand-edit in this diff with justification"
       ;;
     LOOSE)
-      echo "suppression-ban FAIL baseline looser than reality: $path — baseline $b > actual $n; the ratchet only moves down"
+      gg_message baseline-loose "$path:$b:$n" "Baseline exceeds the actual count; tighten it."
       echo "  remedy: run suppression-ban --update to tighten the row"
       ;;
     STALE)
-      echo "suppression-ban FAIL stale baseline row: $path — no bare allows remain (or the file left the tracked, non-excluded set); the row ($b) must go"
+      gg_message baseline-stale "$path:$b" "No bare allow attributes remain; remove the row."
       echo "  remedy: run suppression-ban --update to drop the row"
       ;;
   esac
@@ -329,7 +327,7 @@ UNMEASURED=""
 
 total=$((BLANKET_VIOLATIONS + ratchet_violations))
 if [ "$total" -gt 0 ]; then
-  echo "suppression-ban: $total violation(s) — $BLANKET_VIOLATIONS blanket, $ratchet_violations ratchet (baseline $BASELINE_FILE)$UNMEASURED"
+  gg_message result "$total:$BLANKET_VIOLATIONS:$ratchet_violations:$BASELINE_FILE:$GG_WALK_SKIPPED:$EXCLUDES_FILE" "Suppression violations found$UNMEASURED"
   exit 1
 fi
-echo "suppression-ban: OK — no blanket suppressions, bare allows within baseline $BASELINE_FILE$UNMEASURED"
+gg_message result "0:0:0:$BASELINE_FILE:$GG_WALK_SKIPPED:$EXCLUDES_FILE" "No blanket suppressions; bare allows meet the baseline$UNMEASURED"

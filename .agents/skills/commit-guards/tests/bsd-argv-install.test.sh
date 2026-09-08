@@ -104,7 +104,7 @@ run() { # ARGS...
   local rc=0 out="" real
   real="$(cd "$R" && pwd -P)"
   out="$("$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" "$@" 2>&1)" || rc=$?
-  printf 'rc=%s%s modes=%s,%s,%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C sed "s#$real#<repo>#g; s#$R#<repo>#g" | LC_ALL=C paste -sd ';' -)}" \
+  printf 'rc=%s%s modes=%s,%s,%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C sed "/^  /d; s#$real#<repo>#g; s#$R#<repo>#g" | LC_ALL=C paste -sd ';' -)}" \
     "$(mode "$R/.git/hooks/pre-commit")" "$(mode "$R/.git/hooks/commit-msg")" "$(mode "$R/.git/hooks/kendex-guards")"
 }
 
@@ -161,16 +161,16 @@ run_rows() { # label | fixture | args | expect
 
 echo "=== the installer under BSD chmod and sed: its verdict and the bits git reads are one pin ==="
 X="-rwxr-xr-x"
-ARMED="commit-guards git hooks: pre-commit and commit-msg armed in <repo>/.git/hooks"
-NOT_INSTALLED="commit-guards git hooks: NOT installed — could not write <repo>/.git/hooks/kendex-guards"
+ARMED="commit-guards git hooks: installed=<repo>/.git/hooks"
+NOT_INSTALLED="commit-guards git hooks: not-installed=<repo>/.git/hooks/kendex-guards"
 run_rows \
   "the shipped package arms both hooks and the helper, every file executable|real install||rc=0 $ARMED modes=$X,$X,$X" \
-  "--check reads the same repository as armed|installed check|--check|rc=0 commit-guards git hooks: armed — pre-commit and commit-msg gate commits in <repo>/.git/hooks modes=$X,$X,$X" \
+  "--check reads the same repository as armed|installed check|--check|rc=0 commit-guards git hooks: armed=<repo>/.git/hooks modes=$X,$X,$X" \
   "control: chmod's wrong order writes nothing under BSD rules, and the installer says so|broken_chmod broken-install||rc=1 $NOT_INSTALLED modes=absent,absent,absent" \
-  "control: --check over the repository that install left reads it as not armed|broken_chmod_installed broken-check|--check|rc=1 commit-guards git hooks: NOT armed — helper kendex-guards is missing; pre-commit is missing; commit-msg is missing (<repo>/.git/hooks); run 'kendex guard install' (or this installer) to re-arm modes=absent,absent,absent" \
-  "a helper whose scripts directory is gone is recognised from its line 3 and replaced|dangling_real dangling||rc=0 ::warning::install-git-hooks: <repo>/.git/hooks/kendex-guards was written by an install whose scripts directory is gone; replacing it;$ARMED modes=$X,$X,$X" \
-  "control: reading line 3 with a -- operand fails under BSD sed, so the helper reads as somebody else's and the install stops|dangling_broken_sed dangling-broken||rc=1 ::warning::install-git-hooks: <repo>/.git/hooks/kendex-guards exists but was not written by this installer; refusing to overwrite it;$NOT_INSTALLED modes=absent,absent,-rw-r--r--" \
-  "control: a helper whose scripts directory still exists is another install's, and is refused|live_real live||rc=1 ::warning::install-git-hooks: <repo>/.git/hooks/kendex-guards exists but was not written by this installer; refusing to overwrite it;$NOT_INSTALLED modes=absent,absent,-rw-r--r--"
+  "control: --check over the repository that install left reads it as not armed|broken_chmod_installed broken-check|--check|rc=1 commit-guards git hooks: not-armed=helper-missing=kendex-guards; hook-missing=pre-commit; hook-missing=commit-msg modes=absent,absent,absent" \
+  "a helper whose scripts directory is gone is recognised from its line 3 and replaced|dangling_real dangling||rc=0 install-git-hooks: helper-replacing-dangling=<repo>/.git/hooks/kendex-guards;$ARMED modes=$X,$X,$X" \
+  "control: reading line 3 with a -- operand fails under BSD sed, so the helper reads as somebody else's and the install stops|dangling_broken_sed dangling-broken||rc=1 install-git-hooks: helper-foreign=<repo>/.git/hooks/kendex-guards;$NOT_INSTALLED modes=absent,absent,-rw-r--r--" \
+  "control: a helper whose scripts directory still exists is another install's, and is refused|live_real live||rc=1 install-git-hooks: helper-foreign=<repo>/.git/hooks/kendex-guards;$NOT_INSTALLED modes=absent,absent,-rw-r--r--"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

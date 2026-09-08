@@ -29,7 +29,7 @@ GG_MD_EXCLUDES_DEFAULT="tools/md-excludes"
 # already announced on stdout.
 gg_md_scope() { # LANE STAGED-FLAG ALL-FLAG
   local lane="$1" staged="$2" all="$3" setting
-  [ "$staged" -eq 1 ] && [ "$all" -eq 1 ] && gg_config_error "--staged and --all are exclusive"
+  [ "$staged" -eq 1 ] && [ "$all" -eq 1 ] && gg_fail scope-flags "--staged,--all" "The scope flags are exclusive."
   if [ "$staged" -eq 1 ]; then
     GG_MD_MODE=staged
     return 0
@@ -45,12 +45,12 @@ gg_md_scope() { # LANE STAGED-FLAG ALL-FLAG
       return 0
       ;;
     touched) ;;
-    *) gg_config_error "COMMIT_GUARDS_MD_SCOPE must be 'touched' or 'all', got '$(gg_scrubbed "$setting")'" ;;
+    *) gg_fail scope "$setting" "COMMIT_GUARDS_MD_SCOPE must be touched or all." ;;
   esac
   gg_require_merged_index
   if git diff --cached --quiet --diff-filter=AMT 2>/dev/null; then
     GG_MD_MODE=none
-    echo "$lane: OK — nothing staged to judge (COMMIT_GUARDS_MD_SCOPE=touched judges the files a commit touches); run with --all, or set COMMIT_GUARDS_MD_SCOPE=all once this repository's markdown is reflowed"
+    gg_message staged-count 0 "Nothing is staged for $lane. Use --all to check the configured files."
     return 0
   fi
   GG_MD_MODE=staged
@@ -79,7 +79,7 @@ gg_md_select() { # NOUN — what the lane calls its content, for the skip lines
     staged)
       gg_walk_staged_paths "$noun" gg_md_take
       ;;
-    *) gg_config_error "gg_md_select: no scope resolved (GG_MD_MODE='$GG_MD_MODE')" ;;
+    *) gg_fail unresolved-scope "$GG_MD_MODE" "The Markdown selector requires a resolved scope." ;;
   esac
 }
 
@@ -90,10 +90,27 @@ gg_md_take() { # PATH BLOBFILE SHA
   GG_MD_COUNT=$((GG_MD_COUNT + 1))
 }
 
-# The phrase a verdict names its scope by.
-gg_md_scope_desc() {
-  case "$GG_MD_MODE" in
-    staged) printf 'staged markdown file(s)' ;;
-    all) printf 'tracked markdown file(s)' ;;
+# Present the shared block-parser enum without putting prose in its records.
+gg_md_block_message() { # RULE PATH LINE — sets GG_MD_RULE and GG_MD_DETAIL
+  local rule="$1" path="$2" line="$3"
+  GG_MD_RULE="${rule%%:*}"
+  GG_MD_DETAIL="$path:$line"
+  case "$rule" in
+    block-unclosed:*) GG_MD_DETAIL="$GG_MD_DETAIL:${rule#*:}" ;;
+  esac
+  case "$GG_MD_RULE" in
+    heading-before) GG_MD_EXPLANATION="Put a blank line before the heading." ;;
+    heading-after) GG_MD_EXPLANATION="Put a blank line after the heading." ;;
+    fence-before) GG_MD_EXPLANATION="Put a blank line before the fence." ;;
+    fence-after) GG_MD_EXPLANATION="Put a blank line after the fence." ;;
+    list-before) GG_MD_EXPLANATION="Put a blank line before the list." ;;
+    paragraph-wrap) GG_MD_EXPLANATION="Put the whole paragraph on one line." ;;
+    item-wrap) GG_MD_EXPLANATION="Put the whole list item on one line." ;;
+    trailing-space) GG_MD_EXPLANATION="Remove the trailing double-space break." ;;
+    crlf) GG_MD_EXPLANATION="Use LF line endings. The file cannot be read past this line." ;;
+    fence-unclosed) GG_MD_EXPLANATION="Close the fence before the file ends." ;;
+    front-unclosed) GG_MD_EXPLANATION="Close the front matter before the file ends." ;;
+    html-unclosed | block-unclosed) GG_MD_EXPLANATION="Close the block before the file ends." ;;
+    *) gg_fail block-rule "$rule" "The block parser returned an unknown rule." ;;
   esac
 }

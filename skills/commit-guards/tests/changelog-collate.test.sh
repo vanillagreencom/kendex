@@ -10,7 +10,7 @@
 # without writing when the judgement refuses, the record's shape cannot be
 # folded into, the index or working tree has pending changes, or the
 # release flag is absent. One table: a row builds its own repository, runs
-# the fold and reads back the exit status with every line printed, then
+# the fold and reads back the exit status with each stable message record, then
 # the record (the seed it was, or the exact folded text) and what is left
 # under the fragment tree beside any staging file. The judgement's own
 # lines are changelog-entries.test.sh's; here they ride along where the
@@ -36,7 +36,7 @@ assert_eq() { # LABEL EXPECT ACTUAL
 }
 
 # One line for a fold in the row's repository: the exit status, then every
-# line printed, in order, joined by ';'. The release flag is set unless the
+# stable message record, in order, joined by ';'. The release flag is set unless the
 # row's ENVS (a comma-separated list of assignments; -u,NAME unsets, and
 # comes first) names it; SHIM names a directory of stand-in tools put ahead
 # of PATH.
@@ -51,6 +51,7 @@ run() { # ENVS SHIM
   [ -z "$2" ] || path="$TMP/shim-$2:$PATH"
   # shellcheck disable=SC2086
   out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} PATH="$path" "$CE" --collate 2>&1)" || rc=$?
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^changelog-entries: [a-z-]+=/ { print }')" || return 2
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 # The record after the run: the name of the text it equals byte for byte
@@ -112,13 +113,9 @@ shim mv '#!/bin/sh\necho "mv: refused by the test stub" >&2\nexit 1\n'
 shim rm "#!/bin/sh\\ncase \"\$*\" in *changelog.d/*) echo \"rm: refused by the test stub\" >&2; exit 1 ;; esac\\nexec $(command -v rm) \"\$@\"\\n"
 shim git "#!/usr/bin/env bash\\nif [ \"\$1\" = status ]; then exit 1; fi\\nexec $(printf '%q' "$(command -v git)") \"\$@\"\\n"
 
-# The lines the fold prints, as functions of what a row put in.
-ERR="::error::changelog-entries: "
-DIRTY="${ERR}--collate requires a clean index and working tree; commit, restore or remove these first:"
-FLAG="${ERR}--collate requires COMMIT_GUARDS_CHANGELOG_COLLATE=1 for the release write"
-folded() { printf "changelog-entries: folded %s %s into CHANGELOG.md's [Unreleased] section" "$1" "$2"; } # COUNT NOUN
-refused() { printf 'changelog-entries FAIL CHANGELOG.md %s;  %s;changelog-entries: 1 violation(s) — cap 200 characters, 1 fragment(s) measured' "$1" "$2"; } # COMPLAINT REMEDY
-SECTIONS="added changed deprecated removed fixed security"
+# Counts and destination are stable values; English wording is not a contract.
+ERR="changelog-entries: "
+folded() { printf 'changelog-entries: folded=%s:CHANGELOG.md' "$1"; } # COUNT
 FOLDED='# Changelog
 
 ## [Unreleased]
@@ -141,15 +138,15 @@ ONE="changelog.d/fixed~changelog.d/fixed/pending.md"
 
 # The table: label | fixture | env | shim | expect | record | left.
 run_rows() {
-  local row label fx env sh expect rec want_left
+  local row label fx env sh expect rec want_left actual
   for row in "$@"; do
     IFS='|' read -r label fx env sh expect rec want_left <<<"$row"
     [ -n "$want_left" ] || { echo "harness: row has fewer than seven fields: $row" >&2; exit 2; }
     R=""
     "$fx"
-    assert_eq "$label" "$expect" "$(run "$env" "$sh")"
-    assert_eq "$label — the record" "$rec" "$(record "$rec")"
-    assert_eq "$label — left behind" "$want_left" "$(left)"
+    actual="$(run "$env" "$sh")"
+    actual="$actual|$(record "$rec")|$(left)"
+    assert_eq "$label" "$expect|$rec|$want_left" "$actual"
   done
 }
 
@@ -168,15 +165,15 @@ DISK="$RECORD
 fx_ignored() { pending ignored; printf 'scratch/\n.keep\n' >"$R/.git/info/exclude"; mkdir -p "$R/scratch"; printf 'Release scratch.\n' >"$R/scratch/note"; : >"$R/changelog.d/fixed/.keep"; }
 fx_status_fails() { pending status-fails; }
 run_rows \
-  "the flag absent refuses, naming it|fx_no_flag|-u,COMMIT_GUARDS_CHANGELOG_COLLATE||rc=2 $FLAG|SEED|$ONE" \
-  "the flag set to 0 is the same refusal|fx_flag_off|COMMIT_GUARDS_CHANGELOG_COLLATE=0||rc=2 $FLAG|SEED|$ONE" \
-  "an unstaged edit refuses, listing the path as git shows it|fx_unstaged|||rc=2 $DIRTY;  \\ M\\ release-input.txt|SEED|$ONE" \
-  "a staged edit refuses|fx_staged|||rc=2 $DIRTY;  M\\ \\ release-input.txt|SEED|$ONE" \
-  "an untracked file refuses|fx_untracked|||rc=2 $DIRTY;  \\?\\?\\ pending-release.txt|SEED|$ONE" \
-  "a fragment git and the disk disagree about refuses, and the disk copy survives|fx_frag_edited|||rc=2 $DIRTY;  \\ M\\ changelog.d/fixed/pending.md|SEED|$ONE" \
-  "a record git and the disk disagree about refuses: the disk edit is neither published nor overwritten|fx_record_edited|||rc=2 $DIRTY;  \\ M\\ CHANGELOG.md|DISK|$ONE" \
+  "the flag absent refuses, naming it|fx_no_flag|-u,COMMIT_GUARDS_CHANGELOG_COLLATE||rc=2 ${ERR}collate-flag=<unset>|SEED|$ONE" \
+  "the flag set to 0 is the same refusal|fx_flag_off|COMMIT_GUARDS_CHANGELOG_COLLATE=0||rc=2 ${ERR}collate-flag=0|SEED|$ONE" \
+  "an unstaged edit refuses, listing the path as git shows it|fx_unstaged|||rc=2 ${ERR}dirty-path=\\ M\\ release-input.txt;${ERR}collate-dirty=CHANGELOG.md|SEED|$ONE" \
+  "a staged edit refuses|fx_staged|||rc=2 ${ERR}dirty-path=M\\ \\ release-input.txt;${ERR}collate-dirty=CHANGELOG.md|SEED|$ONE" \
+  "an untracked file refuses|fx_untracked|||rc=2 ${ERR}dirty-path=\\?\\?\\ pending-release.txt;${ERR}collate-dirty=CHANGELOG.md|SEED|$ONE" \
+  "a fragment git and the disk disagree about refuses, and the disk copy survives|fx_frag_edited|||rc=2 ${ERR}dirty-path=\\ M\\ changelog.d/fixed/pending.md;${ERR}collate-dirty=CHANGELOG.md|SEED|$ONE" \
+  "a record git and the disk disagree about refuses: the disk edit is neither published nor overwritten|fx_record_edited|||rc=2 ${ERR}dirty-path=\\ M\\ CHANGELOG.md;${ERR}collate-dirty=CHANGELOG.md|DISK|$ONE" \
   "ignored scratch, inside the fragment tree too, does not block; the section directory it keeps non-empty stays|fx_ignored|||rc=0 $(folded 1 entry)|FOLDED|changelog.d/fixed~changelog.d/fixed/.keep" \
-  "a git status that fails cannot authorize the write|fx_status_fails||git|rc=2 ${ERR}could not read repository status; nothing was written|SEED|$ONE"
+  "a git status that fails cannot authorize the write|fx_status_fails||git|rc=2 ${ERR}collate-status=1|SEED|$ONE"
 
 echo "=== the record's shape is judged before the fold, and a shape the fold cannot use is refused ==="
 fx_misspelled() { repo misspelled "$(printf '%s' "$RECORD" | sed 's/^### Added$/### Add/')"; frag fixed pending.md '- Folded in.\n'; }
@@ -191,15 +188,15 @@ fx_symlink_record() { pending symlink-record; mv "$R/CHANGELOG.md" "$R/real.md";
 fx_nul_record() { pending nul-record; printf '%s\0' "$RECORD" >"$R/CHANGELOG.md"; reseed; git -C "$R" add -A; git -C "$R" commit -qm 'chore: nul'; }
 fx_bad_beside() { pending bad-beside; frag fixed bad.md 'Prose, not a list item.\n'; }
 run_rows \
-  "a heading that is not a section refuses, naming it and the sections|fx_misspelled|||rc=1 $(refused "names 'Add' under [Unreleased], which is not a Keep a Changelog section" "section one of: $SECTIONS")|SEED|$ONE" \
-  "a record with no [Unreleased] heading refuses with the remedy|fx_no_heading|||rc=1 $(refused "carries no '## [Unreleased]' heading" "open one — a release folds the fragments into it and has nowhere to put them otherwise")|SEED|$ONE" \
-  "two [Unreleased] headings are a shape nothing can decide: a collection error|fx_two_headings|||rc=2 ${ERR}CHANGELOG.md carries more than one '## [Unreleased]' heading — which one is the section cannot be decided|SEED|$ONE" \
-  "an unclosed fence is the same class|fx_open_fence|||rc=2 ${ERR}CHANGELOG.md leaves a code fence unclosed — the [Unreleased] section cannot be located|SEED|$ONE" \
-  "a record git does not track is refused: nothing measured it|fx_untracked_record|||rc=2 ${ERR}CHANGELOG.md is not tracked; commit the collation destination first|SEED|$ONE" \
-  "the record scope off leaves the fold nowhere to write|fx_scope_off|COMMIT_GUARDS_CHANGELOG_RECORD=||rc=2 ${ERR}no collation destination: COMMIT_GUARDS_CHANGELOG_RECORD is empty|SEED|$ONE" \
-  "a record tracked as a symlink is not a destination|fx_symlink_record|||rc=2 ${ERR}CHANGELOG.md is not a regular collation destination|SEED|$ONE" \
-  "a record carrying a NUL is binary, not a destination|fx_nul_record|||rc=2 ${ERR}CHANGELOG.md holds binary content; collation needs text|SEED|$ONE" \
-  "a fragment the judge refuses stops the run as its own refusal, and the acceptable one beside it is neither folded nor deleted|fx_bad_beside|||rc=1 changelog-entries FAIL changelog.d/fixed/bad.md does not open with a list marker — a fragment is the Markdown list item it becomes, opening with a hyphen and a space;changelog-entries: 1 violation(s) — cap 200 characters, 1 fragment(s) measured|SEED|changelog.d/fixed~changelog.d/fixed/bad.md~changelog.d/fixed/pending.md"
+  "a heading that is not a section refuses, naming it and the sections|fx_misspelled|||rc=1 ${ERR}record-section=CHANGELOG.md:Add;${ERR}violations=1:1:200|SEED|$ONE" \
+  "a record with no [Unreleased] heading refuses with the remedy|fx_no_heading|||rc=1 ${ERR}record-heading=CHANGELOG.md:missing;${ERR}violations=1:1:200|SEED|$ONE" \
+  "two [Unreleased] headings are a shape nothing can decide: a collection error|fx_two_headings|||rc=2 ${ERR}record-heading-count=CHANGELOG.md:2|SEED|$ONE" \
+  "an unclosed fence is the same class|fx_open_fence|||rc=2 ${ERR}record-fence=CHANGELOG.md:unclosed|SEED|$ONE" \
+  "a record git does not track is refused: nothing measured it|fx_untracked_record|||rc=2 ${ERR}record-untracked=CHANGELOG.md|SEED|$ONE" \
+  "the record scope off leaves the fold nowhere to write|fx_scope_off|COMMIT_GUARDS_CHANGELOG_RECORD=||rc=2 ${ERR}record-off=COMMIT_GUARDS_CHANGELOG_RECORD|SEED|$ONE" \
+  "a record tracked as a symlink is not a destination|fx_symlink_record|||rc=2 ${ERR}record-mode=CHANGELOG.md:120000|SEED|$ONE" \
+  "a record carrying a NUL is binary, not a destination|fx_nul_record|||rc=2 ${ERR}record-binary=CHANGELOG.md|SEED|$ONE" \
+  "a fragment the judge refuses stops the run as its own refusal, and the acceptable one beside it is neither folded nor deleted|fx_bad_beside|||rc=1 ${ERR}fragment-marker=changelog.d/fixed/bad.md;${ERR}violations=1:1:200|SEED|changelog.d/fixed~changelog.d/fixed/bad.md~changelog.d/fixed/pending.md"
 
 echo "=== every guarantee of the fold, on one record and one exact expected output ==="
 # One fixture, because these rules only meet in a file: all six section
@@ -366,9 +363,9 @@ run_rows \
   "a section that ends with the file is folded into with no separator after it|fx_tail|||rc=0 $(folded 1 entry)|TAIL_OUT|-" \
   "a fragment whose name carries a newline is folded in and removed like any other|fx_newline_name|||rc=0 $(folded 1 entry)|FOLDED|-" \
   "the format's README is neither folded nor swept, and its directory stays|fx_readme|||rc=0 $(folded 1 entry)|FOLDED|changelog.d/README.md" \
-  "nothing to fold is a stated no-op that reads no destination: a record with no heading passes|fx_nothing|||rc=0 changelog-entries: no fragments — nothing to collate|SEED|-" \
-  "a rename that fails is a loud refusal carrying what mv said, the record byte-identical, no staging file, the fragment kept|fx_mv_fails||mv|rc=2 ${ERR}could not replace the collated changelog at CHANGELOG.md (mv: refused by the test stub) — inspect the file before trusting it|SEED|$ONE" \
-  "every fragment that survives its delete is named, escaped, after the record was replaced|fx_rm_fails||rm|rc=2 rm: refused by the test stub;rm: refused by the test stub;${ERR}CHANGELOG.md is collated, but these fragments survived and would fold in a second time — delete them by hand:;  changelog.d/fixed/a\\ b.md;  changelog.d/fixed/pending.md|FOLDED2|changelog.d/fixed~changelog.d/fixed/a b.md~changelog.d/fixed/pending.md"
+  "nothing to fold is a stated no-op that reads no destination: a record with no heading passes|fx_nothing|||rc=0 ${ERR}collate-empty=0|SEED|-" \
+  "a rename that fails names the destination, with the record byte-identical, no staging file, and the fragment kept|fx_mv_fails||mv|rc=2 ${ERR}replace-file=CHANGELOG.md|SEED|$ONE" \
+  "every fragment that survives its delete is named, escaped, after the record was replaced|fx_rm_fails||rm|rc=2 ${ERR}fragment-survivor=changelog.d/fixed/a\\ b.md;${ERR}fragment-survivor=changelog.d/fixed/pending.md;${ERR}collate-survivors=CHANGELOG.md|FOLDED2|changelog.d/fixed~changelog.d/fixed/a b.md~changelog.d/fixed/pending.md"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

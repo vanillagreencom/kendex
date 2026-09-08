@@ -53,6 +53,7 @@ run() { # ENVS ARGS
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   # shellcheck disable=SC2086
   out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$CM" $2 2>&1)" || rc=$?
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^conflict-markers: [a-z-]+=/ { print }')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
@@ -68,14 +69,13 @@ repo() { # NAME
 }
 put() { mkdir -p "$R/$(dirname "$1")"; printf '%b' "$2" >"$R/$1"; git -C "$R" add -A; } # PATH CONTENT (printf %b), staged
 
-# The lines the scan prints, as functions of what a row put in.
+# Stable scan records, without English explanation lines.
 EXCL='tools/conflict-markers-excludes'
-ERR="::error::conflict-markers: "
-hit() { printf 'conflict-markers FAIL conflict marker: %s:%s:%s;  remedies: finish the merge and delete the marker lines; a file that legitimately carries the trio at column 0 belongs in %s with a reason' "$1" "$2" "$3" "${4:-$EXCL}"; } # PATH LINE TEXT [EXCLUDES]
-skip() { printf 'conflict-markers: not measured: %s — binary content, not text' "$1"; } # PATH
-unmeasured() { printf '; %s matched path(s) not measured' "$1"; } # N
-clean() { printf 'conflict-markers: OK — no conflict markers in tracked files%s' "${1-}"; } # [UNMEASURED]
-failed() { printf 'conflict-markers: %s conflict marker(s) — excludes %s%s' "$1" "${2:-$EXCL}" "${3-}"; } # N [EXCLUDES] [UNMEASURED]
+ERR="conflict-markers: "
+hit() { printf 'conflict-markers: match=conflict marker:%s:%s:%s' "$1" "$2" "$3"; } # PATH LINE TEXT
+skip() { printf 'conflict-markers: unmeasured=%s:binary' "$1"; } # PATH
+clean() { printf 'conflict-markers: result=0:%s:%s' "${1:-0}" "${2:-$EXCL}"; } # [UNMEASURED] [EXCLUDES]
+failed() { printf 'conflict-markers: result=%s:%s:%s' "$1" "${3:-0}" "${2:-$EXCL}"; } # N [EXCLUDES] [UNMEASURED]
 
 # Table one: a.rs holds CONTENT in a fresh repository.
 ROW=0
@@ -130,14 +130,14 @@ HITS="$(hit fixtures/merge.txt 1 "$OPEN HEAD");$(hit fixtures/merge.txt 3 "$CLOS
 run_rows \
   "control: the fixture conflict fails without an excludes row, naming both markers|fixture bare|||rc=1 $HITS" \
   "the excludes row silences the declared path|fx_excluded|||rc=0 $(clean)" \
-  "a pattern without a tab-separated reason is exit 2 naming the line|fx_no_reason|||rc=2 ${ERR}$EXCL:1: expected 'pattern<TAB>reason' (every exclusion carries its justification)" \
-  "the excludes path resolves through COMMIT_GUARDS_CONFLICT_EXCLUDES|alt alt-env|COMMIT_GUARDS_CONFLICT_EXCLUDES=alt-excludes||rc=0 $(clean)" \
-  "--excludes FILE points at the same list|alt alt-flag||--excludes alt-excludes|rc=0 $(clean)" \
-  "the equals form of --excludes resolves the same list|alt alt-eq||--excludes=alt-excludes|rc=0 $(clean)" \
+  "a pattern without a tab-separated reason is exit 2 naming the line|fx_no_reason|||rc=2 ${ERR}exclusion-reason=$EXCL:1" \
+  "the excludes path resolves through COMMIT_GUARDS_CONFLICT_EXCLUDES|alt alt-env|COMMIT_GUARDS_CONFLICT_EXCLUDES=alt-excludes||rc=0 $(clean 0 alt-excludes)" \
+  "--excludes FILE points at the same list|alt alt-flag||--excludes alt-excludes|rc=0 $(clean 0 alt-excludes)" \
+  "the equals form of --excludes resolves the same list|alt alt-eq||--excludes=alt-excludes|rc=0 $(clean 0 alt-excludes)" \
   "control: without either the default path has no list and the conflict fails, the remedy naming the default list|alt alt-none|||rc=1 $HITS" \
-  "--excludes without a path is exit 2|alt alt-bare||--excludes|rc=2 ${ERR}--excludes requires a path" \
-  "an unknown flag is exit 2, quoting it|alt alt-unknown||--no-such-flag|rc=2 ${ERR}unknown argument '--no-such-flag' (see --help)"
-assert_eq "--help prints usage at exit 0" "rc=0 usage: conflict-markers [--excludes FILE]" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
+  "--excludes without a path is exit 2|alt alt-bare||--excludes|rc=2 ${ERR}argument-missing=--excludes" \
+  "an unknown flag is exit 2, quoting it|alt alt-unknown||--no-such-flag|rc=2 ${ERR}argument-unknown=--no-such-flag"
+assert_eq "--help exits 0" "rc=0" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
 assert_eq "-h is --help" "$(run '' --help)" "$(run '' -h)"
 
 echo "=== the check's own source does not trip it; a carrier the sniff skips is named and qualifies the verdict ==="
@@ -156,8 +156,8 @@ assert_eq "premise: the self fixture tracks the shipped script" "scripts/conflic
 run_rows \
   "the shipped script, tracked, scans clean: its patterns are interval-built|fx_self self|||rc=0 $(clean)" \
   "control: a planted marker fails while the script stays unnamed|fx_self_planted|||rc=1 $(hit planted.txt 1 "$OPEN HEAD");$(failed 1)" \
-  "a clean verdict names the skipped carrier and says how many went unmeasured|asset asset|||rc=0 $(skip asset.png);$(clean "$(unmeasured 1)")" \
-  "a violation verdict carries the same qualifier, the marker elsewhere deciding the exit|fx_asset_planted|||rc=1 $(skip asset.png);$(hit planted.txt 1 "$CLOSE theirs");$(failed 1 "$EXCL" "$(unmeasured 1)")" \
+  "a clean verdict names the skipped carrier and says how many went unmeasured|asset asset|||rc=0 $(skip asset.png);$(clean 1)" \
+  "a violation verdict carries the same qualifier, the marker elsewhere deciding the exit|fx_asset_planted|||rc=1 $(skip asset.png);$(hit planted.txt 1 "$CLOSE theirs");$(failed 1 "$EXCL" 1)" \
   "control: the same bytes without a NUL are read, fire on their line, and nothing goes unmeasured|fx_asset_text|||rc=1 $(hit asset.png 4 "$OPEN HEAD");$(failed 1)"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

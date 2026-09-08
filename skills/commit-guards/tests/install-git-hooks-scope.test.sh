@@ -20,18 +20,19 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # The lanes are the subject here, so the chain's step lines are kept beside
 # the package's verdict lines; each lane's own report is still its suite's.
-KEEP="${KEEP%)}|=== pre-commit: )"
+KEEP="${KEEP/::error::/::error::doc-limits: (unknown argument|unrecognized option|invalid option)}"
+KEEP="${KEEP%)}|pre-commit: )"
 ROOTS=".agents/skills .claude/skills .cursor/skills .gemini/skills .github/skills .opencode/skills skills"
-DL="=== pre-commit: doc-limits (document byte ceilings)"
-BATCH="=== pre-commit: commit-guards all --staged"
-LOCAL_NONE="=== pre-commit: repo-local entry: none configured"
-PF_FIRST="=== pre-commit: first commit — preflight --staged has no base; skipped"
-PF_RAN="=== pre-commit: preflight"
+DL="pre-commit: step=doc-limits"
+BATCH="pre-commit: step=commit-guards all --staged"
+LOCAL_NONE="pre-commit: local-entry=none"
+PF_FIRST="pre-commit: base-missing=preflight"
+PF_RAN="pre-commit: step=preflight"
 # The verdict names git's bypass flag; assembled from split tokens so this
 # file never carries the flag itself (the quality corpus reads it as code).
-ERRORS="pre-commit: a guard could not complete — commit blocked; fix the errors above (bypass only with git commit --no-""verify)"
+ERRORS="pre-commit: result=2"
 SCRIPTS="<repo>/.agents/skills/commit-guards/scripts"
-skip() { printf '=== pre-commit: %s not installed — skipped (no %s skill under %s (%s), nor at %s/../../%s)' "$1" "$1" "$2" "$ROOTS" "$3" "$1"; } # LANE SEARCHED SCRIPTS-DIR
+skip() { printf 'pre-commit: lane-absent=%s roots=%s skills=%s fallback=%s/../../%s' "$1" "$2" "$ROOTS" "$3" "$1"; } # LANE SEARCHED SCRIPTS-DIR
 # The lane lines of a commit whose chain runs from SCRIPTS-DIR with the
 # committing tree at SEARCHED and no preflight installed.
 lanes() { printf '%s;%s;%s;%s;%s' "$DL" "$(skip preflight "$1" "$2")" "$(skip bot-instructions "$1" "$2")" "$BATCH" "$LOCAL_NONE"; } # SEARCHED SCRIPTS-DIR
@@ -149,13 +150,13 @@ fx_vendored() {
 VENDOR_SCRIPTS="<repo>/vendor/commit-guards/scripts"
 CLAUDE_SCRIPTS="<repo>/.claude/skills/commit-guards/scripts"
 run_rows \
-  "a package moved under .claude/skills is rediscovered and its chain runs the commit|fx_copy_clean|$ONE|commit|feat: add a|rc=0 $(lanes '<repo>' "$CLAUDE_SCRIPTS");$CHAIN_OK;$MSG_OK feat: add a|" \
+  "a package moved under .claude/skills is rediscovered and its chain runs the commit|fx_copy_clean|$ONE|commit|feat: add a|rc=0 $(lanes '<repo>' "$CLAUDE_SCRIPTS");$CHAIN_OK;${MSG_OK}feat: add a|" \
   "control: the rediscovered chain still blocks|fx_copy_marker|$ONE|commit|feat: add b|rc=1 $(lanes '<repo>' "$CLAUDE_SCRIPTS");$BLOCKED|" \
   "a package beside an external git directory is not this repository's: the checkout's own package gates|fx_separate|$ONE|commit|feat: separate|rc=1 $BLOCKS|" \
   "a package under the git directory's parent inside the work tree is not the main checkout's|fx_inside|$ONE|commit|feat: inside|rc=1 $BLOCKS|" \
   "a linked worktree is served by the main checkout's package|fx_linked|$ONE|commit|feat: linked|rc=1 $(lanes '<root>/wt-linked and <repo>' "$SCRIPTS");$BLOCKED|" \
   "a checkout reached through a symlink is still gated, through its own root|fx_symlinked|$ONE|commit-here|feat: via link|rc=1 $BLOCKS|" \
-  "with the package gone the search fails closed and names every root|fx_no_package|$ONE|commit|feat: add a|rc=1 kendex-guards: no executable commit-guards pre-commit script at , nor under <repo> or <repo> (project '', roots $ROOTS)|" \
+  "with the package gone the search fails closed and names every root|fx_no_package|$ONE|commit|feat: add a|rc=1 kendex-guards: lane-missing=pre-commit|" \
   "a copy outside every skill root finds doc-limits beside itself, and it gates|fx_vendored|$ONE|commit|feat: add big|rc=1 $(lanes '<repo>' "$VENDOR_SCRIPTS");$BLOCKED|" \
   "a project below the work-tree root finds a sibling under another of its skill roots, and it gates|fx_project_root|$ONE|commit|feat: add big|rc=1 $(lanes '<repo> and <repo>/sub' "$SUB_SCRIPTS");$BLOCKED|"
 
@@ -170,7 +171,7 @@ fx_mode_kept() { over mode-kept '#!/bin/sh\necho mine\n' 0700; }
 run_rows \
   "uninstall restores a hook with no final newline byte for byte|fx_noeol_uninstall||uninstall||rc=0 $REMOVED_BOTH|helper=absent pre-commit=$X:#!/bin/sh~echo mine<noeol> commit-msg=absent hooksPath=<unset>" \
   "a hook that is only a newline-less shebang takes the delegate on its own line|fx_shebang_only||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@ commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "control: that hook runs the chain|fx_shebang_only_commit|$ONE|commit|feat: add a|rc=0 $CLEAN;$MSG_OK feat: add a|" \
+  "control: that hook runs the chain|fx_shebang_only_commit|$ONE|commit|feat: add a|rc=0 $CLEAN;${MSG_OK}feat: add a|" \
   "a consumer's shebang-only hook is restored, not deleted, while the hook we created goes|fx_shebang_nl_uninstall||uninstall||rc=0 $REMOVED_BOTH|helper=absent pre-commit=$X:#!/bin/sh commit-msg=absent hooksPath=<unset>" \
   "a rewritten hook keeps its own mode and content|fx_mode_kept||install||rc=0 $ARMED|helper=$OURS pre-commit=rwx------:#!/bin/sh~@PRE@~echo mine commit-msg=$SHIM_MSG hooksPath=<unset>"
 
@@ -179,9 +180,9 @@ fx_nope() { R="$TMP/nope"; }
 fx_notgit() { R="$TMP/notgit"; mkdir "$R"; }
 fx_fresh() { R="$(new_repo fresh)"; }
 run_rows \
-  "a missing --repo path is a usage error|fx_nope||install||rc=2 ::error::install-git-hooks: no such directory: <repo>|" \
-  "a directory outside a git work tree is a usage error|fx_notgit||install||rc=2 ::error::install-git-hooks: not inside a git work tree: <repo>|" \
-  "an unknown flag is a usage error|fx_fresh||install|--bogus|rc=2 ::error::install-git-hooks: unknown argument '--bogus' (see --help)|"
+  "a missing --repo path is a usage error|fx_nope||install||rc=2 install-git-hooks: repo-missing=<repo>|" \
+  "a directory outside a git work tree is a usage error|fx_notgit||install||rc=2 install-git-hooks: repo-not-worktree=<repo>|" \
+  "an unknown flag is a usage error|fx_fresh||install|--bogus|rc=2 install-git-hooks: argument-unknown=--bogus|"
 # Outside the table because the usage line carries the row separator.
 HELP_RC=0
 HELP_LINE="$("$INSTALL" --help 2>&1 | sed -n 1p)" || HELP_RC=$?
@@ -204,11 +205,11 @@ fx_pf_dies() {
 }
 PF_LANES_TAIL="$(skip bot-instructions '<repo>' "$SCRIPTS");$BATCH;$LOCAL_NONE"
 run_rows \
-  "the first commit states the preflight skip instead of blocking|fx_pf_first|$ONE|commit|feat: add ok|rc=0 $DL;$PF_FIRST;$PF_LANES_TAIL;$CHAIN_OK;$MSG_OK feat: add ok|" \
+  "the first commit states the preflight skip instead of blocking|fx_pf_first|$ONE|commit|feat: add ok|rc=0 $DL;$PF_FIRST;$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
   "a staged fail-open script blocks through preflight|fx_pf_blocks|$ONE|commit|feat: add loose|rc=1 $DL;$PF_RAN;$PF_LANES_TAIL;$BLOCKED|" \
-  "control: clean staged content commits through a run preflight|fx_pf_clean|$ONE|commit|feat: add ok|rc=0 $DL;$PF_RAN;$PF_LANES_TAIL;$CHAIN_OK;$MSG_OK feat: add ok|" \
-  "a dangling preflight install blocks, never skips|fx_pf_dangling|$ONE|commit|feat: add d|rc=1 $DL;::error::pre-commit: the preflight skill is installed at <repo>/.agents/skills/preflight but <repo>/.agents/skills/preflight/scripts/preflight is missing or not executable — reinstall it|" \
-  "a preflight that dies at run time is a step that did not complete, and blocks|fx_pf_dies|$ONE|commit|feat: add d|rc=1 $DL;$PF_RAN;pre-commit: step 'preflight' did not complete (exit 2);$PF_LANES_TAIL;$ERRORS|"
+  "control: clean staged content commits through a run preflight|fx_pf_clean|$ONE|commit|feat: add ok|rc=0 $DL;$PF_RAN;$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
+  "a dangling preflight install blocks, never skips|fx_pf_dangling|$ONE|commit|feat: add d|rc=1 $DL;pre-commit: lane-missing=<repo>/.agents/skills/preflight/scripts/preflight|" \
+  "a preflight that dies at run time is a step that did not complete, and blocks|fx_pf_dies|$ONE|commit|feat: add d|rc=1 $DL;$PF_RAN;pre-commit: step-incomplete=preflight:2;$PF_LANES_TAIL;$ERRORS|"
 
 echo "=== a repo-local doc-limits replacement is a stated skip only when its parser rejects --staged ==="
 # new_repo links doc-limits to the real skill; a fork fixture replaces the
@@ -234,14 +235,14 @@ fx_fork_invalid_colon() { spelling fork-invalid-colon "doc-limits: invalid optio
 fx_fork_invalid_dashes() { spelling fork-invalid-dashes "doc-limits: invalid option -- staged"; }
 fx_fork_echoed() { fork fork-echoed "$ECHOED"; }
 fx_fork_verdict() { fork fork-verdict "$VERDICT"; }
-FORK_SKIP="=== pre-commit: doc-limits at <repo>/.agents/skills/doc-limits/scripts/doc-limits rejects --staged (repo-local replacement) — skipped; this repo's own wiring owns that gate"
+FORK_SKIP="pre-commit: staged-unsupported=<repo>/.agents/skills/doc-limits/scripts/doc-limits"
 run_rows \
-  "a fork whose parser rejects --staged is skipped and the commit proceeds|fx_fork_rejects|$ONE|commit|feat: add ok|rc=0 $DL;::error::doc-limits: unknown argument '--staged' (see --help);$FORK_SKIP;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$CHAIN_OK;$MSG_OK feat: add ok|" \
-  "a parser saying unrecognized option '--staged' is the same skip|fx_fork_unrecognized_quoted|$ONE|commit|feat: add ok|rc=0 $DL;$FORK_SKIP;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$CHAIN_OK;$MSG_OK feat: add ok|" \
-  "a parser saying unrecognized option: --staged is the same skip|fx_fork_unrecognized_colon|$ONE|commit|feat: add ok|rc=0 $DL;$FORK_SKIP;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$CHAIN_OK;$MSG_OK feat: add ok|" \
-  "a parser saying invalid option: --staged is the same skip|fx_fork_invalid_colon|$ONE|commit|feat: add ok|rc=0 $DL;$FORK_SKIP;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$CHAIN_OK;$MSG_OK feat: add ok|" \
-  "a parser saying invalid option -- staged is the same skip|fx_fork_invalid_dashes|$ONE|commit|feat: add ok|rc=0 $DL;$FORK_SKIP;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$CHAIN_OK;$MSG_OK feat: add ok|" \
-  "must-fail: the whole rejection phrase inside a config diagnostic is not a rejection, and the step did not complete|fx_fork_echoed|$ONE|commit|feat: add ok|rc=1 $DL;::error::doc-limits: DOC_LIMITS_CLASSES has an invalid byte limit; a run would say doc-limits: unknown argument '--staged' (see --help);pre-commit: step 'doc-limits' did not complete (exit 2);$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$ERRORS|" \
+  "a fork whose parser rejects --staged is skipped and the commit proceeds|fx_fork_rejects|$ONE|commit|feat: add ok|rc=0 $DL;::error::doc-limits: unknown argument '--staged' (see --help);$FORK_SKIP;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
+  "a parser saying unrecognized option '--staged' is the same skip|fx_fork_unrecognized_quoted|$ONE|commit|feat: add ok|rc=0 $DL;$FORK_SKIP;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
+  "a parser saying unrecognized option: --staged is the same skip|fx_fork_unrecognized_colon|$ONE|commit|feat: add ok|rc=0 $DL;$FORK_SKIP;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
+  "a parser saying invalid option: --staged is the same skip|fx_fork_invalid_colon|$ONE|commit|feat: add ok|rc=0 $DL;$FORK_SKIP;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
+  "a parser saying invalid option -- staged is the same skip|fx_fork_invalid_dashes|$ONE|commit|feat: add ok|rc=0 $DL;$FORK_SKIP;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
+  "must-fail: the whole rejection phrase inside a config diagnostic is not a rejection, and the step did not complete|fx_fork_echoed|$ONE|commit|feat: add ok|rc=1 $DL;pre-commit: step-incomplete=doc-limits:2;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$ERRORS|" \
   "a fork's own verdict blocks like the skill's|fx_fork_verdict|$ONE|commit|feat: add ok|rc=1 $DL;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$BLOCKED|"
 
 echo "=== a project name survives every byte it may hold ==="
@@ -268,13 +269,12 @@ fx_nasty_install() { nasty nasty-install; }
 fx_nasty_check() { nasty_armed nasty-check; }
 fx_nasty_commit() { nasty_armed nasty-commit; blank_baked; printf '.gitignore\n' >"$R/.gitignore"; stage_marker; }
 fx_nasty_uninstall() { nasty_armed nasty-uninstall; }
-# The chain's skip lines name the project directory, whose newline ends the
-# kept line where the name ends.
-nasty_skip() { printf '=== pre-commit: %s not installed — skipped (no %s skill under <repo> and <repo>/%s (%s), nor at <repo>/%s' "$1" "$1" "$NASTY" "$ROOTS" "$NASTY"; } # LANE
+# The fallback path ends with a newline; the header replaces it with '?'.
+nasty_skip() { printf 'pre-commit: lane-absent=%s roots=<repo> and <repo>/%s skills=%s fallback=<repo>/%s?/.agents/skills/commit-guards/scripts/../../%s' "$1" "$NASTY" "$ROOTS" "$NASTY" "$1"; } # LANE
 NASTY_LANES="$DL;$(nasty_skip preflight);$(nasty_skip bot-instructions);$BATCH;$LOCAL_NONE"
 run_rows \
   "a project named with every awkward class arms|fx_nasty_install||install||rc=0 $ARMED|" \
-  "and --check recognises the helper it wrote|fx_nasty_check||check||rc=0 commit-guards git hooks: armed — pre-commit and commit-msg gate commits in <repo>/.git/hooks|" \
+  "and --check recognises the helper it wrote|fx_nasty_check||check||rc=0 commit-guards git hooks: armed=<repo>/.git/hooks|" \
   "and the helper rediscovers the package under that project name, whose chain blocks|fx_nasty_commit|$ONE|commit|feat: add b|rc=1 $NASTY_LANES;$BLOCKED|" \
   "and the project can disarm again|fx_nasty_uninstall||uninstall||rc=0 $REMOVED_BOTH|helper=absent pre-commit=absent commit-msg=absent hooksPath=<unset>"
 

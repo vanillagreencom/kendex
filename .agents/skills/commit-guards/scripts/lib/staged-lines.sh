@@ -21,7 +21,7 @@ gg_staged_added_lines() { # PATH — one "line<TAB>content" record per line this
     >"$GG_TMP/patch" 2>"$GG_TMP/patch.err" || status=$?
   if [ "$status" -ne 0 ]; then
     [ ! -s "$GG_TMP/patch.err" ] || cat -- "$GG_TMP/patch.err" >&2
-    gg_collection_error "could not read the staged additions in '$f' (git diff exit $status)"
+    gg_fail staged-read "$f:$status" "could not read the staged additions in '$f' (git diff exit $status)"
   fi
   # Line numbers come from the hunk headers ('@@ -a,b +c,d @@'), and only
   # lines inside a hunk count — every 'diff --git' closes the hunk before
@@ -52,5 +52,5 @@ gg_staged_added_lines() { # PATH — one "line<TAB>content" record per line this
     hunk && /^ / { ln++; next }
   ' "$GG_TMP/patch" || awk_status=$?
   [ "$awk_status" -eq 0 ] \
-    || gg_collection_error "could not parse the staged additions in '$f' (awk exit $awk_status)"
+    || gg_fail staged-parse "$f:$awk_status" "could not parse the staged additions in '$f' (awk exit $awk_status)"
 }

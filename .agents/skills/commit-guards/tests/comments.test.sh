@@ -43,7 +43,7 @@ assert_eq() { # LABEL EXPECT ACTUAL
 }
 
 # One line for a run in the row's repository: the exit status, then every
-# line printed, in order, joined by ';'. ENVS is a comma-separated list of
+# stable record printed, in order, joined by ';'. ENVS is a comma-separated list of
 # assignments (`-u,NAME` unsets one); ARGS are passed through; BIN is the
 # script run, the lane unless a row says otherwise.
 R=""
@@ -53,6 +53,7 @@ run() { # ENVS ARGS
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   # shellcheck disable=SC2086
   out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$BIN" $2 2>&1)" || rc=$?
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^[a-z][a-z-]*: [a-z-]+=/ { print }')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
@@ -73,22 +74,23 @@ stage() { git -C "$R" add -A; }
 commit() { git -C "$R" commit -qm "${1:-seed}"; } # [MESSAGE]
 file() { repo "$1"; put "$2" "$3"; stage; } # NAME PATH CONTENT — one tracked file
 
-# The lines the lane prints, as functions of what a row put in.
+# Expected records retain the rule, source position and scan counts.
 EXCL=tools/comments-excludes
-remedy() { printf '  remedies: state the constraint that holds now and delete the story; the issue id, the number and the date belong in the commit that made the change; a generated, vendored, or immutable file belongs in %s with a reason' "${1:-$EXCL}"; } # [EXCLUDES]
-hit() { printf 'comments FAIL history reference (%s): %s:%s: %s;%s' "$1" "$2" "$3" "$4" "$(remedy "${5:-}")"; } # SHAPE PATH LINE TEXT [EXCLUDES]
-ok_idx() { printf 'comments: OK — no history references in the comments of %s scanned file(s)' "$1"; } # FILES
-idx() { printf 'comments: %s history reference(s) in the comments of %s scanned file(s) — excludes %s' "$1" "$2" "${3:-$EXCL}"; } # HITS FILES [EXCLUDES]
-ok_stg() { printf 'comments: OK — the staged diff adds no history references in comments (%s file(s) read)' "$1"; } # FILES
-stg() { printf 'comments: %s history reference(s) in comments added by the staged diff — excludes %s' "$1" "${2:-$EXCL}"; } # HITS [EXCLUDES]
-skip() { printf 'comments: not measured: %s — %s' "$1" "$2"; } # PATH REASON
-unread() { printf '; %s matched path(s) not measured' "$1"; } # COUNT
-incomplete() { printf 'comments: scan incomplete — %s file(s) could not be scanned; %s history reference(s) found in %s scanned file(s)' "$1" "$2" "$3"; } # UNSCANNED HITS FILES
-ERR="::error::comments: "
-NO_TYPE="${ERR}COMMIT_GUARDS_COMMENT_REFERENCE_TYPES must name an active type; issue-id needs GH_ISSUE_PATTERN"
-ID="issue id"
-NUM="issue number"
-DATE="calendar date"
+COMMENT_PATHS="$(sed -n 's/^GG_COMMENT_PATHS_DEFAULT="\(.*\)"$/\1/p' "$SKILL_DIR/scripts/lib/comment-text.sh")"
+hit() { printf 'comments: %s=%s:%s:%s' "$1" "$2" "$3" "$4"; } # SHAPE PATH LINE SOURCE-TEXT
+ok_idx() { printf 'comments: summary=violations=0 files=%s scope=index skipped=0' "$1"; } # FILES
+idx() { printf 'comments: summary=violations=%s files=%s scope=index skipped=0;comments: excludes=%s' "$1" "$2" "${3:-$EXCL}"; } # HITS FILES [EXCLUDES]
+ok_stg() { printf 'comments: summary=violations=0 files=%s scope=staged skipped=%s' "$1" "${2:-0}"; } # FILES [SKIPPED]
+stg() { printf 'comments: summary=violations=%s files=1 scope=staged skipped=0;comments: excludes=%s' "$1" "${2:-$EXCL}"; } # HITS [EXCLUDES]
+skip() { printf 'comments: unmeasured=%s:%s' "$1" "$2"; } # PATH CODE
+extraction() { printf 'comments: extraction=%s:%s;comments: unmeasured=%s:extraction' "$1" "$2" "$1"; } # PATH REFUSAL
+unread() { printf '%s' "$1"; } # COUNT
+incomplete() { printf 'comments: incomplete=files=%s violations=%s scanned=%s skipped=' "$1" "$2" "$3"; } # UNSCANNED HITS FILES
+ERR="comments: "
+NO_TYPE="${ERR}reference-types=inactive"
+ID="issue-id"
+NUM="issue-number"
+DATE="date"
 
 # The first table: label | path | content | env | args | expect. One
 # tracked file per row, built from CONTENT through printf %b.
@@ -137,7 +139,7 @@ rows=(
   "the issue-id class alone reports only the id on a line carrying a date too|a.rs|// tracked as $W on $D\n|COMMIT_GUARDS_COMMENT_REFERENCE_TYPES=issue-id||rc=1 $(hit "$ID" a.rs 1 " tracked as $W on $D");$(idx 1 1)"
   "the date class alone reports only the date|a.rs|// tracked as $W on $D\n|COMMIT_GUARDS_COMMENT_REFERENCE_TYPES=date||rc=1 $(hit "$DATE" a.rs 1 " tracked as $W on $D");$(idx 1 1)"
   "the issue-number class alone finds nothing on that line|a.rs|// tracked as $W on $D\n|COMMIT_GUARDS_COMMENT_REFERENCE_TYPES=issue-number||rc=0 $(ok_idx 1)"
-  "an unknown reference type is a config error quoting it|a.rs|// clean\n|COMMIT_GUARDS_COMMENT_REFERENCE_TYPES=issue-id bogus||rc=2 ${ERR}COMMIT_GUARDS_COMMENT_REFERENCE_TYPES contains unknown type 'bogus'"
+  "an unknown reference type is a config error quoting it|a.rs|// clean\n|COMMIT_GUARDS_COMMENT_REFERENCE_TYPES=issue-id bogus||rc=2 ${ERR}reference-type=bogus"
   "technical names pass without a tracker pattern|a.rs|// UTF-8 HTTP-200 RFC-3339 gpt-6-astra exit-2\n|GH_ISSUE_PATTERN=||rc=0 $(ok_idx 1)"
   "an undeclared tracker prefix is not guessed|a.rs|// see $W\n|GH_ISSUE_PATTERN=||rc=0 $(ok_idx 1)"
   "control: the configured tracker prefix catches the same reference|a.rs|// see $W\n|||rc=1 $(hit "$ID" a.rs 1 " see $W");$(idx 1 1)"
@@ -150,7 +152,7 @@ rows=(
   "and catches its own whatever the case|a.rs|// see KEN-12 only\n|GH_ISSUE_PATTERN=ken-[0-9]+||rc=1 $(hit "$ID" a.rs 1 " see KEN-12 only");$(idx 1 1)"
   "control: under the fixture pattern the same line is clean|a.rs|// see KEN-12 only\n|||rc=0 $(ok_idx 1)"
   "an empty pattern leaves issue ids unconfigured|a.rs|// see $W again\n|GH_ISSUE_PATTERN=||rc=0 $(ok_idx 1)"
-  "a pattern no engine can compile is a config error quoting the bounded pattern, never a silent no-match|a.rs|// see $W\n|GH_ISSUE_PATTERN=(||rc=2 ${ERR}GH_ISSUE_PATTERN is not a POSIX ERE awk can read: '(^|[^A-Za-z0-9_])(()([^A-Za-z0-9_]|\$)'"
+  "a pattern no engine can compile is a config error quoting the bounded pattern, never a silent no-match|a.rs|// see $W\n|GH_ISSUE_PATTERN=(||rc=2 ${ERR}awk-pattern=GH_ISSUE_PATTERN:(^|[^A-Za-z0-9_])(()([^A-Za-z0-9_]|\$)"
 )
 for line in "${ORDINARY[@]}"; do
   rows+=("ordinary wording passes in index scope: $line|a.rs|// $line\n|||rc=0 $(ok_idx 1)")
@@ -207,7 +209,7 @@ run_files \
   "a backslash in \$'...' does escape, so the comment after the string is judged|a.sh|echo \$'a\\\\'b' # $W\n|||rc=1 $(hit "$ID" a.sh 1 " $W");$(idx 1 1)" \
   "a heredoc body is not judged; the line after its terminator is|a.sh|cat <<EOF\n# $W\nEOF\n# $W\n|||rc=1 $(hit "$ID" a.sh 4 " $W");$(idx 1 1)" \
   "a quoted <<- heredoc ends at its tab-indented terminator|a.sh|cat <<-'EOF'\n\t# $W\n\tEOF\n# $W\n|||rc=1 $(hit "$ID" a.sh 4 " $W");$(idx 1 1)" \
-  "a plain << heredoc is not ended by a tab-indented terminator: it never closes|a.sh|cat <<EOF\n# $W\n\tEOF\n# $W\n|||rc=2 $(skip a.sh 'comment text could not be extracted: a heredoc (terminator EOF) opened at line 1 is never closed ');$(incomplete 1 0 0)$(unread 1)" \
+  "a plain << heredoc is not ended by a tab-indented terminator: it never closes|a.sh|cat <<EOF\n# $W\n\tEOF\n# $W\n|||rc=2 $(extraction a.sh unclosed-heredoc:1:EOF);$(incomplete 1 0 0)$(unread 1)" \
   "an unquoted heredoc word stops at an operator|a.sh|cat <<EOF;echo\n# $W\nEOF\n# $W\n|||rc=1 $(hit "$ID" a.sh 4 " $W");$(idx 1 1)" \
   "a backslash-quoted heredoc word loses its backslash|a.sh|cat <<\\\\EOF\n# $W\nEOF\n# $W\n|||rc=1 $(hit "$ID" a.sh 4 " $W");$(idx 1 1)" \
   "a shift is not a heredoc|a.sh|x=\$((1<<2)) # $W\n|||rc=1 $(hit "$ID" a.sh 1 " $W");$(idx 1 1)" \
@@ -217,7 +219,7 @@ run_files \
   "a quote inside a quoted command substitution does not hide the following comment|a.sh|out=\"\$(printf '\"')\"\n# $W\n|||rc=1 $(hit "$ID" a.sh 2 " $W");$(idx 1 1)" \
   "a comment inside a quoted command substitution is judged as shell code|a.sh|out=\"\$(\n# $W\nprintf ok\n)\"\n|||rc=1 $(hit "$ID" a.sh 2 " $W");$(idx 1 1)" \
   "a quoted command substitution stays extractable when its comments are clean|a.sh|out=\"\$(printf '\"$W\"')\"\n|||rc=0 $(ok_idx 1)" \
-  "a quoted command substitution never closed is reported at its opener|a.sh|out=\"\$(\n# $W\n|||rc=2 $(skip a.sh 'comment text could not be extracted: a command substitution opened at line 1 is never closed ');$(incomplete 1 0 0)$(unread 1)" \
+  "a quoted command substitution never closed is reported at its opener|a.sh|out=\"\$(\n# $W\n|||rc=2 $(extraction a.sh unclosed-substitution:1);$(incomplete 1 0 0)$(unread 1)" \
   "a heredoc token inside an embedded heredoc does not hide the following comment|a.sh|out=\"\$(python3 - <<'PY'\nprint(\"<<'MANIFEST_EOF'\")\nPY\n)\"\n# $W\n|||rc=1 $(hit "$ID" a.sh 5 " $W");$(idx 1 1)" \
   "a heredoc in a quoted command substitution stays extractable when its comments are clean|a.sh|out=\"\$(python3 - <<'PY'\nprint(\"<<'MANIFEST_EOF' $W\")\nPY\n)\"\n|||rc=0 $(ok_idx 1)" \
   "a triple-quoted Python string is one string|a.py|\"\"\"\n# $W\n\"\"\"\n# $W\n|||rc=1 $(hit "$ID" a.py 4 " $W");$(idx 1 1)" \
@@ -288,21 +290,21 @@ fx_link() { repo link; put target.txt "// $W\n"; ln -s target.txt "$R/link.rs"; 
 fx_blob() { repo blob; put blob.rs "lead\\0000// $W\n"; stage; }
 fx_link_blob() { repo link-blob; put target.txt "// $W\n"; ln -s target.txt "$R/link.rs"; put blob.rs "lead\\0000// $W\n"; stage; }
 run_files \
-  "a block comment never closed is reported with its opener, not read to the end as one comment|a.c|int x;\n/* open\nint y; // $W\n|||rc=2 $(skip a.c 'comment text could not be extracted: a block comment opened at line 2 is never closed ');$(incomplete 1 0 0)$(unread 1)" \
-  "a heredoc never terminated is reported, naming its word|a.sh|cat <<EOF\nbody\n# $W\n|||rc=2 $(skip a.sh 'comment text could not be extracted: a heredoc (terminator EOF) opened at line 1 is never closed ');$(incomplete 1 0 0)$(unread 1)" \
+  "a block comment never closed is reported with its opener, not read to the end as one comment|a.c|int x;\n/* open\nint y; // $W\n|||rc=2 $(extraction a.c unclosed-block:2);$(incomplete 1 0 0)$(unread 1)" \
+  "a heredoc never terminated is reported, naming its word|a.sh|cat <<EOF\nbody\n# $W\n|||rc=2 $(extraction a.sh unclosed-heredoc:1:EOF);$(incomplete 1 0 0)$(unread 1)" \
   "control: a string that does close is a string, and the comment after it is judged|a.rs|let s = \"spans\nlines\";\n// $W\n|||rc=1 $(hit "$ID" a.rs 3 " $W");$(idx 1 1)" \
   "an extensionless file the list names is judged under the grammar its shebang picks|run|#!/usr/bin/env bash\n# $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=1 $(hit "$ID" run 2 " $W");$(idx 1 1)" \
   "a python shebang picks the python grammar, where a backslash escapes inside single quotes|run|#!/usr/bin/env python3\ns = 'don\\\\'t' # $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=1 $(hit "$ID" run 2 " $W");$(idx 1 1)" \
   "a node shebang picks the C family with template literals|run|#!/usr/bin/env node\n// $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=1 $(hit "$ID" run 2 " $W");$(idx 1 1)" \
-  "a first line naming a shell without #! is not a shebang|run|# start with bash\n# $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=0 $(skip run 'no comment grammar for this path (CHECKS.md § comments)');comments: OK — nothing measurable to scan$(unread 1)" \
-  "the same file with no shebang is named as unmeasured, and nothing measurable was scanned|run|# $W\necho hi\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=0 $(skip run 'no comment grammar for this path (CHECKS.md § comments)');comments: OK — nothing measurable to scan$(unread 1)" \
-  "an extension the table does not carry is named, not guessed at|notes.txt|# $W\n|COMMIT_GUARDS_COMMENT_PATHS=*.txt||rc=0 $(skip notes.txt 'no comment grammar for this path (CHECKS.md § comments)');comments: OK — nothing measurable to scan$(unread 1)"
+  "a first line naming a shell without #! is not a shebang|run|# start with bash\n# $W\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=0 $(skip run grammar);comments: unmeasured-count=$(unread 1)" \
+  "the same file with no shebang is named as unmeasured, and nothing measurable was scanned|run|# $W\necho hi\n|COMMIT_GUARDS_COMMENT_PATHS=run||rc=0 $(skip run grammar);comments: unmeasured-count=$(unread 1)" \
+  "an extension the table does not carry is named, not guessed at|notes.txt|# $W\n|COMMIT_GUARDS_COMMENT_PATHS=*.txt||rc=0 $(skip notes.txt grammar);comments: unmeasured-count=$(unread 1)"
 run_rows \
-  "a regex literal holding a backtick opens a template literal that never closes (stated limit), and the later file's finding is kept|fx_unclosed_ts|||rc=2 $(skip a.ts 'comment text could not be extracted: a string literal opened at line 1 is never closed ');$(hit "$ID" b.rs 1 " $W");$(incomplete 1 1 1)$(unread 1)" \
-  "a shebang read that fails is a collection error, not a path with no grammar|fx_shim_head|PATH=$TMP/shim-head/shim:$PATH,COMMIT_GUARDS_COMMENT_PATHS=run||rc=2 ${ERR}could not read the first line of run" \
-  "a symlink at a source path is named as unmeasured|fx_link|||rc=0 $(skip link.rs 'tracked as a symlink, not source');comments: OK — nothing measurable to scan$(unread 1)" \
-  "a binary blob at a source path is named as unmeasured|fx_blob|||rc=0 $(skip blob.rs 'binary content, not source');comments: OK — nothing measurable to scan$(unread 1)" \
-  "both together are two unmeasured paths and no clean file count|fx_link_blob|||rc=0 $(skip blob.rs 'binary content, not source');$(skip link.rs 'tracked as a symlink, not source');comments: OK — nothing measurable to scan$(unread 2)"
+  "a regex literal holding a backtick opens a template literal that never closes (stated limit), and the later file's finding is kept|fx_unclosed_ts|||rc=2 $(extraction a.ts unclosed-string:1);$(hit "$ID" b.rs 1 " $W");$(incomplete 1 1 1)$(unread 1)" \
+  "a shebang read that fails is a collection error, not a path with no grammar|fx_shim_head|PATH=$TMP/shim-head/shim:$PATH,COMMIT_GUARDS_COMMENT_PATHS=run||rc=2 ${ERR}shebang-read=run" \
+  "a symlink at a source path is named as unmeasured|fx_link|||rc=0 $(skip link.rs symlink);comments: unmeasured-count=$(unread 1)" \
+  "a binary blob at a source path is named as unmeasured|fx_blob|||rc=0 $(skip blob.rs binary);comments: unmeasured-count=$(unread 1)" \
+  "both together are two unmeasured paths and no clean file count|fx_link_blob|||rc=0 $(skip blob.rs binary);$(skip link.rs symlink);comments: unmeasured-count=$(unread 2)"
 
 SECTION=scope
 echo "=== scope: each default extension is scanned under its family, markdown and JSON are not ==="
@@ -328,12 +330,12 @@ fx_override_empty() { repo override-empty; put a.rs "// $W\n"; stage; }
 fx_flag_unknown() { repo flag-unknown; put a.rs "// clean\n"; stage; }
 fx_flag_bare() { repo flag-bare; put a.rs "// clean\n"; stage; }
 run_rows \
-  "markdown and JSON are not this lane's: no tracked file matches, and the verdict names the list|fx_not_ours|||rc=0 comments: OK — no tracked file matches COMMIT_GUARDS_COMMENT_PATHS ($(printf '%s' "$(sed -n 's/^GG_COMMENT_PATHS_DEFAULT="\(.*\)"$/\1/p' "$SKILL_DIR/scripts/lib/comment-text.sh")"))" \
-  "the override replaces the list: a.rs is no longer scanned, the named file is unmeasured|fx_override|COMMIT_GUARDS_COMMENT_PATHS=*.txt||rc=0 $(skip notes.txt 'no comment grammar for this path (CHECKS.md § comments)');comments: OK — nothing measurable to scan$(unread 1)" \
-  "a list matching no tracked file passes, naming the list|fx_override_none|COMMIT_GUARDS_COMMENT_PATHS=no/such/*.rs||rc=0 comments: OK — no tracked file matches COMMIT_GUARDS_COMMENT_PATHS (no/such/*.rs)" \
-  "an empty path list is a config error naming how to switch the check off|fx_override_empty|COMMIT_GUARDS_COMMENT_PATHS= ||rc=2 ${ERR}COMMIT_GUARDS_COMMENT_PATHS names no path — name at least one, or drop this check from COMMIT_GUARDS_CHECKS" \
-  "an unknown argument is a config error quoting it|fx_flag_unknown||--no-such-flag|rc=2 ${ERR}unknown argument '--no-such-flag' (see --help)" \
-  "--excludes with no path is a config error|fx_flag_bare||--excludes|rc=2 ${ERR}--excludes requires a path"
+  "markdown and JSON are not this lane's: no tracked file matches, and the verdict names the list|fx_not_ours|||rc=0 comments: no-match=$COMMENT_PATHS" \
+  "the override replaces the list: a.rs is no longer scanned, the named file is unmeasured|fx_override|COMMIT_GUARDS_COMMENT_PATHS=*.txt||rc=0 $(skip notes.txt grammar);comments: unmeasured-count=$(unread 1)" \
+  "a list matching no tracked file passes, naming the list|fx_override_none|COMMIT_GUARDS_COMMENT_PATHS=no/such/*.rs||rc=0 comments: no-match=no/such/*.rs" \
+  "an empty path list is a config error naming how to switch the check off|fx_override_empty|COMMIT_GUARDS_COMMENT_PATHS= ||rc=2 ${ERR}glob-empty=COMMIT_GUARDS_COMMENT_PATHS" \
+  "an unknown argument is a config error quoting it|fx_flag_unknown||--no-such-flag|rc=2 ${ERR}argument=--no-such-flag" \
+  "--excludes with no path is a config error|fx_flag_bare||--excludes|rc=2 ${ERR}argument-value=--excludes"
 
 SECTION=excludes
 echo "=== excludes: generated trees are excluded with a reason, carves win, the list resolves like the sibling lanes' ==="
@@ -350,11 +352,11 @@ run_rows \
   "control: both planted files fail without a row, in index order|fx_exc_none|||rc=1 $(hit "$ID" gen/out.ts 1 " $W");$(hit "$ID" vendor/lib.rs 1 " $W");$(idx 2 2)" \
   "the row silences exactly the vendored tree|fx_exc_row|||rc=1 $(hit "$ID" gen/out.ts 1 " $W");$(idx 1 1)" \
   "a ! row carves its path back into the scanned set|fx_exc_carve|||rc=1 $(hit "$ID" gen/out.ts 1 " $W");$(idx 1 1)" \
-  "a row without a reason is a config error naming the line|fx_exc_no_reason|||rc=2 ${ERR}$EXCL:1: expected 'pattern<TAB>reason' (every exclusion carries its justification)" \
-  "the list path resolves through the environment key, and the remedy would name it|fx_exc_alt|COMMIT_GUARDS_COMMENT_EXCLUDES=alt||rc=0 comments: OK — no tracked file matches COMMIT_GUARDS_COMMENT_PATHS ($(sed -n 's/^GG_COMMENT_PATHS_DEFAULT="\(.*\)"$/\1/p' "$SKILL_DIR/scripts/lib/comment-text.sh"))" \
-  "--excludes names the same list|fx_exc_alt_flag||--excludes alt|rc=0 comments: OK — no tracked file matches COMMIT_GUARDS_COMMENT_PATHS ($(sed -n 's/^GG_COMMENT_PATHS_DEFAULT="\(.*\)"$/\1/p' "$SKILL_DIR/scripts/lib/comment-text.sh"))" \
+  "a row without a reason is a config error naming the line|fx_exc_no_reason|||rc=2 ${ERR}exclusion-reason=$EXCL:1" \
+  "the list path resolves through the environment key, and the remedy would name it|fx_exc_alt|COMMIT_GUARDS_COMMENT_EXCLUDES=alt||rc=0 comments: no-match=$COMMENT_PATHS" \
+  "--excludes names the same list|fx_exc_alt_flag||--excludes alt|rc=0 comments: no-match=$COMMENT_PATHS" \
   "the remedy and the summary name the list in force|fx_exc_alt_hit||--excludes alt|rc=1 $(hit "$ID" gen/out.ts 1 " $W" alt);$(idx 1 1 alt)" \
-  "--excludes=PATH is the same flag|fx_exc_alt_eq||--excludes=alt|rc=0 comments: OK — no tracked file matches COMMIT_GUARDS_COMMENT_PATHS ($(sed -n 's/^GG_COMMENT_PATHS_DEFAULT="\(.*\)"$/\1/p' "$SKILL_DIR/scripts/lib/comment-text.sh"))"
+  "--excludes=PATH is the same flag|fx_exc_alt_eq||--excludes=alt|rc=0 comments: no-match=$COMMENT_PATHS"
 
 SECTION=staged
 echo "=== --staged judges the lines the commit adds, with comment state from the whole file ==="
@@ -381,13 +383,13 @@ run_rows \
   "control: the index scan still refuses the committed reference|fx_stg_index|||rc=1 $(hit "$ID" fixture.rs 1 " committed $W");$(idx 1 2)" \
   "staged bytes decide, whatever the work tree says now|fx_stg_bytes||--staged|rc=1 $(hit "$ID" ok.rs 1 " $W");$(stg 1)" \
   "a hit on a line the commit did not touch is not this commit's, though the file is read whole|fx_stg_untouched||--staged|rc=0 $(ok_stg 1)" \
-  "a staged file that cannot be extracted makes the staged verdict incomplete, exit 2|fx_stg_unclosed||--staged|rc=2 $(skip ok.rs 'comment text could not be extracted: a block comment opened at line 2 is never closed ');$(incomplete 1 0 0)$(unread 1)" \
+  "a staged file that cannot be extracted makes the staged verdict incomplete, exit 2|fx_stg_unclosed||--staged|rc=2 $(extraction ok.rs unclosed-block:2);$(incomplete 1 0 0)$(unread 1)" \
   "a pure rename adds no line and reads no file|fx_stg_rename||--staged|rc=0 $(ok_stg 0)" \
   "a file that moved and changed is read whole|fx_stg_moved||--staged|rc=1 $(hit "$ID" moved.rs 1 " committed $W");$(hit "$ID" moved.rs 2 " and $W again");$(stg 2)" \
   "on a repository's first commit the whole staged tree reads as added|fx_stg_first||--staged|rc=1 $(hit "$ID" a.rs 1 " $W");$(stg 1)" \
   "control: a clean first commit passes, not exit 2 for want of a HEAD|fx_stg_first_clean||--staged|rc=0 $(ok_stg 1)" \
   "--staged honours the path list: markdown is not read|fx_stg_md||--staged|rc=0 $(ok_stg 0)" \
-  "--staged names a path with no grammar as unmeasured, never judged|fx_stg_nogrammar|COMMIT_GUARDS_COMMENT_PATHS=run|--staged|rc=0 $(skip run 'no comment grammar for this path (CHECKS.md § comments)');$(ok_stg 0)$(unread 1)" \
+  "--staged names a path with no grammar as unmeasured, never judged|fx_stg_nogrammar|COMMIT_GUARDS_COMMENT_PATHS=run|--staged|rc=0 $(skip run grammar);$(ok_stg 0 1)" \
   "--staged honours the exclusion list|fx_stg_vendor||--staged|rc=0 $(ok_stg 0)" \
   "control: without the row the staged vendored comment fails|fx_stg_vendor_none||--staged|rc=1 $(hit "$ID" vendor/v.rs 1 " $W");$(stg 1)"
 
@@ -397,15 +399,15 @@ fx_dispatch() { repo dispatch; put ok.rs 'fn main() {}\n'; stage; commit; put a.
 BIN="$GG"
 fx_dispatch
 assert_eq "'commit-guards comments' reaches the lane" "rc=1 $(hit "$ID" a.rs 1 " $W");$(idx 1 2)" "$(run "" comments)"
-assert_eq "the batch hands comments --staged at commit scope" "rc=1 === commit-guards: comments --staged;$(hit "$ID" a.rs 1 " $W");$(stg 1);commit-guards: violations — see the failures above" "$(run COMMIT_GUARDS_CHECKS=comments 'all --staged')"
+assert_eq "the batch hands comments --staged at commit scope" "rc=1 commit-guards: step=comments --staged;$(hit "$ID" a.rs 1 " $W");$(stg 1);commit-guards: result=1" "$(run COMMIT_GUARDS_CHECKS=comments 'all --staged')"
 DEFAULT_BATCH="$(run "" "")"
 assert_eq "the default batch passes on this tree" "rc=0" "${DEFAULT_BATCH%% *}"
-assert_eq "and does not run the lane" "" "$(printf '%s' "$DEFAULT_BATCH" | tr ';' '\n' | grep 'commit-guards: comments' || true)"
+assert_eq "and does not run the lane" "" "$(printf '%s' "$DEFAULT_BATCH" | tr ';' '\n' | grep '^comments: ' || true)"
 BIN="$CM"
 
 echo "=== the usage is answered ==="
 repo help
-assert_eq "--help prints the usage and exits 0" "rc=0 usage: comments [--staged] [--excludes FILE]" "$(run "" --help | cut -d';' -f1)"
+assert_eq "--help prints the usage and exits 0" "rc=0 comments: usage=comments" "$(run "" --help | cut -d';' -f1)"
 assert_eq "-h is the same flag" "$(run "" --help)" "$(run "" -h)"
 
 echo "=== the skill's own shipped shell scans clean under its own lane ==="

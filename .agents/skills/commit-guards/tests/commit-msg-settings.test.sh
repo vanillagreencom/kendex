@@ -58,12 +58,13 @@ judge() { # SHIM-DIR ENVS MSG
   out="$(cd "$R" && printf '%s\n' "$3" |
     PATH="${dir:+$dir:}$PATH" env ${envs[@]+"${envs[@]}"} "$CM" 2>&1)" || rc=$?
   out="${out//"$ROOT"/<root>}"
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^commit-msg: [a-z-]+=/ { print }')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
-OK="commit-msg: OK — conventional header:"
+OK="commit-msg: header-valid="
 shape_fail() { # HEADER TYPES — the whole shape violation, naming the list that answered
-  printf '%s' "commit-msg FAIL non-conventional header: $1;  expected: type(scope)!: subject — scope and '!' optional; types: $2;  scope accepts uppercase issue keys and issue numbers, e.g. fix(ABC-123): tighten the gate / fix(#123): case-fold IDs;  git-generated headers (Merge/Revert/Reapply, fixup!/squash!/amend!) pass unchanged"
+  printf '%s' "commit-msg: header-shape=$1:$2"
 }
 
 # A git that fails one probe and nothing else, so the row reads which
@@ -109,18 +110,18 @@ fx_recreated() { # NAME — committed docs-only, staged for deletion, recreated 
 
 DOCS_ONLY="$(shape_fail 'feat: base type' docs)"
 OUTSIDE="$(shape_fail 'feat: base type' 'docs build')"
-LS_FILES="::error::kendex.settings.toml: could not query the index while resolving a setting (git ls-files exit 71); refusing to treat it as untracked"
-LS_TREE="::error::kendex.settings.toml: could not probe HEAD while resolving a setting (git ls-tree exit 71); refusing to treat it as untracked"
-LS_FILES_S="::error::kendex.settings.toml: could not read its index mode while resolving a setting (git ls-files exit 71)"
-REV_PARSE="::error::.kendex/settings.toml: could not resolve HEAD while resolving a setting (git rev-parse exit 71); refusing to treat it as untracked"
+LS_FILES="commit-msg: settings-index-query=kendex.settings.toml:71"
+LS_TREE="commit-msg: settings-head-query=kendex.settings.toml:71"
+LS_FILES_S="commit-msg: settings-index-mode=kendex.settings.toml:71"
+REV_PARSE="commit-msg: settings-head-resolve=.kendex/settings.toml:71"
 echo "=== which settings source answers in the hook lane ==="
 # label | fixture | shim | env | message | expect
 rows=(
-  "an untracked kendex.settings.toml is the worktree copy: its list admits docs|fx_untracked untracked-1|||docs: settings-admitted type|rc=0 $OK docs: settings-admitted type"
+  "an untracked kendex.settings.toml is the worktree copy: its list admits docs|fx_untracked untracked-1|||docs: settings-admitted type|rc=0 ${OK}docs: settings-admitted type"
   "control: that list refuses feat, and the refusal names it|fx_untracked untracked-2|||feat: base type|rc=1 $DOCS_ONLY"
-  "a .env type list is read by nothing: the built-in list decides|fx_dotenv dotenv|||feat: base type|rc=0 $OK feat: base type"
+  "a .env type list is read by nothing: the built-in list decides|fx_dotenv dotenv|||feat: base type|rc=0 ${OK}feat: base type"
   "control: .env.local restricts the list|fx_dotenv_local dotenv-local-1|||feat: base type|rc=1 $(shape_fail 'feat: base type' chore)"
-  "the /dev/null sentinel selects no source at all, .env.local included|fx_dotenv_local dotenv-local-2||COMMIT_GUARDS_SETTINGS_FILE=/dev/null|feat: base type|rc=0 $OK feat: base type"
+  "the /dev/null sentinel selects no source at all, .env.local included|fx_dotenv_local dotenv-local-2||COMMIT_GUARDS_SETTINGS_FILE=/dev/null|feat: base type|rc=0 ${OK}feat: base type"
   "control: the committed list refuses feat|fx_committed committed-1|||feat: base type|rc=1 $DOCS_ONLY"
   "a failing index probe is exit 2, never a fall back to the built-in list|fx_committed committed-2|$ROOT/git-shim-ls-files||feat: base type|rc=2 $LS_FILES"
   "a failing index-mode read is exit 2, never the symlink shape let through|fx_committed committed-5|$ROOT/git-shim-ls-files-s||feat: base type|rc=2 $LS_FILES_S"
@@ -132,7 +133,7 @@ rows=(
   "a leading './' is the committed file|fx_loosened loosened-3||COMMIT_GUARDS_SETTINGS_FILE=./kendex.settings.toml|feat: base type|rc=1 $DOCS_ONLY"
   "segments that never existed cancel out to the committed file|fx_loosened loosened-4||COMMIT_GUARDS_SETTINGS_FILE=a/b/../../kendex.settings.toml|feat: base type|rc=1 $DOCS_ONLY"
   "control: a spelling that still escapes once normalized reads the out-of-repo file|fx_loosened loosened-5||COMMIT_GUARDS_SETTINGS_FILE=sub/../../outside-settings.toml|feat: base type|rc=1 $OUTSIDE"
-  "control: a source staged for deletion governs as absent, whatever the recreated copy says|fx_recreated recreated-1|||feat: base type|rc=0 $OK feat: base type"
+  "control: a source staged for deletion governs as absent, whatever the recreated copy says|fx_recreated recreated-1|||feat: base type|rc=0 ${OK}feat: base type"
   "a failing HEAD probe is exit 2, never authority for the recreated copy|fx_recreated recreated-2|$ROOT/git-shim-ls-tree||feat: base type|rc=2 $LS_TREE"
 )
 for row in "${rows[@]}"; do

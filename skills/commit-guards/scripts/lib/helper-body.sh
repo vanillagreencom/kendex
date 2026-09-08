@@ -97,22 +97,23 @@ helper_program() { # -> the part of the helper every checkout writes alike
 #
 # Blocks whenever the guard it should run cannot be reached: a gate that
 # cannot run is never a pass.
+# Exit 2 is the family's "could not complete", distinct from a check's
+# exit 1 verdict. Both block the commit.
+fail() { # KEY VALUE EXPLANATION
+  value="$(printf '%s' "$2" | LC_ALL=C tr '\001-\037\177' '?')" || exit 2
+  printf 'kendex-guards: %s=%s\n  %s\n' "$1" "$value" "$3" >&2
+  echo "  The commit is blocked because a guard could not run. Re-arm the shims with 'kendex guard install', or bypass this commit with 'git commit --no-verify'." >&2
+  exit 2
+}
+
 mode="${1-}"
 case "$mode" in
   pre-commit | commit-msg) shift ;;
   *)
-    echo "kendex-guards: usage: kendex-guards pre-commit | commit-msg MSGFILE" >&2
-    exit 2
+    fail mode-invalid "$mode" "Use pre-commit or commit-msg MSGFILE."
     ;;
 esac
 
-# Exit 2 is the family's "could not complete", distinct from a check's
-# exit 1 verdict. Both block the commit.
-fail() {
-  echo "kendex-guards: $*" >&2
-  echo "  The commit is blocked because a guard could not run. Re-arm the shims with 'kendex guard install', or bypass this commit with 'git commit --no-verify'." >&2
-  exit 2
-}
 
 # `$(...)` strips trailing newlines, and a checkout directory may end in
 # one — so a naive capture names a directory that is not there and every
@@ -133,10 +134,10 @@ gg_git_path() { # VAR DIR ARG... — VAR gets git's answer, bytes intact
   eval "$__v=\${__raw%\"\$gg_nl\"}"
 }
 gg_git_path common "$PWD" rev-parse --git-common-dir || common=""
-[ -n "$common" ] || fail "could not resolve the common git directory"
+[ -n "$common" ] || fail git-query --git-common-dir "could not resolve the common git directory"
 case "$common" in /*) ;; *) common="$PWD/$common" ;; esac
 gg_git_path top "$PWD" rev-parse --show-toplevel || top=""
-[ -n "$top" ] || fail "could not resolve the working tree root"
+[ -n "$top" ] || fail git-query --show-toplevel "could not resolve the working tree root"
 # The main checkout owns the installed skills; a linked worktree shares this
 # hooks directory but may not carry its own copy. Its own root is the
 # fallback for layouts where the git directory is not <root>/.git.
@@ -195,7 +196,7 @@ for root in ${main:+"$main/$project_rel"} "$top/$project_rel" ${main:+"$main/"} 
     fi
   done
 done
-fail "no executable commit-guards $mode script at $installed_scripts, nor under $main or $top (project '$project_rel', roots $skill_roots)"
+fail lane-missing "$mode" "no executable commit-guards $mode script at $installed_scripts, nor under $main or $top (project '$project_rel', roots $skill_roots)"
 HELPER
 }
 

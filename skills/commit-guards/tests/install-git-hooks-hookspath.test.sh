@@ -21,17 +21,14 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The stand-down block, as the installer prints it to stderr: the statement,
 # git's report rendered by %q (scope, origin and value on one tab-separated
 # line), the sentence. ORIGIN is the report line with the value aliased.
-SET_LINE="  core.hooksPath is set."
-CLEAR="  Clear the setting at its source, then run kendex guard install."
-UNLISTED="  Its origin could not be listed."
-local_origin() { printf "  \$'local\\\\tfile:.git/config\\\\t%s'" "$1"; } # VALUE as %q renders it
-block() { printf '%s;%s;%s' "$SET_LINE" "$1" "$CLEAR"; } # ORIGIN-LINE
-# The install lane's warning and skip around the block; the check lane's
-# verdicts. Every value but the empty one is "set (VALUE)".
-skipped() { printf '::warning::install-git-hooks: core.hooksPath is set (%s); this installer writes <repo>/.git/hooks only and will not write behind a configured hooks path, so the guard shims were NOT installed;%s;commit-guards git hooks: skipped — core.hooksPath is set (%s)' "$1" "$2" "$1"; } # VALUE BLOCK
-undetermined() { printf '%s;commit-guards git hooks: could not determine whether commits are gated — core.hooksPath is set (%s), and a configured hooks path is outside this verifier'"'"'s contract: it reads <repo>/.git/hooks only; git'"'"'s report of where it is set is on stderr, or read the configured directory yourself' "$2" "$1"; } # VALUE BLOCK
-OFF_WARN="::warning::install-git-hooks: core.hooksPath is set and empty, which switches git hooks off entirely, so the guard shims were NOT installed"
-OFF_CHECK="commit-guards git hooks: NOT armed — core.hooksPath is set and empty, which switches git hooks off, so commits are NOT gated; git's report of where it is set is on stderr"
+SET_LINE="install-git-hooks: hooks-path-set=core.hooksPath"
+UNLISTED="install-git-hooks: hooks-path-origin-unavailable=core.hooksPath"
+local_origin() { printf "install-git-hooks: hooks-path-origin=\$'local\\\\tfile:.git/config\\\\t%s'" "$1"; } # VALUE as %q renders it
+block() { printf '%s;%s' "$SET_LINE" "$1"; } # ORIGIN-LINE
+skipped() { printf 'install-git-hooks: hooks-path-configured=%s;%s;commit-guards git hooks: skipped-hooks-path=%s' "$1" "$2" "$1"; } # VALUE BLOCK
+undetermined() { printf '%s;commit-guards git hooks: unknown=hooks-path-configured=%s' "$2" "$1"; } # VALUE BLOCK
+OFF_WARN="install-git-hooks: hooks-path-disabled=''"
+OFF_CHECK="commit-guards git hooks: not-armed=hooks-path-disabled=''"
 NONE="helper=absent pre-commit=absent commit-msg=absent"
 set_value() { git -C "$R" config core.hooksPath "$1"; } # VALUE
 
@@ -45,8 +42,8 @@ fx_off_install() { R="$(new_repo off-install)"; set_value ""; }
 fx_off_install_armed() { armed off-install-armed; copies_at_root; set_value ""; }
 run_rows \
   "the empty value is NOT armed, never armed at the root|fx_off_check||check||rc=1 $(block "$(local_origin '')");$OFF_CHECK|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=''" \
-  "the install says the same rather than writing|fx_off_install||install||rc=0 $OFF_WARN;$(block "$(local_origin '')");commit-guards git hooks: skipped — core.hooksPath is set ('')|$NONE hooksPath=''" \
-  "and leaves an earlier arming as it was|fx_off_install_armed||install||rc=0 $OFF_WARN;$(block "$(local_origin '')");commit-guards git hooks: skipped — core.hooksPath is set ('')|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=''"
+  "the install says the same rather than writing|fx_off_install||install||rc=0 $OFF_WARN;$(block "$(local_origin '')");commit-guards git hooks: skipped-hooks-path=''|$NONE hooksPath=''" \
+  "and leaves an earlier arming as it was|fx_off_install_armed||install||rc=0 $OFF_WARN;$(block "$(local_origin '')");commit-guards git hooks: skipped-hooks-path=''|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=''"
 
 echo "=== set at all stands the install down, whatever the spelling ==="
 # Whether the configured directory is in fact this repository's own would be
@@ -93,15 +90,15 @@ fx_command_line() { armed command-line; }
 # A global value shadowed by a local one: two sources to clear, both listed,
 # in git's order; the summary names the value git reads.
 fx_shadowed() { armed shadowed; git config --global core.hooksPath "$R/globalhooks"; UNDO="git config --global --unset-all core.hooksPath"; set_value "$R/localhooks"; }
-GLOBAL_ORIGIN="  \$'global\\tfile:<root>/home/.gitconfig\\t<repo>/globalhooks'"
-INCLUDED_ORIGIN="  \$'local\\tfile:<repo>/extra.cfg\\t<repo>/includedhooks'"
-COMMAND_ORIGIN="  \$'command\\tcommand line:\\t<repo>/envhooks'"
+GLOBAL_ORIGIN="install-git-hooks: hooks-path-origin=\$'global\\tfile:<root>/home/.gitconfig\\t<repo>/globalhooks'"
+INCLUDED_ORIGIN="install-git-hooks: hooks-path-origin=\$'local\\tfile:<repo>/extra.cfg\\t<repo>/includedhooks'"
+COMMAND_ORIGIN="install-git-hooks: hooks-path-origin=\$'command\\tcommand line:\\t<repo>/envhooks'"
 run_rows \
   "a global value: the scope and the origin as git spells them|fx_global||check||rc=2 $(undetermined '<repo>/globalhooks' "$(block "$GLOBAL_ORIGIN")")|" \
   "and the install lane prints the same block|fx_global_install||install||rc=0 $(skipped '<repo>/globalhooks' "$(block "$GLOBAL_ORIGIN")")|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath='<repo>/globalhooks'" \
   "an included file is named under the including scope, as git names it|fx_included||check||rc=2 $(undetermined '<repo>/includedhooks' "$(block "$INCLUDED_ORIGIN")")|" \
   "a value from the environment is reported as the command line, not a file|fx_command_line|GIT_CONFIG_COUNT=1,GIT_CONFIG_KEY_0=core.hooksPath,GIT_CONFIG_VALUE_0=$TMP/command-line/envhooks|check||rc=2 $(undetermined '<repo>/envhooks' "$(block "$COMMAND_ORIGIN")")|" \
-  "a global value shadowed by a local one lists both sources, nothing dropped or reordered|fx_shadowed||check||rc=2 $(undetermined '<repo>/localhooks' "$SET_LINE;$GLOBAL_ORIGIN;$(local_origin '<repo>/localhooks');$CLEAR")|"
+  "a global value shadowed by a local one lists both sources, nothing dropped or reordered|fx_shadowed||check||rc=2 $(undetermined '<repo>/localhooks' "$SET_LINE;$GLOBAL_ORIGIN;$(local_origin '<repo>/localhooks')")|"
 
 echo "=== a report git will not produce is said to be missing ==="
 # The verdict does not depend on the listing: a git that cannot produce it
@@ -117,7 +114,7 @@ fx_unlistable() {
   chmod +x "$TMP/gitshim/git"
 }
 run_rows \
-  "an unlistable origin changes the text, never the verdict|fx_unlistable|PATH=$TMP/gitshim:$PATH|check||rc=2 $(undetermined '<repo>/somehooks' "$SET_LINE;$UNLISTED;$CLEAR")|"
+  "an unlistable origin changes the text, never the verdict|fx_unlistable|PATH=$TMP/gitshim:$PATH|check||rc=2 $(undetermined '<repo>/somehooks' "$SET_LINE;$UNLISTED")|"
 
 # A configuration git cannot read has no row: lib/paths.sh's gg_path returns 1
 # for every failure, so classify_hooks_path never sees the 128 a broken
@@ -147,9 +144,9 @@ fx_wild_check() { wild_armed wild-check; }
 fx_wild_drift() { wild_armed wild-drift; rm "$R/.git/hooks/pre-commit"; }
 wild_hooks() { printf "\$'<root>/%s\\\\npo\\\\Ex/.git/hooks'" "$1"; } # NAME -> the hooks directory as %q renders it
 run_rows \
-  "an install under that path reports one line, the path escaped|fx_wild_install||install||rc=0 commit-guards git hooks: pre-commit and commit-msg armed in $(wild_hooks wild-install)|" \
-  "the armed verdict is one line as well|fx_wild_check||check||rc=0 commit-guards git hooks: armed — pre-commit and commit-msg gate commits in $(wild_hooks wild-check)|" \
-  "the drift verdict folds its reason into that one line|fx_wild_drift||check||rc=1 commit-guards git hooks: NOT armed — pre-commit is missing ($(wild_hooks wild-drift)); run 'kendex guard install' (or this installer) to re-arm|"
+  "an install under that path reports one line, the path escaped|fx_wild_install||install||rc=0 commit-guards git hooks: installed=$(wild_hooks wild-install)|" \
+  "the armed verdict is one line as well|fx_wild_check||check||rc=0 commit-guards git hooks: armed=$(wild_hooks wild-check)|" \
+  "the drift verdict folds its reason into that one line|fx_wild_drift||check||rc=1 commit-guards git hooks: not-armed=hook-missing=pre-commit|"
 
 echo "=== a repository path that begins with a dash is a path ==="
 # `cd "$REPO"` reads a leading dash as an option: `--repo -P` became `cd -P`,
@@ -165,7 +162,7 @@ cp -R "$GG_SKILL_TEMPLATE" "$R/.agents/skills/commit-guards"
 R_PHYS="$(cd -- "$R" && pwd -P)"
 DASH_RC=0
 DASH_OUT="$(cd "$TMP" && "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo -P 2>&1)" || DASH_RC=$?
-assert_eq "an install named by a dash-led relative path arms that repository" "rc=0 $ARMED" "rc=$DASH_RC $(aliased "$DASH_OUT")"
+assert_eq "an install named by a dash-led relative path arms that repository" "rc=0 $ARMED" "rc=$DASH_RC $(aliased "${DASH_OUT%%$'\n'*}")"
 assert_eq "and the shims land there, not in the caller's directory" "$FRESH" "$(state)"
 
 assert_eq "every seeded fixture landed its seed commit" "" "$SEEDS_FAILED"

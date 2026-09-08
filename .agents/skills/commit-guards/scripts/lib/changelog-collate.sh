@@ -72,30 +72,31 @@ gg_changelog_collate() { # folds this run's accepted fragments into the record
 "
 
   [ "${COMMIT_GUARDS_CHANGELOG_COLLATE:-}" = "1" ] \
-    || gg_config_error "--collate requires COMMIT_GUARDS_CHANGELOG_COLLATE=1 for the release write"
+    || gg_fail collate-flag "${COMMIT_GUARDS_CHANGELOG_COLLATE-<unset>}" "--collate requires COMMIT_GUARDS_CHANGELOG_COLLATE=1 for the release write"
 
   git status --porcelain=v1 --untracked-files=normal -z >"$GG_TMP/collate.dirty" \
-    || gg_collection_error "could not read repository status; nothing was written"
+    || gg_fail collate-status "$?" "could not read repository status; nothing was written"
   if [ -s "$GG_TMP/collate.dirty" ]; then
     shown=""
     while IFS= read -r -d '' dirty; do
+      gg_message dirty-path "$(gg_shown "$dirty")" "Commit, restore, or remove this pending change." >&2
       shown="$shown  $(gg_shown "$dirty")$nl"
     done <"$GG_TMP/collate.dirty"
-    gg_config_error "--collate requires a clean index and working tree; commit, restore or remove these first:
+    gg_fail collate-dirty "$(gg_shown "$RECORD")" "--collate requires a clean index and working tree; commit, restore or remove these first:
 ${shown%"$nl"}"
   fi
 
   if [ "$checked" -eq 0 ]; then
-    echo "changelog-entries: no fragments — nothing to collate"
+    gg_message collate-empty "$checked" "No fragments to collate."
     return 0
   fi
   # A collation with nowhere to fold into refuses rather than writing some
   # other file.
   [ -n "$RECORD" ] \
-    || gg_config_error "the record scope is off (COMMIT_GUARDS_CHANGELOG_RECORD is empty), so there is no collated record to fold these fragments into"
+    || gg_fail record-off COMMIT_GUARDS_CHANGELOG_RECORD "The record scope is off, so there is no collation destination."
   # The index validation must cover the destination before the fold writes it.
   [ -n "$RECORD_SHA" ] \
-    || gg_config_error "$(gg_shown "$RECORD") is not tracked, so nothing measured it and nothing would notice it change; commit it first"
+    || gg_fail record-untracked "$(gg_shown "$RECORD")" "The collation destination is not tracked; commit it first."
 
   for sec in $GG_SECTIONS; do
     : >"$GG_TMP/collate.sel.$sec"
@@ -116,7 +117,7 @@ ${shown%"$nl"}"
     sec="${rec%%"$GG_TAB"*}"
     path="${rec#*"$GG_TAB"}"
     [ -f "$path" ] \
-      || gg_collection_error "$(gg_shown "$path") is in the index but not a file on disk — nothing was written"
+      || gg_fail fragment-missing "$(gg_shown "$path")" "The fragment is in the index but not a file on disk; nothing was written."
     printf '%s\0' "$path" >>"$GG_TMP/collate.sel.$sec"
     printf '%s\0' "$path" >>"$GG_TMP/collate.frags"
     # The directory each fragment sits in, so an emptied one can go with it
@@ -130,18 +131,18 @@ ${shown%"$nl"}"
   for sec in $GG_SECTIONS; do
     while IFS= read -r -d '' f; do
       LC_ALL=C awk 1 "$f" >>"$GG_TMP/collate.frag.$sec" \
-        || gg_collection_error "could not read $(gg_shown "$f") — nothing was written"
+        || gg_fail fragment-read "$(gg_shown "$f")" "The fragment could not be read; nothing was written."
     done <"$GG_TMP/collate.sel.$sec"
   done
 
-  [ -f "$RECORD" ] || gg_collection_error "$(gg_shown "$RECORD") is missing — nothing was written"
+  [ -f "$RECORD" ] || gg_fail record-missing "$(gg_shown "$RECORD")" "The collation destination is missing; nothing was written."
   # Where the section begins, which level-3 headings it holds and where it
   # ends are the line numbers the record scope kept when it accepted the
   # staged copy — which the guard above just held equal to the file on disk.
   # Splitting at them is why nothing here searches the record for a heading
   # again: a second search is a second grammar.
   [ "$GG_RECORD_START" -gt 0 ] \
-    || gg_collection_error "$(gg_shown "$RECORD") was accepted without a line for its [Unreleased] heading — nothing was written"
+    || gg_fail record-start "$(gg_shown "$RECORD"):$GG_RECORD_START" "The accepted record has no line for its Unreleased heading; nothing was written."
   printf '%s' "$GG_RECORD_SECLINES" >"$GG_TMP/collate.secline"
 
   # Split at those numbers: the part above the heading, that section's lead
@@ -169,7 +170,7 @@ ${shown%"$nl"}"
     }
   ' "$RECORD" || rc=$?
   [ "$rc" -eq 0 ] \
-    || gg_collection_error "$(gg_shown "$RECORD") could not be split (awk exit $rc) — nothing was written"
+    || gg_fail record-split "$(gg_shown "$RECORD"):$rc" "The record could not be split; nothing was written."
 
   # Assembled first, installed second: gg_install_file is the family's one
   # replace-whole-or-not-at-all, and it stages beside the record, keeps the
@@ -177,7 +178,7 @@ ${shown%"$nl"}"
   # while assembling leaves the record untouched because nothing has been
   # renamed over it yet.
   gg_collate_assemble >"$GG_TMP/collate.out" \
-    || gg_collection_error "could not assemble the collated changelog — $(gg_shown "$RECORD") is untouched"
+    || gg_fail collate-assemble "$(gg_shown "$RECORD")" "The collated changelog could not be assembled; the record is untouched."
   gg_install_file "$GG_TMP/collate.out" "$RECORD" "the collated changelog"
 
   # Past the rename, every fragment is in the record. Deleting stops for none
@@ -185,10 +186,13 @@ ${shown%"$nl"}"
   # refusal names every survivor, not the first.
   survivors=""
   while IFS= read -r -d '' f; do
-    rm -f -- "$f" || survivors="$survivors  $(gg_shown "$f")$nl"
+    if ! rm -f -- "$f"; then
+      gg_message fragment-survivor "$(gg_shown "$f")" "Delete this collated fragment before the next release." >&2
+      survivors="$survivors  $(gg_shown "$f")$nl"
+    fi
   done <"$GG_TMP/collate.frags"
   [ -z "$survivors" ] \
-    || gg_config_error "$(gg_shown "$RECORD") is collated, but these fragments survived and would fold in a second time — delete them by hand:
+    || gg_fail collate-survivors "$(gg_shown "$RECORD")" "The record is collated, but these fragments survived and would fold in a second time; delete them by hand:
 ${survivors%"$nl"}"
   # A directory the collation emptied goes with it. Not-empty and not-found
   # are both ordinary, and neither leaves anything to act on.
@@ -197,5 +201,5 @@ ${survivors%"$nl"}"
   done <"$GG_TMP/collate.dirs"
 
   if [ "$count" -eq 1 ]; then noun=entry; else noun=entries; fi
-  echo "changelog-entries: folded $count $noun into $(gg_shown "$RECORD")'s [Unreleased] section"
+  gg_message folded "$count:$(gg_shown "$RECORD")" "Folded $count $noun into the Unreleased section."
 }

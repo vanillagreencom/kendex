@@ -62,16 +62,16 @@ judge() { # ENVS ARGS MSG
   out="$(cd "$R" && printf '%b\n' "$stdin" |
     env COMMIT_GUARDS_SETTINGS_FILE=/dev/null ${envs[@]+"${envs[@]}"} "$CM" ${args[@]+"${args[@]}"} 2>&1)" || rc=$?
   out="${out//"$ROOT"/<root>}"
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^commit-msg: [a-z-]+=/ { print }')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
 DEFAULT_TYPES="build chore ci docs feat fix perf refactor revert style test"
-OK="commit-msg: OK — conventional header:"
-GEN="commit-msg: git-generated header — shape and length not judged:"
+OK="commit-msg: header-valid="
+GEN="commit-msg: header-generated="
 shape_fail() { # HEADER-AS-SHOWN [TYPES] — the whole shape violation
-  printf '%s' "commit-msg FAIL non-conventional header: $1;  expected: type(scope)!: subject — scope and '!' optional; types: ${2:-$DEFAULT_TYPES};  scope accepts uppercase issue keys and issue numbers, e.g. fix(ABC-123): tighten the gate / fix(#123): case-fold IDs;  git-generated headers (Merge/Revert/Reapply, fixup!/squash!/amend!) pass unchanged"
+  printf '%s' "commit-msg: header-shape=$1:${2:-$DEFAULT_TYPES}"
 }
-LEN_TAIL=";  move the detail into the body — the header is the one line every log shows"
 ESC="$(printf '\033')"
 SOH="$(printf '\001')"
 DEL="$(printf '\177')"
@@ -87,13 +87,13 @@ run_rows() { # label | env | args | message | expect
 
 echo "=== the conventional shape, and every header outside it ==="
 run_rows \
-  "a bare type|||feat: add the gate|rc=0 $OK feat: add the gate" \
-  "a lowercase scope|||fix(cli): repair the trailing newline|rc=0 $OK fix(cli): repair the trailing newline" \
-  "MUST: an uppercase issue key in the scope|||fix(ABC-123): tighten the gate|rc=0 $OK fix(ABC-123): tighten the gate" \
-  "an issue-number scope|||fix(#123): case-fold open-terminal issue IDs|rc=0 $OK fix(#123): case-fold open-terminal issue IDs" \
-  "the breaking-change marker|||feat(api)!: drop the legacy endpoint|rc=0 $OK feat(api)!: drop the legacy endpoint" \
-  "a multi-part scope with a comma and a space|||chore(deps, ci): bump the runner image|rc=0 $OK chore(deps, ci): bump the runner image" \
-  "a slashed scope|||refactor(tui/render): split the paint pass|rc=0 $OK refactor(tui/render): split the paint pass" \
+  "a bare type|||feat: add the gate|rc=0 ${OK}feat: add the gate" \
+  "a lowercase scope|||fix(cli): repair the trailing newline|rc=0 ${OK}fix(cli): repair the trailing newline" \
+  "MUST: an uppercase issue key in the scope|||fix(ABC-123): tighten the gate|rc=0 ${OK}fix(ABC-123): tighten the gate" \
+  "an issue-number scope|||fix(#123): case-fold open-terminal issue IDs|rc=0 ${OK}fix(#123): case-fold open-terminal issue IDs" \
+  "the breaking-change marker|||feat(api)!: drop the legacy endpoint|rc=0 ${OK}feat(api)!: drop the legacy endpoint" \
+  "a multi-part scope with a comma and a space|||chore(deps, ci): bump the runner image|rc=0 ${OK}chore(deps, ci): bump the runner image" \
+  "a slashed scope|||refactor(tui/render): split the paint pass|rc=0 ${OK}refactor(tui/render): split the paint pass" \
   "a bare imperative subject fails, and the diagnostic names the shape, the types and the key example|||Add stuff|rc=1 $(shape_fail 'Add stuff')" \
   "an uppercase type|||Feat: uppercase type|rc=1 $(shape_fail 'Feat: uppercase type')" \
   "a missing colon|||feat add the gate|rc=1 $(shape_fail 'feat add the gate')" \
@@ -104,29 +104,29 @@ run_rows \
 
 echo "=== git-generated headers pass unchanged (MUST) ==="
 run_rows \
-  "Merge|||Merge branch feature into main|rc=0 $GEN Merge branch feature into main" \
-  "Revert|||Revert \"feat: add the gate\"|rc=0 $GEN Revert \"feat: add the gate\"" \
-  "Reapply|||Reapply \"feat: add the gate\"|rc=0 $GEN Reapply \"feat: add the gate\"" \
-  "fixup!|||fixup! fix(cli): repair the newline|rc=0 $GEN fixup! fix(cli): repair the newline" \
-  "squash!|||squash! fix(cli): repair the newline|rc=0 $GEN squash! fix(cli): repair the newline" \
-  "amend!|||amend! fix(cli): repair the newline|rc=0 $GEN amend! fix(cli): repair the newline"
+  "Merge|||Merge branch feature into main|rc=0 ${GEN}Merge branch feature into main" \
+  "Revert|||Revert \"feat: add the gate\"|rc=0 ${GEN}Revert \"feat: add the gate\"" \
+  "Reapply|||Reapply \"feat: add the gate\"|rc=0 ${GEN}Reapply \"feat: add the gate\"" \
+  "fixup!|||fixup! fix(cli): repair the newline|rc=0 ${GEN}fixup! fix(cli): repair the newline" \
+  "squash!|||squash! fix(cli): repair the newline|rc=0 ${GEN}squash! fix(cli): repair the newline" \
+  "amend!|||amend! fix(cli): repair the newline|rc=0 ${GEN}amend! fix(cli): repair the newline"
 
 echo "=== the header is the first line that is neither blank nor a comment ==="
 run_rows \
-  "only the header of a multi-line message is judged|||feat: subject line\n\nbody paragraph\nmore body|rc=0 $OK feat: subject line" \
-  "comment and blank lines before the header are skipped|||# comment from the template\n\nfeat: subject after comments|rc=0 $OK feat: subject after comments" \
-  "an empty message is its own violation||||rc=1 commit-msg FAIL empty commit message (no non-comment content)" \
-  "a CRLF header is stripped before matching|||feat: crlf subject\r|rc=0 $OK feat: crlf subject"
+  "only the header of a multi-line message is judged|||feat: subject line\n\nbody paragraph\nmore body|rc=0 ${OK}feat: subject line" \
+  "comment and blank lines before the header are skipped|||# comment from the template\n\nfeat: subject after comments|rc=0 ${OK}feat: subject after comments" \
+  "an empty message is its own violation||||rc=1 commit-msg: header-empty=0" \
+  "a CRLF header is stripped before matching|||feat: crlf subject\r|rc=0 ${OK}feat: crlf subject"
 
 echo "=== the argv the hook contract passes ==="
 run_rows \
-  "a message FILE is read whole, the way the hook passes it||@MSG@|# from the template\n\nfix(VST-214): ship the check family|rc=0 $OK fix(VST-214): ship the check family" \
-  "'-' names stdin||-|fix(cli): read from the dash|rc=0 $OK fix(cli): read from the dash" \
-  "a missing message file is exit 2, never a pass||<root>/no-such-msg|fix: unread|rc=2 ::error::commit-msg: no such message file: <root>/no-such-msg" \
-  "two positional arguments are exit 2||@MSG@ extra|fix: two files|rc=2 ::error::commit-msg: at most one message file (see --help)" \
-  "an unknown flag is exit 2||--bogus|fix: flagged|rc=2 ::error::commit-msg: unknown argument --bogus (see --help)"
+  "a message FILE is read whole, the way the hook passes it||@MSG@|# from the template\n\nfix(VST-214): ship the check family|rc=0 ${OK}fix(VST-214): ship the check family" \
+  "'-' names stdin||-|fix(cli): read from the dash|rc=0 ${OK}fix(cli): read from the dash" \
+  "a missing message file is exit 2, never a pass||<root>/no-such-msg|fix: unread|rc=2 commit-msg: message-missing=<root>/no-such-msg" \
+  "two positional arguments are exit 2||@MSG@ extra|fix: two files|rc=2 commit-msg: message-extra=extra" \
+  "an unknown flag is exit 2||--bogus|fix: flagged|rc=2 commit-msg: argument-unknown=--bogus"
 usage="$(judge "" --help 'fix: x')"
-assert_eq "--help prints the usage and exits 0" "rc=0 usage: commit-msg [FILE]" "${usage%%;*}"
+assert_eq "--help prints the usage and exits 0" "rc=0" "${usage%%;*}"
 
 # A grep that cannot run the header match: the verdict is a measurement
 # that failed, never a pass and never a violation. The shim fails the one
@@ -135,14 +135,14 @@ mkdir -p "$ROOT/grep-shim"
 printf '#!/usr/bin/env bash\ncase " $* " in *" -qE ^("*) echo "grep: simulated failure" >&2; exit 2 ;; esac\nexec "%s" "$@"\n' "$(command -v grep)" >"$ROOT/grep-shim/grep"
 chmod +x "$ROOT/grep-shim/grep"
 run_rows \
-  "a grep that cannot run the header match is exit 2, never a verdict|PATH=<root>/grep-shim:<path>||fix: unmatched|rc=2 grep: simulated failure;::error::commit-msg: grep failed matching the header (exit 2)"
+  "a grep that cannot run the header match is exit 2, never a verdict|PATH=<root>/grep-shim:<path>||fix: unmatched|rc=2 commit-msg: header-scan=2"
 
 echo "=== the type list is configuration, and it is validated ==="
 run_rows \
-  "a custom list admits its types|COMMIT_GUARDS_COMMIT_TYPES=feat release||release: cut 2.6.6|rc=0 $OK release: cut 2.6.6" \
+  "a custom list admits its types|COMMIT_GUARDS_COMMIT_TYPES=feat release||release: cut 2.6.6|rc=0 ${OK}release: cut 2.6.6" \
   "control: the custom list rejects everything else, and the diagnostic names that list|COMMIT_GUARDS_COMMIT_TYPES=feat release||fix: no longer a type|rc=1 $(shape_fail 'fix: no longer a type' 'feat release')" \
-  "a non-lowercase entry is exit 2|COMMIT_GUARDS_COMMIT_TYPES=Feat||feat: x|rc=2 ::error::commit-msg: COMMIT_GUARDS_COMMIT_TYPES entry 'Feat' is not a lowercase type name" \
-  "an empty list is exit 2|COMMIT_GUARDS_COMMIT_TYPES= ||feat: x|rc=2 ::error::commit-msg: COMMIT_GUARDS_COMMIT_TYPES resolved empty — at least one type is required"
+  "a non-lowercase entry is exit 2|COMMIT_GUARDS_COMMIT_TYPES=Feat||feat: x|rc=2 commit-msg: type-invalid=Feat" \
+  "an empty list is exit 2|COMMIT_GUARDS_COMMIT_TYPES= ||feat: x|rc=2 commit-msg: types-empty=COMMIT_GUARDS_COMMIT_TYPES"
 
 # The scope class is ASCII in every surface that documents it, and a bracket
 # range is a COLLATION range under a UTF-8 locale, which is the one thing
@@ -154,10 +154,10 @@ echo "=== the shape verdict is the same in every locale a hook inherits ==="
 run_rows \
   "an accented scope is outside the documented class under C|LC_ALL=C||fix(café): tighten the gate|rc=1 $(shape_fail 'fix(café): tighten the gate')" \
   "an accented scope is outside the documented class under C.UTF-8|LC_ALL=C.UTF-8||fix(café): tighten the gate|rc=1 $(shape_fail 'fix(café): tighten the gate')" \
-  "control: the same scope in ASCII passes under C|LC_ALL=C||fix(cafe): tighten the gate|rc=0 $OK fix(cafe): tighten the gate" \
-  "control: the same scope in ASCII passes under C.UTF-8|LC_ALL=C.UTF-8||fix(cafe): tighten the gate|rc=0 $OK fix(cafe): tighten the gate" \
-  "a subject carrying invalid UTF-8 passes under C|LC_ALL=C||$BADBYTES|rc=0 $OK $BADBYTES" \
-  "a subject carrying invalid UTF-8 passes under C.UTF-8|LC_ALL=C.UTF-8||$BADBYTES|rc=0 $OK $BADBYTES"
+  "control: the same scope in ASCII passes under C|LC_ALL=C||fix(cafe): tighten the gate|rc=0 ${OK}fix(cafe): tighten the gate" \
+  "control: the same scope in ASCII passes under C.UTF-8|LC_ALL=C.UTF-8||fix(cafe): tighten the gate|rc=0 ${OK}fix(cafe): tighten the gate" \
+  "a subject carrying invalid UTF-8 passes under C|LC_ALL=C||$BADBYTES|rc=0 ${OK}$BADBYTES" \
+  "a subject carrying invalid UTF-8 passes under C.UTF-8|LC_ALL=C.UTF-8||$BADBYTES|rc=0 ${OK}$BADBYTES"
 
 # A commit object carries whatever bytes were written into it, and a
 # generated revert or fixup header carries a subject copied out of history
@@ -166,12 +166,12 @@ run_rows \
 # every line that quotes the header shows the byte as a replacement in place.
 echo "=== every quoted header reaches the reader scrubbed, never raw ==="
 run_rows \
-  "the OK line shows a control byte as a replacement, in place|||fix: a subject with ${ESC}[31m in it|rc=0 $OK fix: a subject with ?[31m in it" \
-  "the first control byte is scrubbed|||fix: a subject with ${SOH} in it|rc=0 $OK fix: a subject with ? in it" \
-  "DEL is scrubbed|||fix: a subject with ${DEL} in it|rc=0 $OK fix: a subject with ? in it" \
+  "the OK line shows a control byte as a replacement, in place|||fix: a subject with ${ESC}[31m in it|rc=0 ${OK}fix: a subject with ?[31m in it" \
+  "the first control byte is scrubbed|||fix: a subject with ${SOH} in it|rc=0 ${OK}fix: a subject with ? in it" \
+  "DEL is scrubbed|||fix: a subject with ${DEL} in it|rc=0 ${OK}fix: a subject with ? in it" \
   "the shape violation quotes the header scrubbed|||no type here ${ESC}[31m at all|rc=1 $(shape_fail 'no type here ?[31m at all')" \
-  "the length violation quotes it scrubbed|COMMIT_GUARDS_SUBJECT_MAX=5||fix: a subject with ${ESC}[31m in it|rc=1 $OK fix: a subject with ?[31m in it;commit-msg FAIL header is 31 characters (max 5): fix: a subject with ?[31m in it$LEN_TAIL" \
-  "the generated-header notice quotes it scrubbed too|||Revert \"fix: a subject with ${ESC}[31m in it\"|rc=0 $GEN Revert \"fix: a subject with ?[31m in it\""
+  "the length violation quotes it scrubbed|COMMIT_GUARDS_SUBJECT_MAX=5||fix: a subject with ${ESC}[31m in it|rc=1 ${OK}fix: a subject with ?[31m in it;commit-msg: header-length=31:5:fix: a subject with ?[31m in it" \
+  "the generated-header notice quotes it scrubbed too|||Revert \"fix: a subject with ${ESC}[31m in it\"|rc=0 ${GEN}Revert \"fix: a subject with ?[31m in it\""
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

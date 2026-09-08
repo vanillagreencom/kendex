@@ -44,6 +44,7 @@ DECISION_ID_PREFIX_DEFAULT="D"
 DECISION_ID_WIDTH_DEFAULT="3"
 
 usage() {
+  gg_message usage md-refs "Command usage follows."
   cat <<EOF
 usage: md-refs [--staged | --all]
 
@@ -96,15 +97,15 @@ while [ $# -gt 0 ]; do
       usage
       exit 0
       ;;
-    *) gg_config_error "unknown argument '$1' (see --help)" ;;
+    *) gg_fail argument "$1" "Unknown argument. See --help." ;;
   esac
   shift
 done
 
-[ -r "$BLOCKS_AWK" ] || gg_config_error "$BLOCKS_AWK is missing — reinstall the commit-guards skill"
-[ -r "$SHAPES_AWK" ] || gg_config_error "$SHAPES_AWK is missing — reinstall the commit-guards skill"
-[ -r "$REFS_AWK" ] || gg_config_error "$REFS_AWK is missing — reinstall the commit-guards skill"
-[ -r "$SLUG_AWK" ] || gg_config_error "$SLUG_AWK is missing — reinstall the commit-guards skill"
+[ -r "$BLOCKS_AWK" ] || gg_fail dependency "$BLOCKS_AWK" "Reinstall the commit-guards skill to restore this file."
+[ -r "$SHAPES_AWK" ] || gg_fail dependency "$SHAPES_AWK" "Reinstall the commit-guards skill to restore this file."
+[ -r "$REFS_AWK" ] || gg_fail dependency "$REFS_AWK" "Reinstall the commit-guards skill to restore this file."
+[ -r "$SLUG_AWK" ] || gg_fail dependency "$SLUG_AWK" "Reinstall the commit-guards skill to restore this file."
 
 gg_repo_root_cd
 gg_md_load_paths md-refs COMMIT_GUARDS_MD_REFS_PATHS "$PATHS_DEFAULT"
@@ -113,7 +114,7 @@ DEC_DIR_RAW="$(gg_setting DECISIONS_DIR "$DECISIONS_DIR_DEFAULT")" || exit 2
 DEC_DIR="$(gg_config_path "$DEC_DIR_RAW" DECISIONS_DIR)" || exit 2
 ID_PREFIX="$(gg_setting DECISION_ID_PREFIX "$DECISION_ID_PREFIX_DEFAULT")" || exit 2
 case "$ID_PREFIX" in
-  "" | *[!A-Za-z0-9_-]*) gg_config_error "DECISION_ID_PREFIX must be letters, digits, '_' or '-', got '$(gg_scrubbed "$ID_PREFIX")'" ;;
+  "" | *[!A-Za-z0-9_-]*) gg_fail decision-prefix "$ID_PREFIX" "Use letters, digits, underscore or dash for DECISION_ID_PREFIX." ;;
 esac
 ID_WIDTH="$(gg_setting DECISION_ID_WIDTH "$DECISION_ID_WIDTH_DEFAULT")" || exit 2
 gg_positive_int "$ID_WIDTH" DECISION_ID_WIDTH
@@ -128,7 +129,7 @@ if [ "$STAGED" -eq 0 ] && [ "$ALL" -eq 0 ]; then
     case "$diff_status" in
       0) ;;
       1) STAGED=1 ;;
-      *) gg_collection_error "could not read staged changes (git diff exit $diff_status)" ;;
+      *) gg_fail staged-read "$diff_status" "Git could not read staged changes." ;;
     esac
   fi
 fi
@@ -141,14 +142,13 @@ GG_MD_MODE=all
 gg_tmpdir
 gg_md_select markdown
 SKIPPED="$GG_WALK_SKIPPED"
-SCOPE_DESC="$(gg_md_scope_desc)"
 
 MD_GLOBS_SHOWN="$GG_PATH_GLOBS_SHOWN"
 
 # The index's paths, one per line, are what a reference may land on. A path
 # holding a newline splits here and can be no link target; that direction
 # is loud (the link fails), never a pass.
-git ls-files -z >"$GG_TMP/tracked.z" || gg_collection_error "git ls-files failed"
+git ls-files -z >"$GG_TMP/tracked.z" || gg_fail index-read "$?" "Git could not list tracked files."
 LC_ALL=C tr '\0' '\n' <"$GG_TMP/tracked.z" >"$GG_TMP/tracked"
 
 DEC_JUDGE=0
@@ -159,12 +159,13 @@ fi
 lines_of() { # BLOBFILE PATH — md-blocks' line stream, refusing what it cannot end
   local status=0
   LC_ALL=C awk -f "$SHAPES_AWK" -f "$BLOCKS_AWK" -v mode=lines -- "$1" >"$GG_TMP/lines" 2>"$GG_TMP/lines.err" || status=$?
-  [ ! -s "$GG_TMP/lines.err" ] || cat -- "$GG_TMP/lines.err" >&2
+  [ ! -s "$GG_TMP/lines.err" ] || gg_message block-stderr "$2:$status" "$(cat -- "$GG_TMP/lines.err")" >&2
   if [ "$status" -ne 0 ]; then
     local refusal
     refusal="$(grep '^R' -- "$GG_TMP/lines" | head -n 1 || true)"
     refusal="${refusal#R"$GG_TAB"}"
-    gg_collection_error "$(gg_shown "$2"):${refusal%%"$GG_TAB"*}: ${refusal#*"$GG_TAB"} — the file cannot be read past it; close the construct"
+    gg_md_block_message "${refusal#*"$GG_TAB"}" "$2" "${refusal%%"$GG_TAB"*}"
+    gg_fail "$GG_MD_RULE" "$GG_MD_DETAIL" "$GG_MD_EXPLANATION"
   fi
 }
 
@@ -174,7 +175,7 @@ while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
   gg_read_blob "$sha" "$f" "markdown file"
   lines_of "$GG_TMP/blob" "$f"
   LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=refs -v src="$f" -v id_prefix="$ID_PREFIX" -v id_width="$ID_WIDTH" -- "$GG_TMP/lines" >>"$GG_TMP/refs.tsv" \
-    || gg_collection_error "could not read the references in $(gg_shown "$f")"
+    || gg_fail reference-read "$f:$?" "The reference parser failed."
 done <"$GG_TMP/md-files.z"
 
 # Pass one, continued: what each source file cites in its comment text, and
@@ -189,7 +190,7 @@ SRC_EXTRACT_ERRORS=0
 source_file() { # PATH BLOBFILE
   local f="$1" blob="$2" want=comments status=0 fam
   if gg_blob_is_binary "$blob" "$f"; then
-    gg_note_skip "$f" "binary content, not source"
+    gg_note_skip "$f" binary "binary content, not source"
     return 1
   fi
   fam="$(gg_comment_family "$f" "$blob")" || status=$?
@@ -198,18 +199,19 @@ source_file() { # PATH BLOBFILE
   # read as a path with no grammar.
   [ "$status" -eq 0 ] || exit "$status"
   if [ -z "$fam" ]; then
-    gg_note_skip "$f" "no comment grammar for this path (CHECKS.md § comments)"
+    gg_note_skip "$f" grammar "no comment grammar for this path (CHECKS.md § comments)"
     return 1
   fi
   [ "$fam" != hash-toml ] || want=strings
   if ! gg_comment_text "$fam" "$blob" "$f" "$want" >"$GG_TMP/text"; then
-    gg_note_skip "$f" "comment text could not be extracted: $GG_COMMENT_ERROR"
+    gg_message extraction "$f:$GG_COMMENT_ERROR" "The comment extractor failed: $GG_COMMENT_ERROR_DETAIL"
+    gg_note_skip "$f" extraction "The comment text could not be extracted."
     SRC_EXTRACT_ERRORS=$((SRC_EXTRACT_ERRORS + 1))
     return 1
   fi
   LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=refs -v grammar=text -v src="$f" \
     -v id_prefix="$ID_PREFIX" -v id_width="$ID_WIDTH" -- "$GG_TMP/text" >>"$GG_TMP/refs.tsv" \
-    || gg_collection_error "could not read the references in $(gg_shown "$f")"
+    || gg_fail reference-read "$f:$?" "The reference parser failed."
 }
 gg_md_load_paths md-refs COMMIT_GUARDS_MD_REFS_SOURCE_PATHS "$SOURCE_PATHS_DEFAULT"
 SRC_GLOBS_SHOWN="$GG_PATH_GLOBS_SHOWN"
@@ -226,14 +228,14 @@ SRC_GLOBS_SHOWN="$GG_PATH_GLOBS_SHOWN"
 # content really is binary is named below instead.
 sig_status=0
 git grep -l -z --cached -F -e "$SECTION_SIGN" >"$GG_TMP/sig.z" || sig_status=$?
-[ "$sig_status" -le 1 ] || gg_collection_error "could not search the index for citations (git grep exit $sig_status)"
+[ "$sig_status" -le 1 ] || gg_fail citation-search "$sig_status" "Git could not search the index for citations."
 CARRIERS=$'\n'
 while IFS= read -r -d '' sig_path; do
   CARRIERS="$CARRIERS$sig_path"$'\n'
 done <"$GG_TMP/sig.z"
 
 gg_require_merged_index
-git ls-files -sz >"$GG_TMP/src-files.z" || gg_collection_error "git ls-files failed"
+git ls-files -sz >"$GG_TMP/src-files.z" || gg_fail index-read "$?" "Git could not list tracked files."
 GG_WALK_SKIPPED=0
 : >"$GG_TMP/skipped.z"
 while IFS= read -r -d '' rec; do
@@ -246,11 +248,11 @@ while IFS= read -r -d '' rec; do
   sha="${rest%% *}"
   case "$mode" in
     120000)
-      gg_note_skip "$f" "tracked as a symlink, not source"
+      gg_note_skip "$f" symlink "tracked as a symlink, not source"
       continue
       ;;
     160000)
-      gg_note_skip "$f" "tracked as a submodule gitlink, not source"
+      gg_note_skip "$f" gitlink "tracked as a submodule gitlink, not source"
       continue
       ;;
   esac
@@ -258,7 +260,7 @@ while IFS= read -r -d '' rec; do
     # The carrier list separates its paths by newline, so one holding a
     # newline cannot be looked up in it; named, never quietly passed.
     *$'\n'*)
-      gg_note_skip "$f" "the path holds a newline, which the carrier list cannot separate"
+      gg_note_skip "$f" path-newline "the path holds a newline, which the carrier list cannot separate"
       continue
       ;;
   esac
@@ -271,22 +273,20 @@ while IFS= read -r -d '' rec; do
   SRC_COUNT=$((SRC_COUNT + 1))
 done <"$GG_TMP/src-files.z"
 SKIPPED=$((SKIPPED + GG_WALK_SKIPPED))
-UNMEASURED=""
-[ "$SKIPPED" -eq 0 ] || UNMEASURED="; $SKIPPED matched path(s) not measured"
 
 # Before the empty-set answer below: a carrier this lane could not read is
 # what the verdict cannot speak for, and a run whose only source file was
 # that carrier would otherwise call itself measurable-free and exit 0.
 if [ "$SRC_EXTRACT_ERRORS" -gt 0 ]; then
-  echo "md-refs: scan incomplete — $SRC_EXTRACT_ERRORS carrier(s) could not be read$UNMEASURED"
+  gg_message incomplete "files=$SRC_EXTRACT_ERRORS skipped=$SKIPPED" "Some citation carriers could not be read."
   exit 2
 fi
 
 if [ "$GG_MD_COUNT" -eq 0 ] && [ "$SRC_COUNT" -eq 0 ]; then
   if [ "$SKIPPED" -eq 0 ]; then
-    echo "md-refs: OK — no $SCOPE_DESC to judge (COMMIT_GUARDS_MD_REFS_PATHS $MD_GLOBS_SHOWN; COMMIT_GUARDS_MD_REFS_SOURCE_PATHS $SRC_GLOBS_SHOWN)"
+    gg_message no-match "$MD_GLOBS_SHOWN;$SRC_GLOBS_SHOWN" "No configured documents or source files match."
   else
-    echo "md-refs: OK — nothing measurable to judge$UNMEASURED"
+    gg_message unmeasured-count "$SKIPPED" "No selected paths could be measured."
   fi
   exit 0
 fi
@@ -295,49 +295,38 @@ fi
 # the index whether or not the file is in scope.
 LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=targets -v tracked="$GG_TMP/tracked" \
   -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/targets" \
-  || gg_collection_error "could not resolve the reference targets"
+  || gg_fail targets-exit "$?" "The reference target resolver failed."
 : >"$GG_TMP/headings.tsv"
 while IFS= read -r target; do
   [ -n "$target" ] || continue
   gg_read_blob ":0:$target" "$target" "markdown file"
   if gg_blob_is_binary "$GG_TMP/blob" "$target"; then
-    gg_collection_error "$(gg_shown "$target") is cited by heading but holds binary content"
+    gg_fail target-binary "$target" "A heading citation cannot target binary content."
   fi
   lines_of "$GG_TMP/blob" "$target"
   LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=index -v src="$target" -- "$GG_TMP/lines" >>"$GG_TMP/headings.tsv" \
-    || gg_collection_error "could not index the headings of $(gg_shown "$target")"
+    || gg_fail headings-exit "$target:$?" "The heading parser failed."
 done <"$GG_TMP/targets"
 
 # Pass three: the verdict.
 LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=verdict -v tracked="$GG_TMP/tracked" -v headings="$GG_TMP/headings.tsv" \
   -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/verdict" \
-  || gg_collection_error "could not resolve the references"
+  || gg_fail references-exit "$?" "The reference resolver failed."
 
 REMEDY="point the reference at a tracked file, a heading it has, or a recorded decision, or delete it"
 violations=0
 judged=""
-while IFS="$GG_TAB" read -r kind a b c; do
+while IFS="$GG_TAB" read -r kind a b c detail; do
   case "$kind" in
     V)
-      echo "md-refs FAIL dead reference: $(gg_shown "$a"):$b: $(gg_scrubbed "$c")"
-      echo "  remedies: $REMEDY"
+      gg_message "$c" "$a:$b:$detail" "$REMEDY"
       violations=$((violations + 1))
       ;;
     N) judged="$a" ;;
-    *) gg_collection_error "unexpected record '$(gg_scrubbed "$kind")' in the verdict" ;;
+    *) gg_fail verdict-record "$kind" "The resolver returned an unknown verdict record." ;;
   esac
 done <"$GG_TMP/verdict"
-[ -n "$judged" ] || gg_collection_error "the verdict carried no reference count; refusing to read its silence as a pass"
+[ -n "$judged" ] || gg_fail verdict-count missing "The resolver returned no reference count."
 
-if [ "$DEC_JUDGE" -eq 1 ]; then
-  DEC_NOTE="decision IDs judged against $DEC_DIR"
-else
-  DEC_NOTE="decision IDs not judged ($DEC_DIR is not tracked)"
-fi
-
-SETS="$GG_MD_COUNT $SCOPE_DESC and $SRC_COUNT source file(s)"
-if [ "$violations" -gt 0 ]; then
-  echo "md-refs: $violations dead reference(s) among $judged in $SETS; $DEC_NOTE$UNMEASURED"
-  exit 1
-fi
-echo "md-refs: OK — $judged reference(s) resolve in $SETS; $DEC_NOTE$UNMEASURED"
+gg_message summary "violations=$violations references=$judged markdown=$GG_MD_COUNT sources=$SRC_COUNT decisions=$DEC_JUDGE:$DEC_DIR skipped=$SKIPPED" "The reference scan is complete."
+[ "$violations" -eq 0 ] || exit 1

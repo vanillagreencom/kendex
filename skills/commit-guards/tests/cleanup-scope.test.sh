@@ -90,6 +90,7 @@ run() { # LANE ENVS
     commit-msg) out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$SCRIPTS/commit-msg" "$TMP/msg.txt" 2>&1)" || rc=$? ;;
     *) out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$SCRIPTS/$1" 2>&1)" || rc=$? ;;
   esac
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^[a-z-]+: [a-z-]+=/ { print }')"
   printf 'rc=%s last=%s sentinel=%s scratch=%s' "$rc" "$(printf '%s\n' "$out" | tail -n 1)" "$(kept)" "$(( $(scratch) - before ))"
 }
 ROW=0
@@ -111,12 +112,12 @@ rmdir "$TMPDIR/gg-todo-ban.decoy"
 assert_eq "control: the root is empty before any row" "0" "$(scratch)"
 
 echo "=== a check or a lane never deletes an inherited GG_TMP, an inherited ownership flag never deletes the settings cache, and a check's own scratch is removed ==="
-CHAIN="pre-commit: OK — staged guard chain clean"
+CHAIN="pre-commit: result=0"
 run_rows \
-  "standalone: a check with GG_TMP inherited passes, leaves the inherited directory and its own scratch removed|todo-ban|GG_TMP=S|rc=0 last=todo-ban: OK — no work markers in tracked files sentinel=kept scratch=0" \
-  "install: a check with GG_INSTALL_TMP inherited leaves the inherited file|todo-ban|GG_INSTALL_TMP=F|rc=0 last=todo-ban: OK — no work markers in tracked files sentinel=kept scratch=0" \
+  "standalone: a check with GG_TMP inherited passes, leaves the inherited directory and its own scratch removed|todo-ban|GG_TMP=S|rc=0 last=todo-ban: index-count=0:0:tools/todo-ban-excludes sentinel=kept scratch=0" \
+  "install: a check with GG_INSTALL_TMP inherited leaves the inherited file|todo-ban|GG_INSTALL_TMP=F|rc=0 last=todo-ban: index-count=0:0:tools/todo-ban-excludes sentinel=kept scratch=0" \
   "hooklane: the pre-commit chain with GG_TMP inherited passes and leaves it|pre-commit|GG_TMP=S|rc=0 last=$CHAIN sentinel=kept scratch=0" \
-  "msglane: the commit-msg gate with GG_TMP inherited passes and leaves it|commit-msg|GG_TMP=S|rc=0 last=commit-msg: OK — conventional header: feat: a message sentinel=kept scratch=0" \
+  "msglane: the commit-msg gate with GG_TMP inherited passes and leaves it|commit-msg|GG_TMP=S|rc=0 last=commit-msg: header-valid=feat: a message sentinel=kept scratch=0" \
   "ownership: the chain completes with the ownership flag inherited, no check losing the cache mid-run|pre-commit|GG_SETTINGS_INDEX_OWNED=1|rc=0 last=$CHAIN sentinel=kept scratch=0" \
   "cachedir: the chain with GG_SETTINGS_INDEX_DIR inherited makes its own cache and leaves the inherited one|pre-commit|GG_SETTINGS_INDEX_DIR=S|rc=0 last=$CHAIN sentinel=kept scratch=0" \
   "control: the same chain in a clean environment|pre-commit||rc=0 last=$CHAIN sentinel=kept scratch=0"

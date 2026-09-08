@@ -71,7 +71,7 @@ if [ $# -ge 1 ]; then
       case " $KNOWN_CHECKS " in
         *" $CHECK "*) exec "$SCRIPT_DIR/$CHECK" "$@" ;;
       esac
-      gg_config_error "unknown check '$CHECK' (known: $KNOWN_CHECKS)"
+      gg_fail check-unknown "$CHECK" "unknown check '$CHECK' (known: $KNOWN_CHECKS)"
       ;;
   esac
 fi
@@ -82,7 +82,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --staged) SCOPE_MODE="staged" ;;
     --base)
-      [ $# -ge 2 ] || gg_config_error "--base requires a ref"
+      [ $# -ge 2 ] || gg_fail argument-missing "--base" "--base requires a ref"
       shift
       SCOPE_MODE="base"
       BASE_REF="$1"
@@ -91,26 +91,26 @@ while [ $# -gt 0 ]; do
       SCOPE_MODE="base"
       BASE_REF="${1#--base=}"
       ;;
-    *) gg_config_error "'all' takes only --staged or --base REF; invoke a single check to pass flags" ;;
+    *) gg_fail argument-unknown "$1" "'all' takes only --staged or --base REF; invoke a single check to pass flags" ;;
   esac
   SCOPE_FLAGS=$((SCOPE_FLAGS + 1))
   shift
 done
-[ "$SCOPE_FLAGS" -le 1 ] || gg_config_error "--staged and --base name different scopes; pass one"
+[ "$SCOPE_FLAGS" -le 1 ] || gg_fail scope-conflict "$SCOPE_FLAGS" "--staged and --base name different scopes; pass one"
 
 gg_repo_root_cd
 CHECKS="$(gg_setting COMMIT_GUARDS_CHECKS "$BATCH_DEFAULT")" || exit 2
 case "$CHECKS" in
   *[!\ ]*) ;;
-  *) gg_config_error "COMMIT_GUARDS_CHECKS resolved empty — name at least one check or unset it" ;;
+  *) gg_fail checks-empty "COMMIT_GUARDS_CHECKS" "COMMIT_GUARDS_CHECKS resolved empty — name at least one check or unset it" ;;
 esac
 for c in $CHECKS; do
   case "$c" in
-    commit-msg) gg_config_error "commit-msg reads a message and cannot run in the batch; wire 'commit-guards commit-msg \"\$1\"' into the commit-msg hook instead" ;;
+    commit-msg) gg_fail check-interactive "commit-msg" "commit-msg reads a message and cannot run in the batch; wire 'commit-guards commit-msg \"\$1\"' into the commit-msg hook instead" ;;
   esac
   case " $KNOWN_CHECKS " in
     *" $c "*) ;;
-    *) gg_config_error "COMMIT_GUARDS_CHECKS names unknown check '$c' (known: $KNOWN_CHECKS)" ;;
+    *) gg_fail check-unknown "$c" "COMMIT_GUARDS_CHECKS names unknown check '$c' (known: $KNOWN_CHECKS)" ;;
   esac
 done
 
@@ -137,7 +137,7 @@ for c in $CHECKS; do
       ;;
   esac
   [ "${#scope[@]}" -eq 0 ] || scope_desc=" ${scope[*]}"
-  echo "=== commit-guards: $c$scope_desc"
+  gg_message step "$c$scope_desc" "Run the configured check."
   check_status=0
   "$SCRIPT_DIR/$c" ${scope[@]+"${scope[@]}"} || check_status=$?
   case "$check_status" in
@@ -145,17 +145,17 @@ for c in $CHECKS; do
     1) had_violations=1 ;;
     *)
       had_errors=1
-      echo "commit-guards: check '$c' did not complete (exit $check_status)"
+      gg_message incomplete "$c:$check_status" "The check did not complete."
       ;;
   esac
 done
 
 if [ "$had_errors" -eq 1 ]; then
-  echo "commit-guards: could not complete every check — fix the errors above before trusting any verdict"
+  gg_message result 2 "Could not complete every check. Fix the errors above."
   exit 2
 fi
 if [ "$had_violations" -eq 1 ]; then
-  echo "commit-guards: violations — see the failures above"
+  gg_message result 1 "Violations found. See the failures above."
   exit 1
 fi
-echo "commit-guards: OK — enabled checks clean ($CHECKS)"
+gg_message result "0:$CHECKS" "Enabled checks are clean."

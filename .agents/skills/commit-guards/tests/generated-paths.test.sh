@@ -32,12 +32,11 @@ load() { # INVENTORY
   local rc=0 err=""
   GENERATED_PATHS="stale"
   generated_paths_load "$1" 2>"$TMP/err" || rc=$?
-  err="$(LC_ALL=C sed -e 's/^jq: error (at <stdin>:[0-9]*): //' -e 's/^jq: parse error: .*/<jq parse error>/' "$TMP/err" | LC_ALL=C paste -sd ';' -)"
+  err="$(LC_ALL=C awk '/^commit-guards: [a-z-]+=/ { print }' "$TMP/err" | paste -sd ';' -)"
   printf 'rc=%s paths=<%s>%s' "$rc" "$(printf '%s' "$GENERATED_PATHS" | LC_ALL=C paste -sd ';' -)" "${err:+ $err}"
 }
-REFUSED='::error::generated paths: cannot read .kendex-generated.json; jq is required; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
-ONE="expected one inventory;$REFUSED"
-ARRAY="expected an array of paths without newline or NUL;$REFUSED"
+ONE="commit-guards: inventory-status=20"
+ARRAY="commit-guards: inventory-status=21"
 
 load_rows() { # label | inventory | expect
   local row label inventory expect
@@ -53,7 +52,7 @@ load_rows \
   "literal paths load as written: a glob character and a space are content|[\".agents/skills/a*/x.md\",\"space name.md\"]|rc=0 paths=<.agents/skills/a*/x.md;space name.md>" \
   "empty input is refused: no inventory is not one inventory||rc=2 paths=<> $ONE" \
   "two arrays are refused: a stream is not one inventory|[] []|rc=2 paths=<> $ONE" \
-  "text that is not JSON is refused with jq's parse error ahead of the cause|invalid|rc=2 paths=<> <jq parse error>;$REFUSED" \
+  "text that is not JSON is refused with jq's parse error ahead of the cause|invalid|rc=2 paths=<> commit-guards: inventory-status=5" \
   "an object is refused: not an array|{}|rc=2 paths=<> $ARRAY" \
   "a null entry is refused: it has no length|[null]|rc=2 paths=<> $ARRAY" \
   "a number entry is refused: not a string|[1]|rc=2 paths=<> $ARRAY" \

@@ -73,10 +73,10 @@ commit() { # ARGS...
   local rc=0
   : >"$R/hook.out"
   git -C "$R" commit "$@" >/dev/null 2>&1 || rc=$?
-  printf 'rc=%s %s' "$rc" "$(LC_ALL=C paste -sd ';' - <"$R/hook.out")"
+  printf 'rc=%s %s' "$rc" "$(LC_ALL=C awk '/^commit-msg: [a-z-]+=/ { print }' "$R/hook.out" | paste -sd ';' -)"
 }
-OWED="commit-msg FAIL crates/core/lib.rs changed without a changelog entry;  write one of: changelog.d/*/*.md;  or put [no-changelog] in the header when the commit changes nothing a consumer sees;  CHANGELOG.md counts only under COMMIT_GUARDS_CHANGELOG_COLLATE=1, which is the release commit collating the fragments"
-header() { printf 'commit-msg: OK — conventional header: %s' "$1"; } # HEADER
+OWED="commit-msg: changelog-missing=crates/core/lib.rs:changelog.d/*/*.md"
+header() { printf 'commit-msg: header-valid=%s' "$1"; } # HEADER
 
 echo "=== an amend is judged against the parent it will HAVE, not the HEAD it replaces ==="
 # `git diff --cached` on an amend shows only what was staged ON TOP of the
@@ -103,7 +103,7 @@ else
   # is the pin.
   staged_on_fragment value
   assert_eq "must-fail: a message VALUE spelling the flag does not widen the base" \
-    "rc=1 commit-msg FAIL non-conventional header: --amend;  expected: type(scope)!: subject — scope and '!' optional; types: build chore ci docs feat fix perf refactor revert style test;  scope accepts uppercase issue keys and issue numbers, e.g. fix(ABC-123): tighten the gate / fix(#123): case-fold IDs;  git-generated headers (Merge/Revert/Reapply, fixup!/squash!/amend!) pass unchanged;$OWED" \
+    "rc=1 commit-msg: header-shape=--amend:build chore ci docs feat fix perf refactor revert style test;$OWED" \
     "$(commit --mess '--amend')"
   # MUST-FAIL: a message merely CONTAINING the flag. The argv is read
   # NUL-delimited so this stays one argument; a scan joining argv with spaces

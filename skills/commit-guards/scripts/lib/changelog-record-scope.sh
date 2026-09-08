@@ -4,6 +4,8 @@
 # Needs common.sh and changelog-grammar.sh.
 
 GG_RECORD_WHY=""
+GG_RECORD_KEY=""
+GG_RECORD_VALUE=""
 GG_RECORD_HARD=0
 # Where the accepted section is, kept for the collation that folds into it:
 # the heading's own line, the first line past the section (0 when the file
@@ -14,6 +16,8 @@ GG_RECORD_SECLINES=""
 gg_record_accepts() { # PARSED-FILE — 0 when the copy is a record this guard accepts
   local file="$1" rc=0 kind a b low
   GG_RECORD_WHY=""
+  GG_RECORD_KEY=""
+  GG_RECORD_VALUE=""
   GG_RECORD_HARD=0
   GG_RECORD_START=0
   GG_RECORD_END=0
@@ -23,20 +27,28 @@ gg_record_accepts() { # PARSED-FILE — 0 when the copy is a record this guard a
     0) : ;;
     3)
       GG_RECORD_WHY="leaves a code fence unclosed — the [Unreleased] section cannot be located"
+      GG_RECORD_KEY=record-fence
+      GG_RECORD_VALUE="$RECORD:unclosed"
       GG_RECORD_HARD=1
       return 1
       ;;
     4)
       GG_RECORD_WHY="carries more than one '## [Unreleased]' heading — which one is the section cannot be decided"
+      GG_RECORD_KEY=record-heading-count
+      GG_RECORD_VALUE="$RECORD:2"
       GG_RECORD_HARD=1
       return 1
       ;;
     5)
       GG_RECORD_WHY="carries no '## [Unreleased]' heading"
+      GG_RECORD_KEY=record-heading
+      GG_RECORD_VALUE="$RECORD:missing"
       return 1
       ;;
     *)
       GG_RECORD_WHY="could not be read (awk exit $rc) — the [Unreleased] section cannot be located"
+      GG_RECORD_KEY=record-parse
+      GG_RECORD_VALUE="$RECORD:$rc"
       GG_RECORD_HARD=1
       return 1
       ;;
@@ -50,6 +62,8 @@ gg_record_accepts() { # PARSED-FILE — 0 when the copy is a record this guard a
         # Heading TEXT, so it may hold anything a line holds.
         if ! gg_is_section "$low"; then
           GG_RECORD_WHY="names '$(gg_scrubbed "$b")' under [Unreleased], which is not a Keep a Changelog section"
+          GG_RECORD_KEY=record-section
+          GG_RECORD_VALUE="$RECORD:$b"
           return 1
         fi
         # Line numbers, never a heading to search for again: lib/changelog-collate.sh
@@ -60,7 +74,7 @@ gg_record_accepts() { # PARSED-FILE — 0 when the copy is a record this guard a
         GG_RECORD_SECLINES="$GG_RECORD_SECLINES$a$GG_TAB$low
 "
         ;;
-      *) gg_collection_error "the changelog grammar emitted a boundary this judge does not understand: $(gg_shown "$kind")" ;;
+      *) gg_fail record-boundary "$kind" "the changelog grammar emitted a boundary this judge does not understand: $(gg_shown "$kind")" ;;
     esac
   done <"$GG_TMP/bounds"
   return 0
@@ -74,28 +88,28 @@ gg_record_structure() { # 0 when the staged record's shape is one a release can 
   if gg_record_accepts "$GG_TMP/record.index"; then
     return 0
   fi
-  [ "$GG_RECORD_HARD" -eq 0 ] || gg_collection_error "$(gg_shown "$RECORD") $GG_RECORD_WHY"
-  case "$GG_RECORD_WHY" in
-    "carries no"*)
+  [ "$GG_RECORD_HARD" -eq 0 ] || gg_fail "$GG_RECORD_KEY" "$GG_RECORD_VALUE" "$(gg_shown "$RECORD") $GG_RECORD_WHY"
+  case "$GG_RECORD_KEY" in
+    record-heading)
       # A release folds every fragment into this heading and deletes the files
       # they came from, so a record without one is a release that cannot run,
       # caught here rather than at the tag.
-      refuse "$RECORD" "$GG_RECORD_WHY" \
+      refuse "$GG_RECORD_KEY" "$GG_RECORD_VALUE" "$GG_RECORD_WHY" \
         "open one — a release folds the fragments into it and has nowhere to put them otherwise"
       ;;
-    *) refuse "$RECORD" "$GG_RECORD_WHY" "section one of: $GG_SECTIONS" ;;
+    *) refuse "$GG_RECORD_KEY" "$GG_RECORD_VALUE" "$GG_RECORD_WHY" "section one of: $GG_SECTIONS" ;;
   esac
   return 1
 }
 
 
 gg_changelog_record_scope() {
-  [ -n "$RECORD" ] || gg_config_error "no collation destination: COMMIT_GUARDS_CHANGELOG_RECORD is empty"
-  [ -n "$RECORD_SHA" ] || gg_config_error "$(gg_shown "$RECORD") is not tracked; commit the collation destination first"
-  gg_mode_is_regular "$RECORD_MODE" || gg_collection_error "$(gg_shown "$RECORD") is not a regular collation destination"
+  [ -n "$RECORD" ] || gg_fail record-off COMMIT_GUARDS_CHANGELOG_RECORD "no collation destination: COMMIT_GUARDS_CHANGELOG_RECORD is empty"
+  [ -n "$RECORD_SHA" ] || gg_fail record-untracked "$(gg_shown "$RECORD")" "$(gg_shown "$RECORD") is not tracked; commit the collation destination first"
+  gg_mode_is_regular "$RECORD_MODE" || gg_fail record-mode "$(gg_shown "$RECORD"):$RECORD_MODE" "$(gg_shown "$RECORD") is not a regular collation destination"
   gg_changelog_blob "$RECORD_SHA" "$RECORD" \
-    || gg_collection_error "$(gg_shown "$RECORD") holds binary content; collation needs text"
+    || gg_fail record-binary "$(gg_shown "$RECORD")" "$(gg_shown "$RECORD") holds binary content; collation needs text"
   cat -- "$GG_TMP/blob" >"$GG_TMP/record.index" \
-    || gg_collection_error "could not read the staged collation destination $(gg_shown "$RECORD")"
+    || gg_fail record-read "$(gg_shown "$RECORD")" "could not read the staged collation destination $(gg_shown "$RECORD")"
   gg_record_structure || return 0
 }

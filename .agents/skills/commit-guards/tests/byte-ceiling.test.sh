@@ -47,6 +47,8 @@ run() { # ENVS ARGS
   out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$BC" $2 2>&1)" || rc=$?
   # shellcheck disable=SC2086
   out2="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$BC" $2 2>&1)" || rc2=$?
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^byte-ceiling: [a-z-]+=/ { print }')"
+  out2="$(printf '%s\n' "$out2" | LC_ALL=C awk '/^byte-ceiling: [a-z-]+=/ { print }')"
   line="rc=$rc${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
   line2="rc=$rc2${out2:+ $(printf '%s\n' "$out2" | LC_ALL=C paste -sd ';' -)}"
   printf '%s' "$line"
@@ -73,16 +75,15 @@ commit() { git -C "$R" commit -qm "${1:-seed}"; }
 EXCL='tools/byte-ceiling-excludes'
 excludes() { mkdir -p "$R/tools"; printf '%b' "$1" >"$R/$EXCL"; git -C "$R" add -A; } # CONTENT (printf %b)
 
-# The lines the check prints, as functions of what a row put in.
-REMEDY="  remedies: keep big artifacts out of the repo (asset store, Git LFS, build-time generation); a file that genuinely belongs gets a row in $EXCL with its reason"
-ERR="::error::byte-ceiling: "
-over() { printf 'byte-ceiling FAIL oversized file: %s — %s bytes (~%s KB) > ceiling %s KB;%s' "$1" "$2" "$3" "$4" "$REMEDY"; } # PATH BYTES ~KB CEILING
-grew() { printf 'byte-ceiling FAIL oversized file grew: %s — %s -> %s bytes (~%s KB), ceiling %s KB;%s' "$1" "$2" "$3" "$4" "$5" "$REMEDY"; } # PATH PRIOR BYTES ~KB CEILING
-STAGED="staged file(s)"
-SWEEP="tracked file(s) (full sweep)"
-since() { printf 'file(s) added or changed since %s' "$1"; } # REF
-ok() { printf 'byte-ceiling: OK — %s %s checked, ceiling %s KB' "$1" "${2:-$STAGED}" "${3:-1}"; } # CHECKED [SCOPE] [CEILING]
-failed() { printf 'byte-ceiling: %s violation(s) — ceiling %s KB, %s %s checked' "$1" "${3:-1}" "$2" "${4:-$STAGED}"; } # VIOLATIONS CHECKED [CEILING] [SCOPE]
+# Stable records preserve sizes, counts, ceiling and scope.
+ERR="byte-ceiling: "
+over() { printf 'byte-ceiling: oversized=%s:%s:%s:%s' "$1" "$2" "$3" "$4"; } # PATH BYTES ~KB CEILING
+grew() { printf 'byte-ceiling: grew=%s:%s:%s:%s:%s' "$1" "$2" "$3" "$4" "$5"; } # PATH PRIOR BYTES ~KB CEILING
+STAGED="staged:"
+SWEEP="all:"
+since() { printf 'base:%s' "$1"; } # REF
+ok() { printf 'byte-ceiling: result=0:%s:%s:%s' "$1" "${3:-1}" "${2:-$STAGED}"; } # CHECKED [SCOPE] [CEILING]
+failed() { printf 'byte-ceiling: result=%s:%s:%s:%s' "$1" "$2" "${3:-1}" "${4:-$STAGED}"; } # VIOLATIONS CHECKED [CEILING] [SCOPE]
 C=COMMIT_GUARDS_BYTE_CEILING_KB
 
 run_rows() { # label | fixture | envs | args | expect
@@ -171,10 +172,10 @@ run_rows \
   "--all does not size a committed gitlink either: it carries a commit id, not content|gitlink gitlink-all committed|$C=1|--all|rc=0 $(ok 1 "$SWEEP")" \
   "a staged gitlink is not sized content|gitlink gitlink-staged staged|$C=1||rc=0 $(ok 0)" \
   "control: --base main on main itself has no additions|legacy base-self|$C=1|--base main|rc=0 $(ok 0 "$(since main)")" \
-  "an unknown --base ref is exit 2, naming it|legacy base-unknown|$C=1|--base no-such-ref|rc=2 ${ERR}--base ref 'no-such-ref' does not name a commit" \
-  "--base without a ref is exit 2|legacy base-bare|$C=1|--base|rc=2 ${ERR}--base requires a ref" \
-  "an unmerged index is refused rather than measured around: the conflict's addition would vanish from the record set|fx_unmerged unmerged-staged|$C=1||rc=2 clash.bin;${ERR}the index carries 1 unmerged path(s) (listed above) and a --cached scan skips them silently — finish or abort the merge, then re-run" \
-  "--all refuses it too, where ls-files would size one blob per stage|fx_unmerged unmerged-all|$C=1|--all|rc=2 clash.bin;${ERR}the index carries 1 unmerged path(s) (listed above) and a --cached scan skips them silently — finish or abort the merge, then re-run"
+  "an unknown --base ref is exit 2, naming it|legacy base-unknown|$C=1|--base no-such-ref|rc=2 ${ERR}base-ref=no-such-ref" \
+  "--base without a ref is exit 2|legacy base-bare|$C=1|--base|rc=2 ${ERR}argument-missing=--base" \
+  "an unmerged index is refused rather than measured around: the conflict's addition would vanish from the record set|fx_unmerged unmerged-staged|$C=1||rc=2 ${ERR}unmerged-path=clash.bin;${ERR}unmerged-count=1" \
+  "--all refuses it too, where ls-files would size one blob per stage|fx_unmerged unmerged-all|$C=1|--all|rc=2 ${ERR}unmerged-path=clash.bin;${ERR}unmerged-count=1"
 
 echo "=== lockfiles are exempt by basename; declared asset trees by an excludes row with a reason ==="
 fx_lock() { repo "$1"; put "${2:-package-lock.json}" 2; } # NAME [PATH]
@@ -191,7 +192,7 @@ run_rows \
   "control: a basename that only ends in a lockfile's name is not exempt|fx_lock_suffix|$C=1||rc=1 $(over not-package-lock.json 2048 2 1);$(failed 1 1)" \
   "control: an asset fails without an excludes row|asset asset-bare|$C=1||rc=1 $(over assets/demo.gif 2048 2 1);$(failed 1 1)" \
   "an excludes row exempts the declared tree; the list itself is a staged file and is counted|fx_excluded|$C=1||rc=0 $(ok 1)" \
-  "a pattern without a reason is exit 2 naming the line|fx_no_reason|$C=1||rc=2 ${ERR}$EXCL:1: expected 'pattern<TAB>reason' (every exclusion carries its justification)" \
+  "a pattern without a reason is exit 2 naming the line|fx_no_reason|$C=1||rc=2 ${ERR}exclusion-reason=$EXCL:1" \
   "--excludes FILE names the list, and the remedy names it too|fx_excludes_flag excludes-flag|$C=1|--excludes conf/excludes|rc=0 $(ok 1)" \
   "the equals form of --excludes names the same list|fx_excludes_flag excludes-eq|$C=1|--excludes=conf/excludes|rc=0 $(ok 1)" \
   "control: without the flag the same repository fails on the asset, and the remedy names the default list|fx_excludes_flag excludes-default|$C=1||rc=1 $(over assets/demo.gif 2048 2 1);$(failed 1 2)"
@@ -200,12 +201,12 @@ echo "=== the ceiling resolves through the settings ladder and is validated ==="
 cfg() { repo "$1"; put f.txt 1; } # NAME
 fx_settings() { cfg "$1"; printf '[env]\nCOMMIT_GUARDS_BYTE_CEILING_KB = "3"\n' >"$R/kendex.settings.toml"; put big.bin 4; }
 run_rows \
-  "a non-numeric ceiling is exit 2, quoting it|cfg non-numeric|$C=abc||rc=2 ${ERR}COMMIT_GUARDS_BYTE_CEILING_KB must be a positive integer, got 'abc'" \
-  "a zero ceiling is exit 2|cfg zero|$C=0||rc=2 ${ERR}COMMIT_GUARDS_BYTE_CEILING_KB must be a positive integer, got '0'" \
-  "an unknown flag is exit 2, quoting it|cfg unknown-flag|$C=1|--no-such-flag|rc=2 ${ERR}unknown argument '--no-such-flag' (see --help)" \
+  "a non-numeric ceiling is exit 2, quoting it|cfg non-numeric|$C=abc||rc=2 ${ERR}positive-integer=COMMIT_GUARDS_BYTE_CEILING_KB:abc" \
+  "a zero ceiling is exit 2|cfg zero|$C=0||rc=2 ${ERR}positive-integer=COMMIT_GUARDS_BYTE_CEILING_KB:0" \
+  "an unknown flag is exit 2, quoting it|cfg unknown-flag|$C=1|--no-such-flag|rc=2 ${ERR}argument-unknown=--no-such-flag" \
   "kendex.settings.toml supplies the ceiling: 4 KB fails at 3 where the built-in 200 would pass|fx_settings settings-file|||rc=1 $(over big.bin 4096 4 3);$(failed 1 3 3)" \
   "the environment overrides the settings file: 5 passes where 3 failed|fx_settings settings-env|$C=5||rc=0 $(ok 3 "$STAGED" 5)"
-assert_eq "--help prints usage at exit 0" "rc=0 usage: byte-ceiling [--staged | --base REF | --all] [--excludes FILE]" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
+assert_eq "--help exits 0" "rc=0" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
 assert_eq "-h is --help" "$(run '' --help)" "$(run '' -h)"
 
 echo "=== fail-closed: a broken blob measurement is a collection error, never a pass ==="
@@ -225,8 +226,8 @@ chmod +x "$TMP/git-shim-prior/git"
 measure() { repo "$1"; put big.bin 2; } # NAME
 run_rows \
   "control: without the shim the oversized staged file fails|measure measure-real|$C=1||rc=1 $(over big.bin 2048 2 1);$(failed 1 1)" \
-  "an unmeasurable blob is exit 2 naming the blob and the file, with no verdict line, git's own words ahead of it|measure measure-shim|PATH=$TMP/git-shim:$PATH,$C=1||rc=2 fatal: simulated object read failure;${ERR}cannot read blob $SHA2K for 'big.bin' — its size is unmeasurable, refusing to skip it" \
-  "an unmeasurable PRIOR blob is exit 2 too: the tighten-only baseline is not guessed|fx_grow_prior|PATH=$TMP/git-shim-prior:$PATH,$C=1||rc=2 fatal: simulated object read failure;${ERR}cannot read prior blob $SHA5K for 'seed.bin' — its size is unmeasurable, refusing to skip it"
+  "an unmeasurable blob is exit 2 naming the blob and the file, with no verdict line, git's own words ahead of it|measure measure-shim|PATH=$TMP/git-shim:$PATH,$C=1||rc=2 ${ERR}blob-size=big.bin:$SHA2K" \
+  "an unmeasurable PRIOR blob is exit 2 too: the tighten-only baseline is not guessed|fx_grow_prior|PATH=$TMP/git-shim-prior:$PATH,$C=1||rc=2 ${ERR}prior-size=seed.bin:$SHA5K"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

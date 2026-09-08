@@ -147,7 +147,7 @@ aliased() { # TEXT -> the text with the row's repository and the scratch root al
 # print. The lanes' own lines — the step announcements, each check's
 # findings, the sibling gates' reports — are their suites' contract and are
 # dropped here.
-KEEP='^(commit-guards git hooks: |::warning::install-git-hooks: |::error::|kendex-guards: |commit-guards: hook helper |pre-commit: |commit-msg: OK|commit-msg FAIL|foreign: |local: |fatal: |error: )'
+KEEP='^(commit-guards git hooks: |install-git-hooks: |::error::|kendex-guards: |commit-guards: hook-helper=|pre-commit: (result|lane-missing|local-missing|path-escape)=|commit-msg: |foreign: |local: |fatal: |error: )'
 
 # One line for a run inside the row's repository: the exit status, then
 # every kept line in order joined by ';'. ENVS is a comma-separated list of
@@ -207,6 +207,7 @@ run() { # ENVS ACTION ARG
   if [ "$filtered" -eq 1 ] && [ -n "$out" ]; then
     out="$(printf '%s\n' "$out" | LC_ALL=C grep -E "$KEEP" || true)"
   fi
+  out="$(printf '%s\n' "$out" | sed '/^  /d')"
   out="$(aliased "$out")"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
@@ -323,24 +324,24 @@ MSG_LINE="$(sed -n 2p "$R/.git/hooks/commit-msg")"
 CREATED="# kendex-guards-hook created this file"
 REF_HELPER="$(sed 3d "$R/.git/hooks/kendex-guards")"
 
-ARMED="commit-guards git hooks: pre-commit and commit-msg armed in <repo>/.git/hooks"
-INCOMPLETE="commit-guards git hooks: incomplete — see the warnings above (<repo>/.git/hooks)"
-REMOVAL_INCOMPLETE="commit-guards git hooks: removal incomplete — see the warnings above (<repo>/.git/hooks)"
-NOT_INSTALLED="commit-guards git hooks: NOT installed — could not write <repo>/.git/hooks/kendex-guards"
-REMOVED_BOTH="commit-guards git hooks: removed from pre-commit commit-msg in <repo>/.git/hooks"
-NOTHING="commit-guards git hooks: nothing to remove in <repo>/.git/hooks"
-WARN="::warning::install-git-hooks:"
+ARMED="commit-guards git hooks: installed=<repo>/.git/hooks"
+INCOMPLETE="commit-guards git hooks: incomplete=<repo>/.git/hooks"
+REMOVAL_INCOMPLETE="commit-guards git hooks: removal-incomplete=<repo>/.git/hooks"
+NOT_INSTALLED="commit-guards git hooks: not-installed=<repo>/.git/hooks/kendex-guards"
+REMOVED_BOTH="commit-guards git hooks: removed=pre-commit commit-msg path=<repo>/.git/hooks"
+NOTHING="commit-guards git hooks: nothing-to-remove=<repo>/.git/hooks"
+WARN="install-git-hooks:"
 X=rwxr-xr-x
 RW=rw-r--r--
 OURS="$X:ours['<repo>/.agents/skills/commit-guards/scripts']"
 SHIM_PRE="$X:#!/bin/sh~@PRE@~@CREATED@"
 SHIM_MSG="$X:#!/bin/sh~@MSG@~@CREATED@"
 FRESH="helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>"
-CHAIN_OK="pre-commit: OK — staged guard chain clean"
-MSG_OK="commit-msg: OK — conventional header:"
-BLOCKED="pre-commit: violations — commit blocked; see the failures above"
-NO_HELPER="commit-guards: hook helper .git/hooks/kendex-guards is missing or not executable; commit blocked (reinstall: kendex guard install)"
-NO_SCRIPT="kendex-guards: no executable commit-guards pre-commit script at <repo>/.agents/skills/commit-guards/scripts, nor under <repo> or <repo> (project '', roots .agents/skills .claude/skills .cursor/skills .gemini/skills .github/skills .opencode/skills skills)"
+CHAIN_OK="pre-commit: result=0"
+MSG_OK="commit-msg: header-valid="
+BLOCKED="pre-commit: result=1"
+NO_HELPER="commit-guards: hook-helper=.git/hooks/kendex-guards"
+NO_SCRIPT="kendex-guards: lane-missing=pre-commit"
 # The plumbing rows run one check: the batch's composition is not their
 # subject and every check has its own suite.
 ONE="COMMIT_GUARDS_CHECKS=todo-ban"

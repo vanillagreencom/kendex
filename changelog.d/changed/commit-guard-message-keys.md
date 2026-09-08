@@ -1,0 +1,1 @@
+- Commit guards report stable message keys and values before their English explanations.

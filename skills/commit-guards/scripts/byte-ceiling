@@ -58,7 +58,7 @@ while [ $# -gt 0 ]; do
     --staged) MODE="staged" ;;
     --all) MODE="all" ;;
     --base)
-      [ $# -ge 2 ] || gg_config_error "--base requires a ref"
+      [ $# -ge 2 ] || gg_fail argument-missing "--base" "--base requires a ref"
       shift
       MODE="base"
       BASE_REF="$1"
@@ -68,7 +68,7 @@ while [ $# -gt 0 ]; do
       BASE_REF="${1#--base=}"
       ;;
     --excludes)
-      [ $# -ge 2 ] || gg_config_error "--excludes requires a path"
+      [ $# -ge 2 ] || gg_fail argument-missing "--excludes" "--excludes requires a path"
       shift
       EXCLUDES_OPT="$1"
       ;;
@@ -77,7 +77,7 @@ while [ $# -gt 0 ]; do
       usage
       exit 0
       ;;
-    *) gg_config_error "unknown argument '$1' (see --help)" ;;
+    *) gg_fail argument-unknown "$1" "unknown argument '$1' (see --help)" ;;
   esac
   shift
 done
@@ -128,17 +128,17 @@ case "$MODE" in
     # the ceiling. The index modes refuse an unresolved merge rather than
     # measure around it.
     gg_require_merged_index
-    git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT >"$GG_TMP/raw.z" || gg_collection_error "git diff --cached failed collecting staged additions and changes"
+    git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT >"$GG_TMP/raw.z" || gg_fail staged-collect "$?" "git diff --cached failed collecting staged additions and changes"
     ;;
   base)
-    git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null || gg_config_error "--base ref '$BASE_REF' does not name a commit"
-    git -c diff.renames=true diff --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT "$BASE_REF...HEAD" >"$GG_TMP/raw.z" || gg_collection_error "git diff $BASE_REF...HEAD failed collecting additions and changes (no merge base?)"
+    git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null || gg_fail base-ref "$BASE_REF" "--base ref '$BASE_REF' does not name a commit"
+    git -c diff.renames=true diff --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT "$BASE_REF...HEAD" >"$GG_TMP/raw.z" || gg_fail base-collect "$BASE_REF:$?" "git diff $BASE_REF...HEAD failed collecting additions and changes (no merge base?)"
     ;;
   all)
     # ls-files -s emits one record per STAGE for an unmerged path, so the
     # walk below would size two or three rival blobs as separate files.
     gg_require_merged_index
-    git ls-files -sz >"$GG_TMP/files.z" || gg_collection_error "git ls-files failed"
+    git ls-files -sz >"$GG_TMP/files.z" || gg_fail index-read "$?" "git ls-files failed"
     while IFS= read -r -d '' rec; do
       # Record shape: "<mode> <sha> <stage>\t<path>".
       mode="${rec%% *}"
@@ -168,7 +168,7 @@ if [ "$MODE" != "all" ]; then
     esac
     case "$dstsha" in
       *[!0]*) ;;
-      *) gg_collection_error "'$f' has no destination blob in the diff record — cannot measure it" ;;
+      *) gg_fail blob-missing "$f" "'$f' has no destination blob in the diff record — cannot measure it" ;;
     esac
     emit_candidate "$dstsha" "$srcsha" "$srcmode" "$f"
   done <"$GG_TMP/raw.z"
@@ -182,21 +182,21 @@ while IFS= read -r -d '' sha \
   && IFS= read -r -d '' f; do
   is_lockfile "$f" && continue
   gg_is_excluded "$f" && continue
-  size="$(git cat-file -s "$sha")" || gg_collection_error "cannot read blob $sha for '$f' — its size is unmeasurable, refusing to skip it"
+  size="$(git cat-file -s "$sha")" || gg_fail blob-size "$f:$sha" "cannot read blob $sha for '$f' — its size is unmeasurable, refusing to skip it"
   checked=$((checked + 1))
   if [ "$size" -gt "$CEILING_BYTES" ]; then
     prior_size=""
     if gg_mode_is_regular "$srcmode"; then
-      prior_size="$(git cat-file -s "$srcsha")" || gg_collection_error "cannot read prior blob $srcsha for '$f' — its size is unmeasurable, refusing to skip it"
+      prior_size="$(git cat-file -s "$srcsha")" || gg_fail prior-size "$f:$srcsha" "cannot read prior blob $srcsha for '$f' — its size is unmeasurable, refusing to skip it"
     fi
     if [ -n "$prior_size" ] && [ "$prior_size" -gt "$CEILING_BYTES" ] && [ "$size" -le "$prior_size" ]; then
       continue
     fi
     kb=$(((size + 1023) / 1024))
     if [ -n "$prior_size" ] && [ "$prior_size" -gt "$CEILING_BYTES" ]; then
-      echo "byte-ceiling FAIL oversized file grew: $f — $prior_size -> $size bytes (~$kb KB), ceiling $CEILING_KB KB"
+      gg_message grew "$f:$prior_size:$size:$kb:$CEILING_KB" "The oversized file grew beyond its baseline."
     else
-      echo "byte-ceiling FAIL oversized file: $f — $size bytes (~$kb KB) > ceiling $CEILING_KB KB"
+      gg_message oversized "$f:$size:$kb:$CEILING_KB" "The file exceeds the byte ceiling."
     fi
     echo "  remedies: keep big artifacts out of the repo (asset store, Git LFS, build-time generation); a file that genuinely belongs gets a row in $EXCLUDES_FILE with its reason"
     violations=$((violations + 1))
@@ -210,7 +210,7 @@ case "$MODE" in
 esac
 
 if [ "$violations" -gt 0 ]; then
-  echo "byte-ceiling: $violations violation(s) — ceiling $CEILING_KB KB, $checked $SCOPE_DESC checked"
+  gg_message result "$violations:$checked:$CEILING_KB:$MODE:$BASE_REF" "Checked $checked $SCOPE_DESC; violations found."
   exit 1
 fi
-echo "byte-ceiling: OK — $checked $SCOPE_DESC checked, ceiling $CEILING_KB KB"
+gg_message result "0:$checked:$CEILING_KB:$MODE:$BASE_REF" "Checked $checked $SCOPE_DESC; no oversized files."

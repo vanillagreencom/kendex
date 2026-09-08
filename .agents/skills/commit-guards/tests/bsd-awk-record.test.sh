@@ -15,7 +15,7 @@
 #
 # One table: PACKAGE is the shipped skill or a copy with the translation
 # removed; changelog-entries runs under the shim over a fragment git calls
-# text, and the row pins the exit status with every line printed.
+# text, and the row pins the exit status with each stable message record.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -88,9 +88,10 @@ broken() { # the package with the NUL translation removed
   cp -R "$SKILL_DIR" "$PKG"
   perl -pi -e "s/LC_ALL=C tr '\\\\000' '\\\\200' <\"\\\$GG_TMP\\/blob\" \\| LC_ALL=C awk/LC_ALL=C awk/" "$PKG/scripts/lib/changelog-grammar.sh"
 }
-run() { # — the exit status and every line printed by PKG's changelog-entries over the fragment
+run() { # — the exit status and stable message records from PKG's changelog-entries over the fragment
   local rc=0 out=""
   out="$(cd "$R" && "$PKG/scripts/changelog-entries" 2>&1)" || rc=$?
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^changelog-entries: [a-z-]+=/ { print }')" || return 2
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 run_rows() { # label | package | expect
@@ -109,8 +110,8 @@ assert_eq "the control removed the NUL translation" "0" "$(grep -c "tr '\\\\000'
 
 echo "=== a NUL past git's sample is refused as unmeasurable under BWK's record rule, not reported as a long entry ==="
 run_rows \
-  "the shipped package refuses the fragment naming its line|real|rc=2 ::error::changelog-entries: changelog.d/added/late-nul.md line 1 is not valid UTF-8 — text with no character count cannot be measured" \
-  "control: without the translation the record ends at the NUL and the prefix is measured as an over-long entry|broken|rc=1 changelog-entries FAIL long entry: changelog.d/added/late-nul.md — 8102 characters (cap 200);  entry: - $XS;  remedies: state the outcome and stop; a Breaking migration note stays inline, and the reasoning belongs in the commit;changelog-entries: 1 violation(s) — cap 200 characters, 1 fragment(s) measured"
+  "the shipped package refuses the fragment naming its line|real|rc=2 changelog-entries: encoding-line=changelog.d/added/late-nul.md:1" \
+  "control: without the translation the record ends at the NUL and the prefix is measured as an over-long entry|broken|rc=1 changelog-entries: fragment-long=changelog.d/added/late-nul.md:8102:200;changelog-entries: entry-preview=- $XS;changelog-entries: violations=1:1:200"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

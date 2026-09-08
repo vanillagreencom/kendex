@@ -1,6 +1,8 @@
 # md-blocks.awk — the one reading of a markdown file's block structure that
 # md-format, md-reflow and md-refs share. POSIX awk, one file per run.
 #
+# Parsed by md-format, md-reflow and md-refs. V/R rules are stable enums;
+# block-unclosed carries its closing tag after a colon.
 #   -v mode=check    "V<TAB>line<TAB>rule" per format violation
 #   -v mode=reflow   the file rewritten to the format, on stdout
 #   -v mode=lines    "T<TAB>line<TAB>content" per judged line, "X..." per
@@ -33,8 +35,8 @@ function violation(rule) { if (mode == "check") printf "V\t%d\t%s\n", FNR, rule 
 # The blank line the format requires after a heading or a fence closer,
 # whatever follows; anything else just ends the open paragraph.
 function close_block() {
-  if (prev == "heading") separate("a heading not followed by a blank line")
-  else if (prev == "fence") separate("a fence not followed by a blank line")
+  if (prev == "heading") separate("heading-after")
+  else if (prev == "fence") separate("fence-after")
   else flush()
 }
 
@@ -69,7 +71,7 @@ function list_push(ind, cind) {
 
 BEGIN {
   if (mode != "check" && mode != "reflow" && mode != "lines") {
-    printf "md-blocks.awk: mode must be check, reflow or lines (got '%s')\n", mode > "/dev/stderr"
+    printf "md-blocks: mode=%s\n  Expected check, reflow or lines.\n", mode > "/dev/stderr"
     exit 2
   }
   region = ""
@@ -89,11 +91,11 @@ stopped { next }
   raw = $0
   if (raw ~ /\r$/) {
     if (mode == "check") {
-      violation("a CRLF line ending; the format is LF, and the file is not judged past this line")
+      violation("crlf")
       stopped = 1
       next
     }
-    refuse(FNR, "a CRLF line ending")
+    refuse(FNR, "crlf")
   }
 
   # Front matter: both delimiters at column zero, on the raw line.
@@ -205,7 +207,7 @@ stopped { next }
     flen = 0
     while (substr(body, flen + 1, 1) == fchar) flen++
     if (fchar == "~" || index(substr(body, flen + 1), "`") == 0) {
-      if (prev == "para" || prev == "item") separate("a fence directly under a paragraph or list line; put a blank line before it")
+      if (prev == "para" || prev == "item") separate("fence-before")
       else close_block()
       out(raw)
       region = "fence"
@@ -222,10 +224,10 @@ stopped { next }
     if (prev == "bound") {
       full = PREFIX
       PREFIX = bound_prefix
-      separate("a heading not preceded by a blank line")
+      separate("heading-before")
       PREFIX = full
     }
-    else if (!(prev == "blank" || prev == "start" || prev == "html")) separate("a heading not preceded by a blank line")
+    else if (!(prev == "blank" || prev == "start" || prev == "html")) separate("heading-before")
     else flush()
     out(raw)
     text = body
@@ -329,9 +331,9 @@ stopped { next }
     cind = (ws == 0 || ws >= 5) ? ind + mlen + 1 : ind + RLENGTH
     list_pop_to(ind)
     list_push(ind, cind)
-    if (prev == "para") separate("a list item directly under a paragraph line; put a blank line before the list")
+    if (prev == "para") separate("list-before")
     else close_block()
-    if (raw ~ /  $/) violation("a trailing-double-space line break; join the lines instead")
+    if (raw ~ /  $/) violation("trailing-space")
     emit("T", content)
     buf = rtrim(raw)
     have_buf = 1
@@ -342,7 +344,7 @@ stopped { next }
 
   # A paragraph line.
   if (prev == "para" || prev == "item" || lazy) {
-    violation(prev == "item" ? "a list item continued on the next line; put the whole item on one line" : "a paragraph hard-wrapped over lines; put the whole paragraph on one line")
+    violation(prev == "item" ? "item-wrap" : "paragraph-wrap")
     buf = buf " " rtrim(body)
     if (prev == "para") setext_text = setext_text " " rtrim(body)
     para_lines++
@@ -357,15 +359,15 @@ stopped { next }
     prev = "para"
     prev_depth = depth
   }
-  if (raw ~ /  $/) violation("a trailing-double-space line break; join the lines instead")
+  if (raw ~ /  $/) violation("trailing-space")
   emit("T", content)
   next
 }
 
 END {
   if (refused || stopped) exit (refused ? 2 : 0)
-  if (region == "fence") refuse(open_line, "an unterminated fence")
-  if (region == "front") refuse(open_line, "unterminated front matter")
-  if (region == "html" && html_end != "") refuse(open_line, (html_kind == "HTML block") ? "an unterminated HTML block" : "a block with no closing " html_kind)
+  if (region == "fence") refuse(open_line, "fence-unclosed")
+  if (region == "front") refuse(open_line, "front-unclosed")
+  if (region == "html" && html_end != "") refuse(open_line, (html_kind == "HTML block") ? "html-unclosed" : "block-unclosed:" html_kind)
   flush()
 }

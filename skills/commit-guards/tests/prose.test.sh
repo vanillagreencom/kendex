@@ -34,7 +34,7 @@ assert_eq() { # LABEL EXPECT ACTUAL
 }
 
 # One line for a run in the row's repository: the exit status, then every
-# line printed, in order, joined by ';'. ENVS is a comma-separated list of
+# stable record printed, in order, joined by ';'. ENVS is a comma-separated list of
 # assignments; ARGS are passed through.
 R=""
 run() { # ENVS ARGS
@@ -42,6 +42,7 @@ run() { # ENVS ARGS
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   # shellcheck disable=SC2086
   out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$PROSE" $2 2>&1)" || rc=$?
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^[a-z][a-z-]*: [a-z-]+=/ { print }')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
@@ -61,15 +62,14 @@ SEEDED='Seeded 2026-08-12.\n'
 # The lines the scan prints, as functions of what a row put in.
 PATHS_CORE="SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md"
 PATHS_ALL="$PATHS_CORE docs/architecture/*.md"
-REMEDY="  remedies: state the rule that holds now and delete the story; the date and the issue number belong in the commit that made the change"
-ERR="::error::prose: "
-hit() { printf 'prose FAIL history reference: %s:%s:%s;%s' "$1" "$2" "$3" "$REMEDY"; } # PATH LINE TEXT
-skip() { printf 'prose: not measured: %s — %s' "$1" "$2"; } # PATH REASON
-unmeasured() { printf '; %s matched path(s) not measured' "$1"; } # N
-clean() { printf 'prose: OK — no history references in %s scanned file(s)%s' "$1" "${2-}"; } # SCANNED [UNMEASURED]
-failed() { printf 'prose: %s history reference(s) in %s scanned file(s) — paths %s%s' "$1" "$2" "${3:-$PATHS_CORE}" "${4-}"; } # HITS SCANNED [PATHS] [UNMEASURED]
-nomatch() { printf 'prose: OK — no tracked file matches COMMIT_GUARDS_PROSE_PATHS (%s)' "$1"; } # PATHS
-NONE="prose: OK — nothing measurable to scan"
+ERR="prose: "
+hit() { printf 'prose: match=history reference:%s:%s:%s' "$1" "$2" "$3"; } # PATH LINE SOURCE-TEXT
+skip() { printf 'prose: unmeasured=%s:%s' "$1" "$2"; } # PATH CODE
+unmeasured() { printf '%s' "$1"; } # N
+clean() { printf 'prose: summary=violations=0 files=%s skipped=%s' "$1" "${2:-0}"; } # SCANNED [SKIPPED]
+failed() { printf 'prose: summary=violations=%s files=%s skipped=%s;prose: paths=%s' "$1" "$2" "${4:-0}" "${3:-$PATHS_CORE}"; } # HITS SCANNED [PATHS] [SKIPPED]
+nomatch() { printf 'prose: no-match=%s' "$1"; } # PATHS
+NONE="prose: unmeasured-count="
 
 # Table one: SKILL.md holds LINE in a fresh repository, scanned under the
 # default scope.
@@ -147,7 +147,7 @@ run_rows "${rows[@]}" \
   "control: under scope all the same file fails|fx_arch arch-all|COMMIT_GUARDS_MD_SCOPE=all||rc=1 $(hit docs/architecture/overview.md 1 'Seeded 2026-08-12.');$(failed 1 2 "$PATHS_ALL")" \
   "README, CHECKS, docs, CHANGELOG, references and a workflows-named file keep their history, with the ten scoped files still read|fx_unscoped unscoped|||rc=0 $(clean 10)" \
   "control: the same six files fail once a path list names them|fx_unscoped unscoped-named|COMMIT_GUARDS_PROSE_PATHS=$UNSCOPED_GLOBS||rc=1 $(for f in $UNSCOPED_SORTED; do hit "$f" 1 'Seeded 2026-08-12, reverted in #1204.'; printf ';'; done)$(failed 6 6 "$UNSCOPED_GLOBS")" \
-  "an unknown scope is exit 2, quoting it|fx_arch scope-unknown|COMMIT_GUARDS_MD_SCOPE=sometimes||rc=2 ${ERR}COMMIT_GUARDS_MD_SCOPE must be 'touched' or 'all', got 'sometimes'"
+  "an unknown scope is exit 2, quoting it|fx_arch scope-unknown|COMMIT_GUARDS_MD_SCOPE=sometimes||rc=2 ${ERR}scope=sometimes"
 
 echo "=== the markdown excludes list carves a vendored skill out ==="
 vendored() { repo "$1"; put SKILL.md 'clean\n'; put .agents/skills/vendored/SKILL.md "$SEEDED"; }
@@ -164,12 +164,12 @@ run_rows \
   "the override replaces the list: docs/design.md fails and SKILL.md is no longer scanned|override env|COMMIT_GUARDS_PROSE_PATHS=docs/*.md||rc=1 $(hit docs/design.md 1 'Seeded 2026-08-12.');$(failed 1 1 'docs/*.md')" \
   "the same override resolves from kendex.settings.toml [env]|fx_settings|||rc=1 $(hit docs/design.md 1 'Seeded 2026-08-12.');$(failed 1 1 'docs/*.md')" \
   "a list matching no tracked file passes naming the list, and scans nothing|override nomatch|COMMIT_GUARDS_PROSE_PATHS=no/such/*.md||rc=0 $(nomatch 'no/such/*.md')" \
-  "an empty path list is exit 2|override empty|COMMIT_GUARDS_PROSE_PATHS= ||rc=2 ${ERR}COMMIT_GUARDS_PROSE_PATHS names no path — name at least one, or drop this check from COMMIT_GUARDS_CHECKS" \
-  "an absolute path is exit 2|override absolute|COMMIT_GUARDS_PROSE_PATHS=/etc/SKILL.md||rc=2 ${ERR}prose path must be repo-root-relative, got absolute: /etc/SKILL.md" \
-  "a path escaping the repository is exit 2|override escaping|COMMIT_GUARDS_PROSE_PATHS=../outside/*.md||rc=2 ${ERR}prose path escapes the repository or normalizes empty: ../outside/*.md" \
-  "an unknown flag is exit 2, quoting it|override unknown-flag||--no-such-flag|rc=2 ${ERR}unknown argument '--no-such-flag' (see --help)"
-assert_eq "--help prints usage at exit 0" "rc=0 usage: prose" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
-assert_eq "--help documents the scope-all list as the default" "(default $PATHS_ALL)" "$(run '' --help | LC_ALL=C sed -n 's/.*(\(default SKILL.md[^)]*\)).*/(\1)/p')"
+  "an empty path list is exit 2|override empty|COMMIT_GUARDS_PROSE_PATHS= ||rc=2 ${ERR}glob-empty=COMMIT_GUARDS_PROSE_PATHS" \
+  "an absolute path is exit 2|override absolute|COMMIT_GUARDS_PROSE_PATHS=/etc/SKILL.md||rc=2 ${ERR}path-absolute=prose:/etc/SKILL.md" \
+  "a path escaping the repository is exit 2|override escaping|COMMIT_GUARDS_PROSE_PATHS=../outside/*.md||rc=2 ${ERR}path-escape=prose:../outside/*.md" \
+  "an unknown flag is exit 2, quoting it|override unknown-flag||--no-such-flag|rc=2 ${ERR}argument=--no-such-flag"
+assert_eq "--help prints usage at exit 0" "rc=0 prose: usage=prose" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
+assert_eq "--help names the default scope-all paths" "$PATHS_ALL" "$(run '' --help | LC_ALL=C sed -n 's/.*;prose: paths=//p')"
 
 echo "=== a configured path that is not markdown is named, never counted clean ==="
 fx_regular() { repo regular; put notes/target.md "$SEEDED"; put skills/dev/SKILL.md "$SEEDED"; }
@@ -190,11 +190,11 @@ fx_index_both() { repo "$1"; put workflows/a.md 'clean\n'; put workflows/b.md "$
 fx_index_glob() { fx_index_both index-glob; rm "$R/workflows/b.md"; } # b.md still in the index, gone from the checkout
 run_rows \
   "control: the same content as a REGULAR file at the scoped path fails|fx_regular|||rc=1 $(hit skills/dev/SKILL.md 1 'Seeded 2026-08-12.');$(failed 1 1)" \
-  "a scoped symlink is named as unmeasured and counted apart: no clean verdict, no 'nothing matched' line|fx_symlink symlink|||rc=0 $(skip skills/dev/SKILL.md 'tracked as a symlink, not markdown');$NONE$(unmeasured 1)" \
-  "a repo whose CLAUDE.md links to AGENTS.md and back exits 0, naming both links|fx_chain_clean|||rc=0 $(skip .claude/CLAUDE.md 'tracked as a symlink, not markdown');$(skip CLAUDE.md 'tracked as a symlink, not markdown');$(clean 1 "$(unmeasured 2)")" \
-  "control: a reference in the file the links point at still fails, naming it|fx_chain_seeded|||rc=1 $(skip .claude/CLAUDE.md 'tracked as a symlink, not markdown');$(skip CLAUDE.md 'tracked as a symlink, not markdown');$(hit AGENTS.md 1 'Seeded 2026-08-12.');$(failed 1 1 "$PATHS_CORE" "$(unmeasured 2)")" \
-  "a gitlink at a scoped path is named as unmeasured, not read as markdown|fx_gitlink|||rc=0 $(skip vendor/AGENTS.md 'tracked as a submodule gitlink, not markdown');$(clean 1 "$(unmeasured 1)")" \
-  "a binary blob at a scoped path is named as unmeasured, with no clean file count over it|fx_binary|||rc=0 $(skip AGENTS.md 'binary content, not markdown');$NONE$(unmeasured 1)" \
+  "a scoped symlink is named as unmeasured and counted apart: no clean verdict, no 'nothing matched' line|fx_symlink symlink|||rc=0 $(skip skills/dev/SKILL.md symlink);$NONE$(unmeasured 1)" \
+  "a repo whose CLAUDE.md links to AGENTS.md and back exits 0, naming both links|fx_chain_clean|||rc=0 $(skip .claude/CLAUDE.md symlink);$(skip CLAUDE.md symlink);$(clean 1 "$(unmeasured 2)")" \
+  "control: a reference in the file the links point at still fails, naming it|fx_chain_seeded|||rc=1 $(skip .claude/CLAUDE.md symlink);$(skip CLAUDE.md symlink);$(hit AGENTS.md 1 'Seeded 2026-08-12.');$(failed 1 1 "$PATHS_CORE" "$(unmeasured 2)")" \
+  "a gitlink at a scoped path is named as unmeasured, not read as markdown|fx_gitlink|||rc=0 $(skip vendor/AGENTS.md gitlink);$(clean 1 "$(unmeasured 1)")" \
+  "a binary blob at a scoped path is named as unmeasured, with no clean file count over it|fx_binary|||rc=0 $(skip AGENTS.md binary);$NONE$(unmeasured 1)" \
   "control: both tracked workflows are scanned while both sit in the work tree|fx_index_both index-both|||rc=1 $(hit workflows/b.md 1 'Seeded 2026-08-12.');$(failed 1 2)" \
   "a tracked file absent from the work tree is still scanned: the glob is matched against the index|fx_index_glob|||rc=1 $(hit workflows/b.md 1 'Seeded 2026-08-12.');$(failed 1 2)"
 # The premises the rows above rest on. The symlink skip: `git grep --cached`
@@ -232,7 +232,10 @@ probe() { # FLAG — the loader called from a shell with pathname expansion set 
   out="$(cd "$R" && GG_CHECK=probe bash -c 'set -euo pipefail; set '"$1"'f; . "$1"; gg_load_path_globs "*.md" probe PROBE_KEY; printf %s "$GG_PATH_GLOBS"' _ "$COMMON" 2>&1)" || rc=$?
   printf 'rc=%s %s' "$rc" "$out"
 }
-assert_eq "the loader exits 2 when the caller left pathname expansion on" "rc=2 ${ERR/prose/probe}gg_load_path_globs: pathname expansion is on; the caller must run under 'set -f' or the configured globs resolve against the work tree instead of matching the index" "$(probe +)"
+PROBE_RESULT="$(probe +)"
+PROBE_RECORD="${PROBE_RESULT%%$'\n'*}"
+assert_eq "the loader exits 2 with the pathname-expansion refusal" "rc=2 probe: glob-expansion" "${PROBE_RECORD%=*}"
+case "${PROBE_RECORD##*=}" in *f*) assert_eq "the refused flags have pathname expansion enabled" absent present ;; esac
 assert_eq "control: under set -f the same call loads the glob unexpanded" "rc=0 *.md" "$(probe -)"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

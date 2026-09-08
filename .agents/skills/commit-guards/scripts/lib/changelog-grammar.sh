@@ -35,15 +35,16 @@ gg_changelog_scopes() {
 # A fragment is one Markdown list item: it opens with a hyphen and a space,
 # and every later line indents under it. A second marker or a heading would
 # be a second entry, or would end the section it is folded into. The
-# complaint, or nothing.
+# output enum (empty, marker, continuation), or nothing. changelog-entries
+# consumes this internal result and supplies the explanation.
 GG_SHAPE_AWK='
-BEGIN { empty = "has no entry in it — a fragment is the Markdown list item it becomes" }
+BEGIN { empty = "empty" }
 { sub(/\r$/, "") }
 /^[[:space:]]*$/ { next }
 !seen {
   seen = 1
   if ($0 !~ /^- /) {
-    print "does not open with a list marker — a fragment is the Markdown list item it becomes, opening with a hyphen and a space"
+    print "marker"
     exit
   }
   # A marker with nothing after it is an entry that says nothing, which is
@@ -52,7 +53,7 @@ BEGIN { empty = "has no entry in it — a fragment is the Markdown list item it 
   next
 }
 !/^[ \t]/ {
-  print "holds more than the one entry it becomes — every line after the first indents under it"
+  print "continuation"
   exit
 }
 END { if (!seen) print empty }

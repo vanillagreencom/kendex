@@ -78,6 +78,7 @@ install_line() { # SHIM-DIR ARM — ARM is `tmpdir` (gg_tmpdir first) or `bare`
     gg_install_file "$4" tools/dest.tsv "the fixture"
   ' _ "$COMMON" "$INSTALL" "$2" "$ROOT/src.tsv" 2>&1)" || rc=$?
   out="${out//"$ROOT"/<root>}"
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^probe: [a-z-]+=/ { print }')"
   if [ -e "$dest" ]; then
     content="$(cat "$dest")"
     mode="$(filemode "$dest")"
@@ -95,10 +96,10 @@ rows=(
   "a destination without owner-write is replaced and keeps its read-only mode|444||tmpdir|rc=0 dest=REPLACEMENT mode=444 staged=0"
   "a destination that does not exist yet lands with the staging file's owner-only mode|absent||tmpdir|rc=0 dest=REPLACEMENT mode=600 staged=0"
   "a symlink destination is replaced by a file with the mode of the file behind it; the file behind it is untouched|link||tmpdir|rc=0 dest=REPLACEMENT mode=644 former-target=BEHIND THE LINK staged=0"
-  "an unreadable mode is a loud refusal, the destination untouched|644|$ROOT/nostat|tmpdir|rc=2 ::error::probe: could not read the mode of tools/dest.tsv — the fixture was not replaced dest=ORIGINAL mode=644 staged=0"
-  "no scratch directory is a refusal before anything is staged|644||bare|rc=2 ::error::probe: gg_install_file needs gg_tmpdir called first — the fixture was not replaced dest=ORIGINAL mode=644 staged=0"
-  "a failed chmod names the mode it could not give and what chmod said, the destination untouched|644|$ROOT/nochmod|tmpdir|rc=2 ::error::probe: could not give the replacement for the fixture tools/dest.tsv's mode (644) (chmod: refused by the test stub) dest=ORIGINAL mode=644 staged=0"
-  "a failed rename is a loud collection error, the destination byte-identical|644|$ROOT/nomv|tmpdir|rc=2 ::error::probe: could not replace the fixture at tools/dest.tsv — inspect the file before trusting it dest=ORIGINAL mode=644 staged=0"
+  "an unreadable mode is a loud refusal, the destination untouched|644|$ROOT/nostat|tmpdir|rc=2 probe: file-mode=tools/dest.tsv dest=ORIGINAL mode=644 staged=0"
+  "no scratch directory is a refusal before anything is staged|644||bare|rc=2 probe: replacement-scratch=the fixture dest=ORIGINAL mode=644 staged=0"
+  "a failed chmod names the mode it could not give and what chmod said, the destination untouched|644|$ROOT/nochmod|tmpdir|rc=2 probe: replacement-mode=tools/dest.tsv:644 dest=ORIGINAL mode=644 staged=0"
+  "a failed rename is a loud collection error, the destination byte-identical|644|$ROOT/nomv|tmpdir|rc=2 probe: replace-file=tools/dest.tsv dest=ORIGINAL mode=644 staged=0"
 )
 i=0
 for row in "${rows[@]}"; do

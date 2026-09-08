@@ -47,7 +47,7 @@ resolve() { # ENVS [KEY]
   ' "$SETTINGS" "${2:-$K}" 2>"$TMP/err"; })" || rc=$?
   # bash names the resolver's own path and line when a redirect inside it is
   # refused; the path and the line number are not the row's to pin.
-  err="$(LC_ALL=C sed -e "s#$SETTINGS#<settings.sh>#" -e 's/line [0-9]*:/line N:/' "$TMP/err" | LC_ALL=C paste -sd ';' -)"
+  err="$(LC_ALL=C awk '/^commit-guards: [a-z-]+=/ { print }' "$TMP/err" | LC_ALL=C paste -sd ';' -)"
   printf 'rc=%s value=%s%s' "$rc" "$out" "${err:+ err=$err}"
 }
 
@@ -73,9 +73,7 @@ fx_env_dir() { root "$1"; mkdir -p "$R/.env.local"; } # NAME
 fx_env_dangling() { root env-dangling; ln -s missing.env "$R/.env.local"; }
 dotenv() { root "$1"; shift; put .env.local "$*\n"; } # NAME LINE... — .env.local holds the rejoined words
 fx_nested_dup() { root nested-dup; put .kendex/settings.toml '[env]\nCOMMIT_GUARDS_TP = "a"\nCOMMIT_GUARDS_TP = "b"\n'; }
-ERR_DUP='::error::.kendex/settings.toml: COMMIT_GUARDS_TP is assigned more than once in [env] (each key must be unique in the table)'
-NOT_REGULAR='settings source exists but is not a regular file (directory, FIFO, socket or device); a source is skipped only when it is absent'
-NOT_RESOLVING='settings source is a symlink that does not resolve (dangling target, cycle, or over-long chain); a source is skipped only when it is absent'
+ERR_DUP='commit-guards: settings-duplicate=.kendex/settings.toml:COMMIT_GUARDS_TP'
 
 run_rows() { # label | world | envs | expect
   local row label fx envs expect words
@@ -105,25 +103,25 @@ run_rows \
   "control: the same assignment inside [env] resolves|toml in-env [env]\nCOMMIT_GUARDS_TP = \"in-env\"\n||rc=0 value=in-env" \
   "a trailing comment is dropped from the decoded value, a quote inside it included|toml comment [env]\nCOMMIT_GUARDS_TP = \"kept\" # a \"quoted\" comment\n||rc=0 value=kept" \
   "a key assigned twice inside [env] is a config error naming the key, in the nested file under a good root file|fx_nested_dup||rc=1 value= err=$ERR_DUP" \
-  "a backslash in the value is a config error, never decoded|fx_backslash||rc=1 value= err=::error::kendex.settings.toml: unsupported syntax for COMMIT_GUARDS_TP (expected a single-line basic string, no double quote and no backslash: COMMIT_GUARDS_TP = \"value\")" \
-  "a commented [env] header is a config error naming its line, not an invisible table|toml header [env] # comment\nCOMMIT_GUARDS_TP = \"hidden\"\n||rc=1 value= err=::error::kendex.settings.toml:1: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)" \
-  "a leading byte-order mark is a config error, not a misread first line|fx_bom||rc=1 value= err=::error::kendex.settings.toml: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" \
-  "an unrelated non-contract assignment fails the read|toml unrelated-bare [env]\nUNRELATED = bare\nCOMMIT_GUARDS_TP = \"v\"\n||rc=1 value= err=::error::kendex.settings.toml: unsupported syntax for UNRELATED (expected a single-line basic string, no double quote and no backslash: UNRELATED = \"value\")" \
-  "an unrelated duplicated key fails the read|toml unrelated-dup [env]\nUNRELATED = \"a\"\nUNRELATED = \"b\"\nCOMMIT_GUARDS_TP = \"v\"\n||rc=1 value= err=::error::kendex.settings.toml: UNRELATED is assigned more than once in [env] (each key must be unique in the table)" \
-  "an exported value does not mask a malformed settings file|toml masked-dup [env]\nDUP = \"a\"\nDUP = \"b\"\n|COMMIT_GUARDS_TP=explicit|rc=1 value= err=::error::kendex.settings.toml: DUP is assigned more than once in [env] (each key must be unique in the table)" \
-  "an exported value does not mask a DIRECTORY at .env.local|fx_env_dir env-dir-masked|COMMIT_GUARDS_TP=explicit|rc=1 value= err=::error::.env.local: $NOT_REGULAR"
+  "a backslash in the value is a config error, never decoded|fx_backslash||rc=1 value= err=commit-guards: settings-string=kendex.settings.toml:COMMIT_GUARDS_TP" \
+  "a commented [env] header is a config error naming its line, not an invisible table|toml header [env] # comment\nCOMMIT_GUARDS_TP = \"hidden\"\n||rc=1 value= err=commit-guards: settings-header=kendex.settings.toml:1" \
+  "a leading byte-order mark is a config error, not a misread first line|fx_bom||rc=1 value= err=commit-guards: settings-bom=kendex.settings.toml" \
+  "an unrelated non-contract assignment fails the read|toml unrelated-bare [env]\nUNRELATED = bare\nCOMMIT_GUARDS_TP = \"v\"\n||rc=1 value= err=commit-guards: settings-string=kendex.settings.toml:UNRELATED" \
+  "an unrelated duplicated key fails the read|toml unrelated-dup [env]\nUNRELATED = \"a\"\nUNRELATED = \"b\"\nCOMMIT_GUARDS_TP = \"v\"\n||rc=1 value= err=commit-guards: settings-duplicate=kendex.settings.toml:UNRELATED" \
+  "an exported value does not mask a malformed settings file|toml masked-dup [env]\nDUP = \"a\"\nDUP = \"b\"\n|COMMIT_GUARDS_TP=explicit|rc=1 value= err=commit-guards: settings-duplicate=kendex.settings.toml:DUP" \
+  "an exported value does not mask a DIRECTORY at .env.local|fx_env_dir env-dir-masked|COMMIT_GUARDS_TP=explicit|rc=1 value= err=commit-guards: settings-regular=.env.local"
 
 echo "=== a source is skipped only when it is ABSENT; the overrides that force defaults ==="
 run_rows \
   "a SET-but-EMPTY COMMIT_GUARDS_SETTINGS_FILE is unset and reads the default sources|root empty-override|COMMIT_GUARDS_SETTINGS_FILE=|rc=0 value=root" \
   "COMMIT_GUARDS_SETTINGS_FILE=/dev/null forces the built-in default past every source|fx_dotenv devnull|COMMIT_GUARDS_SETTINGS_FILE=/dev/null|rc=0 value=dflt" \
   "an ABSENT explicit settings file falls back to the built-in default|root absent-explicit|COMMIT_GUARDS_SETTINGS_FILE=absent.settings.toml|rc=0 value=dflt" \
-  "a DIRECTORY at the settings path is a config error, not a silent default|fx_dir_settings|COMMIT_GUARDS_SETTINGS_FILE=nonregular.dir|rc=1 value= err=::error::nonregular.dir: $NOT_REGULAR" \
-  "a DANGLING symlink at the settings path is a config error|fx_dangling|COMMIT_GUARDS_SETTINGS_FILE=dangling.settings.toml|rc=1 value= err=::error::dangling.settings.toml: $NOT_RESOLVING" \
-  "a CYCLIC symlink at the settings path is a config error|fx_cyclic|COMMIT_GUARDS_SETTINGS_FILE=cycle-a.settings.toml|rc=1 value= err=::error::cycle-a.settings.toml: $NOT_RESOLVING" \
+  "a DIRECTORY at the settings path is a config error, not a silent default|fx_dir_settings|COMMIT_GUARDS_SETTINGS_FILE=nonregular.dir|rc=1 value= err=commit-guards: settings-regular=nonregular.dir" \
+  "a DANGLING symlink at the settings path is a config error|fx_dangling|COMMIT_GUARDS_SETTINGS_FILE=dangling.settings.toml|rc=1 value= err=commit-guards: settings-symlink=dangling.settings.toml" \
+  "a CYCLIC symlink at the settings path is a config error|fx_cyclic|COMMIT_GUARDS_SETTINGS_FILE=cycle-a.settings.toml|rc=1 value= err=commit-guards: settings-symlink=cycle-a.settings.toml" \
   "control: a RESOLVING symlink reads its target|fx_resolving|COMMIT_GUARDS_SETTINGS_FILE=link.settings.toml|rc=0 value=linked" \
-  "a DIRECTORY at .env.local is a config error where the settings file would have answered|fx_env_dir env-dir||rc=1 value= err=::error::.env.local: $NOT_REGULAR" \
-  "a DANGLING .env.local symlink is a config error, not a silent skip|fx_env_dangling||rc=1 value= err=::error::.env.local: $NOT_RESOLVING" \
+  "a DIRECTORY at .env.local is a config error where the settings file would have answered|fx_env_dir env-dir||rc=1 value= err=commit-guards: settings-regular=.env.local" \
+  "a DANGLING .env.local symlink is a config error, not a silent skip|fx_env_dangling||rc=1 value= err=commit-guards: settings-symlink=.env.local" \
   "control: with .env.local absent the settings file answers|root env-absent||rc=0 value=root"
 
 echo "=== the .env.local grammar: last assignment wins, quotes stripped, a comment after the closing quote dropped ==="
@@ -133,8 +131,8 @@ run_rows \
   "double quotes are stripped and a comment after the closing quote dropped|dotenv env-dq COMMIT_GUARDS_TP=\"quoted value\" # comment||rc=0 value=quoted value" \
   "single quotes are stripped|dotenv env-sq COMMIT_GUARDS_TP='single'||rc=0 value=single" \
   "an unquoted value ends at the first whitespace|dotenv env-bare COMMIT_GUARDS_TP=abc def||rc=0 value=abc" \
-  "a segment adjacent to the closing quote is a config error naming the key, not a truncated value|dotenv env-adjacent COMMIT_GUARDS_TP=\"abc\"#def||rc=1 value= err=::error::.env.local: unsupported syntax for COMMIT_GUARDS_TP (a quoted value must end at its closing quote, optionally followed by a comment)"
-assert_eq "a key that is not a shell identifier is refused before any source is read" "rc=1 value= err=::error::gg_setting: invalid key name 'bad-key' (shell identifier shape required: [A-Za-z_][A-Za-z0-9_]*)" "$(root bad-key; resolve '' bad-key)"
+  "a segment adjacent to the closing quote is a config error naming the key, not a truncated value|dotenv env-adjacent COMMIT_GUARDS_TP=\"abc\"#def||rc=1 value= err=commit-guards: settings-dotenv=.env.local:COMMIT_GUARDS_TP"
+assert_eq "a key that is not a shell identifier is refused before any source is read" "rc=1 value= err=commit-guards: settings-key=bad-key" "$(root bad-key; resolve '' bad-key)"
 
 echo "=== an unreadable .env.local fails loud, never falls through ==="
 if [ "$(id -u)" -eq 0 ]; then
@@ -143,7 +141,7 @@ else
   root unreadable
   put .env.local 'COMMIT_GUARDS_TP=dotenv\n'
   chmod 000 "$R/.env.local"
-  assert_eq "an unreadable .env.local is a config error: falling through would have read root" "rc=1 value= err=<settings.sh>: line N: .env.local: Permission denied;::error::.env.local: unreadable while resolving a setting (permission denied)" "$(resolve '')"
+  assert_eq "an unreadable .env.local is a config error: falling through would have read root" "rc=1 value= err=commit-guards: settings-permission=.env.local" "$(resolve '')"
   chmod 600 "$R/.env.local"
   assert_eq "control: the same file, readable, supplies its value" "rc=0 value=dotenv" "$(resolve '')"
 fi

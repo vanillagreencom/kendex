@@ -60,12 +60,13 @@ left() { # — record=<same|changed> fragment=<same|gone|changed> index=<same|ch
   if git -C "$R" ls-files -s | cmp -s - "$TMP/index-before"; then index=same; fi
   printf 'record=%s fragment=%s index=%s' "$record" "$fragment" "$index"
 }
-# One line for a run: the exit status, every line printed joined by ';',
+# One line for a run: the exit status, stable message records joined by ';',
 # then what it left behind.
 run() { # ARGS...
   local rc=0 out=""
   snapshot
   out="$(cd "$R" && "$CE" "$@" 2>&1)" || rc=$?
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^changelog-entries: [a-z-]+=/ { print }')" || return 2
   printf 'rc=%s%s %s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}" "$(left)"
 }
 ROW=0
@@ -81,28 +82,28 @@ rows() { # MODE — label | content | expect; MODE is the plain check or --colla
     assert_eq "$label" "$expect" "$(run $mode)"
   done
 }
-ERR="::error::changelog-entries: "
-VIOLATION="changelog-entries: 1 violation(s) — cap 200 characters, 1 fragment(s) measured"
+ERR="changelog-entries: "
+VIOLATION="changelog-entries: violations=1:1:200"
 UNTOUCHED="record=same fragment=same index=same"
 
 echo "=== the plain check reads fragments, never the record: any wording passes beside a valid fragment ==="
 rows '' \
-  "a record with no Unreleased heading|# Release notes\n|rc=0 changelog-entries: OK — 1 fragment(s) within the cap (200 characters) $UNTOUCHED" \
-  "a record with a paragraph under a foreign section|# Changelog\n\n## [Unreleased]\n\n### Details\n\nA new paragraph.\n|rc=0 changelog-entries: OK — 1 fragment(s) within the cap (200 characters) $UNTOUCHED"
+  "a record with no Unreleased heading|# Release notes\n|rc=0 changelog-entries: checked=1:200 $UNTOUCHED" \
+  "a record with a paragraph under a foreign section|# Changelog\n\n## [Unreleased]\n\n### Details\n\nA new paragraph.\n|rc=0 changelog-entries: checked=1:200 $UNTOUCHED"
 
 echo "=== control: a fragment's own structure still fails beside a reworded record ==="
 ROW=$((ROW + 1))
 repo "row-$ROW" '# Release notes\n' 'not a list item\n'
 assert_eq "a fragment that is not a list item fails naming it, the record untouched" \
-  "rc=1 changelog-entries FAIL $FRAGMENT does not open with a list marker — a fragment is the Markdown list item it becomes, opening with a hyphen and a space;changelog-entries: 1 violation(s) — cap 200 characters, 0 fragment(s) measured $UNTOUCHED" "$(run)"
+  "rc=1 changelog-entries: fragment-marker=$FRAGMENT;changelog-entries: violations=1:0:200 $UNTOUCHED" "$(run)"
 
 echo "=== collation reads the record: an unusable shape is refused without a write, a usable one folds ==="
 rows --collate \
-  "no Unreleased heading is a violation naming the remedy|# Release notes\n|rc=1 changelog-entries FAIL CHANGELOG.md carries no '## [Unreleased]' heading;  open one — a release folds the fragments into it and has nowhere to put them otherwise;$VIOLATION $UNTOUCHED" \
-  "two Unreleased headings cannot be decided between|# Log\n\n## [Unreleased]\n\n## [Unreleased]\n|rc=2 ${ERR}CHANGELOG.md carries more than one '## [Unreleased]' heading — which one is the section cannot be decided $UNTOUCHED" \
-  "an unclosed code fence hides the section|# Log\n\n## [Unreleased]\n\n\`\`\`\nunclosed\n|rc=2 ${ERR}CHANGELOG.md leaves a code fence unclosed — the [Unreleased] section cannot be located $UNTOUCHED" \
-  "a section name outside Keep a Changelog is a violation naming the set|# Log\n\n## [Unreleased]\n\n### Details\n\n- Note.\n|rc=1 changelog-entries FAIL CHANGELOG.md names 'Details' under [Unreleased], which is not a Keep a Changelog section;  section one of: added changed deprecated removed fixed security;$VIOLATION $UNTOUCHED" \
-  "control: a usable record folds the fragment and keeps its edited note|# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Reworded note.\n|rc=0 changelog-entries: folded 1 entry into CHANGELOG.md's [Unreleased] section record=changed fragment=gone index=same"
+  "no Unreleased heading is a violation naming the remedy|# Release notes\n|rc=1 changelog-entries: record-heading=CHANGELOG.md:missing;$VIOLATION $UNTOUCHED" \
+  "two Unreleased headings cannot be decided between|# Log\n\n## [Unreleased]\n\n## [Unreleased]\n|rc=2 ${ERR}record-heading-count=CHANGELOG.md:2 $UNTOUCHED" \
+  "an unclosed code fence hides the section|# Log\n\n## [Unreleased]\n\n\`\`\`\nunclosed\n|rc=2 ${ERR}record-fence=CHANGELOG.md:unclosed $UNTOUCHED" \
+  "a section name outside Keep a Changelog is a violation naming the set|# Log\n\n## [Unreleased]\n\n### Details\n\n- Note.\n|rc=1 changelog-entries: record-section=CHANGELOG.md:Details;$VIOLATION $UNTOUCHED" \
+  "control: a usable record folds the fragment and keeps its edited note|# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Reworded note.\n|rc=0 changelog-entries: folded=1:CHANGELOG.md record=changed fragment=gone index=same"
 assert_eq "control: the fold appends the fragment under the edited note" \
   "$(printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Reworded note.\n- A pending change.\n')" "$(cat "$R/CHANGELOG.md")"
 
@@ -131,11 +132,11 @@ shape_rows() { # label | shape | expect
   done
 }
 shape_rows \
-  "an untracked record is refused: commit it first|untracked|rc=2 ${ERR}CHANGELOG.md is not tracked; commit the collation destination first $UNTOUCHED" \
-  "a symlinked record is not a regular destination, and the link is kept|symlink|rc=2 ${ERR}CHANGELOG.md is not a regular collation destination $UNTOUCHED link=same" \
-  "a gitlink at the record's path is not a regular destination|gitlink|rc=2 ${ERR}CHANGELOG.md is not a regular collation destination $UNTOUCHED" \
-  "a record holding binary content is refused|binary|rc=2 ${ERR}CHANGELOG.md holds binary content; collation needs text $UNTOUCHED" \
-  "a record that is not valid UTF-8 is refused naming its line|utf8|rc=2 ${ERR}CHANGELOG.md line 4 is not valid UTF-8 — text with no character count cannot be measured $UNTOUCHED"
+  "an untracked record is refused: commit it first|untracked|rc=2 ${ERR}record-untracked=CHANGELOG.md $UNTOUCHED" \
+  "a symlinked record is not a regular destination, and the link is kept|symlink|rc=2 ${ERR}record-mode=CHANGELOG.md:120000 $UNTOUCHED link=same" \
+  "a gitlink at the record's path is not a regular destination|gitlink|rc=2 ${ERR}record-mode=CHANGELOG.md:160000 $UNTOUCHED" \
+  "a record holding binary content is refused|binary|rc=2 ${ERR}record-binary=CHANGELOG.md $UNTOUCHED" \
+  "a record that is not valid UTF-8 is refused naming its line|utf8|rc=2 ${ERR}encoding-line=CHANGELOG.md:4 $UNTOUCHED"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
