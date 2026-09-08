@@ -3,7 +3,7 @@
 # name: doc-drift-check
 # event: Stop
 # matcher:
-# description: Shows the user a notice through stdout systemMessage JSON when unchanged documents may need an update after covered code changes. The notice opens with `doc-drift-check: stale=<count>` and lists the documents under it; stdout carries that one object and nothing else. Uses the nearest tracked non-root AGENTS.md and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Every Stop reports independently. Claude Code only.
+# description: Shows the user a notice through stdout systemMessage JSON when unchanged documents may need an update after covered code changes. The notice opens with `doc-drift-check: stale=<count>` and `doc-drift-check: base=<ref>` — the ref it compared against, or `default-branch`, `none` or `unrelated` — and lists the documents under them; stdout carries that one object and nothing else. Uses the nearest tracked non-root AGENTS.md and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Every Stop reports independently. Claude Code only.
 # safety: Read-only notice. Always exits 0, including when discovery fails; failures report that the notice is unavailable. Does not parse session payloads or write session state. Every notice opens with `doc-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
 # harnesses: [claude-code]
@@ -34,8 +34,8 @@ notice() { # KEY VALUE [DETAIL]
       exec 3>&1
       JQ_STATUS=0
       JQ_ERR=$(jq -n --arg systemMessage \
-        "$(printf 'doc-drift-check: stale=%s\nThese unchanged documents may need an update:\n%sCompared %s\n' \
-          "$2" "$STALE" "$JUDGED")" '{systemMessage: $systemMessage}' 2>&1 1>&3) || JQ_STATUS=$?
+        "$(printf 'doc-drift-check: stale=%s\ndoc-drift-check: base=%s\nThese unchanged documents may need an update:\n%sCompared %s\n' \
+          "$2" "$BASE_VALUE" "$STALE" "$JUDGED")" '{systemMessage: $systemMessage}' 2>&1 1>&3) || JQ_STATUS=$?
       exec 3>&-
       [ "$JQ_STATUS" -eq 0 ] || notice exit "$JQ_STATUS" "$JQ_ERR"
       ;;
@@ -110,18 +110,29 @@ if probe_ref symbolic-ref -q --short HEAD; then
   CURRENT="$REF"
 fi
 
+# BASE_VALUE is the arm this hook chose, as a value a reader parses: the ref
+# it compared against, or which of the three reasons left it the working tree
+# alone. The English below the notice describes the same choice for a person;
+# the value is what a consumer reads, so the choice is not carried by prose.
 BASE=""
+BASE_VALUE=""
 if [ -z "$DEFAULT" ]; then
+  BASE_VALUE=none
   JUDGED="the working tree alone: no origin/HEAD, main or master to compare against"
 elif [ "$CURRENT" = "${DEFAULT#origin/}" ]; then
+  BASE_VALUE=default-branch
   JUDGED="the working tree alone: $CURRENT is the default branch"
 else
   rc=0
   BASE=$(git merge-base HEAD "$DEFAULT" 2>&1) || rc=$?
   case "$rc" in
-    0) JUDGED="every change since $BASE, the merge-base with $DEFAULT" ;;
+    0)
+      BASE_VALUE="$DEFAULT"
+      JUDGED="every change since $BASE, the merge-base with $DEFAULT"
+      ;;
     1)
       BASE=""
+      BASE_VALUE=unrelated
       JUDGED="the working tree alone: HEAD shares no history with $DEFAULT"
       ;;
     *) git_failed 'merge-base' "$BASE" ;;

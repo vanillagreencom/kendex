@@ -3,7 +3,7 @@
 # name: session-drift-check
 # event: SessionStart
 # description: On a fresh session start (not resume or compact), runs `kendex check --quiet` and surfaces kendex drift to the agent — outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`, `-g` in a global section), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Prints nothing when the install is current. KENDEX_DRIFT_HOOK=off disables it.
-# safety: Informational only — never installs or removes anything and never touches the project's git state. The check never waits on the network; the only thing it may write is kendex's own cache bookkeeping under ~/.kendex/cache (fetch stamps), and when a source cache there is older than its TTL, a detached background process refreshes it (git fetch + reset, confined to that cache) and this hook does not wait for it. Every suggestion requires user approval before acting. Every notice opens with `session-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key. The one passthrough is `kendex check`'s own report, relayed on stdout under the keyed line and preserved exactly.
+# safety: Informational only — never installs or removes anything and never touches the project's git state. The check never waits on the network; the only thing it may write is kendex's own cache bookkeeping under ~/.kendex/cache (fetch stamps), and when a source cache there is older than its TTL, a detached background process refreshes it (git fetch + reset, confined to that cache) and this hook does not wait for it. Every suggestion requires user approval before acting. Every notice opens with `session-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key. `kendex check`'s own report is relayed on stdout under those lines, preserved exactly; which arm its exit code chose is a value on them, not a sentence in it.
 # timeout: 30
 # harnesses: [claude-code, codex]
 # ---
@@ -32,10 +32,14 @@ notice() { # KEY VALUE [DETAIL]
     path=*) printf 'kendex check could not run: project directory %s is not accessible; drift status unknown\n' "$2" ;;
     drift=found) printf '%s\n' "$OUTPUT" ;;
     check=could-not-run)
-      # The exit-2 arm with nothing to relay is the one line that ends without
-      # a colon; every other rendering of this notice, the embedded hook in
+      # The status kendex left is a value, not a number inside a sentence: the
+      # arm this hook chose and the code it chose it from are both parsed off
+      # keyed lines, and the English below says the same for a person. The
+      # exit-2 arm with nothing to relay is the one line that ends without a
+      # colon; every other rendering of this notice, the embedded hook in
       # crates/core/src/drift/hook.rs and the Pi extension included, prints the
       # colon and the report under it, a blank line where there is none.
+      printf 'session-drift-check: exit=%s\n' "${3:-}"
       printf 'kendex check could not run (exit %s); drift status unknown' "${3:-}"
       if [ "${3:-}" = 2 ] && [ -z "$OUTPUT" ]; then
         printf '\n'
@@ -44,6 +48,7 @@ notice() { # KEY VALUE [DETAIL]
       fi
       ;;
     check=incomplete)
+      printf 'session-drift-check: exit=%s\n' "${3:-}"
       printf 'kendex check incomplete (exit %s); some drift status unknown:\n%s\n' "${3:-}" "$OUTPUT"
       ;;
     exit=*) printf 'kendex check could not run: drift hook failed at line %s (exit %s); drift status unknown\n' "${3:-}" "$2" ;;

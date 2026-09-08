@@ -25,11 +25,10 @@
 #            as `<doc>(<changed path>)`, sorted and joined by `,`; a stdout
 #            that is not a lone {systemMessage} object renders as
 #            `malformed:` and the text
-#   judged   the notice's Compared line with the arm-shared prefixes (`every
-#            change since <sha>, ` and `the working tree alone: `) removed;
-#            `-` without a notice. The clause is wording, but each is emitted
-#            by exactly one base-selection arm and the hook has no other
-#            observable for the base it chose
+#   base     the notice's `doc-drift-check: base=` value: the ref the hook
+#            compared against, or `default-branch`, `none` or `unrelated` for
+#            the three ways it is left the working tree alone; `-` without a
+#            notice
 #   stale    the notice's own first line, `doc-drift-check: stale=<count>`;
 #            `-` without a notice
 #   err      every stderr line by kind, in order, joined by `;`: the keyed
@@ -231,10 +230,9 @@ out_text() {
   printf '%s' "$out" | LC_ALL=C sort | paste -s -d ',' -
 }
 
-judged_text() {
+base_text() {
   [[ "$MESSAGE" != "" ]] || { printf -- '-'; return; }
-  printf '%s\n' "$MESSAGE" | sed -n 's/^Compared //p' |
-    sed -E 's/^every change since [0-9a-f]{40}, //; s/^the working tree alone: //'
+  printf '%s\n' "$MESSAGE" | sed -n 's/^doc-drift-check: base=//p'
 }
 
 err_text() {
@@ -277,7 +275,7 @@ run_table() { # TITLE COLUMNS ROWS
         world) WORLD="${fields[$i]}" ;;
         change) CHANGE="${fields[$i]}" ;;
         payload) PAYLOAD="${fields[$i]}" ;;
-        rc | out | judged | stale | err) want="$want $col=${fields[$i]}" ;;
+        rc | out | base | stale | err) want="$want $col=${fields[$i]}" ;;
         *) printf 'an unknown column asserts nothing: %s\n' "$col" >&2; exit 1 ;;
       esac
       i=$((i + 1))
@@ -290,7 +288,7 @@ run_table() { # TITLE COLUMNS ROWS
       case "$col" in
         rc) got="$got rc=$RC" ;;
         out) got="$got out=$(out_text)" ;;
-        judged) got="$got judged=$(judged_text)" ;;
+        base) got="$got base=$(base_text)" ;;
         stale) got="$got stale=$(stale_text)" ;;
         err) got="$got err=$(err_text)" ;;
       esac
@@ -333,20 +331,20 @@ root entries cover nothing|repo root-topic|ui|-
 a non-ASCII path is code and keeps its bytes|repo|unicode|crates/core/AGENTS.md(crates/core/src/über.rs),docs/architecture/core.md(crates/core/src/über.rs)
 "
 
-run_table "base selection: what the branch is compared against" "world change out judged" "\
-a committed change on a branch is judged against origin/HEAD|clone|code commit|$CORE_DOCS|the merge-base with origin/main
+run_table "base selection: what the branch is compared against" "world change out base" "\
+a committed change on a branch is judged against origin/HEAD|clone|code commit|$CORE_DOCS|origin/main
 an uncommitted doc change beside the committed code passes|clone|code commit agents|-|-
 a doc committed beside the code passes|clone|code agents commit|-|-
 a doc committed earlier on the branch passes|clone|topic commit code commit|-|-
 a commit on the default branch is not a change|clone on-main|code commit|-|-
-a working-tree change on the default branch is judged alone|clone on-main|code commit code|$CORE_DOCS|main is the default branch
-without origin/HEAD a local main is the base|repo on-feat|code commit|$CORE_DOCS|the merge-base with main
-main outranks master|repo with-master on-feat|code commit|$CORE_DOCS|the merge-base with main
-without main a local master is the base|repo master on-feat|code commit|$CORE_DOCS|the merge-base with master
+a working-tree change on the default branch is judged alone|clone on-main|code commit code|$CORE_DOCS|default-branch
+without origin/HEAD a local main is the base|repo on-feat|code commit|$CORE_DOCS|main
+main outranks master|repo with-master on-feat|code commit|$CORE_DOCS|main
+without main a local master is the base|repo master on-feat|code commit|$CORE_DOCS|master
 with no default branch a commit is not a change|repo trunk on-feat|code commit|-|-
-with no default branch the working tree is judged alone|repo trunk on-feat|code commit code|$CORE_DOCS|no origin/HEAD, main or master to compare against
+with no default branch the working tree is judged alone|repo trunk on-feat|code commit code|$CORE_DOCS|none
 a commit sharing no history with the default is not a change|repo orphan|code commit|-|-
-a branch sharing no history is judged on its working tree|repo orphan|code commit code|$CORE_DOCS|HEAD shares no history with main
+a branch sharing no history is judged on its working tree|repo orphan|code commit code|$CORE_DOCS|unrelated
 "
 
 run_table "every Stop reports independently" "world change payload rc out err" "\

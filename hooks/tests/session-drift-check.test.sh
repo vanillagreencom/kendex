@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 # Tests for the session-drift-check hook.
 #
-# The hook is a thin adapter over `kendex check --quiet`, and its stdout is
-# the session-start context channel, so the exact text is the contract. Every
-# notice opens with `session-drift-check: <key>=<value>`, the line a reader
-# parses, and the whole channel is pinned under it because that is what this
-# hook's contract is. The mapping rows drive it with a fake `kendex` on PATH
-# that replays a scripted exit code and output, so no real install is
-# consulted.
+# The hook is a thin adapter over `kendex check --quiet`. What it decides is
+# which arm the check's exit code chose, and that is a value on its keyed
+# lines: `drift=found`, `check=incomplete` or `check=could-not-run`, with
+# `exit=<code>` beside the two that name one. The rows pin those and the hook's
+# own exit status. The context text under them is written for a model to read
+# and is pinned nowhere — no program parses it, so pinning it would be pinning
+# prose. The mapping rows drive the hook with a fake `kendex` on PATH that
+# replays a scripted exit code and output, so no real install is consulted.
 #
-# A row is `label|fake rc|fake out|stdout`:
+# A row is `label|fake rc|fake out|keyed`:
 #   fake rc   the exit status the fake kendex returns
 #   fake out  the fake's output by word (fake_out maps it); `-` for none
-#   stdout    the hook's exact stdout, `\n` for a newline and `{out}` for the
-#             fake's output; `-` when empty
+#   keyed     the hook's own keyed lines, in order, joined by `;`; `-` when it
+#             writes none
 # Every row also asserts the hook's exit 0 and the argv `check --quiet`.
 #
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
@@ -96,6 +97,18 @@ assert_eq() {
   fi
 }
 
+# The keyed lines a run wrote, joined by `;`, and whether anything stands under
+# them. The text under them is written for a model to read, so a row says that
+# the report reached stdout, never what it said.
+keyed_of() { # TEXT
+  printf '%s\n' "$1" | sed -n 's/^session-drift-check: //p' | paste -s -d ';' -
+}
+relayed_of() { # TEXT
+  local rest
+  rest="$(printf '%s\n' "$1" | sed '/^session-drift-check: /d' | tr -d '[:space:]')"
+  [ -n "$rest" ] && printf 'present' || printf 'absent'
+}
+
 assert_contains() {
   local got="$1" needle="$2" name="$3"
   if [[ "$got" == *"$needle"* ]]; then
@@ -105,15 +118,6 @@ assert_contains() {
     FAIL=$((FAIL + 1))
     printf '  FAIL  %s\n        expected to contain: %s\n        got:      %s\n' "$name" "$needle" "$got"
   fi
-}
-
-# Text as one line: every backslash doubled first, then every newline written
-# as `\n`, so a hook that printed the two characters `\n` instead of a line
-# break renders as `\\n` and cannot match a row.
-escape_nl() {
-  local text="$1"
-  text="${text//\\/\\\\}"
-  printf '%s' "${text//$'\n'/\\n}"
 }
 
 calls() {
@@ -136,10 +140,11 @@ run_row() { # fake-rc fake-out-word
     FAKE_RC="$1" FAKE_OUT="$fake" \
     bash "$HOOK" <<<'{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' \
     >"$TMP_ROOT/stdout" 2>/dev/null || rc=$?
-  text="$(cat "$TMP_ROOT/stdout"; printf x)"
-  text="${text%x}"
-  [[ "$text" != "" ]] && text="$(escape_nl "$text")" || text='-'
-  printf 'rc=%s calls=%s out=%s' "$rc" "$(calls)" "$text"
+  # The keyed lines only: the context text under them is for a model, and a
+  # row that pinned it would pin prose.
+  text="$(sed -n 's/^session-drift-check: //p' "$TMP_ROOT/stdout" | paste -s -d ';' -)"
+  [[ "$text" != "" ]] || text='-'
+  printf 'rc=%s calls=%s keyed=%s' "$rc" "$(calls)" "$text"
 }
 
 run_table() {
@@ -161,8 +166,7 @@ run_table() {
       printf '%s => %s\n' "$label" "$got"
       continue
     fi
-    want="${stdout//\{out\}/$(escape_nl "$fake_text")}"
-    assert_eq "$got" "rc=0 calls=check --quiet out=$want" "$label"
+    assert_eq "$got" "rc=0 calls=check --quiet keyed=$stdout" "$label"
   done <<<"$rows"
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }
@@ -171,17 +175,17 @@ run_table() {
 # the check before it says anything, and the exit 3 row keeps the colon over
 # a blank line, the same text the embedded and Pi hooks print. Each row's first
 # line is the key and value: which arm the exit code chose.
-run_table "the kendex check exit to stdout mapping" "\
-a clean install prints nothing|0|-|-
-drift found: the report verbatim|1|report|session-drift-check: drift=found\n{out}\n
-not yet evaluated: the report verbatim, never as a failure|1|unevaluated|session-drift-check: drift=found\n{out}\n
-could not check: incomplete, carrying the check's own diagnostic|2|could-not-check|session-drift-check: check=incomplete\nkendex check incomplete (exit 2); some drift status unknown:\n{out}\n
-an error: inside a report line is still a completed report|2|error-inside-a-line|session-drift-check: check=incomplete\nkendex check incomplete (exit 2); some drift status unknown:\n{out}\n
-exit 2 with no output is a failure to run, not an empty partial report|2|-|session-drift-check: check=could-not-run\nkendex check could not run (exit 2); drift status unknown\n
-an Error: line at exit 2 is a failure to run, carrying kendex's own diagnostic|2|Error-line|session-drift-check: check=could-not-run\nkendex check could not run (exit 2); drift status unknown:\n{out}\n
-a usage error: at exit 2 is a failure to run, never partial|2|usage-error|session-drift-check: check=could-not-run\nkendex check could not run (exit 2); drift status unknown:\n{out}\n
-exit 3 names the failure and exit code and carries the output|3|fatal|session-drift-check: check=could-not-run\nkendex check could not run (exit 3); drift status unknown:\n{out}\n
-exit 3 with no output keeps the shape every rendering prints|3|-|session-drift-check: check=could-not-run\nkendex check could not run (exit 3); drift status unknown:\n\n
+run_table "the kendex check exit to the arm it chooses" "\
+a clean install says nothing|0|-|-
+drift found|1|report|drift=found
+not yet evaluated is drift, never a failure|1|unevaluated|drift=found
+could not check: incomplete, and the code it chose from|2|could-not-check|check=incomplete;exit=2
+an error: inside a report line is still a completed report|2|error-inside-a-line|check=incomplete;exit=2
+exit 2 with no output is a failure to run, not an empty partial report|2|-|check=could-not-run;exit=2
+an Error: line at exit 2 is a failure to run|2|Error-line|check=could-not-run;exit=2
+a usage error: at exit 2 is a failure to run, never partial|2|usage-error|check=could-not-run;exit=2
+exit 3 is a failure to run, and the code is the value|3|fatal|check=could-not-run;exit=3
+exit 3 with no output chooses the same arm|3|-|check=could-not-run;exit=3
 "
 
 echo "session-drift-check: unreadable stdin"
@@ -199,7 +203,7 @@ out="$(env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
 rc=$?
 set -e
 assert_eq "$rc" 0 "exits 0 when the payload read fails"
-assert_eq "$out" "session-drift-check: drift=found"$'\n'"$REPORT" \
+assert_eq "keyed=$(keyed_of "$out") relayed=$(relayed_of "$out")" 'keyed=drift=found relayed=present' \
   "still relays the report when the payload read fails"
 
 echo "session-drift-check: environment switches"
@@ -221,7 +225,8 @@ for src in resume compact; do
 done
 for src in startup clear; do
   HOOK_SOURCE=$src capture FAKE_RC=1 FAKE_OUT="$REPORT"
-  assert_eq "$out" "session-drift-check: drift=found"$'\n'"$REPORT"$'\n' "source=$src relays the report"
+  assert_eq "keyed=$(keyed_of "$out") relayed=$(relayed_of "$out")" 'keyed=drift=found relayed=present' \
+    "source=$src relays the report"
 done
 
 echo "session-drift-check: the start reason is the payload's own top-level key"
@@ -243,7 +248,8 @@ run_raw() {
 }
 
 run_raw '{"tool_input":{"source":"resume"},"source":"startup"}' "$BIN_DIR"
-assert_eq "$out" "session-drift-check: drift=found"$'\n'"$REPORT" "a nested source does not silence a fresh start"
+assert_eq "keyed=$(keyed_of "$out") relayed=$(relayed_of "$out")" 'keyed=drift=found relayed=present' \
+  "a nested source does not silence a fresh start"
 assert_eq "$(cat "$ARGS_LOG")" "check --quiet" "…and the check still runs"
 
 run_raw '{"tool_input":{"source":"startup"},"source":"resume"}' "$BIN_DIR"
@@ -252,7 +258,7 @@ assert_eq "$(cat "$ARGS_LOG")" "" "…and the check never runs on a resume"
 
 # A string value carrying the same characters is text, not the key.
 run_raw '{"cwd":"/tmp/\"source\": \"resume\"","source":"startup"}' "$BIN_DIR"
-assert_eq "$out" "session-drift-check: drift=found"$'\n'"$REPORT" \
+assert_eq "keyed=$(keyed_of "$out") relayed=$(relayed_of "$out")" 'keyed=drift=found relayed=present' \
   "a quoted source inside another value is not the start reason"
 
 echo "session-drift-check: a payload it cannot read"
@@ -279,7 +285,7 @@ run_exact_path() { # payload PATH
 }
 run_exact_path '{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' "$NOJQ_BIN"
 assert_eq "$rc" 0 "without jq the session still starts"
-assert_eq "$out" "session-drift-check: missing-tools=jq"$'\n'"kendex drift check skipped: jq is not on PATH" \
+assert_eq "keyed=$(keyed_of "$out")" 'keyed=missing-tools=jq' \
   "without jq the skip names jq rather than reading as a clean install"
 assert_eq "$(cat "$ARGS_LOG")" "" "without jq the check never runs"
 
@@ -287,14 +293,14 @@ assert_eq "$(cat "$ARGS_LOG")" "" "without jq the check never runs"
 # key", so it must not read as a fresh start.
 run_raw '{"source":"resume"' "$BIN_DIR"
 assert_eq "$rc" 0 "a payload jq cannot parse still exits 0"
-assert_eq "$out" "session-drift-check: payload=invalid-json"$'\n'"kendex drift check skipped: the session payload is not valid JSON" \
+assert_eq "keyed=$(keyed_of "$out")" 'keyed=payload=invalid-json' \
   "…and the skip names the payload rather than reading as a fresh start"
 assert_eq "$(cat "$ARGS_LOG")" "" "and the check never runs for it"
 
 echo "session-drift-check: unusable project directory"
 capture FAKE_RC=1 FAKE_OUT="$REPORT" CLAUDE_PROJECT_DIR="$TMP_ROOT/does-not-exist"
 assert_eq "$rc" 0 "missing project dir exits 0"
-assert_eq "${out%%$'\n'*}" "session-drift-check: path=$TMP_ROOT/does-not-exist" \
+assert_eq "keyed=$(keyed_of "$out")" "keyed=path=$TMP_ROOT/does-not-exist" \
   "the unusable project directory is the value, rather than reading as clean"
 assert_eq "$(cat "$ARGS_LOG")" "" "missing project dir never invokes kendex"
 
@@ -328,9 +334,8 @@ out="$(env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
 rc=$?
 set -e
 assert_eq "$rc" 0 "an unexpected failure still exits 0"
-assert_eq "${out%%$'\n'*}" "session-drift-check: exit=1" \
+assert_eq "keyed=$(keyed_of "$out")" 'keyed=exit=1' \
   "an unexpected failure is reported with the status it left, not swallowed"
-assert_contains "$out" "drift status unknown" "and the notice says drift status is unknown"
 
 echo "session-drift-check: no kendex on PATH"
 NOKENDEX_BIN="$TMP_ROOT/nokendex"
@@ -344,7 +349,7 @@ out="$(env -i HOME="$HOME" PATH="$NOKENDEX_BIN" "$(command -v bash)" "$HOOK" <<<
 rc=$?
 set -e
 assert_eq "$rc" 0 "exits 0 without a kendex binary"
-assert_eq "$out" "session-drift-check: missing-tools=kendex"$'\n'"kendex drift check skipped: kendex is not on PATH" \
+assert_eq "keyed=$(keyed_of "$out")" 'keyed=missing-tools=kendex' \
   "says why it skipped without a kendex binary"
 
 echo
