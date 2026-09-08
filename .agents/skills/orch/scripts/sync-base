@@ -4,10 +4,16 @@ set -euo pipefail
 
 # Message text is centralized; callers supply the reason and relevant values.
 message() {
-  local reason="$1"
+  local reason="$1" field
   shift
   printf '%s: %s' sync-base "$reason"
-  printf ' %s' "$@"
+  for field in "$@"; do
+    field="${field//\\/\\\\}"
+    field="${field//$'\t'/\\t}"
+    field="${field//$'\r'/\\r}"
+    field="${field//$'\n'/\\n}"
+    printf ' %s' "$field"
+  done
   printf '\n'
   case "$reason" in
   argument-count) printf 'Supply at most one repository path.\n' ;;
@@ -15,7 +21,10 @@ message() {
   base-unresolved) printf '%s\n' 'The base branch could not be resolved.' ;;
   invalid-branch) printf '%s\n' 'The base branch name is invalid.' ;;
   not-executable) printf '%s\n' 'The Git authentication helper is not executable.' ;;
+  fetch-failed) printf '%s\n' 'The remote base branch could not be fetched.' ;;
   dirty) printf '%s\n' 'The base checkout has tracked changes.' ;;
+  fast-forward-failed) printf '%s\n' 'The base checkout could not be fast-forwarded.' ;;
+  ref-update-failed) printf '%s\n' 'The local base branch reference could not be updated.' ;;
   ref-unresolved) printf '%s\n' 'The branch reference could not be resolved after the fast-forward.' ;;
   base-mismatch) printf '%s\n' 'The local and remote base commits differ after the fast-forward.' ;;
   esac
@@ -49,8 +58,13 @@ git check-ref-format --branch "$BASE_BRANCH" >/dev/null 2>&1 \
 
 GIT_AUTH="$SCRIPT_DIR/../../github/scripts/git-https-auth"
 [[ -x "$GIT_AUTH" ]] || { message not-executable "path=$GIT_AUTH" >&2; exit 1; }
-"$GIT_AUTH" -C "$REPO_ROOT" fetch --prune origin \
-  "+refs/heads/$BASE_BRANCH:refs/remotes/origin/$BASE_BRANCH"
+DETAIL=""
+if ! DETAIL="$("$GIT_AUTH" -C "$REPO_ROOT" fetch --prune origin \
+  "+refs/heads/$BASE_BRANCH:refs/remotes/origin/$BASE_BRANCH" 2>&1)"; then
+  message fetch-failed "ref=origin/$BASE_BRANCH" >&2
+  [[ -z "$DETAIL" ]] || printf '%s\n' "$DETAIL" >&2
+  exit 1
+fi
 
 git -C "$REPO_ROOT" worktree prune
 BASE_WORKTREE=""
@@ -77,7 +91,12 @@ if [[ -n "$BASE_WORKTREE" ]]; then
   # `--ff-only --no-overwrite-ignore` is the collision judge: it refuses the
   # merge when an incoming path would clobber an untracked or ignored file,
   # and it refuses without touching the tree. Nothing scans ahead of it.
-  git -C "$BASE_WORKTREE" merge --ff-only --no-overwrite-ignore "origin/$BASE_BRANCH" >&2
+  if ! DETAIL="$(git -C "$BASE_WORKTREE" merge --ff-only --no-overwrite-ignore "origin/$BASE_BRANCH" 2>&1)"; then
+    message fast-forward-failed "path=$BASE_WORKTREE" "ref=origin/$BASE_BRANCH" >&2
+    [[ -z "$DETAIL" ]] || printf '%s\n' "$DETAIL" >&2
+    exit 1
+  fi
+  [[ -z "$DETAIL" ]] || printf '%s\n' "$DETAIL" >&2
   LOCAL_SHA="$(git -C "$BASE_WORKTREE" rev-parse "refs/heads/$BASE_BRANCH")" \
     || { message ref-unresolved "ref=refs/heads/$BASE_BRANCH" >&2; exit 1; }
   ORIGIN_SHA="$(git -C "$BASE_WORKTREE" rev-parse "refs/remotes/origin/$BASE_BRANCH")" \
@@ -87,7 +106,12 @@ if [[ -n "$BASE_WORKTREE" ]]; then
     exit 1
   }
 else
-  git -C "$REPO_ROOT" fetch . \
-    "refs/remotes/origin/$BASE_BRANCH:refs/heads/$BASE_BRANCH" >&2
+  if ! DETAIL="$(git -C "$REPO_ROOT" fetch . \
+    "refs/remotes/origin/$BASE_BRANCH:refs/heads/$BASE_BRANCH" 2>&1)"; then
+    message ref-update-failed "ref=refs/heads/$BASE_BRANCH" >&2
+    [[ -z "$DETAIL" ]] || printf '%s\n' "$DETAIL" >&2
+    exit 1
+  fi
+  [[ -z "$DETAIL" ]] || printf '%s\n' "$DETAIL" >&2
 fi
 printf '%s\n' "$BASE_BRANCH"

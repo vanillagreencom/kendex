@@ -82,9 +82,9 @@ word_index() {
 # now against the one it stored without the answer moving under it.
 usage_reset_key() {
   local line rc=0 hour min meridiem mon day year weekday zone
-  line="$(grep -Em1 -- "$USAGE_RESET_ANY_RE" <<<"$1")" || rc=$?
+  line="$(grep -Em1 -- "$USAGE_RESET_ANY_RE" <<<"$1" 2>&1)" || rc=$?
   [[ "$rc" -le 1 ]] \
-    || die "could not search a limit banner for its reset clause (grep exited $rc)"
+    || die reset-scan-failed "$line" "exit=$rc"
   [[ -n "$line" ]] || return 0
   mon=""; day=""; year=""; weekday=""
   # Longest tail first: a dated clause also matches the bare-clock tail from

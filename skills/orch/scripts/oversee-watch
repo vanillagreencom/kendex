@@ -170,6 +170,7 @@ ow_message() { # REASON FIELD=VALUE...
     worktree-query-failed) text='The worktree helper query failed.' ;;
     handoff-read-failed) text='The handoff record could not be read.' ;;
     limit-scan-failed) text='The lane screen could not be searched for a usage limit.' ;;
+    reset-scan-failed) text='The limit banner could not be searched for its reset clause.' ;;
     window-list-failed) text='The tmux window list could not be read.' ;;
     pane-command-failed) text='The pane command could not be read.' ;;
     pane-command-invalid) text='The pane command reply is malformed.' ;;

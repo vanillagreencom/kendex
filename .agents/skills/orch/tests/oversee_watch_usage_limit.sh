@@ -347,5 +347,24 @@ expect="first=EVENT+lane-asking+gh-2 out~EVENT+usage-limit=false"
 assert_eq "$(watch "$expect")" "$expect" \
   "control: without the arm the column-0 row is the turn and the banner above it goes unreported" "$ERR"
 
+cat > "$TMP_ROOT/bin/grep" <<'EOF'
+#!/usr/bin/env bash
+if [[ -f "$STUB_DIR/reset-grep-fail" && "${1:-}" == "-Em1" ]]; then
+  printf '%s\n' 'E_RESET_GREP' >&2
+  exit 2
+fi
+exec /usr/bin/grep "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/grep"
+new_case reset_scan_failure
+screen "banner:$BANNER"
+touch "$STUB_DIR/reset-grep-fail"
+run TZ=UTC
+assert_eq "$RC" "2" "a reset-clause search failure exits 2"
+assert_eq "$(grep -Fxc 'oversee-watch: reset-scan-failed exit=2' "$ERR")" "1" \
+  "a reset-clause search failure emits its stable reason and exit"
+assert_eq "$(grep -Fxc 'E_RESET_GREP' "$ERR")" "1" \
+  "the reset-clause failure keeps the tool detail after its header"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

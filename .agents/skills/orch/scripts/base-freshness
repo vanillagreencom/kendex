@@ -67,13 +67,15 @@ base_ref="refs/remotes/origin/$base_branch"
 
 git_https_auth="$SCRIPT_DIR/../../github/scripts/git-https-auth"
 fetch_ok=true
+fetch_detail=""
 if [[ -x "$git_https_auth" ]]; then
-    "$git_https_auth" -C "$worktree" fetch --no-tags --no-recurse-submodules origin "+refs/heads/$base_branch:$base_ref" >/dev/null || fetch_ok=false
+    fetch_detail="$("$git_https_auth" -C "$worktree" fetch --no-tags --no-recurse-submodules origin "+refs/heads/$base_branch:$base_ref" 2>&1)" || fetch_ok=false
 else
-    git -C "$worktree" fetch --no-tags --no-recurse-submodules origin "+refs/heads/$base_branch:$base_ref" >/dev/null || fetch_ok=false
+    fetch_detail="$(git -C "$worktree" fetch --no-tags --no-recurse-submodules origin "+refs/heads/$base_branch:$base_ref" 2>&1)" || fetch_ok=false
 fi
 if [[ "$fetch_ok" != true ]]; then
     message fetch-failed "ref=origin/$base_branch" >&2
+    [[ -z "$fetch_detail" ]] || printf '%s\n' "$fetch_detail" >&2
     exit 1
 fi
 
