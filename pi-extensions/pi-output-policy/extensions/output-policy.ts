@@ -528,7 +528,7 @@ export function minimizeShellOutput(text: string, command: string, cwd?: string)
 	let gap = 0;
 	for (let i = 0; i < lines.length; i += 1) {
 		if (keep.has(i)) {
-			if (gap > 0) compact.push(`[...${gap} repetitive/noisy line(s) minimized...]`);
+			if (gap > 0) compact.push(minimizedNotice(gap));
 			gap = 0;
 			compact.push(lines[i] ?? "");
 		} else {
@@ -536,7 +536,7 @@ export function minimizeShellOutput(text: string, command: string, cwd?: string)
 			gap += 1;
 		}
 	}
-	if (gap > 0) compact.push(`[...${gap} repetitive/noisy line(s) minimized...]`);
+	if (gap > 0) compact.push(minimizedNotice(gap));
 	return dropped > 0 ? { dropped, text: compact.join("\n") } : { dropped: 0, text };
 }
 
@@ -559,13 +559,21 @@ function writeArtifact(ctx: ExtensionContext, toolName: string, toolCallId: stri
 	return { error: "artifact persistence unavailable" };
 }
 
+function minimizedNotice(lines: number): string {
+	return policyNotice("minimized-lines", lines, "Repetitive or noisy lines were minimized.");
+}
+
+function policyNotice(key: string, value: string | number, explanation: string): string {
+	return `[output-policy:${key}=${JSON.stringify(value)}]\n${explanation}`;
+}
+
 function notice(meta: TruncationMeta): string {
 	const target = meta.direction === "tail" ? `Showing last ${meta.shownLines} lines / ${formatSize(meta.shownBytes)}` : `Showing ${meta.shownRange} of ${meta.totalLines} / ${formatSize(meta.shownBytes)}`;
 	const artifact = meta.artifactPath ? ` Full output: ${meta.artifactPath}` : meta.artifactError ? ` Full output preservation unavailable: ${meta.artifactError}` : "";
 	const minimized = meta.minimized ? ` Minimized ${meta.minimizedDroppedLines} noisy line(s) before truncation.` : "";
 	const saved = typeof meta.savedBytes === "number" && meta.savedBytes > 0 ? ` Saved ${formatSize(meta.savedBytes)} from transcript (turn total: ${formatSize(meta.turnSavedBytes ?? 0)}, session: ${formatSize(meta.sessionSavedBytes ?? 0)}).` : "";
 	const continuation = meta.direction === "head" && meta.totalLines > meta.shownLines ? ` Continue with the same tool using an offset past line ${meta.shownLines} to read more.` : "";
-	return `[Output truncated (${meta.direction}). ${target}. Total: ${meta.totalLines} lines / ${formatSize(meta.totalBytes)}.${minimized}${saved}${artifact}${continuation}]`;
+	return policyNotice("truncated-bytes", meta.totalBytes, `Output truncated (${meta.direction}). ${target}. Total: ${meta.totalLines} lines / ${formatSize(meta.totalBytes)}.${minimized}${saved}${artifact}${continuation}`);
 }
 
 export function processText(event: any, ctx: ExtensionContext, text: string): { text: string; meta?: TruncationMeta } {
@@ -601,7 +609,7 @@ export function processText(event: any, ctx: ExtensionContext, text: string): { 
 	const tooLarge = overSpill || overTextBlock || overLineCount || overLineWidth;
 	if (!tooLarge) {
 		const widthSafe = lines.map((line) => truncateLine(line, maxLineWidth)).join("\n");
-		return minimized ? { text: `${widthSafe}\n\n[Output minimized: removed ${minimizedDroppedLines} repetitive/noisy line(s).]` } : { text: widthSafe };
+		return minimized ? { text: `${widthSafe}\n\n${minimizedNotice(minimizedDroppedLines)}` } : { text: widthSafe };
 	}
 
 	const artifact = writeArtifact(ctx, event.toolName ?? "tool", event.toolCallId, original);
@@ -635,11 +643,11 @@ const SANITIZE_ARRAY_CAP = 50;
 const SANITIZE_OBJECT_CAP = 80;
 
 export function sanitizeDetails(value: unknown, depth = 0): { value: unknown; changed: boolean } {
-	if (depth > 4) return { changed: true, value: "[Max detail depth reached]" };
+	if (depth > 4) return { changed: true, value: policyNotice("detail-depth", depth, "Maximum detail depth reached.") };
 	if (value == null || typeof value === "number" || typeof value === "boolean") return { changed: false, value };
 	if (typeof value === "string") {
 		const max = 8 * 1024;
-		return value.length > max ? { changed: true, value: `${value.slice(0, max)}… [detail string truncated]` } : { changed: false, value };
+		return value.length > max ? { changed: true, value: `${value.slice(0, max)}…\n${policyNotice("detail-chars", value.length, "Detail string truncated.")}` } : { changed: false, value };
 	}
 	if (Array.isArray(value)) {
 		const overflow = value.length > SANITIZE_ARRAY_CAP;
@@ -652,7 +660,7 @@ export function sanitizeDetails(value: unknown, depth = 0): { value: unknown; ch
 			sanitized.push(nested.value);
 		}
 		if (overflow) {
-			sanitized.push(`[output-policy: array truncated, dropped ${value.length - limit} item(s)]`);
+			sanitized.push(policyNotice("detail-array-dropped", value.length - limit, "Detail array truncated."));
 		}
 		return { changed, value: sanitized };
 	}
@@ -667,7 +675,7 @@ export function sanitizeDetails(value: unknown, depth = 0): { value: unknown; ch
 		for (const key in source) {
 			if (!Object.hasOwn(source, key)) continue;
 			if (kept >= SANITIZE_OBJECT_CAP) {
-				out["[output-policy:truncated]"] = `object truncated past cap of ${SANITIZE_OBJECT_CAP} field(s)`;
+				out["[output-policy:truncated]"] = policyNotice("detail-object-cap", SANITIZE_OBJECT_CAP, "Detail object truncated.");
 				changed = true;
 				break;
 			}
@@ -746,9 +754,9 @@ export default function outputPolicy(pi: ExtensionAPI): void {
 			: `${detection.totalChars.toLocaleString()} streamed characters`;
 		ctx.abort();
 		try {
-			ctx.ui.notify(`Model output stopped: ${detail}. Retry or switch model.`, "warning");
+			ctx.ui.notify(policyNotice(detection.reason, detection.reason === "repetition" ? detection.consecutiveRepeats! : detection.totalChars, `Model output stopped: ${detail}. Retry or switch model.`), "warning");
 		} catch (error) {
-			console.warn(`pi-output-policy: model-output warning failed (${stringifyError(error)})`);
+			console.warn(policyNotice("warning-error", stringifyError(error), "Model output warning failed."));
 		}
 	});
 

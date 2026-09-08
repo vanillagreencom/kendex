@@ -18,4 +18,15 @@ For maintainers. What it does for a consumer is [README.md](README.md). Everythi
 bun test ./tests
 ```
 
-`tests/output-policy.test.ts` covers the guard boundaries (exact repetition and character thresholds, disable switches, lifecycle resets), each mode's caps and the knob override, the minimizer alone and with truncation, sanitization shapes and the allowlist, and the per-turn and per-session counters. A threshold change ships with the case that fires exactly at the new boundary.
+| Test file | Contract |
+|---|---|
+| [model-output-detector.test.ts](tests/model-output-detector.test.ts) | Stream input shapes and exact repetition and character thresholds |
+| [model-output-handler.test.ts](tests/model-output-handler.test.ts) | Abort notices, settings snapshots, and message lifecycle resets |
+| [policy-config.test.ts](tests/policy-config.test.ts) | Policy modes and detail exemptions |
+| [process-text.test.ts](tests/process-text.test.ts) | Text budgets, artifacts, explicit overrides, and minimizer interaction |
+| [shell-minimizer.test.ts](tests/shell-minimizer.test.ts) | Retained shell output and minimizer configuration |
+| [sanitize-details.test.ts](tests/sanitize-details.test.ts) | Detail limits and truncation identifiers |
+| [saved-bytes.test.ts](tests/saved-bytes.test.ts) | Saved-byte accumulation and turn and session resets |
+| [tool-result.test.ts](tests/tool-result.test.ts) | Tool-result sanitization and truncation metadata |
+
+A threshold change ships with the case that fires exactly at the new boundary.
