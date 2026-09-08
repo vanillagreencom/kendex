@@ -206,9 +206,10 @@ printf '#!/usr/bin/env bash\necho "tr: simulated execution failure" >&2\nexit 1\
 # suppression-ban's per-carrier count is its own call, made after the shared
 # listing has named the carrier; the shim errors that call alone and exits 0,
 # so the `error:` line on stderr is the only thing left that can refuse it.
-printf '#!/usr/bin/env bash\ncase " $* " in *" -acE "*) echo "error: %s: unable to read %s" >&2; exit 0 ;; esac\nexec "%s" "$@"\n' \
-  "'phantom.rs'" "0000000000000000000000000000000000000000" "$REAL_GIT" >"$ROOT/count-shim/git"
-chmod +x "$ROOT/wc-shim/wc" "$ROOT/tr-shim/tr" "$ROOT/count-shim/git"
+printf '#!/usr/bin/env bash\ncase " $* " in *" -acE "*) : >%q; echo "error: %s: unable to read %s" >&2; exit 0 ;; esac\nexec "%s" "$@"\n' \
+  "$ROOT/head-arm" "'phantom.rs'" "0000000000000000000000000000000000000000" "$REAL_GIT" >"$ROOT/count-shim/git"
+printf '#!/usr/bin/env bash\nif [ -e %q ]; then echo "dependency-order-control: early-reader" >&2; rm -f -- %q; fi\nexec %q "$@"\n' "$ROOT/head-arm" "$ROOT/head-arm" "$(command -v head)" >"$ROOT/count-shim/head"
+chmod +x "$ROOT/wc-shim/wc" "$ROOT/tr-shim/tr" "$ROOT/count-shim/git" "$ROOT/count-shim/head"
 
 # A sed script aliasing every staged blob's sha to OID(path): a reader that
 # names the blob it could not read is read back by the path it stands for.
@@ -243,7 +244,7 @@ rows=(
   "a first block that cannot be sized is exit 2, never OK|fx_staged staged-3|$ROOT/wc-shim|todo-ban --staged|rc=2 todo-ban: content-sample=ok.rs:1"
   "a NUL-free count that cannot run is exit 2, never OK|fx_staged staged-4|$ROOT/tr-shim|todo-ban --staged|rc=2 todo-ban: content-sample=ok.rs:1"
   "control: the baselined bare allow passes with the real git|fx_count count-0||suppression-ban|rc=0 suppression-ban: result=0:0:0:tools/suppression-baseline.tsv:0:tools/suppression-ban-excludes"
-  "a count whose stderr carries an error line is exit 2, never a clean zero|fx_count count-1|$ROOT/count-shim|suppression-ban|rc=2 suppression-ban: grep-content=0"
+  "a count whose stderr carries an error line refuses without an early-reader diagnostic|fx_count count-1|$ROOT/count-shim|suppression-ban|rc=2 suppression-ban: grep-content=0"
 )
 for row in "${rows[@]}"; do
   IFS='|' read -r label fixture shim args expect <<<"$row"

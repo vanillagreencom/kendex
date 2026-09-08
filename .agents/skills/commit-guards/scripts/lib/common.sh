@@ -223,9 +223,11 @@ gg_require_merged_index() { # PATHSPEC... — returns only when nothing is unmer
 # git's C-locale spelling, so every call feeding this guard runs under
 # LC_ALL=C — a translated prefix would slip past the match.
 gg_grep_guard() { # STATUS ERRFILE CONTEXT — returns only when the scan is complete
-  local status="$1" errfile="$2" context="$3" first_err
+  local status="$1" errfile="$2" context="$3" first_err="" line
   [ "$status" -le 1 ] || gg_fail_cause grep-exit "$status" "$errfile" "git grep failed $context (exit $status)"
-  first_err="$(grep -E '^error:' -- "$errfile" | head -n 1 || true)"
+  while IFS= read -r line; do
+    case "$line" in error:*) first_err="$line"; break ;; esac
+  done <"$errfile"
   [ -z "$first_err" ] || gg_fail_cause grep-content "$status" "$errfile" "git grep could not read staged content while $context ($(gg_scrubbed "$first_err"))"
   [ ! -s "$errfile" ] || cat -- "$errfile" >&2
 }
