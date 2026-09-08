@@ -24,15 +24,6 @@ fn said(findings: &[Finding], record: &str) -> bool {
         .any(|f| f.message.lines().next() == Some(record))
 }
 
-/// Findings joined for a failure's diagnostic.
-fn spoken(findings: &[Finding]) -> String {
-    findings
-        .iter()
-        .map(|f| format!("{} — {}", f.message, f.remediation))
-        .collect::<Vec<_>>()
-        .join(" | ")
-}
-
 #[test]
 fn a_sound_rendering_of_every_kind_has_nothing_to_say() {
     for (harness, text) in [
@@ -229,56 +220,48 @@ fn an_effort_level_the_harness_does_not_accept_is_refused() {
             "---\nname: rust\ndescription: r\neffort: {}\n---\nBody.\n",
             "max",
             "ultra",
+            "kendex-effort-rejected: harness=claude key=effort value=ultra allowed=low,medium,high,xhigh,max",
         ),
         (
             HarnessId::Codex,
             "name = \"rust\"\ndescription = \"r\"\nmodel_reasoning_effort = \"{}\"\ndeveloper_instructions = '''\nBody.\n'''\n",
             "xhigh",
             "max",
+            "kendex-effort-rejected: harness=codex key=model_reasoning_effort value=max allowed=minimal,low,medium,high,xhigh",
         ),
         (
             HarnessId::Opencode,
             "---\ndescription: r\nmode: subagent\noptions:\n  reasoningEffort: {}\n---\nBody.\n",
             "high",
             "ultra",
+            "kendex-effort-rejected: harness=opencode key=reasoningEffort value=ultra allowed=minimal,low,medium,high,xhigh",
         ),
         (
             HarnessId::Pi,
             "---\nname: rust\ndescription: r\neffort: {}\n---\nBody.\n",
             "max",
             "ultra",
+            "kendex-effort-rejected: harness=pi key=effort value=ultra allowed=minimal,low,medium,high,xhigh,max",
         ),
     ];
-    for (harness, shape, good, bad) in cases {
-        let accepted = validate_agent(harness, "rust", &shape.replace("{}", good));
-        assert!(
-            accepted.is_empty(),
-            "{}: {}",
-            harness.name(),
-            spoken(&accepted)
-        );
-        let refused = validate_agent(harness, "rust", &shape.replace("{}", bad));
-        assert_eq!(
-            blocking(&refused).len(),
-            1,
-            "{}: {}",
-            harness.name(),
-            spoken(&refused)
-        );
-        assert!(
-            refused
+    for (harness, shape, good, bad, refusal) in cases {
+        for (value, expected) in [(good, None), (bad, Some((true, refusal)))] {
+            let findings = validate_agent(harness, "rust", &shape.replace("{}", value));
+            let records: Vec<_> = findings
                 .iter()
-                .any(
-                    |finding| finding.message.lines().next().is_some_and(|record| record
-                        .starts_with("kendex-effort-rejected: ")
-                        && record
-                            .split_whitespace()
-                            .any(|field| field == format!("value={bad}")))
-                ),
-            "{}: {}",
-            harness.name(),
-            spoken(&refused)
-        );
+                .map(|finding| {
+                    (
+                        finding.is_breakage(),
+                        finding.message.lines().next().unwrap_or_default(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                records,
+                expected.into_iter().collect::<Vec<_>>(),
+                "{harness:?} {value}: {findings:?}"
+            );
+        }
     }
 }
 
