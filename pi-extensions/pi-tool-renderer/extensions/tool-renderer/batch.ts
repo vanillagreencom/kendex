@@ -275,7 +275,7 @@ export function registerToolBatch(pi: ExtensionAPI, agent: any, cwd: string): vo
 			const effectiveCwd = contextCwd(context, cwd);
 			const calls = normalizeBatchCalls(params?.calls);
 			const maxCalls = Math.max(1, Math.floor(settingNumber("batchMaxCalls", 8, effectiveCwd)));
-			if (calls.length === 0) return { content: [{ type: "text", text: batchMessages.empty }], details: { failed: 0, items: [], succeeded: 0, total: 0 } };
+			if (calls.length === 0) return { content: [{ type: "text", text: batchMessages.empty }], details: { failed: 0, items: [], succeeded: 0, total: 0 }, isError: true };
 			if (calls.length > maxCalls) {
 				return {
 					content: [{ type: "text", text: batchMessages.limit(calls.length, maxCalls) }],

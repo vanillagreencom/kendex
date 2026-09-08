@@ -7,7 +7,7 @@ import { useWorld } from "./helpers/world.js";
 const world = useWorld();
 for (const row of [
 	// The call schema permits an item without tool/name; normalization drops it.
-	{ name: "empty normalized calls", calls: [{}], max: 8, agent: {}, expected: "batch_calls=0", failed: 0, isError: undefined },
+	{ name: "empty normalized calls", calls: [{}], max: 8, agent: {}, expected: "batch_calls=0", failed: 0, isError: true },
 	{ name: "configured call limit", calls: [{ tool: "read" }, { tool: "read" }], max: 1, agent: {}, expected: "batch_calls=2 max_calls=1", failed: 2, isError: true },
 	{ name: "SDK tool unavailable", calls: [{ tool: "read" }], max: 8, agent: {}, expected: "batch_tool_unavailable=read", failed: 1, isError: true },
 	{ name: "native tool error", calls: [{ tool: "read" }], max: 8, agent: { createReadTool: () => ({ execute: async () => { throw new TypeError("upstream-payload"); } }) }, expected: "batch_error=TypeError", failed: 1, isError: true },
