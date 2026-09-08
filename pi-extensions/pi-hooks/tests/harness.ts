@@ -13,7 +13,7 @@ export const CONFIG_ID = "@vanillagreen/pi-hooks";
 export type ToolCallHandler = (event: { toolName: string; input: Record<string, unknown> }, ctx: Record<string, unknown>) => Promise<unknown>;
 
 export function runGit(args: string[], cwd: string): void {
-	const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+	const result = spawnSync("git", args, { cwd, encoding: "utf8", env: process.env });
 	if (result.status !== 0) {
 		throw new Error(`git ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
 	}
