@@ -19,8 +19,8 @@
 #             joined by `,`; `-` for none
 #   err       stderr's distinct lines: an unreadable bound as `bound=<v>`
 #             (the value the refusal names), gh's own line verbatim; `-`
-# Every row also pins that the repository's own config holds no rewrite
-# after the run (`persisted=0`).
+# Every row also pins that the wrapper exited 0 (`rc=0`) and that the
+# repository's own config holds no rewrite after the run (`persisted=0`).
 set -euo pipefail
 
 # A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
@@ -100,11 +100,18 @@ build() {
   done
 }
 
-# The wrapped git, asked what config it sees.
-wrapped() { # repo key
-  (PATH="$TMP_ROOT/bin:$PATH" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+# The wrapped git, asked to list its config: git answers with exit 0 with or
+# without the keys, so a wrapper that stops before running git is its own
+# status rather than an empty answer.
+wrapped() { # repo
+  PATH="$TMP_ROOT/bin:$PATH" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
     env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN ${W_ENV[@]+"${W_ENV[@]}"} \
-    "$GIT_HELPER" -C "$1" config --get-all "$2" 2>>"$TMP_ROOT/stderr") || true
+    "$GIT_HELPER" -C "$1" config --list 2>>"$TMP_ROOT/stderr"
+}
+
+# Every value of one key in a `config --list` listing, in order.
+values_of() { # key
+  awk -v key="$1" -F= '$1 == key { print substr($0, length(key) + 2) }'
 }
 
 err_text() {
@@ -120,13 +127,20 @@ err_text() {
 }
 
 run() { # remote
-  local repo helper rewrites persisted
+  local repo listing rc helper rewrites persisted
   repo="$(repo_of "$1")"
   : >"$TMP_ROOT/stderr"
-  helper="$(wrapped "$repo" credential.helper | sed -e 's/^$/reset/' -e 's/^!gh auth git-credential$/gh/' | paste -s -d ',' -)"
-  rewrites="$(wrapped "$repo" url.https://github.com/.insteadOf | paste -s -d ',' -)"
-  persisted="$(GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -C "$repo" config --get-all url.https://github.com/.insteadOf | wc -l | tr -d ' ' || true)"
-  printf 'helper=%s rewrites=%s persisted=%s err=%s' "${helper:--}" "${rewrites:--}" "$persisted" "$(err_text)"
+  listing="$(wrapped "$repo")" && rc=0 || rc=$?
+  helper="$(values_of credential.helper <<<"$listing" | sed -e 's/^$/reset/' -e 's/^!gh auth git-credential$/gh/' | paste -s -d ',' -)"
+  rewrites="$(values_of url.https://github.com/.insteadof <<<"$listing" | paste -s -d ',' -)"
+  # The repository's own config, read without the wrapper; a failed read is
+  # its status, never an empty count.
+  if persisted="$(GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -C "$repo" config --list)"; then
+    persisted="$(values_of url.https://github.com/.insteadof <<<"$persisted" | wc -l | tr -d ' ')"
+  else
+    persisted="unreadable:$?"
+  fi
+  printf 'rc=%s helper=%s rewrites=%s persisted=%s err=%s' "$rc" "${helper:--}" "${rewrites:--}" "$persisted" "$(err_text)"
 }
 
 run_table() {
@@ -146,7 +160,7 @@ run_table() {
       printf '%s => %s\n' "$label" "$got"
       continue
     fi
-    assert_eq "$got" "helper=$helper rewrites=$rewrites persisted=0 err=$err" "$label"
+    assert_eq "$got" "rc=0 helper=$helper rewrites=$rewrites persisted=0 err=$err" "$label"
   done <<<"$rows"
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }
