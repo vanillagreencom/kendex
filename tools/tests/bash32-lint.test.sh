@@ -14,6 +14,12 @@
 # read out of the roster line; that is still reading the lint rather than
 # keeping a second copy of the list here.
 set -eu -o pipefail
+
+# A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
+# GIT_WORK_TREE and GIT_INDEX_FILE, which would resolve the no-repository
+# row's fixture to the real repository.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 ROOT="$(git rev-parse --show-toplevel)" || exit 2
 cd "$ROOT" || exit 2
 
@@ -179,109 +185,103 @@ else
 fi
 
 # --- 4. the lint's fail-closed paths, each proven red -------------------
-expect_die() { # expect_die LABEL DIR
-  local status=0 out=""
-  out="$("$LINT" "$2" 2>&1)" || status=$?
-  if [ "$status" -eq 2 ]; then
-    ok "$1"
-  else
-    bad "$1 — exited $status, not 2" "$out"
-  fi
+# A row is `label|world|cwd|argv|exit`:
+#   world  words for build, each staged fresh under the row's own directory
+#          W: `empty` a directory holding nothing; `nonshell` one holding
+#          only a JSON file; `populated` one holding a clean shell file;
+#          `syntax` one holding a shell file that does not parse;
+#          `unreadable-dir` a clean file beside a subdirectory nobody can
+#          read; `unreadable-file` a clean file beside an extensionless
+#          entry point nobody can read; `unenterable` a directory nobody can
+#          enter; `grep-stub` a grep on PATH that answers the shebang probe
+#          and refuses the scan; `unless-root` the row's outcome is
+#          `skipped-as-root` under uid 0, which reads and enters every
+#          directory whatever its mode; `lint:stale` a copy of the lint
+#          whose NO_SHELL names a directory that is gone; `lint:grew` a copy
+#          of the lint whose NO_SHELL names W/noshell, a copy of the real
+#          NO_SHELL directory that grew a shell file; `lint:sealed` a copy
+#          of the lint whose NO_SHELL names W/sealed, a directory nobody can
+#          enter; `-` for nothing staged
+#   cwd    where the lint runs: `root` the toplevel, `world` W, any other
+#          value a path under the toplevel
+#   argv   the lint's arguments as written: `W/<path>` a path under W,
+#          `NO_SCAN` and `NO_SHELL` the lint's own entries as it declares
+#          them, `ROOT/NO_SCAN` the NO_SCAN directory spelled absolute, any
+#          other word itself; `-` for none
+#   exit   the exit status
+#
+# The exception entries are repository-relative, so a relative DIR from a
+# subdirectory proves they are read from the toplevel and not beneath the
+# caller's cwd, and the two NO_SCAN spellings prove an exception is a
+# directory rather than a string. The price of that is the no-repository
+# row: with nothing to resolve the toplevel from, the exceptions cannot be
+# judged and the run ends. A directory holding only non-shell files beside
+# a populated one is the per-directory guard, which the roster-wide "nothing
+# was read" guard would otherwise carry, and a run naming only a NO_SHELL
+# directory is that roster-wide guard; an empty directory ends the run
+# before either, on the empty listing it cannot classify. A failed grep is
+# proven by a stub that refuses the scan
+# rather than by an unreadable file, which root would read; the discovery
+# and resolution halves have no such stub and skip under root instead.
+
+# Read out of the lint, never restated. A run that could not read them ends
+# here: a row handed an empty entry would be refused as "not a directory"
+# and score the 2 it expects.
+NOSCAN=""
+NOSCAN="$(sed -n 's#^NO_SCAN="\(.*\)"$#\1#p' "$LINT")" || NOSCAN=""
+NOSCAN="${NOSCAN%% *}"
+NOSHELL=""
+NOSHELL="$(sed -n 's#^NO_SHELL="\(.*\)"$#\1#p' "$LINT")" || NOSHELL=""
+NOSHELL="${NOSHELL%% *}"
+if [ -z "$NOSCAN" ] || [ ! -d "$ROOT/$NOSCAN" ] || [ -z "$NOSHELL" ] || [ ! -d "$ROOT/$NOSHELL" ]; then
+  bad "precondition: the lint declares no NO_SCAN and NO_SHELL directory the rows could exercise"
+  verdict
+  exit
+fi
+ok "precondition: the exceptions name directories: NO_SCAN $NOSCAN, NO_SHELL $NOSHELL"
+
+# Every row's directory sits below the ceiling set at the top of this file,
+# so it is outside every repository. Asserted rather than assumed: under a
+# TMPDIR inside a checkout the no-repository row would resolve a toplevel,
+# scan clean, and report that the fail-closed path held.
+WORLDS="$TMP/worlds"
+mkdir -p "$WORLDS" || {
+  bad "precondition: the fixture root could not be staged"
+  verdict
+  exit
+}
+if inroot="$(cd "$WORLDS" && git rev-parse --show-toplevel 2>/dev/null)"; then
+  bad "precondition: the fixture root sits in a git repository ($inroot), so nothing here is proven"
+  verdict
+  exit
+fi
+ok "precondition: the fixture root is outside every repository"
+
+W=""
+W_LINT="$LINT"
+W_PATH="$PATH"
+W_SKIP=no
+row_n=0
+
+# mutate_lint LINE — a copy of the lint with its NO_SHELL line replaced by
+# LINE, asserted to have landed exactly once: an edit that landed nowhere
+# would run the unmodified lint and prove nothing.
+mutate_lint() {
+  local landed=0
+  sed "s|^NO_SHELL=.*|$1|" "$LINT" >"$W/lint" || return 1
+  chmod +x "$W/lint" || return 1
+  landed="$(grep -Fxc -- "$1" "$W/lint")" || return 1
+  [ "$landed" -eq 1 ] || return 1
+  W_LINT="$W/lint"
 }
 
-mkdir -p "$TMP/empty"
-expect_die "a directory holding no shell file is a scan that read nothing" "$TMP/empty"
-
-mkdir -p "$TMP/nonshell"
-printf '{"a":1}\n' >"$TMP/nonshell/fixture.json"
-expect_die "a directory holding only non-shell files reads nothing either" "$TMP/nonshell"
-
-# And an empty directory does not get carried by a populated one beside it.
-# Without this the two cases above pass on the roster-wide "nothing was read"
-# guard alone, and dropping the per-directory one costs nothing.
-mkdir -p "$TMP/populated"
-printf '#!/usr/bin/env bash\n:\n' >"$TMP/populated/real.sh"
-
-# The roster's exception entries are repository-relative, so they have to be
-# read from the toplevel and not from wherever the caller stands. Invoked with
-# a relative DIR from a subdirectory, the run must scan that DIR and say clean
-# rather than die on an exception it failed to find beneath the caller's cwd.
-status=0
-out="$(cd "$ROOT/skills/orch" && "$LINT" scripts 2>&1)" || status=$?
-if [ "$status" -eq 0 ]; then
-  ok "a relative DIR argument from a subdirectory scans clean"
-else
-  bad "a relative DIR from a subdirectory exited $status, not 0" "$out"
-fi
-
-# An exception is a directory, not a string, so it must hold under every
-# spelling of that directory: relative to the toplevel, and absolute. The two
-# diverging is an exception that excuses a run named one way and scans the
-# same tree named the other.
-noscan_dir=""
-noscan_dir="$(sed -n 's#^NO_SCAN="\(.*\)"$#\1#p' "$LINT" | head -n 1)" || noscan_dir=""
-if [ -z "$noscan_dir" ] || [ ! -d "$ROOT/$noscan_dir" ]; then
-  bad "the lint declares no NO_SCAN directory these spellings could exercise"
-else
-  for spelling in "$noscan_dir" "$ROOT/$noscan_dir"; do
-    status=0
-    out="$(cd "$ROOT" && "$LINT" "$spelling" 2>&1)" || status=$?
-    if [ "$status" -eq 2 ]; then
-      ok "the NO_SCAN exception holds when its directory is named as $spelling"
-    else
-      bad "naming the exception as $spelling exited $status, not 2" "$out"
-    fi
-  done
-fi
-
-# And the price of reading them from the toplevel, stated: with no repository
-# around it the exceptions cannot be judged at all, so the run ends instead of
-# scanning a roster nothing checked. The fixture sits BELOW the ceiling set at
-# the top of this file, and its being outside a repository is asserted rather
-# than assumed — under a TMPDIR inside a checkout it would otherwise resolve a
-# toplevel, scan clean, and report that the fail-closed path held.
-mkdir -p "$TMP/norepo/populated"
-printf '#!/usr/bin/env bash\n:\n' >"$TMP/norepo/populated/real.sh"
-if noroot="$(cd "$TMP/norepo" && git rev-parse --show-toplevel 2>/dev/null)"; then
-  bad "the no-repository fixture sits in a git repository ($noroot), so nothing here is proven"
-else
-  status=0
-  out="$(cd "$TMP/norepo" && "$LINT" populated 2>&1)" || status=$?
-  if [ "$status" -eq 2 ]; then
-    ok "a run with no repository around it ends rather than scanning"
-  else
-    bad "a run outside a repository exited $status, not 2" "$out"
-  fi
-fi
-
-status=0
-out="$("$LINT" "$TMP/populated" "$TMP/empty" 2>&1)" || status=$?
-if [ "$status" -eq 2 ]; then
-  ok "an empty directory beside a populated one still ends the run"
-else
-  bad "an empty directory beside a populated one exited $status, not 2" "$out"
-fi
-
-# A construct this set does not name still has to be syntax.
-mkdir -p "$TMP/syntax"
-printf '#!/usr/bin/env bash\nif [ 1 -eq 1 ]; then\n' >"$TMP/syntax/broken.sh"
-status=0
-out="$("$LINT" "$TMP/syntax" 2>&1)" || status=$?
-if [ "$status" -eq 1 ]; then
-  ok "a shell file that does not parse reds the lint"
-else
-  bad "an unparsable shell file exited $status, not 1" "$out"
-fi
-
-# grep's status is part of the answer: 0 found, 1 none, anything else a scan
-# that did not run. Proven by making the scan itself fail — a stub grep that
-# answers the shebang probe and refuses the scan — rather than by an
-# unreadable file, which root would read.
-mkdir -p "$TMP/gbin"
-cat >"$TMP/gbin/grep" <<'STUB'
+# -q is the shebang probe in is_shell; the stub answers it from the real
+# grep so discovery still works. Everything else is the scan, and it could
+# not run.
+stage_grep_stub() {
+  mkdir "$W/bin" || return 1
+  cat >"$W/bin/grep" <<'STUB' || return 1
 #!/bin/sh
-# -q is the shebang probe in is_shell; answer it from the real grep so
-# discovery still works. Everything else is the scan, and it could not run.
 for a in "$@"; do
   case "$a" in
   -q*) exec /usr/bin/env -i PATH=/usr/bin:/bin grep "$@" ;;
@@ -289,97 +289,168 @@ for a in "$@"; do
 done
 exit 2
 STUB
-chmod +x "$TMP/gbin/grep"
-status=0
-out="$(PATH="$TMP/gbin:$PATH" "$LINT" "$TMP/populated" 2>&1)" || status=$?
-if [ "$status" -eq 2 ]; then
-  ok "a scan that could not run is not read as a clean tree"
-else
-  bad "a failed grep exited $status, not 2" "$out"
-fi
+  chmod +x "$W/bin/grep" || return 1
+  W_PATH="$W/bin:$PATH"
+}
 
-# Discovery is the other half of the same contract: a file list that could not
-# be built, and a file that could not be classified, are each a scan that did
-# not run. Root reads both regardless, so the pair is skipped there rather
-# than scored as a pass.
-if [ "$(id -u)" -ne 0 ]; then
-  mkdir -p "$TMP/unreadable-dir/sub"
-  printf '#!/usr/bin/env bash\n:\n' >"$TMP/unreadable-dir/a.sh"
-  printf '#!/usr/bin/env bash\nlocal -A cache\n' >"$TMP/unreadable-dir/sub/bad.sh"
-  chmod 000 "$TMP/unreadable-dir/sub"
-  status=0
-  out="$("$LINT" "$TMP/unreadable-dir" 2>&1)" || status=$?
-  chmod 755 "$TMP/unreadable-dir/sub"
-  if [ "$status" -eq 2 ]; then
-    ok "a file list that could not be built is not read as a clean tree"
-  else
-    bad "an unreadable subdirectory exited $status, not 2" "$out"
+word() { # word WORD — stage one world word under W
+  case "$1" in
+  empty) mkdir "$W/empty" ;;
+  nonshell)
+    mkdir "$W/nonshell" &&
+      printf '{"a":1}\n' >"$W/nonshell/fixture.json"
+    ;;
+  populated)
+    mkdir "$W/populated" &&
+      printf '#!/usr/bin/env bash\n:\n' >"$W/populated/real.sh"
+    ;;
+  syntax)
+    mkdir "$W/syntax" &&
+      printf '#!/usr/bin/env bash\nif [ 1 -eq 1 ]; then\n' >"$W/syntax/broken.sh"
+    ;;
+  unreadable-dir)
+    mkdir -p "$W/unreadable-dir/sub" &&
+      printf '#!/usr/bin/env bash\n:\n' >"$W/unreadable-dir/a.sh" &&
+      printf '#!/usr/bin/env bash\nlocal -A cache\n' >"$W/unreadable-dir/sub/bad.sh" &&
+      chmod 000 "$W/unreadable-dir/sub"
+    ;;
+  unreadable-file)
+    # Extensionless entry points are classified by their shebang, so an
+    # unreadable one would answer "not shell" and leave the scan short.
+    mkdir "$W/unreadable-file" &&
+      printf '#!/usr/bin/env bash\n:\n' >"$W/unreadable-file/real.sh" &&
+      printf '#!/usr/bin/env bash\nlocal -A cache\n' >"$W/unreadable-file/entrypoint" &&
+      chmod 000 "$W/unreadable-file/entrypoint"
+    ;;
+  unenterable)
+    mkdir "$W/unenterable" &&
+      chmod 000 "$W/unenterable"
+    ;;
+  grep-stub) stage_grep_stub ;;
+  unless-root) W_SKIP=yes ;;
+  lint:stale) mutate_lint 'NO_SHELL="skills/gone/scripts"' ;;
+  lint:grew)
+    cp -R "$ROOT/$NOSHELL" "$W/noshell" &&
+      printf '#!/usr/bin/env bash\n:\n' >"$W/noshell/now-shell.sh" &&
+      mutate_lint "NO_SHELL=\"$W/noshell\""
+    ;;
+  lint:sealed)
+    mkdir "$W/sealed" &&
+      chmod 000 "$W/sealed" &&
+      mutate_lint "NO_SHELL=\"$W/sealed\""
+    ;;
+  -) ;;
+  *)
+    printf 'unknown world word: %s\n' "$1" >&2
+    exit 2
+    ;;
+  esac
+}
+
+build() { # build WORD... — a fresh directory W, then each word staged in it
+  local w
+  row_n=$((row_n + 1))
+  W="$WORLDS/$row_n"
+  W_LINT="$LINT"
+  W_PATH="$PATH"
+  W_SKIP=no
+  mkdir "$W" || return 1
+  for w in "$@"; do
+    word "$w" || return 1
+  done
+}
+
+arg_of() { # arg_of TOKEN — a row's argv token as the argument it names
+  case "$1" in
+  W/*) printf '%s/%s' "$W" "${1#W/}" ;;
+  NO_SCAN) printf '%s' "$NOSCAN" ;;
+  NO_SHELL) printf '%s' "$NOSHELL" ;;
+  ROOT/NO_SCAN) printf '%s/%s' "$ROOT" "$NOSCAN" ;;
+  *) printf '%s' "$1" ;;
+  esac
+}
+
+run() { # run CWD ARGV — `rc=<status>`, or `rc=skipped-as-root`
+  local rc=0 dir="" a=""
+  local -a argv=()
+  if [ "$W_SKIP" = yes ] && [ "$(id -u)" -eq 0 ]; then
+    printf 'rc=skipped-as-root'
+    return
   fi
-
-  # Extensionless entry points are classified by their shebang, so an
-  # unreadable one would answer "not shell" and leave the scan silently short.
-  mkdir -p "$TMP/unreadable-file"
-  printf '#!/usr/bin/env bash\n:\n' >"$TMP/unreadable-file/real.sh"
-  printf '#!/usr/bin/env bash\nlocal -A cache\n' >"$TMP/unreadable-file/entrypoint"
-  chmod 000 "$TMP/unreadable-file/entrypoint"
-  status=0
-  out="$("$LINT" "$TMP/unreadable-file" 2>&1)" || status=$?
-  chmod 644 "$TMP/unreadable-file/entrypoint"
-  if [ "$status" -eq 2 ]; then
-    ok "a file that could not be classified ends the run rather than being dropped"
-  else
-    bad "an unreadable extensionless file exited $status, not 2" "$out"
+  case "$1" in
+  root) dir="$ROOT" ;;
+  world) dir="$W" ;;
+  *) dir="$ROOT/$1" ;;
+  esac
+  if [ "$2" != - ]; then
+    for a in $2; do
+      argv+=("$(arg_of "$a")")
+    done
   fi
-fi
+  (cd "$dir" && PATH="$W_PATH" "$W_LINT" ${argv[@]+"${argv[@]}"} >"$W/stdout" 2>"$W/stderr") || rc=$?
+  # The modes an unreadable world set come off, so the EXIT trap can remove it.
+  chmod -R u+rwX "$W"
+  printf 'rc=%s' "$rc"
+}
 
-status=0
-out="$("$LINT" "$TMP/no-such-directory" 2>&1)" || status=$?
-if [ "$status" -eq 2 ]; then
-  ok "a path that is not a directory ends the run"
-else
-  bad "a missing directory exited $status, not 2" "$out"
-fi
-
-# A stale exception excuses a directory nobody is checking, so the lint
-# refuses to start on one. Proven against a copy with the entry rewritten.
-mutant="$TMP/mutant-lint"
-sed 's|^NO_SHELL=.*|NO_SHELL="skills/gone/scripts"|' "$LINT" >"$mutant" &&
-  chmod +x "$mutant" || bad "could not stage the stale-exception mutant"
-if [ -x "$mutant" ]; then
-  grep -q 'skills/gone/scripts' "$mutant" || bad "the stale-exception mutation did not land"
-  status=0
-  out="$(cd "$ROOT" && "$mutant" 2>&1)" || status=$?
-  if [ "$status" -eq 2 ]; then
-    ok "an exception naming a directory that is gone ends the run"
-  else
-    bad "a stale exception exited $status, not 2" "$out"
-  fi
-fi
-
-# And the other direction: a NO_SHELL directory that grows a shell file must
-# stop being excused rather than staying silently unscanned.
-noshell_dir=""
-noshell_dir="$(sed -n 's#^NO_SHELL="\(.*\)"$#\1#p' "$LINT" | tr ' ' '\n' | head -n 1)" || noshell_dir=""
-if [ -n "$noshell_dir" ] && [ -d "$noshell_dir" ]; then
-  ok "the NO_SHELL exception names $noshell_dir"
-  probe_lint="$TMP/probe-noshell"
-  probe_dir="$TMP/noshell-copy"
-  cp -R "$noshell_dir" "$probe_dir" &&
-    printf '#!/usr/bin/env bash\n:\n' >"$probe_dir/now-shell.sh" &&
-    sed "s|^NO_SHELL=.*|NO_SHELL=\"$probe_dir\"|" "$LINT" >"$probe_lint" &&
-    chmod +x "$probe_lint" || bad "could not stage the grew-a-shell-file probe"
-  if [ -x "$probe_lint" ]; then
-    status=0
-    out="$("$probe_lint" "$probe_dir" 2>&1)" || status=$?
-    if [ "$status" -eq 2 ]; then
-      ok "a NO_SHELL directory that grew a shell file ends the run"
-    else
-      bad "a NO_SHELL directory with a shell file exited $status, not 2" "$out"
+run_table() { # run_table TITLE ROWS
+  local title="$1" rows="$2" label world cwd argv want got row field before=$((PASS + FAIL))
+  printf '=== %s ===\n' "$title"
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    IFS='|' read -r label world cwd argv want <<<"$row"
+    for field in "$label" "$world" "$cwd" "$argv" "$want"; do
+      [ -n "$field" ] || {
+        printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2
+        exit 1
+      }
+    done
+    # shellcheck disable=SC2086
+    if ! build $world; then
+      bad "$label" "the world could not be staged: $world"
+      continue
     fi
-  fi
-else
-  bad "the lint declares no NO_SHELL directory this check could exercise"
-fi
+    got="$(run "$cwd" "$argv")"
+    # A rendering aid for writing rows; the run is refused after the loop.
+    if [ "${TOOLS_TABLE_PROBE:-}" = 1 ]; then
+      printf '%s => %s\n' "$label" "$got"
+      continue
+    fi
+    if [ "$got" = "rc=skipped-as-root" ]; then
+      printf '  skip  %s (%s)\n' "$label" "$got"
+    elif [ "$got" = "rc=$want" ]; then
+      ok "$label"
+    else
+      bad "$label (want rc=$want, got $got)" "$(tr '\n' ';' <"$W/stderr")"
+    fi
+  done <<EOF
+$rows
+EOF
+  [ "$((PASS + FAIL))" -gt "$before" ] || {
+    printf 'no row was asserted (a probe run renders rows instead)\n' >&2
+    exit 2
+  }
+}
+
+run_table "the fail-closed paths" "\
+a directory holding no shell file is a scan that read nothing|empty|root|W/empty|2
+a directory holding only non-shell files reads nothing either|nonshell|root|W/nonshell|2
+a relative DIR argument from a subdirectory scans clean|-|skills/orch|scripts|0
+the NO_SCAN exception holds when its directory is named relative to the toplevel|-|root|NO_SCAN|2
+the NO_SCAN exception holds when its directory is named absolute|-|root|ROOT/NO_SCAN|2
+a run with no repository around it ends rather than scanning|populated|world|populated|2
+an empty directory beside a populated one still ends the run|populated empty|root|W/populated W/empty|2
+a directory holding only non-shell files beside a populated one still ends the run|populated nonshell|root|W/populated W/nonshell|2
+a run naming only a NO_SHELL directory read nothing|-|root|NO_SHELL|2
+a shell file that does not parse reds the lint|syntax|root|W/syntax|1
+a scan that could not run is not read as a clean tree|populated grep-stub|root|W/populated|2
+a file list that could not be built is not read as a clean tree|unreadable-dir unless-root|root|W/unreadable-dir|2
+a file that could not be classified ends the run rather than being dropped|unreadable-file unless-root|root|W/unreadable-file|2
+a path that is not a directory ends the run|-|root|W/no-such-directory|2
+a directory that cannot be entered ends the run|unenterable unless-root|root|W/unenterable|2
+an exception naming a directory that is gone ends the run|lint:stale|root|-|2
+a NO_SHELL directory that grew a shell file ends the run|lint:grew|root|W/noshell|2
+an exception naming a directory that cannot be entered ends the run|populated lint:sealed unless-root|root|W/populated|2"
 
 # --- 5. the pattern set, as the lint itself reports it -------------------
 # Asked of the program, not lifted out of its text: `--pattern` prints the
