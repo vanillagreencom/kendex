@@ -87,6 +87,9 @@ run_payload() { # raw-json [PATH] -> rc, stderr in ERR_FILE, run in the worktree
   set -e
 }
 
+# shellcheck source=lib/payload-rows.sh
+. "$TEST_DIR/lib/payload-rows.sh"
+
 echo "=== block-worktree-refresh: a project-scope write from a linked worktree is refused ==="
 for verb in refresh apply 'add orch' 'remove orch' update-pi 'pin orch' 'fork orch' adopt drift-hook 'source add x' 'source remove x' 'source enable x' 'source disable x' 'marketplace subscribe x' 'marketplace unsubscribe x'; do
   run_in "$WT" "kendex $verb"; assert_eq "$rc" 2 "kendex $verb from the worktree is refused"
@@ -175,34 +178,12 @@ set +e
 rc=$?
 set -e
 assert_eq "$rc" 2 'a stdin that cannot be read refuses with the refusal status, not the read error'
-run_payload '{"tool_input":{"command":"kendex refresh"'
-assert_eq "$rc" 2 'a truncated JSON payload refuses rather than skipping the guard'
-run_payload '{"tool_input":{"command":123}}'
-assert_eq "$rc" 2 'a command that is not a string refuses'
 run_payload '{"tool_input":{"command":"kendex refresh"},"cwd":5}'
 assert_eq "$rc" 2 'a cwd that is not a string refuses'
-run_payload '{"tool_input":{"command":""}}'
-assert_eq "$rc" 0 'an empty command is read, not a read failure'
-run_payload '{"tool_name":"Bash","tool_input":{}}'
-assert_eq "$rc" 0 'a payload naming no command passes'
-run_payload '{"command":"kendex apply"}'
-assert_eq "$rc" 2 'a top-level command field is read like a nested one'
-run_payload '{"sessionId":"s","timestamp":1,"cwd":"'"$WT"'","toolName":"bash","toolArgs":{"command":"kendex refresh"}}'
-assert_eq "$rc" 2 'a Copilot toolArgs object is read'
-run_payload '{"toolName":"bash","toolArgs":"{\"command\":\"kendex refresh\"}"}'
-assert_eq "$rc" 2 'a Copilot toolArgs JSON string is read'
-run_payload '{"toolName":"bash","toolArgs":{"command":"kendex verify"}}'
-assert_eq "$rc" 0 'a read under toolArgs passes, so the shape is read rather than refused'
 
-echo "=== block-worktree-refresh: a missing reader refuses ==="
-NOJQ_BIN="$TMP_ROOT/nojq"
-mkdir -p "$NOJQ_BIN"
-for tool in bash cat git; do
-  target="$(command -v "$tool" 2>/dev/null)" && ln -sf "$target" "$NOJQ_BIN/$tool"
-done
-run_payload '{"tool_input":{"command":"kendex refresh"}}' "$NOJQ_BIN"
-assert_eq "$rc" 2 'without jq the guard refuses rather than skipping'
-assert_contains "$ERR_FILE" 'required to read the hook payload' 'the refusal names what is missing'
+payload_table "$HOOK" 'kendex refresh' 'kendex verify' "$WT"
+
+echo "=== block-worktree-refresh: a missing git refuses ==="
 NOGIT_BIN="$TMP_ROOT/nogit"
 mkdir -p "$NOGIT_BIN"
 for tool in bash cat jq; do

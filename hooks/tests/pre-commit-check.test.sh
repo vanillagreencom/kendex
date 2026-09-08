@@ -19,6 +19,10 @@
 # must-fail control checks that these assertions can go red.
 set -euo pipefail
 
+# The fixture's own git calls must build the fixture, not whatever repository
+# a wrapper's redirection variables name.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 HOOKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$HOOKS_DIR/pre-commit-check.sh}"
 
@@ -49,14 +53,16 @@ done
 
 run_hook() {
   local dir="$1" payload="$2"
-  shift 2
   set +e
-  (cd "$dir" && env PATH="$NO_KENDEX_BIN" "$@" bash "$HOOK" <<<"$payload") >/dev/null 2>"$ERR_FILE"
+  (cd "$dir" && env PATH="$NO_KENDEX_BIN" bash "$HOOK" <<<"$payload") >/dev/null 2>"$ERR_FILE"
   rc=$?
   set -e
   err="$(cat "$ERR_FILE")"
   log="$(cat "$RAN_LOG" 2>/dev/null || true)"
 }
+
+# shellcheck source=lib/payload-rows.sh
+. "$HOOKS_DIR/tests/lib/payload-rows.sh"
 
 payload() { printf '{"tool_input":{"command":"%s"}}' "$1"; }
 
@@ -126,21 +132,6 @@ mkdir -p "$TMP_ROOT/custom-hooks"
 cp "$ARMED_BY_PATH/.git/hooks/pre-commit" "$ARMED_BY_PATH/.git/hooks/commit-msg" "$TMP_ROOT/custom-hooks/"
 git -C "$ARMED_BY_PATH" config core.hooksPath "$TMP_ROOT/custom-hooks"
 NOT_A_REPO="$TMP_ROOT/plain"; mkdir -p "$NOT_A_REPO"
-# Everything the hook needs except one tool, so each missing-tool lane is
-# measured rather than asserted from an unreachable interpreter. Dropping cat
-# is not the same failure as dropping jq: without the guard the hook dies at
-# `INPUT=$(cat)` with 127, and a PreToolUse status that is not 2 is a
-# non-blocking error the harness runs the command past.
-NO_JQ_BIN="$TMP_ROOT/no-jq-bin"
-mkdir -p "$NO_JQ_BIN"
-for tool in git grep bash cat env printf; do
-  target="$(command -v "$tool" 2>/dev/null)" && ln -sf "$target" "$NO_JQ_BIN/$tool"
-done
-NO_CAT_BIN="$TMP_ROOT/no-cat-bin"
-mkdir -p "$NO_CAT_BIN"
-for tool in git grep jq bash env printf; do
-  target="$(command -v "$tool" 2>/dev/null)" && ln -sf "$target" "$NO_CAT_BIN/$tool"
-done
 
 echo "a git word with a later commit word is the commit"
 
@@ -232,47 +223,15 @@ for form in 'cd sub && git commit -m x' 'GIT_DIR=/e/.git git commit -m x' 'GIT_W
 done
 
 echo
-echo "an unreadable payload is refused, never skipped"
-
-run_hook "$UNARMED" '{"tool_input":{"command":123}}'
-assert_eq "$rc" "2" "a command that is not a string is refused"
-assert_contains "$err" "not valid JSON, or names a command that is not a string" "the refusal names the payload"
-assert_eq "$log" "" "nothing ran for the unreadable payload"
-
-echo
-echo "Copilot carries the command under toolArgs, as an object or as one JSON-encoded string"
-
-run_hook "$ARMED" '{"sessionId":"s","timestamp":1,"cwd":"/w","toolName":"bash","toolArgs":{"command":"git commit '"$NV"' -m x"}}'
-assert_eq "$rc" "2" "a Copilot toolArgs object is read"
+payload_table "$HOOK" "git commit $NV -m x" 'git commit -m x' "$ARMED"
+# The table's refusal column says the hook read the command and refused it;
+# which arm refused is this suite's pin, and the armed bypass arm is the one
+# that must be reached through the Copilot shape.
+run_hook "$ARMED" "$(jq -nc --arg c "git commit $NV -m x" '{toolName:"bash",toolArgs:{command:$c}}')"
 assert_contains "$err" "would skip this repository's armed git hooks" "the bypass under toolArgs is named"
-run_hook "$ARMED" '{"toolName":"bash","toolArgs":"{\"command\":\"git commit '"$NV"' -m x\"}"}'
-assert_eq "$rc" "2" "a Copilot toolArgs JSON string is read"
-run_hook "$ARMED" '{"toolName":"bash","toolArgs":{"command":"git commit -m x"}}'
-assert_eq "$rc" "0" "a plain commit under toolArgs passes, so the shape is read rather than refused"
-run_hook "$ARMED" '{"toolName":"bash","toolArgs":"not json"}'
-assert_eq "$rc" "2" "a toolArgs string that is not JSON refuses rather than skipping the guard"
-
-run_hook "$UNARMED" '{"tool_input":{"command":"git commit -m x'
-assert_eq "$rc" "2" "a command string that never ends is refused"
-
-run_hook "$UNARMED" "$(payload 'git commit -m x')" PATH="$NO_JQ_BIN"
-assert_eq "$rc" "2" "a PATH without jq refuses rather than skipping the guard"
-assert_contains "$err" "jq, cat and grep are required" "and says which tools are missing"
-
-run_hook "$UNARMED" "$(payload 'git commit -m x')" PATH="$NO_CAT_BIN"
-assert_eq "$rc" "2" "a PATH without cat refuses rather than dying unread"
-assert_contains "$err" "jq, cat and grep are required" "and says which tools are missing"
-
-# The harness sends the command under tool_input; a payload naming it at the
-# top level is read the same way, and that fallback is a line of its own.
-run_hook "$UNARMED" '{"command":"git commit -m x"}'
-assert_eq "$rc" "2" "a top-level command field is read like a nested one"
-assert_contains "$err" "not armed by kendex" "and reaches the ordinary refusal"
 
 run_hook "$UNARMED" '{"note":"about to commit with git"}'
 assert_eq "$rc" "0" "a payload with no command field is left alone"
-run_hook "$UNARMED" '{"tool_input":{"command":""}}'
-assert_eq "$rc" "0" "an empty command string is left alone"
 # A command that splits into no words at all. On bash before 4.4 expanding a
 # zero-element array under `set -u` aborts, so the clean exit is pinned rather
 # than assumed; this suite is run against bash 3.2 as well as the host's.

@@ -48,18 +48,8 @@ run_hook() { # command -> rc, stderr in $err
   err="$(cat "$ERR_FILE")"
 }
 
-run_payload() { # raw-json [PATH] -> rc, stderr in $err
-  set +e
-  if [ -n "${2:-}" ]; then
-    printf '%s' "$1" | env -i HOME="$HOME" PWD="$PWD" PATH="$2" "$BASH_BIN" "$HOOK" \
-      >/dev/null 2>"$ERR_FILE"
-  else
-    printf '%s' "$1" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
-  fi
-  rc=$?
-  set -e
-  err="$(cat "$ERR_FILE")"
-}
+# shellcheck source=lib/payload-rows.sh
+. "$TEST_DIR/lib/payload-rows.sh"
 
 REPO=/home/agent/dev/project
 
@@ -197,65 +187,7 @@ assert_contains "$err" "Read the source in place" 'the refusal offers reading in
 assert_contains "$err" "MINIMAL synthetic fixture" 'the refusal offers a minimal fixture'
 assert_contains "$err" 'mktemp -d' 'the refusal shows how to build the fixture'
 
-echo "=== block-repo-copy: a payload it cannot read refuses ==="
-run_payload "{\"tool_input\":{\"command\":\"cp -r $REPO/.git /tmp/copy"
-assert_eq "$rc" 2 'a truncated JSON payload refuses rather than skipping the guard'
-assert_contains "$err" 'not valid JSON' 'the parse refusal names the cause'
-run_payload '{"tool_input":{"command":123}}'
-assert_eq "$rc" 2 'a command that is not a string refuses'
-run_payload '{"tool_input":{"command":false}}'
-assert_eq "$rc" 2 'a command of false refuses, not read as an absent one'
-run_payload '{"tool_name":"Bash","tool_input":{}}'
-assert_eq "$rc" 0 'a payload naming no command passes'
-run_payload '{"tool_input":{"command":""}}'
-assert_eq "$rc" 0 'an empty command is read, not a read failure'
-# The harness sends the command under tool_input; a payload naming it at the
-# top level is read the same way, and that fallback is a branch of its own.
-run_payload "{\"command\":\"cp -r $REPO/.git /tmp/copy\"}"
-assert_eq "$rc" 2 'a top-level command field is read like a nested one'
-# Copilot carries the command under toolArgs, as an object or as one
-# JSON-encoded string.
-run_payload "{\"sessionId\":\"s\",\"timestamp\":1,\"cwd\":\"/w\",\"toolName\":\"bash\",\"toolArgs\":{\"command\":\"cp -r $REPO/.git /tmp/copy\"}}"
-assert_eq "$rc" 2 'a Copilot toolArgs object is read'
-run_payload "{\"toolName\":\"bash\",\"toolArgs\":\"{\\\"command\\\":\\\"cp -r $REPO/.git /tmp/copy\\\"}\"}"
-assert_eq "$rc" 2 'a Copilot toolArgs JSON string is read'
-run_payload "{\"toolName\":\"bash\",\"toolArgs\":{\"command\":\"cp -r $REPO/src /tmp/copy\"}}"
-assert_eq "$rc" 0 'a harmless copy under toolArgs passes, so the shape is read rather than refused'
-run_payload '{"toolName":"bash","toolArgs":"not json"}'
-assert_eq "$rc" 2 'a toolArgs string that is not JSON refuses rather than skipping the guard'
-
-NOJQ_BIN="$TMP_ROOT/nojq"
-mkdir -p "$NOJQ_BIN"
-# type -P, not command -v: cat and friends are shell functions in some
-# interactive environments, and a function name symlinks to nothing.
-for tool in cat sed grep; do
-  real="$(type -P "$tool" 2>/dev/null || true)"
-  [ -n "$real" ] && [ -x "$real" ] || continue
-  ln -sf "$real" "$NOJQ_BIN/$tool"
-done
-run_payload "{\"tool_input\":{\"command\":\"cp -r $REPO/.git /tmp/copy\"}}" "$NOJQ_BIN"
-assert_eq "$rc" 2 'no jq refuses rather than guessing at the payload'
-assert_contains "$err" 'required to read the hook payload' 'the refusal names what is missing'
-run_payload "{\"tool_input\":{\"command\":\"git status --short\"}}" /nonexistent
-assert_eq "$rc" 2 'no text tools at all refuses too, whatever the command'
-
-# cat is the other half of the same guard: jq reads the payload, cat is what
-# hands it over. A PATH holding jq and not cat is what tells the two apart.
-NOCAT_BIN="$TMP_ROOT/nocat"
-mkdir -p "$NOCAT_BIN"
-for tool in jq sed grep; do
-  real="$(type -P "$tool" 2>/dev/null || true)"
-  [ -n "$real" ] && [ -x "$real" ] || continue
-  ln -sf "$real" "$NOCAT_BIN/$tool"
-done
-run_payload "{\"tool_input\":{\"command\":\"git status --short\"}}" "$NOCAT_BIN"
-assert_eq "$rc" 2 'no cat refuses rather than skipping the guard'
-assert_contains "$err" 'required to read the hook payload' 'the refusal names what is missing'
-# The control that the exact PATH is what decided: the same benign command
-# passes once cat is on it.
-ln -sf "$(type -P cat)" "$NOCAT_BIN/cat"
-run_payload "{\"tool_input\":{\"command\":\"git status --short\"}}" "$NOCAT_BIN"
-assert_eq "$rc" 0 'and the same PATH with cat added passes'
+payload_table "$HOOK" "cp -r $REPO/.git /tmp/copy" "cp -r $REPO/src /tmp/copy"
 
 echo "=== block-repo-copy: the stated limits ==="
 # Reading the command's text rather than resolving its operands costs in both

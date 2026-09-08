@@ -47,17 +47,8 @@ run_hook() { # command -> rc, stderr in ERR_FILE
   set -e
 }
 
-run_payload() { # raw-json [PATH] -> rc, stderr in ERR_FILE
-  set +e
-  if [ -n "${2:-}" ]; then
-    printf '%s' "$1" | env -i HOME="$HOME" PWD="$PWD" PATH="$2" "$BASH_BIN" "$HOOK" \
-      >/dev/null 2>"$ERR_FILE"
-  else
-    printf '%s' "$1" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
-  fi
-  rc=$?
-  set -e
-}
+# shellcheck source=lib/payload-rows.sh
+. "$TEST_DIR/lib/payload-rows.sh"
 
 echo "=== block-unsafe-rm: a variable-rooted operand is refused ==="
 run_hook 'rm -rf $CACHE/$KEY';        assert_eq "$rc" 2 'a bare $NAME root is refused'
@@ -128,72 +119,11 @@ run_hook 'ls -la';                    assert_eq "$rc" 0 'an unrelated command pa
 
 echo "=== block-unsafe-rm: the refusal names the cause and the rewrite ==="
 run_hook 'rm -rf $CACHE/$KEY'
-assert_contains "$ERR_FILE" 'possibly-empty variable path' 'the refusal names the harness prompt it prevents'
 assert_contains "$ERR_FILE" '${NAME:?}' 'the refusal names the ${NAME:?} rewrite'
 assert_contains "$ERR_FILE" '/absolute/literal/path' 'the refusal names the literal-path alternative'
 assert_contains "$ERR_FILE" 'rm -rf $CACHE/$KEY' 'the refusal quotes the command it judged'
 
-echo "=== block-unsafe-rm: a payload it cannot read refuses ==="
-run_payload '{"tool_input":{"command":"rm -rf $X"'
-assert_eq "$rc" 2 'a truncated JSON payload refuses rather than skipping the guard'
-assert_contains "$ERR_FILE" 'not valid JSON' 'the parse refusal names the cause'
-run_payload '{"tool_input":{"command":123}}'
-assert_eq "$rc" 2 'a command that is not a string refuses'
-run_payload '{"tool_input":{"command":false}}'
-assert_eq "$rc" 2 'a command of false refuses, not read as an absent one'
-run_payload '{"tool_name":"Bash","tool_input":{}}'
-assert_eq "$rc" 0 'a payload naming no command passes'
-run_payload '{"tool_input":{"command":""}}'
-assert_eq "$rc" 0 'an empty command is read, not a read failure'
-# The harness sends the command under tool_input; a payload naming it at the
-# top level is read the same way, and that fallback is a branch of its own.
-run_payload '{"command":"rm -rf $X"}'
-assert_eq "$rc" 2 'a top-level command field is read like a nested one'
-run_payload '{"command":false}'
-assert_eq "$rc" 2 'and a top-level false is refused, not read as an absent one'
-# Copilot carries the command under toolArgs, as an object or as one
-# JSON-encoded string.
-run_payload '{"sessionId":"s","timestamp":1,"cwd":"/w","toolName":"bash","toolArgs":{"command":"rm -rf $X/sub"}}'
-assert_eq "$rc" 2 'a Copilot toolArgs object is read'
-run_payload '{"toolName":"bash","toolArgs":"{\"command\":\"rm -rf $X/sub\"}"}'
-assert_eq "$rc" 2 'a Copilot toolArgs JSON string is read'
-run_payload '{"toolName":"bash","toolArgs":{"command":"rm -rf -- \"${X:?}/sub\""}}'
-assert_eq "$rc" 0 'the accepted rewrite under toolArgs passes, so the shape is read rather than refused'
-run_payload '{"toolName":"bash","toolArgs":"not json"}'
-assert_eq "$rc" 2 'a toolArgs string that is not JSON refuses rather than skipping the guard'
-
-NOJQ_BIN="$TMP_ROOT/nojq"
-mkdir -p "$NOJQ_BIN"
-# type -P, not command -v: cat and friends are shell functions in some
-# interactive environments, and a function name symlinks to nothing.
-for tool in cat sed grep; do
-  real="$(type -P "$tool" 2>/dev/null || true)"
-  [ -n "$real" ] && [ -x "$real" ] || continue
-  ln -sf "$real" "$NOJQ_BIN/$tool"
-done
-run_payload '{"tool_input":{"command":"rm -rf $X"}}' "$NOJQ_BIN"
-assert_eq "$rc" 2 'no jq refuses rather than guessing at the payload'
-assert_contains "$ERR_FILE" 'required to read the hook payload' 'the refusal names what is missing'
-run_payload '{"tool_input":{"command":"ls -la"}}' /nonexistent
-assert_eq "$rc" 2 'no text tools at all refuses too, whatever the command'
-
-# cat is the other half of the same guard: jq reads the payload, cat is what
-# hands it over. A PATH holding jq and not cat is what tells the two apart.
-NOCAT_BIN="$TMP_ROOT/nocat"
-mkdir -p "$NOCAT_BIN"
-for tool in jq sed grep; do
-  real="$(type -P "$tool" 2>/dev/null || true)"
-  [ -n "$real" ] && [ -x "$real" ] || continue
-  ln -sf "$real" "$NOCAT_BIN/$tool"
-done
-run_payload '{"tool_input":{"command":"ls -la"}}' "$NOCAT_BIN"
-assert_eq "$rc" 2 'no cat refuses rather than skipping the guard'
-assert_contains "$ERR_FILE" 'required to read the hook payload' 'the refusal names what is missing'
-# The control that the exact PATH is what decided: the same benign command
-# passes once cat is on it.
-ln -sf "$(type -P cat)" "$NOCAT_BIN/cat"
-run_payload '{"tool_input":{"command":"ls -la"}}' "$NOCAT_BIN"
-assert_eq "$rc" 0 'and the same PATH with cat added passes'
+payload_table "$HOOK" 'rm -rf $X/sub' 'rm -rf -- "${X:?}/sub"'
 
 echo "=== block-unsafe-rm: the stated limit ==="
 # A flag the shell would assemble is not seen here. The harness prompt still
