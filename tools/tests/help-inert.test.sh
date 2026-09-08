@@ -35,12 +35,17 @@ printf '%s\n' \
     '. "$PWD/.env.local"' \
     'printf "environment control\n"' \
     >"$FIXTURE/.agents/skills/control/scripts/environment-load"
+printf '%s\n' \
+    '#!/bin/sh' \
+    'printf "swallowed %s\n" "$*"' \
+    >"$FIXTURE/.agents/skills/control/scripts/command-swallow"
 cp "$FIXTURE/bin/blocked" "$FIXTURE/bin/gh"
 cp "$FIXTURE/bin/blocked" "$FIXTURE/bin/codex"
 cp "$FIXTURE/bin/blocked" "$FIXTURE/bin/curl"
 chmod +x "$FIXTURE/bin/blocked" "$FIXTURE/bin/gh" "$FIXTURE/bin/codex" \
     "$FIXTURE/bin/curl" "$FIXTURE/.agents/skills/control/scripts/dependency-call" \
-    "$FIXTURE/.agents/skills/control/scripts/environment-load"
+    "$FIXTURE/.agents/skills/control/scripts/environment-load" \
+    "$FIXTURE/.agents/skills/control/scripts/command-swallow"
 export HELP_INERT_CALLS="$CALLS"
 
 # The linear CLI's contract is Bash 4 or newer (skills/linear/tests/
@@ -91,6 +96,7 @@ while IFS=$'\t' read -r skill script token args expected; do
 done <<'ROWS'
 control	scripts/dependency-call	dependency control	--help	dependency
 control	scripts/environment-load	environment control	--help	environment
+control	scripts/command-swallow	command control	--help	command
 decider	scripts/decisions	Decision Lookup Tool	-
 decider	scripts/decisions	Decision Lookup Tool	help
 decider	scripts/decisions	Decision Lookup Tool	--help
