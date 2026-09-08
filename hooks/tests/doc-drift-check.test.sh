@@ -203,9 +203,11 @@ run() { # PAYLOAD — sets RC and MESSAGE (the systemMessage, empty when stdout 
   (cd "$RUN_DIR" && env HOME="$TMP_ROOT" PATH="$RUN_PATH" bash "$HOOK" <<<"$payload" \
     >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || RC=$?
   MESSAGE=""
-  if [[ -s "$TMP_ROOT/stdout" ]] && jq -e 'type == "object" and keys == ["systemMessage"] and (.systemMessage | type == "string" and length > 0)' \
+  # Slurped, so a second JSON value on stdout (which jq -e alone would read
+  # through, answering for the last) leaves MESSAGE empty and the row malformed.
+  if [[ -s "$TMP_ROOT/stdout" ]] && jq -es 'length == 1 and (.[0] | type == "object" and keys == ["systemMessage"] and (.systemMessage | type == "string" and length > 0))' \
     <"$TMP_ROOT/stdout" >/dev/null 2>&1; then
-    MESSAGE="$(jq -r '.systemMessage' <"$TMP_ROOT/stdout")"
+    MESSAGE="$(jq -rs '.[0].systemMessage' <"$TMP_ROOT/stdout")"
   fi
 }
 
