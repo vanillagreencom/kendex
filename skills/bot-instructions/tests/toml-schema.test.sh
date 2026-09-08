@@ -182,7 +182,7 @@ ROWS
 # the glob as the one `[[bot-instructions.exclusions.path]]` entry under the
 # minimal head.
 IFS= read -r -d '' globs <<'ROWS'
-an empty glob~~empty glob
+an empty glob~~[[bot-instructions.exclusions.path]][0] glob: empty glob
 a leading slash~/src/**~has a leading `/`
 a trailing slash~src/~has a trailing `/`
 a .. component~../**~has a `..` component
@@ -192,8 +192,10 @@ an extglob, outside the class~@(a|b)/**~carries an extglob
 a comma, which Copilot applyTo splits on~a,b~carries a comma
 a comment character, which .coderabbit.yaml reads as a comment~a#b~carries a comment character
 ROWS
+globs_converted=0
 while IFS='~' read -r label glob clause; do
   [ -n "$label" ] || continue
+  globs_converted=$((globs_converted + 1))
   rows="$rows$label|append|check|$clause
 [[bot-instructions.exclusions.path]]
 glob = \"$glob\"
@@ -203,6 +205,15 @@ END
 done <<EOF
 $globs
 EOF
+
+# The call below asserts one merged list, so `bi_toml_table`'s floor counts the
+# schema records too and an emptied glob heredoc would drop every path-shape
+# claim in silence. This floor is derived from the list the loop read, never
+# from a count typed a second time.
+[ "$globs_converted" -gt 0 ] || {
+  printf 'the glob list converted no rows into the table\n' >&2
+  exit 1
+}
 
 bi_toml_table 'the schema clauses' "$repo" "$rows"
 
