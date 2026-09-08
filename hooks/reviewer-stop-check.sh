@@ -4,7 +4,7 @@
 # event: SubagentStop
 # matcher:
 # description: Blocks a reviewer subagent's stop once when the worktree it reviewed is not clean. The worktree is the one the artifact path in the subagent's transcript names (`<worktree>/tmp/review-<agent>-*.json`, the newest mention); `git status --porcelain --untracked-files=all` there listing anything blocks, naming each path, and a transcript naming no artifact path blocks the same way, since the review contract is an artifact at that path. An agent_type not starting with `reviewer-` passes, as does `stop_hook_active` true; a block is recorded per agent_id under `<git common dir>/kendex/reviewer-stop/` so a later stop of the same subagent passes. Claude Code only, the harness with a SubagentStop event that names the agent.
-# safety: Reads the payload, the transcript and git status; the only write is the per-agent marker under the reviewed repository's git common dir. Exit 2 names the paths and asks for the reviewer's own files to be deleted and the rest reported, never bypassed. jq is required to read the payload; a payload, transcript or git that cannot be read is refused, never passed. Refusals carry the line `reviewer-stop-check: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first. The marker probes keep their own words, which name why the write was refused.
+# safety: Reads the payload, the transcript and git status; the only write is the per-agent marker under the reviewed repository's git common dir. Exit 2 names the paths and asks for the reviewer's own files to be deleted and the rest reported, never bypassed. jq is required to read the payload; a payload, transcript or git that cannot be read is refused, never passed. Refusals carry the line `reviewer-stop-check: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first.
 # timeout: 30
 # harnesses: [claude-code]
 # ---
@@ -85,10 +85,10 @@ for dependency in jq git cat grep tail mkdir; do
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
-# cat's own words add nothing the refusal does not carry: the payload could
-# not be read, and there is no second cause to name. Silencing it keeps the
-# keyed line the only thing this hook writes here.
-INPUT=$(cat 2>/dev/null) || refuse payload unreadable
+# cat keeps its own words: they say which failure it was — a directory on
+# stdin, a closed descriptor, a read error — and `payload=unreadable` carries
+# the verdict, not the cause.
+INPUT=$(cat) || refuse payload unreadable
 
 FIELDS=$(printf '%s' "$INPUT" | jq -r '
   def str($v): if $v == null then "" elif ($v | type) == "string" then $v else error("not a string") end;

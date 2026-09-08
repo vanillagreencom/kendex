@@ -30,20 +30,17 @@ passed=0
 failed=0
 # `first` is the hook's own keyed line, found by its prefix rather than at
 # line 1: a command the hook runs may write its own diagnostic first, and that
-# line is not this hook's to pin. `-` when it wrote none.
+# line is not this hook's to pin. `-` when it wrote none. The reader is the
+# shared one; this suite runs the hook from a fixture copy, so it names the
+# hook and the stderr file rather than taking the suite-wide defaults.
 first=-
-keyed_line() { # -> the `command-safety: ` line, `-` when there is none
-  local line=""
-  while IFS= read -r line; do
-    case "$line" in "command-safety: "*) printf '%s' "$line"; return ;; esac
-  done <"$scratch/stderr"
-  printf -- '-'
-}
+# shellcheck source=lib/first-line.sh
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/first-line.sh"
 check() { # EXPECTED COMMAND LABEL [CWD] [HOOK]
   local expected="$1" command="$2" label="$3" payload_cwd="${4:-$repo}" payload_hook="${5:-$hook}" payload status=0 output
   payload="$(jq -nc --arg command "$command" --arg cwd "$payload_cwd" '{tool_input:{command:$command},cwd:$cwd}')"
   output="$(printf '%s' "$payload" | bash "$payload_hook" 2>"$scratch/stderr")" || status=$?
-  first="$(keyed_line)"
+  first="$(first_line command-safety "$scratch/stderr")"
   if [ "$status" -eq "$expected" ]; then
     printf 'PASS %s\n' "$label"
     passed=$((passed + 1))
@@ -92,7 +89,7 @@ settings
 shape() { # EXPECTED PAYLOAD_JSON LABEL
   local expected="$1" payload="$2" label="$3" status=0 output
   output="$(printf '%s' "$payload" | bash "$hook" 2>"$scratch/stderr")" || status=$?
-  first="$(keyed_line)"
+  first="$(first_line command-safety "$scratch/stderr")"
   if [ "$status" -eq "$expected" ]; then
     printf 'PASS %s\n' "$label"
     passed=$((passed + 1))

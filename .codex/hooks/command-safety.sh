@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: On harnesses that execute hooks, refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. An absent policy is inactive. Matching is textual, including quoted text, and does not inspect the desktop or running processes.
-# safety: When executed with a configured policy, blocks matching command text before the shell tool runs. Unreadable input, missing settings support, and invalid or explicitly empty patterns refuse execution. Refusals carry the line `command-safety: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first. grep and the settings loader keep their own words, which name a pattern or a settings line the keyed value cannot.
+# safety: When executed with a configured policy, blocks matching command text before the shell tool runs. Unreadable input, missing settings support, and invalid or explicitly empty patterns refuse execution. Refusals carry the line `command-safety: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first.
 # timeout: 10
 # ---
 
@@ -73,10 +73,10 @@ cwd="$(jq -r 'if .cwd == null then "" elif .cwd | type == "string" then .cwd els
 [ -n "$cwd" ] || cwd="$PWD"
 # The requested path is kept: the assignment below takes the substitution's
 # empty output when the directory cannot be entered, so the refusal would name
-# nothing. cd's own words are silenced because `cwd=<path>` and the English
-# under it already say everything the probe would.
+# nothing. cd keeps its own words, which say whether the directory was missing,
+# was not a directory, or could not be read; `cwd=<path>` carries none of that.
 requested_cwd="$cwd"
-cwd="$(cd -- "$cwd" 2>/dev/null && pwd -P)" || refuse cwd "$requested_cwd"
+cwd="$(cd -- "$cwd" && pwd -P)" || refuse cwd "$requested_cwd"
 root_status=0
 root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" || root_status=$?
 if [ "$root_status" -ne 0 ]; then
@@ -119,7 +119,7 @@ GG_CHECK=command-safety
 source "$lib/common.sh"
 # shellcheck source=../skills/commit-guards/scripts/lib/settings.sh
 source "$lib/settings.sh"
-cd -- "$root" 2>/dev/null || refuse cwd "$root"
+cd -- "$root" || refuse cwd "$root"
 # The loader keeps its own diagnostic: it names the file and the line the
 # settings could not be read at, which `settings=unreadable` does not carry.
 pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "^$")" || refuse settings unreadable

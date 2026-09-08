@@ -78,10 +78,10 @@ for dependency in jq git cat grep dirname; do
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
-# cat's own words add nothing the refusal does not carry: the payload could
-# not be read, and there is no second cause to name. Silencing it keeps the
-# keyed line the only thing this hook writes here.
-INPUT=$(cat 2>/dev/null) || refuse payload unreadable
+# cat keeps its own words: they say which failure it was — a directory on
+# stdin, a closed descriptor, a read error — and `payload=unreadable` carries
+# the verdict, not the cause.
+INPUT=$(cat) || refuse payload unreadable
 
 # One jq read for the strings the decision needs. A payload that does not
 # parse, or whose agent_type or tool_name is not a string, is refused.

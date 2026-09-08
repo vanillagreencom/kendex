@@ -28,14 +28,17 @@
 #   text   what the mode sends; `-` is empty, and `printf %b` decodes the
 #          escapes a row spells. It stands last, so a row may hold a pipe
 
-first_line() { # -> the hook's own keyed line, `-` when it wrote none
-  local prefix line=""
-  prefix="$(basename "${HOOK:?}" .sh): "
+# NAME and FILE default to the suite's own hook and stderr; a suite whose
+# fixture runs a copy of the hook under another path passes them instead.
+first_line() { # [NAME] [FILE] -> the hook's own keyed line, `-` when it wrote none
+  local prefix line="" file
+  prefix="${1:-$(basename "${HOOK:?}" .sh)}: "
+  file="${2:-$ERR_FILE}"
   # Read to the end in the shell: a `head` here stops reading while the hook
   # still writes, and its SIGPIPE would read as an empty stderr.
   while IFS= read -r line; do
     case "$line" in "$prefix"*) printf '%s' "$line"; return ;; esac
-  done <"$ERR_FILE"
+  done <"$file"
   printf -- '-'
 }
 
