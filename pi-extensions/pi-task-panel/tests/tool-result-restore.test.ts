@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "bun:test";
 import { applyTaskPanelToolResultRestore, taskPanelToolResultState } from "../extensions/tool-result-details.js";
 import { stateWithTasks } from "./lib/task-state.ts";
 
