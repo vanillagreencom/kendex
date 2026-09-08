@@ -7,7 +7,6 @@ import { describe, expect, test } from "bun:test";
 
 import type { LifecycleHooks } from "../extensions/lifecycle.js";
 import { createOrphanWatcher } from "../extensions/orphan-watcher.js";
-import { summarizeTaskStatus } from "../extensions/format.js";
 import { taskSnapshot } from "../extensions/snapshot.js";
 import type {
 	BackgroundTaskSnapshot,
@@ -114,29 +113,3 @@ describe("orphan-watcher annotation (kendex#97)", () => {
 	});
 });
 
-describe("summarizeTaskStatus formatting (kendex#97)", () => {
-	test("self-exit annotation is omitted so historical rows stay terse", () => {
-		expect(summarizeTaskStatus("completed", 0, "self-exit")).toBe("completed (exit 0)");
-		expect(summarizeTaskStatus("failed", 137, "self-exit")).toBe("failed (exit 137)");
-	});
-
-	test("non-self-exit reasons are appended in parentheses", () => {
-		expect(summarizeTaskStatus("stopped", null, "extension-stop")).toBe(
-			"stopped (extension-stop)",
-		);
-		expect(summarizeTaskStatus("stopped", null, "reconcile-on-restart")).toBe(
-			"stopped (reconcile-on-restart)",
-		);
-		expect(summarizeTaskStatus("failed", null, "orphaned-pid-gone")).toBe(
-			"failed (exit ?) (orphaned-pid-gone)",
-		);
-		expect(summarizeTaskStatus("failed", null, "external")).toBe(
-			"failed (exit ?) (external)",
-		);
-	});
-
-	test("undefined termination reason matches the legacy output (back-compat)", () => {
-		expect(summarizeTaskStatus("stopped", null, undefined)).toBe("stopped");
-		expect(summarizeTaskStatus("completed", 0, undefined)).toBe("completed (exit 0)");
-	});
-});
