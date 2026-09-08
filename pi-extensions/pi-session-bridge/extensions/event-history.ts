@@ -16,6 +16,7 @@
  *     compact-only data plus an explicit `rawError` marker.
  */
 
+import { stringifyError } from "./diagnostics.js";
 import { Buffer } from "node:buffer";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -69,6 +70,12 @@ interface RawSlot {
 }
 
 export type HistoryWarn = (where: string, error: unknown) => void;
+
+const messages = {
+	disabled: "spill_enabled=false\nRaw spill is disabled.",
+	budget: (bytes: number) => `spill_max_bytes=${bytes}\nRaw spill exceeds the configured limit.`,
+	refMismatch: (offset: number) => `raw_ref_offset=${offset}\nThe raw event reference does not match.`,
+};
 
 export class BridgeHistory {
 	private readonly entries: HistoryEntry[] = [];
@@ -126,7 +133,7 @@ export class BridgeHistory {
 					envelope.rawError = this.lastSpillError;
 				}
 			} else {
-				envelope.rawError = "raw spill disabled";
+				envelope.rawError = messages.disabled;
 			}
 		}
 		const bytes = Buffer.byteLength(JSON.stringify(envelope), "utf8");
@@ -245,7 +252,7 @@ export class BridgeHistory {
 			if (limits.maxRawSpillBytes > 0 && this.currentFileSize() + length > limits.maxRawSpillBytes) {
 				this.compactSidecar();
 				if (this.currentFileSize() + length > limits.maxRawSpillBytes) {
-					this.lastSpillError = `raw spill exceeds maxRawSpillBytes (${limits.maxRawSpillBytes})`;
+					this.lastSpillError = messages.budget(limits.maxRawSpillBytes);
 					this.warn("spill.budget", new Error(this.lastSpillError));
 					return undefined;
 				}
@@ -282,7 +289,7 @@ export class BridgeHistory {
 				fs.readSync(fd, buf, 0, current.length, current.offset);
 				const line = buf.toString("utf8").trimEnd();
 				const parsed = JSON.parse(line) as { ref?: unknown; data?: unknown };
-				if (parsed.ref !== slot.ref) return { ok: false, error: `raw ref mismatch at offset ${current.offset}` };
+				if (parsed.ref !== slot.ref) return { ok: false, error: messages.refMismatch(current.offset) };
 				return { ok: true, data: parsed.data };
 			} finally {
 				fs.closeSync(fd);
@@ -344,10 +351,7 @@ function clone(envelope: HistoryEnvelope): HistoryEnvelope {
 	return JSON.parse(JSON.stringify(envelope)) as HistoryEnvelope;
 }
 
-function stringifyError(error: unknown): string {
-	if (error instanceof Error) return `${error.name}: ${error.message}`;
-	return String(error);
-}
+
 
 /** Remove sidecar files belonging to dead pids. Best-effort. */
 export function cleanupStaleSpills(rawDir: string, isAlive: (pid: number) => boolean): void {

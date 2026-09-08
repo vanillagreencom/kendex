@@ -86,9 +86,10 @@ describe("Pi activity broker", () => {
 			broker.publish(event({ source: "pi-agents", type: "agent.task_failed" }));
 
 			expect(warnings).toHaveLength(2);
-			expect(String(warnings[0]?.[0])).toContain("type=agent.task_completed source=pi-agents");
-			expect(String(warnings[0]?.[0])).toContain("socket closed");
-			expect(String(warnings[1]?.[0])).toContain("type=agent.task_failed source=pi-agents");
+			expect(warnings.map((warning) => String(warning[0]).split("\n")[0])).toEqual([
+				"publisher_failure=agent.task_completed source=pi-agents error=TypeError",
+				"publisher_failure=agent.task_failed source=pi-agents error=TypeError",
+			]);
 		} finally {
 			console.warn = originalWarn;
 		}

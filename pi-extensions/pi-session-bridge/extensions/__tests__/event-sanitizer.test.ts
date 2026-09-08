@@ -10,32 +10,25 @@ import {
 const baseConfig = { maxEventBytes: DEFAULT_MAX_EVENT_BYTES, previewBytes: DEFAULT_PREVIEW_BYTES };
 
 describe("sanitizeBridgeEvent", () => {
-	test("message_update keeps role/contentIndex/delta length and short preview", () => {
-		const payload = { role: "assistant", contentIndex: 0, type: "text", delta: "Hello world" };
-		const result = sanitizeBridgeEvent("message_update", payload, baseConfig);
-		expect(result.truncated).toBe(true);
-		const data = result.data as Record<string, unknown>;
-		expect(data.role).toBe("assistant");
-		expect(data.type).toBe("text");
-		expect(data.contentIndex).toBe(0);
-		expect(data.deltaLength).toBe(11);
-		expect(data.deltaBytes).toBe(11);
-		expect(data.deltaPreview).toBe("Hello world");
-		expect("delta" in data).toBe(false);
-	});
-
-	test("message_update truncates very large deltas to preview window", () => {
-		const huge = "x".repeat(500_000);
-		const payload = { role: "assistant", contentIndex: 0, delta: huge };
-		const result = sanitizeBridgeEvent("message_update", payload, { ...baseConfig, previewBytes: 64 });
-		const data = result.data as Record<string, unknown>;
-		expect(data.deltaLength).toBe(500_000);
-		expect(typeof data.deltaPreview).toBe("string");
-		expect((data.deltaPreview as string).length).toBeLessThanOrEqual(64);
-		expect(result.truncated).toBe(true);
-		expect(result.raw).toEqual(payload);
-		expect(result.originalBytes).toBeGreaterThan(100_000);
-	});
+	for (const row of [
+		{ name: "short delta", delta: "Hello world", length: 11, previewBytes: DEFAULT_PREVIEW_BYTES, large: false },
+		{ name: "large delta", delta: "x".repeat(500_000), length: 500_000, previewBytes: 64, large: true },
+	]) {
+		test(`message update ${row.name}`, () => {
+			const payload = { role: "assistant", contentIndex: 0, type: "text", delta: row.delta };
+			const result = sanitizeBridgeEvent("message_update", payload, { ...baseConfig, previewBytes: row.previewBytes });
+			const data = result.data as Record<string, unknown>;
+			expect(data).toMatchObject({ role: "assistant", type: "text", contentIndex: 0, deltaLength: row.length, deltaBytes: row.length });
+			expect(typeof data.deltaPreview).toBe("string");
+			expect((data.deltaPreview as string).length).toBeLessThanOrEqual(row.previewBytes);
+			expect("delta" in data).toBe(false);
+			expect(result.truncated).toBe(true);
+			if (row.large) {
+				expect(result.raw).toEqual(payload);
+				expect(result.originalBytes).toBeGreaterThan(100_000);
+			} else expect(data.deltaPreview).toBe("Hello world");
+		});
+	}
 
 	test("tool_execution_end compacts heavy result and surfaces byte counts", () => {
 		const heavyResult = { text: "y".repeat(120_000) };
@@ -117,62 +110,54 @@ describe("sanitizeBridgeEvent", () => {
 		expect("streamingBehavior" in data).toBe(false);
 	});
 
-	test("unknown events pass through when under per-event budget", () => {
-		const payload = { ok: true, count: 3 };
-		const result = sanitizeBridgeEvent("bridge_pong", payload, baseConfig);
-		expect(result.data).toEqual(payload);
-		expect(result.truncated).toBe(false);
-		expect(result.raw).toBeUndefined();
-	});
+	for (const row of [
+		{ name: "small unknown event", event: "bridge_pong", payload: { ok: true, count: 3 }, maxEventBytes: DEFAULT_MAX_EVENT_BYTES, truncated: false },
+		{ name: "large unknown event", event: "custom_heavy_event", payload: { blob: "z".repeat(1_500_000) }, maxEventBytes: 1024, truncated: true },
+	]) {
+		test(row.name, () => {
+			const result = sanitizeBridgeEvent(row.event, row.payload, { ...baseConfig, maxEventBytes: row.maxEventBytes });
+			expect(result.truncated).toBe(row.truncated);
+			if (row.truncated) {
+				const data = result.data as Record<string, unknown>;
+				expect(data.truncated).toBe(true);
+				expect(typeof data.originalBytes).toBe("number");
+				expect(data.maxBytes).toBe(1024);
+				expect(result.raw).toEqual(row.payload);
+			} else {
+				expect(result.data).toEqual(row.payload);
+				expect(result.raw).toBeUndefined();
+			}
+		});
+	}
 
-	test("unknown events over per-event budget collapse to a descriptor", () => {
-		const blob = "z".repeat(1_500_000);
-		const payload = { blob };
-		const result = sanitizeBridgeEvent("custom_heavy_event", payload, { ...baseConfig, maxEventBytes: 1024 });
-		const data = result.data as Record<string, unknown>;
-		expect(result.truncated).toBe(true);
-		expect(data.truncated).toBe(true);
-		expect(typeof data.originalBytes).toBe("number");
-		expect(data.maxBytes).toBe(1024);
-		expect(result.raw).toEqual(payload);
-	});
-
-	test("session_info_changed compacts the renamed session to a preview", () => {
-		const payload = { type: "session_info_changed", name: "Rename the bridge registry" };
-		const result = sanitizeBridgeEvent("session_info_changed", payload, baseConfig);
-		const data = result.data as Record<string, unknown>;
-
-		expect(data.nameBytes).toBe(Buffer.byteLength(payload.name, "utf8"));
-		expect(data.nameLength).toBe(payload.name.length);
-		expect(data.namePreview).toBe(payload.name);
-		expect("nameTruncated" in data).toBe(false);
-		expect("name" in data).toBe(false);
-		expect("type" in data).toBe(false);
-		expect(result.truncated).toBe(true);
-		expect(result.raw).toEqual(payload);
-	});
-
-	test("session_info_changed truncates an oversized session name", () => {
-		const name = `named session ${"x".repeat(500)}`;
-		const payload = { name };
-		const result = sanitizeBridgeEvent("session_info_changed", payload, { ...baseConfig, previewBytes: 32 });
-		const data = result.data as Record<string, unknown>;
-
-		expect(data.nameBytes).toBe(Buffer.byteLength(name, "utf8"));
-		expect(data.nameLength).toBe(name.length);
-		expect((data.namePreview as string).length).toBeLessThanOrEqual(32);
-		expect(data.nameTruncated).toBe(true);
-		expect(result.truncated).toBe(true);
-		expect(result.raw).toEqual(payload);
-	});
-
-	test("session_info_changed emits an empty descriptor when the name is cleared", () => {
-		const payload = { type: "session_info_changed", name: undefined };
-		const result = sanitizeBridgeEvent("session_info_changed", payload, baseConfig);
-
-		expect(result.data).toEqual({});
-		expect(result.truncated).toBe(true);
-	});
+	for (const row of [
+		{ label: "ordinary name", name: "Rename the bridge registry", previewBytes: DEFAULT_PREVIEW_BYTES, truncated: false },
+		{ label: "oversized name", name: `named session ${"x".repeat(500)}`, previewBytes: 32, truncated: true },
+		{ label: "cleared name", name: undefined, previewBytes: DEFAULT_PREVIEW_BYTES, truncated: false },
+		{ label: "non-string name", name: 7, previewBytes: DEFAULT_PREVIEW_BYTES, truncated: false },
+	]) {
+		test(`session info ${row.label}`, () => {
+			const payload = { type: "session_info_changed", name: row.name };
+			const result = sanitizeBridgeEvent("session_info_changed", payload, { ...baseConfig, previewBytes: row.previewBytes });
+			const data = result.data as Record<string, unknown>;
+			expect(result.truncated).toBe(true);
+			expect("name" in data).toBe(false);
+			expect("type" in data).toBe(false);
+			if (typeof row.name === "string") {
+				expect(data.nameBytes).toBe(Buffer.byteLength(row.name, "utf8"));
+				expect(data.nameLength).toBe(row.name.length);
+				expect((data.namePreview as string).length).toBeLessThanOrEqual(row.previewBytes);
+				if (row.truncated) expect(data.nameTruncated).toBe(true);
+				else {
+					expect(data.namePreview).toBe(row.name);
+					expect("nameTruncated" in data).toBe(false);
+				}
+				expect(result.raw).toEqual(payload);
+			} else {
+				expect(data).toEqual({});
+			}
+		});
+	}
 
 	test("session_info_changed passes non-record payloads through untouched", () => {
 		for (const payload of [undefined, null, "renamed", 42, ["renamed"]]) {
@@ -183,13 +168,6 @@ describe("sanitizeBridgeEvent", () => {
 		}
 	});
 
-	test("session_info_changed ignores a non-string name", () => {
-		const result = sanitizeBridgeEvent("session_info_changed", { name: 7 }, baseConfig);
-		const data = result.data as Record<string, unknown>;
-
-		expect("namePreview" in data).toBe(false);
-		expect("nameBytes" in data).toBe(false);
-	});
 
 	test("message_update reads role/contentIndex/delta from assistantMessageEvent envelope", () => {
 		const payload = {
@@ -232,50 +210,30 @@ describe("sanitizeBridgeEvent", () => {
 		expect(result.truncated).toBe(true);
 	});
 
-	test("tool_execution_* accepts toolCallId / tool_call_id / nested toolCall", () => {
-		const camel = sanitizeBridgeEvent("tool_execution_start", { toolName: "Read", toolCallId: "tcl_1", input: { path: "/x" } }, baseConfig);
-		expect((camel.data as Record<string, unknown>).toolUseId).toBe("tcl_1");
+	for (const row of [
+		{ name: "camel id", event: "tool_execution_start", payload: { toolName: "Read", toolCallId: "tcl_1", input: { path: "/x" } }, expected: { toolUseId: "tcl_1" }, errorBytes: false },
+		{ name: "snake id", event: "tool_execution_update", payload: { tool_name: "Bash", tool_call_id: "tcl_2", output: "ok" }, expected: { toolUseId: "tcl_2" }, errorBytes: false },
+		{ name: "nested id", event: "tool_execution_end", payload: { toolCall: { name: "Edit", id: "tcl_3", status: "error", isError: true }, error: "boom" }, expected: { toolName: "Edit", toolUseId: "tcl_3", status: "error", isError: true }, errorBytes: true },
+	]) {
+		test(`tool execution ${row.name}`, () => {
+			const data = sanitizeBridgeEvent(row.event, row.payload, baseConfig).data as Record<string, unknown>;
+			expect(data).toMatchObject(row.expected);
+			if (row.errorBytes) expect(typeof data.errorBytes).toBe("number");
+		});
+	}
 
-		const snake = sanitizeBridgeEvent("tool_execution_update", { tool_name: "Bash", tool_call_id: "tcl_2", output: "ok" }, baseConfig);
-		expect((snake.data as Record<string, unknown>).toolUseId).toBe("tcl_2");
-
-		const nested = sanitizeBridgeEvent("tool_execution_end", { toolCall: { name: "Edit", id: "tcl_3", status: "error", isError: true }, error: "boom" }, baseConfig);
-		const nestedData = nested.data as Record<string, unknown>;
-		expect(nestedData.toolName).toBe("Edit");
-		expect(nestedData.toolUseId).toBe("tcl_3");
-		expect(nestedData.status).toBe("error");
-		expect(nestedData.isError).toBe(true);
-		expect(typeof nestedData.errorBytes).toBe("number");
-	});
-
-	test("agent_end accepts content array or single message variants", () => {
-		const stringContent = sanitizeBridgeEvent("agent_end", {
-			status: "ended",
-			usage: { inputTokens: 1 },
-			content: "final body " + "x".repeat(500),
-		}, baseConfig);
-		const stringData = stringContent.data as Record<string, unknown>;
-		expect(stringData.status).toBe("ended");
-		expect(typeof stringData.finalTextPreview).toBe("string");
-		expect((stringData.finalTextPreview as string).length).toBeGreaterThan(0);
-
-		const arrayContent = sanitizeBridgeEvent("agent_end", {
-			status: "ended",
-			content: [
-				{ type: "text", text: "alpha" },
-				{ type: "text", text: "omega" },
-			],
-		}, baseConfig);
-		expect((arrayContent.data as Record<string, unknown>).finalTextPreview).toBe("omega");
-
-		const singleMessage = sanitizeBridgeEvent("agent_end", {
-			status: "ended",
-			message: { role: "assistant", content: [{ type: "text", text: "from .message" }] },
-		}, baseConfig);
-		const singleData = singleMessage.data as Record<string, unknown>;
-		expect(singleData.messagesCount).toBe(1);
-		expect(singleData.finalTextPreview).toBe("from .message");
-	});
+	for (const row of [
+		{ name: "string content", payload: { status: "ended", usage: { inputTokens: 1 }, content: "final body " + "x".repeat(500) }, expected: { status: "ended" } },
+		{ name: "array content", payload: { status: "ended", content: [{ type: "text", text: "alpha" }, { type: "text", text: "omega" }] }, expected: { finalTextPreview: "omega" } },
+		{ name: "single message", payload: { status: "ended", message: { role: "assistant", content: [{ type: "text", text: "from .message" }] } }, expected: { messagesCount: 1, finalTextPreview: "from .message" } },
+	]) {
+		test(`agent end ${row.name}`, () => {
+			const data = sanitizeBridgeEvent("agent_end", row.payload, baseConfig).data as Record<string, unknown>;
+			expect(data).toMatchObject(row.expected);
+			expect(typeof data.finalTextPreview).toBe("string");
+			expect((data.finalTextPreview as string).length).toBeGreaterThan(0);
+		});
+	}
 
 	test("originalBytes reflects raw JSON length", () => {
 		const payload = { role: "assistant", contentIndex: 1, delta: "abc" };

@@ -1,121 +1,40 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import * as net from "node:net";
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import sessionBridge from "../extensions/session-bridge.ts";
 
-type EventHandler = (event: any, ctx?: any) => unknown | Promise<unknown>;
-
-interface FakePi {
-	handlers: Map<string, EventHandler>;
-	pi: any;
-}
-
-function fakePi(): FakePi {
-	const handlers = new Map<string, EventHandler>();
-	return {
-		handlers,
-		pi: {
-			exec: async () => ({ code: 0, stdout: "" }),
-			getCommands: () => [],
-			getSessionName: () => undefined,
-			getThinkingLevel: () => undefined,
-			on: (eventName: string, handler: EventHandler) => handlers.set(eventName, handler),
-			registerCommand: () => undefined,
-			sendUserMessage: () => undefined,
-		},
-	};
-}
-
-function writeBridgeSettings(root: string, extras: Record<string, unknown> = {}): void {
-	const settingsPath = join(root, ".pi/settings.json");
-	mkdirSync(dirname(settingsPath), { recursive: true });
-	writeFileSync(settingsPath, JSON.stringify({
-		kendex: {
-			extensionManager: {
-				config: {
-					"@vanillagreen/pi-session-bridge": { enabled: true, ...extras },
-				},
-			},
-		},
-	}));
-}
-
-function fakeCtx(dir: string): any {
-	return {
-		cwd: dir,
-		hasUI: false,
-		isProjectTrusted: () => true,
-		sessionManager: { getSessionId: () => "session-test" },
-	};
-}
-
-async function shutdownBridge(handlers: Map<string, EventHandler>, dir: string): Promise<void> {
-	const shutdown = handlers.get("session_shutdown");
-	if (!shutdown) return;
-	// stop() awaits server.close() which can take a moment for FIN exchange under bun's net.
-	await Promise.race([
-		shutdown({ reason: "test" }, fakeCtx(dir)),
-		new Promise<void>((resolve) => setTimeout(resolve, 1500)),
-	]);
-}
-
-async function sendCommand(socketPath: string, payload: Record<string, unknown>): Promise<any> {
-	return new Promise<any>((resolve, reject) => {
-		const socket = net.createConnection(socketPath);
-		let buffer = "";
-		const targetId = payload.id;
-		const timeout = setTimeout(() => {
-			socket.destroy();
-			reject(new Error(`sendCommand timed out waiting for id=${String(targetId)}`));
-		}, 2500);
-		socket.setEncoding("utf8");
-		socket.on("connect", () => {
-			socket.write(`${JSON.stringify(payload)}\n`);
-		});
-		socket.on("data", (chunk) => {
-			buffer += chunk;
-			while (true) {
-				const nl = buffer.indexOf("\n");
-				if (nl === -1) break;
-				const line = buffer.slice(0, nl);
-				buffer = buffer.slice(nl + 1);
-				if (!line) continue;
-				let msg: any;
-				try { msg = JSON.parse(line); } catch { continue; }
-				if (msg.type === "response" && msg.id === targetId) {
-					clearTimeout(timeout);
-					socket.destroy();
-					resolve(msg);
-					return;
-				}
-			}
-		});
-		socket.on("error", (error) => {
-			clearTimeout(timeout);
-			reject(error);
-		});
-	});
-}
+import { fakePi, fakeCtx, sendCommand, shutdownBridge, writeBridgeSettings, type EventHandler } from "./lib/bridge-fixture.ts";
 
 let dir = "";
+let activeHandlers: Map<string, EventHandler> | undefined;
+let oldPiDir: string | undefined;
 let oldBridgeDir: string | undefined;
 let oldCwd = "";
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "pi-session-bridge-history-"));
 	oldBridgeDir = process.env.PI_BRIDGE_DIR;
+	oldPiDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
 	oldCwd = process.cwd();
 	process.env.PI_BRIDGE_DIR = join(dir, "bridge");
 });
 
 afterEach(async () => {
+	try {
+		if (activeHandlers) await shutdownBridge(activeHandlers, dir);
+	} finally {
+		activeHandlers = undefined;
+		setSystemTime();
+		if (oldPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = oldPiDir;
 	if (oldBridgeDir === undefined) delete process.env.PI_BRIDGE_DIR;
 	else process.env.PI_BRIDGE_DIR = oldBridgeDir;
 	process.chdir(oldCwd);
 	if (dir) rmSync(dir, { recursive: true, force: true });
+	}
 });
 
 describe("history byte budgets", () => {
@@ -123,6 +42,7 @@ describe("history byte budgets", () => {
 		writeBridgeSettings(dir);
 		process.chdir(dir);
 		const { pi, handlers } = fakePi();
+		activeHandlers = handlers;
 		sessionBridge(pi);
 		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
 
@@ -162,16 +82,18 @@ describe("history byte budgets", () => {
 	});
 
 	test("history honors event and since filters", async () => {
+		setSystemTime(new Date("2026-05-20T00:00:00.000Z"));
 		writeBridgeSettings(dir);
 		process.chdir(dir);
 		const { pi, handlers } = fakePi();
+		activeHandlers = handlers;
 		sessionBridge(pi);
 		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
 
+		setSystemTime(new Date("2026-05-21T00:00:00.000Z"));
 		await handlers.get("message_update")?.({ role: "assistant", contentIndex: 0, delta: "first" }, fakeCtx(dir));
-		await new Promise((resolve) => setTimeout(resolve, 25));
-		const turnStart = new Date();
-		await new Promise((resolve) => setTimeout(resolve, 25));
+		const turnStart = new Date("2026-05-21T00:00:01.000Z");
+		setSystemTime(turnStart);
 		await handlers.get("tool_execution_end")?.({ toolName: "Read", toolUseId: "t1", status: "success", result: "result body" }, fakeCtx(dir));
 		await handlers.get("message_update")?.({ role: "assistant", contentIndex: 1, delta: "second" }, fakeCtx(dir));
 
@@ -195,6 +117,7 @@ describe("history byte budgets", () => {
 		writeBridgeSettings(dir, { maxHistoryBytes: 1_500, maxEventBytes: 65_536, eventPreviewBytes: 32 });
 		process.chdir(dir);
 		const { pi, handlers } = fakePi();
+		activeHandlers = handlers;
 		sessionBridge(pi);
 		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
 
@@ -220,6 +143,7 @@ describe("history byte budgets", () => {
 		writeBridgeSettings(dir, { maxEventBytes: 65_536, eventPreviewBytes: 16 });
 		process.chdir(dir);
 		const { pi, handlers } = fakePi();
+		activeHandlers = handlers;
 		sessionBridge(pi);
 		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
 
@@ -259,6 +183,7 @@ describe("history byte budgets", () => {
 		writeBridgeSettings(dir);
 		process.chdir(dir);
 		const { pi, handlers } = fakePi();
+		activeHandlers = handlers;
 		sessionBridge(pi);
 		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
 
@@ -273,7 +198,7 @@ describe("history byte budgets", () => {
 		expect(resp.success).toBe(true);
 		const updateEvent = (resp.data.events as Array<Record<string, unknown>>).find((entry) => entry.event === "message_update");
 		expect(updateEvent?.rawRestored).not.toBe(true);
-		expect(typeof updateEvent?.rawError).toBe("string");
+		expect((updateEvent?.rawError as string).split("\n")[0]).toBe("error_code=SyntaxError");
 		expect(Array.isArray(resp.data.rawErrors)).toBe(true);
 
 		await shutdownBridge(handlers, dir);
@@ -283,6 +208,7 @@ describe("history byte budgets", () => {
 		writeBridgeSettings(dir);
 		process.chdir(dir);
 		const { pi, handlers } = fakePi();
+		activeHandlers = handlers;
 		sessionBridge(pi);
 		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
 

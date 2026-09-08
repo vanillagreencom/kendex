@@ -12,6 +12,7 @@
  *   The bridge replies with JSONL responses and broadcasts live Pi events.
  */
 
+import { stringifyError } from "./diagnostics.js";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
@@ -44,6 +45,10 @@ const CONFIG_ID = "@vanillagreen/pi-session-bridge";
 const DEFAULT_HISTORY_LIMIT = 500;
 const DEFAULT_MAX_LINE_BYTES = 1024 * 1024;
 const MAX_SKILL_EXPANSION_CACHE_SESSIONS = 100;
+
+const messages = {
+	loadedSkill: (name: string, args: string) => `skill_loaded=${name} invocation=${args}\nThe skill is already in this session's context.`,
+};
 
 /** Pi events the bridge republishes (after sanitizing) to subscribed clients. */
 export const BRIDGE_STREAM_EVENT_NAMES = [
@@ -795,7 +800,7 @@ export function expandLoadedSlashContent(
 						expanded: true,
 						kind: "skill",
 						command: parsed.commandName,
-						text: invocation ? `Skill ${skillName} (previously loaded). Invocation: ${invocation}` : `Skill ${skillName} (previously loaded).`,
+						text: messages.loadedSkill(skillName, invocation),
 					};
 				}
 			}
@@ -1025,10 +1030,7 @@ function readPositiveInt(value: unknown, fallback: number) {
 	return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
-function stringifyError(error: unknown) {
-	if (error instanceof Error) return `${error.name}: ${error.message}`;
-	return String(error);
-}
+
 
 function toJsonable<T>(value: T): T {
 	const seen = new WeakSet<object>();
