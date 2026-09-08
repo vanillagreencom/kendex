@@ -125,7 +125,7 @@ fn refusal(harness: HarnessId, value: &Value) -> Option<String> {
                 .and_then(Value::as_object)
                 .is_some_and(|env| !env.is_empty()) =>
         {
-            Some("Antigravity documents no substitution for an environment value, so a $NAME reference would reach the server as text — declare the server without env, or drop Antigravity from its harnesses".to_owned())
+            Some("kendex-mcp-env-unsupported: harness=antigravity\nAntigravity documents no substitution for an environment value, so a $NAME reference would reach the server as text — declare the server without env, or drop Antigravity from its harnesses".to_owned())
         }
         HarnessId::Codex => env.and_then(|env| crate::configedit::codex_env_vars(env).err()),
         _ => None,

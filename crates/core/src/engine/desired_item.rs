@@ -64,16 +64,14 @@ pub(super) fn no_harness_note(
     state: &mut DesiredState,
 ) {
     state.mark_incomplete();
-    let asked: Vec<&str> = decl
+    let asked = decl
         .harnesses
         .as_ref()
-        .unwrap_or(&manifest.install.harnesses)
-        .iter()
-        .map(|harness| harness.display_name())
-        .collect();
+        .unwrap_or(&manifest.install.harnesses);
     state.notes.push(format!(
-        "{} {name}: {} cannot hold one at this scope — nothing was installed",
+        "kendex-item-unsupported: kind={} name={name} harnesses={}\n{} cannot hold one at this scope — nothing was installed",
         kind.name(),
-        asked.join(", ")
+        asked.iter().map(|harness| harness.name()).collect::<Vec<_>>().join(","),
+        asked.iter().map(|harness| harness.display_name()).collect::<Vec<_>>().join(", "),
     ));
 }

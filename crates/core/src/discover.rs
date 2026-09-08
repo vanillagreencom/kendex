@@ -166,26 +166,28 @@ mod tests {
 
     #[test]
     fn project_root_walks_up_and_lock_file_wins_at_home() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = tmp.path();
-        fs::create_dir_all(home.join("dev/app/.claude")).unwrap();
-        fs::create_dir_all(home.join("dev/app/src/nested")).unwrap();
-
-        let found = project_root_from(&home.join("dev/app/src/nested"), home).unwrap();
-        assert_eq!(
-            found,
-            crate::paths::canonical(&home.join("dev/app")).unwrap()
-        );
-
-        // Markers at home itself never make home the project…
-        fs::create_dir_all(home.join(".claude")).unwrap();
-        assert_eq!(project_root_from(&home.join("dev"), home), None);
-
-        // …but a lock file there does.
-        fs::write(home.join(".kendex-lock.json"), "{}").unwrap();
-        assert_eq!(
-            project_root_from(&home.join("dev"), home).unwrap(),
-            crate::paths::canonical(home).unwrap()
-        );
+        for (start, lock_at_home, expected) in [
+            ("home/dev/app/src/nested", false, "home/dev/app"),
+            ("home/dev", false, ""),
+            ("home/dev", true, "home"),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = crate::paths::canonical(tmp.path()).unwrap();
+            let home = root.join("home");
+            // The private ancestor catches a walk past home before any
+            // real marker above the fixture can decide the answer.
+            fs::create_dir_all(root.join(".claude")).unwrap();
+            fs::create_dir_all(home.join(".claude")).unwrap();
+            fs::create_dir_all(home.join("dev/app/.claude")).unwrap();
+            fs::create_dir_all(home.join("dev/app/src/nested")).unwrap();
+            if lock_at_home {
+                fs::write(home.join(".kendex-lock.json"), "{}").unwrap();
+            }
+            assert_eq!(
+                project_root_from(&root.join(start), &home),
+                Some(root.join(expected)),
+                "{start}, home lock={lock_at_home}",
+            );
+        }
     }
 }

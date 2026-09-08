@@ -96,10 +96,8 @@ fn an_event_copilot_does_not_have_is_reported_never_faked() {
     let f = fixture("\"copilot\"", "[hooks.done]\nsource = \"cat\"\n");
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(
-        report
-            .notes
-            .iter()
-            .any(|note| note.contains("event TaskCompleted has no Copilot counterpart")),
+        report.notes.iter().any(|note| note.lines().next()
+            == Some("kendex-hook-unsupported: harness=copilot event=TaskCompleted hook=done")),
         "{:?}",
         report.notes
     );
@@ -114,31 +112,22 @@ fn an_event_copilot_does_not_have_is_reported_never_faked() {
 fn hooks_switched_off_in_claudes_settings_are_reported_inert() {
     let f = fixture("\"copilot\"", "[hooks.audit]\nsource = \"cat\"\n");
     let claude = f.project.join(".claude/settings.json");
-    fs::write(&claude, r#"{"disableAllHooks": true}"#).unwrap();
-
-    let report = apply_now(&f);
-    assert!(
-        report
-            .warnings
-            .iter()
-            .any(|w| w.message.contains("installs but stays inert")),
-        "{:?}",
-        report.warnings
-    );
-    // Said, not obeyed: the registration still lands where Copilot reads it.
-    let registry = f.project.join(".github/hooks/audit.json");
-    assert_eq!(json(&registry)["hooks"]["preToolUse"][0]["matcher"], "bash");
-
-    fs::write(&claude, r#"{"disableAllHooks": false}"#).unwrap();
-    let quiet = audit(&f.env, &f.scope).unwrap();
-    assert!(
-        !quiet
-            .warnings
-            .iter()
-            .any(|w| w.message.contains("stays inert")),
-        "{:?}",
-        quiet.warnings
-    );
+    for disabled in [true, false] {
+        fs::write(&claude, format!("{{\"disableAllHooks\": {disabled}}}")).unwrap();
+        let report = apply_now(&f);
+        assert_eq!(
+            report.warnings.iter().any(|w| w.message.lines().next()
+                == Some(
+                    "kendex-hooks-disabled: harness=copilot hook=audit setting=disableAllHooks"
+                )),
+            disabled,
+            "disabled={disabled}: {:?}",
+            report.warnings
+        );
+        // The report names the switch but keeps the requested registration.
+        let registry = f.project.join(".github/hooks/audit.json");
+        assert_eq!(json(&registry)["hooks"]["preToolUse"][0]["matcher"], "bash");
+    }
 }
 
 /// A repository file may add a name to `disabledSkills` but never take one
@@ -155,10 +144,8 @@ fn a_skill_a_personal_setting_holds_down_cannot_be_switched_back_on_here() {
 
     let report = apply_now(&f);
     assert!(
-        report
-            .warnings
-            .iter()
-            .any(|w| w.message.contains("this project cannot switch it back on")),
+        report.warnings.iter().any(|w| w.message.lines().next()
+            == Some("kendex-item-disabled: harness=copilot item=deploy setting=disabledSkills")),
         "{:?}",
         report.warnings
     );
@@ -167,62 +154,46 @@ fn a_skill_a_personal_setting_holds_down_cannot_be_switched_back_on_here() {
     assert!(f.project.join(".agents/skills/deploy/SKILL.md").is_file());
 }
 
-/// One tree, two readers. Copilot sees a skill installed for Claude Code,
-/// and saying so must never turn one installation into two.
+/// A shared skill names Copilot as a reader only when its loader accepts
+/// the name. The note does not create another installation.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_skill_installed_for_another_tool_is_noted_as_visible_to_copilot() {
-    let f = fixture("\"claude\"", "[skills.deploy]\nsource = \"cat\"\n");
-    let report = apply_now(&f);
-    assert!(
-        report
-            .notes
-            .iter()
-            .any(|note| note.contains("GitHub Copilot")
-                && note.contains("read `.agents/skills` too")
-                && note.contains("one definition, counted once")),
-        "{:?}",
-        report.notes
-    );
-    // Nothing was installed into Copilot's own directory, and nothing in the
-    // report claims Copilot has an installation of its own.
-    assert!(!f.project.join(".github/skills").exists());
-    assert!(
-        !report
-            .drift
-            .iter()
-            .any(|row| row.harness == kendex_core::model::HarnessId::Copilot)
-    );
-}
-
-/// The same note, over a name that reader's loader will not take. Copilot
-/// keys a skill on a lowercase-hyphen slug, so `Deploy` is unloadable
-/// there rather than renamed — counting Copilot as already having the
-/// definition would be counting one it cannot read. The test above is the
-/// pair: the same install under a plain name does name Copilot, so this
-/// cannot pass by the note having gone silent.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn the_cross_read_note_skips_a_loader_that_would_reject_the_name() {
-    let f = fixture("\"claude\"", "[skills.Deploy]\nsource = \"cat\"\n");
-    let source = f.env.home.join("catalog/skills/Deploy");
-    fs::create_dir_all(&source).unwrap();
-    fs::write(
-        source.join("SKILL.md"),
-        "---\nname: Deploy\ndescription: Ship it\n---\n\nSteps.\n",
-    )
-    .unwrap();
-
-    let report = apply_now(&f);
-    assert!(f.project.join(".agents/skills/Deploy/SKILL.md").is_file());
-    assert!(
-        !report
-            .notes
-            .iter()
-            .any(|note| note.contains("GitHub Copilot")),
-        "Copilot cannot load `Deploy`: {:?}",
-        report.notes
-    );
+fn a_shared_skill_names_only_readers_that_accept_its_name() {
+    for (name, expected) in [("deploy", true), ("Deploy", false)] {
+        let f = fixture(
+            "\"claude\"",
+            &format!("[skills.{name}]\nsource = \"cat\"\n"),
+        );
+        let source = f.env.home.join("catalog/skills").join(name);
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Ship it\n---\n\nSteps.\n"),
+        )
+        .unwrap();
+        let report = apply_now(&f);
+        assert_eq!(
+            report.notes.iter().any(|note| note.lines().next()
+                == Some("kendex-shared-skills: readers=copilot path=.agents/skills")),
+            expected,
+            "{name}: {:?}",
+            report.notes
+        );
+        assert!(
+            f.project
+                .join(".agents/skills")
+                .join(name)
+                .join("SKILL.md")
+                .is_file()
+        );
+        assert!(!f.project.join(".github/skills").exists());
+        assert!(
+            !report
+                .drift
+                .iter()
+                .any(|row| row.harness == kendex_core::model::HarnessId::Copilot)
+        );
+    }
 }
 
 #[test]
@@ -237,9 +208,7 @@ fn a_model_the_repository_will_not_run_is_named() {
 
     let report = apply_now(&f);
     assert!(
-        report.warnings.iter().any(|w| w
-            .message
-            .contains("allows gpt-5.4 and not claude-sonnet-4.6")),
+        report.warnings.iter().any(|w| w.message.lines().next() == Some("kendex-model-disallowed: harness=copilot agent=rust requested=claude-sonnet-4.6 allowed=gpt-5.4")),
         "{:?}",
         report.warnings
     );
@@ -264,8 +233,14 @@ fn a_name_copilots_loader_rejects_is_refused_with_the_one_that_works() {
     let report = apply_now(&f);
     assert!(
         report.drift.iter().any(|row| row.name == "Deploy_Thing"
-            && row.detail.contains("will not load `Deploy_Thing`")
-            && row.detail.contains("deploy-thing")),
+            && row.kind == kendex_core::model::ItemKind::Skill
+            && row.harness == kendex_core::model::HarnessId::Copilot
+            && row.state == kendex_core::engine::DriftState::Conflict
+            && row.cause.is_none()
+            && row.detail.lines().next()
+                == Some(
+                    "kendex-name-rejected: harness=copilot name=Deploy_Thing suggested=deploy-thing"
+                )),
         "{:?}",
         report.drift
     );
@@ -288,9 +263,8 @@ fn a_command_declared_only_for_copilot_says_it_installed_nowhere() {
 
     let report = apply_now(&f);
     assert!(
-        report.notes.iter().any(|note| note
-            .contains("command ship: GitHub Copilot cannot hold one at this scope")
-            && note.contains("nothing was installed")),
+        report.notes.iter().any(|note| note.lines().next()
+            == Some("kendex-item-unsupported: kind=command name=ship harnesses=copilot")),
         "{:?}",
         report.notes
     );

@@ -28,11 +28,17 @@ fn model_finding(harness: HarnessId, model: &str) -> Option<Finding> {
         .is_some_and(|(provider, id)| !provider.is_empty() && !id.is_empty());
     match (model_shape(harness), model.contains('/'), qualified) {
         (ModelShape::Bare, true, _) => Some(Finding::breakage(
-            format!("`model: {model}` names a provider, and {tool} reaches one vendor only"),
+            format!(
+                "kendex-model-shape: harness={} model={model} expected=bare\n`model: {model}` names a provider, and {tool} reaches one vendor only",
+                harness.name()
+            ),
             "name a bare model id this tool lists, a tier alias, or `inherit`",
         )),
         (ModelShape::ProviderQualified, _, false) => Some(Finding::breakage(
-            format!("`model: {model}` is not `provider/model`, which is how {tool} loads a model"),
+            format!(
+                "kendex-model-shape: harness={} model={model} expected=provider/model\n`model: {model}` is not `provider/model`, which is how {tool} loads a model",
+                harness.name()
+            ),
             "write the model as `provider/model`, or `inherit` to follow the session",
         )),
         _ => None,
@@ -50,7 +56,9 @@ fn effort_finding(harness: HarnessId, key: &str, value: &str) -> Option<Finding>
     }
     Some(Finding::breakage(
         format!(
-            "`{key}: {value}` is not an effort level {} accepts",
+            "kendex-effort-rejected: harness={} key={key} value={value} allowed={}\n`{key}: {value}` is not an effort level {} accepts",
+            harness.name(),
+            levels.join(","),
             harness.display_name()
         ),
         format!("use one of {}", levels.join(", ")),
@@ -64,7 +72,9 @@ pub(super) fn codex(text: &str) -> Vec<Finding> {
         Ok(table) => table,
         Err(problem) => {
             return vec![Finding::breakage(
-                format!("Codex reads agents as TOML and this one does not parse — {problem}"),
+                format!(
+                    "kendex-agent-invalid: harness=codex format=toml\nCodex reads agents as TOML and this one does not parse — {problem}"
+                ),
                 "check the agent's frontmatter and body in the catalog for stray quotes or control characters",
             )];
         }
@@ -79,7 +89,7 @@ pub(super) fn codex(text: &str) -> Vec<Finding> {
             continue;
         }
         findings.push(Finding::breakage(
-            format!("the Codex agent has no `{key}`, so Codex will not load it"),
+            format!("kendex-agent-key-missing: harness=codex key={key}\nthe Codex agent has no `{key}`, so Codex will not load it"),
             match key {
                 "developer_instructions" => {
                     "write the agent a body in the catalog — there is nothing to instruct it with"
@@ -93,7 +103,7 @@ pub(super) fn codex(text: &str) -> Vec<Finding> {
         let shown = mode.as_str().unwrap_or("not text");
         if !SANDBOX_MODES.contains(&shown) {
             findings.push(Finding::breakage(
-                format!("`sandbox_mode = \"{shown}\"` is not a sandbox Codex knows"),
+                format!("kendex-sandbox-rejected: harness=codex value={shown} allowed={}\n`sandbox_mode = \"{shown}\"` is not a sandbox Codex knows", SANDBOX_MODES.join(",")),
                 format!("use one of {}", SANDBOX_MODES.join(", ")),
             ));
         }
@@ -116,7 +126,7 @@ pub(super) fn codex(text: &str) -> Vec<Finding> {
 /// OpenCode reads agent frontmatter strictly: a mode or permission value it
 /// does not know drops the agent rather than defaulting it.
 pub(super) fn opencode(text: &str) -> Vec<Finding> {
-    let map = match frontmatter_map(text, "OpenCode") {
+    let map = match frontmatter_map(text, HarnessId::Opencode) {
         Ok(map) => map,
         Err(finding) => return vec![finding],
     };
@@ -125,7 +135,7 @@ pub(super) fn opencode(text: &str) -> Vec<Finding> {
         && !MODES.contains(&mode)
     {
         findings.push(Finding::breakage(
-            format!("`mode: {mode}` is not a mode OpenCode knows"),
+            format!("kendex-agent-mode-rejected: harness=opencode value={mode} allowed={}\n`mode: {mode}` is not a mode OpenCode knows", MODES.join(",")),
             format!("set the agent's mode to one of {}", MODES.join(", ")),
         ));
     }
@@ -152,7 +162,7 @@ pub(super) fn opencode(text: &str) -> Vec<Finding> {
                 if !PERMISSION_VALUES.contains(&shown) {
                     findings.push(Finding::breakage(
                         format!(
-                            "permission `{key}` is set to `{shown}`, which OpenCode cannot read"
+                            "kendex-permission-rejected: harness=opencode key={key} value={shown} allowed={}\npermission `{key}` is set to `{shown}`, which OpenCode cannot read", PERMISSION_VALUES.join(",")
                         ),
                         format!("set it to one of {}", PERMISSION_VALUES.join(", ")),
                     ));
@@ -170,7 +180,7 @@ pub(super) fn opencode(text: &str) -> Vec<Finding> {
 /// Claude registers an agent under its frontmatter name, so a name that
 /// disagrees with the declared one answers to something nobody typed.
 pub(super) fn claude(name: &str, text: &str) -> Vec<Finding> {
-    let map = match frontmatter_map(text, "Claude Code") {
+    let map = match frontmatter_map(text, HarnessId::Claude) {
         Ok(map) => map,
         Err(finding) => return vec![finding],
     };
@@ -181,14 +191,16 @@ pub(super) fn claude(name: &str, text: &str) -> Vec<Finding> {
         .trim();
     if declared.is_empty() {
         return vec![Finding::breakage(
-            format!("the Claude agent for `{name}` has no name, so nothing can call it"),
+            format!(
+                "kendex-agent-key-missing: harness=claude name={name} key=name\nthe Claude agent for `{name}` has no name, so nothing can call it"
+            ),
             format!("add `name: {name}` to the agent's frontmatter in the catalog"),
         )];
     }
     if declared != name {
         return vec![Finding::breakage(
             format!(
-                "the agent installs as `{name}` but calls itself `{declared}`, so Claude answers to the wrong one"
+                "kendex-agent-name-mismatch: harness=claude installed={name} declared={declared}\nthe agent installs as `{name}` but calls itself `{declared}`, so Claude answers to the wrong one"
             ),
             format!("rename it to `{name}` in the catalog, or declare the agent as `{declared}`"),
         )];
@@ -208,7 +220,7 @@ pub(super) fn claude(name: &str, text: &str) -> Vec<Finding> {
 /// optional `:level` suffix, and `effort` as one of Pi's thinking levels;
 /// a bare id loads no model and an unknown level is ignored.
 pub(super) fn pi(text: &str) -> Vec<Finding> {
-    let map = match frontmatter_map(text, "Pi") {
+    let map = match frontmatter_map(text, HarnessId::Pi) {
         Ok(map) => map,
         Err(finding) => return vec![finding],
     };
@@ -233,7 +245,7 @@ pub(super) fn pi(text: &str) -> Vec<Finding> {
 /// nobody typed. Its `model` accepts a Gemini id or the literal `inherit`
 /// (matrix §1, §4).
 pub(super) fn gemini(name: &str, text: &str) -> Vec<Finding> {
-    let map = match frontmatter_map(text, "Gemini CLI") {
+    let map = match frontmatter_map(text, HarnessId::Gemini) {
         Ok(map) => map,
         Err(finding) => return vec![finding],
     };
@@ -280,7 +292,7 @@ pub(super) fn gemini(name: &str, text: &str) -> Vec<Finding> {
 /// tiers (<https://antigravity.google/docs/subagents>).
 pub(super) fn antigravity(name: &str, text: &str) -> Vec<Finding> {
     const TIERS: [&str; 3] = ["inherit", "flash", "pro"];
-    let map = match frontmatter_map(text, "Antigravity") {
+    let map = match frontmatter_map(text, HarnessId::Antigravity) {
         Ok(map) => map,
         Err(finding) => return vec![finding],
     };
@@ -330,7 +342,7 @@ pub(super) fn antigravity(name: &str, text: &str) -> Vec<Finding> {
 /// name nobody declared, and its model is free text a repository allowlist
 /// may still refuse (matrix §2, §4).
 pub(super) fn copilot(name: &str, text: &str) -> Vec<Finding> {
-    let map = match frontmatter_map(text, "Copilot") {
+    let map = match frontmatter_map(text, HarnessId::Copilot) {
         Ok(map) => map,
         Err(finding) => return vec![finding],
     };
@@ -361,7 +373,7 @@ pub(super) fn copilot(name: &str, text: &str) -> Vec<Finding> {
 }
 
 pub(super) fn cursor(text: &str) -> Vec<Finding> {
-    let map = match frontmatter_map(text, "Cursor") {
+    let map = match frontmatter_map(text, HarnessId::Cursor) {
         Ok(map) => map,
         Err(finding) => return vec![finding],
     };
@@ -369,7 +381,7 @@ pub(super) fn cursor(text: &str) -> Vec<Finding> {
         .filter(|(key, _)| !CURSOR_KEYS.contains(key))
         .map(|(key, _)| {
             Finding::advisory(
-                format!("Cursor ignores `{key}:` in a rule file"),
+                format!("kendex-rule-key-ignored: harness=cursor key={key}\nCursor ignores `{key}:` in a rule file"),
                 format!(
                     "keep rule frontmatter to {} — every other key is folklore",
                     CURSOR_KEYS.join(", ")

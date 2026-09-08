@@ -49,9 +49,10 @@ pub(super) fn hook(
         remediation,
     };
     let Some(registered) = crate::harness::copilot::hook_for(hook) else {
-        state.notes.push(format!(
-            "hook {name}: event {} has no Copilot counterpart, and hanging it on a near-miss would run it at the wrong moment",
-            hook.event
+        state.notes.push(super::targets::unsupported_hook_event(
+            name,
+            &hook.event,
+            HarnessId::Copilot,
         ));
         return None;
     };
@@ -70,7 +71,7 @@ pub(super) fn hook(
     if let Some(path) = settings::hooks_switched_off_by(env, scope) {
         state.warnings.push(named(
             format!(
-                "`disableAllHooks` is on in {}, which switches off every Copilot hook — as configured, this one installs but stays inert",
+                "kendex-hooks-disabled: harness=copilot hook={name} setting=disableAllHooks\n`disableAllHooks` is on in {}, which switches off every Copilot hook — as configured, this one installs but stays inert",
                 path.display()
             ),
             Some(
@@ -102,7 +103,7 @@ pub(super) fn switched_off_elsewhere(ctx: &ItemCtx, kind: ItemKind, state: &mut 
         ctx,
         kind,
         format!(
-            "your personal Copilot settings list {} in `{key}`, and a repository can only add names to that list — as configured, this project cannot switch it back on",
+            "kendex-item-disabled: harness=copilot item={0} setting={key}\nYour personal Copilot settings list {0} in `{key}`, and a repository can only add names to that list — as configured, this project cannot switch it back on",
             ctx.name
         ),
         Some(format!(
@@ -132,7 +133,9 @@ pub(super) fn agent_notices(ctx: &ItemCtx, state: &mut DesiredState, model: Opti
         ctx,
         ItemKind::Agent,
         format!(
-            "this repository's `.github/allowed_models.txt` allows {} and not {model} — as configured, Copilot will not run this agent on the model it names",
+            "kendex-model-disallowed: harness=copilot agent={} requested={model} allowed={}\nThis repository's `.github/allowed_models.txt` allows {} and not {model} — as configured, Copilot will not run this agent on the model it names",
+            ctx.name,
+            patterns.join(","),
             patterns.join(", ")
         ),
         Some("pick a model the repository allows, or add this one to that file".to_owned()),

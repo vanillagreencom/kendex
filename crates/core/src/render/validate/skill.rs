@@ -31,13 +31,14 @@ pub(super) fn findings(
     let Some(bytes) = skill_md(files) else {
         return vec![Finding::breakage(
             format!(
-                "the tree for `{name}` has no SKILL.md, which is the only file {tool} looks for"
+                "kendex-skill-file-missing: harness={} name={name} path=SKILL.md\nthe tree for `{name}` has no SKILL.md, which is the only file {tool} looks for",
+                harness.name()
             ),
             "add SKILL.md to the skill's directory in the catalog",
         )];
     };
     let text = String::from_utf8_lossy(bytes);
-    let map = match frontmatter_map(&text, tool) {
+    let map = match frontmatter_map(&text, harness) {
         Ok(map) => map,
         Err(finding) => return vec![finding],
     };
@@ -53,23 +54,26 @@ pub(super) fn findings(
             format!("add `name: {name}` to the skill's SKILL.md in the catalog"),
         ));
     } else if in_file != name {
-        findings.push(Finding::breakage(
-            format!(
-                "SKILL.md calls the skill `{in_file}` but it installs as `{name}`, so {tool} offers a name nobody declared"
-            ),
-            match declared == name {
-                true => format!(
+        let (fix, remediation) = match declared == name {
+            true => (
+                "name",
+                format!(
                     "set `name: {name}` in the skill's SKILL.md, or declare the skill as `{in_file}`"
                 ),
-                // The installed name carries the plugin the item lives in,
-                // which no catalog file knows and no declaration can spell.
-                // kendex writes it into its own copy, and the one shape it
-                // cannot write into is frontmatter that is not a plain
-                // `---` block.
-                false => format!(
+            ),
+            // A plugin-derived installed name is repaired in the generated file.
+            false => (
+                "frontmatter",
+                format!(
                     "give this skill's SKILL.md a plain `---` frontmatter block — that is what kendex writes `name: {name}` into when it installs `{declared}`"
                 ),
-            },
+            ),
+        };
+        findings.push(Finding::breakage(
+            format!(
+                "kendex-skill-name-mismatch: harness={} installed={name} declared={declared} in-file={in_file} fix={fix}\nSKILL.md calls the skill `{in_file}` but it installs as `{name}`, so {tool} offers a name nobody declared", harness.name()
+            ),
+            remediation,
         ));
     }
     let described = map
@@ -78,7 +82,7 @@ pub(super) fn findings(
         .is_some_and(|text| !text.trim().is_empty());
     if !described {
         findings.push(Finding::advisory(
-            format!("SKILL.md has no description, so {tool} has nothing to decide when to use `{name}` on"),
+            format!("kendex-skill-description-missing: harness={} name={name}\nSKILL.md has no description, so {tool} has nothing to decide when to use `{name}` on", harness.name()),
             "add a one-line `description:` saying when the skill applies",
         ));
     }
@@ -91,8 +95,8 @@ pub(super) fn findings(
     {
         findings.push(Finding::breakage(
             format!(
-                "`{name}`'s description is {} characters and {tool} rejects a skill whose description runs past {CODEX_DESCRIPTION_MAX_CHARS}",
-                description.chars().count()
+                "kendex-skill-description-too-long: harness={} name={name} length={} limit={CODEX_DESCRIPTION_MAX_CHARS}\n`{name}`'s description is {} characters and {tool} rejects a skill whose description runs past {CODEX_DESCRIPTION_MAX_CHARS}",
+                harness.name(), description.chars().count(), description.chars().count()
             ),
             "shorten the `description:` in the skill's SKILL.md — say when the skill applies, and leave the how to the body",
         ));

@@ -51,7 +51,7 @@ fn cross_read_note(ctx: &ItemCtx, method: Method, state: &mut DesiredState) {
     // The name the shared tree lists it under, which is what each reader's
     // loader is held to.
     let installed = crate::harness::canonical_name(ctx.name);
-    let readers: Vec<String> = HarnessId::ALL
+    let readers: Vec<HarnessId> = HarnessId::ALL
         .into_iter()
         .filter(|harness| !ctx.harnesses.contains(harness))
         .filter(|harness| {
@@ -74,7 +74,6 @@ fn cross_read_note(ctx: &ItemCtx, method: Method, state: &mut DesiredState) {
                 .iter()
                 .all(|finding| !finding.is_breakage())
         })
-        .map(|harness| harness.display_name().to_owned())
         .collect();
     if readers.is_empty() {
         return;
@@ -86,8 +85,18 @@ fn cross_read_note(ctx: &ItemCtx, method: Method, state: &mut DesiredState) {
         Scope::Project { .. } => "`.agents/skills`",
     };
     let note = format!(
-        "skills: {} read {where_} too, so what is installed here is already visible to them — one definition, counted once",
-        readers.join(", ")
+        "kendex-shared-skills: readers={} path={}\n{} read {where_} too, so what is installed here is already visible to them — one definition, counted once",
+        readers
+            .iter()
+            .map(|harness| harness.name())
+            .collect::<Vec<_>>()
+            .join(","),
+        where_.trim_matches('`'),
+        readers
+            .iter()
+            .map(|harness| harness.display_name())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     if !state.notes.contains(&note) {
         state.notes.push(note);

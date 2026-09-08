@@ -5,6 +5,14 @@ use crate::env::Env;
 use crate::harness::{Enforcement, adapter};
 use crate::model::{HarnessId, ItemKind, Scope};
 
+/// The notice every native event adapter emits when no listener can run it.
+pub(super) fn unsupported_hook_event(name: &str, event: &str, harness: HarnessId) -> String {
+    format!(
+        "kendex-hook-unsupported: harness={} event={event} hook={name}\nThis harness cannot run the hook event. Nothing is installed for it.",
+        harness.name(),
+    )
+}
+
 /// What installing a hook on this harness actually buys. A tool that only
 /// reads the file must never be presented as one that acts on it: the
 /// warning travels with the plan, the preview, and the audit page. Read
@@ -116,6 +124,8 @@ pub(super) fn opencode_instruction_prefix(scope: &Scope) -> &'static str {
 /// never reaches `/`. When nothing from the start up holds the script, the
 /// command refuses, naming the start and the file: a hook that did not run
 /// must not read as one that allowed.
+/// Its own output starts with `kendex-hook-missing`; a launching shell may
+/// emit a startup diagnostic before it executes this registered command.
 ///
 /// `rel` goes through [`crate::names::quoted`], never interpolated inside
 /// double quotes, so a segment holding a `$` or a backtick is read as the

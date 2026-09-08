@@ -116,9 +116,10 @@ pub(super) fn restated_hook_artifact(
         _ => Some(hook.event.as_str()),
     };
     let Some(event) = event else {
-        state.notes.push(format!(
-            "kendex-hook-unsupported: harness={} event={} hook={name}\nThis harness cannot run the hook event. Nothing is installed for it.",
-            harness.name(), hook.event
+        state.notes.push(super::targets::unsupported_hook_event(
+            name,
+            &hook.event,
+            harness,
         ));
         return None;
     };

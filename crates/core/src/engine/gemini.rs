@@ -36,7 +36,7 @@ fn overridden_named(env: &Env, name: &str, kind: ItemKind, key: &str) -> Option<
         name: name.to_owned(),
         harness: Some(HarnessId::Gemini),
         message: format!(
-            "this machine's system-wide Gemini settings also set `{key}`, which outranks both your settings and this project — as configured, what kendex writes here can be overridden"
+            "kendex-settings-overridden: harness=gemini item={name} key={key}\nThis machine's system-wide Gemini settings also set `{key}`, which outranks both your settings and this project — as configured, what kendex writes here can be overridden"
         ),
         remediation: Some(format!(
             "ask whoever manages {} to make room for it, or install this at a scope that file leaves alone",
@@ -56,9 +56,10 @@ pub(super) fn agent_notices(ctx: &ItemCtx, state: &mut DesiredState) {
             kind: ItemKind::Agent,
             name: ctx.name.to_owned(),
             harness: Some(HarnessId::Gemini),
-            message:
-                "Gemini's subagents are switched off in its settings, so this agent installs but stays inert"
-                    .to_owned(),
+            message: format!(
+                "kendex-agents-disabled: harness=gemini agent={} setting=experimental.enableAgents\nGemini's subagents are switched off in its settings, so this agent installs but stays inert",
+                ctx.name,
+            ),
             remediation: Some(
                 "turn `experimental.enableAgents` on in Gemini's settings, or drop Gemini from this agent's harnesses"
                     .to_owned(),
@@ -82,14 +83,15 @@ pub(super) fn hook(
 ) -> Option<HookSpec> {
     if let Some(reason) = read(&settings_file(env, scope)).unmanageable() {
         state.notes.push(format!(
-            "hook {name}: {reason} — nothing was registered for Gemini"
+            "kendex-settings-unmanageable: harness=gemini kind=hook item={name}\n{reason} — nothing was registered for Gemini"
         ));
         return None;
     }
     let Some(registered) = crate::harness::gemini::hook_for(hook) else {
-        state.notes.push(format!(
-            "hook {name}: event {} has no Gemini counterpart, and hanging it on a near-miss would run it at the wrong moment",
-            hook.event
+        state.notes.push(super::targets::unsupported_hook_event(
+            name,
+            &hook.event,
+            HarnessId::Gemini,
         ));
         return None;
     };
@@ -123,7 +125,7 @@ fn switched_off_machine_wide(ctx: &ItemCtx) -> Option<ItemWarning> {
         name: ctx.name.to_owned(),
         harness: Some(HarnessId::Gemini),
         message: format!(
-            "Gemini records whether a server is on in one file for the whole machine, and {} is switched off there — as configured, it is declared for this project but stays inert",
+            "kendex-mcp-disabled: harness=gemini server={0}\nGemini records whether a server is on in one file for the whole machine, and {0} is switched off there — as configured, it is declared for this project but stays inert",
             ctx.name
         ),
         remediation: Some(format!(
@@ -142,7 +144,7 @@ fn gated_out(ctx: &ItemCtx) -> Option<ItemWarning> {
         name: ctx.name.to_owned(),
         harness: Some(HarnessId::Gemini),
         message: format!(
-            "Gemini's settings in {} gate which servers load, and {} is not among them — as configured, it installs but stays inert",
+            "kendex-mcp-filtered: harness=gemini server={1}\nGemini's settings in {0} gate which servers load, and {1} is not among them — as configured, it installs but stays inert",
             path.display(),
             ctx.name
         ),
@@ -186,7 +188,7 @@ pub(super) fn mcp_edits(
 ) -> Option<Vec<(PathBuf, ConfigEdit)>> {
     if let Some(reason) = settings(ctx).unmanageable() {
         state.notes.push(format!(
-            "mcp {}: {reason} — nothing was declared for Gemini",
+            "kendex-settings-unmanageable: harness=gemini kind=mcp-server item={}\n{reason} — nothing was declared for Gemini",
             ctx.name
         ));
         return None;
