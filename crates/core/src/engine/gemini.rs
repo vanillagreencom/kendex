@@ -243,15 +243,21 @@ mod tests {
 
     #[test]
     fn a_streamable_http_server_is_keyed_apart_from_an_sse_one() {
-        assert_eq!(
-            server(&json!({"type": "http", "url": "https://mcp.example"})),
-            json!({"httpUrl": "https://mcp.example"})
-        );
-        assert_eq!(
-            server(&json!({"type": "sse", "url": "https://mcp.example"})),
-            json!({"url": "https://mcp.example"})
-        );
-        let stdio = json!({"command": "gh-mcp", "args": ["--stdio"]});
-        assert_eq!(server(&stdio), stdio);
+        for (input, expected) in [
+            (
+                json!({"type": "http", "url": "https://mcp.example"}),
+                json!({"httpUrl": "https://mcp.example"}),
+            ),
+            (
+                json!({"type": "sse", "url": "https://mcp.example"}),
+                json!({"url": "https://mcp.example"}),
+            ),
+            (
+                json!({"command": "gh-mcp", "args": ["--stdio"]}),
+                json!({"command": "gh-mcp", "args": ["--stdio"]}),
+            ),
+        ] {
+            assert_eq!(server(&input), expected, "{input}");
+        }
     }
 }

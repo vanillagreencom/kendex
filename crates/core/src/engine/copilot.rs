@@ -171,13 +171,21 @@ mod tests {
 
     #[test]
     fn a_command_server_is_typed_local_and_a_url_server_keeps_its_transport() {
-        assert_eq!(
-            server(&json!({"command": "gh-mcp", "args": ["--stdio"]})),
-            json!({"type": "local", "command": "gh-mcp", "args": ["--stdio"]})
-        );
-        let http = json!({"type": "http", "url": "https://mcp.example"});
-        assert_eq!(server(&http), http);
-        let sse = json!({"type": "sse", "url": "https://mcp.example"});
-        assert_eq!(server(&sse), sse);
+        for (input, expected) in [
+            (
+                json!({"command": "gh-mcp", "args": ["--stdio"]}),
+                json!({"type": "local", "command": "gh-mcp", "args": ["--stdio"]}),
+            ),
+            (
+                json!({"type": "http", "url": "https://mcp.example"}),
+                json!({"type": "http", "url": "https://mcp.example"}),
+            ),
+            (
+                json!({"type": "sse", "url": "https://mcp.example"}),
+                json!({"type": "sse", "url": "https://mcp.example"}),
+            ),
+        ] {
+            assert_eq!(server(&input), expected, "{input}");
+        }
     }
 }
