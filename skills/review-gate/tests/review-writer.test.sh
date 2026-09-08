@@ -216,6 +216,12 @@ H_PENDING_OLD="[$(entry pending "$AWAITING_DETAIL" "$OLD")]"
 H_PENDING_OLD_X="[$(entry pending x "$OLD")]"
 H_SUCCESS_OLD="[$(entry success "reviewed at head with no unresolved threads" "$OLD")]"
 H_PENDING_REVIEWED_OLD="[$(entry pending "reviewed at head with no unresolved threads" "$OLD")]"
+# The commit-status API caps a description at 140 characters; the writer
+# truncates there and compares the truncated form when it decides a no-op.
+LONG_DETAIL="1 decline names no mechanism: give a passing state or a false premise it disproves, a label alone is not a reason, and the gate will not clear until then"
+LONG_DETAIL_140="${LONG_DETAIL:0:140}"
+LONG_UNREASONED="verdict=unreasoned-decline detail=$LONG_DETAIL"
+H_FAILURE_LONG_OLD="[$(entry failure "$LONG_DETAIL_140" "$OLD")]"
 H_FAILURE_OLD="[$(entry failure "standing review changes requested" "$OLD")]"
 H_SUCCESS_FUTURE="[$(entry success ok "$FUTURE")]"
 G_PENDING_FUTURE="[$(entry pending "newer writer run" "$FUTURE")]"
@@ -318,13 +324,14 @@ observe() {
 
 # table ROW... — one run and one assertion per row: `label|mode|env|expect`.
 table() {
-  local row label mode env expect
+  local row label mode env expect before=$((PASS + FAIL))
   for row in "$@"; do
     IFS='|' read -r label mode env expect <<<"$row"
     [[ -n "$expect" ]] || { printf 'table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
     run_writer "$mode" "$env"
     assert_eq "$(observe "$expect")" "$expect" "$label"
   done
+  [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "table: no row was asserted" >&2; exit 2; }
 }
 
 echo "=== downward transitions are direct posts, idempotent, never deferred ==="
@@ -342,11 +349,13 @@ table \
   "w8: unreasoned-decline posts failure with the remedy in the description|single|STUB_VERDICT_LINE=$UNREASONED;STUB_GATE_HISTORY=[]|rc=0 posts=failure@headsha desc=1+decline+names+no+mechanism" \
   "w8b: unreasoned-decline over a newer success posts failure without deferring|single|STUB_VERDICT_LINE=$UNREASONED;STUB_GATE_HISTORY=$H_SUCCESS_FUTURE|rc=0 posts=failure@headsha says~deferring=false" \
   "w9: untracked-claim posts failure with the remedy in the description|single|STUB_VERDICT_LINE=$UNTRACKED;STUB_GATE_HISTORY=[]|rc=0 posts=failure@headsha desc=1+tracking+claim+names+no+issue" \
+  "w9c: a detail past the API's 140 characters is posted truncated there|single|STUB_VERDICT_LINE=$LONG_UNREASONED;STUB_GATE_HISTORY=[]|rc=0 posts=failure@headsha desc=${LONG_DETAIL_140// /+}" \
+  "w9d: the no-op check compares the truncated form, so a long detail already posted is not re-posted|single|STUB_VERDICT_LINE=$LONG_UNREASONED;STUB_GATE_HISTORY=$H_FAILURE_LONG_OLD|rc=0 posts=none says~nothing+to+do=true" \
   "w9b: untracked-claim over a newer success posts failure without deferring|single|STUB_VERDICT_LINE=$UNTRACKED;STUB_GATE_HISTORY=$H_SUCCESS_FUTURE|rc=0 posts=failure@headsha says~deferring=false"
 
 echo "=== approved converges to success ==="
 table \
-  "w5: approved with the same success entry posts nothing|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_SUCCESS_OLD|rc=0 posts=none" \
+  "w5: approved with the same success entry posts nothing|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_SUCCESS_OLD|rc=0 posts=none says~nothing+to+do=true" \
   "w5b: the same description under a different state is re-posted|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_REVIEWED_OLD|rc=0 posts=success@headsha" \
   "w6: a reviewed head over pending opens the gate|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD|rc=0 posts=success@headsha" \
   "w7: a dismissed objection reopens the gate|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_FAILURE_OLD|rc=0 posts=success@headsha"
@@ -411,7 +420,7 @@ table \
 echo "=== pagination merges (one array per page; page limits strand state) ==="
 table \
   "wp1: a PR beyond page one is enumerated and converged|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN7;STUB_OPEN_PRS_PAGE2=$OPEN8;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha7,pending@sha8 says~converging+2+open+PR(s)=true" \
-  "wp2: the projection merges every page before deciding: a success on page two alone is already converged|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=[];STUB_GATE_HISTORY_PAGE2=$H_SUCCESS_OLD|rc=0 posts=none" \
+  "wp2: the projection merges every page before deciding: a success on page two alone is already converged|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=[];STUB_GATE_HISTORY_PAGE2=$H_SUCCESS_OLD|rc=0 posts=none says~nothing+to+do=true" \
   "wp3: a newer non-success entry on the guard's page two still defers|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_GUARD_HISTORY=[];STUB_GUARD_HISTORY_PAGE2=$G_FAILURE_FUTURE|rc=0 posts=none says~deferring+the+success+post=true"
 
 echo "=== settings: the writer never rewrites the override context ==="
