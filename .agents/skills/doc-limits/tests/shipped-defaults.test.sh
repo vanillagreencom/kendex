@@ -31,6 +31,14 @@ expect_first_line() { # EXPECTED LABEL
     FAIL=$((FAIL + 1)); printf '  FAIL: %s: first line <%s>\n' "$2" "$first"
   fi
 }
+must_fail_first_line() { # FORMER-LINE LABEL
+  local first="${OUT%%$'\n'*}"
+  if [ "$first" != "$1" ]; then
+    PASS=$((PASS + 1)); printf '  ok: %s\n' "$2"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL: %s: mutant retained <%s>\n' "$2" "$first"
+  fi
+}
 must_fail() { # FORMER-EXIT MUTANT-EXIT LABEL: prove the former assertion turns red
   local assertion_rc=0
   (PASS=0; FAIL=0; expect "$1" "$3"; [ "$FAIL" -eq 0 ]) >"$TMP/control.log" || assertion_rc=$?
@@ -94,6 +102,21 @@ if [ "$CLASS_ASSERTIONS" -eq 0 ]; then
   printf 'FAIL: CLASSES executed no assertions\n' >&2
   exit 1
 fi
+
+bytes README.md 16384
+git -C "$R" add README.md
+private_command notice-protocol
+[ "$(grep -Fxc "  printf 'notice=%s %s=%q\\n' \"\$key\" \"\$field\" \"\$value\"" "$MUTANT")" -eq 1 ]
+sed "s/printf 'notice=%s %s=%q\\\\n'/printf 'renamed=%s %s=%q\\\\n'/" "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --staged
+must_fail_first_line 'notice=documents-checked count=1' 'notice protocol control: changing the formatter fails the pass notice'
+SR="$SOURCE_COMMAND"
+git -C "$R" rm -qf README.md
 
 bytes src/large.rs 100000
 git -C "$R" add src/large.rs

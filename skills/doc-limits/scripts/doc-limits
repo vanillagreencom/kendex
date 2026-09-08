@@ -70,9 +70,9 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-REPO_ROOT="$(git rev-parse --show-toplevel)" || config_error repository-root-missing path "$PWD" "not inside a git repository"
-cd "$REPO_ROOT" || config_error repository-root-unreadable path "$REPO_ROOT" "could not enter the repository root $REPO_ROOT"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/doc-limits.XXXXXX")" || config_error temp-create-failed path "${TMPDIR:-/tmp}" "could not create a temporary directory"
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || config_error repository-root-missing path "$PWD" "not inside a git repository"
+cd "$REPO_ROOT" 2>/dev/null || config_error repository-root-unreadable path "$REPO_ROOT" "could not enter the repository root $REPO_ROOT"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/doc-limits.XXXXXX" 2>/dev/null)" || config_error temp-create-failed path "${TMPDIR:-/tmp}" "could not create a temporary directory"
 trap 'rm -rf -- "${TMP:?}"' EXIT
 if [ "$STAGED" -eq 1 ]; then
   SR_SETTINGS_FROM_INDEX=1
@@ -170,7 +170,7 @@ staged_policy_state() { # PATH
 INDEX_FILE_MODE=""
 read_index_file_mode() { # PATH — sets INDEX_FILE_MODE ("" when untracked)
   local entry status=0
-  entry="$(git ls-files -s -- ":(literal)$1")" || status=$?
+  entry="$(git ls-files -s -- ":(literal)$1" 2>/dev/null)" || status=$?
   [ "$status" -eq 0 ] || collection_error index-query-failed exit "$status" "could not query the index for $1 (git ls-files exit $status) — refusing to treat it as absent"
   INDEX_FILE_MODE="${entry%% *}"
   [ -n "$entry" ] || INDEX_FILE_MODE=""
@@ -187,7 +187,7 @@ read_head_file_mode() { # PATH — sets HEAD_FILE_MODE ("" when HEAD carries no 
     1) return 0 ;;
     *) collection_error head-query-failed exit "$head_status" "could not resolve HEAD while probing for $1 (git rev-parse exit $head_status) — refusing to treat it as absent" ;;
   esac
-  entry="$(git ls-tree HEAD -- ":(literal)$1")" || status=$?
+  entry="$(git ls-tree HEAD -- ":(literal)$1" 2>/dev/null)" || status=$?
   [ "$status" -eq 0 ] || collection_error head-tree-query-failed exit "$status" "could not query HEAD for $1 (git ls-tree exit $status) — refusing to treat it as absent"
   HEAD_FILE_MODE="${entry%% *}"
   [ -n "$entry" ] || HEAD_FILE_MODE=""
@@ -197,7 +197,7 @@ read_policy_from_index() { # PATH — stages the index copy of the list at $TMP/
     100*) ;;
     *) config_error excludes-mode-invalid mode "$INDEX_FILE_MODE" "$1 is tracked but is not a regular file in the index (mode $INDEX_FILE_MODE); it cannot be read as an exclusion list" ;;
   esac
-  git show ":$1" >"$TMP/excludes" \
+  git show ":$1" >"$TMP/excludes" 2>/dev/null \
     || collection_error excludes-index-read-failed path "$1" "could not read the tracked exclusion list from the index: $1 — refusing to run with zero exclusions"
 }
 EXCLUDES_SOURCE="$EXCLUDES_FILE"
@@ -269,7 +269,7 @@ INVENTORY_SOURCE="$(sr_settings_source .kendex-generated.json)" || exit 2
 if [ "$STAGED" -eq 0 ] && [ ! -f "$INVENTORY_SOURCE" ]; then
   read_index_file_mode .kendex-generated.json
   if [ -n "$INDEX_FILE_MODE" ]; then
-    git show :0:.kendex-generated.json >"$TMP/generated.json" \
+    git show :0:.kendex-generated.json >"$TMP/generated.json" 2>/dev/null \
       || collection_error inventory-index-read-failed path .kendex-generated.json 'cannot read .kendex-generated.json from the index; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
     INVENTORY_SOURCE="$TMP/generated.json"
   fi
@@ -282,10 +282,11 @@ fi
 if [ ! -e "$INVENTORY_SOURCE" ] && [ ! -L "$INVENTORY_SOURCE" ]; then
   inventory='[]'
 else
-  inventory="$(cat -- "$INVENTORY_SOURCE")" \
+  inventory="$(cat -- "$INVENTORY_SOURCE" 2>/dev/null)" \
     || collection_error inventory-read-failed path "$INVENTORY_SOURCE" 'cannot read .kendex-generated.json; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
 fi
-generated_paths_load "$inventory" || exit 2
+generated_paths_load "$inventory" 2>/dev/null \
+  || collection_error inventory-invalid path .kendex-generated.json 'cannot read .kendex-generated.json; jq is required; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
 is_excluded() { # PATH — inclusion rows override both exclusion sources
   generated_path_contains "$1" \
     || glob_match "$1" ${EXCLUDE_PATTERNS[@]+"${EXCLUDE_PATTERNS[@]}"} || return 1
@@ -305,7 +306,7 @@ path_threshold() { # PATH: first matching class, or no limit
 }
 # The index supplies both the tracked set and blob IDs. A single batch reads
 # their sizes, so staged checks do not materialize every document.
-git ls-files -s -z >"$TMP/files.z" || collection_error documents-enumeration-failed exit "$?" "could not enumerate tracked documents"
+git ls-files -s -z >"$TMP/files.z" 2>/dev/null || collection_error documents-enumeration-failed exit "$?" "could not enumerate tracked documents"
 : >"$TMP/documents.tsv"
 while IFS= read -r -d '' rec; do
   mode="${rec%% *}"
@@ -324,7 +325,7 @@ while IFS= read -r -d '' rec; do
   oid="${oid%% *}"
   printf '%s\t%s\t%s\t%s\n' "$oid" "$f" "$PT" "$PC" >>"$TMP/documents.tsv"
 done <"$TMP/files.z"
-cut -f1 "$TMP/documents.tsv" | git cat-file --batch-check >"$TMP/sizes" \
+cut -f1 "$TMP/documents.tsv" 2>/dev/null | git cat-file --batch-check >"$TMP/sizes" 2>/dev/null \
   || collection_error blob-sizes-read-failed exit "$?" "could not read document blob sizes"
 checked=0 violations=0
 while IFS="$TAB" read -r oid f limit class; do
@@ -332,7 +333,7 @@ while IFS="$TAB" read -r oid f limit class; do
   [ "$actual_oid" = "$oid" ] && [ "$kind" = blob ] \
     || collection_error document-blob-read-failed path "$f" "could not read document blob: $f"
   if [ "$STAGED" -eq 0 ] && [ -f "$f" ] && [ ! -L "$f" ]; then
-    n="$(wc -c <"$f")" || collection_error document-measure-failed path "$f" "could not measure tracked document: $f"
+    n="$(wc -c <"$f" 2>/dev/null)" || collection_error document-measure-failed path "$f" "could not measure tracked document: $f"
     n="${n#"${n%%[![:space:]]*}"}"
   fi
   case "$n" in "" | *[!0-9]*) collection_error document-byte-count-invalid path "$f" "invalid byte count for tracked document: $f" ;; esac

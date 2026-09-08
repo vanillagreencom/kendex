@@ -130,8 +130,8 @@ git -C "$R" commit -qm 'control fixture'
 printf 'AGENTS.md\tfixture exception\n' >"$R/tools/doc-limits-excludes"
 private_command exclusion-source
 [ ! -L "$MUTANT" ]
-[ "$(grep -Fxc '  git show ":$1" >"$TMP/excludes" \' "$MUTANT")" -eq 1 ]
-sed 's#  git show ":\$1" >"\$TMP/excludes" \\#  cp -- "$1" "$TMP/excludes" \\#' "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc '  git show ":$1" >"$TMP/excludes" 2>/dev/null \' "$MUTANT")" -eq 1 ]
+sed 's#  git show ":\$1" >"\$TMP/excludes" 2>/dev/null \\#  cp -- "$1" "$TMP/excludes" 2>/dev/null \\#' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"

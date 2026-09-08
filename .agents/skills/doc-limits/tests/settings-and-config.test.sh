@@ -137,6 +137,14 @@ SR="$MUTANT"
 run
 expect 2 'diagnostics-load-failure'
 expect_first_line "doc-limits-error=diagnostics-load value=$(printf '%q' "$MUTANT_DIAGNOSTICS")" 'diagnostics-load failure'
+MUTANT_SETTINGS="$(dirname "$MUTANT")/lib/settings.sh"
+[ "$(grep -Fxc "  printf 'doc-limits-error=diagnostics-load value=%q\\n%s\\n' \"\$sr_settings_script_dir/diagnostics.sh\" 'Could not load the diagnostics library.' >&2" "$MUTANT_SETTINGS")" -eq 1 ]
+sed 's/doc-limits-error=diagnostics-load/doc-limits-error=diagnostics-renamed/' "$MUTANT_SETTINGS" >"$MUTANT_SETTINGS.changed"
+if cmp -s "$MUTANT_SETTINGS" "$MUTANT_SETTINGS.changed"; then exit 1; fi
+mv "$MUTANT_SETTINGS.changed" "$MUTANT_SETTINGS"
+bash -n "$MUTANT_SETTINGS"
+run
+must_fail_first_line "doc-limits-error=diagnostics-load value=$(printf '%q' "$MUTANT_DIAGNOSTICS")" 'diagnostics-load control: changing the stable key fails the refusal'
 sed 's#^source "\$SCRIPT_DIR/lib/settings.sh" || exit 2$#source "$SCRIPT_DIR/lib/settings.sh" || exit 1#' "$MUTANT" >"$MUTANT.changed"
 if cmp -s "$MUTANT" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
@@ -264,6 +272,14 @@ run --unknown
 expect 2 'unknown-option'
 expect_first_line 'error=argument-unknown argument=--unknown' 'unknown-option diagnostic'
 
+REPO_FIXTURE="$R"
+R="$TMP/outside-repository"
+mkdir "$R"
+run
+expect 2 'outside-repository'
+expect_first_line "error=repository-root-missing path=$(printf '%q' "$R")" 'outside-repository diagnostic precedes Git stderr'
+R="$REPO_FIXTURE"
+
 # Git is the real producer of policy lookup, document enumeration, and blob sizes.
 REAL_GIT="$(command -v git)"
 export REAL_GIT
@@ -314,8 +330,8 @@ fi
 
 private_command enumeration-guard
 [ ! -L "$MUTANT" ]
-[ "$(grep -Fxc 'git ls-files -s -z >"$TMP/files.z" || collection_error documents-enumeration-failed exit "$?" "could not enumerate tracked documents"' "$MUTANT")" -eq 1 ]
-sed 's/^git ls-files -s -z >"\$TMP\/files.z" || collection_error documents-enumeration-failed exit "\$?" "could not enumerate tracked documents"$/git ls-files -s -z >"$TMP\/files.z" || :/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc 'git ls-files -s -z >"$TMP/files.z" 2>/dev/null || collection_error documents-enumeration-failed exit "$?" "could not enumerate tracked documents"' "$MUTANT")" -eq 1 ]
+sed 's/^git ls-files -s -z >"\$TMP\/files.z" 2>\/dev\/null || collection_error documents-enumeration-failed exit "\$?" "could not enumerate tracked documents"$/git ls-files -s -z >"$TMP\/files.z" 2>\/dev\/null || :/' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
