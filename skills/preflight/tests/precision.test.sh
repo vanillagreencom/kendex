@@ -277,6 +277,37 @@ fires "the trapped scratch dir beside it does not shield an untrapped one" "scri
 fires "the captured status beside it does not shield a swallowed one" "scripts/swallow.sh:4: [fail-open] git || true swallows exit 2"
 fires "the wired suites beside it, and the workflow path filter globbing everything, do not wire an unwired one" "tests/orphan.test.sh:0: [unwired-suite]"
 
+echo "=== mktemp assignments whose status the shell checks stay clean ==="
+seed mktempchecked
+mkdir -p "$R/scripts/lib"
+cat >"$R/scripts/lib/or-list.sh" <<'EOF'
+#!/usr/bin/env bash
+read_error_file="$(mktemp)" || { echo "could not create error file" >&2; return 1; }
+trap 'rm -f "${read_error_file:-}"' EXIT
+EOF
+cat >"$R/scripts/lib/condition.sh" <<'EOF'
+#!/usr/bin/env bash
+if false; then
+  :
+elif _elt_tmp="$(mktemp)"; then
+  rm -f "$_elt_tmp"
+else
+  return 1
+fi
+trap ':' EXIT
+EOF
+run_pf
+clean "an OR-list handler and an elif condition check mktemp status" 2
+
+echo "=== control: an operator inside mktemp does not check the assignment ==="
+cat >"$R/scripts/lib/or-list.sh" <<'EOF'
+#!/usr/bin/env bash
+read_error_file="$(mktemp || true)"
+trap 'rm -f "${read_error_file:-}"' EXIT
+EOF
+run_pf
+fires "an operator hidden inside the substitution leaves the assignment unchecked" "scripts/lib/or-list.sh:2: [fail-open] unchecked mktemp"
+
 echo "=== inert trap text arms nothing; quoted command text swallows nothing; an untracked runner wires ==="
 seed inert
 mkdir -p "$R/.github/workflows"

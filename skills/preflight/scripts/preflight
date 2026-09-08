@@ -732,6 +732,18 @@ has_exit_trap() { # FILE
 # opens with `$(`, and it runs no command and carries no status, so a loop
 # counter — the commonest line in this repo's own tooling — is not the shape.
 SUBST_ASSIGN_RE='^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*="?\$\([^(]'
+# A substitution assignment's status is checked when the assignment is the
+# condition, or when an operator follows the substitution's closing `)`.
+# Reading only the tail keeps an operator inside the substitution out.
+substitution_status_checked() { # LINE
+  if grep -Eq -- '^[[:space:]]*(if|elif)[[:space:]]+(![[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*="?\$\([^(]' <<<"$1"; then
+    return 0
+  fi
+  case "${1##*)}" in
+    *'||'* | *'&&'*) return 0 ;;
+  esac
+  return 1
+}
 # The guard the assignment was written to reach: a test naming the assigned
 # variable on one of the lines just below. It is the whole finding — a
 # variable nothing below tests belongs to a command whose failure is MEANT to
@@ -1207,7 +1219,9 @@ while IFS= read -r f; do
     n="${rec%%"$TAB"*}"
     content="${rec#*"$TAB"}"
 
-    if [ "$is_sh" = 1 ] && [ "$vendored_mirror" = 0 ] && [ "$has_ee" = 0 ] && printf '%s' "$content" | grep -Eq -- "$MKTEMP_ASSIGN"; then
+    if [ "$is_sh" = 1 ] && [ "$vendored_mirror" = 0 ] && [ "$has_ee" = 0 ] \
+      && grep -Eq -- "$MKTEMP_ASSIGN" <<<"$content" \
+      && ! substitution_status_checked "$content"; then
       emit "$f" "$n" fail-open "unchecked mktemp in a file without errexit — a failed mktemp leaves the variable empty and the script runs on"
     fi
 
@@ -1222,22 +1236,13 @@ while IFS= read -r f; do
       && [ "$has_ee" = 1 ] && [ "$has_noee" = 0 ]; then
       case "$content" in
         *'$('*)
-          # The operator is a status capture only OUTSIDE the substitution, so
-          # the skip reads the tail past the last `)`: `VAR="$(cmd)" || VAR=""`
-          # is the fix shape and stays out, while `VAR="$(cd "$d" && cmd)"` —
-          # whose inner operator captures nothing — is judged like any other.
-          case "${content##*)}" in
-            *'||'* | *'&&'*) ;;
-            *)
-              if grep -Eq -- "$SUBST_ASSIGN_RE" <<<"$content"; then
-                assign_var="${content#"${content%%[![:space:]]*}"}"
-                assign_var="${assign_var%%=*}"
-                if guard_tests_var "$cpath" "$n" "$assign_var"; then
-                  emit "$f" "$n" fail-open "bare command-substitution assignment under errexit — its status ends the script here, so the test of \$$assign_var below never runs; move the assignment into the condition"
-                fi
-              fi
-              ;;
-          esac
+          if ! substitution_status_checked "$content" && grep -Eq -- "$SUBST_ASSIGN_RE" <<<"$content"; then
+            assign_var="${content#"${content%%[![:space:]]*}"}"
+            assign_var="${assign_var%%=*}"
+            if guard_tests_var "$cpath" "$n" "$assign_var"; then
+              emit "$f" "$n" fail-open "bare command-substitution assignment under errexit — its status ends the script here, so the test of \$$assign_var below never runs; move the assignment into the condition"
+            fi
+          fi
           ;;
       esac
     fi
