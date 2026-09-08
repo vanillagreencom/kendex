@@ -12,8 +12,9 @@ use crate::model::{HarnessId, ItemKind};
 pub(super) fn hook(name: &str, hook: &HookSpec, state: &mut DesiredState) -> Option<HookSpec> {
     if hook.harnesses.is_none() {
         state.notes.push(format!(
-            "kendex-hook-unlisted: harness=antigravity hook={name}\n{}",
-            crate::hook::by_name_only(HarnessId::Antigravity)
+            "kendex-hook-unlisted: harness=antigravity hook={record_name}\n{arg0}",
+            arg0 = crate::hook::by_name_only(HarnessId::Antigravity),
+            record_name = crate::names::shown(name),
         ));
         return None;
     }
@@ -31,8 +32,9 @@ pub(super) fn hook(name: &str, hook: &HookSpec, state: &mut DesiredState) -> Opt
             name: name.to_owned(),
             harness: Some(HarnessId::Antigravity),
             message: format!(
-                "Antigravity matches `{}` against its own tool names, and this matcher carries syntax kendex cannot restate in them — it installs as written and may never match",
-                hook.matcher.as_deref().unwrap_or_default()
+                "kendex-hook-matcher-untranslated: harness=antigravity hook={record_name} matcher={record_arg0}\nAntigravity matches this against its own tool names, and this matcher carries syntax kendex cannot restate in them — it installs as written and may never match",
+                record_name = crate::names::shown(name),
+                record_arg0 = crate::names::shown(hook.matcher.as_deref().unwrap_or_default()),
             ),
             remediation: Some(
                 "write the matcher as plain tool names separated by `|`, or check it against Antigravity's names (`run_command`, `view_file`, `write_to_file`)"

@@ -186,6 +186,104 @@ fn a_rendering_a_harness_would_refuse_is_named_with_what_it_got_wrong() {
             breakage: &[],
             advice: &[],
         },
+        Row {
+            harness: HarnessId::Gemini,
+            name: "rust",
+            text: "---\ndescription: Rust engineer\n---\nBody.\n".to_owned(),
+            breakage: &["kendex-agent-key-missing: harness=gemini name=rust key=name"],
+            advice: &[],
+        },
+        Row {
+            harness: HarnessId::Gemini,
+            name: "rust",
+            text: "---\nname: other\ndescription: Rust engineer\n---\nBody.\n".to_owned(),
+            breakage: &["kendex-agent-name-mismatch: harness=gemini installed=rust declared=other"],
+            advice: &[],
+        },
+        Row {
+            harness: HarnessId::Gemini,
+            name: "rust",
+            text: "---\nname: rust\n---\nBody.\n".to_owned(),
+            breakage: &["kendex-agent-key-missing: harness=gemini name=rust key=description"],
+            advice: &[],
+        },
+        Row {
+            harness: HarnessId::Antigravity,
+            name: "rust",
+            text: "---\ndescription: Rust engineer\n---\nBody.\n".to_owned(),
+            breakage: &["kendex-agent-key-missing: harness=antigravity name=rust key=name"],
+            advice: &[],
+        },
+        Row {
+            harness: HarnessId::Antigravity,
+            name: "rust",
+            text: "---\nname: other\ndescription: Rust engineer\n---\nBody.\n".to_owned(),
+            breakage: &["kendex-agent-name-mismatch: harness=antigravity installed=rust declared=other"],
+            advice: &[],
+        },
+        Row {
+            harness: HarnessId::Antigravity,
+            name: "rust",
+            text: "---\nname: rust\n---\nBody.\n".to_owned(),
+            breakage: &["kendex-agent-key-missing: harness=antigravity name=rust key=description"],
+            advice: &[],
+        },
+        Row {
+            harness: HarnessId::Copilot,
+            name: "rust",
+            text: "---\nname: other\ndescription: Rust engineer\n---\nBody.\n".to_owned(),
+            breakage: &["kendex-agent-name-mismatch: harness=copilot installed=rust declared=other"],
+            advice: &[],
+        },
+        Row {
+            harness: HarnessId::Copilot,
+            name: "rust",
+            text: "---\nname: rust\n---\nBody.\n".to_owned(),
+            breakage: &["kendex-agent-key-missing: harness=copilot name=rust key=description"],
+            advice: &[],
+        },
+        Row {
+            harness: HarnessId::Opencode,
+            name: "rust",
+            text: "---\ndescription: Rust engineer\nmode: subagent\npermission: deny\n---\nBody.\n".to_owned(),
+            breakage: &["kendex-permission-invalid: harness=opencode key=permission"],
+            advice: &[],
+        },
+        Row {
+            harness: HarnessId::Gemini,
+            name: "rust",
+            text: "---\nname: rust\ndescription: Rust engineer\nmodel: other\n---\nBody.\n".to_owned(),
+            breakage: &[],
+            advice: &["kendex-agent-model-fallback: harness=gemini model=other"],
+        },
+        Row {
+            harness: HarnessId::Antigravity,
+            name: "rust",
+            text: "---\nname: rust\ndescription: Rust engineer\nmodel: other\n---\nBody.\n".to_owned(),
+            breakage: &["kendex-agent-model-rejected: harness=antigravity model=other allowed=inherit,flash,pro"],
+            advice: &[],
+        },
+        Row {
+            harness: HarnessId::Opencode,
+            name: "rust",
+            text: "---\ndescription: Rust engineer\nmodel: \"bad\\nmodel\"\n---\nBody.\n".to_owned(),
+            breakage: &["kendex-model-shape: harness=opencode model=bad\\nmodel expected=provider/model"],
+            advice: &[],
+        },
+        Row {
+            harness: HarnessId::Codex,
+            name: "rust",
+            text: "name = \"rust\"\ndescription = \"Rust engineer\"\ndeveloper_instructions = \"Body.\"\nmodel = \"openai/bad\\nmodel\"\n".to_owned(),
+            breakage: &["kendex-model-shape: harness=codex model=openai/bad\\nmodel expected=bare"],
+            advice: &[],
+        },
+        Row {
+            harness: HarnessId::Claude,
+            name: "rust",
+            text: "---\nname: \"other\\nagent\"\ndescription: Rust engineer\n---\nBody.\n".to_owned(),
+            breakage: &["kendex-agent-name-mismatch: harness=claude installed=rust declared=other\\nagent"],
+            advice: &[],
+        },
     ];
     for row in rows {
         let label = format!("{} {}", row.harness.name(), row.name);
@@ -392,6 +490,21 @@ fn a_skill_tree_must_carry_a_skill_md_that_names_its_own_directory() {
         (
             "gh",
             "gh",
+            skill_tree("---\ndescription: d\n---\n"),
+            Some((true, "kendex-skill-name-missing: harness=claude name=gh")),
+        ),
+        (
+            "gh",
+            "gh",
+            skill_tree("---\nname: \"git\\nhub\"\ndescription: d\n---\n"),
+            Some((
+                true,
+                "kendex-skill-name-mismatch: harness=claude installed=gh declared=gh in-file=git\\nhub fix=name",
+            )),
+        ),
+        (
+            "gh",
+            "gh",
             vec![],
             Some((
                 true,
@@ -489,5 +602,59 @@ fn a_skill_whose_description_runs_past_codexs_limit_is_refused_there_and_install
                 .collect::<Vec<_>>(),
             "{harness:?} {length}: {findings:?}"
         );
+    }
+}
+
+/// Command-file findings carry the same record and severity contract.
+#[test]
+fn command_refusals_and_notices_identify_the_rejected_field() {
+    for (harness, text, expected) in [
+        (
+            HarnessId::Gemini,
+            "prompt = broken",
+            vec![(true, "kendex-command-invalid: harness=gemini format=toml")],
+        ),
+        (
+            HarnessId::Gemini,
+            "description = \"Run it\"",
+            vec![(
+                true,
+                "kendex-command-key-missing: harness=gemini key=prompt",
+            )],
+        ),
+        (
+            HarnessId::Gemini,
+            "prompt = \"Run it\"",
+            vec![(
+                false,
+                "kendex-command-key-missing: harness=gemini key=description",
+            )],
+        ),
+        (
+            HarnessId::Gemini,
+            "prompt = \"Run it\"\ndescription = \"Command\"",
+            vec![],
+        ),
+        (
+            HarnessId::Pi,
+            "Report !`git status`",
+            vec![(
+                false,
+                "kendex-command-inline-unsupported: harness=pi syntax=!`command`",
+            )],
+        ),
+        (HarnessId::Pi, "Report the current status", vec![]),
+    ] {
+        let findings = super::validate_command(harness, text);
+        let records: Vec<_> = findings
+            .iter()
+            .map(|finding| {
+                (
+                    finding.is_breakage(),
+                    finding.message.lines().next().unwrap_or_default(),
+                )
+            })
+            .collect();
+        assert_eq!(records, expected, "{harness:?} {text}: {findings:?}");
     }
 }

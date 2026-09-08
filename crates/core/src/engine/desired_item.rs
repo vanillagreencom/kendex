@@ -69,9 +69,10 @@ pub(super) fn no_harness_note(
         .as_ref()
         .unwrap_or(&manifest.install.harnesses);
     state.notes.push(format!(
-        "kendex-item-unsupported: kind={} name={name} harnesses={}\n{} cannot hold one at this scope — nothing was installed",
-        kind.name(),
-        asked.iter().map(|harness| harness.name()).collect::<Vec<_>>().join(","),
-        asked.iter().map(|harness| harness.display_name()).collect::<Vec<_>>().join(", "),
+        "kendex-item-unsupported: kind={record_arg0} name={record_name} harnesses={record_arg1}\n{arg2} cannot hold one at this scope — nothing was installed",
+        arg2 = asked.iter().map(|harness| harness.display_name()).collect::<Vec<_>>().join(", "),
+        record_arg0 = crate::names::shown(kind.name()),
+        record_name = crate::names::shown(name),
+        record_arg1 = crate::names::shown(&asked.iter().map(|harness| harness.name()).collect::<Vec<_>>().join(",")),
     ));
 }

@@ -31,8 +31,9 @@ pub(super) fn findings(
     let Some(bytes) = skill_md(files) else {
         return vec![Finding::breakage(
             format!(
-                "kendex-skill-file-missing: harness={} name={name} path=SKILL.md\nthe tree for `{name}` has no SKILL.md, which is the only file {tool} looks for",
-                harness.name()
+                "kendex-skill-file-missing: harness={record_arg0} name={record_name} path=SKILL.md\nthe tree for `{name}` has no SKILL.md, which is the only file {tool} looks for",
+                record_arg0 = crate::names::shown(harness.name()),
+                record_name = crate::names::shown(name),
             ),
             "add SKILL.md to the skill's directory in the catalog",
         )];
@@ -50,7 +51,11 @@ pub(super) fn findings(
         .trim();
     if in_file.is_empty() {
         findings.push(Finding::breakage(
-            format!("SKILL.md has no `name:`, so {tool} has nothing to list `{name}` under"),
+            format!(
+                "kendex-skill-name-missing: harness={record_arg0} name={record_name}\nSKILL.md has no `name:`, so {tool} has nothing to list `{name}` under",
+                record_arg0 = crate::names::shown(harness.name() ),
+                record_name = crate::names::shown(name ),
+            ),
             format!("add `name: {name}` to the skill's SKILL.md in the catalog"),
         ));
     } else if in_file != name {
@@ -71,7 +76,12 @@ pub(super) fn findings(
         };
         findings.push(Finding::breakage(
             format!(
-                "kendex-skill-name-mismatch: harness={} installed={name} declared={declared} in-file={in_file} fix={fix}\nSKILL.md calls the skill `{in_file}` but it installs as `{name}`, so {tool} offers a name nobody declared", harness.name()
+                "kendex-skill-name-mismatch: harness={record_arg0} installed={record_name} declared={record_declared} in-file={record_in_file} fix={record_fix}\nSKILL.md calls the skill `{in_file}` but it installs as `{name}`, so {tool} offers a name nobody declared",
+                record_arg0 = crate::names::shown(harness.name() ),
+                record_name = crate::names::shown(name ),
+                record_declared = crate::names::shown(declared ),
+                record_in_file = crate::names::shown(in_file ),
+                record_fix = crate::names::shown(fix ),
             ),
             remediation,
         ));
@@ -82,7 +92,11 @@ pub(super) fn findings(
         .is_some_and(|text| !text.trim().is_empty());
     if !described {
         findings.push(Finding::advisory(
-            format!("kendex-skill-description-missing: harness={} name={name}\nSKILL.md has no description, so {tool} has nothing to decide when to use `{name}` on", harness.name()),
+            format!(
+                "kendex-skill-description-missing: harness={record_arg0} name={record_name}\nSKILL.md has no description, so {tool} has nothing to decide when to use `{name}` on",
+                record_arg0 = crate::names::shown(harness.name() ),
+                record_name = crate::names::shown(name ),
+            ),
             "add a one-line `description:` saying when the skill applies",
         ));
     }
@@ -95,8 +109,12 @@ pub(super) fn findings(
     {
         findings.push(Finding::breakage(
             format!(
-                "kendex-skill-description-too-long: harness={} name={name} length={} limit={CODEX_DESCRIPTION_MAX_CHARS}\n`{name}`'s description is {} characters and {tool} rejects a skill whose description runs past {CODEX_DESCRIPTION_MAX_CHARS}",
-                harness.name(), description.chars().count(), description.chars().count()
+                "kendex-skill-description-too-long: harness={record_arg0} name={record_name} length={record_arg1} limit={record_CODEX_DESCRIPTION_MAX_CHARS}\n`{name}`'s description is {arg2} characters and {tool} rejects a skill whose description runs past {CODEX_DESCRIPTION_MAX_CHARS}",
+                arg2 = description.chars().count(),
+                record_arg0 = crate::names::shown(harness.name() ),
+                record_name = crate::names::shown(name ),
+                record_arg1 = description.chars().count(),
+                record_CODEX_DESCRIPTION_MAX_CHARS = CODEX_DESCRIPTION_MAX_CHARS,
             ),
             "shorten the `description:` in the skill's SKILL.md — say when the skill applies, and leave the how to the body",
         ));

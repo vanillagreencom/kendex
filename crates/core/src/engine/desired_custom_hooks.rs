@@ -67,9 +67,9 @@ pub(super) fn desired_custom_hooks(
                 // silence as enforcement.
                 Delivery::NotInstallable(reason) if harness.hooks_by_name_only() => {
                     state.notes.push(format!(
-                        "hook {}: skips {} — {reason}",
-                        name,
-                        harness.name()
+                        "kendex-custom-hook-unlisted: hook={record_arg0} harness={record_arg1}\n{reason}",
+                        record_arg0 = crate::names::shown(&name),
+                        record_arg1 = crate::names::shown(harness.name()),
                     ));
                     continue;
                 }
@@ -126,13 +126,18 @@ fn advisory_downgrade(harness: HarnessId, spec: &HookSpec) -> String {
         && !spec.every_agent()
     {
         return format!(
-            "{} cannot tell agents apart at runtime, so a hook for specific agents is written into them as instructions — nothing enforces it there",
-            harness.display_name()
+            "kendex-custom-hook-unscoped: harness={record_arg0} hook={record_arg1}\n{arg2} cannot tell agents apart at runtime, so a hook for specific agents is written into them as instructions — nothing enforces it there",
+            arg2 = harness.display_name(),
+            record_arg0 = crate::names::shown(harness.name()),
+            record_arg1 = crate::names::shown(&spec.name),
         );
     }
     format!(
-        "{} never fires {}, so this hook is written into the agents as instructions — nothing enforces it there",
-        harness.display_name(),
-        spec.event
+        "kendex-custom-hook-advisory: harness={record_arg0} hook={record_arg1} event={record_arg2}\n{arg3} never fires {arg4}, so this hook is written into the agents as instructions — nothing enforces it there",
+        arg3 = harness.display_name(),
+        arg4 = spec.event,
+        record_arg0 = crate::names::shown(harness.name()),
+        record_arg1 = crate::names::shown(&spec.name),
+        record_arg2 = crate::names::shown(&spec.event),
     )
 }

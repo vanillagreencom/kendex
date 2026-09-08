@@ -199,20 +199,38 @@ fn a_shared_skill_names_only_readers_that_accept_its_name() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_model_the_repository_will_not_run_is_named() {
-    let f = fixture("\"copilot\"", "[agents.rust]\nsource = \"cat\"\n");
-    fs::write(
-        f.project.join(".github/allowed_models.txt"),
-        "gpt-5.4\nfallback: gpt-5.4\n",
-    )
-    .unwrap();
-
-    let report = apply_now(&f);
-    assert!(
-        report.warnings.iter().any(|w| w.message.lines().next() == Some("kendex-model-disallowed: harness=copilot agent=rust requested=claude-sonnet-4.6 allowed=gpt-5.4")),
-        "{:?}",
-        report.warnings
-    );
-    assert!(f.project.join(".github/agents/rust.agent.md").is_file());
+    for (model, record) in [
+        (
+            "claude-sonnet-4.6",
+            "kendex-model-disallowed: harness=copilot agent=rust requested=claude-sonnet-4.6 allowed=gpt-5.4",
+        ),
+        (
+            "claude-sonnet-4.6\nother",
+            "kendex-model-disallowed: harness=copilot agent=rust requested=claude-sonnet-4.6\\nother allowed=gpt-5.4",
+        ),
+    ] {
+        let f = fixture("\"copilot\"", "[agents.rust]\nsource = \"cat\"\n");
+        let agent = format!(
+            "---\nname: rust\ndescription: Rust engineer\nmodel: {}\n---\nBody.\n",
+            serde_json::to_string(model).unwrap()
+        );
+        fs::write(f.env.home.join("catalog/agents/rust.md"), agent).unwrap();
+        fs::write(
+            f.project.join(".github/allowed_models.txt"),
+            "gpt-5.4\nfallback: gpt-5.4\n",
+        )
+        .unwrap();
+        let report = apply_now(&f);
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.message.lines().next() == Some(record)),
+            "{record}: {:?}",
+            report.warnings
+        );
+        assert!(f.project.join(".github/agents/rust.agent.md").is_file());
+    }
 }
 
 /// Copilot's skills reference requires a lowercase-hyphen `name`, so a name

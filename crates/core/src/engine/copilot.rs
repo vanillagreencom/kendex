@@ -59,8 +59,9 @@ pub(super) fn hook(
     if registered.matcher_as_authored {
         state.warnings.push(named(
             format!(
-                "Copilot matches `{}` against its own tool names, and this matcher carries syntax kendex cannot restate in them — it installs as written and may never match",
-                hook.matcher.as_deref().unwrap_or_default()
+                "kendex-hook-matcher-untranslated: harness=copilot hook={record_name} matcher={record_arg0}\nCopilot matches this against its own tool names, and this matcher carries syntax kendex cannot restate in them — it installs as written and may never match",
+                record_name = crate::names::shown(name),
+                record_arg0 = crate::names::shown(hook.matcher.as_deref().unwrap_or_default()),
             ),
             Some(
                 "write the matcher as plain tool names separated by `|`, or check it against Copilot's names (`bash`, `read`, `write`)"
@@ -71,8 +72,9 @@ pub(super) fn hook(
     if let Some(path) = settings::hooks_switched_off_by(env, scope) {
         state.warnings.push(named(
             format!(
-                "kendex-hooks-disabled: harness=copilot hook={name} setting=disableAllHooks\n`disableAllHooks` is on in {}, which switches off every Copilot hook — as configured, this one installs but stays inert",
-                path.display()
+                "kendex-hooks-disabled: harness=copilot hook={record_name} setting=disableAllHooks\n`disableAllHooks` is on in {arg0}, which switches off every Copilot hook — as configured, this one installs but stays inert",
+                arg0 = path.display(),
+                record_name = crate::names::shown(name),
             ),
             Some(
                 "set `disableAllHooks` to false there, or drop Copilot from this hook's harnesses"
@@ -103,8 +105,10 @@ pub(super) fn switched_off_elsewhere(ctx: &ItemCtx, kind: ItemKind, state: &mut 
         ctx,
         kind,
         format!(
-            "kendex-item-disabled: harness=copilot item={0} setting={key}\nYour personal Copilot settings list {0} in `{key}`, and a repository can only add names to that list — as configured, this project cannot switch it back on",
-            ctx.name
+            "kendex-item-disabled: harness=copilot item={record_arg0} setting={record_key}\nYour personal Copilot settings list {arg0} in `{key}`, and a repository can only add names to that list — as configured, this project cannot switch it back on",
+            arg0 = ctx.name,
+            record_arg0 = crate::names::shown(ctx.name),
+            record_key = crate::names::shown(key),
         ),
         Some(format!(
             "take {} out of `{key}` in {}",
@@ -133,10 +137,11 @@ pub(super) fn agent_notices(ctx: &ItemCtx, state: &mut DesiredState, model: Opti
         ctx,
         ItemKind::Agent,
         format!(
-            "kendex-model-disallowed: harness=copilot agent={} requested={model} allowed={}\nThis repository's `.github/allowed_models.txt` allows {} and not {model} — as configured, Copilot will not run this agent on the model it names",
-            ctx.name,
-            patterns.join(","),
-            patterns.join(", ")
+            "kendex-model-disallowed: harness=copilot agent={record_arg0} requested={record_model} allowed={record_arg1}\nThis repository's `.github/allowed_models.txt` allows {arg2} and not {model} — as configured, Copilot will not run this agent on the model it names",
+            arg2 = patterns.join(", "),
+            record_arg0 = crate::names::shown(ctx.name),
+            record_model = crate::names::shown(model),
+            record_arg1 = crate::names::shown(&patterns.join(",")),
         ),
         Some("pick a model the repository allows, or add this one to that file".to_owned()),
     ));

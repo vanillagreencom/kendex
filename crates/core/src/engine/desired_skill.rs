@@ -85,18 +85,21 @@ fn cross_read_note(ctx: &ItemCtx, method: Method, state: &mut DesiredState) {
         Scope::Project { .. } => "`.agents/skills`",
     };
     let note = format!(
-        "kendex-shared-skills: readers={} path={}\n{} read {where_} too, so what is installed here is already visible to them — one definition, counted once",
-        readers
-            .iter()
-            .map(|harness| harness.name())
-            .collect::<Vec<_>>()
-            .join(","),
-        where_.trim_matches('`'),
-        readers
+        "kendex-shared-skills: readers={record_arg0} path={record_arg1}\n{arg2} read {where_} too, so what is installed here is already visible to them — one definition, counted once",
+        arg2 = readers
             .iter()
             .map(|harness| harness.display_name())
             .collect::<Vec<_>>()
-            .join(", ")
+            .join(", "),
+        record_arg0 = crate::names::shown(
+            &(readers
+                .iter()
+                .map(|harness| harness.name())
+                .collect::<Vec<_>>()
+                .join(","))
+            .to_string()
+        ),
+        record_arg1 = crate::names::shown(where_.trim_matches('`')),
     );
     if !state.notes.contains(&note) {
         state.notes.push(note);

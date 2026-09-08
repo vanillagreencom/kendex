@@ -29,15 +29,17 @@ fn model_finding(harness: HarnessId, model: &str) -> Option<Finding> {
     match (model_shape(harness), model.contains('/'), qualified) {
         (ModelShape::Bare, true, _) => Some(Finding::breakage(
             format!(
-                "kendex-model-shape: harness={} model={model} expected=bare\n`model: {model}` names a provider, and {tool} reaches one vendor only",
-                harness.name()
+                "kendex-model-shape: harness={record_arg0} model={record_model} expected=bare\n`model: {model}` names a provider, and {tool} reaches one vendor only",
+                record_arg0 = crate::names::shown(harness.name()),
+                record_model = crate::names::shown(model),
             ),
             "name a bare model id this tool lists, a tier alias, or `inherit`",
         )),
         (ModelShape::ProviderQualified, _, false) => Some(Finding::breakage(
             format!(
-                "kendex-model-shape: harness={} model={model} expected=provider/model\n`model: {model}` is not `provider/model`, which is how {tool} loads a model",
-                harness.name()
+                "kendex-model-shape: harness={record_arg0} model={record_model} expected=provider/model\n`model: {model}` is not `provider/model`, which is how {tool} loads a model",
+                record_arg0 = crate::names::shown(harness.name()),
+                record_model = crate::names::shown(model),
             ),
             "write the model as `provider/model`, or `inherit` to follow the session",
         )),
@@ -56,10 +58,12 @@ fn effort_finding(harness: HarnessId, key: &str, value: &str) -> Option<Finding>
     }
     Some(Finding::breakage(
         format!(
-            "kendex-effort-rejected: harness={} key={key} value={value} allowed={}\n`{key}: {value}` is not an effort level {} accepts",
-            harness.name(),
-            levels.join(","),
-            harness.display_name()
+            "kendex-effort-rejected: harness={record_arg0} key={record_key} value={record_value} allowed={record_arg1}\n`{key}: {value}` is not an effort level {arg2} accepts",
+            arg2 = harness.display_name(),
+            record_arg0 = crate::names::shown(harness.name()),
+            record_key = crate::names::shown(key),
+            record_value = crate::names::shown(value),
+            record_arg1 = crate::names::shown(&levels.join(",")),
         ),
         format!("use one of {}", levels.join(", ")),
     ))
@@ -89,7 +93,10 @@ pub(super) fn codex(text: &str) -> Vec<Finding> {
             continue;
         }
         findings.push(Finding::breakage(
-            format!("kendex-agent-key-missing: harness=codex key={key}\nthe Codex agent has no `{key}`, so Codex will not load it"),
+            format!(
+                "kendex-agent-key-missing: harness=codex key={record_key}\nthe Codex agent has no `{key}`, so Codex will not load it",
+                record_key = crate::names::shown(key ),
+            ),
             match key {
                 "developer_instructions" => {
                     "write the agent a body in the catalog — there is nothing to instruct it with"
@@ -103,7 +110,11 @@ pub(super) fn codex(text: &str) -> Vec<Finding> {
         let shown = mode.as_str().unwrap_or("not text");
         if !SANDBOX_MODES.contains(&shown) {
             findings.push(Finding::breakage(
-                format!("kendex-sandbox-rejected: harness=codex value={shown} allowed={}\n`sandbox_mode = \"{shown}\"` is not a sandbox Codex knows", SANDBOX_MODES.join(",")),
+                format!(
+                    "kendex-sandbox-rejected: harness=codex value={record_shown} allowed={record_arg0}\n`sandbox_mode = \"{shown}\"` is not a sandbox Codex knows",
+                    record_shown = crate::names::shown(shown ),
+                    record_arg0 = crate::names::shown(&SANDBOX_MODES.join(",")),
+                ),
                 format!("use one of {}", SANDBOX_MODES.join(", ")),
             ));
         }
@@ -135,7 +146,11 @@ pub(super) fn opencode(text: &str) -> Vec<Finding> {
         && !MODES.contains(&mode)
     {
         findings.push(Finding::breakage(
-            format!("kendex-agent-mode-rejected: harness=opencode value={mode} allowed={}\n`mode: {mode}` is not a mode OpenCode knows", MODES.join(",")),
+            format!(
+                "kendex-agent-mode-rejected: harness=opencode value={record_mode} allowed={record_arg0}\n`mode: {mode}` is not a mode OpenCode knows",
+                record_mode = crate::names::shown(mode ),
+                record_arg0 = crate::names::shown(&MODES.join(",")),
+            ),
             format!("set the agent's mode to one of {}", MODES.join(", ")),
         ));
     }
@@ -162,7 +177,10 @@ pub(super) fn opencode(text: &str) -> Vec<Finding> {
                 if !PERMISSION_VALUES.contains(&shown) {
                     findings.push(Finding::breakage(
                         format!(
-                            "kendex-permission-rejected: harness=opencode key={key} value={shown} allowed={}\npermission `{key}` is set to `{shown}`, which OpenCode cannot read", PERMISSION_VALUES.join(",")
+                            "kendex-permission-rejected: harness=opencode key={record_key} value={record_shown} allowed={record_arg0}\npermission `{key}` is set to `{shown}`, which OpenCode cannot read",
+                            record_key = crate::names::shown(key ),
+                            record_shown = crate::names::shown(shown ),
+                            record_arg0 = crate::names::shown(&PERMISSION_VALUES.join(",")),
                         ),
                         format!("set it to one of {}", PERMISSION_VALUES.join(", ")),
                     ));
@@ -170,7 +188,7 @@ pub(super) fn opencode(text: &str) -> Vec<Finding> {
             }
         }
         Some(_) => findings.push(Finding::breakage(
-            "`permission:` is not a block of permission names",
+            "kendex-permission-invalid: harness=opencode key=permission\n`permission:` is not a block of permission names",
             "write permission as indented `<name>: allow|ask|deny` lines",
         )),
     }
@@ -192,7 +210,8 @@ pub(super) fn claude(name: &str, text: &str) -> Vec<Finding> {
     if declared.is_empty() {
         return vec![Finding::breakage(
             format!(
-                "kendex-agent-key-missing: harness=claude name={name} key=name\nthe Claude agent for `{name}` has no name, so nothing can call it"
+                "kendex-agent-key-missing: harness=claude name={record_name} key=name\nthe Claude agent for `{name}` has no name, so nothing can call it",
+                record_name = crate::names::shown(name),
             ),
             format!("add `name: {name}` to the agent's frontmatter in the catalog"),
         )];
@@ -200,7 +219,9 @@ pub(super) fn claude(name: &str, text: &str) -> Vec<Finding> {
     if declared != name {
         return vec![Finding::breakage(
             format!(
-                "kendex-agent-name-mismatch: harness=claude installed={name} declared={declared}\nthe agent installs as `{name}` but calls itself `{declared}`, so Claude answers to the wrong one"
+                "kendex-agent-name-mismatch: harness=claude installed={record_name} declared={record_declared}\nthe agent installs as `{name}` but calls itself `{declared}`, so Claude answers to the wrong one",
+                record_name = crate::names::shown(name),
+                record_declared = crate::names::shown(declared),
             ),
             format!("rename it to `{name}` in the catalog, or declare the agent as `{declared}`"),
         )];
@@ -258,12 +279,17 @@ pub(super) fn gemini(name: &str, text: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
     match text_at("name") {
         "" => findings.push(Finding::breakage(
-            format!("the Gemini agent for `{name}` has no name, so nothing can call it"),
+            format!(
+                "kendex-agent-key-missing: harness=gemini name={record_name} key=name\nthe Gemini agent for `{name}` has no name, so nothing can call it",
+                record_name = crate::names::shown(name ),
+            ),
             format!("add `name: {name}` to the agent's frontmatter in the catalog"),
         )),
         declared if declared != name => findings.push(Finding::breakage(
             format!(
-                "the agent installs as `{name}` but calls itself `{declared}`, so Gemini answers to the wrong one"
+                "kendex-agent-name-mismatch: harness=gemini installed={record_name} declared={record_declared}\nthe agent installs as `{name}` but calls itself `{declared}`, so Gemini answers to the wrong one",
+                record_name = crate::names::shown(name ),
+                record_declared = crate::names::shown(declared ),
             ),
             format!("rename it to `{name}` in the catalog, or declare the agent as `{declared}`"),
         )),
@@ -271,7 +297,10 @@ pub(super) fn gemini(name: &str, text: &str) -> Vec<Finding> {
     }
     if text_at("description").is_empty() {
         findings.push(Finding::breakage(
-            format!("the Gemini agent for `{name}` has no description, so Gemini will not load it"),
+            format!(
+                "kendex-agent-key-missing: harness=gemini name={record_name} key=description\nthe Gemini agent for `{name}` has no description, so Gemini will not load it",
+                record_name = crate::names::shown(name ),
+            ),
             "add `description:` to the agent's frontmatter in the catalog",
         ));
     }
@@ -280,7 +309,10 @@ pub(super) fn gemini(name: &str, text: &str) -> Vec<Finding> {
         findings.push(finding);
     } else if !model.is_empty() && model != "inherit" && !model.starts_with("gemini-") {
         findings.push(Finding::advisory(
-            format!("`model: {model}` is not a Gemini model id, so Gemini falls back to its own"),
+            format!(
+                "kendex-agent-model-fallback: harness=gemini model={record_model}\n`model: {model}` is not a Gemini model id, so Gemini falls back to its own",
+                record_model = crate::names::shown(model ),
+            ),
             "name a `gemini-*` model, or use a tier alias so kendex picks one",
         ));
     }
@@ -305,12 +337,17 @@ pub(super) fn antigravity(name: &str, text: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
     match text_at("name") {
         "" => findings.push(Finding::breakage(
-            format!("the Antigravity agent for `{name}` has no name, so nothing can call it"),
+            format!(
+                "kendex-agent-key-missing: harness=antigravity name={record_name} key=name\nthe Antigravity agent for `{name}` has no name, so nothing can call it",
+                record_name = crate::names::shown(name ),
+            ),
             format!("add `name: {name}` to the agent's frontmatter in the catalog"),
         )),
         declared if declared != name => findings.push(Finding::breakage(
             format!(
-                "the agent installs as `{name}` but calls itself `{declared}`, so Antigravity answers to the wrong one"
+                "kendex-agent-name-mismatch: harness=antigravity installed={record_name} declared={record_declared}\nthe agent installs as `{name}` but calls itself `{declared}`, so Antigravity answers to the wrong one",
+                record_name = crate::names::shown(name ),
+                record_declared = crate::names::shown(declared ),
             ),
             format!("rename it to `{name}` in the catalog, or declare the agent as `{declared}`"),
         )),
@@ -319,7 +356,8 @@ pub(super) fn antigravity(name: &str, text: &str) -> Vec<Finding> {
     if text_at("description").is_empty() {
         findings.push(Finding::breakage(
             format!(
-                "the Antigravity agent for `{name}` has no description, so it is never delegated to"
+                "kendex-agent-key-missing: harness=antigravity name={record_name} key=description\nthe Antigravity agent for `{name}` has no description, so it is never delegated to",
+                record_name = crate::names::shown(name ),
             ),
             "add `description:` to the agent's frontmatter in the catalog",
         ));
@@ -327,7 +365,11 @@ pub(super) fn antigravity(name: &str, text: &str) -> Vec<Finding> {
     let model = text_at("model");
     if !model.is_empty() && !TIERS.contains(&model) {
         findings.push(Finding::breakage(
-            format!("`model: {model}` is not a tier Antigravity reads"),
+            format!(
+                "kendex-agent-model-rejected: harness=antigravity model={record_model} allowed={record_arg0}\n`model: {model}` is not a tier Antigravity reads",
+                record_model = crate::names::shown(model ),
+                record_arg0 = crate::names::shown(&TIERS.join(",")),
+            ),
             format!(
                 "use one of {}, or a tier alias so kendex picks one",
                 TIERS.join(", ")
@@ -355,7 +397,10 @@ pub(super) fn copilot(name: &str, text: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
     if text_at("description").is_empty() {
         findings.push(Finding::breakage(
-            format!("the Copilot agent for `{name}` has no description, and Copilot needs one to load it"),
+            format!(
+                "kendex-agent-key-missing: harness=copilot name={record_name} key=description\nthe Copilot agent for `{name}` has no description, and Copilot needs one to load it",
+                record_name = crate::names::shown(name ),
+            ),
             "add `description:` to the agent's frontmatter in the catalog",
         ));
     }
@@ -363,7 +408,9 @@ pub(super) fn copilot(name: &str, text: &str) -> Vec<Finding> {
     if !declared.is_empty() && declared != name {
         findings.push(Finding::breakage(
             format!(
-                "the agent installs as `{name}` but calls itself `{declared}`, so Copilot lists it under the wrong one"
+                "kendex-agent-name-mismatch: harness=copilot installed={record_name} declared={record_declared}\nthe agent installs as `{name}` but calls itself `{declared}`, so Copilot lists it under the wrong one",
+                record_name = crate::names::shown(name ),
+                record_declared = crate::names::shown(declared ),
             ),
             format!("rename it to `{name}` in the catalog, or declare the agent as `{declared}`"),
         ));
@@ -381,7 +428,10 @@ pub(super) fn cursor(text: &str) -> Vec<Finding> {
         .filter(|(key, _)| !CURSOR_KEYS.contains(key))
         .map(|(key, _)| {
             Finding::advisory(
-                format!("kendex-rule-key-ignored: harness=cursor key={key}\nCursor ignores `{key}:` in a rule file"),
+                format!(
+                    "kendex-rule-key-ignored: harness=cursor key={record_key}\nCursor ignores `{key}:` in a rule file",
+                    record_key = crate::names::shown(key ),
+                ),
                 format!(
                     "keep rule frontmatter to {} — every other key is folklore",
                     CURSOR_KEYS.join(", ")

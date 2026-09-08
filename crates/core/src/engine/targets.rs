@@ -8,8 +8,10 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// The notice every native event adapter emits when no listener can run it.
 pub(super) fn unsupported_hook_event(name: &str, event: &str, harness: HarnessId) -> String {
     format!(
-        "kendex-hook-unsupported: harness={} event={event} hook={name}\nThis harness cannot run the hook event. Nothing is installed for it.",
-        harness.name(),
+        "kendex-hook-unsupported: harness={record_arg0} event={record_event} hook={record_name}\nThis harness cannot run the hook event. Nothing is installed for it.",
+        record_arg0 = crate::names::shown(harness.name()),
+        record_event = crate::names::shown(event),
+        record_name = crate::names::shown(name),
     )
 }
 
@@ -30,12 +32,20 @@ pub(super) fn advisory_notice(
     }
     let (message, remediation) = match harness {
         HarnessId::Pi => (
-            "the pi-hooks carrier is not registered in any settings pi loads here — the hook is written but nothing will run it".to_owned(),
-            format!("install the {} extension at either scope", crate::pi_ext::carrier::CARRIER),
+            format!(
+                "kendex-hook-carrier-missing: harness=pi hook={record_name} carrier=pi-hooks\nThe pi-hooks carrier is not registered in any settings pi loads here — the hook is written but nothing will run it",
+                record_name = crate::names::shown(name),
+            ),
+            format!(
+                "install the {} extension at either scope",
+                crate::pi_ext::carrier::CARRIER
+            ),
         ),
         _ => (
             format!(
-                "this protection is advisory on {tool} — it installs as text the model may ignore, not a check the tool runs"
+                "kendex-hook-advisory: harness={record_arg0} hook={record_name}\nThis protection is advisory on {tool} — it installs as text the model may ignore, not a check the tool runs",
+                record_arg0 = crate::names::shown(harness.name()),
+                record_name = crate::names::shown(name),
             ),
             format!(
                 "keep it for the tools that run hooks — Claude Code, Codex, Gemini CLI, GitHub Copilot, Antigravity — or accept it as guidance on {tool}"

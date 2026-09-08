@@ -36,7 +36,9 @@ fn overridden_named(env: &Env, name: &str, kind: ItemKind, key: &str) -> Option<
         name: name.to_owned(),
         harness: Some(HarnessId::Gemini),
         message: format!(
-            "kendex-settings-overridden: harness=gemini item={name} key={key}\nThis machine's system-wide Gemini settings also set `{key}`, which outranks both your settings and this project — as configured, what kendex writes here can be overridden"
+            "kendex-settings-overridden: harness=gemini item={record_name} key={record_key}\nThis machine's system-wide Gemini settings also set `{key}`, which outranks both your settings and this project — as configured, what kendex writes here can be overridden",
+            record_name = crate::names::shown(name),
+            record_key = crate::names::shown(key),
         ),
         remediation: Some(format!(
             "ask whoever manages {} to make room for it, or install this at a scope that file leaves alone",
@@ -57,8 +59,8 @@ pub(super) fn agent_notices(ctx: &ItemCtx, state: &mut DesiredState) {
             name: ctx.name.to_owned(),
             harness: Some(HarnessId::Gemini),
             message: format!(
-                "kendex-agents-disabled: harness=gemini agent={} setting=experimental.enableAgents\nGemini's subagents are switched off in its settings, so this agent installs but stays inert",
-                ctx.name,
+                "kendex-agents-disabled: harness=gemini agent={record_arg0} setting=experimental.enableAgents\nGemini's subagents are switched off in its settings, so this agent installs but stays inert",
+                record_arg0 = crate::names::shown(ctx.name),
             ),
             remediation: Some(
                 "turn `experimental.enableAgents` on in Gemini's settings, or drop Gemini from this agent's harnesses"
@@ -83,7 +85,8 @@ pub(super) fn hook(
 ) -> Option<HookSpec> {
     if let Some(reason) = read(&settings_file(env, scope)).unmanageable() {
         state.notes.push(format!(
-            "kendex-settings-unmanageable: harness=gemini kind=hook item={name}\n{reason} — nothing was registered for Gemini"
+            "kendex-settings-unmanageable: harness=gemini kind=hook item={record_name}\n{reason} — nothing was registered for Gemini",
+            record_name = crate::names::shown(name),
         ));
         return None;
     }
@@ -101,8 +104,9 @@ pub(super) fn hook(
             name: name.to_owned(),
             harness: Some(HarnessId::Gemini),
             message: format!(
-                "Gemini matches `{}` against its own tool names, and this matcher carries syntax kendex cannot restate in them — it installs as written and may never match",
-                hook.matcher.as_deref().unwrap_or_default()
+                "kendex-hook-matcher-untranslated: harness=gemini hook={record_name} matcher={record_arg0}\nGemini matches this against its own tool names, and this matcher carries syntax kendex cannot restate in them — it installs as written and may never match",
+                record_name = crate::names::shown(name),
+                record_arg0 = crate::names::shown(hook.matcher.as_deref().unwrap_or_default()),
             ),
             remediation: Some(
                 "write the matcher as plain tool names separated by `|`, or check it against Gemini's names (`run_shell_command`, `read_file`, `write_file`)"
@@ -125,8 +129,9 @@ fn switched_off_machine_wide(ctx: &ItemCtx) -> Option<ItemWarning> {
         name: ctx.name.to_owned(),
         harness: Some(HarnessId::Gemini),
         message: format!(
-            "kendex-mcp-disabled: harness=gemini server={0}\nGemini records whether a server is on in one file for the whole machine, and {0} is switched off there — as configured, it is declared for this project but stays inert",
-            ctx.name
+            "kendex-mcp-disabled: harness=gemini server={record_arg0}\nGemini records whether a server is on in one file for the whole machine, and {arg0} is switched off there — as configured, it is declared for this project but stays inert",
+            arg0 = ctx.name,
+            record_arg0 = crate::names::shown(ctx.name),
         ),
         remediation: Some(format!(
             "switch it back on for the whole machine, in {}",
@@ -144,9 +149,10 @@ fn gated_out(ctx: &ItemCtx) -> Option<ItemWarning> {
         name: ctx.name.to_owned(),
         harness: Some(HarnessId::Gemini),
         message: format!(
-            "kendex-mcp-filtered: harness=gemini server={1}\nGemini's settings in {0} gate which servers load, and {1} is not among them — as configured, it installs but stays inert",
-            path.display(),
-            ctx.name
+            "kendex-mcp-filtered: harness=gemini server={record_arg1}\nGemini's settings in {arg0} gate which servers load, and {arg1} is not among them — as configured, it installs but stays inert",
+            arg0 = path.display(),
+            arg1 = ctx.name,
+            record_arg1 = crate::names::shown(ctx.name),
         ),
         remediation: Some(format!(
             "take it out of `mcp.excluded`, or add it to `mcp.allowed`, in {}",
@@ -188,8 +194,8 @@ pub(super) fn mcp_edits(
 ) -> Option<Vec<(PathBuf, ConfigEdit)>> {
     if let Some(reason) = settings(ctx).unmanageable() {
         state.notes.push(format!(
-            "kendex-settings-unmanageable: harness=gemini kind=mcp-server item={}\n{reason} — nothing was declared for Gemini",
-            ctx.name
+            "kendex-settings-unmanageable: harness=gemini kind=mcp-server item={record_arg0}\n{reason} — nothing was declared for Gemini",
+            record_arg0 = crate::names::shown(ctx.name),
         ));
         return None;
     }

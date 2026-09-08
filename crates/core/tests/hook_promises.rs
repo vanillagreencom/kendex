@@ -5,7 +5,7 @@
 
 #[path = "../../test_util.rs"]
 mod test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::fs;
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ use kendex_core::model::{HarnessId, ItemKind, Scope};
 const GUARD: &str = "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: check shell commands\n# ---\nexit 0\n";
 
 /// A matcher that is a regex, not a tool name.
-const LOOSE: &str = "#!/usr/bin/env bash\n# ---\n# name: loose\n# event: PreToolUse\n# matcher: Bash.*\n# description: check shell commands\n# ---\nexit 0\n";
+const LOOSE: &str = "#!/usr/bin/env bash\n# ---\n# name: loose\n# event: PreToolUse\n# matcher: Bash.*\n# harnesses: [gemini, copilot, antigravity]\n# description: check shell commands\n# ---\nexit 0\n";
 
 struct Fixture {
     _tmp: tempfile::TempDir,
@@ -30,7 +30,7 @@ struct Fixture {
 #[allow(clippy::unwrap_used)]
 fn fixture(harnesses: &str, declarations: &str) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
     let project: PathBuf = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
@@ -79,14 +79,32 @@ fn a_hook_says_which_tools_run_it_and_which_only_read_it() {
         .warnings
         .iter()
         .filter(|warning| warning.kind == ItemKind::Hook && warning.name == "guard")
-        .map(|warning| (warning.harness, warning.remediation.is_some()))
+        .map(|warning| {
+            (
+                warning.harness,
+                warning.remediation.is_some(),
+                warning.message.lines().next(),
+            )
+        })
         .collect();
     assert_eq!(
         advisory,
         [
-            (Some(HarnessId::Opencode), true),
-            (Some(HarnessId::Cursor), true),
-            (Some(HarnessId::Pi), true),
+            (
+                Some(HarnessId::Opencode),
+                true,
+                Some("kendex-hook-advisory: harness=opencode hook=guard")
+            ),
+            (
+                Some(HarnessId::Cursor),
+                true,
+                Some("kendex-hook-advisory: harness=cursor hook=guard")
+            ),
+            (
+                Some(HarnessId::Pi),
+                true,
+                Some("kendex-hook-carrier-missing: harness=pi hook=guard carrier=pi-hooks")
+            ),
         ]
     );
 
@@ -114,20 +132,35 @@ fn a_hook_says_which_tools_run_it_and_which_only_read_it() {
 #[allow(clippy::unwrap_used)]
 fn a_matcher_that_cannot_be_translated_installs_as_written_and_is_named() {
     let f = fixture(
-        "\"gemini\", \"copilot\"",
+        "\"gemini\", \"copilot\", \"antigravity\"",
         "[hooks.loose]\nsource = \"cat\"\n",
     );
     let report = plan(&f);
 
-    let named: Vec<HarnessId> = report
+    let named: Vec<_> = report
         .warnings
         .iter()
         .filter(|w| w.kind == ItemKind::Hook && w.name == "loose")
-        .filter_map(|w| w.harness)
+        .map(|w| (w.harness, w.message.lines().next()))
         .collect();
     assert_eq!(
         named,
-        [HarnessId::Gemini, HarnessId::Copilot],
+        [
+            (
+                Some(HarnessId::Gemini),
+                Some("kendex-hook-matcher-untranslated: harness=gemini hook=loose matcher=Bash.*")
+            ),
+            (
+                Some(HarnessId::Copilot),
+                Some("kendex-hook-matcher-untranslated: harness=copilot hook=loose matcher=Bash.*")
+            ),
+            (
+                Some(HarnessId::Antigravity),
+                Some(
+                    "kendex-hook-matcher-untranslated: harness=antigravity hook=loose matcher=Bash.*"
+                )
+            )
+        ],
         "{:?}",
         report.warnings
     );
@@ -139,12 +172,49 @@ fn a_matcher_that_cannot_be_translated_installs_as_written_and_is_named() {
     let registered = |path: PathBuf| -> serde_json::Value {
         serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
     };
-    assert_eq!(
-        registered(root.join(".gemini/settings.json"))["hooks"]["BeforeTool"][0]["matcher"],
-        "Bash.*"
-    );
-    assert_eq!(
-        registered(root.join(".github/hooks/loose.json"))["hooks"]["preToolUse"][0]["matcher"],
-        "Bash.*"
-    );
+    for (path, matcher) in [
+        (".gemini/settings.json", vec!["hooks", "BeforeTool"]),
+        (".github/hooks/loose.json", vec!["hooks", "preToolUse"]),
+        (".agents/hooks.json", vec!["loose", "PreToolUse"]),
+    ] {
+        assert_eq!(
+            registered(root.join(path))[matcher[0]][matcher[1]][0]["matcher"],
+            "Bash.*",
+            "{path}"
+        );
+    }
+}
+
+/// Catalog scripts supply their own frontmatter; a refused script names
+/// whether that input was unreadable or excluded the requested harness.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_catalog_hook_refusal_names_its_own_reason() {
+    for (text, record) in [
+        (
+            "not a hook".to_owned(),
+            "kendex-hook-unreadable: hook=guard",
+        ),
+        (
+            GUARD.replace("# event:", "# harnesses: [claude]\n# event:"),
+            "kendex-hook-excluded: hook=guard harness=codex",
+        ),
+    ] {
+        let f = fixture("\"codex\"", "[hooks.guard]\nsource = \"cat\"\n");
+        fs::write(f.env.home.join("catalog/hooks/guard.sh"), text).unwrap();
+        let report = plan(&f);
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.lines().next() == Some(record)),
+            "{record}: {:?}",
+            report.notes
+        );
+        kendex_core::apply::execute(&f.env, &report.plan).unwrap();
+        let Scope::Project { root } = &f.scope else {
+            panic!("fixture is a project")
+        };
+        assert!(!root.join(".codex/hooks.json").exists(), "{record}");
+    }
 }
