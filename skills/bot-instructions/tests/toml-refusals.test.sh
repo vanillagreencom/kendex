@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# `toml-schema`'s content refusals: one red control per cell of
-# `repo-toml.md` § The content refusals, whose predicates are encoded once in
-# `scripts/lib/refusals.py`. The schema's shape clauses are
-# `toml-schema.test.sh`.
+# `toml-schema`'s content refusals. Each row here is one red control over a
+# cell of `repo-toml.md` § The content refusals, whose predicates are encoded
+# once in `scripts/lib/refusals.py`. It is NOT a control per cell of that
+# table: a row carries several predicates and only the combinations below are
+# exercised, so `[bot-instructions.repo] name` is here for its marker refusal
+# and not its others, and `[bot-instructions.tone] coderabbit` has no row at
+# all. The cross-file probe checks that the table and the three structures
+# encoding it agree, which is the table's SHAPE rather than each input. The
+# schema's shape clauses are `toml-schema.test.sh`.
 #
 # Every control starts from a TOML with every `[bot-instructions.bots]` flag
 # false, a legitimate state that renders nothing, and pins the
