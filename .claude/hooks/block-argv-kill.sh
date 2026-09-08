@@ -18,6 +18,9 @@ COMMAND=""
 # stable key for the condition and the value acted on — the missing tool, why
 # the payload could not be read, or the verb the command spelled. The English
 # explanation and the remedy follow on later lines.
+# A reader matches `^block-argv-kill: `, not line 1: a command this hook
+# runs may write its own diagnostic to the same stream first, and that line
+# names a cause the keyed one does not carry.
 refuse() { # KEY VALUE
   printf 'block-argv-kill: %s=%s\n' "$1" "$2" >&2
   case "$1=$2" in
@@ -55,9 +58,9 @@ for dependency in jq cat; do
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
-# cat's own diagnostic is dropped so the refusal's keyed line is the first
-# line of this hook's stderr, as it is for every other condition.
-INPUT=$(cat 2>/dev/null) || refuse payload unreadable
+# cat keeps its own voice: "Is a directory" names the cause, and the keyed
+# refusal below it names the verdict.
+INPUT=$(cat) || refuse payload unreadable
 # An empty payload is no payload: jq reads nothing from it and says nothing,
 # which would pass as an absent command.
 case "$INPUT" in

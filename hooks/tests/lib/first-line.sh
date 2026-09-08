@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
-# The first-line contract, as one table each suite runs against its own hook.
-# Every refusal and notice opens with `<hook-name>: <key>=<value>`, and that
+# The keyed-line contract, as one table each suite runs against its own hook.
+# Every refusal and notice carries a line `<hook-name>: <key>=<value>`, and that
 # line is what a reader parses; a row pins it beside the exit status, and the
 # English below it is pinned nowhere.
+#
+# A reader matches the prefix `^<hook-name>: `, not line 1, and so does this
+# library: a command the hook runs may write its own diagnostic to the same
+# stream first — cat on a directory, the settings loader on a malformed file —
+# and that line names a cause the keyed one does not carry. Reading line 1
+# strictly would pin the absence of those diagnostics, which is not the
+# contract and costs the reader the cause.
 #
 # Usage, from a suite that defines ERR_FILE, `run_hook COMMAND` and
 # `run_payload RAW-JSON` (each leaving the status in `rc` and stderr in
@@ -21,12 +28,15 @@
 #   text   what the mode sends; `-` is empty, and `printf %b` decodes the
 #          escapes a row spells. It stands last, so a row may hold a pipe
 
-first_line() { # -> the first line of stderr, `-` when there is none
-  local line=""
-  # Read in the shell: a `head` here stops reading while the hook still
-  # writes, and its SIGPIPE would read as an empty stderr.
-  IFS= read -r line <"$ERR_FILE" || :
-  printf '%s' "${line:--}"
+first_line() { # -> the hook's own keyed line, `-` when it wrote none
+  local prefix line=""
+  prefix="$(basename "${HOOK:?}" .sh): "
+  # Read to the end in the shell: a `head` here stops reading while the hook
+  # still writes, and its SIGPIPE would read as an empty stderr.
+  while IFS= read -r line; do
+    case "$line" in "$prefix"*) printf '%s' "$line"; return ;; esac
+  done <"$ERR_FILE"
+  printf -- '-'
 }
 
 first_table() { # ROWS

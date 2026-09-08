@@ -33,8 +33,10 @@
 #            else; `no-jq` and `no-cat` are that set less the one tool;
 #            `none` is a directory that does not exist
 #   rc       the exit status
-#   first    the first line of stderr, the hook's own name stripped: every hook
-#            opens a refusal with `<hook-name>: <key>=<value>`, and the reader's
+#   first    the hook's own keyed line, its name stripped, found by the prefix
+#            `<hook-name>: ` rather than at line 1, since a command the hook
+#            runs may write its own diagnostic first: every hook
+#            carries `<hook-name>: <key>=<value>`, and the reader's
 #            own keys are the same in every hook, so `payload=invalid-json` and
 #            `missing-tools=jq` are pinned here as the values themselves.
 #            `{tools}` stands for PAYLOAD_TOOLS, the whole dependency list of
@@ -95,17 +97,23 @@ payload_world() { # name tool... -> a directory holding those tools and nothing 
   done
 }
 
-payload_first() { # -> the first stderr line's key=value, or `refusal`
+payload_first() { # -> the keyed line's key=value, or `refusal`
   local line="" kv
-  # One line, read in the shell: a `head` here would stop reading while the
+  # Read to the end in the shell: a `head` here would stop reading while the
   # writer still writes, and its SIGPIPE would read as an empty stderr.
-  IFS= read -r line <"$PAYLOAD_ROOT/stderr" || :
-  [ -n "$line" ] || { printf -- '-'; return; }
-  kv="${line#*: }"
-  case "$kv" in
-    missing-tools=* | payload=*) printf '%s' "$kv" ;;
-    *) printf 'refusal' ;;
-  esac
+  while IFS= read -r line; do
+    case "$line" in
+      "$PAYLOAD_PREFIX"*)
+        kv="${line#"$PAYLOAD_PREFIX"}"
+        case "$kv" in
+          missing-tools=* | payload=*) printf '%s' "$kv" ;;
+          *) printf 'refusal' ;;
+        esac
+        return
+        ;;
+    esac
+  done <"$PAYLOAD_ROOT/stderr"
+  printf -- '-'
 }
 
 payload_run() { # hook dir path payload -> "rc=N first=KEY=VALUE"
@@ -146,6 +154,7 @@ payload_table() { # hook refusing passing [dir]
   [ -n "${PAYLOAD_TOOLS:-}" ] || { echo 'payload-rows: the suite must set PAYLOAD_TOOLS, the dependency list of the hook under test' >&2; exit 2; }
   local label shape command world rc first row field text path got before=$((PASS + FAIL))
   PAYLOAD_BASH="$(command -v bash)"
+  PAYLOAD_PREFIX="$(basename "$hook" .sh): "
   PAYLOAD_ROOT="${TMP_ROOT:?}/payload-rows"
   rm -rf -- "${TMP_ROOT:?}/payload-rows"
   mkdir -p "$PAYLOAD_ROOT"

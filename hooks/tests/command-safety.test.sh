@@ -28,16 +28,22 @@ settings() { # [SOURCE_FILE]: the file whose one COMMAND_SAFETY_DENY_PATTERN lin
 settings
 passed=0
 failed=0
-# `first` is the line the run opened with, `-` for silence; the row after a
-# check pins it where the condition has one.
+# `first` is the hook's own keyed line, found by its prefix rather than at
+# line 1: a command the hook runs may write its own diagnostic first, and that
+# line is not this hook's to pin. `-` when it wrote none.
 first=-
+keyed_line() { # -> the `command-safety: ` line, `-` when there is none
+  local line=""
+  while IFS= read -r line; do
+    case "$line" in "command-safety: "*) printf '%s' "$line"; return ;; esac
+  done <"$scratch/stderr"
+  printf -- '-'
+}
 check() { # EXPECTED COMMAND LABEL [CWD] [HOOK]
   local expected="$1" command="$2" label="$3" payload_cwd="${4:-$repo}" payload_hook="${5:-$hook}" payload status=0 output
   payload="$(jq -nc --arg command "$command" --arg cwd "$payload_cwd" '{tool_input:{command:$command},cwd:$cwd}')"
   output="$(printf '%s' "$payload" | bash "$payload_hook" 2>"$scratch/stderr")" || status=$?
-  first=""
-  IFS= read -r first <"$scratch/stderr" || :
-  [ -n "$first" ] || first=-
+  first="$(keyed_line)"
   if [ "$status" -eq "$expected" ]; then
     printf 'PASS %s\n' "$label"
     passed=$((passed + 1))
@@ -86,9 +92,7 @@ settings
 shape() { # EXPECTED PAYLOAD_JSON LABEL
   local expected="$1" payload="$2" label="$3" status=0 output
   output="$(printf '%s' "$payload" | bash "$hook" 2>"$scratch/stderr")" || status=$?
-  first=""
-  IFS= read -r first <"$scratch/stderr" || :
-  [ -n "$first" ] || first=-
+  first="$(keyed_line)"
   if [ "$status" -eq "$expected" ]; then
     printf 'PASS %s\n' "$label"
     passed=$((passed + 1))
@@ -128,11 +132,12 @@ done
 status=0
 out="$(jq -nc --arg cwd "$repo" '{tool_input:{command:"git status"},cwd:$cwd}' \
   | env -i HOME="$HOME" PATH="$nodirname" "$(command -v bash)" "$hook" 2>&1 >/dev/null)" || status=$?
-if [ "$status" -eq 2 ] && [ "${out%%$'\n'*}" = 'command-safety: missing-tools=dirname' ]; then
+keyed="$(printf '%s\n' "$out" | grep -m1 '^command-safety: ' || true)"
+if [ "$status" -eq 2 ] && [ "$keyed" = 'command-safety: missing-tools=dirname' ]; then
   printf 'PASS without dirname the refusal names it\n'
   passed=$((passed + 1))
 else
-  printf 'FAIL without dirname the refusal names it: exit %s, first line %s\n' "$status" "${out%%$'\n'*}"
+  printf 'FAIL without dirname the refusal names it: exit %s, keyed line %s\n' "$status" "$keyed"
   failed=$((failed + 1))
 fi
 

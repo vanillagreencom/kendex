@@ -16,6 +16,9 @@ set -euo pipefail
 # the condition and the value acted on — the git subcommand that failed, the
 # status a discovery command left, or how many documents the notice names. The
 # English explanation follows it.
+# A reader matches `^doc-drift-check: `, not line 1: a command this hook
+# runs may write its own diagnostic to the same stream first, and that line
+# names a cause the keyed one does not carry.
 #
 # The notice itself is a machine-read protocol Claude Code parses: one JSON
 # object on stdout, whose single `systemMessage` string key holds the text the
@@ -24,12 +27,11 @@ set -euo pipefail
 notice() { # KEY VALUE [DETAIL]
   case "$1" in
     stale)
-      # jq's own diagnostic is dropped: a jq that cannot run leaves the EXIT
-      # trap to say so under its own key, and a notice this hook could not
-      # build is not a line it owns.
+      # jq keeps its own diagnostic: it names why the notice could not be
+      # built, and the EXIT trap below reports the status under its own key.
       jq -n --arg systemMessage \
         "$(printf 'doc-drift-check: stale=%s\nThese unchanged documents may need an update:\n%sCompared %s\n' \
-          "$2" "$STALE" "$JUDGED")" '{systemMessage: $systemMessage}' 2>/dev/null
+          "$2" "$STALE" "$JUDGED")" '{systemMessage: $systemMessage}'
       ;;
     git)
       {

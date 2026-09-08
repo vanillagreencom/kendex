@@ -361,7 +361,7 @@ unreadable repository metadata|repo badconfig|code|0|-|git=rev-parse;git
 an unreadable changed set is not an empty one|repo break:ls-files|code|0|-|git=ls-files;fixture: ls-files failed
 a merge-base git cannot answer is not judged as the working tree|clone break:merge-base|code commit|0|-|git=merge-base;fixture: merge-base failed
 a default-branch probe git cannot answer is not read as absent|clone break:symbolic-ref|code commit|0|-|git=symbolic-ref;fixture: symbolic-ref failed
-a jq that cannot build the notice leaves the trap to say so, and says nothing itself|repo break:jq|code|0|-|exit=19
+a jq that cannot build the notice keeps its own words, and the trap says so under its key|repo break:jq|code|0|-|fixture: jq failed;exit=19
 "
 
 run_table "the notice's own first line counts what it names" "world change stale" "\

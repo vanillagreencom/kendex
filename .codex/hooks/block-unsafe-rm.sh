@@ -18,6 +18,9 @@ COMMAND=""
 # stable key for the condition and the value acted on — the missing tool, why
 # the payload could not be read, or the shape refused. The English explanation
 # and the rewrites follow on later lines.
+# A reader matches `^block-unsafe-rm: `, not line 1: a command this hook
+# runs may write its own diagnostic to the same stream first, and that line
+# names a cause the keyed one does not carry.
 refuse() { # KEY VALUE
   printf 'block-unsafe-rm: %s=%s\n' "$1" "$2" >&2
   case "$1=$2" in

@@ -21,6 +21,9 @@ ISSUES=""
 # a stable key for the condition and the value acted on — the git subcommand
 # that could not answer, or the status clippy left. The English explanation and
 # the diagnostics follow it.
+# A reader matches `^task-completed-check: `, not line 1: a command this hook
+# runs may write its own diagnostic to the same stream first, and that line
+# names a cause the keyed one does not carry.
 refuse() { # KEY VALUE [DETAIL]
   {
     printf 'task-completed-check: %s=%s\n' "$1" "$2"

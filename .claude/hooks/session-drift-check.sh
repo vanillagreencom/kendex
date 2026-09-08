@@ -21,6 +21,9 @@ OUTPUT=""
 # unreachable project directory, what became of the check, or the status an
 # unguarded command left. The English explanation and kendex's own report
 # follow it. Every line goes to stdout, the session-start context channel.
+# A reader matches `^session-drift-check: `, not line 1: a command this hook
+# runs may write its own diagnostic to the same stdout first, and that line
+# names a cause the keyed one does not carry.
 notice() { # KEY VALUE [DETAIL]
   printf 'session-drift-check: %s=%s\n' "$1" "$2"
   case "$1=$2" in

@@ -13,6 +13,9 @@ set -euo pipefail
 # line is the contract a reader parses: the keys and values are the fixed set
 # hooks/AGENTS.md names, and the English explanation and the rewrite follow on
 # later lines.
+# A reader matches `^block-bare-cd: `, not line 1: a command this hook
+# runs may write its own diagnostic to the same stream first, and that line
+# names a cause the keyed one does not carry.
 refuse() { # KEY VALUE
   printf 'block-bare-cd: %s=%s\n' "$1" "$2" >&2
   case "$1=$2" in

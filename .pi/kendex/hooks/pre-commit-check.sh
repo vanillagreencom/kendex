@@ -18,6 +18,9 @@ MARKER="# kendex-guards-hook"
 # hooks/AGENTS.md names, and the English explanation and the rewrites follow on
 # later lines. Only the caller decides the status: `judged` is the notice
 # beside a command this hook allows, the rest are refusals.
+# A reader matches `^pre-commit-check: `, not line 1: a command this hook
+# runs may write its own diagnostic to the same stream first, and that line
+# names a cause the keyed one does not carry.
 message() { # KEY VALUE
   printf 'pre-commit-check: %s=%s\n' "$1" "$2" >&2
   case "$1=$2" in

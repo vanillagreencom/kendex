@@ -15,6 +15,9 @@ set -euo pipefail
 # stable key for the condition and the value acted on — the missing tool, why
 # the payload could not be read, the state of the project policy, or the exit
 # status of a check that did not complete. The English explanation follows it.
+# A reader matches `^command-safety: `, not line 1: a command this hook
+# runs may write its own diagnostic to the same stream first, and that line
+# names a cause the keyed one does not carry.
 # The EXIT trap below calls this, so the whole message is one group that
 # cannot carry a failure out: a write that fails there would leave with the
 # writer's status rather than the refusal's, which the harness runs past.
@@ -70,9 +73,10 @@ cwd="$(jq -r 'if .cwd == null then "" elif .cwd | type == "string" then .cwd els
 [ -n "$cwd" ] || cwd="$PWD"
 # The requested path is kept: the assignment below takes the substitution's
 # empty output when the directory cannot be entered, so the refusal would name
-# nothing. cd's own diagnostic is dropped for the same reason the others are.
+# nothing. cd keeps its own diagnostic, which says why the directory could not
+# be entered.
 requested_cwd="$cwd"
-cwd="$(cd -- "$cwd" 2>/dev/null && pwd -P)" || refuse cwd "$requested_cwd"
+cwd="$(cd -- "$cwd" && pwd -P)" || refuse cwd "$requested_cwd"
 root_status=0
 root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" || root_status=$?
 if [ "$root_status" -ne 0 ]; then
@@ -115,17 +119,16 @@ GG_CHECK=command-safety
 source "$lib/common.sh"
 # shellcheck source=../skills/commit-guards/scripts/lib/settings.sh
 source "$lib/settings.sh"
-cd -- "$root" 2>/dev/null || refuse cwd "$root"
-# The loader's own diagnostic is dropped so the refusal's keyed line is the
-# first line of this hook's stderr; the same settings error reaches the author
-# from the commit-guards chain, which reads the file on every commit.
-pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "^$" 2>/dev/null)" || refuse settings unreadable
+cd -- "$root" || refuse cwd "$root"
+# The loader keeps its own diagnostic: it names the file and the line the
+# settings could not be read at, which `settings=unreadable` does not carry.
+pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "^$")" || refuse settings unreadable
 [ -n "$pattern" ] || refuse settings empty
 [ "$pattern" != '^$' ] || exit 0
 status=0
-# grep's own words on a pattern it cannot read are dropped: the status says
-# which case it is, and the refusal's keyed line leads instead.
-printf '%s\n' "$command_text" | LC_ALL=C grep -E -- "$pattern" >/dev/null 2>&1 || status=$?
+# grep keeps its own words on a pattern it cannot read: they name which part
+# of the pattern it choked on, which the keyed refusal cannot.
+printf '%s\n' "$command_text" | LC_ALL=C grep -E -- "$pattern" >/dev/null || status=$?
 case "$status" in
   0) refuse refused policy ;;
   1) exit 0 ;;

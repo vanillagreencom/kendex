@@ -27,6 +27,9 @@ ANSWER=""
 # the payload could not be read, the tool call refused, or the path a reviewer
 # may not write. The English explanation follows it, and it never names a
 # bypass.
+# A reader matches `^reviewer-read-only: `, not line 1: a command this hook
+# runs may write its own diagnostic to the same stream first, and that line
+# names a cause the keyed one does not carry.
 refuse() { # KEY VALUE
   {
     printf 'reviewer-read-only: %s=%s\n' "$1" "$2"
@@ -75,9 +78,9 @@ for dependency in jq git cat grep dirname; do
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
-# cat's own diagnostic is dropped so the refusal's keyed line is the first
-# line of this hook's stderr, as it is for every other condition.
-INPUT=$(cat 2>/dev/null) || refuse payload unreadable
+# cat keeps its own voice: "Is a directory" names the cause, and the keyed
+# refusal below it names the verdict.
+INPUT=$(cat) || refuse payload unreadable
 
 # One jq read for the strings the decision needs. A payload that does not
 # parse, or whose agent_type or tool_name is not a string, is refused.

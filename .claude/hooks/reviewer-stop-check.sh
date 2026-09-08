@@ -27,6 +27,9 @@ STATUS=""
 # the payload could not be read, the git subcommand that failed, the marker
 # path, or the worktree that is not clean. The English explanation and what to
 # do about it follow it, and never a bypass.
+# A reader matches `^reviewer-stop-check: `, not line 1: a command this hook
+# runs may write its own diagnostic to the same stream first, and that line
+# names a cause the keyed one does not carry.
 refuse() { # KEY VALUE [DETAIL]
   {
     printf 'reviewer-stop-check: %s=%s\n' "$1" "$2"
@@ -82,9 +85,9 @@ for dependency in jq git cat grep tail mkdir; do
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
-# cat's own diagnostic is dropped so the refusal's keyed line is the first
-# line of this hook's stderr, as it is for every other condition.
-INPUT=$(cat 2>/dev/null) || refuse payload unreadable
+# cat keeps its own voice: "Is a directory" names the cause, and the keyed
+# refusal below it names the verdict.
+INPUT=$(cat) || refuse payload unreadable
 
 FIELDS=$(printf '%s' "$INPUT" | jq -r '
   def str($v): if $v == null then "" elif ($v | type) == "string" then $v else error("not a string") end;
@@ -135,9 +138,9 @@ record_and_block() { # KEY VALUE
   if [ -e "$MARKER" ]; then
     exit 0
   fi
-  # Both probes write their own diagnostic on failure, and it would stand
-  # ahead of the keyed line; the refusal below is what names the path.
-  if ! mkdir -p -- "$MARKER_DIR" 2>/dev/null || ! : >"$MARKER" 2>/dev/null; then
+  # Both probes keep their own diagnostic on failure: it names why the write
+  # was refused, which the keyed line below, naming the path, does not.
+  if ! mkdir -p -- "$MARKER_DIR" || ! : >"$MARKER"; then
     refuse marker "$MARKER"
   fi
   refuse "$1" "$2"
