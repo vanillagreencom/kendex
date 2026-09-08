@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Hook failure, drift failure, session failure, and clippy notices now start with a stable key and value. Explanations follow on later lines. Hook payloads and drift reports still pass through unchanged.
+
 ### 0.12.0
 
 - **Breaking**: the `hookTimeoutMs` setting is removed. A registered hook's budget is the `timeout` its registration in `kendex/hooks.json` declares, 60 seconds where it declares none, the same budget Claude Code gives it. A value left in `settings.json` is ignored. `runHook` drops its `ceilingMs` argument.
