@@ -197,7 +197,7 @@ an untracked root settings file cannot widen staged JSONC policy|untracked-root-
 an untracked nested settings file cannot widen staged JSONC policy|untracked-nested-jsonc|--staged|jq|1|themes/white/apps/vscode-theme.json:2: [data-syntax]|invalid JSON
 an untracked root settings file cannot narrow staged migration policy|untracked-root-migration|--staged|-|1|store/migrations/V1__init.sql:0: [applied-migration-edited]|-
 an untracked nested settings file cannot narrow staged migration policy|untracked-nested-migration|--staged|-|1|store/migrations/V1__init.sql:0: [applied-migration-edited]|-
-a non-ignored untracked file is in scope; an ignored one is not|untracked|-|-|1|docs/never-added.md:3: [docs-cited-paths]|-
+a non-ignored untracked file is in scope; an ignored one is not|untracked|-|-|1|docs/never-added.md:3: [docs-cited-paths]|across 2 changed file(s)
 --staged sees only the index, so the untracked file is out of scope|untracked|--staged|-|0|-|-
 an untracked doc in an untracked directory has its dead citation reported|newdir|-|-|1|docs/new/guide.md:3: [docs-cited-paths]|cites a path that does not exist: docs/new/missing.md
 content comes from the index, so line 3 is the staged line|rewound|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-

@@ -266,11 +266,13 @@ pf_world() {
 # at the end of the document, which errexit must not read; an empty table is
 # pf_table's refusal.
 #
-# A `says` fragment prefixed `!` must be ABSENT. Two rows need that and nothing
-# weaker: a withheld-lines row whose claim is that no clean verdict may cover
-# it, and the header-pair row, where an unanchored parser trips the splitter's
-# loud refusal instead of losing the finding — the measurement is the ordinary
-# verdict, not the refusal.
+# A `says` fragment prefixed `!` must be ABSENT. Four rows carry one: the three
+# withheld-lines rows, whose claim is that no clean verdict may cover content a
+# lane did not read, and the header-pair row, where an unanchored parser trips
+# the splitter's loud refusal instead of losing the finding — the measurement is
+# the ordinary verdict, not the refusal. Each forbids text a run at the pinned
+# status does not normally reach, so a defect that also moves the status reds on
+# `rc` first; the fragment holds the claim for one that does not move it.
 IFS= read -r -d '' rows <<'ROWS' || :
 control: the added dead citation fires with no attributes row|attrs-none|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 --staged still reads the added line under a '-diff' row|attrs-nodiff|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|!preflight: clean

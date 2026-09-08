@@ -113,7 +113,11 @@ pf_scope_seed() { # NAME — fixture in $R
 # `;`-separated list of finding heads the run must print (`-` for none),
 # compared whole against `pf_fired`. `says` is `;`-separated fragments `$OUT`
 # must carry, each one prefixed `!` instead if it must be ABSENT, or `-`; it
-# is the last field, so `read` keeps a `|` inside it. A `{R}` in `argv`
+# is the last field, so `read` keeps a `|` inside it. Only a LEADING `!` is
+# the marker, so a fragment whose own first character is `!` cannot be
+# expressed; no message these suites pin begins with one. `rc` is compared
+# before `says`, so an absence fragment reds only on a run that reaches the
+# pinned status still carrying the text it forbids. A `{R}` in `argv`
 # expands to the fixture path, which the row cannot spell before its world is
 # built. A row with an empty field asserts nothing and refuses the run, as
 # does a `needs` token `pf_needs_absent` does not know, a world word
