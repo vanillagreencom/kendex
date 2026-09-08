@@ -114,7 +114,7 @@ record_row() {
 
 evaluate_next_id_rows() {
   local script="$1" mode="$2" only_row="${3:-}" name repo_name environment expected_status
-  local stdout_rule expected_stdout stderr_rule repo actual_stdout actual_stderr actual expected guard
+  local stdout_rule expected_stdout stderr_rule repo actual_stdout actual_stderr actual expected guard first_line
   local executed_rows=0
   table_failures=""
   while IFS='~' read -r name repo_name environment expected_status stdout_rule expected_stdout stderr_rule; do
@@ -129,6 +129,7 @@ evaluate_next_id_rows() {
       ignore) actual_stdout=ignored; expected_stdout=ignored ;;
       *) fail "unknown stdout rule: $stdout_rule"; continue ;;
     esac
+    first_line="${err%%$'\n'*}"
     case "$stderr_rule" in
       empty)
         actual_stderr="$err"
@@ -140,14 +141,15 @@ evaluate_next_id_rows() {
         ;;
       bad-id-prefix)
         actual_stderr=0,0
-        [[ "$err" == *ADR-current* ]] && actual_stderr=1,0
-        [[ "$err" == *ADR-current* && "$err" == *DECISION_ID_PREFIX* ]] && actual_stderr=1,1
+        [[ "$first_line" == *"error=id-suffix-missing"* ]] && actual_stderr=1,0
+        [[ "$first_line" == *"error=id-suffix-missing"* && "$first_line" == *"value=ADR-current"* ]] && actual_stderr=1,1
         expected=1,1
         ;;
       width)
-        actual_stderr=0
-        [[ "$err" == *DECISION_ID_WIDTH* ]] && actual_stderr=1
-        expected=1
+        actual_stderr=0,0
+        [[ "$first_line" == *"error=id-width-invalid"* ]] && actual_stderr=1,0
+        [[ "$first_line" == *"error=id-width-invalid"* && "$first_line" == *"value=zero"* ]] && actual_stderr=1,1
+        expected=1,1
         ;;
       *) fail "unknown stderr rule: $stderr_rule"; continue ;;
     esac
@@ -191,6 +193,14 @@ if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
     pass "wrong next ID fails the inferred scheme row"
   else
     fail "wrong next ID did not fail the inferred scheme row"
+  fi
+
+  diagnostic_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/id-diagnostic-key/decisions" '        emit_error id-suffix-missing "value=$last_id"' '        emit_error id-suffix-invalid "value=$last_id"' 1)"
+  failures="$(evaluate_next_id_rows "$diagnostic_mutant" control unparseable-last-id)"
+  if [[ "$failures" == *'|unparseable-last-id|'* ]]; then
+    pass "a changed ID diagnostic key fails its row"
+  else
+    fail "a changed ID diagnostic key did not fail its row"
   fi
 
   next_id_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-next-id-table/decider/tests/decider-next-id-scheme.test.sh" NEXT_ID_CASES)"

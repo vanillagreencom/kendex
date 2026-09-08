@@ -44,6 +44,7 @@ cat >"$BAD_REPO/docs/decisions/INDEX.md" <<'EOF'
 | 2026-02-01 | D101 | PROJ-1 | Well-formed row | Reason one | Never | Active | [Full](D101.md) |
 | 2026-02-02 | D102 | PROJ-2 | Truncated row | Active |
 | 2026-02-03 | D103 | PROJ-3 | Second well-formed | Reason three | Never | Active | [Full](D103.md) |
+| 2026-02-04 | D104 | PROJ-4 | Seven-cell row | Reason four | Active | [Full](D104.md) |
 EOF
 
 run_decisions() {
@@ -141,7 +142,8 @@ LINK_CASES
 }
 
 evaluate_diagnostic_rows() {
-  local script="$1" mode="$2" only_row="${3:-}" name fixture projection expected actual first second guard
+  local script="$1" mode="$2" only_row="${3:-}" name fixture projection expected actual first second third guard first_line
+  local bad_index="$BAD_REPO/docs/decisions/INDEX.md"
   local executed_rows=0
   table_failures=""
   while IFS='~' read -r name fixture projection expected; do
@@ -161,11 +163,8 @@ evaluate_diagnostic_rows() {
         expected="0~0~$expected"
         ;;
       malformed-warning)
-        first=0
-        second=0
-        [[ "$err" == *D102* || "$err" == *:6:* ]] && first=1
-        [[ "$err" == *:6:* ]] && second=1
-        actual="$rc~$first~$second"
+        first_line="${err%%$'\n'*}"
+        actual="$rc~$first_line"
         ;;
       empty-stderr)
         actual="$rc~${err:-<empty>}"
@@ -175,10 +174,11 @@ evaluate_diagnostic_rows() {
         continue
         ;;
     esac
+    expected="${expected//<bad-index>/$bad_index}"
     record_row "$mode" "$name" "$actual" "$expected"
   done <<'DIAGNOSTIC_CASES'
 malformed-row-results~malformed~ids~D101,D103
-malformed-row-diagnostic~malformed~malformed-warning~0~1~1
+malformed-row-diagnostic~malformed~malformed-warning~0~notice=index-row-invalid path=<bad-index> line=6 cells=5
 healthy-index-diagnostic~healthy~empty-stderr~0~<empty>
 DIAGNOSTIC_CASES
   if [[ "$executed_rows" -eq 0 ]]; then
@@ -223,9 +223,13 @@ if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
   failures="$(evaluate_link_rows "$date_mutant" control)"
   expect_control_failure "$failures" date-enrichment "date mutation fails the enrichment row"
 
-  warning_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-warning/decisions" '| select((.value | split("|") | length) < 9)' '| select(false)' 1)"
+  warning_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-warning/decisions" '| select((.value | cells | length) < 8)' '| select(false)' 1)"
   failures="$(evaluate_diagnostic_rows "$warning_mutant" control)"
   expect_control_failure "$failures" malformed-row-diagnostic "warning suppression fails the diagnostic row"
+
+  row_filter_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/wide-row-filter/decisions" '| select(length >= 8)' '| select(length >= 7)' 1)"
+  failures="$(evaluate_diagnostic_rows "$row_filter_mutant" control)"
+  expect_control_failure "$failures" malformed-row-results "a seven-cell row fails the result filter control"
 
   link_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-link-table/decider/tests/decider-index-parse.test.sh" LINK_CASES)"
   if decider_test_fails_with "$link_table_mutant" "link table executed no rows"; then

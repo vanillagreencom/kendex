@@ -35,6 +35,15 @@ cat >"$HAS_DIR/docs/decisions/INDEX.md" <<'EOF'
 | 2026-01-10 | D001 | PROJ-100 | Use Redis for session caching | Fast and simple | If latency degrades | Active | [Full](D001-session-caching.md) |
 EOF
 
+NO_INDEX_DIR="$TMP_ROOT/no-index-project"
+mkdir -p "$NO_INDEX_DIR/docs/decisions"
+
+NO_JQ_BIN="$TMP_ROOT/no-jq-bin"
+mkdir -p "$NO_JQ_BIN"
+ln -s "$(command -v git)" "$NO_JQ_BIN/git"
+ln -s "$(command -v dirname)" "$NO_JQ_BIN/dirname"
+BASH_BIN="$(command -v bash)"
+
 NOT_A_DIR="$TMP_ROOT/not-a-dir"
 touch "$NOT_A_DIR"
 
@@ -51,6 +60,12 @@ run_decisions() {
       ;;
     existing)
       out=$( (cd "$HAS_DIR" && env -u DECISIONS_DIR DECISIONS_DIR=docs/decisions "$script" "$@") 2>"$ERR_FILE")
+      ;;
+    missing-index)
+      out=$( (cd "$NO_INDEX_DIR" && env -u DECISIONS_DIR DECISIONS_DIR=docs/decisions "$script" "$@") 2>"$ERR_FILE")
+      ;;
+    missing-dependency)
+      out=$( (cd "$HAS_DIR" && env -u DECISIONS_DIR PATH="$NO_JQ_BIN" DECISIONS_DIR=docs/decisions "$BASH_BIN" "$script" "$@") 2>"$ERR_FILE")
       ;;
     configured-file)
       out=$( (cd "$NO_DIR" && env -u DECISIONS_DIR DECISIONS_DIR="$NOT_A_DIR" "$script" "$@") 2>"$ERR_FILE")
@@ -83,7 +98,7 @@ record_row() {
 
 evaluate_directory_rows() {
   local script="$1" mode="$2" only_row="${3:-}" name state action argument expected_status
-  local stdout_rule expected_stdout stderr_rule needle_one needle_two actual_stdout actual_stderr
+  local stdout_rule expected_stdout stderr_rule needle_one needle_two actual_stdout actual_stderr first_line
   local projected projection_rc actual expected guard
   local executed_rows=0
   table_failures=""
@@ -93,10 +108,20 @@ evaluate_directory_rows() {
     fi
     executed_rows=$((executed_rows + 1))
     case "$action" in
+      dependency) run_decisions "$script" "$state" list ;;
       issue) run_decisions "$script" "$state" search --issue "$argument" ;;
+      issue-missing) run_decisions "$script" "$state" search --issue ;;
+      issue-empty) run_decisions "$script" "$state" search --issue= ;;
+      issue-regex-invalid) run_decisions "$script" "$state" search --issue "$argument" ;;
       keyword) run_decisions "$script" "$state" search "$argument" ;;
+      limit-missing) run_decisions "$script" "$state" search "$argument" --limit ;;
+      limit-empty) run_decisions "$script" "$state" search "$argument" --limit= ;;
+      limit-invalid) run_decisions "$script" "$state" search "$argument" --limit nope ;;
+      query-regex-invalid) run_decisions "$script" "$state" search "$argument" ;;
+      search-empty) run_decisions "$script" "$state" search --limit 1 ;;
       list|next-id|help) run_decisions "$script" "$state" "$action" ;;
       get) run_decisions "$script" "$state" get "$argument" ;;
+      get-missing) run_decisions "$script" "$state" get ;;
       *) fail "unknown directory-row action: $action"; continue ;;
     esac
 
@@ -124,17 +149,12 @@ evaluate_directory_rows() {
       *) fail "unknown stdout rule: $stdout_rule"; continue ;;
     esac
 
+    first_line="${err%%$'\n'*}"
+    [[ "$needle_two" == '<not-a-dir>' ]] && needle_two="path=$NOT_A_DIR"
     case "$stderr_rule" in
-      contains)
-        actual_stderr=0
-        [[ "$err" == *"$needle_one"* ]] && actual_stderr=1
-        expected=1
-        ;;
-      both)
-        actual_stderr=0,0
-        [[ "$err" == *"$needle_one"* ]] && actual_stderr=1,0
-        [[ "$err" == *"$needle_one"* && "$err" == *"$needle_two"* ]] && actual_stderr=1,1
-        expected=1,1
+      key-value)
+        actual_stderr="$first_line"
+        expected="$needle_one $needle_two"
         ;;
       empty)
         actual_stderr="$err"
@@ -150,19 +170,31 @@ evaluate_directory_rows() {
     actual="$rc~$actual_stdout~$actual_stderr"
     record_row "$mode" "$name" "$actual" "$expected_status~$expected_stdout~$expected"
   done <<'DIRECTORY_CASES'
-configured-absent-issue~configured-absent~issue~PROJ-557~0~exact~[]~both~docs/decisions~not present
-configured-absent-keyword~configured-absent~keyword~ffi error handling~0~exact~[]~contains~not present~
-configured-absent-list~configured-absent~list~~0~exact~[]~contains~not present~
-configured-absent-next-id~configured-absent~next-id~~1~ignore~~contains~does not exist~
-configured-absent-get~configured-absent~get~D001~1~ignore~~contains~does not exist~
-undiscovered-issue~undiscovered~issue~PROJ-557~0~exact~[]~contains~no decisions directory found~
+configured-absent-issue~configured-absent~issue~PROJ-557~0~exact~[]~key-value~notice=decisions-dir-absent~path=docs/decisions
+configured-absent-keyword~configured-absent~keyword~ffi error handling~0~exact~[]~key-value~notice=decisions-dir-absent~path=docs/decisions
+configured-absent-list~configured-absent~list~~0~exact~[]~key-value~notice=decisions-dir-absent~path=docs/decisions
+configured-absent-next-id~configured-absent~next-id~~1~ignore~~key-value~error=decisions-dir-absent~path=docs/decisions
+configured-absent-get~configured-absent~get~D001~1~ignore~~key-value~error=decisions-dir-absent~path=docs/decisions
+undiscovered-issue~undiscovered~issue~PROJ-557~0~exact~[]~key-value~notice=decisions-dir-absent~path=auto
 help-without-directory~undiscovered~help~~0~contains~Decision Lookup Tool~ignore~~
 existing-keyword-miss~existing~keyword~zzz nonexistent term~0~exact~[]~empty~~
 existing-issue-miss~existing~issue~PROJ-999~0~exact~[]~empty~~
 existing-keyword-hit~existing~keyword~redis~0~ids~["D001"]~ignore~~
 existing-next-id~existing~next-id~~0~exact~D002~ignore~~
-configured-file-search~configured-file~issue~PROJ-557~1~exact~~contains~is not a directory~
-configured-file-next-id~configured-file~next-id~~1~ignore~~contains~is not a directory~
+missing-jq~missing-dependency~dependency~~1~ignore~~key-value~error=dependency-missing~command=jq
+missing-index~missing-index~list~~1~ignore~~key-value~error=index-missing~path=docs/decisions/INDEX.md
+missing-search-input~existing~search-empty~~1~ignore~~key-value~error=search-input-missing~value=query-or-issue
+missing-decision~existing~get~D999~1~ignore~~key-value~error=decision-not-found~id=D999
+missing-issue-value~existing~issue-missing~~1~ignore~~key-value~error=argument-value-missing~option=--issue
+empty-issue-value~existing~issue-empty~~1~ignore~~key-value~error=argument-value-missing~option=--issue
+missing-limit-value~existing~limit-missing~redis~1~ignore~~key-value~error=argument-value-missing~option=--limit
+empty-limit-value~existing~limit-empty~redis~1~ignore~~key-value~error=argument-value-missing~option=--limit
+invalid-limit-value~existing~limit-invalid~redis~1~ignore~~key-value~error=limit-invalid~value=nope
+invalid-query-regex~existing~query-regex-invalid~(~1~ignore~~key-value~error=regex-invalid~value=(
+invalid-issue-regex~existing~issue-regex-invalid~[~1~ignore~~key-value~error=regex-invalid~value=[
+missing-get-value~existing~get-missing~~1~ignore~~key-value~error=argument-value-missing~action=get
+configured-file-search~configured-file~issue~PROJ-557~1~exact~~key-value~error=decisions-dir-type~<not-a-dir>
+configured-file-next-id~configured-file~next-id~~1~ignore~~key-value~error=decisions-dir-type~<not-a-dir>
 DIRECTORY_CASES
   if [[ "$executed_rows" -eq 0 ]]; then
     guard="directory table executed no rows"
@@ -205,6 +237,14 @@ if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
     pass "absent keyword-search failure fails its row"
   else
     fail "absent keyword-search failure did not fail its row"
+  fi
+
+  diagnostic_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/diagnostic-key/decisions" '    emit_notice decisions-dir-absent "path=$DECISIONS_DIR"' '    emit_notice decisions-dir-missing "path=$DECISIONS_DIR"' 1)"
+  failures="$(evaluate_directory_rows "$diagnostic_mutant" control configured-absent-issue)"
+  if [[ "$failures" == *'|configured-absent-issue|'* ]]; then
+    pass "a changed diagnostic key fails its row"
+  else
+    fail "a changed diagnostic key did not fail its row"
   fi
 
   directory_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-directory-table/decider/tests/decider-search-missing-dir.test.sh" DIRECTORY_CASES)"

@@ -5,7 +5,24 @@
 # Read-only lookups (search, list) treat an absent decisions directory as "no
 # decisions recorded": empty JSON array, note on stderr, exit 0. Commands that
 # feed the creation workflow (next-id, get) require an initialized directory.
+# Diagnostic protocol: a refusal starts with `error=KEY` and one or more
+# `FIELD=VALUE` pairs; a notice starts with `notice=KEY` and the same field
+# form. English guidance follows on later lines.
 set -euo pipefail
+
+emit_error() { # KEY FIELD=VALUE EXPLANATION
+  local key="$1" field="$2"
+  shift 2
+  printf 'error=%s %s\n' "$key" "$field" >&2
+  printf '%s\n' "$*" >&2
+}
+
+emit_notice() { # KEY FIELD=VALUE EXPLANATION
+  local key="$1" field="$2"
+  shift 2
+  printf 'notice=%s %s\n' "$key" "$field" >&2
+  printf '%s\n' "$*" >&2
+}
 
 # Help is answered before project configuration is read: sourcing a repo's
 # .env.local under --help would execute repository-controlled shell code.
@@ -100,7 +117,7 @@ source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT"
 
 if ! command -v jq &>/dev/null; then
-  echo "Error: jq is required but not installed" >&2
+  emit_error dependency-missing command=jq "jq is required but is not installed."
   exit 1
 fi
 
@@ -131,7 +148,7 @@ if [[ -z "${DECISIONS_DIR:-}" ]]; then
 elif [[ ! -e "$DECISIONS_DIR" ]]; then
   DECISIONS_DIR_ABSENT=1
 elif [[ ! -d "$DECISIONS_DIR" ]]; then
-  echo "Error: DECISIONS_DIR '$DECISIONS_DIR' is not a directory" >&2
+  emit_error decisions-dir-type "path=$DECISIONS_DIR" "DECISIONS_DIR is not a directory."
   exit 1
 fi
 
@@ -139,7 +156,7 @@ INDEX_FILE=""
 if [[ "$DECISIONS_DIR_ABSENT" -eq 0 ]]; then
   INDEX_FILE="$DECISIONS_DIR/INDEX.md"
   if [[ ! -f "$INDEX_FILE" ]]; then
-    echo "Error: INDEX.md not found in '$DECISIONS_DIR'" >&2
+    emit_error index-missing "path=$INDEX_FILE" "The decisions directory has no INDEX.md file."
     exit 1
   fi
 fi
@@ -147,18 +164,18 @@ fi
 require_decisions_dir() {
   [[ "$DECISIONS_DIR_ABSENT" -eq 1 ]] || return 0
   if [[ -n "$DECISIONS_DIR" ]]; then
-    echo "Error: DECISIONS_DIR '$DECISIONS_DIR' does not exist" >&2
+    emit_error decisions-dir-absent "path=$DECISIONS_DIR" "DECISIONS_DIR does not exist."
   else
-    echo "Error: Could not find decisions directory. Set DECISIONS_DIR or create docs/decisions/INDEX.md" >&2
+    emit_error decisions-dir-absent path=auto "No decisions directory was found. Set DECISIONS_DIR or create docs/decisions/INDEX.md."
   fi
   exit 1
 }
 
 note_missing_decisions_dir() {
   if [[ -n "$DECISIONS_DIR" ]]; then
-    echo "note: decisions directory '$DECISIONS_DIR' not present — no decisions recorded" >&2
+    emit_notice decisions-dir-absent "path=$DECISIONS_DIR" "The decisions directory is absent, so no decisions are recorded."
   else
-    echo "note: no decisions directory found — no decisions recorded" >&2
+    emit_notice decisions-dir-absent path=auto "No decisions directory was found, so no decisions are recorded."
   fi
 }
 
@@ -181,6 +198,10 @@ split_decision_id() {
   return 1
 }
 
+regex_valid() { # REGEX
+  jq -n --arg regex "$1" '"" | test($regex)' >/dev/null 2>&1
+}
+
 # Parse the INDEX.md table into JSON, one jq pass over the whole file.
 #
 # Column order is a machine contract: a row is a line starting `| YYYY-` and
@@ -199,13 +220,21 @@ parse_index() {
   # ever recorded, so every such row is named on stderr. stdout still carries
   # exactly the rows that parse.
   jq -R -s -r --arg f "$INDEX_FILE" '
+    def cells:
+      split("|")
+      | if .[0] == "" then .[1:] else . end
+      | if .[-1] == "" then .[:-1] else . end;
     split("\n")
     | to_entries[]
     | select(.value | test("^\\| [0-9]{4}-"))
-    | select((.value | split("|") | length) < 9)
-    | "WARNING: \($f):\(.key + 1): INDEX row has \(.value | split("|") | length) cells, need at least 9 — row skipped: \(.value)"
+    | select((.value | cells | length) < 8)
+    | "notice=index-row-invalid path=\($f) line=\(.key + 1) cells=\(.value | cells | length)\nINDEX row needs at least 8 columns and was skipped: \(.value)"
   ' "$INDEX_FILE" >&2
   jq -R -s -c --arg dir "$DECISIONS_DIR" '
+    def cells:
+      split("|")
+      | if .[0] == "" then .[1:] else . end
+      | if .[-1] == "" then .[:-1] else . end;
     def cell_path:
       . as $cell
       | ( [ $cell | scan("\\(([^)]+)\\)") ]
@@ -214,11 +243,11 @@ parse_index() {
       | if length > 0 then .[0][0] else "" end;
     [ split("\n")[]
       | select(test("^\\| [0-9]{4}-"))
-      | split("|")
-      | select(length >= 9)
+      | cells
+      | select(length >= 8)
       | map(sub("^\\s+"; "") | sub("\\s+$"; ""))
-      | { id: .[2], research: .[3], decision: .[4], rationale: .[5],
-          status: .[7], path: (.[8] | cell_path) }
+      | { id: .[1], research: .[2], decision: .[3], rationale: .[4],
+          status: .[6], path: (.[7] | cell_path) }
       | .path |= (if . == "" then "" else $dir + "/" + . end)
     ]' "$INDEX_FILE"
 }
@@ -277,16 +306,47 @@ search_decisions() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --issue) issue="$2"; shift 2 ;;
-      --issue=*) issue="${1#--issue=}"; shift ;;
-      --limit) limit="$2"; shift 2 ;;
-      --limit=*) limit="${1#--limit=}"; shift ;;
+      --issue)
+        if [[ $# -lt 2 ]]; then
+          emit_error argument-value-missing option=--issue "--issue requires an ID."
+          return 1
+        fi
+        issue="$2"; shift 2
+        ;;
+      --issue=*)
+        issue="${1#--issue=}"
+        if [[ -z "$issue" ]]; then
+          emit_error argument-value-missing option=--issue "--issue requires an ID."
+          return 1
+        fi
+        shift
+        ;;
+      --limit)
+        if [[ $# -lt 2 ]]; then
+          emit_error argument-value-missing option=--limit "--limit requires a number."
+          return 1
+        fi
+        limit="$2"; shift 2
+        ;;
+      --limit=*)
+        limit="${1#--limit=}"
+        if [[ -z "$limit" ]]; then
+          emit_error argument-value-missing option=--limit "--limit requires a number."
+          return 1
+        fi
+        shift
+        ;;
       *) query="$1"; shift ;;
     esac
   done
 
+  if [[ ! "$limit" =~ ^[0-9]+$ ]]; then
+    emit_error limit-invalid "value=$limit" "--limit must be a non-negative integer."
+    return 1
+  fi
+
   if [[ -z "$issue" && -z "$query" ]]; then
-    echo '{"error": "Provide a search query or --issue ID"}' >&2
+    emit_error search-input-missing value=query-or-issue "Provide a search query or --issue ID."
     return 1
   fi
 
@@ -301,6 +361,10 @@ search_decisions() {
 
   if [[ -n "$issue" ]]; then
     # Negative lookahead prevents PROJ-18 matching PROJ-189.
+    if ! regex_valid "$issue(?![0-9])"; then
+      emit_error regex-invalid "value=$issue" "The issue value is not a valid regular expression."
+      return 1
+    fi
     echo "$all" | jq --arg issue "$issue" '[
       .[] | select(.research | test($issue + "(?![0-9])"; "i")) |
       {id, decision, path}
@@ -309,6 +373,10 @@ search_decisions() {
   fi
 
   if echo "$query" | grep -qE '[|()\\]'; then
+    if ! regex_valid "$query"; then
+      emit_error regex-invalid "value=$query" "The search query is not a valid regular expression."
+      return 1
+    fi
     local rx_bodies
     rx_bodies=$(body_term_hits "$all" "$query")
     echo "$all" | jq --arg q "$query" --argjson limit "$limit" --argjson bodies "$rx_bodies" '[
@@ -384,7 +452,7 @@ cmd_next_id() {
 
   if [[ "${DECISION_ID_WIDTH+x}" == "x" ]]; then
     if [[ ! "$DECISION_ID_WIDTH" =~ ^[1-9][0-9]*$ ]]; then
-      echo "Error: DECISION_ID_WIDTH must be a positive integer" >&2
+      emit_error id-width-invalid "value=$DECISION_ID_WIDTH" "DECISION_ID_WIDTH must be a positive integer."
       return 1
     fi
     width="$DECISION_ID_WIDTH"
@@ -398,7 +466,7 @@ cmd_next_id() {
     if [[ "${#ids[@]}" -gt 0 ]]; then
       local last_id="${ids[${#ids[@]} - 1]}"
       if ! split_decision_id "$last_id"; then
-        echo "Error: Last decision ID '$last_id' in INDEX.md has no numeric suffix. Set DECISION_ID_PREFIX and DECISION_ID_WIDTH to select a scheme explicitly." >&2
+        emit_error id-suffix-missing "value=$last_id" "The last decision ID in INDEX.md has no numeric suffix. Set DECISION_ID_PREFIX and DECISION_ID_WIDTH to select a scheme explicitly."
         return 1
       fi
       prefix="$PARSED_ID_PREFIX"
@@ -434,13 +502,17 @@ cmd_next_id() {
 }
 
 cmd_get() {
-  local id="${1:?Usage: decisions get <DECISION_ID>}"
+  if [[ $# -lt 1 || -z "$1" ]]; then
+    emit_error argument-value-missing action=get "decisions get requires a decision ID."
+    return 1
+  fi
+  local id="$1"
 
   local match
   match=$(parse_index | jq --arg id "$id" '[.[] | select(.id == $id)] | .[0] // empty')
 
   if [[ -z "$match" || "$match" == "null" ]]; then
-    echo "Error: Decision $id not found" >&2
+    emit_error decision-not-found "id=$id" "The decision was not found."
     exit 1
   fi
 
@@ -477,11 +549,11 @@ case "$action" in
     cmd_get "$@"
     ;;
   issue|issues)
-    echo "Error: Unknown action '$action' — issue lookup is: decisions search --issue <ISSUE_ID>" >&2
+    emit_error action-unknown "action=$action hint=search--issue" "Use decisions search --issue <ISSUE_ID> for issue lookup."
     exit 1
     ;;
   *)
-    echo "Error: Unknown action '$action'" >&2
+    emit_error action-unknown "action=$action" "The action is not supported."
     show_help
     exit 1
     ;;
