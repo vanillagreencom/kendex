@@ -1,33 +1,17 @@
-import { describe, expect, test } from "bun:test";
-
+import { expect, test } from "bun:test";
 import { lineCount } from "../format.js";
 
-describe("lineCount", () => {
-	test("empty string is zero", () => {
-		expect(lineCount("")).toBe(0);
-	});
+const rows = [
+	{ name: "empty string", text: "", expected: 0 },
+	{ name: "single line", text: "hello", expected: 1 },
+	{ name: "two lines", text: "a\nb", expected: 2 },
+	{ name: "trailing LF", text: "a\nb\n", expected: 2 },
+	{ name: "trailing CRLF", text: "a\r\nb\r\n", expected: 2 },
+	{ name: "lone newline", text: "\n", expected: 0 },
+	{ name: "blank interior line", text: "a\n\nb\n", expected: 3 },
+];
 
-	test("single line without trailing newline", () => {
-		expect(lineCount("hello")).toBe(1);
-	});
-
-	test("two lines without trailing newline", () => {
-		expect(lineCount("a\nb")).toBe(2);
-	});
-
-	test("ignores a single trailing LF", () => {
-		expect(lineCount("a\nb\n")).toBe(2);
-	});
-
-	test("ignores a single trailing CRLF", () => {
-		expect(lineCount("a\r\nb\r\n")).toBe(2);
-	});
-
-	test("lone newline is zero lines of output", () => {
-		expect(lineCount("\n")).toBe(0);
-	});
-
-	test("keeps blank interior lines", () => {
-		expect(lineCount("a\n\nb\n")).toBe(3);
-	});
+test("line count", () => {
+	expect.hasAssertions();
+	for (const row of rows) expect(lineCount(row.text), row.name).toBe(row.expected);
 });
