@@ -25,6 +25,13 @@
 #          pr-view's own preflight), and a pr view call as its argv; `-` for none
 set -euo pipefail
 
+# A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
+# GIT_WORK_TREE and GIT_INDEX_FILE, which take precedence over `git -C` and
+# would configure the real repository; a caller's bounds would alter every
+# row that sets none. A row sets its own through env:N=V.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+unset KENDEX_GITHUB_AUTH_TIMEOUT KENDEX_GITHUB_OP_TIMEOUT KENDEX_GITHUB_PR_VIEW_TIMEOUT
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 GITHUB_SH="$REPO_ROOT/skills/github/scripts/github.sh"
