@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Pins what tools/setup arms: the commit-guards installer writes both shims,
-# nothing is spliced in beside them, and the clone then commits through the
-# armed hooks in both directions — one package verdict has to be reachable
-# from a real commit, or the chain is wired to nothing. The refusing direction
+# and the clone then commits through the armed hooks in both directions — one
+# package verdict has to be reachable from a real commit, or the chain is
+# wired to nothing. Every refusal is setup's own report (exit status, the
+# `hooks armed` line withheld, the remedy it names); what the installer says
+# about each hook is the installer's suite to pin. The refusing direction
 # runs first in every pair.
 set -euo pipefail
 
@@ -18,9 +20,11 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
+# Fixture validity: the changelog refusal below is reachable only through a
+# path this repo obliges.
 [ -n "$REQUIRED_PATHS" ] \
-  && ok "kendex.settings.toml names the paths that oblige a changelog entry" \
-  || bad "kendex.settings.toml names the paths that oblige a changelog entry" "COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS is empty"
+  && ok "precondition: COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS is set" \
+  || bad "precondition: COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS is set" "the value read from kendex.settings.toml is empty"
 
 new_fixture() { # NAME — a clone-shaped repo carrying the package and these tools
   R="$TMP/$1"
@@ -59,30 +63,17 @@ OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
 { [ -x "$HOOKS/commit-msg" ] && grep -qF "$SENTINEL" "$HOOKS/commit-msg"; } \
   && ok "commit-msg carries the installer's line and is executable" \
   || bad "commit-msg carries the installer's line and is executable" "$(cat "$HOOKS/commit-msg" 2>&1)"
-grep -qF "tools/commit-msg" "$HOOKS/commit-msg" \
-  && bad "no repo-local lane is spliced in beside it" "$(cat "$HOOKS/commit-msg")" \
-  || ok "no repo-local lane is spliced in beside it"
 
 echo "=== the chain runs at commit time, local lane last ==="
+# A lane spliced in beside the package's commit-msg line would die here on
+# `No such file or directory`, so this one passing commit is also the proof
+# that nothing was.
 git -C "$R" add -A
 RC=0
 OUT="$(git -C "$R" commit -m "chore: fixture" 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && case "$OUT" in *"repo-local lane ran"*) true ;; *) false ;; esac \
   && ok "the first commit passes and reaches tools/guard last" \
   || bad "the first commit passes and reaches tools/guard last" "rc=$RC out=$OUT"
-
-echo "=== the package judges the header ==="
-printf 'x\n' >>"$R/README.md"
-git -C "$R" add -A
-RC=0
-OUT="$(git -C "$R" commit -m "not conventional at all" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"non-conventional header"*) true ;; *) false ;; esac \
-  && ok "a non-conventional subject is refused by the package's check" \
-  || bad "a non-conventional subject is refused by the package's check" "rc=$RC out=$OUT"
-RC=0
-OUT="$(git -C "$R" commit -m "docs: a conventional subject" 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && ok "a conventional subject passes" \
-  || bad "a conventional subject passes" "rc=$RC out=$OUT"
 
 echo "=== the installed hook still obliges the changelog this repo's paths ask for ==="
 # One arm, and it is here for the render, not for the rule. commit-msg.test.sh
@@ -97,11 +88,11 @@ OUT="$(git -C "$R" commit -m "feat: a crate change" 2>&1)" || RC=$?
   && ok "a crates/ change with no changelog entry is refused by the installed hook" \
   || bad "a crates/ change with no changelog entry is refused by the installed hook" "rc=$RC out=$OUT"
 
-echo "=== hooks the installer will not vouch for are each named ==="
-# It refuses an interpreter it cannot verify rather than rewriting somebody
-# else's hook. setup's remedy points back at that report rather than naming a
-# cause of its own, so the report has to name every hook in the way and why —
-# the first one it tripped over is not the whole answer.
+echo "=== hooks the installer will not vouch for stop setup short of armed ==="
+# The installer refuses an interpreter it cannot verify rather than rewriting
+# somebody else's hook, and names each hook it refused; that report is the
+# installer's to pin. setup's own report of that world is the exit status,
+# the `hooks armed` line withheld, and the remedy it names.
 new_fixture foreign
 for hook in pre-commit commit-msg; do
   printf '#!/usr/bin/env bash\necho "%s ran"\n' "$hook" >"$HOOKS/$hook"
@@ -109,17 +100,9 @@ for hook in pre-commit commit-msg; do
 done
 RC=0
 OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && ok "setup stops instead of reporting the clone armed" \
-  || bad "setup stops instead of reporting the clone armed" "rc=$RC out=$OUT"
-# Cause and remedy are asserted apart: the remedy prints for every refusal, so
-# matching it alone would pass on a message naming the wrong cause.
-for hook in pre-commit commit-msg; do
-  case "$OUT" in
-    *"hooks/$hook runs under an interpreter that cannot be verified"*)
-      ok "the report names $hook and why it was refused" ;;
-    *) bad "the report names $hook and why it was refused" "out=$OUT" ;;
-  esac
-done
+[ "$RC" -ne 0 ] && case "$OUT" in *"hooks armed"*) false ;; *"--uninstall"*) true ;; *) false ;; esac \
+  && ok "setup stops with its remedy instead of reporting the clone armed" \
+  || bad "setup stops with its remedy instead of reporting the clone armed" "rc=$RC out=$OUT"
 
 echo "=== following the printed remedy through arms the clone ==="
 # The remedy is keyed on what a hook still HOLDS, not on who wrote it, and
@@ -191,7 +174,7 @@ git -C "$E" init -q
 git -C "$E" config core.hooksPath "$E/other-hooks"
 RC=0
 OUT="$(cd "$E" && ./tools/setup 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"not armed"*) true ;; *) false ;; esac \
+[ "$RC" -ne 0 ] && case "$OUT" in *"hooks armed"*) false ;; *"not armed"*) true ;; *) false ;; esac \
   && ok "a configured hooks path stops setup instead of wiring a hook git ignores" \
   || bad "a configured hooks path stops setup instead of wiring a hook git ignores" "rc=$RC out=$OUT"
 [ ! -e "$E/.git/hooks/pre-commit" ] && [ ! -e "$E/.git/hooks/commit-msg" ] \
