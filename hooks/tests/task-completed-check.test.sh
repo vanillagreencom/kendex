@@ -177,7 +177,7 @@ assert_contains "$err" "rev-parse failed" "names the probe that could not answer
 echo "task-completed-check: a changed set larger than the pipe buffer"
 REPO="$(new_repo bigset)"
 printf 'pub fn added() {}\n' >"$REPO/src/added.rs"
-# Sorts after src/, and long enough that the filter cannot have read it all
+# precondition: Sorts after src/, and long enough that the filter cannot have read it all
 # before an early-exiting reader would have quit on the .rs file.
 mkdir -p "$REPO/zpad"
 i=0

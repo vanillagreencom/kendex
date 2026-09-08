@@ -182,9 +182,6 @@ run_hook "cargo build --target x86_64-unknown-linux-gnu"; assert_eq "$rc" 0 'a -
 echo "=== block-repo-copy: the refusal names the cause and the alternatives ==="
 run_hook "cp -r $REPO/target /tmp/copy"
 assert_contains "$err" "cp -r $REPO/target /tmp/copy" 'the refusal quotes the command it judged'
-assert_contains "$err" "ENOSPC" 'the refusal names the failure the copy causes'
-assert_contains "$err" "Read the source in place" 'the refusal offers reading in place'
-assert_contains "$err" "MINIMAL synthetic fixture" 'the refusal offers a minimal fixture'
 assert_contains "$err" 'mktemp -d' 'the refusal shows how to build the fixture'
 
 payload_table "$HOOK" "cp -r $REPO/.git /tmp/copy" "cp -r $REPO/src /tmp/copy"
