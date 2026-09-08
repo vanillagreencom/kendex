@@ -1,11 +1,21 @@
 import { expect, test } from "bun:test";
 import { normalizeThinkingLevel, thinkingThemeToken } from "../extensions/qol/statusline.ts";
 
-test("statusline preserves max thinking level", () => {
-	expect(normalizeThinkingLevel("max")).toBe("max");
-	expect(thinkingThemeToken("max")).toBe("thinkingMax");
-});
+const thinkingRows = [
+	{ name: "max thinking level", input: "max", expected: "max" },
+	{ name: "unknown thinking level", input: "future", expected: "off" },
+];
 
-test("statusline normalizes unknown thinking levels to off", () => {
-	expect(normalizeThinkingLevel("future")).toBe("off");
+if (thinkingRows.length === 0) throw new Error("Thinking normalization table is empty");
+
+for (const row of thinkingRows) {
+	test(row.name, () => {
+		expect.hasAssertions();
+		expect(normalizeThinkingLevel(row.input)).toBe(row.expected);
+	});
+}
+
+test("max thinking theme token", () => {
+	expect.hasAssertions();
+	expect(thinkingThemeToken("max")).toBe("thinkingMax");
 });
