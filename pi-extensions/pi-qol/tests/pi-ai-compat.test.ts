@@ -120,6 +120,6 @@ if (retryRows.length === 0) throw new Error("Retry dispatch table is empty");
 for (const row of retryRows) {
 	test(row.name, async () => {
 		expect.hasAssertions();
-		expect(await row.run()).toEqual(row.expected);
+		expect(await row.run()).toStrictEqual(row.expected);
 	});
 }
