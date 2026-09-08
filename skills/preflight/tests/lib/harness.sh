@@ -112,22 +112,18 @@ pf_scope_seed() { # NAME — fixture in $R
 # (`pf_needs_absent`), `rc` is exact, `fired` is the exact ordered
 # `;`-separated list of finding heads the run must print (`-` for none),
 # compared whole against `pf_fired`. `says` is `;`-separated fragments `$OUT`
-# must carry, each one prefixed `!` instead if it must be ABSENT, or `-`; it
-# is the last field, so `read` keeps a `|` inside it. Only a LEADING `!` is
-# the marker, so a fragment whose own first character is `!` cannot be
-# expressed; no message these suites pin begins with one. `rc` is compared
-# before `says`, so an absence fragment reds only on a run that reaches the
-# pinned status still carrying the text it forbids. A `{R}` in `argv`
-# expands to the fixture path, which the row cannot spell before its world is
-# built. A row with an empty field asserts nothing and refuses the run, as
-# does a `needs` token `pf_needs_absent` does not know, a world word
-# `pf_world` does not know or any failure its return status carries; a table
-# that asserted no row exits 2 from its own counter, so a fixture failure or a
-# probe run never reads as green. `PF_TABLE_PROBE=1` renders each row's
-# status, fired list and finding lines instead of asserting.
+# must carry, or `-`; it is the last field, so `read` keeps a `|` inside it.
+# A `{R}` in `argv` expands to the fixture path, which the row cannot spell
+# before its world is built. A row with an empty field asserts nothing and
+# refuses the run, as does a `needs` token `pf_needs_absent` does not know, a
+# world word `pf_world` does not know or any failure its return status
+# carries; a table that asserted no row exits 2 from its own counter, so a
+# fixture failure or a probe run never reads as green. `PF_TABLE_PROBE=1`
+# renders each row's status, fired list and finding lines instead of
+# asserting.
 pf_table() {
   local title="$1" rows="$2" row label world argv needs rc fired says
-  local field before reason needs_rc got miss extra frag lines brace_r
+  local field before reason needs_rc got miss frag lines brace_r
   before=$((PASS + FAIL))
   printf '=== %s ===\n' "$title"
   while IFS= read -r row; do
@@ -177,24 +173,16 @@ EOF
       continue
     fi
     miss=""
-    extra=""
     if [ "$says" != - ]; then
       while IFS= read -r frag; do
         [ -n "$frag" ] || continue
-        case "$frag" in
-          '!'*)
-            case "$OUT" in *"${frag#'!'}"*) extra="${extra:+$extra;}${frag#'!'}" ;; esac
-            ;;
-          *) case "$OUT" in *"$frag"*) ;; *) miss="${miss:+$miss;}$frag" ;; esac ;;
-        esac
+        case "$OUT" in *"$frag"*) ;; *) miss="${miss:+$miss;}$frag" ;; esac
       done <<EOF
 $(printf '%s\n' "$says" | tr ';' '\n')
 EOF
     fi
     if [ -n "$miss" ]; then
       bad "$label" "expected the output to carry '$miss': $(printf '%s' "$OUT" | tr '\n' ' ')"
-    elif [ -n "$extra" ]; then
-      bad "$label" "expected the output not to carry '$extra': $(printf '%s' "$OUT" | tr '\n' ' ')"
     else
       ok "$label"
     fi

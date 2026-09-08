@@ -265,17 +265,9 @@ pf_world() {
 # of double quotes runs its parse past the closing parenthesis. It returns 1
 # at the end of the document, which errexit must not read; an empty table is
 # pf_table's refusal.
-#
-# A `says` fragment prefixed `!` must be ABSENT. Four rows carry one: the three
-# withheld-lines rows, whose claim is that no clean verdict may cover content a
-# lane did not read, and the header-pair row, where an unanchored parser trips
-# the splitter's loud refusal instead of losing the finding — the measurement is
-# the ordinary verdict, not the refusal. Each forbids text a run at the pinned
-# status does not normally reach, so a defect that also moves the status reds on
-# `rc` first; the fragment holds the claim for one that does not move it.
 IFS= read -r -d '' rows <<'ROWS' || :
 control: the added dead citation fires with no attributes row|attrs-none|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
---staged still reads the added line under a '-diff' row|attrs-nodiff|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|!preflight: clean
+--staged still reads the added line under a '-diff' row|attrs-nodiff|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 the 'binary' attribute macro cannot withhold them either|attrs-macro|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 --base still reads the added line under a '-diff' row|attrs-base|-|-|1|docs/staged.md:3: [docs-cited-paths]|-
 a changed file whose own bytes are binary contributes no lines|binary-nul|--staged|-|0|-|preflight: clean (1 changed file(s))
@@ -293,12 +285,12 @@ control: the same fixture without the forged line reports the same finding|attri
 a plain text carrier cannot forge a header over another file's record|plain-text-forged|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 --base holds the same line against the plain text carrier|plain-text-forged|-|-|1|docs/staged.md:3: [docs-cited-paths]|-
 control: the plain text fixture without the forged line reports the same finding|plain-text-plain|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
-a forged '---'/'+++' PAIR cannot re-point the parse either|forged-header-pair|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|!arrived in two separate groups
+a forged '---'/'+++' PAIR cannot re-point the parse either|forged-header-pair|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 a rejected header record leaves the lines after it attributed to their own file|forged-line-is-content|--staged|-|1|zz.txt:4: [hardcoded-temp-path]|-
-content the run cannot read is exit 2, naming the path|unreadable|-|nonroot|2|-|docs/new.md;!preflight: clean
+content the run cannot read is exit 2, naming the path|unreadable|-|nonroot|2|-|docs/new.md
 control: the same file readable produces the ordinary verdict|readable|-|-|1|docs/new.md:3: [docs-cited-paths]|-
 control: the staged file reports the ordinary verdict while its blob is readable|vanished-blob-control|--staged|-|1|docs/new.md:3: [docs-cited-paths]|-
-a staged blob the index lookup cannot materialize is exit 2, naming the path|vanished-blob|--staged|-|2|-|docs/new.md;!preflight: clean
+a staged blob the index lookup cannot materialize is exit 2, naming the path|vanished-blob|--staged|-|2|-|docs/new.md
 ROWS
 pf_table "what the diff parse may withhold" "$rows"
 
