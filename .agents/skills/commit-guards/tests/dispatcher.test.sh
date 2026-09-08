@@ -175,8 +175,8 @@ single_rows \
   "control: the named check's exit status is the run's|planted single-3||todo-ban||rc=1 todo-ban: match=work marker:planted.rs:1:// $TD: planted for the dispatcher" \
   "commit-msg is invocable by name over stdin: only the batch refuses it|clean single-4||commit-msg|feat: dispatched\n|rc=0 commit-msg: header-valid=feat: dispatched" \
   "an unknown check name is exit 2 naming the known set|clean single-5||no-such-check||rc=2 ${ERR}check-unknown=no-such-check" \
-  "--help prints usage at exit 0|clean help||--help||rc=0" \
-  "-h is --help|clean help-h||-h||rc=0"
+  "--help prints usage at exit 0|clean help||--help||rc=0 commit-guards: usage=commit-guards" \
+  "-h is --help|clean help-h||-h||rc=0 commit-guards: usage=commit-guards"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

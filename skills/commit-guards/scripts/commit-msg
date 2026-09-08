@@ -42,6 +42,7 @@ source "$SCRIPT_DIR/lib/changelog-grammar.sh"
 source "$SCRIPT_DIR/lib/commit-changes.sh"
 
 usage() {
+  gg_message usage "$GG_CHECK" "Command usage follows."
   cat <<'EOF'
 usage: commit-msg [FILE]
 

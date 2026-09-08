@@ -28,6 +28,7 @@ source "$SCRIPT_DIR/lib/settings.sh"
 source "$SCRIPT_DIR/lib/atomic-install.sh"
 
 usage() {
+  gg_message usage "$GG_CHECK" "Command usage follows."
   cat <<'EOF'
 usage: suppression-ban [--update] [--baseline FILE] [--excludes FILE]
 

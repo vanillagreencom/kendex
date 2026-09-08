@@ -37,6 +37,7 @@ STAGED_SCOPED_CHECKS="todo-ban byte-ceiling md-format md-refs comments"
 FULL_SCOPED_CHECKS="byte-ceiling"
 
 usage() {
+  gg_message usage "$GG_CHECK" "Command usage follows."
   cat <<EOF
 usage: commit-guards [all] [--staged | --base REF] | CHECK [ARGS...]
 

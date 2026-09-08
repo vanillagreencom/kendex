@@ -206,7 +206,7 @@ run_rows \
   "an unknown flag is exit 2, quoting it|cfg unknown-flag|$C=1|--no-such-flag|rc=2 ${ERR}argument-unknown=--no-such-flag" \
   "kendex.settings.toml supplies the ceiling: 4 KB fails at 3 where the built-in 200 would pass|fx_settings settings-file|||rc=1 $(over big.bin 4096 4 3);$(failed 1 3 3)" \
   "the environment overrides the settings file: 5 passes where 3 failed|fx_settings settings-env|$C=5||rc=0 $(ok 3 "$STAGED" 5)"
-assert_eq "--help exits 0" "rc=0" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
+assert_eq "--help emits its usage record and exits 0" "rc=0 byte-ceiling: usage=byte-ceiling" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
 assert_eq "-h is --help" "$(run '' --help)" "$(run '' -h)"
 
 echo "=== fail-closed: a broken blob measurement is a collection error, never a pass ==="

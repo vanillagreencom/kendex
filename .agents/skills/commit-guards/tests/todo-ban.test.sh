@@ -395,7 +395,7 @@ run_rows \
 
 echo "=== the usage is answered ==="
 repo help
-assert_eq "--help exits 0" "rc=0" "$(run "" "" --help | cut -d';' -f1)"
+assert_eq "--help emits its usage record and exits 0" "rc=0 todo-ban: usage=todo-ban" "$(run "" "" --help | cut -d';' -f1)"
 assert_eq "-h is the same flag" "$(run "" "" --help)" "$(run "" "" -h)"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

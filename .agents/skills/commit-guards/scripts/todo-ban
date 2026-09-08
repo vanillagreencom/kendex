@@ -20,6 +20,7 @@ source "$SCRIPT_DIR/lib/settings.sh"
 source "$SCRIPT_DIR/lib/staged-lines.sh"
 
 usage() {
+  gg_message usage "$GG_CHECK" "Command usage follows."
   cat <<'EOF'
 usage: todo-ban [--staged] [--excludes FILE]
 

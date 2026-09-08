@@ -126,7 +126,7 @@ run_rows \
   "two positional arguments are exit 2||@MSG@ extra|fix: two files|rc=2 commit-msg: message-extra=extra" \
   "an unknown flag is exit 2||--bogus|fix: flagged|rc=2 commit-msg: argument-unknown=--bogus"
 usage="$(judge "" --help 'fix: x')"
-assert_eq "--help prints the usage and exits 0" "rc=0" "${usage%%;*}"
+assert_eq "--help emits its usage record and exits 0" "rc=0 commit-msg: usage=commit-msg" "${usage%%;*}"
 
 # A grep that cannot run the header match: the verdict is a measurement
 # that failed, never a pass and never a violation. The shim fails the one

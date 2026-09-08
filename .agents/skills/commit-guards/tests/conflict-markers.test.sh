@@ -137,7 +137,7 @@ run_rows \
   "control: without either the default path has no list and the conflict fails, the remedy naming the default list|alt alt-none|||rc=1 $HITS" \
   "--excludes without a path is exit 2|alt alt-bare||--excludes|rc=2 ${ERR}argument-missing=--excludes" \
   "an unknown flag is exit 2, quoting it|alt alt-unknown||--no-such-flag|rc=2 ${ERR}argument-unknown=--no-such-flag"
-assert_eq "--help exits 0" "rc=0" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
+assert_eq "--help emits its usage record and exits 0" "rc=0 conflict-markers: usage=conflict-markers" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
 assert_eq "-h is --help" "$(run '' --help)" "$(run '' -h)"
 
 echo "=== the check's own source does not trip it; a carrier the sniff skips is named and qualifies the verdict ==="
