@@ -57,6 +57,7 @@ run_mode() { # MODE
   esac
 }
 
+MODE_ASSERTIONS=0
 while IFS='|' read -r name mode operation expected; do
   case "$operation" in
     listed) : ;;
@@ -71,6 +72,7 @@ while IFS='|' read -r name mode operation expected; do
   esac
   run_mode "$mode"
   expect "$expected" "$name: $mode"
+  MODE_ASSERTIONS=$((MODE_ASSERTIONS + 1))
 done <<'MODE_CASES'
 listed-render-excluded|worktree|listed|0
 unlisted-owned-source-measured|worktree|grow-owned|1
@@ -79,6 +81,10 @@ listed-render-excluded|staged|listed|0
 unlisted-owned-source-measured|staged|grow-owned|1
 owned-source-restored|staged|restore-owned|0
 MODE_CASES
+if [ "$MODE_ASSERTIONS" -eq 0 ]; then
+  printf 'FAIL: MODE_CASES executed no assertions\n' >&2
+  exit 1
+fi
 
 while IFS='|' read -r name mode operation expected; do
   case "$operation" in

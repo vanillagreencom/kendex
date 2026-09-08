@@ -102,6 +102,7 @@ git -C "$R" rm -qf src/large.rs
 
 bytes AGENTS.md 16385
 git -C "$R" add AGENTS.md
+EXCLUSION_ASSERTIONS=0
 while IFS='|' read -r name operation expected; do
   case "$operation" in
     reasoned) printf 'AGENTS.md\tdeliberate fixture exception\n' >"$R/tools/doc-limits-excludes" ;;
@@ -111,11 +112,16 @@ while IFS='|' read -r name operation expected; do
   git -C "$R" add tools/doc-limits-excludes
   run --staged
   expect "$expected" "$name"
+  EXCLUSION_ASSERTIONS=$((EXCLUSION_ASSERTIONS + 1))
 done <<'EXCLUSION_CASES'
 reasoned-exclusion|reasoned|0
 exclusion-missing-reason|missing-reason|2
 exclusion-removed|removed|1
 EXCLUSION_CASES
+if [ "$EXCLUSION_ASSERTIONS" -eq 0 ]; then
+  printf 'FAIL: EXCLUSION_CASES executed no assertions\n' >&2
+  exit 1
+fi
 
 printf 'AGENTS.md\tdeliberate fixture exception\n' >"$R/tools/doc-limits-excludes"
 git -C "$R" add tools/doc-limits-excludes

@@ -129,14 +129,20 @@ for value in '*.md=0k' '*.md=400' '*.md=invalid' '*.md' '=1k'; do
 done
 SR="$SOURCE_COMMAND"
 
+CLASS_ORDER_ASSERTIONS=0
 while IFS='|' read -r name value expected; do
   export DOC_LIMITS_CLASSES="$value"
   run
   expect "$expected" "$name"
+  CLASS_ORDER_ASSERTIONS=$((CLASS_ORDER_ASSERTIONS + 1))
 done <<'CLASS_ORDER_CASES'
 specific-class-first|AGENTS.md=3k;*.md=1k|0
 wildcard-class-first|*.md=1k;AGENTS.md=3k|1
 CLASS_ORDER_CASES
+if [ "$CLASS_ORDER_ASSERTIONS" -eq 0 ]; then
+  printf 'FAIL: CLASS_ORDER_CASES executed no assertions\n' >&2
+  exit 1
+fi
 
 private_command class-order
 [ ! -L "$MUTANT" ]
@@ -148,14 +154,20 @@ mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
 bash -n "$MUTANT"
 SR="$MUTANT"
+CLASS_ORDER_CONTROL_ASSERTIONS=0
 while IFS='|' read -r name value expected mutant_exit; do
   export DOC_LIMITS_CLASSES="$value"
   run
   must_fail "$expected" "$mutant_exit" "class-order table control: $name"
+  CLASS_ORDER_CONTROL_ASSERTIONS=$((CLASS_ORDER_CONTROL_ASSERTIONS + 1))
 done <<'CLASS_ORDER_CONTROLS'
 specific-class-first|AGENTS.md=3k;*.md=1k|0|1
 wildcard-class-first|*.md=1k;AGENTS.md=3k|1|0
 CLASS_ORDER_CONTROLS
+if [ "$CLASS_ORDER_CONTROL_ASSERTIONS" -eq 0 ]; then
+  printf 'FAIL: CLASS_ORDER_CONTROLS executed no assertions\n' >&2
+  exit 1
+fi
 SR="$SOURCE_COMMAND"
 
 unset DOC_LIMITS_CLASSES
@@ -213,10 +225,12 @@ GIT
 chmod +x "$TMP/bin/git"
 export PATH="$TMP/bin:$PATH"
 
+COLLECTION_ASSERTIONS=0
 while IFS='|' read -r name fault expected; do
   export GIT_FAULT="$fault"
   run --staged
   expect "$expected" "$name"
+  COLLECTION_ASSERTIONS=$((COLLECTION_ASSERTIONS + 1))
 done <<'COLLECTION_CASES'
 git-policy-lookup-failure|policy-lookup|2
 git-enumeration-failure|enumeration|2
@@ -225,6 +239,10 @@ git-batch-failure|batch-complete-failure|2
 empty-successful-batch-response|batch-empty-success|2
 collection-restored|none|1
 COLLECTION_CASES
+if [ "$COLLECTION_ASSERTIONS" -eq 0 ]; then
+  printf 'FAIL: COLLECTION_CASES executed no assertions\n' >&2
+  exit 1
+fi
 
 private_command enumeration-guard
 [ ! -L "$MUTANT" ]
