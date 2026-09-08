@@ -24,6 +24,11 @@
 #   issues   every issue type in order, joined by `,`; `-` for none
 set -euo pipefail
 
+# A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
+# GIT_WORK_TREE and GIT_INDEX_FILE, which take precedence over `git -C`;
+# sourcing verify-lib.sh runs git rev-parse.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB="$TEST_DIR/../scripts/lib/verify-lib.sh"
 TMP_ROOT="$(mktemp -d)"
@@ -141,7 +146,10 @@ run_table() {
     fi
     assert_eq "$got" "build=$build test=$test issues=$issues" "$label"
   done <<<"$rows"
-  [[ "$((PASS + FAIL - before))" -eq "$(printf '%s\n' "$rows" | grep -c '|')" ]] || { echo "not every row was asserted (a probe run renders rows instead)" >&2; exit 2; }
+  # At least one row asserted, and every listed row: an empty table and a
+  # probe run are both refused.
+  [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
+  [[ "$((PASS + FAIL - before))" -eq "$(printf '%s\n' "$rows" | grep -c '|')" ]] || { echo "not every listed row was asserted" >&2; exit 2; }
 }
 
 LINE1='error[E0001]: mismatched types at src/lib.rs:1 — expected u32, found i64'
