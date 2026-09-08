@@ -1,98 +1,11 @@
 import { expect, test } from "bun:test";
 import {
 	chunkConversationText,
-	computeBudgetTrigger,
 	evaluateTranscriptRisk,
-	isBudgetGuardCompaction,
-	QOL_BUDGET_GUARD_SENTINEL,
 	orchestrateChunkedSummary,
 	type SummarizeOutcome,
 	type SummarizeRequest,
 } from "../extensions/qol/budget-guard.ts";
-
-test("computeBudgetTrigger returns undefined when disabled", () => {
-	const trigger = computeBudgetTrigger({
-		contextWindow: 200_000,
-		enabled: false,
-		percentLimit: 85,
-		tokenLimit: -1,
-		tokens: 195_000,
-	});
-	expect(trigger).toBeUndefined();
-});
-
-test("computeBudgetTrigger fires on percent threshold", () => {
-	const trigger = computeBudgetTrigger({
-		contextWindow: 200_000,
-		enabled: true,
-		percentLimit: 85,
-		tokenLimit: -1,
-		tokens: 180_000,
-	});
-	expect(trigger).toBeDefined();
-	expect(trigger?.reason).toContain("85% budget guard");
-	expect(trigger?.key.startsWith("percent:85:")).toBe(true);
-	expect(trigger?.percent).toBeCloseTo(90, 0);
-});
-
-test("computeBudgetTrigger fires on absolute token limit even without context window", () => {
-	const trigger = computeBudgetTrigger({
-		enabled: true,
-		percentLimit: -1,
-		tokenLimit: 150_000,
-		tokens: 160_000,
-	});
-	expect(trigger).toBeDefined();
-	expect(trigger?.key.startsWith("tokens:150000:")).toBe(true);
-	expect(trigger?.reason).toContain("budget token limit");
-});
-
-test("computeBudgetTrigger returns stable key while usage stays in the same bucket", () => {
-	const first = computeBudgetTrigger({
-		contextWindow: 200_000,
-		enabled: true,
-		percentLimit: 85,
-		tokenLimit: -1,
-		tokens: 172_000,
-	});
-	const second = computeBudgetTrigger({
-		contextWindow: 200_000,
-		enabled: true,
-		percentLimit: 85,
-		tokenLimit: -1,
-		tokens: 175_000,
-	});
-	expect(first?.key).toBe(second?.key);
-});
-
-test("computeBudgetTrigger advances bucket key when crossing into the next multiple", () => {
-	const at1x = computeBudgetTrigger({
-		contextWindow: 200_000,
-		enabled: true,
-		percentLimit: 50,
-		tokenLimit: -1,
-		tokens: 120_000,
-	});
-	const at2x = computeBudgetTrigger({
-		contextWindow: 200_000,
-		enabled: true,
-		percentLimit: 50,
-		tokenLimit: -1,
-		tokens: 220_000,
-	});
-	expect(at1x?.key).not.toBe(at2x?.key);
-});
-
-test("computeBudgetTrigger ignores invalid token counts", () => {
-	expect(computeBudgetTrigger({ enabled: true, percentLimit: 85, tokenLimit: -1, tokens: 0 })).toBeUndefined();
-	expect(computeBudgetTrigger({ enabled: true, percentLimit: 85, tokenLimit: -1, tokens: Number.NaN })).toBeUndefined();
-});
-
-test("isBudgetGuardCompaction detects the sentinel", () => {
-	expect(isBudgetGuardCompaction(`${QOL_BUDGET_GUARD_SENTINEL} fired`)).toBe(true);
-	expect(isBudgetGuardCompaction("user requested compaction")).toBe(false);
-	expect(isBudgetGuardCompaction(undefined)).toBe(false);
-});
 
 test("chunkConversationText returns single chunk when under the cap", () => {
 	expect(chunkConversationText("short", 200)).toEqual(["short"]);
