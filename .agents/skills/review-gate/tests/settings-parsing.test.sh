@@ -132,6 +132,7 @@ file_table \
   'a quoted foreign header after [env] is a config error, not a leaked key|[env];x = "y";["notes"];REVIEW_GATE_TH = "leak"|REVIEW_GATE_TH|dflt||rc=1 out=- err~unsupported+table+header+shape=true' \
   'an unrelated non-contract assignment fails the read|[env];UNRELATED = bare;REVIEW_GATE_TW = "v"|REVIEW_GATE_TW|dflt||rc=1 out=- err~unsupported+syntax+for+UNRELATED=true' \
   'an unrelated duplicated key fails the read|[env];UNRELATED = "a";UNRELATED = "b";REVIEW_GATE_TW = "v"|REVIEW_GATE_TW|dflt||rc=1 out=- err~UNRELATED+is+assigned+more+than+once=true' \
+  'an unrelated backslash value fails the read|[env];UNRELATED = "a\b";REVIEW_GATE_TW = "v"|REVIEW_GATE_TW|dflt||rc=1 out=- err~unsupported+syntax+for+UNRELATED=true' \
   'an exported value does not mask a malformed settings file|[env];DUP = "a";DUP = "b"|REVIEW_GATE_TV|dflt|REVIEW_GATE_TV=envwin|rc=1 out=- err~assigned+more+than+once=true'
 
 echo "=== the shape at the settings-file handle ==="
@@ -225,6 +226,7 @@ world_table \
   'without the sentinel the settings file at the default path supplies the value|[env];REVIEW_GATE_TS = "fromfile"|-|-|unset|REVIEW_GATE_TS|dflt||rc=0 out=fromfile' \
   'the sentinel skips a populated settings file and the built-in default decides|[env];REVIEW_GATE_TS = "fromfile"|-|-|/dev/null|REVIEW_GATE_TS|dflt||rc=0 out=dflt' \
   'an explicit environment variable still wins over the sentinel|[env];REVIEW_GATE_TS = "fromfile"|-|-|/dev/null|REVIEW_GATE_TS|dflt|REVIEW_GATE_TS=fromenv|rc=0 out=fromenv' \
+  'the sentinel skips a populated .env.local as well, the dotenv layer included|[env];REVIEW_GATE_TS = "fromfile"|-|REVIEW_GATE_TS=dotenv|/dev/null|REVIEW_GATE_TS|dflt||rc=0 out=dflt' \
   'a SET-but-EMPTY handle reads the default sources|[env];REVIEW_GATE_TE = "fromrepo"|-|-|empty|REVIEW_GATE_TE|dflt||rc=0 out=fromrepo' \
   "the root settings file supplies the value|$ROOT|-|-|unset|REVIEW_GATE_TP|dflt||rc=0 out=root" \
   ".kendex/settings.toml beats kendex.settings.toml|$ROOT|[env];REVIEW_GATE_TP = \"nested\"|-|unset|REVIEW_GATE_TP|dflt||rc=0 out=nested" \
