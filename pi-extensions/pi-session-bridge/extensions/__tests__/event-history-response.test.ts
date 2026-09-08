@@ -17,14 +17,15 @@ describe("BridgeHistory.buildResponse", () => {
 	}
 
 	for (const row of [
-		{ name: "event filter", filters: { event: "message_update" }, expected: ["message_update", "message_update", "message_update"] },
-		{ name: "since filter", filters: { since: "2026-05-21T00:00:00.003Z" }, expected: ["tool_execution_end", "message_update", "tool_execution_end"] },
+		{ name: "event filter before limit", filters: { event: "message_update" }, limit: 2, expected: ["message_update", "message_update"], indexes: [2, 4] },
+		{ name: "since filter", filters: { since: "2026-05-21T00:00:00.003Z" }, limit: 10, expected: ["tool_execution_end", "message_update", "tool_execution_end"], indexes: [3, 4, 5] },
 	]) {
-		test(`filters before limit: ${row.name}`, () => {
+		test(`history response: ${row.name}`, () => {
 			const history = new BridgeHistory(spillPath, () => defaultLimits, () => undefined);
 			pushSeries(history, 6);
-			const result = history.buildResponse({ limit: 10, maxBytes: 1024 * 1024, ...row.filters });
+			const result = history.buildResponse({ limit: row.limit, maxBytes: 1024 * 1024, ...row.filters });
 			expect(result.events.map((entry) => entry.event)).toEqual(row.expected);
+			expect(result.events.map((entry) => (entry.data as { idx: number }).idx)).toEqual(row.indexes);
 		});
 	}
 
