@@ -12,6 +12,7 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 # shellcheck source=lib/waiter-assertions.sh
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(cd "$TMP_ROOT" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # Two projects: `gate` has the review-gate engine beside orch, `nogate` has
