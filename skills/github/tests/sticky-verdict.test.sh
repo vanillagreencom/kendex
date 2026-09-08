@@ -75,10 +75,10 @@ run_table() {
 
 run_table "compute_sticky_verdict_from_body" "\
 an empty body is pending|\\n|pending
-a checklist under a job link with no review section is pending|View job\\n- [ ] todo|pending
+a checklist with no review signal is pending|Checklist\\n- [ ] todo|pending
 a review section carrying a check mark and approved is approved|## Review\\n✅ Approved|approved
 a check-mark approval line outside any section is approved|Looks good.\\n✅ Approved|approved
-a review section carrying a warning sign is changes|## Review\\n⚠️ changes requested|changes
+a review section carrying a warning sign is changes|## Review\\n⚠️ Please take another look|changes
 mixed signals under one section are changes|## Review\\n✅ Approved with ⚠️ caveats|changes
 the review summary fixture is approved despite prose mentioning changes|@claude_review_summary_comments|approved
 a blocker sentence under a review summary heading is changes|### Review Summary\\nThis PR cannot merge until the flaky test is fixed.|changes
