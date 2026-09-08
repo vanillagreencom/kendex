@@ -73,7 +73,7 @@ run() {
   local out
   out="$(checks_of "$1" | scope_current_run)"
   printf 'scoped=%s runs=%s' \
-    "$(jq -r '[.[] | .name + ":" + .state + ":" + (((.link // "") | capture("/runs/(?<r>[0-9]+)")? .r) // "-")] | join(",")' <<<"$out")" \
+    "$(jq -r '[.[] | .name + ":" + .state + ":" + (((.link // "") | capture("/runs/(?<r>[0-9]+)")? | .r) // "-")] | join(",")' <<<"$out")" \
     "$(jq -r "$CI_RUN_JQ_DEFS"'head_runs | if length == 0 then "-" else join(",") end' <<<"$out")"
 }
 
