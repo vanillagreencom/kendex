@@ -144,25 +144,42 @@ git -C "$R" rm -qf src/large.rs
 bytes AGENTS.md 16385
 git -C "$R" add AGENTS.md
 EXCLUSION_ASSERTIONS=0
-while IFS='|' read -r name operation expected; do
+while IFS='|' read -r name operation expected first_line; do
   case "$operation" in
     reasoned) printf 'AGENTS.md\tdeliberate fixture exception\n' >"$R/tools/doc-limits-excludes" ;;
     missing-reason) printf 'AGENTS.md\n' >"$R/tools/doc-limits-excludes" ;;
     removed) : >"$R/tools/doc-limits-excludes" ;;
+    empty-carve) printf '!\tmissing pattern\n' >"$R/tools/doc-limits-excludes" ;;
   esac
   git -C "$R" add tools/doc-limits-excludes
   run --staged
   expect "$expected" "$name"
+  expect_first_line "$first_line" "$name diagnostic"
   EXCLUSION_ASSERTIONS=$((EXCLUSION_ASSERTIONS + 1))
 done <<'EXCLUSION_CASES'
-reasoned-exclusion|reasoned|0
-exclusion-missing-reason|missing-reason|2
-exclusion-removed|removed|1
+reasoned-exclusion|reasoned|0|notice=documents-checked count=0
+exclusion-missing-reason|missing-reason|2|error=excludes-row-invalid line=1
+exclusion-removed|removed|1|notice=document-over-limit path=AGENTS.md
+exclusion-empty-carve|empty-carve|2|error=excludes-carve-empty line=1
 EXCLUSION_CASES
 if [ "$EXCLUSION_ASSERTIONS" -eq 0 ]; then
   printf 'FAIL: EXCLUSION_CASES executed no assertions\n' >&2
   exit 1
 fi
+
+printf 'AGENTS.md\n' >"$R/tools/doc-limits-excludes"
+git -C "$R" add tools/doc-limits-excludes
+private_command exclusion-diagnostic
+[ "$(grep -Fxc '      config_error excludes-row-invalid line "$lineno" "$EXCLUDES_LABEL:$lineno: expected '\''pattern<TAB>reason'\'' (every exclusion carries its justification)"' "$MUTANT")" -eq 1 ]
+sed 's/config_error excludes-row-invalid line/config_error excludes-row-renamed line/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --staged
+must_fail_first_line 'error=excludes-row-invalid line=1' 'exclusion diagnostic control: changing the stable key fails the malformed row'
+SR="$SOURCE_COMMAND"
 
 printf 'AGENTS.md\tdeliberate fixture exception\n' >"$R/tools/doc-limits-excludes"
 git -C "$R" add tools/doc-limits-excludes

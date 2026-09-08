@@ -66,6 +66,15 @@ private_command() { # NAME: copy the command and set MUTANT
   ln -s "$TEST_DIR/../../commit-guards" "$root/skills/commit-guards"
   MUTANT="$root/skills/doc-limits/scripts/doc-limits"
 }
+clear_settings_sources() {
+  local path="$R/.kendex/settings.toml"
+  if [ -L "$path" ] || [ -f "$path" ]; then
+    rm "$path"
+  elif [ -d "$path" ]; then
+    rmdir "$path"
+  fi
+  rm -f "$R/kendex.settings.toml" "$R/.env.local"
+}
 
 bytes AGENTS.md 2049
 git -C "$R" add AGENTS.md
@@ -255,7 +264,64 @@ SR="$MUTANT"
 run
 must_fail_first_line 'doc-limits-error=settings-duplicate value=DUP' 'settings diagnostic control: changing the stable key fails the duplicate assertion'
 SR="$SOURCE_COMMAND"
-rm "$R/kendex.settings.toml" "$R/.env.local" "$R/.kendex/settings.toml"
+clear_settings_sources
+
+SETTINGS_ERROR_ASSERTIONS=0
+while IFS='|' read -r name operation first_line; do
+  clear_settings_sources
+  case "$operation" in
+    dangling) ln -s missing "$R/.kendex/settings.toml" ;;
+    directory) mkdir "$R/.kendex/settings.toml" ;;
+    bom) printf '\357\273\277[env]\nDOC_LIMITS_CLASSES = "*.md=1k"\n' >"$R/.kendex/settings.toml" ;;
+    header) printf '[env] # invalid\n' >"$R/.kendex/settings.toml" ;;
+    syntax) printf '[env]\nDOC_LIMITS_CLASSES = 1\n' >"$R/.kendex/settings.toml" ;;
+    dotenv) printf 'DOC_LIMITS_CLASSES="*.md=1k"tail\n' >"$R/.env.local" ;;
+  esac
+  run
+  expect 2 "$name"
+  expect_first_line "$first_line" "$name diagnostic"
+  SETTINGS_ERROR_ASSERTIONS=$((SETTINGS_ERROR_ASSERTIONS + 1))
+done <<'SETTINGS_ERROR_CASES'
+settings-dangling-symlink|dangling|doc-limits-error=settings-symlink value=.kendex/settings.toml
+settings-directory|directory|doc-limits-error=settings-type value=.kendex/settings.toml
+settings-bom|bom|doc-limits-error=settings-bom value=.kendex/settings.toml
+settings-header|header|doc-limits-error=settings-header value=1
+settings-syntax|syntax|doc-limits-error=settings-syntax value=DOC_LIMITS_CLASSES
+settings-dotenv|dotenv|doc-limits-error=settings-dotenv value=DOC_LIMITS_CLASSES
+SETTINGS_ERROR_CASES
+if [ "$SETTINGS_ERROR_ASSERTIONS" -eq 0 ]; then
+  printf 'FAIL: SETTINGS_ERROR_CASES executed no assertions\n' >&2
+  exit 1
+fi
+
+clear_settings_sources
+ln -s missing "$R/.kendex/settings.toml"
+private_command settings-message
+MUTANT_DIAGNOSTICS="$(dirname "$MUTANT")/lib/diagnostics.sh"
+[ "$(grep -Fxc "  printf 'doc-limits-%s=%s value=%q\\n%s\\n' \"\$1\" \"\$2\" \"\$3\" \"\$4\"" "$MUTANT_DIAGNOSTICS")" -eq 1 ]
+sed 's/doc-limits-%s=%s/renamed-%s=%s/' "$MUTANT_DIAGNOSTICS" >"$MUTANT_DIAGNOSTICS.changed"
+if cmp -s "$MUTANT_DIAGNOSTICS" "$MUTANT_DIAGNOSTICS.changed"; then exit 1; fi
+mv "$MUTANT_DIAGNOSTICS.changed" "$MUTANT_DIAGNOSTICS"
+bash -n "$MUTANT_DIAGNOSTICS"
+SR="$MUTANT"
+run
+must_fail_first_line 'doc-limits-error=settings-symlink value=.kendex/settings.toml' 'settings formatter control: changing the stable prefix fails the symlink row'
+
+clear_settings_sources
+printf '[env] # invalid\n' >"$R/.kendex/settings.toml"
+private_command settings-awk-message
+MUTANT_SETTINGS="$(dirname "$MUTANT")/lib/settings.sh"
+[ "$(grep -Fxc '      printf "doc-limits-error=settings-header value=%d\n::error::%s:%d: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)\n", NR, src, NR > "/dev/stderr"' "$MUTANT_SETTINGS")" -eq 1 ]
+sed 's/doc-limits-error=settings-header value=%d/doc-limits-error=settings-header-renamed value=%d/' "$MUTANT_SETTINGS" >"$MUTANT_SETTINGS.changed"
+if cmp -s "$MUTANT_SETTINGS" "$MUTANT_SETTINGS.changed"; then exit 1; fi
+mv "$MUTANT_SETTINGS.changed" "$MUTANT_SETTINGS"
+bash -n "$MUTANT_SETTINGS"
+SR="$MUTANT"
+run
+must_fail_first_line 'doc-limits-error=settings-header value=1' 'settings parser control: changing the stable key fails the header row'
+SR="$SOURCE_COMMAND"
+clear_settings_sources
+
 printf '*.md\tfixture exception\n!AGENTS.md\tkeep root instructions checked\n' >"$R/tools/doc-limits-excludes"
 export DOC_LIMITS_CLASSES='*.md=1k'
 run
@@ -288,6 +354,35 @@ bash -n "$MUTANT"
 SR="$MUTANT"
 run --excludes
 must_fail_first_line 'error=argument-value-missing option=--excludes' 'diagnostic control: changing the stable key fails the missing-value assertion'
+SR="$SOURCE_COMMAND"
+
+EXCLUDES_PATH_ASSERTIONS=0
+while IFS='|' read -r name argument key relevant; do
+  run "$argument"
+  expect 2 "$name"
+  expect_first_line "error=$key path=$(printf '%q' "$relevant")" "$name diagnostic"
+  EXCLUDES_PATH_ASSERTIONS=$((EXCLUDES_PATH_ASSERTIONS + 1))
+done <<'EXCLUDES_PATH_CASES'
+excludes-empty|--excludes=|excludes-path-empty|
+excludes-absolute|--excludes=/outside|excludes-path-absolute|/outside
+excludes-parent|--excludes=../outside|excludes-path-invalid|../outside
+excludes-option|--excludes=-outside|excludes-path-option|-outside
+EXCLUDES_PATH_CASES
+if [ "$EXCLUDES_PATH_ASSERTIONS" -eq 0 ]; then
+  printf 'FAIL: EXCLUDES_PATH_CASES executed no assertions\n' >&2
+  exit 1
+fi
+
+private_command excludes-path-diagnostic
+[ "$(grep -Fxc 'case "$EXCLUDES_FILE" in /*) config_error excludes-path-absolute path "$EXCLUDES_FILE" "excludes path must be repo-root-relative, got absolute: $EXCLUDES_FILE" ;; esac' "$MUTANT")" -eq 1 ]
+sed 's/config_error excludes-path-absolute path/config_error excludes-path-absolute-renamed path/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --excludes=/outside
+must_fail_first_line 'error=excludes-path-absolute path=/outside' 'excludes-path control: changing the stable key fails the absolute row'
 SR="$SOURCE_COMMAND"
 
 run --unknown
