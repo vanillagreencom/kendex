@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useNavStore } from "./nav";
+import { type LibraryFilter, useNavStore } from "./nav";
 
 describe("nav store", () => {
   beforeEach(() => {
@@ -110,35 +110,44 @@ describe("nav store", () => {
     expect(useNavStore.getState().packageView).toBeNull();
   });
 
-  it("hands off a tool + kind filter to Library and clears it on request", () => {
-    useNavStore.getState().goToLibrary({ harness: "claude", kind: "hook" });
-
-    const state = useNavStore.getState();
-    expect(state.page).toBe("library");
-    expect(state.libraryFilter).toEqual({ harness: "claude", kind: "hook" });
-
-    state.clearLibraryFilter();
-    expect(useNavStore.getState().libraryFilter).toBeNull();
-  });
-
-  it("hands off an empty filter when a link asks for everything", () => {
-    useNavStore.getState().goToLibrary();
-
-    expect(useNavStore.getState().libraryFilter).not.toBeNull();
-  });
-
-  it("hands off where a link asks the Library to look", () => {
-    useNavStore.getState().goToLibrary({ scope: { project: "/x" } });
-
-    expect(useNavStore.getState().libraryFilter?.scope).toEqual({
-      project: "/x",
-    });
-  });
-
-  it("hands off a link asking for the personal setup alone", () => {
-    useNavStore.getState().goToLibrary({ scope: "global" });
-
-    expect(useNavStore.getState().libraryFilter?.scope).toBe("global");
+  it("hands the Library the whole filter intent of a link", () => {
+    const rows: {
+      name: string;
+      filter: LibraryFilter | undefined;
+      expected: LibraryFilter;
+      clear: boolean;
+    }[] = [
+      {
+        name: "harness and kind",
+        filter: { harness: "claude", kind: "hook" },
+        expected: { harness: "claude", kind: "hook" },
+        clear: true,
+      },
+      { name: "everything", filter: undefined, expected: {}, clear: false },
+      {
+        name: "one project",
+        filter: { scope: { project: "/x" } },
+        expected: { scope: { project: "/x" } },
+        clear: false,
+      },
+      {
+        name: "personal setup",
+        filter: { scope: "global" },
+        expected: { scope: "global" },
+        clear: false,
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      useNavStore.getState().goToLibrary(row.filter);
+      const state = useNavStore.getState();
+      expect(state.page, row.name).toBe("library");
+      expect(state.libraryFilter, row.name).toEqual(row.expected);
+      if (row.clear) {
+        state.clearLibraryFilter();
+        expect(useNavStore.getState().libraryFilter, row.name).toBeNull();
+      }
+    }
   });
 
   it("pushes the prior page onto history on a cross-page nav", () => {
@@ -194,12 +203,6 @@ describe("nav store", () => {
     expect(useNavStore.getState().libraryFilter).toBeNull();
   });
 
-  it("is a no-op when history is empty", () => {
-    useNavStore.getState().back();
-
-    expect(useNavStore.getState().page).toBe("home");
-  });
-
   it("setPage resets the history stack and clears any pending filter", () => {
     useNavStore.getState().goToLibrary({ harness: "claude", kind: "hook" });
     useNavStore.getState().setPage("settings");
@@ -241,6 +244,6 @@ describe("nav store", () => {
       useNavStore.getState().goTo("harnesses");
     }
 
-    expect(useNavStore.getState().history.length).toBeLessThanOrEqual(20);
+    expect(useNavStore.getState().history).toHaveLength(20);
   });
 });

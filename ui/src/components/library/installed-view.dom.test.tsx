@@ -150,20 +150,21 @@ describe("the Library narrowed to packages edited on disk", () => {
     ["failed with nothing kept", readFailed("no network"), [], [], true],
   ];
 
-  it.each(reads)(
-    "answers for a %s read",
-    (_name, read, kept, expected, skeleton) => {
+  it("answers for every known and unknown edited-package read", () => {
+    expect(reads).toHaveLength(4);
+    for (const [name, read, kept, expected, skeleton] of reads) {
       useUpdatesStore.setState({ rows: kept as never, read });
       useLibraryViewStore.setState({ ...NO_FILTERS, edited: "edited" });
       const host = mount(<InstalledView />);
-      expect(names(host).filter((name) => name !== undefined)).toEqual(
-        expected,
-      );
+      expect(
+        names(host).filter((name) => name !== undefined),
+        name,
+      ).toEqual(expected);
       expect(host.querySelector('[data-slot="skeleton"]') !== null).toBe(
         skeleton,
       );
-    },
-  );
+    }
+  });
 
   it("shows every package when the facet is off", () => {
     useLibraryViewStore.setState({ ...NO_FILTERS });

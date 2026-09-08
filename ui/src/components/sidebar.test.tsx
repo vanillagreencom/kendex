@@ -1,7 +1,8 @@
+// @vitest-environment jsdom
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UPDATES_ATTENTION_TITLE } from "@/lib/copy";
-import { SIDEBAR_ROW } from "@/lib/layout";
+import { mount } from "@/test/dom";
 import { Sidebar } from "./sidebar";
 import { updateRow } from "./updates-test-rows";
 
@@ -92,6 +93,13 @@ describe("a sidebar column too short for its nav", () => {
   // A squashed row is not a smaller sidebar, it is a broken one: the rows
   // keep their height and the nav scrolls past them instead.
   it("keeps every row at its own height", () => {
-    expect(SIDEBAR_ROW).toContain("shrink-0");
+    const host = mount(<Sidebar />);
+    const rows = [...host.querySelectorAll("nav button")];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.classList.contains("shrink-0"), row.textContent ?? "").toBe(
+        true,
+      );
+    }
   });
 });

@@ -83,18 +83,23 @@ beforeEach(() => {
 // The detail page selects its row from the store's retained rows, so a
 // failed overview re-read leaves it drawing a subscription nobody could
 // confirm — said on the page, with the retry beside it.
-describe("DetailHeader for a subscription a failed read left behind", () => {
-  it("says the row may be stale, with the retry", () => {
-    stub.read = { status: "failed", error: "offline" };
-    const html = render();
-    expect(html).toContain(MARKETPLACES_UNCONFIRMED_TITLE);
-    expect(html).toContain("offline");
-    expect(html).toContain(TRY_AGAIN_LABEL);
-  });
-
-  it("carries no stale note over a current read", () => {
-    const html = render();
-    expect(html).not.toContain(MARKETPLACES_UNCONFIRMED_TITLE);
+describe("DetailHeader subscription read state", () => {
+  it("labels retained subscriptions only when their read failed", () => {
+    const rows = [
+      { name: "failed", read: { status: "failed" as const, error: "offline" } },
+      { name: "current", read: { status: "landed" as const, error: null } },
+    ];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      stub.read = row.read;
+      const html = render();
+      if (row.read.status === "failed") {
+        expect(html, row.name).toContain(MARKETPLACES_UNCONFIRMED_TITLE);
+        expect(html, row.name).toContain("offline");
+        expect(html, row.name).toContain(TRY_AGAIN_LABEL);
+      } else
+        expect(html, row.name).not.toContain(MARKETPLACES_UNCONFIRMED_TITLE);
+    }
   });
 });
 

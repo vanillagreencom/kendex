@@ -109,26 +109,25 @@ describe("harness marks", () => {
     );
   });
 
-  it.each(MARKS)(
-    "%s paints every drawn shape in the caller's colour",
-    (file, svg) => {
+  it("paints every raw mark in the caller's colour", () => {
+    expect(MARKS.length).toBeGreaterThan(0);
+    for (const [file, svg] of MARKS) {
       const doc = parse(file, svg);
       const shapes = painted(doc);
-      // Zero shapes would make the assertion below pass against nothing.
-      expect(shapes.length).toBeGreaterThan(0);
-      expect(ignoringTheToken(shapes, doc)).toEqual([]);
-    },
-  );
+      expect(shapes.length, file).toBeGreaterThan(0);
+      expect(ignoringTheToken(shapes, doc), file).toEqual([]);
+    }
+  });
 
-  it.each(HARNESSES)(
-    "%s keeps its paint through the icon svgr builds",
-    (id) => {
+  it("keeps every mark's paint through the icon svgr builds", () => {
+    expect(HARNESSES.length).toBeGreaterThan(0);
+    for (const id of HARNESSES) {
       const host = mount(<HarnessIcon harness={id} />);
       const mark = host.querySelector("svg") as SVGElement;
       const shapes = painted(mark);
-      expect(shapes.length).toBeGreaterThan(0);
-      expect(ignoringTheToken(shapes, mark.ownerDocument)).toEqual([]);
-      expect(mark.getAttribute("class")).toContain(`text-harness-${id}`);
-    },
-  );
+      expect(shapes.length, id).toBeGreaterThan(0);
+      expect(ignoringTheToken(shapes, mark.ownerDocument), id).toEqual([]);
+      expect(mark.getAttribute("class"), id).toContain(`text-harness-${id}`);
+    }
+  });
 });

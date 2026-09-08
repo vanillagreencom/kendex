@@ -61,49 +61,41 @@ describe("starting to manage a page of items", () => {
     expect(calls.map((call) => call.name)).toEqual(["a", "b"]);
   });
 
-  // A folder read through shortcuts needs its own confirmation, so it is
-  // handed back rather than taken with the rest.
-  it("hands back the first shared folder instead of adopting it", async () => {
-    const { calls, adopt } = record();
-    const browser = group("browser", ["claude"]);
-    const link: SharedLink = {
-      group: browser,
-      harness: "claude",
-      target: "/w/shared",
-      tools: ["claude"],
-    };
-
-    const shared = await adoptAll(
-      [browser, group("deploy", ["claude"])],
-      (g) => (g.name === "browser" ? link : null),
-      adopt,
-    );
-
-    expect(shared).toBe(link);
-    expect(calls.map((call) => call.name)).toEqual(["deploy"]);
-  });
-});
-
-describe("a shared folder read before something fails", () => {
-  // Its confirmation would open against a page that is now wrong, so the
-  // failure takes the deferred folder with it.
-  it("is dropped rather than confirmed after the failure", async () => {
-    const { calls, adopt } = record(() => false);
-    const browser = group("browser", ["claude"]);
-    const link: SharedLink = {
-      group: browser,
-      harness: "claude",
-      target: "/w/shared",
-      tools: ["claude"],
-    };
-
-    const shared = await adoptAll(
-      [browser, group("deploy", ["claude"])],
-      (g) => (g.name === "browser" ? link : null),
-      adopt,
-    );
-
-    expect(shared).toBeNull();
-    expect(calls.map((call) => call.name)).toEqual(["deploy"]);
+  it("returns a deferred folder only when the remaining adoption succeeds", async () => {
+    const rows = [
+      { name: "shared folder deferred after success", succeeds: true },
+      { name: "shared folder dropped after failure", succeeds: false },
+    ];
+    expect(
+      rows.length,
+      "shared adoption outcome table is empty",
+    ).toBeGreaterThan(0);
+    for (const row of rows) {
+      const { calls, adopt } = record(() => row.succeeds);
+      const browser = group("browser", ["claude"]);
+      const link: SharedLink = {
+        group: browser,
+        harness: "claude",
+        target: "/w/shared",
+        tools: ["claude"],
+      };
+      const shared = await adoptAll(
+        [browser, group("deploy", ["claude"])],
+        (g) => (g.name === "browser" ? link : null),
+        adopt,
+      );
+      expect(
+        {
+          sameLink: shared === link,
+          shared,
+          calls: calls.map((call) => call.name),
+        },
+        row.name,
+      ).toEqual({
+        sameLink: row.succeeds,
+        shared: row.succeeds ? link : null,
+        calls: ["deploy"],
+      });
+    }
   });
 });

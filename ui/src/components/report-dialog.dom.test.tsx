@@ -16,48 +16,52 @@ beforeEach(() => {
 });
 
 describe("report routing with an unreadable install record", () => {
-  it("shows the warning kept by fallback routing", async () => {
-    vi.mocked(commands.reportRoute).mockResolvedValue({
-      status: "ok",
-      data: {
-        kendexOwned: true,
-        repo: "vanillagreencom/kendex",
-        label: "skills",
-        issueUrl: "https://github.com/vanillagreencom/kendex/issues/new",
+  it("shows fallback warnings only for the route that carries them", async () => {
+    const rows = [
+      {
+        name: "unreadable record",
+        expectedWarning: true,
         warnings: ["install record unreadable: old record"],
       },
-    });
-    const host = mount(<ReportDialog scope={PROJECT} name="gh" kind="skill" />);
-
-    await userEvent.click(host.querySelector("button") as HTMLButtonElement);
-    await settle();
-
-    expect(document.body.textContent).toContain(
-      "Routing used fallback evidence",
-    );
-    expect(document.body.textContent).toContain(
-      "install record unreadable: old record",
-    );
-  });
-
-  it("shows no fallback warning for a clean route", async () => {
-    vi.mocked(commands.reportRoute).mockResolvedValue({
-      status: "ok",
-      data: {
-        kendexOwned: true,
-        repo: "vanillagreencom/kendex",
-        label: "skills",
-        issueUrl: "https://github.com/vanillagreencom/kendex/issues/new",
-        warnings: [],
-      },
-    });
-    const host = mount(<ReportDialog scope={PROJECT} name="gh" kind="skill" />);
-
-    await userEvent.click(host.querySelector("button") as HTMLButtonElement);
-    await settle();
-
-    expect(document.body.textContent).not.toContain(
-      "Routing used fallback evidence",
-    );
+      { name: "clean route", expectedWarning: false, warnings: [] },
+    ];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      vi.mocked(commands.reportRoute).mockResolvedValue({
+        status: "ok",
+        data: {
+          kendexOwned: true,
+          repo: "vanillagreencom/kendex",
+          label: "skills",
+          issueUrl: "https://github.com/vanillagreencom/kendex/issues/new",
+          warnings: row.warnings,
+        },
+      });
+      const host = mount(
+        <ReportDialog scope={PROJECT} name="gh" kind="skill" />,
+      );
+      await userEvent.click(host.querySelector("button") as HTMLButtonElement);
+      await settle();
+      const open = document.querySelector('[role="dialog"]');
+      expect(open).not.toBeNull();
+      if (row.expectedWarning) {
+        expect(open?.textContent, row.name).toContain(
+          "Routing used fallback evidence",
+        );
+        expect(open?.textContent, row.name).toContain(
+          "install record unreadable: old record",
+        );
+      } else {
+        expect(open?.textContent, row.name).not.toContain(
+          "Routing used fallback evidence",
+        );
+      }
+      const close = [...(open?.querySelectorAll("button") ?? [])].find(
+        (button) => button.textContent === "Close",
+      );
+      if (!close) throw new Error("no close button");
+      await userEvent.click(close);
+      await settle();
+    }
   });
 });

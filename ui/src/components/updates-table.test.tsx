@@ -10,6 +10,7 @@ import {
   OPEN_PACKAGE_LABEL,
   UPDATE_NEEDS_CHECK_NOTE,
 } from "@/lib/copy-updates";
+import { READ_LANDED, type ReadState, readFailed } from "@/lib/read-state";
 import { groupUpdates } from "@/lib/update-groups";
 import { PackageRows, UpdatesTable } from "./updates-table";
 import { updateRow as row } from "./updates-test-rows";
@@ -35,7 +36,7 @@ const triggers = (html: string): string[] =>
 // left behind. Rows on the table imply a read that answered, so that is
 // the default.
 const stub = vi.hoisted(() => ({
-  loaded: true,
+  read: { status: "landed", error: null } as ReadState,
   busy: false,
   checking: false,
   showVersion: false,
@@ -46,7 +47,7 @@ vi.mock("@/stores/updates", async (importOriginal) => {
   const hook = (selector?: (state: unknown) => unknown) => {
     const state = {
       ...mod.useUpdatesStore.getState(),
-      loaded: stub.loaded,
+      read: stub.read,
       busy: stub.busy,
       checking: stub.checking,
     };
@@ -70,7 +71,8 @@ vi.mock("@/stores/updates-view", async (importOriginal) => {
 });
 
 beforeEach(() => {
-  stub.loaded = true;
+  stub.read = READ_LANDED;
+  stub.checking = false;
   stub.busy = false;
   stub.showVersion = false;
 });
@@ -183,11 +185,13 @@ describe("UpdatesTable", () => {
   });
 
   it("offers no install beside where the edited rendering can't be kept", () => {
-    for (const extra of [
+    const rows = [
       { kind: "agent" as const, editedHarnesses: ["opencode" as const] },
       { editedHarnesses: ["claude" as const, "codex" as const] },
       { editedHarnesses: ["claude" as const], derived: true },
-    ]) {
+    ];
+    expect(rows).toHaveLength(3);
+    for (const extra of rows) {
       const html = render([
         row("gh", null, {
           blockedByLocalEdit: true,
@@ -218,7 +222,7 @@ describe("UpdatesTable", () => {
   // The install may move a hold to the row's `latest`, which stale rows
   // name without anyone confirming — it waits for a check like Update.
   it("holds Install as new package on rows a failed check left behind", () => {
-    stub.loaded = false;
+    stub.read = readFailed("updates unavailable");
     const html = render([
       row("gh", null, {
         blockedByLocalEdit: true,
@@ -295,7 +299,9 @@ describe("UpdatesTable", () => {
     expect(html).toMatch(/aria-controls="([^"]+)"[\s\S]*<tr[^>]*id="\1"/);
     expect(html).toContain(">Update all<");
     expect(html).toContain(">Held in 1 of 3<");
-    for (const place of ["User level", "acme", "shop"]) {
+    const places = ["User level", "acme", "shop"];
+    expect(places).toHaveLength(3);
+    for (const place of places) {
       expect(html).toContain(`>${place}<`);
       expect(html).toContain(
         `aria-label="Follow the source for gh in ${place}"`,
@@ -368,7 +374,7 @@ describe("UpdatesTable", () => {
   // — updating from them would move a hold to a stale commit, so every
   // Update action waits for a check that succeeds.
   it("holds every Update action on rows a failed check left behind", () => {
-    stub.loaded = false;
+    stub.read = readFailed("updates unavailable");
     const html = renderToStaticMarkup(
       <Table>
         <TableBody>
@@ -427,7 +433,9 @@ describe("UpdatesTable", () => {
   // Ignore item takes the same pair; it renders only once opened, so it is
   // held in `updates-table.dom.test.tsx`.
   it("holds Notify again while a check or a write is out", () => {
-    for (const flag of ["busy", "checking"] as const) {
+    const flags = ["busy", "checking"] as const;
+    expect(flags).toHaveLength(2);
+    for (const flag of flags) {
       stub.busy = false;
       stub.checking = false;
       stub[flag] = true;

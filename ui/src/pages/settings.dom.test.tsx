@@ -3,7 +3,7 @@
 // the page's only one. `app_version` cannot refuse — it answers a `Result`
 // so a transport failure folds into the same reply (`specta_builder` in
 // `crates/app/src/lib.rs`), which is the only failure this row ever draws.
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
 import { mount, settle } from "@/test/dom";
 import { SettingsPage } from "./settings";
@@ -31,31 +31,42 @@ vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 beforeEach(() => vi.clearAllMocks());
 
-it("draws the version the command answered with", async () => {
-  vi.mocked(commands.appVersion).mockResolvedValue({
-    status: "ok",
-    data: "5.0.1",
+describe("the version read outcome", () => {
+  const rows = [
+    {
+      name: "draws the version the command answered with",
+      response: { status: "ok", data: "5.0.1" },
+      version: "5.0.1",
+      error: null,
+    },
+    {
+      name: "says the version could not be read when the command answers an error",
+      response: { status: "error", error: "the bridge closed" },
+      version: "unavailable",
+      error: "the bridge closed",
+    },
+  ] as const;
+  expect(rows).toHaveLength(2);
+  it.each(rows)("$name", async (row) => {
+    vi.mocked(commands.appVersion).mockResolvedValue(row.response);
+    const host = mount(<SettingsPage />);
+    await settle();
+    const alert = host.querySelector('[role="alert"]');
+    expect(
+      {
+        version: host.textContent?.includes(row.version),
+        alert: alert !== null,
+        reason:
+          row.error === null ? null : alert?.textContent?.includes(row.error),
+        unavailable:
+          row.error === null ? null : alert?.textContent?.includes(row.version),
+      },
+      row.name,
+    ).toEqual({
+      version: true,
+      alert: row.error !== null,
+      reason: row.error === null ? null : true,
+      unavailable: row.error === null ? null : true,
+    });
   });
-
-  const host = mount(<SettingsPage />);
-  await settle();
-
-  expect(host.textContent).toContain("5.0.1");
-  expect(host.querySelector('[role="alert"]')).toBeNull();
-});
-
-// Without this the row sits on its ellipsis for the rest of the session and
-// the person is told nothing at all about why the version never arrived.
-it("says the version could not be read when the command answers an error", async () => {
-  vi.mocked(commands.appVersion).mockResolvedValue({
-    status: "error",
-    error: "the bridge closed",
-  });
-
-  const host = mount(<SettingsPage />);
-  await settle();
-
-  const alert = host.querySelector('[role="alert"]');
-  expect(alert?.textContent).toContain("the bridge closed");
-  expect(alert?.textContent).toContain("unavailable");
 });

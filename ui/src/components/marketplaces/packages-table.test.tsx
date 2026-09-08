@@ -135,50 +135,63 @@ describe("the line under the package name", () => {
 });
 
 describe("the safety dot in the packages list", () => {
-  it("carries the caveat beside the number, since this row installs here", () => {
-    const html = render(scored(100));
-    expect(html).toContain(">Install<");
-    expect(trigger(html)).toContain("100/100.");
-    expect(trigger(html)).toContain(SAFETY_CAVEAT);
-  });
-
-  it("says the same for a score with findings behind it", () => {
-    const html = render(scored(60, [FINDING]));
-    expect(trigger(html)).toContain("60/100.");
-    expect(trigger(html)).toContain(SAFETY_CAVEAT);
-  });
-
-  it("names the worst severity in words, so the colour is never alone", () => {
-    const html = render(
-      scored(40, [FINDING, { ...FINDING, severity: "critical" }]),
-    );
-    expect(trigger(html)).toContain("Serious · 40/100.");
-  });
-
-  it("puts the words where a keyboard reaches them, not on hover alone", () => {
-    // A tab stop before Install, and text in the row rather than a native
-    // `title` — which a screen reader may skip and a keyboard never lands on.
-    const html = render(scored(100));
-    expect(trigger(html)).toContain(
-      `<span class="sr-only">${safetyDotWords(100, 0, [])}</span>`,
-    );
-    expect(html.indexOf(SAFETY_CAVEAT)).toBeLessThan(html.indexOf(">Install<"));
-    expect(html).not.toContain(`title="${safetyDotWords(100, 0, [])}`);
-  });
-
-  it("says no result has landed, and still claims nothing either way", () => {
-    // Scores queue one at a time and a failed read leaves a row without
-    // one, so this state is what an installable row often looks like. The
-    // caveat has to reach the reader here too, and no score may.
-    const html = render(null);
-    expect(html).toContain(">Install<");
-    expect(trigger(html)).toContain("Not checked yet.");
-    expect(trigger(html)).toContain(SAFETY_CAVEAT);
-    expect(trigger(html)).toContain(SAFETY_DOT_UNCHECKED);
-    expect(trigger(html)).not.toMatch(/\d+\/100/);
-    expect(html.indexOf(SAFETY_DOT_UNCHECKED)).toBeLessThan(
-      html.indexOf(">Install<"),
-    );
+  it("carries score, severity and missing-result words beside the install", () => {
+    const rows = [
+      {
+        name: "checked without findings",
+        safety: scored(100),
+        shown: ["100/100.", SAFETY_CAVEAT],
+        install: true,
+        accessible: true,
+        unchecked: false,
+      },
+      {
+        name: "checked with findings",
+        safety: scored(60, [FINDING]),
+        shown: ["60/100.", SAFETY_CAVEAT],
+        install: false,
+        accessible: false,
+        unchecked: false,
+      },
+      {
+        name: "worst severity",
+        safety: scored(40, [FINDING, { ...FINDING, severity: "critical" }]),
+        shown: ["Serious · 40/100."],
+        install: false,
+        accessible: false,
+        unchecked: false,
+      },
+      {
+        name: "no result landed",
+        safety: null,
+        shown: ["Not checked yet.", SAFETY_CAVEAT, SAFETY_DOT_UNCHECKED],
+        install: true,
+        accessible: false,
+        unchecked: true,
+      },
+    ];
+    expect(rows).toHaveLength(4);
+    for (const row of rows) {
+      const html = render(row.safety);
+      for (const words of row.shown)
+        expect(trigger(html), row.name).toContain(words);
+      if (row.install) expect(html, row.name).toContain(">Install<");
+      if (row.accessible) {
+        expect(trigger(html)).toContain(
+          `<span class="sr-only">${safetyDotWords(100, 0, [])}</span>`,
+        );
+        expect(html.indexOf(SAFETY_CAVEAT)).toBeLessThan(
+          html.indexOf(">Install<"),
+        );
+        expect(html).not.toContain(`title="${safetyDotWords(100, 0, [])}`);
+      }
+      if (row.unchecked) {
+        expect(trigger(html)).not.toMatch(/\d+\/100/);
+        expect(html.indexOf(SAFETY_DOT_UNCHECKED)).toBeLessThan(
+          html.indexOf(">Install<"),
+        );
+      }
+    }
   });
 });
 
@@ -202,28 +215,26 @@ const mount = (safety: PackageSafety | null) => {
 };
 
 describe("reading the safety dot", () => {
-  it("does not open the package page on a click", async () => {
-    const { dot, goToAvailablePackage } = mount(scored(60, [FINDING]));
-    await userEvent.click(dot);
-    expect(goToAvailablePackage).not.toHaveBeenCalled();
-  });
-
-  it("does not open the package page on Enter or Space", async () => {
-    // The browser turns both into a click on the button, which is the path
-    // the row would otherwise navigate on.
-    const { dot, goToAvailablePackage } = mount(scored(60, [FINDING]));
-    dot.focus();
-    await userEvent.keyboard("{Enter}");
-    await userEvent.keyboard(" ");
-    expect(goToAvailablePackage).not.toHaveBeenCalled();
-  });
-
-  it("does not open it while the score is still being read", async () => {
-    const { dot, goToAvailablePackage } = mount(null);
-    dot.focus();
-    await userEvent.click(dot);
-    await userEvent.keyboard("{Enter}");
-    expect(goToAvailablePackage).not.toHaveBeenCalled();
+  it("keeps pointer and keyboard activation on the safety control", async () => {
+    const rows = [
+      { name: "checked click", safety: scored(60, [FINDING]), event: "click" },
+      {
+        name: "checked Enter",
+        safety: scored(60, [FINDING]),
+        event: "{Enter}",
+      },
+      { name: "checked Space", safety: scored(60, [FINDING]), event: " " },
+      { name: "unchecked click", safety: null, event: "click" },
+      { name: "unchecked Enter", safety: null, event: "{Enter}" },
+    ];
+    expect(rows).toHaveLength(5);
+    for (const row of rows) {
+      const { dot, goToAvailablePackage } = mount(row.safety);
+      dot.focus();
+      if (row.event === "click") await userEvent.click(dot);
+      else await userEvent.keyboard(row.event);
+      expect(goToAvailablePackage, row.name).not.toHaveBeenCalled();
+    }
   });
 
   it("still shows the words when the trigger takes focus", () => {
@@ -395,6 +406,8 @@ describe("a marketplace's own packages table", () => {
         subscription={{ catalog, repo: null }}
       />,
     );
+    expect(html).toContain(">apply<");
+    expect(html).toContain(">review<");
     expect(html.indexOf(">apply<")).toBeLessThan(html.indexOf(">review<"));
   });
 
@@ -593,25 +606,19 @@ describe("the columns a narrow table keeps", () => {
     },
   ];
 
-  for (const { page, table, wide } of PAGES) {
-    it(`keeps Name, Kind, Safety and Status on ${page}`, () => {
+  it("keeps the essential columns and restores each page's declared columns", () => {
+    expect(PAGES).toHaveLength(2);
+    for (const { page, table, wide } of PAGES) {
       stub.scores = {};
       useProvenanceStore.setState({ loaded: true, rows: [] });
       roomIs(700);
       const host = mountTree(table);
-      expect(heads(host)).toEqual(["Name", "Kind", "Safety", "Status"]);
-      // Reachable, not merely present: the dot's words are what a reader
-      // gets from the row, and the Status cell still offers the install.
-      expect(trigger(host.innerHTML)).toContain(SAFETY_DOT_UNCHECKED);
-      expect(host.textContent ?? "").toContain("Install");
-    });
-
-    it(`gives every column back on ${page} once there is room`, () => {
-      stub.scores = {};
-      useProvenanceStore.setState({ loaded: true, rows: [] });
+      expect(heads(host), page).toEqual(["Name", "Kind", "Safety", "Status"]);
+      expect(trigger(host.innerHTML), page).toContain(SAFETY_DOT_UNCHECKED);
+      expect(host.textContent ?? "", page).toContain("Install");
       roomIs(1400);
-      const host = mountTree(table);
-      expect(heads(host)).toEqual(wide);
-    });
-  }
+      const wideHost = mountTree(table);
+      expect(heads(wideHost), page).toEqual(wide);
+    }
+  });
 });

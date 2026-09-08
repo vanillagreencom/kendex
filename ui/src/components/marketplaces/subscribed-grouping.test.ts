@@ -40,25 +40,38 @@ const elsewhere = (over: Partial<MarketplaceRow> = {}): MarketplaceRow =>
 // and Unsubscribe to another marketplace's subscription, and splitting what
 // should fold is the duplication this page exists to remove.
 describe("what makes two declarations one marketplace", () => {
-  it("folds one repository however each place names it", () => {
-    const groups = groupByMarketplace([
-      elsewhere(),
-      elsewhere({ scope: project("/w/alpha"), name: "acme-kit" }),
-    ]);
-    expect(groups).toHaveLength(1);
-    expect(groups[0].places).toHaveLength(2);
-  });
-
-  it("keeps two repositories apart where only their alias agrees", () => {
-    const groups = groupByMarketplace([
-      elsewhere(),
-      elsewhere({
-        scope: project("/w/alpha"),
-        repo: "https://git.internal/tools/kit",
-        repoIdentity: "https://git.internal/tools/kit",
-      }),
-    ]);
-    expect(groups).toHaveLength(2);
+  it("groups repositories by identity rather than their aliases", () => {
+    const rows = [
+      {
+        name: "one repository under different aliases",
+        declarations: [
+          elsewhere(),
+          elsewhere({ scope: project("/w/alpha"), name: "acme-kit" }),
+        ],
+        groups: 1,
+        places: 2,
+      },
+      {
+        name: "different repositories under the same alias",
+        declarations: [
+          elsewhere(),
+          elsewhere({
+            scope: project("/w/alpha"),
+            repo: "https://git.internal/tools/kit",
+            repoIdentity: "https://git.internal/tools/kit",
+          }),
+        ],
+        groups: 2,
+        places: null,
+      },
+    ];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      const groups = groupByMarketplace(row.declarations);
+      expect(groups, row.name).toHaveLength(row.groups);
+      if (row.places !== null)
+        expect(groups[0].places, row.name).toHaveLength(row.places);
+    }
   });
 });
 
@@ -87,24 +100,41 @@ describe("what makes two folder declarations one marketplace", () => {
       resolvedPath,
     });
 
-  it("keeps one spelling apart where it resolves to two directories", () => {
-    const groups = groupByMarketplace([
-      folder({ scope: "global" }, "/srv/catalog", "C:/srv/catalog"),
-      folder(project("D:/work/beta"), "/srv/catalog", "D:/srv/catalog"),
-    ]);
-    expect(groups.map((group) => group.key)).toEqual([
-      "C:/srv/catalog",
-      "D:/srv/catalog",
-    ]);
-  });
-
-  it("folds two places resolving to one directory", () => {
-    const groups = groupByMarketplace([
-      folder({ scope: "global" }, "/work/beta/catalog", "/work/beta/catalog"),
-      folder(project("/work/beta"), "catalog", "/work/beta/catalog"),
-    ]);
-    expect(groups.map((group) => group.key)).toEqual(["/work/beta/catalog"]);
-    expect(groups[0].places).toHaveLength(2);
+  it("groups folders by the directory core resolved", () => {
+    const rows = [
+      {
+        name: "one spelling resolves to different directories",
+        declarations: [
+          folder({ scope: "global" }, "/srv/catalog", "C:/srv/catalog"),
+          folder(project("D:/work/beta"), "/srv/catalog", "D:/srv/catalog"),
+        ],
+        keys: ["C:/srv/catalog", "D:/srv/catalog"],
+        places: null,
+      },
+      {
+        name: "different spellings resolve to one directory",
+        declarations: [
+          folder(
+            { scope: "global" },
+            "/work/beta/catalog",
+            "/work/beta/catalog",
+          ),
+          folder(project("/work/beta"), "catalog", "/work/beta/catalog"),
+        ],
+        keys: ["/work/beta/catalog"],
+        places: 2,
+      },
+    ];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      const groups = groupByMarketplace(row.declarations);
+      expect(
+        groups.map((group) => group.key),
+        row.name,
+      ).toEqual(row.keys);
+      if (row.places !== null)
+        expect(groups[0].places, row.name).toHaveLength(row.places);
+    }
   });
 });
 

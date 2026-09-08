@@ -105,41 +105,26 @@ describe("the submit dialog when the account could not be read", () => {
     });
   });
 
-  it("names the failure that left the account unknown", async () => {
-    useAccountStore.setState({ readError: UNREACHABLE });
-    mount(
-      <MineSubmitDialog
-        path={row.path}
-        open={true}
-        onOpenChange={() => {}}
-        onSubmitted={() => {}}
-      />,
-    );
+  it("shows the device-flow error ahead of the account-read failure", async () => {
+    showDialog();
     await settle();
-
-    const alert = document.body.querySelector('[role="alert"]');
-    expect(alert?.textContent).toBe(UNREACHABLE);
-  });
-
-  it("keeps the device flow's own failure ahead of it", async () => {
-    // A denied approval is the person's explanation for what just
-    // happened; a read that failed behind it must not take its place.
-    useAccountStore.setState({
-      readError: UNREACHABLE,
-      error: "the approval was denied",
-    });
-    mount(
-      <MineSubmitDialog
-        path={row.path}
-        open={true}
-        onOpenChange={() => {}}
-        onSubmitted={() => {}}
-      />,
-    );
-    await settle();
-
-    const alert = document.body.querySelector('[role="alert"]');
-    expect(alert?.textContent).toBe("the approval was denied");
+    const rows = [
+      { name: "account read failed", error: null, expected: UNREACHABLE },
+      {
+        name: "device flow failed",
+        error: "the approval was denied",
+        expected: "the approval was denied",
+      },
+    ];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      useAccountStore.setState({ readError: UNREACHABLE, error: row.error });
+      await settle();
+      expect(
+        document.body.querySelector('[role="alert"]')?.textContent,
+        row.name,
+      ).toBe(row.expected);
+    }
   });
 });
 
@@ -167,24 +152,15 @@ describe("a submit that meets an expired sign-in", () => {
     await settle();
   };
 
-  it("moves the account to expired and drops the rows with it", async () => {
+  it("expires the account, clears submissions and replaces Submit with sign-in and its reason", async () => {
     await submit();
-    expect(useAccountStore.getState().account).toEqual({
-      kind: "expired",
-    });
+    expect(useAccountStore.getState().account).toEqual({ kind: "expired" });
     expect(useAccountStore.getState().submissions).toBeNull();
-  });
-
-  it("stops offering the submit and offers the sign-in that fixes it", async () => {
-    await submit();
     expect(button("Submit")).toBeUndefined();
     expect(button("Sign in with GitHub")).toBeDefined();
-  });
-
-  it("says what happened, in the sentence the backend sent", async () => {
-    await submit();
-    const alert = document.body.querySelector('[role="alert"]');
-    expect(alert?.textContent).toBe(EXPIRED);
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
+      EXPIRED,
+    );
   });
 });
 
@@ -214,8 +190,9 @@ describe("a submit whose transport failed", () => {
     expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
       GONE,
     );
-    expect(useAccountStore.getState().account).not.toEqual({
-      kind: "expired",
+    expect(useAccountStore.getState().account).toEqual({
+      kind: "signed-in",
+      identity: JANE,
     });
   });
 });

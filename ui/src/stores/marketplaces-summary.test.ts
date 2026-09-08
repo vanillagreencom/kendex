@@ -19,7 +19,13 @@ describe("a repository's summary", () => {
   });
 
   it("fails under its own key so the packages table is not hidden", async () => {
-    useMarketplacesStore.setState({ readErrors: { [key]: "packages broke" } });
+    const packagesKey = readErrorKey(key, "packages");
+    useMarketplacesStore.setState({
+      readErrors: {
+        [key]: "packages broke",
+        [packagesKey]: "package read failed",
+      },
+    });
     vi.mocked(commands.marketplaceSummary).mockResolvedValue({
       status: "error",
       error: "could not reach github.com",
@@ -32,6 +38,7 @@ describe("a repository's summary", () => {
       "could not reach github.com",
     );
     expect(errors[key]).toBe("packages broke");
+    expect(errors[packagesKey]).toBe("package read failed");
   });
 
   it("names the subscription the page carries on as", async () => {

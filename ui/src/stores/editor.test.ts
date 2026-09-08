@@ -137,71 +137,52 @@ describe("editor store", () => {
   /// away, so this route runs the leaving package's uninstaller like any
   /// other removal — and the editor is the one write that does not go
   /// through the update commands, so it says so itself.
-  it("says what a save that dropped a package ran in the repository", async () => {
-    vi.mocked(commands.getManifest).mockResolvedValue({
-      status: "ok",
-      data: { manifest: null, base: "b1" },
-    });
-    await useEditorStore.getState().load();
-    vi.mocked(commands.saveCustomize).mockResolvedValue({
-      status: "ok",
-      data: {
-        ...({} as AuditView_Serialize),
-        undone: [
-          "commit-guards: running scripts/install-git-hooks --uninstall",
-        ],
+  it("reports only the repository account of a successful save", async () => {
+    const account =
+      "commit-guards: running scripts/install-git-hooks --uninstall";
+    const rows = [
+      {
+        name: "removed an armed package",
+        response: { status: "ok", data: { undone: [account] } },
+        message: true,
+        stale: false,
       },
-    });
-    useEditorStore
-      .getState()
-      .edit((draft) => setInstruction(draft, "skill-instructions", "gh", "x"));
-
-    await useEditorStore.getState().save();
-
-    expect(toast.message).toHaveBeenCalledWith(
-      "commit-guards: running scripts/install-git-hooks --uninstall",
-    );
-  });
-
-  it("stays quiet when a save took no armed package away", async () => {
-    vi.mocked(toast.message).mockClear();
-    vi.mocked(commands.getManifest).mockResolvedValue({
-      status: "ok",
-      data: { manifest: null, base: "b1" },
-    });
-    await useEditorStore.getState().load();
-    vi.mocked(commands.saveCustomize).mockResolvedValue({
-      status: "ok",
-      data: {} as AuditView_Serialize,
-    });
-    useEditorStore
-      .getState()
-      .edit((draft) => setInstruction(draft, "skill-instructions", "gh", "x"));
-
-    await useEditorStore.getState().save();
-
-    expect(toast.message).not.toHaveBeenCalled();
-  });
-
-  it("stays quiet when a save is refused as stale", async () => {
-    vi.mocked(toast.message).mockClear();
-    vi.mocked(commands.getManifest).mockResolvedValue({
-      status: "ok",
-      data: { manifest: null, base: "b1" },
-    });
-    await useEditorStore.getState().load();
-    vi.mocked(commands.saveCustomize).mockResolvedValue({
-      status: "error",
-      error: { kind: "stale" },
-    });
-    useEditorStore
-      .getState()
-      .edit((draft) => setInstruction(draft, "skill-instructions", "gh", "x"));
-
-    await useEditorStore.getState().save();
-
-    expect(useEditorStore.getState().stale).toBe(true);
-    expect(toast.message).not.toHaveBeenCalled();
+      {
+        name: "no armed package removed",
+        response: { status: "ok", data: {} },
+        message: false,
+        stale: false,
+      },
+      {
+        name: "stale refusal",
+        response: { status: "error", error: { kind: "stale" } },
+        message: false,
+        stale: true,
+      },
+    ] as const;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      vi.mocked(toast.message).mockClear();
+      vi.mocked(commands.getManifest).mockResolvedValue({
+        status: "ok",
+        data: { manifest: null, base: "b1" },
+      });
+      await useEditorStore.getState().load();
+      vi.mocked(commands.saveCustomize).mockResolvedValue(
+        row.response as Awaited<ReturnType<typeof commands.saveCustomize>>,
+      );
+      useEditorStore
+        .getState()
+        .edit((draft) =>
+          setInstruction(draft, "skill-instructions", "gh", "x"),
+        );
+      await useEditorStore.getState().save();
+      if (row.message)
+        expect(toast.message, row.name).toHaveBeenCalledWith(account);
+      else expect(toast.message, row.name).not.toHaveBeenCalled();
+      if (row.stale)
+        expect(useEditorStore.getState().stale, row.name).toBe(true);
+    }
   });
 
   /// The manifest is not the settings file: a settings change reconciles

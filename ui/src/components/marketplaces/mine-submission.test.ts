@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 import type { SubmissionRow } from "@/bindings";
-import { submissionFor, submissionLine, submitLabel } from "./mine-submission";
+import {
+  type Submission,
+  submissionFor,
+  submissionLine,
+  submitLabel,
+} from "./mine-submission";
 
 const listed: SubmissionRow = {
   repo: "ada/team-skills",
@@ -10,81 +15,114 @@ const listed: SubmissionRow = {
   indexed_at: null,
 };
 
-// What a marketplace's submission reads as turns on how the last read
-// went, and the three outcomes have to stay apart.
-describe("submissionFor", () => {
-  // A submission is keyed by the GitHub repository, so a marketplace with
-  // no remote has nothing the server could have listed. No read makes that
-  // less certain, so the offer stays a first submit under all three.
-  it("is not submitted without a remote, however the read went", () => {
-    expect(submissionFor([listed], null, null)).toEqual({
-      kind: "not-submitted",
-    });
-    expect(submissionFor(null, null, null)).toEqual({ kind: "not-submitted" });
-    expect(submissionFor([listed], "offline", null)).toEqual({
-      kind: "not-submitted",
-    });
-  });
-
-  // A row already read is what the server last said about that repository,
-  // and a later read that failed does not unsay it.
-  it("is submitted under the row the server gave, failed read or not", () => {
-    expect(submissionFor([listed], null, "ada/team-skills")).toEqual({
-      kind: "submitted",
-      row: listed,
-    });
-    expect(submissionFor([listed], "offline", "ada/team-skills")).toEqual({
-      kind: "submitted",
-      row: listed,
-    });
-  });
-
-  // Absence means not submitted only where a read landed to say so.
-  it("reads absence as not submitted once a read has landed", () => {
-    expect(submissionFor([], null, "ada/team-skills")).toEqual({
-      kind: "not-submitted",
-    });
-  });
-
-  it("reads absence as unknown when the last read failed", () => {
-    expect(submissionFor([], "offline", "ada/team-skills")).toEqual({
-      kind: "unknown",
-    });
-  });
-
-  // The arm the three above cannot discriminate, and the one the first
-  // paint of the tab is in: no read has been made, so there are no rows to
-  // be absent from. Answering not-submitted here offers a first submit
-  // over work already in review.
-  it("reads absence as unknown before any read has been made", () => {
-    expect(submissionFor(null, null, "ada/team-skills")).toEqual({
-      kind: "unknown",
-    });
-  });
+it("keeps submitted, absent and unknown read outcomes distinct", () => {
+  const rows: {
+    name: string;
+    rows: SubmissionRow[] | null;
+    error: string | null;
+    repo: string | null;
+    expected: Submission;
+  }[] = [
+    {
+      name: "no remote after a landed read",
+      rows: [listed],
+      error: null,
+      repo: null,
+      expected: { kind: "not-submitted" },
+    },
+    {
+      name: "no remote before a read",
+      rows: null,
+      error: null,
+      repo: null,
+      expected: { kind: "not-submitted" },
+    },
+    {
+      name: "no remote after failure",
+      rows: [listed],
+      error: "offline",
+      repo: null,
+      expected: { kind: "not-submitted" },
+    },
+    {
+      name: "submitted after a landed read",
+      rows: [listed],
+      error: null,
+      repo: listed.repo,
+      expected: { kind: "submitted", row: listed },
+    },
+    {
+      name: "submitted despite a failed read",
+      rows: [listed],
+      error: "offline",
+      repo: listed.repo,
+      expected: { kind: "submitted", row: listed },
+    },
+    {
+      name: "absence after a landed read",
+      rows: [],
+      error: null,
+      repo: listed.repo,
+      expected: { kind: "not-submitted" },
+    },
+    {
+      name: "absence after failure",
+      rows: [],
+      error: "offline",
+      repo: listed.repo,
+      expected: { kind: "unknown" },
+    },
+    {
+      name: "absence before any read",
+      rows: null,
+      error: null,
+      repo: listed.repo,
+      expected: { kind: "unknown" },
+    },
+  ];
+  expect(rows).toHaveLength(8);
+  for (const row of rows) {
+    expect(submissionFor(row.rows, row.error, row.repo), row.name).toEqual(
+      row.expected,
+    );
+  }
 });
 
-// A read that never landed is not a server that answered with nothing.
-// Both surfaces the row draws have to keep them apart: a first submit
-// offered over work already in review is wrong, and a blank line under it
-// makes the same claim silently.
-describe("what an unanswered submission draws", () => {
-  it("names the unknown state rather than leaving the row blank", () => {
-    expect(submissionLine({ kind: "unknown" })).toBe(
-      "Submission status unknown",
-    );
-    expect(submissionLine(null)).toBeNull();
-    expect(submissionLine({ kind: "not-submitted" })).toBeNull();
-  });
+it("gives unknown a status line without inventing one for an absent submission", () => {
+  const rows: {
+    name: string;
+    state: Submission | null;
+    line: string | null;
+  }[] = [
+    {
+      name: "unknown",
+      state: { kind: "unknown" },
+      line: "Submission status unknown",
+    },
+    { name: "unanswered", state: null, line: null },
+    { name: "not submitted", state: { kind: "not-submitted" }, line: null },
+  ];
+  expect(rows).toHaveLength(3);
+  for (const row of rows)
+    expect(submissionLine(row.state), row.name).toBe(row.line);
+});
 
-  it("offers a bare Submit where nothing is known, never a first submit", () => {
-    expect(submitLabel({ kind: "unknown" })).toBe("Submit…");
-    expect(submitLabel(null)).toBe("Submit…");
-  });
-
-  // The control the two above are read against: a landed read saying this
-  // marketplace is not listed is what earns the first-submit offer.
-  it("offers the first submit only where a read said it is not listed", () => {
-    expect(submitLabel({ kind: "not-submitted" })).toBe("Submit to community…");
-    expect(submitLabel({ kind: "submitted", row: listed })).toBe("Re-submit…");
-  });
+it("offers a first or repeat submit only when that state is known", () => {
+  const rows: { name: string; state: Submission | null; label: string }[] = [
+    { name: "unknown", state: { kind: "unknown" }, label: "Submit…" },
+    { name: "unanswered", state: null, label: "Submit…" },
+    {
+      name: "not submitted",
+      state: { kind: "not-submitted" },
+      label: "Submit to community…",
+    },
+    {
+      name: "submitted",
+      state: { kind: "submitted", row: listed },
+      label: "Re-submit…",
+    },
+  ];
+  expect(rows).toHaveLength(4);
+  for (const row of rows)
+    expect(submitLabel(row.state), row.name).toBe(row.label);
 });

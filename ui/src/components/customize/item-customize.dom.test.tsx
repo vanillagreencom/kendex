@@ -107,31 +107,40 @@ describe("the place chips", () => {
     useUpdatesStore.setState({ rows: [], read: READ_PENDING });
   });
 
-  it("marks the place that holds something and leaves the other plain", () => {
-    seed({ "/work/vg": withSetting, "/work/hyprtrade": empty });
-    expect(markedPlaces(tab())).toEqual(["vg"]);
-  });
-
-  it("marks nothing where no place holds anything", () => {
-    seed({ "/work/vg": empty, "/work/hyprtrade": empty });
-    expect(markedPlaces(tab())).toEqual([]);
-  });
-
-  // A fork is a fact the update rows carry. A re-check that failed keeps
-  // the rows it had, and the Library and the package header read them as
-  // last-known; a chip that went plain here would answer differently
-  // about the same place.
-  it("keeps a fork's mark after a failed re-check that kept its rows", () => {
-    seed({ "/work/vg": empty, "/work/hyprtrade": empty });
-    const forkedAt = rows.map((row) => ({
-      ...row,
-      forked: sameScope(row.scope, HYPR),
-    }));
-    useUpdatesStore.setState({
-      rows: forkedAt as never,
-      read: readFailed("offline"),
-    });
-    expect(markedPlaces(tab())).toEqual(["hyprtrade"]);
+  it("marks each place from saved settings or retained fork readings", () => {
+    const cases = [
+      {
+        name: "settings in vg",
+        saved: { "/work/vg": withSetting, "/work/hyprtrade": empty },
+        fork: false,
+        expected: ["vg"],
+      },
+      {
+        name: "nothing held",
+        saved: { "/work/vg": empty, "/work/hyprtrade": empty },
+        fork: false,
+        expected: [],
+      },
+      {
+        name: "fork retained after failed re-check",
+        saved: { "/work/vg": empty, "/work/hyprtrade": empty },
+        fork: true,
+        expected: ["hyprtrade"],
+      },
+    ];
+    expect(cases).toHaveLength(3);
+    for (const entry of cases) {
+      seed(entry.saved);
+      if (entry.fork)
+        useUpdatesStore.setState({
+          rows: rows.map((row) => ({
+            ...row,
+            forked: sameScope(row.scope, HYPR),
+          })) as never,
+          read: readFailed("offline"),
+        });
+      expect(markedPlaces(tab()), entry.name).toEqual(entry.expected);
+    }
   });
 
   /// The manifest draft beside them already moves these chips before a

@@ -57,87 +57,48 @@ describe("scan store", () => {
     expect(state.result).toEqual(emptyResult);
     expect(state.error).toBeNull();
     expect(state.scanning).toBe(false);
+    expect(state.lastScanAt).not.toBeNull();
   });
 
-  it("stamps lastScanAt on a successful scan", async () => {
-    vi.mocked(commands.scanMachine).mockResolvedValue({
-      status: "ok",
-      data: emptyResult,
-    });
-
-    await useScanStore.getState().refresh();
-
-    expect(useScanStore.getState().lastScanAt).not.toBeNull();
-  });
-
-  it("leaves lastScanAt untouched when a scan fails", async () => {
-    useScanStore.setState({ lastScanAt: 123 });
+  it("keeps the last result and its date when a scan fails", async () => {
+    useScanStore.setState({ result: emptyResult, lastScanAt: 123 });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "error",
       error: "boom",
     });
-
     await useScanStore.getState().refresh();
-
-    expect(useScanStore.getState().lastScanAt).toBe(123);
-  });
-
-  it("keeps the last good result when a rescan fails", async () => {
-    useScanStore.setState({ result: emptyResult });
-    vi.mocked(commands.scanMachine).mockResolvedValue({
-      status: "error",
-      error: "boom",
-    });
-
-    await useScanStore.getState().refresh();
-
     const state = useScanStore.getState();
     expect(state.result).toEqual(emptyResult);
     expect(state.error).toBe("boom");
+    expect(state.lastScanAt).toBe(123);
   });
 
   // A request arriving mid-scan dropped outright — a silent no-op, nothing
   // retrying — would leave the read behind a write missing whenever any
   // background scan was out, and the write is exactly what the scan already
   // running cannot answer for. Home renders its inventory from this result.
-  it("takes a re-read behind a scan already running rather than dropping it", async () => {
-    const parked = park();
-    vi.mocked(commands.scanMachine)
-      .mockReturnValueOnce(parked.promise)
-      .mockResolvedValue({ status: "ok", data: emptyResult });
-
-    const running = useScanStore.getState().refresh();
-    const behind = useScanStore.getState().refresh();
-
-    expect(commands.scanMachine).toHaveBeenCalledTimes(1);
-
-    parked.land({ status: "ok", data: emptyResult });
-    await running;
-    await behind;
-
-    expect(commands.scanMachine).toHaveBeenCalledTimes(2);
-  });
-
-  it("queues exactly one re-read however many arrive under the scan", async () => {
-    const parked = park();
-    vi.mocked(commands.scanMachine)
-      .mockReturnValueOnce(parked.promise)
-      .mockResolvedValue({ status: "ok", data: emptyResult });
-
-    const running = useScanStore.getState().refresh();
-    const behind = [
-      useScanStore.getState().refresh(),
-      useScanStore.getState().refresh(),
-      useScanStore.getState().refresh(),
+  it("queues one re-read for arrivals during a running scan", async () => {
+    const rows = [
+      { name: "one arrival", arrivals: 1 },
+      { name: "repeated arrivals", arrivals: 3 },
     ];
-
-    parked.land({ status: "ok", data: emptyResult });
-    await running;
-    await Promise.all(behind);
-
-    // Three arrivals, one re-read: they join it rather than stacking
-    // identical whole-machine reads.
-    expect(commands.scanMachine).toHaveBeenCalledTimes(2);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      vi.mocked(commands.scanMachine).mockClear();
+      const parked = park();
+      vi.mocked(commands.scanMachine)
+        .mockReturnValueOnce(parked.promise)
+        .mockResolvedValue({ status: "ok", data: emptyResult });
+      const running = useScanStore.getState().refresh();
+      const behind = Array.from({ length: row.arrivals }, () =>
+        useScanStore.getState().refresh(),
+      );
+      expect(commands.scanMachine, row.name).toHaveBeenCalledTimes(1);
+      parked.land({ status: "ok", data: emptyResult });
+      await running;
+      await Promise.all(behind);
+      expect(commands.scanMachine, row.name).toHaveBeenCalledTimes(2);
+    }
   });
 
   // A scan that could not answer is the state most in need of the one
@@ -183,28 +144,23 @@ describe("scan store", () => {
     expect(toast.error).toHaveBeenCalled();
   });
 
-  it("toasts a background failure once, then stays quiet on repeat silent retries", async () => {
-    vi.mocked(commands.scanMachine).mockResolvedValue({
-      status: "error",
-      error: "boom",
-    });
-
-    await useScanStore.getState().refresh();
-    await useScanStore.getState().refresh();
-
-    expect(toast.error).toHaveBeenCalledTimes(1);
-  });
-
-  it("toasts every time a user-triggered refresh fails, announce or not", async () => {
-    vi.mocked(commands.scanMachine).mockResolvedValue({
-      status: "error",
-      error: "boom",
-    });
-
-    await useScanStore.getState().refresh({ announce: true });
-    await useScanStore.getState().refresh({ announce: true });
-
-    expect(toast.error).toHaveBeenCalledTimes(2);
+  it("announces each requested failure and only the first silent failure", async () => {
+    const rows = [
+      { name: "silent retries", announce: false, calls: 1 },
+      { name: "user refreshes", announce: true, calls: 2 },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      useScanStore.setState({ backgroundFailureAnnounced: false });
+      vi.mocked(toast.error).mockClear();
+      vi.mocked(commands.scanMachine).mockResolvedValue({
+        status: "error",
+        error: "boom",
+      });
+      await useScanStore.getState().refresh({ announce: row.announce });
+      await useScanStore.getState().refresh({ announce: row.announce });
+      expect(toast.error, row.name).toHaveBeenCalledTimes(row.calls);
+    }
   });
 
   it("re-arms the background toast after a scan succeeds", async () => {

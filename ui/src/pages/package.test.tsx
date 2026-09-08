@@ -36,7 +36,6 @@ import {
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_CHECKING,
 } from "@/lib/copy-updates";
-import { editorOpenPath } from "@/lib/editor-path";
 import { SEVERITY_LABELS } from "@/lib/labels";
 import {
   READ_LANDED,
@@ -373,32 +372,37 @@ describe("what the package page says instead of Update", () => {
   // A fork is already the person's copy, so an edit to one is part of what
   // the package is. The header says both words where the row reports the
   // edit, and there is nothing on the page asking what to do about it.
-  it("names an edited fork as a state on the header", async () => {
+  const forks = [
+    {
+      name: "names an edited fork as a state on the header",
+      edited: true,
+      label: FORKED_EDITED_BADGE_LABEL,
+    },
+    {
+      name: "says only Forked where the fork carries no edits",
+      edited: false,
+      label: FORKED_BADGE_LABEL,
+    },
+  ];
+  expect(forks).toHaveLength(2);
+  it.each(forks)("$name", async (row) => {
     const host = await openWith(
       {
         read: READ_LANDED,
-        rows: [{ ...updateRow(VG), forked: true, forkEdited: true }],
+        rows: [{ ...updateRow(VG), forked: true, forkEdited: row.edited }],
       },
       "skill",
       { status: "ok", data: VERSIONS },
       forkedRecord(),
     );
-    expect(header(host)).toContain(FORKED_EDITED_BADGE_LABEL);
-    expect(host.textContent).not.toContain(FORK_NOTICE_TITLE);
-  });
-
-  it("says only Forked where the fork carries no edits", async () => {
-    const host = await openWith(
+    expect(
       {
-        read: READ_LANDED,
-        rows: [{ ...updateRow(VG), forked: true }],
+        label: header(host)?.includes(row.label),
+        edited: header(host)?.includes(FORKED_EDITED_BADGE_LABEL),
+        notice: host.textContent?.includes(FORK_NOTICE_TITLE),
       },
-      "skill",
-      { status: "ok", data: VERSIONS },
-      forkedRecord(),
-    );
-    expect(header(host)).toContain(FORKED_BADGE_LABEL);
-    expect(header(host)).not.toContain(FORKED_EDITED_BADGE_LABEL);
+      row.name,
+    ).toEqual({ label: true, edited: row.edited, notice: false });
   });
 
   it("says a check is running before the first read answers", async () => {
@@ -744,6 +748,10 @@ describe("the package page's safety tab", () => {
       ],
     });
 
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: useAuditStore.getState().views,
+    });
     const host = await openPage(VG, [VG, HYPR], { [scopeKey(VG)]: PLAIN });
 
     // Nothing scored the place this page is about, so the tab shows the
@@ -805,24 +813,36 @@ describe("the package page's mark", () => {
     });
   });
 
-  it("counts every place, not the one the page was opened at", async () => {
+  const marks = [
+    {
+      name: "counts every place, not the one the page was opened at",
+      vg: CUSTOMIZED,
+      hypr: CUSTOMIZED,
+      label: "Customized in vg and hyprtrade · 2 of 2 projects",
+    },
+    {
+      name: "says so about a place the page was not opened at",
+      vg: PLAIN,
+      hypr: CUSTOMIZED,
+      label: "Customized in hyprtrade · 1 of 2 projects",
+    },
+    {
+      name: "says nothing where no place holds anything",
+      vg: PLAIN,
+      hypr: PLAIN,
+      label: null,
+    },
+  ];
+  expect(marks).toHaveLength(3);
+  it.each(marks)("$name", async (row) => {
     const host = await openPage(VG, [VG, HYPR], {
-      [scopeKey(VG)]: CUSTOMIZED,
-      [scopeKey(HYPR)]: CUSTOMIZED,
+      [scopeKey(VG)]: row.vg,
+      [scopeKey(HYPR)]: row.hypr,
     });
     await settle();
-    expect(header(host)).toContain(
-      "Customized in vg and hyprtrade · 2 of 2 projects",
+    expect(header(host)?.includes(row.label ?? "Customized"), row.name).toBe(
+      row.label !== null,
     );
-  });
-
-  it("says so about a place the page was not opened at", async () => {
-    const host = await openPage(VG, [VG, HYPR], {
-      [scopeKey(VG)]: PLAIN,
-      [scopeKey(HYPR)]: CUSTOMIZED,
-    });
-    await settle();
-    expect(header(host)).toContain("Customized in hyprtrade · 1 of 2 projects");
   });
 
   it("stands still while the editor moves to another place", async () => {
@@ -837,15 +857,6 @@ describe("the package page's mark", () => {
     await editElsewhere(HYPR);
     expect(useEditorStore.getState().scope).toEqual(HYPR);
     expect(header(host)).toContain(said);
-  });
-
-  it("says nothing where no place holds anything", async () => {
-    const host = await openPage(VG, [VG, HYPR], {
-      [scopeKey(VG)]: PLAIN,
-      [scopeKey(HYPR)]: PLAIN,
-    });
-    await settle();
-    expect(header(host)?.includes("Customized")).toBe(false);
   });
 });
 
@@ -910,7 +921,7 @@ describe("the package page's file actions", () => {
 
     await openIn(host, OPEN_IN_EDITOR_LABEL);
     expect(commands.openInEditor).toHaveBeenCalledWith(
-      editorOpenPath("/work/vg/.claude/skills/gh"),
+      "/work/vg/.claude/skills/gh",
     );
   });
 });
@@ -924,29 +935,28 @@ describe("the package page's tabs", () => {
       (tab) => tab.textContent,
     );
 
-  it("puts Projects and the score between Overview and Customize", async () => {
-    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
-
-    // Nothing has scored this package in these tests, so the tab carries
-    // the dash it shows before a reading arrives.
-    expect(tabs(host)).toEqual([
-      "Overview",
-      "Projects",
-      `${SAFETY_TAB}—`,
-      "Customize",
-    ]);
-  });
-
-  it("keeps them both for a kind with nothing to customize", async () => {
+  const kinds = [
+    {
+      name: "puts Projects and the score between Overview and Customize",
+      kind: "skill",
+      labels: ["Overview", "Projects", `${SAFETY_TAB}—`, "Customize"],
+    },
+    {
+      name: "keeps them both for a kind with nothing to customize",
+      kind: "mcp-server",
+      labels: ["Overview", "Projects", `${SAFETY_TAB}—`],
+    },
+  ] satisfies { name: string; kind: ItemKind; labels: string[] }[];
+  expect(kinds).toHaveLength(2);
+  it.each(kinds)("$name", async (row) => {
     const host = await openPage(
       VG,
       [VG],
       { [scopeKey(VG)]: PLAIN },
       null,
-      "mcp-server",
+      row.kind,
     );
-
-    expect(tabs(host)).toEqual(["Overview", "Projects", `${SAFETY_TAB}—`]);
+    expect(tabs(host), row.name).toEqual(row.labels);
   });
 });
 

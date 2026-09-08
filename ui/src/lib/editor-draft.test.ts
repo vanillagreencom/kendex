@@ -140,8 +140,12 @@ describe("setFrontmatterField", () => {
 
   it("prunes an emptied list but keeps other fields", () => {
     let next = setFrontmatterField(draft(), "pi", "orch", "pane", true);
+    next = setFrontmatterField(next, "pi", "orch", "deny-tools", ["Bash"]);
     next = setFrontmatterField(next, "pi", "orch", "deny-tools", null);
-    expect(next["agent-frontmatter"]?.pi.orch.pane).toBe(true);
+    expect({
+      pane: next["agent-frontmatter"]?.pi.orch.pane,
+      denied: next["agent-frontmatter"]?.pi.orch["deny-tools"],
+    }).toEqual({ pane: true, denied: null });
   });
 });
 

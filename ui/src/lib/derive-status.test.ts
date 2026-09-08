@@ -23,28 +23,48 @@ function item(overrides: Partial<ObservedItem>): ObservedItem {
 const status = (items: ObservedItem[]) => groupStatus(groupItems(items)[0]);
 
 describe("groupStatus", () => {
-  it("is active while every copy is switched on and readable", () => {
-    expect(status([item({}), item({ harness: "codex" })])).toBe("active");
-  });
-
-  it("is off when any copy is switched off", () => {
-    expect(status([item({}), item({ harness: "codex", enabled: false })])).toBe(
-      "off",
-    );
-  });
-
-  it("reports a broken link over a switch — the file is gone either way", () => {
-    const broken = item({
-      enabled: false,
-      fileState: { state: "symlink", target: "/gone", broken: true },
-    });
-    expect(status([broken])).toBe("broken");
-  });
-
-  it("says nothing about a link that still points somewhere", () => {
-    const linked = item({
-      fileState: { state: "symlink", target: "/src/deploy", broken: false },
-    });
-    expect(status([linked])).toBe("active");
+  it("reports broken links before disabled copies", () => {
+    const rows: {
+      name: string;
+      items: ObservedItem[];
+      expected: ReturnType<typeof groupStatus>;
+    }[] = [
+      {
+        name: "all active",
+        items: [item({}), item({ harness: "codex" })],
+        expected: "active",
+      },
+      {
+        name: "one disabled",
+        items: [item({}), item({ harness: "codex", enabled: false })],
+        expected: "off",
+      },
+      {
+        name: "disabled broken link",
+        items: [
+          item({
+            enabled: false,
+            fileState: { state: "symlink", target: "/gone", broken: true },
+          }),
+        ],
+        expected: "broken",
+      },
+      {
+        name: "live link",
+        items: [
+          item({
+            fileState: {
+              state: "symlink",
+              target: "/src/deploy",
+              broken: false,
+            },
+          }),
+        ],
+        expected: "active",
+      },
+    ];
+    expect(rows.length, "group status table is empty").toBeGreaterThan(0);
+    for (const row of rows)
+      expect(status(row.items), row.name).toBe(row.expected);
   });
 });

@@ -113,22 +113,21 @@ describe("audit store refresh", () => {
     expect(toast.error).toHaveBeenCalledTimes(2);
   });
 
-  it("reuses a recent audit instead of re-running it on every visit", async () => {
-    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
-
-    await useAuditStore.getState().refresh();
-    await useAuditStore.getState().refresh();
-
-    expect(commands.auditAll).toHaveBeenCalledTimes(1);
-  });
-
-  it("re-runs an audit the caller asks for by name", async () => {
-    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
-
-    await useAuditStore.getState().refresh();
-    await useAuditStore.getState().refresh({ force: true });
-
-    expect(commands.auditAll).toHaveBeenCalledTimes(2);
+  it("reuses a recent audit unless the caller forces another", async () => {
+    const rows = [
+      { name: "ordinary revisit", force: false, calls: 1 },
+      { name: "forced revisit", force: true, calls: 2 },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      useAuditStore.setState({ auditedAt: null });
+      vi.mocked(commands.auditAll)
+        .mockClear()
+        .mockResolvedValue({ status: "ok", data: [] });
+      await useAuditStore.getState().refresh();
+      await useAuditStore.getState().refresh({ force: row.force });
+      expect(commands.auditAll, row.name).toHaveBeenCalledTimes(row.calls);
+    }
   });
 
   // A force says the bytes changed. Dropping it because a machine-wide read
@@ -151,38 +150,28 @@ describe("audit store refresh", () => {
     };
   };
 
-  it("runs a forced refresh that arrives while an audit is in flight", async () => {
-    const land = parkAudits();
-
-    const first = useAuditStore.getState().refresh();
-    const queued = useAuditStore.getState().refresh({ force: true });
-    expect(commands.auditAll).toHaveBeenCalledTimes(1);
-
-    land();
-    await first;
-    // The follow-up starts as the first audit lands, so its call is only
-    // on the record once that has happened.
-    expect(commands.auditAll).toHaveBeenCalledTimes(2);
-    land();
-    await queued;
-  });
-
-  it("queues one follow-up however many forces arrive mid-audit", async () => {
-    const land = parkAudits();
-
-    const first = useAuditStore.getState().refresh();
-    const forces = [
-      useAuditStore.getState().refresh({ force: true }),
-      useAuditStore.getState().refresh({ force: true }),
-      useAuditStore.getState().refresh({ force: true }),
+  it("queues one follow-up for forced arrivals during an audit", async () => {
+    const rows = [
+      { name: "one force", forces: 1 },
+      { name: "repeated forces", forces: 3 },
     ];
-
-    land();
-    await first;
-    land();
-    await Promise.all(forces);
-
-    expect(commands.auditAll).toHaveBeenCalledTimes(2);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      useAuditStore.setState({ auditedAt: null });
+      vi.mocked(commands.auditAll).mockClear();
+      const land = parkAudits();
+      const first = useAuditStore.getState().refresh();
+      const forces = Array.from({ length: row.forces }, () =>
+        useAuditStore.getState().refresh({ force: true }),
+      );
+      expect(commands.auditAll, row.name).toHaveBeenCalledTimes(1);
+      land();
+      await first;
+      expect(commands.auditAll, row.name).toHaveBeenCalledTimes(2);
+      land();
+      await Promise.all(forces);
+      expect(commands.auditAll, row.name).toHaveBeenCalledTimes(2);
+    }
   });
 
   // An unforced visit while an audit runs waits on that audit rather than

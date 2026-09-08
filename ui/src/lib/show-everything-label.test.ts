@@ -8,20 +8,33 @@ describe("showEverythingLabel", () => {
     );
   });
 
-  it("names the folder a card opens", () => {
-    expect(showEverythingLabel("client", "/work/client")).toBe(
-      "Show everything in client, /work/client",
+  it("keeps the visible name and the available path in the accessible label", () => {
+    const rows = [
+      {
+        name: "project folder",
+        label: "client",
+        path: "/work/client",
+        expected: "Show everything in client, /work/client",
+      },
+      {
+        name: "no folder",
+        label: "Personal",
+        path: undefined,
+        expected: "Show everything in Personal",
+      },
+      {
+        name: "empty folder",
+        label: "Personal",
+        path: "",
+        expected: "Show everything in Personal",
+      },
+    ];
+    expect(rows.length, "show everything label table is empty").toBeGreaterThan(
+      0,
     );
-  });
-
-  it("keeps the name a reader sees inside the label", () => {
-    expect(showEverythingLabel("client", "/work/client")).toContain("client");
-  });
-
-  it("says only the name where there is no folder", () => {
-    expect(showEverythingLabel("Personal")).toBe("Show everything in Personal");
-    expect(showEverythingLabel("Personal", "")).toBe(
-      "Show everything in Personal",
-    );
+    for (const row of rows)
+      expect(showEverythingLabel(row.label, row.path), row.name).toBe(
+        row.expected,
+      );
   });
 });

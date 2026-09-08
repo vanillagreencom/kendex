@@ -216,6 +216,7 @@ describe("when the check could not run", () => {
     expect(host.textContent).toContain("58/100");
     expect(host.textContent).toContain("3h ago");
     expect(host.textContent).toContain(staleSafetyNote(checkedAt));
+    expect(host.querySelector(".sr-only")?.textContent).toBe(SAFETY_TAB_STALE);
     expect(host.textContent).toContain(SAFETY_RETRY_LABEL);
   });
 });
@@ -307,27 +308,6 @@ describe("when the audit answered with no reading for this package", () => {
 // the label is what somebody standing on another tab sees, and a kept
 // figure drawn as a current one there is a claim nothing supports.
 describe("the label when the check could not run again", () => {
-  it("marks a kept reading, in words and not colour alone", async () => {
-    vi.mocked(commands.auditAll).mockResolvedValue({
-      status: "error",
-      error: "audit crashed",
-    });
-    act(() => {
-      useAuditStore.setState({
-        views: [view([gh])],
-        auditedAt: Date.now() - 3 * 60 * 60 * 1000,
-        backgroundFailureAnnounced: true,
-      });
-    });
-
-    const host = mount(
-      <SafetyTab reference={{ kind: "skill", name: "gh", scope: GLOBAL }} />,
-    );
-    await settle();
-
-    expect(host.querySelector(".sr-only")?.textContent).toBe(SAFETY_TAB_STALE);
-  });
-
   // A dash is also what a pending check and an unscored answer show, so a
   // first check that failed has to say so rather than show one.
   it("marks a first check that failed", async () => {

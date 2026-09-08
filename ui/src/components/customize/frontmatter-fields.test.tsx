@@ -16,28 +16,37 @@ const render = (overrides: Partial<DraftFrontmatter>) =>
 // they make a place customized only through Settings look untouched, and
 // the manifest holding the customization look unloaded.
 describe("a field holding a value of the reader's", () => {
-  it("says so on its label, in words as well as in colour", () => {
-    const shown = render({ effort: "xhigh" });
-    expect(shown).toContain("text-customized");
-    expect(shown).toContain(CUSTOMIZED_MARK);
-  });
-
-  it("marks nothing where the grid is all examples", () => {
-    const shown = render({});
-    expect(shown).not.toContain("text-customized");
-    expect(shown).not.toContain(CUSTOMIZED_MARK);
-  });
-
-  // A placeholder is still on screen for an unset field; the mark is what
-  // tells the two apart, so it must not follow the placeholder.
-  it("leaves a field showing only its example unmarked", () => {
-    const shown = render({ effort: "xhigh" });
-    expect(shown).toContain('placeholder="opus"');
-    expect(shown.match(/text-customized/g)).toHaveLength(1);
-  });
-
-  it("marks a list and a flag the same way it marks text", () => {
-    expect(render({ "allow-tools": ["Read"] })).toContain(CUSTOMIZED_MARK);
-    expect(render({ pane: true })).toContain(CUSTOMIZED_MARK);
+  it("marks values while leaving placeholder examples unmarked", () => {
+    const rows: {
+      name: string;
+      overrides: Partial<DraftFrontmatter>;
+      marked: boolean;
+      color?: boolean;
+    }[] = [
+      {
+        name: "text value beside an unset model example",
+        overrides: { effort: "xhigh" },
+        marked: true,
+        color: true,
+      },
+      { name: "only examples", overrides: {}, marked: false, color: false },
+      {
+        name: "list value",
+        overrides: { "allow-tools": ["Read"] },
+        marked: true,
+      },
+      { name: "flag value", overrides: { pane: true }, marked: true },
+    ];
+    expect(rows).toHaveLength(4);
+    for (const { name, overrides, marked, color } of rows) {
+      const shown = render(overrides);
+      expect(shown.includes(CUSTOMIZED_MARK), name).toBe(marked);
+      if (color !== undefined)
+        expect(shown.includes("text-customized"), name).toBe(color);
+      if (name === "text value beside an unset model example") {
+        expect(shown).toContain('placeholder="opus"');
+        expect(shown.match(/text-customized/g)).toHaveLength(1);
+      }
+    }
   });
 });

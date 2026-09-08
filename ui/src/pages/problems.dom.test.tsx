@@ -144,46 +144,35 @@ beforeEach(() => {
 });
 
 describe("a declared item whose place already holds files", () => {
-  it("offers only the exits core reported for the row", async () => {
-    stage([
-      view({
+  const offers = [
+    {
+      name: "offers only the exits core reported for the row",
+      item: "scout",
+      reading: view({
         drift: [
-          // A folder where one file goes: core says it cannot be kept as
-          // it stands, and the page must not offer to.
           inTheWay("scout", "claude", { cause: "unmanaged-wrong-shape" }),
         ],
         exits: [exit("skill:scout:claude", { keep: false, enter: true })],
       }),
-    ]);
-    const host = mount(<ProblemsPage />);
-    await settle();
-
-    expect(host.textContent).toContain("scout");
-    expect(button(host, KEEP_FILES_LABEL)).toBeUndefined();
-    expect(host.textContent).toContain(MOVE_FILES_YOURSELF);
-    expect(button(host, REPLACE_FILES_LABEL)).toBeDefined();
-  });
-
-  it("offers keeping alone where core refuses the replacement", async () => {
-    stage([
-      view({
+      keep: false,
+      replace: true,
+      manual: true,
+    },
+    {
+      name: "offers keeping alone where core refuses the replacement",
+      item: "browser",
+      reading: view({
         drift: [inTheWay("browser", "claude", { cause: "shared-link" })],
         exits: [exit("skill:browser:claude", { replace: false })],
       }),
-    ]);
-    const host = mount(<ProblemsPage />);
-    await settle();
-
-    expect(button(host, KEEP_FILES_LABEL)).toBeDefined();
-    expect(button(host, REPLACE_FILES_LABEL)).toBeUndefined();
-  });
-
-  // One installation core refuses takes the offer off the whole item: both
-  // exits act on all of it, and half an item settled leaves the rest
-  // blocked with the item out of its tool's hands.
-  it("offers neither exit when one installation refuses it", async () => {
-    stage([
-      view({
+      keep: true,
+      replace: false,
+      manual: false,
+    },
+    {
+      name: "offers neither exit when one installation refuses it",
+      item: "release-notes",
+      reading: view({
         drift: [
           inTheWay("release-notes", "claude"),
           inTheWay("release-notes", "codex"),
@@ -198,13 +187,30 @@ describe("a declared item whose place already holds files", () => {
           }),
         ],
       }),
-    ]);
+      keep: false,
+      replace: false,
+      manual: true,
+    },
+  ];
+  expect(offers).toHaveLength(3);
+  it.each(offers)("$name", async (row) => {
+    stage([row.reading]);
     const host = mount(<ProblemsPage />);
     await settle();
-
-    expect(host.textContent).toContain("release-notes");
-    expect(button(host, KEEP_FILES_LABEL)).toBeUndefined();
-    expect(button(host, REPLACE_FILES_LABEL)).toBeUndefined();
+    expect(
+      {
+        item: host.textContent?.includes(row.item),
+        keep: button(host, KEEP_FILES_LABEL) !== undefined,
+        replace: button(host, REPLACE_FILES_LABEL) !== undefined,
+        manual: host.textContent?.includes(MOVE_FILES_YOURSELF),
+      },
+      row.name,
+    ).toEqual({
+      item: true,
+      keep: row.keep,
+      replace: row.replace,
+      manual: row.manual,
+    });
   });
 
   it("takes the item over through replaceUnmanagedItem", async () => {
@@ -278,6 +284,7 @@ describe("a declared item whose place already holds files", () => {
 
     await press(button(host, REPLACE_FILES_LABEL));
     const said = dialog().textContent ?? "";
+    expect(places).toHaveLength(3);
     for (const place of places) expect(said).toContain(place);
     expect(said).not.toContain("3 places");
   });
@@ -373,8 +380,6 @@ describe("a declared item whose place already holds files", () => {
 
     await press(button(host, KEEP_FILES_LABEL));
     expect(dialog().textContent).toContain(MANAGE_CONFIRM_BODY);
-    // Read off the export: the line above compares it to its own words.
-    expect(MANAGE_CONFIRM_BODY).toContain("Nothing is deleted");
     expect(dialog().textContent).not.toContain("read this skill from");
   });
 });

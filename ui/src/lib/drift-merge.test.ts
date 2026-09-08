@@ -17,84 +17,95 @@ function row(overrides: Partial<DriftRow>): DriftRow {
 }
 
 describe("mergeDriftRows", () => {
-  it("folds rows sharing kind, name, and state into one", () => {
-    const merged = mergeDriftRows([
-      row({ harness: "claude" }),
-      row({
-        harness: "pi",
-        detail: "/home/method/.pi/agent/skills/agent-browser",
-      }),
-    ]);
-    expect(merged).toHaveLength(1);
-    expect(merged[0].installations).toHaveLength(2);
-  });
-
-  it("keeps rows with different names or states apart", () => {
-    const merged = mergeDriftRows([
-      row({ name: "journal", harness: "claude" }),
-      row({ name: "agent-browser", harness: "pi" }),
-      row({ name: "agent-browser", harness: "claude", state: "stale" }),
-    ]);
-    expect(merged).toHaveLength(3);
-  });
-
-  it("preserves installation order within a group", () => {
-    const merged = mergeDriftRows([
-      row({ harness: "claude" }),
-      row({ harness: "pi" }),
-    ]);
-    expect(merged[0].installations.map((r) => r.harness)).toEqual([
-      "claude",
-      "pi",
-    ]);
+  it("groups only equal item states and preserves installation order", () => {
+    const rows = [
+      {
+        name: "matching item states",
+        input: [
+          row({ harness: "claude" }),
+          row({
+            harness: "pi",
+            detail: "/home/method/.pi/agent/skills/agent-browser",
+          }),
+        ],
+        expected: [{ installations: [{}, {}] }],
+      },
+      {
+        name: "different names or states",
+        input: [
+          row({ name: "journal", harness: "claude" }),
+          row({ name: "agent-browser", harness: "pi" }),
+          row({ name: "agent-browser", harness: "claude", state: "stale" }),
+        ],
+        expected: [{}, {}, {}],
+      },
+      {
+        name: "installation order",
+        input: [row({ harness: "claude" }), row({ harness: "pi" })],
+        expected: [
+          { installations: [{ harness: "claude" }, { harness: "pi" }] },
+        ],
+      },
+    ];
+    expect(rows.length, "drift grouping table is empty").toBeGreaterThan(0);
+    for (const row of rows)
+      expect(mergeDriftRows(row.input), row.name).toMatchObject(row.expected);
   });
 });
 
 describe("abbreviateHome", () => {
-  it("shortens a home directory path to ~", () => {
-    expect(abbreviateHome("/home/method/.claude/skills/agent-browser")).toBe(
-      "~/.claude/skills/agent-browser",
-    );
-    expect(abbreviateHome("/Users/dana/.codex/skills/deploy")).toBe(
-      "~/.codex/skills/deploy",
-    );
-  });
-
-  it("leaves paths outside the home directory alone", () => {
-    expect(abbreviateHome("/etc/kendex/config.json")).toBe(
-      "/etc/kendex/config.json",
-    );
+  it("shortens home roots and preserves other paths", () => {
+    const rows = [
+      {
+        path: "/home/method/.claude/skills/agent-browser",
+        expected: "~/.claude/skills/agent-browser",
+      },
+      {
+        path: "/Users/dana/.codex/skills/deploy",
+        expected: "~/.codex/skills/deploy",
+      },
+      { path: "/etc/kendex/config.json", expected: "/etc/kendex/config.json" },
+    ];
+    expect(rows.length, "home path table is empty").toBeGreaterThan(0);
+    for (const row of rows)
+      expect(abbreviateHome(row.path), row.path).toBe(row.expected);
   });
 });
 
 describe("summarizePaths", () => {
-  it("joins two paths, abbreviated, with the full paths in the title", () => {
-    const summary = summarizePaths([
-      "/home/method/.claude/skills/agent-browser",
-      "/home/method/.pi/agent/skills/agent-browser",
-    ]);
-    expect(summary?.text).toBe(
-      "~/.claude/skills/agent-browser · ~/.pi/agent/skills/agent-browser",
-    );
-    expect(summary?.title).toBe(
-      "/home/method/.claude/skills/agent-browser\n/home/method/.pi/agent/skills/agent-browser",
-    );
-  });
-
-  it("collapses three or more paths to the first plus a count", () => {
-    const summary = summarizePaths([
-      "/home/method/.claude/skills/x",
-      "/home/method/.codex/skills/x",
-      "/home/method/.pi/agent/skills/x",
-    ]);
-    expect(summary?.text).toBe("~/.claude/skills/x +2 more");
-  });
-
-  it("counts one place once however many tools read it", () => {
+  it("summarizes unique paths while retaining their original titles", () => {
     const shared = "/home/method/hand-made/skills/browser";
-    const summary = summarizePaths([shared, shared]);
-    expect(summary?.text).toBe("~/hand-made/skills/browser");
-    expect(summary?.count).toBe(1);
+    const rows = [
+      {
+        name: "two paths",
+        paths: [
+          "/home/method/.claude/skills/agent-browser",
+          "/home/method/.pi/agent/skills/agent-browser",
+        ],
+        expected: {
+          text: "~/.claude/skills/agent-browser · ~/.pi/agent/skills/agent-browser",
+          title:
+            "/home/method/.claude/skills/agent-browser\n/home/method/.pi/agent/skills/agent-browser",
+        },
+      },
+      {
+        name: "collapsed paths",
+        paths: [
+          "/home/method/.claude/skills/x",
+          "/home/method/.codex/skills/x",
+          "/home/method/.pi/agent/skills/x",
+        ],
+        expected: { text: "~/.claude/skills/x +2 more" },
+      },
+      {
+        name: "shared path",
+        paths: [shared, shared],
+        expected: { text: "~/hand-made/skills/browser", count: 1 },
+      },
+    ];
+    expect(rows.length, "path summary table is empty").toBeGreaterThan(0);
+    for (const row of rows)
+      expect(summarizePaths(row.paths), row.name).toMatchObject(row.expected);
   });
 
   it("returns null with no paths", () => {

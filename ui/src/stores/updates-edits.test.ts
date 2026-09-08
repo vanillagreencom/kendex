@@ -2,6 +2,7 @@ import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HarnessId, UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
+import { updateRow } from "@/components/updates-test-rows";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
 import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
@@ -32,35 +33,14 @@ vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() },
 }));
 
-function row(overrides: Partial<UpdateRow>): UpdateRow {
-  return {
-    scope: { scope: "global" },
-    kind: "skill",
-    name: "gh",
-    source: "kendex",
+const row = (overrides: Partial<UpdateRow>): UpdateRow =>
+  updateRow("gh", null, {
     repo: "owner/catalog",
     repoIdentity: "owner/catalog",
     current: { commit: "a".repeat(40), label: "v1", date: null },
     latest: { commit: "b".repeat(40), label: "v2", date: null },
-    updateAvailable: true,
-    pinned: false,
-    ignored: false,
-    blockedByLocalEdit: false,
-    editedHarnesses: [],
-    forkableHarness: null,
-    canDiscard: true,
-    canTakeLatest: true,
-    holdOwner: null,
-    derived: false,
-    requiredBy: [],
-    forked: false,
-    forkEdited: false,
-    mixed: false,
-    removedUpstream: false,
-    noPerPackageUpdate: null,
     ...overrides,
-  };
-}
+  });
 
 /** `installAsNew` hands its refusal to a callback at the engine's answer,
  *  ahead of the reads behind it. A case about that answer reads through
@@ -192,33 +172,34 @@ describe("updates store: edited places", () => {
       forkableHarness: "claude" as const,
     };
 
-    await takeNewVersion(row({ ...edited, pinned: true }));
-    expect(commands.applyDiscardEdits).toHaveBeenLastCalledWith(
-      { scope: "global" },
-      "skill",
-      "gh",
-      "b".repeat(40),
-    );
-
-    await takeNewVersion(row(edited));
-    expect(commands.applyDiscardEdits).toHaveBeenLastCalledWith(
-      { scope: "global" },
-      "skill",
-      "gh",
-      null,
-    );
-
-    // A held bundle member: the bundle owns the revision, so the discard
-    // runs without moving one.
-    await takeNewVersion(
-      row({ ...edited, pinned: true, derived: true, canTakeLatest: false }),
-    );
-    expect(commands.applyDiscardEdits).toHaveBeenLastCalledWith(
-      { scope: "global" },
-      "skill",
-      "gh",
-      null,
-    );
+    const rows = [
+      {
+        name: "held",
+        subject: row({ ...edited, pinned: true }),
+        revision: "b".repeat(40),
+      },
+      { name: "following", subject: row(edited), revision: null },
+      {
+        name: "bundle-owned hold",
+        subject: row({
+          ...edited,
+          pinned: true,
+          derived: true,
+          canTakeLatest: false,
+        }),
+        revision: null,
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const test of rows) {
+      await takeNewVersion(test.subject);
+      expect(commands.applyDiscardEdits, test.name).toHaveBeenLastCalledWith(
+        { scope: "global" },
+        "skill",
+        "gh",
+        test.revision,
+      );
+    }
     expect(commands.packageSetRev).not.toHaveBeenCalled();
   });
 
@@ -293,27 +274,29 @@ describe("updates store: installing beside an edited place", () => {
       },
     });
 
-    expect(
-      await refusalFrom(row({ ...edited, pinned: true }), "claude", "gh-mine"),
-    ).toBeNull();
-    expect(commands.packageForkBeside).toHaveBeenLastCalledWith(
-      { scope: "global" },
-      "skill",
-      "gh",
-      "claude",
-      "gh-mine",
-      "b".repeat(40),
-    );
-
-    expect(await refusalFrom(row(edited), "claude", "gh-mine")).toBeNull();
-    expect(commands.packageForkBeside).toHaveBeenLastCalledWith(
-      { scope: "global" },
-      "skill",
-      "gh",
-      "claude",
-      "gh-mine",
-      null,
-    );
+    const rows = [
+      {
+        name: "held",
+        subject: row({ ...edited, pinned: true }),
+        revision: "b".repeat(40),
+      },
+      { name: "following", subject: row(edited), revision: null },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const test of rows) {
+      expect(
+        await refusalFrom(test.subject, "claude", "gh-mine"),
+        test.name,
+      ).toBeNull();
+      expect(commands.packageForkBeside, test.name).toHaveBeenLastCalledWith(
+        { scope: "global" },
+        "skill",
+        "gh",
+        "claude",
+        "gh-mine",
+        test.revision,
+      );
+    }
     expect(toast.success).toHaveBeenCalledWith(
       "Installed gh — your edited copy is now gh-mine",
     );

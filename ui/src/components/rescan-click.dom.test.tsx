@@ -6,7 +6,7 @@
 // path asks to be told, which is a thing about the call sites and not about
 // `rescanEverything`: a caller that takes the default leaves the option
 // inert.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
 import { ProblemCard } from "@/components/problem-card";
 import { Sidebar } from "@/components/sidebar";
@@ -45,7 +45,7 @@ const press = async (host: HTMLElement, label: string) => {
   await settle();
 };
 
-beforeEach(() => {
+const reset = () => {
   vi.clearAllMocks();
   vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
   // Home reads the marketplaces overview on mount. It is nothing to do
@@ -60,52 +60,38 @@ beforeEach(() => {
     error: null,
     backgroundFailureAnnounced: false,
   });
-});
+};
 
 describe("a button offering to look again", () => {
-  it("is told about a failure the background scan already announced", async () => {
+  it("announces an already-reported background failure from each entry point", async () => {
+    const rows = [
+      {
+        name: "Problems",
+        label: "Rescan",
+        element: (
+          <ProblemCard
+            problem={{
+              key: "scan",
+              kind: "scan-failure",
+              message: "the machine could not be read",
+              scope: null,
+            }}
+          />
+        ),
+      },
+      { name: "Sidebar", label: "Scan again", element: <Sidebar /> },
+      { name: "Home", label: SCAN_AGAIN_LABEL, element: <OverviewPage /> },
+    ];
+    expect(rows).toHaveLength(3);
     const { toast } = await import("sonner");
-    failing();
-    // Startup met the failure and said so; the store has gone quiet.
-    await useScanStore.getState().refresh();
-    expect(toast.error).toHaveBeenCalledTimes(1);
-
-    const host = mount(
-      <ProblemCard
-        problem={{
-          key: "scan",
-          kind: "scan-failure",
-          message: "the machine could not be read",
-          scope: null,
-        }}
-      />,
-    );
-    await press(host, "Rescan");
-
-    expect(toast.error).toHaveBeenCalledTimes(2);
-  });
-
-  it("is told from the sidebar's Scan again too", async () => {
-    const { toast } = await import("sonner");
-    failing();
-    await useScanStore.getState().refresh();
-    expect(toast.error).toHaveBeenCalledTimes(1);
-
-    const host = mount(<Sidebar />);
-    await press(host, "Scan again");
-
-    expect(toast.error).toHaveBeenCalledTimes(2);
-  });
-
-  it("is told from Home's Scan again too", async () => {
-    const { toast } = await import("sonner");
-    failing();
-    await useScanStore.getState().refresh();
-    expect(toast.error).toHaveBeenCalledTimes(1);
-
-    const host = mount(<OverviewPage />);
-    await press(host, SCAN_AGAIN_LABEL);
-
-    expect(toast.error).toHaveBeenCalledTimes(2);
+    for (const row of rows) {
+      reset();
+      failing();
+      await useScanStore.getState().refresh();
+      expect(toast.error, row.name).toHaveBeenCalledTimes(1);
+      const host = mount(row.element);
+      await press(host, row.label);
+      expect(toast.error, row.name).toHaveBeenCalledTimes(2);
+    }
   });
 });

@@ -68,15 +68,40 @@ beforeEach(() => {
 // manifest half of the same page already reads its draft, and a draft
 // counting on one half of a page and not the other is the mismatch.
 describe("useCustomizedHere", () => {
-  it("lists a package an unsaved settings value has just made theirs", () => {
-    expect(listed(place("enforce"), [])).toBe("");
-    expect(
-      listed(place("enforce"), [setEdit({ kind: "set", value: "advise" })]),
-    ).toBe("gh");
-  });
-
-  it("drops one an unsaved reset has just handed back", () => {
-    expect(listed(place("advise"), [])).toBe("gh");
-    expect(listed(place("advise"), [setEdit({ kind: "reset" })])).toBe("");
+  it("lists unsaved additions and removes unsaved resets", () => {
+    const rows: {
+      name: string;
+      saved: string;
+      edit: SettingsEdit["value"];
+      before: string;
+      after: string;
+    }[] = [
+      {
+        name: "unsaved value",
+        saved: "enforce",
+        edit: { kind: "set", value: "advise" },
+        before: "",
+        after: "gh",
+      },
+      {
+        name: "unsaved reset",
+        saved: "advise",
+        edit: { kind: "reset" },
+        before: "gh",
+        after: "",
+      },
+    ];
+    expect(rows.length, "unsaved customization table is empty").toBeGreaterThan(
+      0,
+    );
+    for (const row of rows) {
+      expect(
+        {
+          before: listed(place(row.saved), []),
+          after: listed(place(row.saved), [setEdit(row.edit)]),
+        },
+        row.name,
+      ).toEqual({ before: row.before, after: row.after });
+    }
   });
 });

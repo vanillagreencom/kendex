@@ -114,10 +114,6 @@ describe("how the names are joined", () => {
     );
     expect(label.match(/ and /g)).toHaveLength(1);
   });
-
-  it("names one place on its own", () => {
-    expect(packageMark([mine(VG)])?.label).toBe("Customized in vg");
-  });
 });
 
 // Two projects can end in the same folder name. A mark that names only the

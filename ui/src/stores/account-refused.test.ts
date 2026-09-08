@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
 import {
   ADA,
@@ -9,7 +9,10 @@ import {
   load,
   serves,
 } from "@/test/account-store";
-import { hasCredential, useAccountStore } from "./account";
+import { hasCredential, type SettledAccount, useAccountStore } from "./account";
+import { setAccountReader } from "./account-read";
+
+afterEach(() => setAccountReader(null));
 
 // `vi.mock` is hoisted above the imports, so its factory cannot reach one.
 vi.mock("@/bindings", () => ({
@@ -56,16 +59,53 @@ describe("a call refused because the sign-in expired", () => {
     expect(useAccountStore.getState().submissions).toBeNull();
   });
 
-  it("keeps the explanation through the read that follows it", async () => {
-    useAccountStore.setState({
-      account: { kind: "signed-in", identity: ADA },
-    });
-    met();
-    // The refusal cleared the credential, so this read finds none and
-    // says signed out. What the command learned has to outlive it.
-    answers({ state: "signed-out" });
-    await load();
-    expect(account()).toEqual({ kind: "expired" });
+  it("keeps expiry until a read confirms a credential", async () => {
+    const rows = [
+      {
+        name: "credential removed",
+        answer: { kind: "signed-out" },
+        expected: { kind: "expired" },
+        credential: false,
+      },
+      {
+        name: "cached identity while unreachable",
+        answer: { kind: "offline", identity: ADA },
+        expected: { kind: "expired" },
+        credential: false,
+      },
+      {
+        name: "server accepts another credential",
+        answer: { kind: "signed-in", identity: BOB },
+        expected: { kind: "signed-in", identity: BOB },
+        credential: true,
+      },
+    ] satisfies {
+      name: string;
+      answer: SettledAccount;
+      expected: SettledAccount;
+      credential: boolean;
+    }[];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      fresh();
+      useAccountStore.setState({
+        account: { kind: "signed-in", identity: ADA },
+      });
+      met();
+      expect(account(), row.name).toEqual({ kind: "expired" });
+      // Keep the bridge path for the read that finds the credential removed.
+      if (row.answer.kind === "signed-out") {
+        setAccountReader(null);
+        answers({ state: "signed-out" });
+      } else {
+        serves(row.answer);
+      }
+      await load();
+      expect(
+        { account: account(), credential: hasCredential(account()) },
+        row.name,
+      ).toEqual({ account: row.expected, credential: row.credential });
+    }
   });
 
   it("drops rows already out for the credential it ended", async () => {
@@ -81,41 +121,6 @@ describe("a call refused because the sign-in expired", () => {
     });
     await useAccountStore.getState().loadSubmissions();
     expect(useAccountStore.getState().submissions).toBeNull();
-  });
-
-  // A failed removal leaves the credential, and its cached identity, in
-  // place. An outage then answers `offline` off that warm cache
-  // for a sign-in the server has already refused, and offline holds a
-  // credential: without the same rule the signed-out answer gets, the dead
-  // sign-in comes back usable and the Submit it cannot carry is offered
-  // again.
-  it("keeps expired through a read that could not reach the server", async () => {
-    useAccountStore.setState({
-      account: { kind: "signed-in", identity: ADA },
-    });
-    met();
-    expect(account()).toEqual({ kind: "expired" });
-
-    serves({ kind: "offline", identity: ADA });
-    await load();
-
-    expect(account()).toEqual({ kind: "expired" });
-    // What the submit dialog gates its Submit button on.
-    expect(hasCredential(account())).toBe(false);
-  });
-
-  // The control: a read that reached the server is news that outranks the
-  // verdict, or an expiry could never be cleared at all.
-  it("lets a signed-in read take the expiry back", async () => {
-    useAccountStore.setState({
-      account: { kind: "signed-in", identity: ADA },
-    });
-    met();
-
-    serves({ kind: "signed-in", identity: BOB });
-    await load();
-
-    expect(account()).toEqual({ kind: "signed-in", identity: BOB });
   });
 
   it("changes nothing once the account has already moved on", () => {
@@ -271,21 +276,43 @@ describe("a submissions read the server could not answer", () => {
     identity: ADA,
   };
 
-  const fails = () =>
-    vi.mocked(commands.mineSubmissions).mockResolvedValue({
-      status: "error",
-      error: { kind: "failed", message: WHY },
-    } as Awaited<ReturnType<typeof commands.mineSubmissions>>);
-
-  it("records why, and leaves the rows it could not refresh", async () => {
-    useAccountStore.setState({ account: signedIn, submissions: [ROW] });
-    fails();
-
-    await useAccountStore.getState().loadSubmissions();
-
-    expect(useAccountStore.getState().submissionsError).toBe(WHY);
-    expect(useAccountStore.getState().submissions).toEqual([ROW]);
-    expect(account()).toEqual(signedIn);
+  it("records a failed submissions read without dropping its account or rows", async () => {
+    const rows = [
+      {
+        name: "server refusal",
+        error: { kind: "failed" as const, message: WHY },
+        message: WHY,
+      },
+      {
+        name: "folded transport failure",
+        error: "the bridge is gone",
+        message: "the bridge is gone",
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      useAccountStore.setState({
+        account: signedIn,
+        submissions: [ROW],
+        submissionsError: null,
+      });
+      vi.mocked(commands.mineSubmissions).mockResolvedValue({
+        status: "error",
+        error: row.error,
+      } as Awaited<ReturnType<typeof commands.mineSubmissions>>);
+      await expect(
+        useAccountStore.getState().loadSubmissions(),
+        row.name,
+      ).resolves.toBeUndefined();
+      expect(
+        {
+          error: useAccountStore.getState().submissionsError,
+          submissions: useAccountStore.getState().submissions,
+          account: account(),
+        },
+        row.name,
+      ).toEqual({ error: row.message, submissions: [ROW], account: signedIn });
+    }
   });
 
   // Expiry is the credential ending, and the rows go with it. A failure
@@ -307,34 +334,6 @@ describe("a submissions read the server could not answer", () => {
     expect(account()).toEqual({ kind: "expired" });
     expect(useAccountStore.getState().submissions).toBeNull();
     expect(useAccountStore.getState().submissionsError).toBeNull();
-  });
-
-  // A failed call is a read that failed, not an exception for the poll's
-  // `void` caller to drop on the floor. It says nothing about the
-  // credential, so the account stays where it is and the rows say why they
-  // are not current.
-  //
-  // The transport folds its own failure into the error arm as the message
-  // alone, so that — not a rejection — is what the poll meets. Left
-  // read by `kind` the message answers `undefined`, the write falls to the
-  // arm that writes nothing, and an empty tab offers a first submit over
-  // work already in review.
-  it("lands a failed poll as a failed read, with the words it came with", async () => {
-    useAccountStore.setState({ account: signedIn, submissions: [ROW] });
-    vi.mocked(commands.mineSubmissions).mockResolvedValue({
-      status: "error",
-      error: "the bridge is gone",
-    } as Awaited<ReturnType<typeof commands.mineSubmissions>>);
-
-    await expect(
-      useAccountStore.getState().loadSubmissions(),
-    ).resolves.toBeUndefined();
-
-    expect(useAccountStore.getState().submissionsError).toBe(
-      "the bridge is gone",
-    );
-    expect(useAccountStore.getState().submissions).toEqual([ROW]);
-    expect(account()).toEqual(signedIn);
   });
 
   it("goes with the credential when the person signs out", async () => {
@@ -383,26 +382,39 @@ describe("a submissions read the server could not answer", () => {
       error: { kind: "failed", message: WHY },
     } as Answer;
 
-    it("keeps the newer success when the older read fails last", async () => {
-      const { land, first, second } = bothOut();
-      land[1](landed);
-      await second;
-      land[0](failed);
-      await first;
-
-      expect(useAccountStore.getState().submissions).toEqual([ROW]);
-      expect(useAccountStore.getState().submissionsError).toBeNull();
-    });
-
-    it("keeps the newer failure when the older read lands last", async () => {
-      const { land, first, second } = bothOut();
-      land[1](failed);
-      await second;
-      land[0](landed);
-      await first;
-
-      expect(useAccountStore.getState().submissionsError).toBe(WHY);
-      expect(useAccountStore.getState().submissions).toBeNull();
+    it("keeps the newest submissions result when the older read answers last", async () => {
+      const rows = [
+        {
+          name: "newer success",
+          newer: landed,
+          older: failed,
+          submissions: [ROW],
+          error: null,
+        },
+        {
+          name: "newer failure",
+          newer: failed,
+          older: landed,
+          submissions: null,
+          error: WHY,
+        },
+      ];
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        useAccountStore.setState({ submissions: null, submissionsError: null });
+        const { land, first, second } = bothOut();
+        land[1](row.newer);
+        await second;
+        land[0](row.older);
+        await first;
+        expect(
+          {
+            submissions: useAccountStore.getState().submissions,
+            error: useAccountStore.getState().submissionsError,
+          },
+          row.name,
+        ).toEqual({ submissions: row.submissions, error: row.error });
+      }
     });
   });
 

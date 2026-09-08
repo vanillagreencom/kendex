@@ -147,6 +147,7 @@ describe("the state the section draws", () => {
   // The field is the provider's immutable account id, not a handle. It is
   // nobody's name and belongs nowhere a person can read it.
   it("never shows the provider id of a credential it draws", () => {
+    expect(IDENTIFIED).toHaveLength(2);
     for (const account of IDENTIFIED) {
       expect(show({ account }).textContent).not.toContain(ADA.githubLogin);
     }

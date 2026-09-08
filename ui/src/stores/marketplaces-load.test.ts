@@ -51,19 +51,44 @@ describe("the marketplaces overview read failing", () => {
     vi.clearAllMocks();
   });
 
-  it("keeps the rows and marks them not current on a returned refusal", async () => {
-    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
-      status: "error",
-      error: "offline",
-    });
-
-    await useMarketplacesStore.getState().load();
-
-    const state = useMarketplacesStore.getState();
-    expect(state.rows).toEqual([kept]);
-    expect(state.read.status).toBe("failed");
-    expect(state.error).toBe("offline");
-    expect(state.read.error).toBe("offline");
+  it("keeps the rows and marks them not current when the overview fails", async () => {
+    const rows = [
+      { name: "returned refusal", rejected: false, reason: "offline" },
+      { name: "rejected bridge call", rejected: true, reason: "ipc down" },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      useMarketplacesStore.setState({
+        rows: [kept],
+        read: READ_LANDED,
+        error: null,
+      });
+      if (row.rejected)
+        vi.mocked(commands.marketplacesOverview).mockRejectedValue(
+          new Error(row.reason),
+        );
+      else
+        vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+          status: "error",
+          error: row.reason,
+        });
+      await useMarketplacesStore.getState().load();
+      const state = useMarketplacesStore.getState();
+      expect(
+        {
+          rows: state.rows,
+          status: state.read.status,
+          error: state.error,
+          readError: state.read.error,
+        },
+        row.name,
+      ).toEqual({
+        rows: [kept],
+        status: "failed",
+        error: row.reason,
+        readError: row.reason,
+      });
+    }
   });
 
   // Actions write the shared error field too; only load() may write the
@@ -106,73 +131,46 @@ describe("the marketplaces overview read failing", () => {
     expect(useMarketplacesStore.getState().read.error).toBeNull();
   });
 
-  // A rejected call that escaped the store would leave the read landed and
-  // the tile counting rows nobody could confirm.
-  it("lands a rejected call the same as a returned refusal", async () => {
-    vi.mocked(commands.marketplacesOverview).mockRejectedValue(
-      new Error("ipc down"),
-    );
-
-    await useMarketplacesStore.getState().load();
-
-    const state = useMarketplacesStore.getState();
-    expect(state.rows).toEqual([kept]);
-    expect(state.read.status).toBe("failed");
-    expect(state.error).toBe("ipc down");
-  });
-
   // Home's mount-time load overlaps the page's own, a retry button against
   // either, and every mutation re-reading behind them. Without ordering a
   // slow early one landing last stamps its stale rows current and clears
   // the notice saying they are not.
-  it("discards a slow load that lands after a fresher one", async () => {
-    let resolveFirst!: (
-      value: Awaited<ReturnType<typeof commands.marketplacesOverview>>,
-    ) => void;
-    vi.mocked(commands.marketplacesOverview).mockReturnValueOnce(
-      new Promise((resolve) => {
-        resolveFirst = resolve;
-      }),
-    );
-    const first = useMarketplacesStore.getState().load();
-
-    const fresh = [{ ...kept, name: "fresh" }];
-    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
-      status: "ok",
-      data: fresh,
-    });
-    await useMarketplacesStore.getState().load();
-
-    resolveFirst({ status: "ok", data: [{ ...kept, name: "stale" }] });
-    await first;
-
-    const state = useMarketplacesStore.getState();
-    expect(state.rows).toEqual(fresh);
-    expect(state.read.status).toBe("landed");
-  });
-
-  // The read state rides on the ordering too: an older landing that
-  // cleared a newer failure takes the unconfirmed notice off the page.
-  it("discards a slow failed load landing after a fresher answer", async () => {
-    let rejectFirst!: (reason: Error) => void;
-    vi.mocked(commands.marketplacesOverview).mockReturnValueOnce(
-      new Promise((_, reject) => {
-        rejectFirst = reject;
-      }),
-    );
-    const first = useMarketplacesStore.getState().load();
-
-    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
-      status: "ok",
-      data: [kept],
-    });
-    await useMarketplacesStore.getState().load();
-
-    rejectFirst(new Error("ipc down"));
-    await first;
-
-    const state = useMarketplacesStore.getState();
-    expect(state.read.status).toBe("landed");
-    expect(state.read.error).toBeNull();
+  it("discards an older overview result after a fresher answer", async () => {
+    const rows = [
+      { name: "older successful read", rejected: false },
+      { name: "older rejected read", rejected: true },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      let resolveFirst!: (
+        value: Awaited<ReturnType<typeof commands.marketplacesOverview>>,
+      ) => void;
+      let rejectFirst!: (reason: Error) => void;
+      vi.mocked(commands.marketplacesOverview).mockReturnValueOnce(
+        new Promise((resolve, reject) => {
+          resolveFirst = resolve;
+          rejectFirst = reject;
+        }),
+      );
+      const first = useMarketplacesStore.getState().load();
+      const fresh = [{ ...kept, name: row.rejected ? "kit" : "fresh" }];
+      vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+        status: "ok",
+        data: fresh,
+      });
+      await useMarketplacesStore.getState().load();
+      if (row.rejected) rejectFirst(new Error("ipc down"));
+      else resolveFirst({ status: "ok", data: [{ ...kept, name: "stale" }] });
+      await first;
+      const state = useMarketplacesStore.getState();
+      expect(
+        {
+          rows: state.rows,
+          status: state.read.status,
+          error: state.read.error,
+        },
+        row.name,
+      ).toEqual({ rows: fresh, status: "landed", error: null });
+    }
   });
 });

@@ -47,7 +47,9 @@ describe("a place's unmanaged items", () => {
       group("lint", ["codex"]),
       group("fmt", ["pi"]),
     ]);
-    for (const name of ["gh", "lint", "fmt"]) expect(html).toContain(name);
+    const names = ["gh", "lint", "fmt"];
+    expect(names).toHaveLength(3);
+    for (const name of names) expect(html).toContain(name);
     // The summary's own button reads "Start managing all 3", so only the
     // per-row label exactly is counted.
     expect(html.split(`>${START_MANAGING_LABEL}<`).length - 1).toBe(3);

@@ -116,6 +116,7 @@ describe("a project added while the list is on screen", () => {
     const host = mount(<ProjectList />);
     await settle();
     expect(host.textContent).not.toContain(unmanagedHereLabel(2));
+    const beforeRegistering = vi.mocked(commands.auditAll).mock.calls.length;
 
     await act(async () => {
       await useSettingsStore.getState().registerProject("/work/acme");
@@ -123,33 +124,10 @@ describe("a project added while the list is on screen", () => {
     await settle();
 
     expect(commands.auditAll).toHaveBeenCalled();
-    expect(host.textContent).toContain(unmanagedHereLabel(2));
-  });
-
-  // The mount's own audit is inside the freshness window by the time the
-  // registration lands, so an unforced ask would return without calling the
-  // backend at all and the count would stay at zero.
-  it("asks past the freshness window rather than reusing the last answer", async () => {
-    vi.mocked(commands.registerProject).mockResolvedValue({
-      status: "ok",
-      data: { settings: { projects: ["/work/acme"] }, base: null } as never,
-    });
-    vi.mocked(commands.auditAll).mockResolvedValue({
-      status: "ok",
-      data: [view(ACME, [byHand("gh")])],
-    });
-
-    mount(<ProjectList />);
-    await settle();
-    const beforeRegistering = vi.mocked(commands.auditAll).mock.calls.length;
-
-    await act(async () => {
-      await useSettingsStore.getState().registerProject("/work/acme");
-    });
-
     expect(vi.mocked(commands.auditAll).mock.calls.length).toBeGreaterThan(
       beforeRegistering,
     );
+    expect(host.textContent).toContain(unmanagedHereLabel(2));
   });
 });
 
@@ -330,6 +308,8 @@ describe("a place card's kind badge", () => {
   it("shows the row count of the view its click opens", () => {
     const host = mount(<ProjectList />);
     const badge = badgeCount(host, "Personal");
+    expect(badge).toBe(2);
+    expect(badgeCount(host, "acme")).toBe(1);
 
     act(() => skillBadge(host, "Personal").click());
     expect(useNavStore.getState().libraryFilter).toEqual({
@@ -337,15 +317,5 @@ describe("a place card's kind badge", () => {
       kind: "skill",
     });
     expect(badge).toBe(destinationRows());
-  });
-
-  // The must-fail control: three installations of two packages sit behind
-  // Personal, so 3 is the pre-fix number this case rejects. Without it the
-  // equality above would hold on any pair that moved together. The project
-  // card pins that a place counts only what is at it.
-  it("counts packages rather than the installations behind them", () => {
-    const host = mount(<ProjectList />);
-    expect(badgeCount(host, "Personal")).toBe(2);
-    expect(badgeCount(host, "acme")).toBe(1);
   });
 });

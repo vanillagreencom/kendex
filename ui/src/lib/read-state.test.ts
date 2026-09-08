@@ -159,9 +159,10 @@ describe("invalidations", () => {
 describe("readOf", () => {
   it("lands an answer and keeps why a refusal did not", () => {
     expect(readOf({ status: "ok" })).toEqual(READ_LANDED);
-    expect(readOf({ status: "error", error: "offline" })).toEqual(
-      readFailed("offline"),
-    );
+    expect(readOf({ status: "error", error: "offline" })).toEqual({
+      status: "failed",
+      error: "offline",
+    });
   });
 
   // The three states a surface tells apart: only a landed read may say

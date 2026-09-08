@@ -213,6 +213,9 @@ describe("the authoring guide", () => {
     await settle();
     await openGuide(host);
     expect(commands.mineAuthoringDoc).toHaveBeenCalledTimes(1);
+    const alert = document.body.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("Couldn't open the guide");
+    expect(alert?.textContent).toContain("the bridge closed");
 
     await closeGuide();
     vi.mocked(commands.mineAuthoringDoc).mockResolvedValue(
@@ -223,21 +226,6 @@ describe("the authoring guide", () => {
     expect(commands.mineAuthoringDoc).toHaveBeenCalledTimes(2);
     expect(document.body.textContent).toContain("Authoring");
     expect(document.body.querySelector('[role="alert"]')).toBeNull();
-  });
-
-  it("says why the guide did not arrive when the read answers an error", async () => {
-    vi.mocked(commands.mineSubmissions).mockResolvedValue(answered([]));
-    vi.mocked(commands.mineAuthoringDoc).mockResolvedValue({
-      status: "error",
-      error: "the bridge closed",
-    });
-    const host = mount(<MineTab />);
-    await settle();
-    await openGuide(host);
-
-    const alert = document.body.querySelector('[role="alert"]');
-    expect(alert?.textContent).toContain("Couldn't open the guide");
-    expect(alert?.textContent).toContain("the bridge closed");
   });
 });
 

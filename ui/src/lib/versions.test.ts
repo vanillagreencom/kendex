@@ -24,25 +24,39 @@ const page = (
   }) satisfies Parameters<typeof canUpdatePackage>[0];
 
 describe("canUpdatePackage", () => {
-  it("offers Update for a following package with a newer version", () => {
-    expect(canUpdatePackage(page())).toBe(true);
-  });
-
-  // Whatever withholds the update, the page hides the button — and the
-  // page renders this same string beside it, so the two never disagree.
-  // The reason itself is `update-groups.ts`'s to work out.
-  it("never offers it while anything is withheld, whatever the reason", () => {
-    expect(canUpdatePackage(page({ withheld: "any reason at all" }))).toBe(
-      false,
+  it("requires current metadata and an allowed newer version", () => {
+    const rows = [
+      { name: "newer following package", input: page(), expected: true },
+      {
+        name: "withheld",
+        input: page({ withheld: "any reason at all" }),
+        expected: false,
+      },
+      {
+        name: "no latest version",
+        input: page({ latest: undefined }),
+        expected: false,
+      },
+      {
+        name: "no installed version",
+        input: page({ installed: undefined }),
+        expected: false,
+      },
+      {
+        name: "metadata pending",
+        input: page({ metaLoaded: false }),
+        expected: false,
+      },
+      {
+        name: "already installed latest",
+        input: page({ latest: version({ installed: true }) }),
+        expected: false,
+      },
+    ];
+    expect(rows.length, "package update offer table is empty").toBeGreaterThan(
+      0,
     );
-  });
-
-  it("waits for what it needs", () => {
-    expect(canUpdatePackage(page({ latest: undefined }))).toBe(false);
-    expect(canUpdatePackage(page({ installed: undefined }))).toBe(false);
-    expect(canUpdatePackage(page({ metaLoaded: false }))).toBe(false);
-    expect(
-      canUpdatePackage(page({ latest: version({ installed: true }) })),
-    ).toBe(false);
+    for (const row of rows)
+      expect(canUpdatePackage(row.input), row.name).toBe(row.expected);
   });
 });

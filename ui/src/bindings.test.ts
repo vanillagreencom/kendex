@@ -36,26 +36,24 @@ describe("a command whose transport rejected", () => {
     delete bridged.__TAURI_INTERNALS__;
   });
 
-  it("answers with the refusal shape and the rejection's message", async () => {
-    rejectingWith(new Error("the channel is gone"));
-
-    await expect(commands.scanMachine()).resolves.toEqual({
-      status: "error",
-      error: "the channel is gone",
-    });
-  });
-
-  // A blank message renders as blank under whatever title shows it, and a
-  // caller testing it by truthiness reads the failure as no failure — the
-  // same silence the fold exists to end. `lib/settled.ts` owns the words,
-  // and this holds the generated copy of them to it.
-  it("stands words in for a rejection that says nothing", async () => {
-    rejectingWith(new Error(""));
-
-    await expect(commands.scanMachine()).resolves.toEqual({
-      status: "error",
-      error: NO_REASON_GIVEN,
-    });
+  // The generated fallback must agree with the value used by UI readers.
+  it("folds transport Error messages into refusal values", async () => {
+    const rows = [
+      {
+        name: "message",
+        message: "the channel is gone",
+        error: "the channel is gone",
+      },
+      { name: "empty message", message: "", error: NO_REASON_GIVEN },
+    ];
+    expect(rows.length, "transport error table is empty").toBeGreaterThan(0);
+    for (const row of rows) {
+      rejectingWith(new Error(row.message));
+      await expect(commands.scanMachine(), row.name).resolves.toEqual({
+        status: "error",
+        error: row.error,
+      });
+    }
   });
 
   // The engine's own refusal arrives as the rejected value itself, never as
@@ -89,28 +87,26 @@ describe("a command whose transport answered", () => {
     });
   });
 
-  it.each<Manifest_Deserialize>([
-    { schema: 6 },
-    {
-      schema: 6,
-      "bot-instructions": {
-        schema: 1,
-        bots: { codex: true, qodo: false },
-        cadence: { qodo_commands: ["/review"] },
-        doctrine: { append: { severity: "Keep the repo rule." } },
+  it("retains optional bot settings through the manifest bridge", async () => {
+    const rows: Manifest_Deserialize[] = [
+      { schema: 6 },
+      {
+        schema: 6,
+        "bot-instructions": {
+          schema: 1,
+          bots: { codex: true, qodo: false },
+          cadence: { qodo_commands: ["/review"] },
+          doctrine: { append: { severity: "Keep the repo rule." } },
+        },
       },
-    },
-  ])(
-    "retains optional bot settings through the manifest bridge: %j",
-    async (manifest) => {
+    ];
+    expect(rows.length, "manifest bridge table is empty").toBeGreaterThan(0);
+    for (const manifest of rows) {
       const returned = { manifest };
       bridged.__TAURI_INTERNALS__ = {
         invoke: () => Promise.resolve(returned),
       };
-      await expect(commands.getManifest({ scope: "global" })).resolves.toEqual({
-        status: "ok",
-        data: returned,
-      });
+      const answer = await commands.getManifest({ scope: "global" });
       let sent: unknown;
       bridged.__TAURI_INTERNALS__ = {
         invoke: (_command, args) => {
@@ -123,11 +119,14 @@ describe("a command whose transport answered", () => {
         { manifest, base: null },
         null,
       );
-      expect(sent).toEqual({
-        scope: { scope: "global" },
-        manifest: { manifest, base: null },
-        settings: null,
+      expect({ answer, sent }, JSON.stringify(manifest)).toEqual({
+        answer: { status: "ok", data: returned },
+        sent: {
+          scope: { scope: "global" },
+          manifest: { manifest, base: null },
+          settings: null,
+        },
       });
-    },
-  );
+    }
+  });
 });

@@ -147,27 +147,32 @@ describe("the unreadable file rows", () => {
     ],
   ];
 
-  it.each(rows)("says %j plainly", (problem, title, remedy) => {
-    const onProblems = vi.fn();
-    const found = row(
-      attentionRows(
-        source({
-          result: {
-            harnesses: [],
-            items: [],
-            missingProjects: [],
-            warnings: [warning(problem)],
-          },
-          onProblems,
-        }),
-      ),
-      "unreadable-file:/h/.gemini/config/mcp_config.json",
-    );
-    expect(found.title).toBe(title);
-    expect(found.detail).toBe(`/h/.gemini/config/mcp_config.json — ${remedy}`);
-    expect(found.action?.label).toBe(SEE_PROBLEMS_LABEL);
-    found.action?.onClick();
-    expect(onProblems).toHaveBeenCalledTimes(1);
+  it("gives each unreadable-file problem its own explanation and destination", () => {
+    expect(rows).toHaveLength(5);
+    for (const [problem, title, remedy] of rows) {
+      const onProblems = vi.fn();
+      const found = row(
+        attentionRows(
+          source({
+            result: {
+              harnesses: [],
+              items: [],
+              missingProjects: [],
+              warnings: [warning(problem)],
+            },
+            onProblems,
+          }),
+        ),
+        "unreadable-file:/h/.gemini/config/mcp_config.json",
+      );
+      expect(found.title).toBe(title);
+      expect(found.detail).toBe(
+        `/h/.gemini/config/mcp_config.json — ${remedy}`,
+      );
+      expect(found.action?.label).toBe(SEE_PROBLEMS_LABEL);
+      found.action?.onClick();
+      expect(onProblems).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("gives every file its own row rather than one row with a count", () => {

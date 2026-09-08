@@ -123,54 +123,44 @@ describe("a Community row's Subscribed marker", () => {
   // as well as bring one — a rendering the engine refuses drops that
   // package whatever the planning options say. What its uninstaller ran is
   // the subscribe's own account to give.
-  it("says what a subscribe ran in the repository", async () => {
-    vi.mocked(commands.marketplaceSubscribe).mockResolvedValue({
-      status: "ok",
-      data: {
-        name: "kit",
-        reference: "https://github.com/Acme/Kit.git",
-        rev: null,
-        lead: null,
-        notes: [],
+  it("relays a subscribe's removal report when a package left", async () => {
+    const rows = [
+      {
+        name: "uninstaller ran",
         undone: ["guards: running scripts/arm --uninstall"],
+        calls: [["guards: running scripts/arm --uninstall"]],
       },
-    });
-    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
-      status: "ok",
-      data: [],
-    });
-
-    await useMarketplacesStore
-      .getState()
-      .subscribe({ scope: "global" }, "https://github.com/Acme/Kit.git", null);
-
-    expect(toast.message).toHaveBeenCalledWith(
-      "guards: running scripts/arm --uninstall",
-    );
-  });
-
-  it("stays quiet when a subscribe took no armed package away", async () => {
-    vi.mocked(toast.message).mockClear();
-    vi.mocked(commands.marketplaceSubscribe).mockResolvedValue({
-      status: "ok",
-      data: {
-        name: "kit",
-        reference: "https://github.com/Acme/Kit.git",
-        rev: null,
-        lead: null,
-        notes: [],
-      },
-    });
-    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
-      status: "ok",
-      data: [],
-    });
-
-    await useMarketplacesStore
-      .getState()
-      .subscribe({ scope: "global" }, "https://github.com/Acme/Kit.git", null);
-
-    expect(toast.message).not.toHaveBeenCalled();
+      { name: "no armed package left", undone: undefined, calls: [] },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const entry of rows) {
+      vi.mocked(toast.message).mockClear();
+      vi.mocked(commands.marketplaceSubscribe).mockResolvedValue({
+        status: "ok",
+        data: {
+          name: "kit",
+          reference: "https://github.com/Acme/Kit.git",
+          rev: null,
+          lead: null,
+          notes: [],
+          ...(entry.undone === undefined ? {} : { undone: entry.undone }),
+        },
+      });
+      vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+        status: "ok",
+        data: [],
+      });
+      await useMarketplacesStore
+        .getState()
+        .subscribe(
+          { scope: "global" },
+          "https://github.com/Acme/Kit.git",
+          null,
+        );
+      expect(vi.mocked(toast.message).mock.calls, entry.name).toEqual(
+        entry.calls,
+      );
+    }
   });
 
   it("ignores path subscriptions, which are no repository", () => {
@@ -228,8 +218,12 @@ describe("a Community row's Subscribed marker", () => {
     expect(toast.success).not.toHaveBeenCalled();
     // Nothing committed, so the rows and the caches stand.
     expect(commands.marketplacesOverview).not.toHaveBeenCalled();
-    expect(useMarketplacesStore.getState().summaries.kept).toBeDefined();
-    expect(useMarketplacesStore.getState().rows).toHaveLength(1);
+    expect(useMarketplacesStore.getState().summaries.kept).toEqual({
+      provenance: "acme/kit",
+    });
+    expect(useMarketplacesStore.getState().rows).toEqual([
+      row("Acme/Kit", "acme/kit"),
+    ]);
   });
 
   it("clears once an unsubscribe lands, whatever the directory snapshot said", async () => {
@@ -260,52 +254,41 @@ describe("a Community row's Subscribed marker", () => {
   // a package leaving with its source may have armed this repository, and
   // its uninstaller ran. Rust proves it produces the lines; this proves
   // the window shows them.
-  it("says what the unsubscribe ran in the repository", async () => {
-    useMarketplacesStore.setState({
-      rows: [row("Acme/Kit", "acme/kit")],
-      read: READ_LANDED,
-    });
-    vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
-      status: "ok",
-      data: {
+  it("relays an unsubscribe's removal report when a package left", async () => {
+    const rows = [
+      {
+        name: "uninstaller ran",
         undone: [
           "commit-guards: running scripts/install-git-hooks --uninstall",
         ],
+        calls: [
+          ["commit-guards: running scripts/install-git-hooks --uninstall"],
+        ],
       },
-    });
-    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
-      status: "ok",
-      data: [],
-    });
-
-    await useMarketplacesStore
-      .getState()
-      .unsubscribe({ scope: "global" }, "kit", false, false);
-
-    expect(toast.message).toHaveBeenCalledWith(
-      "commit-guards: running scripts/install-git-hooks --uninstall",
-    );
-  });
-
-  it("stays quiet when the unsubscribe took no armed package away", async () => {
-    useMarketplacesStore.setState({
-      rows: [row("Acme/Kit", "acme/kit")],
-      read: READ_LANDED,
-    });
-    vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
-      status: "ok",
-      data: {},
-    });
-    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
-      status: "ok",
-      data: [],
-    });
-
-    await useMarketplacesStore
-      .getState()
-      .unsubscribe({ scope: "global" }, "kit", false, false);
-
-    expect(toast.message).not.toHaveBeenCalled();
+      { name: "no armed package left", undone: undefined, calls: [] },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const entry of rows) {
+      vi.mocked(toast.message).mockClear();
+      useMarketplacesStore.setState({
+        rows: [row("Acme/Kit", "acme/kit")],
+        read: READ_LANDED,
+      });
+      vi.mocked(commands.marketplaceUnsubscribe).mockResolvedValue({
+        status: "ok",
+        data: entry.undone === undefined ? {} : { undone: entry.undone },
+      });
+      vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+        status: "ok",
+        data: [],
+      });
+      await useMarketplacesStore
+        .getState()
+        .unsubscribe({ scope: "global" }, "kit", false, false);
+      expect(vi.mocked(toast.message).mock.calls, entry.name).toEqual(
+        entry.calls,
+      );
+    }
   });
 
   it("falls back to the snapshot only before the live list has loaded", () => {

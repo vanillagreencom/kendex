@@ -1,67 +1,65 @@
-// The letter both account surfaces put in the circle. What these hold to is
-// that it is one character a reader would recognise as the first one, and
-// that an account the server has not named gets none.
 import { describe, expect, it } from "vitest";
 import { ACCOUNT_SIGNED_IN_LABEL } from "@/lib/copy-account";
 import { accountInitial, accountLabel } from "./account-avatar";
 
-// The provider's account id is an opaque number, not a handle. Every
-// fixture spells it that way so a test cannot pass by showing one.
+// The provider ID is opaque and cannot stand in for a missing name.
 const ADA = { name: "Ada Lovelace", githubLogin: "1234567" };
 
-describe("the letter on the avatar", () => {
-  const named = (name: string) => accountInitial({ name, githubLogin: null });
-
-  it("takes the name's first letter", () => {
-    expect(accountInitial(ADA)).toBe("A");
+describe("the account avatar", () => {
+  it("keeps the first visible character whole, or leaves an unnamed account empty", () => {
+    const rows = [
+      { name: "name", identity: ADA, initial: "A" },
+      {
+        name: "combining accent",
+        identity: { name: "e\u0301lodie", githubLogin: null },
+        initial: "E\u0301",
+      },
+      {
+        name: "precomposed accent",
+        identity: { name: "élodie", githubLogin: null },
+        initial: "É",
+      },
+      {
+        name: "expanded casing",
+        identity: { name: "ßeta", githubLogin: null },
+        initial: "S",
+      },
+      {
+        name: "joined emoji",
+        identity: { name: "👩‍🚀 crew", githubLogin: null },
+        initial: "👩‍🚀",
+      },
+      {
+        name: "blank name",
+        identity: { name: "   ", githubLogin: "1234567" },
+        initial: null,
+      },
+      { name: "no identity", identity: null, initial: null },
+      {
+        name: "surrogate pair",
+        identity: { name: "𝔄da", githubLogin: null },
+        initial: "𝔄",
+      },
+    ];
+    expect(rows).toHaveLength(8);
+    for (const row of rows) {
+      expect(accountInitial(row.identity), row.name).toBe(row.initial);
+    }
   });
 
-  // The accent is part of the letter a reader sees, whether the server sent
-  // one character or a base letter and a combining mark.
-  it("keeps a combining mark with the letter it belongs to", () => {
-    expect(named("e\u0301lodie")).toBe("E\u0301");
-    expect(named("élodie")).toBe("É");
-  });
-
-  // Casing can widen what it is given: this one letter uppercases to two,
-  // and the circle holds one.
-  it("keeps one letter when casing expands it", () => {
-    expect(named("ßeta")).toBe("S");
-  });
-
-  // Every part of the sequence or none: half an emoji is a different emoji.
-  it("keeps a multi-part emoji whole", () => {
-    expect(named("👩‍🚀 crew")).toBe("👩‍🚀");
-  });
-
-  // A name the server sent as blank is no name at all, and the provider id
-  // is not a stand-in for one: the circle stays empty.
-  it("has no letter for a blank name", () => {
-    expect(accountInitial({ name: "   ", githubLogin: "1234567" })).toBeNull();
-  });
-
-  it("has no letter for an account with no identity", () => {
-    expect(accountInitial(null)).toBeNull();
-  });
-
-  it("keeps a first character that is a surrogate pair whole", () => {
-    expect(named("𝔄da")).toBe("𝔄");
-  });
-});
-
-// The field is the provider's immutable account id, not a handle. Nothing
-// may fall back to it: it is nobody's name.
-describe("what the app calls the account", () => {
-  it("is the name the server answered with", () => {
-    expect(accountLabel(ADA)).toBe(ADA.name);
-  });
-
-  // A name the server sent as blank is no name at all, so the label says
-  // the credential is signed in rather than printing whitespace or an id.
-  it("says only that it is signed in when the server named nobody", () => {
-    expect(accountLabel({ name: "  ", githubLogin: "1234567" })).toBe(
-      ACCOUNT_SIGNED_IN_LABEL,
-    );
-    expect(accountLabel(null)).toBe(ACCOUNT_SIGNED_IN_LABEL);
+  it("names the account without exposing the provider ID", () => {
+    const rows = [
+      { name: "named", identity: ADA, label: ADA.name },
+      {
+        name: "blank",
+        identity: { name: "  ", githubLogin: "1234567" },
+        label: ACCOUNT_SIGNED_IN_LABEL,
+      },
+      { name: "absent", identity: null, label: ACCOUNT_SIGNED_IN_LABEL },
+    ];
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(accountLabel(row.identity), row.name).toBe(row.label);
+    }
   });
 });

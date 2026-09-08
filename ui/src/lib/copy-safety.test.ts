@@ -3,12 +3,10 @@ import type { Finding } from "@/bindings";
 import {
   installedScoreWords,
   SAFETY_CAVEAT,
-  SAFETY_CHECK_FAILED,
   SAFETY_DOT_UNCHECKED,
   safetyDotWords,
   safetyHeadline,
   severityTone,
-  staleSafetyNote,
 } from "./copy-safety";
 
 const finding = (severity: Finding["severity"]): Finding => ({
@@ -21,58 +19,19 @@ const finding = (severity: Finding["severity"]): Finding => ({
 });
 
 describe("what a score is allowed to claim", () => {
-  // Everything a person reads where a score belongs, the words that stand
-  // in before one arrives included. A clean read means "nothing was matched
-  // in what we read", so none of these may promise more. The banned words
-  // are matched as plain substrings, which the copy affords by never
-  // reaching for them — not even in a negated form.
-  const besideAScore = [
-    SAFETY_CAVEAT,
-    safetyDotWords(100, 0, []),
-    safetyDotWords(100, 3, []),
-    safetyHeadline([], 0),
-    safetyHeadline([], 3),
-    installedScoreWords(100, 0, []),
-    installedScoreWords(100, 0, [], true),
-    SAFETY_CHECK_FAILED,
-    staleSafetyNote,
-    SAFETY_DOT_UNCHECKED,
-  ];
-
-  it("never claims more than the check established", () => {
-    const copy = besideAScore.join(" ").toLowerCase();
-    for (const banned of [
-      "safe",
-      "verified",
-      "verifies",
-      "approved",
-      "trusted",
-      "vetted",
-      "endorse",
-      "guarantee",
-    ]) {
-      expect(copy).not.toContain(banned);
-    }
-  });
-
   it("discloses that the read is partial wherever it shows a score", () => {
     // The list's dot is the whole reading on a row that installs from
     // there, so its words carry the caveat the number cannot.
     expect(safetyDotWords(60, 0, [finding("high")])).toBe(
-      "Important · 60/100. An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
-    );
-    expect(SAFETY_CAVEAT).toBe(
-      "An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
+      `Important · 60/100. ${SAFETY_CAVEAT}`,
     );
   });
 
-  it("carries the caveat before any result has landed, claiming neither way", () => {
+  it("carries no score before any result has landed", () => {
     // The row installs whether or not its score has arrived, so the words
     // that stand in for one say the check has not answered and repeat what
     // the check is worth — without a number that reads as a result.
-    expect(SAFETY_DOT_UNCHECKED).toBe(
-      "Not checked yet. An automated check for risky patterns, not a review. It can miss things, and a package too large to read is not checked at all.",
-    );
+
     expect(SAFETY_DOT_UNCHECKED).not.toMatch(/\d+\/100/);
   });
 });

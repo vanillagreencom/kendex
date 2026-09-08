@@ -88,44 +88,56 @@ beforeEach(() => {
 // from the rows it was handed. A place the audit could not read has rows
 // nothing has confirmed still exist — files may have changed or gone since.
 describe("a place the audit could not read", () => {
-  it("offers no adoption, and says why rather than claiming it is clean", async () => {
-    stage([
-      {
+  const outcomes = [
+    {
+      name: "offers no adoption, and says why rather than claiming it is clean",
+      reading: {
         ...view([byHand("gh"), byHand("lint")]),
         error: { kind: "lock-corrupt", message: "lock is not JSON" },
       },
-    ]);
+      present: [PLACE_UNCHECKED_TITLE, "lock is not JSON"],
+      absent: [START_MANAGING_LABEL, ALL_MANAGED_TITLE],
+      noButtons: true,
+    },
+    {
+      name: "offers the adoption once the place reads",
+      reading: view([byHand("gh")]),
+      present: ["gh", START_MANAGING_LABEL],
+      absent: [PLACE_UNCHECKED_TITLE],
+      noButtons: false,
+    },
+    {
+      name: "says everything is managed when the place reads and holds nothing",
+      reading: view([]),
+      present: [ALL_MANAGED_TITLE],
+      absent: [PLACE_UNCHECKED_TITLE],
+      noButtons: false,
+    },
+  ] satisfies {
+    name: string;
+    reading: AuditView;
+    present: string[];
+    absent: string[];
+    noButtons: boolean;
+  }[];
+  expect(outcomes).toHaveLength(3);
+  it.each(outcomes)("$name", async (row) => {
+    stage([row.reading]);
     const host = mount(<UnmanagedPage />);
     await settle();
-
-    expect(host.textContent).toContain(PLACE_UNCHECKED_TITLE);
-    expect(host.textContent).toContain("lock is not JSON");
-    expect(host.textContent).not.toContain(START_MANAGING_LABEL);
-    // "Everything is managed" is the one thing this page must not say about
-    // a place whose contents nothing has read.
-    expect(host.textContent).not.toContain(ALL_MANAGED_TITLE);
-    expect(host.querySelectorAll("button")).toHaveLength(0);
-  });
-
-  // The controls, so the absence above is the error's doing and not the
-  // page having nothing to show either way.
-  it("offers the adoption once the place reads", async () => {
-    stage([view([byHand("gh")])]);
-    const host = mount(<UnmanagedPage />);
-    await settle();
-
-    expect(host.textContent).toContain("gh");
-    expect(host.textContent).toContain(START_MANAGING_LABEL);
-    expect(host.textContent).not.toContain(PLACE_UNCHECKED_TITLE);
-  });
-
-  it("says everything is managed when the place reads and holds nothing", async () => {
-    stage([view([])]);
-    const host = mount(<UnmanagedPage />);
-    await settle();
-
-    expect(host.textContent).toContain(ALL_MANAGED_TITLE);
-    expect(host.textContent).not.toContain(PLACE_UNCHECKED_TITLE);
+    const text = host.textContent ?? "";
+    expect(
+      {
+        present: row.present.filter((value) => text.includes(value)),
+        absent: row.absent.filter((value) => text.includes(value)),
+        buttons: row.noButtons ? host.querySelectorAll("button").length : null,
+      },
+      row.name,
+    ).toEqual({
+      present: row.present,
+      absent: [],
+      buttons: row.noButtons ? 0 : null,
+    });
   });
 });
 
@@ -150,10 +162,9 @@ describe("an item a tool reads through a shortcut it set up", () => {
 
     // The dialog is in a portal, off the page's own tree.
     const confirm = button(document.body, PROCEED_LABEL);
+    expect(confirm).toBeDefined();
     expect(confirm?.className).not.toContain("bg-destructive");
-    // Read off the export: a body compared to its own words pins nothing.
     const body = manageSharedBody(SHARED, ["Claude Code"]);
-    expect(body).toContain("Nothing is deleted");
     expect(document.body.textContent).toContain(body);
   });
 });

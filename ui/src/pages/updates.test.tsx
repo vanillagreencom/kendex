@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
@@ -20,12 +21,14 @@ import { UpdatesPage } from "./updates";
 // escaped the same way before it can be looked for.
 const esc = (copy: string) => copy.replace(/'/g, "&#x27;");
 
-/** Markup for a disabled button carrying `label`. Nothing between the tag
- *  and the label may open another button: `.*` on one line of static markup
- *  would let a disabled button before it reach this one's words and pass
- *  over a button that is live. */
-const disabledButton = (label: string) =>
-  new RegExp(`<button[^>]*disabled=""[^>]*>(?:(?!<button)[\\s\\S])*?${label}<`);
+/** Read the named control from the rendered page. */
+const renderedButton = (html: string, label: string) => {
+  const page = document.createElement("div");
+  page.innerHTML = html;
+  return [...page.querySelectorAll("button")].find(
+    (button) => button.textContent?.trim() === label,
+  );
+};
 
 // Static rendering reads a zustand store's initial snapshot, never one set
 // later, so the store is wrapped to let a test stage what the last read
@@ -77,126 +80,174 @@ const secondsAgo = (ago: number) => Math.floor(Date.now() / 1000) - ago;
 // answers — and after one that failed — "Everything is up to date" would
 // assert the very thing kendex just said it could not verify.
 describe("the Updates page across its read states", () => {
-  it("says it is checking before the first read answers", () => {
-    stub.read = { status: "pending", error: null };
-    const html = renderToStaticMarkup(<UpdatesPage />);
-    expect(html).toContain(UPDATES_CHECKING);
-    expect(html).not.toContain(UPDATES_EMPTY);
-  });
-
-  it("says the check failed and offers the retry, not up-to-dateness", () => {
-    stub.read = { status: "failed", error: "no network" };
-    const html = renderToStaticMarkup(<UpdatesPage />);
-    expect(html).toContain(esc(UPDATES_ATTENTION_TITLE));
-    expect(html).toContain("no network");
-    expect(html).toContain("Check for updates");
-    expect(html).not.toContain(UPDATES_EMPTY);
-  });
-
-  it("calls a completed, error-free empty read up to date", () => {
-    expect(renderToStaticMarkup(<UpdatesPage />)).toContain(UPDATES_EMPTY);
-  });
-
-  it("heads rows kept from a better read with the stale note", () => {
-    stub.rows = [updateRow("gh", null)];
-    stub.read = { status: "failed", error: "no network" };
-    const html = renderToStaticMarkup(<UpdatesPage />);
-    expect(html).toContain(UPDATES_UNCONFIRMED_TITLE);
-    expect(html).toContain("no network");
-    // The kept rows are still drawn under it.
-    expect(html).toContain("gh");
-  });
-
-  it("carries no stale note over rows from a current read", () => {
-    stub.rows = [updateRow("gh", null)];
-    expect(renderToStaticMarkup(<UpdatesPage />)).not.toContain(
-      UPDATES_UNCONFIRMED_TITLE,
-    );
-  });
-
-  // With every noteworthy row muted, a failed check would otherwise strand
-  // the page: the stale note and error with no way to try again anywhere.
-  it("keeps the retry reachable when only hidden rows remain", () => {
-    stub.rows = [updateRow("gh", null, { ignored: true })];
-    stub.read = { status: "failed", error: "no network" };
-    const html = renderToStaticMarkup(<UpdatesPage />);
-    expect(html).toContain(UPDATES_UNCONFIRMED_TITLE);
-    expect(html).toContain(CHECK_FOR_UPDATES_LABEL);
-  });
-
-  // The store refuses a check while a write of the standing is out, so the
-  // button that starts one says so rather than taking a click the store
-  // then refuses.
-  it("holds Check while a write is out", () => {
-    stub.rows = [updateRow("gh", null)];
-    stub.busy = true;
-    expect(renderToStaticMarkup(<UpdatesPage />)).toMatch(
-      disabledButton(CHECK_FOR_UPDATES_LABEL),
-    );
-  });
-
-  // The empty state's retry calls the same handler as the header's Check,
-  // and `updateRows` clearing the last visible row renders it while that
-  // write still holds `busy` — a live button the store would refuse.
-  it("holds the empty state's retry while a write is out", () => {
-    stub.busy = true;
-    expect(renderToStaticMarkup(<UpdatesPage />)).toMatch(
-      disabledButton(CHECK_FOR_UPDATES_LABEL),
-    );
-  });
-
-  it("offers no header check button on a clean page with nothing visible", () => {
-    stub.rows = [updateRow("gh", null, { ignored: true })];
-    const html = renderToStaticMarkup(<UpdatesPage />);
-    expect(html).not.toContain(CHECK_FOR_UPDATES_LABEL);
-  });
-
-  // Stale rows name a `latest` nobody confirmed; the page-wide Update all
-  // waits for a check that succeeds, like the per-row actions.
-  it("holds Update all over rows a failed check left behind", () => {
-    stub.rows = [updateRow("one", null), updateRow("two", null)];
-    stub.read = { status: "failed", error: "no network" };
-    const html = renderToStaticMarkup(<UpdatesPage />);
-    expect(html).toMatch(disabledButton(UPDATE_ALL_LABEL));
-    expect(html).toContain(`title="${UPDATE_NEEDS_CHECK_NOTE}"`);
+  it("renders the controls and notices for the current reading", () => {
+    const failed = { status: "failed", error: "no network" } as const;
+    const landed = { status: "landed", error: null } as const;
+    const rows = [
+      {
+        name: "says it is checking before the first read answers",
+        read: { status: "pending", error: null },
+        updates: [],
+        busy: false,
+        present: [UPDATES_CHECKING],
+        absent: [UPDATES_EMPTY],
+        disabled: [],
+      },
+      {
+        name: "says the check failed and offers the retry, not up-to-dateness",
+        read: failed,
+        updates: [],
+        busy: false,
+        present: [
+          esc(UPDATES_ATTENTION_TITLE),
+          "no network",
+          "Check for updates",
+        ],
+        absent: [UPDATES_EMPTY],
+        disabled: [],
+      },
+      {
+        name: "heads rows kept from a better read with the stale note",
+        read: failed,
+        updates: [updateRow("gh", null)],
+        busy: false,
+        present: [UPDATES_UNCONFIRMED_TITLE, "no network", "gh"],
+        absent: [],
+        disabled: [],
+      },
+      {
+        name: "carries no stale note over rows from a current read",
+        read: landed,
+        updates: [updateRow("gh", null)],
+        busy: false,
+        present: [],
+        absent: [UPDATES_UNCONFIRMED_TITLE],
+        disabled: [],
+      },
+      {
+        name: "keeps the retry reachable when only hidden rows remain",
+        read: failed,
+        updates: [updateRow("gh", null, { ignored: true })],
+        busy: false,
+        present: [UPDATES_UNCONFIRMED_TITLE, CHECK_FOR_UPDATES_LABEL],
+        absent: [],
+        disabled: [],
+      },
+      {
+        name: "holds Check while a write is out",
+        read: landed,
+        updates: [updateRow("gh", null)],
+        busy: true,
+        present: [],
+        absent: [],
+        disabled: [CHECK_FOR_UPDATES_LABEL],
+      },
+      {
+        name: "holds the empty state's retry while a write is out",
+        read: landed,
+        updates: [],
+        busy: true,
+        present: [],
+        absent: [],
+        disabled: [CHECK_FOR_UPDATES_LABEL],
+      },
+      {
+        name: "offers no header check button on a clean page with nothing visible",
+        read: landed,
+        updates: [updateRow("gh", null, { ignored: true })],
+        busy: false,
+        present: [],
+        absent: [CHECK_FOR_UPDATES_LABEL],
+        disabled: [],
+      },
+      {
+        name: "holds Update all over rows a failed check left behind",
+        read: failed,
+        updates: [updateRow("one", null), updateRow("two", null)],
+        busy: false,
+        present: [`title="${UPDATE_NEEDS_CHECK_NOTE}"`],
+        absent: [],
+        disabled: [UPDATE_ALL_LABEL],
+      },
+    ] satisfies {
+      name: string;
+      read: typeof stub.read;
+      updates: UpdateRow[];
+      busy: boolean;
+      present: string[];
+      absent: string[];
+      disabled: string[];
+    }[];
+    expect(rows).toHaveLength(9);
+    for (const row of rows) {
+      stub.read = row.read;
+      stub.rows = row.updates;
+      stub.busy = row.busy;
+      const html = renderToStaticMarkup(<UpdatesPage />);
+      expect(
+        {
+          present: row.present.filter((value) => html.includes(value)),
+          absent: row.absent.filter((value) => html.includes(value)),
+          disabled: row.disabled.map((label) => ({
+            label,
+            disabled: renderedButton(html, label)?.disabled,
+          })),
+        },
+        row.name,
+      ).toEqual({
+        present: row.present,
+        absent: [],
+        disabled: row.disabled.map((label) => ({ label, disabled: true })),
+      });
+    }
   });
 });
 
-// The check runs offline on load, so what is on screen can be days old
-// with nothing about it saying so. Every state that presents an answer
-// says how old that answer is.
+// Both the list and the empty state disclose when their answer was checked.
 describe("how fresh the page says its answer is", () => {
-  it("dates the list from the last fetch behind it", () => {
-    stub.rows = [updateRow("gh", null)];
-    stub.lastFetched = secondsAgo(3 * 3600);
-    expect(renderToStaticMarkup(<UpdatesPage />)).toContain(
-      "Last checked 3h ago",
-    );
-  });
-
-  // The state the hint exists for: "Everything is up to date" looks the
-  // same whether it was checked a minute or a month ago.
-  it("dates the up-to-date state, which is the one that hides its age", () => {
-    stub.lastFetched = secondsAgo(5 * 86_400);
-    const html = renderToStaticMarkup(<UpdatesPage />);
-    expect(html).toContain(UPDATES_EMPTY);
-    expect(html).toContain("Last checked 5d ago");
-  });
-
-  it("never dates an answer no check has produced", () => {
-    stub.rows = [updateRow("gh", null)];
-    const html = renderToStaticMarkup(<UpdatesPage />);
-    expect(html).toContain(NEVER_CHECKED);
-    expect(html).not.toMatch(/Last checked/);
-  });
-
-  // A fresh install on first launch: nothing to update and nothing fetched
-  // yet. The one state where an unqualified "Everything is up to date"
-  // would be pure guess, and the two hint sites cross here.
-  it("does not call a scope it has never checked up to date without saying so", () => {
-    const html = renderToStaticMarkup(<UpdatesPage />);
-    expect(html).toContain(UPDATES_EMPTY);
-    expect(html).toContain(NEVER_CHECKED);
-    expect(html).not.toMatch(/Last checked/);
+  it("dates only answers a check produced", () => {
+    const rows = [
+      {
+        name: "dates the list from the last fetch behind it",
+        updates: [updateRow("gh", null)],
+        age: 3 * 3600,
+        present: ["Last checked 3h ago"],
+        absent: [],
+      },
+      {
+        name: "dates the up-to-date state, which is the one that hides its age",
+        updates: [],
+        age: 5 * 86_400,
+        present: [UPDATES_EMPTY, "Last checked 5d ago"],
+        absent: [],
+      },
+      {
+        name: "never dates an answer no check has produced",
+        updates: [updateRow("gh", null)],
+        age: null,
+        present: [NEVER_CHECKED],
+        absent: ["Last checked"],
+      },
+      {
+        name: "calls a completed, error-free empty read up to date and says it has never checked",
+        updates: [],
+        age: null,
+        present: [UPDATES_EMPTY, NEVER_CHECKED],
+        absent: ["Last checked"],
+      },
+    ];
+    expect(rows).toHaveLength(4);
+    for (const row of rows) {
+      stub.rows = row.updates;
+      stub.lastFetched = row.age === null ? null : secondsAgo(row.age);
+      const html = renderToStaticMarkup(<UpdatesPage />);
+      expect(
+        {
+          present: row.present.filter((value) => html.includes(value)),
+          absent: row.absent.filter((value) => html.includes(value)),
+        },
+        row.name,
+      ).toEqual({ present: row.present, absent: [] });
+    }
   });
 });

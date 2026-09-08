@@ -11,30 +11,74 @@ const press = (key: string, extra: Record<string, boolean> = {}) => ({
 });
 
 describe("zoomForKey", () => {
-  it("steps in and out, and resets to full size", () => {
-    expect(zoomForKey(press("+"), 100)).toBe(100 + ZOOM.step);
-    expect(zoomForKey(press("="), 100)).toBe(100 + ZOOM.step);
-    expect(zoomForKey(press("-"), 100)).toBe(100 - ZOOM.step);
-    expect(zoomForKey(press("_"), 100)).toBe(100 - ZOOM.step);
-    expect(zoomForKey(press("0"), 175)).toBe(ZOOM.default);
-  });
-
-  it("stops at the ends of the range instead of running past them", () => {
-    expect(zoomForKey(press("+"), ZOOM.max)).toBe(ZOOM.max);
-    expect(zoomForKey(press("-"), ZOOM.min)).toBe(ZOOM.min);
-  });
-
-  it("takes Cmd as well as Ctrl", () => {
-    expect(zoomForKey(press("+", { ctrlKey: false, metaKey: true }), 100)).toBe(
-      100 + ZOOM.step,
-    );
-  });
-
-  it("leaves every other press alone", () => {
-    expect(zoomForKey(press("+", { ctrlKey: false }), 100)).toBeNull();
-    expect(zoomForKey(press("+", { altKey: true }), 100)).toBeNull();
-    expect(zoomForKey(press("a"), 100)).toBeNull();
-    expect(zoomForKey(press("1"), 100)).toBeNull();
+  it("maps zoom keys, modifiers and range limits", () => {
+    const rows = [
+      {
+        name: "plus",
+        event: press("+"),
+        current: 100,
+        expected: 100 + ZOOM.step,
+      },
+      {
+        name: "equal",
+        event: press("="),
+        current: 100,
+        expected: 100 + ZOOM.step,
+      },
+      {
+        name: "minus",
+        event: press("-"),
+        current: 100,
+        expected: 100 - ZOOM.step,
+      },
+      {
+        name: "underscore",
+        event: press("_"),
+        current: 100,
+        expected: 100 - ZOOM.step,
+      },
+      {
+        name: "reset",
+        event: press("0"),
+        current: 175,
+        expected: ZOOM.default,
+      },
+      {
+        name: "upper limit",
+        event: press("+"),
+        current: ZOOM.max,
+        expected: ZOOM.max,
+      },
+      {
+        name: "lower limit",
+        event: press("-"),
+        current: ZOOM.min,
+        expected: ZOOM.min,
+      },
+      {
+        name: "command modifier",
+        event: press("+", { ctrlKey: false, metaKey: true }),
+        current: 100,
+        expected: 100 + ZOOM.step,
+      },
+      {
+        name: "no modifier",
+        event: press("+", { ctrlKey: false }),
+        current: 100,
+        expected: null,
+      },
+      {
+        name: "alt modifier",
+        event: press("+", { altKey: true }),
+        current: 100,
+        expected: null,
+      },
+      { name: "letter", event: press("a"), current: 100, expected: null },
+      { name: "other digit", event: press("1"), current: 100, expected: null },
+    ];
+    expect(rows.length, "zoom key table is empty").toBeGreaterThan(0);
+    for (const row of rows)
+      expect(zoomForKey(row.event, row.current), row.name).toBe(row.expected);
   });
 });
 

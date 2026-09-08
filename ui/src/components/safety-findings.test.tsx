@@ -1,6 +1,8 @@
-import { renderToStaticMarkup } from "react-dom/server";
+// @vitest-environment jsdom
+
 import { describe, expect, it } from "vitest";
 import type { Finding } from "@/bindings";
+import { mount } from "@/test/dom";
 import { FindingLine } from "./safety-findings";
 
 const finding = (severity: Finding["severity"]): Finding => ({
@@ -13,16 +15,20 @@ const finding = (severity: Finding["severity"]): Finding => ({
 });
 
 describe("a finding's severity word", () => {
-  it("is visible text, distinct per severity — never the dot's colour alone", () => {
-    const critical = renderToStaticMarkup(
-      <FindingLine finding={finding("critical")} />,
-    );
-    const low = renderToStaticMarkup(<FindingLine finding={finding("low")} />);
-    expect(critical).toContain("Serious:");
-    expect(low).toContain("Minor:");
-    expect(critical).not.toContain("Minor:");
-    expect(low).not.toContain("Serious:");
-    // Visible beside the message, not tucked into a reader-only span.
-    expect(critical).not.toContain("sr-only");
+  it("puts distinct severity words beside the message, beyond the dot's title", () => {
+    const rows = [
+      { severity: "critical" as const, word: "Serious:", other: "Minor:" },
+      { severity: "low" as const, word: "Minor:", other: "Serious:" },
+    ];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      const host = mount(<FindingLine finding={finding(row.severity)} />);
+      const words = host.querySelector("p > span");
+      expect(words?.textContent?.trim(), row.severity).toBe(row.word);
+      expect(host.innerHTML, row.severity).not.toContain(row.other);
+      if (row.severity === "critical") {
+        expect(host.innerHTML).not.toContain("sr-only");
+      }
+    }
   });
 });

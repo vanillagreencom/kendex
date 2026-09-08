@@ -191,48 +191,58 @@ describe("zoom, on screen", () => {
     ).toBeLessThan(vi.mocked(commands.saveZoom).mock.invocationCallOrder[0]);
   });
 
-  it("keeps a size the window refused out of the settings file", async () => {
-    // Starting away from ZOOM.default, so the rollback has to name the size
-    // the person was working at rather than falling back to full size.
-    useSettingsStore.setState({
-      settings: { ...settings, zoom: 150 },
-      zoom: 150,
-    });
-    windowAt(150);
-    vi.mocked(commands.windowSetZoom).mockResolvedValue(failed("no webview"));
-
-    await useSettingsStore.getState().setZoom(160);
-
-    expect(zoom()).toBe(150);
-    expect(commands.saveZoom).not.toHaveBeenCalled();
-    expect(dialog().title).toBe("Couldn't change the zoom");
-    expect(dialog().message).toBe("no webview");
-  });
-
-  it("puts the size back when the window could not be reached, and lets Retry ask again", async () => {
-    useSettingsStore.setState({
-      settings: { ...settings, zoom: 150 },
-      zoom: 150,
-    });
-    windowAt(150);
-    vi.mocked(commands.windowSetZoom).mockResolvedValue(failed("no bridge"));
-
-    await expect(
-      useSettingsStore.getState().setZoom(160),
-    ).resolves.toBeUndefined();
-
-    // Not left showing a size the window never took: the settle timer would
-    // otherwise write it.
-    expect(zoom()).toBe(150);
-    expect(dialog().title).toBe("Couldn't change the zoom");
-    expect(dialog().message).toBe("no bridge");
-
-    windowTakes();
-    dialog().actions[0].onClick();
-    await vi.waitFor(() => expect(commands.saveZoom).toHaveBeenCalled());
-
-    expect(commands.windowSetZoom).toHaveBeenLastCalledWith(160);
-    expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(160);
+  it("rolls back a refused resize and persists an accepted retry", async () => {
+    const rows = [
+      {
+        name: "refused window",
+        start: 150,
+        asked: 160,
+        error: "no webview",
+        retry: false,
+      },
+      {
+        name: "unreachable window retry",
+        start: 150,
+        asked: 160,
+        error: "no bridge",
+        retry: true,
+      },
+      {
+        name: "retry from full size",
+        start: 100,
+        asked: 150,
+        error: "no webview",
+        retry: true,
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      freshZoomStore();
+      useSettingsStore.setState({
+        settings: { ...settings, zoom: row.start },
+        zoom: row.start,
+      });
+      windowAt(row.start);
+      vi.mocked(commands.windowSetZoom).mockResolvedValue(failed(row.error));
+      await expect(
+        useSettingsStore.getState().setZoom(row.asked),
+      ).resolves.toBeUndefined();
+      expect(zoom(), row.name).toBe(row.start);
+      expect(commands.saveZoom, row.name).not.toHaveBeenCalled();
+      expect(dialog().title, row.name).toBe("Couldn't change the zoom");
+      expect(dialog().message, row.name).toBe(row.error);
+      if (row.retry) {
+        windowTakes();
+        dialog().actions[0].onClick();
+        await vi.waitFor(() => expect(commands.saveZoom).toHaveBeenCalled());
+        expect(commands.windowSetZoom, row.name).toHaveBeenLastCalledWith(
+          row.asked,
+        );
+        expect(vi.mocked(commands.saveZoom).mock.calls[0][0], row.name).toBe(
+          row.asked,
+        );
+      }
+    }
   });
 
   /// A refusal is about the press that was refused. Another press made
@@ -288,19 +298,5 @@ describe("zoom, on screen", () => {
     expect(commands.saveZoom).not.toHaveBeenCalled();
     expect(dialog().open).toBe(true);
     expect(dialog().title).toBe("Couldn't save the zoom");
-  });
-
-  it("stores the size an accepted retry manages to show", async () => {
-    vi.mocked(commands.windowSetZoom).mockResolvedValueOnce(
-      failed("no webview"),
-    );
-
-    await useSettingsStore.getState().setZoom(150);
-    const retry = dialog().actions[0];
-    windowTakes();
-    retry.onClick();
-    await vi.waitFor(() => expect(commands.saveZoom).toHaveBeenCalled());
-
-    expect(vi.mocked(commands.saveZoom).mock.calls[0][0]).toBe(150);
   });
 });

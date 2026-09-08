@@ -1,25 +1,27 @@
 import { describe, expect, it } from "vitest";
-import type { Scope, ScopeSettings, UpdateRow } from "@/bindings";
+import type { ObservedItem, Scope, ScopeSettings, UpdateRow } from "@/bindings";
 import { groupItems } from "@/lib/derive";
 import { markFor } from "./package-mark";
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
 const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
 
-const item = (scope: Scope) => ({
+const item = (scope: Scope): ObservedItem => ({
   kind: "skill",
   name: "gh",
   scope,
   harness: "claude",
   path: `${scope.scope === "project" ? scope.root : ""}/.claude/skills/gh`,
-  fileState: "file",
+  fileState: { state: "file" },
   enabled: true,
   origin: null,
   description: "about gh",
   tags: [],
+  modifiedAt: null,
+  vendor: null,
 });
 
-const group = groupItems([item(VG), item(HYPR)] as never)[0];
+const group = groupItems([item(VG), item(HYPR)])[0];
 
 // Both places have been read for hand edits and forks, so a count over
 // them is a count over places somebody looked at.

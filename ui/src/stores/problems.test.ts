@@ -22,43 +22,54 @@ function view(overrides: Partial<AuditView>): AuditView {
 }
 
 describe("deriveProblems", () => {
-  it("is empty when every view is error-free and the scan is healthy", () => {
-    expect(deriveProblems([view({})], null)).toEqual([]);
-  });
-
-  it("turns a view with an error into a scoped problem", () => {
-    const errored = view({
-      scope: projectScope,
-      error: { kind: "lock-corrupt", message: "not valid JSON" },
-    });
-
-    const problems = deriveProblems([view({}), errored], null);
-
-    expect(problems).toEqual([
+  it("projects each combination of audit and scan errors", () => {
+    const rows = [
       {
-        key: "/home/dana/api",
-        scope: projectScope,
-        kind: "lock-corrupt",
-        message: "not valid JSON",
+        name: "healthy scan and views",
+        views: [view({})],
+        scan: null,
+        expected: [],
       },
-    ]);
-  });
-
-  it("adds one scope-less problem for a failing scan", () => {
-    const problems = deriveProblems([view({})], "boom");
-
-    expect(problems).toEqual([
-      { key: "scan", scope: null, kind: "scan-failure", message: "boom" },
-    ]);
+      {
+        name: "scoped audit error",
+        views: [
+          view({}),
+          view({
+            scope: projectScope,
+            error: { kind: "lock-corrupt", message: "not valid JSON" },
+          }),
+        ],
+        scan: null,
+        expected: [
+          {
+            key: "/home/dana/api",
+            scope: projectScope,
+            kind: "lock-corrupt",
+            message: "not valid JSON",
+          },
+        ],
+      },
+      {
+        name: "scan failure",
+        views: [view({})],
+        scan: "boom",
+        expected: [
+          { key: "scan", scope: null, kind: "scan-failure", message: "boom" },
+        ],
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows)
+      expect(deriveProblems(row.views, row.scan), row.name).toEqual(
+        row.expected,
+      );
   });
 
   it("reports both an audit error and a scan failure at once", () => {
     const errored = view({
       error: { kind: "manifest-invalid", message: "bad toml" },
     });
-
     const problems = deriveProblems([errored], "scan broke");
-
     expect(problems).toHaveLength(2);
     expect(problems.map((p) => p.kind)).toEqual([
       "manifest-invalid",

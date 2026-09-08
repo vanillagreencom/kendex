@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { PLACE_UNCHECKED_LABEL } from "@/lib/copy";
@@ -27,41 +28,53 @@ const render = (
   );
 
 describe("a place's card", () => {
-  it("counts what kendex is not looking after, beside what it is", () => {
-    const html = render({ unmanaged: 4 });
-    expect(html).toContain("3 Skills");
-    expect(html).toContain("4 not managed yet");
-  });
-
-  // This is the app's only mention of unmanaged content, and nothing about
-  // it is wrong — a card saying "0 not managed" on every project would be
-  // a nag on a page that is about what is installed.
-  it("says nothing when there is nothing unmanaged", () => {
-    expect(render({ unmanaged: 0 })).not.toContain("not managed");
-    expect(render()).not.toContain("not managed");
-  });
-
-  // A place the audit could not read holds an unknown number, not zero.
-  // Saying nothing would read as nothing unmanaged; offering the link would
-  // open a list of rows nothing has confirmed still exist, each with a
-  // button that writes to the filesystem.
-  it("says the place could not be checked instead of counting it", () => {
-    const html = render({ unmanaged: null });
-    expect(html).toContain(esc(PLACE_UNCHECKED_LABEL));
-    expect(html).not.toContain("not managed yet");
-    // The kind counts come from the scan, which still answered.
-    expect(html).toContain("3 Skills");
-  });
-
-  it("offers nothing to click for a place it could not check", () => {
-    const html = render({ unmanaged: null });
-    // The card carries other buttons — its name, its kind counts — so what
-    // matters is the tag these particular words sit in: the nearest one
-    // opened before them is a span, never a button.
-    const before = html.slice(0, html.indexOf(esc(PLACE_UNCHECKED_LABEL)));
-    expect(before.lastIndexOf("<span")).toBeGreaterThan(
-      before.lastIndexOf("<button"),
-    );
+  it("distinguishes unmanaged counts from an unchecked place", () => {
+    const rows = [
+      {
+        name: "unmanaged items",
+        value: 4,
+        present: ["3 Skills", "4 not managed yet"],
+        absent: [],
+      },
+      {
+        name: "nothing unmanaged",
+        value: 0,
+        present: [],
+        absent: ["not managed"],
+      },
+      {
+        name: "no unmanaged answer",
+        value: undefined,
+        present: [],
+        absent: ["not managed"],
+      },
+      {
+        name: "unchecked",
+        value: null,
+        present: [esc(PLACE_UNCHECKED_LABEL), "3 Skills"],
+        absent: ["not managed yet"],
+      },
+    ];
+    expect(rows).toHaveLength(4);
+    for (const entry of rows) {
+      const html = render({ unmanaged: entry.value });
+      expect(
+        {
+          present: entry.present.filter((text) => html.includes(text)),
+          forbidden: entry.absent.filter((text) => html.includes(text)),
+        },
+        entry.name,
+      ).toEqual({ present: entry.present, forbidden: [] });
+      if (entry.value === null) {
+        const document = new DOMParser().parseFromString(html, "text/html");
+        const note = [...document.querySelectorAll("span")].find(
+          (node) => node.textContent === PLACE_UNCHECKED_LABEL,
+        );
+        expect(note).toBeDefined();
+        expect(note?.closest("button")).toBeNull();
+        expect(note?.querySelector("button")).toBeNull();
+      }
+    }
   });
 
   // Files kendex wrote and could not offer to commit are not a fault, so

@@ -12,60 +12,100 @@ beforeEach(() => {
 
 describe("saying what a removal ran", () => {
   it("says nothing when nothing was armed", () => {
-    sayUndone([]);
-    sayUndone(undefined);
-    expect(toast.message).not.toHaveBeenCalled();
+    const rows: { name: string; account: string[] | undefined }[] = [
+      { name: "empty account", account: [] },
+      { name: "undefined account", account: undefined },
+    ];
+
+    expect(rows.length, "silent removal table is empty").toBeGreaterThan(0);
+    for (const row of rows) {
+      vi.mocked(toast.message).mockClear();
+      sayUndone(row.account);
+      expect(toast.message, row.name).not.toHaveBeenCalled();
+    }
   });
 
-  // The account interleaves kendex's own notes with each departing
-  // package's output, in name order. A cut by position would spend itself
-  // on whoever talks first — the party kendex does not control — and eat
-  // the second package's stand-down notice, the only place kendex says an
-  // effect was left standing and names the manual remedy.
-  it("says a later package's stand-down after a chatty one", () => {
-    const account = [
+  it("says every line, including a later package's stand-down", () => {
+    // The final notice is an opaque backend value after another package's
+    // output. A positional cut must not hide the manual remedy it carries.
+    const chattyAccount = [
       "aaa-loud: running scripts/out",
       ...Array.from({ length: 9 }, (_, n) => `chatter ${n}`),
       "zzz-quiet: declares no uninstaller — what it changed about this " +
         "repository stays; to undo: undo it by hand",
     ];
+    const rows: {
+      name: string;
+      account: string[];
+    }[] = [
+      {
+        name: "later package's stand-down after a chatty one",
+        account: chattyAccount,
+      },
+      {
+        name: "every line of a long account",
+        account: Array.from({ length: 26 }, (_, n) => `line ${n}`),
+      },
+    ];
 
-    sayUndone(account);
-
-    expect(toast.message).toHaveBeenCalledTimes(account.length);
-    expect(toast.message).toHaveBeenLastCalledWith(account.at(-1));
-  });
-
-  it("says every line it is handed, however many that is", () => {
-    sayUndone(Array.from({ length: 26 }, (_, n) => `line ${n}`));
-    expect(toast.message).toHaveBeenCalledTimes(26);
-    expect(toast.message).toHaveBeenLastCalledWith("line 25");
+    expect(rows.length, "long removal table is empty").toBeGreaterThan(0);
+    for (const row of rows) {
+      vi.mocked(toast.message).mockClear();
+      sayUndone(row.account);
+      expect(vi.mocked(toast.message).mock.calls, row.name).toEqual(
+        row.account.map((line) => [line]),
+      );
+    }
   });
 });
 
 describe("the account a write's answer carries", () => {
   const RAN = "guards: running scripts/arm --uninstall";
 
-  it("reads it off the answer itself", () => {
-    saying({ status: "ok", data: { undone: [RAN] } });
-    expect(toast.message).toHaveBeenCalledWith(RAN);
+  it("reads the account from each existing answer shape", () => {
+    const rows: { name: string; answer: unknown }[] = [
+      {
+        name: "on the answer itself",
+        answer: { status: "ok", data: { undone: [RAN] } },
+      },
+      {
+        name: "on the standing the answer nests",
+        answer: { status: "ok", data: { view: { undone: [RAN] } } },
+      },
+    ];
+
+    expect(rows.length, "write account shape table is empty").toBeGreaterThan(
+      0,
+    );
+    for (const row of rows) {
+      vi.mocked(toast.message).mockClear();
+      saying(row.answer);
+      expect(toast.message, row.name).toHaveBeenCalledWith(RAN);
+    }
   });
 
-  it("reads it off the standing the answer nests", () => {
-    saying({ status: "ok", data: { view: { undone: [RAN] } } });
-    expect(toast.message).toHaveBeenCalledWith(RAN);
-  });
+  it("says nothing for a refusal or an answer without an account", () => {
+    const rows: { name: string; answer: unknown }[] = [
+      {
+        name: "refusal",
+        answer: { status: "error", error: "the plan was refused" },
+      },
+      {
+        name: "answer without an account",
+        answer: { status: "ok", data: { ignored: true } },
+      },
+      { name: "null answer data", answer: { status: "ok", data: null } },
+      { name: "undefined answer", answer: undefined },
+    ];
 
-  it("says nothing for a refusal, which accounts for nothing", () => {
-    saying({ status: "error", error: "the plan was refused" });
-    expect(toast.message).not.toHaveBeenCalled();
-  });
-
-  it("says nothing for an answer that carries no account", () => {
-    saying({ status: "ok", data: { ignored: true } });
-    saying({ status: "ok", data: null });
-    saying(undefined);
-    expect(toast.message).not.toHaveBeenCalled();
+    expect(rows.length, "silent write answer table is empty").toBeGreaterThan(
+      0,
+    );
+    for (const row of rows) {
+      vi.mocked(toast.message).mockClear();
+      saying(row.answer);
+      expect(toast.message, row.name).not.toHaveBeenCalled();
+    }
   });
 
   it("hands the answer straight back", () => {

@@ -21,24 +21,42 @@ function result(roots: string[]): ScanResult {
 }
 
 describe("scopeChoices", () => {
-  it("offers every project holding something", () => {
-    expect(scopeChoices(result(["/b", "/a", "/a"]), "all")).toEqual([
-      "/a",
-      "/b",
-    ]);
-  });
-
-  it("offers the project being looked at even when it holds nothing", () => {
-    // Picked last, listed in its place: the pills read the same however the
-    // project came to be one of them.
-    expect(scopeChoices(result(["/z"]), { project: "/empty" })).toEqual([
-      "/empty",
-      "/z",
-    ]);
-    expect(scopeChoices(null, { project: "/empty" })).toEqual(["/empty"]);
-  });
-
-  it("names the picked project once when it holds something too", () => {
-    expect(scopeChoices(result(["/a"]), { project: "/a" })).toEqual(["/a"]);
+  it("sorts distinct installed and selected project roots", () => {
+    const rows: {
+      name: string;
+      scan: ScanResult | null;
+      selection: Parameters<typeof scopeChoices>[1];
+      expected: string[];
+    }[] = [
+      {
+        name: "installed roots",
+        scan: result(["/b", "/a", "/a"]),
+        selection: "all",
+        expected: ["/a", "/b"],
+      },
+      {
+        name: "selected empty project",
+        scan: result(["/z"]),
+        selection: { project: "/empty" },
+        expected: ["/empty", "/z"],
+      },
+      {
+        name: "selected before scan",
+        scan: null,
+        selection: { project: "/empty" },
+        expected: ["/empty"],
+      },
+      {
+        name: "selected installed project",
+        scan: result(["/a"]),
+        selection: { project: "/a" },
+        expected: ["/a"],
+      },
+    ];
+    expect(rows.length, "scope choice table is empty").toBeGreaterThan(0);
+    for (const row of rows)
+      expect(scopeChoices(row.scan, row.selection), row.name).toEqual(
+        row.expected,
+      );
   });
 });
