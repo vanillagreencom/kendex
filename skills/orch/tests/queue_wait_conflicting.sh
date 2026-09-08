@@ -29,20 +29,6 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 # shellcheck source=lib/waiter-assertions.sh
 source "$TEST_DIR/lib/waiter-assertions.sh"
 
-# Whole-line match, for the --help rows below. Both `conflicting` and
-# `base_conflict` occur in --help prose and in the cause list, so a substring
-# assertion on either word passes with the verdict's own row deleted.
-assert_matches() {
-  local haystack="$1" pattern="$2" name="$3"
-  if grep -qE -- "$pattern" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted line matching: %s\n        in: %s\n' "$name" "$pattern" "$haystack"
-  fi
-}
-
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/seq"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 
@@ -303,35 +289,12 @@ write_fixture state last "$(pr_state OPEN CONFLICTING)"
 write_fixture queue last "$q_in_queue"
 err="$TMP_ROOT/e6"
 out="$(run_queue_wait -- 1 1 20 --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_contains "$out" "conflicting" "the plain line names the verdict" "$err"
-assert_contains "$out" "restacked" "the plain line names the remedy" "$err"
+assert_eq "$rc" "1" "plain conflicting result exits 1" "$err"
+assert_eq "$(sed -n '1p' <<<"$out")" \
+  "queue-wait: result status=complete verdict=conflicting pr=1 cause=base_conflict polls=2 progressing=null" \
+  "the plain result carries the confirmed verdict and cause" "$err"
 
-# The remedy is a ROUTE, not a short restatement of one. ../workflows/merge-pr.md § 5
-# step 1 fixes the restack order — disarm, dequeue, and only then push,
-# because an armed PR re-enqueues itself the moment its requirements go
-# green — and guard_fire enforces that same order here. A line restating a
-# shorter version drifts away from it the next time the order is corrected,
-# which is exactly what this line did.
-assert_contains "$out" "merge-pr.md § 5 step 1" \
-  "the plain line routes to the workflow that owns the restack order" "$err"
-assert_contains "$out" "a push is not the first step" \
-  "the line refuses the bare push a reader would otherwise infer from it" "$err"
-
-# The --help heredoc is the semantics reference other documents point at
-# instead of restating a verdict list, so deleting a row here strands them.
-# The row assertion is anchored on the row, so deleting it cannot pass on the
-# word appearing in the prose above. The ranking is a sentence, matched
-# against a whitespace-flattened copy: it wraps mid-clause in the heredoc,
-# and anchoring on a wrap point would break on any reflow of a rule that
-# survived it.
-help_out="$(run_queue_wait -- --help 2>/dev/null)"
-help_flat="$(tr '\n' ' ' <<<"$help_out" | tr -s ' ')"
-assert_matches "$help_out" '^  conflicting mergeable == "CONFLICTING": the head conflicts with the base\.$' \
-  "--help carries the conflicting verdict as a row of its § Verdicts block"
-assert_matches "$help_flat" 'this outranks ejected and disarmed — the fix is a restack, not a CI cycle\.' \
-  "the row states the ranking that keeps a conflict out of the recovery cycle"
-assert_matches "$help_out" '# only when known: base_conflict \|$' \
-  "--help carries its cause in the cause list, not only in prose"
+# queue-verdict-routing-lint.test.sh checks the help enum against emitted verdicts.
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -148,19 +148,19 @@ printf '75' > "$EXIT_DIR/CC-2"
 run_case c1 -- CC-1 CC-2 CC-3
 assert_eq "$RC" "0" "exit 0 when siblings launched around an owned item"
 assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 CC-2 CC-3 " "create attempted for every item (no abort at the owned one)"
-assert_contains "$OUT" "Opened terminal 'CC-1'" "item before the owned one launches"
-assert_contains "$OUT" "Opened terminal 'CC-3'" "item after the owned one launches"
-assert_not_contains "$OUT" "Opened terminal 'CC-2'" "owned item is not launched"
-assert_contains "$ERR" "Skipped CC-2: owned by another session (worktree create exit 75)" "owned item named on stderr"
-assert_contains "$OUT" "Done: launched 2 handoff session(s), skipped 1 (owned by another session)." "summary reports launched=2 skipped=1"
+assert_contains "$OUT" "open-terminal: terminal-opened item=CC-1" "item before the owned one launches"
+assert_contains "$OUT" "open-terminal: terminal-opened item=CC-3" "item after the owned one launches"
+assert_not_contains "$OUT" "open-terminal: terminal-opened item=CC-2" "owned item is not launched"
+assert_contains "$ERR" "open-terminal: item-owned item=CC-2 exit=75" "owned item named on stderr"
+assert_contains "$OUT" "open-terminal: summary launched=2 skipped=1 failed=0 lanes=0" "summary reports launched=2 skipped=1"
 
 # Case 2: every item owned elsewhere -> nothing launched, exit 75.
 EXIT_DIR="$TMP_ROOT/exit2"; mkdir -p "$EXIT_DIR"
 printf '75' > "$EXIT_DIR/CC-1"; printf '75' > "$EXIT_DIR/CC-2"
 run_case c2 -- CC-1 CC-2
 assert_eq "$RC" "75" "exit 75 when every item is owned by another session"
-assert_not_contains "$OUT" "Opened terminal" "nothing launched when every item is owned"
-assert_contains "$ERR" "launched 0 handoff session(s), skipped 2 (owned by another session)" "all-skipped summary names the counts"
+assert_not_contains "$OUT" "open-terminal: terminal-opened" "nothing launched when every item is owned"
+assert_contains "$ERR" "open-terminal: summary launched=0 skipped=2 failed=0 lanes=0" "all-skipped summary names the counts"
 
 # Case 3: a non-75 create failure is that item's failure; siblings still launch.
 EXIT_DIR="$TMP_ROOT/exit3"; mkdir -p "$EXIT_DIR"
@@ -168,10 +168,10 @@ printf '1' > "$EXIT_DIR/CC-2"
 run_case c3 -- CC-1 CC-2 CC-3
 assert_eq "$RC" "1" "exit 1 when one create fails for a non-ownership reason"
 assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 CC-2 CC-3 " "create attempted for every item (no abort at the failed one)"
-assert_contains "$OUT" "Opened terminal 'CC-3'" "item after the failed one still launches"
-assert_contains "$ERR" "Error: worktree create failed for CC-2 (exit 1)" "create failure names the item and exit code"
-assert_contains "$ERR" "1 handoff lane(s) failed; launched 2 successfully." "summary reports failed=1 launched=2"
-assert_not_contains "$ERR" "Skipped CC-2" "a non-75 create failure is not reported as skipped"
+assert_contains "$OUT" "open-terminal: terminal-opened item=CC-3" "item after the failed one still launches"
+assert_contains "$ERR" "open-terminal: worktree-failed item=CC-2 exit=1" "create failure names the item and exit code"
+assert_contains "$ERR" "open-terminal: summary launched=2 skipped=0 failed=1 lanes=0" "summary reports failed=1 launched=2"
+assert_not_contains "$ERR" "open-terminal: item-owned item=CC-2" "a non-75 create failure is not reported as skipped"
 
 # Case 4: without --relaunch, an item whose worktree already exists is refused
 # by bare create — this is the state a dead lane leaves behind.
@@ -190,8 +190,8 @@ printf '75' > "$EXIT_DIR/CC-1"; touch "$EXISTS_DIR/CC-1"
 run_case c5 -- --relaunch CC-1
 assert_eq "$RC" "0" "--relaunch launches into the existing worktree"
 assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 --reuse " "--relaunch creates with --reuse, and never retries bare"
-assert_contains "$OUT" "Opened terminal 'CC-1'" "the replacement session is launched"
-assert_not_contains "$ERR" "Skipped CC-1" "a relaunched item is not skipped as owned"
+assert_contains "$OUT" "open-terminal: terminal-opened item=CC-1" "the replacement session is launched"
+assert_not_contains "$ERR" "open-terminal: item-owned item=CC-1" "a relaunched item is not skipped as owned"
 
 # Case 6: --relaunch on a worktree held under another owner's lease — create
 # --reuse still exits 75 — stays a skip.
@@ -200,8 +200,8 @@ EXISTS_DIR="$TMP_ROOT/exists6"; mkdir -p "$EXISTS_DIR"
 printf '75' > "$EXIT_DIR/CC-1.reuse"; touch "$EXISTS_DIR/CC-1"
 run_case c6 -- --relaunch CC-1
 assert_eq "$RC" "75" "a live foreign lease is still a skip under --relaunch"
-assert_not_contains "$OUT" "Opened terminal" "nothing launches into another owner's worktree"
-assert_contains "$ERR" "Skipped CC-1: owned by another session (worktree create exit 75)" "the foreign-lease skip is named on stderr"
+assert_not_contains "$OUT" "open-terminal: terminal-opened" "nothing launches into another owner's worktree"
+assert_contains "$ERR" "open-terminal: item-owned item=CC-1 exit=75" "the foreign-lease skip is named on stderr"
 
 # Case 7: --relaunch after the worktree was cleaned up falls back to bare
 # create — `create --reuse` requires an existing tree.

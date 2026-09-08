@@ -102,13 +102,13 @@ art_fixed="$("$WS" --state-dir "$sda" get KEN-2 '.fixed_items | length')"
   || bad "the superseded entry is dropped by the artifact-bound write" "len=$art_fixed"
 
 err="$("$WS" --state-dir "$sda" update KEN-2 --slurpfile art "$TMP_ROOT/absent.json" '.cycles = 1' 2>&1 >/dev/null)" && rc=0 || rc=$?
-[[ "$rc" -ne 0 ]] && [[ "$err" == *"no such file"* ]] \
+[[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: slurpfile-missing arg1=art arg2=$TMP_ROOT/absent.json"* ]] \
   && ok "--slurpfile refuses a missing file" \
   || bad "--slurpfile refuses a missing file" "rc=$rc err=$err"
 
 printf 'not json' > "$TMP_ROOT/bad.json"
 err="$("$WS" --state-dir "$sda" update KEN-2 --slurpfile art "$TMP_ROOT/bad.json" '.cycles = 1' 2>&1 >/dev/null)" && rc=0 || rc=$?
-[[ "$rc" -ne 0 ]] && [[ "$err" == *"exactly one JSON value"* ]] \
+[[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: slurpfile-value arg1=art arg2=$TMP_ROOT/bad.json"* ]] \
   && ok "--slurpfile refuses a file that is not one JSON value" \
   || bad "--slurpfile refuses a file that is not one JSON value" "rc=$rc err=$err"
 
@@ -193,12 +193,12 @@ labels="$("$WS" --state-dir "$sd" get KEN-1 '.qa_labels | join(",")')"
 before="$("$WS" --state-dir "$sd" get KEN-1 '.qa_labels | length')"
 err="$("$WS" --state-dir "$sd" update KEN-1 --argjson labels 'not json' '.qa_labels = $labels' 2>&1 >/dev/null)" && rc=0 || rc=$?
 after="$("$WS" --state-dir "$sd" get KEN-1 '.qa_labels | length')"
-[[ "$rc" -ne 0 ]] && [[ "$err" == *"exactly one JSON value"* ]] && [[ "$before" == "$after" ]] \
+[[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: argjson-value arg1=labels"* ]] && [[ "$before" == "$after" ]] \
   && ok "--argjson refuses a non-JSON value and writes nothing" \
   || bad "--argjson refuses a non-JSON value and writes nothing" "rc=$rc err=$err before=$before after=$after"
 
 err="$("$WS" --state-dir "$sd" update KEN-1 --argjson pair '1 2' '.cycles = 0' 2>&1 >/dev/null)" && rc=0 || rc=$?
-[[ "$rc" -ne 0 ]] && [[ "$err" == *"exactly one JSON value"* ]] \
+[[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: argjson-value arg1=pair"* ]] \
   && ok "--argjson refuses a stream of several values" \
   || bad "--argjson refuses a stream of several values" "rc=$rc err=$err"
 
@@ -222,17 +222,17 @@ sha_type="$("$WS" --state-dir "$sd" get KEN-1 '.pre_delegate_sha | type')"
 
 # --- argument-shape refusals -----------------------------------------------
 err="$("$WS" --state-dir "$sd" update KEN-1 --arg loc 2>&1 >/dev/null)" && rc=0 || rc=$?
-[[ "$rc" -ne 0 ]] && [[ "$err" == *"needs a NAME and a VALUE"* ]] \
+[[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: binding-arguments arg1=--arg"* ]] \
   && ok "--arg without a VALUE is refused" \
   || bad "--arg without a VALUE is refused" "rc=$rc err=$err"
 
 err="$("$WS" --state-dir "$sd" update KEN-1 '.cycles = 1' '.cycles = 2' 2>&1 >/dev/null)" && rc=0 || rc=$?
-[[ "$rc" -ne 0 ]] && [[ "$err" == *"exactly one jq expression"* ]] \
+[[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: extra-expression count=2"* ]] \
   && ok "two jq expressions are refused" \
   || bad "two jq expressions are refused" "rc=$rc err=$err"
 
 err="$("$WS" --state-dir "$sd" update KEN-1 --arg loc "$LOC" 2>&1 >/dev/null)" && rc=0 || rc=$?
-[[ "$rc" -ne 0 ]] && [[ "$err" == *"needs a jq expression"* ]] \
+[[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: missing-expression count=0"* ]] \
   && ok "bindings with no expression are refused" \
   || bad "bindings with no expression are refused" "rc=$rc err=$err"
 
@@ -286,7 +286,7 @@ sd2="$TMP_ROOT/state-interpolated"
 err="$("$WS" --state-dir "$sd2" update KEN-2 \
   ".escalated_items = ((.escalated_items // []) + [{description: \"$DESC\", location: \"$LOC\", outcome: \"blocked\"}])" 2>&1 >/dev/null)" && rc=0 || rc=$?
 recorded="$("$WS" --state-dir "$sd2" get KEN-2 '.escalated_items | length')"
-[[ "$rc" -ne 0 ]] && [[ "$err" == *"jq expression failed"* ]] && [[ "$recorded" == "0" ]] \
+[[ "$rc" -ne 0 ]] && [[ "$err" == *"workflow-state: jq-failed state=$sd2/workflow-state-KEN-2.json"* ]] && [[ "$recorded" == "0" ]] \
   && ok "the interpolated form fails on this text and records nothing" \
   || bad "the interpolated form fails on this text and records nothing" "rc=$rc recorded=$recorded err=$err"
 

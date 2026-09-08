@@ -70,7 +70,7 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 observe() {
   local got="" token name value needle
   for token in $1; do
-    name="${token%%=*}"
+    name="${token%=*}"
     case "$name" in
       rc) value="$RC" ;;
       files) value="$(json '.files | tojson')" ;;
@@ -391,7 +391,7 @@ GART="$GW/tmp/dev-return-$ISSUE-$R.json"
 # `label^jq on the implement receipt^args^expect`
 commit_rows=(
   "a reachable HEAD commit^.commit=\"$HEAD_SHA\"^--worktree $GW --issue $ISSUE --round-id $R^rc=0 reason=valid warning=null"
-  "a fabricated sha, named on stderr with no such object^.commit=\"$FAKE_SHA\"^--worktree $GW --issue $ISSUE --round-id $R^rc=1 ok=false reason=commit_unresolvable stderr~$FAKE_SHA=true stderr~no+such+object=true"
+  "a fabricated sha, named on stderr with no such object^.commit=\"$FAKE_SHA\"^--worktree $GW --issue $ISSUE --round-id $R^rc=1 ok=false reason=commit_unresolvable stderr~dev-artifact-check:+commit-missing+sha=$FAKE_SHA+repo=$GW=true"
   "an orphaned but real commit is valid with a warning^.commit=\"$ORPHAN_SHA\"^--worktree $GW --issue $ISSUE --round-id $R^rc=0 ok=true reason=valid warning=commit_unreachable"
   "a missing commit is the scalar gate first^del(.commit)^--worktree $GW --issue $ISSUE --round-id $R^reason=invalid"
   "commit_unresolvable beats bundled incompleteness^.commit=\"$FAKE_SHA\" | .bundled=true | .items=[]^--worktree $GW --issue $ISSUE --round-id $R^reason=commit_unresolvable"

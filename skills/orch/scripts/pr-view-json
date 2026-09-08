@@ -3,6 +3,19 @@
 
 set -euo pipefail
 
+# Callers preserve positional values for this diagnostic catalog.
+pr_view_json_message() {
+  local _message_key="$1"
+  shift
+  case "$_message_key" in
+    helper-missing)
+      printf 'pr-view-json: helper-missing github=%s\n' "$GITHUB"
+      printf '%s\n' "Error: github helper not found: $GITHUB"
+      ;;
+  esac
+}
+
+
 worktree="${1:-.}"
 shift || true
 
@@ -11,7 +24,7 @@ SKILLS_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 GITHUB="$SKILLS_DIR/github/scripts/github.sh"
 
 if [[ ! -x "$GITHUB" ]]; then
-    echo "Error: github helper not found: $GITHUB" >&2
+    pr_view_json_message helper-missing "$@" >&2
     exit 1
 fi
 

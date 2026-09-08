@@ -30,13 +30,67 @@
 
 set -uo pipefail
 
-PROG="spawn-adapter"
 
-die() { printf '%s: %s\n' "$PROG" "$1" >&2; exit 2; }
+# Callers preserve positional values for this diagnostic catalog.
+die() {
+  local _message_key="$1"
+  shift
+  case "$_message_key" in
+    missing-subcommand)
+      printf 'spawn-adapter: missing-subcommand count=0\n'
+      usage
+      ;;
+    missing-jq)
+      printf 'spawn-adapter: missing-jq exit=%s\n' "2"
+      printf '%s\n' "jq is required"
+      ;;
+    fallback-value)
+      printf 'spawn-adapter: fallback-value option=%s\n' "--fallback-reason"
+      printf '%s\n' "--fallback-reason requires a value"
+      ;;
+    unknown-option)
+      printf 'spawn-adapter: unknown-option arg1=%s\n' "$1"
+      printf '%s\n' "unknown option: $1"
+      ;;
+    extra-argument)
+      printf 'spawn-adapter: extra-argument arg1=%s\n' "$1"
+      printf '%s\n' "unexpected extra argument: $1"
+      ;;
+    missing-name)
+      printf 'spawn-adapter: missing-name exit=%s\n' "2"
+      printf '%s\n' "spawn requires a canonical agent name"
+      ;;
+    translated-name)
+      printf 'spawn-adapter: translated-name canonical=%s\n' "$canonical"
+      printf '%s\n' "'$canonical' looks like an already-translated runtime name; pass the canonical hyphenated agent name (the tool does the translation)"
+      ;;
+    invalid-name)
+      printf 'spawn-adapter: invalid-name canonical=%s\n' "$canonical"
+      printf '%s\n' "'$canonical' is not a valid agent name ([A-Za-z0-9][A-Za-z0-9-]*)"
+      ;;
+    empty-fallback)
+      printf 'spawn-adapter: empty-fallback option=%s\n' "--fallback-reason"
+      printf '%s\n' "--fallback-reason must be non-empty; the reason is recorded, not decorative"
+      ;;
+    config-value)
+      printf 'spawn-adapter: config-value option=%s\n' "--config"
+      printf '%s\n' "--config requires a value"
+      ;;
+    unknown-argument)
+      printf 'spawn-adapter: unknown-argument arg1=%s\n' "$1"
+      printf '%s\n' "unknown argument: $1"
+      ;;
+    unknown-subcommand)
+      printf 'spawn-adapter: unknown-subcommand arg1=%s\n' "${1}"
+      printf '%s\n' "unknown subcommand: ${1} (expected spawn or slots)"
+      ;;
+  esac >&2
+  exit 2
+}
 
 usage() { sed -n '/^# Usage:/,/^# THE IDENTITY RULE/p' "$0" | sed 's/^# \{0,1\}//' | sed '$d'; }
 
-command -v jq >/dev/null 2>&1 || die "jq is required"
+command -v jq >/dev/null 2>&1 || die missing-jq "$@"
 
 # The spawn API's task_name schema accepts only [a-z0-9_] and rejects a
 # hyphenated name BEFORE launch. Translating is therefore not a
@@ -51,27 +105,27 @@ cmd_spawn() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 			--fallback-reason)
-				[[ $# -ge 2 ]] || die "--fallback-reason requires a value"
+				[[ $# -ge 2 ]] || die fallback-value "$@"
 				fallback_reason="$2"; have_fallback=true; shift 2 ;;
 			--fallback-reason=*)
 				fallback_reason="${1#--fallback-reason=}"; have_fallback=true; shift ;;
-			-*) die "unknown option: $1" ;;
+			-*) die unknown-option "$@" ;;
 			*)
-				[[ -z "$canonical" ]] || die "unexpected extra argument: $1"
+				[[ -z "$canonical" ]] || die extra-argument "$@"
 				canonical="$1"; shift ;;
 		esac
 	done
-	[[ -n "$canonical" ]] || die "spawn requires a canonical agent name"
+	[[ -n "$canonical" ]] || die missing-name "$@"
 	# Guard the identity rule at the boundary: an underscore name here means the
 	# caller already translated and is about to key state on the runtime
 	# spelling, which is the exact mistake this tool exists to prevent.
 	if [[ "$canonical" == *_* ]]; then
-		die "'$canonical' looks like an already-translated runtime name; pass the canonical hyphenated agent name (the tool does the translation)"
+		die translated-name "$@"
 	fi
 	[[ "$canonical" =~ ^[A-Za-z0-9][A-Za-z0-9-]*$ ]] \
-		|| die "'$canonical' is not a valid agent name ([A-Za-z0-9][A-Za-z0-9-]*)"
+		|| die invalid-name "$@"
 	if [[ "$have_fallback" == true && -z "$fallback_reason" ]]; then
-		die "--fallback-reason must be non-empty; the reason is recorded, not decorative"
+		die empty-fallback "$@"
 	fi
 
 	local task_name agent_type
@@ -118,6 +172,19 @@ cmd_spawn() {
 # `agent thread limit reached` at spawn time.
 MULTI_AGENT_DEFAULT_CAP=4
 
+slot_warning() {
+	case "$1" in
+		legacy-ignored)
+			printf 'legacy-ignored value=%s effective=%s\n' "$legacy" "$effective"
+			printf 'MultiAgentV2 ignores agents.max_threads. Set features.multi_agent_v2.max_concurrent_threads_per_session.\n'
+			;;
+		legacy-conflict)
+			printf 'legacy-conflict value=%s effective=%s\n' "$legacy" "$v2"
+			printf 'The legacy key differs from the authoritative MultiAgentV2 key. The MultiAgentV2 key sets the cap.\n'
+			;;
+	esac
+}
+
 read_toml_int() {
 	# $1 = file, $2 = section (empty for top level), $3 = key
 	local file="$1" section="$2" key="$3"
@@ -146,9 +213,9 @@ cmd_slots() {
 	local config="${CODEX_HOME:-$HOME/.codex}/config.toml"
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-			--config) [[ $# -ge 2 ]] || die "--config requires a value"; config="$2"; shift 2 ;;
+			--config) [[ $# -ge 2 ]] || die config-value "$@"; config="$2"; shift 2 ;;
 			--config=*) config="${1#--config=}"; shift ;;
-			*) die "unknown argument: $1" ;;
+			*) die unknown-argument "$@" ;;
 		esac
 	done
 
@@ -165,11 +232,11 @@ cmd_slots() {
 	else
 		effective="$MULTI_AGENT_DEFAULT_CAP"; source="MultiAgentV2 default"
 		if [[ -n "$legacy" ]]; then
-			warning="agents.max_threads is set to $legacy but MultiAgentV2 ignores it; the effective cap is still $effective. Set features.multi_agent_v2.max_concurrent_threads_per_session (openai/codex#33447, #33039)."
+			warning="$(slot_warning legacy-ignored)"
 		fi
 	fi
 	if [[ -n "$v2" && -n "$legacy" && "$v2" != "$legacy" ]]; then
-		warning="agents.max_threads ($legacy) disagrees with the authoritative features.multi_agent_v2.max_concurrent_threads_per_session ($v2); the v2 key wins."
+		warning="$(slot_warning legacy-conflict)"
 	fi
 
 	jq -nc \
@@ -189,7 +256,7 @@ cmd_slots() {
 		  # live sessions themselves.
 		  recommended_reviewer_slot_budget: ($effective | tostring),
 		  warning: (if $warning == "" then null else $warning end),
-		  note: "A running session keeps its old cap until restarted."
+		  note: "restart-required value=true\nA running session keeps its old cap until restarted."
 		}'
 }
 
@@ -197,6 +264,6 @@ case "${1:-}" in
 	spawn) shift; cmd_spawn "$@" ;;
 	slots) shift; cmd_slots "$@" ;;
 	-h|--help) usage; exit 0 ;;
-	"") usage >&2; exit 2 ;;
-	*) die "unknown subcommand: ${1} (expected spawn or slots)" ;;
+	"") die missing-subcommand ;;
+	*) die unknown-subcommand "$@" ;;
 esac

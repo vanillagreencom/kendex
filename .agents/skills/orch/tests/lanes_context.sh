@@ -530,13 +530,13 @@ for row in \
   "a row carries the lane's number between its harness and its status, a dash for tokens where the line names no window|TABLE|^ken-101[[:space:]]+%1[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+35%[[:space:]]+-[[:space:]]+ok[[:space:]]*\$" \
   "a lane naming its window carries the token figure in its own column|TABLE|^ken-134[[:space:]]+%33[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+52%[[:space:]]+520000[[:space:]]+ok[[:space:]]*\$" \
   "an unmeasured lane's number columns are dashes, never zeros|TABLE|^ken-104[[:space:]]+%4[[:space:]]+[^[:space:]]+[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+no_status_line[[:space:]]*\$" \
-  "the legend states which direction it reports|TABLE|CONSUMED" \
+  "the legend states which direction it reports|TABLE|^lane-context: percent kind=consumed\$" \
   "the legend names both codex spellings and which is converted|TABLE|LEFT or what is USED" \
-  "the legend says what the token column is and when it is empty|TABLE|CONTEXT_TOKENS: that percent of the window the status line names" \
+  "the legend says what the token column is and when it is empty|TABLE|^lane-context: tokens kind=window-percent absent=-\$" \
   "the column-less header is aligned with spaces, not a run of tabs|NOCOL_OUT|^LANE {2,}PANE {2,}ACCOUNT {2,}HARNESS {2,}CONTEXT_USED_PCT {2,}CONTEXT_TOKENS {2,}STATUS *\$" \
   "a measured lane keeps its row where column is missing|NOCOL_OUT|^ken-101[[:space:]]+%1[[:space:]]+drovr[[:space:]]+claude[[:space:]]+35%[[:space:]]+-[[:space:]]+ok[[:space:]]*\$" \
   "an unmeasured lane keeps its row too, dashes and all|NOCOL_OUT|^ken-104[[:space:]]+%4[[:space:]]+drovr[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+no_status_line[[:space:]]*\$" \
-  "the legend survives the missing column too|NOCOL_OUT|CONSUMED"; do
+  "the legend survives the missing column too|NOCOL_OUT|^lane-context: percent kind=consumed\$"; do
   IFS='|' read -r label which re <<<"$row"
   assert_line "${!which}" "$re" "$label"
 done
@@ -544,7 +544,7 @@ done
 echo "=== an empty fleet says so; an unreadable store refuses ==="
 rm -f "$STATE"/claims/*.claim
 EMPTY="$(run_ctx)"
-assert_contains "$EMPTY" "No live lane claims" "an empty fleet says so"
+assert_eq "${EMPTY%%$'\n'*}" "lane-context: empty count=0" "an empty fleet says so"
 assert_eq "$(run_ctx --json | jq -r 'length')" "0" "an empty fleet is an empty array"
 BROKEN_STATE="$TMP_ROOT/broken"
 mkdir -p "$BROKEN_STATE"

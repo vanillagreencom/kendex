@@ -17,6 +17,19 @@
 #
 # Sourced, never executed. Bash 3.2-safe, like its callers.
 
+
+# Callers preserve positional values for this diagnostic catalog.
+file_lock_message() {
+  local _message_key="$1"
+  shift
+  case "$_message_key" in
+    lock-timeout)
+      printf 'file-lock: lock-timeout lock-file=%s wait-s=%s\n' "$lock_file" "${wait_s}"
+      printf '%s\n' "Error: could not acquire $lock_file.d after ${wait_s}s. If no orch process is running, remove it: rmdir '$lock_file.d'"
+      ;;
+  esac
+}
+
 ORCH_LOCK_MUTEX_DIR=""
 
 orch_release_lock() { # release a mutex this shell took; a no-op under flock
@@ -42,7 +55,7 @@ orch_take_lock() { # FD LOCK_FILE WAIT_SECONDS
   while ! mkdir -- "$lock_file.d" 2>/dev/null; do
     tries=$((tries + 1))
     if [ "$tries" -ge "$limit" ]; then
-      echo "Error: could not acquire $lock_file.d after ${wait_s}s. If no orch process is running, remove it: rmdir '$lock_file.d'" >&2
+      file_lock_message lock-timeout "$@" >&2
       return 1
     fi
     sleep 0.1

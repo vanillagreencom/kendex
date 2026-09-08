@@ -15,6 +15,19 @@
 # here would be the second copy that table exists to prevent.
 set -euo pipefail
 
+# Message text is centralized; callers supply the reason and relevant values.
+message() {
+  local reason="$1"
+  shift
+  printf '%s: %s' orch-env "$reason"
+  printf ' %s' "$@"
+  printf '\n'
+  case "$reason" in
+  argument-count) printf '%s\n' 'Use orch-env with a variable name and default value.' ;;
+  invalid-name) printf '%s\n' 'The variable name is not valid.' ;;
+  esac
+}
+
 # Help is answered before any project configuration is read: .env.local is
 # sourced as shell, so a help form that reaches the loader runs whatever the
 # checkout put there. Position 1 only — the second operand is the DEFAULT
@@ -27,12 +40,12 @@ help | --help | -h)
 esac
 
 if [[ $# -ne 2 ]]; then
-  echo "Usage: orch-env VAR_NAME DEFAULT" >&2
+  message argument-count "count=$#" >&2
   exit 2
 fi
 
 if ! [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-  echo "orch-env: invalid variable name: $1" >&2
+  message invalid-name "name=$1" >&2
   exit 2
 fi
 

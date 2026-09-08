@@ -122,13 +122,13 @@ echo "=== open-terminal: a launch at a working directory that is gone is refused
 
 run empty "$REPO/scripts/open-terminal" empty --ghostty CC-1
 assert_eq "$RC" "1" "a GUI launch with no worktree path fails the item"
-assert_contains "$ERR" "Error: refusing to launch 'CC-1': working directory '' does not exist" \
+assert_eq "${ERR%%$'\n'*}" "open-terminal: directory-missing item=CC-1 path=" \
   "the refusal names the item and the empty directory"
 assert_eq "$TERM_LOG_TEXT" "" "no terminal was launched for the empty path"
 
 run missing "$REPO/scripts/open-terminal" missing --ghostty CC-1
 assert_eq "$RC" "1" "a GUI launch at a deleted worktree fails the item"
-assert_contains "$ERR" "Error: refusing to launch 'CC-1': working directory '$TMP_ROOT/gone/CC-1' does not exist" \
+assert_eq "${ERR%%$'\n'*}" "open-terminal: directory-missing item=CC-1 path=$TMP_ROOT/gone/CC-1" \
   "the refusal names the directory that is gone"
 assert_eq "$TERM_LOG_TEXT" "" "no terminal was launched at the deleted directory"
 
@@ -141,7 +141,7 @@ OT_TMUX_VALUE=stub,1,0
 run tmux_missing "$REPO/scripts/open-terminal" missing --tmux CC-1
 OT_TMUX_VALUE=""
 assert_eq "$RC" "1" "a tmux launch at a deleted worktree fails the item"
-assert_contains "$ERR" "Error: refusing to launch 'CC-1': working directory '$TMP_ROOT/gone/CC-1' does not exist" \
+assert_eq "${ERR%%$'\n'*}" "open-terminal: directory-missing item=CC-1 path=$TMP_ROOT/gone/CC-1" \
   "the tmux path refuses in the same words"
 assert_eq "$TMUX_LOG_TEXT" "" "tmux was never called for the deleted directory"
 

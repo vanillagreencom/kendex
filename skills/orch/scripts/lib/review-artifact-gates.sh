@@ -15,6 +15,9 @@
 # artifact_content_gates is the single entry point; the individual gates below
 # are its steps and are not called directly by review-artifact-check.
 #
+# Rejection details start with `review-artifact-check: <code> key=value ...`.
+# English explanation follows that line. emit_unavailable retains the JSON
+# result protocol even when jq cannot encode it.
 # Sourced by: review-artifact-check.
 
 set -euo pipefail
@@ -26,7 +29,7 @@ set -euo pipefail
 # the status a legitimate rejection uses, so a caller reading .ok got an empty
 # parse and a caller reading the status read "artifact rejected".
 emit_unavailable() {
-  local detail="${1:-review-artifact-check could not run, so no artifact could be validated}"
+  local detail="${1:-The artifact check could not run.}" dependency="${2:-unknown}"
   # The detail is interpolated into a JSON literal with no encoder available —
   # by design, since this runs when jq or mktemp has already failed — so it is
   # made safe by REMOVING what JSON cannot carry raw, never by escaping it in
@@ -38,7 +41,7 @@ emit_unavailable() {
   detail="${detail//\"/}"
   detail="${detail//[[:cntrl:]]/ }"
   while [[ "$detail" == *"  "* ]]; do detail="${detail//  / }"; done
-  printf '{"ok":false,"path":null,"reason":"invalid","detail":"%s"}\n' "$detail"
+  printf '{"ok":false,"path":null,"reason":"invalid","detail":"review-artifact-check: unavailable dependency=%s\\n%s"}\n' "$dependency" "$detail"
 }
 
 # jq's stderr lands here and is read only when the gate's exit status says the
@@ -58,7 +61,7 @@ case "$review_artifact_gate_tmp_root" in
   *) review_artifact_gate_tmp_root="./$review_artifact_gate_tmp_root" ;;
 esac
 review_artifact_gate_err="$(mktemp "$review_artifact_gate_tmp_root/review-artifact-check.XXXXXX" 2>/dev/null)" || {
-  emit_unavailable "review-artifact-check could not create its temporary error channel (mktemp failed; check TMPDIR and free space), so no artifact could be validated"
+  emit_unavailable "The check could not create its temporary error channel. Check TMPDIR and free space." mktemp
   exit 1
 }
 review_artifact_gate_cleanup() { rm -f "$review_artifact_gate_err"; }
@@ -151,7 +154,7 @@ gate_filter() {
 gate_failure_detail() {
   local rc="$1" err=""
   err="$(tr '\n\t' '  ' < "$review_artifact_gate_err" 2>/dev/null || printf '')"
-  printf 'gate could not run: jq exited %s%s' "$rc" "${err:+: $err}"
+  printf 'review-artifact-check: gate_failed jq_exit=%s\n%s' "$rc" "$err"
 }
 
 # disposition_allows_fallback
@@ -175,9 +178,9 @@ self_reports_no_review() {
     (.qa_metadata? // {}) as $qa
     | if (($qa | type) == "object") then
         if ($qa.review_performed == false)
-          then "qa_metadata.review_performed is false — the artifact states no review happened, which no verdict overrides"
+          then "review-artifact-check: no_review review_performed=false\nThe artifact states that no review happened."
         elif ((($qa.reason // "") | tostring) | test("no[ _-]?(scope|review)|not[ _-]?reviewed"; "i"))
-          then "qa_metadata.reason admits no review happened: \"\($qa.reason)\""
+          then "review-artifact-check: no_review review_reason=\($qa.reason | @json)\nThe reason states that no review happened."
         else "" end
       else "" end
   '
@@ -196,16 +199,16 @@ self_reports_no_review() {
 qa_shaped_incomplete() {
   gate_filter "$1" '
     # gate:qa-shape
-    def shape($k): if (has($k) | not) then "\($k)[] is absent"
+    def shape($k): if (has($k) | not) then "\($k)=absent"
       else (.[$k] | type) as $t
         | if $t == "array" then empty
-          elif $t == "null" then "\($k)[] is null"
-          else "\($k)[] is \($t), not an array" end
+          elif $t == "null" then "\($k)=null"
+          else "\($k)=\($t)" end
       end ;
     if ((.qa_metadata? | type) == "object") then
       ( [ shape("blockers"), shape("suggestions") ] ) as $bad
       | if ($bad | length) > 0
-        then "\($bad | join("; ")) — declaring qa_metadata commits the artifact to both finding"
+        then "review-artifact-check: finding_arrays \($bad | join(" "))\nDeclaring qa_metadata commits the artifact to both finding"
              + " arrays, empty ones included: a review with nothing to say writes []. An artifact"
              + " with no qa_metadata does not have to carry them."
         else "" end
@@ -259,7 +262,7 @@ finding_item_detail() {
                      and (($item | type) == "object")
                      and ($item.category != null)
                      and ((["fix","issue"] | index($item.category | tostring)) == null)
-                  then ["category(not fix|issue)"] else [] end )
+                  then ["category:enum"] else [] end )
                 as $badcat
               # A present-but-blank impact is as unroutable as a missing one:
               # the filing bar adjudicates its text.
@@ -268,7 +271,7 @@ finding_item_detail() {
                      and ($item.category == "issue")
                      and ($item.impact != null)
                      and ((($item.impact | type) != "string") or (($item.impact | tostring | gsub("\\s";"")) == ""))
-                  then ["impact(blank)"] else [] end )
+                  then ["impact:blank"] else [] end )
                 as $blankimpact
               # priority in 1..4, estimate in 1..5 per review-finding.md — a present
               # but non-numeric or out-of-range value is unusable, not just the
@@ -280,7 +283,7 @@ finding_item_detail() {
                            {f:"estimate", v:$item.estimate, lo:1, hi:5} ]
                          | map(select(.v != null
                              and (((.v | type) != "number") or (.v < .lo) or (.v > .hi))))
-                         | map("\(.f)(not \(.lo)..\(.hi))") )
+                         | map("\(.f):range[\(.lo),\(.hi)]") )
                   else [] end )
                 as $badnum
               | ($missing + $badcat + $blankimpact + $badnum) as $problems
@@ -291,8 +294,8 @@ finding_item_detail() {
               # priority stops at 4 — so the same agent reaches for `priority: 5`
               # or a plausible-but-wrong field name again.
               | if ($problems | length) > 0
-                then "\($arr)[\($i)]: missing/invalid \($problems | join(", "))"
-                     + " — every blockers[]/suggestions[] item requires:"
+                then "review-artifact-check: finding_item path=\($arr)[\($i)] missing=\($missing | join(",")) invalid=\(($badcat + $blankimpact + $badnum) | join(","))"
+                     + "\nEvery blockers[]/suggestions[] item requires:"
                      + " id, title, location (path plus symbol, no line numbers),"
                      + " description, recommendation, priority (integer 1-4),"
                      + " estimate (1-5); suggestions also category (fix|issue),"
@@ -376,7 +379,7 @@ artifact_content_gates() {
   fi
   case "$out" in
     invalid:*)
-      reject_terminal "invalid_declaration" "${out#invalid:} — $REVIEW_DECLARATION_BAR"
+      reject_terminal "invalid_declaration" "${out#invalid:}"$'\n'"$REVIEW_DECLARATION_BAR"
       return 1
       ;;
     declared:*)
@@ -397,7 +400,7 @@ artifact_content_gates() {
   fi
   if [[ -n "$out" ]]; then
     if [[ -z "$declared" ]]; then
-      reject_terminal "zero_sample" "$out — $REVIEW_ZERO_SAMPLE_REMEDY"
+      reject_terminal "zero_sample" "$out"$'\n'"$REVIEW_ZERO_SAMPLE_REMEDY"
       return 1
     fi
     review_artifact_measurement_suppressed="$out"

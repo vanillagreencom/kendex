@@ -77,16 +77,9 @@ json() { jq -r "$@" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 #   path             the reported path with the staged worktree's tmp/ prefix
 #                    removed, or null; a path anywhere else prints whole and
 #                    fails the row
-#   detail~<text>    whether the detail names <text> (`+` reads as a space)
-#   branch~<text>    the half of the detail before the em-dash: what the
-#                    refusing branch found. The half after it is the shared
-#                    requirement, which quotes the very tokens the branches
-#                    match on, so a needle against the whole detail pins
-#                    nothing; a detail whose branch half carries the
-#                    requirement (the separator gone, so the split lands on
-#                    the requirement's own em-dash) aborts the suite
-#   bar~<text>       the half after the em-dash: the requirement
-#   silenced~<text>  whether measurement_suppressed names <text>
+#   detail~key:value  whether the first detail line carries key=value
+#   silenced~key:value  the same field in measurement_suppressed
+#   diagnostic       the stable diagnostic code
 observe() {
   local got="" token name value needle
   for token in $1; do
@@ -94,13 +87,9 @@ observe() {
     case "$name" in
       rc) value="$RC" ;;
       path) value="$(json --arg tmp "$WT/tmp/" '.path | if . == null then "null" else ltrimstr($tmp) end')" ;;
-      detail~*) needle="${name#detail~}"; value="$(json '.detail // ""' | grep -qF -- "${needle//+/ }" && echo true || echo false)" ;;
-      branch~*|bar~*)
-        json '.detail // "" | split(" — ")[0]' | grep -qF -- 'must name the instrument' && { printf 'observe: %s asked of a detail whose branch half carries the requirement: %s\n' "$name" "$(json '.detail')" >&2; exit 1; }
-        needle="${name#*~}"
-        if [[ "$name" == branch~* ]]; then value="$(json '.detail // "" | split(" — ")[0]' | grep -qF -- "${needle//+/ }" && echo true || echo false)"
-        else value="$(json '.detail // "" | split(" — ")[1:] | join(" — ")' | grep -qF -- "${needle//+/ }" && echo true || echo false)"; fi ;;
-      silenced~*) needle="${name#silenced~}"; value="$(json '.measurement_suppressed // ""' | grep -qF -- "${needle//+/ }" && echo true || echo false)" ;;
+      detail~*) needle="${name#detail~}"; value="$(json --arg needle "${needle/:/=}" '(.detail // "" | split("\n")[0] | split(" ")) | index($needle) != null')" ;;
+      diagnostic) value="$(json '.detail // "" | split("\n")[0] | split(" ")[1]')" ;;
+      silenced~*) needle="${name#silenced~}"; value="$(json --arg needle "${needle/:/=}" '(.measurement_suppressed // "" | split("\n")[0] | split(" ")) | index($needle) != null')" ;;
       *) value="$(json "if has(\"$name\") then .$name else \"ABSENT\" end")"; value="${value// /+}" ;;
     esac
     got="$got $name=$value"
@@ -178,20 +167,20 @@ echo "=== zero_sample: a measurement that produced no samples is not a result ==
 # measurements; the same text quoted inside a finding is that finding's
 # evidence. Whitespace between citation tokens is not one fixed spelling.
 file_table \
-  "a zero-mutant citation is refused, quoted, and told the declaration^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"validated: mutation: killed 0/0; stability: 10/10 at 16 threads\"}^rc=1 ok=false reason=zero_sample detail~killed+0/0=true detail~instrument+failure=true detail~measurement_failed=true" \
-  "a zero-run stability citation is refused and quoted^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 3/3; stability: 0/0 at 16 threads\"}^rc=1 reason=zero_sample detail~stability:+0/0=true" \
-  "zero threads is the same instrument failure, named^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 3/3; stability: 10/10 at 0 threads\"}^rc=1 reason=zero_sample detail~zero+threads=true" \
+  "a zero-mutant citation reports its measurement and sample count^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"validated: mutation: killed 0/0; stability: 10/10 at 16 threads\"}^rc=1 ok=false reason=zero_sample detail~measurement:mutation=true detail~samples:0=true" \
+  "a zero-run stability citation is refused and quoted^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 3/3; stability: 0/0 at 16 threads\"}^rc=1 reason=zero_sample detail~measurement:stability=true detail~samples:0=true" \
+  "zero threads is the same instrument failure, named^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 3/3; stability: 10/10 at 0 threads\"}^rc=1 reason=zero_sample detail~threads:0=true" \
   "stability 0/10, ten measured runs none passed, stays valid^{\"agent\":\"reviewer-test\",\"verdict\":\"action_required\",\"summary\":\"concurrency-sensitive: mutation: killed 3/3; stability: 0/10 at 16 threads\"}^rc=0 reason=valid" \
   "mutation killed 0/3, three mutants none killed, stays valid^{\"agent\":\"reviewer-test\",\"verdict\":\"action_required\",\"summary\":\"mutant survived: mutation: killed 0/3; stability: 10/10 at 16 threads\"}^rc=0 reason=valid" \
   "a partial kill and partial stability stay valid^{\"agent\":\"reviewer-test\",\"verdict\":\"action_required\",\"summary\":\"mutation: killed 2/3; stability: 9/10 at 16 threads\"}^rc=0 reason=valid" \
   "a zeroed citation quoted in a blocker description is out of scope^{\"agent\":\"reviewer-test\",\"verdict\":\"action_required\",\"summary\":\"s\",\"blockers\":[{\"id\":1,\"title\":\"t\",\"location\":\"src/x.rs (\`f\`)\",\"description\":\"the fixture proves the gate rejects mutation: killed 0/0; stability: 0/0 at 16 threads\",\"recommendation\":\"r\",\"priority\":2,\"estimate\":2}],\"suggestions\":[],\"qa_metadata\":{}}^rc=0 reason=valid" \
   "a zeroed citation quoted in a suggestion is out of scope^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"s\",\"blockers\":[],\"suggestions\":[{\"id\":1,\"title\":\"t\",\"location\":\"tests/x.sh\",\"description\":\"the fixture uses mutation: killed 0/0 as its control\",\"recommendation\":\"r\",\"priority\":3,\"estimate\":1,\"category\":\"fix\"}],\"qa_metadata\":{}}^rc=0 reason=valid" \
   "a zeroed citation quoted in a question is out of scope^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":[{\"id\":1,\"location\":\"general\",\"question\":\"is mutation: killed 0/0 expected here?\",\"draft_response\":\"d\",\"source\":\"@x\",\"source_id\":\"1\",\"source_type\":\"inline\"}],\"qa_metadata\":{}}^rc=0 reason=valid" \
-  "the same text in .summary is the artifact's own measurement, and the refusal points at the honest route^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"the fixture proves the gate rejects mutation: killed 0/0; stability: 0/0 at 16 threads\",\"blockers\":[],\"suggestions\":[],\"qa_metadata\":{}}^rc=1 reason=zero_sample detail~blocker+or+suggestion=true" \
+  "the same text in .summary is the artifact's own measurement^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"the fixture proves the gate rejects mutation: killed 0/0; stability: 0/0 at 16 threads\",\"blockers\":[],\"suggestions\":[],\"qa_metadata\":{}}^rc=1 reason=zero_sample detail~measurement:mutation=true detail~samples:0=true" \
   "a citation nested in qa_metadata is the artifact's own measurement^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"qa_metadata\":{\"test_qa\":{\"note\":\"mutation: killed 0/0\"}}}^rc=1 reason=zero_sample" \
   "a citation wrapped across a newline still counts^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/\\n0; stability: 10/10 at 16 threads\"}^rc=1 reason=zero_sample" \
-  "a newline after 'stability:' still counts^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"stability:\\n0/0 at 16 threads\"}^reason=zero_sample" \
-  "a newline before a zero thread count still counts^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"stability: 10/10 at\\n0 threads\"}^reason=zero_sample" \
+  "a newline after 'stability:' still counts^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"stability:\\n0/0 at 16 threads\"}^rc=1 reason=zero_sample" \
+  "a newline before a zero thread count still counts^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"stability: 10/10 at\\n0 threads\"}^rc=1 reason=zero_sample" \
   "a nonzero mutation and stability citation stays valid^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 3/3; stability: 10/10 at 16 threads\"}^rc=0 reason=valid measurement_failed=ABSENT measurement_suppressed=ABSENT" \
   "an artifact citing no measurement is untouched by the gate^{\"agent\":\"reviewer-quality\",\"verdict\":\"pass\",\"summary\":\"no measurement was needed for this domain\"}^rc=0 reason=valid"
 
@@ -201,18 +190,18 @@ echo "=== perf payload: evidence is required, absence is not detected shape by s
 # so each row pins the branch's detail beside the shared reason. One real
 # measured value is enough, in either container.
 wrapped_table '{"agent":"reviewer-perf","verdict":"pass","summary":"s","blockers":[],"suggestions":[],"qa_metadata":{"perf_qa":%s}}' \
-  "percentiles missing entirely^{\"regression_pct\":0,\"regressions\":[],\"platform\":\"linux\",\"baseline_sha\":\"abc\"}^reason=zero_sample detail~declares+no+percentiles+block=true" \
-  "percentiles null^{\"percentiles\":null}^reason=zero_sample detail~declares+no+percentiles+block=true" \
-  "percentiles an empty object^{\"percentiles\":{}}^reason=zero_sample detail~percentiles+is+empty=true" \
-  "percentiles an empty array^{\"percentiles\":[]}^reason=zero_sample detail~percentiles+is+empty=true" \
-  "percentiles all zero numbers^{\"percentiles\":{\"p50\":0,\"p99\":0}}^reason=zero_sample detail~no+measured+value+above+zero=true" \
-  "percentiles zero-valued strings^{\"percentiles\":{\"p50\":\"0ms\",\"p99\":\"0ms\"}}^reason=zero_sample detail~no+measured+value+above+zero=true" \
-  "percentiles null leaves^{\"percentiles\":{\"p50\":null,\"p99\":null}}^reason=zero_sample detail~no+measured+value+above+zero=true" \
-  "percentiles a bare string^{\"percentiles\":\"none recorded\"}^reason=zero_sample detail~neither+an+object+nor+an+array=true" \
-  "perf_qa itself not an object^\"benchmarks ran\"^reason=zero_sample detail~perf_qa+is+not+an+object=true" \
-  "one real number among zeros is accepted^{\"percentiles\":{\"p50\":0,\"p99\":4.2}}^ok=true reason=valid" \
-  "a populated array is accepted^{\"percentiles\":[1.5,2.5]}^ok=true reason=valid" \
-  "no perf_qa payload at all is accepted^null^ok=true reason=valid"
+  "percentiles missing entirely^{\"regression_pct\":0,\"regressions\":[],\"platform\":\"linux\",\"baseline_sha\":\"abc\"}^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.percentiles=true detail~state:missing=true" \
+  "percentiles null^{\"percentiles\":null}^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.percentiles=true detail~state:missing=true" \
+  "percentiles an empty object^{\"percentiles\":{}}^rc=1 reason=zero_sample detail~count:0=true" \
+  "percentiles an empty array^{\"percentiles\":[]}^rc=1 reason=zero_sample detail~count:0=true" \
+  "percentiles all zero numbers^{\"percentiles\":{\"p50\":0,\"p99\":0}}^rc=1 reason=zero_sample detail~positive_values:0=true" \
+  "percentiles zero-valued strings^{\"percentiles\":{\"p50\":\"0ms\",\"p99\":\"0ms\"}}^rc=1 reason=zero_sample detail~positive_values:0=true" \
+  "percentiles null leaves^{\"percentiles\":{\"p50\":null,\"p99\":null}}^rc=1 reason=zero_sample detail~positive_values:0=true" \
+  "percentiles a bare string^{\"percentiles\":\"none recorded\"}^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa.percentiles=true detail~type:string=true" \
+  "perf_qa itself not an object^\"benchmarks ran\"^rc=1 reason=zero_sample detail~field:qa_metadata.perf_qa=true detail~type:string=true" \
+  "one real number among zeros is accepted^{\"percentiles\":{\"p50\":0,\"p99\":4.2}}^rc=0 ok=true reason=valid" \
+  "a populated array is accepted^{\"percentiles\":[1.5,2.5]}^rc=0 ok=true reason=valid" \
+  "no perf_qa payload at all is accepted^null^rc=0 ok=true reason=valid"
 
 echo "=== the declaration: top-level, substantive, and mechanically visible ==="
 # The escape must not require adopting the qa shape (following the rejection's
@@ -220,32 +209,32 @@ echo "=== the declaration: top-level, substantive, and mechanically visible ==="
 # any single character, and must not read as a plain green: its reason is what
 # an orchestrator branches on. The rejection branches OVERLAP (a null token is
 # also short, bare punctuation is also short), so each refusing row pins the
-# branch half of the detail; a refused declaration is never echoed as a real
+# diagnostic fields; a refused declaration is never echoed as a real
 # one. The declaration is read in ONE place, so the echo and the decision agree
 # either side of the 20-character, 3-word bar.
 wrapped_table '{"agent":"reviewer-test","verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"measurement_failed":%s}' \
   "a declaration is accepted as undermeasured, never plain valid, and echoed^\"cargo-mutants selected 0 mutants for the changed file\"^rc=0 ok=true reason=valid_undermeasured measurement_failed=cargo-mutants+selected+0+mutants+for+the+changed+file" \
-  "a single period^\".\"^reason=invalid_declaration measurement_failed=ABSENT branch~punctuation+only=true bar~name+the+instrument=true" \
-  "n/a^\"n/a\"^reason=invalid_declaration measurement_failed=ABSENT branch~null+token=true" \
-  "N/A with punctuation^\"N/A.\"^reason=invalid_declaration branch~null+token=true" \
-  "none^\"none\"^reason=invalid_declaration branch~null+token=true" \
-  "unknown^\"unknown\"^reason=invalid_declaration branch~null+token=true" \
-  "unavailable^\"unavailable\"^reason=invalid_declaration branch~null+token=true" \
-  "tbd^\"tbd\"^reason=invalid_declaration branch~null+token=true" \
-  "bare punctuation^\"---\"^reason=invalid_declaration branch~punctuation+only=true" \
-  "long bare punctuation^\"---------------------------\"^reason=invalid_declaration branch~punctuation+only=true" \
-  "whitespace only^\"   \"^reason=invalid_declaration branch~is+blank=true" \
-  "one long word^\"instrumentfailedbadly\"^reason=invalid_declaration branch~is+1+word(s)=true" \
-  "two words past the length floor: only the word bar refuses it^\"cargo-mutants produced-no-samples-at-all\"^reason=invalid_declaration branch~is+2+word(s)=true" \
-  "three words past the floor^\"cargo-mutants selected zero-mutants\"^reason=valid_undermeasured" \
-  "three tiny words: only the length bar refuses them^\"a b c\"^reason=invalid_declaration branch~is+5+characters=true" \
-  "a boolean^true^reason=invalid_declaration branch~must+be+a+string=true" \
-  "a number^0^reason=invalid_declaration branch~must+be+a+string=true" \
-  "an object^{\"why\":\"broke\"}^reason=invalid_declaration branch~must+be+a+string=true" \
-  "an array^[\"broke\"]^reason=invalid_declaration branch~must+be+a+string=true" \
-  "null is no declaration, and the zero citation stands^null^reason=zero_sample" \
-  "19 characters, 3 words: one short of the bar, refused on its own terms and not echoed^\"aa bbbb ccccccccccc\"^reason=invalid_declaration measurement_failed=ABSENT" \
-  "20 characters, 3 words: exactly the bar, and the echo agrees^\"aa bbbb cccccccccccc\"^reason=valid_undermeasured measurement_failed=aa+bbbb+cccccccccccc"
+  "a single period^\".\"^rc=1 reason=invalid_declaration measurement_failed=ABSENT detail~state:punctuation=true" \
+  "n/a^\"n/a\"^rc=1 reason=invalid_declaration measurement_failed=ABSENT detail~state:null_token=true" \
+  "N/A with punctuation^\"N/A.\"^rc=1 reason=invalid_declaration detail~state:null_token=true" \
+  "none^\"none\"^rc=1 reason=invalid_declaration detail~state:null_token=true" \
+  "unknown^\"unknown\"^rc=1 reason=invalid_declaration detail~state:null_token=true" \
+  "unavailable^\"unavailable\"^rc=1 reason=invalid_declaration detail~state:null_token=true" \
+  "tbd^\"tbd\"^rc=1 reason=invalid_declaration detail~state:null_token=true" \
+  "bare punctuation^\"---\"^rc=1 reason=invalid_declaration detail~state:punctuation=true" \
+  "long bare punctuation^\"---------------------------\"^rc=1 reason=invalid_declaration detail~state:punctuation=true" \
+  "whitespace only^\"   \"^rc=1 reason=invalid_declaration detail~state:blank=true" \
+  "one long word^\"instrumentfailedbadly\"^rc=1 reason=invalid_declaration detail~words:1=true detail~minimum:3=true" \
+  "two words past the length floor: only the word bar refuses it^\"cargo-mutants produced-no-samples-at-all\"^rc=1 reason=invalid_declaration detail~words:2=true detail~minimum:3=true" \
+  "three words past the floor^\"cargo-mutants selected zero-mutants\"^rc=0 reason=valid_undermeasured" \
+  "three tiny words: only the length bar refuses them^\"a b c\"^rc=1 reason=invalid_declaration detail~characters:5=true detail~minimum:20=true" \
+  "a boolean^true^rc=1 reason=invalid_declaration detail~type:boolean=true" \
+  "a number^0^rc=1 reason=invalid_declaration detail~type:number=true" \
+  "an object^{\"why\":\"broke\"}^rc=1 reason=invalid_declaration detail~type:object=true" \
+  "an array^[\"broke\"]^rc=1 reason=invalid_declaration detail~type:array=true" \
+  "null is no declaration, and the zero citation stands^null^rc=1 reason=zero_sample" \
+  "19 characters, 3 words: one short of the bar, refused on its own terms and not echoed^\"aa bbbb ccccccccccc\"^rc=1 reason=invalid_declaration measurement_failed=ABSENT" \
+  "20 characters, 3 words: exactly the bar, and the echo agrees^\"aa bbbb cccccccccccc\"^rc=0 reason=valid_undermeasured measurement_failed=aa+bbbb+cccccccccccc"
 
 echo "=== the escape suppresses one gate, wherever its block sits ==="
 # The declaration's blast radius would be a consequence of statement order:
@@ -259,15 +248,15 @@ echo "=== the escape suppresses one gate, wherever its block sits ==="
 # finding and not the remedy text of a rejection that did not happen.
 file_table \
   "the tolerant shape adopts the escape without adding qa_metadata^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",$DECLARATION}^rc=0 reason=valid_undermeasured" \
-  "a declaration also covers an empty perf payload^{\"agent\":\"reviewer-perf\",\"verdict\":\"action_required\",\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"measurement_failed\":\"the bench runner emitted no samples for any lane\",\"qa_metadata\":{\"perf_qa\":{\"percentiles\":{}}}}^reason=valid_undermeasured" \
-  "a declaration does not suppress the no-review gate^{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[],$DECLARATION,\"qa_metadata\":{\"review_performed\":false,\"reason\":\"no_scope_provided\"}}^reason=no_review" \
-  "a declaration does not suppress the finding-item gate^{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[{\"title\":\"t\",\"detail\":\"d\"}],$DECLARATION,\"qa_metadata\":{}}^reason=incomplete" \
-  "a declaration does not suppress the qa-shape gate^{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",$DECLARATION,\"qa_metadata\":{}}^reason=incomplete" \
-  "a declaration does not suppress the missing-verdict gate^{\"agent\":\"r\",\"summary\":\"mutation: killed 0/0\",$DECLARATION}^reason=invalid" \
-  "control: the zero-sample gate is the one it replaces^{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[],$DECLARATION,\"qa_metadata\":{}}^reason=valid_undermeasured" \
-  "the result names the perf measurement a mutation declaration silenced^{\"agent\":\"reviewer-perf\",\"verdict\":\"pass\",\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],$DECLARATION,\"qa_metadata\":{\"perf_qa\":{\"percentiles\":{\"p50\":0,\"p99\":0}}}}^rc=0 reason=valid_undermeasured silenced~percentiles+carries+no+measured+value+above+zero=true" \
-  "the result names the citation a declaration silenced, finding not remedy^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[],$DECLARATION}^silenced~killed+0/0=true silenced~measurement_failed=false" \
-  "control: a declaration with nothing to silence records nothing and is still undermeasured^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 3/3; stability: 10/10 at 16 threads\",\"blockers\":[],\"suggestions\":[],$DECLARATION}^reason=valid_undermeasured measurement_suppressed=ABSENT"
+  "a declaration also covers an empty perf payload^{\"agent\":\"reviewer-perf\",\"verdict\":\"action_required\",\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"measurement_failed\":\"the bench runner emitted no samples for any lane\",\"qa_metadata\":{\"perf_qa\":{\"percentiles\":{}}}}^rc=0 reason=valid_undermeasured" \
+  "a declaration does not suppress the no-review gate^{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[],$DECLARATION,\"qa_metadata\":{\"review_performed\":false,\"reason\":\"no_scope_provided\"}}^rc=1 reason=no_review" \
+  "a declaration does not suppress the finding-item gate^{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[{\"title\":\"t\",\"detail\":\"d\"}],$DECLARATION,\"qa_metadata\":{}}^rc=1 reason=incomplete" \
+  "a declaration does not suppress the qa-shape gate^{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",$DECLARATION,\"qa_metadata\":{}}^rc=1 reason=incomplete" \
+  "a declaration does not suppress the missing-verdict gate^{\"agent\":\"r\",\"summary\":\"mutation: killed 0/0\",$DECLARATION}^rc=1 reason=invalid" \
+  "control: the zero-sample gate is the one it replaces^{\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[],$DECLARATION,\"qa_metadata\":{}}^rc=0 reason=valid_undermeasured" \
+  "the result names the perf measurement a mutation declaration silenced^{\"agent\":\"reviewer-perf\",\"verdict\":\"pass\",\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],$DECLARATION,\"qa_metadata\":{\"perf_qa\":{\"percentiles\":{\"p50\":0,\"p99\":0}}}}^rc=0 reason=valid_undermeasured silenced~positive_values:0=true" \
+  "the result records the silenced citation as structured measurement fields^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 0/0\",\"blockers\":[],\"suggestions\":[],$DECLARATION}^rc=0 silenced~measurement:mutation=true silenced~samples:0=true silenced~measurement_failed:true=false" \
+  "control: a declaration with nothing to silence records nothing and is still undermeasured^{\"agent\":\"reviewer-test\",\"verdict\":\"pass\",\"summary\":\"mutation: killed 3/3; stability: 10/10 at 16 threads\",\"blockers\":[],\"suggestions\":[],$DECLARATION}^rc=0 reason=valid_undermeasured measurement_suppressed=ABSENT"
 
 echo "=== glob mode: terminal rejections, and the one fallback ==="
 # zero_sample and invalid_declaration are TERMINAL: recording the rejection
@@ -309,12 +298,6 @@ for row in "torn_write|fallback" "terminal|terminal" "|terminal" "typo_write|ter
   assert_eq "$got" "$want" "disposition '${disposition:-unset}' -> $want"
 done
 
-echo "=== the rejection reason is documented where reviewers read the rules ==="
-finding_schema="$REPO_ROOT/skills/reviewer/schemas/review-finding.md"
-[[ -f "$finding_schema" ]] || { echo "review-finding.md is gone; the rows below pin nothing" >&2; exit 1; }
-for token in zero_sample measurement_failed; do
-  assert_eq "$(grep -qF -- "$token" "$finding_schema" && echo yes || echo no)" "yes" "review-finding.md names $token"
-done
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -54,7 +54,7 @@ assert_eq "$(jq -r '.canonical' <<<"$OUT")" "reviewer-arch" "canonical is echoed
 # the runtime spelling — refuse rather than silently accept it.
 err="$("$ADAPTER" spawn reviewer_arch 2>&1)"; rc=$?
 assert_eq "$rc" "2" "an already-translated name is rejected"
-assert_contains "$err" "canonical hyphenated agent name" "the refusal says what to pass instead"
+assert_eq "${err%%$'\n'*}" "spawn-adapter: translated-name canonical=reviewer_arch" "the refusal identifies the translated name"
 
 "$ADAPTER" spawn "bad name!" >/dev/null 2>&1
 assert_eq "$?" "2" "an invalid agent name is rejected"
@@ -73,7 +73,7 @@ assert_eq "$(jq -r '.record.identity_key' <<<"$OUT")" "reviewer-safety" \
   "a fallback still records the canonical identity, not worker"
 assert_eq "$(jq -r '.record.runtime_metadata.agent_type' <<<"$OUT")" "worker" \
   "worker is recorded as runtime metadata"
-assert_contains "$(jq -r '.record.runtime_metadata.fallback_reason' <<<"$OUT")" "does not expose" \
+assert_eq "$(jq -r '.record.runtime_metadata.fallback_reason' <<<"$OUT")" "runtime does not expose this agent_type" \
   "the fallback reason is recorded"
 assert_eq "$(jq -r '.spawn.task_name' <<<"$OUT")" "reviewer_safety" \
   "a fallback still carries the translated task_name"
@@ -100,10 +100,8 @@ max_threads = 12
 ')"
 assert_eq "$(jq -r '.effective_cap' <<<"$OUT")" "4" \
   "the legacy key alone does NOT raise the cap"
-assert_contains "$(jq -r '.warning' <<<"$OUT")" "MultiAgentV2 ignores it" \
-  "the warning names the silent-ignore explicitly"
-assert_contains "$(jq -r '.warning' <<<"$OUT")" "max_concurrent_threads_per_session" \
-  "the warning names the key that would actually work"
+assert_eq "$(jq -r '.warning | split("\n")[0]' <<<"$OUT")" "legacy-ignored value=12 effective=4" \
+  "the warning identifies the ignored value and effective cap"
 
 OUT="$(cfg '[features.multi_agent_v2]
 max_concurrent_threads_per_session = 6
@@ -111,7 +109,7 @@ max_concurrent_threads_per_session = 6
 max_threads = 12
 ')"
 assert_eq "$(jq -r '.effective_cap' <<<"$OUT")" "6" "the v2 key wins when both are set"
-assert_contains "$(jq -r '.warning' <<<"$OUT")" "v2 key wins" "a disagreement is reported"
+assert_eq "$(jq -r '.warning | split("\n")[0]' <<<"$OUT")" "legacy-conflict value=12 effective=6" "a disagreement is reported"
 
 OUT="$("$ADAPTER" slots --config "$TMP_ROOT/nope.toml")"
 assert_eq "$(jq -r '.config_present' <<<"$OUT")" "false" "a missing config is reported as absent"
@@ -119,7 +117,7 @@ assert_eq "$(jq -r '.effective_cap' <<<"$OUT")" "4" "a missing config falls back
 
 # A running session keeps its old cap until restarted — easy to forget after a
 # config edit, so the tool always says it.
-assert_contains "$(jq -r '.note' <<<"$OUT")" "until restarted" "the restart caveat is always reported"
+assert_eq "$(jq -r '.note | split("\n")[0]' <<<"$OUT")" "restart-required value=true" "the restart caveat is always reported"
 
 echo "=== the prose actually collapsed ==="
 
@@ -151,5 +149,9 @@ else
 fi
 
 echo
+rc=0
+"$ADAPTER" >/dev/null 2>"$TMP_ROOT/arguments.err" || rc=$?
+assert_eq "$rc:$(sed -n '1p' "$TMP_ROOT/arguments.err")" "2:spawn-adapter: missing-subcommand count=0" "missing subcommand identifies the argument count"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

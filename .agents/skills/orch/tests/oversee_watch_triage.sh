@@ -24,7 +24,7 @@ run() {
 }
 
 # watch EXPECT — prints the run's value of every `name=` field EXPECT names,
-# in EXPECT's order (in a needle `+` reads as a space and %e as `=`; %B is the
+# in EXPECT's order (in a needle `+` reads as a space, %p as `+`, and %e as `=`; %B is the
 # stub bin directory, %R the case's repository root, %S the stub directory):
 #   rc               exit status
 #   first            the first stdout line, or `none`
@@ -44,7 +44,7 @@ watch() {
   for token in $1; do
     name="${token%%=*}"
     needle="${name#*~}"; needle="${needle//+/ }"; needle="${needle//%e/=}"; needle="${needle//%B/$TMP_ROOT/bin}"
-    needle="${needle//%R/$CASE_REPO_ROOT}"; needle="${needle//%S/$STUB_DIR}"; needle="${needle//%t/$'\t'}"
+    needle="${needle//%p/+}"; needle="${needle//%R/$CASE_REPO_ROOT}"; needle="${needle//%S/$STUB_DIR}"; needle="${needle//%t/$'\t'}"
     case "$name" in
       rc) value="$RC" ;;
       first) value="$(head -n 1 <<<"$OUT")"; value="${value:-none}"; value="${value// /+}" ;;
@@ -126,7 +126,7 @@ tracker_items '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]'
 printf '[{"number":5,"headRefName":"issue-5","mergedAt":"2026-08-15T10:00:00Z"}]\n' > "$STUB_DIR/merged.json"
 run LINEAR_TEAM -- --max-loops 1 --item issue-5
 check "an unset LINEAR_TEAM keeps the watch running and --since still serves the merged check" \
-  "rc=0 first=EVENT+merged+5+issue-5+owner/repo stderr~LINEAR_TEAM+is+unset+or+empty=true"
+  "rc=0 first=EVENT+merged+5+issue-5+owner/repo stderr~oversee-watch:+triage-disabled+setting%eLINEAR_TEAM+value%e=true"
 new_case triage_no_team_reaches_the_triage_check
 tracker_items '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]'
 run LINEAR_TEAM -- --max-loops 1
@@ -135,11 +135,11 @@ check "with no team the run reaches the triage check, emits nothing for the unse
 new_case triage_skipped_by_an_empty_export
 tracker_items '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]'
 run LINEAR_TEAM= -- --max-loops 1
-check "an exported-empty LINEAR_TEAM takes the skip path the absent name takes" "rc=0 notes~skipping+the+team+triage+check=1"
+check "an exported-empty LINEAR_TEAM takes the skip path the absent name takes" "rc=0 notes~oversee-watch:+triage-disabled=1"
 new_case triage_skipped_without_team_or_tracker
 run LINEAR_TEAM OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/absent-tracker" -- --max-loops 2
 check "no team disarms the gate a missing tracker CLI would close, and the skip note prints once over two passes" \
-  "rc=0 first=EVENT+heartbeat+loops=2+interval=0s+since=$SINCE notes~skipping+the+team+triage+check=1"
+  "rc=0 first=EVENT+heartbeat+loops=2+interval=0s+since=$SINCE notes~oversee-watch:+triage-disabled=1"
 
 # The verdict read's state directory: an inherited one is cleared by the
 # harness, a relative configured one joins the project root, an absolute one
@@ -165,15 +165,15 @@ done
 # `label|env|stubs|args|expect`, stubs `;`-separated `file=content` under the
 # stub directory or `dir=<name>` under the state directory.
 for row in \
-  "a missing tracker CLI is named with its remedy|OVERSEE_WATCH_TRACKER=%B/absent-tracker|tracker.out=[{\"id\":\"KEN-1200\",\"created_at\":\"2026-08-15T10:00:00.000Z\"}]||rc=2 stdout=empty stderr~tracker+CLI+not+found+at+%B/absent-tracker=true stderr~OVERSEE_WATCH_TRACKER=true" \
-  "a missing workflow-state CLI is named with its remedy|OVERSEE_WATCH_WORKFLOW_STATE=%B/absent-workflow-state|tracker.out=[{\"id\":\"KEN-1200\",\"created_at\":\"2026-08-15T10:00:00.000Z\"}]||rc=2 stdout=empty stderr~workflow-state+CLI+not+found+at+%B/absent-workflow-state=true stderr~OVERSEE_WATCH_WORKFLOW_STATE=true" \
-  "a tracker list failure keeps its real cause||tracker.rc=2;tracker.err=Linear API unavailable||rc=2 stdout=empty stderr~Linear+API+unavailable=true" \
-  "malformed tracker output is named||tracker.out={}||rc=2 stdout=empty stderr~tracker+output+is+not+an+array=true" \
-  "an unwritable triage baseline names the shared state file|OVERSEE_WATCH_PR_WATCH=%B/absent-pr-watch|tracker.out=[{\"id\":\"KEN-1200\",\"created_at\":\"2026-08-15T10:00:00.000Z\"}];oversee-state.json={\"triaged\":[{\"issue\":\"KEN-1200\",\"verdict\":\"kept\"}]};dir=$STATE_FILE_NAME||rc=2 stdout=empty stderr~could+not+write+the+pr-watch+state+file=true" \
-  "an unreadable verdict log keeps its original cause||workflow-state.rc=2;workflow-state.err=oversee state unreadable||rc=2 stdout=empty stderr~oversee+state+unreadable=true" \
-  "an invalid verdict issue id is named||oversee-state.json={\"triaged\":[{\"issue\":\"bad id\",\"verdict\":\"kept\"}]}||rc=2 stdout=empty stderr~invalid+issue+id:+'bad+id'=true" \
-  "a date-only --since is refused, naming the documented form|||--since 2026-08-15|rc=2 stdout=empty stderr~UTC+timestamp+ending+in+Z=true" \
-  "an offset --since is refused, naming the documented form|||--since 2026-08-15T09:00:00+00:00|rc=2 stdout=empty stderr~UTC+timestamp+ending+in+Z=true"; do
+  "a missing tracker CLI is named with its remedy|OVERSEE_WATCH_TRACKER=%B/absent-tracker|tracker.out=[{\"id\":\"KEN-1200\",\"created_at\":\"2026-08-15T10:00:00.000Z\"}]||rc=2 stdout=empty stderr~oversee-watch:+helper-missing+path%e%B/absent-tracker=true stderr~OVERSEE_WATCH_TRACKER=true" \
+  "a missing workflow-state CLI is named with its remedy|OVERSEE_WATCH_WORKFLOW_STATE=%B/absent-workflow-state|tracker.out=[{\"id\":\"KEN-1200\",\"created_at\":\"2026-08-15T10:00:00.000Z\"}]||rc=2 stdout=empty stderr~oversee-watch:+helper-missing+path%e%B/absent-workflow-state=true stderr~OVERSEE_WATCH_WORKFLOW_STATE=true" \
+  "a tracker list failure keeps its real cause||tracker.rc=2;tracker.err=E_TRACKER_UNAVAILABLE||rc=2 stdout=empty stderr~oversee-watch:+tracker-list-failed+team%ekendex+exit%e2=true stderr~E_TRACKER_UNAVAILABLE=true" \
+  "malformed tracker output is named||tracker.out={}||rc=2 stdout=empty stderr~tracker-type+expected%earray+actual%eobject=true" \
+  "an unwritable triage baseline names the shared state file|OVERSEE_WATCH_PR_WATCH=%B/absent-pr-watch|tracker.out=[{\"id\":\"KEN-1200\",\"created_at\":\"2026-08-15T10:00:00.000Z\"}];oversee-state.json={\"triaged\":[{\"issue\":\"KEN-1200\",\"verdict\":\"kept\"}]};dir=$STATE_FILE_NAME||rc=2 stdout=empty stderr~oversee-watch:+state-target-invalid=true" \
+  "an unreadable verdict log keeps its original cause||workflow-state.rc=2;workflow-state.err=E_STATE_UNREADABLE||rc=2 stdout=empty stderr~oversee-watch:+triage-state-failed+exit%e2=true stderr~E_STATE_UNREADABLE=true" \
+  "an invalid verdict issue id is named||oversee-state.json={\"triaged\":[{\"issue\":\"bad id\",\"verdict\":\"kept\"}]}||rc=2 stdout=empty stderr~oversee-watch:+triage-item-invalid+item%ebad+id=true" \
+  "a date-only --since is refused, naming the documented form|||--since 2026-08-15|rc=2 stdout=empty stderr~oversee-watch:+since-invalid+value%e2026-08-15=true" \
+  "an offset --since is refused, naming the documented form|||--since 2026-08-15T09:00:00+00:00|rc=2 stdout=empty stderr~oversee-watch:+since-invalid+value%e2026-08-15T09:00:00%p00:00=true"; do
   IFS='|' read -r label env stubs args expect <<<"$row"
   new_case triage_refusal
   if [[ -n "$stubs" ]]; then

@@ -383,6 +383,7 @@ observe() {
       early) got="$got early=$(json '.elapsed_seconds < 3')" ;;
       spent) got="$got spent=$(json '.elapsed_seconds >= 3')" ;;
       stdout) got="$got stdout=$([[ -n "$OUT" ]] && echo line || echo empty)" ;;
+      text_status) got="$got text_status=$(sed -n '1s/^approval-wait: result status=\([^ ]*\).*$/\1/p' <<<"$OUT")" ;;
       approval_polls) got="$got approval_polls=$(cat "$RUN/approval-polls" 2>/dev/null || echo 0)" ;;
       review_polls) got="$got review_polls=$(cat "$RUN/review-polls" 2>/dev/null || echo 0)" ;;
       status_queries) got="$got status_queries=$(count_lines "$RUN/status-queries")" ;;
@@ -509,20 +510,20 @@ echo "=== text mode prints a result line for every branch the emitter has ==="
 # reviewed, so each branch is a row.
 TEXT_REVIEW='1 1 3 --mode review'
 table '1 1 3' \
-  'approval: approved||STUB_APPROVAL_MODE=approved_decision|rc=0 stdout=line' \
-  'approval: changes requested||STUB_APPROVAL_MODE=changes|rc=1 stdout=line' \
-  'approval: comments||STUB_APPROVAL_MODE=none,STUB_THREADS_UNRESOLVED=2|rc=1 stdout=line' \
-  'approval: timeout||STUB_APPROVAL_MODE=none|rc=1 stdout=line' \
-  'approval: error||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 stdout=line' \
-  'approval: proceeded||STUB_APPROVAL_MODE=none,PR_REVIEW_ON_TIMEOUT=proceed|rc=0 stdout=line' \
-  "review: reviewed via a review object|$TEXT_REVIEW|STUB_REVIEWS_MODE=commented_at_head|rc=0 stdout=line" \
-  "review: reviewed via a check-run|$TEXT_REVIEW|STUB_REVIEWS_MODE=none,STUB_CHECKS_MODE=success_at_head,PR_REVIEW_CHECK=Review Bot|rc=0 stdout=line" \
-  "review: reviewed via a commit status|$TEXT_REVIEW|STUB_REVIEWS_MODE=none,STUB_STATUS_MODE=success_at_head,PR_REVIEW_CHECK=Review Bot|rc=0 stdout=line" \
-  "review: changes requested|$TEXT_REVIEW|STUB_REVIEWS_MODE=changes_standing|rc=1 stdout=line" \
-  "review: comments|$TEXT_REVIEW|STUB_REVIEWS_MODE=commented_at_head,STUB_THREADS_UNRESOLVED=2|rc=1 stdout=line" \
-  "review: timeout|$TEXT_REVIEW|STUB_REVIEWS_MODE=none|rc=1 stdout=line" \
-  "review: error|$TEXT_REVIEW|GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 stdout=line" \
-  "review: proceeded|$TEXT_REVIEW|STUB_REVIEWS_MODE=none,PR_REVIEW_ON_TIMEOUT=proceed|rc=0 stdout=line"
+  'approval: approved||STUB_APPROVAL_MODE=approved_decision|rc=0 text_status=approved' \
+  'approval: changes requested||STUB_APPROVAL_MODE=changes|rc=1 text_status=changes_requested' \
+  'approval: comments||STUB_APPROVAL_MODE=none,STUB_THREADS_UNRESOLVED=2|rc=1 text_status=comments' \
+  'approval: timeout||STUB_APPROVAL_MODE=none|rc=1 text_status=timeout' \
+  'approval: error||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 text_status=error' \
+  'approval: proceeded||STUB_APPROVAL_MODE=none,PR_REVIEW_ON_TIMEOUT=proceed|rc=0 text_status=proceeded' \
+  "review: reviewed via a review object|$TEXT_REVIEW|STUB_REVIEWS_MODE=commented_at_head|rc=0 text_status=reviewed" \
+  "review: reviewed via a check-run|$TEXT_REVIEW|STUB_REVIEWS_MODE=none,STUB_CHECKS_MODE=success_at_head,PR_REVIEW_CHECK=Review Bot|rc=0 text_status=reviewed" \
+  "review: reviewed via a commit status|$TEXT_REVIEW|STUB_REVIEWS_MODE=none,STUB_STATUS_MODE=success_at_head,PR_REVIEW_CHECK=Review Bot|rc=0 text_status=reviewed" \
+  "review: changes requested|$TEXT_REVIEW|STUB_REVIEWS_MODE=changes_standing|rc=1 text_status=changes_requested" \
+  "review: comments|$TEXT_REVIEW|STUB_REVIEWS_MODE=commented_at_head,STUB_THREADS_UNRESOLVED=2|rc=1 text_status=comments" \
+  "review: timeout|$TEXT_REVIEW|STUB_REVIEWS_MODE=none|rc=1 text_status=timeout" \
+  "review: error|$TEXT_REVIEW|GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 text_status=error" \
+  "review: proceeded|$TEXT_REVIEW|STUB_REVIEWS_MODE=none,PR_REVIEW_ON_TIMEOUT=proceed|rc=0 text_status=proceeded"
 
 echo "=== PR_REVIEW_WAIT_SECS: an absent max_wait positional resolves through orch-env ==="
 # Process env beats kendex.settings.toml [env], and an explicit positional

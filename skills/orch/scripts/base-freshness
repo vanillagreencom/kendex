@@ -21,6 +21,21 @@
 
 set -euo pipefail
 
+# Message text is centralized; callers supply the reason and relevant values.
+message() {
+  local reason="$1"
+  shift
+  printf '%s: %s' base-freshness "$reason"
+  printf ' %s' "$@"
+  printf '\n'
+  case "$reason" in
+  unknown-flag) printf '%s\n' 'Use base-freshness with a worktree path.' ;;
+  not-worktree) printf '%s\n' 'The directory is not a Git worktree.' ;;
+  missing-remote) printf '%s\n' 'The origin remote is absent. Base freshness cannot be verified.' ;;
+  fetch-failed) printf '%s\n' 'The base fetch failed. Base freshness cannot be verified.' ;;
+  esac
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 case "${1:-}" in
@@ -29,7 +44,7 @@ case "${1:-}" in
         exit 0
         ;;
     -*)
-        echo "Error: unknown flag '$1' (usage: base-freshness [worktree])" >&2
+        message unknown-flag "flag=$1" >&2
         exit 2
         ;;
 esac
@@ -37,12 +52,12 @@ esac
 worktree="${1:-.}"
 
 if ! git -C "$worktree" rev-parse --git-dir >/dev/null 2>&1; then
-    echo "Error: '$worktree' is not a git worktree" >&2
+    message not-worktree "path=$worktree" >&2
     exit 2
 fi
 
 if ! git -C "$worktree" remote get-url origin >/dev/null 2>&1; then
-    echo "Error: no 'origin' remote in $worktree; base freshness cannot be verified" >&2
+    message missing-remote "path=$worktree" remote=origin >&2
     exit 1
 fi
 
@@ -58,7 +73,7 @@ else
     git -C "$worktree" fetch --no-tags --no-recurse-submodules origin "+refs/heads/$base_branch:$base_ref" >/dev/null || fetch_ok=false
 fi
 if [[ "$fetch_ok" != true ]]; then
-    echo "Error: could not fetch origin/$base_branch; base freshness cannot be verified" >&2
+    message fetch-failed "ref=origin/$base_branch" >&2
     exit 1
 fi
 

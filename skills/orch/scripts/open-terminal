@@ -10,6 +10,67 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export SCRIPT_DIR
 
+# Message headers are `open-terminal: REASON field=value ...`; backslash,
+# tab, carriage return and newline in values are escaped on that first line.
+# English explanations follow and are not a parsing contract.
+# start_cmd returns a shell command consumed by open_gui or open_tmux. Its
+# quoting and harness argv, including the kickoff prompt, are that contract.
+ot_message() { # REASON FIELD=VALUE...
+  local reason="$1" text field
+  shift
+  case "$reason" in
+    missing-value) text='The option requires a value.' ;;
+    helper-missing) text='The required helper is not executable.' ;;
+    items-missing) text='Specify a work item.' ;;
+    tracker-invalid) text='The tracker must be linear or github.' ;;
+    command-missing) text='Select a harness or a custom command.' ;;
+    desktop-harness) text='Use the Codex Desktop thread tools for this harness.' ;;
+    mode-override) text='The explicit GUI option overrides the detected tmux mode.' ;;
+    verify-seconds-invalid) text='The verification timeout must be a positive integer in seconds.' ;;
+    verify-seconds-clamped) text='The verification timeout was limited to the maximum.' ;;
+    flags-invalid) text='Launch flags must contain plain flag words without shell metacharacters.' ;;
+    permission-prompt) text='The unattended harness can stop at a permission prompt with these flags.' ;;
+    lane-quote) text='A quote in the lane path cannot be embedded safely in the launch command.' ;;
+    lane-separator) text='A tab or newline in the lane path cannot be stored in a claim.' ;;
+    lane-harness-missing) text='Select a harness for automatic lane selection.' ;;
+    lane-unavailable) text='No lane meets the usage threshold. Wait for a reset, raise the threshold or select a lane.' ;;
+    lane-resolution-failed) text='The lanes helper failed to select an account.' ;;
+    lane-directory-missing) text='The specified lane directory does not exist.' ;;
+    lane-unknown) text='The lane is neither a known alias nor a directory.' ;;
+    lane-selected) text='The launch account is selected.' ;;
+    harness-unsupported) text='This terminal harness is not supported.' ;;
+    directory-missing) text='The working directory does not exist. No window was opened.' ;;
+    tmux-missing) text='This launch requires an active tmux session.' ;;
+    tmux-failed) text='The tmux operation failed.' ;;
+    claim-write-failed) text='The lane launched, but its claim could not be recorded. Check OVERSEE_WATCH_STATE_DIR.' ;;
+    tmux-opened) text='The tmux window is open.' ;;
+    launch-confirmed) text='The lane started while its composer was checked. No further text was sent.' ;;
+    composer-stuck) text='The composer did not become ready. Attach to the session and start the brief manually.' ;;
+    brief-redelivered) text='The brief was sent again after the initial prompt was consumed.' ;;
+    brief-undelivered) text='The brief is still undelivered. Attach to the session and start it manually.' ;;
+    terminal-missing) text='Set TERMINAL to an installed terminal or install xdg-terminal-exec.' ;;
+    terminal-fallback) text='The requested terminal is unavailable. The selected terminal will open the lane.' ;;
+    terminal-opened) text='The GUI terminal launch was started.' ;;
+    issue-invalid) text='The issue identifier does not match the configured pattern.' ;;
+    github-item-invalid) text='A GitHub work item must be an issue number.' ;;
+    repo-missing) text='Specify a repository when GitHub cannot resolve it.' ;;
+    claim-unrecorded) text='The previous claim is missing. The batch cannot select another account safely.' ;;
+    item-owned) text='Another session owns this work item. Its worktree was skipped.' ;;
+    worktree-failed) text='The worktree helper failed to create this item.' ;;
+    summary) text='The launch batch is complete.' ;;
+    *) printf 'open-terminal: message-invalid reason=%s\n' "$reason" >&2; return 2 ;;
+  esac
+  printf 'open-terminal: %s' "$reason"
+  for field in "$@"; do
+    field="${field//\\/\\\\}"
+    field="${field//$'\t'/\\t}"
+    field="${field//$'\r'/\\r}"
+    field="${field//$'\n'/\\n}"
+    printf ' %s' "$field"
+  done
+  printf '\n%s\n' "$text"
+}
+
 usage() {
   cat <<'USAGE'
 Usage: open-terminal [--tracker linear|github] [--repo OWNER/REPO] ITEM... [options]
@@ -74,7 +135,7 @@ USAGE
 
 # A valued option with no value must fail with the flag named, not crash on an
 # unbound $2 under nounset.
-need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || { echo "Error: $1 requires a value" >&2; exit 2; }; }
+need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || { ot_message missing-value "option=$1" >&2; exit 2; }; }
 
 # The one parser. It answers a help request itself, so the dry run below
 # decides that before any configuration is read, off these arms and no second
@@ -170,11 +231,11 @@ parse_argv "$@"
 # LANE_MAX_PCT here means no flag was passed and the setting decides.
 LANE_MAX_PCT="${LANE_MAX_PCT:-${ORCH_LANE_MAX_PCT:-90}}"
 
-[[ -x "$WORKTREE_CLI" ]] || { echo "Error: worktree CLI not found at $WORKTREE_CLI" >&2; exit 1; }
-[[ ${#ITEMS[@]} -gt 0 ]] || { echo "Error: no work items specified" >&2; exit 1; }
-[[ "$TRACKER" == "linear" || "$TRACKER" == "github" ]] || { echo "Error: --tracker must be linear or github" >&2; exit 1; }
-[[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { echo "Error: --harness or --cmd required" >&2; exit 1; }
-[[ "$HARNESS" != "codex-app" ]] || { echo "Error: codex-app handoff requires Codex Desktop codex_app thread tools; open-terminal only launches terminal harnesses" >&2; exit 1; }
+[[ -x "$WORKTREE_CLI" ]] || { ot_message helper-missing "path=$WORKTREE_CLI" >&2; exit 1; }
+[[ ${#ITEMS[@]} -gt 0 ]] || { ot_message items-missing "count=0" >&2; exit 1; }
+[[ "$TRACKER" == "linear" || "$TRACKER" == "github" ]] || { ot_message tracker-invalid "tracker=$TRACKER" >&2; exit 1; }
+[[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { ot_message command-missing "options=--harness,--cmd" >&2; exit 1; }
+[[ "$HARNESS" != "codex-app" ]] || { ot_message desktop-harness "harness=$HARNESS" >&2; exit 1; }
 
 # ORCH_TMUX_VERIFY_SECS feeds a per-pass sleep loop (two passes per tmux
 # lane): a runaway value hangs every lane in the launch and a non-integer
@@ -191,7 +252,7 @@ elif [[ "$TERMINAL_MODE" == "ghostty" && -n "${TMUX:-}" ]]; then
   # The override stands (an intentional GUI launch from a tmux controller), but
   # a caller who inferred the flag from the visible terminal gets told where the
   # lane went and how to keep the next one in the workspace.
-  echo "Warning: --ghostty overrides tmux auto-detection; \$TMUX is set, so omitting the flag opens tmux windows instead" >&2
+  ot_message mode-override "option=--ghostty" "detected=tmux" >&2
 fi
 # Only Claude tmux lanes run brief verification (other harnesses and
 # custom --cmd launches pass an empty brief and never read the timeout),
@@ -199,7 +260,7 @@ fi
 if [[ "$TERMINAL_MODE" != "tmux" || "$HARNESS" != "claude" || -n "$CMD_TEMPLATE" ]]; then
   TMUX_VERIFY_SECS=15
 elif [[ ! "$TMUX_VERIFY_SECS" =~ ^[0-9]+$ ]]; then
-  echo "Error: ORCH_TMUX_VERIFY_SECS must be a positive integer (seconds), got '$TMUX_VERIFY_SECS'." >&2
+  ot_message verify-seconds-invalid "setting=ORCH_TMUX_VERIFY_SECS" "value=$TMUX_VERIFY_SECS" >&2
   exit 1
 fi
 # Strip leading zeros (octal hazard), then bound the digit count BEFORE any
@@ -208,16 +269,16 @@ fi
 TMUX_VERIFY_SECS="$(printf '%s' "$TMUX_VERIFY_SECS" | sed 's/^0*//')"
 TMUX_VERIFY_SECS="${TMUX_VERIFY_SECS:-0}"
 if (( ${#TMUX_VERIFY_SECS} > 9 )); then
-  echo "WARNING: ORCH_TMUX_VERIFY_SECS is absurdly large; clamped to 120 seconds per verification pass." >&2
+  ot_message verify-seconds-clamped "value=$TMUX_VERIFY_SECS" "limit=120" >&2
   TMUX_VERIFY_SECS=120
 fi
 TMUX_VERIFY_SECS=$((10#$TMUX_VERIFY_SECS))
 if ((TMUX_VERIFY_SECS == 0)); then
-  echo "Error: ORCH_TMUX_VERIFY_SECS must be a positive integer (seconds), got '0'." >&2
+  ot_message verify-seconds-invalid "setting=ORCH_TMUX_VERIFY_SECS" "value=$TMUX_VERIFY_SECS" >&2
   exit 1
 fi
 if (( TMUX_VERIFY_SECS > 120 )); then
-  echo "WARNING: ORCH_TMUX_VERIFY_SECS=$TMUX_VERIFY_SECS clamped to 120 seconds per verification pass." >&2
+  ot_message verify-seconds-clamped "value=$TMUX_VERIFY_SECS" "limit=120" >&2
   TMUX_VERIFY_SECS=120
 fi
 
@@ -232,7 +293,7 @@ if [[ -n "$LAUNCH_FLAGS" ]]; then
   # where they are literal rather than range/close syntax.
   launch_flags_pattern='^[]A-Za-z0-9._=/[-]+( []A-Za-z0-9._=/[-]+)*$'
   if [[ ! "$LAUNCH_FLAGS" =~ $launch_flags_pattern ]]; then
-    echo "Error: --launch-flags '$LAUNCH_FLAGS' contains characters outside letters, digits, and . _ = / - [ ] words separated by single spaces — refusing to interpolate it into a shell command." >&2
+    ot_message flags-invalid "option=--launch-flags" "value=$LAUNCH_FLAGS" >&2
     exit 1
   fi
 fi
@@ -244,7 +305,7 @@ if [[ "$HARNESS" == "claude" && -z "$CMD_TEMPLATE" ]]; then
   case "$LAUNCH_FLAGS" in
     *dangerously-skip-permissions*|*bypassPermissions*|*dontAsk*) ;;
     *)
-      echo "WARNING: --launch-flags '$LAUNCH_FLAGS' carries no permission-bypass flag — every lane will stall at its first tool call with nobody attached to answer; handoff autonomy is void." >&2
+      ot_message permission-prompt "flags=$LAUNCH_FLAGS" >&2
       ;;
   esac
 fi
@@ -264,11 +325,11 @@ CLAIM_WRITE_FAILED=false
 # when the value is unusable.
 lane_value_error() {
   if [[ "$1" == *"'"* ]]; then
-    echo "Error: lane config dir contains a single quote; cannot render a safe launch command: $1" >&2
+    ot_message lane-quote "value=$1" >&2
     return 0
   fi
   if [[ "$1" == *$'\t'* || "$1" == *$'\n'* ]]; then
-    echo "Error: lane config dir contains a tab or newline; its in-flight claim could not be recorded: $1" >&2
+    ot_message lane-separator "value=$1" >&2
     return 0
   fi
   return 1
@@ -280,8 +341,8 @@ if [[ -n "$LANE" ]]; then
       lane_harness="${LANE#auto}"
       lane_harness="${lane_harness#:}"
       [[ -n "$lane_harness" ]] || lane_harness="$HARNESS"
-      [[ -n "$lane_harness" ]] || { echo "Error: --lane auto needs --harness, or use --lane auto:<harness>" >&2; exit 1; }
-      [[ -x "$LANES_CLI" ]] || { echo "Error: lanes helper not found at $LANES_CLI" >&2; exit 1; }
+      [[ -n "$lane_harness" ]] || { ot_message lane-harness-missing "lane=$LANE" >&2; exit 1; }
+      [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
       LANE_AUTO=true
       LANE_HARNESS="$lane_harness"
       lane_rc=0
@@ -290,10 +351,9 @@ if [[ -n "$LANE" ]]; then
         # lanes exits 3 for "every lane is over the threshold" and 1 for a real
         # failure. Both stop the launch; only the first is the operator's call.
         if [[ "$lane_rc" -eq 3 ]]; then
-          echo "Error: no $lane_harness lane under ${LANE_MAX_PCT}% used; nothing was launched." >&2
-          echo "  Wait for a reset, raise --lane-max-pct, or pass an explicit --lane <config-dir>." >&2
+          ot_message lane-unavailable "harness=$lane_harness" "max-pct=$LANE_MAX_PCT" >&2
         else
-          echo "Error: could not resolve a lane (lanes exited $lane_rc); nothing was launched." >&2
+          ot_message lane-resolution-failed "exit=$lane_rc" >&2
         fi
         exit 1
       fi
@@ -305,17 +365,17 @@ if [[ -n "$LANE" ]]; then
       # name, or whatever ORCH_LANE_ALIASES renamed it to — through the same
       # inventory `pick` measures, so aliases need no second source of truth.
       if [[ "$lane_dir" == */* ]]; then
-        [[ -d "$lane_dir" ]] || { echo "Error: --lane '$LANE' is not a directory (expected 'auto', 'auto:<harness>', a config dir, or a lane alias)" >&2; exit 1; }
+        [[ -d "$lane_dir" ]] || { ot_message lane-directory-missing "path=$LANE" >&2; exit 1; }
       else
         # A bare word is resolved as an alias BEFORE the filesystem. Testing
         # `-d` first meant any same-named directory in the caller's cwd shadowed
         # a real lane and launched the fleet against the wrong account without
         # saying so. A bare directory name still works when no alias claims it.
-        [[ -x "$LANES_CLI" ]] || { echo "Error: lanes helper not found at $LANES_CLI" >&2; exit 1; }
+        [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
         lane_dir="$("$LANES_CLI" list --json | jq -r --arg a "$LANE" 'map(select(.alias == $a)) | first | .config_dir // empty')"
         if [[ -z "$lane_dir" ]]; then
           lane_dir="$LANE"
-          [[ -d "$lane_dir" ]] || { echo "Error: --lane '$LANE' is neither a known lane alias nor a directory (see: lanes list)" >&2; exit 1; }
+          [[ -d "$lane_dir" ]] || { ot_message lane-unknown "lane=$LANE" >&2; exit 1; }
         fi
       fi
       case "$HARNESS" in
@@ -331,7 +391,7 @@ if [[ -n "$LANE" ]]; then
   # separator, and a lane whose claim nobody can count is a lane that stacks
   # sessions silently.
   if lane_value_error "$LANE_ENV"; then exit 1; fi
-  echo "Lane: $LANE_ENV"
+  ot_message lane-selected "lane=$LANE_ENV"
 fi
 
 
@@ -383,7 +443,7 @@ start_cmd() {
     github:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s'\n" "$flags" "$repo" "$item" ;;
     github:opencode) printf "opencode %s--prompt '/orch start github %s#%s'\n" "$flags" "$repo" "$item" ;;
     github:pi)       printf "pi %s'/skill:orch start github %s#%s'\n" "$flags" "$repo" "$item" ;;
-    *) echo "Error: unsupported harness: $HARNESS" >&2; exit 1 ;;
+    *) ot_message harness-unsupported "harness=$HARNESS" >&2; exit 1 ;;
   esac
 }
 
@@ -538,7 +598,7 @@ tmux_wait_composer() {
 # false.
 launchable_dir() { # DIR TITLE
   [[ -d "$1" ]] && return 0
-  echo "Error: refusing to launch '$2': working directory '$1' does not exist" >&2
+  ot_message directory-missing "item=$2" "path=$1" >&2
   return 1
 }
 
@@ -549,18 +609,18 @@ open_tmux() {
   # failed window creation or keystroke cannot fall through to a success
   # return (most visibly on briefless lanes, whose early return would
   # otherwise count a broken window as launched).
-  [[ -n "${TMUX:-}" ]] || { echo "Error: not inside tmux" >&2; return 1; }
+  [[ -n "${TMUX:-}" ]] || { ot_message tmux-missing "item=$title" >&2; return 1; }
   launchable_dir "$dir" "$title" || return 1
   local last_idx pane spec server
   if ! last_idx=$(tmux list-windows -F '#{window_index}' | tail -1) || [[ -z "$last_idx" ]]; then
-    echo "Error: tmux list-windows failed; cannot place window '$title'" >&2
+    ot_message tmux-failed "operation=list-windows" "item=$title" >&2
     return 1
   fi
   # The server pid rides along with the pane id: it is the other half of a
   # lane claim's liveness key, and taking both from the creating call means no
   # second tmux round trip and no window between them.
   if ! spec=$(tmux new-window -a -t ":${last_idx}" -n "$title" -c "$dir" -P -F '#{pid} #{pane_id}') || [[ -z "$spec" ]]; then
-    echo "Error: tmux new-window failed for '$title'" >&2
+    ot_message tmux-failed "operation=new-window" "item=$title" >&2
     return 1
   fi
   pane="${spec##* }"
@@ -576,16 +636,16 @@ open_tmux() {
       # This launch stands, but the next `auto` pick cannot see it: the batch
       # stops at the top of the next item rather than stacking blind.
       CLAIM_WRITE_FAILED=true
-      echo "Warning: could not record the lane claim for '$title'; lanes pick will not count it (set OVERSEE_WATCH_STATE_DIR)" >&2
+      ot_message claim-write-failed "item=$title" >&2
     fi
   fi
   if ! tmux send-keys -t "$pane" "clear" Enter ||
      ! tmux send-keys -t "$pane" -l "$cmd" ||
      ! tmux send-keys -t "$pane" Enter; then
-    echo "Error: tmux send-keys failed launching '$title'" >&2
+    ot_message tmux-failed "operation=send-keys" "item=$title" >&2
     return 1
   fi
-  echo "Opened tmux window '$title' in $dir"
+  ot_message tmux-opened "item=$title" "path=$dir"
   [[ -n "$brief" ]] || return 0
   # Launch verification: a first-run dialog (theme / trust /
   # browser integration) can consume the CLI-arg brief, leaving a healthy TUI
@@ -599,22 +659,22 @@ open_tmux() {
   local composer_rc=0
   tmux_wait_composer "$pane" "$brief" || composer_rc=$?
   if (( composer_rc == 2 )); then
-    echo "Confirmed '$title' launched while waiting for its composer; nothing further sent"
+    ot_message launch-confirmed "item=$title"
     return 0
   fi
   if (( composer_rc != 0 )); then
-    echo "Error: '$title' never reached a ready composer (first-run dialog stuck?) — attach and start it manually: $brief" >&2
+    ot_message composer-stuck "item=$title" "brief=$brief" >&2
     return 1
   fi
   if ! tmux send-keys -t "$pane" -l "$brief" || ! tmux send-keys -t "$pane" Enter; then
-    echo "Error: tmux send-keys failed re-delivering the brief to '$title'" >&2
+    ot_message tmux-failed "operation=brief-send" "item=$title" >&2
     return 1
   fi
   if tmux_wait_launched "$pane" "$brief"; then
-    echo "Re-delivered brief to '$title' (initial CLI-arg prompt was consumed at boot)"
+    ot_message brief-redelivered "item=$title"
     return 0
   fi
-  echo "Error: brief undelivered to '$title' after one re-send — the session is likely sitting at a first-run dialog or an empty composer. Attach and start it manually: $brief" >&2
+  ot_message brief-undelivered "item=$title" "brief=$brief" >&2
   return 1
 }
 
@@ -645,13 +705,13 @@ open_gui() {
     chosen="ghostty"
     launcher=("${scrub[@]}" ghostty --working-directory="$dir" --title="$title" -e bash -lc "$shell_cmd")
   else
-    echo "Error: no GUI terminal found; set \$TERMINAL to one, or install xdg-terminal-exec" >&2
+    ot_message terminal-missing "setting=TERMINAL" >&2
     return 1
   fi
   # A $TERMINAL naming nothing on PATH — a typo, an uninstalled terminal, a value
   # carrying arguments — is otherwise substituted in silence.
   [[ -z "${TERMINAL:-}" || "$chosen" == "$TERMINAL" ]] ||
-    echo "Warning: \$TERMINAL '$TERMINAL' does not resolve to an executable; launching '$title' with $chosen instead" >&2
+    ot_message terminal-fallback "requested=$TERMINAL" "selected=$chosen" "item=$title" >&2
   # setsid puts the window in its own session so it outlives this script and
   # its terminal. macOS ships none — it is util-linux — and with stderr
   # already going to /dev/null the shell's `setsid: command not found` was
@@ -663,7 +723,7 @@ open_gui() {
   else
     nohup "${launcher[@]}" </dev/null >/dev/null 2>&1 &
   fi
-  echo "Opened terminal '$title' in $dir"
+  ot_message terminal-opened "item=$title" "path=$dir"
 }
 
 repo="$(resolve_repo)"
@@ -691,13 +751,13 @@ for raw in "${ITEMS[@]}"; do
     elif [[ "$raw" =~ ^$GH_ISSUE_PATTERN$ ]]; then
       item="$raw"
     else
-      echo "Error: invalid issue id: $raw" >&2; exit 1
+      ot_message issue-invalid "item=$raw" >&2; exit 1
     fi
     wt_id="$item"
     title="$item"
   else
-    [[ "$item" =~ ^[0-9]+$ ]] || { echo "Error: GitHub item must be an issue number: $raw" >&2; exit 1; }
-    [[ -n "$repo" ]] || { echo "Error: --repo OWNER/REPO required when gh repo cannot resolve" >&2; exit 1; }
+    [[ "$item" =~ ^[0-9]+$ ]] || { ot_message github-item-invalid "item=$raw" >&2; exit 1; }
+    [[ -n "$repo" ]] || { ot_message repo-missing "option=--repo" >&2; exit 1; }
     wt_id="issue-$item"
     title="gh-$item"
   fi
@@ -714,7 +774,7 @@ for raw in "${ITEMS[@]}"; do
   attempted=$((attempted + 1))
   if [[ "$LANE_AUTO" == true && "$TERMINAL_MODE" == "tmux" && "$attempted" -gt 1 ]]; then
     if [[ "$CLAIM_WRITE_FAILED" == true ]]; then
-      echo "Error: the previous lane's claim was not recorded, so this pick cannot see it; stopping after $launched launch(es) rather than stacking $item blind." >&2
+      ot_message claim-unrecorded "item=$item" "launched=$launched" >&2
       failed=$((failed + 1))
       break
     fi
@@ -722,9 +782,9 @@ for raw in "${ITEMS[@]}"; do
     next_lane="$(pick_auto_lane)" || lane_rc=$?
     if [[ "$lane_rc" -ne 0 ]]; then
       if [[ "$lane_rc" -eq 3 ]]; then
-        echo "Error: no $LANE_HARNESS lane under ${LANE_MAX_PCT}% used for $item; stopping after $launched launch(es)." >&2
+        ot_message lane-unavailable "harness=$LANE_HARNESS" "max-pct=$LANE_MAX_PCT" "item=$item" "launched=$launched" >&2
       else
-        echo "Error: could not re-resolve a lane for $item (lanes exited $lane_rc); stopping after $launched launch(es)." >&2
+        ot_message lane-resolution-failed "exit=$lane_rc" "item=$item" "launched=$launched" >&2
       fi
       failed=$((failed + 1))
       break
@@ -735,7 +795,7 @@ for raw in "${ITEMS[@]}"; do
     fi
     if [[ "$next_lane" != "$LANE_ENV" ]]; then
       LANE_ENV="$next_lane"
-      echo "Lane: $LANE_ENV"
+      ot_message lane-selected "lane=$LANE_ENV"
     fi
   fi
   # The worktree create is the ownership claim: exit 75 means another session
@@ -755,11 +815,11 @@ for raw in "${ITEMS[@]}"; do
   create_rc=0
   wt="$("$WORKTREE_CLI" create "${create_args[@]}")" || create_rc=$?
   if [[ "$create_rc" -eq 75 ]]; then
-    echo "Skipped $item: owned by another session (worktree create exit 75)" >&2
+    ot_message item-owned "item=$item" "exit=75" >&2
     skipped=$((skipped + 1))
     continue
   elif [[ "$create_rc" -ne 0 ]]; then
-    echo "Error: worktree create failed for $item (exit $create_rc)" >&2
+    ot_message worktree-failed "item=$item" "exit=$create_rc" >&2
     failed=$((failed + 1))
     continue
   fi
@@ -790,26 +850,21 @@ for raw in "${ITEMS[@]}"; do
   [[ -z "$LANE_ENV" ]] || grep -qxF -- "$LANE_ENV" <<<"$lanes_seen" || lanes_seen+="$LANE_ENV"$'\n'
 done
 
-skipped_note=""
-[[ "$skipped" -eq 0 ]] || skipped_note=", skipped $skipped (owned by another session)"
+# Every recorded lane ends with a newline. Lane paths cannot contain one.
+lanes_used="${lanes_seen//[!$'\n']/}"
+lanes_used="${#lanes_used}"
+summary_fields=("launched=$launched" "skipped=$skipped" "failed=$failed" "lanes=$lanes_used")
+if [[ "$lanes_used" -eq 1 ]]; then
+  summary_fields+=("lane=${lanes_seen%$'\n'}")
+elif [[ "$lanes_used" -eq 0 && -n "$LANE_ENV" ]]; then
+  summary_fields+=("lane=$LANE_ENV")
+fi
 if [[ "$failed" -gt 0 ]]; then
-  echo "Error: $failed handoff lane(s) failed; launched $launched successfully$skipped_note." >&2
+  ot_message summary "${summary_fields[@]}" >&2
   exit 1
 fi
 if [[ "$launched" -eq 0 && "$skipped" -gt 0 ]]; then
-  echo "Done: launched 0 handoff session(s)$skipped_note." >&2
+  ot_message summary "${summary_fields[@]}" >&2
   exit 75
 fi
-# The lanes that carried a session, never $LANE_ENV: a re-pick for an item
-# that turned out to be owned elsewhere leaves that variable naming an account
-# this run never launched on.
-lanes_used="$(grep -c . <<<"$lanes_seen" || true)"
-if [[ "$lanes_used" -gt 1 ]]; then
-  echo "Done: launched $launched handoff session(s)$skipped_note across $lanes_used lanes (see the Lane: lines above)."
-elif [[ "$lanes_used" -eq 1 ]]; then
-  echo "Done: launched $launched handoff session(s)$skipped_note on lane ${lanes_seen%$'\n'}."
-elif [[ -n "$LANE_ENV" ]]; then
-  echo "Done: launched $launched handoff session(s)$skipped_note on lane $LANE_ENV."
-else
-  echo "Done: launched $launched handoff session(s)$skipped_note."
-fi
+ot_message summary "${summary_fields[@]}"

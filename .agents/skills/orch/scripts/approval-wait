@@ -3,7 +3,99 @@
 # effective gate mode with --resolve-mode. The authoritative contract —
 # modes, mode resolution, settings, JSON output, auth, exit codes — is
 # print_usage below: run with --help.
+# --resolve-mode stdout is the approval|review|off enum consumed by submit-pr
+# and ci-fix. --json stdout is the result object consumed by their gate routing.
+# The error field contains a diagnostic key/value first line and English below.
 set -euo pipefail
+
+# Each diagnostic keeps its stable fields and explanation in one place.
+approval_message() {
+  local message_key="$1"
+  shift
+  case "$message_key" in
+    missing-gh)
+      printf 'approval-wait: missing-gh command=%s\n' "gh"
+      printf '%s\n' "gh CLI not found on PATH"
+      ;;
+    auth-unavailable)
+      printf 'approval-wait: auth-unavailable command=%s\n' "gh"
+      printf '%s\n' "no working GitHub auth path. Use gh auth login or set a valid GH_BOT_TOKEN in .env.local."
+      ;;
+    repo-unresolved)
+      printf 'approval-wait: repo-unresolved remote=%s\n' "origin"
+      printf '%s\n' "could not resolve GitHub repo (gh repo view and git remote both failed)"
+      ;;
+    pr-view-failed)
+      printf 'approval-wait: pr-view-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
+      printf '%s\n' "gh pr view failed for PR #$PR_NUM in $REPO"
+      ;;
+    reviews-failed)
+      printf 'approval-wait: reviews-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
+      printf '%s\n' "review listing failed for PR #$PR_NUM in $REPO"
+      ;;
+    checks-failed)
+      printf 'approval-wait: checks-failed commit=%s repo=%s\n' "$last_head_sha" "$REPO"
+      printf '%s\n' "check-run listing failed for commit $last_head_sha in $REPO"
+      ;;
+    statuses-failed)
+      printf 'approval-wait: statuses-failed commit=%s repo=%s\n' "$last_head_sha" "$REPO"
+      printf '%s\n' "commit-status listing failed for commit $last_head_sha in $REPO"
+      ;;
+    threads-failed)
+      printf 'approval-wait: threads-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
+      printf '%s\n' "review thread query failed for PR #$PR_NUM in $REPO"
+      ;;
+    unknown-option)
+      printf 'approval-wait: unknown-option option=%q\n' "$1"
+      printf '%s\n' "approval-wait: unknown option '$1'"
+      ;;
+    missing-pr)
+      printf 'approval-wait: missing-pr operand=%s\n' "PR"
+      printf '%s\n' "approval-wait: missing required <PR#> argument"
+      ;;
+    auth-fallback)
+      printf 'approval-wait: auth-fallback source=%s\n' "keyring"
+      printf '%s\n' "Warning: GH_TOKEN/GITHUB_TOKEN failed gh auth; unsetting them and using gh keyring auth."
+      ;;
+    transient-error)
+      printf 'approval-wait: transient-error count=%s operation=%s\n' "$transient_api_errors" "$error_key"
+      printf '%s\n' "approval-wait: transient GitHub error #$transient_api_errors: $what${detail:+ ($detail)}"
+      ;;
+    retry)
+      printf 'approval-wait: retry seconds=%s\n' "$retry_interval"
+      printf '%s\n' "approval-wait: retrying in ${retry_interval}s"
+      ;;
+    missing-mode)
+      printf 'approval-wait: missing-mode option=%s\n' "--mode"
+      printf '%s\n' "approval-wait: --mode requires a value: approval or review"
+      ;;
+    missing-timeout)
+      printf 'approval-wait: missing-timeout option=%s\n' "--on-timeout"
+      printf '%s\n' "approval-wait: --on-timeout requires a value: block or proceed"
+      ;;
+    mode-resolution)
+      printf 'approval-wait: mode-resolution setting=%s\n' "REVIEW_GATE_MODE"
+      printf '%s\n' "approval-wait: REVIEW_GATE_MODE could not be resolved through the review-gate settings lib (see error above)"
+      ;;
+    gate-fallback)
+      printf 'approval-wait: gate-fallback value=%q fallback=%s\n' "$mode" "approval"
+      printf '%s\n' "approval-wait: unrecognized PR_REVIEW_GATE value '$mode'; using approval"
+      ;;
+    invalid-mode)
+      printf 'approval-wait: invalid-mode value=%q\n' "$MODE"
+      printf '%s\n' "approval-wait: invalid --mode '$MODE' (expected approval or review)"
+      ;;
+    timeout-fallback)
+      printf 'approval-wait: timeout-fallback value=%q fallback=%s\n' "$ON_TIMEOUT" "block"
+      printf '%s\n' "approval-wait: unrecognized PR_REVIEW_ON_TIMEOUT value '$ON_TIMEOUT'; using block"
+      ;;
+    result-failed)
+      printf 'approval-wait: result-failed pr=%s repo=%s exit=%s\n' "$PR_NUM" "$REPO" "$rc"
+      printf '%s\n' "approval-wait: could not emit the gate result for PR #$PR_NUM in $REPO (exit $rc)"
+      ;;
+    *) printf 'approval-wait: message-key key=%q\n' "$message_key"; return 2 ;;
+  esac
+}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export SCRIPT_DIR
@@ -16,14 +108,15 @@ source "$SCRIPT_DIR/lib/gh-auth.sh"
 source "$SCRIPT_DIR/lib/review-threads.sh"
 
 print_usage() {
+  printf 'approval-wait: usage command=%s\n' 'approval-wait'
   cat <<'USAGE'
 Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json]
                      [--mode approval|review] [--on-timeout block|proceed]
        approval-wait --resolve-mode
 
 Wait for the reviewer-gate verdict on a PR. Every exit path emits a final
-result on stdout — an "Approval ..."/"Review ..." line, or a JSON object
-with --json — so callers can route approved vs changes-requested vs timeout
+result on stdout: a stable status line with English below, or a JSON object
+with --json, so callers can route approved vs changes-requested vs timeout
 vs proceeded deterministically (kendex#538, kendex#642).
 
   <PR#>          pull request number (required)
@@ -189,12 +282,12 @@ while [[ $# -gt 0 ]]; do
     --json) JSON_OUTPUT=true; shift ;;
     --resolve-mode) RESOLVE_MODE=true; shift ;;
     --mode)
-      [[ -n "${2:-}" ]] || { echo "approval-wait: --mode requires a value: approval or review" >&2; exit 2; }
+      [[ -n "${2:-}" ]] || { approval_message missing-mode >&2; exit 2; }
       MODE="$2"
       shift 2
       ;;
     --on-timeout)
-      [[ -n "${2:-}" ]] || { echo "approval-wait: --on-timeout requires a value: block or proceed" >&2; exit 2; }
+      [[ -n "${2:-}" ]] || { approval_message missing-timeout >&2; exit 2; }
       ON_TIMEOUT_FLAG="$2"
       shift 2
       ;;
@@ -202,7 +295,7 @@ while [[ $# -gt 0 ]]; do
       # An unrecognized flag must never fall through into a positional slot:
       # it would be consumed as the PR#/interval and die downstream blaming
       # an argument the caller never typed, same as ci-wait).
-      echo "approval-wait: unknown option '$1'" >&2
+      approval_message unknown-option "$1" >&2
       print_usage >&2
       exit 2
       ;;
@@ -238,7 +331,7 @@ if $RESOLVE_MODE; then
       . "$rg_lib"
       rg_setting REVIEW_GATE_MODE "enforce"
     )"; then
-      echo "approval-wait: REVIEW_GATE_MODE could not be resolved through the review-gate settings lib (see error above)" >&2
+      approval_message mode-resolution >&2
       exit 2
     fi
   elif [[ -n "${REVIEW_GATE_MODE+x}" ]]; then
@@ -278,7 +371,7 @@ if $RESOLVE_MODE; then
       fi
       ;;
     *)
-      echo "approval-wait: unrecognized PR_REVIEW_GATE value '$mode'; using approval" >&2
+      approval_message gate-fallback >&2
       mode="approval"
       ;;
   esac
@@ -289,13 +382,13 @@ fi
 case "$MODE" in
   approval|review) ;;
   *)
-    echo "approval-wait: invalid --mode '$MODE' (expected approval or review)" >&2
+    approval_message invalid-mode >&2
     exit 2
     ;;
 esac
 
 if [[ "${#POSITIONAL[@]}" -lt 1 ]]; then
-  echo "approval-wait: missing required <PR#> argument" >&2
+  approval_message missing-pr >&2
   print_usage >&2
   exit 2
 fi
@@ -339,7 +432,7 @@ ON_TIMEOUT="${ON_TIMEOUT_FLAG:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_ON_TIMEOUT pro
 case "$ON_TIMEOUT" in
   block|proceed) ;;
   *)
-    echo "approval-wait: unrecognized PR_REVIEW_ON_TIMEOUT value '$ON_TIMEOUT'; using block" >&2
+    approval_message timeout-fallback >&2
     ON_TIMEOUT="block"
     ;;
 esac
@@ -399,7 +492,7 @@ run_approved_gate() {
   local rc=0
   { emit_result "approved" && exit 0; } || rc=$?
   [ "$rc" -ne 0 ] || rc=1
-  echo "approval-wait: could not emit the gate result for PR #$PR_NUM in $REPO (exit $rc)" >&2
+  approval_message result-failed >&2
   exit "$rc"
 }
 
@@ -451,6 +544,7 @@ emit_result() {
         + (if $error == "" then {} else {error: $error} end)' || return $?
     return 0
   fi
+  printf 'approval-wait: result status=%s pr=%s mode=%s elapsed=%s unresolved=%s\n' "$status" "$PR_NUM" "$MODE" "$elapsed" "$last_unresolved"
   case "$status" in
     approved)
       echo "Approval: approved (decision: ${last_review_decision:-none}, approvals: $last_approvals, unresolved threads: $last_unresolved)"
@@ -503,12 +597,15 @@ emit_result() {
 }
 
 emit_error() {
-  emit_result "error" "$1"
+  local message
+  message="$(approval_message "$1")" || return $?
+  emit_result "error" "$message" || return $?
+  printf '%s\n' "$message" >&2
 }
 
 if ! command -v gh >/dev/null 2>&1; then
-  emit_error "gh CLI not found on PATH"
-  echo "approval-wait: gh CLI not found on PATH" >&2
+  emit_error missing-gh
+
   exit 3
 fi
 
@@ -524,7 +621,7 @@ if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
     if [[ "$auth_status" -ne 124 && "${KENDEX_GITHUB_SELECTED_TOKEN_SOURCE:-}" != "GH_BOT_TOKEN" ]]; then
       KEYRING_PROBED=true
       if orch_github_keyring_auth_status; then
-        echo "Warning: GH_TOKEN/GITHUB_TOKEN failed gh auth; unsetting them and using gh keyring auth." >&2
+        approval_message auth-fallback >&2
         unset GH_TOKEN GITHUB_TOKEN
         export KENDEX_GITHUB_AUTH_FALLBACK="keyring"
         AUTH_READY=true
@@ -556,12 +653,7 @@ if [[ "$AUTH_READY" != "true" ]]; then
 fi
 
 if [[ "$AUTH_READY" != "true" ]]; then
-  emit_error "no working GitHub auth path"
-  {
-    echo "approval-wait: no working GitHub auth path."
-    echo "Tried: env GH_TOKEN/GITHUB_TOKEN, gh keyring, project GH_BOT_TOKEN."
-    echo "Run: gh auth login   (or set a valid GH_BOT_TOKEN in .env.local)."
-  } >&2
+  emit_error auth-unavailable
   exit 3
 fi
 
@@ -574,8 +666,8 @@ if [ -z "$REPO" ]; then
   REPO="${REPO%.git}"
 fi
 if [ -z "$REPO" ]; then
-  emit_error "could not resolve GitHub repo (gh repo view and git remote both failed)"
-  echo "Could not resolve GitHub repo (gh repo view and git remote both failed)" >&2
+  emit_error repo-unresolved
+
   exit 1
 fi
 
@@ -618,17 +710,17 @@ gh_failure_is_transient() {
 # max_wait budget is already spent, the failure becomes terminal with the
 # standard error, exit code, and transient_api_errors count.
 transient_retry() {
-  local what="$1" detail
+  local error_key="$1" what detail
+  what="$(approval_message "$error_key")" || return $?
   detail="$(head -c 200 "$GH_ERR_FILE" 2>/dev/null | tr '\n' ' ')"
   transient_api_errors=$((transient_api_errors + 1))
-  echo "approval-wait: transient GitHub error #$transient_api_errors: $what${detail:+ ($detail)}" >&2
+  approval_message transient-error >&2
   update_elapsed
   if [ "$elapsed" -ge "$MAX_WAIT" ]; then
-    emit_error "$what"
-    echo "$what" >&2
+    emit_error "$error_key"
     exit 1
   fi
-  echo "approval-wait: retrying in ${retry_interval}s" >&2
+  approval_message retry >&2
   sleep "$retry_interval"
   retry_interval=$((retry_interval * 2))
   if [ "$retry_interval" -gt "$RETRY_INTERVAL_CAP" ]; then
@@ -662,11 +754,11 @@ while true; do
     set -e
     if [ "$view_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view_json"; then
       if gh_failure_is_transient "$view_status"; then
-        transient_retry "gh pr view failed for PR #$PR_NUM in $REPO"
+        transient_retry pr-view-failed
         continue
       fi
-      emit_error "gh pr view failed for PR #$PR_NUM in $REPO"
-      echo "gh pr view failed for PR #$PR_NUM in $REPO" >&2
+      emit_error pr-view-failed
+
       exit 1
     fi
     last_head_sha=$(jq -r '.headRefOid // ""' <<<"$view_json")
@@ -691,11 +783,11 @@ while true; do
     fi
     if [ "$reviews_status" -ne 0 ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$reviews_json"; then
       if gh_failure_is_transient "$reviews_status"; then
-        transient_retry "review listing failed for PR #$PR_NUM in $REPO"
+        transient_retry reviews-failed
         continue
       fi
-      emit_error "review listing failed for PR #$PR_NUM in $REPO"
-      echo "review listing failed for PR #$PR_NUM in $REPO" >&2
+      emit_error reviews-failed
+
       exit 1
     fi
 
@@ -750,11 +842,11 @@ while true; do
       set -e
       if [ "$checks_status" -ne 0 ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$checks_json"; then
         if gh_failure_is_transient "$checks_status"; then
-          transient_retry "check-run listing failed for commit $last_head_sha in $REPO"
+          transient_retry checks-failed
           continue
         fi
-        emit_error "check-run listing failed for commit $last_head_sha in $REPO"
-        echo "check-run listing failed for commit $last_head_sha in $REPO" >&2
+        emit_error checks-failed
+
         exit 1
       fi
       named_check=$(jq -c --arg name "$REVIEW_CHECK_NAME" \
@@ -783,11 +875,11 @@ while true; do
         set -e
         if [ "$statuses_status" -ne 0 ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$statuses_json"; then
           if gh_failure_is_transient "$statuses_status"; then
-            transient_retry "commit-status listing failed for commit $last_head_sha in $REPO"
+            transient_retry statuses-failed
             continue
           fi
-          emit_error "commit-status listing failed for commit $last_head_sha in $REPO"
-          echo "commit-status listing failed for commit $last_head_sha in $REPO" >&2
+          emit_error statuses-failed
+
           exit 1
         fi
         named_status=$(jq -c --arg name "$REVIEW_CHECK_NAME" \
@@ -814,11 +906,11 @@ while true; do
     set -e
     if [ "$view_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view_json"; then
       if gh_failure_is_transient "$view_status"; then
-        transient_retry "gh pr view failed for PR #$PR_NUM in $REPO"
+        transient_retry pr-view-failed
         continue
       fi
-      emit_error "gh pr view failed for PR #$PR_NUM in $REPO"
-      echo "gh pr view failed for PR #$PR_NUM in $REPO" >&2
+      emit_error pr-view-failed
+
       exit 1
     fi
 
@@ -847,11 +939,11 @@ while true; do
   set -e
   if [ "$threads_status" -ne 0 ]; then
     if gh_failure_is_transient "$threads_status"; then
-      transient_retry "review thread query failed for PR #$PR_NUM in $REPO"
+      transient_retry threads-failed
       continue
     fi
-    emit_error "review thread query failed for PR #$PR_NUM in $REPO"
-    echo "review thread query failed for PR #$PR_NUM in $REPO" >&2
+    emit_error threads-failed
+
     exit 1
   fi
   last_unresolved="$unresolved_total"

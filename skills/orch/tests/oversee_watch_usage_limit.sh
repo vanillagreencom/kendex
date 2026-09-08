@@ -244,12 +244,12 @@ screen "banner:You've hit your weekly limit"
 run
 expect="rc=0 first=EVENT+usage-limit+gh-2"
 assert_eq "$(watch "$expect")" "$expect" "the run that reports the wall notes the missing claim" "$ERR"
-assert_eq "$(grep -c 'no live lane claim' "$ERR")" "1" "and prints the note once"
+assert_eq "$(grep -c 'oversee-watch: claim-missing lane=gh-2' "$ERR")" "1" "and prints the note once"
 rm -f "$STUB_DIR/pane-gh-2.calls" "$STUB_DIR/cmd-gh-2.calls"
 run
 expect="rc=0 first=$HEARTBEAT out~EVENT+usage-limit=false"
 assert_eq "$(watch "$expect")" "$expect" "a re-run over the same wall reports nothing" "$ERR"
-assert_eq "$(grep -c 'no live lane claim' "$ERR" || true)" "0" "and the note about an event it did not print stays silent"
+assert_eq "$(grep -c 'oversee-watch: claim-missing lane=gh-2' "$ERR" || true)" "0" "and the note about an event it did not print stays silent"
 
 echo "=== the reset the banner states ==="
 # SURFACE 1: the reset parsed out of each banner form the grammar accepts,

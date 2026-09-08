@@ -21,6 +21,27 @@
 # Record: `<server pid>\t<pane id>\t<config dir>\t<window>\t<created at>`.
 set -euo pipefail
 
+# Callers preserve positional values for this diagnostic catalog.
+lane_claims_message() {
+  local _message_key="$1"
+  shift
+  case "$_message_key" in
+    not-directory)
+      printf 'lane-claims: not-directory dir=%s\n' "$dir"
+      printf '%s\n' "lane-claims: claims path $dir is not a directory; launches already in flight cannot be read"
+      ;;
+    unreadable-directory)
+      printf 'lane-claims: unreadable-directory dir=%s\n' "$dir"
+      printf '%s\n' "lane-claims: claims directory $dir is not readable; launches already in flight are invisible"
+      ;;
+    unreadable-claim)
+      printf 'lane-claims: unreadable-claim f=%s\n' "$f"
+      printf '%s\n' "lane-claims: cannot read claim $f; leaving it in place"
+      ;;
+  esac
+}
+
+
 # Directory holding the claim files. $1: project root (may be empty).
 lane_claims_dir() {
   if [[ -n "${OVERSEE_WATCH_STATE_DIR:-}" ]]; then
@@ -56,11 +77,11 @@ lane_claims_read() {
     return 0
   fi
   if [[ ! -d "$dir" ]]; then
-    echo "lane-claims: claims path $dir is not a directory; launches already in flight cannot be read" >&2
+    lane_claims_message not-directory "$@" >&2
     return 2
   fi
   if [[ ! -r "$dir" || ! -x "$dir" ]]; then
-    echo "lane-claims: claims directory $dir is not readable; launches already in flight are invisible" >&2
+    lane_claims_message unreadable-directory "$@" >&2
     return 2
   fi
   live="$(tmux list-panes -a -F '#{pid} #{pane_id}' 2>/dev/null)" || live=""
@@ -76,7 +97,7 @@ lane_claims_read() {
       # A claim that cannot be read is a launch that cannot be seen: reported,
       # left in place, and carried out as a failure so a caller deciding where
       # to launch refuses rather than counting it as absent.
-      echo "lane-claims: cannot read claim $f; leaving it in place" >&2
+      lane_claims_message unreadable-claim "$@" >&2
       rc=2
       continue
     fi

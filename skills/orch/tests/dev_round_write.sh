@@ -74,7 +74,7 @@ rec() { jq -r "$1" "$OUT" 2>/dev/null || echo UNPARSEABLE; }
 observe() {
   local got="" token name value needle
   for token in $1; do
-    name="${token%%=*}"
+    name="${token%=*}"
     case "$name" in
       rc) value="$RC" ;;
       out) value="$OUT" ;;
@@ -213,19 +213,19 @@ table \
   "no --item: an empty delegated set is not a fix round|--worktree $WT --issue i --round-id 1-1|rc=2" \
   "missing --worktree|--issue i --round-id 1-1 --item 1 t $OKR|rc=2" \
   "a nonexistent --worktree|--worktree $TMP_ROOT/nope --issue i --round-id 1-1 --item 1 t $OKR|rc=2" \
-  "a worktree with no HEAD commit|--worktree $NOHEAD --issue i --round-id 1-1 --item 1 t $OKR|rc=2 stderr~no+resolvable+HEAD+commit=true" \
+  "a worktree with no HEAD commit|--worktree $NOHEAD --issue i --round-id 1-1 --item 1 t $OKR|rc=2 stderr~dev-round-write:+missing-head+worktree=$NOHEAD=true" \
   "missing --issue|--worktree $WT --round-id 1-1 --item 1 t $OKR|rc=2" \
   "missing --round-id|--worktree $WT --issue i --item 1 t $OKR|rc=2" \
-  "a path-unsafe --issue|--worktree $WT --issue a/b --round-id 1-1 --item 1 t $OKR|rc=2 stderr~must+match=true" \
+  "a path-unsafe --issue|--worktree $WT --issue a/b --round-id 1-1 --item 1 t $OKR|rc=2 stderr~dev-round-write:+invalid-id+arg1=--issue+arg2=a/b=true" \
   "a path-traversal --round-id|--worktree $WT --issue i --round-id .. --item 1 t $OKR|rc=2" \
   "a non-numeric --item N|--worktree $WT --issue i --round-id 1-1 --item x t $OKR|rc=2" \
   "a leading-zero --item N is not a canonical integer|--worktree $WT --issue i --round-id 1-1 --item 01 t $OKR|rc=2" \
   "an empty --item TEXT|--worktree $WT --issue i --round-id 1-1 --item 1 EMPTY $OKR|rc=2" \
   "a whitespace-only --item TEXT|--worktree $WT --issue i --round-id 1-1 --item 1 SPACES $OKR|rc=2" \
-  "an --item TEXT that is one of the writer's own flags: a forgotten value|--worktree $WT --issue i --round-id 1-1 --item 1 --worktree $OKR|rc=2 stderr~got+flag+'--worktree'=true" \
+  "an --item TEXT that is one of the writer's own flags: a forgotten value|--worktree $WT --issue i --round-id 1-1 --item 1 --worktree $OKR|rc=2 stderr~dev-round-write:+text-flag+text=--worktree+n=1=true" \
   "--item with too few arguments|--worktree $WT --issue i --round-id 1-1 --item 1|rc=2" \
   "a duplicate item number: a set, not a list|--worktree $WT --issue i --round-id 1-1 --item 1 a $OKR --item 1 b $OKR|rc=2" \
-  "a duplicate --issue: no silent last-wins|--worktree $WT --issue i --issue j --round-id 1-1 --item 1 t $OKR|rc=2 stderr~--issue+supplied+more+than+once=true" \
+  "a duplicate --issue: no silent last-wins|--worktree $WT --issue i --issue j --round-id 1-1 --item 1 t $OKR|rc=2 stderr~dev-round-write:+duplicate+arg1=--issue=true" \
   "an unknown argument|--worktree $WT --issue i --round-id 1-1 --item 1 t $OKR --bogus|rc=2"
 assert_eq "$([[ -f "$WT/tmp/dev-round-i-1-1.json" ]] && echo yes || echo no)" "no" "failed invocations write nothing"
 run_write -h
@@ -269,7 +269,7 @@ printf 'five\n' >> "$GW/change.txt"
 git -C "$GW" add change.txt
 git -C "$GW" commit -q -m over-limit
 run_write --worktree "$GW" --issue KEN-GROWTH --round-id 3-3 --item 1 over-limit "$OK_REACH"
-E="rc=3 stderr~branch+diffstat+is+5+lines=true stderr~baseline+is+2+lines=true stderr~2x=true"
+E="rc=3 stderr~dev-round-write:+growth-limit+current=5+baseline=2+limit=4=true"
 assert_eq "$(observe "$E")" "$E" "a pre-push round past twice the baseline is refused with both numbers and the rule" "$ERR"
 git init -q --bare "$TMP_ROOT/growth-remote.git"
 git -C "$GW" remote add origin "$TMP_ROOT/growth-remote.git"

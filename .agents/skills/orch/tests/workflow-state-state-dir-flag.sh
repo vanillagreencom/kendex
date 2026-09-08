@@ -139,7 +139,7 @@ for spelling in spaced equals; do
     out="$(env -u ORCH_STATE_DIR "$WS" --state-dir= path issue-empty 2>&1)" || rc=$?
   fi
   assert_eq "$rc" "2" "--state-dir with an empty value ($spelling form) exits 2"
-  assert_eq "$out" "Error: --state-dir requires a path argument" \
+  assert_eq "${out%%$'\n'*}" "workflow-state: state-dir-value option=--state-dir" \
     "--state-dir with an empty value ($spelling form) names the missing path"
 done
 

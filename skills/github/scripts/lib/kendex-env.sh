@@ -34,6 +34,43 @@
 # the guarded expansion below keeps standalone kendex_load_settings_file calls
 # working when the snapshot was never taken (empty-array expansion is an
 # unbound variable under Bash 3.2 with set -u).
+
+# Callers preserve positional values for this diagnostic catalog.
+kendex_env_message() {
+  local _message_key="$1"
+  shift
+  case "$_message_key" in
+    byte-order-mark)
+      printf 'kendex-env: byte-order-mark arg1=%s\n' "$1"
+      printf '%s\n' "::error::$1: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)"
+      ;;
+    unreadable)
+      printf 'kendex-env: unreadable arg1=%s\n' "$1"
+      printf '%s\n' "::error::$1: source exists but is unreadable (permission denied); a source is skipped only when it is absent"
+      ;;
+    unresolved-link)
+      printf 'kendex-env: unresolved-link arg1=%s\n' "$1"
+      printf '%s\n' "::error::$1: source is a symlink that does not resolve (dangling target, cycle, or over-long chain); a source is skipped only when it is absent"
+      ;;
+    not-file)
+      printf 'kendex-env: not-file arg1=%s\n' "$1"
+      printf '%s\n' "::error::$1: source exists but is not a regular file (directory, FIFO, socket or device); a source is skipped only when it is absent"
+      ;;
+    table-header)
+      printf 'kendex-env: table-header file=%s lineno=%s\n' "$file" "$lineno"
+      printf '%s\n' "::error::$file:$lineno: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)"
+      ;;
+    duplicate-key)
+      printf 'kendex-env: duplicate-key file=%s key=%s\n' "$file" "$key"
+      printf '%s\n' "::error::$file: $key is assigned more than once in [env] (each key must be unique in the table)"
+      ;;
+    value-syntax)
+      printf 'kendex-env: value-syntax file=%s key=%s\n' "$file" "$key"
+      printf '%s\n' "::error::$file: unsupported syntax for $key (expected a single-line basic string with no '\"' and no '\\': $key = \"value\")"
+      ;;
+  esac
+}
+
 kendex_parent_env_has() {
   local name="$1" snapshot_name
   for snapshot_name in ${_KENDEX_PARENT_ENV_NAMES[@]+"${_KENDEX_PARENT_ENV_NAMES[@]}"}; do
@@ -49,7 +86,7 @@ kendex_parent_env_has() {
 # never an operand.
 kendex_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
   if [[ "$(head -c 3 < "$1" 2>/dev/null)" == $'\xEF\xBB\xBF' ]]; then
-    echo "::error::$1: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
+    kendex_env_message byte-order-mark "$@" >&2
     return 1
   fi
 }
@@ -63,14 +100,14 @@ kendex_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
 kendex_source_usable() { # PATH — 0 = readable regular file or absent; 1 + ::error otherwise
   if [[ -f "$1" ]]; then
     [[ -r "$1" ]] && return 0
-    echo "::error::$1: source exists but is unreadable (permission denied); a source is skipped only when it is absent" >&2
+    kendex_env_message unreadable "$@" >&2
     return 1
   fi
   { [[ -e "$1" || -L "$1" ]]; } || return 0
   if [[ ! -e "$1" ]]; then
-    echo "::error::$1: source is a symlink that does not resolve (dangling target, cycle, or over-long chain); a source is skipped only when it is absent" >&2
+    kendex_env_message unresolved-link "$@" >&2
   else
-    echo "::error::$1: source exists but is not a regular file (directory, FIFO, socket or device); a source is skipped only when it is absent" >&2
+    kendex_env_message not-file "$@" >&2
   fi
   return 1
 }
@@ -136,7 +173,7 @@ kendex_load_settings_file() {
         section="${BASH_REMATCH[1]}"
         continue
       fi
-      echo "::error::$file:$lineno: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)" >&2
+      kendex_env_message table-header "$@" >&2
       return 1
     fi
 
@@ -148,12 +185,12 @@ kendex_load_settings_file() {
     # resolver family applies. Checked before the parent-env skip: a malformed
     # file must fail identically whatever this session exports.
     if [[ "$seen" == *" $key "* ]]; then
-      echo "::error::$file: $key is assigned more than once in [env] (each key must be unique in the table)" >&2
+      kendex_env_message duplicate-key "$@" >&2
       return 1
     fi
     seen="$seen$key "
     if ! kendex_decode_value value "${line#*=}"; then
-      echo "::error::$file: unsupported syntax for $key (expected a single-line basic string with no '\"' and no '\\': $key = \"value\")" >&2
+      kendex_env_message value-syntax "$@" >&2
       return 1
     fi
 
