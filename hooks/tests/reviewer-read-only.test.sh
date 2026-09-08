@@ -12,6 +12,11 @@
 #
 # Fixtures are throwaway git repositories built under a HOME of their own.
 #
+# Every refusal opens with `reviewer-read-only: <key>=<value>`, and that line
+# is the contract: the tool call it refused, or the path it would not have
+# written, is the value. The artifact path a reviewer may write, and git's own
+# words when it could not answer, are pinned as themselves under it.
+#
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (a no-op hook, an always-refuse hook) can be run against these same
 # assertions.
@@ -30,6 +35,7 @@ FAIL=0
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 BASH_BIN="$(command -v bash)"
+ERR_FILE="$TMP_ROOT/stderr"
 
 fgit() {
   env HOME="$TMP_ROOT" git "$@"
@@ -91,6 +97,12 @@ assert_contains() {
   fi
 }
 
+# The first-line reader. This suite's runs vary the agent, the tool and the
+# path rather than one command, which the shared table's modes do not express,
+# so `first_line` is the half of that library it uses.
+# shellcheck source=lib/first-line.sh
+. "$TEST_DIR/lib/first-line.sh"
+
 ARTIFACT="$REPO/tmp/review-reviewer-test-20260903-101010.json"
 
 echo "reviewer-read-only: agents that are not reviewers pass"
@@ -108,7 +120,8 @@ assert_eq "$rc" 0 "an agent named reviewer with no hyphenated domain is not a re
 echo "reviewer-read-only: a reviewer edits nothing"
 for tool in Edit MultiEdit NotebookEdit; do
   run_tool reviewer-correctness "$tool" file_path "$REPO/src/lib.rs"
-  assert_eq "$rc" 2 "a reviewer's $tool is refused"
+  assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: refused=$tool" \
+    "a reviewer's $tool is refused, the call its value"
 done
 run_tool reviewer-correctness Edit file_path "$REPO/src/lib.rs"
 assert_contains "$err" "tmp/review-reviewer-correctness-" "the refusal names the one path a reviewer writes"
@@ -124,8 +137,8 @@ assert_eq "$rc" 0 "the artifact path passes once tmp/ exists"
 run_tool reviewer-test Write file_path "$REPO/tmp/review-reviewer-test-codebase-20260903-101010.json"
 assert_eq "$rc" 0 "the codebase-review artifact path passes"
 run_tool reviewer-test Write file_path "$REPO/src/lib.rs"
-assert_eq "$rc" 2 "a Write onto a tracked file is refused"
-assert_contains "$err" "$REPO/src/lib.rs" "the refusal names the path"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: path=$REPO/src/lib.rs" \
+  "a Write onto a tracked file is refused, the path its value"
 assert_contains "$err" "mktemp -d" "the refusal says where a control belongs"
 run_tool reviewer-test Write file_path "$REPO/probe.sh"
 assert_eq "$rc" 2 "a new file at the repository root is refused"
@@ -149,7 +162,7 @@ for cmd in 'git commit -m x' 'git push' 'git push origin HEAD' "git -C $REPO com
   'git --no-pager commit' 'git -c user.name=t commit -m x' 'cd /x && git commit -q; echo done' \
   'git add -A && git commit -m "probe"' 'git push --force-with-lease'; do
   run_tool reviewer-security Bash command "$cmd"
-  assert_eq "$rc" 2 "refused: $cmd"
+  assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: refused=git-write" "refused: $cmd"
 done
 for cmd in 'git log --oneline -5' "git -C $REPO diff origin/main...HEAD" 'git cat-file commit HEAD' \
   'git commit-tree HEAD^{tree}' 'git status --porcelain' 'git show HEAD --stat' 'git log --grep=commit' \
@@ -164,8 +177,8 @@ assert_eq "$rc" 2 "a command that is not a string is refused"
 
 echo "reviewer-read-only: a payload it cannot read refuses"
 run_payload '{"agent_type":"reviewer-test","tool_name":"Edit"'
-assert_eq "$rc" 2 "a truncated JSON payload refuses rather than skipping the guard"
-assert_contains "$err" "not valid JSON" "the parse refusal names the cause"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: payload=invalid-json" \
+  "a truncated JSON payload refuses rather than skipping the guard"
 run_payload '{"agent_type":["reviewer-test"],"tool_name":"Edit"}'
 assert_eq "$rc" 2 "an agent_type that is not a string refuses"
 run_payload '{"agent_type":"reviewer-test","tool_name":false}'
@@ -187,20 +200,43 @@ printf '{"agent_type":"reviewer-test","tool_name":"Write","tool_input":{"file_pa
   | env HOME="$TMP_ROOT" PATH="$BROKEN_BIN:$PATH" "$BASH_BIN" "$HOOK" >/dev/null 2>"$TMP_ROOT/stderr"
 rc=$?
 set -e
-assert_eq "$rc" 2 "a git failure that is not 'not a git repository' refuses the write"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: git=unreadable" \
+  "a git failure that is not 'not a git repository' refuses the write"
 assert_contains "$(cat "$TMP_ROOT/stderr")" "unable to read the repository configuration" "carries git's own failure"
 
-echo "reviewer-read-only: without the tools that read the payload"
-NOJQ_BIN="$TMP_ROOT/nojq"
-mkdir -p "$NOJQ_BIN"
-for tool in cat sed grep dirname git; do
-  real="$(type -P "$tool" 2>/dev/null || true)"
-  [ -n "$real" ] && [ -x "$real" ] || continue
-  ln -sf "$real" "$NOJQ_BIN/$tool"
-done
-run_payload '{"agent_type":"generalist","tool_name":"Edit","tool_input":{"file_path":"x"}}' "$NOJQ_BIN"
-assert_eq "$rc" 2 "no jq refuses rather than guessing at the payload, whoever the agent is"
-assert_contains "$err" "required to read the hook payload" "the refusal names what is missing"
+echo "reviewer-read-only: without the tools it runs"
+# One world per declared dependency, each holding every other tool and not
+# that one: the refusal names the missing tool and nothing is judged without
+# it. A row per tool is what keeps the inventory honest — an absent grep does
+# not stall this hook, it passes the call through.
+tools_table() { # TOOLS
+  local tool other bin before=$((PASS + FAIL))
+  for tool in $1; do
+    bin="$TMP_ROOT/without-$tool"
+    rm -rf -- "$bin"
+    mkdir -p "$bin"
+    for other in $1; do
+      [ "$other" != "$tool" ] || continue
+      real="$(type -P "$other" 2>/dev/null || true)"
+      [ -n "$real" ] && [ -x "$real" ] || continue
+      ln -sf "$real" "$bin/$other"
+    done
+    run_payload '{"agent_type":"generalist","tool_name":"Edit","tool_input":{"file_path":"x"}}' "$bin"
+    assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: missing-tools=$tool" \
+      "without $tool the call is refused, and the value names it"
+  done
+  # A world holding none of them: the value is the whole list, in check order.
+  # A row per tool cannot see an accumulator that overwrites instead of
+  # appending, because only one name is ever missing in one.
+  bin="$TMP_ROOT/without-everything"
+  rm -rf -- "$bin"
+  mkdir -p "$bin"
+  run_payload '{"agent_type":"generalist","tool_name":"Edit","tool_input":{"file_path":"x"}}' "$bin"
+  assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: missing-tools=${1// /,}" \
+    "with none of them the value is the whole list, in check order"
+  [ "$((PASS + FAIL))" -gt "$before" ] || { echo "tools: no row was asserted" >&2; exit 2; }
+}
+tools_table "jq git cat grep dirname"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

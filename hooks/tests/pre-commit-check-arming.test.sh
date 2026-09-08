@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Arming and directory notices for pre-commit-check. Word grammar is in the
 # sibling suite; these fixtures vary the installed hooks and the directory.
+#
+# Every refusal and notice opens with `pre-commit-check: <key>=<value>`, the
+# fixed set hooks/AGENTS.md names, and that line is what a row pins. An unarmed
+# repository refuses with `unarmed=<directory>` whatever the command said. The
+# repository-moving notice, `judged=<directory>`, is what this hook has to say
+# where it can neither defer nor refuse — outside a repository — so its rows
+# run there, and it is the whole verdict at exit 0.
 # shellcheck source-path=SCRIPTDIR
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -32,36 +39,34 @@ git -C "$ARMED_BY_PATH" config core.hooksPath "$TMP_ROOT/custom-hooks"
 NOT_A_REPO="$TMP_ROOT/plain"; mkdir -p "$NOT_A_REPO"
 
 # Each fixture proves once that the hook does not run repository scripts.
+# A row is `label|directory|status|first line`.
 arming_table() {
-  local rows="$1" row label dir want clause field before=$((PASS + FAIL))
+  local rows="$1" row label dir want first field before=$((PASS + FAIL))
   while IFS= read -r row; do
     [[ "$row" != "" ]] || continue
-    IFS='|' read -r label dir want clause <<<"$row"
-    for field in "$label" "$dir" "$want" "$clause"; do
+    IFS='|' read -r label dir want first <<<"$row"
+    for field in "$label" "$dir" "$want" "$first"; do
       [[ "$field" != "" ]] || { echo "arming: a row with an empty field asserts nothing: $row" >&2; exit 1; }
     done
     : >"$RAN_LOG"
     run_hook "$dir" "$(payload 'git commit -m test')"
     if [[ "${PRE_COMMIT_TABLE_PROBE:-}" == 1 ]]; then
-      printf '%s => rc=%s err=%s log=%s\n' "$label" "$rc" "$err" "$log"
+      printf '%s => rc=%s first=%s log=%s\n' "$label" "$rc" "$(first_line)" "$log"
       continue
     fi
-    assert_eq "$rc" "$want" "$label"
-    if [[ "$clause" != - ]]; then
-      assert_contains "$err" "$clause" "and the refusal says so: $label"
-    fi
-    assert_eq "$log" "" "precondition: nothing of the repository's ran: $label"
+    assert_eq "rc=$rc first=$(first_line)" "rc=$want first=$first" "$label"
+    assert_eq "$log" "" "nothing of the repository's own scripts ran: $label"
   done <<<"$rows"
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "arming: no row was asserted" >&2; exit 2; }
 }
 
 arming_table "\
 an armed .git/hooks pair gates the commit itself|$ARMED|0|-
-not armed: disarmed|$DISARMED|2|not armed by kendex
-not armed: half-armed|$HALF_ARMED|2|not armed by kendex
-not armed: hooks-off|$HOOKS_OFF|2|not armed by kendex
-not armed: armed-by-path|$ARMED_BY_PATH|2|not armed by kendex
-not armed: unarmed|$UNARMED|2|not armed by kendex
+not armed: disarmed|$DISARMED|2|pre-commit-check: unarmed=$DISARMED
+not armed: half-armed|$HALF_ARMED|2|pre-commit-check: unarmed=$HALF_ARMED
+not armed: hooks-off|$HOOKS_OFF|2|pre-commit-check: unarmed=$HOOKS_OFF
+not armed: armed-by-path|$ARMED_BY_PATH|2|pre-commit-check: unarmed=$ARMED_BY_PATH
+not armed: unarmed|$UNARMED|2|pre-commit-check: unarmed=$UNARMED
 "
 assert_contains "$err" "kendex guard install" "the unarmed refusal names the command that fixes it"
 assert_contains "$err" "kendex guard check" "and the one that explains it"
@@ -72,34 +77,36 @@ echo "the hook gates its working directory only"
 run_hook "$ARMED" "$(payload "git -C $UNARMED commit -m x")"
 assert_eq "$rc" "0" "an armed cwd defers whatever the commit is aimed at"
 run_hook "$UNARMED" "$(payload "git -C $ARMED commit -m x")"
-assert_eq "$rc" "2" "an unarmed cwd judges itself whatever the target"
-assert_contains "$err" "judged $UNARMED only" "and the notice names the directory it judged"
-run_hook "$NOT_A_REPO" "$(payload "git -C $UNARMED commit -m x")"
-assert_eq "$rc" "0" "a non-repository cwd gates nothing"
-assert_contains "$err" "moves repositories" "and says the target is elsewhere"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=pre-commit-check: unarmed=$UNARMED" \
+  "an unarmed cwd judges itself whatever the target, and its value is that directory"
+run_hook "$NOT_A_REPO" "$(payload 'git commit -m x')"
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" \
+  "a non-repository cwd with no moving word gates nothing and says nothing"
 run_hook "$UNARMED" "$(payload 'git commit -m x')"
-assert_not_contains "$err" "moves repositories" "no notice for a commit in place"
+assert_not_contains "$err" "pre-commit-check: judged=" "no notice for a commit in place"
+# Every word that moves the repository, outside a repository, where the notice
+# is the whole verdict: the hook has nothing to defer to and nothing to refuse.
 move_table() {
-  local rows="$1" row form notice field before=$((PASS + FAIL))
+  local rows="$1" row form before=$((PASS + FAIL))
   while IFS= read -r row; do
+    # A row is the form and nothing else, so an empty one is an empty field.
     [[ "$row" != "" ]] || continue
-    IFS='|' read -r form notice <<<"$row"
-    for field in "$form" "$notice"; do
-      [[ "$field" != "" ]] || { echo "moves: a row with an empty field asserts nothing: $row" >&2; exit 1; }
-    done
-    run_hook "$UNARMED" "$(payload "$form")"
+    form="$row"
+    run_hook "$NOT_A_REPO" "$(payload "$form")"
     if [[ "${PRE_COMMIT_TABLE_PROBE:-}" == 1 ]]; then
-      printf '%s => %s\n' "$form" "$err"
+      printf '%s => rc=%s %s\n' "$form" "$rc" "$err"
       continue
     fi
-    assert_contains "$err" "$notice" "a repository-moving word is named: $form"
+    assert_eq "rc=$rc first=$(first_line)" "rc=0 first=pre-commit-check: judged=$NOT_A_REPO" \
+      "a repository-moving word is named: $form"
   done <<<"$rows"
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "moves: no row was asserted" >&2; exit 2; }
 }
 
-move_table 'cd sub && git commit -m x|moves repositories
-GIT_DIR=/e/.git git commit -m x|moves repositories
-GIT_WORK_TREE=/e git commit -m x|moves repositories
+move_table 'cd sub && git commit -m x
+GIT_DIR=/e/.git git commit -m x
+GIT_WORK_TREE=/e git commit -m x
+git -C /e commit -m x
 '
 
 echo

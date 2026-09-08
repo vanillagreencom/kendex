@@ -8,6 +8,10 @@
 # than scoring on the other two. Nothing is resolved or stat-ed, so there are no
 # filesystem fixtures: the command's own text is the whole input.
 #
+# Every refusal opens with `block-repo-copy: <key>=<value>`, and that line is
+# the contract: the first-line table pins the key and the value of each
+# condition beside its exit status, and the English under it is not asserted.
+#
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (a no-op hook, an always-block hook) can be run against these same
 # assertions.
@@ -47,6 +51,20 @@ run_hook() { # command -> rc, stderr in $err
   set -e
   err="$(cat "$ERR_FILE")"
 }
+
+run_payload() { # raw-json -> rc, stderr in ERR_FILE
+  set +e
+  printf '%s' "$1" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
+  rc=$?
+  set -e
+}
+
+# shellcheck source=lib/first-line.sh
+. "$TEST_DIR/lib/first-line.sh"
+
+# The hook's dependency list, in the order it checks them: the shared table
+# pins it as the value of the world that has none of them.
+PAYLOAD_TOOLS=jq,cat
 
 # shellcheck source=lib/payload-rows.sh
 . "$TEST_DIR/lib/payload-rows.sh"
@@ -179,7 +197,18 @@ run_hook "ls -la $REPO/.git /tmp";           assert_eq "$rc" 0 'reading a reposi
 run_hook "grep -rn target /tmp/build.log";   assert_eq "$rc" 0 'a word merely containing tar is not the verb'
 run_hook "cargo build --target x86_64-unknown-linux-gnu"; assert_eq "$rc" 0 'a --target flag is not a source operand'
 
-echo "=== block-repo-copy: the refusal names the cause and the alternatives ==="
+echo "=== block-repo-copy: the first line of every condition ==="
+# The verb that matched is the value, so each verb reaches a value of its own
+# and a command the hook allows says nothing at all.
+first_table "\
+the verb that matched is the value|command|2|block-repo-copy: refused=cp|cp -r $REPO/target /tmp/copy
+another verb is a value of its own|command|2|block-repo-copy: refused=rsync|rsync -a $REPO/target /tmp/copy
+a two-word verb reaches the set's own spelling|command|2|block-repo-copy: refused=git clone|git clone $REPO/.git /tmp/copy
+the blanks the command spelled are not part of the verb|command|2|block-repo-copy: refused=git clone|git   clone $REPO/.git /tmp/copy
+the verb on the far side of a pipe is the one that matched|command|2|block-repo-copy: refused=tar|tar -cf - $REPO/target | tar -xf - -C /tmp
+a copy the hook allows says nothing|command|0|-|cp -r $REPO/docs /tmp/copy
+a payload that is not JSON is refused unread|payload|2|block-repo-copy: payload=invalid-json|not JSON
+"
 run_hook "cp -r $REPO/target /tmp/copy"
 assert_contains "$err" "cp -r $REPO/target /tmp/copy" 'the refusal quotes the command it judged'
 assert_contains "$err" 'mktemp -d' 'the refusal shows how to build the fixture'

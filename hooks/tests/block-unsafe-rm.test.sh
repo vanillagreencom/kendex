@@ -9,6 +9,10 @@
 # independently below, so a change that dropped one of them reds here rather
 # than scoring on the other two.
 #
+# Every refusal opens with `block-unsafe-rm: <key>=<value>`, and that line is
+# the contract: the first-line table pins the key and the value of each
+# condition beside its exit status, and the English under it is not asserted.
+#
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (a no-op hook, an always-block hook) run against these assertions.
 set -euo pipefail
@@ -46,6 +50,20 @@ run_hook() { # command -> rc, stderr in ERR_FILE
   rc=$?
   set -e
 }
+
+run_payload() { # raw-json -> rc, stderr in ERR_FILE
+  set +e
+  printf '%s' "$1" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
+  rc=$?
+  set -e
+}
+
+# shellcheck source=lib/first-line.sh
+. "$TEST_DIR/lib/first-line.sh"
+
+# The hook's dependency list, in the order it checks them: the shared table
+# pins it as the value of the world that has none of them.
+PAYLOAD_TOOLS=jq,cat
 
 # shellcheck source=lib/payload-rows.sh
 . "$TEST_DIR/lib/payload-rows.sh"
@@ -117,7 +135,15 @@ run_hook 'rm -rf /var/tmp/x | cat $F';                    assert_eq "$rc" 0 'and
 run_hook 'confirm -rf $X';            assert_eq "$rc" 0 'a word merely ending in rm is not the verb'
 run_hook 'ls -la';                    assert_eq "$rc" 0 'an unrelated command passes'
 
-echo "=== block-unsafe-rm: the refusal names the cause and the rewrite ==="
+echo "=== block-unsafe-rm: the first line of every condition ==="
+# The three parts stand in either order and are nested inside the pattern's
+# alternation, so the value names the shape rather than one of the words.
+first_table "\
+the refused shape is the value|command|2|block-unsafe-rm: refused=recursive-rm|rm -rf \$CACHE/\$KEY
+a flag standing after the operand reaches the same value|command|2|block-unsafe-rm: refused=recursive-rm|rm \$DIR/sub -rf
+an operand that cannot collapse says nothing|command|0|-|rm -rf -- \"\${P:?}/save\"
+a payload that is not JSON is refused unread|payload|2|block-unsafe-rm: payload=invalid-json|not JSON
+"
 run_hook 'rm -rf $CACHE/$KEY'
 assert_contains "$ERR_FILE" '${NAME:?}' 'the refusal names the ${NAME:?} rewrite'
 assert_contains "$ERR_FILE" '/absolute/literal/path' 'the refusal names the literal-path alternative'

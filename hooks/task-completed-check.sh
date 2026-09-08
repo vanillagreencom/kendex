@@ -4,7 +4,7 @@
 # event: TaskCompleted
 # matcher:
 # description: Before a task is marked complete, runs `cargo clippy --workspace --all-targets -- -D warnings` against the repository's Cargo.toml, or the nearest one above a changed file when the root has none, whenever a Rust file changed in the working tree, the index or as an untracked file, and refuses the completion naming the first error lines, or the output tail when there are none. Rust only.
-# safety: Refuses on any clippy failure and on a git that cannot list the changed set. Claude Code does not block on a hook that outruns its budget, so the budget is that harness's own default for a command hook; a cold build of a large workspace that outruns it completes the task unchecked, and a warm target directory is what keeps this gate closed.
+# safety: Refuses on any clippy failure and on a git that cannot list the changed set. Claude Code does not block on a hook that outruns its budget, so the budget is that harness's own default for a command hook; a cold build of a large workspace that outruns it completes the task unchecked, and a warm target directory is what keeps this gate closed. Every refusal opens with `task-completed-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 600
 # harnesses: [claude-code]
 # ---
@@ -14,10 +14,37 @@ set -euo pipefail
 # Consume stdin
 cat > /dev/null
 
-git_failed() { # SUBCOMMAND OUTPUT — an unreadable changed set is not an empty one
-  echo "task-completed-check: git $1 failed, so what changed is unknown:" >&2
-  printf '%s\n' "$2" >&2
+# The clippy lines the refusal quotes, empty until there are any.
+ISSUES=""
+# Every line this hook writes, and the only place its text lives. The first
+# line is the contract a reader parses, `task-completed-check: <key>=<value>`:
+# a stable key for the condition and the value acted on — the git subcommand
+# that could not answer, or the status clippy left. The English explanation and
+# the diagnostics follow it.
+# The keyed line stands first, at position 1. What a command this hook runs
+# wrote is captured where the hook reads it and passed here as the cause, so
+# it is replayed under the key rather than ahead of it.
+refuse() { # KEY VALUE [DETAIL]
+  {
+    printf 'task-completed-check: %s=%s\n' "$1" "$2"
+    case "$1" in
+      git)
+        printf 'git %s failed, so what changed is unknown:\n' "$2"
+        ;;
+      clippy)
+        echo "Clippy failed — fix before completing task:"
+        printf '%s\n' "$ISSUES"
+        ;;
+    esac
+    # The cause a command this hook ran wrote, captured at the site and
+    # replayed here: under the keyed line, never ahead of it.
+    [ -z "${3:-}" ] || printf '%s\n' "$3"
+  } >&2
   exit 2
+}
+
+git_failed() { # SUBCOMMAND OUTPUT — an unreadable changed set is not an empty one
+  refuse git "$1" "$2"
 }
 
 # A git that cannot answer blocks, with no reading of the failure that means
@@ -71,15 +98,17 @@ if [ -n "$RUST_CHANGED" ]; then
   # A repository whose root holds Cargo.toml leaves MANIFEST_ARGS empty, and
   # bash 3.2 under `set -u` reads an empty array as an unbound variable.
   # Hence the guarded expansion.
-  if ! OUTPUT=$(cargo clippy ${MANIFEST_ARGS[@]+"${MANIFEST_ARGS[@]}"} --workspace --all-targets -- -D warnings 2>&1); then
-    # The exit status is the verdict. Diagnostic lines are only how the
-    # failure is reported, so a run that produced none — a missing cargo, a
-    # killed build — falls back to the tail of whatever it did print.
+  CLIPPY_STATUS=0
+  OUTPUT=$(cargo clippy ${MANIFEST_ARGS[@]+"${MANIFEST_ARGS[@]}"} --workspace --all-targets -- -D warnings 2>&1) ||
+    CLIPPY_STATUS=$?
+  if [ "$CLIPPY_STATUS" -ne 0 ]; then
+    # The exit status is the verdict, and it is what the first line carries: a
+    # missing cargo and a lint failure leave different ones. Diagnostic lines
+    # are only how the failure is reported, so a run that produced none — a
+    # missing cargo, a killed build — falls back to the tail of what it printed.
     ISSUES=$(printf '%s\n' "$OUTPUT" | grep -E '^error' | head -15 || true)
     [ -n "$ISSUES" ] || ISSUES=$(printf '%s\n' "$OUTPUT" | tail -15)
-    echo "Clippy failed — fix before completing task:" >&2
-    printf '%s\n' "$ISSUES" >&2
-    exit 2
+    refuse clippy "$CLIPPY_STATUS"
   fi
 fi
 

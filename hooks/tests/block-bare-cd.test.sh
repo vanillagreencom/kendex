@@ -14,6 +14,11 @@
 # payload jq cannot read, or one naming a command that is not a string, is
 # refused rather than skipped.
 #
+# Every refusal opens with `block-bare-cd: <key>=<value>`, the fixed set
+# hooks/AGENTS.md names: the first-line table pins the key and the value of
+# each condition beside its exit status, and the English under it is not
+# asserted.
+#
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (the unguarded hook, a no-op hook) run against these same assertions.
 set -euo pipefail
@@ -49,6 +54,20 @@ run_hook() { # command -> rc, stderr in ERR_FILE
   set -e
 }
 
+run_payload() { # raw-json -> rc, stderr in ERR_FILE
+  set +e
+  printf '%s' "$1" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
+  rc=$?
+  set -e
+}
+
+# shellcheck source=lib/first-line.sh
+. "$TEST_DIR/lib/first-line.sh"
+
+# The hook's dependency list, in the order it checks them: the shared table
+# pins it as the value of the world that has none of them.
+PAYLOAD_TOOLS=jq,cat,grep,sed
+
 # shellcheck source=lib/payload-rows.sh
 . "$TEST_DIR/lib/payload-rows.sh"
 
@@ -61,9 +80,16 @@ run_hook 'cd ~/dev';      assert_eq "$rc" 2 'cd to a home-relative path is refus
 run_hook 'cd ..';         assert_eq "$rc" 2 'cd .. is refused'
 run_hook 'cd "$repo"';    assert_eq "$rc" 2 'a quoted operand alone is still a bare cd'
 
-echo "=== block-bare-cd: the refusal names the cause and the rewrite ==="
+echo "=== block-bare-cd: the first line of every condition ==="
+# The value is the line the hook refused, so the row that carries an operand
+# and the row that carries none reach different values.
+first_table "\
+a line that is only a cd reaches the refused key|command|2|block-bare-cd: refused=bare-cd|cd /tmp
+a bare cd with no operand reaches the same one|command|2|block-bare-cd: refused=bare-cd|cd
+a scoped move says nothing|command|0|-|(cd /tmp && ls)
+a payload that is not JSON is refused unread|payload|2|block-bare-cd: payload=invalid-json|not JSON
+"
 run_hook 'cd'
-assert_contains "$ERR_FILE" 'across tool calls' 'the refusal names what it prevents'
 assert_contains "$ERR_FILE" '(cd /path && command)' 'the refusal names the subshell rewrite'
 
 echo "=== block-bare-cd: accepted shapes ==="

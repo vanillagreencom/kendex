@@ -13,6 +13,11 @@
 #
 # Fixtures are throwaway git repositories built under a HOME of their own.
 #
+# Every refusal opens with `reviewer-stop-check: <key>=<value>`, and that line
+# is the contract: each condition is pinned by its key and value beside the
+# exit status. The paths git status names, and git's own words when it could
+# not answer, are pinned as themselves under it.
+#
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (a no-op hook, an always-block hook) can be run against these same
 # assertions.
@@ -28,9 +33,14 @@ HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/reviewer-stop-check.sh}"
 
 PASS=0
 FAIL=0
-TMP_ROOT="$(mktemp -d)"
+# Physical, not as mktemp spelled it: git reports a canonical
+# --show-toplevel, so on a host whose temp root is a symlink (macOS, where
+# /var is /private/var) a logical fixture path would never equal the value the
+# hook prints.
+TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 BASH_BIN="$(command -v bash)"
+ERR_FILE="$TMP_ROOT/stderr"
 # The hook runs from a directory that is not a repository, as a session
 # elsewhere would: the reviewed worktree comes from the transcript alone.
 RUN_DIR="$TMP_ROOT/cwd"
@@ -123,6 +133,12 @@ assert_not_contains() {
   fi
 }
 
+# The first-line reader. This suite's runs vary the transcript and the
+# repository rather than one command, which the shared table's modes do not
+# express, so `first_line` is the half of that library it uses.
+# shellcheck source=lib/first-line.sh
+. "$TEST_DIR/lib/first-line.sh"
+
 echo "reviewer-stop-check: a clean reviewed worktree passes"
 REPO="$(new_repo clean)"
 T="$(transcript_for "$REPO")"
@@ -150,7 +166,7 @@ printf 'probe\n' >"$REPO/probe.sh"
 run_hook "$T" reviewer-test a1
 assert_eq "$rc" 2 "blocks on an untracked file"
 assert_contains "$err" "?? probe.sh" "names the untracked file"
-assert_contains "$err" "$REPO" "names the reviewed worktree"
+assert_eq "$(first_line)" "reviewer-stop-check: worktree=$REPO" "the value is the reviewed worktree"
 [ -e "$REPO/.git/kendex/reviewer-stop/a1" ] && marker=yes || marker=no
 assert_eq "$marker" yes "the block records the agent under the reviewed repository's git common dir"
 run_hook "$T" reviewer-test a1
@@ -199,7 +215,7 @@ assert_eq "$rc" 0 "the newest mention is the reviewed worktree, and it is clean"
 printf 'probe\n' >"$REPO_B/probe.txt"
 run_hook "$T" reviewer-test c2
 assert_eq "$rc" 2 "dirt in the newest-mentioned worktree blocks"
-assert_contains "$err" "$REPO_B" "names that worktree"
+assert_eq "$(first_line)" "reviewer-stop-check: worktree=$REPO_B" "and the value is that worktree"
 assert_not_contains "$err" "$REPO_A" "and not the earlier one"
 
 echo "reviewer-stop-check: a linked worktree is judged on its own"
@@ -230,9 +246,8 @@ set +e
 rc=$?
 set -e
 err="$(cat "$TMP_ROOT/stderr")"
-assert_eq "$rc" 2 "no artifact path blocks"
-assert_contains "$err" "names no review artifact path" "names the cause"
-assert_contains "$err" "tmp/review-reviewer-test-" "and the path shape the contract wants"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: artifact=missing" "no artifact path blocks"
+assert_contains "$err" "tmp/review-reviewer-test-" "and the refusal names the path shape the contract wants"
 [ -e "$RUN_REPO/.git/kendex/reviewer-stop/e1" ] && marker=yes || marker=no
 assert_eq "$marker" yes "the block is recorded under the repository the hook runs in"
 set +e
@@ -243,30 +258,44 @@ rc=$?
 set -e
 assert_eq "$rc" 0 "a second stop of that subagent passes"
 run_hook "$T" reviewer-test e2
-assert_eq "$rc" 2 "outside any repository the block cannot be recorded and refuses"
-assert_contains "$err" "rev-parse --git-common-dir failed" "naming the probe that could not answer"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: git=rev-parse --git-common-dir" \
+  "outside any repository the block cannot be recorded and the probe is the value"
+
+echo "reviewer-stop-check: the marker cannot be recorded"
+# A git directory the hook may read and not write: mkdir and the redirection
+# both fail there, and each writes its own diagnostic, so this is the row that
+# holds the keyed line first on that path.
+REPO="$(new_repo unwritable)"
+T="$(transcript_for "$REPO")"
+: >"$REPO/probe.sh"
+chmod -w "$REPO/.git"
+run_hook "$T" reviewer-test m1
+chmod +w "$REPO/.git"
+assert_eq "rc=$rc first=$(first_line) cause=$(cause_below)" \
+  "rc=2 first=reviewer-stop-check: marker=$REPO/.git/kendex/reviewer-stop/m1 cause=present" \
+  "a marker it cannot record refuses, the value is the path, and mkdir's words are under it"
 
 echo "reviewer-stop-check: a payload or transcript it cannot read refuses"
 REPO="$(new_repo bad)"
 T="$(transcript_for "$REPO")"
 run_payload '{"agent_type":"reviewer-test","agent_id":"f1"'
-assert_eq "$rc" 2 "a truncated JSON payload refuses"
-assert_contains "$err" "not valid JSON" "the parse refusal names the cause"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: payload=invalid-json" \
+  "a truncated JSON payload refuses"
 run_payload "{\"agent_type\":\"reviewer-test\",\"agent_id\":\"f1\",\"transcript_path\":\"$TMP_ROOT/absent.jsonl\"}"
-assert_eq "$rc" 2 "a transcript that does not exist refuses"
-assert_contains "$err" "transcript_path is not a readable file" "names the cause"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: transcript=unreadable" \
+  "a transcript that does not exist refuses"
 run_payload "{\"agent_type\":\"reviewer-test\",\"agent_id\":\"f1\"}"
 assert_eq "$rc" 2 "no transcript_path refuses"
 run_payload "{\"agent_type\":\"reviewer-test\",\"agent_id\":\"../x\",\"transcript_path\":\"$T\"}"
-assert_eq "$rc" 2 "an agent_id that is not a name refuses"
-assert_contains "$err" "no usable agent_id" "names the cause"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: agent-id=invalid" \
+  "an agent_id that is not a name refuses"
 run_payload "{\"agent_type\":\"reviewer-test\",\"transcript_path\":\"$T\"}"
 assert_eq "$rc" 2 "no agent_id refuses"
 T2="$TMP_ROOT/transcript.gone.jsonl"
 printf '{"text":"File: %s/gone/tmp/review-reviewer-test-20260903-101010.json"}\n' "$TMP_ROOT" >"$T2"
 run_hook "$T2" reviewer-test f2
-assert_eq "$rc" 2 "an artifact path whose worktree is not a repository refuses"
-assert_contains "$err" "rev-parse --show-toplevel failed" "names the probe"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: git=rev-parse --show-toplevel" \
+  "an artifact path whose worktree is not a repository refuses, the probe its value"
 
 echo "reviewer-stop-check: git cannot answer what changed"
 REPO="$(new_repo brokengit)"
@@ -291,20 +320,43 @@ set +e
   >/dev/null 2>"$TMP_ROOT/stderr"
 rc=$?
 set -e
-assert_eq "$rc" 2 "an unreadable status blocks rather than passing"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: git=status" \
+  "an unreadable status blocks rather than passing, the probe its value"
 assert_contains "$(cat "$TMP_ROOT/stderr")" "unable to read index" "carries git's own failure"
 
 echo "reviewer-stop-check: without jq"
-NOJQ_BIN="$TMP_ROOT/nojq"
-mkdir -p "$NOJQ_BIN"
-for tool in cat sed grep tail dirname git; do
-  real="$(type -P "$tool" 2>/dev/null || true)"
-  [ -n "$real" ] && [ -x "$real" ] || continue
-  ln -sf "$real" "$NOJQ_BIN/$tool"
-done
-run_payload "{\"agent_type\":\"generalist\",\"agent_id\":\"h1\",\"transcript_path\":\"$T\"}" "$NOJQ_BIN"
-assert_eq "$rc" 2 "no jq refuses rather than guessing at the payload"
-assert_contains "$err" "required to read the hook payload" "the refusal names what is missing"
+# One world per declared dependency, each holding every other tool and not
+# that one: the refusal names the missing tool and nothing is judged without
+# it. A row per tool is what keeps the inventory honest — an absent tail does
+# not stall this hook, it passes the call through.
+tools_table() { # TOOLS
+  local tool other bin before=$((PASS + FAIL))
+  for tool in $1; do
+    bin="$TMP_ROOT/without-$tool"
+    rm -rf -- "$bin"
+    mkdir -p "$bin"
+    for other in $1; do
+      [ "$other" != "$tool" ] || continue
+      real="$(type -P "$other" 2>/dev/null || true)"
+      [ -n "$real" ] && [ -x "$real" ] || continue
+      ln -sf "$real" "$bin/$other"
+    done
+    run_payload '{"agent_type":"generalist","agent_id":"h1","transcript_path":"/nonexistent"}' "$bin"
+    assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: missing-tools=$tool" \
+      "without $tool the call is refused, and the value names it"
+  done
+  # A world holding none of them: the value is the whole list, in check order.
+  # A row per tool cannot see an accumulator that overwrites instead of
+  # appending, because only one name is ever missing in one.
+  bin="$TMP_ROOT/without-everything"
+  rm -rf -- "$bin"
+  mkdir -p "$bin"
+  run_payload '{"agent_type":"generalist","agent_id":"h1","transcript_path":"/nonexistent"}' "$bin"
+  assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: missing-tools=${1// /,}" \
+    "with none of them the value is the whole list, in check order"
+  [ "$((PASS + FAIL))" -gt "$before" ] || { echo "tools: no row was asserted" >&2; exit 2; }
+}
+tools_table "jq git cat grep tail mkdir"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

@@ -33,10 +33,18 @@
 #            else; `no-jq` and `no-cat` are that set less the one tool;
 #            `none` is a directory that does not exist
 #   rc       the exit status
-#   err      stderr reduced to the arm that wrote it: `parse` is the reader's
-#            refusal of a payload it could not read, `tools` its refusal of a
-#            PATH that cannot read one, `refusal` the hook's own refusal of a
-#            command it read, `-` silence
+#   first    line 1, the hook's own name stripped: every hook opens with
+#            `<hook-name>: <key>=<value>` and replays a captured cause under
+#            it, so position 1 is the contract. A line 1 that is not this
+#            hook's keyed line, or carries no `key=value`, is `malformed` — a
+#            value no row expects, so a diagnostic in front of the key reddens
+#            the row instead of passing as `refusal`. The reader's
+#            own keys are the same in every hook, so `payload=invalid-json` and
+#            `missing-tools=jq` are pinned here as the values themselves.
+#            `{tools}` stands for PAYLOAD_TOOLS, the whole dependency list of
+#            the hook under test, which is what the world with no tools at all
+#            leaves missing. `refusal` is any other key, the hook's own refusal
+#            of a command it read, which the hook's suite pins; `-` is silence
 #
 # Every row runs the hook under `env -i` with HOME, PWD and the world's PATH
 # and nothing else, so a passing row proves the hook read the payload with
@@ -91,51 +99,66 @@ payload_world() { # name tool... -> a directory holding those tools and nothing 
   done
 }
 
-payload_err_kind() { # -> the arm that wrote stderr
-  local text
-  text="$(cat "$PAYLOAD_ROOT/stderr")"
-  case "$text" in
-    "") printf -- '-' ;;
-    *"not valid JSON"*) printf 'parse' ;;
-    *"required to read the hook payload"*) printf 'tools' ;;
-    *) printf 'refusal' ;;
+payload_first() { # -> line 1's key=value, `refusal`, or `malformed`
+  local line="" kv
+  # One line, read in the shell: a `head` here would stop reading while the
+  # writer still writes, and its SIGPIPE would read as an empty stderr.
+  IFS= read -r line <"$PAYLOAD_ROOT/stderr" || :
+  [ -n "$line" ] || { printf -- '-'; return; }
+  # Not this hook's keyed line at all: `malformed`, never `refusal`. The two
+  # were the same value once, and a diagnostic standing where the key belongs
+  # then passed as the hook's own refusal.
+  case "$line" in
+    "$PAYLOAD_PREFIX"*) kv="${line#"$PAYLOAD_PREFIX"}" ;;
+    *) printf 'malformed'; return ;;
+  esac
+  case "$kv" in
+    missing-tools=* | payload=*) printf '%s' "$kv" ;;
+    # The hook's own key for the command it read; the hook's suite pins which.
+    *=*) printf 'refusal' ;;
+    *) printf 'malformed' ;;
   esac
 }
 
-payload_run() { # hook dir path payload -> "rc=N err=KIND"
+payload_run() { # hook dir path payload -> "rc=N first=KEY=VALUE"
   local hook="$1" dir="$2" path="$3" payload="$4" rc=0
   printf '%s' "$payload" | (
     cd "$dir" && env -i HOME="$HOME" PWD="$dir" PATH="$path" "$PAYLOAD_BASH" "$hook" \
       >/dev/null 2>"$PAYLOAD_ROOT/stderr"
   ) || rc=$?
-  printf 'rc=%s err=%s' "$rc" "$(payload_err_kind)"
+  printf 'rc=%s first=%s' "$rc" "$(payload_first)"
 }
 
 PAYLOAD_ROWS="\
 the refusing command under the harness shape is refused, so the shape is read|harness|refusing|tools|2|refusal
 the passing command under the harness shape passes|harness|passing|tools|0|-
-a truncated payload is refused unread rather than skipping the guard|truncated|refusing|tools|2|parse
-a command that is not a string is refused unread|number|-|tools|2|parse
-a command of false is refused unread, not read as an absent one|false|-|tools|2|parse
-a tool_input that is not an object is refused unread|input-string|refusing|tools|2|parse
+a truncated payload is refused unread rather than skipping the guard|truncated|refusing|tools|2|payload=invalid-json
+a command that is not a string is refused unread|number|-|tools|2|payload=invalid-json
+a command of false is refused unread, not read as an absent one|false|-|tools|2|payload=invalid-json
+a tool_input that is not an object is refused unread|input-string|refusing|tools|2|payload=invalid-json
 an empty command is read and passes, not a read failure|harness|empty|tools|0|-
 a payload naming no command passes|no-command|-|tools|0|-
 a top-level command field is read like a nested one|top-level|refusing|tools|2|refusal
-a top-level false is refused unread, not read as an absent one|top-level-false|-|tools|2|parse
+a top-level false is refused unread, not read as an absent one|top-level-false|-|tools|2|payload=invalid-json
 a Copilot toolArgs object is read|copilot-object|refusing|tools|2|refusal
 a Copilot toolArgs JSON string is read|copilot-string|refusing|tools|2|refusal
 the passing command under toolArgs passes, so the shape is read rather than refused|copilot-object|passing|tools|0|-
-a toolArgs string that is not JSON is refused unread rather than skipping the guard|copilot-text|-|tools|2|parse
-without jq the refusing command is refused unread rather than guessed at|harness|refusing|no-jq|2|tools
-without jq even the passing command is refused: nothing was read|harness|passing|no-jq|2|tools
-without cat the passing command is refused unread rather than dying at the read|harness|passing|no-cat|2|tools
-with no tools at all the passing command is refused unread|harness|passing|none|2|tools
+a toolArgs string that is not JSON is refused unread rather than skipping the guard|copilot-text|-|tools|2|payload=invalid-json
+without jq the refusing command is refused unread rather than guessed at|harness|refusing|no-jq|2|missing-tools=jq
+without jq even the passing command is refused: nothing was read|harness|passing|no-jq|2|missing-tools=jq
+without cat the passing command is refused unread rather than dying at the read|harness|passing|no-cat|2|missing-tools=cat
+with no tools at all the passing command is refused unread, naming every tool it asks for|harness|passing|none|2|missing-tools={tools}
 "
 
+# PAYLOAD_TOOLS is the hook's whole dependency list, comma-joined in the order
+# it checks them: the row for a world with no tools at all pins that list, and
+# it is the one expectation these shared rows cannot hold themselves.
 payload_table() { # hook refusing passing [dir]
   local hook="$1" refusing="$2" passing="$3" dir="${4:-$PWD}"
-  local label shape command world rc err row field text path got before=$((PASS + FAIL))
+  [ -n "${PAYLOAD_TOOLS:-}" ] || { echo 'payload-rows: the suite must set PAYLOAD_TOOLS, the dependency list of the hook under test' >&2; exit 2; }
+  local label shape command world rc first row field text path got before=$((PASS + FAIL))
   PAYLOAD_BASH="$(command -v bash)"
+  PAYLOAD_PREFIX="$(basename "$hook" .sh): "
   PAYLOAD_ROOT="${TMP_ROOT:?}/payload-rows"
   rm -rf -- "${TMP_ROOT:?}/payload-rows"
   mkdir -p "$PAYLOAD_ROOT"
@@ -148,8 +171,8 @@ payload_table() { # hook refusing passing [dir]
   echo "=== $(basename "$hook" .sh): the payload reader ==="
   while IFS= read -r row; do
     [ "$row" != "" ] || continue
-    IFS='|' read -r label shape command world rc err <<<"$row"
-    for field in "$label" "$shape" "$command" "$world" "$rc" "$err"; do
+    IFS='|' read -r label shape command world rc first <<<"$row"
+    for field in "$label" "$shape" "$command" "$world" "$rc" "$first"; do
       [ "$field" != "" ] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
     done
     case "$command" in
@@ -175,7 +198,7 @@ payload_table() { # hook refusing passing [dir]
       printf '%s => %s\n' "$label" "$got"
       continue
     fi
-    assert_eq "$got" "rc=$rc err=$err" "$label"
+    assert_eq "$got" "rc=$rc first=${first//\{tools\}/$PAYLOAD_TOOLS}" "$label"
   done <<<"$PAYLOAD_ROWS"
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }

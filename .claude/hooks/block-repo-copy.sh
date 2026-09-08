@@ -4,17 +4,60 @@
 # event: PreToolUse
 # matcher: Bash
 # description: Block a copy (cp, rsync, tar, git clone) whose source names a `.git` or `target` path component and whose destination is under /tmp, /var/tmp or $TMPDIR. Suggests reading the source in place or building a minimal fixture.
-# safety: Temp destinations are commonly RAM-backed tmpfs; a multi-gigabyte tree copy fills the filesystem and every process writing there then fails with ENOSPC. One regex over the raw command decides, in the order the words stand, so nothing is resolved, expanded or stat-ed: a source whose last path component IS `.git` or `target` is expensive by construction, and a destination spelled under a temp root is scratch. Both edges of that component are tested, so a word merely ending in one — a `…/bar.git` clone URL, a `build-target` directory — is not it. A source reached through a variable, and a repository named only by its working-tree path, are not seen; neither is a `tar -czf DEST SRC`, which spells the destination before the source. The reading runs the other way too: the three parts count wherever they stand, a quoted string and a comment tail included, so a read-only command spelling out a copy is refused as the copy it is not.
+# safety: Temp destinations are commonly RAM-backed tmpfs; a multi-gigabyte tree copy fills the filesystem and every process writing there then fails with ENOSPC. One regex over the raw command decides, in the order the words stand, so nothing is resolved, expanded or stat-ed: a source whose last path component IS `.git` or `target` is expensive by construction, and a destination spelled under a temp root is scratch. Both edges of that component are tested, so a word merely ending in one — a `…/bar.git` clone URL, a `build-target` directory — is not it. A source reached through a variable, and a repository named only by its working-tree path, are not seen; neither is a `tar -czf DEST SRC`, which spells the destination before the source. The reading runs the other way too: the three parts count wherever they stand, a quoted string and a comment tail included, so a read-only command spelling out a copy is refused as the copy it is not. Every refusal opens with `block-repo-copy: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # ---
 
 set -euo pipefail
 
-# jq is the only reader of the payload. Without it the command cannot be read,
-# and a command this hook has not read cannot be shown not to be the copy.
-if ! command -v jq >/dev/null 2>&1 || ! command -v cat >/dev/null 2>&1; then
-  echo "block-repo-copy: jq and cat are required to read the hook payload; refusing rather than skipping the guard" >&2
+# The command as it was read, empty until the reader has it: the refusal quotes
+# it, and a refusal can be reached before it is set.
+COMMAND=""
+# Every line this hook writes, and the only place its text lives. The first
+# line is the contract a reader parses, `block-repo-copy: <key>=<value>`: a
+# stable key for the condition and the value acted on — the missing tool, why
+# the payload could not be read, or the copy verb the command spelled. The
+# English explanation and the alternatives follow on later lines.
+# The keyed line stands first, at position 1. What a command this hook runs
+# wrote is captured where the hook reads it and passed here as the cause, so
+# it is replayed under the key rather than ahead of it.
+refuse() { # KEY VALUE [CAUSE]
+  printf 'block-repo-copy: %s=%s\n' "$1" "$2" >&2
+  case "$1=$2" in
+    missing-tools=*)
+      echo "the commands ${2//,/, } are required to read the hook payload and are not on PATH; refusing rather than skipping the guard" >&2
+      ;;
+    payload=invalid-json)
+      echo "the hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
+      ;;
+    refused=*)
+      echo "Refusing a copy of a repository or build tree into scratch space." >&2
+      echo "  command: $COMMAND" >&2
+      echo >&2
+      echo "A source whose last component is .git or target is large by construction, and" >&2
+      echo "temp/scratch filesystems are commonly RAM-backed tmpfs — the copy can fill the" >&2
+      echo "filesystem, after which every process writing there fails with ENOSPC." >&2
+      echo >&2
+      echo "Do one of these instead:" >&2
+      echo "  - Read the source in place. Reading does not mutate it, so no copy is needed" >&2
+      echo "    to leave it unchanged." >&2
+      echo "  - Build a MINIMAL synthetic fixture:" >&2
+      echo '      d=$(mktemp -d); mkdir -p "$d/repo/.git" "$d/repo/target"; touch "$d/repo/f"' >&2
+      ;;
+  esac
+  # The cause a command this hook ran wrote, captured at the site and replayed
+  # here: under the keyed line, never ahead of it.
+  [ -z "${3:-}" ] || printf '%s\n' "$3" >&2
   exit 2
-fi
+}
+
+# jq is the only reader of the payload. Without it the command cannot be read,
+# and a command this hook has not read cannot be shown not to be the copy. The value
+# names every one of them the PATH is missing, in the order checked.
+MISSING=""
+for dependency in jq cat; do
+  command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
+done
+[ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
 INPUT=$(cat)
 
@@ -26,7 +69,7 @@ INPUT=$(cat)
 # an object or as one JSON-encoded string. The null tests are spelled out
 # because jq's `//` reads `false` as absent, and `false` is not a command
 # either.
-if ! COMMAND=$(printf '%s' "$INPUT" \
+COMMAND=$(printf '%s' "$INPUT" \
   | jq -r 'def copilot: .toolArgs
              | if . == null then null elif type == "string" then fromjson else . end
              | if . == null then null elif type == "object" then .command else error end;
@@ -34,10 +77,8 @@ if ! COMMAND=$(printf '%s' "$INPUT" \
            elif .command != null then .command
            elif copilot != null then copilot
            else "" end
-           | if type == "string" then . else error end' 2>/dev/null); then
-  echo "block-repo-copy: hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
-  exit 2
-fi
+           | if type == "string" then . else error end' 2>/dev/null) ||
+  refuse payload invalid-json
 
 # The whole rule, in the order the words stand: a copy verb, then a word whose
 # last path component is `.git` or `target`, then a destination under a temp
@@ -130,18 +171,14 @@ if [[ ! $COMMAND =~ $BLOCK_RE ]]; then
   exit 0
 fi
 
-{
-  echo "Refusing a copy of a repository or build tree into scratch space."
-  echo "  command: $COMMAND"
-  echo
-  echo "A source whose last component is .git or target is large by construction, and"
-  echo "temp/scratch filesystems are commonly RAM-backed tmpfs — the copy can fill the"
-  echo "filesystem, after which every process writing there fails with ENOSPC."
-  echo
-  echo "Do one of these instead:"
-  echo "  - Read the source in place. Reading does not mutate it, so no copy is needed"
-  echo "    to leave it unchanged."
-  echo "  - Build a MINIMAL synthetic fixture:"
-  echo '      d=$(mktemp -d); mkdir -p "$d/repo/.git" "$d/repo/target"; touch "$d/repo/f"'
-} >&2
-exit 2
+# VERB is the second group of the pattern above and the only one that carries
+# a copy verb, so the first line names the verb that matched. The value is a
+# finite set a reader matches on, so the two-word alternative is normalised to
+# one blank: the command may spell `git   clone` or a tab, and its own
+# whitespace is not part of the verb. First word and last word, taken from the
+# match itself, so the set is not written down a second time.
+VERB_HIT=${BASH_REMATCH[2]}
+case "$VERB_HIT" in
+  *[[:space:]]*) VERB_HIT="${VERB_HIT%%[[:space:]]*} ${VERB_HIT##*[[:space:]]}" ;;
+esac
+refuse refused "$VERB_HIT"

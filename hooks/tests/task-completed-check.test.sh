@@ -11,6 +11,11 @@
 # Fixtures are throwaway git repositories built under a HOME of their own;
 # clippy is a fake `cargo` on PATH replaying a scripted exit code and output.
 #
+# Every refusal opens with `task-completed-check: <key>=<value>`, and that line
+# is the contract: the status clippy left, or the git subcommand that could not
+# answer, is the value. The diagnostics under it are git's and cargo's own
+# words, pinned as themselves.
+#
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (a no-op hook, an always-block hook) can be run against these same
 # assertions.
@@ -23,6 +28,7 @@ PASS=0
 FAIL=0
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+ERR_FILE="$TMP_ROOT/stderr"
 
 BIN_DIR="$TMP_ROOT/bin"
 mkdir -p "$BIN_DIR"
@@ -98,6 +104,12 @@ assert_contains() {
   fi
 }
 
+# The first-line reader. This suite's runs vary the repository and the fake
+# cargo rather than one command, which the shared table's modes do not express,
+# so `first_line` is the half of that library it uses.
+# shellcheck source=lib/first-line.sh
+. "$TEST_DIR/lib/first-line.sh"
+
 echo "task-completed-check: nothing changed"
 REPO="$(new_repo clean)"
 run_hook "$REPO" FAKE_RC=0
@@ -111,7 +123,8 @@ run_hook "$REPO" FAKE_RC=0
 assert_eq "$rc" 0 "a passing clippy exits 0"
 assert_contains "$(cat "$ARGS_LOG")" "clippy" "a new file alone still runs clippy"
 run_hook "$REPO" FAKE_RC=101 FAKE_OUT="error: unused variable"
-assert_eq "$rc" 2 "a new file alone can still block the task"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=task-completed-check: clippy=101" \
+  "a new file alone can still block the task, clippy's status the value"
 assert_contains "$err" "error: unused variable" "carries clippy's own diagnostic"
 
 echo "task-completed-check: an untracked file seen from a subdirectory"
@@ -153,8 +166,8 @@ run_hook "$REPO" FAKE_RC=101 FAKE_OUT="warning: build failed, waiting for other 
 assert_eq "$rc" 2 "a failure printing no error: line still blocks"
 assert_contains "$err" "waiting for other jobs" "reports what the failed run did print"
 run_hook "$REPO" FAKE_RC=1 FAKE_OUT=""
-assert_eq "$rc" 2 "a failure printing nothing at all still blocks"
-assert_contains "$err" "Clippy failed" "names the failure when there is no output to quote"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=task-completed-check: clippy=1" \
+  "a failure printing nothing at all still blocks, its status the value"
 run_hook "$REPO" FAKE_RC=0 FAKE_OUT="error: this line is not a verdict"
 assert_eq "$rc" 0 "a successful run is not blocked by the word error in its output"
 
@@ -171,14 +184,16 @@ REPO="$(new_repo badconfig)"
 printf 'pub fn added() {}\n' >"$REPO/src/added.rs"
 printf 'this is not a config line\n' >"$REPO/.git/config"
 run_hook "$REPO" FAKE_RC=0
-assert_eq "$rc" 2 "an unreadable .git/config blocks"
-assert_contains "$err" "rev-parse failed" "names the probe that could not answer"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=task-completed-check: git=rev-parse" \
+  "an unreadable .git/config blocks, naming the probe that could not answer"
 
 echo "task-completed-check: a changed set larger than the pipe buffer"
 REPO="$(new_repo bigset)"
 printf 'pub fn added() {}\n' >"$REPO/src/added.rs"
-# precondition: Sorts after src/, and long enough that the filter cannot have read it all
-# before an early-exiting reader would have quit on the .rs file.
+# The padding sorts after src/, and is long enough that the changed-set filter
+# cannot have read it all before an early-exiting reader would have quit on the
+# .rs file: without it a filter that stops at its first match reaches the same
+# verdict, and this case would establish nothing.
 mkdir -p "$REPO/zpad"
 i=0
 while [ "$i" -lt 1200 ]; do
@@ -213,7 +228,8 @@ set +e
   >/dev/null 2>"$TMP_ROOT/stderr"
 rc=$?
 set -e
-assert_eq "$rc" 2 "an unreadable changed set blocks rather than passing"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=task-completed-check: git=ls-files" \
+  "an unreadable changed set blocks rather than passing, naming the probe"
 assert_contains "$(cat "$TMP_ROOT/stderr")" "unable to read index" "carries git's own failure"
 
 echo "task-completed-check: no git on PATH"
@@ -246,8 +262,8 @@ set +e
   >/dev/null 2>"$TMP_ROOT/stderr"
 rc=$?
 set -e
-assert_eq "$rc" 2 "a missing cargo blocks rather than passing"
-assert_contains "$(cat "$TMP_ROOT/stderr")" "Clippy failed" "says the lint run failed"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=task-completed-check: clippy=127" \
+  "a missing cargo blocks rather than passing, and the status says which failure it was"
 
 echo
 echo "passed: $PASS  failed: $FAIL"
