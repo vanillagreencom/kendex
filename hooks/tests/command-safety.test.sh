@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Tests for the command-safety hook. It applies whatever
+# COMMAND_SAFETY_DENY_PATTERN the project ships, and every refusal opens with
+# `command-safety: <key>=<value>` — the key naming the condition, the value
+# naming the state of the policy or the status a check left. `check` asserts
+# the exit status of a row; `assert_first` pins the line the refusal opened
+# with, which is what a reader parses.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -22,38 +28,44 @@ settings() { # [SOURCE_FILE]: the file whose one COMMAND_SAFETY_DENY_PATTERN lin
 settings
 passed=0
 failed=0
-check() { # EXPECTED COMMAND LABEL
+# `first` is the line the run opened with, `-` for silence; the row after a
+# check pins it where the condition has one.
+first=-
+check() { # EXPECTED COMMAND LABEL [CWD] [HOOK]
   local expected="$1" command="$2" label="$3" payload_cwd="${4:-$repo}" payload_hook="${5:-$hook}" payload status=0 output
   payload="$(jq -nc --arg command "$command" --arg cwd "$payload_cwd" '{tool_input:{command:$command},cwd:$cwd}')"
-  output="$(printf '%s' "$payload" | bash "$payload_hook" 2>&1)" || status=$?
+  output="$(printf '%s' "$payload" | bash "$payload_hook" 2>"$scratch/stderr")" || status=$?
+  first=""
+  IFS= read -r first <"$scratch/stderr" || :
+  [ -n "$first" ] || first=-
   if [ "$status" -eq "$expected" ]; then
     printf 'PASS %s\n' "$label"
     passed=$((passed + 1))
   else
-    printf 'FAIL %s: exit %s, expected %s: %s\n' "$label" "$status" "$expected" "$output"
+    printf 'FAIL %s: exit %s, expected %s: %s%s\n' "$label" "$status" "$expected" "$output" "$(cat "$scratch/stderr")"
     failed=$((failed + 1))
   fi
 }
-check 2 'qs -c vshell' 'live config launch'
-check 2 'qs -p quickshell/vshell' 'live path launch'
-check 2 'pkill quickshell' 'broad process-name kill'
-check 2 'pkill -f quickshell' 'process kill with flags'
-check 2 'git status && qs -c vshell' 'launch in a compound command'
-check 0 'scripts/validate qml' 'isolated validation'
-check 0 'git status' 'unrelated shell command'
-check 0 'qs -c test-fixture' 'a different configured shell'
 
-settings "$ROOT/kendex.settings.toml"
-while IFS='|' read -r expected command label; do
-  check "$expected" "$command" "$label"
-done <<'ROWS'
-2|systemd-run --user --scope -p MemoryMax=64M cargo test -p kendex-core|a systemd-run scope capped in megabytes is refused
-2|systemd-run --user --scope --property=MemoryHigh=512K ./target/debug/review_fixes|a systemd-run scope capped in kilobytes is refused
-0|systemd-run --user --scope --slice=agents.slice cargo test -p kendex-core|an uncapped systemd-run scope is allowed
-0|systemd-run --user --scope -p MemoryMax=2G cargo test -p kendex-core|a systemd-run scope capped at a gigabyte is allowed
-ROWS
-settings
+assert_first() { # WANT LABEL
+  if [ "$first" = "$1" ]; then
+    printf 'PASS %s\n' "$2"
+    passed=$((passed + 1))
+  else
+    printf 'FAIL %s: first line %s, expected %s\n' "$2" "$first" "$1"
+    failed=$((failed + 1))
+  fi
+}
+# The two shipped policies, kendex.settings.toml's own value and the example in
+# docs/authoring/command-safety.md, are the repository's content rather than
+# this hook's behaviour; a tools/guard lane owns them, with its control in
+# tools/tests/guard.test.sh. What stays here is that the hook applies whatever
+# policy it is given: a project pattern refuses, and a command outside it does
+# not, whichever project ships the pattern.
+printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "^never-matches-anything$"\n' \
+  >"$repo/kendex.settings.toml"
 check 0 'systemd-run --user --scope -p MemoryMax=64M cargo test -p kendex-core' 'the memory-cap refusal is the project pattern, not the hook'
+settings
 
 printf '[env]\n' >"$repo/kendex.settings.toml"
 check 0 'git status' 'an unconfigured project leaves the hook inactive'
@@ -61,45 +73,75 @@ check 0 'git status' 'a global hook outside Git leaves the hook inactive' /
 mkdir -p "$scratch/outside"
 printf 'gitdir: /missing\n' >"$scratch/outside/.git"
 check 2 'git status' 'an unresolved Git worktree refuses' "$scratch/outside"
+assert_first 'command-safety: git=unreadable' 'and the git key names the working directory it could not resolve'
 mv "$scratch/outside/.git" "$scratch/unresolved-git-marker"
 printf '[env\n' >"$repo/kendex.settings.toml"
 check 2 'git status' 'malformed project settings refuse'
+assert_first 'command-safety: settings=unreadable' 'and the value says the settings could not be read'
 settings
 
-status=0
-jq -nc --arg cwd "$repo" '{tool_input:{cmd:"qs -c vshell"},cwd:$cwd}' | bash "$hook" >/dev/null 2>&1 || status=$?
-[ "$status" -eq 2 ] || { printf 'FAIL cmd input\n'; failed=$((failed + 1)); }
-status=0
-jq -nc --arg cwd "$repo" '{tool_input:{command:["qs","-c","vshell"]},cwd:$cwd}' | bash "$hook" >/dev/null 2>&1 || status=$?
-[ "$status" -eq 2 ] || { printf 'FAIL argument-array input\n'; failed=$((failed + 1)); }
-status=0
-jq -nc --arg cwd "$repo" '{toolName:"bash",toolArgs:{command:"qs -c vshell"},cwd:$cwd}' | bash "$hook" >/dev/null 2>&1 || status=$?
-[ "$status" -eq 2 ] || { printf 'FAIL Copilot object input\n'; failed=$((failed + 1)); }
-status=0
-jq -nc --arg cwd "$repo" '{toolName:"bash",toolArgs:{command:"git status"},cwd:$cwd}' | bash "$hook" >/dev/null 2>&1 || status=$?
-[ "$status" -eq 0 ] || { printf 'FAIL allowed Copilot object input\n'; failed=$((failed + 1)); }
-status=0
-jq -nc --arg cwd "$repo" '{toolName:"bash",toolArgs:"{\"command\":\"qs -c vshell\"}",cwd:$cwd}' | bash "$hook" >/dev/null 2>&1 || status=$?
-[ "$status" -eq 2 ] || { printf 'FAIL Copilot string input\n'; failed=$((failed + 1)); }
-status=0
-jq -nc --arg cwd "$repo" '{toolName:"bash",toolArgs:"{\"command\":\"git status\"}",cwd:$cwd}' | bash "$hook" >/dev/null 2>&1 || status=$?
-[ "$status" -eq 0 ] || { printf 'FAIL allowed Copilot string input\n'; failed=$((failed + 1)); }
+# Every payload shape a shipped harness sends, each counted as a row rather
+# than a bare FAIL: the two spellings of the command field, an argument array,
+# and Copilot's object and string forms in both directions.
+shape() { # EXPECTED PAYLOAD_JSON LABEL
+  local expected="$1" payload="$2" label="$3" status=0 output
+  output="$(printf '%s' "$payload" | bash "$hook" 2>"$scratch/stderr")" || status=$?
+  first=""
+  IFS= read -r first <"$scratch/stderr" || :
+  [ -n "$first" ] || first=-
+  if [ "$status" -eq "$expected" ]; then
+    printf 'PASS %s\n' "$label"
+    passed=$((passed + 1))
+  else
+    printf 'FAIL %s: exit %s, expected %s: %s%s\n' "$label" "$status" "$expected" "$output" "$(cat "$scratch/stderr")"
+    failed=$((failed + 1))
+  fi
+}
+# The table counts its own rows: an emptied row list is a refusal, never a
+# silently shorter run.
+before=$((passed + failed))
+while IFS='|' read -r expected filter label; do
+  [ -n "$expected" ] || continue
+  shape "$expected" "$(jq -nc --arg cwd "$repo" "$filter")" "$label"
+done <<'SHAPES'
+2|{tool_input:{cmd:"qs -c vshell"},cwd:$cwd}|a refused command under the cmd field
+2|{tool_input:{command:["qs","-c","vshell"]},cwd:$cwd}|a refused command as an argument array
+2|{toolName:"bash",toolArgs:{command:"qs -c vshell"},cwd:$cwd}|a refused command under a Copilot toolArgs object
+0|{toolName:"bash",toolArgs:{command:"git status"},cwd:$cwd}|an allowed command under a Copilot toolArgs object
+2|{toolName:"bash",toolArgs:"{\"command\":\"qs -c vshell\"}",cwd:$cwd}|a refused command under a Copilot toolArgs string
+0|{toolName:"bash",toolArgs:"{\"command\":\"git status\"}",cwd:$cwd}|an allowed command under a Copilot toolArgs string
+SHAPES
+[ "$((passed + failed))" -gt "$before" ] || { printf 'FAIL no payload shape was asserted\n'; failed=$((failed + 1)); }
 
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "^other-command$"\n' >"$repo/kendex.settings.toml"
 check 0 'qs -c vshell' 'policy is configured, not tied to Quickshell'
 check 2 'other-command' 'a different project policy takes effect'
+assert_first 'command-safety: refused=policy' 'a command the policy matches names the policy'
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "BLOCK_THIS"\n' >"$repo/kendex.settings.toml"
 check 2 "printf '%s' 'BLOCK_THIS'" 'matching quoted text is still refused'
+check 0 'git status' 'a command outside the policy passes'
+assert_first - 'a command it allows says nothing at all'
 
+# Every state of the policy the hook can find, each its own value under the
+# settings key, so a reader tells a broken pattern from an absent one.
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "["\n' >"$repo/kendex.settings.toml"
 check 2 'scripts/validate qml' 'invalid pattern refuses'
+assert_first 'command-safety: settings=invalid-pattern' 'and the value says the pattern is unreadable'
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = ""\n' >"$repo/kendex.settings.toml"
 check 2 'scripts/validate qml' 'empty pattern refuses'
-for payload in 'not JSON' '{"tool_input":{"command":false}}' '{"tool_input":{}}'; do
-  status=0
-  printf '%s' "$payload" | bash "$hook" >/dev/null 2>&1 || status=$?
-  [ "$status" -eq 2 ] || { printf 'FAIL invalid input\n'; failed=$((failed + 1)); }
-done
+assert_first 'command-safety: settings=empty' 'and the value says the pattern is empty'
+settings
+before=$((passed + failed))
+while IFS='|' read -r payload label; do
+  [ -n "$payload" ] || continue
+  shape 2 "$payload" "$label"
+  assert_first 'command-safety: payload=invalid-json' "the payload key names it: $label"
+done <<'PAYLOADS'
+not JSON|a payload that is not JSON is refused unread
+{"tool_input":{"command":false}}|a command that is not a string is refused unread
+{"tool_input":{}}|a payload naming no command is refused unread
+PAYLOADS
+[ "$((passed + failed))" -gt "$before" ] || { printf 'FAIL no unreadable payload was asserted\n'; failed=$((failed + 1)); }
 
 global="$scratch/global/.claude"
 hostile="$scratch/hostile"
@@ -115,6 +157,7 @@ check 0 'git status' 'global delivery prefers its installed loader' "$hostile" "
 [ ! -e "$hostile_marker" ] || { printf 'FAIL global delivery ran the project loader\n'; failed=$((failed + 1)); }
 mv "$global/skills/commit-guards/scripts/lib" "$scratch/absent-global-lib"
 check 2 'git status' 'missing global support refuses without a project fallback' "$hostile" "$global/hooks/command-safety.sh"
+assert_first 'command-safety: settings=no-loader' 'and the settings key names the missing loader'
 [ ! -e "$hostile_marker" ] || { printf 'FAIL missing global support ran the project loader\n'; failed=$((failed + 1)); }
 
 settings
@@ -124,6 +167,7 @@ check 2 'qs -c vshell' 'copy delivery finds the installed dependency'
 check 0 'scripts/validate qml' 'copy delivery allows validation'
 printf 'return 1\n' >"$repo/.claude/skills/commit-guards/scripts/lib/common.sh"
 check 2 'scripts/validate qml' 'a failed settings loader refuses with the blocking exit code'
+assert_first 'command-safety: exit=1' 'and the exit key carries the status the check left'
 mv "$repo/.claude/skills/commit-guards/scripts/lib" "$scratch/absent-lib"
 check 2 'scripts/validate qml' 'missing settings support refuses'
 printf '%s passed, %s failed\n' "$passed" "$failed"

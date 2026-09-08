@@ -12,9 +12,45 @@
 # command that can legitimately fail is guarded so this always reaches exit 0.
 set -euo pipefail
 
+# kendex's own report, empty until it has run: the drift notice passes it
+# through.
+OUTPUT=""
+# Every line this hook writes, and the only place its text lives. The first
+# line is the contract a reader parses, `session-drift-check: <key>=<value>`: a
+# stable key for the condition and the value acted on — the missing tool, the
+# unreachable project directory, what became of the check, or the status an
+# unguarded command left. The English explanation and kendex's own report
+# follow it. Every line goes to stdout, the session-start context channel.
+notice() { # KEY VALUE [DETAIL]
+  printf 'session-drift-check: %s=%s\n' "$1" "$2"
+  case "$1=$2" in
+    tools=*) printf 'kendex drift check skipped: %s is not on PATH\n' "$2" ;;
+    payload=invalid-json) echo "kendex drift check skipped: the session payload is not valid JSON" ;;
+    path=*) printf 'kendex check could not run: project directory %s is not accessible; drift status unknown\n' "$2" ;;
+    drift=found) printf '%s\n' "$OUTPUT" ;;
+    check=could-not-run)
+      # The exit-2 arm with nothing to relay is the one line that ends without
+      # a colon; every other rendering of this notice, the embedded hook in
+      # crates/core/src/drift/hook.rs and the Pi extension included, prints the
+      # colon and the report under it, a blank line where there is none.
+      printf 'kendex check could not run (exit %s); drift status unknown' "${3:-}"
+      if [ "${3:-}" = 2 ] && [ -z "$OUTPUT" ]; then
+        printf '\n'
+      else
+        printf ':\n%s\n' "$OUTPUT"
+      fi
+      ;;
+    check=incomplete)
+      printf 'kendex check incomplete (exit %s); some drift status unknown:\n%s\n' "${3:-}" "$OUTPUT"
+      ;;
+    exit=*) printf 'kendex check could not run: drift hook failed at line %s (exit %s); drift status unknown\n' "${3:-}" "$2" ;;
+  esac
+  return 0
+}
+
 # Reaching this trap means an UNGUARDED command failed. Say so: an unexpected
 # failure that printed nothing would read as a clean install.
-trap 'rc=$?; echo "kendex check could not run: drift hook failed at line $LINENO (exit $rc); drift status unknown"; exit 0' ERR
+trap 'rc=$?; notice exit "$rc" "$LINENO"; exit 0' ERR
 
 INPUT=$(cat || true)
 
@@ -33,11 +69,11 @@ fi
 # unread payload cannot be shown to be a fresh start, so the report is skipped
 # rather than repeated on every compact.
 if ! command -v jq >/dev/null 2>&1; then
-  echo "kendex drift check skipped: jq is not on PATH to read the session payload"
+  notice tools jq
   exit 0
 fi
 if ! SOURCE=$(printf '%s' "$INPUT" | jq -r '.source // ""' 2>/dev/null); then
-  echo "kendex drift check skipped: the session payload is not valid JSON"
+  notice payload invalid-json
   exit 0
 fi
 case "$SOURCE" in
@@ -49,7 +85,7 @@ esac
 # The hook only exists because kendex installed it, so a missing binary is
 # almost always a PATH gap worth one line — never a blocker.
 if ! command -v kendex >/dev/null 2>&1; then
-  echo "kendex drift check skipped: kendex is not on PATH"
+  notice tools kendex
   exit 0
 fi
 
@@ -58,7 +94,7 @@ fi
 # `--` so a directory whose name starts with a dash is a path, not an option.
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
 if ! cd -- "$PROJECT_DIR" 2>/dev/null; then
-  echo "kendex check could not run: project directory $PROJECT_DIR is not accessible; drift status unknown"
+  notice path "$PROJECT_DIR"
   exit 0
 fi
 
@@ -72,9 +108,8 @@ case "$RC" in
     exit 0
     ;;
   1)
-    # Drift found, or packages awaiting evaluation: stdout is the
-    # session-start context channel.
-    printf '%s\n' "$OUTPUT"
+    # Drift found, or packages awaiting evaluation.
+    notice drift found
     ;;
   2)
     # kendex could not check, in part or at all. A report carrying a
@@ -84,21 +119,14 @@ case "$RC" in
     # comes from before the check read anything, so nothing was checked
     # and it reads as could-not-run.
     case "$OUTPUT" in
-      "")
-        echo "kendex check could not run (exit 2); drift status unknown"
-        ;;
-      Error:* | error:*)
-        printf 'kendex check could not run (exit 2); drift status unknown:\n%s\n' "$OUTPUT"
-        ;;
-      *)
-        printf 'kendex check incomplete (exit 2); some drift status unknown:\n%s\n' "$OUTPUT"
-        ;;
+      "" | Error:* | error:*) notice check could-not-run "$RC" ;;
+      *) notice check incomplete "$RC" ;;
     esac
     ;;
   *)
     # Anything else is not a kendex verdict: a signal, a timeout, a
     # binary that could not start.
-    printf 'kendex check could not run (exit %s); drift status unknown:\n%s\n' "$RC" "$OUTPUT"
+    notice check could-not-run "$RC"
     ;;
 esac
 

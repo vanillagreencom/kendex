@@ -13,14 +13,51 @@ set -euo pipefail
 # The marker the commit-guards installer ends every hook line it writes with.
 MARKER="# kendex-guards-hook"
 
+# Every line this hook writes, and the only place its text lives. The first
+# line is the contract a reader parses, `pre-commit-check: <key>=<value>`: a
+# stable key for the condition and the value acted on — the missing tool, the
+# word that would skip the armed hooks, whether this repository is armed, or
+# the directory this lane judged. The English explanation and the rewrites
+# follow on later lines. Only the caller decides the status: `judged` is a
+# notice beside an allowed command, the rest are refusals.
+message() { # KEY VALUE
+  printf 'pre-commit-check: %s=%s\n' "$1" "$2" >&2
+  case "$1=$2" in
+    tools=*)
+      echo "$2 is required to read the hook payload; refusing rather than skipping the guard" >&2
+      ;;
+    payload=invalid-json)
+      echo "the hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
+      ;;
+    # The bypass refusal is written for the person who did not mean it. That is
+    # the common case and the expensive one: this hook reads words, so an honest
+    # commit message about the flag is refused exactly like the flag, and a
+    # refusal that only says "no" sends them to read the hook. So it names the
+    # word, splits the two cases, and gives the rewrite for each.
+    bypass=*)
+      echo "refusing this command. The word '$2' would skip this repository's armed git hooks, and the commit-msg gate with them, so nothing would check this commit or its message." >&2
+      echo "  If you meant it: git runs the installed pre-commit and commit-msg hooks itself, so commit without that word." >&2
+      echo "  If you did not: this hook reads whitespace-separated words, not shell, so that word counts wherever it stands, a commit message, a heredoc body and a comment tail included. Three ways out, cheapest first: split the command so the text and the commit are separate calls; pass the message with 'git commit -F <file>'; or reword so it is not a word of its own." >&2
+      ;;
+    # One message, because the flat rule has one failure: not armed. Which of an
+    # empty core.hooksPath, a redirect, a foreign hook or half a pair it was is
+    # the taxonomy that kept answering wrongly; `kendex guard check` does know.
+    armed=no)
+      echo "this repository's git hooks are not armed by kendex in $PWD, so nothing checks this commit — run 'kendex guard install' (this hook does not run a repository's own scripts on its behalf), 'kendex guard check' says what the package makes of it, or remove this hook" >&2
+      ;;
+    judged=*)
+      echo "the command moves repositories (-C, --git-dir, --work-tree, cd, GIT_DIR, or GIT_WORK_TREE); this hook judged $2 only — the target repository is gated by its own armed git pre-commit hook, if any (kendex guard install there)" >&2
+      ;;
+  esac
+}
+
 # jq is the only reader of the payload, and grep is what reads the marker out of
 # a hook file. Without them the command cannot be read, or an armed repository
-# cannot be told from an unarmed one, and this hook refuses either way.
-if ! command -v jq >/dev/null 2>&1 || ! command -v cat >/dev/null 2>&1 \
-  || ! command -v grep >/dev/null 2>&1; then
-  echo "pre-commit-check: jq, cat and grep are required to read the hook payload; refusing rather than skipping the guard" >&2
-  exit 2
-fi
+# cannot be told from an unarmed one, and this hook refuses either way. jq leads
+# so the world with no tools at all names it.
+for dependency in jq cat grep; do
+  command -v "$dependency" >/dev/null 2>&1 || { message tools "$dependency"; exit 2; }
+done
 
 INPUT=$(cat)
 
@@ -32,7 +69,7 @@ INPUT=$(cat)
 # an object or as one JSON-encoded string. The null tests are spelled out
 # because jq's `//` reads `false` as absent, and `false` is not a command
 # either.
-if ! COMMAND=$(printf '%s' "$INPUT" \
+COMMAND=$(printf '%s' "$INPUT" \
   | jq -r 'def copilot: .toolArgs
              | if . == null then null elif type == "string" then fromjson else . end
              | if . == null then null elif type == "object" then .command else error end;
@@ -40,10 +77,8 @@ if ! COMMAND=$(printf '%s' "$INPUT" \
            elif .command != null then .command
            elif copilot != null then copilot
            else "" end
-           | if type == "string" then . else error end' 2>/dev/null); then
-  echo "pre-commit-check: hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
-  exit 2
-fi
+           | if type == "string" then . else error end' 2>/dev/null) ||
+  { message payload invalid-json; exit 2; }
 
 # One rewrite before the words are read, and only one. bash(1) defines a
 # metacharacter as a character that separates words when unquoted, and lists
@@ -153,7 +188,7 @@ fi
 # names the directory it judged and leaves the target to the target's own hook.
 elsewhere_notice() {
   [ -z "$MOVES" ] && return 0
-  echo "pre-commit-check: the command moves repositories (-C, --git-dir, --work-tree, cd, GIT_DIR, or GIT_WORK_TREE); this hook judged $PWD only — the target repository is gated by its own armed git pre-commit hook, if any (kendex guard install there)" >&2
+  message judged "$PWD"
 }
 
 HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null) || {
@@ -183,28 +218,17 @@ if [ "$HOOKS_PATH_STATUS" -eq 1 ] \
   ARMED=1
 fi
 # An armed hook means git gates the commit; a word sidestepping it is refused.
-# The refusal is written for the person who did not mean it. That is the common
-# case and the expensive one: this hook reads words, so an honest commit message
-# about the flag is refused exactly like the flag, and a refusal that only says
-# "no" sends them to read the hook. So it names the word, splits the two cases,
-# and gives the rewrite for each.
 if [ -n "$ARMED" ]; then
   [ -n "$BYPASS" ] || exit 0
-  echo "pre-commit-check: refusing this command. The word '$BYPASS' would skip this repository's armed git hooks, and the commit-msg gate with them, so nothing would check this commit or its message." >&2
-  echo "  If you meant it: git runs the installed pre-commit and commit-msg hooks itself, so commit without that word." >&2
-  echo "  If you did not: this hook reads whitespace-separated words, not shell, so that word counts wherever it stands, a commit message, a heredoc body and a comment tail included. Three ways out, cheapest first: split the command so the text and the commit are separate calls; pass the message with 'git commit -F <file>'; or reword so it is not a word of its own." >&2
+  message bypass "$BYPASS"
   exit 2
 fi
-elsewhere_notice
-
 # Nothing here carries our marker, and this lane does not stand in. Arming is
 # the one act that says a person wants this repository's committed scripts run
 # on their commits, and it is local: git clones no hooks, so running one here
 # would put execution behind a checkout nobody armed. The commit is refused
-# instead, and the refusal names the command that fixes it.
-#
-# One message, because the flat rule has one failure: not armed. Which of an
-# empty core.hooksPath, a redirect, a foreign hook or half a pair it was is the
-# taxonomy that kept answering wrongly; `kendex guard check` does know.
-echo "pre-commit-check: this repository's git hooks are not armed by kendex in $PWD, so nothing checks this commit — run 'kendex guard install' (this hook does not run a repository's own scripts on its behalf), 'kendex guard check' says what the package makes of it, or remove this hook" >&2
+# instead, and the refusal names the command that fixes it. The verdict leads
+# and the directory notice follows it, so the first line is the refusal's.
+message armed no
+elsewhere_notice
 exit 2

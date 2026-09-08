@@ -10,25 +10,75 @@
 
 set -euo pipefail
 
-# jq reads the payload and git answers the one question. Without either the
-# command cannot be judged, and an unjudged command is refused.
-if ! command -v jq >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1 || ! command -v cat >/dev/null 2>&1; then
-  echo "block-worktree-refresh: jq, git and cat are required to read the hook payload and the worktree; refusing rather than skipping the guard" >&2
-  exit 2
-fi
-
-INPUT=$(cat) || {
-  echo "block-worktree-refresh: could not read the hook payload from stdin; refusing rather than skipping the guard" >&2
+# What the refusals name, empty until each is known: the kendex verb, the
+# working directory judged, the global form of that verb, the .git entry git
+# could not read, and git's own words on a question it could not answer.
+VERB=""
+CWD=""
+GLOBAL_FORM=""
+AT=""
+REASON=""
+# Every line this hook writes, and the only place its text lives. The first
+# line is the contract a reader parses, `block-worktree-refresh: <key>=<value>`:
+# a stable key for the condition and the value acted on — the missing tool, why
+# the payload could not be read, the verb refused, or git's exit status. The
+# English explanation and the two forms that are right follow on later lines.
+refuse() { # KEY VALUE
+  printf 'block-worktree-refresh: %s=%s\n' "$1" "$2" >&2
+  case "$1=$2" in
+    tools=*)
+      echo "$2 is required to read the hook payload and the worktree; refusing rather than skipping the guard" >&2
+      ;;
+    payload=unreadable)
+      echo "the hook payload could not be read from stdin; refusing rather than skipping the guard" >&2
+      ;;
+    payload=empty)
+      echo "the hook payload is empty, which would read as an absent command; refusing rather than skipping the guard" >&2
+      ;;
+    payload=invalid-json)
+      echo "the hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
+      ;;
+    payload=invalid-cwd)
+      echo "the payload's cwd is not a string; refusing rather than skipping the guard" >&2
+      ;;
+    moved=*)
+      echo "refusing 'kendex $VERB' at project scope after a cd or pushd in the same command: the directory the write lands in cannot be established from the command's words." >&2
+      echo "  Run kendex from the main checkout as its own command (the first line of 'git worktree list' names it), or pass $GLOBAL_FORM for a global change." >&2
+      ;;
+    refused=*)
+      echo "refusing 'kendex $VERB' at project scope from the linked worktree $CWD." >&2
+      echo "  The project install is registered to the main checkout (the first line of 'git worktree list'); a project-scope write from here renders into that checkout and removes what it does not expect there." >&2
+      echo "  Run the same command from the main checkout, or pass $GLOBAL_FORM for a global change. Reads (kendex verify, check, list) are not refused." >&2
+      ;;
+    git=unreadable)
+      echo "$AT/.git exists but git could not read a repository there, so whether $CWD is a linked worktree is unknown and the write is refused" >&2
+      ;;
+    git=unresolvable)
+      echo "the git directories git named under $CWD could not be entered, so the write is refused" >&2
+      ;;
+    git=*)
+      echo "git could not say whether $CWD is a linked worktree, so the write is refused:" >&2
+      printf '%s\n' "$REASON" >&2
+      ;;
+  esac
   exit 2
 }
+
+# jq reads the payload and git answers the one question. Without either the
+# command cannot be judged, and an unjudged command is refused. jq leads so the
+# world with no tools at all names it.
+for dependency in jq git cat; do
+  command -v "$dependency" >/dev/null 2>&1 || refuse tools "$dependency"
+done
+
+# cat's own diagnostic is dropped so the refusal's keyed line is the first
+# line of this hook's stderr, as it is for every other condition.
+INPUT=$(cat 2>/dev/null) || refuse payload unreadable
 # An empty payload is no payload: jq reads nothing from it and says nothing,
 # which would pass as an absent command.
 case "$INPUT" in
   *[![:space:]]*) ;;
-  *)
-    echo "block-worktree-refresh: the hook payload is empty; refusing rather than skipping the guard" >&2
-    exit 2
-    ;;
+  *) refuse payload empty ;;
 esac
 
 # A payload that does not parse, or that names a command which is not a
@@ -39,7 +89,7 @@ esac
 # an object or as one JSON-encoded string. The null tests are spelled out
 # because jq's `//` reads `false` as absent, and `false` is not a command
 # either.
-if ! COMMAND=$(printf '%s' "$INPUT" \
+COMMAND=$(printf '%s' "$INPUT" \
   | jq -r 'def copilot: .toolArgs
              | if . == null then null elif type == "string" then fromjson else . end
              | if . == null then null elif type == "object" then .command else error end;
@@ -47,10 +97,8 @@ if ! COMMAND=$(printf '%s' "$INPUT" \
            elif .command != null then .command
            elif copilot != null then copilot
            else "" end
-           | if type == "string" then . else error end' 2>/dev/null); then
-  echo "block-worktree-refresh: hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
-  exit 2
-fi
+           | if type == "string" then . else error end' 2>/dev/null) ||
+  refuse payload invalid-json
 
 # The verb as a word after a `kendex` word, judged one segment at a time: a
 # segment is the text between two of `;`, `&`, `|`, `(`, `)` and a line end,
@@ -94,7 +142,6 @@ CHECK_RE='(^|[[:space:]])(--check|-c)([[:space:]]|$)'
 # the one the write lands in; such a command is refused whatever that
 # directory says, since the effective one cannot be established from words.
 MOVE_RE='(^|[^[:alnum:]_.-])(cd|pushd)([[:space:]]|$)'
-VERB=""
 MOVED=""
 while IFS= read -r SEGMENT; do
   case "$SEGMENT" in
@@ -138,20 +185,17 @@ case "$VERB" in
   *) GLOBAL_FORM='--scope global (or --global)' ;;
 esac
 if [ -n "$MOVED" ]; then
-  {
-    echo "block-worktree-refresh: refusing 'kendex $VERB' at project scope after a cd or pushd in the same command: the directory the write lands in cannot be established from the command's words."
-    echo "  Run kendex from the main checkout as its own command (the first line of 'git worktree list' names it), or pass $GLOBAL_FORM for a global change."
-  } >&2
-  exit 2
+  refuse moved "$VERB"
 fi
 
 # The working directory is the payload's cwd where the harness sends one
 # (Claude Code, Codex, Gemini CLI and Copilot), else the directory the hook
 # runs in (the Pi carrier).
+# The assignment stands inside the condition: bare, its own status would end
+# the script under errexit and the empty-cwd test below would never run.
 if ! CWD=$(printf '%s' "$INPUT" \
   | jq -r 'if .cwd == null then "" elif (.cwd | type) == "string" then .cwd else error end' 2>/dev/null); then
-  echo "block-worktree-refresh: the payload's cwd is not a string; refusing rather than skipping the guard" >&2
-  exit 2
+  refuse payload invalid-cwd
 fi
 [ -n "$CWD" ] || CWD=$PWD
 
@@ -179,8 +223,7 @@ if ! DIRS=$(git -C "$CWD" rev-parse --git-dir --git-common-dir 2>/dev/null); the
       AT=$(cd -- "$CWD" 2>/dev/null && pwd -P) || AT=$CWD
       while :; do
         if [ -e "$AT/.git" ] || [ -L "$AT/.git" ]; then
-          echo "block-worktree-refresh: $AT/.git exists but git could not read a repository there, so whether $CWD is a linked worktree is unknown and the write is refused" >&2
-          exit 2
+          refuse git unreadable
         fi
         [ "$AT" != / ] || exit 0
         AT=${AT%/*}
@@ -188,9 +231,9 @@ if ! DIRS=$(git -C "$CWD" rev-parse --git-dir --git-common-dir 2>/dev/null); the
       done
       ;;
   esac
-  echo "block-worktree-refresh: git could not say whether $CWD is a linked worktree (exit $REASON_STATUS), so the write is refused:" >&2
-  printf '%s\n' "$REASON" >&2
-  exit 2
+  # The status git left is the value: it is what separates a repository git
+  # refused to read from a directory it could not reach.
+  refuse git "$REASON_STATUS"
 fi
 GIT_DIR_LINE=${DIRS%%$'\n'*}
 COMMON_DIR_LINE=${DIRS#*$'\n'}
@@ -203,8 +246,7 @@ resolve() { # PATH -> physical path on stdout, relative to CWD when relative
   esac
 }
 if ! GIT_DIR=$(resolve "$GIT_DIR_LINE") || ! COMMON_DIR=$(resolve "$COMMON_DIR_LINE"); then
-  echo "block-worktree-refresh: the git directories git named under $CWD could not be entered, so the write is refused" >&2
-  exit 2
+  refuse git unresolvable
 fi
 if [ "$GIT_DIR" = "$COMMON_DIR" ]; then
   exit 0
@@ -213,9 +255,4 @@ fi
 # The main checkout is not derived from the common dir, which a repository
 # made with --separate-git-dir keeps outside its checkout; `git worktree list`
 # names the checkout first.
-{
-  echo "block-worktree-refresh: refusing 'kendex $VERB' at project scope from the linked worktree $CWD."
-  echo "  The project install is registered to the main checkout (the first line of 'git worktree list'); a project-scope write from here renders into that checkout and removes what it does not expect there."
-  echo "  Run the same command from the main checkout, or pass $GLOBAL_FORM for a global change. Reads (kendex verify, check, list) are not refused."
-} >&2
-exit 2
+refuse refused "$VERB"

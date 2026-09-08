@@ -10,13 +10,42 @@
 
 set -euo pipefail
 
+# The command as it was read, empty until the reader has it: the refusal quotes
+# it, and a refusal can be reached before it is set.
+COMMAND=""
+# Every line this hook writes, and the only place its text lives. The first
+# line is the contract a reader parses, `block-unsafe-rm: <key>=<value>`: a
+# stable key for the condition and the value acted on — the missing tool, why
+# the payload could not be read, or the shape refused. The English explanation
+# and the rewrites follow on later lines.
+refuse() { # KEY VALUE
+  printf 'block-unsafe-rm: %s=%s\n' "$1" "$2" >&2
+  case "$1=$2" in
+    tools=*)
+      echo "$2 is required to read the hook payload; refusing rather than skipping the guard" >&2
+      ;;
+    payload=invalid-json)
+      echo "the hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
+      ;;
+    refused=recursive-rm)
+      echo "Recursive rm on a variable-rooted path stalls the session: the harness stops on" >&2
+      echo "  $COMMAND" >&2
+      echo "with a 'Dangerous rm operation on possibly-empty variable path' prompt." >&2
+      echo "Rewrite so the path cannot collapse to / — either form is accepted:" >&2
+      echo "  rm -rf -- \"\${NAME:?}/sub\"      (bash aborts if NAME is unset or empty)" >&2
+      echo "  rm -rf -- /absolute/literal/path" >&2
+      ;;
+  esac
+  exit 2
+}
+
 # jq is the only reader of the payload. Without it the command cannot be read,
 # and a command this hook has not read cannot be shown to name a path that
-# stays inside the working tree.
-if ! command -v jq >/dev/null 2>&1 || ! command -v cat >/dev/null 2>&1; then
-  echo "block-unsafe-rm: jq and cat are required to read the hook payload; refusing rather than skipping the guard" >&2
-  exit 2
-fi
+# stays inside the working tree. jq leads so the world with no tools at all
+# names it.
+for dependency in jq cat; do
+  command -v "$dependency" >/dev/null 2>&1 || refuse tools "$dependency"
+done
 
 INPUT=$(cat)
 
@@ -28,7 +57,7 @@ INPUT=$(cat)
 # an object or as one JSON-encoded string. The null tests are spelled out
 # because jq's `//` reads `false` as absent, and `false` is not a command
 # either.
-if ! COMMAND=$(printf '%s' "$INPUT" \
+COMMAND=$(printf '%s' "$INPUT" \
   | jq -r 'def copilot: .toolArgs
              | if . == null then null elif type == "string" then fromjson else . end
              | if . == null then null elif type == "object" then .command else error end;
@@ -36,10 +65,8 @@ if ! COMMAND=$(printf '%s' "$INPUT" \
            elif .command != null then .command
            elif copilot != null then copilot
            else "" end
-           | if type == "string" then . else error end' 2>/dev/null); then
-  echo "block-unsafe-rm: hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
-  exit 2
-fi
+           | if type == "string" then . else error end' 2>/dev/null) ||
+  refuse payload invalid-json
 
 # The whole rule, built from named parts so each one is readable on its own.
 # The parts count WHEREVER they stand in the command. There is no
@@ -121,12 +148,7 @@ if [[ ! $COMMAND =~ $UNSAFE_RE ]]; then
   exit 0
 fi
 
-{
-  echo "Recursive rm on a variable-rooted path stalls the session: the harness stops on"
-  echo "  $COMMAND"
-  echo "with a 'Dangerous rm operation on possibly-empty variable path' prompt."
-  echo "Rewrite so the path cannot collapse to / — either form is accepted:"
-  echo "  rm -rf -- \"\${NAME:?}/sub\"      (bash aborts if NAME is unset or empty)"
-  echo "  rm -rf -- /absolute/literal/path"
-} >&2
-exit 2
+# The three parts stand in either order and each is nested inside the
+# alternation, so the shape is what the first line names rather than one of
+# the words; the command itself follows on the next line.
+refuse refused recursive-rm

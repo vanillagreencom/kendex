@@ -15,22 +15,74 @@ set -euo pipefail
 # them as something else changes what a filename may hold.
 export LC_ALL=C
 
-if ! command -v jq >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
-  echo "reviewer-stop-check: jq and git are required to read the hook payload and the worktree; refusing rather than skipping the guard" >&2
-  exit 2
-fi
-
-INPUT=$(cat) || {
-  echo "reviewer-stop-check: could not read the hook payload from stdin" >&2
+# What the refusals name, empty until each is known: the calling subagent,
+# whose type names the artifact path, the transcript the worktree is read
+# from, and the worktree's own dirty paths.
+AGENT_TYPE=""
+TRANSCRIPT=""
+STATUS=""
+# Every line this hook writes, and the only place its text lives. The first
+# line is the contract a reader parses, `reviewer-stop-check: <key>=<value>`: a
+# stable key for the condition and the value acted on — the missing tool, why
+# the payload could not be read, the git subcommand that failed, the marker
+# path, or the worktree that is not clean. The English explanation and what to
+# do about it follow it, and never a bypass.
+refuse() { # KEY VALUE [DETAIL]
+  {
+    printf 'reviewer-stop-check: %s=%s\n' "$1" "$2"
+    case "$1=$2" in
+      tools=*)
+        echo "$2 is required to read the hook payload and the worktree; refusing rather than skipping the guard"
+        ;;
+      payload=unreadable)
+        echo "the hook payload could not be read from stdin"
+        ;;
+      payload=invalid-json)
+        echo "the hook payload is not valid JSON, or a field it reads is not a string; refusing rather than skipping the guard"
+        ;;
+      agent-id=invalid)
+        echo "the payload carries no usable agent_id, so a block could not be recorded; refusing"
+        ;;
+      transcript=unreadable)
+        echo "the payload's transcript_path $TRANSCRIPT is not a readable file, so the reviewed worktree is unknown; refusing"
+        ;;
+      transcript=unread)
+        echo "the transcript $TRANSCRIPT could not be read; refusing"
+        ;;
+      artifact=missing)
+        echo "the transcript names no review artifact path (<worktree>/tmp/review-$AGENT_TYPE-<timestamp>.json), so the reviewed worktree cannot be checked for files you left behind. Write the artifact to that path, delete every probe you created, and finish."
+        ;;
+      marker=*)
+        echo "the marker $2 could not be recorded, so a second stop could not be told from the first"
+        ;;
+      worktree=*)
+        echo "the reviewed worktree $2 is not clean:"
+        printf '%s\n' "$STATUS"
+        echo "Delete every file you created (a control belongs under a mktemp -d of your own) and report any change that was there before you; then finish."
+        ;;
+      git=*)
+        echo "git $2 failed, so the reviewed worktree's state is unknown:"
+        printf '%s\n' "${3:-}"
+        ;;
+    esac
+  } >&2
   exit 2
 }
 
-if ! FIELDS=$(printf '%s' "$INPUT" | jq -r '
+# jq reads the payload and git answers for the worktree. jq leads so the world
+# with no tools at all names it.
+for dependency in jq git; do
+  command -v "$dependency" >/dev/null 2>&1 || refuse tools "$dependency"
+done
+
+# cat's own diagnostic is dropped so the refusal's keyed line is the first
+# line of this hook's stderr, as it is for every other condition.
+INPUT=$(cat 2>/dev/null) || refuse payload unreadable
+
+FIELDS=$(printf '%s' "$INPUT" | jq -r '
   def str($v): if $v == null then "" elif ($v | type) == "string" then $v else error("not a string") end;
-  [str(.agent_type), str(.agent_id), str(.transcript_path), (.stop_hook_active == true | tostring)] | @tsv' 2>/dev/null); then
-  echo "reviewer-stop-check: hook payload is not valid JSON, or a field it reads is not a string; refusing rather than skipping the guard" >&2
-  exit 2
-fi
+  [str(.agent_type), str(.agent_id), str(.transcript_path), (.stop_hook_active == true | tostring)] | @tsv' 2>/dev/null) ||
+  refuse payload invalid-json
 TAB=$'\t'
 AGENT_TYPE=${FIELDS%%"$TAB"*}
 REST=${FIELDS#*"$TAB"}
@@ -49,18 +101,14 @@ fi
 
 AGENT_SHAPE='^[A-Za-z0-9._-]+$'
 if ! [[ "$AGENT_ID" =~ $AGENT_SHAPE ]]; then
-  echo "reviewer-stop-check: the payload carries no usable agent_id, so a block could not be recorded; refusing" >&2
-  exit 2
+  refuse agent-id invalid
 fi
 if [ ! -r "$TRANSCRIPT" ] || [ ! -f "$TRANSCRIPT" ]; then
-  echo "reviewer-stop-check: the payload's transcript_path is not a readable file, so the reviewed worktree is unknown; refusing" >&2
-  exit 2
+  refuse transcript unreadable
 fi
 
 git_failed() { # SUBCOMMAND OUTPUT — an unreadable answer is never a clean one
-  echo "reviewer-stop-check: git $1 failed, so the reviewed worktree's state is unknown:" >&2
-  printf '%s\n' "$2" >&2
-  exit 2
+  refuse git "$1" "$2"
 }
 
 # The block is recorded once per subagent. The marker lives under the git
@@ -68,9 +116,9 @@ git_failed() { # SUBCOMMAND OUTPUT — an unreadable answer is never a clean one
 # repository the hook runs in before then; both are shared by every linked
 # worktree.
 MARKER_REPO=.
-record_and_block() { # MESSAGE-LINES on stdin
+record_and_block() { # KEY VALUE
   COMMON_DIR=$(git -C "$MARKER_REPO" rev-parse --git-common-dir 2>&1) ||
-    git_failed "-C $MARKER_REPO rev-parse --git-common-dir" "$COMMON_DIR"
+    git_failed 'rev-parse --git-common-dir' "$COMMON_DIR"
   case "$COMMON_DIR" in
     /*) ;;
     *) COMMON_DIR="$MARKER_REPO/$COMMON_DIR" ;;
@@ -81,11 +129,9 @@ record_and_block() { # MESSAGE-LINES on stdin
     exit 0
   fi
   if ! mkdir -p -- "$MARKER_DIR" || ! : >"$MARKER"; then
-    echo "reviewer-stop-check: could not record the marker $MARKER, so a second stop could not be told from the first" >&2
-    exit 2
+    refuse marker "$MARKER"
   fi
-  cat >&2
-  exit 2
+  refuse "$1" "$2"
 }
 
 # The newest artifact path the transcript mentions: the Write call's
@@ -98,31 +144,20 @@ GREP_RC=$?
 set -e
 case "$GREP_RC" in
   0) ;;
-  1)
-    record_and_block <<EOF
-reviewer-stop-check: the transcript names no review artifact path (<worktree>/tmp/review-$AGENT_TYPE-<timestamp>.json), so the reviewed worktree cannot be checked for files you left behind. Write the artifact to that path, delete every probe you created, and finish.
-EOF
-    ;;
-  *)
-    echo "reviewer-stop-check: could not read the transcript $TRANSCRIPT; refusing" >&2
-    exit 2
-    ;;
+  1) record_and_block artifact missing ;;
+  *) refuse transcript unread ;;
 esac
 ARTIFACT=$(printf '%s\n' "$MENTIONS" | tail -n 1)
 WORKTREE=${ARTIFACT%/tmp/review-*}
 
 if ! TOPLEVEL=$(git -C "$WORKTREE" rev-parse --show-toplevel 2>&1); then
-  git_failed "-C $WORKTREE rev-parse --show-toplevel" "$TOPLEVEL"
+  git_failed 'rev-parse --show-toplevel' "$TOPLEVEL"
 fi
 MARKER_REPO=$WORKTREE
 STATUS=$(git -C "$WORKTREE" status --porcelain --untracked-files=all 2>&1) ||
-  git_failed "-C $WORKTREE status" "$STATUS"
+  git_failed status "$STATUS"
 if [ -z "$STATUS" ]; then
   exit 0
 fi
 
-record_and_block <<EOF
-reviewer-stop-check: the reviewed worktree $TOPLEVEL is not clean:
-$STATUS
-Delete every file you created (a control belongs under a mktemp -d of your own) and report any change that was there before you; then finish.
-EOF
+record_and_block worktree "$TOPLEVEL"

@@ -3,6 +3,12 @@
 # The suites consume the observations and the bypass word.
 # shellcheck disable=SC2034
 
+# The first-line reader both suites assert with. Their forms run in two
+# fixtures at once, which the shared table's single run does not express, so
+# `first_line` is the half of that library they use.
+# shellcheck source=first-line.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/first-line.sh"
+
 # The bypass flag and the installer's marker, both assembled: this repository's
 # own hook refuses a command spelling the first out, and a file carrying the
 # second reads as a shim.

@@ -3,7 +3,7 @@
 # name: doc-drift-check
 # event: Stop
 # matcher:
-# description: Shows the user a notice through stdout systemMessage JSON when unchanged documents may need an update after covered code changes. Uses the nearest tracked non-root AGENTS.md and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Every Stop reports independently. Claude Code only.
+# description: Shows the user a notice through stdout systemMessage JSON when unchanged documents may need an update after covered code changes. The notice opens with `doc-drift-check: stale=<count>` and lists the documents under it; stdout carries that one object and nothing else. Uses the nearest tracked non-root AGENTS.md and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Every Stop reports independently. Claude Code only.
 # safety: Read-only notice. Always exits 0, including when discovery fails; failures report that the notice is unavailable. Does not parse session payloads or write session state.
 # timeout: 30
 # harnesses: [claude-code]
@@ -11,16 +11,48 @@
 
 set -euo pipefail
 
+# Every line this hook writes, and the only place its text lives. Each begins
+# with the stable first line `doc-drift-check: <key>=<value>`: a stable key for
+# the condition and the value acted on — the git subcommand that failed, the
+# status a discovery command left, or how many documents the notice names. The
+# English explanation follows it.
+#
+# The notice itself is a machine-read protocol Claude Code parses: one JSON
+# object on stdout, whose single `systemMessage` string key holds the text the
+# user is shown. The keyed first line opens that string; nothing else is
+# written to stdout, and a second object there is not the protocol.
+notice() { # KEY VALUE [DETAIL]
+  case "$1" in
+    stale)
+      jq -n --arg systemMessage \
+        "$(printf 'doc-drift-check: stale=%s\nThese unchanged documents may need an update:\n%sCompared %s\n' \
+          "$2" "$STALE" "$JUDGED")" '{systemMessage: $systemMessage}'
+      ;;
+    git)
+      {
+        printf 'doc-drift-check: git=%s\n' "$2"
+        printf 'notice unavailable: git %s failed, so what changed is unknown:\n' "$2"
+        printf '%s\n' "${3:-}"
+      } >&2
+      ;;
+    exit)
+      {
+        printf 'doc-drift-check: exit=%s\n' "$2"
+        printf 'notice unavailable: a discovery command exited %s\n' "$2"
+      } >&2
+      ;;
+  esac
+}
+
 # A notice cannot hold a Stop event, including on a failed discovery command.
-trap 'status=$?; if [ "$status" -ne 0 ]; then printf "doc-drift-check: notice unavailable (command exited %s)\n" "$status" >&2; fi; exit 0' EXIT
+trap 'status=$?; if [ "$status" -ne 0 ]; then notice exit "$status" || :; fi; exit 0' EXIT
 
 # Doc paths are matched by byte ranges below; a locale that
 # reads them as something else changes what a filename may hold.
 export LC_ALL=C
 
 git_failed() { # SUBCOMMAND OUTPUT — an unreadable changed set is not an empty one
-  echo "doc-drift-check: notice unavailable: git $1 failed, so what changed is unknown:" >&2
-  printf '%s\n' "$2" >&2
+  notice git "$1" "$2"
   exit 0
 }
 
@@ -183,6 +215,7 @@ EOF
 # path; a doc is named once however many paths reached it.
 STALE_DOCS=""
 STALE=""
+STALE_COUNT=0
 while IFS= read -r path; do
   docs=$(covering_docs "$path")
   [ -n "$docs" ] || continue
@@ -200,6 +233,7 @@ EOF
     in_list "$STALE_DOCS" "$doc" && continue
     STALE_DOCS="$STALE_DOCS$doc"$'\n'
     STALE="$STALE  $doc ($path changed)"$'\n'
+    STALE_COUNT=$((STALE_COUNT + 1))
   done <<EOF
 $docs
 EOF
@@ -211,6 +245,5 @@ if [ -z "$STALE" ]; then
   exit 0
 fi
 
-MESSAGE=$(printf 'These unchanged documents may need an update:\n%sCompared %s\n' "$STALE" "$JUDGED")
-jq -n --arg systemMessage "$MESSAGE" '{systemMessage: $systemMessage}'
+notice stale "$STALE_COUNT"
 exit 0

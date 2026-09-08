@@ -9,12 +9,47 @@
 
 set -euo pipefail
 
-# jq is the only reader of the payload. Without it the command cannot be read,
-# and a command this hook has not read cannot be shown not to be the copy.
-if ! command -v jq >/dev/null 2>&1 || ! command -v cat >/dev/null 2>&1; then
-  echo "block-repo-copy: jq and cat are required to read the hook payload; refusing rather than skipping the guard" >&2
+# The command as it was read, empty until the reader has it: the refusal quotes
+# it, and a refusal can be reached before it is set.
+COMMAND=""
+# Every line this hook writes, and the only place its text lives. The first
+# line is the contract a reader parses, `block-repo-copy: <key>=<value>`: a
+# stable key for the condition and the value acted on — the missing tool, why
+# the payload could not be read, or the copy verb the command spelled. The
+# English explanation and the alternatives follow on later lines.
+refuse() { # KEY VALUE
+  printf 'block-repo-copy: %s=%s\n' "$1" "$2" >&2
+  case "$1=$2" in
+    tools=*)
+      echo "$2 is required to read the hook payload; refusing rather than skipping the guard" >&2
+      ;;
+    payload=invalid-json)
+      echo "the hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
+      ;;
+    refused=*)
+      echo "Refusing a copy of a repository or build tree into scratch space." >&2
+      echo "  command: $COMMAND" >&2
+      echo >&2
+      echo "A source whose last component is .git or target is large by construction, and" >&2
+      echo "temp/scratch filesystems are commonly RAM-backed tmpfs — the copy can fill the" >&2
+      echo "filesystem, after which every process writing there fails with ENOSPC." >&2
+      echo >&2
+      echo "Do one of these instead:" >&2
+      echo "  - Read the source in place. Reading does not mutate it, so no copy is needed" >&2
+      echo "    to leave it unchanged." >&2
+      echo "  - Build a MINIMAL synthetic fixture:" >&2
+      echo '      d=$(mktemp -d); mkdir -p "$d/repo/.git" "$d/repo/target"; touch "$d/repo/f"' >&2
+      ;;
+  esac
   exit 2
-fi
+}
+
+# jq is the only reader of the payload. Without it the command cannot be read,
+# and a command this hook has not read cannot be shown not to be the copy. jq
+# leads so the world with no tools at all names it.
+for dependency in jq cat; do
+  command -v "$dependency" >/dev/null 2>&1 || refuse tools "$dependency"
+done
 
 INPUT=$(cat)
 
@@ -26,7 +61,7 @@ INPUT=$(cat)
 # an object or as one JSON-encoded string. The null tests are spelled out
 # because jq's `//` reads `false` as absent, and `false` is not a command
 # either.
-if ! COMMAND=$(printf '%s' "$INPUT" \
+COMMAND=$(printf '%s' "$INPUT" \
   | jq -r 'def copilot: .toolArgs
              | if . == null then null elif type == "string" then fromjson else . end
              | if . == null then null elif type == "object" then .command else error end;
@@ -34,10 +69,8 @@ if ! COMMAND=$(printf '%s' "$INPUT" \
            elif .command != null then .command
            elif copilot != null then copilot
            else "" end
-           | if type == "string" then . else error end' 2>/dev/null); then
-  echo "block-repo-copy: hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
-  exit 2
-fi
+           | if type == "string" then . else error end' 2>/dev/null) ||
+  refuse payload invalid-json
 
 # The whole rule, in the order the words stand: a copy verb, then a word whose
 # last path component is `.git` or `target`, then a destination under a temp
@@ -130,18 +163,7 @@ if [[ ! $COMMAND =~ $BLOCK_RE ]]; then
   exit 0
 fi
 
-{
-  echo "Refusing a copy of a repository or build tree into scratch space."
-  echo "  command: $COMMAND"
-  echo
-  echo "A source whose last component is .git or target is large by construction, and"
-  echo "temp/scratch filesystems are commonly RAM-backed tmpfs — the copy can fill the"
-  echo "filesystem, after which every process writing there fails with ENOSPC."
-  echo
-  echo "Do one of these instead:"
-  echo "  - Read the source in place. Reading does not mutate it, so no copy is needed"
-  echo "    to leave it unchanged."
-  echo "  - Build a MINIMAL synthetic fixture:"
-  echo '      d=$(mktemp -d); mkdir -p "$d/repo/.git" "$d/repo/target"; touch "$d/repo/f"'
-} >&2
-exit 2
+# VERB is the second group of the pattern above and the only one that carries
+# a copy verb, so the first line names the verb that matched. A `git clone`
+# keeps the blank the command spelled between its two words.
+refuse refused "${BASH_REMATCH[2]}"
