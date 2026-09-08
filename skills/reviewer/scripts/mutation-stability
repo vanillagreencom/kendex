@@ -9,6 +9,10 @@
 #
 #   mutation: killed 1/1; stability: N/N at T threads
 #
+# Diagnostic protocol: each refusal starts with error=KEY FIELD=VALUE, and each
+# notice starts with notice=KEY FIELD=VALUE. English detail follows. The final
+# mutation/stability summary above is the downstream result protocol.
+#
 # Exit: 0 killed and stable; 1 mutant survived or a stability run failed;
 # 2 instrument failure (control, empty selection, invalid mutant, timed-out run,
 # bad input).
@@ -36,12 +40,34 @@ usage: mutation-stability --worktree PATH --sha SHA --test CMD --build CMD
 USAGE
 }
 
+message() {
+  level="$1" key="$2" field="$3" value="$4" text="$5"
+  printf '%s=%s %s=%q\n' "$level" "$key" "$field" "$value" >&2
+  printf '%s\n' "$text" >&2
+}
+
+refuse() {
+  message error "$1" "$2" "$3" "$4"
+  exit 2
+}
+
+refuse_with_log() {
+  key="$1" field="$2" value="$3" text="$4" log="$5"
+  message error "$key" "$field" "$value" "$text"
+  [ ! -s "$log" ] || cat -- "$log" >&2
+  exit 2
+}
+
+notice() {
+  message notice "$1" "$2" "$3" "$4"
+}
+
 WORKTREE="" SHA="" TEST="" BUILD="" MUTATE="" N=10 THREADS="" TIMEOUT=300 KEEP=0
 THREADS_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --worktree|--sha|--test|--build|--mutate|--stability|--threads|--timeout)
-      [ $# -ge 2 ] || { echo "$1 needs a value" >&2; usage >&2; exit 2; }
+      [ $# -ge 2 ] || { option="$1"; message error argument-value-missing option "$option" "$option needs a value"; usage >&2; exit 2; }
       case "$1" in
         --worktree) WORKTREE="$2" ;;
         --sha) SHA="$2" ;;
@@ -55,17 +81,19 @@ while [ $# -gt 0 ]; do
       shift ;;
     --keep) KEEP=1 ;;
     -h|--help) usage; exit 0 ;;
-    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+    *) argument="$1"; message error argument-unknown argument "$argument" "unknown argument: $argument"; usage >&2; exit 2 ;;
   esac
   shift
 done
 [ -n "$WORKTREE" ] && [ -n "$SHA" ] && [ -n "$TEST" ] && [ -n "$BUILD" ] && [ -n "$MUTATE" ] || {
-  usage >&2; exit 2
+  message error arguments-missing set worktree-sha-test-build-mutate "required options are missing"
+  usage >&2
+  exit 2
 }
 positive_integer() {
   option="$1" value="$2"
   case "$value" in
-    *[!0-9]*|''|0) echo "$option wants a positive integer" >&2; exit 2 ;;
+    *[!0-9]*|''|0) refuse positive-integer-invalid option "$option:$value" "$option wants a positive integer" ;;
   esac
 }
 
@@ -81,8 +109,7 @@ positive_integer --timeout "$TIMEOUT"
 # out the run on the first write to a copy.
 SETTLE="${MUTATION_STABILITY_SETTLE:-1}"
 if ! [[ "$SETTLE" =~ ^[0-9]{1,18}$ ]]; then
-  echo "MUTATION_STABILITY_SETTLE wants a whole number of seconds" >&2
-  exit 2
+  refuse settle-invalid value "$SETTLE" "MUTATION_STABILITY_SETTLE wants a whole number of seconds"
 fi
 # The precondition for skipping the boundary — that BUILD keeps no cache the
 # copies could share — is the caller's to know and this script cannot check
@@ -90,9 +117,17 @@ fi
 # as survived, and nothing about that verdict looks wrong afterwards. Say it
 # once, so a transcript shows which verdicts were produced without it.
 [ "$SETTLE" -ne 0 ] ||
-  echo "settle: 0 — copies are not mtime-separated; verdicts assume BUILD shares no cache" >&2
+  notice settle-disabled value "$SETTLE" "copies are not mtime-separated; verdicts assume BUILD shares no cache"
 
-ROOT=$(mktemp -d "${TMPDIR:-/tmp}/mutation-stability.XXXXXX") || exit 2
+root_result=""
+root_status=0
+root_result=$(mktemp -d "${TMPDIR:-/tmp}/mutation-stability.XXXXXX" 2>&1) || root_status=$?
+if [ "$root_status" -ne 0 ]; then
+  message error temp-create-failed path "${TMPDIR:-/tmp}" "could not create the mutation workspace"
+  [ -z "$root_result" ] || printf '%s\n' "$root_result" >&2
+  exit 2
+fi
+ROOT="$root_result"
 ACTIVE_PID="" ACTIVE_GROUP=""
 
 group_leaves() {
@@ -223,8 +258,8 @@ run_command() { # run $2 in $1, capture output in $3, label it $4
   ACTIVE_PID="" ACTIVE_GROUP=""
 
   if [ "$timed_out" -eq 1 ]; then
-    echo "$label timed out after ${TIMEOUT}s" >&2
-    [ "$KEEP" = 1 ] && echo "kept: $ROOT" >&2
+    message error command-timeout seconds "$TIMEOUT" "$label timed out after ${TIMEOUT}s"
+    [ "$KEEP" = 1 ] && notice workspace-kept path "$ROOT" "kept mutation workspace: $ROOT"
     exit 2
   fi
   return "$status"
@@ -251,40 +286,48 @@ cargo_selection_nonempty() {
   ' "$1"
 }
 
-extract "$ROOT/mutant" || { echo "control: git archive failed for $SHA" >&2; exit 2; }
+extract_status=0
+extract "$ROOT/mutant" >"$ROOT/control-archive.log" 2>&1 || extract_status=$?
+if [ "$extract_status" -ne 0 ]; then
+  refuse_with_log archive-failed sha "$SHA" "control archive failed" "$ROOT/control-archive.log"
+fi
 
 control_build_status=0
 run_command "$ROOT/mutant" "$BUILD" "$ROOT/control-build.log" "control build" || control_build_status=$?
 if [ "$control_build_status" -ne 0 ]; then
-  echo "control: build fails before any mutation — not a usable instrument" >&2
-  [ "$KEEP" = 1 ] && echo "kept: $ROOT" >&2
+  message error control-build-failed exit "$control_build_status" "control build fails before any mutation; the instrument is not usable"
+  [ "$KEEP" = 1 ] && notice workspace-kept path "$ROOT" "kept mutation workspace: $ROOT"
   exit 2
 fi
 
 control_status=0
 run_test "$ROOT/mutant" "$ROOT/control.log" || control_status=$?
 if [ "$control_status" -ne 0 ]; then
-  echo "control: test fails before any mutation — not a usable instrument" >&2
-  [ "$KEEP" = 1 ] && echo "kept: $ROOT" >&2
+  message error control-test-failed exit "$control_status" "control test fails before any mutation; the instrument is not usable"
+  [ "$KEEP" = 1 ] && notice workspace-kept path "$ROOT" "kept mutation workspace: $ROOT"
   exit 2
 fi
 
 selection_status=0
 cargo_selection_nonempty "$ROOT/control.log" || selection_status=$?
 if [ "$selection_status" = 1 ]; then
-  echo "control: filter selected no test — not a usable instrument" >&2
-  [ "$KEEP" = 1 ] && echo "kept: $ROOT" >&2
+  message error control-selection-empty count 0 "the control filter selected no test; the instrument is not usable"
+  [ "$KEEP" = 1 ] && notice workspace-kept path "$ROOT" "kept mutation workspace: $ROOT"
   exit 2
 fi
 
 outrank_last_build
-(cd "$ROOT/mutant" && bash -c "$MUTATE") || { echo "mutate command failed" >&2; exit 2; }
+mutate_status=0
+(cd "$ROOT/mutant" && bash -c "$MUTATE") >"$ROOT/mutate.log" 2>&1 || mutate_status=$?
+if [ "$mutate_status" -ne 0 ]; then
+  refuse_with_log mutate-command-failed exit "$mutate_status" "mutate command failed" "$ROOT/mutate.log"
+fi
 
 build_status=0
 run_command "$ROOT/mutant" "$BUILD" "$ROOT/build.log" "mutant build" || build_status=$?
 if [ "$build_status" -ne 0 ]; then
-  echo "mutation: invalid-mutant; build failed after mutation" >&2
-  [ "$KEEP" = 1 ] && echo "kept: $ROOT" >&2
+  message error mutant-build-failed exit "$build_status" "the build failed after mutation; the mutant is invalid"
+  [ "$KEEP" = 1 ] && notice workspace-kept path "$ROOT" "kept mutation workspace: $ROOT"
   exit 2
 fi
 
@@ -294,7 +337,11 @@ KILLED=1
 [ "$mutant_status" -ne 0 ] || KILLED=0
 
 PASSES=0
-extract "$ROOT/clean" || { echo "control: second archive failed" >&2; exit 2; }
+extract_status=0
+extract "$ROOT/clean" >"$ROOT/clean-archive.log" 2>&1 || extract_status=$?
+if [ "$extract_status" -ne 0 ]; then
+  refuse_with_log archive-failed sha "$SHA" "clean archive failed" "$ROOT/clean-archive.log"
+fi
 i=0
 while [ "$i" -lt "$N" ]; do
   if run_test "$ROOT/clean" "$ROOT/stability-$i.log"; then PASSES=$((PASSES + 1)); fi
@@ -302,5 +349,5 @@ while [ "$i" -lt "$N" ]; do
 done
 
 echo "mutation: killed $KILLED/1; stability: $PASSES/$N at $THREADS threads"
-if [ "$KEEP" = 1 ]; then echo "kept: $ROOT" >&2; fi
+if [ "$KEEP" = 1 ]; then notice workspace-kept path "$ROOT" "kept mutation workspace: $ROOT"; fi
 [ "$KILLED" = 1 ] && [ "$PASSES" = "$N" ]

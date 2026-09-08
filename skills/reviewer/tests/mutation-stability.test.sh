@@ -47,6 +47,20 @@ output_has() {
   esac
 }
 
+output_first_line() {
+  printf '%s' "${out%%$'\n'*}"
+}
+
+output_error_line() {
+  local key="$1" line
+  while IFS= read -r line; do
+    case "$line" in
+      "error=$key "*) printf '%s' "$line"; return 0 ;;
+    esac
+  done <<< "$out"
+  printf 'absent'
+}
+
 stopped() {
   pid="$1" attempts=0
   while kill -0 "$pid" 2>/dev/null && [ "$attempts" -lt 20 ]; do
@@ -160,13 +174,13 @@ while IFS=$'\t' read -r name revision test_cmd build_cmd mutation_token stabilit
       actual="rc=$rc;killed-zero=$(output_has 'mutation: killed 0/1;')"
       ;;
     control-failure)
-      actual="rc=$rc;before-mutation=$(output_has 'before any mutation')"
+      actual="rc=$rc;diagnostic=$(output_error_line control-test-failed)"
       ;;
     empty-selection)
-      actual="rc=$rc;empty-selection=$(output_has 'filter selected no test');survived=$(output_has 'survived')"
+      actual="rc=$rc;diagnostic=$(output_error_line control-selection-empty);survived=$(output_has 'survived')"
       ;;
     invalid-mutant)
-      actual="rc=$rc;invalid-mutant=$(output_has 'invalid-mutant');killed=$(output_has 'killed')"
+      actual="rc=$rc;diagnostic=$(output_error_line mutant-build-failed);killed=$(output_has 'killed')"
       ;;
     partial-stability)
       actual="rc=$rc;partial=$(output_has 'stability: 1/3 at 2 threads')"
@@ -180,17 +194,47 @@ while IFS=$'\t' read -r name revision test_cmd build_cmd mutation_token stabilit
 done <<'ROWS'
 killed mutant	base	bash check.sh	true	kill	2	2	exact-summary	rc=0;last=mutation: killed 1/1; stability: 2/2 at 2 threads
 surviving decoy	base	bash check.sh	true	decoy	1	default	killed-zero	rc=1;killed-zero=yes
-red before mutation	base	false	true	none	1	default	control-failure	rc=2;before-mutation=yes
-empty Cargo selection	base	printf "test result: ok. 0 passed; 0 failed; 0 ignored\n"	true	none	1	default	empty-selection	rc=2;empty-selection=yes;survived=no
-non-compiling mutant	base	true	test -f lib.sh	remove	1	default	invalid-mutant	rc=2;invalid-mutant=yes;killed=no
+red before mutation	base	false	true	none	1	default	control-failure	rc=2;diagnostic=error=control-test-failed exit=1
+empty Cargo selection	base	printf "test result: ok. 0 passed; 0 failed; 0 ignored\n"	true	none	1	default	empty-selection	rc=2;diagnostic=error=control-selection-empty count=0;survived=no
+non-compiling mutant	base	true	test -f lib.sh	remove	1	default	invalid-mutant	rc=2;diagnostic=error=mutant-build-failed exit=1;killed=no
 partial stability	flaky	bash check.sh	true	kill	3	2	partial-stability	rc=1;partial=yes
 ROWS
 assert_table_executed "command outcome" "$command_rows"
 
+echo "=== input and dependency refusal table ==="
+input_rows=0
+while IFS=$'\t' read -r name kind expected_line; do
+  rc=0
+  out=""
+  case "$kind" in
+    missing-value) out=$("$MS" --worktree 2>&1) || rc=$? ;;
+    unknown) out=$("$MS" --unknown 2>&1) || rc=$? ;;
+    arguments) out=$("$MS" 2>&1) || rc=$? ;;
+    temp) out=$(MUTATION_STABILITY_SETTLE=1 TMPDIR="$TMP/absent" "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test true --build true --mutate true 2>&1) || rc=$? ;;
+    temp-space) out=$(MUTATION_STABILITY_SETTLE=1 TMPDIR="$TMP/space absent" "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test true --build true --mutate true 2>&1) || rc=$? ;;
+    archive) out=$(MUTATION_STABILITY_SETTLE=1 "$MS" --worktree "$REPO" --sha not-a-sha --test true --build true --mutate true 2>&1) || rc=$? ;;
+    control-build) out=$(MUTATION_STABILITY_SETTLE=1 "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test true --build false --mutate true 2>&1) || rc=$? ;;
+    mutate) out=$(MUTATION_STABILITY_SETTLE=1 "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test 'printf "test result: ok. 1 passed; 0 failed; 0 ignored\n"' --build true --mutate 'printf "mutation detail\n" >&2; false' 2>&1) || rc=$? ;;
+    *) fail "input refusal fixture" "unknown kind: $kind" ;;
+  esac
+  assert_row "input refusal" "$name" "rc=$rc;first=$(output_first_line)" "rc=2;first=$expected_line"
+  input_rows=$((input_rows + 1))
+done <<ROWS
+missing option value	missing-value	error=argument-value-missing option=--worktree
+unknown option	unknown	error=argument-unknown argument=--unknown
+missing required options	arguments	error=arguments-missing set=worktree-sha-test-build-mutate
+temporary workspace failure	temp	error=temp-create-failed path=$TMP/absent
+temporary workspace path escaping	temp-space	error=temp-create-failed path=$TMP/space\ absent
+archive failure	archive	error=archive-failed sha=not-a-sha
+control build failure	control-build	error=control-build-failed exit=1
+mutation command failure	mutate	error=mutate-command-failed exit=1
+ROWS
+assert_table_executed "input refusal" "$input_rows"
+
 run_ms "$SHA_BASE" --test 'true' --build 'true' --mutate 'true' --timeout 0
 assert_case "numeric validator rejects zero" \
-  "rc=$rc;timeout-validator=$(output_has '--timeout wants a positive integer')" \
-  "rc=2;timeout-validator=yes"
+  "rc=$rc;diagnostic=$(output_first_line)" \
+  "rc=2;diagnostic=error=positive-integer-invalid option=--timeout:0"
 
 echo "=== settle validation table ==="
 settle_validation_rows=0
@@ -198,12 +242,12 @@ while IFS=$'\t' read -r name value expected; do
   rc=0
   out=""
   out=$(MUTATION_STABILITY_SETTLE="$value" "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test 'true' --build 'true' --mutate 'true' --stability 1 2>&1) || rc=$?
-  actual="rc=$rc;setting-named=$(output_has 'MUTATION_STABILITY_SETTLE wants a whole number of seconds')"
+  actual="rc=$rc;diagnostic=$(output_first_line)"
   assert_row "settle validation" "$name" "$actual" "$expected"
   settle_validation_rows=$((settle_validation_rows + 1))
 done <<'ROWS'
-non-numeric settle	soon	rc=2;setting-named=yes
-over-wide settle	18446744073709551616	rc=2;setting-named=yes
+non-numeric settle	soon	rc=2;diagnostic=error=settle-invalid value=soon
+over-wide settle	18446744073709551616	rc=2;diagnostic=error=settle-invalid value=18446744073709551616
 ROWS
 assert_table_executed "settle validation" "$settle_validation_rows"
 
@@ -231,12 +275,13 @@ while IFS=$'\t' read -r name setting expected; do
   fi
   whole_sleeps=$(awk '/^[0-9]+$/ { if (seen++) printf ","; printf "%s", $0 }' "$sleep_log") || whole_sleeps=unreadable
   [ -n "$whole_sleeps" ] || whole_sleeps=absent
-  actual="rc=$rc;whole-sleeps=$whole_sleeps;skip-warning=$(output_has 'settle: 0')"
+  if [ "$setting" = 0 ]; then skip_notice="$(output_first_line)"; else skip_notice=absent; fi
+  actual="rc=$rc;whole-sleeps=$whole_sleeps;skip-notice=$skip_notice"
   assert_row "settle setting" "$name" "$actual" "$expected"
   settle_setting_rows=$((settle_setting_rows + 1))
 done <<'ROWS'
-default settle	unset	rc=0;whole-sleeps=1,1,1;skip-warning=no
-zero settle	0	rc=0;whole-sleeps=absent;skip-warning=yes
+default settle	unset	rc=0;whole-sleeps=1,1,1;skip-notice=absent
+zero settle	0	rc=0;whole-sleeps=absent;skip-notice=notice=settle-disabled value=0
 ROWS
 assert_table_executed "settle setting" "$settle_setting_rows"
 
@@ -272,7 +317,7 @@ observe_timeout() {
   elif [ -n "$child" ]; then
     kill -KILL "$child" 2>/dev/null || true
   fi
-  actual="rc=$rc;timeout=$(output_has 'timed out after 1s');child-stopped=$child_stopped"
+  actual="rc=$rc;timeout=$(output_error_line command-timeout);child-stopped=$child_stopped"
 }
 
 observe_launch_window() {
@@ -324,7 +369,7 @@ for path in glob.glob("/proc/[0-9]*/stat"):
         pass
 print("inner-rc=%s;timeout=%s;zombies=%s" % (
     run.returncode,
-    "yes" if "timed out after 1s" in run.stderr else "no",
+    "yes" if "error=command-timeout seconds=1" in run.stderr else "no",
     "none" if not zombies else "present",
 ))
 ' "$MS" "$REPO" "$SHA_BASE" 2>&1) || rc=$?
@@ -349,7 +394,7 @@ while IFS=$'\t' read -r name kind expected; do
   assert_row "process cleanup" "$name" "$actual" "$expected"
   process_rows=$((process_rows + 1))
 done <<'ROWS'
-timed-out child exits, reports, and stops	timeout	rc=2;timeout=yes;child-stopped=yes
+timed-out child exits, reports, and stops	timeout	rc=2;timeout=error=command-timeout seconds=1;child-stopped=yes
 launch-window cancellation owns and stops its child	launch-window	rc=143;signalled=yes;child-recorded=yes;child-stopped=yes
 non-reaping PID 1 adopts no zombie	namespace	outer-rc=0;inner-rc=2;timeout=yes;zombies=none
 ROWS
@@ -371,7 +416,7 @@ observe_kept_copies() {
   rc=0
   out=""
   kept=$("$MS" --worktree "$REPO" --sha "$SHA_CACHED" --test 'bash check.sh' --build 'true' --mutate "$KILL_MUTATION" --stability 1 --threads 2 --keep 2>&1 >/dev/null) || rc=$?
-  root=$(printf '%s\n' "$kept" | sed -n 's/^kept: //p') || root=""
+  root=$(printf '%s\n' "$kept" | sed -n 's/^notice=workspace-kept path=//p') || root=""
   clean_present=no
   gap_ok=no
   case "$root" in
