@@ -2,709 +2,219 @@
 # Scope pins. Each mode decides which lines the line-scoped lanes may speak
 # about, so a mode that quietly widens or narrows its diff would either fail
 # innocent changes or wave real ones through. docs-cited-paths is the vehicle
-# throughout: one added line, one finding, in a file every mode can reach. Environment failures (bad flag,
-# no repository, unresolvable base) must exit 2 — distinct from a clean run
-# and from a run with findings.
+# throughout: one added line, one finding, in a file every mode can reach.
+# Environment failures (bad flag, no repository, unresolvable base) must exit
+# 2 — distinct from a clean run and from a run with findings.
+#
+# Every row pins the WHOLE fired set, so "in scope" and "out of scope" are one
+# claim: a mode that widened its diff by one file reddens the row that named
+# the narrower set, with no separate absence assertion to keep in step.
+#
+# The diff-parse hardening this file used to carry is `diff-parse.test.sh`.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
-TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-PF="$SKILL_DIR/scripts/preflight"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-PASS=0
-FAIL=0
-ok() {
-  PASS=$((PASS + 1))
-  printf '  ok    %s\n' "$1"
-}
-bad() {
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"
+# A workflow that runs one named suite: the runner input the unwired-suite
+# lane reads out of whichever scope is under test.
+runner_names() { # SUITE — write $R/.github/workflows/ci.yml naming it
+  mkdir -p "$R/tests" "$R/.github/workflows"
+  printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash %s\n' \
+    "$1" >"$R/.github/workflows/ci.yml"
 }
 
-seed() { # NAME — fixture in $R: committed baseline, origin/main, feature branch
-  R="$TMP/$1"
-  mkdir -p "$R/docs" "$R/store/migrations"
-  git -C "$R" -c init.defaultBranch=main init -q
-  git -C "$R" config user.email test@example.com
-  git -C "$R" config user.name test
-  printf '# Staged\n' >"$R/docs/staged.md"
-  printf '# Loose\n' >"$R/docs/loose.md"
-  printf '# Legacy\n\nSee `docs/gone.md` for background.\n' >"$R/docs/legacy.md"
-  printf 'CREATE TABLE t (id INTEGER);\n' >"$R/store/migrations/V1__init.sql"
-  git -C "$R" add -A
-  git -C "$R" commit -qm init
-  git clone -q --bare "$R" "$R.git"
-  git -C "$R" remote add origin "$R.git"
-  git -C "$R" fetch -q origin
-  git -C "$R" remote set-head origin main >/dev/null
-  git -C "$R" checkout -qb feature
+# A settings file declaring one env value, at a path the scope rules decide
+# whether to honour.
+settings_at() { # PATH KEY VALUE — write $R/PATH
+  mkdir -p "$(dirname "$R/$1")"
+  printf '[env]\n%s = "%s"\n' "$2" "$3" >"$R/$1"
 }
 
-run_pf() {
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && "$PF" "$@" 2>&1)" || RC=$?
+JSONC_GLOB='**/themes/*/apps/vscode-theme.json'
+
+# One world per row: every state a case used to reach by evolving the fixture
+# under it is its own word, seeded and planted from scratch, so no row depends
+# on the row before it.
+pf_world() {
+  # The two worlds that are not repositories at all. Both runs start outside
+  # the path they name, which is what `--repo` has to reach on its own.
+  case "$1" in
+    not-a-repo)
+      R="$TMP/not-a-repo"
+      rm -rf -- "${TMP:?}/not-a-repo"
+      mkdir -p "$R"
+      PF_CWD="$TMP"
+      return 0
+      ;;
+    no-such-directory)
+      R="$TMP/no-such-directory"
+      rm -rf -- "${TMP:?}/no-such-directory"
+      PF_CWD="$TMP"
+      return 0
+      ;;
+  esac
+  pf_scope_seed "$1"
+  case "$1" in
+    # One dead citation staged, another only in the worktree: the two scopes
+    # disagree about the second, and each row's fired set says which it saw.
+    staged)
+      printf '# Staged\n\nSee `docs/gone.md` for the rest.\n' >"$R/docs/staged.md"
+      git -C "$R" add docs/staged.md
+      printf '# Loose\n\nSee `docs/gone.md` too.\n' >"$R/docs/loose.md"
+      ;;
+    # A staged suite AND the staged workflow edit that wires it, with the
+    # worktree workflow restored to the old name: a lane reading the worktree
+    # would call the staged suite unwired.
+    staged-runner | worktree-runner)
+      runner_names tests/other.test.sh
+      git -C "$R" add -A
+      git -C "$R" commit -qm ci
+      printf '#!/usr/bin/env bash\nset -euo pipefail\necho new\n' >"$R/tests/new.test.sh"
+      runner_names tests/new.test.sh
+      git -C "$R" add -A
+      runner_names tests/other.test.sh
+      # The inverse: a second staged suite only the WORKTREE workflow names.
+      if [ "$1" = worktree-runner ]; then
+        printf '#!/usr/bin/env bash\nset -euo pipefail\necho new2\n' >"$R/tests/new2.test.sh"
+        git -C "$R" add tests/new2.test.sh
+        runner_names tests/new2.test.sh
+      fi
+      ;;
+    # The same index rule covers a lane's policy inputs. A staged JSONC
+    # declaration governs the staged theme; the worktree copy that narrows it
+    # does not. The inverse world closes the bypass the other way round.
+    staged-jsonc | worktree-jsonc)
+      mkdir -p "$R/themes/white/apps"
+      printf '{\n  // staged JSONC\n  "name": "white",\n}\n' >"$R/themes/white/apps/vscode-theme.json"
+      settings_at kendex.settings.toml PREFLIGHT_JSONC_GLOBS "$JSONC_GLOB"
+      git -C "$R" add themes/white/apps/vscode-theme.json kendex.settings.toml
+      settings_at kendex.settings.toml PREFLIGHT_JSONC_GLOBS ""
+      if [ "$1" = worktree-jsonc ]; then
+        git -C "$R" add kendex.settings.toml
+        settings_at kendex.settings.toml PREFLIGHT_JSONC_GLOBS "$JSONC_GLOB"
+      fi
+      ;;
+    # New shared settings do not exist in the commit. Neither supported shared
+    # path may widen JSONC during a staged run; the control is the same world
+    # with no settings file at all.
+    untracked-jsonc-control | untracked-root-jsonc | untracked-nested-jsonc)
+      mkdir -p "$R/themes/white/apps"
+      printf '{\n  // remains strict without a committed setting\n  "name": "white"\n}\n' \
+        >"$R/themes/white/apps/vscode-theme.json"
+      git -C "$R" add themes/white/apps/vscode-theme.json
+      case "$1" in
+        untracked-root-jsonc) settings_at kendex.settings.toml PREFLIGHT_JSONC_GLOBS "$JSONC_GLOB" ;;
+        untracked-nested-jsonc) settings_at .kendex/settings.toml PREFLIGHT_JSONC_GLOBS "$JSONC_GLOB" ;;
+      esac
+      ;;
+    # Nor may either narrow the migration set out from under the same run.
+    untracked-root-migration | untracked-nested-migration)
+      printf 'CREATE TABLE t (id INTEGER, name TEXT);\n' >"$R/store/migrations/V1__init.sql"
+      git -C "$R" add store/migrations/V1__init.sql
+      case "$1" in
+        untracked-root-migration) settings_at kendex.settings.toml PREFLIGHT_MIGRATION_GLOBS "" ;;
+        untracked-nested-migration) settings_at .kendex/settings.toml PREFLIGHT_MIGRATION_GLOBS "" ;;
+      esac
+      ;;
+    # An untracked file is a new file to the default scope and nothing at all
+    # to --staged; an ignored one is nothing to either.
+    untracked)
+      printf '# Never added\n\nSee `docs/gone.md` here too.\n' >"$R/docs/never-added.md"
+      mkdir -p "$R/scratch"
+      printf 'scratch/\n' >"$R/.gitignore"
+      printf '# Ignored\n\nSee `docs/gone.md` from an ignored file.\n' >"$R/scratch/ignored.md"
+      ;;
+    # A new doc under a new directory is judged as it will be once committed:
+    # its citation of a missing sibling fires even though nothing tracked
+    # lives in that directory yet.
+    newdir)
+      mkdir -p "$R/docs/new"
+      printf '# New\n\nSee `docs/new/missing.md`.\n' >"$R/docs/new/guide.md"
+      ;;
+    # The worktree has moved on past the index: --staged judges the staged
+    # bytes, so the finding sits on the staged line.
+    rewound)
+      printf '# Staged\n\nSee `docs/gone.md` for the rest.\n' >"$R/docs/staged.md"
+      git -C "$R" add docs/staged.md
+      printf '# Staged\n\nAll clean again.\n' >"$R/docs/staged.md"
+      ;;
+    # Untouched: the default scope has nothing, --all has every tracked line,
+    # including the citation the baseline committed.
+    everything) ;;
+    # A commit made on the branch, for the rows that name their own base and
+    # for the row that reaches the repository from outside it.
+    based | repo-relocate)
+      printf '# Loose\n\nSee `docs/gone.md` from this commit.\n' >"$R/docs/loose.md"
+      git -C "$R" add -A
+      git -C "$R" commit -qm "add a citation"
+      if [ "$1" = repo-relocate ]; then PF_CWD="$TMP"; fi
+      ;;
+    # The default base walk, one world per state of the fallback chain:
+    # origin/HEAD, then origin/main, then the local main, then nothing.
+    base-origin-head | base-origin-main | base-local-main | base-none)
+      printf '# Loose\n\nSee `docs/gone.md` once more.\n' >"$R/docs/loose.md"
+      git -C "$R" add -A
+      case "$1" in
+        base-origin-head) ;;
+        base-origin-main) git -C "$R" remote set-head origin --delete >/dev/null ;;
+        base-local-main)
+          git -C "$R" remote set-head origin --delete >/dev/null
+          git -C "$R" update-ref -d refs/remotes/origin/main
+          ;;
+        base-none)
+          git -C "$R" remote set-head origin --delete >/dev/null
+          git -C "$R" update-ref -d refs/remotes/origin/main
+          git -C "$R" branch -q -D main
+          ;;
+      esac
+      ;;
+    *)
+      printf 'pf_world: no such world: %s\n' "$1" >&2
+      return 1
+      ;;
+  esac
 }
-has() { case "$OUT" in *"$1"*) return 0 ;; esac; return 1; }
 
-echo "=== --staged sees the index, not the worktree ==="
-seed staged
-printf '# Staged\n\nSee `docs/gone.md` for the rest.\n' >"$R/docs/staged.md"
-git -C "$R" add docs/staged.md
-printf '# Loose\n\nSee `docs/gone.md` too.\n' >"$R/docs/loose.md"
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]" && ! has "docs/loose.md"; then
-  ok "the staged dead citation fires and the unstaged one is out of scope"
-else
-  bad "the staged dead citation fires and the unstaged one is out of scope" "rc=$RC out=$OUT"
-fi
-
-run_pf
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]" && has "docs/loose.md:3: [docs-cited-paths]"; then
-  ok "the default scope is base-to-worktree, so it sees both"
-else
-  bad "the default scope is base-to-worktree, so it sees both" "rc=$RC out=$OUT"
-fi
-
-echo "=== --staged reads a lane's policy inputs from the index too ==="
-seed stagedpolicy
-mkdir -p "$R/tests" "$R/.github/workflows"
-printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/other.test.sh\n' >"$R/.github/workflows/ci.yml"
-git -C "$R" add -A
-git -C "$R" commit -qm ci
-# Staged: a new suite AND the workflow edit that wires it. The worktree copy
-# of the workflow is then restored, so a lane reading the worktree would call
-# the staged suite unwired.
-printf '#!/usr/bin/env bash\nset -euo pipefail\necho new\n' >"$R/tests/new.test.sh"
-printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/new.test.sh\n' >"$R/.github/workflows/ci.yml"
-git -C "$R" add -A
-printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/other.test.sh\n' >"$R/.github/workflows/ci.yml"
-run_pf --staged
-if [ "$RC" -eq 0 ] && ! has "unwired-suite"; then
-  ok "the staged runner wires the staged suite, whatever the worktree copy says"
-else
-  bad "the staged runner wires the staged suite, whatever the worktree copy says" "rc=$RC out=$OUT"
-fi
-
-# The inverse: only the worktree copy names it. The staged runner does not,
-# so the staged suite is unwired.
-printf '#!/usr/bin/env bash\nset -euo pipefail\necho new2\n' >"$R/tests/new2.test.sh"
-git -C "$R" add tests/new2.test.sh
-printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/new2.test.sh\n' >"$R/.github/workflows/ci.yml"
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "tests/new2.test.sh:0: [unwired-suite]"; then
-  ok "a worktree-only mention does not wire a staged suite"
-else
-  bad "a worktree-only mention does not wire a staged suite" "rc=$RC out=$OUT"
-fi
-
-# The same index rule covers settings. A staged JSONC declaration must govern
-# the staged theme even when the worktree setting no longer declares it.
-seed stagedjsonc
-mkdir -p "$R/themes/white/apps"
-printf '{\n  // staged JSONC\n  "name": "white",\n}\n' >"$R/themes/white/apps/vscode-theme.json"
-printf '[env]\nPREFLIGHT_JSONC_GLOBS = "**/themes/*/apps/vscode-theme.json"\n' >"$R/kendex.settings.toml"
-git -C "$R" add "$R/themes/white/apps/vscode-theme.json" "$R/kendex.settings.toml"
-printf '[env]\nPREFLIGHT_JSONC_GLOBS = ""\n' >"$R/kendex.settings.toml"
-run_pf --staged
-if [ "$RC" -eq 0 ] && ! has "data-syntax"; then
-  ok "a staged JSONC setting governs the staged file despite a narrower worktree copy"
-else
-  bad "a staged JSONC setting governs the staged file despite a narrower worktree copy" "rc=$RC out=$OUT"
-fi
-
-# The inverse closes the bypass: a worktree-only allowance cannot admit strict
-# JSON when the staged settings leave it out.
-git -C "$R" add "$R/kendex.settings.toml"
-printf '[env]\nPREFLIGHT_JSONC_GLOBS = "**/themes/*/apps/vscode-theme.json"\n' >"$R/kendex.settings.toml"
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "themes/white/apps/vscode-theme.json:2: [data-syntax] invalid JSON"; then
-  ok "a worktree-only JSONC setting cannot widen the staged policy"
-else
-  bad "a worktree-only JSONC setting cannot widen the staged policy" "rc=$RC out=$OUT"
-fi
-# New shared settings do not exist in the commit. Neither supported shared
-# path may widen JSONC or narrow the migration set during a staged run.
-seed untrackedrootjsonc
-mkdir -p "$R/themes/white/apps"
-printf '{\n  // remains strict without a committed setting\n  "name": "white"\n}\n' >"$R/themes/white/apps/vscode-theme.json"
-git -C "$R" add themes/white/apps/vscode-theme.json
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "themes/white/apps/vscode-theme.json:2: [data-syntax] invalid JSON"; then
-  ok "control: staged JSON stays strict before a shared JSONC setting exists"
-else
-  bad "control: staged JSON stays strict before a shared JSONC setting exists" "rc=$RC out=$OUT"
-fi
-printf '[env]\nPREFLIGHT_JSONC_GLOBS = "**/themes/*/apps/vscode-theme.json"\n' >"$R/kendex.settings.toml"
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "themes/white/apps/vscode-theme.json:2: [data-syntax] invalid JSON"; then
-  ok "an untracked root settings file cannot widen staged JSONC policy"
-else
-  bad "an untracked root settings file cannot widen staged JSONC policy" "rc=$RC out=$OUT"
-fi
-
-seed untrackednestedjsonc
-mkdir -p "$R/themes/white/apps" "$R/.kendex"
-printf '{\n  // remains strict without a committed setting\n  "name": "white"\n}\n' >"$R/themes/white/apps/vscode-theme.json"
-git -C "$R" add themes/white/apps/vscode-theme.json
-printf '[env]\nPREFLIGHT_JSONC_GLOBS = "**/themes/*/apps/vscode-theme.json"\n' >"$R/.kendex/settings.toml"
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "themes/white/apps/vscode-theme.json:2: [data-syntax] invalid JSON"; then
-  ok "an untracked nested settings file cannot widen staged JSONC policy"
-else
-  bad "an untracked nested settings file cannot widen staged JSONC policy" "rc=$RC out=$OUT"
-fi
-
-seed untrackedrootmigration
-printf 'CREATE TABLE t (id INTEGER, name TEXT);\n' >"$R/store/migrations/V1__init.sql"
-git -C "$R" add store/migrations/V1__init.sql
-printf '[env]\nPREFLIGHT_MIGRATION_GLOBS = ""\n' >"$R/kendex.settings.toml"
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "store/migrations/V1__init.sql:0: [applied-migration-edited]"; then
-  ok "an untracked root settings file cannot narrow staged migration policy"
-else
-  bad "an untracked root settings file cannot narrow staged migration policy" "rc=$RC out=$OUT"
-fi
-
-seed untrackednestedmigration
-mkdir -p "$R/.kendex"
-printf 'CREATE TABLE t (id INTEGER, name TEXT);\n' >"$R/store/migrations/V1__init.sql"
-git -C "$R" add store/migrations/V1__init.sql
-printf '[env]\nPREFLIGHT_MIGRATION_GLOBS = ""\n' >"$R/.kendex/settings.toml"
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "store/migrations/V1__init.sql:0: [applied-migration-edited]"; then
-  ok "an untracked nested settings file cannot narrow staged migration policy"
-else
-  bad "an untracked nested settings file cannot narrow staged migration policy" "rc=$RC out=$OUT"
-fi
-
-
-echo "=== untracked files are new files in the default scope, invisible to --staged ==="
-seed untracked
-printf '# Never added\n\nSee `docs/gone.md` here too.\n' >"$R/docs/never-added.md"
-mkdir -p "$R/scratch"
-printf 'scratch/\n' >"$R/.gitignore"
-printf '# Ignored\n\nSee `docs/gone.md` from an ignored file.\n' >"$R/scratch/ignored.md"
-run_pf
-if [ "$RC" -eq 1 ] && has "docs/never-added.md:3: [docs-cited-paths]" && ! has "scratch/ignored.md"; then
-  ok "a non-ignored untracked file is in scope; an ignored one is not"
-else
-  bad "a non-ignored untracked file is in scope; an ignored one is not" "rc=$RC out=$OUT"
-fi
-run_pf --staged
-if [ "$RC" -eq 0 ] && ! has "never-added.md"; then
-  ok "--staged sees only the index, so the untracked file is out of scope"
-else
-  bad "--staged sees only the index, so the untracked file is out of scope" "rc=$RC out=$OUT"
-fi
-# A new doc under a new directory is judged as it will be once committed:
-# its citation of a missing sibling fires even though nothing tracked lives
-# in that directory yet.
-seed newdir
-mkdir -p "$R/docs/new"
-printf '# New\n\nSee `docs/new/missing.md`.\n' >"$R/docs/new/guide.md"
-run_pf
-if [ "$RC" -eq 1 ] && has "docs/new/guide.md:3: [docs-cited-paths] cites a path that does not exist: docs/new/missing.md"; then
-  ok "an untracked doc in an untracked directory has its dead citation reported"
-else
-  bad "an untracked doc in an untracked directory has its dead citation reported" "rc=$RC out=$OUT"
-fi
-
-echo "=== --staged judges staged bytes even when the worktree has moved on ==="
-seed rewound
-printf '# Staged\n\nSee `docs/gone.md` for the rest.\n' >"$R/docs/staged.md"
-git -C "$R" add docs/staged.md
-printf '# Staged\n\nAll clean again.\n' >"$R/docs/staged.md" # worktree only
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
-  ok "content comes from the index, so line 3 is the staged line"
-else
-  bad "content comes from the index, so line 3 is the staged line" "rc=$RC out=$OUT"
-fi
-
-echo "=== --all treats every tracked line as added ==="
-seed everything
-run_pf
-if [ "$RC" -eq 0 ] && has "preflight: clean (0 changed file(s))"; then
-  ok "an untouched branch has nothing in the default scope"
-else
-  bad "an untouched branch has nothing in the default scope" "rc=$RC out=$OUT"
-fi
-run_pf --all
-if [ "$RC" -eq 1 ] && has "docs/legacy.md:3: [docs-cited-paths]" && has "changed file(s)"; then
-  ok "--all reaches the committed violation the default scope ignores"
-else
-  bad "--all reaches the committed violation the default scope ignores" "rc=$RC out=$OUT"
-fi
-
-echo "=== --base picks the comparison point ==="
-seed based
-printf '# Loose\n\nSee `docs/gone.md` from this commit.\n' >"$R/docs/loose.md"
-git -C "$R" add -A
-git -C "$R" commit -qm "add a citation"
-run_pf --base main
-if [ "$RC" -eq 1 ] && has "docs/loose.md:3: [docs-cited-paths]"; then
-  ok "--base main sees the commit made on the branch"
-else
-  bad "--base main sees the commit made on the branch" "rc=$RC out=$OUT"
-fi
-run_pf --base HEAD
-if [ "$RC" -eq 0 ] && has "preflight: clean"; then
-  ok "--base HEAD compares against itself and finds nothing"
-else
-  bad "--base HEAD compares against itself and finds nothing" "rc=$RC out=$OUT"
-fi
-
-echo "=== --repo runs against a repository the caller is not standing in ==="
-OUT=""
-RC=0
-OUT="$(cd "$TMP" && "$PF" --repo "$R" --base main 2>&1)" || RC=$?
-if [ "$RC" -eq 1 ] && has "docs/loose.md:3: [docs-cited-paths]"; then
-  ok "--repo relocates the run without a cd"
-else
-  bad "--repo relocates the run without a cd" "rc=$RC out=$OUT"
-fi
-
-echo "=== environment failures exit 2, never 0 or 1 ==="
-run_pf --nonsense
-if [ "$RC" -eq 2 ] && has "unknown argument"; then
-  ok "an unknown flag is a usage error"
-else
-  bad "an unknown flag is a usage error" "rc=$RC out=$OUT"
-fi
-
-run_pf --base does-not-exist
-if [ "$RC" -eq 2 ] && has "does not resolve to a commit"; then
-  ok "a --base ref that resolves to nothing is an environment error"
-else
-  bad "a --base ref that resolves to nothing is an environment error" "rc=$RC out=$OUT"
-fi
-
-mkdir -p "$TMP/not-a-repo"
-OUT=""
-RC=0
-OUT="$("$PF" --repo "$TMP/not-a-repo" 2>&1)" || RC=$?
-if [ "$RC" -eq 2 ] && has "not inside a git repository"; then
-  ok "a path outside any repository is an environment error"
-else
-  bad "a path outside any repository is an environment error" "rc=$RC out=$OUT"
-fi
-
-OUT=""
-RC=0
-OUT="$("$PF" --repo "$TMP/no-such-directory" 2>&1)" || RC=$?
-if [ "$RC" -eq 2 ] && has "--repo path is not a directory"; then
-  ok "a --repo path that does not exist is an environment error"
-else
-  bad "a --repo path that does not exist is an environment error" "rc=$RC out=$OUT"
-fi
-
-echo "=== the default base walks origin/HEAD, then origin/main, then main ==="
-seed defaulted
-printf '# Loose\n\nSee `docs/gone.md` once more.\n' >"$R/docs/loose.md"
-git -C "$R" add -A
-run_pf
-if [ "$RC" -eq 1 ] && has "docs/loose.md:3: [docs-cited-paths]"; then
-  ok "origin/HEAD names the default branch"
-else
-  bad "origin/HEAD names the default branch" "rc=$RC out=$OUT"
-fi
-
-git -C "$R" remote set-head origin --delete >/dev/null
-run_pf
-if [ "$RC" -eq 1 ] && has "docs/loose.md:3: [docs-cited-paths]"; then
-  ok "a repository whose origin/HEAD was never set falls back to origin/main"
-else
-  bad "a repository whose origin/HEAD was never set falls back to origin/main" "rc=$RC out=$OUT"
-fi
-
-git -C "$R" update-ref -d refs/remotes/origin/main
-run_pf
-if [ "$RC" -eq 1 ] && has "docs/loose.md:3: [docs-cited-paths]"; then
-  ok "with no remote-tracking refs left, the local main branch is the last fallback"
-else
-  bad "with no remote-tracking refs left, the local main branch is the last fallback" "rc=$RC out=$OUT"
-fi
-
-git -C "$R" branch -q -D main
-run_pf
-if [ "$RC" -eq 2 ] && has "could not resolve a default diff base"; then
-  ok "with nothing left to compare against, the run fails closed instead of reporting clean"
-else
-  bad "with nothing left to compare against, the run fails closed instead of reporting clean" "rc=$RC out=$OUT"
-fi
-
-echo "=== an attributes rule cannot withhold the lines a change adds ==="
-
-# A committed '-diff' (or 'binary') row makes git call a path binary, and the
-# patch then says "Binary files ... differ" with no hunks at all: every
-# line-scoped lane would have nothing to read while the run still counted the
-# file as changed — a scan reported but never performed. One row would take a
-# whole extension out of reach.
-CITE='# Staged
-
-See `docs/gone.md` for the rest.
-'
-
-seed attrs-staged
-printf '%s' "$CITE" >"$R/docs/staged.md"
-git -C "$R" add docs/staged.md
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
-  ok "control: the added dead citation fires with no attributes row"
-else
-  bad "control: the added dead citation fires with no attributes row" "rc=$RC out=$OUT"
-fi
-printf '*.md -diff\n' >"$R/.gitattributes"
-git -C "$R" add .gitattributes
-# The fixture is real only if the row has in fact flipped git's verdict.
-if git -C "$R" diff --cached --no-ext-diff -- docs/staged.md | grep -q '^Binary files'; then
-  ok "fixture: with '*.md -diff' an unpinned diff carries no hunks"
-else
-  bad "fixture: '-diff' makes an unpinned diff carry no hunks" "rc=$RC"
-fi
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
-  ok "--staged still reads the added line under a '-diff' row"
-else
-  bad "--staged still reads the added line under a '-diff' row" "rc=$RC out=$OUT"
-fi
-if has "preflight: clean"; then
-  bad "no clean verdict may cover a file whose lines were withheld" "$OUT"
-else
-  ok "no clean verdict covers the withheld lines"
-fi
-printf '*.md binary\n' >"$R/.gitattributes"
-git -C "$R" add .gitattributes
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
-  ok "the 'binary' attribute macro cannot withhold them either"
-else
-  bad "the 'binary' attribute macro cannot withhold them either" "rc=$RC out=$OUT"
-fi
-
-# The base scope reads the same patch shape against the merge base.
-seed attrs-base
-printf '*.md -diff\n' >"$R/.gitattributes"
-git -C "$R" add .gitattributes
-git -C "$R" commit -qm attrs
-printf '%s' "$CITE" >"$R/docs/staged.md"
-run_pf
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
-  ok "--base still reads the added line under a '-diff' row"
-else
-  bad "--base still reads the added line under a '-diff' row" "rc=$RC out=$OUT"
-fi
-
-# The other half: forcing text is not a licence to decode an asset. Content
-# is the judge in every scope — the same test --all applies to a tracked file
-# — so binary bytes contribute no lines and no finding built from them.
-seed attrs-binary
-printf 'PNG\000See `docs/gone.md` for the rest.\n' >"$R/docs/staged.md"
-git -C "$R" add docs/staged.md
-run_pf --staged
-if [ "$RC" -eq 0 ] && has "preflight: clean (1 changed file(s))"; then
-  ok "a changed file whose own bytes are binary contributes no lines"
-else
-  bad "a changed file whose own bytes are binary contributes no lines" "rc=$RC out=$OUT"
-fi
-printf 'PNG See `docs/gone.md` for the rest.\n' >"$R/docs/staged.md"
-git -C "$R" add docs/staged.md
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "docs/staged.md:1: [docs-cited-paths]"; then
-  ok "control: the same bytes without the NUL are read as text"
-else
-  bad "control: the same bytes without the NUL are read as text" "rc=$RC out=$OUT"
-fi
-
-# git calls a blob binary on a NUL in its LEADING 8000 BYTES and reads the rest
-# as text. A wider window would drop a file git reads as text, taking its added
-# lines out of every lane while the run still counted it changed.
-seed binary-window
-{
-  printf '# Staged\n\n'
-  printf 'See `docs/gone.md` for the rest.\n'
-  head -c 20000 /dev/zero | tr '\0' 'x'
-  printf '\n\000\n'
-} >"$R/docs/staged.md"
-git -C "$R" add docs/staged.md
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
-  ok "a NUL past the leading 8000 bytes leaves the file text, as it is to git"
-else
-  bad "a NUL past the leading 8000 bytes leaves the file text, as it is to git" "rc=$RC out=$OUT"
-fi
-
-# The other half of "no lines": a file whose lines are withheld is still a
-# CHANGED FILE, and the whole-file lanes judge the path, not the content — no
-# amount of binary content makes a new suite wired. The temp-path line is what
-# makes the second half of this assertion mean something: it is a line-scoped
-# finding on that same path, and the NUL is the only reason it stays quiet.
-seed binary-wholefile
-mkdir -p "$R/tests" "$R/.github/workflows"
-printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/other.test.sh\n' >"$R/.github/workflows/ci.yml"
-git -C "$R" add -A
-git -C "$R" commit -qm ci
-printf '#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p /tmp/preflight-fixture\n# \000\n' >"$R/tests/new.test.sh"
-git -C "$R" add tests/new.test.sh
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "tests/new.test.sh:0: [unwired-suite]" && ! has "[hardcoded-temp-path]"; then
-  ok "a binary file still reaches the whole-file lanes; only its lines are withheld"
-else
-  bad "a binary file still reaches the whole-file lanes; only its lines are withheld" "rc=$RC out=$OUT"
-fi
-printf '#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p /tmp/preflight-fixture\n# x\n' >"$R/tests/new.test.sh"
-git -C "$R" add tests/new.test.sh
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "tests/new.test.sh:0: [unwired-suite]" && has "tests/new.test.sh:3: [hardcoded-temp-path]"; then
-  ok "control: without the NUL the same fixture fires on the line too"
-else
-  bad "control: without the NUL the same fixture fires on the line too" "rc=$RC out=$OUT"
-fi
-
-# A committed blob whose own bytes spell a patch header. Forcing --text hands
-# every changed file's raw content to the patch parser unless content is judged
-# FIRST: a line reading '++ b/<path>' renders with the '+' prefix as a file
-# header at column 1, re-points the parser at that path, and the record split
-# then reopens and truncates it — destroying another file's added lines.
-seed binary-forged-header
-printf '# Staged\n\nSee `docs/gone.md` for the rest.\n' >"$R/docs/staged.md"
-printf 'PNG\000\n++ b/docs/staged.md\n+junk\n' >"$R/zz.bin"
-git -C "$R" add -A
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
-  ok "a binary blob cannot forge a patch header over another file's lines"
-else
-  bad "a binary blob cannot forge a patch header over another file's lines" "rc=$RC out=$OUT"
-fi
-run_pf
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
-  ok "--base holds the same line against the forged header"
-else
-  bad "--base holds the same line against the forged header" "rc=$RC out=$OUT"
-fi
-
-# The index revspec carries its stage: `:0:PATH`, never a bare `:PATH`. Under
-# the bare form git reads a leading `0:` through `3:` in the path AS the stage
-# selector, so `0:asset` asks for the blob at `asset` instead. That lookup
-# either lands on another file's bytes or fails outright, and a failure drops
-# the path out of the binary exclusion, where --text hands its raw content to
-# the patch parser and the forged header above goes live again.
+# `read -d ''` rather than `$(cat <<'ROWS' ...)`: Bash 3.2 scans a here-document
+# inside a command substitution for quotes, and a row carrying an odd number
+# of double quotes runs its parse past the closing parenthesis. It returns 1
+# at the end of the document, which errexit must not read; an empty table is
+# pf_table's refusal.
 #
-# The victim is dot-named on purpose. git orders the patch by path, and the
-# record split truncates a file's collected lines only when its path is
-# reopened after another one, so the forging file has to come SECOND.
-seed stage-prefixed-path
-printf '%s' "$CITE" >"$R/.top.md"
-printf 'PNG\000\n++ b/.top.md\n+junk\n' >"$R/0:asset"
-git -C "$R" add -- .top.md '0:asset'
-run_pf --staged
-if [ "$RC" -eq 1 ] && has ".top.md:3: [docs-cited-paths]"; then
-  ok "a path named for a stage selector cannot forge a header over another file's record"
-else
-  bad "a path named for a stage selector cannot forge a header over another file's record" "rc=$RC out=$OUT"
-fi
-printf 'PNG\000\n+junk\n' >"$R/0:asset"
-git -C "$R" add -- '0:asset'
-run_pf --staged
-if [ "$RC" -eq 1 ] && has ".top.md:3: [docs-cited-paths]"; then
-  ok "control: the same fixture without the injected header line reports the same finding"
-else
-  bad "control: the same fixture without the injected header line reports the same finding" "rc=$RC out=$OUT"
-fi
+# `says` carries only what a row cannot be told apart without: an environment
+# error's message, and a clean verdict whose changed-file count is the claim.
+IFS= read -r -d '' rows <<'ROWS' || :
+the staged dead citation fires and the unstaged one is out of scope|staged|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
+the default scope is base-to-worktree, so it sees both|staged|-|-|1|docs/loose.md:3: [docs-cited-paths];docs/staged.md:3: [docs-cited-paths]|-
+the staged runner wires the staged suite, whatever the worktree copy says|staged-runner|--staged|-|0|-|-
+a worktree-only mention does not wire a staged suite|worktree-runner|--staged|-|1|tests/new2.test.sh:0: [unwired-suite]|-
+a staged JSONC setting governs the staged file despite a narrower worktree copy|staged-jsonc|--staged|jq|0|-|-
+a worktree-only JSONC setting cannot widen the staged policy|worktree-jsonc|--staged|jq|1|themes/white/apps/vscode-theme.json:2: [data-syntax]|invalid JSON
+control: staged JSON stays strict before a shared JSONC setting exists|untracked-jsonc-control|--staged|jq|1|themes/white/apps/vscode-theme.json:2: [data-syntax]|invalid JSON
+an untracked root settings file cannot widen staged JSONC policy|untracked-root-jsonc|--staged|jq|1|themes/white/apps/vscode-theme.json:2: [data-syntax]|invalid JSON
+an untracked nested settings file cannot widen staged JSONC policy|untracked-nested-jsonc|--staged|jq|1|themes/white/apps/vscode-theme.json:2: [data-syntax]|invalid JSON
+an untracked root settings file cannot narrow staged migration policy|untracked-root-migration|--staged|-|1|store/migrations/V1__init.sql:0: [applied-migration-edited]|-
+an untracked nested settings file cannot narrow staged migration policy|untracked-nested-migration|--staged|-|1|store/migrations/V1__init.sql:0: [applied-migration-edited]|-
+a non-ignored untracked file is in scope; an ignored one is not|untracked|-|-|1|docs/never-added.md:3: [docs-cited-paths]|-
+--staged sees only the index, so the untracked file is out of scope|untracked|--staged|-|0|-|-
+an untracked doc in an untracked directory has its dead citation reported|newdir|-|-|1|docs/new/guide.md:3: [docs-cited-paths]|cites a path that does not exist: docs/new/missing.md
+content comes from the index, so line 3 is the staged line|rewound|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
+an untouched branch has nothing in the default scope|everything|-|-|0|-|preflight: clean (0 changed file(s))
+--all reaches the committed violation the default scope ignores|everything|--all|-|1|docs/legacy.md:3: [docs-cited-paths]|changed file(s)
+--base main sees the commit made on the branch|based|--base main|-|1|docs/loose.md:3: [docs-cited-paths]|-
+--base HEAD compares against itself and finds nothing|based|--base HEAD|-|0|-|preflight: clean
+--repo relocates the run without a cd|repo-relocate|--repo {R} --base main|-|1|docs/loose.md:3: [docs-cited-paths]|-
+an unknown flag is a usage error|based|--nonsense|-|2|-|unknown argument
+a --base ref that resolves to nothing is an environment error|based|--base does-not-exist|-|2|-|does not resolve to a commit
+a path outside any repository is an environment error|not-a-repo|--repo {R}|-|2|-|not inside a git repository
+a --repo path that does not exist is an environment error|no-such-directory|--repo {R}|-|2|-|--repo path is not a directory
+origin/HEAD names the default branch|base-origin-head|-|-|1|docs/loose.md:3: [docs-cited-paths]|-
+a repository whose origin/HEAD was never set falls back to origin/main|base-origin-main|-|-|1|docs/loose.md:3: [docs-cited-paths]|-
+with no remote-tracking refs left, the local main branch is the last fallback|base-local-main|-|-|1|docs/loose.md:3: [docs-cited-paths]|-
+with nothing left to compare against, the run fails closed instead of reporting clean|base-none|-|-|2|-|could not resolve a default diff base
+ROWS
+pf_table "what each scope may speak about" "$rows"
 
-# The other half of the bare form: a sibling sits at the shortened path, the
-# lookup succeeds, and the binary verdict is taken over bytes belonging to a
-# different file.
-seed stage-prefixed-sibling
-printf '%s' "$CITE" >"$R/0:doc.md"
-printf 'PNG\000binary\n' >"$R/doc.md"
-git -C "$R" add -- '0:doc.md' doc.md
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "0:doc.md:3: [docs-cited-paths]"; then
-  ok "a stage-prefixed path is judged on its own bytes, not on its shortened sibling's"
-else
-  bad "a stage-prefixed path is judged on its own bytes, not on its shortened sibling's" "rc=$RC out=$OUT"
-fi
-
-# The header state machine, pinned where excluding carriers cannot reach.
-# `+++ b/<path>` is a file header only where git can have written one: inside
-# the preamble a `diff --git` line opens, directly after `--- `. A hunk BODY
-# spells the same shape at column 0 whenever an added line reads `++ b/<path>`,
-# and an unanchored parser hands the victim's record to the carrier — the
-# splitter then reopens that record and truncates the findings already
-# collected for it. The carrier here is ORDINARY TEXT that content
-# classification correctly refuses to exclude, so no exclusion closes this:
-# only the anchor does.
-#
-# Both fixtures share the shape that makes the loss happen: the carrier sorts
-# AFTER the victim and writes at least one row under its OWN name before
-# forging, so the forged rows arrive as a second, non-adjacent group.
-forge_carrier() { # PATH — a text carrier whose third added line forges a header
-  printf 'seed\nnormal\n++ b/docs/staged.md\njunk\n' >"$R/$1"
-}
-
-# Variant one: a NUL-free blob a committed `-diff` row marks binary. The
-# --text pin gives it hunks it would not otherwise have had, and content
-# classification correctly calls it text, so it is correctly NOT excluded.
-seed attributed-text-forged-header
-printf '%s' "$CITE" >"$R/docs/staged.md"
-printf '*.txt -diff\n' >"$R/.gitattributes"
-forge_carrier zz.txt
-git -C "$R" add -A
-NOTEXT="$(git -C "$R" -c core.quotePath=false diff --cached --no-color --unified=0 -- zz.txt)"
-case "$NOTEXT" in
-  *"Binary files"*) ok "fixture: the '-diff' row really does make the unpinned diff go binary" ;;
-  *) bad "fixture: the '-diff' row makes the unpinned diff go binary" "diff=$NOTEXT" ;;
-esac
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
-  ok "an attributed-text carrier cannot forge a header over another file's record"
-else
-  bad "an attributed-text carrier cannot forge a header over another file's record" "rc=$RC out=$OUT"
-fi
-printf 'seed\nnormal\njunk\n' >"$R/zz.txt"
-git -C "$R" add zz.txt
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
-  ok "control: the same fixture without the forged line reports the same finding"
-else
-  bad "control: the same fixture without the forged line reports the same finding" "rc=$RC out=$OUT"
-fi
-
-# Variant two: no attributes row at all. A plain text file reaches the parser
-# by every route, on every scope, with nothing to exclude it by.
-seed plain-text-forged-header
-printf '%s' "$CITE" >"$R/docs/staged.md"
-forge_carrier zz.txt
-git -C "$R" add -A
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
-  ok "a plain text carrier cannot forge a header over another file's record"
-else
-  bad "a plain text carrier cannot forge a header over another file's record" "rc=$RC out=$OUT"
-fi
-run_pf
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
-  ok "--base holds the same line against the plain text carrier"
-else
-  bad "--base holds the same line against the plain text carrier" "rc=$RC out=$OUT"
-fi
-printf 'seed\nnormal\njunk\n' >"$R/zz.txt"
-git -C "$R" add zz.txt
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
-  ok "control: the plain text fixture without the forged line reports the same finding"
-else
-  bad "control: the plain text fixture without the forged line reports the same finding" "rc=$RC out=$OUT"
-fi
-
-# A flag set by `--- ` alone would still be forgeable: with --unified=0 a
-# hunk emits its removed lines before its added ones, so ONE hunk that
-# replaces a line reading `-- a/<x>` with one reading `++ b/<victim>` spells
-# the whole header pair at column 0. `diff --git` is the record no body can
-# spell, which is why the flag is anchored there rather than on `--- `.
-seed forged-header-pair
-printf 'seed\nfiller\n-- a/x\ntail\n' >"$R/zz.txt"
-git -C "$R" add zz.txt
-git -C "$R" commit -qm carrier
-printf '%s' "$CITE" >"$R/docs/staged.md"
-printf 'seed\nnormal\nfiller\n++ b/docs/staged.md\njunk\ntail\n' >"$R/zz.txt"
-git -C "$R" add -A
-# Every half of the shape matters. The first hunk gives the carrier a record
-# under its OWN name, without which there is nothing to reopen and nothing to
-# truncate. The second spells the pair on ADJACENT records, which is what a
-# flag set by `--- ` alone accepts, and puts an added line AFTER it, without
-# which the forged header re-points at nothing.
-PAIR="$(git -C "$R" diff --cached --no-color --unified=0 -- zz.txt | grep -A2 -e '^--- a/x$' | tr '\n' '|')"
-case "$PAIR" in
-  "--- a/x|+++ b/docs/staged.md|+junk|")
-    ok "fixture: the hunk body spells the header pair, with a line after it"
-    ;;
-  *) bad "fixture: the hunk body spells the header pair, with a line after it" "got=$PAIR" ;;
-esac
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "docs/staged.md:3: [docs-cited-paths]"; then
-  ok "a forged '---'/'+++' PAIR cannot re-point the parse either"
-else
-  bad "a forged '---'/'+++' PAIR cannot re-point the parse either" "rc=$RC out=$OUT"
-fi
-# Anchored on `--- ` alone this same fixture re-points the parse and the
-# splitter refusal below fires instead — a loud exit 2 rather than a lost
-# finding, which is the guard doing its job over a parser that let the
-# forgery through. The measurement is the ordinary verdict, not the refusal.
-if has "arrived in two separate groups"; then
-  bad "the forgery never reaches the splitter's refusal" "out=$OUT"
-else
-  ok "the forgery never reaches the splitter's refusal"
-fi
-
-# The forged line is not swallowed either: it is content of the file that
-# carries it, so a lane scanning that file's added lines still sees it.
-seed forged-line-is-content
-printf 'seed\nnormal\n++ b/docs/staged.md\nmkdir -p /tmp/preflight-fixture\n' >"$R/zz.txt"
-git -C "$R" add -A
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "zz.txt:4: [hardcoded-temp-path]"; then
-  ok "a rejected header record leaves the lines after it attributed to their own file"
-else
-  bad "a rejected header record leaves the lines after it attributed to their own file" "rc=$RC out=$OUT"
-fi
-
-echo "=== content the run cannot read fails loudly, never a clean verdict ==="
-
-# A read that FAILS is not a verdict of "no lines". The path is already inside
-# the changed-file count, so a silent skip would print a clean total covering
-# content no lane read — the exact shape every pin above exists to close.
-seed unreadable
-printf '# New\n\nSee `docs/gone.md` for the rest.\n' >"$R/docs/new.md"
-if [ "$(id -u)" -eq 0 ]; then
-  printf '  skip  the unreadable-content pin needs a non-root reader (chmod 000 cannot deny root)\n'
-else
-  chmod 000 "$R/docs/new.md"
-  run_pf
-  chmod 644 "$R/docs/new.md"
-  if [ "$RC" -eq 2 ] && has "docs/new.md" && ! has "preflight: clean"; then
-    ok "content the run cannot read is exit 2, naming the path"
-  else
-    bad "content the run cannot read is exit 2, naming the path" "rc=$RC out=$OUT"
-  fi
-  run_pf
-  if [ "$RC" -eq 1 ] && has "docs/new.md:3: [docs-cited-paths]"; then
-    ok "control: the same file readable produces the ordinary verdict"
-  else
-    bad "control: the same file readable produces the ordinary verdict" "rc=$RC out=$OUT"
-  fi
-fi
-
-# Staged scope reads the index, so the failure is the index lookup's: the
-# blob the change set just listed cannot be materialized. The path stays in
-# the changed-file count either way, so a silent skip here is the same clean
-# verdict over unread content — it just arrives through the other scope.
-seed vanished-blob
-printf '# New\n\nSee `docs/gone.md` for the rest.\n' >"$R/docs/new.md"
-git -C "$R" add docs/new.md
-run_pf --staged
-if [ "$RC" -eq 1 ] && has "docs/new.md:3: [docs-cited-paths]"; then
-  ok "control: the staged file reports the ordinary verdict while its blob is readable"
-else
-  bad "control: the staged file reports the ordinary verdict" "rc=$RC out=$OUT"
-fi
-OID="$(git -C "$R" rev-parse :0:docs/new.md)"
-if [ ! -f "$R/.git/objects/${OID:0:2}/${OID:2}" ]; then
-  bad "fixture: the staged blob is a loose object at the expected path" "$OID"
-else
-  rm -f -- "$R/.git/objects/${OID:0:2}/${OID:2}"
-  run_pf --staged
-  if [ "$RC" -eq 2 ] && has "docs/new.md" && ! has "preflight: clean"; then
-    ok "a staged blob the index lookup cannot materialize is exit 2, naming the path"
-  else
-    bad "a vanished staged blob is exit 2, naming the path" "rc=$RC out=$OUT"
-  fi
-fi
-
-printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
-[ "$FAIL" -eq 0 ]
+pf_summary

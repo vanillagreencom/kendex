@@ -2,9 +2,10 @@
 # Shared counters, runner and table driver for the preflight suites.
 #
 # Sourced on the line after each suite's `set -euo pipefail`; this file sets
-# no mode, the caller's shell owns it. The suite keeps what is its own: `seed`
-# (its neutral world), `TMP` and the trap that removes it, and `pf_world`, the
-# map from a row's world words onto a fresh fixture in `$R`.
+# no mode, the caller's shell owns it. The suite keeps what is its own: its
+# neutral world, `TMP` and the trap that removes it, and `pf_world`, the map
+# from a row's world words onto a fresh fixture in `$R`. `pf_scope_seed` is
+# here because the two scope suites, split from one file, share one world.
 #
 # Sourced, never executed: no mode bit, per this repo's CI convention.
 
@@ -30,10 +31,14 @@ skipped() {
 
 OUT=""
 RC=0
-run_pf() { # [args...] — run in $R; sets OUT and RC
+# The directory the run starts in. Empty means the fixture itself; a world
+# that pins how preflight finds a repository the caller is not standing in
+# sets it to a directory outside `$R`, and `pf_table` clears it per row.
+PF_CWD=""
+run_pf() { # [args...] — run in ${PF_CWD:-$R}; sets OUT and RC
   OUT=""
   RC=0
-  OUT="$(cd "$R" && "$PF" "$@" 2>&1)" || RC=$?
+  OUT="$(cd "${PF_CWD:-$R}" && "$PF" "$@" 2>&1)" || RC=$?
 }
 
 # The finding heads in `$OUT`, in output order, one per line: the
@@ -46,10 +51,11 @@ pf_fired() {
   printf '%s\n' "$OUT" | sed -n 's/^\([^ :][^ ]*:[0-9][0-9]*: \[[a-z-]*\]\).*/\1/p'
 }
 
-# The only judge of which `needs` tokens exist: `shellcheck`, `jq`, or `toml`
-# (taplo, or python3 with tomllib), each a tool the row's lane cannot run
-# without. Three outcomes, so a mistyped token cannot read as an absent tool
-# and silently drop the row: `0` the named tool is absent, printing the
+# The only judge of which `needs` tokens exist: a tool the row's lane cannot
+# run without (`shellcheck`, `jq`, or `toml` — taplo, or python3 with
+# tomllib), or `nonroot`, the reader a permission fixture needs in order to be
+# denied. Three outcomes, so a mistyped token cannot read as an absent tool
+# and silently drop the row: `0` what the row named is absent, printing the
 # reason (the row skips); `1` it is present (the row runs); `2` the token is
 # not a name this driver knows, printing that (the run refuses).
 pf_needs_absent() { # NEEDS
@@ -63,6 +69,10 @@ pf_needs_absent() { # NEEDS
       command -v python3 >/dev/null 2>&1 && python3 -c 'import tomllib' >/dev/null 2>&1 && return 1
       printf 'no taplo and no python3 with tomllib\n'
       ;;
+    nonroot)
+      case "$(id -u)" in 0) ;; *) return 1 ;; esac
+      printf 'running as root, where chmod 000 denies nothing\n'
+      ;;
     *)
       printf 'a tool this driver does not know: %s\n' "$1"
       return 2
@@ -71,22 +81,49 @@ pf_needs_absent() { # NEEDS
   return 0
 }
 
+# The neutral world the two scope suites share: a committed baseline whose
+# `docs/legacy.md` already carries a dead citation, so `--all` reaches a
+# violation the default scope cannot; an `origin/main` for the default base
+# walk to resolve; an applied migration; and a feature branch checked out. It
+# is rebuilt on every call, so a world word two rows both name starts clean.
+pf_scope_seed() { # NAME — fixture in $R
+  R="$TMP/$1"
+  rm -rf -- "${TMP:?}/$1" "${TMP:?}/$1.git"
+  mkdir -p "$R/docs" "$R/store/migrations"
+  git -C "$R" -c init.defaultBranch=main init -q
+  git -C "$R" config user.email test@example.com
+  git -C "$R" config user.name test
+  printf '# Staged\n' >"$R/docs/staged.md"
+  printf '# Loose\n' >"$R/docs/loose.md"
+  printf '# Legacy\n\nSee `docs/gone.md` for background.\n' >"$R/docs/legacy.md"
+  printf 'CREATE TABLE t (id INTEGER);\n' >"$R/store/migrations/V1__init.sql"
+  git -C "$R" add -A
+  git -C "$R" commit -qm init
+  git clone -q --bare "$R" "$R.git"
+  git -C "$R" remote add origin "$R.git"
+  git -C "$R" fetch -q origin
+  git -C "$R" remote set-head origin main >/dev/null
+  git -C "$R" checkout -qb feature
+}
+
 # One table. Rows are `label|world|argv|needs|rc|fired|says`: `world` is a
 # word list the suite's `pf_world` maps onto a fresh fixture (setting `R`),
-# `argv` is `-` or the preflight flags, `needs` is `-` or a tool
+# `argv` is `-` or the preflight flags, `needs` is `-` or a token
 # (`pf_needs_absent`), `rc` is exact, `fired` is the exact ordered
 # `;`-separated list of finding heads the run must print (`-` for none),
 # compared whole against `pf_fired`. `says` is `;`-separated fragments `$OUT`
-# must carry, or `-`; it is the last field, so `read` keeps a `|` inside it.
-# A row with an empty field asserts nothing and refuses the run, as does a
-# `needs` token `pf_needs_absent` does not know, a world word `pf_world` does
-# not know or any failure its return status carries; a table that asserted no
-# row exits 2 from its own counter, so a fixture failure or a probe run never
-# reads as green. `PF_TABLE_PROBE=1` renders each row's status, fired list
-# and finding lines instead of asserting.
+# must carry, each one prefixed `!` instead if it must be ABSENT, or `-`; it
+# is the last field, so `read` keeps a `|` inside it. A `{R}` in `argv`
+# expands to the fixture path, which the row cannot spell before its world is
+# built. A row with an empty field asserts nothing and refuses the run, as
+# does a `needs` token `pf_needs_absent` does not know, a world word
+# `pf_world` does not know or any failure its return status carries; a table
+# that asserted no row exits 2 from its own counter, so a fixture failure or a
+# probe run never reads as green. `PF_TABLE_PROBE=1` renders each row's
+# status, fired list and finding lines instead of asserting.
 pf_table() {
   local title="$1" rows="$2" row label world argv needs rc fired says
-  local field before reason needs_rc got miss frag lines
+  local field before reason needs_rc got miss extra frag lines brace_r
   before=$((PASS + FAIL))
   printf '=== %s ===\n' "$title"
   while IFS= read -r row; do
@@ -108,8 +145,11 @@ EOF
         *) printf '%s: %s\n' "$reason" "$row" >&2; exit 1 ;;
       esac
     fi
+    PF_CWD=""
     # shellcheck disable=SC2086
     pf_world $world || { printf 'the world could not be built: %s\n' "$row" >&2; exit 1; }
+    brace_r='{R}'
+    argv="${argv//$brace_r/$R}"
     if [ "$argv" = - ]; then
       run_pf
     else
@@ -133,16 +173,24 @@ EOF
       continue
     fi
     miss=""
+    extra=""
     if [ "$says" != - ]; then
       while IFS= read -r frag; do
         [ -n "$frag" ] || continue
-        case "$OUT" in *"$frag"*) ;; *) miss="${miss:+$miss;}$frag" ;; esac
+        case "$frag" in
+          '!'*)
+            case "$OUT" in *"${frag#'!'}"*) extra="${extra:+$extra;}${frag#'!'}" ;; esac
+            ;;
+          *) case "$OUT" in *"$frag"*) ;; *) miss="${miss:+$miss;}$frag" ;; esac ;;
+        esac
       done <<EOF
 $(printf '%s\n' "$says" | tr ';' '\n')
 EOF
     fi
     if [ -n "$miss" ]; then
       bad "$label" "expected the output to carry '$miss': $(printf '%s' "$OUT" | tr '\n' ' ')"
+    elif [ -n "$extra" ]; then
+      bad "$label" "expected the output not to carry '$extra': $(printf '%s' "$OUT" | tr '\n' ' ')"
     else
       ok "$label"
     fi
