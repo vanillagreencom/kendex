@@ -8,6 +8,11 @@
 # runs first in every pair.
 set -euo pipefail
 
+# A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
+# GIT_WORK_TREE and GIT_INDEX_FILE, which take precedence over `git -C` and
+# would point the fixtures' git at the real repository.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS="$(cd "$TEST_DIR/.." && pwd)"
 REPO="$(cd "$TOOLS/.." && pwd)"
