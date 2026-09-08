@@ -65,18 +65,20 @@ function multiTabRequest() {
 
 describe("rpc mode detection", () => {
 	test("isRpcMode detects explicit rpc mode only", () => {
-		expect(isRpcMode({ mode: "rpc" })).toBe(true);
-		expect(isRpcMode({ mode: "interactive" })).toBe(false);
-		expect(isRpcMode({})).toBe(false);
-		expect(isRpcMode(undefined)).toBe(false);
+		for (const [context, expected] of [
+			[{ mode: "rpc" }, true], [{ mode: "interactive" }, false], [{}, false], [undefined, false],
+		] as const) {
+			expect(isRpcMode(context)).toBe(expected);
+		}
 	});
 
 	test("rpcDialogUI requires callable select and input", () => {
-		expect(rpcDialogUI(undefined)).toBeUndefined();
-		expect(rpcDialogUI({ select: () => Promise.resolve(undefined) })).toBeUndefined();
-		expect(rpcDialogUI({ input: () => Promise.resolve(undefined) })).toBeUndefined();
 		const ui = { input: () => Promise.resolve(undefined), select: () => Promise.resolve(undefined) };
-		expect(rpcDialogUI(ui)).toBe(ui as RpcDialogUI);
+		for (const [candidate, expected] of [
+			[undefined, undefined], [{ select: ui.select }, undefined], [{ input: ui.input }, undefined], [ui, ui],
+		] as const) {
+			expect(rpcDialogUI(candidate)).toBe(expected);
+		}
 	});
 });
 
@@ -179,7 +181,16 @@ describe("rpc questionnaire walker", () => {
 		const outcome = await runRpcQuestionnaire(dialogs, request);
 
 		expect(outcome).toEqual({ answers: [["Real answer"]], kind: "answered" });
-		expect(dialogs.calls[2].title).toBe("Custom answer cannot be empty — Path: Which path?");
+		expect(dialogs.calls[2].title.split("\n")[0]).toBe("custom-answer=empty");
+		expect(dialogs.calls[2].title.split("\n").at(-1)).toBe("Path: Which path?");
+	});
+
+	test("blank unlisted select text re-shows the question instead of answering blank", async () => {
+		const dialogs = fakeDialogs(["", "2. B"]);
+		const outcome = await runRpcQuestionnaire(dialogs, singleRequest());
+
+		expect(outcome).toEqual({ answers: [["B"]], kind: "answered" });
+		expect(dialogs.calls[1].title.split("\n")[0]).toBe("answer=empty");
 	});
 
 	test("persistent blank input cancels after bounded re-prompts, never a false answer", async () => {
@@ -197,7 +208,9 @@ describe("rpc questionnaire walker", () => {
 		const outcome = await runRpcQuestionnaire(dialogs, request);
 
 		expect(outcome).toEqual({ answers: [["A"], ["Docs", "Tests"], ["Slow"]], kind: "answered" });
-		expect(dialogs.calls[2].title.startsWith("Option numbers must be between 1 and 3 — Targets")).toBe(true);
+		expect(dialogs.calls[2].title.split("\n")[0]).toBe("option-range=9:1:3");
+		expect(dialogs.calls[2].title.split("\n")[1]).toBe("Option numbers must be between 1 and 3.");
+		expect(dialogs.calls[2].title.split("\n")[2]).toBe("Targets (2/3): Which targets?");
 	});
 
 	test("multi-select option list is never truncated away, custom row included", async () => {
@@ -268,27 +281,19 @@ describe("rpc questionnaire walker", () => {
 describe("multi-select parsing", () => {
 	const tab = () => multiTabRequest().questions[1];
 
-	test("comma or space separated numbers map to option labels, deduped", () => {
-		expect(parseMultiSelection("1,2,1", tab())).toEqual({ labels: ["Docs", "Tests"], wantsCustom: false });
-		expect(parseMultiSelection(" 2 1 ", tab())).toEqual({ labels: ["Tests", "Docs"], wantsCustom: false });
-	});
-
-	test("custom row number requests the follow-up input", () => {
-		expect(parseMultiSelection("1,3", tab())).toEqual({ labels: ["Docs"], wantsCustom: true });
-	});
-
-	test("out-of-range or ambiguous numbers are an error, never a silent empty answer", () => {
-		expect(parseMultiSelection("9", tab())).toEqual({ error: "Option numbers must be between 1 and 3" });
-		expect(parseMultiSelection("0", tab())).toEqual({ error: "Option numbers must be between 1 and 3" });
-		expect(parseMultiSelection("12", tab())).toEqual({ error: "Option numbers must be between 1 and 3" });
-	});
-
-	test("non-numeric input becomes a whole free-text custom answer", () => {
-		expect(parseMultiSelection("Docs and a migration guide", tab())).toEqual({
-			labels: ["Docs and a migration guide"],
-			wantsCustom: false,
-		});
-		expect(parseMultiSelection("   ", tab())).toEqual({ labels: [], wantsCustom: false });
+	test("maps numeric and free-text selections without silent range failures", () => {
+		for (const [raw, expected] of [
+			["1,2,1", { labels: ["Docs", "Tests"], wantsCustom: false }],
+			[" 2 1 ", { labels: ["Tests", "Docs"], wantsCustom: false }],
+			["1,3", { labels: ["Docs"], wantsCustom: true }],
+			["9", { error: "option-range=9:1:3\nOption numbers must be between 1 and 3." }],
+			["0", { error: "option-range=0:1:3\nOption numbers must be between 1 and 3." }],
+			["12", { error: "option-range=12:1:3\nOption numbers must be between 1 and 3." }],
+			["Docs and a migration guide", { labels: ["Docs and a migration guide"], wantsCustom: false }],
+			["   ", { labels: [], wantsCustom: false }],
+		] as const) {
+			expect(parseMultiSelection(raw, tab())).toEqual(expected);
+		}
 	});
 });
 
@@ -315,7 +320,7 @@ describe("presentQuestion routing", () => {
 		});
 
 		expect(outcome?.kind).toBe("unavailable");
-		expect((outcome as Extract<PresentOutcome, { kind: "unavailable" }>).error).toContain("select/input");
+		expect((outcome as Extract<PresentOutcome, { kind: "unavailable" }>).error.split("\n")[0]).toBe("question-ui=rpc:unavailable");
 	});
 
 	test("custom() resolving undefined falls back to the dialog walker", async () => {
@@ -347,6 +352,7 @@ describe("presentQuestion routing", () => {
 		});
 
 		expect(outcome?.kind).toBe("unavailable");
+		expect((outcome as Extract<PresentOutcome, { kind: "unavailable" }>).error.split("\n")[0]).toBe("question-ui=custom:unavailable");
 	});
 
 	test("custom() completing the request stays on the custom path", async () => {
