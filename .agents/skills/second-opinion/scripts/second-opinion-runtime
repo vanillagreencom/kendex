@@ -51,6 +51,7 @@ stop_process_group() {
   process_group_alive "$leader" || return 0
   if ! kill -TERM -- "-$leader" 2>/dev/null; then
     process_group_alive "$leader" || return 0
+    printf 'could-not-send-TERM: group=%s\n' "$leader" >&2
     echo "second-opinion-runtime: could not send TERM to process group $leader" >&2
     return 1
   fi
@@ -60,6 +61,7 @@ stop_process_group() {
     if [[ $now -ge $end ]]; then
       if ! kill -KILL -- "-$leader" 2>/dev/null; then
         process_group_alive "$leader" || return 0
+        printf 'could-not-send-KILL: group=%s\n' "$leader" >&2
         echo "second-opinion-runtime: could not send KILL to process group $leader" >&2
         return 1
       fi
@@ -67,6 +69,7 @@ stop_process_group() {
       while process_group_alive "$leader"; do
         now=$(date +%s)
         if [[ $now -ge $end ]]; then
+          printf 'process-group-still-alive: group=%s signal=KILL\n' "$leader" >&2
           echo "second-opinion-runtime: process group $leader is still alive after KILL" >&2
           return 1
         fi
@@ -201,6 +204,7 @@ launch() {
   # but pointless.
   cleanup_launch() {
     if [[ -n "$LAUNCH_WORKER_PID" ]] && ! stop_process_group "$LAUNCH_WORKER_PID" 30; then
+      printf 'launch-cleanup-failed: runtime=%s\n' "$LAUNCH_RUNTIME_DIR" >&2
       echo "second-opinion-runtime: launch cleanup failed; runtime state preserved: $LAUNCH_RUNTIME_DIR" >&2
       return 1
     fi
@@ -324,6 +328,7 @@ wait_for_run() {
     now=$(date +%s)
     if [[ $now -ge $deadline ]]; then
       if ! stop_process_group "$worker_pid" 30; then
+        printf 'deadline-cleanup-failed: runtime=%s\n' "$runtime_dir" >&2
         echo "second-opinion: deadline cleanup failed; runtime state preserved: $runtime_dir" >&2
         exit 75
       fi

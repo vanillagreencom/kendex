@@ -312,8 +312,8 @@ RUNTIME_PATH="$RUNTIME" bash -c '
   stop_process_group 4242 1
 ' > "$TMP_ROOT/term-fail.stdout" 2> "$TMP_ROOT/term-fail.stderr" || rc=$?
 assert_rc "$rc" 1 "a TERM failure is reported"
-assert_contains "$TMP_ROOT/term-fail.stderr" "could not send TERM to process group 4242" \
-  "the TERM failure names the signal and group"
+assert_contains "$TMP_ROOT/term-fail.stderr" "could-not-send-TERM: group=4242" \
+  "the TERM failure key names the signal and group"
 
 printf '100\n' > "$TMP_ROOT/kill-fail.clock"
 rc=0
@@ -332,12 +332,14 @@ RUNTIME_PATH="$RUNTIME" TEST_CLOCK="$TMP_ROOT/kill-fail.clock" bash -c '
   stop_process_group 4292 1
 ' > "$TMP_ROOT/kill-fail.stdout" 2> "$TMP_ROOT/kill-fail.stderr" || rc=$?
 assert_rc "$rc" 1 "a KILL failure after TERM is reported"
-assert_contains "$TMP_ROOT/kill-fail.stderr" "could not send KILL to process group 4292" \
-  "the KILL failure names the signal and group"
+assert_contains "$TMP_ROOT/kill-fail.stderr" "could-not-send-KILL: group=4292" \
+  "the KILL failure key names the signal and group"
 
 KILL_FAILURE_MUTANT="$TMP_ROOT/kill-failure-mutant-runtime"
 awk '
-  /could not send KILL to process group/ {
+  /could-not-send-KILL:/ {
+    print
+    if (getline <= 0) exit 8
     print
     if (getline <= 0 || $0 !~ /return 1/) exit 8
     sub(/return 1/, "return 0")
@@ -389,8 +391,8 @@ RUNTIME_PATH="$RUNTIME" TEST_CLOCK="$TMP_ROOT/final-live.clock" \
   stop_process_group 4343 1
 ' > "$TMP_ROOT/final-live.stdout" 2> "$TMP_ROOT/final-live.stderr" || rc=$?
 assert_rc "$rc" 1 "a process group still alive after KILL is reported"
-assert_contains "$TMP_ROOT/final-live.stderr" "process group 4343 is still alive after KILL" \
-  "the final-liveness failure names the group and signal"
+assert_contains "$TMP_ROOT/final-live.stderr" "process-group-still-alive: group=4343 signal=KILL" \
+  "the final-liveness failure key names the group and signal"
 [[ ! -e "$TMP_ROOT/final-live.wait-called" ]] \
   || fail "post-KILL cleanup entered wait while the group was still alive"
 ok "post-KILL cleanup stays inside its bounded liveness loop"
@@ -404,6 +406,7 @@ rc=0
 RUNTIME_PATH="$RUNTIME" FAIL_ROOT="$TMP_ROOT" bash -c '
   source "$RUNTIME_PATH"
   stop_process_group() {
+    printf "injected-cleanup-refusal: group=%s\n" "$1" >&2
     echo "second-opinion-runtime: injected cleanup refusal" >&2
     return 1
   }
@@ -411,10 +414,11 @@ RUNTIME_PATH="$RUNTIME" FAIL_ROOT="$TMP_ROOT" bash -c '
     "$(($(date +%s) - 1))" 1
 ' > "$TMP_ROOT/cleanup-fail.stdout" 2> "$TMP_ROOT/cleanup-fail.stderr" || rc=$?
 assert_rc "$rc" 75 "deadline cleanup failure remains recoverable"
-assert_contains "$TMP_ROOT/cleanup-fail.stderr" "injected cleanup refusal" \
-  "the cleanup cause reaches the caller"
-assert_contains "$TMP_ROOT/cleanup-fail.stderr" "runtime state preserved" \
-  "the wait names the preserved recovery state"
+assert_contains "$TMP_ROOT/cleanup-fail.stderr" "injected-cleanup-refusal: group=4444" \
+  "the cleanup cause key reaches the caller"
+assert_contains "$TMP_ROOT/cleanup-fail.stderr" \
+  "deadline-cleanup-failed: runtime=$TMP_ROOT/cleanup-fail-runtime" \
+  "the wait refusal key names the preserved recovery state"
 [[ -d "$TMP_ROOT/cleanup-fail-runtime" ]] \
   || fail "cleanup failure deleted the runtime state needed to retry"
 ok "cleanup failure preserves the runtime directory"
@@ -431,6 +435,7 @@ run_launch_cleanup_failure() { # RUNTIME LABEL
       source "$RUNTIME_PATH"
       stop_process_group() {
         printf "%s\n" "$1" > "$STOP_CAPTURE"
+        printf "injected-launch-cleanup-refusal: group=%s\n" "$1" >&2
         echo "second-opinion-runtime: injected launch cleanup refusal" >&2
         return 1
       }
@@ -450,10 +455,12 @@ cleanup_captured_launch() { # LABEL
 
 rc="$(run_launch_cleanup_failure "$RUNTIME" launch-cleanup)"
 assert_rc "$rc" 1 "a publication failure with failed cleanup exits nonzero"
-assert_contains "$TMP_ROOT/launch-cleanup.stderr" "injected launch cleanup refusal" \
-  "launch cleanup reports the stop failure"
-assert_contains "$TMP_ROOT/launch-cleanup.stderr" "runtime state preserved" \
-  "launch cleanup names the preserved state"
+assert_contains "$TMP_ROOT/launch-cleanup.stderr" \
+  "injected-launch-cleanup-refusal: group=$(cat < "$TMP_ROOT/launch-cleanup.stop-pid")" \
+  "launch cleanup reports the stop failure key"
+assert_contains "$TMP_ROOT/launch-cleanup.stderr" \
+  "launch-cleanup-failed: runtime=$TMP_ROOT/launch-cleanup-runtime" \
+  "launch cleanup refusal key names the preserved state"
 [[ -d "$TMP_ROOT/launch-cleanup-runtime" ]] \
   || fail "launch cleanup failure deleted its recovery state"
 ok "launch cleanup failure preserves the runtime directory"
@@ -461,7 +468,9 @@ cleanup_captured_launch launch-cleanup || fail "launch cleanup control left its 
 
 LAUNCH_CLEANUP_MUTANT="$TMP_ROOT/launch-cleanup-mutant-runtime-script"
 awk '
-  /launch cleanup failed; runtime state preserved/ {
+  /launch-cleanup-failed:/ {
+    print
+    if (getline <= 0) exit 8
     print
     if (getline <= 0 || $0 !~ /return 1/) exit 8
     sub(/return 1/, ":")
