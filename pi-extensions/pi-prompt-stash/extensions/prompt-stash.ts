@@ -26,6 +26,11 @@ const ANSI_GREEN_FG = "\x1b[32m";
 const ANSI_YELLOW_FG = "\x1b[33m";
 const ANSI_FG_RESET = "\x1b[39m";
 
+const stashMessages = {
+	empty: "prompt_stash_items=0\nPrompt stash is empty",
+	saved: (count: number) => `prompt_stash_items=${count}\nStashed prompt (${count} total)`,
+};
+
 function ansiGreen(text: string): string { return `${ANSI_GREEN_FG}${text}${ANSI_FG_RESET}`; }
 function ansiYellow(text: string): string { return `${ANSI_YELLOW_FG}${text}${ANSI_FG_RESET}`; }
 
@@ -232,7 +237,7 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 	const path = storePath(ctx);
 	let items = loadItems(path);
 	if (items.length === 0) {
-		ctx.ui.notify("Prompt stash is empty", "info");
+		ctx.ui.notify(stashMessages.empty, "info");
 		return;
 	}
 
@@ -439,7 +444,7 @@ async function toggleStash(ctx: ExtensionContext): Promise<void> {
 	if (text.trim().length > 0) {
 		const count = stashPrompt(ctx, text);
 		ctx.ui.setEditorText("");
-		ctx.ui.notify(`Stashed prompt (${count} total)`, "info");
+		ctx.ui.notify(stashMessages.saved(count), "info");
 		return;
 	}
 
