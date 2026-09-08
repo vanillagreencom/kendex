@@ -44,13 +44,14 @@ run_test_command() {
 	TEST_COMMAND_PID=$!
 	local status=0
 	wait "$TEST_COMMAND_PID" || status=$?
-	TEST_COMMAND_PID=""
+	cleanup_test_command
 	return "$status"
 }
 
 cleanup_test_command() {
 	if [[ -n "$TEST_COMMAND_PID" ]]; then
 		kill -- "-$TEST_COMMAND_PID" 2>/dev/null || true
+		kill -KILL -- "-$TEST_COMMAND_PID" 2>/dev/null || true
 		wait "$TEST_COMMAND_PID" 2>/dev/null || true
 		TEST_COMMAND_PID=""
 	fi
