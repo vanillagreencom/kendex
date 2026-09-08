@@ -66,8 +66,9 @@ assert_eq "$(git -C "$CLONE" rev-parse main)" "$(git -C "$SEED" rev-parse main)"
 git -C "$CLONE" worktree list --porcelain | grep -Fq "$STALE_TREE" && fail "stale worktree registration is pruned" || ok "stale worktree registration is pruned"
 
 BASE_TREE="$TMP_ROOT/base"$'\n'"tree"
-BASE_TREE_HEADER="${BASE_TREE//$'\n'/\\n}"
 git -C "$CLONE" worktree add -q "$BASE_TREE" main
+BASE_TREE="$(cd -- "$BASE_TREE" && pwd -P)"
+BASE_TREE_HEADER="${BASE_TREE//$'\n'/\\n}"
 printf 'five\n' >> "$SEED/file"
 git -C "$SEED" add file
 git -C "$SEED" commit -q -m five
