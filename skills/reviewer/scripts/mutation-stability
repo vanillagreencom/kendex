@@ -51,6 +51,13 @@ refuse() {
   exit 2
 }
 
+refuse_with_log() {
+  key="$1" field="$2" value="$3" text="$4" log="$5"
+  message error "$key" "$field" "$value" "$text"
+  [ ! -s "$log" ] || cat -- "$log" >&2
+  exit 2
+}
+
 notice() {
   message notice "$1" "$2" "$3" "$4"
 }
@@ -112,8 +119,15 @@ fi
 [ "$SETTLE" -ne 0 ] ||
   notice settle-disabled value "$SETTLE" "copies are not mtime-separated; verdicts assume BUILD shares no cache"
 
-ROOT=$(mktemp -d "${TMPDIR:-/tmp}/mutation-stability.XXXXXX") ||
-  refuse temp-create-failed path "${TMPDIR:-/tmp}" "could not create the mutation workspace"
+root_result=""
+root_status=0
+root_result=$(mktemp -d "${TMPDIR:-/tmp}/mutation-stability.XXXXXX" 2>&1) || root_status=$?
+if [ "$root_status" -ne 0 ]; then
+  message error temp-create-failed path "${TMPDIR:-/tmp}" "could not create the mutation workspace"
+  [ -z "$root_result" ] || printf '%s\n' "$root_result" >&2
+  exit 2
+fi
+ROOT="$root_result"
 ACTIVE_PID="" ACTIVE_GROUP=""
 
 group_leaves() {
@@ -272,7 +286,11 @@ cargo_selection_nonempty() {
   ' "$1"
 }
 
-extract "$ROOT/mutant" || refuse archive-failed sha "$SHA" "control archive failed"
+extract_status=0
+extract "$ROOT/mutant" >"$ROOT/control-archive.log" 2>&1 || extract_status=$?
+if [ "$extract_status" -ne 0 ]; then
+  refuse_with_log archive-failed sha "$SHA" "control archive failed" "$ROOT/control-archive.log"
+fi
 
 control_build_status=0
 run_command "$ROOT/mutant" "$BUILD" "$ROOT/control-build.log" "control build" || control_build_status=$?
@@ -299,7 +317,11 @@ if [ "$selection_status" = 1 ]; then
 fi
 
 outrank_last_build
-(cd "$ROOT/mutant" && bash -c "$MUTATE") || refuse mutate-command-failed exit "$?" "mutate command failed"
+mutate_status=0
+(cd "$ROOT/mutant" && bash -c "$MUTATE") >"$ROOT/mutate.log" 2>&1 || mutate_status=$?
+if [ "$mutate_status" -ne 0 ]; then
+  refuse_with_log mutate-command-failed exit "$mutate_status" "mutate command failed" "$ROOT/mutate.log"
+fi
 
 build_status=0
 run_command "$ROOT/mutant" "$BUILD" "$ROOT/build.log" "mutant build" || build_status=$?
@@ -315,7 +337,11 @@ KILLED=1
 [ "$mutant_status" -ne 0 ] || KILLED=0
 
 PASSES=0
-extract "$ROOT/clean" || refuse archive-failed sha "$SHA" "clean archive failed"
+extract_status=0
+extract "$ROOT/clean" >"$ROOT/clean-archive.log" 2>&1 || extract_status=$?
+if [ "$extract_status" -ne 0 ]; then
+  refuse_with_log archive-failed sha "$SHA" "clean archive failed" "$ROOT/clean-archive.log"
+fi
 i=0
 while [ "$i" -lt "$N" ]; do
   if run_test "$ROOT/clean" "$ROOT/stability-$i.log"; then PASSES=$((PASSES + 1)); fi
