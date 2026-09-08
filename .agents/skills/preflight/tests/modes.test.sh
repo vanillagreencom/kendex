@@ -272,6 +272,27 @@ case "$first" in
     bad "the newline in its value is escaped, so the record stays one line" "first line: $first" ;;
 esac
 
+# A dependency that writes its own diagnostic must not reach stderr before
+# the record. A gitfile pointing nowhere makes git say so at length.
+broken="$TMP/broken-gitfile"
+rm -rf -- "${TMP:?}/broken-gitfile"
+mkdir -p "$broken"
+printf 'gitdir: /nonexistent-git-dir\n' > "$broken/.git"
+dep_out="$( ( cd "$broken" && "$PF" ) 2>&1 >/dev/null || : )"
+dep_first="$(printf '%s\n' "$dep_out" | sed -n '1p')"
+case "$dep_first" in
+  'preflight: not-a-repo='*)
+    ok "a failing dependency's diagnostic does not precede the record" ;;
+  *)
+    bad "a failing dependency's diagnostic does not precede the record" "first line: $dep_first" ;;
+esac
+case "$dep_out" in
+  *fatal:*)
+    ok "the dependency's own cause is replayed after the record" ;;
+  *)
+    bad "the dependency's own cause is replayed after the record" "output: $dep_out" ;;
+esac
+
 # The tab branch is its own line of code, so it gets its own case: without
 # one, deleting that line leaves this suite green and a tab reaches the
 # record raw.

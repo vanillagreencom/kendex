@@ -201,10 +201,16 @@ EOF
 # its stderr captured, and the refusal replays that text AFTER its own two
 # lines, so the record is always first and nothing is lost.
 PF_DEP_ERR=""
-pf_quiet() { # COMMAND... -> the command's status, its stderr in PF_DEP_ERR
+# Runs a dependency with its stderr captured, leaving stdout wherever the
+# caller sends it, so a diagnostic cannot reach the terminal before the
+# refusal record. `env_error` replays what was captured after its own lines,
+# so nothing is lost. Used at every failure path that ends in a refusal.
+pf_dep() { # COMMAND... -> the command's status, its stderr in PF_DEP_ERR
+  local st=0
   PF_DEP_ERR=""
-  PF_DEP_ERR="$("$@" 2>&1 1>/dev/null)" || return $?
-  return 0
+  "$@" 2>"$TMP/dep.err" || st=$?
+  PF_DEP_ERR="$(cat "$TMP/dep.err" 2>/dev/null)"
+  return "$st"
 }
 
 env_error() { # KEY VALUE EXPLANATION...
@@ -243,10 +249,27 @@ done
 if [ -n "$REPO_OPT" ]; then
   cd -- "$REPO_OPT" 2>/dev/null || env_error repo-path "$REPO_OPT" "--repo names something that is not a directory this run can enter"
 fi
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || env_error not-a-repo "$PWD" "no git repository contains this directory, so there is no diff to read"
+# These two run before the run's own temporary directory exists, so they
+# share one capture file directly under the root mktemp would use. Their
+# diagnostic is replayed after the record rather than discarded: the record
+# names the condition, the dependency names the cause.
+pf_early_err="${TMPDIR:-/tmp}/preflight-early-$$.err"
+: >"$pf_early_err" 2>/dev/null || pf_early_err=/dev/null
+# Read AFTER the substitution, never inside it: a variable set in a command
+# substitution belongs to that subshell and would be gone here.
+pf_early_read() { PF_DEP_ERR="$(cat "$pf_early_err" 2>/dev/null)"; }
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>"$pf_early_err")" || {
+  pf_early_read
+  env_error not-a-repo "$PWD" "no git repository contains this directory, so there is no diff to read"
+}
 cd "$REPO_ROOT"
 
-TMP="$(mktemp -d 2>/dev/null)" || env_error tmpdir "${TMPDIR:-/tmp}" "a scratch directory could not be created under it"
+TMP="$(mktemp -d 2>"$pf_early_err")" || {
+  pf_early_read
+  env_error tmpdir "${TMPDIR:-/tmp}" "a scratch directory could not be created under it"
+}
+rm -f -- "$pf_early_err"
 # cleanup re-exits with the status it interrupted: under errexit a failing rm
 # would otherwise replace the contract exit code with its own.
 cleanup() {
@@ -368,12 +391,12 @@ resolve_base() { # -> merge-base commit on stdout; nonzero names the condition
 
 case "$MODE" in
   all)
-    git ls-files -z >"$TMP/files.z" || env_error git-failed ls-files "listing the tracked files failed"
+    pf_dep git ls-files -z >"$TMP/files.z" || env_error git-failed ls-files "listing the tracked files failed"
     ;;
   staged)
     git rev-parse --verify --quiet HEAD >/dev/null || env_error no-commits --staged "the repository has no commits, so there is nothing to diff the index against"
-    git_diff --cached --name-only --diff-filter=d -z >"$TMP/files.z" || env_error git-failed diff-cached "reading the staged diff failed"
-    git_diff --cached --name-only --no-renames --diff-filter=A >"$TMP/newfiles.list" || env_error git-failed diff-cached "reading the staged diff failed"
+    pf_dep git_diff --cached --name-only --diff-filter=d -z >"$TMP/files.z" || env_error git-failed diff-cached "reading the staged diff failed"
+    pf_dep git_diff --cached --name-only --no-renames --diff-filter=A >"$TMP/newfiles.list" || env_error git-failed diff-cached "reading the staged diff failed"
     ;;
   base)
     git rev-parse --verify --quiet HEAD >/dev/null || env_error no-commits base "the repository has no commits; pass --all"
@@ -385,12 +408,12 @@ case "$MODE" in
       3) env_error merge-base "$BASE_REF" "HEAD and this ref share no merge base, so there is no range to read" ;;
       *) env_error base-unresolved "origin/HEAD,origin/main,main" "none of these resolved; pass --base REF or --all" ;;
     esac
-    git_diff --name-only --diff-filter=d -z "$BASE" -- >"$TMP/files.z" || env_error git-failed "diff-$BASE" "reading the diff against this base failed"
-    git_diff --name-only --no-renames --diff-filter=A "$BASE" -- >"$TMP/newfiles.list" || env_error git-failed "diff-$BASE" "reading the diff against this base failed"
+    pf_dep git_diff --name-only --diff-filter=d -z "$BASE" -- >"$TMP/files.z" || env_error git-failed "diff-$BASE" "reading the diff against this base failed"
+    pf_dep git_diff --name-only --no-renames --diff-filter=A "$BASE" -- >"$TMP/newfiles.list" || env_error git-failed "diff-$BASE" "reading the diff against this base failed"
     # A file never added is invisible to `git diff` yet is part of the change
     # the author is about to commit. Every non-ignored untracked file is a new
     # file with every line added, exactly what it will be at the PR.
-    git -c core.quotePath=false ls-files --others --exclude-standard -z >"$TMP/untracked.z" || env_error git-failed ls-files-others "listing the untracked files failed"
+    pf_dep git -c core.quotePath=false ls-files --others --exclude-standard -z >"$TMP/untracked.z" || env_error git-failed ls-files-others "listing the untracked files failed"
     ;;
 esac
 [ -f "$TMP/untracked.z" ] || : >"$TMP/untracked.z"
@@ -436,7 +459,7 @@ else
   # into the patch and none of its bytes can reach the parser below.
   case "$MODE" in
     staged)
-      git_diff --cached --unified=0 --no-color --no-renames --diff-filter=d -- ${PATCH_EXCLUDE[@]+"${PATCH_EXCLUDE[@]}"} >"$TMP/patch" || env_error git-failed diff-cached "reading the staged diff failed"
+      pf_dep git_diff --cached --unified=0 --no-color --no-renames --diff-filter=d -- ${PATCH_EXCLUDE[@]+"${PATCH_EXCLUDE[@]}"} >"$TMP/patch" || env_error git-failed diff-cached "reading the staged diff failed"
       ;;
     base)
       git_diff --unified=0 --no-color --no-renames --diff-filter=d "$BASE" -- ${PATCH_EXCLUDE[@]+"${PATCH_EXCLUDE[@]}"} >"$TMP/patch" || env_error git-failed "diff-$BASE" "reading the diff against this base failed"
@@ -531,7 +554,7 @@ awk -F'\t' -v dir="$TMP" -v listfile="$TMP/files.list" '
 [ "$split_status" -eq 0 ] \
   || env_error split-groups "$(cat "$TMP/split.err")" "the added lines arrived in two separate groups; refusing to report over a record set whose second group would truncate the first"
 
-git ls-files >"$TMP/tracked.list" || env_error git-failed ls-files "listing the tracked files failed"
+pf_dep git ls-files >"$TMP/tracked.list" || env_error git-failed ls-files "listing the tracked files failed"
 # Every directory that holds tracked files, at every depth — plus the
 # directories of the untracked files in scope, so a new doc under a new
 # directory is judged as it will be once committed.
@@ -1336,9 +1359,9 @@ if [ -n "$MIGRATION_BASE" ] && [ -n "$MIGRATION_GLOBS" ]; then
   # MDR are the statuses the verb below names; the base read, not the filter,
   # is what keeps an added file out.
   if [ "$MODE" = staged ]; then
-    git_diff --cached --find-renames --name-status --diff-filter=MDR -z >"$TMP/migrations.z" || env_error git-failed diff-cached "reading the staged diff failed"
+    pf_dep git_diff --cached --find-renames --name-status --diff-filter=MDR -z >"$TMP/migrations.z" || env_error git-failed diff-cached "reading the staged diff failed"
   else
-    git_diff --find-renames --name-status --diff-filter=MDR -z "$BASE" -- >"$TMP/migrations.z" || env_error git-failed "diff-$BASE" "reading the diff against this base failed"
+    pf_dep git_diff --find-renames --name-status --diff-filter=MDR -z "$BASE" -- >"$TMP/migrations.z" || env_error git-failed "diff-$BASE" "reading the diff against this base failed"
   fi
   while IFS= read -r -d '' mstatus && IFS= read -r -d '' mpath; do
     mnew=""

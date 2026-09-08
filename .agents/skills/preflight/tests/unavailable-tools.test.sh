@@ -35,6 +35,19 @@ run_pf() {
   OUT="$(cd "$R" && PATH="$BIN" "$PF" --staged 2>&1)" || RC=$?
 }
 has() { case "$OUT" in *"$1"*) return 0 ;; esac; return 1; }
+# A record is compared as a WHOLE line: as a substring, `clean=5` is satisfied
+# by `clean=50`, and an aggregate ending in one more lane satisfies the
+# expected set.
+has_record() {
+  local line
+  while IFS= read -r line; do
+    [ "$line" = "$1" ] || continue
+    return 0
+  done <<EOF
+$OUT
+EOF
+  return 1
+}
 ok() { PASS=$((PASS + 1)); printf '  ok: %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL: %s (exit %s)\n%s\n' "$1" "$RC" "$OUT"; }
 
@@ -45,10 +58,10 @@ for lane in shellcheck-errors masked-returns data-syntax; do
 done
 has 'JSON: jq is unavailable' && has 'TOML: taplo or python3 with tomllib is unavailable' \
   && ok 'data-syntax identifies each unavailable format' || bad 'data format skip details'
-has 'preflight: clean=5' \
+has_record 'preflight: clean=5' \
   && ok 'the verdict record carries the changed-file count' \
   || bad 'the verdict record carries the changed-file count'
-has 'preflight: not-run=data-syntax,masked-returns,shellcheck-errors' \
+has_record 'preflight: not-run=data-syntax,masked-returns,shellcheck-errors' \
   && ok 'the verdict names every skipped lane in one record' \
   || bad 'the verdict names every skipped lane in one record'
 [ "$(printf '%s\n' "$OUT" | grep -cF 'preflight: not-run=shellcheck-errors')" -eq 1 ] \
