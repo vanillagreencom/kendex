@@ -272,4 +272,25 @@ case "$first" in
     bad "the newline in its value is escaped, so the record stays one line" "first line: $first" ;;
 esac
 
+# The tab branch is its own line of code, so it gets its own case: without
+# one, deleting that line leaves this suite green and a tab reaches the
+# record raw.
+pf_scope_seed tab-path
+printf 'x\n' > "$R/bad$(printf '\t')name.md"
+git -C "$R" add -A >/dev/null 2>&1
+out="$(refusal_out --staged)"
+records="$(refusal_records "$out")"
+if [ "$records" = 1 ]; then
+  ok "a tab-bearing path still prints exactly one refusal record"
+else
+  bad "a tab-bearing path still prints exactly one refusal record" "printed $records"
+fi
+first="$(refusal_first "$out")"
+case "$first" in
+  'preflight: unrepresentable-path='*'\t'*)
+    ok "the tab in its value is escaped too" ;;
+  *)
+    bad "the tab in its value is escaped too" "first line: $first" ;;
+esac
+
 pf_summary

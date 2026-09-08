@@ -173,6 +173,8 @@ Output protocol, which callers and this package's suites parse:
             skipped lanes adds `preflight: not-run=lane,lane` as its own
             record.
   refusal   preflight: key=value           first line, on stderr, exit 2
+            A dependency's own diagnostic is captured and replayed after the
+            record, so nothing precedes it.
   not-run   preflight: not-run=lane        first line, per skipped lane
             A value carrying a newline or a tab has it escaped as the two
             characters \n or \t, so a record is always one line.
@@ -194,6 +196,17 @@ EOF
 # it is about. Everything after it is English for a person and carries no
 # contract. Tests assert the key, the value and the exit status, never a
 # sentence.
+# A dependency's own diagnostic must not reach stderr before the record: a
+# caller reading the first line would miss it. `pf_quiet` runs a command with
+# its stderr captured, and the refusal replays that text AFTER its own two
+# lines, so the record is always first and nothing is lost.
+PF_DEP_ERR=""
+pf_quiet() { # COMMAND... -> the command's status, its stderr in PF_DEP_ERR
+  PF_DEP_ERR=""
+  PF_DEP_ERR="$("$@" 2>&1 1>/dev/null)" || return $?
+  return 0
+}
+
 env_error() { # KEY VALUE EXPLANATION...
   pf_key="$1"
   # The value goes into a line-oriented record, and some conditions refused
@@ -206,6 +219,7 @@ env_error() { # KEY VALUE EXPLANATION...
   shift 2
   printf 'preflight: %s=%s\n' "$pf_key" "$pf_value" >&2
   printf '%s\n' "$*" >&2
+  [ -z "$PF_DEP_ERR" ] || printf '%s\n' "$PF_DEP_ERR" >&2
   exit 2
 }
 
@@ -232,7 +246,7 @@ fi
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || env_error not-a-repo "$PWD" "no git repository contains this directory, so there is no diff to read"
 cd "$REPO_ROOT"
 
-TMP="$(mktemp -d)" || env_error tmpdir "${TMPDIR:-/tmp}" "a scratch directory could not be created under it"
+TMP="$(mktemp -d 2>/dev/null)" || env_error tmpdir "${TMPDIR:-/tmp}" "a scratch directory could not be created under it"
 # cleanup re-exits with the status it interrupted: under errexit a failing rm
 # would otherwise replace the contract exit code with its own.
 cleanup() {
@@ -241,7 +255,13 @@ cleanup() {
   exit "$cleanup_status"
 }
 trap cleanup EXIT
-pf_load_project_env "$MODE" "$REPO_ROOT" "$TMP" || env_error settings "$REPO_ROOT" "the project settings under this root could not be loaded"
+# Runs in THIS shell, never a subshell: it exports the settings the lanes
+# read, and a command substitution would drop them. Its stderr goes to a file
+# so a diagnostic cannot precede the record.
+pf_load_project_env "$MODE" "$REPO_ROOT" "$TMP" 2>"$TMP/settings.err" || {
+  PF_DEP_ERR="$(cat "$TMP/settings.err")"
+  env_error settings "$REPO_ROOT" "the project settings under this root could not be loaded"
+}
 : >"$TMP/findings.tsv"
 : >"$TMP/skipped.tsv"
 : >"$TMP/added.tsv"

@@ -74,10 +74,21 @@ clean() { # LABEL COUNT — exit 0 and the clean verdict over exactly COUNT file
     bad "$1" "rc=$RC out=$OUT"
     return
   fi
-  case "$OUT" in
-    *"preflight: clean=$2"*) ok "$1" ;;
-    *) bad "$1" "want the clean verdict over $2 changed file(s); rc=$RC out=$OUT" ;;
-  esac
+  # Whole-line, never a substring: `clean=1` must not be satisfied by
+  # `clean=10`.
+  seen=0
+  while IFS= read -r line; do
+    [ "$line" = "preflight: clean=$2" ] || continue
+    seen=1
+    break
+  done <<EOF
+$OUT
+EOF
+  if [ "$seen" = 1 ]; then
+    ok "$1"
+  else
+    bad "$1" "want the clean verdict over $2 changed file(s); rc=$RC out=$OUT"
+  fi
 }
 
 fires() { # LABEL EXPECTED-SUBSTRING

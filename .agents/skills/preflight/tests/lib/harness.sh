@@ -130,6 +130,7 @@ pf_scope_seed() { # NAME — fixture in $R
 pf_table() {
   local title="$1" rows="$2" row label world argv needs rc fired says
   local field before reason needs_rc got miss frag lines brace_r
+  local pf_seen out_line
   before=$((PASS + FAIL))
   printf '=== %s ===\n' "$title"
   while IFS= read -r row; do
@@ -186,7 +187,25 @@ EOF
     if [ "$says" != - ]; then
       while IFS= read -r frag; do
         [ -n "$frag" ] || continue
-        case "$OUT" in *"$frag"*) ;; *) miss="${miss:+$miss;}$frag" ;; esac
+        # A fragment naming a record is compared as a WHOLE line: as a
+        # substring, `preflight: clean=1` is satisfied by `clean=10` and by a
+        # record carrying an extra value, so the pin would not hold what it
+        # names. Every other fragment stays a substring, which is what rows
+        # matching a finding's message rely on.
+        case "$frag" in
+          'preflight: '*)
+            pf_seen=0
+            while IFS= read -r out_line; do
+              [ "$out_line" = "$frag" ] || continue
+              pf_seen=1
+              break
+            done <<INNER
+$OUT
+INNER
+            [ "$pf_seen" = 1 ] || miss="${miss:+$miss;}$frag"
+            ;;
+          *) case "$OUT" in *"$frag"*) ;; *) miss="${miss:+$miss;}$frag" ;; esac ;;
+        esac
       done <<EOF
 $(printf '%s\n' "$says" | tr ';' '\n')
 EOF
