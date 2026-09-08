@@ -419,7 +419,7 @@ export function planIncrementalPromptBatch(
 // throwing — CC may be more tolerant than our checks, so a false positive
 // shouldn't block the user. Pure logic is in session-verify.js; this wrapper
 // fans each warning out to debug log + piUI notify + diagDump.
-function verifyWrittenSession(
+export function verifyWrittenSession(
 	jsonlPath: string,
 	expectedSessionId: string,
 	expectedRecordCount: number,
@@ -436,7 +436,7 @@ function verifyWrittenSession(
 		// reason — an absolute cwd carries the username; the diagDump keeps the
 		// absolute forms.
 		safeNotify(
-			`Session file issue: ${msg}\n` +
+			`${msg}\n` +
 			`cwd=${displayPath(cwd)} realpath=${displayPath(safeRealpath(cwd))}\n` +
 			`Please copy and paste this message into a new issue at https://github.com/vanillagreencom/kendex/issues/new` +
 			(DEBUG ? ` and attach ${DEBUG_LOG_PATH}` : ` (rerun with CLAUDE_BRIDGE_DEBUG=1 to capture a debug log)`),

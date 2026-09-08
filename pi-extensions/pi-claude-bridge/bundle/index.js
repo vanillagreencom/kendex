@@ -53653,7 +53653,7 @@ function verifyWrittenSession2(jsonlPath, expectedSessionId, expectedRecordCount
   for (const msg of warnings) {
     debug(`WARNING session verify: ${msg}`);
     safeNotify(
-      `Session file issue: ${msg}
+      `${msg}
 cwd=${displayPath(cwd)} realpath=${displayPath(safeRealpath(cwd))}
 Please copy and paste this message into a new issue at https://github.com/vanillagreencom/kendex/issues/new` + (DEBUG ? ` and attach ${DEBUG_LOG_PATH}` : ` (rerun with CLAUDE_BRIDGE_DEBUG=1 to capture a debug log)`),
       "warning"
