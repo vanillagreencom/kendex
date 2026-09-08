@@ -5,14 +5,14 @@ import {
 	ansiYellow,
 	applyMessage,
 	formatSettingValue,
-	managerNotice,
 	isPlainSearchInput,
+	managerFailure,
+	managerNotice,
 	nextSettingValue,
 	notifyReset,
 	packageNameForTab,
 	packageTabId,
 	parseSettingInput,
-	stringifyError,
 	stringifySettingValue,
 } from "./format.js";
 import { handleInlineEditInput, renderInlineEditValue } from "./inline-edit.js";
@@ -234,7 +234,7 @@ function createQuickSettingsComponent(pi: ExtensionAPI, ctx: ExtensionCommandCon
 			ui.editing = undefined;
 			requestRender();
 		} catch (error) {
-			ctx.ui.notify(managerNotice("setting-save-failed", row.schema.key, stringifyError(error)), "error");
+			ctx.ui.notify(managerFailure("setting-save-failed", row.schema.key, error), "error");
 		}
 	};
 

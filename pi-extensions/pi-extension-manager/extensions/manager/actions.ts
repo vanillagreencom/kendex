@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import { mkdirSync } from "node:fs";
 import { join, sep } from "node:path";
 import { removeAppendSystemBlockForUninstall, syncAppendSystemForPackage } from "./append-system.js";
-import { managerNotice, stringifyError } from "./format.js";
+import { managerFailure, managerNotice, stringifyError } from "./format.js";
 import { host } from "./host.js";
 import { normalizePackageEntry } from "./inventory.js";
 import { runCommand } from "./process.js";
@@ -276,7 +276,7 @@ export function toggleItem(_pi: ExtensionAPI, ctx: ExtensionCommandContext | Ext
 			return;
 		}
 	} catch (error) {
-		ctx.ui.notify(managerNotice("toggle-failed", item.id, stringifyError(error)), "error");
+		ctx.ui.notify(managerFailure("toggle-failed", item.id, error), "error");
 		return;
 	}
 	const scope = defaultWriteScope(item, inventory.settingsFiles, inventory.managerState);

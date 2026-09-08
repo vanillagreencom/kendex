@@ -5,6 +5,7 @@ const ANSI_GREEN_FG = "\x1b[32m";
 const ANSI_YELLOW_FG = "\x1b[33m";
 const ANSI_RED_FG = "\x1b[31m";
 const ANSI_FG_RESET = "\x1b[39m";
+const MANAGER_NOTICE_PREFIX = "pi-extension-manager: ";
 
 export function ansiGreen(text: string): string { return `${ANSI_GREEN_FG}${text}${ANSI_FG_RESET}`; }
 export function ansiYellow(text: string): string { return `${ANSI_YELLOW_FG}${text}${ANSI_FG_RESET}`; }
@@ -13,12 +14,18 @@ export function ansiRed(text: string): string { return `${ANSI_RED_FG}${text}${A
 /** Stable notification header; explanation remains free to change. */
 export function managerNotice(key: string, value: string | number, explanation: string): string {
 	const shown = String(value).replace(/[\u0000-\u001f\u007f]/g, "?");
-	return `pi-extension-manager: ${key}=${shown}\n${explanation}`;
+	return `${MANAGER_NOTICE_PREFIX}${key}=${shown}\n${explanation}`;
 }
 
 export function stringifyError(error: unknown): string {
 	if (error instanceof Error) return `${error.name}: ${error.message}`;
 	return String(error);
+}
+
+/** Preserve a specific manager refusal when a UI boundary catches it. */
+export function managerFailure(key: string, value: string | number, error: unknown): string {
+	if (error instanceof Error && error.message.startsWith(MANAGER_NOTICE_PREFIX)) return error.message;
+	return managerNotice(key, value, stringifyError(error));
 }
 
 export function isPlainSearchInput(data: string): boolean {

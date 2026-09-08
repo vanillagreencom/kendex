@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { buildInventory } from "../extensions/manager/inventory.ts";
-import { applyMessage, managerNotice, parseSettingInput } from "../extensions/manager/format.ts";
+import { applyMessage, managerFailure, managerNotice, parseSettingInput } from "../extensions/manager/format.ts";
 import { getConfigValue, getOrCreateRecord } from "../extensions/manager/settings.ts";
 import { EXTERNAL_CONFIG_RESOLVER_SYMBOL, type ExternalConfigResolver, type SettingsSchema } from "../extensions/manager/types.ts";
 
@@ -160,4 +160,6 @@ test("setting schema refusals and save notices expose stable keys and values", (
 
 	expect(() => getOrCreateRecord({ config: false }, "config")).toThrow("pi-extension-manager: object-required=config");
 	expect(managerNotice("sample", "line\nbreak", "details").split("\n")[0]).toBe("pi-extension-manager: sample=line?break");
+	expect(managerFailure("setting-save-failed", "style", new Error(managerNotice("setting-enum", "style", "details"))).split("\n")[0]).toBe("pi-extension-manager: setting-enum=style");
+	expect(managerFailure("setting-save-failed", "style", new Error("disk full")).split("\n")[0]).toBe("pi-extension-manager: setting-save-failed=style");
 });
