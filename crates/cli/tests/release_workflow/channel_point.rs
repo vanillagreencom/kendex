@@ -443,6 +443,28 @@ fn a_channel_version_that_is_not_a_version_stops_the_write() {
             "{carried} still uploaded: {:?}",
             run.calls
         );
+        // Two keyed refusals answer this set. A version the manifest carries
+        // but nothing can order reaches the ordering probe, where the binary
+        // says why on its own stderr; a manifest naming no version at all is
+        // refused a step earlier, before any ordering is attempted. Either
+        // way the keyed line is the first line, and the ordering one carries
+        // the binary's reason under it rather than ahead of it.
+        let first = run.output.lines().next().unwrap_or_default().to_owned();
+        let channel = channel_step_env("CHANNEL");
+        if first == format!("release-channel-point: manifest-version={channel}") {
+            assert!(carried.trim().is_empty(), "{carried}: {}", run.output);
+        } else {
+            assert_eq!(
+                first, "release-channel-point: unordered=1.0.0-rc2",
+                "{carried}: the keyed line is not the first line: {}",
+                run.output
+            );
+            assert!(
+                run.output.contains("is not SemVer"),
+                "{carried}: the binary's own reason was not replayed: {}",
+                run.output
+            );
+        }
     }
 }
 

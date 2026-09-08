@@ -242,6 +242,33 @@ run_guard
   || bad "an assignment outside [env] is not read as a policy" "rc=$RC out=$OUT"
 cp "$TMP/settings.orig" "$R/kendex.settings.toml"
 
+# A pattern broad enough to catch what the source documents as allowed is the
+# other direction of the same rule, and the only one no row drove: `cargo
+# test` under an uncapped scope is a command the settings comment names as
+# left alone.
+awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print "COMMAND_SAFETY_DENY_PATTERN = \"systemd-run\""; next } { print }' \
+  "$TMP/settings.orig" >"$R/kendex.settings.toml"
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-over=kendex.settings.toml"* ]] \
+  && [[ "$OUT" == *"  systemd-run --user --scope --slice=agents.slice cargo test -p kendex-core"* ]] \
+  && ok "a policy broadened over a documented-allowed command reds, naming the command" \
+  || bad "a policy broadened over a documented-allowed command reds, naming the command" "rc=$RC out=$OUT"
+cp "$TMP/settings.orig" "$R/kendex.settings.toml"
+
+# The loader answers from the process environment before the file it is given.
+# The source is weakened and the environment carries the real policy: reading
+# the environment would report a policy the file does not carry, which is the
+# fail-open this lane exists to refuse.
+awk -v repl="$policy_line" '/^COMMAND_SAFETY_DENY_PATTERN = / { print repl; next } { print }' \
+  "$TMP/settings.orig" >"$R/kendex.settings.toml"
+real_policy="$(sed -n 's/^COMMAND_SAFETY_DENY_PATTERN = "\(.*\)"$/\1/p' "$TMP/settings.orig")"
+[ -n "$real_policy" ] || bad "precondition: the settings policy could not be read for the override row"
+run_guard COMMAND_SAFETY_DENY_PATTERN="$real_policy"
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-missed=kendex.settings.toml"* ]] \
+  && ok "an ambient COMMAND_SAFETY_DENY_PATTERN does not answer for a weakened source" \
+  || bad "an ambient COMMAND_SAFETY_DENY_PATTERN does not answer for a weakened source" "rc=$RC out=$OUT"
+cp "$TMP/settings.orig" "$R/kendex.settings.toml"
+
 git -C "$R" add kendex.settings.toml docs/authoring/command-safety.md
 run_guard
 [ "$RC" -eq 0 ] \

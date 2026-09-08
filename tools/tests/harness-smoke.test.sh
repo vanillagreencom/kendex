@@ -126,6 +126,53 @@ a harness it does install into is not refused for its name|--only claude --bogus
 a command it needs and cannot find is refused by name|--keep|repo|empty|2|missing-tool=kendex
 no repository around the run is refused, naming where it stood|-|scratch|stubs|2|not-in-repo=SCRATCH"
 
+# The two tallies are counts, and a count only means something once rows have
+# been decided. A stubbed harness decides them without a model turn: one that
+# exits 0 saying nothing fails every row it is asked, and one that cannot run
+# leaves every row unanswerable. The count each verdict carries is compared
+# with the rows the run actually printed, so a tally that went back to a
+# boolean reports 1 against ten rows and reds.
+echo "=== the failed and unanswerable counts are the number of rows ==="
+ROWS_REPO="$TMP/rows-repo"
+ROWS_BIN="$TMP/rows-bin"
+ROWS_CFG="$TMP/rows-cfg"
+mkdir -p "$ROWS_REPO" "$ROWS_BIN" "$ROWS_CFG"
+printf '#!/bin/sh\nexit 0\n' >"$ROWS_BIN/kendex"
+chmod +x "$ROWS_BIN/kendex"
+git -C "$ROWS_REPO" init -q
+git -C "$ROWS_REPO" config user.email harness-smoke@kendex.invalid
+git -C "$ROWS_REPO" config user.name harness-smoke
+
+# The aligned row lines only: the markdown table under them repeats every row,
+# and counting both would double every tally.
+row_count() { # FILE RESULT — rows the run reported with that result
+  awk -v want="$2" '/^\|/ { next } $3 == want { n++ } END { print n + 0 }' "$1"
+}
+
+rows_case() { # LABEL HARNESS-EXIT RESULT KEY WANT-STATUS
+  local label="$1" h out rc=0
+  for h in claude codex; do
+    printf '#!/bin/sh\nexit %s\n' "$2" >"$ROWS_BIN/$h"
+    chmod +x "$ROWS_BIN/$h"
+  done
+  rm -rf -- "${TMP:?}/rows-dir"
+  mkdir -p "$TMP/rows-dir"
+  out="$TMP/rows-out"
+  (cd "$ROWS_REPO" && PATH="$ROWS_BIN:$PATH" CLAUDE_CONFIG_DIR="$ROWS_CFG" \
+    "$BASH" "$SMOKE" --only claude,codex --dir "$TMP/rows-dir" >"$out" 2>&1) || rc=$?
+  local seen keyed
+  seen="$(row_count "$out" "$3")"
+  keyed="$(sed -n "s/^harness-smoke: $4=//p" "$out")"
+  if [ "$rc" = "$5" ] && [ "$seen" -ge 2 ] && [ "$keyed" = "$seen" ]; then
+    ok "$label ($4=$keyed over $seen row(s), exit $rc)"
+  else
+    bad "$label" "rc=$rc want=$5 rows=$seen keyed=${keyed:--}"
+  fi
+}
+
+rows_case "a harness that answers nothing fails every row it is asked" 0 fail failed 1
+rows_case "a harness that cannot run leaves every row unanswerable" 3 unanswerable unanswerable 3
+
 # The keyed line being first is half the claim; the cause the dependency gave
 # has to survive under it.
 echo "=== a dependency's own words are replayed under the keyed line ==="

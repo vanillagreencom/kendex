@@ -148,6 +148,7 @@ elif ! download_out=$(gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY"
   why_arg="$CHANNEL"
   why_cause="$download_out"
 else
+  [ -z "$download_out" ] || printf '%s\n' "$download_out"
   current=$(jq -r '.version // empty' manifest/latest.json 2>&1) || {
     why_cause="$current"
     current=""
@@ -172,6 +173,7 @@ fi
 # otherwise roll every candidate back to it, which on this channel looks
 # exactly like the update path being broken.
 compare=dist/kendex-x86_64-unknown-linux-gnu
+compare_out=""
 if [ "$state" != fresh ] && [ "$state" != carrying ]; then
   verdict=stop
 elif [ ! -f "$compare" ]; then
@@ -189,15 +191,20 @@ elif [ "$state" = fresh ]; then
   # channel is broken from its first write. Ordering it against itself is
   # that question — the verb refuses what is not a version and orders what
   # is, and the answer to this one is never in doubt.
-  if "./$compare" version-compare "$NEW_VERSION" "$NEW_VERSION" > /dev/null; then
+  if compare_out=$("./$compare" version-compare "$NEW_VERSION" "$NEW_VERSION" 2>&1); then
     verdict=write
   else
     verdict=stop
     why=version
     why_arg="$NEW_VERSION"
+    why_cause="$compare_out"
   fi
-elif ! ordered=$("./$compare" version-compare "$current" "$NEW_VERSION"); then
+elif ! ordered=$("./$compare" version-compare "$current" "$NEW_VERSION" 2>/dev/null); then
   verdict=stop
+  # `|| true` inside the substitution: this command has just failed, and a
+  # bare assignment would take its status and end the run under errexit
+  # before the keyed refusal below could be printed at all.
+  why_cause="$("./$compare" version-compare "$current" "$NEW_VERSION" 2>&1 >/dev/null || true)"
 elif [ "$ordered" = newer ]; then
   verdict=hold
 else
@@ -244,7 +251,7 @@ if [ -n "$absent" ]; then
   if create_out=$(gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" --prerelease \
        --title "Pre-release channel" \
        --notes "The update manifests of the newest kendex pre-release. Nothing here is a download; each manifest names assets on the release it came from." 2>&1); then
-    printf '%s\n' "$create_out"
+    [ -z "$create_out" ] || printf '%s\n' "$create_out"
   else
     fail create "$CHANNEL" "" "$create_out"
   fi
@@ -252,7 +259,7 @@ fi
 upload_out=""
 if upload_out=$(gh release upload "$CHANNEL" "${publishing[@]}" \
      --repo "$GITHUB_REPOSITORY" --clobber 2>&1); then
-  printf '%s\n' "$upload_out"
+  [ -z "$upload_out" ] || printf '%s\n' "$upload_out"
 else
   # `gh` deletes before it uploads and uploads in parallel, so a failure can
   # leave anything from the whole set to nothing at all, old assets a

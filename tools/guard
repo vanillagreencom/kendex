@@ -256,13 +256,20 @@ command_safety_policy() { # SOURCE_FILE — refuse|allow rows on stdin
         { printf '[env]\n'; printf '%s\n' "$line"; } >"$probe"
         ;;
     esac
-    # Bind the source explicitly. An installed pre-commit turns on the
-    # loader's index mode, and a relative name would then be probed against
-    # the git index from a directory that is no repository. An explicit
-    # COMMIT_GUARDS_SETTINGS_FILE consults only itself, and an absolute path
-    # is never an index entry, so this reads the policy this lane means and
-    # nothing else. Child-local: the parent keeps its own environment.
+    # The loader answers from the process environment first, then .env.local,
+    # and only then the file it was given, so either of those could answer for
+    # a policy the source does not carry: a weakened source would pass this
+    # lane whenever an override still refused the rows. All three layers are
+    # closed before the file is named. The key is cleared from the
+    # environment; index mode is off, so no relative name is probed against
+    # the git index; and the read runs from the run's own empty temporary
+    # directory, which holds no .env.local. The file named is absolute and
+    # resolves from there unchanged. Child-local throughout: the parent keeps
+    # its own environment and its own directory.
+    unset COMMAND_SAFETY_DENY_PATTERN
+    unset GG_SETTINGS_FROM_INDEX GG_SETTINGS_INDEX_DIR
     export COMMIT_GUARDS_SETTINGS_FILE="$probe"
+    builtin cd "$GG_TMP" || { printf 'unreadable\n'; exit 0; }
     pattern=$(gg_setting COMMAND_SAFETY_DENY_PATTERN "") || { printf 'unreadable\n'; exit 0; }
     [ -n "$pattern" ] || { printf 'empty\n'; exit 0; }
     while IFS='|' read -r want command; do
