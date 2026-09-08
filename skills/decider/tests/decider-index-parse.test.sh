@@ -141,7 +141,7 @@ LINK_CASES
 }
 
 evaluate_diagnostic_rows() {
-  local script="$1" mode="$2" only_row="${3:-}" name fixture projection expected actual first second guard
+  local script="$1" mode="$2" only_row="${3:-}" name fixture projection expected actual first second third guard first_line
   local executed_rows=0
   table_failures=""
   while IFS='~' read -r name fixture projection expected; do
@@ -161,11 +161,14 @@ evaluate_diagnostic_rows() {
         expected="0~0~$expected"
         ;;
       malformed-warning)
+        first_line="${err%%$'\n'*}"
         first=0
         second=0
-        [[ "$err" == *D102* || "$err" == *:6:* ]] && first=1
-        [[ "$err" == *:6:* ]] && second=1
-        actual="$rc~$first~$second"
+        third=0
+        [[ "$first_line" == *"notice=index-row-invalid"* ]] && first=1
+        [[ "$first_line" == *"path=$BAD_REPO/docs/decisions/INDEX.md"* ]] && second=1
+        [[ "$first_line" == *"line=6"* ]] && third=1
+        actual="$rc~$first~$second~$third"
         ;;
       empty-stderr)
         actual="$rc~${err:-<empty>}"
@@ -178,7 +181,7 @@ evaluate_diagnostic_rows() {
     record_row "$mode" "$name" "$actual" "$expected"
   done <<'DIAGNOSTIC_CASES'
 malformed-row-results~malformed~ids~D101,D103
-malformed-row-diagnostic~malformed~malformed-warning~0~1~1
+malformed-row-diagnostic~malformed~malformed-warning~0~1~1~1
 healthy-index-diagnostic~healthy~empty-stderr~0~<empty>
 DIAGNOSTIC_CASES
   if [[ "$executed_rows" -eq 0 ]]; then

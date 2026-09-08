@@ -55,7 +55,7 @@ record_row() {
 
 evaluate_action_rows() {
   local script="$1" mode="$2" only_row="${3:-}" name kind argument expected actual guard
-  local first second projected projection_rc
+  local first second projected projection_rc first_line
   local executed_rows=0
   table_failures=""
   while IFS='~' read -r name kind argument expected; do
@@ -66,24 +66,29 @@ evaluate_action_rows() {
     case "$kind" in
       issue)
         run_decisions "$script" issue "$argument"
+        first_line="${err%%$'\n'*}"
         first=0
         second=0
-        [[ "$err" == *"Unknown action 'issue'"* ]] && first=1
-        [[ "$err" == *"search --issue"* ]] && second=1
+        [[ "$first_line" == *"error=action-unknown"* && "$first_line" == *"action=issue"* ]] && first=1
+        [[ "$first_line" == *"hint=search--issue"* ]] && second=1
         actual="$rc~$out~$first~$second"
         ;;
       issues)
         run_decisions "$script" issues "$argument"
+        first_line="${err%%$'\n'*}"
         first=0
-        [[ "$err" == *"search --issue"* ]] && first=1
-        actual="$rc~$first"
+        second=0
+        [[ "$first_line" == *"error=action-unknown"* && "$first_line" == *"action=issues"* ]] && first=1
+        [[ "$first_line" == *"hint=search--issue"* ]] && second=1
+        actual="$rc~$first~$second"
         ;;
       unknown)
         run_decisions "$script" "$argument" CC-125
+        first_line="${err%%$'\n'*}"
         first=0
         second=0
-        [[ "$err" == *"Unknown action '$argument'"* ]] && first=1
-        [[ "$out" == *"Usage: decisions"* ]] && second=1
+        [[ "$first_line" == *"error=action-unknown"* ]] && first=1
+        [[ "$first_line" == *"action=$argument"* ]] && second=1
         actual="$rc~$first~$second"
         ;;
       lookup)
@@ -102,7 +107,7 @@ evaluate_action_rows() {
     record_row "$mode" "$name" "$actual" "$expected"
   done <<'ACTION_CASES'
 issue-action~issue~CC-125~1~~1~1
-issues-action~issues~CC-125~1~1
+issues-action~issues~CC-125~1~1~1
 generic-unknown-action~unknown~bogus~1~1~1
 supported-issue-lookup~lookup~CC-125~0~0~D001
 ACTION_CASES
@@ -133,6 +138,14 @@ if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
     pass "wrong lookup result fails the supported lookup row"
   else
     fail "wrong lookup result did not fail the supported lookup row"
+  fi
+
+  diagnostic_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/action-diagnostic-key/decisions" '    emit_error action-unknown "action=$action hint=search--issue"' '    emit_error action-invalid "action=$action hint=search--issue"' 1)"
+  failures="$(evaluate_action_rows "$diagnostic_mutant" control issue-action)"
+  if [[ "$failures" == *'|issue-action|'* ]]; then
+    pass "a changed action key fails its row"
+  else
+    fail "a changed action key did not fail its row"
   fi
 
   action_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-action-table/decider/tests/decider-issue-action-hint.test.sh" ACTION_CASES)"

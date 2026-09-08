@@ -83,7 +83,7 @@ record_row() {
 
 evaluate_directory_rows() {
   local script="$1" mode="$2" only_row="${3:-}" name state action argument expected_status
-  local stdout_rule expected_stdout stderr_rule needle_one needle_two actual_stdout actual_stderr
+  local stdout_rule expected_stdout stderr_rule needle_one needle_two actual_stdout actual_stderr first_line
   local projected projection_rc actual expected guard
   local executed_rows=0
   table_failures=""
@@ -124,16 +124,13 @@ evaluate_directory_rows() {
       *) fail "unknown stdout rule: $stdout_rule"; continue ;;
     esac
 
+    first_line="${err%%$'\n'*}"
+    [[ "$needle_two" == '<not-a-dir>' ]] && needle_two="path=$NOT_A_DIR"
     case "$stderr_rule" in
-      contains)
-        actual_stderr=0
-        [[ "$err" == *"$needle_one"* ]] && actual_stderr=1
-        expected=1
-        ;;
-      both)
+      key-value)
         actual_stderr=0,0
-        [[ "$err" == *"$needle_one"* ]] && actual_stderr=1,0
-        [[ "$err" == *"$needle_one"* && "$err" == *"$needle_two"* ]] && actual_stderr=1,1
+        [[ "$first_line" == *"$needle_one"* ]] && actual_stderr=1,0
+        [[ "$first_line" == *"$needle_one"* && "$first_line" == *"$needle_two"* ]] && actual_stderr=1,1
         expected=1,1
         ;;
       empty)
@@ -150,19 +147,19 @@ evaluate_directory_rows() {
     actual="$rc~$actual_stdout~$actual_stderr"
     record_row "$mode" "$name" "$actual" "$expected_status~$expected_stdout~$expected"
   done <<'DIRECTORY_CASES'
-configured-absent-issue~configured-absent~issue~PROJ-557~0~exact~[]~both~docs/decisions~not present
-configured-absent-keyword~configured-absent~keyword~ffi error handling~0~exact~[]~contains~not present~
-configured-absent-list~configured-absent~list~~0~exact~[]~contains~not present~
-configured-absent-next-id~configured-absent~next-id~~1~ignore~~contains~does not exist~
-configured-absent-get~configured-absent~get~D001~1~ignore~~contains~does not exist~
-undiscovered-issue~undiscovered~issue~PROJ-557~0~exact~[]~contains~no decisions directory found~
+configured-absent-issue~configured-absent~issue~PROJ-557~0~exact~[]~key-value~notice=decisions-dir-absent~path=docs/decisions
+configured-absent-keyword~configured-absent~keyword~ffi error handling~0~exact~[]~key-value~notice=decisions-dir-absent~path=docs/decisions
+configured-absent-list~configured-absent~list~~0~exact~[]~key-value~notice=decisions-dir-absent~path=docs/decisions
+configured-absent-next-id~configured-absent~next-id~~1~ignore~~key-value~error=decisions-dir-absent~path=docs/decisions
+configured-absent-get~configured-absent~get~D001~1~ignore~~key-value~error=decisions-dir-absent~path=docs/decisions
+undiscovered-issue~undiscovered~issue~PROJ-557~0~exact~[]~key-value~notice=decisions-dir-absent~path=auto
 help-without-directory~undiscovered~help~~0~contains~Decision Lookup Tool~ignore~~
 existing-keyword-miss~existing~keyword~zzz nonexistent term~0~exact~[]~empty~~
 existing-issue-miss~existing~issue~PROJ-999~0~exact~[]~empty~~
 existing-keyword-hit~existing~keyword~redis~0~ids~["D001"]~ignore~~
 existing-next-id~existing~next-id~~0~exact~D002~ignore~~
-configured-file-search~configured-file~issue~PROJ-557~1~exact~~contains~is not a directory~
-configured-file-next-id~configured-file~next-id~~1~ignore~~contains~is not a directory~
+configured-file-search~configured-file~issue~PROJ-557~1~exact~~key-value~error=decisions-dir-type~<not-a-dir>
+configured-file-next-id~configured-file~next-id~~1~ignore~~key-value~error=decisions-dir-type~<not-a-dir>
 DIRECTORY_CASES
   if [[ "$executed_rows" -eq 0 ]]; then
     guard="directory table executed no rows"
@@ -205,6 +202,14 @@ if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
     pass "absent keyword-search failure fails its row"
   else
     fail "absent keyword-search failure did not fail its row"
+  fi
+
+  diagnostic_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/diagnostic-key/decisions" '    emit_notice decisions-dir-absent "path=$DECISIONS_DIR"' '    emit_notice decisions-dir-missing "path=$DECISIONS_DIR"' 1)"
+  failures="$(evaluate_directory_rows "$diagnostic_mutant" control configured-absent-issue)"
+  if [[ "$failures" == *'|configured-absent-issue|'* ]]; then
+    pass "a changed diagnostic key fails its row"
+  else
+    fail "a changed diagnostic key did not fail its row"
   fi
 
   directory_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-directory-table/decider/tests/decider-search-missing-dir.test.sh" DIRECTORY_CASES)"
