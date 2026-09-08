@@ -185,6 +185,14 @@ describe("rpc questionnaire walker", () => {
 		expect(dialogs.calls[2].title.split("\n").at(-1)).toBe("Path: Which path?");
 	});
 
+	test("blank unlisted select text re-shows the question instead of answering blank", async () => {
+		const dialogs = fakeDialogs(["", "2. B"]);
+		const outcome = await runRpcQuestionnaire(dialogs, singleRequest());
+
+		expect(outcome).toEqual({ answers: [["B"]], kind: "answered" });
+		expect(dialogs.calls[1].title.split("\n")[0]).toBe("answer=empty");
+	});
+
 	test("persistent blank input cancels after bounded re-prompts, never a false answer", async () => {
 		const customRow = "3. Something else (type your own answer)";
 		const dialogs = fakeDialogs([customRow, "", customRow, "", customRow, "", customRow, "", customRow, ""]);
@@ -344,6 +352,7 @@ describe("presentQuestion routing", () => {
 		});
 
 		expect(outcome?.kind).toBe("unavailable");
+		expect((outcome as Extract<PresentOutcome, { kind: "unavailable" }>).error.split("\n")[0]).toBe("question-ui=custom:unavailable");
 	});
 
 	test("custom() completing the request stays on the custom path", async () => {
