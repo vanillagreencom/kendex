@@ -142,6 +142,7 @@ LINK_CASES
 
 evaluate_diagnostic_rows() {
   local script="$1" mode="$2" only_row="${3:-}" name fixture projection expected actual first second third guard first_line
+  local bad_index="$BAD_REPO/docs/decisions/INDEX.md"
   local executed_rows=0
   table_failures=""
   while IFS='~' read -r name fixture projection expected; do
@@ -172,7 +173,7 @@ evaluate_diagnostic_rows() {
         continue
         ;;
     esac
-    expected="${expected//<bad-index>/$BAD_REPO\/docs\/decisions\/INDEX.md}"
+    expected="${expected//<bad-index>/$bad_index}"
     record_row "$mode" "$name" "$actual" "$expected"
   done <<'DIAGNOSTIC_CASES'
 malformed-row-results~malformed~ids~D101,D103
