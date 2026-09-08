@@ -21,11 +21,23 @@ SOURCES=("$SKILL_DIR/SKILL.md" "$SKILL_DIR/references")
 
 # 1. No `mouse_area(...).on_press_maybe(...)` construct anywhere in the guidance.
 #    Matches a `mouse_area` occurrence followed on the same line by `.on_press_maybe`.
-if grep -rnE 'mouse_area.*\.on_press_maybe' "${SOURCES[@]}" >/dev/null 2>&1; then
-    fail "found forbidden mouse_area(...).on_press_maybe(...) construct:"
-    grep -rnE 'mouse_area.*\.on_press_maybe' "${SOURCES[@]}" >&2 || true
+if [ "${#SOURCES[@]}" -eq 0 ]; then
+    fail "guidance source table is empty"
 else
-    pass "no mouse_area(...).on_press_maybe(...) construct in guidance sources"
+    pass "guidance source table is not empty"
+
+    if forbidden_matches="$(grep -rnE 'mouse_area.*\.on_press_maybe' "${SOURCES[@]}" 2>&1)"; then
+        fail "found forbidden mouse_area(...).on_press_maybe(...) construct:"
+        printf '%s\n' "$forbidden_matches" >&2
+    else
+        forbidden_status=$?
+        if [ "$forbidden_status" -eq 1 ]; then
+            pass "no mouse_area(...).on_press_maybe(...) construct in guidance sources"
+        else
+            fail "could not search guidance sources for mouse_area(...).on_press_maybe(...):"
+            printf '%s\n' "$forbidden_matches" >&2
+        fi
+    fi
 fi
 
 # 2. The correct conditional pattern (gate the on_press call, keep wrapper) is present.
