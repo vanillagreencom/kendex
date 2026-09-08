@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -93,6 +93,10 @@ const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 const originalHome = process.env.HOME;
 const originalTmux = process.env.TMUX;
 const originalTmuxPane = process.env.TMUX_PANE;
+const nativeTimeout = globalThis.setTimeout;
+let timerSpy: ReturnType<typeof spyOn> | undefined;
+let zeroDelayCallbacks: Array<() => void> = [];
+let activeWorld: { fake: FakeApi; ctx: ReturnType<typeof makeCtx> } | undefined;
 
 beforeEach(() => {
 	workdir = mkdtempSync(join(tmpdir(), "pi-qol-statusline-toggle-"));
@@ -101,86 +105,112 @@ beforeEach(() => {
 	process.env.HOME = workdir;
 	delete process.env.TMUX;
 	delete process.env.TMUX_PANE;
+	zeroDelayCallbacks = [];
+	timerSpy = spyOn(globalThis, "setTimeout").mockImplementation(((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+		if (delay !== 0) return nativeTimeout(callback, delay, ...args);
+		zeroDelayCallbacks.push(() => callback(...args));
+		return { unref() {} } as ReturnType<typeof setTimeout>;
+	}) as typeof setTimeout);
 });
 
 afterEach(() => {
-	if (workdir) rmSync(workdir, { force: true, recursive: true });
-	if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-	else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
-	if (originalHome === undefined) delete process.env.HOME;
-	else process.env.HOME = originalHome;
-	if (originalTmux === undefined) delete process.env.TMUX;
-	else process.env.TMUX = originalTmux;
-	if (originalTmuxPane === undefined) delete process.env.TMUX_PANE;
-	else process.env.TMUX_PANE = originalTmuxPane;
+	try {
+		if (activeWorld) activeWorld.fake.handlers.session_shutdown({ reason: "quit" }, activeWorld.ctx);
+	} finally {
+		activeWorld = undefined;
+		zeroDelayCallbacks = [];
+		timerSpy?.mockRestore();
+		if (workdir) rmSync(workdir, { force: true, recursive: true });
+		if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+		if (originalHome === undefined) delete process.env.HOME;
+		else process.env.HOME = originalHome;
+		if (originalTmux === undefined) delete process.env.TMUX;
+		else process.env.TMUX = originalTmux;
+		if (originalTmuxPane === undefined) delete process.env.TMUX_PANE;
+		else process.env.TMUX_PANE = originalTmuxPane;
+	}
 });
 
-test("session_start installs the QOL statusline by default", async () => {
-	writeQolConfig({ "sessionSearch.enabled": false, "sessionAutoRename.enabled": false });
+function world(settings: Record<string, unknown> = {}) {
+	writeQolConfig({ "sessionSearch.enabled": false, "sessionAutoRename.enabled": false, ...settings });
 	const fake = makeFakeApi();
-	qolDefault(fake.api);
 	const ctx = makeCtx();
-
-	fake.handlers.session_start?.({ reason: "startup" }, ctx);
-	await new Promise((resolve) => setTimeout(resolve, 5));
-
-	expect(setWidgetNames(ctx)).toContain("statusline");
-	expect(ctx.ui.setFooter.mock.calls.length).toBe(1);
-	expect(ctx.ui.setEditorComponent.mock.calls.length).toBe(1);
-	fake.handlers.session_shutdown?.({ reason: "quit" }, ctx);
-});
-
-test("statusline.enabled=false keeps QOL editor helpers but skips statusline/footer replacement", async () => {
-	writeQolConfig({ "enableScheduleCommand": false, "statusline.enabled": false, "sessionSearch.enabled": false, "sessionAutoRename.enabled": false });
-	const fake = makeFakeApi();
+	activeWorld = { fake, ctx };
 	qolDefault(fake.api);
-	const ctx = makeCtx();
+	return activeWorld;
+}
 
-	fake.handlers.session_start?.({ reason: "startup" }, ctx);
-	await new Promise((resolve) => setTimeout(resolve, 5));
+function install(fake: FakeApi, ctx: ReturnType<typeof makeCtx>) {
+	fake.handlers.session_start({ reason: "startup" }, ctx);
+	for (const callback of zeroDelayCallbacks.splice(0)) callback();
+}
 
-	expect(setWidgetNames(ctx)).not.toContain("statusline");
-	expect(ctx.ui.setFooter.mock.calls.length).toBe(0);
-	expect(ctx.ui.setEditorComponent.mock.calls.length).toBe(1);
-	expect(fake.api.exec.mock.calls.length).toBe(0);
-	fake.handlers.session_shutdown?.({ reason: "quit" }, ctx);
-});
+const installationRows = [
+	{
+		name: "default statusline installation",
+		settings: {},
+		expected: { statusline: true, footers: 1, editors: 1 },
+	},
+	{
+		name: "disabled statusline retains editor helpers",
+		settings: { "enableScheduleCommand": false, "statusline.enabled": false },
+		expected: { statusline: false, footers: 0, editors: 1, execs: 0 },
+	},
+];
 
-test("session_info_changed syncs the session title without waiting for the poll", async () => {
-	writeQolConfig({ "sessionSearch.enabled": false, "sessionAutoRename.enabled": false });
-	let sessionName: string | undefined;
-	const fake = makeFakeApi();
-	fake.api.getSessionName = () => sessionName;
-	qolDefault(fake.api);
-	const ctx = makeCtx();
+if (installationRows.length === 0) throw new Error("Statusline installation table is empty");
 
-	fake.handlers.session_start?.({ reason: "startup" }, ctx);
-	const requestRender = mock(() => {});
-	const editorFactory = ctx.ui.setEditorComponent.mock.calls.at(-1)?.[0];
-	editorFactory?.({ requestRender }, makeTheme(), {});
-	requestRender.mockClear();
-	const statusCallsBefore = ctx.ui.setStatus.mock.calls.length;
+for (const row of installationRows) {
+	test(row.name, () => {
+		expect.hasAssertions();
+		const { fake, ctx } = world(row.settings);
+		install(fake, ctx);
+		expect({
+			statusline: setWidgetNames(ctx).includes("statusline"),
+			footers: ctx.ui.setFooter.mock.calls.length,
+			editors: ctx.ui.setEditorComponent.mock.calls.length,
+			...("execs" in row.expected ? { execs: fake.api.exec.mock.calls.length } : {}),
+		}).toEqual(row.expected);
+	});
+}
 
-	sessionName = "Renamed session";
-	fake.handlers.session_info_changed?.({ name: sessionName }, ctx);
+const titleRows = [
+	{
+		name: "session_info_changed refreshes the UI title",
+		hasUI: true,
+		expected: { rendered: true, statusIncreased: true, finalStatusKey: "session-manager" },
+	},
+	{
+		name: "session_info_changed is inert without a UI",
+		hasUI: false,
+		expected: { statusCalls: 0 },
+	},
+];
 
-	// syncSessionTitle re-renders on a changed name and always reasserts the
-	// session-manager status slot, so both prove the handler ran the sync.
-	expect(requestRender.mock.calls.length).toBeGreaterThan(0);
-	expect(ctx.ui.setStatus.mock.calls.length).toBeGreaterThan(statusCallsBefore);
-	expect(ctx.ui.setStatus.mock.calls.at(-1)?.[0]).toBe("session-manager");
-	fake.handlers.session_shutdown?.({ reason: "quit" }, ctx);
-});
+if (titleRows.length === 0) throw new Error("Session title event table is empty");
 
-test("session_info_changed is a no-op without a UI", async () => {
-	writeQolConfig({ "sessionSearch.enabled": false, "sessionAutoRename.enabled": false });
-	const fake = makeFakeApi();
-	fake.api.getSessionName = () => "Headless rename";
-	qolDefault(fake.api);
-	const ctx = makeCtx();
-	ctx.hasUI = false;
-
-	fake.handlers.session_info_changed?.({ name: "Headless rename" }, ctx);
-
-	expect(ctx.ui.setStatus.mock.calls.length).toBe(0);
-});
+for (const row of titleRows) {
+	test(row.name, () => {
+		expect.hasAssertions();
+		const { fake, ctx } = world();
+		let sessionName: string | undefined;
+		fake.api.getSessionName = () => sessionName;
+		ctx.hasUI = row.hasUI;
+		const requestRender = mock(() => {});
+		if (row.hasUI) {
+			install(fake, ctx);
+			const editorFactory = ctx.ui.setEditorComponent.mock.calls.at(-1)?.[0];
+			editorFactory?.({ requestRender }, makeTheme(), {});
+			requestRender.mockClear();
+		}
+		const before = ctx.ui.setStatus.mock.calls.length;
+		sessionName = row.hasUI ? "Renamed session" : "Headless rename";
+		fake.handlers.session_info_changed({ name: sessionName }, ctx);
+		expect(row.hasUI ? {
+			rendered: requestRender.mock.calls.length > 0,
+			statusIncreased: ctx.ui.setStatus.mock.calls.length > before,
+			finalStatusKey: ctx.ui.setStatus.mock.calls.at(-1)?.[0],
+		} : { statusCalls: ctx.ui.setStatus.mock.calls.length }).toEqual(row.expected);
+	});
+}
