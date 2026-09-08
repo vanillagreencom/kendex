@@ -12,7 +12,8 @@
 # (`settings:header`, `settings:cap`, `envlocal:cap`), and `env:NAME=value`
 # for the caller's own environment. The argv is `probe` (an unparseable
 # argument: reaching the option parser proves the lookup did not end the run)
-# or `detect`. Every line of stderr is pinned, the install path aliased.
+# or `detect`. The error spec can select the first line with `first:`.
+# Other rows pin all stderr lines. The install path is aliased.
 
 set -euo pipefail
 
@@ -138,7 +139,11 @@ run() {
   [[ -z "$W_PATH" ]] || env_args+=(PATH="$W_PATH")
   (env "${env_args[@]}" ${W_ENV[@]+"${W_ENV[@]}"} "$script" "${argv[@]}" >"$ROW/stdout" 2>"$ROW/stderr") || rc=$?
   out="$(alias_text <"$ROW/stdout")"
-  err="$(alias_text <"$ROW/stderr")"
+  if [[ "${2:-all}" == first ]]; then
+    err="$(sed -n '1p' "$ROW/stderr" | alias_text)"
+  else
+    err="$(alias_text <"$ROW/stderr")"
+  fi
   printf 'rc=%s out=%s err=%s' "$rc" "${out:--}" "${err:--}"
 }
 
@@ -155,7 +160,7 @@ err_word() {
     unresolved:nogit) printf 'second-opinion: could not resolve a repository at <scripts>;  git said: <script>: line *: git: command not found' ;;
     # git spells the unreadable gitdir by version ((null), or its path)
     unresolved:marker) printf 'second-opinion: could not resolve a repository at <scripts>;  git said: not a git repository: <gitdir>' ;;
-    settings-header) printf '::error::<install>/kendex.settings.toml:1: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket);second-opinion: refusing to run on a rejected settings load' ;;
+    settings-header) printf 'kendex-env: table-header file=<install>/kendex.settings.toml lineno=1' ;;
     session-only) printf 'Error: project settings set session-only SECOND_OPINION_FOREGROUND_CAP\\; remove it there and pass --foreground or export it in this session' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
@@ -173,7 +178,12 @@ run_table() {
     n=$((n + 1))
     # shellcheck disable=SC2086
     build "row-$n" $world
-    got="$(run "$argv")"
+    if [[ "$err" == first:* ]]; then
+      got="$(run "$argv" first)"
+      err="${err#first:}"
+    else
+      got="$(run "$argv")"
+    fi
     # A rendering aid for writing rows; the run is refused after the loop.
     if [[ "${SECOND_OPINION_TABLE_PROBE:-}" == 1 ]]; then
       printf '%s => %s\n' "$label" "$got"
@@ -189,7 +199,7 @@ an install outside a repository has nothing to load and runs on to the parser|in
 no git on PATH: the lookup refuses above the parser, quoting git, nothing on stdout|install:outside path:nogit|probe|1|-|unresolved:nogit
 a linked worktree whose marker points at a pruned checkout refuses the same way|install:worktree-broken|probe|1|-|unresolved:marker
 a lookup stopped at a mount point is the absence of a repository: runs on to the parser|install:outside path:mountgit|probe|1|-|parser
-a settings file the loader refuses ends the run naming the defect, not as an undeclared session|install:repo settings:header|detect|1|-|settings-header
+a settings file the loader refuses ends the run naming the defect, not as an undeclared session|install:repo settings:header|detect|1|-|first:settings-header
 a project settings file declaring the session-only foreground cap is refused|install:repo settings:cap|detect|1|-|session-only
 an .env.local declaring it is refused the same way|install:repo envlocal:cap|detect|1|-|session-only
 the caller's own export of the key outranks the project's: the run goes on to the parser|install:repo settings:cap env:SECOND_OPINION_FOREGROUND_CAP=1|probe|1|-|parser

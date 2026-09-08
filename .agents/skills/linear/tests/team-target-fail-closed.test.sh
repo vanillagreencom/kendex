@@ -120,7 +120,8 @@ auth_view() {
 # run SETTINGS ENV VIEW ARGS... — one command in the project, rendered as one
 # line: the status, the call count, then the view. ENV is `-` (LINEAR_TEAM
 # absent from the process) or the exported value, the empty string included.
-# VIEW: `err` is the wire and stderr whole; `wire` is the wire alone (sync's
+# VIEW: `err` is the wire and stderr whole; `err-first` selects its first line.
+# `wire` is the wire alone (sync's
 # progress line carries an elapsed time); `out` is the first stdout line (help
 # prints one document); `auth` is the report's fields and warnings.
 run() {
@@ -142,6 +143,7 @@ run() {
   out) printf 'rc=%s calls=%s %s' "$rc" "$calls" "$(printf '%s\n' "$out" | head -1)" ;;
   wire) printf 'rc=%s calls=%s wire=%s' "$rc" "$calls" "$(wire)" ;;
   err) printf 'rc=%s calls=%s wire=%s%s' "$rc" "$calls" "$(wire)" "${err:+ $err}" ;;
+  err-first) printf 'rc=%s calls=%s wire=%s %s' "$rc" "$calls" "$(wire)" "${err%%;*}" ;;
   *) printf 'UNKNOWN-VIEW:%s' "$view" ;;
   esac
 }
@@ -206,7 +208,7 @@ expected() {
     done
     ;;
   settings-refused)
-    printf 'rc=1 calls=0 wire= ::error::<project>/kendex.settings.toml: DUP is assigned more than once in [env] (each key must be unique in the table)'
+    printf 'rc=1 calls=0 wire= kendex-env: duplicate-key file=<project>/kendex.settings.toml key=DUP'
     ;;
   *) printf 'UNKNOWN-SPEC:%s' "$spec" ;;
   esac
@@ -262,7 +264,7 @@ auth-check --strict fails on an unresolved team|none|-|auth|auth-check --strict|
 auth-check --strict names the configured team and its file|Configured|-|auth|auth-check --strict|auth 0 Configured project-config kendex.settings.toml true
 an exported team is reported from the environment, shadowing the file|Configured|EnvTeam|auth|auth-check|auth 0 EnvTeam environment null true shadow:EnvTeam:Configured
 an exported empty team is unset, names no file, and says what it shadows|Configured||auth|auth-check|auth 0 null unset null false noteam empty:Configured envkey
-a refused settings file runs no command|dup|-|err|auth-check|settings-refused
+a refused settings file runs no command|dup|-|err-first|auth-check|settings-refused
 '
 
 while IFS='|' read -r label fixture envteam view args spec; do
