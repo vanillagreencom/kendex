@@ -10,6 +10,7 @@
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (a no-op hook, an always-block hook) run against these assertions.
 set -euo pipefail
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/block-worktree-refresh.sh}"
@@ -22,9 +23,6 @@ TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"
 BASH_BIN="$(command -v bash)"
-# The fixture's own git calls must build the fixture, not whatever repository
-# a wrapper's redirection variables name.
-unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 export HOME="$TMP_ROOT/home"
 mkdir -p "$HOME"
 printf '[user]\n\temail = t@t\n\tname = t\n[init]\n\tdefaultBranch = main\n' >"$HOME/.gitconfig"
@@ -46,7 +44,7 @@ WT="$TMP_ROOT/wt"
 git -C "$MAIN" worktree add -q "$WT" -b lane
 OUTSIDE="$TMP_ROOT/outside"
 mkdir -p "$OUTSIDE"
-# The outside rows prove the not-a-repository branch only where the fixture
+# precondition: The outside rows prove the not-a-repository branch only where the fixture
 # root itself is outside every repository; a TMPDIR inside a checkout would
 # make them pass or fail for another reason.
 if git -C "$OUTSIDE" rev-parse --git-dir >/dev/null 2>&1; then
@@ -90,85 +88,157 @@ run_payload() { # raw-json [PATH] -> rc, stderr in ERR_FILE, run in the worktree
 # shellcheck source=lib/payload-rows.sh
 . "$TEST_DIR/lib/payload-rows.sh"
 
-echo "=== block-worktree-refresh: a project-scope write from a linked worktree is refused ==="
-for verb in refresh apply 'add orch' 'remove orch' update-pi 'pin orch' 'fork orch' adopt drift-hook 'source add x' 'source remove x' 'source enable x' 'source disable x' 'marketplace subscribe x' 'marketplace unsubscribe x'; do
-  run_in "$WT" "kendex $verb"; assert_eq "$rc" 2 "kendex $verb from the worktree is refused"
-done
-assert_contains "$ERR_FILE" 'git worktree list' 'the refusal names how to find the main checkout'
-assert_contains "$ERR_FILE" '--scope global' 'the refusal names the global scope'
-run_in "$WT" 'kendex source list';                assert_eq "$rc" 0 'source list is a read'
-run_in "$WT" 'kendex marketplace list';           assert_eq "$rc" 0 'marketplace list is a read'
-run_in "$WT" 'true && kendex refresh';            assert_eq "$rc" 2 'the verb is found after a chained command'
-run_in "$MAIN" "cd $WT && kendex refresh";        assert_eq "$rc" 2 'a cd before the verb moves the write out of the directory git is asked about'
-assert_contains "$ERR_FILE" 'after a cd or pushd' 'the refusal names the move'
-run_in "$OUTSIDE" "pushd $WT; kendex apply";      assert_eq "$rc" 2 'a pushd in an earlier segment is a move too'
-run_in "$MAIN" "cd $WT && kendex refresh -g";     assert_eq "$rc" 0 'a global write after a cd passes: no directory is written'
-run_in "$MAIN" "kendex refresh && cd $WT";        assert_eq "$rc" 0 'a cd after the verb does not move the write'
-run_in "$WT" "$(printf 'echo x\nkendex apply')";  assert_eq "$rc" 2 'the verb is found on the second line'
-run_in "$WT" '/home/u/.cargo/bin/kendex refresh'; assert_eq "$rc" 2 'an absolute path in front of kendex is still kendex'
-run_in "$WT" '"/home/u/.cargo/bin/kendex" refresh'; assert_eq "$rc" 2 'a quoted path in front of kendex is still kendex'
-run_in "$WT" "kendex 'refresh'";                  assert_eq "$rc" 2 'a quoted verb is still the verb'
-run_in "$WT" 'kendex refresh --scope project';    assert_eq "$rc" 2 'the project scope spelled out is still the project scope'
-run_from "$WT" 'kendex refresh';                  assert_eq "$rc" 2 'without a cwd in the payload the hook judges the directory it runs in'
-
-echo "=== block-worktree-refresh: the right forms pass ==="
-run_in "$MAIN" 'kendex refresh';                  assert_eq "$rc" 0 'the same write from the main checkout passes'
-run_in "$WT" 'kendex refresh -g';                 assert_eq "$rc" 0 'the -g scope passes'
-run_in "$WT" 'kendex refresh --global';           assert_eq "$rc" 0 'the --global scope passes'
-run_in "$WT" 'kendex remove --scope global orch'; assert_eq "$rc" 0 'the --scope global words pass'
-run_in "$WT" 'kendex remove --scope=global orch'; assert_eq "$rc" 0 'the --scope=global word passes'
-run_in "$WT" 'kendex add --global orch';          assert_eq "$rc" 0 'add takes the global scope as --global'
-run_in "$WT" 'kendex update-pi --check';          assert_eq "$rc" 0 'update-pi --check previews and is a read'
-run_in "$WT" 'kendex update-pi -c';               assert_eq "$rc" 0 'update-pi -c is the same read'
-run_in "$WT" 'kendex add orch';                   assert_eq "$rc" 2 'add from the worktree is refused'
-assert_contains "$ERR_FILE" 'pass --global for a global change' 'the add refusal names the form add accepts'
-run_in "$WT" 'kendex update-pi';                  assert_eq "$rc" 2 'update-pi from the worktree is refused'
-assert_contains "$ERR_FILE" 'pass --scope global for a global change' 'the update-pi refusal names the form update-pi accepts'
-run_in "$WT" 'kendex refresh -g; kendex verify';  assert_eq "$rc" 0 'a global write beside a read passes'
-run_in "$WT" 'kendex refresh -g && kendex refresh'; assert_eq "$rc" 2 'a global word in an earlier segment does not exempt a later write'
-run_in "$WT" 'ls -g && kendex refresh';            assert_eq "$rc" 2 'a -g on another command does not exempt the write'
-run_in "$WT" "$(printf 'kendex refresh \\\n  --scope global')"; assert_eq "$rc" 0 'the scope on a continued line is the write'"'"'s own'
-run_in "$WT" 'kendex refresh -g --scope project';  assert_eq "$rc" 2 '--scope project beside -g is the project scope, which kendex gives precedence'
-run_in "$WT" 'kendex refresh --global --scope=all'; assert_eq "$rc" 2 '--scope all beside --global includes the project scope'
-run_in "$WT" 'kendex refresh --global --scope "project"'; assert_eq "$rc" 2 'a --scope value that is not the plain word global is not read as global'
-run_in "$WT" 'kendex --global refresh';            assert_eq "$rc" 2 'a root option before the verb is dropped by the CLI and exempts nothing'
-run_in "$WT" 'kendex -g refresh -g';               assert_eq "$rc" 0 'the -g after the verb is the one the CLI reads'
-run_in "$WT" 'kendex --verbose refresh';           assert_eq "$rc" 2 'an option word between kendex and the verb does not hide the verb'
-run_in "$WT" 'kendex --harness claude-code refresh'; assert_eq "$rc" 2 'an option with a value between kendex and the verb does not hide the verb'
-run_in "$WT" 'kendex --method copy add orch';      assert_eq "$rc" 2 'the same before add'
-run_in "$WT" 'kendex refresh # -g';                assert_eq "$rc" 2 'a -g behind a comment marker is not an option'
-run_in "$WT" 'kendex refresh $(echo -g)';          assert_eq "$rc" 2 'a -g inside a nested command is not this command'"'"'s'
-run_in "$WT" '# kendex refresh';                   assert_eq "$rc" 0 'a commented-out write is not a write'
-run_in "$WT" 'kendex updates --apply';             assert_eq "$rc" 2 'updates --apply delegates to refresh and is refused'
-run_in "$WT" 'kendex updates';                     assert_eq "$rc" 0 'updates without --apply is a read'
-run_in "$WT" 'kendex updates --apply -g';          assert_eq "$rc" 0 'a global updates --apply passes'
-for verb in verify check list 'report x' 'guard check' '--help'; do
-  run_in "$WT" "kendex $verb"; assert_eq "$rc" 0 "kendex $verb from the worktree passes"
-done
-run_in "$OUTSIDE" 'kendex refresh';               assert_eq "$rc" 0 'outside a repository there is no worktree to protect'
-run_in "$WT" 'git status';                        assert_eq "$rc" 0 'a command without kendex passes'
-run_in "$WT" 'refresh kendex';                    assert_eq "$rc" 0 'the verb before the kendex word is not the command'
-run_in "$WT" 'kendexrefresh';                     assert_eq "$rc" 0 'the two glued together are another word'
-
-echo "=== block-worktree-refresh: the stated limits ==="
-# The pair counts wherever it stands, so a command that only spells it, or a
-# help read that spells it, is refused as the write it is not. Rows, so nobody
-# grows a tokenizer or an exemption list to close them.
-run_in "$WT" 'echo "run kendex refresh from main"'; assert_eq "$rc" 2 'the pair inside a quoted string is refused'
-run_in "$WT" 'kendex refresh --help';               assert_eq "$rc" 2 'a help read spelling the verb is refused; kendex --help is the read that passes'
-run_in "$WT" 'kendex vanillagreencom/kendex';       assert_eq "$rc" 0 'the bare source shorthand for add is not read: it is every kendex word'
-
-echo "=== block-worktree-refresh: a git that cannot answer refuses ==="
 BROKEN="$TMP_ROOT/broken"
 mkdir -p "$BROKEN"
 printf 'gitdir: %s/nowhere\n' "$TMP_ROOT" >"$BROKEN/.git"
-run_in "$BROKEN" 'kendex refresh';                assert_eq "$rc" 2 'a .git file pointing nowhere is a git that could not answer'
-assert_contains "$ERR_FILE" 'could not say whether' 'the refusal names the unanswered question'
-run_in "$TMP_ROOT/absent" 'kendex refresh';       assert_eq "$rc" 2 'a cwd that does not exist is refused, not read as outside a repository'
 MALFORMED="$TMP_ROOT/malformed"
 mkdir -p "$MALFORMED/.git" "$MALFORMED/sub"
-run_in "$MALFORMED/sub" 'kendex refresh';         assert_eq "$rc" 2 'an empty .git directory above the cwd is a repository git could not read, not the absence of one'
-assert_contains "$ERR_FILE" 'exists but git could not read' 'the refusal names the .git entry it found'
+
+# The command is the last field, so read keeps literal pipes in it. printf %b
+# decodes the newline and backslash-newline fixtures without splitting rows.
+command_table() {
+  local row label expected value clause command field global_form before=$((PASS + FAIL))
+  echo "=== block-worktree-refresh: command forms from the linked worktree ==="
+  while IFS= read -r row; do
+    [ "$row" != "" ] || continue
+    IFS='|' read -r label expected value clause command <<<"$row"
+    for field in "$label" "$expected" "$value" "$clause" "$command"; do
+      [ "$field" != "" ] || { printf 'command table: a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+    done
+    command=$(printf '%b' "$command")
+    run_in "$WT" "$command"
+    if [ "${HOOKS_TABLE_PROBE:-}" = 1 ]; then
+      printf '%s => rc=%s\n' "$label" "$rc"
+      continue
+    fi
+    assert_eq "$rc" "$expected" "$label"
+    if [ "$value" != - ]; then
+      global_form=$(sed -n 's/.*or pass \(.*\) for a global change.*/\1/p' "$ERR_FILE")
+      assert_eq "$global_form" "$value" "$label: global option value"
+    fi
+    if [ "$clause" != - ]; then assert_contains "$ERR_FILE" "$clause" "$label: checkout command value"; fi
+  done <<<"$COMMAND_ROWS"
+  [ "$((PASS + FAIL))" -gt "$before" ] || { echo 'command table: no row was asserted (a probe run renders rows instead)' >&2; exit 2; }
+}
+
+directory_table() {
+  local row label mode world expected clause command field dir before=$((PASS + FAIL))
+  echo "=== block-worktree-refresh: directory and git state ==="
+  while IFS= read -r row; do
+    [ "$row" != "" ] || continue
+    IFS='|' read -r label mode world expected clause command <<<"$row"
+    for field in "$label" "$mode" "$world" "$expected" "$clause" "$command"; do
+      [ "$field" != "" ] || { printf 'directory table: a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+    done
+    case "$world" in
+      main) dir="$MAIN" ;;
+      worktree) dir="$WT" ;;
+      outside) dir="$OUTSIDE" ;;
+      broken) dir="$BROKEN" ;;
+      absent) dir="$TMP_ROOT/absent" ;;
+      malformed) dir="$MALFORMED/sub" ;;
+      *) printf 'directory table: unknown world: %s\n' "$world" >&2; exit 1 ;;
+    esac
+    case "$mode" in
+      payload) run_in "$dir" "$command" ;;
+      pwd) run_from "$dir" "$command" ;;
+      *) printf 'directory table: unknown cwd mode: %s\n' "$mode" >&2; exit 1 ;;
+    esac
+    if [ "${HOOKS_TABLE_PROBE:-}" = 1 ]; then
+      printf '%s => rc=%s\n' "$label" "$rc"
+      continue
+    fi
+    assert_eq "$rc" "$expected" "$label"
+    if [ "$clause" != - ]; then assert_contains "$ERR_FILE" "$clause" "$label: refusal clause"; fi
+  done <<<"$DIRECTORY_ROWS"
+  [ "$((PASS + FAIL))" -gt "$before" ] || { echo 'directory table: no row was asserted (a probe run renders rows instead)' >&2; exit 2; }
+}
+
+# label|status|global option value|checkout command value|command
+# The quoted pair and verb help are refused; the bare source shorthand is
+# not read. These are stated limits, not requests for a tokenizer.
+COMMAND_ROWS=$(cat <<'ROWS'
+kendex refresh from the worktree is refused|2|-|-|kendex refresh
+kendex apply from the worktree is refused|2|-|-|kendex apply
+kendex add orch from the worktree is refused|2|-|-|kendex add orch
+kendex remove orch from the worktree is refused|2|-|-|kendex remove orch
+kendex update-pi from the worktree is refused|2|-|-|kendex update-pi
+kendex pin orch from the worktree is refused|2|-|-|kendex pin orch
+kendex fork orch from the worktree is refused|2|-|-|kendex fork orch
+kendex adopt from the worktree is refused|2|-|-|kendex adopt
+kendex drift-hook from the worktree is refused|2|-|-|kendex drift-hook
+kendex source add x from the worktree is refused|2|-|-|kendex source add x
+kendex source remove x from the worktree is refused|2|-|-|kendex source remove x
+kendex source enable x from the worktree is refused|2|-|-|kendex source enable x
+kendex source disable x from the worktree is refused|2|-|-|kendex source disable x
+kendex marketplace subscribe x from the worktree is refused|2|-|-|kendex marketplace subscribe x
+kendex marketplace unsubscribe x from the worktree is refused|2|--scope global (or --global)|git worktree list|kendex marketplace unsubscribe x
+source list is a read|0|-|-|kendex source list
+marketplace list is a read|0|-|-|kendex marketplace list
+the verb is found after a chained command|2|-|-|true && kendex refresh
+the verb is found on the second line|2|-|-|echo x\nkendex apply
+an absolute path in front of kendex is still kendex|2|-|-|/home/u/.cargo/bin/kendex refresh
+a quoted path in front of kendex is still kendex|2|-|-|"/home/u/.cargo/bin/kendex" refresh
+a quoted verb is still the verb|2|-|-|kendex 'refresh'
+the project scope spelled out is still the project scope|2|-|-|kendex refresh --scope project
+the -g scope passes|0|-|-|kendex refresh -g
+the --global scope passes|0|-|-|kendex refresh --global
+the --scope global words pass|0|-|-|kendex remove --scope global orch
+the --scope=global word passes|0|-|-|kendex remove --scope=global orch
+add takes the global scope as --global|0|-|-|kendex add --global orch
+update-pi --check previews and is a read|0|-|-|kendex update-pi --check
+update-pi -c is the same read|0|-|-|kendex update-pi -c
+add from the worktree is refused|2|--global|-|kendex add orch
+update-pi from the worktree is refused|2|--scope global|-|kendex update-pi
+a global write beside a read passes|0|-|-|kendex refresh -g; kendex verify
+a global word in an earlier segment does not exempt a later write|2|-|-|kendex refresh -g && kendex refresh
+a -g on another command does not exempt the write|2|-|-|ls -g && kendex refresh
+the scope on a continued line is the write's own|0|-|-|kendex refresh \\\n  --scope global
+--scope project beside -g is the project scope, which kendex gives precedence|2|-|-|kendex refresh -g --scope project
+--scope all beside --global includes the project scope|2|-|-|kendex refresh --global --scope=all
+a --scope value that is not the plain word global is not read as global|2|-|-|kendex refresh --global --scope "project"
+a root option before the verb is dropped by the CLI and exempts nothing|2|-|-|kendex --global refresh
+the -g after the verb is the one the CLI reads|0|-|-|kendex -g refresh -g
+an option word between kendex and the verb does not hide the verb|2|-|-|kendex --verbose refresh
+an option with a value between kendex and the verb does not hide the verb|2|-|-|kendex --harness claude-code refresh
+the same before add|2|-|-|kendex --method copy add orch
+a -g behind a comment marker is not an option|2|-|-|kendex refresh # -g
+a -g inside a nested command is not this command's|2|-|-|kendex refresh $(echo -g)
+a commented-out write is not a write|0|-|-|# kendex refresh
+updates --apply delegates to refresh and is refused|2|-|-|kendex updates --apply
+updates without --apply is a read|0|-|-|kendex updates
+a global updates --apply passes|0|-|-|kendex updates --apply -g
+kendex verify from the worktree passes|0|-|-|kendex verify
+kendex check from the worktree passes|0|-|-|kendex check
+kendex list from the worktree passes|0|-|-|kendex list
+kendex report x from the worktree passes|0|-|-|kendex report x
+kendex guard check from the worktree passes|0|-|-|kendex guard check
+kendex --help from the worktree passes|0|-|-|kendex --help
+a command without kendex passes|0|-|-|git status
+the verb before the kendex word is not the command|0|-|-|refresh kendex
+the two glued together are another word|0|-|-|kendexrefresh
+the pair inside a quoted string is refused|2|-|-|echo "run kendex refresh from main"
+a help read spelling the verb is refused; kendex --help is the read that passes|2|-|-|kendex refresh --help
+the bare source shorthand for add is not read: it is every kendex word|0|-|-|kendex vanillagreencom/kendex
+ROWS
+)
+command_table
+
+# label|cwd source|world|status|refusal clause|command
+DIRECTORY_ROWS=$(cat <<ROWS
+a cd before the verb moves the write out of the directory git is asked about|payload|main|2|after a cd or pushd|cd $WT && kendex refresh
+a pushd in an earlier segment is a move too|payload|outside|2|-|pushd $WT; kendex apply
+a global write after a cd passes: no directory is written|payload|main|0|-|cd $WT && kendex refresh -g
+a cd after the verb does not move the write|payload|main|0|-|kendex refresh && cd $WT
+without a cwd in the payload the hook judges the directory it runs in|pwd|worktree|2|-|kendex refresh
+the same write from the main checkout passes|payload|main|0|-|kendex refresh
+outside a repository there is no worktree to protect|payload|outside|0|-|kendex refresh
+a .git file pointing nowhere is a git that could not answer|payload|broken|2|could not say whether|kendex refresh
+a cwd that does not exist is refused, not read as outside a repository|payload|absent|2|-|kendex refresh
+an empty .git directory above the cwd is a repository git could not read, not the absence of one|payload|malformed|2|exists but git could not read|kendex refresh
+ROWS
+)
+directory_table
 
 echo "=== block-worktree-refresh: a payload it cannot read refuses ==="
 run_payload ''
