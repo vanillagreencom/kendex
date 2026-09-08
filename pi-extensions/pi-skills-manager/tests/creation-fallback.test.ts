@@ -23,6 +23,7 @@ for (const row of [
 		assert.equal(draft, row.expected);
 		assert.equal(generated, row.generated);
 		assert.equal(fallbacks, row.fallback);
-		assert.deepEqual(reasons, row.notified ? [error] : []);
+		assert.equal(reasons.length, row.notified ? 1 : 0);
+		if (row.notified) assert.equal(reasons[0], error);
 	});
 }
