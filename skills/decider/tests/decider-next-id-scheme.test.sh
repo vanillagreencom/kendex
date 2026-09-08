@@ -169,6 +169,7 @@ NEXT_ID_CASES
     [[ -n "$only_row" ]] && guard="next-ID table selected no row: $only_row"
     if [[ "$mode" == normal ]]; then
       fail "$guard"
+      return 1
     else
       printf 'TABLE_GUARD:%s' "$guard"
       return 1
@@ -182,21 +183,26 @@ NEXT_ID_CASES
 echo "=== decisions next-id scheme rows ==="
 evaluate_next_id_rows "$DECISIONS" normal
 
-echo "=== must-fail control ==="
-arithmetic_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/wrong-next-id/decisions" '$((max_num + 1))' '$((max_num + 2))' 1)"
-failures="$(evaluate_next_id_rows "$arithmetic_mutant" control inferred-adr)"
-if [[ "$failures" == *'|inferred-adr|'* ]]; then
-  pass "wrong next ID fails the inferred scheme row"
-else
-  fail "wrong next ID did not fail the inferred scheme row"
-fi
-
 if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
+  echo "=== must-fail controls ==="
+  arithmetic_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/wrong-next-id/decisions" '$((max_num + 1))' '$((max_num + 2))' 1)"
+  failures="$(evaluate_next_id_rows "$arithmetic_mutant" control inferred-adr)"
+  if [[ "$failures" == *'|inferred-adr|'* ]]; then
+    pass "wrong next ID fails the inferred scheme row"
+  else
+    fail "wrong next ID did not fail the inferred scheme row"
+  fi
+
   next_id_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-next-id-table/decider/tests/decider-next-id-scheme.test.sh" NEXT_ID_CASES)"
   if decider_test_fails_with "$next_id_table_mutant" "next-ID table executed no rows"; then
     pass "an empty next-ID table fails its row-count guard"
   else
     fail "an empty next-ID table missed its row-count guard ($DECIDER_CONTROL_DETAIL)"
+  fi
+  if decider_diagnostic_only_table_control "$next_id_table_mutant" "$TMP_ROOT/empty-next-id-table/decider/tests/diagnostic-only.test.sh" "next-ID table executed no rows" 1; then
+    pass "a next-ID-table diagnostic without a failure is rejected"
+  else
+    fail "a next-ID-table diagnostic without a failure satisfied the control ($DECIDER_CONTROL_DETAIL)"
   fi
   set +e
   selection_output="$(evaluate_next_id_rows "$arithmetic_mutant" control unknown-next-id-row 2>&1)"

@@ -129,6 +129,7 @@ LINK_CASES
     [[ -n "$only_row" ]] && guard="link table selected no row: $only_row"
     if [[ "$mode" == normal ]]; then
       fail "$guard"
+      return 1
     else
       printf 'TABLE_GUARD:%s' "$guard"
       return 1
@@ -185,6 +186,7 @@ DIAGNOSTIC_CASES
     [[ -n "$only_row" ]] && guard="diagnostic table selected no row: $only_row"
     if [[ "$mode" == normal ]]; then
       fail "$guard"
+      return 1
     else
       printf 'TABLE_GUARD:%s' "$guard"
       return 1
@@ -210,26 +212,31 @@ evaluate_link_rows "$DECISIONS" normal
 echo "=== decisions malformed and healthy INDEX rows ==="
 evaluate_diagnostic_rows "$DECISIONS" normal
 
-echo "=== must-fail controls ==="
-fallback_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-fallback/decisions" '+ [ $cell | scan' '+ [ empty | scan' 2)"
-failures="$(evaluate_link_rows "$fallback_mutant" control)"
-expect_control_failure "$failures" backtick-body "backtick fallback loss fails its row"
-expect_control_failure "$failures" bare-body "bare fallback loss fails its row"
-
-date_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-date/decisions" '      date="$parsed"' '      date="mutated"' 1)"
-failures="$(evaluate_link_rows "$date_mutant" control)"
-expect_control_failure "$failures" date-enrichment "date mutation fails the enrichment row"
-
-warning_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-warning/decisions" '| select((.value | split("|") | length) < 9)' '| select(false)' 1)"
-failures="$(evaluate_diagnostic_rows "$warning_mutant" control)"
-expect_control_failure "$failures" malformed-row-diagnostic "warning suppression fails the diagnostic row"
-
 if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
+  echo "=== must-fail controls ==="
+  fallback_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-fallback/decisions" '+ [ $cell | scan' '+ [ empty | scan' 2)"
+  failures="$(evaluate_link_rows "$fallback_mutant" control)"
+  expect_control_failure "$failures" backtick-body "backtick fallback loss fails its row"
+  expect_control_failure "$failures" bare-body "bare fallback loss fails its row"
+
+  date_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-date/decisions" '      date="$parsed"' '      date="mutated"' 1)"
+  failures="$(evaluate_link_rows "$date_mutant" control)"
+  expect_control_failure "$failures" date-enrichment "date mutation fails the enrichment row"
+
+  warning_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-warning/decisions" '| select((.value | split("|") | length) < 9)' '| select(false)' 1)"
+  failures="$(evaluate_diagnostic_rows "$warning_mutant" control)"
+  expect_control_failure "$failures" malformed-row-diagnostic "warning suppression fails the diagnostic row"
+
   link_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-link-table/decider/tests/decider-index-parse.test.sh" LINK_CASES)"
   if decider_test_fails_with "$link_table_mutant" "link table executed no rows"; then
     pass "an empty link table fails its row-count guard"
   else
     fail "an empty link table missed its row-count guard ($DECIDER_CONTROL_DETAIL)"
+  fi
+  if decider_diagnostic_only_table_control "$link_table_mutant" "$TMP_ROOT/empty-link-table/decider/tests/diagnostic-only.test.sh" "link table executed no rows" 2; then
+    pass "a link-table diagnostic without a failure is rejected"
+  else
+    fail "a link-table diagnostic without a failure satisfied the control ($DECIDER_CONTROL_DETAIL)"
   fi
   set +e
   selection_output="$(evaluate_link_rows "$fallback_mutant" control unknown-link-row 2>&1)"
@@ -246,6 +253,11 @@ if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
     pass "an empty diagnostic table fails its row-count guard"
   else
     fail "an empty diagnostic table missed its row-count guard ($DECIDER_CONTROL_DETAIL)"
+  fi
+  if decider_diagnostic_only_table_control "$diagnostic_table_mutant" "$TMP_ROOT/empty-diagnostic-table/decider/tests/diagnostic-only.test.sh" "diagnostic table executed no rows" 2; then
+    pass "a diagnostic-table diagnostic without a failure is rejected"
+  else
+    fail "a diagnostic-table diagnostic without a failure satisfied the control ($DECIDER_CONTROL_DETAIL)"
   fi
   set +e
   selection_output="$(evaluate_diagnostic_rows "$warning_mutant" control unknown-diagnostic-row 2>&1)"

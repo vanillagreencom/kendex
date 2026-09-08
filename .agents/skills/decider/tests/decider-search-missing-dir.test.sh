@@ -169,6 +169,7 @@ DIRECTORY_CASES
     [[ -n "$only_row" ]] && guard="directory table selected no row: $only_row"
     if [[ "$mode" == normal ]]; then
       fail "$guard"
+      return 1
     else
       printf 'TABLE_GUARD:%s' "$guard"
       return 1
@@ -182,35 +183,40 @@ DIRECTORY_CASES
 echo "=== decisions directory-state rows ==="
 evaluate_directory_rows "$DECISIONS" normal
 
-echo "=== must-fail controls ==="
-old_branch='  if [[ "$DECISIONS_DIR_ABSENT" -eq 1 ]]; then'
-old_branch+=$'\n    note_missing_decisions_dir\n'
-old_branch+="    echo '[]'"
-old_branch+=$'\n    return 0\n  fi\n\n  local all'
-new_branch='  if [[ "$DECISIONS_DIR_ABSENT" -eq 1 ]]; then'
-new_branch+=$'\n    note_missing_decisions_dir\n'
-new_branch+="    echo '[]'"
-new_branch+=$'\n    return 1\n  fi\n\n  local all'
-status_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/absent-search-fails/decisions" "$old_branch" "$new_branch" 1)"
-failures="$(evaluate_directory_rows "$status_mutant" control configured-absent-issue)"
-if [[ "$failures" == *'|configured-absent-issue|'* ]]; then
-  pass "absent issue-search failure fails its row"
-else
-  fail "absent issue-search failure did not fail its row"
-fi
-failures="$(evaluate_directory_rows "$status_mutant" control configured-absent-keyword)"
-if [[ "$failures" == *'|configured-absent-keyword|'* ]]; then
-  pass "absent keyword-search failure fails its row"
-else
-  fail "absent keyword-search failure did not fail its row"
-fi
-
 if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
+  echo "=== must-fail controls ==="
+  old_branch='  if [[ "$DECISIONS_DIR_ABSENT" -eq 1 ]]; then'
+  old_branch+=$'\n    note_missing_decisions_dir\n'
+  old_branch+="    echo '[]'"
+  old_branch+=$'\n    return 0\n  fi\n\n  local all'
+  new_branch='  if [[ "$DECISIONS_DIR_ABSENT" -eq 1 ]]; then'
+  new_branch+=$'\n    note_missing_decisions_dir\n'
+  new_branch+="    echo '[]'"
+  new_branch+=$'\n    return 1\n  fi\n\n  local all'
+  status_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/absent-search-fails/decisions" "$old_branch" "$new_branch" 1)"
+  failures="$(evaluate_directory_rows "$status_mutant" control configured-absent-issue)"
+  if [[ "$failures" == *'|configured-absent-issue|'* ]]; then
+    pass "absent issue-search failure fails its row"
+  else
+    fail "absent issue-search failure did not fail its row"
+  fi
+  failures="$(evaluate_directory_rows "$status_mutant" control configured-absent-keyword)"
+  if [[ "$failures" == *'|configured-absent-keyword|'* ]]; then
+    pass "absent keyword-search failure fails its row"
+  else
+    fail "absent keyword-search failure did not fail its row"
+  fi
+
   directory_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-directory-table/decider/tests/decider-search-missing-dir.test.sh" DIRECTORY_CASES)"
   if decider_test_fails_with "$directory_table_mutant" "directory table executed no rows"; then
     pass "an empty directory table fails its row-count guard"
   else
     fail "an empty directory table missed its row-count guard ($DECIDER_CONTROL_DETAIL)"
+  fi
+  if decider_diagnostic_only_table_control "$directory_table_mutant" "$TMP_ROOT/empty-directory-table/decider/tests/diagnostic-only.test.sh" "directory table executed no rows" 1; then
+    pass "a directory-table diagnostic without a failure is rejected"
+  else
+    fail "a directory-table diagnostic without a failure satisfied the control ($DECIDER_CONTROL_DETAIL)"
   fi
   set +e
   selection_output="$(evaluate_directory_rows "$status_mutant" control unknown-directory-row 2>&1)"
