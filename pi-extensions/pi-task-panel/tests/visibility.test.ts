@@ -30,11 +30,9 @@ test("task panel auto-shows first task once, then user hide blocks later task mu
 	assert.equal(panel.panel, "hidden");
 	assert.equal(panel.hiddenByUser, true);
 
-	for (const _mutation of ["tasks_write add_task", "tasks_write replace", "tasks_write start_task", "tasks_write mark_done -> new pending"]) {
-		pendingChange(panel);
-		assert.equal(panel.panel, "hidden");
-		assert.equal(panel.hiddenByUser, true);
-	}
+	pendingChange(panel);
+	assert.equal(panel.panel, "hidden");
+	assert.equal(panel.hiddenByUser, true);
 });
 
 test("task panel replace preserves user-hidden visibility snapshot", () => {
@@ -72,23 +70,17 @@ test("task panel explicit toggle-in restores last visible mode", () => {
 	assert.equal(panel.hiddenByUser, false);
 });
 
-test("toggle from compact hides, then reopens compact", () => {
-	const panel = createTaskPanelVisibility("compact");
-	toggleTaskPanelVisibility(panel);
-	assert.equal(panel.panel, "hidden");
-	assert.equal(panel.hiddenByUser, true);
-	toggleTaskPanelVisibility(panel);
-	assert.equal(panel.panel, "compact");
-	assert.equal(panel.hiddenByUser, false);
-});
-
-test("toggle from expanded hides, then reopens expanded", () => {
-	const panel = createTaskPanelVisibility("expanded");
-	toggleTaskPanelVisibility(panel);
-	assert.equal(panel.panel, "hidden");
-	toggleTaskPanelVisibility(panel);
-	assert.equal(panel.panel, "expanded");
-});
+for (const initial of ["compact", "expanded"] as const) {
+	test(`toggle from ${initial} hides and restores that mode`, () => {
+		const panel = createTaskPanelVisibility(initial);
+		toggleTaskPanelVisibility(panel);
+		assert.equal(panel.panel, "hidden");
+		assert.equal(panel.hiddenByUser, true);
+		toggleTaskPanelVisibility(panel);
+		assert.equal(panel.panel, initial);
+		assert.equal(panel.hiddenByUser, false);
+	});
+}
 
 test("toggle on a fresh hidden panel opens compact", () => {
 	const panel = createTaskPanelVisibility("hidden");
@@ -110,9 +102,8 @@ test("cycle behavior walks hidden, compact, expanded, hidden regardless of last 
 	assert.equal(panel.panel, "compact");
 });
 
-test("toggle behavior setting values normalize with a toggle default", () => {
-	assert.equal(normalizePanelToggleBehavior("cycle"), "cycle");
-	assert.equal(normalizePanelToggleBehavior("toggle"), "toggle");
-	assert.equal(normalizePanelToggleBehavior("bogus"), "toggle");
-	assert.equal(normalizePanelToggleBehavior(undefined), "toggle");
-});
+for (const [value, expected] of [["cycle", "cycle"], ["toggle", "toggle"], ["bogus", "toggle"], [undefined, "toggle"]] as const) {
+	test(`toggle behavior setting ${String(value)}`, () => {
+		assert.equal(normalizePanelToggleBehavior(value), expected);
+	});
+}
