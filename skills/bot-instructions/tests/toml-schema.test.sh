@@ -1,39 +1,37 @@
 #!/usr/bin/env bash
-# `toml-schema`: one red control per rejection clause.
+# `toml-schema`: one red control per clause of the closed schema, the glob
+# dialect's path shapes and the cross-flag set. The content refusals are
+# `toml-refusals.test.sh`.
 #
-# Every control starts from a TOML with every `[bot-instructions.bots]` flag false, which is a
-# legitimate state that renders nothing, so each reds on its own mutation and
-# not on a neighbour's.
+# Every control starts from a TOML with every `[bot-instructions.bots]` flag
+# false, which is a legitimate state that renders nothing, and pins the
+# clause its mutation trips: the validator has some forty clauses, and a row
+# that held only the validator's name passed on any of them.
 
 . "$(dirname "$0")/lib/harness.sh"
 
 repo="$(bi_minimal_repo toml-schema)"
 
-# One control from a mutation appended to the minimal head.
-c() { bi_control toml-schema "$1" "$repo"; }
-
-# One control from a whole TOML written by the caller.
-w() {
-  local label
-  label="$1"
-  cat > "$repo/kendex.toml"
-  expect_red toml-schema "$label" check --repo "$repo"
-}
-
+# One record per mutation, read by `bi_toml_table`: `append` rows are the
+# mutation under `$BI_MIN_HEAD`, `whole` rows the file entire. `read -d ''`
+# rather than `$(cat <<'ROWS' ...)`: Bash 3.2 scans a here-document inside a
+# command substitution for quotes, and a row carrying an odd number of double
+# quotes runs its parse past the closing parenthesis.
+IFS= read -r -d '' rows <<'ROWS'
 # --- the shape set ----------------------------------------------------------
-c 'an unknown table' <<'EOF'
+an unknown table|append|check|unknown table or key 'bot'
 [bot-instructions.bot]
 codex = true
-EOF
-c 'an unknown key in a known table' <<'EOF'
+END
+an unknown key in a known table|append|check|[bot-instructions.exclusions]: unknown key 'derive_renders'
 [bot-instructions.exclusions]
 derive_renders = true
-EOF
-c 'a value of the wrong type' <<'EOF'
+END
+a value of the wrong type|append|check|[bot-instructions.bots] codex: expected a boolean, got str
 [bot-instructions.bots]
 codex = "yes"
-EOF
-c 'an empty glob list' <<'EOF'
+END
+an empty glob list|append|check|globs: empty glob list
 [bot-instructions.bots]
 codex = true
 copilot = true
@@ -41,8 +39,8 @@ copilot = true
 name = "t"
 globs = []
 instructions = "x"
-EOF
-c 'an empty surface name' <<'EOF'
+END
+an empty surface name|append|check|name: '' must be non-empty and hold only [a-z0-9-]
 [bot-instructions.bots]
 codex = true
 copilot = true
@@ -50,8 +48,8 @@ copilot = true
 name = ""
 globs = ["a/**"]
 instructions = "x"
-EOF
-c 'a malformed surface name' <<'EOF'
+END
+a malformed surface name|append|check|name: 'Tests' must be non-empty and hold only [a-z0-9-]
 [bot-instructions.bots]
 codex = true
 copilot = true
@@ -59,8 +57,8 @@ copilot = true
 name = "Tests"
 globs = ["a/**"]
 instructions = "x"
-EOF
-c 'a duplicated surface name' <<'EOF'
+END
+a duplicated surface name|append|check|name: 't' is declared twice
 [bot-instructions.bots]
 codex = true
 copilot = true
@@ -72,8 +70,8 @@ instructions = "x"
 name = "t"
 globs = ["b/**"]
 instructions = "y"
-EOF
-c 'a reserved surface name' <<'EOF'
+END
+a reserved surface name|append|check|name: 'correctness' is reserved
 [bot-instructions.bots]
 codex = true
 copilot = true
@@ -81,215 +79,83 @@ copilot = true
 name = "correctness"
 globs = ["a/**"]
 instructions = "x"
-EOF
-c 'an unknown doctrine block id' <<'EOF'
+END
+an unknown doctrine block id|append|check|'no-such-block' is not a doctrine block id
 [bot-instructions.doctrine.append]
 no-such-block = "x"
-EOF
-w 'a schema value other than 1' <<'EOF'
+END
+a schema value other than 1|whole|check|schema = 2; this generator knows 1
 [bot-instructions]
 schema = 2
 [bot-instructions.repo]
 name = "fixture"
 summary = "A fixture repository."
-EOF
+END
 
+# --- the required keys ------------------------------------------------------
 # The required-key clause derives from the Required column of
 # `repo-toml.md` § Keys rather than restating which fields are required.
-w 'an absent required key stated in prose (schema)' <<'EOF'
+an absent required key stated in prose (schema)|whole|check|required key 'schema' is absent
 [bot-instructions.repo]
 name = "fixture"
 summary = "A fixture repository."
-EOF
-w 'an absent required key in a table row ([bot-instructions.repo] name)' <<'EOF'
+END
+an absent required key in a table row ([bot-instructions.repo] name)|whole|check|[bot-instructions.repo]: required key 'name' is absent
 [bot-instructions]
 schema = 1
 [bot-instructions.repo]
 summary = "A fixture repository."
-EOF
-w 'an absent required [bot-instructions.repo] summary' <<'EOF'
+END
+an absent required [bot-instructions.repo] summary|whole|check|[bot-instructions.repo]: required key 'summary' is absent
 [bot-instructions]
 schema = 1
 [bot-instructions.repo]
 name = "fixture"
-EOF
-c 'an absent required [[bot-instructions.exclusions.path]] reason' <<'EOF'
+END
+an absent required [[bot-instructions.exclusions.path]] reason|append|check|[[bot-instructions.exclusions.path]][0]: required key 'reason' is absent
 [[bot-instructions.exclusions.path]]
 glob = "a/**"
-EOF
-c 'an absent required [[bot-instructions.surface]] instructions' <<'EOF'
+END
+an absent required [[bot-instructions.surface]] instructions|append|check|[[bot-instructions.surface]][0]: required key 'instructions' is absent
 [bot-instructions.bots]
 codex = true
 copilot = true
 [[bot-instructions.surface]]
 name = "t"
 globs = ["a/**"]
-EOF
+END
 
-# --- the content refusals ---------------------------------------------------
-# The clauses are the cells of `repo-toml.md` § The content refusals; the
-# predicates are that table's, encoded once in `scripts/lib/refusals.py`.
-w 'a heading in [bot-instructions.repo] summary, indented, which is the wide predicate' <<'EOF'
-[bot-instructions]
-schema = 1
-[bot-instructions.repo]
-name = "fixture"
-summary = """
-text
-  ## forged
-"""
-EOF
-# A setext heading: `Injected` over `===` reaches
-# `.github/copilot-instructions.md` and `.macroscope/correctness/doctrine.md`
-# as an H1, which an ATX-only refusal does not see.
-w 'a setext heading in [bot-instructions.repo] summary' <<'EOF'
-[bot-instructions]
-schema = 1
-[bot-instructions.repo]
-name = "fixture"
-summary = """
-Injected
-===
-"""
-EOF
-if printf '%s\n' "$bi_out" | grep -q 'heading refusal'; then
-  ok 'and the heading refusal is the clause that names it'
-else
-  bad 'and the heading refusal is the clause that names it' "$bi_out"
-fi
-
-w 'a `---` line under text in [bot-instructions.repo] summary' <<'EOF'
-[bot-instructions]
-schema = 1
-[bot-instructions.repo]
-name = "fixture"
-summary = """
-text
----
-more
-"""
-EOF
-w 'the marker text in [bot-instructions.repo] summary' <<'EOF'
-[bot-instructions]
-schema = 1
-[bot-instructions.repo]
-name = "fixture"
-summary = "generated by bot-instructions is not a repo's to say"
-EOF
-
-# A control character arrives through TOML's own escapes: a backslash-u-0001
-# escape parses cleanly and yields a literal byte, so the value is decoded by
-# the time the refusal sees it.
-printf '[bot-instructions]\nschema = 1\n[bot-instructions.repo]\nname = "fixture"\nsummary = "a\\u0001b"\n' \
-  > "$repo/kendex.toml"
-expect_red toml-schema 'a control character in [bot-instructions.repo] summary' check --repo "$repo"
-
-w 'the marker text in [bot-instructions.repo] name' <<'EOF'
-[bot-instructions]
-schema = 1
-[bot-instructions.repo]
-name = "generated by bot-instructions"
-summary = "A fixture repository."
-EOF
-w 'a newline in [bot-instructions.repo] tracker, which no destination carries' <<'EOF'
-[bot-instructions]
-schema = 1
-[bot-instructions.repo]
-name = "fixture"
-summary = "A fixture repository."
-tracker = """
-KEN
-1
-"""
-EOF
-c 'comment-close in an exclusion reason' <<'EOF'
-[[bot-instructions.exclusions.path]]
-glob = "a/**"
-reason = "ends the comment --> and then some"
-EOF
-c 'a newline in an exclusion reason' <<'EOF'
-[[bot-instructions.exclusions.path]]
-glob = "a/**"
-reason = """
-two
-lines
-"""
-EOF
-c 'a toml-delimiter in a [bot-instructions.doctrine.replace] value' <<'EOF'
-[bot-instructions.doctrine.replace]
-scope = "closes its own string \"\"\" then TOML"
-EOF
-c 'a heading in a [bot-instructions.doctrine.append] value' <<'EOF'
-[bot-instructions.doctrine.append]
-scope = """
-text
-# forged
-"""
-EOF
-c 'the marker text in a [[bot-instructions.surface]] instructions' <<'EOF'
-[bot-instructions.bots]
-codex = true
-copilot = true
-[[bot-instructions.surface]]
-name = "t"
-globs = ["a/**"]
-instructions = "generated by bot-instructions"
-EOF
-
-# --- the glob dialect's path-shape clauses ----------------------------------
-# The character class catches none of these: every byte in them is permitted,
-# and an empty glob has no bytes at all.
-g() {
-  cat > "$repo/kendex.toml" <<EOF
-[bot-instructions]
-schema = 1
-[bot-instructions.repo]
-name = "fixture"
-summary = "A fixture repository."
-[[bot-instructions.exclusions.path]]
-glob = "$2"
-reason = "r"
-EOF
-  expect_red toml-schema "$1" check --repo "$repo"
-}
-g 'an empty glob' ''
-g 'a leading slash' '/src/**'
-g 'a trailing slash' 'src/'
-g 'a .. component' '../**'
-g 'an empty component' 'src//x'
-g 'a brace, outside the class' '{a,b}/**'
-g 'an extglob, outside the class' '@(a|b)/**'
-g 'a comma, which Copilot applyTo splits on' 'a,b'
-g 'a comment character, which .coderabbit.yaml reads as a comment' 'a#b'
-
-c 'an exclusion glob declared twice' <<'EOF'
+# --- an exclusion declared twice, and the retention table -------------------
+an exclusion glob declared twice|append|check|exclusion 'a/**' is declared twice
 [[bot-instructions.exclusions.path]]
 glob = "a/**"
 reason = "one"
 [[bot-instructions.exclusions.path]]
 glob = "a/**"
 reason = "two, and the second reason is the one a reader believes"
-EOF
-
-c 'an unknown retention key' <<'EOF'
+END
+an unknown retention key|append|check|[bot-instructions.retention]: unknown key 'learnings'
 [bot-instructions.retention]
 learnings = false
-EOF
-c 'a retention flag that is not a boolean' <<'EOF'
+END
+a retention flag that is not a boolean|append|check|[bot-instructions.retention] coderabbit: expected a boolean, got str
 [bot-instructions.retention]
 coderabbit = "no"
-EOF
+END
 
 # --- the cross-flag set -----------------------------------------------------
-c 'qodo_best_practices true with qodo false' <<'EOF'
+# The verb-set clause reads a `qodo_commands` entry before the inline-override
+# one does, so an entry carrying an override is refused as a verb outside the
+# set.
+qodo_best_practices true with qodo false|append|check|qodo_best_practices or qodo_review_md is true with qodo false
 [bot-instructions.bots]
 qodo_best_practices = true
-EOF
-c 'copilot true with codex false' <<'EOF'
+END
+copilot true with codex false|append|check|copilot or coderabbit is true with codex false
 [bot-instructions.bots]
 copilot = true
-EOF
-c 'surfaces with every route flag false' <<'EOF'
+END
+surfaces with every route flag false|append|check|a non-empty [[bot-instructions.surface]] set with copilot, coderabbit, macroscope, qodo_best_practices all false
 [bot-instructions.bots]
 codex = true
 qodo = true
@@ -297,15 +163,59 @@ qodo = true
 name = "t"
 globs = ["a/**"]
 instructions = "x"
-EOF
-c 'a qodo_commands entry carrying an inline override' <<'EOF'
+END
+a qodo_commands entry carrying an inline override|append|check|'/review --pr_reviewer.extra_instructions=' is not one of
 [bot-instructions.cadence]
 qodo_commands = ["/review --pr_reviewer.extra_instructions="]
-EOF
-c 'a qodo_commands entry outside the verb set' <<'EOF'
+END
+a qodo_commands entry outside the verb set|append|check|'/ask' is not one of
 [bot-instructions.cadence]
 qodo_commands = ["/ask"]
+END
+ROWS
+
+# --- the glob dialect's path-shape clauses ----------------------------------
+# The character class catches none of these: every byte in them is permitted,
+# and an empty glob has no bytes at all. One row per glob, `label~glob~clause`,
+# `~`-separated because the extglob row's glob carries `|`; the first row's
+# glob is empty, which is its value. Each becomes a record of the table above:
+# the glob as the one `[[bot-instructions.exclusions.path]]` entry under the
+# minimal head.
+IFS= read -r -d '' globs <<'ROWS'
+an empty glob~~[[bot-instructions.exclusions.path]][0] glob: empty glob
+a leading slash~/src/**~has a leading `/`
+a trailing slash~src/~has a trailing `/`
+a .. component~../**~has a `..` component
+an empty component~src//x~has an empty component
+a brace, outside the class~{a,b}/**~carries a brace
+an extglob, outside the class~@(a|b)/**~carries an extglob
+a comma, which Copilot applyTo splits on~a,b~carries a comma
+a comment character, which .coderabbit.yaml reads as a comment~a#b~carries a comment character
+ROWS
+globs_converted=0
+while IFS='~' read -r label glob clause; do
+  [ -n "$label" ] || continue
+  globs_converted=$((globs_converted + 1))
+  rows="$rows$label|append|check|$clause
+[[bot-instructions.exclusions.path]]
+glob = \"$glob\"
+reason = \"r\"
+END
+"
+done <<EOF
+$globs
 EOF
+
+# The call below asserts one merged list, so `bi_toml_table`'s floor counts the
+# schema records too and an emptied glob heredoc would drop every path-shape
+# claim in silence. This floor is derived from the list the loop read, never
+# from a count typed a second time.
+[ "$globs_converted" -gt 0 ] || {
+  printf 'the glob list converted no rows into the table\n' >&2
+  exit 1
+}
+
+bi_toml_table 'the schema clauses' "$repo" "$rows"
 
 # Every flag false is a legitimate state and passes: the clauses above are
 # narrower than "renders nothing readable".
@@ -332,7 +242,8 @@ text = re.sub(r'(name = "tests".*?instructions = """\n).*?(\n""")', r'\1\2',
               open(src).read(), flags=re.S)
 open(repo + "/kendex.toml", "w").write(text)
 PY
-expect_red toml-schema 'a [[bot-instructions.surface]] whose instructions are empty' \
+expect_clause toml-schema 'instructions: empty' \
+  'a [[bot-instructions.surface]] whose instructions are empty' \
   render --dry-run --repo "$repo"
 
 # The dialect's class permits `[`, `]` and every byte between them, so a
@@ -340,33 +251,20 @@ expect_red toml-schema 'a [[bot-instructions.surface]] whose instructions are em
 # it compiles at input is what makes it a finding rather than a traceback out
 # of the dead-exclusion clause.
 repo="$(bi_minimal_repo reversed-class)"
-bi_control toml-schema 'a reversed character range, which is in the class and compiles nowhere' "$repo" <<'EOF'
+{ printf '%s' "$BI_MIN_HEAD"; cat <<'EOF'
 
 [[bot-instructions.exclusions.path]]
 glob = "src/[z-a].rs"
 reason = "a range no engine reads"
 EOF
+} > "$repo/kendex.toml"
+expect_clause toml-schema "glob 'src/[z-a].rs' is in the dialect's character class but is not a pattern this package can match" \
+  'a reversed character range, which is in the class and compiles nowhere' \
+  check --repo "$repo"
 
 # The same clause names WHICH key it read, and quotes the glob the author
 # wrote rather than the collapsed form `re` saw — `**/**/` becomes `**/`
 # before the compile, and quoting that names a string no file holds.
-expect_finding() {
-  local want carries label
-  want="$1"; carries="$2"; label="$3"; shift 3
-  bi_run "$@"
-  if [ "$bi_status" -eq 0 ]; then
-    bad "$label" "expected $want to red; the run passed"
-  elif [ "$bi_status" -ne 1 ]; then
-    bad "$label" "expected exit 1 with $want; exited $bi_status"
-  elif ! printf '%s\n' "$bi_out" | grep -q "^$want:"; then
-    bad "$label" "expected '$want:'; got: $(printf '%s' "$bi_out" | head -1)"
-  elif printf '%s\n' "$bi_out" | grep -qF -- "$carries"; then
-    ok "$label"
-  else
-    bad "$label" "expected the finding to carry '$carries'; got: $(printf '%s' "$bi_out" | head -1)"
-  fi
-}
-
 repo="$(bi_minimal_repo reversed-class-surface)"
 { printf '%s' "$BI_MIN_HEAD"; cat <<'EOF'
 [[bot-instructions.surface]]
@@ -378,10 +276,10 @@ A surface whose glob compiles nowhere.
 """
 EOF
 } > "$repo/kendex.toml"
-expect_finding toml-schema '[[bot-instructions.surface]][0] globs[0]:' \
+expect_clause toml-schema '[[bot-instructions.surface]][0] globs[0]:' \
   'a surface glob that compiles nowhere names the key it came from' \
   check --repo "$repo"
-expect_finding toml-schema "glob 'src/**/**/[z-a].rs'" \
+expect_clause toml-schema "glob 'src/**/**/[z-a].rs'" \
   'and quotes the glob as written, not the collapsed pattern' \
   check --repo "$repo"
 
@@ -392,172 +290,9 @@ mkdir -p "$repo/.agents/skills/zw"
 printf 'x\n' > "$repo/.agents/skills/zw/SKILL.md"
 bi_inventory_add "$repo" '.agents/skills/z[y-a]w/SKILL.md'
 git -C "$repo" add -A >/dev/null 2>&1
-expect_finding exclusion-consistency '.kendex-generated.json .agents/skills/z[y-a]w' \
+expect_clause exclusion-consistency '.kendex-generated.json .agents/skills/z[y-a]w' \
   'a derived glob that compiles nowhere names the inventory entry' \
   check --repo "$repo"
-
-# § Cross-file sets: the content-refusal table is the single statement, and
-# three structures encode it. Held against them here, so a row or a marked
-# cell present on one side and absent from the other reds.
-if python3 - "$BI_ROOT/skills/bot-instructions" <<'PROBE'; then
-import os, re, sys
-PKG = sys.argv[1]
-sys.path.insert(0, os.path.join(PKG, "scripts"))
-from lib import refusals
-from lib.constants import QODO_VERBS
-
-table = open(os.path.join(PKG, "schemas/repo-toml.md")).read()
-rows = [ln for ln in table.split("\n")
-        if ln.startswith("| ") and ln.count("|") == 9
-        and not ln.startswith("| Input string")
-        and not ln.startswith("|---")]
-if len(rows) != 10:
-    sys.exit(f"read {len(rows)} rows out of the table, expected the documented ten")
-
-# The five columns whose cells are a yes/dash, in the table's order, against
-# the predicate names ROWS spells.
-COLUMNS = ["heading", "marker", "comment-close", "toml-delimiter", "control"]
-# The table's row labels, mapped to the ROWS key or to the structure that owns
-# them. Two rows are not content classes and are enforced elsewhere.
-ELSEWHERE = {
-    "`[[bot-instructions.surface]] globs`, `exclude_globs`, `[[bot-instructions.exclusions.path]] glob`": "globs.check",
-    "`[bot-instructions.cadence] qodo_commands` entries": "config._cadence",
-}
-LABELS = {
-    "`[bot-instructions.repo] name`": "[bot-instructions.repo] name",
-    "`[bot-instructions.repo] tracker`": "[bot-instructions.repo] tracker",
-    "`[bot-instructions.repo] summary`": "[bot-instructions.repo] summary",
-    "`[[bot-instructions.surface]] instructions`": "[[bot-instructions.surface]] instructions",
-    "`[bot-instructions.doctrine.append]` / `[bot-instructions.doctrine.replace]` values": "[bot-instructions.doctrine.*] values",
-    "doctrine block text": "doctrine block text",
-    "`[[bot-instructions.exclusions.path]] reason`": "[[bot-instructions.exclusions.path]] reason",
-    "`[bot-instructions.tone] coderabbit`": "[bot-instructions.tone] coderabbit",
-}
-seen = set()
-for line in rows:
-    cells = [c.strip() for c in line.strip().strip("|").split("|")]
-    label = cells[0]
-    if label in ELSEWHERE:
-        seen.add(label)
-        continue
-    if label not in LABELS:
-        sys.exit(f"table row {label!r} is neither a ROWS row nor one of the two "
-                 "the table says are enforced elsewhere")
-    key = LABELS[label]
-    if key not in refusals.ROWS:
-        sys.exit(f"table row {label!r} has no {key!r} in refusals.ROWS")
-    seen.add(label)
-    want = {COLUMNS[i] for i, cell in enumerate(cells[1:6]) if cell == "yes"}
-    have = {p for p in refusals.ROWS[key][0] if p in COLUMNS}
-    if want != have:
-        sys.exit(f"{key!r}: the table marks {sorted(want)} and ROWS runs {sorted(have)}")
-    enforced = cells[7]
-    owner = refusals.ROWS[key][1]
-    if owner not in enforced:
-        sys.exit(f"{key!r}: the table's Enforced column says {enforced!r}, ROWS says {owner!r}")
-if len(seen) != 10:
-    sys.exit(f"matched {len(seen)} of the table's rows")
-if set(LABELS.values()) != set(refusals.ROWS):
-    sys.exit("refusals.ROWS holds a row the table does not")
-# The two the table says live elsewhere, held against the structures that own
-# them rather than taken on trust.
-from lib import globs
-from lib.errors import InputError
-try:
-    globs.check("a,b", "control")
-except InputError:
-    pass
-else:
-    sys.exit("globs.check does not enforce the glob row")
-# The verb row has its own table one section up, and its Role column is what
-# `qodo-parity` reads. Compared cell by cell: a count passes for ANY role
-# assignment.
-verbs = {}
-for ln in table.split("\n"):
-    cells = [c.strip().strip("`") for c in ln.strip().strip("|").split("|")]
-    if len(cells) == 3 and cells[0].startswith("/"):
-        verbs[cells[0]] = cells[2]
-if verbs != QODO_VERBS:
-    sys.exit(f"[bot-instructions.cadence] verb table says {verbs}; constants.QODO_VERBS says {QODO_VERBS}")
-PROBE
-  ok 'the content-refusal table agrees with the three structures that encode it'
-else
-  bad 'the content-refusal table agrees with the three structures that encode it'
-fi
-
-# The class holds three characters ABOVE C0, because a YAML reader breaks a
-# line on all three: U+0085 NEL, U+2028 LINE SEPARATOR, U+2029 PARAGRAPH
-# SEPARATOR. A `reason` carrying one is emitted as the comment above its
-# entry, and the reader takes the rest as a `path_filters:` key whose first
-# entry has no `!` — the allowlist state. Each is paired with the ordinary
-# value it deviates from by that one character. Written as TOML escapes: a
-# literal separator here would be invisible to a reader and to a diff.
-repo="$(bi_minimal_repo line-separators)"
-mkdir -p "$repo/a"
-printf 'x\n' > "$repo/a/f.rs"
-git -C "$repo" add -A >/dev/null 2>&1
-
-bi_reason() {
-  { printf '%s' "$BI_MIN_HEAD"
-    printf '[bot-instructions.exclusions]\n[[bot-instructions.exclusions.path]]\nglob = "a/**"\nreason = "a generated%s tree"\n' "$1"
-  } > "$repo/kendex.toml"
-}
-# Each control asserts WHICH PREDICATE fired, not only the validator. This row
-# carries `control` and `single-line` both, `apply` raises on the first to
-# match, and `splitlines` inside `single-line` breaks on these same three
-# characters — so a bare `expect_red toml-schema` passes whichever is doing
-# the work. `apply` puts the predicate's name in the message.
-for cp in u0085 u2028 u2029; do
-  bi_reason ''
-  expect_green "an ordinary [[bot-instructions.exclusions.path]] reason, the pair for \\$cp" \
-    check --repo "$repo"
-  bi_reason "\\$cp"
-  expect_red toml-schema "a line separator \\$cp in [[bot-instructions.exclusions.path]] reason" \
-    check --repo "$repo"
-  if printf '%s\n' "$bi_out" | grep -qF '(control refusal,'; then
-    ok "and \\$cp is the control predicate's refusal, not single-line's"
-  else
-    bad "and \\$cp is the control predicate's refusal, not single-line's" "$bi_out"
-  fi
-done
-
-# `single-line`'s own clause, and the one character of it that carries weight.
-# `splitlines` DROPS a trailing break, so the predicate appends a `.` before
-# counting: without it `"a\n"` and `"a"` both read as one line and a reason
-# ending in a newline passes.
-bi_reason ''
-expect_green 'an ordinary [[bot-instructions.exclusions.path]] reason, the pair below' check --repo "$repo"
-{ printf '%s' "$BI_MIN_HEAD"
-  printf '[bot-instructions.exclusions]\n[[bot-instructions.exclusions.path]]\nglob = "a/**"\nreason = "a generated tree\\n"\n'
-} > "$repo/kendex.toml"
-expect_red toml-schema 'a [[bot-instructions.exclusions.path]] reason ending in a newline' check --repo "$repo"
-if printf '%s\n' "$bi_out" | grep -qF '(single-line refusal,'; then
-  ok 'and it is the single-line predicate that refuses it'
-else
-  bad 'and it is the single-line predicate that refuses it' "$bi_out"
-fi
-
-# The same character in `[[bot-instructions.surface]] instructions`, which reaches
-# `.coderabbit.yaml` inside a block scalar: the text after it would be emitted
-# unindented, end the scalar, and leave PyYAML unable to read the file at all.
-bi_surface() {
-  { printf '%s' "$BI_MIN_HEAD"
-    # A surface needs a route for its text, or `toml-schema` reds on the
-    # surface set instead and the pair proves nothing about the separator.
-    printf '[bot-instructions.bots]\ncodex = true\ncopilot = true\n'
-    printf '[[bot-instructions.surface]]\nname = "tests"\nglobs = ["a/**"]\nreviewer_only = true\n'
-    printf 'instructions = "An ordinary%s surface."\n' "$1"
-  } > "$repo/kendex.toml"
-}
-# `render --dry-run`, like the empty-instructions control above: this pair
-# needs a bot enabled for the surface text to have a route, and a fixture with
-# bots on and no rendered outputs reds on `drift` under `check`.
-bi_surface ''
-expect_green 'an ordinary [[bot-instructions.surface]] instructions, the pair below' \
-  render --dry-run --repo "$repo"
-bi_surface '\u2028'
-expect_red toml-schema 'a line separator in [[bot-instructions.surface]] instructions' \
-  render --dry-run --repo "$repo"
 
 # `[bot-instructions.doctrine]` is typed before it is iterated, the way `_table` types every
 # sibling. The STRING is the case that matters: untyped it does not crash, it
@@ -577,13 +312,9 @@ PY
 }
 for pair in 'list:[]' 'int:3' 'str:"reply-contract"'; do
   doctrine_is "${pair#*:}"
-  bi_run check --repo "$repo"
-  if printf '%s\n' "$bi_out" | grep -qF "[bot-instructions.doctrine]: expected a table, got ${pair%%:*}"; then
-    ok "a [bot-instructions.doctrine] that is a ${pair%%:*} names the table and what was found"
-  else
-    bad "a [bot-instructions.doctrine] that is a ${pair%%:*} names the table and what was found" \
-      "$(printf '%s' "$bi_out" | head -2 | tr '\n' ' ')"
-  fi
+  expect_clause toml-schema "[bot-instructions.doctrine]: expected a table, got ${pair%%:*}" \
+    "a [bot-instructions.doctrine] that is a ${pair%%:*} names the table and what was found" \
+    check --repo "$repo"
   cp "$BI_FIXTURES/canonical.toml" "$repo/kendex.toml"
 done
 
@@ -602,13 +333,14 @@ mv "$repo/kendex.toml" "$repo/kendex-local.toml"
 printf 'schema = 6\nis_source_catalog = true\nbot-instructions = false\n' > "$repo/kendex.toml"
 expect_green 'source catalog selection also applies with no derived exclusions or install' \
   check --repo "$repo"
+# The refusal names the selected file and the table, not only the validator.
 printf 'schema = 6\nbot-instructions = "text"\n' > "$repo/kendex-local.toml"
-expect_red toml-schema 'a bot configuration scalar is refused as a table error' \
+expect_clause toml-schema 'kendex-local.toml [bot-instructions]: expected a table' \
+  'a bot configuration scalar is refused as a table error naming the selected file' \
   check --repo "$repo"
-expect_finding toml-schema 'kendex-local.toml [bot-instructions]: expected a table' \
-  'the scalar refusal identifies the selected file and table' check --repo "$repo"
 printf 'schema = 6\n' > "$repo/kendex-local.toml"
-expect_red toml-schema 'a missing bot table is refused' \
+expect_clause toml-schema 'kendex-local.toml [bot-instructions]: expected a table' \
+  'a missing bot table is refused' \
   check --repo "$repo"
 
 bi_summary

@@ -191,8 +191,7 @@ expect_green() {
 # The could-not-complete control: exit 2, the status a refusal outside the
 # validator family carries (a `RenderError`, a `SpecError`, a source that
 # could not answer), and the message names what it refused. A validator's
-# finding is `expect_red`; a finding whose message matters is
-# `expect_finding` in `toml-schema.test.sh`.
+# finding is `expect_red`; a finding whose clause matters is `expect_clause`.
 expect_message() {
   local want label
   want="$1"; label="$2"; shift 2
@@ -320,6 +319,60 @@ EOF
 bi_carries() {
   case "$bi_out" in *"$1"*) return 0 ;; esac
   return 1
+}
+
+# One table of `[bot-instructions]` mutations, each a record: a header line
+# `label|world|argv|clause`, the TOML lines verbatim, and a line reading
+# `END`. `world` is how the body reaches `$repo/kendex.toml`: `append`
+# writes `$BI_MIN_HEAD` and then the body, `whole` the body alone. `argv` is
+# the verb and its flags (`--repo` is added here). `clause` is the fragment
+# only that `toml-schema` clause emits, held with `expect_clause`, so a
+# mutation that trips a neighbouring clause of the same validator reds. A
+# `#` line or a blank line where a header is expected is skipped, so a table
+# keeps its sections. A record with an empty field, an unknown world or no
+# `END` refuses the run; a table that asserted no row exits 2 from its own
+# counter, so a fixture failure or a probe run never reads as green.
+# `BI_TABLE_PROBE=1` renders each row's fired set and `toml-schema:` line
+# instead of asserting it, for writing rows.
+bi_toml_table() {
+  local title="$1" repo="$2" rows="$3" row label world argv clause body field before
+  before=$((BI_PASS + BI_FAIL))
+  printf '=== %s ===\n' "$title"
+  while IFS= read -r row; do
+    case "$row" in '' | '#'*) continue ;; esac
+    IFS='|' read -r label world argv clause <<EOF
+$row
+EOF
+    for field in "$label" "$world" "$argv" "$clause"; do
+      [ -n "$field" ] || { printf 'a record with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+    done
+    body=""
+    while IFS= read -r row && [ "$row" != END ]; do
+      body="$body$row
+"
+    done
+    [ "$row" = END ] || { printf 'a record with no END line: %s\n' "$label" >&2; exit 1; }
+    case "$world" in
+      append) printf '%s%s' "$BI_MIN_HEAD" "$body" > "$repo/kendex.toml" ;;
+      whole) printf '%s' "$body" > "$repo/kendex.toml" ;;
+      *) printf 'unknown world: %s\n' "$world" >&2; exit 1 ;;
+    esac
+    if [ "${BI_TABLE_PROBE:-}" = 1 ]; then
+      # shellcheck disable=SC2086
+      bi_run $argv --repo "$repo"
+      printf '%s => fired=[%s] rc=%s %s\n' "$label" "$(bi_fired)" "$bi_status" \
+        "$(printf '%s\n' "$bi_out" | sed -n 's/^toml-schema: //p')"
+      continue
+    fi
+    # shellcheck disable=SC2086
+    expect_clause toml-schema "$clause" "$label" $argv --repo "$repo"
+  done <<EOF
+$rows
+EOF
+  [ "$((BI_PASS + BI_FAIL))" -gt "$before" ] || {
+    printf 'no row was asserted (a probe run renders rows instead)\n' >&2
+    exit 2
+  }
 }
 
 # Replace one key's value in a fixture TOML by rewriting the whole file from a
