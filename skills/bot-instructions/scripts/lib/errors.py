@@ -20,8 +20,9 @@ class BotInstructionsError(Exception):
 
     key = "error"
     # The record's value. Left unset, the command line decides from the
-    # family; a reader that knows better, such as the spec source, sets it.
+    # family and from `from_spec`, which the spec reader sets on its way out.
     subject = None
+    from_spec = False
 
 
 class SpecError(BotInstructionsError):

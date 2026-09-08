@@ -146,7 +146,8 @@ def main(argv=None):
         # to the wrong tree. `subject` is set where the spec source is read.
         subject = getattr(exc, "subject", None)
         if subject is None:
-            subject = spec_root if isinstance(exc, SpecError) else repo
+            from_spec = isinstance(exc, SpecError) or getattr(exc, "from_spec", False)
+            subject = spec_root if from_spec else repo
         print(f"bot-instructions: {exc.key}={subject}", file=sys.stderr)
         print(str(exc), file=sys.stderr)
         return 2

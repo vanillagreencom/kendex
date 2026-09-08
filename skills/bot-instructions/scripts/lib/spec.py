@@ -186,8 +186,11 @@ def load(spec_tree, skill_rel, renders_rel):
         blocks = parse_doctrine(skill_text, skill_rel)
         routing, positions = parse_routing(renders_text, renders_rel)
     except BotInstructionsError as exc:
-        if exc.subject is None:
-            exc.subject = getattr(spec_tree, "root", None)
+        # Mark WHERE it failed, not what the tree happens to be rooted at:
+        # with `--staged --spec` inside the repository the backing tree is the
+        # repository index, and its root would name the wrong subject. The
+        # command line holds the spec root it resolved and fills it in.
+        exc.from_spec = True
         raise
     return Doctrine(blocks, version, routing, positions)
 

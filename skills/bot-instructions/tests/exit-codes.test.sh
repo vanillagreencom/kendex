@@ -13,6 +13,10 @@
 # in-process below the table.
 
 . "$(dirname "$0")/lib/harness.sh"
+# The tool records the path it resolved, and macOS reaches /var through a
+# symlink to /private/var, so a case comparing against the fixture path as
+# written passes on Linux and fails there. Resolve it the same way.
+bi_real() { ( cd -- "$1" 2>/dev/null && pwd -P ) || printf '%s' "$1"; }
 
 # `rendered` is a fresh repo that checks clean; the words after it move it
 # off that state: `stale-copilot` appends to a generated file, `no-git`
@@ -54,7 +58,7 @@ rm -rf -- "${repo:?}/.git"
 record="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
   && python3 -m lib.main check --repo "$repo" ) 2>&1 >/dev/null || : )"
 first="$(printf '%s\n' "$record" | sed -n '1p')"
-if [ "$first" = "bot-instructions: source=$repo" ]; then
+if [ "$first" = "bot-instructions: source=$(bi_real "$repo")" ]; then
   ok 'the refusal record names the key and the repository it was about'
 else
   bad 'the refusal record names the key and the repository it was about' "first line: $first"
@@ -71,6 +75,7 @@ fi
 bi_record() { # -> the first line of a run's stderr, in $bi_first
   bi_first="$(printf '%s\n' "$1" | sed -n '1p')"
 }
+
 
 exact() { # LABEL EXPECTED-FIRST-LINE ACTUAL-FIRST-LINE ACTUAL-STATUS EXPECTED-STATUS
   if [ "$3" = "$2" ] && [ "$4" = "$5" ]; then
@@ -92,7 +97,7 @@ out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
   && python3 -m lib.main check --repo "$spec_repo" --spec "$spec_dir" ) 2>&1 >/dev/null )" || status=$?
 bi_record "$out"
 exact 'the spec record names the spec root, not the repository' \
-  "bot-instructions: spec=$spec_dir" "$bi_first" "$status" 2
+  "bot-instructions: spec=$(bi_real "$spec_dir")" "$bi_first" "$status" 2
 
 # usage: argparse exits before the handlers, so its own record is asserted.
 status=0
@@ -142,7 +147,15 @@ out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
   && python3 -m lib.main check --repo "$badspec_repo" --spec "$badspec" ) 2>&1 >/dev/null )" || status=$?
 bi_record "$out"
 exact 'a spec copy that will not decode names the spec copy, not the repository' \
-  "bot-instructions: render=$badspec" "$bi_first" "$status" 2
+  "bot-instructions: render=$(bi_real "$badspec")" "$bi_first" "$status" 2
+
+# The other flag refusal, which only a prose assertion covered.
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main check --dry-run --repo "$spec_repo" ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'the other flag refusal names its own flag' \
+  "bot-instructions: usage=--dry-run" "$bi_first" "$status" 2
 
 # The launcher's two runtime refusals, which no case reached before. Each runs
 # the launcher with a PATH that produces the condition.
@@ -190,7 +203,7 @@ PY
 )" && crash_status=0 || crash_status=$?
 crash_first="$(printf '%s\n' "$crash_out" | sed -n '1p')"
 if [ "$crash_status" -eq 2 ] \
-  && [ "$crash_first" = "bot-instructions: crashed=$repo" ] \
+  && [ "$crash_first" = "bot-instructions: crashed=$(bi_real "$repo")" ] \
   && printf '%s\n' "$crash_out" | grep -q 'RuntimeError: dispatched dependency failed'; then
   ok 'a crash outside the package error family exits 2 with its traceback'
 else
