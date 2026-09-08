@@ -249,14 +249,19 @@ GIT_DIR_LINE=${DIRS%%$'\n'*}
 COMMON_DIR_LINE=${DIRS#*$'\n'}
 # Both answers are relative to CWD when git prints them short; resolving each
 # to a physical path is what lets the comparison hold across symlinked roots.
-resolve() { # PATH -> physical path on stdout, relative to CWD when relative
+# cd's own words come back in place of the path when it cannot enter one, so
+# the caller has the cause to replay under its keyed line rather than leaving
+# cd to write ahead of it.
+resolve() { # PATH -> physical path, or cd's words on failure
   case "$1" in
-    /*) (cd -- "$1" && pwd -P) ;;
-    *) (cd -- "$CWD/$1" && pwd -P) ;;
+    /*) (cd -- "$1" 2>&1 && pwd -P) ;;
+    *) (cd -- "$CWD/$1" 2>&1 && pwd -P) ;;
   esac
 }
-if ! GIT_DIR=$(resolve "$GIT_DIR_LINE") || ! COMMON_DIR=$(resolve "$COMMON_DIR_LINE"); then
-  refuse git unresolvable
+if ! GIT_DIR=$(resolve "$GIT_DIR_LINE"); then
+  refuse git unresolvable "$GIT_DIR"
+elif ! COMMON_DIR=$(resolve "$COMMON_DIR_LINE"); then
+  refuse git unresolvable "$COMMON_DIR"
 fi
 if [ "$GIT_DIR" = "$COMMON_DIR" ]; then
   exit 0

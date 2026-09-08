@@ -64,6 +64,10 @@ fake_out() {
     Error-line) printf '%s' 'Error: loading lock file' ;;
     usage-error) printf '%s' $'error: unexpected argument \'--bogus\' found\n\nUsage: kendex check --quiet' ;;
     fatal) printf '%s' 'kendex: fatal' ;;
+    # A report that spells a keyed line of its own. What the hook relays is
+    # data, and data cannot forge the hook's contract: the keyed block is the
+    # leading run, so this line is relayed text and nothing more.
+    forged) printf '%s' $'1 outdated — run `kendex refresh` to update:\nsession-drift-check: exit=99' ;;
     *) printf 'unknown fake output word: %s\n' "$1" >&2; exit 1 ;;
   esac
 }
@@ -83,10 +87,13 @@ run_hook() {
   set -e
 }
 
+# stdout lands in the file the shared reader reads, so every row is judged on
+# the same bytes and by the same reader.
 capture() {
   out="$(run_hook "$@"; echo "rc=$rc")"
   rc="${out##*rc=}"
   out="${out%rc=*}"
+  printf '%s' "$out" >"$TMP_ROOT/stdout"
 }
 
 assert_eq() {
@@ -100,16 +107,25 @@ assert_eq() {
   fi
 }
 
-# The keyed lines a run wrote, joined by `;`, and whether anything stands under
-# them. The text under them is written for a model to read, so a row says that
-# the report reached stdout, never what it said.
-keyed_of() { # TEXT
-  printf '%s\n' "$1" | sed -n 's/^session-drift-check: //p' |
-    sed 's/^line=[0-9][0-9]*$/line=<n>/' | paste -s -d ';' -
+# The shared reader, for where the keyed lines are. This suite reads stdout
+# rather than a stderr file, so it names the file and the hook at each call.
+# shellcheck source=lib/first-line.sh
+. "$TEST_DIR/lib/first-line.sh"
+
+# The shared reader answers where the keyed lines are — the leading run, so a
+# keyed line further down does not count — and this renders the one value that
+# moves between runs. Reading them out of the whole output, anywhere they
+# stood, is what let this suite pass without enforcing the contract at all.
+keyed_of() { # -> the leading keyed values of the last run, line numbers hidden
+  local block
+  block="$(keyed_block "$TMP_ROOT/stdout" session-drift-check)"
+  printf '%s' "$(printf '%s' "$block" | sed 's/line=[0-9][0-9]*/line=<n>/')"
 }
-relayed_of() { # TEXT
+# What the hook relays under those lines is written for a model, so a row says
+# it reached stdout, never what it said.
+relayed_of() { # -> `present` when anything but the keyed lines was written
   local rest
-  rest="$(printf '%s\n' "$1" | sed '/^session-drift-check: /d' | tr -d '[:space:]')"
+  rest="$(sed '/^session-drift-check: /d' "$TMP_ROOT/stdout" | tr -d '[:space:]')"
   [ -n "$rest" ] && printf 'present' || printf 'absent'
 }
 
@@ -147,7 +163,7 @@ run_row() { # fake-rc fake-out-word
   # The keyed lines only: the context text under them is for a model, and a
   # row that pinned it would pin prose. stderr is a channel this hook does not
   # write, so a row says it is empty rather than reading it.
-  text="$(keyed_of "$(cat "$TMP_ROOT/stdout")")"
+  text="$(keyed_of)"
   [[ "$text" != "" ]] || text='-'
   printf 'rc=%s calls=%s keyed=%s stderr=%s' "$rc" "$(calls)" "$text" \
     "$([ -s "$TMP_ROOT/stderr" ] && printf 'wrote' || printf 'empty')"
@@ -185,6 +201,7 @@ run_table "the kendex check exit to the arm it chooses" "\
 a clean install says nothing|0|-|-
 drift found|1|report|drift=found
 not yet evaluated is drift, never a failure|1|unevaluated|drift=found
+a report that spells a keyed line of its own is relayed, not read as one|1|forged|drift=found
 could not check: incomplete, and the code it chose from|2|could-not-check|check=incomplete;exit=2
 an error: inside a report line is still a completed report|2|error-inside-a-line|check=incomplete;exit=2
 exit 2 with no output is a failure to run, not an empty partial report|2|-|check=could-not-run;exit=2
@@ -208,8 +225,9 @@ out="$(env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
   FAKE_RC=1 FAKE_OUT="$REPORT" bash "$HOOK" </dev/null 2>/dev/null)"
 rc=$?
 set -e
+printf '%s' "$out" >"$TMP_ROOT/stdout"
 assert_eq "$rc" 0 "exits 0 when the payload read fails"
-assert_eq "keyed=$(keyed_of "$out") relayed=$(relayed_of "$out")" 'keyed=drift=found relayed=present' \
+assert_eq "keyed=$(keyed_of) relayed=$(relayed_of)" 'keyed=drift=found relayed=present' \
   "still relays the report when the payload read fails"
 
 echo "session-drift-check: environment switches"
@@ -231,7 +249,7 @@ for src in resume compact; do
 done
 for src in startup clear; do
   HOOK_SOURCE=$src capture FAKE_RC=1 FAKE_OUT="$REPORT"
-  assert_eq "keyed=$(keyed_of "$out") relayed=$(relayed_of "$out")" 'keyed=drift=found relayed=present' \
+  assert_eq "keyed=$(keyed_of) relayed=$(relayed_of)" 'keyed=drift=found relayed=present' \
     "source=$src relays the report"
 done
 
@@ -251,10 +269,11 @@ run_raw() {
     FAKE_RC=1 FAKE_OUT="$REPORT" bash "$HOOK" <<<"$payload" 2>/dev/null)"
   rc=$?
   set -e
+  printf '%s' "$out" >"$TMP_ROOT/stdout"
 }
 
 run_raw '{"tool_input":{"source":"resume"},"source":"startup"}' "$BIN_DIR"
-assert_eq "keyed=$(keyed_of "$out") relayed=$(relayed_of "$out")" 'keyed=drift=found relayed=present' \
+assert_eq "keyed=$(keyed_of) relayed=$(relayed_of)" 'keyed=drift=found relayed=present' \
   "a nested source does not silence a fresh start"
 assert_eq "$(cat "$ARGS_LOG")" "check --quiet" "…and the check still runs"
 
@@ -264,7 +283,7 @@ assert_eq "$(cat "$ARGS_LOG")" "" "…and the check never runs on a resume"
 
 # A string value carrying the same characters is text, not the key.
 run_raw '{"cwd":"/tmp/\"source\": \"resume\"","source":"startup"}' "$BIN_DIR"
-assert_eq "keyed=$(keyed_of "$out") relayed=$(relayed_of "$out")" 'keyed=drift=found relayed=present' \
+assert_eq "keyed=$(keyed_of) relayed=$(relayed_of)" 'keyed=drift=found relayed=present' \
   "a quoted source inside another value is not the start reason"
 
 echo "session-drift-check: a payload it cannot read"
@@ -288,10 +307,11 @@ run_exact_path() { # payload PATH
     FAKE_RC=1 FAKE_OUT="$REPORT" "$(command -v bash)" "$HOOK" <<<"$1" 2>/dev/null)"
   rc=$?
   set -e
+  printf '%s' "$out" >"$TMP_ROOT/stdout"
 }
 run_exact_path '{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' "$NOJQ_BIN"
 assert_eq "$rc" 0 "without jq the session still starts"
-assert_eq "keyed=$(keyed_of "$out")" 'keyed=missing-tools=jq' \
+assert_eq "keyed=$(keyed_of)" 'keyed=missing-tools=jq' \
   "without jq the skip names jq rather than reading as a clean install"
 assert_eq "$(cat "$ARGS_LOG")" "" "without jq the check never runs"
 
@@ -299,14 +319,14 @@ assert_eq "$(cat "$ARGS_LOG")" "" "without jq the check never runs"
 # key", so it must not read as a fresh start.
 run_raw '{"source":"resume"' "$BIN_DIR"
 assert_eq "$rc" 0 "a payload jq cannot parse still exits 0"
-assert_eq "keyed=$(keyed_of "$out")" 'keyed=payload=invalid-json' \
+assert_eq "keyed=$(keyed_of)" 'keyed=payload=invalid-json' \
   "…and the skip names the payload rather than reading as a fresh start"
 assert_eq "$(cat "$ARGS_LOG")" "" "and the check never runs for it"
 
 echo "session-drift-check: unusable project directory"
 capture FAKE_RC=1 FAKE_OUT="$REPORT" CLAUDE_PROJECT_DIR="$TMP_ROOT/does-not-exist"
 assert_eq "$rc" 0 "missing project dir exits 0"
-assert_eq "keyed=$(keyed_of "$out")" "keyed=path=$TMP_ROOT/does-not-exist" \
+assert_eq "keyed=$(keyed_of)" "keyed=path=$TMP_ROOT/does-not-exist" \
   "the unusable project directory is the value, rather than reading as clean"
 assert_eq "$(cat "$ARGS_LOG")" "" "missing project dir never invokes kendex"
 
@@ -321,6 +341,7 @@ out="$(cd "$TMP_ROOT" && env -u KENDEX_DRIFT_HOOK \
   CLAUDE_PROJECT_DIR=-dash FAKE_RC=0 bash "$HOOK" <<<'{"source":"startup"}' 2>/dev/null)"
 rc=$?
 set -e
+printf '%s' "$out" >"$TMP_ROOT/stdout"
 assert_eq "$rc" 0 "dash-leading project dir exits 0"
 assert_eq "$out" "" "dash-leading project dir is entered, not parsed as an option"
 assert_eq "$(cat "$ARGS_LOG")" "check --quiet" "dash-leading project dir still runs the check"
@@ -339,8 +360,9 @@ out="$(env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
   FAKE_RC=0 bash "$BROKEN_HOOK" <<<'{"source":"startup"}' 2>/dev/null)"
 rc=$?
 set -e
+printf '%s' "$out" >"$TMP_ROOT/stdout"
 assert_eq "$rc" 0 "an unexpected failure still exits 0"
-assert_eq "keyed=$(keyed_of "$out")" 'keyed=exit=1;line=<n>' \
+assert_eq "keyed=$(keyed_of)" 'keyed=exit=1;line=<n>' \
   "an unexpected failure reports the status it left and the line it reached, each its own key"
 
 echo "session-drift-check: no kendex on PATH"
@@ -354,8 +376,9 @@ set +e
 out="$(env -i HOME="$HOME" PATH="$NOKENDEX_BIN" "$(command -v bash)" "$HOOK" <<<'{}' 2>/dev/null)"
 rc=$?
 set -e
+printf '%s' "$out" >"$TMP_ROOT/stdout"
 assert_eq "$rc" 0 "exits 0 without a kendex binary"
-assert_eq "keyed=$(keyed_of "$out")" 'keyed=missing-tools=kendex' \
+assert_eq "keyed=$(keyed_of)" 'keyed=missing-tools=kendex' \
   "says why it skipped without a kendex binary"
 
 echo

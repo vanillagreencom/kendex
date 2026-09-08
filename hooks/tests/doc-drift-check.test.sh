@@ -230,9 +230,12 @@ out_text() {
   printf '%s' "$out" | LC_ALL=C sort | paste -s -d ',' -
 }
 
+# The notice opens with two keyed lines, `stale=` then `base=`, so this reads
+# line 2 rather than searching for the key: a base line further down would not
+# be the contract.
 base_text() {
   [[ "$MESSAGE" != "" ]] || { printf -- '-'; return; }
-  printf '%s\n' "$MESSAGE" | sed -n 's/^doc-drift-check: base=//p'
+  printf '%s\n' "$MESSAGE" | sed -n '2s/^doc-drift-check: base=//p'
 }
 
 err_text() {

@@ -41,6 +41,22 @@ first_line() { # [FILE] -> line 1, `-` when nothing was written
   printf '%s' "${line:--}"
 }
 
+# The keyed lines a hook opens with, as the leading run: reading stops at the
+# first line that is not one, so a keyed line further down — after the English,
+# say — is not counted. That is the difference between asserting the contract
+# and scanning for it.
+keyed_block() { # [FILE] [NAME] -> the leading keyed values, joined by `;`
+  local file="${1:-$ERR_FILE}" prefix line="" out=""
+  prefix="${2:-$(basename "${HOOK:?}" .sh)}: "
+  while IFS= read -r line; do
+    case "$line" in
+      "$prefix"*) out="$out;${line#"$prefix"}" ;;
+      *) break ;;
+    esac
+  done <"$file"
+  printf '%s' "${out#;}"
+}
+
 cause_below() { # [FILE] -> `present` when anything stands under line 1
   local file="${1:-$ERR_FILE}" n
   n=$(awk 'NR > 1 && NF { found = 1 } END { print found + 0 }' <"$file")
