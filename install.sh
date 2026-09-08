@@ -12,22 +12,34 @@
 # lines below, which says more than an abrupt exit would.
 set -eu
 
+# Each installer-owned message starts with install.sh: KEY=VALUE. Values
+# escape backslashes and newlines; English explanation follows on later lines.
+message() {
+  printf 'install.sh: %s=' "$1"
+  printf '%s\n' "$2" | sed -e 's/\\/\\\\/g' -e '$!s/$/\\n/' | tr -d '\n'
+  printf '\n'
+  shift 2
+  printf '%s\n' "$@"
+}
+
 repo="vanillagreencom/kendex"
 version="latest"
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --version) version="${2:?missing version after --version}"; shift 2 ;;
+    --version)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || { message missing-option-value --version "A version must follow --version." >&2; exit 2; }
+      version="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: install.sh [--version vX.Y.Z]"
+      message usage install.sh "Usage: install.sh [--version vX.Y.Z]"
       exit 0
       ;;
-    *) echo "install.sh: unknown option: $1" >&2; exit 2 ;;
+    *) message unknown-option "$1" "The installer does not accept this option." >&2; exit 2 ;;
   esac
 done
 
 for cmd in curl install; do
-  command -v "$cmd" >/dev/null || { echo "install.sh: missing required command: $cmd" >&2; exit 1; }
+  command -v "$cmd" >/dev/null || { message missing-command "$cmd" "Install this required command before running the installer." >&2; exit 1; }
 done
 
 os="$(uname -s)"
@@ -40,7 +52,7 @@ case "$os-$arch" in
   Darwin-arm64|Darwin-aarch64) target="aarch64-apple-darwin";      kind="macos" ;;
   Darwin-x86_64)               target="x86_64-apple-darwin";       kind="macos" ;;
   *)
-    echo "install.sh: unsupported platform: $os $arch" >&2
+    message unsupported-platform "$os $arch" "This platform has no installer build." >&2
     echo "  See https://kendex.ai/download for the desktop app, or build from source." >&2
     exit 1 ;;
 esac
@@ -49,7 +61,7 @@ if [ "$version" = latest ]; then
   version="$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" \
     | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)"
 fi
-[ -n "$version" ] || { echo "install.sh: could not resolve the latest release" >&2; exit 1; }
+[ -n "$version" ] || { message release-unavailable latest "The latest release could not be resolved." >&2; exit 1; }
 plain="${version#v}"
 base="https://github.com/$repo/releases/download/$version"
 
@@ -57,7 +69,7 @@ base="https://github.com/$repo/releases/download/$version"
 # `sh` has no per-function cleanup — `trap ... RETURN` is bash's alone — and
 # an installer that leaves a temp directory behind on every failed attempt
 # fills a machine over time.
-work="$(mktemp -d)" || { echo "install.sh: nowhere to download to" >&2; exit 1; }
+work="$(mktemp -d)" || { message temporary-directory-unavailable "${TMPDIR:-/tmp}" "No temporary download directory could be created." >&2; exit 1; }
 trap 'rm -rf "$work"' EXIT
 
 # Where kendex keeps its own state, spelled the way the app's resolver
@@ -93,7 +105,7 @@ done
 # a signature under the release key covers the bytes it fetched. A machine
 # kept current by re-running this script never gets that check.
 install_cli() {
-  echo "Downloading the kendex command ($target)…"
+  message command-download "$target" "Downloading the kendex command."
   # curl exits 22 on an HTTP error — here a 404 for an asset the release
   # lacks; any other failure is the network, not the release. Testing curl
   # in the condition and reading `$?` in the else is what keeps that code:
@@ -102,8 +114,9 @@ install_cli() {
     :
   else
     rc=$?
-    echo "install.sh: could not download kendex-$target from $base" >&2
-    [ "$rc" -eq 22 ] && echo "  release $version may have no build for $target (see https://github.com/$repo/releases)" >&2
+    message command-download-failed "$rc" "The kendex command could not be downloaded." >&2
+    message command-download-url "$base/kendex-$target" "The command download used this URL." >&2
+    [ "$rc" -eq 22 ] && message release-http-error "$target" "The release server returned an HTTP error for this target." >&2
     exit 1
   fi
   chmod +x "$work/kendex"
@@ -113,7 +126,7 @@ install_cli() {
   if [ -w "$bindir" ]; then
     install -m 0755 "$work/kendex" "$bindir/kendex"
   else
-    echo "Installing to $bindir needs elevated permissions."
+    message privilege-required "$bindir" "Installing the command here needs elevated permissions."
     # The branch is taken because the directory is not writable, whether or
     # not it exists. Two commands rather than the one `install -D` that
     # made the directory itself: -D makes directories on GNU coreutils
@@ -134,7 +147,7 @@ install_cli() {
     [ -d "$bindir" ] || sudo mkdir -m 0755 -p "$bindir"
     sudo install -m 0755 "$work/kendex" "$bindir/kendex"
   fi
-  echo "Installed the kendex command to $bindir/kendex"
+  message command-installed "$bindir/kendex" "The kendex command is installed."
   # What this script installed, so the desktop app can tell this file from
   # any other executable someone has named `kendex` — a wrapper script in a
   # writable directory answers every other test the same way, and the app
@@ -144,7 +157,7 @@ install_cli() {
   state="$(kendex_data)"
   if ! { mkdir -p "$state" 2>/dev/null \
      && printf '%s\n' "$bindir/kendex" > "$state/installed-command"; }; then
-    echo "install.sh: could not record the command's identity in $state; the desktop app will not update it." >&2
+    message command-record-failed "$state/installed-command" "The command identity could not be recorded; the desktop app will not update it." >&2
   fi
 }
 
@@ -163,9 +176,9 @@ install_icon() {
   size=${size##*/}
   file="$work/$size.png"
   if ! curl -fsSL --proto '=https' -o "$file" "$source"; then
-    echo "install.sh: no $size icon this time; kendex keeps the one it has." >&2
+    message icon-download-failed "$size" "The icon could not be downloaded; kendex keeps the one it has." >&2
   elif ! { mkdir -p "$dir" && install -m 0644 "$file" "$dir/kendex.png"; }; then
-    echo "install.sh: cannot write $dir; skipped the $size icon." >&2
+    message icon-install-failed "$dir" "The icon could not be written and was skipped." >&2
   fi
   return 0
 }
@@ -213,10 +226,10 @@ install_app_linux() {
   local data libdir
   data="${XDG_DATA_HOME:-$HOME/.local/share}"
   libdir="$(kendex_data)"
-  echo "Downloading the desktop app…"
+  message app-download "$appimage_arch" "Downloading the desktop app."
   if ! curl -fSL --proto '=https' -o "$work/kendex.AppImage" \
       "$base/kendex_${plain}_${appimage_arch}.AppImage"; then
-    echo "install.sh: could not download the desktop app; the kendex command is installed." >&2
+    message app-download-failed "$appimage_arch" "The desktop app could not be downloaded; the kendex command is installed." >&2
     return 0
   fi
   mkdir -p "$libdir" "$data/applications"
@@ -241,19 +254,18 @@ StartupWMClass=kendex-app
 Categories=Development;Utility;
 Terminal=false
 DESKTOP
-  echo "Installed the desktop app to $libdir/kendex.AppImage"
+  message app-installed "$libdir/kendex.AppImage" "The desktop app is installed."
 }
 
 install_cli
 if [ "$kind" = linux ]; then
   install_app_linux
 else
-  echo "Desktop app: brew install vanillagreencom/kendex/kendex, or https://kendex.ai/download"
+  message app-install-method macos "Desktop app: brew install vanillagreencom/kendex/kendex, or https://kendex.ai/download"
 fi
 
 case ":$PATH:" in
   *":$bindir:"*) ;;
-  *) echo "Note: $bindir is not on your PATH. Add it, e.g.:"
-     echo "  echo 'export PATH=\"$bindir:\$PATH\"' >> ~/.profile" ;;
+  *) message path-missing "$bindir" "Add this directory to PATH in your shell profile." ;;
 esac
 "$bindir/kendex" --version || true

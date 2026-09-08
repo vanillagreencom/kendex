@@ -88,7 +88,23 @@ fn a_debug_build_writes_to_the_dev_home_not_the_one_it_was_given() {
 #[test]
 fn a_sandboxed_build_still_knows_the_real_home_is_not_a_project() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let home = tmp.path().join("home");
+    let project = test_util::rooted(&tmp);
+    let home = project.join("home");
+    // A private ancestor catches the walk after it skips home, before it can reach the host.
+    std::fs::create_dir_all(project.join(".claude")).expect("ancestor marker");
+    std::fs::create_dir_all(project.join("catalog/skills/ancestor")).expect("catalog skill");
+    let skill = "---\nname: ancestor\ndescription: fixture skill\n---\nUse the ancestor project.\n";
+    std::fs::write(
+        project.join("catalog/kendex.toml"),
+        "is_source_catalog = true\n",
+    )
+    .expect("catalog declaration");
+    std::fs::write(project.join("catalog/skills/ancestor/SKILL.md"), skill).expect("catalog body");
+    std::fs::write(
+        project.join("kendex.toml"),
+        "schema = 6\n[sources.catalog]\npath = \"catalog\"\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.ancestor]\nsource = \"catalog\"\n",
+    )
+    .expect("ancestor manifest");
     // The marker that makes an ordinary home look like a project.
     std::fs::create_dir_all(home.join(".claude")).expect("marker");
     let cwd = home.join("scratch");
@@ -100,11 +116,14 @@ fn a_sandboxed_build_still_knows_the_real_home_is_not_a_project() {
         .output()
         .expect("run kendex");
 
-    let said =
-        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
     assert!(
-        said.contains("not inside a project"),
-        "the home was taken for a project: {said}"
+        out.status.success(),
+        "the private ancestor was not selected: {out:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.join(".claude/skills/ancestor/SKILL.md"))
+            .expect("the ancestor project received its declared skill"),
+        skill
     );
     assert!(
         !home.join("kendex.toml").exists(),
