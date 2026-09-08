@@ -203,7 +203,8 @@ echo "=== block-repo-copy: the first line of every condition ==="
 first_table "\
 the verb that matched is the value|command|2|block-repo-copy: refused=cp|cp -r $REPO/target /tmp/copy
 another verb is a value of its own|command|2|block-repo-copy: refused=rsync|rsync -a $REPO/target /tmp/copy
-a two-word verb keeps its blank|command|2|block-repo-copy: refused=git clone|git clone $REPO/.git /tmp/copy
+a two-word verb reaches the set's own spelling|command|2|block-repo-copy: refused=git clone|git clone $REPO/.git /tmp/copy
+the blanks the command spelled are not part of the verb|command|2|block-repo-copy: refused=git clone|git   clone $REPO/.git /tmp/copy
 the verb on the far side of a pipe is the one that matched|command|2|block-repo-copy: refused=tar|tar -cf - $REPO/target | tar -xf - -C /tmp
 a copy the hook allows says nothing|command|0|-|cp -r $REPO/docs /tmp/copy
 a payload that is not JSON is refused unread|payload|2|block-repo-copy: payload=invalid-json|not JSON

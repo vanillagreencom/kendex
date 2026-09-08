@@ -126,6 +126,23 @@ mkdir -p "$nodirname"
 for tool in jq git grep cat; do
   ln -sf "$(command -v "$tool")" "$nodirname/$tool"
 done
+# And a world holding none of them: the value is the whole list, in check
+# order, which a one-tool world cannot tell from an accumulator that
+# overwrites instead of appending.
+notools="$scratch/notools"
+mkdir -p "$notools"
+status=0
+out="$(jq -nc --arg cwd "$repo" '{tool_input:{command:"git status"},cwd:$cwd}' \
+  | env -i HOME="$HOME" PATH="$notools" "$(command -v bash)" "$hook" 2>&1 >/dev/null)" || status=$?
+keyed="$(printf '%s\n' "$out" | grep -m1 '^command-safety: ' || true)"
+if [ "$status" -eq 2 ] && [ "$keyed" = 'command-safety: missing-tools=jq,git,grep,cat,dirname' ]; then
+  printf 'PASS with none of them the value is the whole list, in check order\n'
+  passed=$((passed + 1))
+else
+  printf 'FAIL with none of them the value is the whole list: exit %s, keyed line %s\n' "$status" "$keyed"
+  failed=$((failed + 1))
+fi
+
 status=0
 out="$(jq -nc --arg cwd "$repo" '{tool_input:{command:"git status"},cwd:$cwd}' \
   | env -i HOME="$HOME" PATH="$nodirname" "$(command -v bash)" "$hook" 2>&1 >/dev/null)" || status=$?

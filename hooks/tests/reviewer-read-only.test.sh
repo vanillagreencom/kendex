@@ -225,6 +225,15 @@ tools_table() { # TOOLS
     assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: missing-tools=$tool" \
       "without $tool the call is refused, and the value names it"
   done
+  # A world holding none of them: the value is the whole list, in check order.
+  # A row per tool cannot see an accumulator that overwrites instead of
+  # appending, because only one name is ever missing in one.
+  bin="$TMP_ROOT/without-everything"
+  rm -rf -- "$bin"
+  mkdir -p "$bin"
+  run_payload '{"agent_type":"generalist","tool_name":"Edit","tool_input":{"file_path":"x"}}' "$bin"
+  assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: missing-tools=${1// /,}" \
+    "with none of them the value is the whole list, in check order"
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "tools: no row was asserted" >&2; exit 2; }
 }
 tools_table "jq git cat grep dirname"

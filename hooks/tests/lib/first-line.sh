@@ -27,6 +27,11 @@
 #   first  the whole first line of stderr, or `-` for silence
 #   text   what the mode sends; `-` is empty, and `printf %b` decodes the
 #          escapes a row spells. It stands last, so a row may hold a pipe
+#
+# `tools_table TOOLS` is the other half: one world per tool, each holding every
+# other one, and then a world holding none of them. The last row is what tells
+# an accumulator that appends from one that overwrites — a row per tool passes
+# either way, since only one name is ever missing.
 
 # NAME and FILE default to the suite's own hook and stderr; a suite whose
 # fixture runs a copy of the hook under another path passes them instead.

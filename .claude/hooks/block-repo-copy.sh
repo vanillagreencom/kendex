@@ -169,6 +169,13 @@ if [[ ! $COMMAND =~ $BLOCK_RE ]]; then
 fi
 
 # VERB is the second group of the pattern above and the only one that carries
-# a copy verb, so the first line names the verb that matched. A `git clone`
-# keeps the blank the command spelled between its two words.
-refuse refused "${BASH_REMATCH[2]}"
+# a copy verb, so the first line names the verb that matched. The value is a
+# finite set a reader matches on, so the two-word alternative is normalised to
+# one blank: the command may spell `git   clone` or a tab, and its own
+# whitespace is not part of the verb. First word and last word, taken from the
+# match itself, so the set is not written down a second time.
+VERB_HIT=${BASH_REMATCH[2]}
+case "$VERB_HIT" in
+  *[[:space:]]*) VERB_HIT="${VERB_HIT%%[[:space:]]*} ${VERB_HIT##*[[:space:]]}" ;;
+esac
+refuse refused "$VERB_HIT"
