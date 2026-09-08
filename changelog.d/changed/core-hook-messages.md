@@ -1,1 +1,1 @@
-- Hook and rendering notices start with stable reason keys and escaped values, followed by their English explanation.
+- Hook and rendering notices start with stable reason keys, escaped values and the source of hook exclusions, followed by their English explanation.

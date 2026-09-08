@@ -73,7 +73,7 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
             // own frontmatter, not the manifest — a remedy naming the
             // manifest would widen the install set and change nothing.
             state.notes.push(format!(
-                "kendex-hook-excluded: hook={record_arg0} harness={record_arg1}\n{arg2} is not in the hook's own harnesses line in the catalog; add it there, or list this hook's harnesses in kendex.toml without {arg3}",
+                "kendex-hook-excluded: hook={record_arg0} harness={record_arg1} source=catalog field=harnesses\n{arg2} is not in the hook's own harnesses line in the catalog; add it there, or list this hook's harnesses in kendex.toml without {arg3}",
                 arg2 = harness.name(),
                 arg3 = harness.name(),
                 record_arg0 = crate::names::shown(ctx.name ),

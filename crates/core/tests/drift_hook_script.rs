@@ -120,6 +120,14 @@ const CASES: &[HookCase] = &[
         "Error: loading lock file\n",
     ),
     (
+        "CLI usage failure",
+        "{}",
+        &[],
+        Some("#!/bin/sh\necho 'error: unrecognized subcommand' >&2\nexit 2\n"),
+        Some("kendex-drift-failed: exit=2"),
+        "error: unrecognized subcommand\n",
+    ),
+    (
         "incomplete",
         "{}",
         &[],

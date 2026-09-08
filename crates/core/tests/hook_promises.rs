@@ -197,7 +197,7 @@ fn a_catalog_hook_refusal_names_its_own_reason() {
         ),
         (
             GUARD.replace("# event:", "# harnesses: [claude]\n# event:"),
-            "kendex-hook-excluded: hook=guard harness=codex",
+            "kendex-hook-excluded: hook=guard harness=codex source=catalog field=harnesses",
         ),
     ] {
         let f = fixture("\"codex\"", "[hooks.guard]\nsource = \"cat\"\n");
