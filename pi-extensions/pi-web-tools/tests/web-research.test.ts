@@ -72,7 +72,7 @@ for (const expanded of [false, true]) {
 		const sources = Array.from({ length: 22 }, (_, index) => ({ title: `Source ${index + 1}`, url: `https://example.com/${index + 1}` }));
 		const lines = renderWebResearchSourceTree(sources, { fg: (_tone: string, text: string) => text }, expanded);
 		const text = lines.join("\n");
-		assert.deepEqual(expanded ? { first: text.includes("├─ [1] Source 1"), url: text.split(/\s+/).includes("https://example.com/1"), last: text.includes("[20] Source 20"), hidden: text.includes("[21] Source 21"), remaining: /2.*20\/22/.test(lines.at(-1) ?? "") } : lines, expanded ? { first: true, url: true, last: true, hidden: false, remaining: true } : []);
+		assert.deepEqual(expanded ? { first: text.includes("├─ [1] Source 1"), url: text.split(/\s+/).some((token) => token === "https://example.com/1"), last: text.includes("[20] Source 20"), hidden: text.includes("[21] Source 21"), remaining: /2.*20\/22/.test(lines.at(-1) ?? "") } : lines, expanded ? { first: true, url: true, last: true, hidden: false, remaining: true } : []);
 	});
 }
 for (const { path, expected } of [{ path: "/repo/tmp/findings.md", expected: "tmp/findings.md" }, { path: "/other/findings.md", expected: "/other/findings.md" }]) {

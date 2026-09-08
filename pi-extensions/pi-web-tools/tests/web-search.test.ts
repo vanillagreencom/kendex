@@ -26,13 +26,13 @@ for (const row of [
 		const tool = createWebSearchToolDefinition({ appendEntry(_type: string, data: StoredWebContent) { appended.push(data); } } as any, () => settings);
 		const result = await tool.execute("call", { query: "q", ...(row.fallback ? {} : { provider: "duckduckgo" as const }) }, undefined, undefined, { cwd: process.cwd(), model: { provider: "openai-codex" } } as any);
 		const block = result.content[0]!;
-		const text = block.type === "text" ? block.text : "";
+		const text: string = block.type === "text" ? block.text : "";
 		assert.deepEqual({
 			count: result.details.results.length,
 			printedCount: text.includes(`Results: ${row.expectedCount}`),
 			provider: result.details.provider,
 			printedProvider: text.includes(row.fallback ? "exa-mcp" : "duckduckgo"),
-			url: row.fallback ? text.split(/\s+/).includes("https://example.com/fallback") : text.split(/\s+/).includes("https://example.com/0"),
+			url: row.fallback ? text.split(/\s+/).some((token) => token === "https://example.com/fallback") : text.split(/\s+/).some((token) => token === "https://example.com/0"),
 			fetchGuidance: text.includes("web_fetch"),
 			storedGuidance: text.includes("get_web_content"),
 			warning: result.details.warnings?.some((warning: string) => warning.includes("perplexity")) ?? false,
@@ -45,5 +45,5 @@ test("web_search renderer shows source URLs and hides content ids", () => {
 	const theme = { fg: (_tone: string, text: string) => text, bold: (text: string) => text };
 	const tool = createWebSearchToolDefinition({} as any, () => ({}) as any);
 	const text = tool.renderResult({ details: { provider: "exa", results: [{ title: "Example", url: "https://example.com/path", contentId: "web-123" }] } }, {}, theme, { args: { query: "q" } }).render(200).join("\n");
-	assert.deepEqual({ title: text.includes("Web Search (Exa) q · 1 results"), url: text.split(/\s+/).includes("https://example.com/path"), id: text.includes("content id web-123") }, { title: true, url: true, id: false });
+	assert.deepEqual({ title: text.includes("Web Search (Exa) q · 1 results"), url: text.split(/\s+/).some((token) => token === "https://example.com/path"), id: text.includes("content id web-123") }, { title: true, url: true, id: false });
 });
