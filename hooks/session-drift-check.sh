@@ -12,19 +12,24 @@
 # command that can legitimately fail is guarded so this always reaches exit 0.
 set -euo pipefail
 
-# kendex's own report, empty until it has run: the drift notice passes it
-# through.
+# What the notice reads, each under its own name: kendex's report and the
+# status it left, and the line an unguarded failure reached. A positional
+# detail would mean a status to one caller and a line number to another, and a
+# value whose meaning depends on the caller is not a stable value.
 OUTPUT=""
+RC=0
+FAILED_LINE=""
 # Every line this hook writes, and the only place its text lives. The first
 # line is the contract a reader parses, `session-drift-check: <key>=<value>`: a
 # stable key for the condition and the value acted on — the missing tool, the
 # unreachable project directory, what became of the check, or the status an
 # unguarded command left. The English explanation and kendex's own report
 # follow it. Every line goes to stdout, the session-start context channel.
-# The keyed line stands first, at position 1. What a command this hook runs
-# wrote is captured where the hook reads it and passed here as the cause, so
-# it is replayed under the key rather than ahead of it.
-notice() { # KEY VALUE [DETAIL]
+# The keyed line stands first, at position 1, and every line this function
+# writes goes to stdout: this hook has no stderr channel, and nothing it runs
+# leaves a cause for it to replay — kendex's report is data it relays, not a
+# diagnostic.
+notice() { # KEY VALUE
   printf 'session-drift-check: %s=%s\n' "$1" "$2"
   case "$1=$2" in
     missing-tools=*) printf 'kendex drift check skipped: %s is not on PATH\n' "${2//,/, }" ;;
@@ -39,29 +44,32 @@ notice() { # KEY VALUE [DETAIL]
       # colon; every other rendering of this notice, the embedded hook in
       # crates/core/src/drift/hook.rs and the Pi extension included, prints the
       # colon and the report under it, a blank line where there is none.
-      printf 'session-drift-check: exit=%s\n' "${3:-}"
-      printf 'kendex check could not run (exit %s); drift status unknown' "${3:-}"
-      if [ "${3:-}" = 2 ] && [ -z "$OUTPUT" ]; then
+      printf 'session-drift-check: exit=%s\n' "$RC"
+      printf 'kendex check could not run (exit %s); drift status unknown' "$RC"
+      if [ "$RC" = 2 ] && [ -z "$OUTPUT" ]; then
         printf '\n'
       else
         printf ':\n%s\n' "$OUTPUT"
       fi
       ;;
     check=incomplete)
-      printf 'session-drift-check: exit=%s\n' "${3:-}"
-      printf 'kendex check incomplete (exit %s); some drift status unknown:\n%s\n' "${3:-}" "$OUTPUT"
+      printf 'session-drift-check: exit=%s\n' "$RC"
+      printf 'kendex check incomplete (exit %s); some drift status unknown:\n%s\n' "$RC" "$OUTPUT"
       ;;
-    exit=*) printf 'kendex check could not run: drift hook failed at line %s (exit %s); drift status unknown\n' "${3:-}" "$2" ;;
+    exit=*)
+      # Two facts, two keys: what the failure left, and where it reached.
+      printf 'session-drift-check: line=%s\n' "$FAILED_LINE"
+      printf 'kendex check could not run: drift hook failed at line %s (exit %s); drift status unknown\n' "$FAILED_LINE" "$2"
+      ;;
   esac
-  # The cause a command this hook ran wrote, captured at the site and replayed
-  # here: under the keyed line, never ahead of it.
-  [ -z "${3:-}" ] || printf '%s\n' "$3" >&2
   return 0
 }
 
 # Reaching this trap means an UNGUARDED command failed. Say so: an unexpected
 # failure that printed nothing would read as a clean install.
-trap 'rc=$?; notice exit "$rc" "$LINENO"; exit 0' ERR
+# $LINENO means the failing line only where the trap reads it, so the trap is
+# what records it.
+trap 'rc=$?; FAILED_LINE=$LINENO; notice exit "$rc"; exit 0' ERR
 
 INPUT=$(cat || true)
 
@@ -111,7 +119,6 @@ fi
 
 # kendex's exit code IS the classification; under errexit a bare failing
 # assignment would abort before `RC=$?` could run.
-RC=0
 OUTPUT=$(kendex check --quiet 2>&1) || RC=$?
 
 case "$RC" in
@@ -130,14 +137,14 @@ case "$RC" in
     # comes from before the check read anything, so nothing was checked
     # and it reads as could-not-run.
     case "$OUTPUT" in
-      "" | Error:* | error:*) notice check could-not-run "$RC" ;;
-      *) notice check incomplete "$RC" ;;
+      "" | Error:* | error:*) notice check could-not-run ;;
+      *) notice check incomplete ;;
     esac
     ;;
   *)
     # Anything else is not a kendex verdict: a signal, a timeout, a
     # binary that could not start.
-    notice check could-not-run "$RC"
+    notice check could-not-run
     ;;
 esac
 

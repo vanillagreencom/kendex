@@ -14,8 +14,11 @@
 #   fake rc   the exit status the fake kendex returns
 #   fake out  the fake's output by word (fake_out maps it); `-` for none
 #   keyed     the hook's own keyed lines, in order, joined by `;`; `-` when it
-#             writes none
-# Every row also asserts the hook's exit 0 and the argv `check --quiet`.
+#             writes none. A `line=` value renders as `line=<n>`: the row pins
+#             that the failing line is reported, not which line it was
+# Every row also asserts the hook's exit 0, the argv `check --quiet`, and that
+# stderr is empty — this hook writes to stdout, the session-start context
+# channel, and nothing else.
 #
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (a no-op hook, an always-print hook) can be run against these same
@@ -101,7 +104,8 @@ assert_eq() {
 # them. The text under them is written for a model to read, so a row says that
 # the report reached stdout, never what it said.
 keyed_of() { # TEXT
-  printf '%s\n' "$1" | sed -n 's/^session-drift-check: //p' | paste -s -d ';' -
+  printf '%s\n' "$1" | sed -n 's/^session-drift-check: //p' |
+    sed 's/^line=[0-9][0-9]*$/line=<n>/' | paste -s -d ';' -
 }
 relayed_of() { # TEXT
   local rest
@@ -139,12 +143,14 @@ run_row() { # fake-rc fake-out-word
     PATH="$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
     FAKE_RC="$1" FAKE_OUT="$fake" \
     bash "$HOOK" <<<'{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' \
-    >"$TMP_ROOT/stdout" 2>/dev/null || rc=$?
+    >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr" || rc=$?
   # The keyed lines only: the context text under them is for a model, and a
-  # row that pinned it would pin prose.
-  text="$(sed -n 's/^session-drift-check: //p' "$TMP_ROOT/stdout" | paste -s -d ';' -)"
+  # row that pinned it would pin prose. stderr is a channel this hook does not
+  # write, so a row says it is empty rather than reading it.
+  text="$(keyed_of "$(cat "$TMP_ROOT/stdout")")"
   [[ "$text" != "" ]] || text='-'
-  printf 'rc=%s calls=%s keyed=%s' "$rc" "$(calls)" "$text"
+  printf 'rc=%s calls=%s keyed=%s stderr=%s' "$rc" "$(calls)" "$text" \
+    "$([ -s "$TMP_ROOT/stderr" ] && printf 'wrote' || printf 'empty')"
 }
 
 run_table() {
@@ -166,7 +172,7 @@ run_table() {
       printf '%s => %s\n' "$label" "$got"
       continue
     fi
-    assert_eq "$got" "rc=0 calls=check --quiet keyed=$stdout" "$label"
+    assert_eq "$got" "rc=0 calls=check --quiet keyed=$stdout stderr=empty" "$label"
   done <<<"$rows"
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }
@@ -334,8 +340,8 @@ out="$(env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
 rc=$?
 set -e
 assert_eq "$rc" 0 "an unexpected failure still exits 0"
-assert_eq "keyed=$(keyed_of "$out")" 'keyed=exit=1' \
-  "an unexpected failure is reported with the status it left, not swallowed"
+assert_eq "keyed=$(keyed_of "$out")" 'keyed=exit=1;line=<n>' \
+  "an unexpected failure reports the status it left and the line it reached, each its own key"
 
 echo "session-drift-check: no kendex on PATH"
 NOKENDEX_BIN="$TMP_ROOT/nokendex"
