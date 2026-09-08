@@ -19,8 +19,12 @@
 #             joined by `,`; `-` for none
 #   err       stderr's distinct lines: an unreadable bound as `bound=<v>`
 #             (the value the refusal names), gh's own line verbatim; `-`
-# Every row also pins that the wrapper exited 0 (`rc=0`) and that the
-# repository's own config holds no rewrite after the run (`persisted=0`).
+# Every row also pins that the wrapper exited 0 (`rc=0`), that the wrapped
+# git ran against the row's repository (`repo=<remote>`: a private config
+# value seeded when the repository is built, which a wrapper returning
+# without running git cannot produce), and that the repository's own config
+# holds neither temporary key after the run (`persisted=0` counts both
+# credential.helper and the rewrite).
 set -euo pipefail
 
 # A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
@@ -72,6 +76,7 @@ repo_of() {
   [[ -d "$repo" ]] && { printf '%s' "$repo"; return; }
   mkdir -p "$repo"
   git -C "$repo" init -q -b main
+  git -C "$repo" config kendex.probe "$1"
   case "$1" in
     ssh) git -C "$repo" remote add origin git@github.com:owner/repo.git ;;
     alias) git -C "$repo" remote add vg-claude git@github-vg-claude:owner/repo.git ;;
@@ -127,20 +132,21 @@ err_text() {
 }
 
 run() { # remote
-  local repo listing rc helper rewrites persisted
+  local repo listing rc probe helper rewrites persisted
   repo="$(repo_of "$1")"
   : >"$TMP_ROOT/stderr"
   listing="$(wrapped "$repo")" && rc=0 || rc=$?
+  probe="$(values_of kendex.probe <<<"$listing")"
   helper="$(values_of credential.helper <<<"$listing" | sed -e 's/^$/reset/' -e 's/^!gh auth git-credential$/gh/' | paste -s -d ',' -)"
   rewrites="$(values_of url.https://github.com/.insteadof <<<"$listing" | paste -s -d ',' -)"
   # The repository's own config, read without the wrapper; a failed read is
   # its status, never an empty count.
   if persisted="$(GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -C "$repo" config --list)"; then
-    persisted="$(values_of url.https://github.com/.insteadof <<<"$persisted" | wc -l | tr -d ' ')"
+    persisted="$({ values_of credential.helper <<<"$persisted"; values_of url.https://github.com/.insteadof <<<"$persisted"; } | wc -l | tr -d ' ')"
   else
     persisted="unreadable:$?"
   fi
-  printf 'rc=%s helper=%s rewrites=%s persisted=%s err=%s' "$rc" "${helper:--}" "${rewrites:--}" "$persisted" "$(err_text)"
+  printf 'rc=%s repo=%s helper=%s rewrites=%s persisted=%s err=%s' "$rc" "${probe:--}" "${helper:--}" "${rewrites:--}" "$persisted" "$(err_text)"
 }
 
 run_table() {
@@ -160,7 +166,7 @@ run_table() {
       printf '%s => %s\n' "$label" "$got"
       continue
     fi
-    assert_eq "$got" "rc=0 helper=$helper rewrites=$rewrites persisted=0 err=$err" "$label"
+    assert_eq "$got" "rc=0 repo=$remote helper=$helper rewrites=$rewrites persisted=0 err=$err" "$label"
   done <<<"$rows"
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }
