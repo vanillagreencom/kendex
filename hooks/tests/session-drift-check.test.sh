@@ -104,9 +104,12 @@ assert_contains() {
   fi
 }
 
-# Text as one line: every newline written as `\n`.
+# Text as one line: every backslash doubled first, then every newline written
+# as `\n`, so a hook that printed the two characters `\n` instead of a line
+# break renders as `\\n` and cannot match a row.
 escape_nl() {
   local text="$1"
+  text="${text//\\/\\\\}"
   printf '%s' "${text//$'\n'/\\n}"
 }
 
@@ -120,7 +123,9 @@ calls() {
 # trailing newlines kept.
 run_row() { # fake-rc fake-out-word
   local rc=0 fake text
-  fake="$(fake_out "$2")"
+  # A word fake_out refuses must end the run, not test the empty-output arm:
+  # the substitution swallows its exit, so the status is carried out by hand.
+  fake="$(fake_out "$2")" || { printf 'the fake output word could not be mapped: %s\n' "$2" >&2; return 1; }
   : >"$ARGS_LOG"
   : >"$CWD_LOG"
   env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
@@ -135,7 +140,7 @@ run_row() { # fake-rc fake-out-word
 }
 
 run_table() {
-  local title="$1" rows="$2" label fake_rc fake_word stdout want got row field before=$((PASS + FAIL))
+  local title="$1" rows="$2" label fake_rc fake_word stdout fake_text want got row field before=$((PASS + FAIL))
   echo "=== $title ==="
   while IFS= read -r row; do
     [[ "$row" != "" ]] || continue
@@ -143,13 +148,17 @@ run_table() {
     for field in "$label" "$fake_rc" "$fake_word" "$stdout"; do
       [[ "$field" != "" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
     done
+    # The word is mapped once, here, where a refusal ends the run: inside the
+    # substitutions below its exit would be swallowed and the row would test
+    # the empty-output arm instead.
+    fake_text="$(fake_out "$fake_word")" || { printf 'a row names a fake output word fake_out refuses: %s\n' "$row" >&2; exit 1; }
     got="$(run_row "$fake_rc" "$fake_word")"
     # A rendering aid for writing rows; the run is refused after the loop.
     if [[ "${HOOKS_TABLE_PROBE:-}" == 1 ]]; then
       printf '%s => %s\n' "$label" "$got"
       continue
     fi
-    want="${stdout//\{out\}/$(escape_nl "$(fake_out "$fake_word")")}"
+    want="${stdout//\{out\}/$(escape_nl "$fake_text")}"
     assert_eq "$got" "rc=0 calls=check --quiet out=$want" "$label"
   done <<<"$rows"
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
