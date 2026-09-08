@@ -131,7 +131,7 @@ test("npm update reports cwd preparation failures", async () => {
 test("invalid npmCommand is surfaced in npm action plans", async () => {
 	await useSpawnMock();
 	const { buildInventory } = await import("../extensions/manager/inventory.ts");
-	const { planUpdate } = await import("../extensions/manager/actions.ts");
+	const { planUninstall, planUpdate } = await import("../extensions/manager/actions.ts");
 	const project = join(rootTmp, "project");
 	const userPi = process.env.PI_CODING_AGENT_DIR!;
 	const packageDir = join(userPi, "npm", "node_modules", "@scope", "bad-command");
@@ -143,8 +143,11 @@ test("invalid npmCommand is surfaced in npm action plans", async () => {
 	item.updateAvailable = true;
 	item.updateSource = "npm";
 	item.npmName = "@scope/bad-command";
-	const plan = planUpdate(item, inv, { cwd: project } as never)!;
-	expect(plan.description.split("\n")[0]).toBe("pi-extension-manager: npm-command-invalid=user");
+	const plans = [planUpdate(item, inv, { cwd: project } as never)!, planUninstall(item, inv, { cwd: project } as never)!];
+	for (const plan of plans) {
+		expect(plan.description.split("\n")[0]).toBe("pi-extension-manager: npm-command-invalid=user");
+		expect(plan.description.split("\n")).toHaveLength(3);
+	}
 });
 
 // The strip has to precede `npm uninstall`: npm 7+ does not reliably run a

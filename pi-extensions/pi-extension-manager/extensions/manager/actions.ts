@@ -82,7 +82,7 @@ export function planUninstall(item: InventoryItem, inventory: Inventory, ctx: Ex
 			item,
 			method: { kind: "npm", npmName, scope: item.scope, cwd, command: npm.command, argsPrefix: npm.argsPrefix },
 			command: `(cd ${shellQuote(cwd)} && ${npm.display} uninstall ${npmName})`,
-			description: `${npm.warning ? `${npm.warning} ` : ""}Installed via npm — runs npm uninstall in Pi's scope-local npm directory, then strips the npm: entry from Pi settings.json.`,
+			description: `${npm.warning ? `${npm.warning}\n` : ""}Installed via npm — runs npm uninstall in Pi's scope-local npm directory, then strips the npm: entry from Pi settings.json.`,
 		};
 	}
 	return {
@@ -175,7 +175,7 @@ export function planUpdate(item: InventoryItem, inventory: Inventory, ctx: Exten
 			item,
 			method: { kind: "npm", npmName: item.npmName, scope: item.scope, cwd, command: npm.command, argsPrefix: npm.argsPrefix },
 			command: `(cd ${shellQuote(cwd)} && ${npm.display} install ${item.npmName}@latest)`,
-			description: `${npm.warning ? `${npm.warning} ` : ""}Installed via npm — installs the latest published package version in Pi's scope-local npm directory, then Pi can load it after /reload or restart.`,
+			description: `${npm.warning ? `${npm.warning}\n` : ""}Installed via npm — installs the latest published package version in Pi's scope-local npm directory, then Pi can load it after /reload or restart.`,
 		};
 	}
 	return undefined;
