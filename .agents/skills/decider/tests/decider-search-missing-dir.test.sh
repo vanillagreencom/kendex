@@ -1,116 +1,30 @@
 #!/usr/bin/env bash
-# decisions missing-directory handling.
-#
-# In a repository with no decisions directory, read-only lookups (search,
-# list) emit an empty JSON array with a stderr note and exit 0: an
-# inapplicable lookup is not a workflow failure. Pinned here: that soft path
-# for both the configured-but-absent and unset-undiscovered cases, and that
-# real errors stay hard: a zero-match search in an existing directory is
-# unchanged, a configured path that exists but is a file is a hard error, and
-# creation-workflow commands (next-id, get) require the directory.
+# Missing, existing, and invalid decisions directory rows.
 set -euo pipefail
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 DECISIONS="$SKILL_DIR/scripts/decisions"
+# shellcheck source=lib/mutate-script.sh
+source "$TEST_DIR/lib/mutate-script.sh"
 
 PASS=0
 FAIL=0
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
-
 ERR_FILE="$TMP_ROOT/stderr"
 
-# Run the decisions script from a given directory with DECISIONS_DIR removed
-# from the parent environment (pass VAR=value args to set it explicitly).
-# Captures stdout in $out, stderr in $err, exit code in $rc.
-run_decisions() {
-  local dir="$1"
-  shift
-  set +e
-  out=$( (cd "$dir" && env -u DECISIONS_DIR "$@" "$DECISIONS" "${ARGS[@]}") 2>"$ERR_FILE")
-  rc=$?
-  set -e
-  err="$(cat "$ERR_FILE")"
-}
+pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
+fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
-
-assert_contains() {
-  local got="$1" needle="$2" name="$3"
-  if [[ "$got" == *"$needle"* ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected to contain: %s\n        got:      %s\n' "$name" "$needle" "$got"
-  fi
-}
-
-echo "=== decisions missing decisions dir (kendex#561) ==="
-
-# --- Project with a configured DECISIONS_DIR that does not exist -------------
-# Mirrors the reported failure: kendex.settings.toml sets DECISIONS_DIR but
-# the repository has no decisions directory.
 NO_DIR="$TMP_ROOT/no-dir-project"
 mkdir -p "$NO_DIR"
 printf '[env]\nDECISIONS_DIR = "docs/decisions"\n' >"$NO_DIR/kendex.settings.toml"
 
-ARGS=(search --issue PROJ-557)
-run_decisions "$NO_DIR"
-assert_eq "$rc" "0" "issue search with absent dir exits 0"
-assert_eq "$out" "[]" "issue search with absent dir emits empty array"
-assert_contains "$err" "docs/decisions" "issue search note names the missing dir"
-assert_contains "$err" "not present" "issue search notes dir not present on stderr"
-
-ARGS=(search "ffi error handling")
-run_decisions "$NO_DIR"
-assert_eq "$rc" "0" "keyword search with absent dir exits 0"
-assert_eq "$out" "[]" "keyword search with absent dir emits empty array"
-assert_contains "$err" "not present" "keyword search notes dir not present on stderr"
-
-ARGS=(list)
-run_decisions "$NO_DIR"
-assert_eq "$rc" "0" "list with absent dir exits 0"
-assert_eq "$out" "[]" "list with absent dir emits empty array"
-assert_contains "$err" "not present" "list notes dir not present on stderr"
-
-# Creation-workflow commands still require the directory.
-ARGS=(next-id)
-run_decisions "$NO_DIR"
-assert_eq "$rc" "1" "next-id with absent dir still errors"
-assert_contains "$err" "does not exist" "next-id reports missing DECISIONS_DIR"
-
-ARGS=(get D001)
-run_decisions "$NO_DIR"
-assert_eq "$rc" "1" "get with absent dir still errors"
-assert_contains "$err" "does not exist" "get reports missing DECISIONS_DIR"
-
-# --- DECISIONS_DIR unset and auto-discovery finds nothing --------------------
 UNSET_DIR="$TMP_ROOT/unset-project"
 mkdir -p "$UNSET_DIR"
 
-ARGS=(search --issue PROJ-557)
-run_decisions "$UNSET_DIR"
-assert_eq "$rc" "0" "issue search with undiscovered dir exits 0"
-assert_eq "$out" "[]" "issue search with undiscovered dir emits empty array"
-assert_contains "$err" "no decisions directory found" "undiscovered dir noted on stderr"
-
-ARGS=(help)
-run_decisions "$UNSET_DIR"
-assert_eq "$rc" "0" "help works without a decisions dir"
-assert_contains "$out" "Decision Lookup Tool" "help prints usage without a decisions dir"
-
-# --- Existing directory: zero-match and match behavior unchanged -------------
 HAS_DIR="$TMP_ROOT/has-dir-project"
 mkdir -p "$HAS_DIR/docs/decisions"
 cat >"$HAS_DIR/docs/decisions/INDEX.md" <<'EOF'
@@ -121,41 +35,163 @@ cat >"$HAS_DIR/docs/decisions/INDEX.md" <<'EOF'
 | 2026-01-10 | D001 | PROJ-100 | Use Redis for session caching | Fast and simple | If latency degrades | Active | [Full](D001-session-caching.md) |
 EOF
 
-ARGS=(search "zzz nonexistent term")
-run_decisions "$HAS_DIR" DECISIONS_DIR=docs/decisions
-assert_eq "$rc" "0" "zero-match keyword search in existing dir exits 0"
-assert_eq "$out" "[]" "zero-match keyword search emits empty array"
-assert_eq "$err" "" "zero-match keyword search emits no stderr note"
+NOT_A_DIR="$TMP_ROOT/not-a-dir"
+touch "$NOT_A_DIR"
 
-ARGS=(search --issue PROJ-999)
-run_decisions "$HAS_DIR" DECISIONS_DIR=docs/decisions
-assert_eq "$rc" "0" "zero-match issue search in existing dir exits 0"
-assert_eq "$out" "[]" "zero-match issue search emits empty array"
-assert_eq "$err" "" "zero-match issue search emits no stderr note"
+run_decisions() {
+  local script="$1" state="$2"
+  shift 2
+  set +e
+  case "$state" in
+    configured-absent)
+      out=$( (cd "$NO_DIR" && env -u DECISIONS_DIR "$script" "$@") 2>"$ERR_FILE")
+      ;;
+    undiscovered)
+      out=$( (cd "$UNSET_DIR" && env -u DECISIONS_DIR "$script" "$@") 2>"$ERR_FILE")
+      ;;
+    existing)
+      out=$( (cd "$HAS_DIR" && env -u DECISIONS_DIR DECISIONS_DIR=docs/decisions "$script" "$@") 2>"$ERR_FILE")
+      ;;
+    configured-file)
+      out=$( (cd "$NO_DIR" && env -u DECISIONS_DIR DECISIONS_DIR="$NOT_A_DIR" "$script" "$@") 2>"$ERR_FILE")
+      ;;
+    *)
+      set -e
+      fail "unknown directory state: $state"
+      return
+      ;;
+  esac
+  rc=$?
+  set -e
+  err="$(<"$ERR_FILE")"
+}
 
-ARGS=(search "redis")
-run_decisions "$HAS_DIR" DECISIONS_DIR=docs/decisions
-assert_eq "$rc" "0" "matching keyword search in existing dir exits 0"
-assert_contains "$out" '"D001"' "matching keyword search returns D001"
+record_row() {
+  local mode="$1" name="$2" actual="$3" expected="$4"
+  if [[ "$actual" == "$expected" ]]; then
+    if [[ "$mode" == normal ]]; then
+      pass "$name"
+    fi
+  else
+    if [[ "$mode" == normal ]]; then
+      fail "$name (expected: $expected; got: $actual)"
+    else
+      table_failures+="|$name|"
+    fi
+  fi
+}
 
-ARGS=(next-id)
-run_decisions "$HAS_DIR" DECISIONS_DIR=docs/decisions
-assert_eq "$rc" "0" "next-id in existing dir exits 0"
-assert_eq "$out" "D002" "next-id in existing dir returns D002"
+evaluate_directory_rows() {
+  local script="$1" mode="$2" only_row="${3:-}" name state action argument expected_status
+  local stdout_rule expected_stdout stderr_rule needle_one needle_two actual_stdout actual_stderr
+  local projected projection_rc actual expected
+  table_failures=""
+  while IFS='~' read -r name state action argument expected_status stdout_rule expected_stdout stderr_rule needle_one needle_two; do
+    if [[ -n "$only_row" && "$name" != "$only_row" ]]; then
+      continue
+    fi
+    case "$action" in
+      issue) run_decisions "$script" "$state" search --issue "$argument" ;;
+      keyword) run_decisions "$script" "$state" search "$argument" ;;
+      list|next-id|help) run_decisions "$script" "$state" "$action" ;;
+      get) run_decisions "$script" "$state" get "$argument" ;;
+      *) fail "unknown directory-row action: $action"; continue ;;
+    esac
 
-# --- Configured path exists but is a file: hard error for every command ------
-touch "$TMP_ROOT/not-a-dir"
+    case "$stdout_rule" in
+      exact)
+        actual_stdout="$out"
+        ;;
+      contains)
+        actual_stdout=0
+        [[ "$out" == *"$expected_stdout"* ]] && actual_stdout=1
+        expected_stdout=1
+        ;;
+      ids)
+        set +e
+        projected=$(jq -cer 'if type == "array" then [.[].id] else error("not an array") end' <<<"$out" 2>/dev/null)
+        projection_rc=$?
+        set -e
+        actual_stdout="$projection_rc:$projected"
+        expected_stdout="0:$expected_stdout"
+        ;;
+      ignore)
+        actual_stdout=ignored
+        expected_stdout=ignored
+        ;;
+      *) fail "unknown stdout rule: $stdout_rule"; continue ;;
+    esac
 
-ARGS=(search --issue PROJ-557)
-run_decisions "$NO_DIR" DECISIONS_DIR="$TMP_ROOT/not-a-dir"
-assert_eq "$rc" "1" "search with file at DECISIONS_DIR exits nonzero"
-assert_eq "$out" "" "search with file at DECISIONS_DIR emits no result"
-assert_contains "$err" "is not a directory" "search with file at DECISIONS_DIR reports hard error"
+    case "$stderr_rule" in
+      contains)
+        actual_stderr=0
+        [[ "$err" == *"$needle_one"* ]] && actual_stderr=1
+        expected=1
+        ;;
+      both)
+        actual_stderr=0,0
+        [[ "$err" == *"$needle_one"* ]] && actual_stderr=1,0
+        [[ "$err" == *"$needle_one"* && "$err" == *"$needle_two"* ]] && actual_stderr=1,1
+        expected=1,1
+        ;;
+      empty)
+        actual_stderr="$err"
+        expected=""
+        ;;
+      ignore)
+        actual_stderr=ignored
+        expected=ignored
+        ;;
+      *) fail "unknown stderr rule: $stderr_rule"; continue ;;
+    esac
 
-ARGS=(next-id)
-run_decisions "$NO_DIR" DECISIONS_DIR="$TMP_ROOT/not-a-dir"
-assert_eq "$rc" "1" "next-id with file at DECISIONS_DIR exits nonzero"
-assert_contains "$err" "is not a directory" "next-id with file at DECISIONS_DIR reports hard error"
+    actual="$rc~$actual_stdout~$actual_stderr"
+    record_row "$mode" "$name" "$actual" "$expected_status~$expected_stdout~$expected"
+  done <<'CASES'
+configured-absent-issue~configured-absent~issue~PROJ-557~0~exact~[]~both~docs/decisions~not present
+configured-absent-keyword~configured-absent~keyword~ffi error handling~0~exact~[]~contains~not present~
+configured-absent-list~configured-absent~list~~0~exact~[]~contains~not present~
+configured-absent-next-id~configured-absent~next-id~~1~ignore~~contains~does not exist~
+configured-absent-get~configured-absent~get~D001~1~ignore~~contains~does not exist~
+undiscovered-issue~undiscovered~issue~PROJ-557~0~exact~[]~contains~no decisions directory found~
+help-without-directory~undiscovered~help~~0~contains~Decision Lookup Tool~ignore~~
+existing-keyword-miss~existing~keyword~zzz nonexistent term~0~exact~[]~empty~~
+existing-issue-miss~existing~issue~PROJ-999~0~exact~[]~empty~~
+existing-keyword-hit~existing~keyword~redis~0~ids~["D001"]~ignore~~
+existing-next-id~existing~next-id~~0~exact~D002~ignore~~
+configured-file-search~configured-file~issue~PROJ-557~1~exact~~contains~is not a directory~
+configured-file-next-id~configured-file~next-id~~1~ignore~~contains~is not a directory~
+CASES
+  if [[ "$mode" == control ]]; then
+    printf '%s' "$table_failures"
+  fi
+}
+
+echo "=== decisions directory-state rows ==="
+evaluate_directory_rows "$DECISIONS" normal
+
+echo "=== must-fail controls ==="
+old_branch='  if [[ "$DECISIONS_DIR_ABSENT" -eq 1 ]]; then'
+old_branch+=$'\n    note_missing_decisions_dir\n'
+old_branch+="    echo '[]'"
+old_branch+=$'\n    return 0\n  fi\n\n  local all'
+new_branch='  if [[ "$DECISIONS_DIR_ABSENT" -eq 1 ]]; then'
+new_branch+=$'\n    note_missing_decisions_dir\n'
+new_branch+="    echo '[]'"
+new_branch+=$'\n    return 1\n  fi\n\n  local all'
+status_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/absent-search-fails/decisions" "$old_branch" "$new_branch" 1)"
+failures="$(evaluate_directory_rows "$status_mutant" control configured-absent-issue)"
+if [[ "$failures" == *'|configured-absent-issue|'* ]]; then
+  pass "absent issue-search failure fails its row"
+else
+  fail "absent issue-search failure did not fail its row"
+fi
+failures="$(evaluate_directory_rows "$status_mutant" control configured-absent-keyword)"
+if [[ "$failures" == *'|configured-absent-keyword|'* ]]; then
+  pass "absent keyword-search failure fails its row"
+else
+  fail "absent keyword-search failure did not fail its row"
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -1,34 +1,25 @@
 #!/usr/bin/env bash
-# Index-parse contract: the INDEX Link cell resolves each decision's document,
-# and `get` enriches from that document.
-#
-# A Link cell the parser cannot resolve yields an empty path, and an empty path
-# makes body search skip the decision and `get` report an unknown date — a miss
-# indistinguishable from "no decision governs this area". The three cell shapes
-# below all appear in indexes written from this skill's row template, so all
-# three must resolve.
-#
-# Teeth: each check is re-run against a mutated copy of the script that breaks
-# the behavior under test, and must catch it.
+# INDEX link parsing and document enrichment.
 set -euo pipefail
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 DECISIONS="$SKILL_DIR/scripts/decisions"
+# shellcheck source=lib/mutate-script.sh
+source "$TEST_DIR/lib/mutate-script.sh"
 
 PASS=0
 FAIL=0
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+ERR_FILE="$TMP_ROOT/stderr"
 
 pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 
-# --- Fixture: one decision per supported Link cell shape ---------------------
-
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/docs/decisions"
-
 cat >"$REPO/docs/decisions/INDEX.md" <<'EOF'
 # Architectural Decision Log
 
@@ -39,93 +30,13 @@ cat >"$REPO/docs/decisions/INDEX.md" <<'EOF'
 | 2026-01-03 | D003 | PROJ-3 | Bare filename cell | Reason three | Never | Active | Full -> D003-bare.md |
 | 2026-01-04 | D004 | PROJ-4 | No document yet | Reason four | Never | Active | pending |
 EOF
+printf '# D001\n\n**Date**: 2026-01-01\n\nGoverns tokenone handling.\n' >"$REPO/docs/decisions/D001-md-link.md"
+printf '# D002\n\n**Date**: 2026-01-02\n\nGoverns tokentwo handling.\n' >"$REPO/docs/decisions/D002-backtick.md"
+printf '# D003\n\n**Date**:2026-01-03\n\nGoverns tokenthree handling.\n' >"$REPO/docs/decisions/D003-bare.md"
 
-printf '# D001\n\n**Date**: 2026-01-01\n\nGoverns tokenone handling.\n' \
-  >"$REPO/docs/decisions/D001-md-link.md"
-printf '# D002\n\n**Date**: 2026-01-02\n\nGoverns tokentwo handling.\n' \
-  >"$REPO/docs/decisions/D002-backtick.md"
-printf '# D003\n\n**Date**:2026-01-03\n\nGoverns tokenthree handling.\n' \
-  >"$REPO/docs/decisions/D003-bare.md"
-
-# run <script> <args...> — stdout only, from inside the fixture repo.
-run() {
-  local script="$1"
-  shift
-  (cd "$REPO" && DECISIONS_DIR="$REPO/docs/decisions" "$script" "$@" 2>/dev/null)
-}
-
-# check_parse <script>
-# Prints the name of every failed expectation (empty output = all held).
-check_parse() {
-  local script="$1" broken=""
-
-  # Each shape resolves to its document, so a body-only keyword finds it.
-  [[ "$(run "$script" search tokenone | jq -r '[.[].id] | join(",")')" == "D001" ]] \
-    || broken="$broken md-link-body"
-  [[ "$(run "$script" search tokentwo | jq -r '[.[].id] | join(",")')" == "D002" ]] \
-    || broken="$broken backtick-body"
-  [[ "$(run "$script" search tokenthree | jq -r '[.[].id] | join(",")')" == "D003" ]] \
-    || broken="$broken bare-body"
-
-  # get resolves the same path and reads the date out of the document.
-  [[ "$(run "$script" get D001 | jq -r '.path')" == "$REPO/docs/decisions/D001-md-link.md" ]] \
-    || broken="$broken md-link-path"
-  [[ "$(run "$script" get D002 | jq -r '.path')" == "$REPO/docs/decisions/D002-backtick.md" ]] \
-    || broken="$broken backtick-path"
-  [[ "$(run "$script" get D001 | jq -r '.date')" == "2026-01-01" ]] \
-    || broken="$broken date-enrichment"
-  # The date label tolerates no space after the colon.
-  [[ "$(run "$script" get D003 | jq -r '.date')" == "2026-01-03" ]] \
-    || broken="$broken date-unspaced"
-
-  # A cell naming no document resolves to nothing rather than a wrong path.
-  [[ "$(run "$script" get D004 | jq -r '.path')" == "" ]] \
-    || broken="$broken empty-cell-path"
-  [[ "$(run "$script" get D004 | jq -r '.date')" == "unknown" ]] \
-    || broken="$broken empty-cell-date"
-
-  printf '%s' "$broken"
-}
-
-# mutate <name> <sed-script> — copies scripts/ and patches the entry point.
-mutate() {
-  local dir="$TMP_ROOT/mutant-$1"
-  mkdir -p "$dir"
-  cp -R "$SKILL_DIR/scripts/lib" "$dir/lib"
-  sed "$2" "$DECISIONS" >"$dir/decisions"
-  chmod +x "$dir/decisions"
-  printf '%s' "$dir/decisions"
-}
-
-# expect_caught <clause> <mutant> <description>
-expect_caught() {
-  local clause="$1" mutant="$2" desc="$3" out
-  out="$(check_parse "$mutant")"
-  if [[ "$out" == *"$clause"* ]]; then
-    pass "$desc"
-  else
-    fail "$desc (check output: '$out')"
-  fi
-}
-
-echo "=== decisions INDEX link-cell and get enrichment ==="
-
-broken="$(check_parse "$DECISIONS")"
-if [[ -z "$broken" ]]; then
-  pass "every Link cell shape resolves and get enriches from the document"
-else
-  fail "index parse contract broken:$broken"
-fi
-
-echo "=== malformed rows are named, not silently dropped ==="
-
-# A row that opens like a decision but misses the eight-cell contract is skipped
-# by the parser. Skipped silently, a mistyped row reads downstream as a decision
-# that was never recorded — the index says one thing, every consumer says
-# another, and nothing points at the row to fix.
-BADREPO="$TMP_ROOT/badrepo"
-mkdir -p "$BADREPO/docs/decisions"
-cat >"$BADREPO/docs/decisions/INDEX.md" <<'EOF'
+BAD_REPO="$TMP_ROOT/bad-repo"
+mkdir -p "$BAD_REPO/docs/decisions"
+cat >"$BAD_REPO/docs/decisions/INDEX.md" <<'EOF'
 # Architectural Decision Log
 
 | Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |
@@ -135,60 +46,153 @@ cat >"$BADREPO/docs/decisions/INDEX.md" <<'EOF'
 | 2026-02-03 | D103 | PROJ-3 | Second well-formed | Reason three | Never | Active | [Full](D103.md) |
 EOF
 
-run_bad() { (cd "$BADREPO" && DECISIONS_DIR="$BADREPO/docs/decisions" "$DECISIONS" "$@"); }
+run_decisions() {
+  local script="$1" repo="$2" decisions_dir="$3"
+  shift 3
+  set +e
+  out=$( (cd "$repo" && DECISIONS_DIR="$decisions_dir" "$script" "$@") 2>"$ERR_FILE")
+  rc=$?
+  set -e
+  err="$(<"$ERR_FILE")"
+}
 
-bad_stdout="$(run_bad list 2>/dev/null)"
-bad_stderr="$(run_bad list 2>&1 >/dev/null)"
+project_json() {
+  local expression="$1"
+  set +e
+  projected=$(jq -cer "$expression" <<<"$out" 2>/dev/null)
+  projection_rc=$?
+  set -e
+}
 
-# stdout contract is unchanged: the parseable rows, and only those.
-if [[ "$(jq -r '[.[].id] | join(",")' <<<"$bad_stdout")" == "D101,D103" ]]; then
-  pass "stdout still carries exactly the rows that parse"
-else
-  fail "stdout contract changed (got: $bad_stdout)"
-fi
+record_row() {
+  local mode="$1" name="$2" actual="$3" expected="$4"
+  if [[ "$actual" == "$expected" ]]; then
+    if [[ "$mode" == normal ]]; then
+      pass "$name"
+    fi
+  else
+    if [[ "$mode" == normal ]]; then
+      fail "$name (expected: $expected; got: $actual)"
+    else
+      table_failures+="|$name|"
+    fi
+  fi
+}
 
-if grep -q 'D102\|:6:' <<<"$bad_stderr"; then
-  pass "the malformed row is named on stderr"
-else
-  fail "the malformed row was dropped without a diagnostic (stderr: $bad_stderr)"
-fi
+evaluate_link_rows() {
+  local script="$1" mode="$2" name kind argument expected actual
+  table_failures=""
+  while IFS='~' read -r name kind argument expected; do
+    run_decisions "$script" "$REPO" "$REPO/docs/decisions" "${kind%%-*}" "$argument"
+    case "$kind" in
+      search-ids)
+        project_json 'if type == "array" then [.[].id] | join(",") else error("not an array") end'
+        ;;
+      get-path)
+        project_json 'if type == "object" and has("path") then .path else error("missing path") end'
+        expected="$REPO/docs/decisions/$expected"
+        ;;
+      get-empty-path)
+        project_json 'if type == "object" and has("path") then .path else error("missing path") end'
+        ;;
+      get-date)
+        project_json 'if type == "object" and has("date") then .date else error("missing date") end'
+        ;;
+      *)
+        fail "unknown link-row projection: $kind"
+        continue
+        ;;
+    esac
+    if [[ -z "$projected" ]]; then
+      projected='<empty>'
+    fi
+    actual="$rc~$projection_rc~$projected"
+    record_row "$mode" "$name" "$actual" "0~0~$expected"
+  done <<'CASES'
+md-link-body~search-ids~tokenone~D001
+backtick-body~search-ids~tokentwo~D002
+bare-body~search-ids~tokenthree~D003
+md-link-path~get-path~D001~D001-md-link.md
+backtick-path~get-path~D002~D002-backtick.md
+date-enrichment~get-date~D001~2026-01-01
+date-unspaced~get-date~D003~2026-01-03
+empty-cell-path~get-empty-path~D004~<empty>
+empty-cell-date~get-date~D004~unknown
+CASES
+  if [[ "$mode" == control ]]; then
+    printf '%s' "$table_failures"
+  fi
+}
 
-if grep -q ':6:' <<<"$bad_stderr"; then
-  pass "the diagnostic cites the row's line in the index"
-else
-  fail "the diagnostic does not cite the index line (stderr: $bad_stderr)"
-fi
+evaluate_diagnostic_rows() {
+  local script="$1" mode="$2" name fixture projection expected actual first second
+  table_failures=""
+  while IFS='~' read -r name fixture projection expected; do
+    if [[ "$fixture" == malformed ]]; then
+      run_decisions "$script" "$BAD_REPO" "$BAD_REPO/docs/decisions" list
+    else
+      run_decisions "$script" "$REPO" "$REPO/docs/decisions" list
+    fi
+    case "$projection" in
+      ids)
+        project_json 'if type == "array" then [.[].id] | join(",") else error("not an array") end'
+        actual="$rc~$projection_rc~$projected"
+        expected="0~0~$expected"
+        ;;
+      malformed-warning)
+        first=0
+        second=0
+        [[ "$err" == *D102* || "$err" == *:6:* ]] && first=1
+        [[ "$err" == *:6:* ]] && second=1
+        actual="$rc~$first~$second"
+        ;;
+      empty-stderr)
+        actual="$rc~${err:-<empty>}"
+        ;;
+      *)
+        fail "unknown diagnostic-row projection: $projection"
+        continue
+        ;;
+    esac
+    record_row "$mode" "$name" "$actual" "$expected"
+  done <<'CASES'
+malformed-row-results~malformed~ids~D101,D103
+malformed-row-diagnostic~malformed~malformed-warning~0~1~1
+healthy-index-diagnostic~healthy~empty-stderr~0~<empty>
+CASES
+  if [[ "$mode" == control ]]; then
+    printf '%s' "$table_failures"
+  fi
+}
 
-# The diagnostic must not fire for a healthy index, or it is just noise.
-if [[ -z "$( (cd "$REPO" && DECISIONS_DIR="$REPO/docs/decisions" "$DECISIONS" list 2>&1 >/dev/null) )" ]]; then
-  pass "a well-formed index emits no warning"
-else
-  fail "a well-formed index emitted a spurious warning"
-fi
+expect_control_failure() {
+  local failures="$1" row="$2" description="$3"
+  if [[ "$failures" == *"|$row|"* ]]; then
+    pass "$description"
+  else
+    fail "$description (failed rows: $failures)"
+  fi
+}
 
-echo "=== teeth ==="
+echo "=== decisions INDEX link and get rows ==="
+evaluate_link_rows "$DECISIONS" normal
 
-# Drop the non-markdown-link fallbacks: only [text](path) cells resolve.
-expect_caught backtick-body \
-  "$(mutate no-fallback 's/+ \[ \$cell | scan/+ [ empty | scan/g')" \
-  "losing the backticked-filename fallback is caught"
+echo "=== decisions malformed and healthy INDEX rows ==="
+evaluate_diagnostic_rows "$DECISIONS" normal
 
-expect_caught bare-body \
-  "$(mutate no-fallback2 's/+ \[ \$cell | scan/+ [ empty | scan/g')" \
-  "losing the bare-filename fallback is caught"
+echo "=== must-fail controls ==="
+fallback_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-fallback/decisions" '+ [ $cell | scan' '+ [ empty | scan' 2)"
+failures="$(evaluate_link_rows "$fallback_mutant" control)"
+expect_control_failure "$failures" backtick-body "backtick fallback loss fails its row"
+expect_control_failure "$failures" bare-body "bare fallback loss fails its row"
 
-# Stop get from adopting the date parsed out of the document.
-expect_caught date-enrichment \
-  "$(mutate no-date 's/date="\$parsed"/date="mutated"/')" \
-  "losing get's date enrichment is caught"
+date_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-date/decisions" '      date="$parsed"' '      date="mutated"' 1)"
+failures="$(evaluate_link_rows "$date_mutant" control)"
+expect_control_failure "$failures" date-enrichment "date mutation fails the enrichment row"
 
-# Drop the malformed-row diagnostic: the rows still vanish, but nothing says so.
-silent="$(mutate no-warn 's/| select((.value | split("|") | length) < 9)/| select(false)/')"
-if [[ -z "$( (cd "$BADREPO" && DECISIONS_DIR="$BADREPO/docs/decisions" "$silent" list 2>&1 >/dev/null) )" ]]; then
-  pass "losing the malformed-row diagnostic is caught"
-else
-  fail "the no-warn mutant still emitted a diagnostic"
-fi
+warning_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-warning/decisions" '| select((.value | split("|") | length) < 9)' '| select(false)' 1)"
+failures="$(evaluate_diagnostic_rows "$warning_mutant" control)"
+expect_control_failure "$failures" malformed-row-diagnostic "warning suppression fails the diagnostic row"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
