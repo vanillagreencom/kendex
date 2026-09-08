@@ -86,7 +86,8 @@ fn run_install_in(
     // Logs the URL; `-o FILE` gets a runnable stand-in for the download,
     // and the release lookup gets a tag.
     let miss = fail.map_or(String::new(), |(url, code)| {
-        format!("case \"$url\" in *{url}*) exit {code} ;; esac\n")
+        // A failed transfer can leave a file; a later chmod must not supply the failure verdict.
+        format!("case \"$url\" in *{url}*) [ -z \"$out\" ] || : > \"$out\"; exit {code} ;; esac\n")
     });
     write_exe(
         &fake.join("curl"),
@@ -206,6 +207,12 @@ fn download_failures_report_their_exit_code_and_release_target() {
         assert_eq!(
             value(&output.stderr, "command-download-failed"),
             Some(exit.to_string().as_str())
+        );
+        assert_eq!(
+            value(&output.stderr, "command-download-url"),
+            Some(
+                "https://github.com/vanillagreencom/kendex/releases/download/v9.9.9/kendex-x86_64-apple-darwin"
+            )
         );
         assert_eq!(value(&output.stderr, "release-http-error"), target);
         assert_eq!(value(&output.stdout, "command-installed"), None);
