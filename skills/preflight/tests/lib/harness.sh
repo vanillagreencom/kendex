@@ -46,9 +46,12 @@ pf_fired() {
   printf '%s\n' "$OUT" | sed -n 's/^\([^ :][^ ]*:[0-9][0-9]*: \[[a-z-]*\]\).*/\1/p'
 }
 
-# `needs` is a tool the row's lane cannot run without: `shellcheck`, `jq`,
-# or `toml` (taplo, or python3 with tomllib). Prints the reason it is
-# absent; succeeds when it is present.
+# The only judge of which `needs` tokens exist: `shellcheck`, `jq`, or `toml`
+# (taplo, or python3 with tomllib), each a tool the row's lane cannot run
+# without. Three outcomes, so a mistyped token cannot read as an absent tool
+# and silently drop the row: `0` the named tool is absent, printing the
+# reason (the row skips); `1` it is present (the row runs); `2` the token is
+# not a name this driver knows, printing that (the run refuses).
 pf_needs_absent() { # NEEDS
   case "$1" in
     shellcheck | jq)
@@ -60,7 +63,10 @@ pf_needs_absent() { # NEEDS
       command -v python3 >/dev/null 2>&1 && python3 -c 'import tomllib' >/dev/null 2>&1 && return 1
       printf 'no taplo and no python3 with tomllib\n'
       ;;
-    *) printf 'a tool this driver does not know: %s\n' "$1" ;;
+    *)
+      printf 'a tool this driver does not know: %s\n' "$1"
+      return 2
+      ;;
   esac
   return 0
 }
@@ -73,14 +79,14 @@ pf_needs_absent() { # NEEDS
 # compared whole against `pf_fired`. `says` is `;`-separated fragments `$OUT`
 # must carry, or `-`; it is the last field, so `read` keeps a `|` inside it.
 # A row with an empty field asserts nothing and refuses the run, as does a
-# world word `pf_world` does not know or any failure its return status
-# carries; a table that asserted no row exits 2 from its own counter, so a
-# fixture failure or a probe run never reads as green. `PF_TABLE_PROBE=1`
-# renders each row's status, fired list and finding lines instead of
-# asserting.
+# `needs` token `pf_needs_absent` does not know, a world word `pf_world` does
+# not know or any failure its return status carries; a table that asserted no
+# row exits 2 from its own counter, so a fixture failure or a probe run never
+# reads as green. `PF_TABLE_PROBE=1` renders each row's status, fired list
+# and finding lines instead of asserting.
 pf_table() {
   local title="$1" rows="$2" row label world argv needs rc fired says
-  local field before reason got miss frag lines
+  local field before reason needs_rc got miss frag lines
   before=$((PASS + FAIL))
   printf '=== %s ===\n' "$title"
   while IFS= read -r row; do
@@ -91,9 +97,16 @@ EOF
     for field in "$label" "$world" "$argv" "$needs" "$rc" "$fired" "$says"; do
       [ -n "$field" ] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
     done
-    if [ "$needs" != - ] && reason="$(pf_needs_absent "$needs")"; then
-      skipped "$label" "$reason"
-      continue
+    if [ "$needs" != - ]; then
+      # The status branched on is the substitution's own: `if cmd; then`
+      # cannot tell the absent tool from the token this driver does not know.
+      needs_rc=0
+      reason="$(pf_needs_absent "$needs")" || needs_rc=$?
+      case "$needs_rc" in
+        0) skipped "$label" "$reason"; continue ;;
+        1) ;; # the tool is present, so the row runs
+        *) printf '%s: %s\n' "$reason" "$row" >&2; exit 1 ;;
+      esac
     fi
     # shellcheck disable=SC2086
     pf_world $world || { printf 'the world could not be built: %s\n' "$row" >&2; exit 1; }
