@@ -86,7 +86,11 @@ describe("shell minimizer + truncation interaction", () => {
 			const tail = "    Finished release\ntest result: ok. 999 passed; 0 failed";
 			const text = `${noisy}\n${tail}`;
 			const result = processText({ toolName: "bash", toolCallId: "sm-min", input: { command: "cargo test" } }, ctx, text);
-			expect(result.text).toMatch(/\[output-policy:minimized-lines=\d+\]/);
+			const outputLines = new Set(result.text.split("\n"));
+			const removed = text.split("\n").filter(line => !outputLines.has(line)).length;
+			const summary = result.text.split("\n\n").at(-1)!;
+			expect(removed).toBeGreaterThan(0);
+			expect(summary.split("\n")[0]).toBe(`[output-policy:minimized-lines=${removed}]`);
 			expect(result.text).toContain("test result: ok");
 			expect(result.meta).toBeUndefined();
 		});

@@ -40,9 +40,12 @@ describe("model output guard handler", () => {
 			await withConfigAsync({ "modelOutputGuard.maxChars": 100 }, async (cwd) => {
 				const fake = createFakePi();
 				outputPolicy(fake.pi);
-				const guard = guardCtx(cwd);
+				const notices: string[] = [];
+				const guard = guardCtx(cwd, message => notices.push(message));
 				await fake.fire("message_update", { assistantMessageEvent: { type, delta: "x".repeat(100) } }, guard.ctx);
 				expect(guard.aborts()).toBe(1);
+				expect(notices).toHaveLength(1);
+				expect(notices[0].split("\n")[0]).toBe("[output-policy:max-chars=100]");
 			});
 		}
 	});
