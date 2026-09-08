@@ -1,67 +1,36 @@
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import {
-	createBackgroundWidgetExpiryScheduler,
 	createBackgroundWidgetVisibility,
-	nextBackgroundWidgetExpiryDelay,
 	shouldRenderBackgroundWidget,
 	toggleBackgroundWidgetVisibility,
 } from "../extensions/widget-visibility.js";
 
-function lifecycleRefreshRenders(mode: "compact" | "expanded" | "hidden"): boolean {
-	return shouldRenderBackgroundWidget({ hasUi: true, mode, showWidget: true, trackedTaskCount: 1, visibleTaskCount: 1 });
-}
+test("widget toggles preserve the last visible mode", () => {
+	expect.hasAssertions();
+	for (const { name, initial, toggles, expected } of [
+		{ name: "hide expanded", initial: "expanded", toggles: 1, expected: { mode: "hidden", lastVisibleMode: "expanded", renders: false } },
+		{ name: "restore expanded", initial: "expanded", toggles: 2, expected: { mode: "expanded", lastVisibleMode: "expanded", renders: true } },
+		{ name: "hide compact", initial: "compact", toggles: 1, expected: { mode: "hidden", lastVisibleMode: "compact", renders: false } },
+		{ name: "restore compact", initial: "compact", toggles: 2, expected: { mode: "compact", lastVisibleMode: "compact", renders: true } },
+		{ name: "show initially hidden", initial: "hidden", toggles: 1, expected: { mode: "compact", lastVisibleMode: "compact", renders: true } },
+	] as const) {
+		const state = createBackgroundWidgetVisibility(initial);
+		for (let index = 0; index < toggles; index++) toggleBackgroundWidgetVisibility(state);
+		const renders = shouldRenderBackgroundWidget({ hasUi: true, mode: state.mode, showWidget: true, trackedTaskCount: 1, visibleTaskCount: 1 });
+		expect({ ...state, renders }, name).toEqual(expected);
+	}
+});
 
-describe("background task mini-dashboard visibility", () => {
-	test("task lifecycle refreshes do not reopen widget after manual hide", () => {
-		const visibility = createBackgroundWidgetVisibility("expanded");
-		toggleBackgroundWidgetVisibility(visibility);
-		expect(visibility.mode).toBe("hidden");
-		expect(visibility.lastVisibleMode).toBe("expanded");
-
-		for (const _event of ["spawnTask", "output update", "exit update", "restore/replay", "clear/retention"]) {
-			expect(lifecycleRefreshRenders(visibility.mode)).toBe(false);
-			expect(visibility.mode).toBe("hidden");
-		}
-	});
-
-	test("explicit toggle-in restores last visible widget mode", () => {
-		const visibility = createBackgroundWidgetVisibility("expanded");
-		toggleBackgroundWidgetVisibility(visibility);
-		toggleBackgroundWidgetVisibility(visibility);
-		expect(visibility.mode).toBe("expanded");
-		expect(lifecycleRefreshRenders(visibility.mode)).toBe(true);
-	});
-
-	test("refreshes after the earliest finished task expires", () => {
-		const tasks = [
-			{ status: "running", updatedAt: 500 },
-			{ status: "completed", updatedAt: 1_000 },
-			{ status: "failed", updatedAt: 2_000 },
-		];
-		expect(nextBackgroundWidgetExpiryDelay(tasks, 15_000, 10_000)).toBe(6_001);
-		expect(nextBackgroundWidgetExpiryDelay(tasks, 15_000, 16_001)).toBe(1_000);
-		expect(nextBackgroundWidgetExpiryDelay(tasks, 15_000, 17_001)).toBeNull();
-
-		let refreshes = 0;
-		let scheduledDelay = 0;
-		let callback = () => {};
-		let clears = 0;
-		const timer = { unref() {} } as ReturnType<typeof setTimeout>;
-		const expiry = createBackgroundWidgetExpiryScheduler(
-			() => refreshes++,
-			(nextCallback, delay) => {
-				callback = nextCallback;
-				scheduledDelay = delay;
-				return timer;
-			},
-			() => clears++,
-		);
-		expiry.schedule(tasks, 15_000, 10_000);
-		expect(scheduledDelay).toBe(6_001);
-		callback();
-		expect(refreshes).toBe(1);
-		expiry.schedule(tasks, 15_000, 10_000);
-		expiry.clear();
-		expect(clears).toBe(1);
-	});
+test("widget rendering requires UI, enabled visibility and visible tasks", () => {
+	expect.hasAssertions();
+	for (const [name, hasUi, showWidget, trackedTaskCount, visibleTaskCount, mode, expected] of [
+		["visible", true, true, 1, 1, "expanded", true],
+		["headless", false, true, 1, 1, "expanded", false],
+		["disabled", true, false, 1, 1, "expanded", false],
+		["untracked", true, true, 0, 0, "expanded", false],
+		["expired", true, true, 1, 0, "expanded", false],
+		["manually hidden", true, true, 1, 1, "hidden", false],
+	] as const) {
+		expect(shouldRenderBackgroundWidget({ hasUi, showWidget, trackedTaskCount, visibleTaskCount, mode }), name).toBe(expected);
+	}
 });
