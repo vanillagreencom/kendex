@@ -9,6 +9,12 @@
 #
 # Sourced, never executed: no mode bit, per this repo's CI convention.
 
+# `pf_scope_seed` builds every world with `git -C`, and an exported GIT_DIR,
+# GIT_COMMON_DIR, GIT_WORK_TREE or GIT_INDEX_FILE takes precedence over it: a
+# caller carrying one would aim these fixtures at its own repository. Cleared
+# here for the suites that source this file, per skills/AGENTS.md.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 PF="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)/preflight"
 
 PASS=0
