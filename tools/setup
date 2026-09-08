@@ -18,34 +18,64 @@
 # somewhere else entirely.
 set -euo pipefail
 
+INSTALLER=.agents/skills/commit-guards/scripts/install-git-hooks
+
+# Every line this script says opens with `setup: <key>=<value>` — the key
+# names the outcome, the value is the path or the short enum the reader acts
+# on — and explains itself on the lines under it. message_text is the only
+# place a key's English lives.
+#
+# The not-armed arm points back at the installer's report rather than
+# asserting one cause: the installer has already said, per hook, WHY it did
+# not arm, and a symlinked hook, a cleared execute bit and a hooks path git
+# reads elsewhere all reach here, where deleting a hook is the fix for none of
+# them. The report may name one hook of the two, so the hand-delete points at
+# what it named rather than at both paths.
+#
+# The two remedy steps are keyed on what the hook still HOLDS, not on who
+# wrote it. --uninstall drops a hook file only when kendex's own lines were
+# all of it; over one carrying a lane of the consumer's it strips our lines,
+# reports success and leaves the rest. Keyed on authorship, the message would
+# send somebody who ran it round the same refusal with nothing left to try.
+message_text() { # KEY VALUE — the English for one key, and the whole of it
+  case "$1" in
+    worktree)
+      echo "not inside a git work tree, so the guards could not be armed." ;;
+    unenterable)
+      echo "the repository toplevel could not be entered, so the guards could not be armed." ;;
+    not-armed)
+      printf '%s\n' \
+        "the guard shims are not armed; that installer step is the one that refused." \
+        "The report above names the reason for each hook, and the remedy follows from it." \
+        "Where the reason is an interpreter the installer will not vouch for:" \
+        "$INSTALLER --uninstall takes out a hook holding nothing but kendex's own lines," \
+        "and a hook still there after that run holds lines of your own — delete that one by" \
+        "hand, only the hook the report named — then run this again. Every other reason the" \
+        "report gives is fixed where it says, not by deleting a hook." ;;
+    armed)
+      echo "the guard shims are armed in that clone." ;;
+    *)
+      echo "no explanation is defined for this key: tools/setup is broken." ;;
+  esac
+}
+note() { # KEY VALUE — a verdict this run reached, on stdout
+  printf 'setup: %s=%s\n' "$1" "$2"
+  message_text "$1" "$2"
+}
+refuse() { # KEY VALUE — nothing was armed
+  printf 'setup: %s=%s\n' "$1" "$2" >&2
+  message_text "$1" "$2" >&2
+  exit 1
+}
+
 # The first probe of all, and it is read for whether it RAN before it is read
 # for what it said. A `$(...)` that failed hands back an empty string, which
 # spells a plausible answer here — a change of directory that stays put — and
 # the run would go on to arm hooks in whatever clone it happened to be in.
 ROOT=""
-ROOT="$(git rev-parse --show-toplevel)" \
-  || { echo "setup: not inside a git work tree — the guards could not be armed" >&2; exit 1; }
-cd "$ROOT" || { echo "setup: could not enter $ROOT — the guards could not be armed" >&2; exit 1; }
+ROOT="$(git rev-parse --show-toplevel)" || refuse worktree none
+cd "$ROOT" || refuse unenterable "$ROOT"
 
-INSTALLER=.agents/skills/commit-guards/scripts/install-git-hooks
-
-# The installer has already reported, per hook, WHY it did not arm. That report
-# is the only thing that knows which refusal this was, so this points back at
-# it rather than asserting one cause: a symlinked hook, a cleared execute bit
-# and a hooks path git reads elsewhere all reach here, and deleting a hook is
-# the fix for none of them. The report may name one hook of the two, so the
-# hand-delete points at what it named rather than at both paths.
-#
-# The two steps are keyed on what the hook still HOLDS, not on who wrote it.
-# --uninstall drops a hook file only when kendex's own lines were all of it;
-# over one carrying a lane of the consumer's it strips our lines, reports
-# success and leaves the rest. Keyed on authorship, the message would send
-# somebody who ran it round the same refusal with nothing left to try.
-not_armed() {
-  echo "setup: the guard shims are not armed; the report above names the reason for each hook, and the remedy follows from it. Where the reason is an interpreter the installer will not vouch for: $INSTALLER --uninstall takes out a hook holding nothing but kendex's own lines, and a hook still there after that run holds lines of your own — delete that one by hand, only the hook the report named — then run this again. Every other reason the report gives is fixed where it says, not by deleting a hook." >&2
-  exit 1
-}
-
-"$INSTALLER" || not_armed
-"$INSTALLER" --check || not_armed
-echo "hooks armed"
+"$INSTALLER" || refuse not-armed install
+"$INSTALLER" --check || refuse not-armed check
+note armed "$ROOT"

@@ -26,7 +26,7 @@ run_guard
 FULL_GUARD=1
 run_guard
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"drift:"*".github/copilot-instructions.md"* ]] \
-  && [[ "$OUT" == *"guard: bot instruction check failed"* ]] \
+  && [[ "$OUT" == *"guard: bot-instructions=1"* ]] \
   && ok "full validation rejects stale worktree bot output" \
   || bad "full validation rejects stale worktree bot output" "rc=$RC out=$OUT"
 FULL_GUARD=0
@@ -78,13 +78,13 @@ check_call() { # TARGET — the one cargo line guard is allowed to run for it
 }
 : >"$CARGO_CALL_LOG"
 run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_LIST_RESULT=1
-[ "$RC" -ne 0 ] && case "$OUT" in *"rustup could not list installed targets"*) true ;; *) false ;; esac \
+[ "$RC" -ne 0 ] && case "$OUT" in *"guard: rustup-targets=unreadable"*) true ;; *) false ;; esac \
   && ok "a failed installed-target lookup blocks guard" \
   || bad "a failed installed-target lookup blocks guard" "rc=$RC out=$OUT"
 run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS=x86_64-unknown-linux-gnu
 [ "$RC" -ne 0 ] &&
-  case "$OUT" in *"Rust target $APPLE is not installed"*) true ;; *) false ;; esac &&
-  case "$OUT" in *"Rust target $WINDOWS is not installed"*) true ;; *) false ;; esac \
+  case "$OUT" in *"guard: missing-target=$APPLE"*) true ;; *) false ;; esac &&
+  case "$OUT" in *"guard: missing-target=$WINDOWS"*) true ;; *) false ;; esac \
   && ok "every missing target is refused with its own install command" \
   || bad "every missing target is refused with its own install command" "rc=$RC out=$OUT"
 if grep -qE -- "--target ($APPLE|$WINDOWS)\$" "$CARGO_CALL_LOG"; then
@@ -94,7 +94,7 @@ else
 fi
 : >"$CARGO_CALL_LOG"
 run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$WINDOWS"
-[ "$RC" -ne 0 ] && case "$OUT" in *"Rust target $APPLE is not installed"*) true ;; *) false ;; esac &&
+[ "$RC" -ne 0 ] && case "$OUT" in *"guard: missing-target=$APPLE"*) true ;; *) false ;; esac &&
   [ "$(grep -cFx "$(check_call "$WINDOWS")" "$CARGO_CALL_LOG")" -eq 1 ] \
   && ok "a missing target does not stop the targets after it" \
   || bad "a missing target does not stop the targets after it" "rc=$RC out=$OUT log=$(cat "$CARGO_CALL_LOG")"
@@ -103,7 +103,7 @@ before=$((PASS + FAIL))
 for failing in "$APPLE" "$WINDOWS"; do
   : >"$CARGO_CALL_LOG"
   run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$BOTH" CROSS_CHECK_FAIL="$failing"
-  [ "$RC" -ne 0 ] && case "$OUT" in *"$failing core and CLI test targets failed to compile"*) true ;; *) false ;; esac \
+  [ "$RC" -ne 0 ] && case "$OUT" in *"guard: cross-check=$failing"*) true ;; *) false ;; esac \
     && ok "a failing $failing compiler verdict blocks guard, naming it" \
     || bad "a failing $failing compiler verdict blocks guard, naming it" "rc=$RC out=$OUT"
 done
@@ -137,10 +137,10 @@ run_guard
   || bad "a touched skill's suite runs in full validation and an untouched skill's does not" "rc=$RC out=$OUT"
 printf 'echo touched\n' >>"$R/skills/quiet/tests/quiet.test.sh"
 run_guard
-[ "$RC" != 0 ] && [[ "$OUT" == *"skills/quiet suite failed"* ]] \
+[ "$RC" != 0 ] && [[ "$OUT" == *"guard: suite=skills/quiet/tests/quiet.test.sh"* ]] \
   && ok "a touched skill's failing suite reds full validation, naming the skill" \
   || bad "a touched skill's failing suite reds full validation, naming the skill" "rc=$RC out=$OUT"
-if mutant_guard '/suite failed (\$t)/d'; then
+if mutant_guard '/say suite "\$t"/d'; then
   OUT=""
   RC=0
   OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
@@ -169,7 +169,7 @@ git -C "$R" update-ref refs/remotes/origin/main HEAD
 git -C "$R" mv skills/quiet/scripts/quiet.sh hooks/quiet.sh
 git -C "$R" commit -q -m "chore: move the quiet script into hooks"
 run_guard
-[ "$RC" != 0 ] && [[ "$OUT" == *"skills/quiet suite failed"* ]] \
+[ "$RC" != 0 ] && [[ "$OUT" == *"guard: suite=skills/quiet/tests/quiet.test.sh"* ]] \
   && ok "a committed move out of a skill runs the suite of the tree it left" \
   || bad "a committed move out of a skill runs the suite of the tree it left" "rc=$RC out=$OUT"
 if mutant_guard 's/diff --no-renames --name-only "\$suites_base"/diff --name-only "$suites_base"/'; then
@@ -200,10 +200,10 @@ exec "$REAL_GIT" "$@"
 SH
 chmod +x "$R/fake-bin/git"
 run_guard PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" FAIL_SUITE_DIFF=1
-[ "$RC" != 0 ] && [[ "$OUT" == *"the touched-file set for the suite lane could not be read"* ]] \
+[ "$RC" != 0 ] && [[ "$OUT" == *"guard: touched-set=branch-diff"* ]] \
   && ok "a failed branch diff reds the suite lane beside a good working-tree read" \
   || bad "a failed branch diff reds the suite lane beside a good working-tree read" "rc=$RC out=$OUT"
-if mutant_guard 's/{ branch_touched=""; say "the touched-file set for the suite lane could not be read (branch diff)"; }/branch_touched=""/'; then
+if mutant_guard 's/{ branch_touched=""; say touched-set branch-diff; }/branch_touched=""/'; then
   OUT=""
   RC=0
   OUT="$(cd "$R" && PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" FAIL_SUITE_DIFF=1 "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
@@ -248,23 +248,23 @@ COMPILER_DEATH="$(printf '%s\n' \
   'Caused by:' \
   '  process didn'"'"'t exit successfully: `rustc --crate-name kendex_core ...` (signal: 9, SIGKILL: kill)')"
 run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_STDERR="$DEATH"
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: a test binary died by a signal"*"review_fixes-ff58"*"SIGSEGV"* ]] \
-  && [[ "$OUT" != *"guard: tests failed"* ]] \
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: test-binary-signal=11"*"review_fixes-ff58"*"SIGSEGV"* ]] \
+  && [[ "$OUT" != *"guard: cargo-test=workspace"* ]] \
   && ok "a runner killed by a signal is reported as the artifact's death, not a failing test" \
   || bad "a runner killed by a signal is reported as the artifact's death, not a failing test" "rc=$RC out=$OUT"
 run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_STDERR="$ASSERTION"
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: tests failed"* ]] && [[ "$OUT" != *"died by a signal"* ]] \
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-test=workspace"* ]] && [[ "$OUT" != *"guard: test-binary-signal="* ]] \
   && ok "a failing assertion still reads as tests failed" \
   || bad "a failing assertion still reads as tests failed" "rc=$RC out=$OUT"
 run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_STDERR="$COMPILER_DEATH"
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: tests failed"* ]] && [[ "$OUT" != *"died by a signal"* ]] \
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-test=workspace"* ]] && [[ "$OUT" != *"guard: test-binary-signal="* ]] \
   && ok "a compiler killed by a signal is not named as a test binary's death" \
   || bad "a compiler killed by a signal is not named as a test binary's death" "rc=$RC out=$OUT"
 if mutant_guard 's/if \[ -n "\$death" \]; then/if false; then/'; then
   OUT=""
   RC=0
   OUT="$(cd "$R" && PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_STDERR="$DEATH" "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
-  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: tests failed"* ]] && [[ "$OUT" != *"died by a signal"* ]] \
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-test=workspace"* ]] && [[ "$OUT" != *"guard: test-binary-signal="* ]] \
     && ok "control: with the death check removed the same death reads as tests failed" \
     || bad "control: with the death check removed the same death reads as tests failed" "rc=$RC out=$OUT"
 else

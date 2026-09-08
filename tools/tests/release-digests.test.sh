@@ -7,21 +7,23 @@
 # a test can run.
 #
 # Every run renders as `rc=<n> out=<o> doc=<d>`:
-#   out  the script's output (stdout and stderr together): its one
-#        `::error::` line reduced to the row's clause when the line carries
-#        it, otherwise every line verbatim joined by `;`; `-` when empty
+#   out  the run's stable first line, `<key>=<value>`, with the
+#        `release-digests: ` prefix off; `-` when the run said nothing; every
+#        line verbatim joined by `;` when it said something carrying no such
+#        line, so a run that stopped some other way cannot render as one that
+#        stopped for the row's reason
 #   doc  the document DIST/digests-TARGET.json: `absent`, or its fields as
 #        `schema=<n> version=<v> target=<t> command=<hex> app=<hex>` read
 #        through jq, or `unparsed:<text>` when jq cannot read it
 #
-# The refusals table is `label|world|target|version|rc|clause|document`:
+# The refusals table is `label|world|target|version|rc|first|document`:
 #   world     what the Linux x86_64 lane staged, as words `build` maps onto
 #             files: `command`, `app`, `sig` (the app's signature), `app2`
 #             (another release's app download), `unstaged` (no directory)
-#   clause    text only that `die` arm emits. Every `die` exits 1, so the
-#             message is the one thing that separates one refusal from
-#             another; the clause pinned is the fragment naming the
-#             refusal, never the remedy the line goes on to give.
+#   first     the `<key>=<value>` only that `die` call emits. Every `die`
+#             exits 1, so the key and its value are the one thing that
+#             separates one refusal from another; the English under that line
+#             is not pinned.
 #   document  `absent`: a lane that half-wrote a document would publish a
 #             statement it never measured, so every refusal row checks it.
 #
@@ -100,12 +102,13 @@ build() {
   stage $files
 }
 
-out_text() { # CLAUSE — the run's output reduced, `-` when empty
-  local clause="$1" text
+out_text() { # — the run's stable first line, `-` when it said nothing
+  local text first
   text="$(cat "$TMP/out")"
   [[ "$text" != "" ]] || { printf -- '-'; return; }
-  if [[ "$clause" != "" && "$text" == "::error::"*"$clause"* && "$text" != *$'\n'* ]]; then
-    printf '%s' "$clause"
+  first="$(awk '/^release-digests: / { sub(/^release-digests: /, ""); print; exit }' "$TMP/out")"
+  if [[ "$first" != "" ]]; then
+    printf '%s' "$first"
   else
     printf '%s' "$text" | paste -s -d ';' -
   fi
@@ -123,10 +126,10 @@ doc_text() { # TARGET — the document's fields, `absent`, or `unparsed:<text>`
   fi
 }
 
-run() { # TARGET VERSION CLAUSE
+run() { # TARGET VERSION
   local rc=0
   "$DIGESTS" --document-only "$1" "$2" "$DIST" >"$TMP/out" 2>&1 || rc=$?
-  printf 'rc=%s out=%s doc=%s' "$rc" "$(out_text "$3")" "$(doc_text "$1")"
+  printf 'rc=%s out=%s doc=%s' "$rc" "$(out_text)" "$(doc_text "$1")"
 }
 
 fields_present() { # ROW FIELD... — a row with an empty field asserts nothing
@@ -150,16 +153,16 @@ asserted() { # BEFORE — refuses a table that asserted no row past that tally
 }
 
 run_refusals() {
-  local title="$1" rows="$2" label world target version rc clause document got row before=$((PASS + FAIL))
+  local title="$1" rows="$2" label world target version rc first document got row before=$((PASS + FAIL))
   echo "=== $title ==="
   while IFS= read -r row; do
     [[ "$row" != "" ]] || continue
-    IFS='|' read -r label world target version rc clause document <<<"$row"
-    fields_present "$row" "$label" "$world" "$target" "$version" "$rc" "$clause" "$document"
+    IFS='|' read -r label world target version rc first document <<<"$row"
+    fields_present "$row" "$label" "$world" "$target" "$version" "$rc" "$first" "$document"
     build "$world"
-    got="$(run "$target" "$version" "$clause")"
+    got="$(run "$target" "$version")"
     probe "$label" "$got" && continue
-    assert_eq "$got" "rc=$rc out=$clause doc=$document" "$label"
+    assert_eq "$got" "rc=$rc out=$first doc=$document" "$label"
   done <<<"$rows"
   asserted "$before"
 }
@@ -173,7 +176,7 @@ run_lanes() {
     fields_present "$row" "$label" "$target" "$staged" "$command_file" "$app_file"
     # shellcheck disable=SC2086
     stage $staged
-    got="$(run "$target" "$VERSION" "")"
+    got="$(run "$target" "$VERSION")"
     probe "$label" "$got" && continue
     assert_eq "$got" "rc=0 out=- doc=schema=1 version=$VERSION target=$target command=$(sha256 "$DIST/$command_file") app=$(sha256 "$DIST/$app_file")" "$label"
   done <<<"$rows"
@@ -181,12 +184,12 @@ run_lanes() {
 }
 
 run_refusals "the refusals, each leaving no document" "\
-a target the release does not build is refused|command app sig|aarch64-unknown-linux-musl|9.9.9|1|not a target this release builds|absent
-a version carrying JSON of its own is refused|command app sig|x86_64-unknown-linux-gnu|9.9.9\", \"target\": \"elsewhere|1|not a version this release could have been built as|absent
-a lane that staged nothing is refused|unstaged|x86_64-unknown-linux-gnu|9.9.9|1|is not a directory|absent
-a lane missing its command is refused|app sig|x86_64-unknown-linux-gnu|9.9.9|1|holds no kendex command|absent
-a lane missing its app download is refused|command sig|x86_64-unknown-linux-gnu|9.9.9|1|holds no app download|absent
-two app downloads in one lane are refused rather than picked between|command app app2 sig|x86_64-unknown-linux-gnu|9.9.9|1|holds more than one app download|absent
+a target the release does not build is refused|command app sig|aarch64-unknown-linux-musl|9.9.9|1|target=aarch64-unknown-linux-musl|absent
+a version carrying JSON of its own is refused|command app sig|x86_64-unknown-linux-gnu|9.9.9\", \"target\": \"elsewhere|1|version=9.9.9\", \"target\": \"elsewhere|absent
+a lane that staged nothing is refused|unstaged|x86_64-unknown-linux-gnu|9.9.9|1|not-a-directory=$DIST|absent
+a lane missing its command is refused|app sig|x86_64-unknown-linux-gnu|9.9.9|1|missing=kendex-x86_64-unknown-linux-gnu|absent
+a lane missing its app download is refused|command sig|x86_64-unknown-linux-gnu|9.9.9|1|missing=kendex_*_amd64.AppImage|absent
+two app downloads in one lane are refused rather than picked between|command app app2 sig|x86_64-unknown-linux-gnu|9.9.9|1|ambiguous=kendex_*_amd64.AppImage|absent
 "
 
 run_lanes "the lanes, each measuring the two downloads its updater installs" "\

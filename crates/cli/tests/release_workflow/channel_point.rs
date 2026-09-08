@@ -18,6 +18,11 @@ use crate::channel::{REFUSED_VERSIONS, channel_step_env, core_can_read};
 use crate::test_util::rooted;
 use crate::{job, job_declaring, step, workflow};
 
+/// The repository the fixture poses as, named once because the guard prints
+/// it back in the refusal a read that could not run leaves.
+#[cfg(unix)]
+pub(crate) const REPOSITORY: &str = "vanillagreencom/kendex";
+
 /// The binary the guard runs `version-compare` on, named by reading the
 /// guard rather than by writing the name down twice: renamed on one side
 /// only, every run here would stage a file the guard never looks at and
@@ -264,7 +269,7 @@ impl Fixture {
             .env("GH_FAIL", &failing)
             .env("GH_LANDED", landed.join(" "))
             .env("GH_CHANNEL", &self.published)
-            .env("GITHUB_REPOSITORY", "vanillagreencom/kendex")
+            .env("GITHUB_REPOSITORY", REPOSITORY)
             .env("CHANNEL", channel_step_env("CHANNEL"))
             .env("NEW_VERSION", new_version)
             .env("GH_TOKEN", "token")
@@ -328,21 +333,22 @@ fn point_channel_staging(
 #[cfg(unix)]
 #[test]
 fn a_read_it_could_not_make_stops_the_write() {
+    let channel = channel_step_env("CHANNEL");
     for (state, failing, said) in [
         (
             Channel::Carrying("2.0.0-rc1"),
             "/releases --paginate",
-            "releases could not be listed",
+            format!("release-channel-point: releases={REPOSITORY}"),
         ),
         (
             Channel::Carrying("2.0.0-rc1"),
             "/releases/tags/",
-            "its assets could not be read",
+            format!("release-channel-point: assets={channel}"),
         ),
         (
             Channel::Carrying("2.0.0-rc1"),
             "release download",
-            "manifest could not be downloaded",
+            format!("release-channel-point: manifest-download={channel}"),
         ),
     ] {
         let run = point_channel(state, "1.0.0-rc1", &[failing]);
@@ -353,7 +359,7 @@ fn a_read_it_could_not_make_stops_the_write() {
             run.calls
         );
         assert!(
-            run.output.contains(said),
+            run.output.contains(&said),
             "{failing} was reported as something else: {}",
             run.output
         );
@@ -391,8 +397,10 @@ fn a_release_that_staged_no_binary_stops_the_write() {
         run.calls
     );
     assert!(
-        run.output
-            .contains("the release's own binary is not in dist"),
+        run.output.contains(&format!(
+            "release-channel-point: compare-binary=dist/{}",
+            compare_binary()
+        )),
         "the stop was reported as something else: {}",
         run.output
     );
@@ -511,10 +519,11 @@ fn a_run_handed_no_manifests_writes_nothing() {
         "an empty dist still uploaded: {:?}",
         run.calls
     );
-    // Both names, as a sentence: pasted together they read as a typo in a
-    // CI log, which is the one place this message is ever read.
+    // Both names in the one value: pasted together they read as a typo in a
+    // CI log, which is the one place this line is ever read.
     assert!(
-        run.output.contains("handed no latest.json or feed.json"),
+        run.output
+            .contains("release-channel-point: missing-manifest=latest.json or feed.json"),
         "{}",
         run.output
     );
@@ -546,7 +555,9 @@ fn a_run_handed_half_the_manifests_writes_nothing() {
             run.calls
         );
         assert!(
-            run.output.contains(&format!("was handed no {missing}")),
+            run.output.contains(&format!(
+                "release-channel-point: missing-manifest={missing}"
+            )),
             "the run did not say which half it was missing: {}",
             run.output
         );
@@ -579,7 +590,7 @@ fn a_channel_this_guard_wrote_holds_against_an_older_tag() {
     assert!(
         older
             .output
-            .contains("carries 1.0.0-rc9, ahead of 1.0.0-rc2"),
+            .contains("release-channel-point: hold=1.0.0-rc9"),
         "{}",
         older.output
     );
@@ -632,10 +643,11 @@ fn a_channel_a_write_did_not_finish_on_stops_the_run() {
         "a half-written channel was written over: {:?}",
         run.calls
     );
-    // Named, because the one thing that clears this state is somebody
-    // looking at the channel.
+    // The leftovers are the value, because the one thing that clears this
+    // state is somebody taking them off the channel.
     assert!(
-        run.output.contains("no latest.json"),
+        run.output
+            .contains("release-channel-point: no-manifest=feed.json"),
         "the run did not say what it found: {}",
         run.output
     );

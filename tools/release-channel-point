@@ -23,7 +23,60 @@
 # the write from inside an `if` condition, where `set -e` does not reach: that
 # is how a `jq` that could not compare read as "not ahead" and let a rollback
 # through.
+#
+# Every verdict prints two lines. The first is the stable
+# `release-channel-point: <key>=<value>`, where the key names the condition and
+# the value is the version, the channel, the path or the repository the reader
+# acts on. The second is one GitHub Actions annotation — `::error::` for a stop,
+# `::notice::` for a channel left alone — carrying the English: the
+# workflow-command grammar ends an annotation at the newline, so that text is
+# one line, and it is the line the release job surfaces. message_text is the
+# only place a key's English lives, and it reads CHANNEL, NEW_VERSION and
+# `absent` from the run rather than taking them per call.
 set -euo pipefail
+
+message_text() { # KEY VALUE [EXTRA] — the English for one key, one line
+  case "$1" in
+    releases)
+      printf 'Nothing was written to the %s channel: the releases of %s could not be listed. Repair the channel, then re-run the tag.\n' "$CHANNEL" "$2" ;;
+    assets)
+      printf 'Nothing was written to the %s channel: it is published but its assets could not be read. Repair the channel, then re-run the tag.\n' "$2" ;;
+    no-manifest)
+      printf 'Nothing was written to the %s channel: it carries %s and no latest.json, so nothing here can say what it holds; those have to come off before a tag re-run publishes anything. Repair the channel, then re-run the tag.\n' "$CHANNEL" "$2" ;;
+    manifest-download)
+      printf "Nothing was written to the %s channel: its manifest could not be downloaded. Repair the channel, then re-run the tag.\n" "$2" ;;
+    manifest-version)
+      printf "Nothing was written to the %s channel: its manifest names no version. Repair the channel, then re-run the tag.\n" "$2" ;;
+    compare-binary)
+      printf 'Nothing was written to the %s channel: the release'"'"'s own binary is not in dist at %s, so nothing here can order %s. Repair the channel, then re-run the tag.\n' "$CHANNEL" "$2" "$NEW_VERSION" ;;
+    compare-binary-mode)
+      printf 'Nothing was written to the %s channel: the release'"'"'s own binary at %s could not be made runnable, so nothing here can order %s. Repair the channel, then re-run the tag.\n' "$CHANNEL" "$2" "$NEW_VERSION" ;;
+    version)
+      printf 'Nothing was written to the %s channel: %s is not a version this build can read. Repair the channel, then re-run the tag.\n' "$CHANNEL" "$2" ;;
+    unordered)
+      printf "Nothing was written to the %s channel: %s and the channel's %s could not be put in order. Repair the channel, then re-run the tag.\n" "$CHANNEL" "$2" "$3" ;;
+    missing-manifest)
+      printf 'Nothing was written to the %s channel: this run was handed no %s, and the channel'"'"'s manifests are published together or not at all. Re-run the tag.\n' "$CHANNEL" "$2" ;;
+    create)
+      printf 'Nothing was written to the %s channel: it does not exist and could not be created. Re-run the tag.\n' "$2" ;;
+    upload | upload-created)
+      printf 'Uploading to the %s channel failed, and what it carries now is some mixture of what was already there and what landed, which this run does not read back.%s Re-run the tag: that run reads the channel and either writes it or refuses, saying what it found.\n' \
+        "$2" "${absent:+ This run is what published that channel; there was none before it.}" ;;
+    hold)
+      printf 'The %s channel carries %s, ahead of %s; leaving it as it is.\n' "$CHANNEL" "$2" "$NEW_VERSION" ;;
+    *)
+      printf 'no explanation is defined for this key: tools/release-channel-point is broken.\n' ;;
+  esac
+}
+note() { # KEY VALUE [EXTRA] — the channel was left as it was, on purpose
+  printf 'release-channel-point: %s=%s\n' "$1" "$2"
+  printf '::notice::%s\n' "$(message_text "$@")"
+}
+fail() { # KEY VALUE [EXTRA] — this run stops, and says what it did
+  printf 'release-channel-point: %s=%s\n' "$1" "$2"
+  printf '::error::%s\n' "$(message_text "$@")"
+  exit 1
+}
 
 # The pair a candidate reads together, named once because every use below is
 # of the pair and not of either name. `manifest_url_for` sends the desktop
@@ -50,10 +103,13 @@ uploaded() {
 
 state=unknown
 why=""
+why_arg=""
+why_extra=""
 current=""
 absent=""
 if ! tags=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate --jq '.[].tag_name'); then
-  why="this repository's releases could not be listed"
+  why=releases
+  why_arg="$GITHUB_REPOSITORY"
 elif ! grep -qxF "$CHANNEL" <<< "$tags"; then
   # Noted, not created. Publishing the channel is a write, and no write may
   # happen before the verdict below authorizes one: every exit between here
@@ -62,7 +118,8 @@ elif ! grep -qxF "$CHANNEL" <<< "$tags"; then
   absent=1
   state=fresh
 elif ! assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --jq '.assets[].name'); then
-  why="the ${CHANNEL} channel is published but its assets could not be read"
+  why=assets
+  why_arg="$CHANNEL"
 elif ! grep -qxF latest.json <<< "$assets"; then
   # Carrying nothing is a channel no write has landed on, and this run may
   # take it. Carrying something without a latest.json is a channel a write
@@ -70,19 +127,22 @@ elif ! grep -qxF latest.json <<< "$assets"; then
   # fresh, any tag would pass the comparison it exists to face, which is the
   # rollback this guard is here to refuse. Repair is a person's, not a run's.
   if [ -n "$assets" ]; then
-    why="the ${CHANNEL} channel carries $(paste -sd' ' - <<< "$assets") and no latest.json, so nothing here can say what it holds; those have to come off before a tag re-run publishes anything"
+    why=no-manifest
+    why_arg="$(paste -sd' ' - <<< "$assets")"
   else
     state=fresh
   fi
 elif ! gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
      --dir manifest --pattern latest.json --clobber; then
-  why="the ${CHANNEL} channel's manifest could not be downloaded"
+  why=manifest-download
+  why_arg="$CHANNEL"
 else
   current=$(jq -r '.version // empty' manifest/latest.json) || current=""
   if [ -n "$current" ]; then
     state=carrying
   else
-    why="the ${CHANNEL} channel's manifest names no version"
+    why=manifest-version
+    why_arg="$CHANNEL"
   fi
 fi
 
@@ -102,11 +162,13 @@ if [ "$state" != fresh ] && [ "$state" != carrying ]; then
   verdict=stop
 elif [ ! -f "$compare" ]; then
   verdict=stop
-  why="the release's own binary is not in dist, so nothing here can order ${NEW_VERSION}"
+  why=compare-binary
+  why_arg="$compare"
 elif ! chmod +x "$compare"; then
   # The artifact upload does not carry the executable bit across.
   verdict=stop
-  why="the release's own binary in dist could not be made runnable, so nothing here can order ${NEW_VERSION}"
+  why=compare-binary-mode
+  why_arg="$compare"
 elif [ "$state" = fresh ]; then
   # A fresh channel has nothing to order against, and the tag still has to
   # be a version: published under a string no candidate can read, the
@@ -117,7 +179,8 @@ elif [ "$state" = fresh ]; then
     verdict=write
   else
     verdict=stop
-    why="${NEW_VERSION} is not a version this build can read"
+    why=version
+    why_arg="$NEW_VERSION"
   fi
 elif ! ordered=$("./$compare" version-compare "$current" "$NEW_VERSION"); then
   verdict=stop
@@ -129,12 +192,11 @@ fi
 case "$verdict" in
   write) ;;
   hold)
-    echo "::notice::The ${CHANNEL} channel carries ${current}, ahead of ${NEW_VERSION}; leaving it as it is."
+    note hold "$current"
     exit 0 ;;
   *)
-    [ -n "$why" ] || why="${NEW_VERSION} and the channel's ${current} could not be put in order"
-    echo "::error::Nothing was written to the ${CHANNEL} channel: ${why}. Repair the channel, then re-run the tag."
-    exit 1 ;;
+    [ -n "$why" ] || { why=unordered; why_arg="$NEW_VERSION"; why_extra="$current"; }
+    fail "$why" "$why_arg" "$why_extra" ;;
 esac
 
 # What `dist` holds, resolved before the write. An unmatched glob left literal
@@ -156,8 +218,7 @@ for file in $MANIFESTS; do
   if [ -z "$short" ]; then short="${file#dist/}"; else short="$short or ${file#dist/}"; fi
 done
 if [ -n "$short" ]; then
-  echo "::error::Nothing was written to the ${CHANNEL} channel: this run was handed no ${short}, and the channel's manifests are published together or not at all. Re-run the tag."
-  exit 1
+  fail missing-manifest "$short"
 fi
 # The write begins here, past the verdict and past the list. A channel that
 # did not exist is published now.
@@ -165,8 +226,7 @@ if [ -n "$absent" ]; then
   if ! gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" --prerelease \
        --title "Pre-release channel" \
        --notes "The update manifests of the newest kendex pre-release. Nothing here is a download; each manifest names assets on the release it came from."; then
-    echo "::error::Nothing was written to the ${CHANNEL} channel: it does not exist and could not be created. Re-run the tag."
-    exit 1
+    fail create "$CHANNEL"
   fi
 fi
 if ! gh release upload "$CHANNEL" "${publishing[@]}" \
@@ -177,10 +237,8 @@ if ! gh release upload "$CHANNEL" "${publishing[@]}" \
   # which: a read after a failed call can fail too, and a message naming a
   # state nobody established is what stops anyone looking. The next run does
   # read it, and its own refusals say what it found.
-  published=""
   if [ -n "$absent" ]; then
-    published=" This run is what published that channel; there was none before it."
+    fail upload-created "$CHANNEL"
   fi
-  echo "::error::Uploading to the ${CHANNEL} channel failed, and what it carries now is some mixture of what was already there and what landed, which this run does not read back.${published} Re-run the tag: that run reads the channel and either writes it or refuses, saying what it found."
-  exit 1
+  fail upload "$CHANNEL"
 fi

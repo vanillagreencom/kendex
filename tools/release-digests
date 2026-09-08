@@ -25,12 +25,47 @@
 # --document-only writes the document and signs nothing: signing needs the
 # release secret, which no test has, and the document is what a test can
 # hold to the shape the client reads.
+#
+# A refusal prints two lines to stderr and exits 1. The first is the stable
+# `release-digests: <key>=<value>`, where the key names the condition and the
+# value is the path, the pattern or the count the reader acts on. The second
+# is one `::error::` GitHub Actions annotation carrying the English: the
+# workflow-command grammar ends an annotation at the newline, so that text is
+# one line, and it is the line the release job surfaces. message_text is the
+# only place a key's English lives.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-die() {
-  echo "::error::$*" >&2
+message_text() { # KEY VALUE [EXTRA...] — the English for one key, one line
+  case "$1" in
+    usage)
+      printf 'usage: tools/release-digests [--document-only] TARGET VERSION DIST\n' ;;
+    not-a-directory)
+      printf '%s is not a directory, so this lane staged nothing to publish.\n' "$2" ;;
+    version)
+      printf "'%s' is not a version this release could have been built as.\n" "$2" ;;
+    target)
+      printf "'%s' is not a target this release builds; add it here and to the release matrix together.\n" "$2" ;;
+    ambiguous)
+      printf '%s holds more than one file matching %s (%s and %s); this lane cannot say which one it published.\n' "$3" "$2" "$4" "$5" ;;
+    missing)
+      printf '%s holds no file matching %s; check this lane'"'"'s staging step, then re-run the tag.\n' "$3" "$2" ;;
+    digest-unreadable)
+      printf 'the SHA-256 of %s could not be taken.\n' "$2" ;;
+    digest-malformed)
+      printf "the digest of %s came back as '%s', which is not SHA-256.\n" "$2" "$3" ;;
+    signer)
+      printf 'the signer failed on %s. kendex update refuses what it cannot verify; check TAURI_SIGNING_PRIVATE_KEY, then re-run the tag.\n' "$2" ;;
+    signature)
+      printf 'no signature for %s. kendex update refuses what it cannot verify; check this lane'"'"'s signer step and TAURI_SIGNING_PRIVATE_KEY, then re-run the tag.\n' "$2" ;;
+    *)
+      printf 'no explanation is defined for this key: tools/release-digests is broken.\n' ;;
+  esac
+}
+die() { # KEY VALUE [EXTRA...] — nothing further is written or signed
+  printf 'release-digests: %s=%s\n' "$1" "$2" >&2
+  printf '::error::%s\n' "$(message_text "$@")" >&2
   exit 1
 }
 
@@ -39,16 +74,16 @@ if [ "${1:-}" = "--document-only" ]; then
   document_only=1
   shift
 fi
-[ "$#" -eq 3 ] || die "usage: tools/release-digests [--document-only] TARGET VERSION DIST"
+[ "$#" -eq 3 ] || die usage "$#"
 target=$1
 version=$2
 dist=$3
 
-[ -d "$dist" ] || die "$dist is not a directory, so this lane staged nothing to publish."
+[ -d "$dist" ] || die not-a-directory "$dist"
 # The version reaches a JSON document and a URL, so it is held to the
 # characters a SemVer version is made of before either.
 case "$version" in
-  "" | *[!0-9A-Za-z.+-]*) die "'$version' is not a version this release could have been built as." ;;
+  "" | *[!0-9A-Za-z.+-]*) die version "$version" ;;
 esac
 
 # What this lane's two downloads are named. The command is staged under its
@@ -63,20 +98,21 @@ case "$target" in
     app_glob="kendex_*_x64-setup.exe"
     ext=".exe"
     ;;
-  *) die "'$target' is not a target this release builds; add it here and to the release matrix together." ;;
+  *) die target "$target" ;;
 esac
 
 # Exactly one match or none: two AppImages in dist/ is a lane that staged
 # another release's artifact beside its own, and picking either would sign
-# a document naming bytes nobody can account for.
-only_match() {
-  local what=$1 pattern=$2 candidate found=""
+# a document naming bytes nobody can account for. The pattern is what a
+# refusal names, because it is what the staging step has to satisfy.
+only_match() { # PATTERN — the one file in DIST matching it
+  local pattern=$1 candidate found=""
   for candidate in "$dist"/$pattern; do
     [ -f "$candidate" ] || continue
-    [ -z "$found" ] || die "$dist holds more than one $what ($found and $candidate); this lane cannot say which one it published."
+    [ -z "$found" ] || die ambiguous "$pattern" "$dist" "$found" "$candidate"
     found=$candidate
   done
-  [ -n "$found" ] || die "$dist holds no $what matching $pattern; check this lane's staging step, then re-run the tag."
+  [ -n "$found" ] || die missing "$pattern" "$dist"
   printf '%s' "$found"
 }
 
@@ -85,17 +121,17 @@ only_match() {
 digest() {
   local file=$1 line
   if command -v sha256sum >/dev/null 2>&1; then
-    line=$(sha256sum "$file") || die "sha256sum could not read $file."
+    line=$(sha256sum "$file") || die digest-unreadable "$file"
   else
-    line=$(shasum -a 256 "$file") || die "shasum could not read $file."
+    line=$(shasum -a 256 "$file") || die digest-unreadable "$file"
   fi
   line=${line%% *}
-  [ "${#line}" -eq 64 ] || die "the digest of $file came back as '$line', which is not SHA-256."
+  [ "${#line}" -eq 64 ] || die digest-malformed "$file" "$line"
   printf '%s' "$line"
 }
 
-command_binary=$(only_match "kendex command" "kendex-${target}${ext}")
-app_download=$(only_match "app download" "$app_glob")
+command_binary=$(only_match "kendex-${target}${ext}")
+app_download=$(only_match "$app_glob")
 # Both digests are taken before the document is opened. A command
 # substitution that failed inside the heredoc would leave its field empty
 # and the document written anyway, which is a lane publishing a statement
@@ -117,8 +153,6 @@ JSON
 [ "$document_only" -eq 0 ] || exit 0
 
 for file in "$command_binary" "$document"; do
-  "$ROOT/ui/node_modules/.bin/tauri" signer sign "$file" ||
-    die "The signer failed on ${file}. kendex update refuses what it cannot verify; check TAURI_SIGNING_PRIVATE_KEY, then re-run the tag."
-  [ -s "${file}.sig" ] ||
-    die "No signature for ${file}. kendex update refuses what it cannot verify; check this lane's signer step and TAURI_SIGNING_PRIVATE_KEY, then re-run the tag."
+  "$ROOT/ui/node_modules/.bin/tauri" signer sign "$file" || die signer "$file"
+  [ -s "${file}.sig" ] || die signature "$file"
 done

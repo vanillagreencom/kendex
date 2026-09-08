@@ -10,10 +10,122 @@
 # judges source comments. What is here is what none of them ships.
 # Repository scans read the working tree. Bot instructions use the index at
 # commit time so their configuration, doctrine and outputs agree.
+# Every finding opens with `guard: <key>=<value>` and explains itself below
+# that line; say() and finding_text() hold the shape and the text.
 set -uo pipefail
 # Resolved before the cd below: the sibling tools this script runs live
 # beside it, not necessarily in the repository it judges.
 TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)" || exit 1
+
+fail=0
+# A finding is one stable first line, `guard: <key>=<value>`: the key names
+# the condition and the value is what the reader acts on — a path, a count,
+# an exit status, or a short enum. The English follows on later lines, and any
+# offending lines the rule collected follow that. finding_text below is the
+# only place a key's English lives, so a key has one spelling and one
+# definition, and no caller carries message text of its own.
+say() { # KEY VALUE
+  printf 'guard: %s=%s\n' "$1" "$2"
+  finding_text "$1" "$2"
+  fail=1
+}
+count_lines() { # TEXT — the non-empty lines in TEXT, a scan finding's value
+  printf '%s\n' "$1" | awk 'NF { n++ } END { print n + 0 }'
+}
+finding_text() { # KEY VALUE — the English for one key, and the whole of it
+  case "$1" in
+    bot-instructions)
+      echo "the bot instruction check refused the working tree; its own report above names each file." ;;
+    homebrew-formula)
+      echo "a Homebrew formula claims the plain kendex name — the cask owns it; name the formula KendexCli." ;;
+    catalog-fs-read)
+      echo "raw filesystem read over catalog paths — go through source_read::SealedSource." ;;
+    ui-tauri-import)
+      echo "the UI reaches Tauri directly — only generated ui/src/bindings.ts may import @tauri-apps." ;;
+    ui-color-literal)
+      echo "raw color literal in UI code — use theme tokens; color lives in the stylesheet." ;;
+    command-safety-unchecked)
+      echo "that source's COMMAND_SAFETY_DENY_PATTERN could not be checked." ;;
+    command-safety-lines)
+      echo "that source does not carry exactly one COMMAND_SAFETY_DENY_PATTERN line." ;;
+    command-safety-unreadable)
+      echo "that source's COMMAND_SAFETY_DENY_PATTERN could not be read by the settings loader." ;;
+    command-safety-empty)
+      echo "that source configures an empty COMMAND_SAFETY_DENY_PATTERN." ;;
+    command-safety-not-an-ere)
+      echo "that source's COMMAND_SAFETY_DENY_PATTERN is not a readable POSIX ERE." ;;
+    command-safety-missed)
+      echo "that source's policy no longer refuses a command it documents as refused; the command follows." ;;
+    command-safety-over)
+      echo "that source's policy now refuses a command it documents as allowed; the command follows." ;;
+    ci-correlation-copy)
+      echo "a caller carries its own scope_current_run or def bucket/def runid — source skills/github/scripts/lib/ci-run-correlation.sh instead." ;;
+    raw-command-new)
+      echo "raw Command::new — external processes go through process::Hardened." ;;
+    fixture-home)
+      echo "fixture HOME without KENDEX_REAL_HOME on the next line — that command would run in the dev sandbox." ;;
+    fixture-diff)
+      echo "the crates/*/tests diff the rooted() rule reads could not be produced." ;;
+    fixture-scan)
+      echo "the temporary fixture declarations could not be checked." ;;
+    unrooted-fixture)
+      echo "temporary fixture bypasses rooted(): import crates/test_util.rs and bind the canonical root on the next source line." ;;
+    bash32-lint)
+      echo "tools/bash32-lint refused the tree — a Bash 4+ construct, a file that does not parse, or a scan that could not run; its own first line above names which." ;;
+    render-changed-set)
+      echo "the changed-file set for the render rule could not be read." ;;
+    render-tracked-set)
+      echo "the tracked render set could not be read." ;;
+    render-committed-set)
+      echo "the committed render set could not be read." ;;
+    missing-render)
+      echo "a render source changed without its tracked render — land the render in the same change; the pairs follow." ;;
+    commit-changes)
+      echo "product changes could not be classified, so no compile lane could be scheduled." ;;
+    tauri-dependency)
+      echo "crates/core must not depend on tauri." ;;
+    crate-lints)
+      echo "that manifest is missing [lints] workspace = true — workspace lints are not inherited." ;;
+    cargo-check)
+      printf 'cargo check failed for %s.\n' "$2" ;;
+    clippy)
+      printf 'cargo clippy failed for %s.\n' "$2" ;;
+    cargo-fmt)
+      echo "cargo fmt --check refused the workspace." ;;
+    touched-set)
+      echo "the touched-file set for the suite lane could not be read at that step." ;;
+    missing-tool)
+      printf '%s is required to read a Pi package.json for its test script.\n' "$2" ;;
+    missing-peers)
+      printf '%s has no node_modules; install its peers as its step in .github/workflows/skill-tests.yml does.\n' "$2" ;;
+    suite)
+      echo "that suite failed; its own output above names the case." ;;
+    rustup-targets)
+      echo "rustup could not list installed targets, so the cross-target checks could not run." ;;
+    missing-target)
+      printf 'that Rust target is not installed: run rustup target add %s.\n' "$2" ;;
+    cross-check)
+      echo "the core and CLI test targets failed to compile for that target." ;;
+    cargo-doc)
+      echo "cargo doc failed." ;;
+    test-binary-signal)
+      echo "a test binary died by that signal before any verdict; rebuild that artifact under target/ to rule out a corrupt binary before reading the suite as red. The death line follows." ;;
+    cargo-test)
+      echo "the workspace test run failed." ;;
+    ui-check)
+      printf 'npm run --prefix ui %s failed.\n' "$2" ;;
+    argument)
+      echo "that argument is not one this script takes; usage: tools/guard [--full]." ;;
+    *)
+      echo "no explanation is defined for this key: tools/guard is broken." ;;
+  esac
+}
+refuse() { # KEY VALUE — guard could not run at all
+  printf 'guard: %s=%s\n' "$1" "$2" >&2
+  finding_text "$1" "$2" >&2
+  exit 2
+}
+
 FULL=0
 case "${1:-}" in
   --full) FULL=1; shift ;;
@@ -25,18 +137,12 @@ case "${1:-}" in
     exit 0
     ;;
 esac
-[ "$#" -eq 0 ] || { printf 'guard: unknown argument: %s\n' "$1" >&2; exit 2; }
+[ "$#" -eq 0 ] || refuse argument "$1"
 cd "$(git rev-parse --show-toplevel)"
-fail=0
-say() {
-  echo "guard: $1"
-  fail=1
-}
-
 # The staged bot-instructions check is a lane of the commit-guards chain that
 # runs this script; --full judges the working tree, which the chain does not.
 if [ "$FULL" -eq 1 ]; then
-  "$TOOLS_DIR/../.agents/skills/bot-instructions/scripts/bot-instructions" check || say "bot instruction check failed"
+  "$TOOLS_DIR/../.agents/skills/bot-instructions/scripts/bot-instructions" check || say bot-instructions "$?"
 fi
 
 # The hit lines below are a tracked file's own bytes, and a source file may
@@ -77,27 +183,114 @@ scan() {
 # install back to CLI-only.
 hits=$(scan 'class Kendex < Formula' '^packaging/homebrew/')
 [ -n "$hits" ] && {
+  say homebrew-formula "$(count_lines "$hits")"
   show "$hits"
-  say "a Homebrew formula claims the plain kendex name — the cask owns it; name the formula KendexCli"
 }
 
 hits=$(scan 'std::fs::read|crate::fs::read' '^crates/core/src/(source\.rs|check_catalog\.rs|library\.rs|source/(about|browse|bundles|catalog|config|discover|index|layout|meta|plugin_registry|slot)\.rs|source/browse/preview\.rs|render/skill\.rs|engine/(desired|ops))|^crates/app/src/editor\.rs')
 [ -n "$hits" ] && {
+  say catalog-fs-read "$(count_lines "$hits")"
   show "$hits" | head -5
-  say "raw filesystem read over catalog paths — go through source_read::SealedSource"
 }
 
 hits=$(scan '@tauri-apps/' '^ui/src/')
 [ -n "$hits" ] && {
+  say ui-tauri-import "$(count_lines "$hits")"
   show "$hits"
-  say "UI reaches Tauri directly — only generated ui/src/bindings.ts may import @tauri-apps"
 }
 
 hits=$(scan '#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?\b|rgba?\(|hsla?\(' '^ui/src/.*\.tsx?$')
 [ -n "$hits" ] && {
+  say ui-color-literal "$(count_lines "$hits")"
   show "$hits" | head -5
-  say "raw color literal in UI code — use theme tokens; color lives in the stylesheet"
 }
+
+# The two shipped command-safety policies must stay working EREs that refuse
+# what their own source says they refuse: kendex.settings.toml's own value and
+# the example in docs/authoring/command-safety.md, which a project copies. The
+# hook applies whatever policy it is given and cannot judge either, so the
+# check belongs here. The pattern is read back through the commit-guards
+# settings loader the hook itself uses; this lane adds no second parser.
+command_safety_policy() { # SOURCE_FILE — refuse|allow rows on stdin
+  local source="$1" rows
+  rows=$(cat)
+  local verdicts
+  # The verdicts are captured, not piped: a piped loop would run `say` in a
+  # subshell, leaving the parent's fail at 0 while a finding printed. A
+  # producer that dies takes the lane down with its own clause.
+  verdicts=$(
+    set -euo pipefail
+    guards="$TOOLS_DIR/../.agents/skills/commit-guards/scripts"
+    source "$guards/lib/common.sh"
+    source "$guards/lib/settings.sh"
+    gg_tmpdir
+    line=$(awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print; found++ }
+      END { exit(found == 1 ? 0 : 1) }' "$source") || { printf 'one-line\n'; exit 0; }
+    probe="$GG_TMP/kendex.settings.toml"
+    { printf '[env]\n'; printf '%s\n' "$line"; } >"$probe"
+    # Bind the extracted policy explicitly. An installed pre-commit turns on
+    # the loader's index mode, and a relative name would then be probed
+    # against the git index from a directory that is no repository. An
+    # explicit COMMIT_GUARDS_SETTINGS_FILE consults only itself, and an
+    # absolute path is never an index entry, so this reads the policy the
+    # lane extracted and nothing else. Child-local: the parent keeps its own
+    # environment, and the settings loader stays the only parser.
+    export COMMIT_GUARDS_SETTINGS_FILE="$probe"
+    pattern=$(gg_setting COMMAND_SAFETY_DENY_PATTERN "") || { printf 'unreadable\n'; exit 0; }
+    [ -n "$pattern" ] || { printf 'empty\n'; exit 0; }
+    while IFS='|' read -r want command; do
+      [ -n "$want" ] || continue
+      status=0
+      # A here-string, not a pipe: grep -q stops reading at its first match,
+      # and a shell writer piped into it takes a SIGPIPE that pipefail turns
+      # into a 141 this loop would read as a status the case below refuses.
+      grep -qE -- "$pattern" <<<"$command" || status=$?
+      case "$status" in
+        0 | 1) ;;
+        *) printf 'not-an-ere\n'; exit 0 ;;
+      esac
+      case "$want:$status" in
+        refuse:1) printf 'missed|%s\n' "$command" ;;
+        allow:0) printf 'over|%s\n' "$command" ;;
+      esac
+    done <<<"$rows"
+  ) || {
+    say command-safety-unchecked "$source"
+    return
+  }
+  while IFS='|' read -r verdict command; do
+    [ -n "$verdict" ] || continue
+    case "$verdict" in
+      one-line) say command-safety-lines "$source" ;;
+      unreadable) say command-safety-unreadable "$source" ;;
+      empty) say command-safety-empty "$source" ;;
+      not-an-ere) say command-safety-not-an-ere "$source" ;;
+      missed) say command-safety-missed "$source"; printf '  %s\n' "$command" ;;
+      over) say command-safety-over "$source"; printf '  %s\n' "$command" ;;
+    esac
+  done <<<"$verdicts"
+}
+
+# The rows are what each source states about itself: the settings comment names
+# the capped scopes it refuses and the uncapped ones it leaves alone, and the
+# doc names the calls its example blocks and the validation it allows.
+command_safety_policy kendex.settings.toml <<'ROWS'
+refuse|systemd-run --user --scope -p MemoryMax=64M cargo test -p kendex-core
+refuse|systemd-run --user --scope --property=MemoryHigh=512K ./target/debug/review_fixes
+allow|systemd-run --user --scope --slice=agents.slice cargo test -p kendex-core
+allow|systemd-run --user --scope -p MemoryMax=2G cargo test -p kendex-core
+ROWS
+command_safety_policy docs/authoring/command-safety.md <<'ROWS'
+refuse|qs -c vshell
+refuse|qs -p quickshell/vshell
+refuse|pkill quickshell
+refuse|pkill -f quickshell
+refuse|git status && qs -c vshell
+allow|scripts/validate qml
+allow|git status
+allow|qs -c test-fixture
+ROWS
+
 
 # One run scoping: skills/github/scripts/lib/ci-run-correlation.sh holds the
 # scope_current_run and the jq taxonomy (def bucket, def runid) that orch
@@ -105,8 +298,8 @@ hits=$(scan '#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?\b|rgba?\(|hsla?\(' '^ui/src/.*\.ts
 # the drift the library ended; the scan reads the spelling those files use.
 hits=$(scan '^scope_current_run\(\)|def (bucket|runid):' '^(skills/orch/scripts/ci-wait|skills/github/scripts/commands/[^/]+\.sh)$')
 [ -n "$hits" ] && {
+  say ci-correlation-copy "$(count_lines "$hits")"
   show "$hits"
-  say "a caller carries its own scope_current_run or def bucket/def runid — source skills/github/scripts/lib/ci-run-correlation.sh instead"
 }
 
 # One hardened constructor builds every external process (invariant 13);
@@ -119,8 +312,8 @@ hits=$(scan '^scope_current_run\(\)|def (bucket|runid):' '^(skills/orch/scripts/
 # and are likewise not tool launches.
 hits=$(scan 'Command::new' '^crates/(core|cli)/src/' | grep -v '^crates/core/src/process/')
 [ -n "$hits" ] && {
+  say raw-command-new "$(count_lines "$hits")"
   show "$hits" | head -5
-  say "raw Command::new — external processes go through process::Hardened"
 }
 
 # A command that hands the binary a fixture home must say on the spot that
@@ -137,8 +330,8 @@ hits=$(grep -rlE '\.env\("HOME"' crates/*/tests 2>/dev/null | while IFS= read -r
   ' "$f"
 done)
 [ -n "$hits" ] && {
+  say fixture-home "$(count_lines "$hits")"
   show "$hits" | head -5
-  say 'fixture HOME without KENDEX_REAL_HOME on the next line — that command would run in the dev sandbox'
 }
 
 # What the diff-scoped rules below diff against: HEAD, or on an unborn
@@ -157,7 +350,7 @@ fi
 # declared name, so rooting some other binding does not clear it. Diff-scoped:
 # older fixtures predate the helper and are not rewritten to satisfy it.
 temp_fixture_diff=$(git diff --no-color --unified=100000 --no-ext-diff --text "${diff_against[@]}" -- 'crates/*/tests/*.rs') ||
-  say "test fixture changes could not be read"
+  say fixture-diff unreadable
 if ! temp_fixture_hits=$(awk '
   function flush() { if (pending) print file ":" pending ": " pending_text; pending = 0 }
   /^diff --git / { flush(); file = $4; sub(/^b\//, "", file); next }
@@ -178,18 +371,18 @@ if ! temp_fixture_hits=$(awk '
   }
   END { flush() }
 ' <<<"$temp_fixture_diff"); then
-  say "temporary fixture declarations could not be checked"
+  say fixture-scan unreadable
 fi
 [ -n "$temp_fixture_hits" ] && {
+  say unrooted-fixture "$(count_lines "$temp_fixture_hits")"
   show "$temp_fixture_hits" | head -5
-  say 'temporary fixture bypasses rooted(): import crates/test_util.rs and bind the canonical root on the next source line'
 }
 
 # Bash 3.2 portability over the skill tree. The roster and the pattern set
 # are the lint's own; exit 1 is a construct, exit 2 a scan that could not
 # run, and neither is a pass. One line on purpose: the must-fail control in
 # tools/tests/guard.test.sh removes this lane by deleting it.
-"$TOOLS_DIR/bash32-lint" || say "tools/bash32-lint refused the tree — a Bash 4+ construct, or a scan that could not run"
+"$TOOLS_DIR/bash32-lint" || say bash32-lint "$?"
 
 # A render source lands its renders in the same change: skills/<x>/<p>
 # renders to .agents/skills/<x>/<p>, an agent definition to one file per
@@ -214,15 +407,15 @@ agent_roots=(.claude/agents:md .codex/agents:toml .pi/agents:md)
 hook_roots=(.claude/hooks .codex/hooks .pi/kendex/hooks)
 render_roots=(.agents/skills "${agent_roots[@]%:*}" "${hook_roots[@]}")
 render_changed=$(git -c core.quotePath=false diff --name-only --no-renames "${diff_against[@]}") ||
-  { render_changed=""; say "the changed-file set for the render rule could not be read"; }
+  { render_changed=""; say render-changed-set unreadable; }
 # Tracked is the index UNION what HEAD carries: the index alone drops a render
 # staged for deletion, which is the moment the outlives clause below exists to
 # judge, and skipping the rule there would accept the drift.
 render_tracked=$(git -c core.quotePath=false ls-files -- "${render_roots[@]}") ||
-  { render_tracked=""; say "the tracked render set could not be read"; }
+  { render_tracked=""; say render-tracked-set unreadable; }
 if [ "$have_head" = 1 ]; then
   render_committed=$(git -c core.quotePath=false ls-tree -r --name-only HEAD -- "${render_roots[@]}") ||
-    { render_committed=""; say "the committed render set could not be read"; }
+    { render_committed=""; say render-committed-set unreadable; }
   render_tracked="$render_tracked
 $render_committed"
 fi
@@ -266,8 +459,8 @@ while IFS= read -r f; do
   esac
 done <<<"$render_changed"
 [ -n "$render_hits" ] && {
+  say missing-render "$(count_lines "$render_hits")"
   show "$render_hits" | head -5
-  say "a render source changed without its tracked render — land the render in the same change"
 }
 
 # The changelog gate owns commit change collection and product-path matching.
@@ -297,7 +490,7 @@ if [ "$FULL" -eq 0 ]; then
   ) >"$GUARD_TMP/product.z"
   classification_status=$?
   if [ "$classification_status" -ne 0 ]; then
-    say "product changes could not be classified"
+    say commit-changes "$classification_status"
     exit "$fail"
   fi
   while IFS= read -r -d '' f; do
@@ -329,23 +522,23 @@ fi
 
 if [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] || [ "${#rust_manifests[@]}" -gt 0 ]; }; then
   if cargo tree -p kendex-core -e normal 2>/dev/null | grep -qE '\btauri v'; then
-    say "crates/core must not depend on tauri"
+    say tauri-dependency crates/core
   fi
   for m in crates/*/Cargo.toml; do
     [ -f "$m" ] || continue
     grep -A1 '^\[lints\]' "$m" | grep -q 'workspace *= *true' ||
-      say "$m: missing [lints] workspace = true — workspace lints are not inherited"
+      say crate-lints "$m"
   done
   if [ "$rust_all" -eq 1 ]; then
-    cargo check --workspace --all-targets || say "cargo check failed"
-    cargo clippy --workspace --all-targets --quiet -- -D warnings || say "clippy failed"
+    cargo check --workspace --all-targets || say cargo-check workspace
+    cargo clippy --workspace --all-targets --quiet -- -D warnings || say clippy workspace
   else
     for manifest in ${rust_manifests[@]+"${rust_manifests[@]}"}; do
-      cargo check --manifest-path "$manifest" --all-targets || say "$manifest failed to compile"
-      cargo clippy --manifest-path "$manifest" --all-targets --quiet -- -D warnings || say "$manifest clippy failed"
+      cargo check --manifest-path "$manifest" --all-targets || say cargo-check "$manifest"
+      cargo clippy --manifest-path "$manifest" --all-targets --quiet -- -D warnings || say clippy "$manifest"
     done
   fi
-  cargo fmt --check || say "cargo fmt --check failed"
+  cargo fmt --check || say cargo-fmt workspace
 fi
 
 # Completion validation runs the suites CI runs for the trees this branch
@@ -357,6 +550,14 @@ fi
 # working tree and index carry, so a render-only sync counts for its source.
 # An untouched suite is not evidence about this change and is not run here;
 # CI runs every suite on the merged tree.
+# A Pi package whose suite value-imports Pi has no lockfile for those peers;
+# CI installs them in the step before its suite, so a checkout without that
+# install names the missing peers beside the failing suite rather than in
+# place of it.
+pi_suite_failed() { # DIR
+  [ -d "$1/node_modules" ] || say missing-peers "$1"
+  say suite "$1"
+}
 if [ "$FULL" -eq 1 ]; then
   suites_base=HEAD
   if git rev-parse --verify -q origin/main >/dev/null; then
@@ -368,11 +569,11 @@ if [ "$FULL" -eq 1 ]; then
   # failed diff pass on a good `git status`. The status read adds what the
   # diff against the working tree cannot see: untracked files.
   branch_touched=$(git -c core.quotePath=false diff --no-renames --name-only "$suites_base" --) ||
-    { branch_touched=""; say "the touched-file set for the suite lane could not be read (branch diff)"; }
+    { branch_touched=""; say touched-set branch-diff; }
   tree_touched=$(git -c core.quotePath=false status --porcelain --untracked-files=all | cut -c4- | sed 's/^.* -> //') ||
-    { tree_touched=""; say "the touched-file set for the suite lane could not be read (working tree)"; }
+    { tree_touched=""; say touched-set working-tree; }
   touched=$(printf '%s\n%s\n' "$branch_touched" "$tree_touched" | sort -u) ||
-    { touched=""; say "the touched-file set for the suite lane could not be read (merge)"; }
+    { touched=""; say touched-set merge; }
   suite_dirs=""
   while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -395,33 +596,28 @@ if [ "$FULL" -eq 1 ]; then
       pi-extensions/*)
         [ -f "$d/package.json" ] || continue
         if ! command -v jq >/dev/null 2>&1; then
-          say "jq is required to read $d/package.json for its test script"
+          say missing-tool jq
           continue
         fi
-        # A package whose suite value-imports Pi has no lockfile for those
-        # peers; CI installs them in the step before its suite, and a checkout
-        # without that install fails here naming the cause, not the suite.
-        remedy=""
-        [ -d "$d/node_modules" ] || remedy=" — $d has no node_modules; install its peers as its step in .github/workflows/skill-tests.yml does"
         if jq -e '.scripts["test:ci"]' "$d/package.json" >/dev/null; then
-          (cd "$d" && npm run test:ci) || say "$d suite failed (npm run test:ci)$remedy"
+          (cd "$d" && npm run test:ci) || pi_suite_failed "$d"
         elif jq -e '.scripts.test' "$d/package.json" >/dev/null; then
-          (cd "$d" && npm test) || say "$d suite failed (npm test)$remedy"
+          (cd "$d" && npm test) || pi_suite_failed "$d"
         fi
         ;;
       *)
         [ -d "$d/tests" ] || continue
         if [ -f "$d/tests/run-all.sh" ]; then
           echo "=== $d/tests/run-all.sh"
-          bash "$d/tests/run-all.sh" || say "$d suite failed"
+          bash "$d/tests/run-all.sh" || say suite "$d/tests/run-all.sh"
           continue
         fi
         for t in "$d"/tests/*.sh "$d"/tests/*.test.mjs; do
           [ -f "$t" ] || continue
           echo "=== $t"
           case "$t" in
-            *.mjs) node --test "$t" || say "$d suite failed ($t)" ;;
-            *) bash "$t" || say "$d suite failed ($t)" ;;
+            *.mjs) node --test "$t" || say suite "$t" ;;
+            *) bash "$t" || say suite "$t" ;;
           esac
         done
         ;;
@@ -433,18 +629,18 @@ if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
   # The app needs each platform's C toolchain; core and CLI can cross-check.
   cross_targets="aarch64-apple-darwin x86_64-pc-windows-msvc"
   if ! installed_targets=$(rustup target list --installed); then
-    say "rustup could not list installed targets: the cross-target checks could not run"
+    say rustup-targets unreadable
   else
     for cross_target in $cross_targets; do
       if ! grep -Fxq "$cross_target" <<<"$installed_targets"; then
-        say "Rust target $cross_target is not installed: run rustup target add $cross_target"
+        say missing-target "$cross_target"
       else
         cargo check -p kendex-core -p kendex-cli --all-targets --target "$cross_target" ||
-          say "$cross_target core and CLI test targets failed to compile"
+          say cross-check "$cross_target"
       fi
     done
   fi
-  cargo doc --no-deps --document-private-items --workspace --quiet || say "cargo doc failed"
+  cargo doc --no-deps --document-private-items --workspace --quiet || say cargo-doc workspace
   # A test binary that dies by a signal reached no verdict: the runner
   # reports the executable's death, not an assertion. A binary whose code
   # pages come back wrong from disk dies this way, and rebuilding that
@@ -459,18 +655,21 @@ if [ "$FULL" -eq 1 ] && [ -f Cargo.toml ]; then
       death=$(grep -m1 -o "process didn't exit successfully: .*(signal: [^)]*)" "$tests_log")
     fi
     if [ -n "$death" ]; then
-      say "a test binary died by a signal before any verdict: ${death#*successfully: }; rebuild that artifact under target/ to rule out a corrupt binary before reading the suite as red"
+      signal=$(printf '%s' "$death" | sed -n 's/.*(signal: \([0-9][0-9]*\).*/\1/p')
+      [ -n "$signal" ] || signal=unknown
+      say test-binary-signal "$signal"
+      printf '%s\n' "${death#*successfully: }"
     else
-      say "tests failed"
+      say cargo-test workspace
     fi
   fi
   rm -f "$tests_log"
 fi
 if [ "$ui_changed" -eq 1 ] && [ -f ui/package.json ]; then
-  npm run --prefix ui check:types || say "tsc failed"
-  npm run --prefix ui check:lint || say "biome failed"
+  npm run --prefix ui check:types || say ui-check check:types
+  npm run --prefix ui check:lint || say ui-check check:lint
   if [ "$FULL" -eq 1 ]; then
-    npm run --prefix ui test -- --silent || say "vitest failed"
+    npm run --prefix ui test -- --silent || say ui-check test
   fi
 fi
 

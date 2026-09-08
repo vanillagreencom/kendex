@@ -3,7 +3,7 @@
 # and the clone then commits through the armed hooks in both directions — one
 # package verdict has to be reachable from a real commit, or the chain is
 # wired to nothing. Every refusal is setup's own report (exit status, the
-# `hooks armed` line withheld, the remedy it names); what the installer says
+# `setup: armed=` line withheld, the remedy it names); what the installer says
 # about each hook is the installer's suite to pin. The refusing direction
 # runs first in every pair.
 set -euo pipefail
@@ -97,7 +97,7 @@ echo "=== hooks the installer will not vouch for stop setup short of armed ==="
 # The installer refuses an interpreter it cannot verify rather than rewriting
 # somebody else's hook, and names each hook it refused; that report is the
 # installer's to pin. setup's own report of that world is the exit status,
-# the `hooks armed` line withheld, and the remedy it names.
+# the `setup: armed=` line withheld, and the remedy it names.
 new_fixture foreign
 for hook in pre-commit commit-msg; do
   printf '#!/usr/bin/env bash\necho "%s ran"\n' "$hook" >"$HOOKS/$hook"
@@ -105,7 +105,7 @@ for hook in pre-commit commit-msg; do
 done
 RC=0
 OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"hooks armed"*) false ;; *"--uninstall"*) true ;; *) false ;; esac \
+[ "$RC" -ne 0 ] && case "$OUT" in *"setup: armed="*) false ;; *"setup: not-armed="*) true ;; *) false ;; esac \
   && ok "setup stops with its remedy instead of reporting the clone armed" \
   || bad "setup stops with its remedy instead of reporting the clone armed" "rc=$RC out=$OUT"
 
@@ -128,7 +128,7 @@ mv "$HOOKS/commit-msg.new" "$HOOKS/commit-msg"
 chmod +x "$HOOKS/commit-msg"
 RC=0
 OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"--uninstall"*) true ;; *) false ;; esac \
+[ "$RC" -ne 0 ] && case "$OUT" in *"setup: not-armed="*) true ;; *) false ;; esac \
   && ok "control: setup refuses that clone and prints the remedy" \
   || bad "control: setup refuses that clone and prints the remedy" "rc=$RC out=$OUT"
 # Step one, exactly as the message spells it.
@@ -145,7 +145,7 @@ OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
 rm -f "$HOOKS/commit-msg"
 RC=0
 OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && case "$OUT" in *"hooks armed"*) true ;; *) false ;; esac \
+[ "$RC" -eq 0 ] && case "$OUT" in *"setup: armed="*) true ;; *) false ;; esac \
   && ok "and the remedy walked through leaves the clone armed" \
   || bad "the remedy walked through arms the clone" "rc=$RC out=$OUT"
 { grep -qF "$SENTINEL" "$HOOKS/commit-msg" && grep -qF "$SENTINEL" "$HOOKS/pre-commit"; } \
@@ -179,7 +179,7 @@ git -C "$E" init -q
 git -C "$E" config core.hooksPath "$E/other-hooks"
 RC=0
 OUT="$(cd "$E" && ./tools/setup 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"hooks armed"*) false ;; *"not armed"*) true ;; *) false ;; esac \
+[ "$RC" -ne 0 ] && case "$OUT" in *"setup: armed="*) false ;; *"setup: not-armed="*) true ;; *) false ;; esac \
   && ok "a configured hooks path stops setup instead of wiring a hook git ignores" \
   || bad "a configured hooks path stops setup instead of wiring a hook git ignores" "rc=$RC out=$OUT"
 [ ! -e "$E/.git/hooks/pre-commit" ] && [ ! -e "$E/.git/hooks/commit-msg" ] \
@@ -194,7 +194,7 @@ NOREPO="$TMP/no-repo"
 mkdir -p "$NOREPO"
 RC=0
 OUT="$(cd "$NOREPO" && "$R/tools/setup" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"hooks armed"*) false ;; *"not inside a git work tree"*) true ;; *) false ;; esac \
+[ "$RC" -ne 0 ] && case "$OUT" in *"setup: armed="*) false ;; *"setup: worktree=none"*) true ;; *) false ;; esac \
   && ok "setup run outside a work tree names that, not the installer" \
   || bad "setup run outside a work tree names that, not the installer" "rc=$RC out=$OUT"
 
