@@ -1,33 +1,14 @@
-import { describe, expect, test } from "bun:test";
-
+import { expect, test } from "bun:test";
 import { lineCount } from "../tool-renderer/text.js";
 
-describe("lineCount", () => {
-	test("empty string is zero", () => {
-		expect(lineCount("")).toBe(0);
-	});
-
-	test("single line without trailing newline", () => {
-		expect(lineCount("hello")).toBe(1);
-	});
-
-	test("two lines without trailing newline", () => {
-		expect(lineCount("a\nb")).toBe(2);
-	});
-
-	test("ignores a single trailing LF", () => {
-		expect(lineCount("a\nb\n")).toBe(2);
-	});
-
-	test("ignores a single trailing CRLF", () => {
-		expect(lineCount("a\r\nb\r\n")).toBe(2);
-	});
-
-	test("lone newline is zero lines of output", () => {
-		expect(lineCount("\n")).toBe(0);
-	});
-
-	test("keeps blank interior lines", () => {
-		expect(lineCount("a\n\nb\n")).toBe(3);
-	});
-});
+for (const row of [
+	{ text: "", expected: 0 },
+	{ text: "hello", expected: 1 },
+	{ text: "a\nb", expected: 2 },
+	{ text: "a\nb\n", expected: 2 },
+	{ text: "a\r\nb\r\n", expected: 2 },
+	{ text: "\n", expected: 0 },
+	{ text: "a\n\nb\n", expected: 3 },
+]) {
+	test(`lineCount ${JSON.stringify(row.text)}`, () => expect(lineCount(row.text)).toBe(row.expected));
+}

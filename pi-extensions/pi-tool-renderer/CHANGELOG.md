@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Batch refusal, timeout, and result notices start with stable keys and values.
+
 ### 2.0.1
 
 - Pi 0.85.1 parity: the re-registered `edit` tool forwards Pi's `prepareArguments` hook from the wrapped definition. Argument shapes Pi's own tool normalizes before validation are accepted with the renderer active instead of failing validation.

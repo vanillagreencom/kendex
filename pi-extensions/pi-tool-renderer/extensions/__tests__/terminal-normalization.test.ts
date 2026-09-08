@@ -1,3 +1,4 @@
+import { useWorld } from "./helpers/world.js";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -6,6 +7,8 @@ import {
 	normalizeTerminalText,
 	splitTerminalLines,
 } from "../tool-renderer/text.js";
+
+useWorld();
 
 describe("terminal output normalization", () => {
 	test("normalizes CRLF and lone CR before line processing", () => {
