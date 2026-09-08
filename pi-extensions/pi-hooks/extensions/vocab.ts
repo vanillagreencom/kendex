@@ -10,6 +10,9 @@
  * on one side and not the other.
  */
 
+/** Public built-in tool vocabulary for extension consumers. */
+export const PI_BUILTIN_TOOLS = ["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"];
+
 /**
  * Tool names follow `render::vocab::claude_tool_name`.
  * tests/vocab.test.ts checks each supported tool through the public function.
@@ -92,3 +95,6 @@ const CLAUDE_SESSION_SOURCES = new Map<string, string>([
 export function claudeSessionSource(reason: string): string {
 	return CLAUDE_SESSION_SOURCES.get(reason.trim().toLowerCase()) ?? reason.trim();
 }
+
+/** Public session-start vocabulary for extension consumers. */
+export const PI_SESSION_REASONS = ["startup", "reload", "new", "resume", "fork"];
