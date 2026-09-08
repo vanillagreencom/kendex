@@ -19,6 +19,8 @@ set -euo pipefail
 OUTPUT=""
 RC=0
 FAILED_LINE=""
+PAYLOAD_ERR=""
+PATH_ERR=""
 # Every line this hook writes, and the only place its text lives. The first
 # line is the contract a reader parses, `session-drift-check: <key>=<value>`: a
 # stable key for the condition and the value acted on — the missing tool, the
@@ -34,7 +36,14 @@ notice() { # KEY VALUE
   case "$1=$2" in
     missing-tools=*) printf 'kendex drift check skipped: %s is not on PATH\n' "${2//,/, }" ;;
     payload=invalid-json) echo "kendex drift check skipped: the session payload is not valid JSON" ;;
-    path=*) printf 'kendex check could not run: project directory %s is not accessible; drift status unknown\n' "$2" ;;
+    payload=unreadable)
+      echo "the session payload could not be read; the drift report below stands on its own"
+      printf '%s\n' "$PAYLOAD_ERR"
+      ;;
+    path=*)
+      printf 'kendex check could not run: project directory %s is not accessible; drift status unknown\n' "$2"
+      printf '%s\n' "$PATH_ERR"
+      ;;
     drift=found) printf '%s\n' "$OUTPUT" ;;
     check=could-not-run)
       # The status kendex left is a value, not a number inside a sentence: the
@@ -71,11 +80,16 @@ notice() { # KEY VALUE
 # what records it.
 trap 'rc=$?; FAILED_LINE=$LINENO; notice exit "$rc"; exit 0' ERR
 
-INPUT=$(cat || true)
+# cat's own words are captured, not left to reach a stream this hook does not
+# write: a session must start either way, so the read failure is reported under
+# its own key on stdout and the check runs on.
+INPUT=$(cat 2>&1) || { PAYLOAD_ERR="$INPUT"; INPUT=""; }
 
 if [ "${KENDEX_DRIFT_HOOK:-}" = "off" ]; then
   exit 0
 fi
+# After the switch, so `off` silences this too.
+[ -z "$PAYLOAD_ERR" ] || notice payload unreadable
 
 # Fresh starts only. Claude Code sends source startup|resume|clear|compact;
 # a resumed or compacted session already carries the report, and a per-compact
@@ -112,10 +126,13 @@ fi
 # Enter it separately so only kendex's own exit code drives classification.
 # `--` so a directory whose name starts with a dash is a path, not an option.
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
-if ! cd -- "$PROJECT_DIR" 2>/dev/null; then
+# The probe carries cd's words into the notice; a substitution cannot move
+# this shell, so the second cd is the move and the first is the cause.
+if ! PATH_ERR=$( (cd -- "$PROJECT_DIR") 2>&1 ); then
   notice path "$PROJECT_DIR"
   exit 0
 fi
+cd -- "$PROJECT_DIR" || { notice path "$PROJECT_DIR"; exit 0; }
 
 # kendex's exit code IS the classification; under errexit a bare failing
 # assignment would abort before `RC=$?` could run.

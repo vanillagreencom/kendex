@@ -60,6 +60,28 @@ assert_cause() { # WANT LABEL
   fi
 }
 
+# What a probe says here is what the hook must have replayed: the row runs
+# the same command rather than pinning a wording, so it holds on any platform
+# and on any version of the tool. `cause=present` cannot serve this — the
+# hook's own English is also a line under line 1.
+assert_replays() { # PROBE_OUTPUT LABEL
+  if [ -z "$1" ]; then
+    printf 'FAIL %s: the probe said nothing, so the row would pass on anything\n' "$2"
+    failed=$((failed + 1))
+    return
+  fi
+  case "$(cat "$scratch/stderr")" in
+    *"$1"*)
+      printf 'PASS %s\n' "$2"
+      passed=$((passed + 1))
+      ;;
+    *)
+      printf 'FAIL %s: the cause is not under the keyed line: %s\n' "$2" "$(cat "$scratch/stderr")"
+      failed=$((failed + 1))
+      ;;
+  esac
+}
+
 assert_first() { # WANT LABEL
   if [ "$first" = "$1" ]; then
     printf 'PASS %s\n' "$2"
@@ -87,6 +109,8 @@ mkdir -p "$scratch/outside"
 printf 'gitdir: /missing\n' >"$scratch/outside/.git"
 check 2 'git status' 'an unresolved Git worktree refuses' "$scratch/outside"
 assert_first 'command-safety: git=unreadable' 'and the git key names the working directory it could not resolve'
+assert_replays "$(git -C "$scratch/outside" rev-parse --show-toplevel 2>&1 || true)" \
+  "and git's own words on the entry it could not read stand under it"
 mv "$scratch/outside/.git" "$scratch/unresolved-git-marker"
 printf '[env\n' >"$repo/kendex.settings.toml"
 check 2 'git status' 'malformed project settings refuse'

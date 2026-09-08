@@ -79,13 +79,15 @@ cwd="$(jq -r 'if .cwd == null then "" elif .cwd | type == "string" then .cwd els
 # refusal names the path it was asked for and replays the cause under it.
 requested_cwd="$cwd"
 cwd="$(cd -- "$cwd" 2>&1 && pwd -P)" || refuse cwd "$requested_cwd" "$cwd"
+# git's words come back in place of the path when it cannot answer, so the
+# refusal below has the cause to replay: which .git entry it could not read.
 root_status=0
-root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" || root_status=$?
+root="$(git -C "$cwd" rev-parse --show-toplevel 2>&1)" || root_status=$?
 if [ "$root_status" -ne 0 ]; then
   at="$cwd"
   while [ "$at" != / ]; do
     if [ -e "$at/.git" ] || [ -L "$at/.git" ]; then
-      refuse git unreadable
+      refuse git unreadable "$root"
     fi
     at="${at%/*}"
     [ -n "$at" ] || at=/

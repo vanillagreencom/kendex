@@ -217,18 +217,24 @@ echo "session-drift-check: unreadable stdin"
 # readable stdin.
 FAILCAT_BIN="$TMP_ROOT/failcat"
 mkdir -p "$FAILCAT_BIN"
-printf '#!/usr/bin/env bash\nexit 1\n' >"$FAILCAT_BIN/cat"
+printf '#!/usr/bin/env bash\necho "cat: -: Input/output error" >&2\nexit 1\n' >"$FAILCAT_BIN/cat"
 chmod +x "$FAILCAT_BIN/cat"
 set +e
 out="$(env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
   PATH="$FAILCAT_BIN:$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
-  FAKE_RC=1 FAKE_OUT="$REPORT" bash "$HOOK" </dev/null 2>/dev/null)"
+  FAKE_RC=1 FAKE_OUT="$REPORT" bash "$HOOK" </dev/null 2>"$TMP_ROOT/stderr")"
 rc=$?
 set -e
 printf '%s' "$out" >"$TMP_ROOT/stdout"
 assert_eq "$rc" 0 "exits 0 when the payload read fails"
-assert_eq "keyed=$(keyed_of) relayed=$(relayed_of)" 'keyed=drift=found relayed=present' \
-  "still relays the report when the payload read fails"
+# The read failure is reported under its own key on stdout, with cat's words
+# below it, and nothing reaches the stream this hook does not write.
+assert_eq "keyed=$(keyed_of) relayed=$(relayed_of)" 'keyed=payload=unreadable relayed=present' \
+  "a failed payload read is reported under its own key"
+assert_contains "$out" 'cat: -: Input/output error' "carrying the reader's own words"
+assert_contains "$out" "$REPORT" "and the report still follows it"
+assert_eq "$([ -s "$TMP_ROOT/stderr" ] && printf 'wrote' || printf 'empty')" empty \
+  "and nothing reaches stderr, a channel this hook does not write"
 
 echo "session-drift-check: environment switches"
 capture FAKE_RC=1 FAKE_OUT="$REPORT" KENDEX_DRIFT_HOOK=off
@@ -327,7 +333,11 @@ echo "session-drift-check: unusable project directory"
 capture FAKE_RC=1 FAKE_OUT="$REPORT" CLAUDE_PROJECT_DIR="$TMP_ROOT/does-not-exist"
 assert_eq "$rc" 0 "missing project dir exits 0"
 assert_eq "keyed=$(keyed_of)" "keyed=path=$TMP_ROOT/does-not-exist" \
-  "the unusable project directory is the value, rather than reading as clean"
+  "the unusable project directory is the value"
+# The same probe, run here: the row asserts the hook replayed what cd actually
+# said rather than a wording pinned by hand.
+cd_said="$( (cd -- "$TMP_ROOT/does-not-exist") 2>&1 || true)"
+assert_contains "$out" "${cd_said##*: }" "with cd's own words under it"
 assert_eq "$(cat "$ARGS_LOG")" "" "missing project dir never invokes kendex"
 
 echo "session-drift-check: dash-leading project directory"
