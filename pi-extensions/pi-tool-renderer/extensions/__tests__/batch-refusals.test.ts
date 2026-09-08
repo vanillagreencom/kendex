@@ -15,12 +15,16 @@ for (const row of [
 	test(`tool_batch refusal: ${row.name}`, async () => {
 		const { cwd } = world();
 		writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ kendex: { extensionManager: { config: { "@vanillagreen/pi-tool-renderer": { batchMaxCalls: row.max } } } } }));
-		let definition: { execute: (...args: unknown[]) => Promise<{ content: Array<{ text: string }>; isError?: boolean; details: { failed: number; items: Array<{ resultText: string }> } }> } | undefined;
+		let definition: { execute: (...args: unknown[]) => Promise<{ content: Array<{ text: string }>; isError?: boolean; details: { failed: number; items: Array<{ resultText: string }> } }>; renderResult: (...args: any[]) => { render: (width: number) => string[] } } | undefined;
 		registerToolBatch({ registerTool: (tool: typeof definition) => { definition = tool; } } as never, row.agent, cwd);
 		expect(definition).toBeDefined();
 		const result = await definition!.execute("batch-refusal", { calls: row.calls }, undefined, undefined, { cwd });
 		expect(result.isError).toBe(row.isError);
 		expect(result.details.failed).toBe(row.failed);
 		expect((result.details.items[0]?.resultText ?? result.content[0]!.text).split("\n")[0]).toBe(row.expected);
+		if (result.details.items.length === 0) {
+			const rendered = definition!.renderResult(result, { expanded: false, isPartial: false }, { bold: (text: string) => text, fg: (_token: string, text: string) => text }, { cwd }).render(100);
+			expect(rendered[0]).toBe(row.expected);
+		}
 	});
 }

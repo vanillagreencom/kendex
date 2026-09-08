@@ -352,7 +352,7 @@ export function registerToolBatch(pi: ExtensionAPI, agent: any, cwd: string): vo
 		renderResult(result: any, { expanded, isPartial }: any, theme: any, context: any) {
 			if (isPartial) return makeTruncatedLines(renderToolBatchCallText(context?.args, theme, context?.cwd ?? cwd));
 			const details = result.details as BatchToolDetails | undefined;
-			if (!details?.items) return makeTruncatedLines(textContent(result) || "(no output)");
+			if (!details?.items?.length) return makeTruncatedLines(textContent(result) || "(no output)");
 			return makeTruncatedLines(renderToolBatchText(details.items, theme, expanded, context?.cwd ?? cwd));
 		},
 	});
