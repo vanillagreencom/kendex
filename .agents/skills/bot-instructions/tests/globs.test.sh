@@ -86,7 +86,13 @@ PY
 export BI_ROOT
 
 # Every shape the dialect permits, each with the selection it makes over the
-# tree above: `pattern|selection`.
+# tree above: `pattern|selection`. A list an edit emptied would let the
+# assertions below supply the suite's success, so each loop here floors on
+# its own count.
+floor() { # BEFORE LABEL — at least one assertion since BEFORE
+  [ "$((BI_PASS + BI_FAIL))" -gt "$1" ] || { printf '%s asserted no row\n' "$2" >&2; exit 2; }
+}
+before=$((BI_PASS + BI_FAIL))
 for row in 'a/**|a/b/g a/f' 'a/*|a/f' '**|a/b/g a/f ab/h docs/x.md solo top.md' \
            '*|solo top.md' '*.md|top.md' '**/*.md|docs/x.md top.md' '**/g|a/b/g' \
            'a/**/g|a/b/g' 'a/*/g|a/b/g' 'a/b/**|a/b/g' 'a?f|-' 'a**|a/b/g a/f ab/h' \
@@ -94,6 +100,7 @@ for row in 'a/**|a/b/g a/f' 'a/*|a/f' '**|a/b/g a/f ab/h docs/x.md solo top.md' 
            'docs|docs/x.md' 'doc?|-'; do
   vector "${row%%|*}" agree "${row#*|}"
 done
+floor "$before" 'the agree table'
 
 # The harness's own control, on inputs the dialect refuses. An empty component
 # is the sharpest: git normalizes `a//f` to `a/f` and selects a file, and this
@@ -111,6 +118,7 @@ vector '../a/f' refused
 # sequences, and this is the difference: a ban list closes the shapes someone
 # thought of, and every byte below is outside the class whether or not anyone
 # named it.
+before=$((BI_PASS + BI_FAIL))
 for bad_pattern in '{a,ab}/**' '@(a|ab)/**' 'a,b' 'a#b' 'a!b' 'a"b'; do
   if python3 -c "
 import sys, os
@@ -128,6 +136,7 @@ raise SystemExit(1)
     bad "the dialect refuses: $bad_pattern"
   fi
 done
+floor "$before" 'the refused-pattern table'
 
 # `**/` translates to `(?:[^/]*/)*`, and nesting those is exponential in the
 # number of `**`: rejecting a deep path took seconds at a dozen, inside the
@@ -140,11 +149,17 @@ sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
 from lib import globs
 
 paths = ["a", "a/b", "a/x/b", "b", "a/x/y/b", "a/b/c", "x/b", "a/x/y/z/b"]
+compared = 0
 for n in range(1, 6):
     many = "a/" + "**/" * n + "b"
     for p in paths:
         if bool(globs.matching(many, [p])) != bool(globs.matching("a/**/b", [p])):
             sys.exit(f"{many!r} and 'a/**/b' disagree on {p!r}")
+        compared += 1
+# The equivalence half floors on its own count: an emptied path list would
+# leave the cost probe below to supply this assertion's success.
+if not compared:
+    sys.exit("the collapse matrix compared no path")
 # In a child with a hard deadline: uncollapsed, twenty `**` against a
 # twenty-deep path does not return in any time a CI lane will wait, and a
 # control that waits with it reports a timeout rather than a failure.
