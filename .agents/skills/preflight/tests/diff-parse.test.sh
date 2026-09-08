@@ -270,7 +270,7 @@ control: the added dead citation fires with no attributes row|attrs-none|--stage
 --staged still reads the added line under a '-diff' row|attrs-nodiff|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 the 'binary' attribute macro cannot withhold them either|attrs-macro|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 --base still reads the added line under a '-diff' row|attrs-base|-|-|1|docs/staged.md:3: [docs-cited-paths]|-
-a changed file whose own bytes are binary contributes no lines|binary-nul|--staged|-|0|-|preflight: clean (1 changed file(s))
+a changed file whose own bytes are binary contributes no lines|binary-nul|--staged|-|0|-|preflight: clean=1
 control: the same bytes without the NUL are read as text|binary-nonul|--staged|-|1|docs/staged.md:1: [docs-cited-paths]|-
 a NUL past the leading 8000 bytes leaves the file text, as it is to git|binary-window|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 a binary file still reaches the whole-file lanes; only its lines are withheld|binary-wholefile-nul|--staged|-|1|tests/new.test.sh:0: [unwired-suite]|-
@@ -287,10 +287,10 @@ a plain text carrier cannot forge a header over another file's record|plain-text
 control: the plain text fixture without the forged line reports the same finding|plain-text-plain|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 a forged '---'/'+++' PAIR cannot re-point the parse either|forged-header-pair|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 a rejected header record leaves the lines after it attributed to their own file|forged-line-is-content|--staged|-|1|zz.txt:4: [hardcoded-temp-path]|-
-content the run cannot read is exit 2, naming the path|unreadable|-|nonroot|2|-|docs/new.md
+content the run cannot read is exit 2, naming the path|unreadable|-|nonroot|2|-|preflight: unreadable=docs/new.md
 control: the same file readable produces the ordinary verdict|readable|-|-|1|docs/new.md:3: [docs-cited-paths]|-
 control: the staged file reports the ordinary verdict while its blob is readable|vanished-blob-control|--staged|-|1|docs/new.md:3: [docs-cited-paths]|-
-a staged blob the index lookup cannot materialize is exit 2, naming the path|vanished-blob|--staged|-|2|-|docs/new.md
+a staged blob the index lookup cannot materialize is exit 2, naming the path|vanished-blob|--staged|-|2|-|preflight: unreadable=docs/new.md
 ROWS
 pf_table "what the diff parse may withhold" "$rows"
 

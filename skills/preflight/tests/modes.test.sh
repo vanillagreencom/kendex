@@ -201,20 +201,117 @@ a non-ignored untracked file is in scope; an ignored one is not|untracked|-|-|1|
 --staged sees only the index, so the untracked file is out of scope|untracked|--staged|-|0|-|-
 an untracked doc in an untracked directory has its dead citation reported|newdir|-|-|1|docs/new/guide.md:3: [docs-cited-paths]|cites a path that does not exist: docs/new/missing.md
 content comes from the index, so line 3 is the staged line|rewound|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
-an untouched branch has nothing in the default scope|everything|-|-|0|-|preflight: clean (0 changed file(s))
+an untouched branch has nothing in the default scope|everything|-|-|0|-|preflight: clean=0
 --all reaches the committed violation the default scope ignores|everything|--all|-|1|docs/legacy.md:3: [docs-cited-paths]|changed file(s)
 --base main sees the commit made on the branch|based|--base main|-|1|docs/loose.md:3: [docs-cited-paths]|-
---base HEAD compares against itself and finds nothing|based|--base HEAD|-|0|-|preflight: clean
+--base HEAD compares against itself and finds nothing|based|--base HEAD|-|0|-|preflight: clean=0
 --repo relocates the run without a cd|repo-relocate|--repo {R} --base main|-|1|docs/loose.md:3: [docs-cited-paths]|-
-an unknown flag is a usage error|based|--nonsense|-|2|-|unknown argument
-a --base ref that resolves to nothing is an environment error|based|--base does-not-exist|-|2|-|does not resolve to a commit
-a path outside any repository is an environment error|not-a-repo|--repo {R}|-|2|-|not inside a git repository
-a --repo path that does not exist is an environment error|no-such-directory|--repo {R}|-|2|-|--repo path is not a directory
+an unknown flag is a usage error|based|--nonsense|-|2|-|preflight: usage=--nonsense
+a --base ref that resolves to nothing is an environment error|based|--base does-not-exist|-|2|-|preflight: base-ref=does-not-exist
+a path outside any repository is an environment error|not-a-repo|--repo {R}|-|2|-|preflight: not-a-repo={R}
+a --repo path that does not exist is an environment error|no-such-directory|--repo {R}|-|2|-|preflight: repo-path={R}
 origin/HEAD names the default branch|base-origin-head|-|-|1|docs/loose.md:3: [docs-cited-paths]|-
 a repository whose origin/HEAD was never set falls back to origin/main|base-origin-main|-|-|1|docs/loose.md:3: [docs-cited-paths]|-
 with no remote-tracking refs left, the local main branch is the last fallback|base-local-main|-|-|1|docs/loose.md:3: [docs-cited-paths]|-
-with nothing left to compare against, the run fails closed instead of reporting clean|base-none|-|-|2|-|could not resolve a default diff base
+with nothing left to compare against, the run fails closed instead of reporting clean|base-none|-|-|2|-|preflight: base-unresolved=origin/HEAD,origin/main,main
 ROWS
 pf_table "what each scope may speak about" "$rows"
+
+# The rows above match a fragment wherever it appears, so they cannot see a
+# SECOND record printed under the first. These two cases assert the whole
+# refusal: how many records it is, and that the value never splits the line
+# carrying it.
+
+pf_scope_seed protocol
+# Captured whole, never piped into a reader that closes early: `head` in a
+# pipefail suite SIGPIPEs its producer and aborts the run.
+refusal_out() { # ARGS... -> everything the run wrote to stderr
+  ( cd "$R" && "$PF" "$@" 2>&1 >/dev/null ) || :
+}
+refusal_records() { # TEXT -> how many `preflight: ` records it holds
+  printf '%s\n' "$1" | grep -c '^preflight: ' || :
+}
+refusal_first() { # TEXT -> its first line
+  printf '%s\n' "$1" | sed -n '1p'
+}
+
+out="$(refusal_out --base does-not-exist)"
+records="$(refusal_records "$out")"
+if [ "$records" = 1 ]; then
+  ok "an unresolvable --base prints exactly one refusal record"
+else
+  bad "an unresolvable --base prints exactly one refusal record" "printed $records"
+fi
+
+first="$(refusal_first "$out")"
+if [ "$first" = "preflight: base-ref=does-not-exist" ]; then
+  ok "its record names the key and the ref that did not resolve"
+else
+  bad "its record names the key and the ref that did not resolve" "first line: $first"
+fi
+
+# A newline in a changed path is the condition `unrepresentable-path` refuses,
+# so it is the value most able to break the record that carries it.
+pf_scope_seed newline-path
+printf 'x\n' > "$R/bad
+name.md"
+git -C "$R" add -A >/dev/null 2>&1
+out="$(refusal_out --staged)"
+records="$(refusal_records "$out")"
+if [ "$records" = 1 ]; then
+  ok "a newline-bearing path still prints exactly one refusal record"
+else
+  bad "a newline-bearing path still prints exactly one refusal record" "printed $records"
+fi
+
+first="$(refusal_first "$out")"
+case "$first" in
+  'preflight: unrepresentable-path='*'\n'*)
+    ok "the newline in its value is escaped, so the record stays one line" ;;
+  *)
+    bad "the newline in its value is escaped, so the record stays one line" "first line: $first" ;;
+esac
+
+# A dependency that writes its own diagnostic must not reach stderr before
+# the record. A gitfile pointing nowhere makes git say so at length.
+broken="$TMP/broken-gitfile"
+rm -rf -- "${TMP:?}/broken-gitfile"
+mkdir -p "$broken"
+printf 'gitdir: /nonexistent-git-dir\n' > "$broken/.git"
+dep_out="$( ( cd "$broken" && "$PF" ) 2>&1 >/dev/null || : )"
+dep_first="$(printf '%s\n' "$dep_out" | sed -n '1p')"
+case "$dep_first" in
+  'preflight: not-a-repo='*)
+    ok "a failing dependency's diagnostic does not precede the record" ;;
+  *)
+    bad "a failing dependency's diagnostic does not precede the record" "first line: $dep_first" ;;
+esac
+case "$dep_out" in
+  *fatal:*)
+    ok "the dependency's own cause is replayed after the record" ;;
+  *)
+    bad "the dependency's own cause is replayed after the record" "output: $dep_out" ;;
+esac
+
+# The tab branch is its own line of code, so it gets its own case: without
+# one, deleting that line leaves this suite green and a tab reaches the
+# record raw.
+pf_scope_seed tab-path
+printf 'x\n' > "$R/bad$(printf '\t')name.md"
+git -C "$R" add -A >/dev/null 2>&1
+out="$(refusal_out --staged)"
+records="$(refusal_records "$out")"
+if [ "$records" = 1 ]; then
+  ok "a tab-bearing path still prints exactly one refusal record"
+else
+  bad "a tab-bearing path still prints exactly one refusal record" "printed $records"
+fi
+first="$(refusal_first "$out")"
+case "$first" in
+  'preflight: unrepresentable-path='*'\t'*)
+    ok "the tab in its value is escaped too" ;;
+  *)
+    bad "the tab in its value is escaped too" "first line: $first" ;;
+esac
 
 pf_summary

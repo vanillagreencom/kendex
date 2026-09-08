@@ -35,41 +35,55 @@ run_pf() {
   OUT="$(cd "$R" && PATH="$BIN" "$PF" --staged 2>&1)" || RC=$?
 }
 has() { case "$OUT" in *"$1"*) return 0 ;; esac; return 1; }
+# A record is compared as a WHOLE line: as a substring, `clean=5` is satisfied
+# by `clean=50`, and an aggregate ending in one more lane satisfies the
+# expected set.
+has_record() {
+  local line
+  while IFS= read -r line; do
+    [ "$line" = "$1" ] || continue
+    return 0
+  done <<EOF
+$OUT
+EOF
+  return 1
+}
 ok() { PASS=$((PASS + 1)); printf '  ok: %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL: %s (exit %s)\n%s\n' "$1" "$RC" "$OUT"; }
 
 run_pf
 [ "$RC" -eq 0 ] && ok 'missing optional tools keep exit 0' || bad 'optional exit status'
 for lane in shellcheck-errors masked-returns data-syntax; do
-  has "[$lane] not run:" && ok "$lane is named" || bad "$lane is named"
+  has "preflight: not-run=$lane" && ok "$lane is named" || bad "$lane is named"
 done
 has 'JSON: jq is unavailable' && has 'TOML: taplo or python3 with tomllib is unavailable' \
   && ok 'data-syntax identifies each unavailable format' || bad 'data format skip details'
-summary="$(printf '%s\n' "$OUT" | tail -n 1)"
-case "$summary" in
-  'preflight: clean ('*'; not run: data-syntax, masked-returns, shellcheck-errors') ok 'clean summary lists the skipped lanes' ;;
-  *) bad 'clean summary lists the skipped lanes' ;;
-esac
-[ "$(printf '%s\n' "$OUT" | grep -cF '[shellcheck-errors] not run:')" -eq 1 ] \
+has_record 'preflight: clean=5' \
+  && ok 'the verdict record carries the changed-file count' \
+  || bad 'the verdict record carries the changed-file count'
+has_record 'preflight: not-run=data-syntax,masked-returns,shellcheck-errors' \
+  && ok 'the verdict names every skipped lane in one record' \
+  || bad 'the verdict names every skipped lane in one record'
+[ "$(printf '%s\n' "$OUT" | grep -cF 'preflight: not-run=shellcheck-errors')" -eq 1 ] \
   && ok 'multiple shell files produce one skip detail' || bad 'skip detail deduplication'
 
 git -C "$R" reset -q HEAD
 printf 'Documentation only.\n' >>"$R/README.md"
 git -C "$R" add README.md
 run_pf
-[ "$RC" -eq 0 ] && ! has 'not run:' \
+[ "$RC" -eq 0 ] && ! has 'preflight: not-run=' \
   && ok 'unneeded optional tools produce no skip' || bad 'docs-only scope'
 printf '// comment dialect\n{"fixture":true,}\n' >"$R/data/config.jsonc"
 git -C "$R" add data/config.jsonc
 run_pf
-[ "$RC" -eq 0 ] && ! has 'not run:' \
+[ "$RC" -eq 0 ] && ! has 'preflight: not-run=' \
   && ok 'JSONC remains outside strict JSON parsing' || bad 'JSONC scope'
 
 git -C "$R" add -A
 printf '#!/usr/bin/env bash\necho fixture\n' >"$R/scripts/loose.sh"
 git -C "$R" add scripts/loose.sh
 run_pf
-[ "$RC" -eq 1 ] && has '[fail-open]' && has '[shellcheck-errors] not run:' \
+[ "$RC" -eq 1 ] && has '[fail-open]' && has 'preflight: not-run=shellcheck-errors' \
   && ok 'other findings still fail while optional checks are skipped' || bad 'findings retain exit 1'
 git -C "$R" rm -qf scripts/loose.sh
 
