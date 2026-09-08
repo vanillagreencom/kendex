@@ -158,21 +158,24 @@ if git ls-files --error-unmatch -- "$DEC_DIR" >/dev/null 2>&1; then
 fi
 
 lines_of() { # BLOBFILE PATH — md-blocks' line stream, refusing what it cannot end
-  local status=0 block_stderr
+  local status=0 block_stderr="" refusal="" row
   LC_ALL=C awk -f "$SHAPES_AWK" -f "$BLOCKS_AWK" -v mode=lines -- "$1" >"$GG_TMP/lines" 2>"$GG_TMP/lines.err" || status=$?
   if [ -s "$GG_TMP/lines.err" ]; then
     # not-a-path: the parser diagnostic is text, not a file name.
     block_stderr="$(cat -- "$GG_TMP/lines.err")" \
       || gg_fail diagnostic-read "$GG_TMP/lines.err" "Could not read parser diagnostics."
-    gg_message block-stderr "$2:$status" "$block_stderr" >&2
   fi
   if [ "$status" -ne 0 ]; then
-    local refusal
-    refusal="$(grep '^R' -- "$GG_TMP/lines" | head -n 1 || true)"
+    while IFS= read -r row; do
+      case "$row" in R"$GG_TAB"*) refusal="$row"; break ;; esac
+    done <"$GG_TMP/lines"
+    [ -n "$refusal" ] \
+      || gg_fail_cause block-exit "$2:$status" "$GG_TMP/lines.err" "The Markdown parser exited without a refusal record."
     refusal="${refusal#R"$GG_TAB"}"
     gg_md_block_message "${refusal#*"$GG_TAB"}" "$2" "${refusal%%"$GG_TAB"*}"
-    gg_fail "$GG_MD_RULE" "$GG_MD_DETAIL" "$GG_MD_EXPLANATION"
+    gg_fail "$GG_MD_RULE" "$GG_MD_DETAIL" "$GG_MD_EXPLANATION${block_stderr:+ $block_stderr}"
   fi
+  [ -z "$block_stderr" ] || gg_message block-stderr "$2:$status" "$block_stderr" >&2
 }
 
 # Pass one: what each selected file cites.

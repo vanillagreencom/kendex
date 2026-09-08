@@ -45,7 +45,13 @@ run() { # ENVS ARGS
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   # shellcheck disable=SC2086
   out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$MDR" $2 2>&1)" || rc=$?
-  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^[a-z][a-z-]*: [a-z-]+=/ { print }')"
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '
+    /^[a-z][a-z-]*: [a-z-]+=/ { print; next }
+    /^[[:space:]]*dependency-order-control:/ {
+      sub(/^[[:space:]]*/, "")
+      print
+    }
+  ')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
@@ -323,9 +329,17 @@ run_rows \
 
 echo "=== refusals and unmeasured paths ==="
 fx_open_fence() { repo "$1"; put AGENTS.md 'Para\n\n```\nopen\n'; }
+fx_awk_exit() {
+  repo "$1"
+  put AGENTS.md 'Clean.\n'
+  mkdir -p "$R/shim"
+  printf '#!/usr/bin/env bash\ncase " $* " in *" mode=lines "*) echo "dependency-order-control: block-exit" >&2; exit 7 ;; esac\nexec %q "$@"\n' "$(command -v awk)" >"$R/shim/awk"
+  chmod +x "$R/shim/awk"
+}
 fx_symlink_doc() { repo symlink-doc; put notes/target.md 'clean\n'; ln -s notes/target.md "$R/AGENTS.md"; git -C "$R" add -A; }
 run_rows \
   "an unterminated fence is exit 2, naming the line|fx_open_fence open-fence||--all|rc=2 ${ERR}fence-unclosed=AGENTS.md:3" \
+  "an AWK exit without a refusal record reports its status before the dependency cause|fx_awk_exit awk-exit|PATH=$TMP/awk-exit/shim:$PATH|--all|rc=2 ${ERR}block-exit=AGENTS.md:7;dependency-order-control: block-exit" \
   "a symlink at a scoped path is named as unmeasured|fx_symlink_doc||--all|rc=0 $(skip AGENTS.md symlink);md-refs: unmeasured-count=$(unmeasured 1)" \
   "--staged and --all are exclusive|fx_open_fence both-flags||--staged --all|rc=2 ${ERR}scope-flags=--staged,--all" \
   "an unknown flag is exit 2, quoting it|fx_open_fence unknown-flag||--no-such-flag|rc=2 ${ERR}argument=--no-such-flag" \
