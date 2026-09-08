@@ -11,17 +11,8 @@
  */
 
 /**
- * Pi's built-in tools, as its extension reference lists them (`docs/
- * extensions.md`, "Extensions can override built-in tools"). Written out
- * rather than read off the table below, which is the thing it checks: a list
- * derived from that map cannot see a row go missing from it.
- */
-export const PI_BUILTIN_TOOLS = ["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"];
-
-/**
- * Each of those said the way `render::vocab::claude_tool_name` says it.
- * tests/registry.test.ts holds this table to that function and its key set to
- * the list above.
+ * Tool names follow `render::vocab::claude_tool_name`.
+ * tests/vocab.test.ts checks each supported tool through the public function.
  *
  * `powershell` maps to itself because the Rust table has no name for it either
  * — Claude Code has no such tool — and an unmapped tool keeps its own id,
@@ -101,9 +92,3 @@ const CLAUDE_SESSION_SOURCES = new Map<string, string>([
 export function claudeSessionSource(reason: string): string {
 	return CLAUDE_SESSION_SOURCES.get(reason.trim().toLowerCase()) ?? reason.trim();
 }
-
-/** The reasons Pi's `session_start` event carries, as its `SessionStartEvent`
- * type lists them. Written out rather than read off the table above, which is
- * the thing tests/registry.test.ts checks: a list derived from that map cannot
- * see a row go missing from it. */
-export const PI_SESSION_REASONS = ["startup", "reload", "new", "resume", "fork"];

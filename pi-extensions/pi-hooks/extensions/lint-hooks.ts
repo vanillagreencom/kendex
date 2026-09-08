@@ -10,7 +10,7 @@ import { filterClippyErrors, findCargoWorkspaceRoot, runWorkspaceClippy } from "
 export type ClippyOutcome =
 	| { kind: "clean" }
 	| { kind: "errors"; lines: string[] }
-	| { kind: "unavailable"; reason: string };
+	| { kind: "unavailable"; code: "workspace" | "timeout-ms" | "exit"; value: string | number; reason: string };
 
 /**
  * Run workspace clippy and report up to 15 error header lines. Used by the
@@ -20,13 +20,13 @@ export type ClippyOutcome =
 export function workspaceClippyOutcome(cwd: string, timeoutMs: number): ClippyOutcome {
 	const metadataBudget = Math.min(5000, Math.floor(timeoutMs / 4));
 	const root = findCargoWorkspaceRoot(cwd, metadataBudget);
-	if (!root) return { kind: "unavailable", reason: "cargo metadata named no workspace root here" };
+	if (!root) return { kind: "unavailable", code: "workspace", value: cwd, reason: "cargo metadata named no workspace root here" };
 
 	const clippyBudget = Math.max(1, timeoutMs - metadataBudget);
 	const r = runWorkspaceClippy(root, clippyBudget);
-	if (r.timedOut) return { kind: "unavailable", reason: `cargo clippy timed out after ${clippyBudget}ms` };
+	if (r.timedOut) return { kind: "unavailable", code: "timeout-ms", value: clippyBudget, reason: `cargo clippy timed out after ${clippyBudget}ms` };
 	if (r.exitCode === 0) return { kind: "clean" };
 	const lines = filterClippyErrors(`${r.stdout}\n${r.stderr}`);
-	if (lines.length === 0) return { kind: "unavailable", reason: `cargo clippy exited ${r.exitCode} printing no error line` };
+	if (lines.length === 0) return { kind: "unavailable", code: "exit", value: r.exitCode, reason: `cargo clippy exited ${r.exitCode} printing no error line` };
 	return { kind: "errors", lines };
 }

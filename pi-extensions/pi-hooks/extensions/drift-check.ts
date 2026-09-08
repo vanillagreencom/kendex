@@ -1,3 +1,9 @@
+/**
+ * kendex check --quiet output protocol: exit 1 report bytes are relayed.
+ * At exit 2, leading Error: or error: denotes a precheck failure; all other
+ * nonempty reports are incomplete checks. tests/drift-check.test.ts pins the
+ * complete result and report for each producer form.
+ */
 import { accessSync, constants, statSync } from "node:fs";
 
 import { runCommandAsync } from "./process.js";
@@ -66,28 +72,22 @@ export function driftMessage(result: DriftCheckResult): string | undefined {
 		case "clean":
 			return undefined;
 		case "unavailable":
-			return "kendex drift check skipped: kendex is not on PATH";
+			return "kendex-drift-unavailable: command=kendex\nkendex is not on PATH.";
 		case "unusable-cwd":
-			return `kendex check could not run: project directory ${result.cwd} is not accessible; drift status unknown`;
+			return `drift-cwd=${result.cwd}\nThe project directory is not accessible. Drift status is unknown.`;
 		case "drift":
 			return result.report;
 		case "incomplete":
-			return `kendex check incomplete (exit 2); some drift status unknown:\n${result.report}`;
+			return `kendex-drift-incomplete: exit=2\nSome drift status is unknown.\n${result.report}`;
 		case "failed":
-			// Only exit 2 drops the colon: kendex chose that code and said
-			// nothing, so there is no report coming. A code >= 3 is a signal
-			// or a timeout, where the colon over a blank line is what both
-			// shell renderings print — this arm has to match them.
-			if (result.exitCode === 2 && result.report === "")
-				return `kendex check could not run (exit ${result.exitCode}); drift status unknown`;
-			return `kendex check could not run (exit ${result.exitCode}); drift status unknown:\n${result.report}`;
+			return `kendex-drift-failed: exit=${result.exitCode}\nThe check could not run. Drift status is unknown.\n${result.report}`;
 	}
 }
 
 /** Text for a throw the classified result kinds never accounted for. */
 export function driftErrorMessage(error: unknown): string {
 	const reason = error instanceof Error ? error.message : String(error);
-	return `kendex check could not run: ${reason || "unknown error"}; drift status unknown`;
+	return `drift-error=${JSON.stringify(reason || "unknown error")}\nThe check could not run. Drift status is unknown.`;
 }
 
 /**
