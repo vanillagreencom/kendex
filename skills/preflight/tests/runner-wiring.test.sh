@@ -10,10 +10,6 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
-# A row's words are literal bytes on their way into a fixture: a runner text
-# carrying `*`, `[` or `?` must reach the file unexpanded.
-set -f
-
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -130,6 +126,14 @@ pf_world() {
 # earlier state's suites stayed wired. `validatescope` is the same shape --
 # `far.test.ts` is the whole fired set, so `sub/app.test.ts` is wired by the
 # same row.
+#
+# The `make` world is the one runner kind here with no `fires` twin, and the
+# gap that leaves is deliberate. Its row is clean, so dropping `Makefile` from
+# the tool's runner name set empties the runner set, the lane goes silent for
+# want of evidence rather than because the suite is wired, and the row stays
+# green. Closing it means a second `make` world carrying a shell suite the
+# vitest default include cannot reach, which is coverage this audit round did
+# not add.
 IFS= read -r -d '' rows <<'ROWS' || :
 a new suite in a repository with no runner at all is not called unwired|none -- tests/orphan.test.sh|-|-|0|-|preflight: clean (1 changed file(s))
 once one runner exists to read, the same suite is unwired|workflow .github/workflows/ci.yml bash tests/other.test.sh -- tests/orphan.test.sh|-|-|1|tests/orphan.test.sh:0: [unwired-suite]|-
