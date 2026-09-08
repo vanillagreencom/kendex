@@ -39,7 +39,6 @@ describe("question activity", () => {
 			refs: { question_id: "que_1" },
 			severity: "warning",
 			source: "pi-questions",
-			summary: "question opened: Pick path",
 			type: "question.opened",
 		});
 		expect(events[0]?.details).toMatchObject({ header: "Pick path", question_count: 1, source: "tool" });

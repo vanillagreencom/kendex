@@ -27,9 +27,16 @@ import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
+// npm invokes this file directly; notices retain their key and value even
+// when their explanation changes. JSON quoting keeps input values on one line.
+function notice(key, value, explanation) {
+	console.error(`append-system: ${key}=${JSON.stringify(value)}`);
+	console.error(explanation);
+}
+
 const action = process.argv[2];
 if (action !== "install" && action !== "remove") {
-	console.error(`append-system.mjs: expected "install" or "remove", got "${action}"`);
+	notice("action", action ?? null, 'Expected "install" or "remove".');
 	process.exit(1);
 }
 
@@ -39,20 +46,20 @@ let pkg;
 try {
 	pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8"));
 } catch (err) {
-	console.error(`append-system.mjs: unable to read package.json in ${pkgDir}: ${err?.message ?? err}`);
+	notice("package-read", pkgDir, `Unable to read package.json: ${err?.message ?? err}`);
 	process.exit(0);
 }
 
 const name = typeof pkg?.name === "string" ? pkg.name : undefined;
 const rel = pkg?.pi?.appendSystem;
 if (!name || typeof rel !== "string") {
-	console.error(`append-system.mjs: package ${pkgDir} is missing name or pi.appendSystem`);
+	notice("package-fields", pkgDir, "The package needs name and pi.appendSystem fields.");
 	process.exit(0);
 }
 
 const scopeRoot = findScopeRoot(pkgDir);
 if (!scopeRoot) {
-	console.error(`append-system.mjs: unable to resolve Pi scope for ${name} from ${pkgDir}`);
+	notice("scope", pkgDir, `Unable to resolve the Pi scope for ${name}.`);
 	process.exit(0);
 }
 
@@ -64,12 +71,12 @@ try {
 	if (action === "install") {
 		const sourcePath = resolve(pkgDir, rel);
 		if (!existsSync(sourcePath)) {
-			console.error(`append-system.mjs: appendSystem source missing for ${name}: ${sourcePath}`);
+			notice("source-missing", sourcePath, `The appendSystem source for ${name} is missing.`);
 			process.exit(0);
 		}
 		const content = readFileSync(sourcePath, "utf8").trim();
 		if (!content) {
-			console.error(`append-system.mjs: appendSystem source is empty for ${name}: ${sourcePath}`);
+			notice("source-empty", sourcePath, `The appendSystem source for ${name} is empty.`);
 			process.exit(0);
 		}
 		upsertBlock(target, begin, end, content);
@@ -78,7 +85,7 @@ try {
 	}
 } catch (err) {
 	// Never fail the npm install/uninstall over an APPEND_SYSTEM.md write.
-	console.error(`append-system.mjs (${action}) for ${name}: ${err?.message ?? err}`);
+	notice("operation", `${action}:${name}:${err?.code ?? "unknown"}`, `Unable to update APPEND_SYSTEM.md: ${err?.message ?? err}`);
 	process.exit(0);
 }
 

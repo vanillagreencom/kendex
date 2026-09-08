@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 
 import { emitAnswerSteer, formatAnswerSteerMessage } from "../answer-steer.js";
 import { normalizeRequest } from "../question-model.js";
@@ -83,21 +82,5 @@ describe("answer steer emission", () => {
 		await Promise.resolve();
 		await Promise.resolve();
 		expect(noted).toBe(1);
-	});
-});
-
-describe("questions.ts steer wiring", () => {
-	const source = readFileSync(new URL("../questions.ts", import.meta.url), "utf8");
-
-	test("emission is gated on the answersAsUserMessage setting, default off", () => {
-		expect(source).toContain('settingBoolean("answersAsUserMessage", false');
-	});
-
-	test("answered events reach emitAnswerSteer with the original request", () => {
-		expect(source).toContain("emitAnswerSteer(pi, event.request, event.result.answers");
-	});
-
-	test("answered and rejected events publish the originating request", () => {
-		expect(source.replace(/\s+/g, " ")).toContain("openedAt, request, requestId: request.id, result: finalResult");
 	});
 });

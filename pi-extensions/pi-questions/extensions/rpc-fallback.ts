@@ -12,6 +12,7 @@ const ROW_MAX_CHARS = 200;
 // Bounds re-prompt loops (blank custom text, out-of-range numbers) so a host
 // that mechanically replays the same bad answer cancels instead of spinning.
 const MAX_PROMPT_ATTEMPTS = 5;
+const EMPTY_CUSTOM_ANSWER = "custom-answer=empty\nCustom answer cannot be empty";
 
 export interface RpcDialogUI {
 	select(title: string, options: string[]): Promise<string | undefined>;
@@ -66,9 +67,10 @@ export function rpcDialogUI(ui: unknown): RpcDialogUI | undefined {
 }
 
 export function noDialogRouteError(rpcMode: boolean): string {
-	return rpcMode
-		? "No question UI available: this RPC host renders neither custom TUI components nor native select/input dialogs"
-		: "No question UI available: custom TUI resolved without a result and the host provides no native select/input dialogs";
+	const explanation = rpcMode
+		? "This RPC host renders neither custom TUI components nor native select/input dialogs."
+		: "Custom TUI resolved without a result and the host provides no native select/input dialogs.";
+	return `question-ui=${rpcMode ? "rpc" : "custom"}:unavailable\n${explanation}`;
 }
 
 /**
@@ -120,7 +122,7 @@ function truncateChars(text: string, max: number): string {
 
 function tabTitle(request: QuestionRequest, tab: QuestionTab, index: number, note = ""): string {
 	const position = request.questions.length > 1 ? ` (${index + 1}/${request.questions.length})` : "";
-	const prefix = note ? `${note} — ` : "";
+	const prefix = note ? `${note}\n` : "";
 	return truncateChars(`${prefix}${tab.header}${position}: ${tab.question}`, TITLE_MAX_CHARS);
 }
 
@@ -179,14 +181,14 @@ async function askSingleSelect(ui: RpcDialogUI, request: QuestionRequest, tab: Q
 			// text as a custom answer, matching the free-text fallback row.
 			const trimmed = choice.trim();
 			if (trimmed) return { kind: "answers", values: [trimmed] };
-			note = "Answer cannot be empty";
+			note = "answer=empty\nAnswer cannot be empty";
 			continue;
 		}
 		if (rowIndex < tab.options.length) return { kind: "answers", values: [tab.options[rowIndex].label] };
 		const custom = await askCustomText(ui, tab, isSettled);
 		if (custom.kind === "abandoned" || custom.kind === "cancelled") return { kind: custom.kind };
 		if (custom.kind === "blank") {
-			note = "Custom answer cannot be empty";
+			note = EMPTY_CUSTOM_ANSWER;
 			continue;
 		}
 		return { kind: "answers", values: [custom.value] };
@@ -207,7 +209,7 @@ export function parseMultiSelection(raw: string, tab: QuestionTab): { labels: st
 	for (const token of tokens) {
 		const row = Number(token);
 		if (row < 1 || row > customRowNumber(tab)) {
-			return { error: `Option numbers must be between 1 and ${customRowNumber(tab)}` };
+			return { error: `option-range=${row}:1:${customRowNumber(tab)}\nOption numbers must be between 1 and ${customRowNumber(tab)}.` };
 		}
 		if (row <= tab.options.length) {
 			const label = tab.options[row - 1].label;
@@ -236,7 +238,7 @@ async function askMultiSelect(ui: RpcDialogUI, request: QuestionRequest, tab: Qu
 		const custom = await askCustomText(ui, tab, isSettled);
 		if (custom.kind === "abandoned" || custom.kind === "cancelled") return { kind: custom.kind };
 		if (custom.kind === "blank") {
-			note = "Custom answer cannot be empty";
+			note = EMPTY_CUSTOM_ANSWER;
 			continue;
 		}
 		return { kind: "answers", values: parsed.labels.includes(custom.value) ? parsed.labels : [...parsed.labels, custom.value] };
