@@ -36,6 +36,7 @@ const MODEL = "claude-haiku-4-5";
 
 async function drain(q) {
 	let out = "";
+	try {
 	for await (const m of q) {
 		if (m.type === "assistant") {
 			for (const block of m.message?.content ?? []) {
@@ -44,6 +45,9 @@ async function drain(q) {
 		}
 	}
 	return out.trim();
+	} finally {
+		q.close();
+	}
 }
 
 function seedTextSession(sid, token) {
@@ -88,8 +92,9 @@ async function askToken(sid) {
 	}));
 }
 
-test("openSession + clear + re-add: CC resolves the replaced content", { timeout: 120_000 }, async () => {
+test("openSession + clear + re-add: CC resolves the replaced content", { timeout: 120_000 }, async (t) => {
 	const sid = randomUUID();
+	t.after(() => deleteSession(sid, CWD, process.env.CLAUDE_CONFIG_DIR));
 	seedTextSession(sid, "FOO");
 
 	const r1 = await askToken(sid);
@@ -106,8 +111,9 @@ test("openSession + clear + re-add: CC resolves the replaced content", { timeout
 	assert.doesNotMatch(r2, /foo/i, `stale FOO returned — CC may be caching by UUID: ${r2}`);
 });
 
-test("deleteSession + createSession({sessionId}): sessionId preserved across full wipe", { timeout: 120_000 }, async () => {
+test("deleteSession + createSession({sessionId}): sessionId preserved across full wipe", { timeout: 120_000 }, async (t) => {
 	const sid = randomUUID();
+	t.after(() => deleteSession(sid, CWD, process.env.CLAUDE_CONFIG_DIR));
 	seedTextSession(sid, "ALPHA");
 
 	const r1 = await askToken(sid);
@@ -132,8 +138,9 @@ test("deleteSession + createSession({sessionId}): sessionId preserved across ful
 	assert.doesNotMatch(r2, /alpha/i, `stale ALPHA returned after delete+recreate: ${r2}`);
 });
 
-test("rebuild over CC-written tool_use records resolves cleanly", { timeout: 180_000 }, async () => {
+test("rebuild over CC-written tool_use records resolves cleanly", { timeout: 180_000 }, async (t) => {
 	const sid = randomUUID();
+	t.after(() => deleteSession(sid, CWD, process.env.CLAUDE_CONFIG_DIR));
 	const s1 = seedTextSession(sid, "GAMMA");
 
 	// Provoke a real tool call so CC writes tool_use/tool_result records to the
@@ -171,8 +178,9 @@ test("rebuild over CC-written tool_use records resolves cleanly", { timeout: 180
 	assert.doesNotMatch(r2, /gamma/i, `stale GAMMA after rebuild: ${r2}`);
 });
 
-test("deleteSession wipes the companion directory", () => {
+test("deleteSession wipes the companion directory", (t) => {
 	const sid = randomUUID();
+	t.after(() => deleteSession(sid, CWD, process.env.CLAUDE_CONFIG_DIR));
 	const s1 = seedTextSession(sid, "EPSILON");
 	const companionDir = s1.jsonlPath.replace(/\.jsonl$/, "");
 

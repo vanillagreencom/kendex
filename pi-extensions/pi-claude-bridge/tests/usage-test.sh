@@ -14,26 +14,30 @@
 
 source "$(dirname "$0")/lib/bash-setup.sh"
 
-echo "=== usage-test.sh ==="
+test_notice test usage-test
 
 setup_test_env "usage-test" "none"
 
 MODEL="${1:-claude-haiku-4-5}"
 NUM_TURNS="${2:-10}"
 
-trap kill_descendants EXIT
+trap cleanup_test_command EXIT
 
 # --- OAuth token from keychain ---
 
 TOKEN=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['claudeAiOauth']['accessToken'])" 2>/dev/null) \
-  || { echo "FAIL: Could not extract OAuth token from keychain"; exit 1; }
+  || { test_notice credential_source keychain "Could not extract the OAuth token." >&2; exit 1; }
 
 get_usage() {
   curl -sf \
     -H "Authorization: Bearer $TOKEN" \
     -H "anthropic-beta: oauth-2025-04-20" \
-    "https://api.anthropic.com/api/oauth/usage"
+    "https://api.anthropic.com/api/oauth/usage" || {
+      local status=$?
+      test_notice usage_exit "$status" "Could not fetch usage." >&2
+      return "$status"
+    }
 }
 
 # --- Map model to Claude Code model ID ---
@@ -85,11 +89,16 @@ extract_pi_metrics() {
 
   while IFS= read -r line; do
     turn=$((turn + 1))
-    local input=$(echo "$line" | jq -r '.input')
-    local cache_read=$(echo "$line" | jq -r '.cacheRead')
-    local cache_write=$(echo "$line" | jq -r '.cacheWrite')
-    local output=$(echo "$line" | jq -r '.output')
-    local cost=$(echo "$line" | jq -r '.cost.total // 0')
+    local input
+    input=$(echo "$line" | jq -r '.input')
+    local cache_read
+    cache_read=$(echo "$line" | jq -r '.cacheRead')
+    local cache_write
+    cache_write=$(echo "$line" | jq -r '.cacheWrite')
+    local output
+    output=$(echo "$line" | jq -r '.output')
+    local cost
+    cost=$(echo "$line" | jq -r '.cost.total // 0')
 
     printf "%-6s  %8s  %8s  %8s  %8s  \$%s\n" "$turn" "$input" "$cache_read" "$cache_write" "$output" "$cost"
 
@@ -105,7 +114,9 @@ extract_pi_metrics() {
 
   local cache_total=$((total_input + total_cache_read + total_cache_write))
   if [ "$cache_total" -gt 0 ]; then
-    echo "Cache hit rate: $(python3 -c "print(round($total_cache_read * 100 / $cache_total, 1))")%"
+    local cache_hit_pct
+    cache_hit_pct=$(python3 -c "print(round($total_cache_read * 100 / $cache_total, 1))")
+    test_notice cache_hit_pct "$cache_hit_pct"
   fi
 
   # Export for comparison
@@ -129,8 +140,8 @@ for k in ['seven_day_opus', 'seven_day_sonnet']:
 "
 }
 
-echo "Model: $MODEL"
-echo "Turns: $NUM_TURNS"
+test_notice model "$MODEL"
+test_notice turns "$NUM_TURNS"
 echo ""
 
 # ============================================================
@@ -138,11 +149,11 @@ echo ""
 # ============================================================
 
 echo "=========================================="
-echo "  Run A: pi-claude-bridge"
+test_notice phase bridge
 echo "=========================================="
 
-echo "Fetching usage before..."
-BEFORE_A=$(get_usage) || { echo "FAIL: Could not fetch usage"; exit 1; }
+test_notice usage_sample before
+BEFORE_A=$(get_usage)
 print_usage "$BEFORE_A"
 
 build_prompts "$TMPFILE_A"
@@ -151,8 +162,8 @@ for p in "${PROMPTS[@]}"; do PROMPT_ARGS+=(-p "$p"); done
 
 LOGFILE_A="$LOGDIR/usage-test-bridge.ndjson"
 echo ""
-echo "Running bridge conversation..."
-timeout 600 pi --no-session -ne -e "$DIR" \
+test_notice conversation bridge
+run_test_command 600 pi --no-session -ne -e "$DIR" \
   --model "pi-claude/$MODEL" \
   --mode json \
   "${PROMPT_ARGS[@]}" \
@@ -163,11 +174,11 @@ echo ""
 extract_pi_metrics "$LOGFILE_A" "A"
 
 echo ""
-echo "Waiting 15s for usage to settle..."
+test_notice usage_wait_seconds 15
 sleep 15
 
-echo "Fetching usage after..."
-AFTER_A=$(get_usage) || { echo "FAIL: Could not fetch usage"; exit 1; }
+test_notice usage_sample after
+AFTER_A=$(get_usage)
 print_usage "$AFTER_A"
 DELTA_A=$(python3 -c "
 import json
@@ -175,7 +186,7 @@ before = json.loads('''$BEFORE_A''')
 after = json.loads('''$AFTER_A''')
 print(round(after['five_hour']['utilization'] - before['five_hour']['utilization'], 2))
 ")
-echo "  5h delta: +${DELTA_A}%"
+test_notice five_hour_delta "$DELTA_A"
 
 # ============================================================
 # Run B: Claude Code direct
@@ -183,11 +194,11 @@ echo "  5h delta: +${DELTA_A}%"
 
 echo ""
 echo "=========================================="
-echo "  Run B: Claude Code direct"
+test_notice phase claude_code
 echo "=========================================="
 
-echo "Fetching usage before..."
-BEFORE_B=$(get_usage) || { echo "FAIL: Could not fetch usage"; exit 1; }
+test_notice usage_sample before
+BEFORE_B=$(get_usage)
 print_usage "$BEFORE_B"
 
 build_prompts "$TMPFILE_B"
@@ -196,7 +207,7 @@ for p in "${PROMPTS[@]}"; do PROMPT_ARGS+=(-p "$p"); done
 
 LOGFILE_B="$LOGDIR/usage-test-direct.ndjson"
 echo ""
-echo "Running Claude Code direct conversation..."
+test_notice conversation claude_code
 
 # Each turn is a separate \`claude -p\` invocation with --resume to maintain session.
 RESUME_ID=""
@@ -219,7 +230,11 @@ for p in "${PROMPTS[@]}"; do
     CLAUDE_ARGS+=(--resume "$RESUME_ID")
   fi
 
-  timeout 120 claude "${CLAUDE_ARGS[@]}" > "$TURN_FILE" 2>"$TURN_FILE.err" || true
+  run_test_command 120 claude "${CLAUDE_ARGS[@]}" > "$TURN_FILE" 2>"$TURN_FILE.err" || {
+    status=$?
+    test_notice command_exit "$status" "Claude Code did not complete the turn." >&2
+    exit "$status"
+  }
 
   # Extract session ID for --resume on next turn
   RESUME_ID=$(jq -r '.session_id // empty' "$TURN_FILE" 2>/dev/null)
@@ -246,17 +261,18 @@ printf "%-6s  %8s  %8s  %8s  %8s  \$%s\n" "Total" "$TOTAL_B_INPUT" "$TOTAL_B_CAC
 
 B_CACHE_TOTAL=$((TOTAL_B_INPUT + TOTAL_B_CACHE_READ + TOTAL_B_CACHE_WRITE))
 if [ "$B_CACHE_TOTAL" -gt 0 ]; then
-  echo "Cache hit rate: $(python3 -c "print(round($TOTAL_B_CACHE_READ * 100 / $B_CACHE_TOTAL, 1))")%"
+  B_CACHE_HIT_PCT=$(python3 -c "print(round($TOTAL_B_CACHE_READ * 100 / $B_CACHE_TOTAL, 1))")
+  test_notice cache_hit_pct "$B_CACHE_HIT_PCT"
 fi
 
 rm -f "$TMPFILE_B"
 
 echo ""
-echo "Waiting 15s for usage to settle..."
+test_notice usage_wait_seconds 15
 sleep 15
 
-echo "Fetching usage after..."
-AFTER_B=$(get_usage) || { echo "FAIL: Could not fetch usage"; exit 1; }
+test_notice usage_sample after
+AFTER_B=$(get_usage)
 print_usage "$AFTER_B"
 DELTA_B=$(python3 -c "
 import json
@@ -264,7 +280,7 @@ before = json.loads('''$BEFORE_B''')
 after = json.loads('''$AFTER_B''')
 print(round(after['five_hour']['utilization'] - before['five_hour']['utilization'], 2))
 ")
-echo "  5h delta: +${DELTA_B}%"
+test_notice five_hour_delta "$DELTA_B"
 
 # ============================================================
 # Comparison
@@ -272,7 +288,7 @@ echo "  5h delta: +${DELTA_B}%"
 
 echo ""
 echo "=========================================="
-echo "  Comparison"
+test_notice phase comparison
 echo "=========================================="
 
 python3 -c "
@@ -308,6 +324,6 @@ elif b_delta > a_delta:
 "
 
 echo ""
-echo "Logs:"
-echo "  Bridge: $LOGFILE_A"
-echo "  Direct: $LOGDIR/usage-test-direct-turn*.json"
+test_notice phase logs
+test_notice bridge_log "$LOGFILE_A"
+test_notice direct_logs "$LOGDIR/usage-test-direct-turn*.json"

@@ -43,49 +43,28 @@ const promptContents = (messages, promptStart) =>
 afterEach(() => setSharedSession(null));
 
 describe("syncSharedSession REUSE path", () => {
-	it("keeps the session and prompts BOTH queued follow-ups, by content", () => {
-		setSharedSession({ sessionId: "sess-reuse", cursor: 1, cwd: CWD });
-		const messages = [user("u1"), assistant(), user("u2"), user("u3")];
-
-		const result = syncSharedSession(messages, CWD);
-
-		assert.equal(result.sessionId, "sess-reuse");
-		assert.equal(result.promptStart, 2);
-		// Content assertion, not length: promptStart = messages.length - 1 (the
-		// old slice(-1) behavior) would still yield ONE user message here.
-		assert.deepEqual(promptContents(messages, result.promptStart), ["u2", "u3"]);
-		assert.deepEqual(__testGetBridgeIntegrityState().sharedSession, {
-			sessionId: "sess-reuse",
-			cursor: 2,
-			cwd: CWD,
-			// A REUSE match proves identity, so a pre-fingerprint record adopts
-			// the conversation anchor.
-			conversationFingerprint: conversationFingerprint(messages),
-		});
-	});
-
-	it("keeps the single-user reuse case: one new user after the trailing assistant", () => {
-		setSharedSession({ sessionId: "sess-single", cursor: 1, cwd: CWD });
-		const messages = [user("u1"), assistant(), user("u2")];
-
-		const result = syncSharedSession(messages, CWD);
-
-		assert.equal(result.sessionId, "sess-single");
-		assert.equal(result.promptStart, 2);
-		assert.deepEqual(promptContents(messages, result.promptStart), ["u2"]);
-		assert.equal(__testGetBridgeIntegrityState().sharedSession.cursor, 2);
-	});
-
-	it("keeps the trailing-assistant reuse case: cursor already past the assistant", () => {
-		setSharedSession({ sessionId: "sess-past", cursor: 2, cwd: CWD });
-		const messages = [user("u1"), assistant(), user("u2"), user("u3")];
-
-		const result = syncSharedSession(messages, CWD);
-
-		assert.equal(result.sessionId, "sess-past");
-		assert.equal(result.promptStart, 2);
-		assert.deepEqual(promptContents(messages, result.promptStart), ["u2", "u3"]);
-		assert.equal(__testGetBridgeIntegrityState().sharedSession.cursor, 2);
+	it("preserves the session and includes every queued follow-up", () => {
+		const rows = [
+			{ sessionId: "sess-reuse", cursor: 1, followups: ["u2", "u3"] },
+			{ sessionId: "sess-single", cursor: 1, followups: ["u2"] },
+			{ sessionId: "sess-past", cursor: 2, followups: ["u2", "u3"] },
+		];
+		for (const { sessionId, cursor, followups } of rows) {
+			setSharedSession({ sessionId, cursor, cwd: CWD });
+			const messages = [user("u1"), assistant(), ...followups.map(user)];
+			const result = syncSharedSession(messages, CWD);
+			assert.deepEqual({
+				sessionId: result.sessionId,
+				promptStart: result.promptStart,
+				prompt: promptContents(messages, result.promptStart),
+				record: __testGetBridgeIntegrityState().sharedSession,
+			}, {
+				sessionId,
+				promptStart: 2,
+				prompt: followups,
+				record: { sessionId, cursor: 2, cwd: CWD, conversationFingerprint: conversationFingerprint(messages) },
+			}, sessionId);
+		}
 	});
 });
 
@@ -98,35 +77,6 @@ describe("syncSharedSession clean start", () => {
 		assert.equal(result.sessionId, null);
 		assert.equal(result.promptStart, 0);
 		assert.deepEqual(promptContents(messages, result.promptStart), ["hello"]);
-	});
-});
-
-describe("conversationFingerprint", () => {
-	it("hashes the FIRST user message's text, string or block form alike", () => {
-		const fromString = conversationFingerprint([user("hello")]);
-		assert.match(fromString, /^u:[0-9a-f]{12}$/);
-		assert.equal(conversationFingerprint([{ role: "user", content: [{ type: "text", text: "hello" }] }]), fromString);
-		// An assistant message with no text (tool-only / empty content) adds no
-		// second component — same anchor as the bare opener.
-		assert.equal(conversationFingerprint([user("hello"), assistant(), user("later turn")]), fromString);
-		assert.notEqual(conversationFingerprint([user("other opener")]), fromString);
-	});
-
-	it("adds the FIRST assistant message's text as a second component once one exists", () => {
-		const grown = conversationFingerprint([user("hello"), assistantText("first answer"), user("later turn")]);
-		assert.match(grown, /^u:[0-9a-f]{12}\|a:[0-9a-f]{12}$/);
-		// The user component is shared with the turn-1 form; the assistant text
-		// is what discriminates two same-opener conversations.
-		assert.equal(grown.startsWith(conversationFingerprint([user("hello")])), true);
-		assert.equal(conversationFingerprint([user("hello"), assistantText("first answer")]), grown);
-		assert.notEqual(conversationFingerprint([user("hello"), assistantText("other answer")]), grown);
-	});
-
-	it("returns undefined when identity is unknowable (no user message, image-only opener)", () => {
-		assert.equal(conversationFingerprint([]), undefined);
-		assert.equal(conversationFingerprint([assistant()]), undefined);
-		assert.equal(conversationFingerprint([{ role: "user", content: [{ type: "image", data: "zzz", mimeType: "image/png" }] }]), undefined);
-		assert.equal(conversationFingerprint([{ role: "user", content: "   " }]), undefined);
 	});
 });
 

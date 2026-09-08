@@ -8,7 +8,7 @@
 // Requires: CLAUDE_BRIDGE_TESTING_ALT_PROVIDER (e.g. "minimax")
 // Requires: CLAUDE_BRIDGE_TESTING_ALT_MODEL (e.g. "MiniMax-M2.7-highspeed")
 
-console.log("=== session-resume-test.mjs ===");
+console.log("test=session-resume");
 
 import { readFileSync } from "node:fs";
 import { createRpcHarness, requireEnv } from "./lib/rpc-harness.mjs";
@@ -31,112 +31,86 @@ const harness = createRpcHarness({
 	defaultTimeout: TIMEOUT,
 });
 
-const { DIR, start, stop, send, addListener, collectText, DEBUG_LOG, RPC_LOG } = harness;
-
-function waitForIdle(timeout = TIMEOUT) {
-	return new Promise((resolve, reject) => {
-		const timer = setTimeout(() => reject(new Error("Timeout waiting for idle")), timeout);
-		const remove = addListener((msg) => {
-			if (msg.type === "agent_end") {
-				clearTimeout(timer);
-				remove();
-				resolve(msg);
-			}
-		});
-	});
-}
-
-async function promptAndWait(message) {
-	const collector = collectText();
-	await send({ type: "prompt", message });
-	await waitForIdle();
-	return collector.stop();
-}
+const { stop, send, promptAndWait, waitForEvent, DEBUG_LOG } = harness;
 
 function finish(code, msg) {
-	console.log(msg);
-	if (code !== 0) {
-		console.log(`  RPC log:    ${RPC_LOG}`);
-		console.log(`  Debug log:  ${DEBUG_LOG}`);
-		console.log(`  CC CLI:     .test-output/cc-cli-logs/`);
-		console.log(`  Note: logs are overwritten on next test run — copy them now if you need to investigate.`);
-	}
-	stop().then(() => process.exit(code));
+	if (code !== 0) throw new Error(msg);
+	console.log(`test_exit=${code}\n${msg}`);
 }
 
 // Start pi
-harness.start();
-await new Promise((r) => setTimeout(r, 2000));
-
 try {
+	harness.start();
+	await new Promise((r) => setTimeout(r, 2000));
   // Turn 1: Non-provider prompt — establishes context before our provider is used
-  console.log("Turn 1: Non-provider prompt (establish context)...");
+  console.log("turn=1\nNon-provider prompt (establish context)...");
   const text1 = await promptAndWait(`The secret word is '${WORD_A}'. Acknowledge and be very brief.`);
   if (!text1) finish(1, "FAIL: Turn 1 produced no text");
-  console.log(`  Response: ${text1.slice(0, 80)}`);
+  console.log(`response=${JSON.stringify(text1.slice(0, 80))}`);
 
   // Switch to provider — first provider turn with prior history (Case 2)
   const [bridgeProvider, bridgeModelId] = BRIDGE_MODEL.split("/");
-  console.log(`Switching to ${BRIDGE_MODEL}...`);
+  console.log(`model=${BRIDGE_MODEL}`);
   await send({ type: "set_model", provider: bridgeProvider, modelId: bridgeModelId });
 
 
   // Turn 2: First provider turn — should see WORD_A from prior non-provider history
-  console.log("Turn 2: First provider turn with prior history (Case 2)...");
+  console.log("turn=2\nFirst provider turn with prior history (Case 2)...");
   const text2 = await promptAndWait(
     `The backup word is '${WORD_B}'. Also, what was the secret word? Reply with both words separated by a comma.`
   );
-  console.log(`  Response: ${text2.slice(0, 80)}`);
+  console.log(`response=${JSON.stringify(text2.slice(0, 80))}`);
   const lower2 = text2.toLowerCase();
-  if (!lower2.includes(WORD_A)) finish(1, `FAIL: Turn 2 response missing '${WORD_A}': ${text2}`);
-  if (!lower2.includes(WORD_B)) finish(1, `FAIL: Turn 2 response missing '${WORD_B}': ${text2}`);
+  for (const word of [WORD_A, WORD_B]) {
+    if (!lower2.includes(word)) finish(1, `missing_word=${word}\nTurn 2: ${text2}`);
+  }
 
   // Switch to other model — creates missed messages
-  console.log(`Switching to ${OTHER_PROVIDER}/${OTHER_MODEL}...`);
+  console.log(`model=${OTHER_PROVIDER}/${OTHER_MODEL}`);
   await send({ type: "set_model", provider: OTHER_PROVIDER, modelId: OTHER_MODEL });
 
   // Turn 3: Non-provider prompt — adds context that provider must see on switch-back
-  console.log("Turn 3: Non-provider prompt (creates missed messages)...");
+  console.log("turn=3\nNon-provider prompt (creates missed messages)...");
   const text3 = await promptAndWait(`The third word is '${WORD_C}'. Acknowledge briefly.`);
   if (!text3) finish(1, "FAIL: Turn 3 produced no text");
-  console.log(`  Response: ${text3.slice(0, 80)}`);
+  console.log(`response=${JSON.stringify(text3.slice(0, 80))}`);
 
   // Switch back to provider — context includes all prior turns (Case 4)
-  console.log(`Switching back to ${BRIDGE_MODEL}...`);
+  console.log(`model=${BRIDGE_MODEL}`);
   await send({ type: "set_model", provider: bridgeProvider, modelId: bridgeModelId });
 
 
   // Turn 4: Provider resumes with missed messages (Case 4)
-  console.log("Turn 4: Provider resume with missed messages (Case 4)...");
+  console.log("turn=4\nProvider resume with missed messages (Case 4)...");
   const text4 = await promptAndWait(
     "What were all three words? Reply with just the three words separated by commas."
   );
-  console.log(`  Response: ${text4.slice(0, 80)}`);
+  console.log(`response=${JSON.stringify(text4.slice(0, 80))}`);
   const lower4 = text4.toLowerCase();
-  if (!lower4.includes(WORD_A)) finish(1, `FAIL: Turn 4 response missing '${WORD_A}': ${text4}`);
-  if (!lower4.includes(WORD_B)) finish(1, `FAIL: Turn 4 response missing '${WORD_B}': ${text4}`);
-  if (!lower4.includes(WORD_C)) finish(1, `FAIL: Turn 4 response missing '${WORD_C}': ${text4}`);
+  for (const word of [WORD_A, WORD_B, WORD_C]) {
+    if (!lower4.includes(word)) finish(1, `missing_word=${word}\nTurn 4: ${text4}`);
+  }
 
   // Turn 5: Abort mid-stream — session should be invalidated, next turn should recover
-  console.log("Turn 5: Abort mid-stream (session recovery)...");
+  console.log("turn=5\nAbort mid-stream (session recovery)...");
   await send({ type: "prompt", message: "Write a detailed 500-word essay about the history of timekeeping." });
   // Set up idle listener before abort so we don't miss agent_end
-  const idle5 = waitForIdle();
+  const idle5 = waitForEvent("agent_end");
   await new Promise((r) => setTimeout(r, 2000));
   await send({ type: "abort" });
   await idle5;
 
 
   // Turn 6: Provider turn after abort — should NOT get "conversation not found"
-  console.log("Turn 6: Provider turn after abort (should recover)...");
+  console.log("turn=6\nProvider turn after abort (should recover)...");
   const text6 = await promptAndWait(
     "What were all three words from earlier? Reply with just the three words separated by commas."
   );
-  console.log(`  Response: ${text6.slice(0, 80)}`);
+  console.log(`response=${JSON.stringify(text6.slice(0, 80))}`);
   const lower6 = text6.toLowerCase();
-  if (!lower6.includes(WORD_A)) finish(1, `FAIL: Turn 6 response missing '${WORD_A}': ${text6}`);
-  if (!lower6.includes(WORD_B)) finish(1, `FAIL: Turn 6 response missing '${WORD_B}': ${text6}`);
-  if (!lower6.includes(WORD_C)) finish(1, `FAIL: Turn 6 response missing '${WORD_C}': ${text6}`);
+  for (const word of [WORD_A, WORD_B, WORD_C]) {
+    if (!lower6.includes(word)) finish(1, `missing_word=${word}\nTurn 6: ${text6}`);
+  }
 
   // sessionId stability: sessionId should stay stable across normal
   // rebuilds (Case 2 → Case 4 → Case 3). It's allowed to rotate exactly
@@ -155,12 +129,14 @@ try {
     if (match[3] === "rotated-post-abort") rotatedPostAbort.push(match[2]);
   }
   if (sessionIds.size === 0) finish(1, "FAIL: no syncResult markers found in debug log");
-  if (sessionIds.size > 2) finish(1, `FAIL: expected ≤2 distinct sessionIds (one pre-abort, one post-abort rotation), got ${sessionIds.size}: ${[...sessionIds].join(", ")}`);
+  if (sessionIds.size !== 2) finish(1, `FAIL: expected exactly 2 distinct sessionIds (one pre-abort, one post-abort rotation), got ${sessionIds.size}: ${[...sessionIds].join(", ")}`);
   if (rotatedPostAbort.length !== 1) finish(1, `FAIL: expected exactly 1 post-abort rotation, got ${rotatedPostAbort.length}`);
-  console.log(`  sessionIds observed: ${sessionIds.size} (expected 2 due to 1 post-abort rotation)`);
+  console.log(`session_ids=${sessionIds.size}\nExpected a distinct session after abort.`);
 
   finish(0, "PASS");
 } catch (e) {
-  finish(1, `FAIL: ${e.message}`);
+  console.error(`test_exit=1\n${e.stack ?? e.message}`);
+	process.exitCode = 1;
+} finally {
+	await stop();
 }
-

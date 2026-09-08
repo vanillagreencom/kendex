@@ -12,19 +12,19 @@
 
 source "$(dirname "$0")/lib/bash-setup.sh"
 
-echo "=== cache-test.sh ==="
+test_notice test cache-test
 
 setup_test_env "cache-test" ".ndjson"
 
 LOGFILE="$LOGDIR/cache-test.ndjson"
 
-trap kill_descendants EXIT
+trap cleanup_test_command EXIT
 
 TMPFILE="$LOGDIR/cache-test-scratch.txt"
 rm -f "$TMPFILE" "$CLAUDE_BRIDGE_DEBUG_PATH"
 
-echo "Running 5-turn conversation (text + tool use)..."
-timeout 180 pi --no-session -ne -e "$DIR" \
+test_notice phase conversation "Run the conversation with text and tool use."
+run_test_command 180 pi --no-session -ne -e "$DIR" \
   --model "pi-claude/claude-haiku-4-5" \
   --mode json \
   -p "The secret number is 42. Acknowledge briefly." \
@@ -39,18 +39,18 @@ rm -f "$TMPFILE"
 
 if [ -s "$LOGFILE.err" ]; then
   echo ""
-  echo "pi stderr:"
+  test_notice stderr_log "$LOGFILE.err"
   cat "$LOGFILE.err"
   echo ""
 fi
 
 if [ "$PI_EXIT" -ne 0 ]; then
-  echo "FAIL: pi exited with code $PI_EXIT"
+  test_notice command_exit "$PI_EXIT"
   exit 1
 fi
 
 echo ""
-echo "Turn-by-turn cache metrics:"
+test_notice phase cache_metrics
 echo "---"
 printf "%-6s  %8s  %8s  %8s  %8s  %s\n" "Turn" "Input" "CacheRd" "CacheWr" "Output" "CacheHit%"
 
@@ -88,7 +88,7 @@ while IFS= read -r line; do
     # on short tool sub-turns while preserving the same session and high cache
     # hit rate.
     if [ "$CACHE_READ" -le 0 ]; then
-      echo "  FAIL: Turn $TURN cacheRead ($CACHE_READ) did not report cached tokens"
+      test_notice cache_read "$CACHE_READ" "Turn $TURN did not report cached tokens."
       FAIL=$((FAIL + 1))
     fi
     # Hit rate is asserted on the AGGREGATE across turns 3+, not per turn: the
@@ -113,14 +113,14 @@ if [ "$AGG_TOTAL" -gt 0 ]; then
 else
   AGG_HIT_PCT=0
 fi
-echo "Aggregate cache hit rate (turns 3+): ${AGG_HIT_PCT}%"
+test_notice cache_hit_pct "$AGG_HIT_PCT"
 if [ "$AGG_HIT_PCT" -lt $MIN_CACHE_HIT_PCT ]; then
-  echo "  FAIL: aggregate cache hit rate ${AGG_HIT_PCT}% < ${MIN_CACHE_HIT_PCT}%"
+  test_notice cache_hit_pct "$AGG_HIT_PCT" "Expected at least $MIN_CACHE_HIT_PCT percent."
   FAIL=$((FAIL + 1))
 fi
 
 if [ "$TURN" -lt $MIN_EXPECTED_TURNS ]; then
-  echo "FAIL: Only $TURN turns detected (expected >= $MIN_EXPECTED_TURNS with tool use sub-turns)"
+  test_notice turns "$TURN" "Expected at least $MIN_EXPECTED_TURNS turns."
   FAIL=$((FAIL + 1))
 fi
 
@@ -134,7 +134,7 @@ fi
 # the distribution and sessionId stability in one pass.
 
 echo ""
-echo "Session sync:"
+test_notice phase session_sync
 
 CLEAN_START_COUNT=0
 REUSE_COUNT=0
@@ -157,24 +157,24 @@ done < <(grep "syncResult:" "$CLAUDE_BRIDGE_DEBUG_PATH" 2>/dev/null || true)
 UNIQUE_SIDS=$(printf "%s\n" "${SESSION_IDS[@]}" | sort -u | grep -c . || true)
 UNIQUE_SIDS=${UNIQUE_SIDS:-0}
 
-echo "  clean-start: $CLEAN_START_COUNT"
-echo "  reuse:       $REUSE_COUNT"
-echo "  rebuild:     $REBUILD_COUNT"
-echo "  unique session ids: $UNIQUE_SIDS"
+test_notice clean_starts "$CLEAN_START_COUNT"
+test_notice reuses "$REUSE_COUNT"
+test_notice rebuilds "$REBUILD_COUNT"
+test_notice session_ids "$UNIQUE_SIDS"
 
 if [ "$CLEAN_START_COUNT" -ne $EXPECTED_CASE1 ]; then
-  echo "  FAIL: Expected exactly $EXPECTED_CASE1 clean-start, got $CLEAN_START_COUNT"
+  test_notice clean_starts "$CLEAN_START_COUNT" "Expected $EXPECTED_CASE1 clean start."
   FAIL=$((FAIL + 1))
 fi
 
 if [ "$REBUILD_COUNT" -gt 0 ]; then
-  echo "  FAIL: $REBUILD_COUNT spurious rebuilds (expected 0 for consecutive same-provider turns)"
+  test_notice rebuilds "$REBUILD_COUNT" "Consecutive provider turns must reuse the session."
   echo "    Likely cause: off-by-one cursor — trailing assistant message misidentified as missed"
   FAIL=$((FAIL + 1))
 fi
 
 if [ "$REUSE_COUNT" -lt $MIN_CASE3_RESUMES ]; then
-  echo "  FAIL: Expected at least $MIN_CASE3_RESUMES reuses for turns 2+, got $REUSE_COUNT"
+  test_notice reuses "$REUSE_COUNT" "Expected at least $MIN_CASE3_RESUMES reuses."
   FAIL=$((FAIL + 1))
 fi
 
@@ -183,7 +183,7 @@ fi
 # A failure that churns UUIDs per turn would surface here even if the
 # distribution checks above still passed.
 if [ "$UNIQUE_SIDS" -gt 1 ]; then
-  echo "  FAIL: expected at most 1 distinct sessionId in same-provider flow, got $UNIQUE_SIDS"
+  test_notice session_ids "$UNIQUE_SIDS" "Expected at most one session ID."
   FAIL=$((FAIL + 1))
 fi
 
@@ -191,10 +191,10 @@ fi
 
 echo ""
 if [ "$FAIL" -eq 0 ]; then
-  echo "PASS: Prompt caching and session resume working correctly"
+  test_notice test_exit 0
 else
-  echo "FAIL: $FAIL assertions failed"
-  echo "  Log: $LOGFILE"
-  echo "  Debug: $CLAUDE_BRIDGE_DEBUG_PATH"
+  test_notice failed "$FAIL"
+  test_notice log "$LOGFILE"
+  test_notice debug_log "$CLAUDE_BRIDGE_DEBUG_PATH"
   exit 1
 fi

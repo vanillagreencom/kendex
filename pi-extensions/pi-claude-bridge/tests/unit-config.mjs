@@ -88,18 +88,14 @@ describe("loadConfig", () => {
 		});
 	}));
 
-	it("ignores invalid effort override settings", () => withTempDirs(({ project }) => {
-		writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({
-			kendex: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": {
-				forceEffort: "ultracode",
-				modelEffortOverrides: "not json",
-			} } } },
-		}));
+	it("ignores each invalid effort override setting", () => withTempDirs(({ project }) => {
 		recordProjectTrust({ cwd: project, isProjectTrusted: () => true });
-
-		const config = loadConfig(project);
-		assert.equal(config.provider?.forceEffort, undefined);
-		assert.equal(config.provider?.modelEffortOverrides, undefined);
+		for (const [key, value] of [["forceEffort", "ultracode"], ["modelEffortOverrides", "not json"]]) {
+			writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({
+				kendex: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": { [key]: value } } } },
+			}));
+			assert.equal(loadConfig(project).provider?.[key], undefined, key);
+		}
 	}));
 
 	// --- connector keys are user-scope + env only ---

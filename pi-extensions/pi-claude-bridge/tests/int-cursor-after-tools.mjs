@@ -23,15 +23,20 @@ test("turn 2 reuses session after tool-using turn 1 (no spurious rebuild)", { ti
 		defaultTimeout: 60_000,
 	});
 
-	harness.start();
-	await new Promise((r) => setTimeout(r, 2000));
-
 	try {
+		harness.start();
+		await new Promise((r) => setTimeout(r, 2000));
+		let toolStarts = 0;
+		const remove = harness.addListener((message) => {
+			if (message.type === "tool_execution_start") toolStarts++;
+		});
 		// Turn 1: force a tool call
 		const text1 = await harness.promptAndWait(
 			"Use the Read tool to read package.json and tell me the top-level name field. Just the name, nothing else."
 		);
 		assert.ok(text1, "Turn 1 should produce text");
+		remove();
+		assert.ok(toolStarts > 0, "Turn 1 must execute a tool to reach cursor tracking");
 
 		// Turn 2: text-only, should reuse session
 		const text2 = await harness.promptAndWait(

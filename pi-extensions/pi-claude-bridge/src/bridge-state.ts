@@ -1,5 +1,5 @@
 import { type ExtensionAPI, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import { debug, diagDump, diagGuidance } from "./debug.js";
+import { DEBUG, debug, diagDump, diagGuidance, diagLogPath } from "./debug.js";
 import { type QueryContext } from "./query-state.js";
 import { currentRequestLaneId } from "./request-lane.js";
 import { summarizeMissingToolNames, type MissingToolResult } from "./tool-pairing-audit.js";
@@ -284,6 +284,7 @@ export function reportToolResultMismatch(
 			unmatchedResultIds: progress.unmatchedResultIds,
 		});
 		safeNotify(
+			`tool-result-mismatch=${JSON.stringify({ delivered: progress.deliveredCount, expected: progress.expectedCount, resolved: progress.resolvedCount, diagnostic: DEBUG ? diagLogPath() : "CLAUDE_BRIDGE_DEBUG=1" })}\n` +
 			`Claude bridge: tool result delivery interrupted during ${reason}; ` +
 			`delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, ` +
 			`waiting=${progress.waitingCount}, queued=${progress.queuedCount}, unmatched=${progress.unmatchedResultCount}` +

@@ -1,18 +1,21 @@
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildPromptContextAppend } from "../src/prompt-context.ts";
 
 const originalPiDir = process.env.PI_CODING_AGENT_DIR;
+const roots = [];
 
 afterEach(() => {
+	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 	if (originalPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = originalPiDir;
 });
 
 function isolateGlobalPiDir(root) {
+	roots.push(root);
 	const globalPi = join(root, "global-pi");
 	mkdirSync(globalPi, { recursive: true });
 	process.env.PI_CODING_AGENT_DIR = globalPi;

@@ -145,6 +145,7 @@
   "devDependencies": {
     "@earendil-works/pi-ai": "^0.84.0",
     "@earendil-works/pi-coding-agent": "^0.84.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/node": "^24.3.0",
     "esbuild": "^0.28.0",
     "tsx": "^4.21.0",

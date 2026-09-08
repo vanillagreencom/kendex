@@ -1,3 +1,4 @@
+import { waitFor } from "./lib/wait-for.mjs";
 /**
  * Completion-path tests for the foreign-conversation guard.
  *
@@ -167,7 +168,7 @@ describe("foreign-conversation completion (#1001)", () => {
 			{ sessionId: "foreign-unresolved-tool" },
 		));
 		// The pi stream ends at the toolUse boundary; teardown runs after.
-		await new Promise((resolve) => setTimeout(resolve, 25));
+		assert.equal(await waitFor(() => runInRequestLane("foreign-unresolved-tool", () => ctx().activeQuery === null)), true, "foreign query teardown completed");
 
 		assert.ok(events.some((event) => event.type === "done" && event.reason === "toolUse"));
 		assert.equal(

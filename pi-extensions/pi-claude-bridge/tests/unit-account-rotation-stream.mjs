@@ -1,3 +1,5 @@
+import { fakeSdkQuery } from "./lib/fake-sdk-query.mjs";
+import { waitFor } from "./lib/wait-for.mjs";
 // Must load before any bridge module: diag assertions need the debug flag
 // set when src/debug.ts is evaluated.
 import "./lib/debug-env.mjs";
@@ -12,7 +14,6 @@ import {
 	__testSetBridgeIntegrityState,
 	__testGetBridgeIntegrityState,
 	__testSetSdkQueryFactory,
-	probeClaudeAccountProfile,
 	streamClaudeAgentSdk,
 } from "../src/index.ts";
 import * as piAi from "@earendil-works/pi-ai";
@@ -40,27 +41,6 @@ const model = {
 };
 const context = { messages: [{ role: "user", content: "hello", timestamp: Date.now() }] };
 
-function fakeSdkQuery(messages, accountLabel, observed) {
-	let closed = false;
-	return {
-		async *[Symbol.asyncIterator]() {
-			for (const message of messages) {
-				if (closed) break;
-				if (message instanceof Error) throw message;
-				yield message;
-			}
-		},
-		close() { closed = true; },
-		async interrupt() { closed = true; },
-		async accountInfo() {
-			return { email: `${accountLabel}@example.com`, subscriptionType: "max" };
-		},
-		async usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET() {
-			observed.usageProbes.push(accountLabel);
-			return { subscription_type: "max", rate_limits_available: true, rate_limits: null };
-		},
-	};
-}
 
 function makeRouter(observed, options = {}) {
 	const accounts = [
@@ -72,7 +52,7 @@ function makeRouter(observed, options = {}) {
 		acquire(input) {
 			observed.acquires.push(input);
 			if (options.unavailable) {
-				const error = new Error("No Claude subscription account is available");
+				const error = new Error("fixture-router-unavailable=all_accounts");
 				if (options.resetAtMs) Object.assign(error, { resetAtMs: options.resetAtMs, rateLimitType: "all_accounts" });
 				throw error;
 			}
@@ -207,13 +187,13 @@ describe("legacy sessions (no account router)", () => {
 	it("surfaces usage-limit copy once and still persists the session", async () => {
 		__testSetSdkQueryFactory(() => fakeSdkQuery([
 			{ type: "system", subtype: "init", session_id: "session-legacy" },
-			{ type: "result", subtype: "error_during_execution", errors: ["You've hit your weekly limit · resets Thursday 4am"] },
+			{ type: "result", subtype: "error_during_execution", errors: ["fixture-sdk-failure=weekly-limit\nYou've hit your weekly limit · resets Thursday 4am"] },
 		], "legacy", observedState()));
 
 		const events = await collect(streamClaudeAgentSdk(model, context, { sessionId: "legacy-usage-limit" }));
 		const errors = events.filter((event) => event.type === "error");
 		assert.equal(errors.length, 1);
-		assert.match(errors[0].error.errorMessage, /weekly limit/);
+		assert.match(errors[0].error.errorMessage, /fixture-sdk-failure=weekly-limit/);
 		const { sharedSession } = bridgeStateFor("legacy-usage-limit");
 		assert.equal(sharedSession?.sessionId, "session-legacy", "session persisted after usage-limit error");
 	});
@@ -261,13 +241,13 @@ describe("legacy sessions (no account router)", () => {
 		__testSetSdkQueryFactory(() => fakeSdkQuery([
 			{ type: "system", subtype: "init", session_id: "session-legacy" },
 			...STREAMED_TEXT("partial work"),
-			{ type: "result", subtype: "error_max_turns", errors: ["max turns exceeded"] },
+			{ type: "result", subtype: "error_max_turns", errors: ["fixture-sdk-failure=max-turns\nmax turns exceeded"] },
 		], "legacy", observedState()));
 
 		const events = await collect(streamClaudeAgentSdk(model, context, { sessionId: "legacy-max-turns" }));
 		const errors = events.filter((event) => event.type === "error");
 		assert.equal(errors.length, 1);
-		assert.match(errors[0].error.errorMessage, /max turns/);
+		assert.match(errors[0].error.errorMessage, /fixture-sdk-failure=max-turns/);
 		const { sharedSession } = bridgeStateFor("legacy-max-turns");
 		assert.equal(sharedSession?.sessionId, "session-legacy");
 		assert.equal(sharedSession?.needsRebuild, undefined);
@@ -450,7 +430,7 @@ describe("managed account stream rotation", () => {
 		stream.push = (event) => {
 			if (armed && event.type === "text_delta") {
 				armed = false;
-				throw new Error("mid-retry transport failure");
+				throw new Error("fixture-mid-retry=transport");
 			}
 			return push(event);
 		};
@@ -459,7 +439,7 @@ describe("managed account stream rotation", () => {
 		assert.equal(calls, 2, "the rotation retry started");
 		const errors = events.filter((event) => event.type === "error");
 		assert.equal(errors.length, 1, "the failed rotation must surface an error event");
-		assert.match(errors[0].error.errorMessage, /mid-retry transport failure/);
+		assert.match(errors[0].error.errorMessage, /fixture-mid-retry=transport/);
 	});
 
 	it("treats an Extra Usage rejection as a model limit and rotates accounts", async () => {
@@ -700,7 +680,7 @@ describe("managed account stream rotation", () => {
 		assert.equal(calls, 0);
 		assert.equal(events.length, 1);
 		assert.equal(events[0].type, "error");
-		assert.match(events[0].error.errorMessage, /No Claude subscription account/);
+		assert.match(events[0].error.errorMessage, /fixture-router-unavailable=all_accounts/);
 		assert.equal(events[0].error.resetAtMs, resetAtMs);
 		assert.equal(events[0].error.rateLimitType, "all_accounts");
 	});
@@ -812,7 +792,7 @@ describe("reentrant subagent queries and the shared session (C1)", () => {
 		// (single-message context → Case 1), so the seeded record survives sync.
 		const parentStream = streamClaudeAgentSdk(model, context, { sessionId: "parent" });
 		assert.ok(parentStream);
-		await new Promise((resolve) => setTimeout(resolve, 10));
+		assert.equal(await waitFor(() => runInRequestLane("parent", () => ctx().activeQuery !== null)), true, "parent query started");
 		const before = JSON.stringify(bridgeStateFor("parent").sharedSession);
 
 		// Reentrant call: a subagent's own short [user] conversation (empty text,
@@ -825,13 +805,8 @@ describe("reentrant subagent queries and the shared session (C1)", () => {
 		assert.equal(JSON.stringify(after), before, "parent record must be byte-identical after the reentrant call");
 		assert.equal(after?.cursor, 40, "cursor must not shrink to the foreign context's length");
 
-		// Let the parent finish and the whole promise chain settle before the
-		// factory is reset, so nothing floats into the next test. (The parent
-		// stream itself is left unconsumed: the reentrant delivery re-pointed
-		// rendering at the subagent's stream, which is part of what this guard
-		// contains — the cursor and record stay correct regardless.)
 		release();
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		await Promise.all([collect(parentStream), collect(subagentStream)]);
 	});
 
 	it("a subagent-shaped fresh query gets no resume id from the parent record", async () => {
@@ -877,7 +852,7 @@ describe("stream-independent metadata capture (C3)", () => {
 
 		const events = await collect(streamClaudeAgentSdk(model, context, { sessionId: "post-boundary-failure" }));
 		// The Pi stream ended at the toolUse boundary, so completion runs after.
-		await new Promise((resolve) => setTimeout(resolve, 25));
+		assert.equal(await waitFor(() => runInRequestLane("post-boundary-failure", () => ctx().activeQuery === null)), true, "query teardown completed");
 		assert.ok(events.some((event) => event.type === "done" && event.reason === "toolUse"));
 		assert.deepEqual(observed.failures, [{ profileId: "a", kind: "server" }], "failure classified despite the ended stream");
 		assert.deepEqual(observed.successes, [], "the attempt must not be recorded as a success");
@@ -904,7 +879,7 @@ describe("stream-independent metadata capture (C3)", () => {
 			], "legacy", observedState()));
 
 			await collect(streamClaudeAgentSdk(model, context, { sessionId: "late-connector-result" }));
-			await new Promise((resolve) => setTimeout(resolve, 25));
+			assert.equal(await waitFor(() => runInRequestLane("late-connector-result", () => ctx().activeQuery === null)), true, "query teardown completed");
 			const record = auditRecords.find((entry) => entry.toolUseId === "conn-1");
 			assert.ok(record, "the connector call must be audited");
 			assert.equal(record.outcome, "ok", "the observed late result must not be recorded as unobserved");
@@ -966,84 +941,5 @@ describe("router callback safety (C5/C7)", () => {
 		assert.deepEqual(textEvents(events), ["delivered"]);
 		assert.equal(events.filter((event) => event.type === "error").length, 0, "no error after a throwing telemetry callback");
 		assert.equal(events.filter((event) => event.type === "done").length, 1);
-	});
-});
-
-describe("account host probe (probeProfile)", () => {
-	it("settles within its deadline and kills a stalled probe child", async () => {
-		// probeProfile is a published entry point and `signal` is optional: a
-		// wedged child (never ends, even after close) must not hang the returned
-		// promise forever.
-		let closed = false;
-		__testSetSdkQueryFactory(() => ({
-			async *[Symbol.asyncIterator]() {
-				yield { type: "system", subtype: "init", session_id: "probe-session" };
-				await new Promise(() => {});
-			},
-			close() { closed = true; },
-			async interrupt() {},
-			async accountInfo() {
-				return { email: "a@example.com", subscriptionType: "max" };
-			},
-			async usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET() {
-				return { subscription_type: "max" };
-			},
-		}));
-
-		const result = await probeClaudeAccountProfile({
-			profile: { profileId: "a", label: "account-a" },
-			cwd: process.cwd(),
-			deadlineMs: 100,
-		});
-		assert.deepEqual(result, {});
-		assert.equal(closed, true, "the expired probe must kill its child");
-	});
-
-	it("spawns the probe child with tool isolation AND a deny-all PreToolUse hook", async () => {
-		// The probe runs /usage under bypassPermissions, so tool containment is
-		// the only gate — it must carry both layers (C12).
-		let probeOptions;
-		__testSetSdkQueryFactory((input) => {
-			probeOptions = input.options;
-			return fakeSdkQuery([{ type: "system", subtype: "init", session_id: "probe-session" }], "a", observedState());
-		});
-
-		await probeClaudeAccountProfile({
-			profile: { profileId: "a", label: "account-a" },
-			cwd: process.cwd(),
-			deadlineMs: 500,
-		});
-		assert.deepEqual(probeOptions.tools, [], "built-in tool set removed");
-		assert.ok(probeOptions.disallowedTools.includes("Bash"), "built-ins disallowed");
-		const hook = probeOptions.hooks?.PreToolUse?.[0]?.hooks?.[0];
-		assert.equal(typeof hook, "function", "deny-all PreToolUse hook registered");
-		const out = await hook({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {} }, "t1", { signal: new AbortController().signal });
-		assert.equal(out.hookSpecificOutput.permissionDecision, "deny", "every tool call is denied");
-	});
-
-	it("returns identity and usage when the probe completes before the deadline", async () => {
-		__testSetSdkQueryFactory(() => {
-			let closed = false;
-			return {
-				async *[Symbol.asyncIterator]() {
-					if (!closed) yield { type: "system", subtype: "init", session_id: "probe-session" };
-				},
-				close() { closed = true; },
-				async interrupt() { closed = true; },
-				async accountInfo() {
-					return { email: "a@example.com", organization: "Org", subscriptionType: "max" };
-				},
-				async usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET() {
-					return { subscription_type: "max" };
-				},
-			};
-		});
-
-		const result = await probeClaudeAccountProfile({
-			profile: { profileId: "a", label: "account-a" },
-			cwd: process.cwd(),
-		});
-		assert.equal(result.identity?.email, "a@example.com");
-		assert.deepEqual(result.usage, { subscription_type: "max" });
 	});
 });

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The bridge must clear sharedSession when Pi starts a replacement session.
 
-console.log("=== int-session-new.mjs ===");
+console.log("test=int-session-new.mjs");
 
 import { readFileSync } from "node:fs";
 import { createRpcHarness } from "./lib/rpc-harness.mjs";
@@ -17,33 +17,25 @@ const harness = createRpcHarness({
 
 const { start, stop, send, promptAndWait, DEBUG_LOG, RPC_LOG } = harness;
 
-let finishing = false;
 function finish(code, msg) {
-	if (finishing) return;
-	finishing = true;
-	console.log(msg);
-	if (code !== 0) {
-		console.log(`  RPC log:    ${RPC_LOG}`);
-		console.log(`  Debug log:  ${DEBUG_LOG}`);
-	}
-	stop().then(() => process.exit(code));
+	if (code !== 0) throw new Error(msg);
+	console.log(`test_exit=${code}\n${msg}`);
 }
 
-start();
-await new Promise((r) => setTimeout(r, 2000));
-
 try {
-	console.log("Turn 1: seed history...");
+	start();
+	await new Promise((r) => setTimeout(r, 2000));
+	console.log("turn=1\nseed history...");
 	await promptAndWait("Pick a number between 1 and 100 and remember it. Reply with just the number.");
-	console.log("Turn 2: more history...");
+	console.log("turn=2\nmore history...");
 	await promptAndWait("Now pick a color. Reply with just the color.");
 
 	const NEW_MARKER_LOG = readFileSync(DEBUG_LOG, "utf8").length;
 
-	console.log("Triggering /new...");
+	console.log("command=new_session");
 	await send({ type: "new_session" });
 
-	console.log("Turn 3: prompt after /new (should be a clean start)...");
+	console.log("turn=3\nprompt after /new (should be a clean start)...");
 	await promptAndWait("Hello fresh session. Reply with just 'hi'.");
 
 	const fullLog = readFileSync(DEBUG_LOG, "utf8");
@@ -57,7 +49,7 @@ try {
 	// The first syncResult must be a clean start (sharedSession=null,
 	// no prior messages on the fresh agent state).
 	const syncResults = [...postNewLog.matchAll(/syncResult: path=(reuse|rebuild|clean-start)/g)].map((m) => m[1]);
-	console.log(`  Post-/new syncResults: ${JSON.stringify(syncResults)}`);
+	console.log(`sync_results=${JSON.stringify(syncResults)}`);
 	if (syncResults.length === 0) {
 		finish(1, "FAIL: no syncResult markers after /new (Turn 3 didn't reach the provider?)");
 	}
@@ -69,5 +61,8 @@ try {
 
 	finish(0, "PASS");
 } catch (e) {
-	finish(1, `FAIL: ${e.message}\n${e.stack}`);
+	console.error(`test_exit=1\n${e.stack ?? e.message}`);
+	process.exitCode = 1;
+} finally {
+	await stop();
 }

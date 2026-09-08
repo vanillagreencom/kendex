@@ -41,8 +41,16 @@ export function createRpcHarness(opts) {
 	let buffer = "";
 	let listeners = [];
 	let reqId = 0;
+	let childClosed;
+	let childFailure;
+	let stopping;
+	const pending = new Set();
 
 	function start() {
+		stopped = false;
+		stopping = undefined;
+		childFailure = undefined;
+		buffer = "";
 		// Truncate the debug log on each run so test assertions that grep the
 		// log see only this run's output, not accumulated history from prior
 		// failing runs. RPC log is still append so cross-run comparisons work.
@@ -50,8 +58,20 @@ export function createRpcHarness(opts) {
 		rpcLog = createWriteStream(RPC_LOG, { flags: "a" });
 		const spawnArgs = ["--no-session", "-ne", "-e", DIR, "--mode", "rpc", ...args];
 		pi = spawn("pi", spawnArgs, {
+			// Pi owns SDK descendants; a private group lets teardown stop the whole tree.
+			detached: process.platform !== "win32",
 			stdio: ["pipe", "pipe", "pipe"],
 			env: { ...process.env, PATH: cleanPath, CLAUDE_BRIDGE_DEBUG: "1", CLAUDE_BRIDGE_DEBUG_PATH: DEBUG_LOG, ...env },
+		});
+
+		childClosed = new Promise((resolve) => pi.once("close", resolve));
+		pi.on("error", (error) => {
+			childFailure = error;
+			for (const cancel of [...pending]) cancel(error);
+		});
+		pi.on("close", (code, signal) => {
+			childFailure ??= new Error(`pi_exit=${code ?? signal}`);
+			for (const cancel of [...pending]) cancel(childFailure);
 		});
 
 		pi.stderr.on("data", (d) => { if (!stopped) rpcLog.write(d); });
@@ -73,10 +93,41 @@ export function createRpcHarness(opts) {
 		});
 	}
 
+	function signalOwnedProcess(signal) {
+		if (process.platform === "win32" || !pi.pid) {
+			pi.kill(signal);
+			return;
+		}
+		try {
+			process.kill(-pi.pid, signal);
+		} catch (error) {
+			if (error.code !== "ESRCH") throw error;
+		}
+	}
+
 	function stop() {
-		stopped = true;
-		pi?.kill();
-		return new Promise((r) => rpcLog?.end(r));
+		if (stopping) return stopping;
+		stopping = (async () => {
+			stopped = true;
+			for (const cancel of [...pending]) cancel(new Error("harness_state=stopped"));
+			listeners = [];
+			if (pi) {
+				signalOwnedProcess("SIGTERM");
+				const timer = setTimeout(() => signalOwnedProcess("SIGKILL"), 1000);
+				try {
+					await childClosed;
+					// Descendants can close inherited pipes before they exit.
+					if (process.platform !== "win32") signalOwnedProcess("SIGKILL");
+				} finally {
+					clearTimeout(timer);
+				}
+			}
+			if (rpcLog) await new Promise((resolve, reject) => {
+				rpcLog.once("error", reject);
+				rpcLog.end(resolve);
+			});
+		})();
+		return stopping;
 	}
 
 	function addListener(fn) {
@@ -87,46 +138,40 @@ export function createRpcHarness(opts) {
 		};
 	}
 
-	function send(cmd, timeout = defaultTimeout) {
-		const id = `req_${++reqId}`;
-		const full = { ...cmd, id };
-		if (!stopped) rpcLog.write(`> ${JSON.stringify(full)}\n`);
-		pi.stdin.write(JSON.stringify(full) + "\n");
+	function waitForMatch(predicate, description, timeout = defaultTimeout) {
+		if (childFailure) return Promise.reject(childFailure);
+		if (stopped) return Promise.reject(new Error("harness_state=stopped"));
 		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => reject(new Error(`Timeout: ${cmd.type}`)), timeout);
-			const remove = addListener((msg) => {
-				if (msg.type !== "response" || msg.id !== id) return;
+			const finish = (error, msg) => {
 				clearTimeout(timer);
 				remove();
-				msg.success ? resolve(msg.data) : reject(new Error(`${cmd.type}: ${msg.error}`));
+				pending.delete(cancel);
+				if (error) reject(error); else resolve(msg);
+			};
+			const cancel = (error) => finish(error);
+			const timer = setTimeout(() => cancel(new Error(`rpc_timeout=${description}`)), timeout);
+			const remove = addListener((msg) => {
+				if (predicate(msg)) finish(null, msg);
 			});
+			pending.add(cancel);
 		});
+	}
+
+	async function send(cmd, timeout = defaultTimeout) {
+		if (childFailure) throw childFailure;
+		if (stopped) throw new Error("harness_state=stopped");
+		const id = `req_${++reqId}`;
+		const full = { ...cmd, id };
+		const response = waitForMatch((msg) => msg.type === "response" && msg.id === id, cmd.type, timeout);
+		if (!stopped) rpcLog.write(`> ${JSON.stringify(full)}\n`);
+		pi.stdin.write(JSON.stringify(full) + "\n");
+		const msg = await response;
+		if (!msg.success) throw new Error(`rpc_command=${cmd.type}\n${msg.error}`);
+		return msg.data;
 	}
 
 	function waitForEvent(type, timeout = defaultTimeout) {
-		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => reject(new Error(`Timeout waiting for ${type}`)), timeout);
-			const remove = addListener((msg) => {
-				if (msg.type === type) {
-					clearTimeout(timer);
-					remove();
-					resolve(msg);
-				}
-			});
-		});
-	}
-
-	function waitForMatch(predicate, description, timeout = defaultTimeout) {
-		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => reject(new Error(`Timeout waiting for ${description}`)), timeout);
-			const remove = addListener((msg) => {
-				if (predicate(msg)) {
-					clearTimeout(timer);
-					remove();
-					resolve(msg);
-				}
-			});
-		});
+		return waitForMatch((msg) => msg.type === type, type, timeout);
 	}
 
 	function collectText() {
@@ -143,14 +188,14 @@ export function createRpcHarness(opts) {
 
 	async function promptAndWait(message, timeout = defaultTimeout) {
 		const collector = collectText();
-		await send({ type: "prompt", message }, timeout);
-		await waitForEvent("agent_end", timeout);
-		return collector.stop();
+		try {
+			await Promise.all([waitForEvent("agent_end", timeout), send({ type: "prompt", message }, timeout)]);
+			return collector.stop();
+		} finally {
+			collector.stop();
+		}
 	}
 
-	function clearListeners() {
-		listeners = [];
-	}
 
 	return {
 		DIR,
@@ -161,7 +206,6 @@ export function createRpcHarness(opts) {
 		start,
 		stop,
 		addListener,
-		clearListeners,
 		send,
 		waitForEvent,
 		waitForMatch,
@@ -178,7 +222,7 @@ export function createRpcHarness(opts) {
 export function requireEnv(name) {
 	const value = process.env[name];
 	if (!value) {
-		console.error(`ERROR: ${name} not set (see .env.test)`);
+		console.error(`missing_env=${name}\nSet the environment variable in .env.test.`);
 		process.exit(1);
 	}
 	return value;

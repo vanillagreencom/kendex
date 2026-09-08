@@ -68,7 +68,8 @@ async function listAccountConnectors(deps) {
   const { credentials, apiBase, signal } = deps;
   const fetchImpl = deps.fetchImpl ?? fetch;
   const url = connectorsListUrl(credentials.organizationUuid, apiBase);
-  const fail = (reason) => ({ ok: false, complete: false, reason: redactSecret(reason, credentials.accessToken) });
+  const fail = (key, value, reason) => ({ ok: false, complete: false, reason: redactSecret(`${key}=${JSON.stringify(value)}
+${reason}`, credentials.accessToken) });
   let response;
   try {
     response = await fetchImpl(url, {
@@ -82,32 +83,32 @@ async function listAccountConnectors(deps) {
       signal
     });
   } catch (error) {
-    return fail(`connector list request failed: ${errorText(error)}`);
+    return fail("connector-request", "transport", `connector list request failed: ${errorText(error)}`);
   }
   let bodyText;
   try {
     bodyText = await response.text();
   } catch (error) {
-    return fail(`connector list response unreadable: ${errorText(error)}`);
+    return fail("connector-response", "unreadable", `connector list response unreadable: ${errorText(error)}`);
   }
   if (!response.ok) {
-    return fail(`connector list returned HTTP ${response.status}${apiErrorSuffix(bodyText)}`);
+    return fail("connector-http", response.status, `connector list returned HTTP ${response.status}${apiErrorSuffix(bodyText)}`);
   }
   let parsed;
   try {
     parsed = JSON.parse(bodyText);
   } catch {
-    return fail("connector list returned a non-JSON body");
+    return fail("connector-json", "invalid", "connector list returned a non-JSON body");
   }
   if (!Array.isArray(parsed?.results)) {
-    return fail("connector list response had no results array");
+    return fail("connector-results", "not-array", "connector list response had no results array");
   }
   const connectors = [];
   for (const raw of parsed.results) {
     const entry = raw;
     const name = nonEmptyString(entry?.name);
     if (!name) {
-      return fail("connector list contained an entry with no name");
+      return fail("connector-name", connectors.length, "connector list contained an entry with no name");
     }
     connectors.push({
       name,

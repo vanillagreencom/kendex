@@ -168,12 +168,12 @@ export function shouldRestorePersistedBridgeEntry(
 	currentPiSessionId: string | undefined,
 	currentCwd: string | undefined,
 ): string | undefined {
-	if (!persisted.piSessionId) return "missing piSessionId";
+	if (!persisted.piSessionId) return "restore-session-missing=piSessionId\nMissing piSessionId.";
 	if (currentPiSessionId && persisted.piSessionId !== currentPiSessionId) {
-		return `piSessionId mismatch (persisted=${persisted.piSessionId} current=${currentPiSessionId})`;
+		return `restore-session-mismatch=${persisted.piSessionId} current=${currentPiSessionId}\nThe persisted session differs from the active session.`;
 	}
 	if (currentCwd && canonicalize(persisted.cwd) !== canonicalize(currentCwd)) {
-		return `cwd mismatch (persisted=${persisted.cwd} current=${currentCwd})`;
+		return `restore-cwd-mismatch=${persisted.cwd} current=${currentCwd}\nThe persisted working directory differs from the active directory.`;
 	}
 	return undefined;
 }

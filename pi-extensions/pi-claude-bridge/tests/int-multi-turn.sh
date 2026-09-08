@@ -5,7 +5,7 @@
 
 source "$(dirname "$0")/lib/bash-setup.sh"
 
-echo "=== multi-turn-test.sh ==="
+test_notice test multi-turn
 
 require_command jq
 
@@ -16,33 +16,31 @@ PASS=0
 FAIL=0
 EXPECTED_VERSION=$(jq -r .version "$DIR/package.json")
 
-trap kill_descendants EXIT
+trap cleanup_test_command EXIT
 
 run_json() {
   local name="$1"; shift
   local assertion="$1"; shift
-  local slug=$(echo "$name" | tr ' :,' '-' | tr -cd '[:alnum:]-')
+  local slug
+  slug=$(echo "$name" | tr ' :,' '-' | tr -cd '[:alnum:]-')
   local logfile="$LOGDIR/$slug.ndjson"
-  printf "%-50s " "$name"
-  if timeout "$TIMEOUT" "$@" > "$logfile" 2>"$logfile.err"; then
+  test_notice case "$name"
+  if run_test_command "$TIMEOUT" "$@" > "$logfile" 2>"$logfile.err"; then
     if [ ! -s "$logfile" ]; then
-      echo "FAIL (empty output)"
+      test_notice output_bytes 0
       ((FAIL+=1))
     elif jq -s -e "$assertion" < "$logfile" > /dev/null 2>&1; then
-      echo "PASS"
+      test_notice test_exit 0
       ((PASS+=1))
     else
-      echo "FAIL (assertion)"
-      echo "  Events: $(jq -r '.type // empty' < "$logfile" 2>/dev/null | sort | uniq -c | sort -rn | head -5)"
+      test_notice assertion_exit 1
       ((FAIL+=1))
     fi
   else
-    echo "FAIL (exit $?)"
-    [ -s "$logfile" ] && echo "  Events: $(jq -r '.type // empty' < "$logfile" 2>/dev/null | sort | uniq -c | sort -rn | head -5)"
+    test_notice command_exit "$?"
     ((FAIL+=1))
   fi
-  echo "  Log: $logfile"
-  kill_descendants
+  test_notice log "$logfile"
 }
 
 # --- Tests ---
@@ -56,7 +54,7 @@ run_json() {
 run_json "multi-turn: tool use, context, history" \
   '([.[] | select(.type == "message_update") | .assistantMessageEvent | select(.type == "toolcall_end")] | length) >= 2 and
    ([.[] | select(.type == "agent_end")] | length) >= 3 and
-   ([.[] | select(.type == "message_update") | .assistantMessageEvent | select(.type == "text_end") | .content] | join(" ") | test("'"$EXPECTED_VERSION"'")) and
+   ([.[] | select(.type == "message_update") | .assistantMessageEvent | select(.type == "text_end") | .content] | join(" ") | contains("'"$EXPECTED_VERSION"'")) and
    ([.[] | select(.type == "message_update") | .assistantMessageEvent | select(.type == "text_end") | .content] | join(" ") | test("banana"))' \
   pi --no-session -ne -e "$DIR" \
   --model "pi-claude/claude-haiku-4-5" \
@@ -119,5 +117,6 @@ run_json "regression: turn 2 tool results not stale from turn 1" \
 # --- Summary ---
 
 echo ""
-echo "Passed: $PASS  Failed: $FAIL"
+test_notice passed "$PASS"
+test_notice failed "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

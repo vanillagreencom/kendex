@@ -14,7 +14,6 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-	NATIVE_PROVIDER_UNSUPPORTED_MESSAGE,
 	buildNativeProvider,
 	claudeAuthSourceLabel,
 	supportsNativeProvider,
@@ -45,24 +44,27 @@ describe("supportsNativeProvider", () => {
 	});
 
 	it("rejects hosts without createProvider (pi-ai 0.80.x shape)", () => {
-		assert.equal(supportsNativeProvider({}), false);
-		assert.equal(supportsNativeProvider(undefined), false);
-		assert.equal(supportsNativeProvider({ createProvider: "nope" }), false);
+		for (const host of [{}, undefined, { createProvider: "nope" }]) {
+			assert.equal(supportsNativeProvider(host), false, JSON.stringify(host) ?? "undefined");
+		}
 	});
 });
 
 describe("claudeAuthSourceLabel", () => {
 	it("names the env token that will authenticate, else the login default", () => {
-		assert.equal(claudeAuthSourceLabel({ CLAUDE_CODE_OAUTH_TOKEN: "tok" }), "CLAUDE_CODE_OAUTH_TOKEN");
-		assert.equal(claudeAuthSourceLabel({ ANTHROPIC_API_KEY: "key" }), "ANTHROPIC_API_KEY");
-		assert.equal(claudeAuthSourceLabel({}), "Claude Code login");
+		for (const [env, expected] of [
+			[{ CLAUDE_CODE_OAUTH_TOKEN: "tok" }, "CLAUDE_CODE_OAUTH_TOKEN"],
+			[{ ANTHROPIC_API_KEY: "key" }, "ANTHROPIC_API_KEY"],
+			[{}, "Claude Code login"],
+		]) {
+			assert.equal(claudeAuthSourceLabel(env), expected, JSON.stringify(env));
+		}
 	});
 });
 
 describe("buildNativeProvider", () => {
-	it("throws the versioned message on a pre-0.81 host shape", () => {
-		assert.throws(() => buildNativeProvider({}, MODELS, () => {}), new RegExp("requires pi >= 0.81"));
-		assert.match(NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, /pi-claude-bridge@1\.x/);
+	it("rejects a host without the native provider API", () => {
+		assert.throws(() => buildNativeProvider({}, MODELS, () => {}), { code: "CLAUDE_BRIDGE_NATIVE_PROVIDER_UNSUPPORTED" });
 	});
 
 	it("builds a provider whose id, models, and stamped fields match the bridge contract", () => {

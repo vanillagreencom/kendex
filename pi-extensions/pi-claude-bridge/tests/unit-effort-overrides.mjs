@@ -3,38 +3,18 @@ import assert from "node:assert/strict";
 import { resolveConfiguredEffort } from "../src/index.ts";
 
 describe("Claude bridge effort overrides", () => {
-	it("keeps mapped Pi effort when no override is configured", () => {
-		assert.equal(resolveConfiguredEffort("claude-opus-4-8", "xhigh", {}), "xhigh");
-	});
-
-	it("uses a global forceEffort override", () => {
-		assert.equal(resolveConfiguredEffort("claude-opus-4-8", "xhigh", { forceEffort: "max" }), "max");
-	});
-
-	it("uses a model-specific override before global forceEffort", () => {
-		assert.equal(resolveConfiguredEffort("claude-opus-4-8", "xhigh", {
-			forceEffort: "high",
-			modelEffortOverrides: { "claude-opus-4-8": "max" },
-		}), "max");
-	});
-
-	it("accepts pi-claude/<id> model override keys and wildcard keys", () => {
-		assert.equal(resolveConfiguredEffort("claude-opus-4-8", "xhigh", {
-			modelEffortOverrides: { "pi-claude/claude-opus-4-8": "max" },
-		}), "max");
-		// P2 / no-legacy: pre-rename claude-bridge/<id> keys are ignored.
-		assert.equal(resolveConfiguredEffort("claude-opus-4-8", "xhigh", {
-			modelEffortOverrides: { "claude-bridge/claude-opus-4-8": "max" },
-		}), "xhigh");
-		assert.equal(resolveConfiguredEffort("claude-haiku-4-5", "medium", {
-			modelEffortOverrides: { "*": "low" },
-		}), "low");
-	});
-
-	it("ignores invalid override values defensively", () => {
-		assert.equal(resolveConfiguredEffort("claude-opus-4-8", "xhigh", {
-			forceEffort: "ultracode",
-			modelEffortOverrides: { "claude-opus-4-8": "turbo" },
-		}), "xhigh");
+	it("resolves configured effort by model and precedence", () => {
+		for (const { name, model, mapped, config, expected } of [
+			{ name: "mapped Pi effort", model: "claude-opus-4-8", mapped: "xhigh", config: {}, expected: "xhigh" },
+			{ name: "global override", model: "claude-opus-4-8", mapped: "xhigh", config: { forceEffort: "max" }, expected: "max" },
+			{ name: "model precedes global", model: "claude-opus-4-8", mapped: "xhigh", config: { forceEffort: "high", modelEffortOverrides: { "claude-opus-4-8": "max" } }, expected: "max" },
+			{ name: "provider-qualified model", model: "claude-opus-4-8", mapped: "xhigh", config: { modelEffortOverrides: { "pi-claude/claude-opus-4-8": "max" } }, expected: "max" },
+			{ name: "unknown provider key", model: "claude-opus-4-8", mapped: "xhigh", config: { modelEffortOverrides: { "claude-bridge/claude-opus-4-8": "max" } }, expected: "xhigh" },
+			{ name: "wildcard", model: "claude-haiku-4-5", mapped: "medium", config: { modelEffortOverrides: { "*": "low" } }, expected: "low" },
+			{ name: "invalid global value", model: "claude-opus-4-8", mapped: "xhigh", config: { forceEffort: "ultracode" }, expected: "xhigh" },
+			{ name: "invalid model value", model: "claude-opus-4-8", mapped: "xhigh", config: { modelEffortOverrides: { "claude-opus-4-8": "turbo" } }, expected: "xhigh" },
+		]) {
+			assert.equal(resolveConfiguredEffort(model, mapped, config), expected, name);
+		}
 	});
 });

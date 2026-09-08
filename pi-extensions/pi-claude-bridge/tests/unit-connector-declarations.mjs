@@ -34,9 +34,9 @@ test("COMPATIBILITY CONTRACT: the server key is `claude.ai <Connector>` — chan
 	// If this test fails, you are making a breaking change for a downstream
 	// repo. Coordinate with memsira first; see docs/cross-repo.md
 	// "The Connector Server Key Is The Tool Namespace — Must-Agree Across Repos".
-	assert.equal(connectorServerName("Slack"), "claude.ai Slack");
-	assert.equal(connectorServerName("Google Calendar"), "claude.ai Google Calendar");
-	assert.equal(connectorServerName("  Figma  "), "claude.ai Figma", "trimmed, not otherwise rewritten");
+	for (const [name, expected] of [["Slack", "claude.ai Slack"], ["Google Calendar", "claude.ai Google Calendar"], ["  Figma  ", "claude.ai Figma"]]) {
+		assert.equal(connectorServerName(name), expected, name);
+	}
 	// No case-folding, no separator substitution, no id in the key — the tool
 	// namespace derives from this string and memsira pins the result verbatim.
 	const servers = connectorMcpServers(ok([
@@ -51,7 +51,7 @@ test("emits the claudeai-proxy shape with alwaysLoad set", () => {
 	]));
 	assert.deepEqual(servers["claude.ai Slack"], {
 		type: "claudeai-proxy",
-		url: connectorProxyUrl("id-slack"),
+		url: "https://mcp-proxy.anthropic.com/v1/mcp/id-slack",
 		id: "id-slack",
 		// The whole mechanism: blocks startup until connected, so the tools are
 		// present when the turn-1 prompt is built.
@@ -60,9 +60,13 @@ test("emits the claudeai-proxy shape with alwaysLoad set", () => {
 });
 
 test("proxy url targets the claude.ai mcp proxy and escapes the id", () => {
-	assert.equal(connectorProxyUrl("id-slack"), "https://mcp-proxy.anthropic.com/v1/mcp/id-slack");
-	assert.equal(connectorProxyUrl("a/b"), "https://mcp-proxy.anthropic.com/v1/mcp/a%2Fb");
-	assert.equal(connectorProxyUrl("x", "https://example.test/mcp///"), "https://example.test/mcp/x");
+	for (const [id, base, expected] of [
+		["id-slack", undefined, "https://mcp-proxy.anthropic.com/v1/mcp/id-slack"],
+		["a/b", undefined, "https://mcp-proxy.anthropic.com/v1/mcp/a%2Fb"],
+		["x", "https://example.test/mcp///", "https://example.test/mcp/x"],
+	]) {
+		assert.equal(connectorProxyUrl(id, base), expected, id);
+	}
 });
 
 test("a connected connector with no installed server id is skipped, not emitted broken", () => {
@@ -87,13 +91,14 @@ test("CLAUDE_BRIDGE_CONNECTOR_DECLARE=off disables declarations without disablin
 	] };
 	const prev = process.env.CLAUDE_BRIDGE_CONNECTOR_DECLARE;
 	try {
-		for (const off of ["off", "0", "false", "no", "OFF"]) {
-			process.env.CLAUDE_BRIDGE_CONNECTOR_DECLARE = off;
-			assert.deepEqual(connectorMcpServers(inv), {}, `expected ${off} to disable`);
-		}
-		for (const on of ["", "on", "1", "true"]) {
-			process.env.CLAUDE_BRIDGE_CONNECTOR_DECLARE = on;
-			assert.deepEqual(Object.keys(connectorMcpServers(inv)), ["claude.ai Slack"], `expected ${on || "<empty>"} to keep declarations`);
+		for (const [value, enabled] of [
+			["off", false], ["0", false], ["false", false], ["no", false], ["OFF", false],
+			["", true], ["on", true], ["1", true], ["true", true],
+		]) {
+			process.env.CLAUDE_BRIDGE_CONNECTOR_DECLARE = value;
+			assert.deepEqual(connectorMcpServers(inv), enabled ? {
+				"claude.ai Slack": { type: "claudeai-proxy", url: "https://mcp-proxy.anthropic.com/v1/mcp/id-slack", id: "id-slack", alwaysLoad: true },
+			} : {}, value);
 		}
 	} finally {
 		if (prev === undefined) delete process.env.CLAUDE_BRIDGE_CONNECTOR_DECLARE;

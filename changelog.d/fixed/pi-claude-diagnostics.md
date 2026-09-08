@@ -1,0 +1,1 @@
+- Pi Claude reports stable error identifiers for tool interruptions, connector failures, and session repair, with a readable explanation below.

@@ -64,7 +64,7 @@ const DRAIN_CAUSE_TEXT: Record<ToolCallDrainCause, string> = {
 
 export function interruptedToolCallResult(cause: ToolCallDrainCause): McpResult {
 	return {
-		content: [{ type: "text", text: `Claude bridge: ${DRAIN_CAUSE_TEXT[cause]} before this tool call's result was delivered. The call did not complete and produced no output.` }],
+		content: [{ type: "text", text: `tool-call-drain=${cause}\nClaude bridge: ${DRAIN_CAUSE_TEXT[cause]} before this tool call's result was delivered. The call did not complete and produced no output.` }],
 		isError: true,
 	};
 }
@@ -95,7 +95,7 @@ export function drainPendingToolCalls(queryCtx: QueryContext, cause: ToolCallDra
  *  call is guaranteed not to have executed on the Pi side. */
 export function strandedToolCallResult(): McpResult {
 	return {
-		content: [{ type: "text", text: "Claude bridge: this tool call was never forwarded to Pi before its turn ended, so it did not execute and no result can arrive. Re-run the tool." }],
+		content: [{ type: "text", text: "tool-call-stranded=unforwarded\nClaude bridge: this tool call was never forwarded to Pi before its turn ended, so it did not execute and no result can arrive. Re-run the tool." }],
 		isError: true,
 	};
 }
@@ -400,7 +400,7 @@ export class QueryContext {
 	turnSawToolCall = false;
 
 	get turnBlocks(): Array<any> {
-		if (!this.turnOutput) throw new Error("turnBlocks accessed before resetTurnState");
+		if (!this.turnOutput) throw new Error("turn-state-uninitialized=turnBlocks\nturnBlocks accessed before resetTurnState");
 		return this.turnOutput.content;
 	}
 
@@ -702,14 +702,14 @@ export function stackDepth(): number { return lane().stack.length; }
 
 export function pushContext(): void {
 	const state = lane();
-	if (!state.current.activeQuery) throw new Error("pushContext() called with no active query");
+	if (!state.current.activeQuery) throw new Error("query-stack-push=inactive\npushContext() called with no active query");
 	state.stack.push(state.current);
 	state.current = new QueryContext();
 }
 
 export function popContext(): void {
 	const state = lane();
-	if (state.stack.length === 0) throw new Error("popContext() called with empty stack");
+	if (state.stack.length === 0) throw new Error("query-stack-pop=empty\npopContext() called with empty stack");
 	const parent = state.stack[state.stack.length - 1];
 	parent.deferredUserMessages.push(...state.current.deferredUserMessages);
 	state.current = state.stack.pop()!;

@@ -16,31 +16,37 @@ describe("Claude usage-limit messages", () => {
 	});
 
 	it("formats reset timestamps with timezone context", () => {
-		const formatted = formatResetTimestamp("2026-05-23T13:19:55Z");
-		assert.match(formatted, /2026|May|23|13|1|UTC|GMT|AM|PM/i);
-		assert.equal(formatResetTimestamp("not a date"), "unknown");
+		const originalTimezone = process.env.TZ;
+		process.env.TZ = "UTC";
+		try {
+			const formatted = formatResetTimestamp("2026-05-23T13:19:55Z");
+			for (const [field, pattern] of [
+				["year", /2026/], ["day", /\b23\b/], ["minute and second", /:19:55/],
+				["time zone", /(?:UTC|GMT)$/],
+			]) {
+				assert.match(formatted, pattern, field);
+			}
+			assert.equal(formatResetTimestamp("not a date"), "unknown");
+		} finally {
+			if (originalTimezone === undefined) delete process.env.TZ;
+			else process.env.TZ = originalTimezone;
+		}
 	});
 
-	it("matches the CLI's official plan and Extra Usage limit copy", () => {
-		assert.equal(isUsageLimitMessage("You've hit your weekly limit · resets Thursday 4am"), true);
-		assert.equal(isUsageLimitMessage("You've reached your session limit"), true);
-		assert.equal(isUsageLimitMessage("You're out of usage credits"), true);
-		assert.equal(isUsageLimitMessage("You're out of extra usage"), true);
-		assert.equal(isUsageLimitMessage("Your seat type doesn't include extra usage"), true);
-	});
-
-	it("matches text embedded in a result payload's errors array", () => {
-		const resultMessage = {
-			type: "result",
-			subtype: "error_during_execution",
-			errors: ["You've hit your weekly limit · resets Thursday 4am"],
-		};
-		assert.equal(isUsageLimitMessage(resultMessage), true);
-	});
-
-	it("ignores unrelated errors and generic rate-limit prose", () => {
-		assert.equal(isUsageLimitMessage("Claude rate limited; resets at 12:00"), false);
-		assert.equal(isUsageLimitMessage(new Error("ECONNRESET")), false);
-		assert.equal(isUsageLimitMessage(undefined), false);
+	it("classifies CLI usage-limit inputs independently", () => {
+		// The CLI emits these strings directly and in result.errors.
+		for (const [name, input, expected] of [
+			["weekly plan", "You've hit your weekly limit · resets Thursday 4am", true],
+			["session plan", "You've reached your session limit", true],
+			["credits", "You're out of usage credits", true],
+			["extra usage", "You're out of extra usage", true],
+			["seat type", "Your seat type doesn't include extra usage", true],
+			["result errors", { type: "result", subtype: "error_during_execution", errors: ["You've hit your weekly limit · resets Thursday 4am"] }, true],
+			["generic rate limit", "Claude rate limited; resets at 12:00", false],
+			["network error", new Error("ECONNRESET"), false],
+			["absent", undefined, false],
+		]) {
+			assert.equal(isUsageLimitMessage(input), expected, name);
+		}
 	});
 });

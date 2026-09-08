@@ -60,55 +60,26 @@ test("the raw scope path is never persisted — the payload stores its digest", 
 	});
 });
 
-test("a file whose recorded scope disagrees with the requested one is rejected", () => {
-	// Guards a truncated-hash collision or a hand-copied cache file.
-	withStateDir(() => {
-		const path = connectorCachePath("/scope/a");
-		mkdirSync(dirname(path), { recursive: true });
-		writeFileSync(path, JSON.stringify({ version: 2, scope: scopeDigest("/scope/OTHER"), savedAt: Date.now(), connectors: [SLACK] }));
-		assert.equal(readCachedConnectors("/scope/a"), undefined);
-	});
-});
-
-test("a version-1 file (raw scope path) is rejected wholesale", () => {
-	withStateDir(() => {
-		const path = connectorCachePath("/scope/a");
-		mkdirSync(dirname(path), { recursive: true });
-		writeFileSync(path, JSON.stringify({ version: 1, scope: "/scope/a", savedAt: Date.now(), connectors: [SLACK] }));
-		assert.equal(readCachedConnectors("/scope/a"), undefined);
-	});
-});
-
-test("stale, future-dated, wrong-version, corrupt and missing all fail open", () => {
-	withStateDir(() => {
-		const path = connectorCachePath("/scope/a");
-		mkdirSync(dirname(path), { recursive: true });
-		const base = { version: 2, scope: scopeDigest("/scope/a"), connectors: [SLACK] };
-
-		writeFileSync(path, JSON.stringify({ ...base, savedAt: Date.now() - 8 * 24 * 3600 * 1000 }));
-		assert.equal(readCachedConnectors("/scope/a"), undefined, "8 days old must expire");
-
-		writeFileSync(path, JSON.stringify({ ...base, savedAt: Date.now() + 60_000 }));
-		assert.equal(readCachedConnectors("/scope/a"), undefined, "future savedAt is not trusted");
-
-		writeFileSync(path, JSON.stringify({ ...base, version: 999, savedAt: Date.now() }));
-		assert.equal(readCachedConnectors("/scope/a"), undefined, "version mismatch must invalidate");
-
-		writeFileSync(path, "{not json");
-		assert.equal(readCachedConnectors("/scope/a"), undefined, "corrupt must not throw");
-
-		rmSync(path);
-		assert.equal(readCachedConnectors("/scope/a"), undefined, "missing must not throw");
-	});
-});
-
-test("within the freshness window it is used", () => {
-	withStateDir(() => {
-		const path = connectorCachePath("/scope/a");
-		mkdirSync(dirname(path), { recursive: true });
-		writeFileSync(path, JSON.stringify({ version: 2, scope: scopeDigest("/scope/a"), savedAt: Date.now() - 6 * 24 * 3600 * 1000, connectors: [SLACK] }));
-		assert.deepEqual(readCachedConnectors("/scope/a"), [SLACK]);
-	});
+test("cache validity rejects stale or malformed files and accepts a fresh file", () => {
+	const base = { version: 2, scope: scopeDigest("/scope/a"), connectors: [SLACK], savedAt: Date.now() };
+	const rows = [
+		["scope mismatch", JSON.stringify({ ...base, scope: scopeDigest("/scope/OTHER") }), undefined],
+		["old version", JSON.stringify({ ...base, version: 1, scope: "/scope/a" }), undefined],
+		["expired", JSON.stringify({ ...base, savedAt: Date.now() - 8 * 24 * 3600 * 1000 }), undefined],
+		["future", JSON.stringify({ ...base, savedAt: Date.now() + 60_000 }), undefined],
+		["wrong version", JSON.stringify({ ...base, version: 999 }), undefined],
+		["corrupt", "{not json", undefined],
+		["missing", undefined, undefined],
+		["fresh", JSON.stringify({ ...base, savedAt: Date.now() - 6 * 24 * 3600 * 1000 }), [SLACK]],
+	];
+	for (const [name, raw, expected] of rows) {
+		withStateDir(() => {
+			const path = connectorCachePath("/scope/a");
+			mkdirSync(dirname(path), { recursive: true });
+			if (raw !== undefined) writeFileSync(path, raw);
+			assert.deepEqual(readCachedConnectors("/scope/a"), expected, name);
+		});
+	}
 });
 
 test("empty and malformed entry lists are not written or returned", () => {
@@ -123,10 +94,11 @@ test("empty and malformed entry lists are not written or returned", () => {
 test("scope key follows CLAUDE_CONFIG_DIR", () => {
 	const prev = process.env.CLAUDE_CONFIG_DIR;
 	try {
-		process.env.CLAUDE_CONFIG_DIR = "/tmp/acct-one";
-		assert.equal(connectorCacheScopeKey(), "/tmp/acct-one");
-		delete process.env.CLAUDE_CONFIG_DIR;
-		assert.equal(connectorCacheScopeKey(), "<default>");
+		for (const [value, expected] of [["/scope/acct-one", "/scope/acct-one"], [undefined, "<default>"]]) {
+			if (value === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+			else process.env.CLAUDE_CONFIG_DIR = value;
+			assert.equal(connectorCacheScopeKey(), expected, String(value));
+		}
 	} finally {
 		if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR;
 		else process.env.CLAUDE_CONFIG_DIR = prev;

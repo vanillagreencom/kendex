@@ -8,10 +8,10 @@
 // sharedSession.needsRebuild = true so the next syncSharedSession call
 // takes the REBUILD path.
 
-console.log("=== int-session-compact.mjs ===");
+console.log("test=int-session-compact.mjs");
 
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { createRpcHarness } from "./lib/rpc-harness.mjs";
 
@@ -23,7 +23,8 @@ const BRIDGE_MODEL = "pi-claude/claude-haiku-4-5";
 // isolated agent dir with a tiny keep-recent threshold so /compact always has
 // something to cut. The machine's claude-bridge.json (e.g. a pinned Claude
 // executable path) is carried over so the bridge still spawns correctly.
-const agentDir = mkdtempSync(join(tmpdir(), "pi-compact-test-"));
+mkdirSync(join(process.cwd(), ".test-output"), { recursive: true });
+const agentDir = mkdtempSync(join(process.cwd(), ".test-output/pi-compact-test-"));
 writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ compaction: { keepRecentTokens: 100 } }));
 const realBridgeConfig = join(homedir(), ".pi", "agent", "claude-bridge.json");
 if (existsSync(realBridgeConfig)) copyFileSync(realBridgeConfig, join(agentDir, "claude-bridge.json"));
@@ -37,34 +38,26 @@ const harness = createRpcHarness({
 
 const { start, stop, send, promptAndWait, DEBUG_LOG, RPC_LOG } = harness;
 
-let finishing = false;
 function finish(code, msg) {
-	if (finishing) return;
-	finishing = true;
-	console.log(msg);
-	if (code !== 0) {
-		console.log(`  RPC log:    ${RPC_LOG}`);
-		console.log(`  Debug log:  ${DEBUG_LOG}`);
-	}
-	stop().then(() => process.exit(code));
+	if (code !== 0) throw new Error(msg);
+	console.log(`test_exit=${code}\n${msg}`);
 }
 
-start();
-await new Promise((r) => setTimeout(r, 2000));
-
 try {
+	start();
+	await new Promise((r) => setTimeout(r, 2000));
 	// A few substantive turns so pi has something to compact.
-	console.log("Turn 1: seed history...");
+	console.log("turn=1\nseed history...");
 	await promptAndWait("Pick a number between 1 and 100 and remember it. Reply with just the number.");
-	console.log("Turn 2: more history...");
+	console.log("turn=2\nmore history...");
 	await promptAndWait("Now pick a color. Reply with just the color.");
-	console.log("Turn 3: more history...");
+	console.log("turn=3\nmore history...");
 	await promptAndWait("Now pick a fruit. Reply with just the fruit.");
 
-	console.log("Triggering /compact...");
+	console.log("command=compact");
 	await send({ type: "compact" });
 
-	console.log("Turn 4: prompt after compact (should force REBUILD)...");
+	console.log("turn=4\nprompt after compact (should force REBUILD)...");
 	await promptAndWait("Are you still there? Reply with just 'yes'.");
 
 	// Split the log at the `session_compact:` marker. Reads BEFORE the
@@ -82,7 +75,7 @@ try {
 	// Capture both the path and the rebuild flavor (preserved | rotated-post-abort | first).
 	const syncResults = [...postEventLog.matchAll(/syncResult: path=(reuse|rebuild|clean-start)(?: sessionId=\S+ priors=\d+ (\S+))?/g)]
 		.map((m) => ({ path: m[1], flavor: m[2] }));
-	console.log(`  Post-event syncResults: ${JSON.stringify(syncResults)}`);
+	console.log(`sync_results=${JSON.stringify(syncResults)}`);
 
 	if (syncResults.length === 0) {
 		throw new Error("no syncResult markers after session_compact event (Turn 4 didn't reach the provider?)");
@@ -113,5 +106,9 @@ try {
 
 	finish(0, "PASS");
 } catch (e) {
-	finish(1, `FAIL: ${e.message}\n${e.stack}`);
+	console.error(`test_exit=1\n${e.stack ?? e.message}`);
+	process.exitCode = 1;
+} finally {
+	await stop();
+	rmSync(agentDir, { recursive: true, force: true });
 }

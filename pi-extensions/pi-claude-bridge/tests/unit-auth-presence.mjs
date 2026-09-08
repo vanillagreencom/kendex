@@ -4,7 +4,7 @@
  * honesty). These exercise auth-presence.ts directly — no live pi instance.
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -24,22 +24,15 @@ function withTempHome(fn) {
 const LINUX = "linux";
 
 describe("resolveClaudeConfigDir", () => {
-	it("prefers an explicit non-empty CLAUDE_CONFIG_DIR", () => {
-		assert.equal(resolveClaudeConfigDir({ CLAUDE_CONFIG_DIR: "/custom/dir" }), "/custom/dir");
-	});
-
-	it("returns the TRIMMED CLAUDE_CONFIG_DIR value", () => {
-		assert.equal(resolveClaudeConfigDir({ CLAUDE_CONFIG_DIR: "  /custom/dir  " }), "/custom/dir");
-	});
-
-	it("ignores an empty/whitespace CLAUDE_CONFIG_DIR and falls back to ~/.claude", () => {
-		const fallback = resolveClaudeConfigDir({ CLAUDE_CONFIG_DIR: "   " });
-		assert.ok(fallback.endsWith("/.claude"), `expected ~/.claude fallback, got ${fallback}`);
-	});
-
-	it("falls back to ~/.claude when unset", () => {
-		const fallback = resolveClaudeConfigDir({});
-		assert.ok(fallback.endsWith("/.claude"), `expected ~/.claude fallback, got ${fallback}`);
+	it("resolves explicit, trimmed and absent config paths", () => {
+		for (const [env, expected] of [
+			[{ CLAUDE_CONFIG_DIR: "/custom/dir" }, "/custom/dir"],
+			[{ CLAUDE_CONFIG_DIR: "  /custom/dir  " }, "/custom/dir"],
+			[{ CLAUDE_CONFIG_DIR: "   " }, join(homedir(), ".claude")],
+			[{}, join(homedir(), ".claude")],
+		]) {
+			assert.equal(resolveClaudeConfigDir(env), expected, JSON.stringify(env));
+		}
 	});
 });
 
@@ -61,41 +54,33 @@ describe("hasClaudeCredentials", () => {
 		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir }, LINUX), false);
 	}));
 
-	// Env-based credential sources (no file needed) --------------------------
-	it("is true for non-empty CLAUDE_CODE_OAUTH_TOKEN", () => withTempHome((dir) => {
-		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir, CLAUDE_CODE_OAUTH_TOKEN: "tok" }, LINUX), true);
-	}));
-
-	it("is true for non-empty ANTHROPIC_API_KEY", () => withTempHome((dir) => {
-		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir, ANTHROPIC_API_KEY: "sk-ant-x" }, LINUX), true);
-	}));
-
-	it("is true for non-empty ANTHROPIC_AUTH_TOKEN", () => withTempHome((dir) => {
-		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir, ANTHROPIC_AUTH_TOKEN: "at-x" }, LINUX), true);
-	}));
-
-	it("is true for truthy CLAUDE_CODE_USE_BEDROCK (1/true), false otherwise", () => withTempHome((dir) => {
-		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir, CLAUDE_CODE_USE_BEDROCK: "1" }, LINUX), true);
-		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir, CLAUDE_CODE_USE_BEDROCK: "true" }, LINUX), true);
-		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir, CLAUDE_CODE_USE_BEDROCK: "0" }, LINUX), false);
-		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir, CLAUDE_CODE_USE_BEDROCK: "yes" }, LINUX), false);
-	}));
-
-	it("is true for truthy CLAUDE_CODE_USE_VERTEX (1/true)", () => withTempHome((dir) => {
-		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir, CLAUDE_CODE_USE_VERTEX: "1" }, LINUX), true);
-		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir, CLAUDE_CODE_USE_VERTEX: "false" }, LINUX), false);
-	}));
-
-	it("is true for truthy CLAUDE_CODE_USE_FOUNDRY / _ANTHROPIC_AWS / _MANTLE", () => withTempHome((dir) => {
-		for (const flag of ["CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_MANTLE"]) {
-			assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir, [flag]: "1" }, LINUX), true, `${flag}=1`);
-			assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir, [flag]: "true" }, LINUX), true, `${flag}=true`);
-			assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir, [flag]: "0" }, LINUX), false, `${flag}=0`);
+	it("detects each environment credential source independently", () => withTempHome((dir) => {
+		// Claude Code emits token variables and provider-routing flags.
+		for (const [key, value, expected] of [
+			["CLAUDE_CODE_OAUTH_TOKEN", "tok", true],
+			["ANTHROPIC_API_KEY", "sk-ant-x", true],
+			["ANTHROPIC_AUTH_TOKEN", "at-x", true],
+			["CLAUDE_CODE_USE_BEDROCK", "1", true],
+			["CLAUDE_CODE_USE_BEDROCK", "true", true],
+			["CLAUDE_CODE_USE_BEDROCK", "0", false],
+			["CLAUDE_CODE_USE_BEDROCK", "yes", false],
+			["CLAUDE_CODE_USE_VERTEX", "1", true],
+			["CLAUDE_CODE_USE_VERTEX", "false", false],
+			["CLAUDE_CODE_USE_FOUNDRY", "1", true],
+			["CLAUDE_CODE_USE_FOUNDRY", "true", true],
+			["CLAUDE_CODE_USE_FOUNDRY", "0", false],
+			["CLAUDE_CODE_USE_ANTHROPIC_AWS", "1", true],
+			["CLAUDE_CODE_USE_ANTHROPIC_AWS", "true", true],
+			["CLAUDE_CODE_USE_ANTHROPIC_AWS", "0", false],
+			["CLAUDE_CODE_USE_MANTLE", "1", true],
+			["CLAUDE_CODE_USE_MANTLE", "true", true],
+			["CLAUDE_CODE_USE_MANTLE", "0", false],
+			["CLAUDE_CODE_OAUTH_TOKEN", "", false],
+			["ANTHROPIC_API_KEY", "   ", false],
+			["ANTHROPIC_AUTH_TOKEN", "", false],
+		]) {
+			assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir, [key]: value }, LINUX), expected, `${key}=${value}`);
 		}
-	}));
-
-	it("treats empty/whitespace token env vars as absent", () => withTempHome((dir) => {
-		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir, CLAUDE_CODE_OAUTH_TOKEN: "", ANTHROPIC_API_KEY: "   ", ANTHROPIC_AUTH_TOKEN: "" }, LINUX), false);
 	}));
 
 	// settings.json apiKeyHelper ---------------------------------------------
@@ -114,13 +99,9 @@ describe("hasClaudeCredentials", () => {
 		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir }, LINUX), false);
 	}));
 
-	// Platform asymmetry -----------------------------------------------------
-	it("defaults to credentialed on darwin when no other signal is present", () => withTempHome((dir) => {
-		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir }, "darwin"), true);
-	}));
-
-	it("does NOT default-credential on linux/win32 without a signal", () => withTempHome((dir) => {
-		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir }, "linux"), false);
-		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir }, "win32"), false);
+	it("uses the platform credential fallback only on darwin", () => withTempHome((dir) => {
+		for (const [platform, expected] of [["darwin", true], ["linux", false], ["win32", false]]) {
+			assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir }, platform), expected, platform);
+		}
 	}));
 });

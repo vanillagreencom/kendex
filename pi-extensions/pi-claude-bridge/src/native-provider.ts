@@ -60,7 +60,9 @@ export function buildNativeProvider(
 	// passes a probe that also accepts a companion account-router pool.
 	hasCredentials: () => boolean = () => hasClaudeCredentials(env),
 ): unknown {
-	if (!supportsNativeProvider(piAi)) throw new Error(NATIVE_PROVIDER_UNSUPPORTED_MESSAGE);
+	if (!supportsNativeProvider(piAi)) {
+		throw Object.assign(new Error(NATIVE_PROVIDER_UNSUPPORTED_MESSAGE), { code: "CLAUDE_BRIDGE_NATIVE_PROVIDER_UNSUPPORTED" });
+	}
 	// The legacy config path stamped provider/api/baseUrl onto each model during
 	// composition; createProvider passes models through verbatim, so stamp here.
 	// Stamps win over any provider field the source model carries — the models

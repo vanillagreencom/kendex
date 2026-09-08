@@ -24,7 +24,7 @@ import { createRpcHarness } from "./lib/rpc-harness.mjs";
 const MODEL = process.env.FORK_TEST_MODEL || "pi-claude/claude-haiku-4-5";
 const [PROVIDER, MODEL_ID] = MODEL.split("/");
 if (!PROVIDER || !MODEL_ID) {
-	console.error(`ERROR: FORK_TEST_MODEL must be 'provider/modelId[:thinking]', got ${MODEL}`);
+	console.error(`invalid_model=${MODEL}\nUse provider/modelId[:thinking].`);
 	process.exit(1);
 }
 
@@ -43,15 +43,11 @@ const PROMPT_3 = `Remember: word_C=${WORD_C}. Reply only "ok".`;
 const FORK_PROBE = `List every secret word I have asked you to remember in this conversation, separated by commas. Just the values, no labels.`;
 
 function logStep(n, msg) {
-	console.log(`\n[${n}] ${msg}`);
+	console.log(`step=${n}\n${msg}`);
 }
 
-function fail(msg, harness, debugTail) {
-	console.log(`\nFAIL: ${msg}`);
-	console.log(`  RPC log:    ${harness.RPC_LOG}`);
-	console.log(`  Debug log:  ${harness.DEBUG_LOG}`);
-	if (debugTail) console.log(`  Debug tail:\n${debugTail}`);
-	harness.stop().then(() => process.exit(1));
+function fail(msg) {
+	throw new Error(msg);
 }
 
 async function main() {
@@ -60,64 +56,65 @@ async function main() {
 		args: ["--model", MODEL],
 		defaultTimeout: TIMEOUT,
 	});
-	const { send, promptAndWait, waitForEvent } = harness;
+	const { send, promptAndWait } = harness;
 
-	console.log(`=== int-fork.mjs (${MODEL}) ===`);
-	console.log(`Words: ${WORD_A} / ${WORD_B} / ${WORD_C}`);
+	console.log(`test=int-fork\nmodel=${MODEL}`);
+	console.log(`words=${JSON.stringify([WORD_A, WORD_B, WORD_C])}`);
 
+	try {
 	harness.start();
 	await new Promise((r) => setTimeout(r, 2000));
-	await waitForEvent("agent_idle", 30_000).catch(() => {});
 
 	// --- Establish parent ---
 	logStep(1, "Parent turn 1 (introduce word_A)");
 	const t1 = await promptAndWait(PROMPT_1);
-	console.log(`    response: ${t1.slice(0, 80)}`);
+	console.log(`response=${JSON.stringify(t1.slice(0, 80))}`);
 
 	logStep(2, "Parent turn 2 (introduce word_B)");
 	const t2 = await promptAndWait(PROMPT_2);
-	console.log(`    response: ${t2.slice(0, 80)}`);
+	console.log(`response=${JSON.stringify(t2.slice(0, 80))}`);
 
 	logStep(3, "Parent turn 3 (introduce word_C)");
 	const t3 = await promptAndWait(PROMPT_3);
-	console.log(`    response: ${t3.slice(0, 80)}`);
+	console.log(`response=${JSON.stringify(t3.slice(0, 80))}`);
 
 	// --- Fork before turn 2 ---
 	logStep(4, "Listing fork-eligible user messages");
 	const forkList = await send({ type: "get_fork_messages" });
-	console.log(`    ${forkList.messages.length} eligible message(s):`);
-	for (const m of forkList.messages) console.log(`      ${m.entryId}  ${m.text.slice(0, 60)}`);
+	console.log(`fork_messages=${forkList.messages.length}`);
+	for (const m of forkList.messages) console.log(`entry_id=${m.entryId}\n${m.text.slice(0, 60)}`);
 
 	const targetMsg = forkList.messages.find((m) => m.text.includes(WORD_B));
-	if (!targetMsg) fail(`Could not find user message containing ${WORD_B} in fork list`, harness);
+	if (!targetMsg) fail(`missing_fork_word=${WORD_B}`);
 
 	logStep(5, `Forking at message containing word_B (entryId=${targetMsg.entryId})`);
 	const forkResult = await send({ type: "fork", entryId: targetMsg.entryId });
-	if (forkResult.cancelled) fail("Fork was cancelled by an extension", harness);
-	console.log(`    fork OK; editor prefilled with: ${(forkResult.text || "").slice(0, 60)}`);
+	if (forkResult.cancelled) fail("fork_cancelled=true");
+	console.log(`fork_cancelled=false\n${(forkResult.text ?? "").slice(0, 60)}`);
 
 	// --- Probe fork: must see word_A only ---
 	logStep(6, "Fork probe: ask what words I taught it");
 	const tFork = await promptAndWait(FORK_PROBE);
-	console.log(`    response: ${tFork.slice(0, 200)}`);
+	console.log(`response=${JSON.stringify(tFork.slice(0, 200))}`);
 	const lower = tFork.toLowerCase();
 	const sawA = lower.includes(WORD_A);
 	const sawB = lower.includes(WORD_B);
 	const sawC = lower.includes(WORD_C);
 
-	console.log(`    saw word_A=${sawA} word_B=${sawB} word_C=${sawC}`);
+	console.log(`fork_words=${JSON.stringify({ word_A: sawA, word_B: sawB, word_C: sawC })}`);
 
-	if (!sawA) fail(`Fork lost ${WORD_A} from inherited history (response: ${tFork})`, harness);
-	if (sawB) fail(`LEAK: Fork response contains ${WORD_B} which was the fork point — should not be inherited`, harness);
-	if (sawC) fail(`LEAK: Fork response contains ${WORD_C} which is past the fork point — pre-fix bug regression`, harness);
+	for (const [word, seen, expected] of [[WORD_A, sawA, true], [WORD_B, sawB, false], [WORD_C, sawC, false]]) {
+		if (seen !== expected) fail(`fork_word=${word} expected=${expected} actual=${seen}\n${tFork}`);
+	}
 
-	console.log(`\nPASS (${MODEL}): fork inherited word_A only; ${WORD_B}/${WORD_C} correctly absent.`);
-	await harness.stop();
-	process.exit(0);
+	console.log(`test_exit=0\nThe fork inherited ${WORD_A} and excluded ${WORD_B} and ${WORD_C}.`);
+	} finally {
+		await harness.stop();
+	}
 }
 
 main().catch((e) => {
-	console.error(`\nFAIL: unexpected error: ${e.message}`);
+	console.error(`test_exit=1\n${e.message}`);
 	console.error(e.stack);
-	process.exit(1);
+	process.exitCode = 1;
 });
