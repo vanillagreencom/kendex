@@ -218,6 +218,11 @@ command_safety_policy() { # SOURCE_FILE — refuse|allow rows on stdin
   local source="$1" rows
   rows=$(cat)
   local verdicts
+  # Every case pattern below carries a balanced `(`: Bash 3.2's parser cannot
+  # close a command substitution whose patterns leave a `)` unbalanced, and
+  # dies at parse time before this lane runs at all. Newer bash reads the two
+  # spellings identically, so nothing here is 3.2-only behaviour.
+  #
   # The verdicts are captured, not piped: a piped loop would run `say` in a
   # subshell, leaving the parent's fail at 0 while a finding printed. A
   # producer that dies takes the lane down with its own clause.
@@ -240,8 +245,8 @@ command_safety_policy() { # SOURCE_FILE — refuse|allow rows on stdin
     # extraction is the whole of what this branch claims: exactly one line in
     # the document spells the assignment.
     case "$source" in
-      *.toml) probe="$PWD/$source" ;;
-      *)
+      (*.toml) probe="$PWD/$source" ;;
+      (*)
         line=$(awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print; found++ }
           END { exit(found == 1 ? 0 : 1) }' "$source") || { printf 'one-line\n'; exit 0; }
         probe="$GG_TMP/kendex.settings.toml"
@@ -265,12 +270,12 @@ command_safety_policy() { # SOURCE_FILE — refuse|allow rows on stdin
       # into a 141 this loop would read as a status the case below refuses.
       grep -qE -- "$pattern" <<<"$command" || status=$?
       case "$status" in
-        0 | 1) ;;
-        *) printf 'not-an-ere\n'; exit 0 ;;
+        (0 | 1) ;;
+        (*) printf 'not-an-ere\n'; exit 0 ;;
       esac
       case "$want:$status" in
-        refuse:1) printf 'missed|%s\n' "$command" ;;
-        allow:0) printf 'over|%s\n' "$command" ;;
+        (refuse:1) printf 'missed|%s\n' "$command" ;;
+        (allow:0) printf 'over|%s\n' "$command" ;;
       esac
     done <<<"$rows"
   ) || {
