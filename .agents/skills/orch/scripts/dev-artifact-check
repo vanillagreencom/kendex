@@ -43,7 +43,6 @@
 
 set -euo pipefail
 
-PROG="dev-artifact-check"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/branch-growth.sh
 source "$SCRIPT_DIR/lib/branch-growth.sh"
@@ -190,23 +189,143 @@ Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
 EOF
 }
 
+# Callers preserve positional values for this diagnostic catalog.
+message() {
+  local _message_key="$1"
+  shift
+  case "$_message_key" in
+    missing-value)
+      printf 'dev-artifact-check: missing-value arg1=%s\n' "$1"
+      printf '%s\n' "$1 requires a value"
+      ;;
+    required)
+      printf 'dev-artifact-check: required arg1=%s\n' "$1"
+      printf '%s\n' "$1 is required (non-empty)"
+      ;;
+    invalid-id)
+      printf 'dev-artifact-check: invalid-id arg1=%s arg2=%s\n' "$1" "$2"
+      printf '%s\n' "$1 '$2' must match ${ID_GRAMMAR} with no '..' (path-safe: no '/' or whitespace)"
+      ;;
+    missing-file-path)
+      printf 'dev-artifact-check: missing-file-path option=%s\n' "--file"
+      printf '%s\n' "--file requires a non-empty path"
+      ;;
+    round-mode-required)
+      printf 'dev-artifact-check: round-mode-required option=%s\n' "--expect-items-from-round"
+      printf '%s\n' "--expect-items-from-round requires round mode (there is no worktree/issue/round to resolve a round record from)"
+      ;;
+    unknown-file-argument)
+      printf 'dev-artifact-check: unknown-file-argument arg1=%s\n' "$1"
+      printf '%s\n' "unknown --file argument: $1"
+      ;;
+    unknown-argument)
+      printf 'dev-artifact-check: unknown-argument arg1=%s\n' "$1"
+      printf '%s\n' "unknown argument: $1"
+      ;;
+    missing-worktree)
+      printf 'dev-artifact-check: missing-worktree option=%s\n' "--worktree"
+      printf '%s\n' "--worktree is required"
+      ;;
+    not-directory)
+      printf 'dev-artifact-check: not-directory worktree=%s\n' "$worktree"
+      printf '%s\n' "--worktree path '$worktree' is not a directory"
+      ;;
+    file-mode-required)
+      printf 'dev-artifact-check: file-mode-required option=%s\n' "--expect-items"
+      printf '%s\n' "--expect-items is only allowed with --file; round mode requires --expect-items-from-round so the delegated set and its protected additions cannot be bypassed"
+      ;;
+    item-source-conflict)
+      printf 'dev-artifact-check: item-source-conflict option=%s\n' "--expect-items"
+      printf '%s\n' "--expect-items and --expect-items-from-round are mutually exclusive: one expected-set source"
+      ;;
+    round-missing)
+      printf 'dev-artifact-check: round-missing round-record=%s\n' "$round_record"
+      printf '%s\n' "round record $round_record not found — was dev-round-write run when the round was stamped?"
+      ;;
+    round-json)
+      printf 'dev-artifact-check: round-json round-record=%s\n' "$round_record"
+      printf '%s\n' "round record $round_record is not parseable JSON"
+      ;;
+    round-mismatch)
+      printf 'dev-artifact-check: round-mismatch round-record=%s round-id=%s\n' "$round_record" "$round_id"
+      printf '%s\n' "round record $round_record does not carry internal round_id '$round_id' — not this round's record"
+      ;;
+    round-schema)
+      printf 'dev-artifact-check: round-schema round-record=%s issue=%s\n' "$round_record" "$issue"
+      printf '%s\n' "round record $round_record fails the dev-round schema (schema_version 2, issue '$issue', base_sha of exactly 40 lowercase hex, unique repository-relative adds[] whose paths carry no ASCII whitespace and do not begin with '-', a cut that is missing, null or boolean, non-empty items[] of unique integer n + non-empty text) — see skills/orch/schemas/dev-round.md"
+      ;;
+    expected-round-required)
+      printf 'dev-artifact-check: expected-round-required file=%s\n' "$file"
+      printf '%s\n' "round-mode receipt $file is kind fix: pass --expect-items-from-round so the delegated item set and its protected additions are checked"
+      ;;
+    invalid-item-numbers)
+      printf 'dev-artifact-check: invalid-item-numbers expect-items=%s\n' "$expect_items"
+      printf '%s\n' "--expect-items must be comma-separated item numbers, got '$expect_items'"
+      ;;
+    invalid-wait)
+      printf 'dev-artifact-check: invalid-wait wait-secs=%s\n' "$wait_secs"
+      printf '%s\n' "--wait must be a non-negative integer (seconds), got '$wait_secs'"
+      ;;
+    invalid-interval)
+      printf 'dev-artifact-check: invalid-interval interval=%s\n' "$interval"
+      printf '%s\n' "--interval must be a positive integer (seconds), got '$interval'"
+      ;;
+    base-orphaned)
+      printf 'dev-artifact-check: base-orphaned sha=%s repo=%s\n' "$base_sha" "$repo"
+      printf 'The round base is no longer an ancestor of HEAD. Additions cannot be attributed to this round.\n'
+      ;;
+    commit-missing)
+      printf 'dev-artifact-check: commit-missing sha=%s repo=%s\n' "$commit" "$repo"
+      printf 'The artifact commit is not a commit object in this repository.\n'
+      ;;
+    commit-orphaned)
+      printf 'dev-artifact-check: commit-orphaned sha=%s repo=%s\n' "$commit" "$repo"
+      printf 'The artifact commit is no longer an ancestor of HEAD.\n'
+      ;;
+    comparison-failed)
+      printf 'dev-artifact-check: comparison-failed repo=%s\n' "$repo"
+      printf 'The round base could not be compared with HEAD.\n'
+      ;;
+    classifier-failed)
+      printf 'dev-artifact-check: classifier-failed repo=%s\n' "$repo"
+      printf 'The protected-addition classifier returned no valid result.\n'
+      ;;
+    unapproved-additions)
+      printf 'dev-artifact-check: unapproved-additions paths=%s\n' "$refused_additions"
+      printf 'The round added files outside its declared additions.\n'
+      ;;
+    cut-unmeasurable)
+      printf 'dev-artifact-check: cut-unmeasurable repo=%s\n' "$repo"
+      printf '%s\n' "$BRANCH_GROWTH_ERROR"
+      ;;
+    cut-oversized)
+      printf 'dev-artifact-check: cut-oversized current=%s limit=%s baseline=%s\n' "$BRANCH_GROWTH_CURRENT" "$BRANCH_GROWTH_LIMIT" "$BRANCH_GROWTH_BASELINE"
+      printf 'The cut round did not reduce the branch to its limit.\n'
+      ;;
+    verdict-unreadable)
+      printf 'dev-artifact-check: verdict-unreadable file=%s\n' "$file"
+      printf 'The emitted artifact verdict could not be read.\n'
+      ;;
+  esac
+}
+
 die() {
-  printf '%s: %s\n' "$PROG" "$1" >&2
+  message "$@" >&2
   exit 2
 }
 
 need() {
   # $1 = flag name, $2 = current argc ($#). A value option needs at least 2 args.
-  (( $2 >= 2 )) || die "$1 requires a value"
+  (( $2 >= 2 )) || die missing-value "$@"
 }
 
 # Validate a path-forming token (--issue / --round-id): non-empty, matches the
 # path-safe grammar, and contains no '..'. Shared verbatim with dev-return-write.
 check_id_token() {
   # $1 = flag name, $2 = value.
-  [[ -n "$2" ]] || die "$1 is required (non-empty)"
+  [[ -n "$2" ]] || die required "$@"
   [[ "$2" =~ $ID_GRAMMAR && "$2" != *..* ]] \
-    || die "$1 '$2' must match ${ID_GRAMMAR} with no '..' (path-safe: no '/' or whitespace)"
+    || die invalid-id "$@"
 }
 
 # `validate` and `validate_note` are surfaced here, not just stored in the file:
@@ -382,8 +501,7 @@ collect_unapproved_additions() {
     return 2
   fi
   if ! git -C "$repo" merge-base --is-ancestor "$base_sha" HEAD >/dev/null 2>&1; then
-    printf '%s: round base %s is not an ancestor of HEAD in %s (orphaned by a rebase?); no comparison can attribute an addition to this round once its base is off the branch\n' \
-      "$PROG" "$base_sha" "$repo" >&2
+    message base-orphaned >&2
     printf '[]\n' > "$result" || return 3
     # 4, not 0: a gate that did not run and a gate that cleared the round are
     # the same empty file, and only the caller can refuse on the difference.
@@ -456,13 +574,13 @@ validate_artifact() {
   fi
   if [[ -n "$commit" ]]; then
     if [[ "$(git -C "$repo" cat-file -t "$commit" 2>/dev/null)" != "commit" ]]; then
-      printf '%s: artifact commit %s: no such object in the repo at %s\n' "$PROG" "$commit" "$repo" >&2
+      message commit-missing >&2
       emit false "$file" "commit_unresolvable"
       return 1
     fi
     if ! git -C "$repo" merge-base --is-ancestor "$commit" HEAD >/dev/null 2>&1; then
       warning="commit_unreachable"
-      printf '%s: artifact commit %s resolves but is not an ancestor of HEAD in %s (orphaned by a rebase?)\n' "$PROG" "$commit" "$repo" >&2
+      message commit-orphaned >&2
     fi
   fi
   if [[ -n "$round_record" ]]; then
@@ -486,13 +604,13 @@ validate_artifact() {
     fi
     if (( additions_rc == 2 )); then
       [[ -n "$refused_file" ]] && rm -f -- "$refused_file"
-      printf '%s: could not compare fix-round base to HEAD in %s\n' "$PROG" "$repo" >&2
+      message comparison-failed >&2
       emit false "$file" "comparison_failed"
       return 1
     fi
     if (( additions_rc != 0 )); then
       [[ -n "$refused_file" ]] && rm -f -- "$refused_file"
-      printf '%s: protected-addition classifier produced no valid result in %s\n' "$PROG" "$repo" >&2
+      message classifier-failed >&2
       emit false "$file" "classifier_failed"
       return 1
     fi
@@ -503,8 +621,7 @@ validate_artifact() {
     fi
     rm -f -- "$refused_file"
     if [[ "$refused_additions" != "[]" ]]; then
-      printf '%s: fix round added files absent from its Adds line: %s\n' \
-        "$PROG" "$(jq -r 'join(", ")' <<<"$refused_additions")" >&2
+      message unapproved-additions >&2
       emit false "$file" "unapproved_additions" "" "" "$refused_additions"
       return 1
     fi
@@ -516,13 +633,12 @@ validate_artifact() {
     # way to grow the branch past the limit unchecked.
     if jq -e '.cut? == true' "$round_record" >/dev/null 2>&1; then
       if ! measure_size_tripwire "$repo" "${issue:-}" "$SCRIPT_DIR"; then
-        printf '%s: cut round: %s\n' "$PROG" "$BRANCH_GROWTH_ERROR" >&2
+        message cut-unmeasurable >&2
         emit false "$file" "cut_unmeasurable"
         return 1
       fi
       if (( BRANCH_GROWTH_CURRENT > BRANCH_GROWTH_LIMIT )); then
-        printf '%s: cut round did not shrink the branch: diffstat is %s lines against a cap of %s (baseline %s)\n' \
-          "$PROG" "$BRANCH_GROWTH_CURRENT" "$BRANCH_GROWTH_LIMIT" "$BRANCH_GROWTH_BASELINE" >&2
+        message cut-oversized >&2
         emit false "$file" "cut_not_shrunk"
         return 1
       fi
@@ -584,17 +700,17 @@ interval=5
 if [[ "${1:-}" == "--file" ]]; then
   shift
   file="${1:-}"
-  [[ -n "$file" && "$file" != --* ]] || die "--file requires a non-empty path"
+  [[ -n "$file" && "$file" != --* ]] || die missing-file-path "$@"
   shift
   while (( $# > 0 )); do
     case "$1" in
       --round-id)     need "$1" $#; want_round="$2"; shift 2 ;;
       --expect-items) need "$1" $#; expect_items="$2"; shift 2 ;;
       --expect-items-from-round)
-        die "--expect-items-from-round requires round mode (there is no worktree/issue/round to resolve a round record from)" ;;
+        die round-mode-required "$@" ;;
       --wait)         need "$1" $#; wait_secs="$2"; shift 2 ;;
       --interval)     need "$1" $#; interval="$2"; shift 2 ;;
-      *) die "unknown --file argument: $1" ;;
+      *) die unknown-file-argument "$@" ;;
     esac
   done
 elif [[ "${1:-}" == --* ]]; then
@@ -611,13 +727,13 @@ elif [[ "${1:-}" == --* ]]; then
       --expect-items-from-round) expect_from_round=true; shift ;;
       --wait)         need "$1" $#; wait_secs="$2"; shift 2 ;;
       --interval)     need "$1" $#; interval="$2"; shift 2 ;;
-      *) die "unknown argument: $1" ;;
+      *) die unknown-argument "$@" ;;
     esac
   done
-  [[ -n "$worktree" ]] || die "--worktree is required"
-  [[ -d "$worktree" ]] || die "--worktree path '$worktree' is not a directory"
+  [[ -n "$worktree" ]] || die missing-worktree "$@"
+  [[ -d "$worktree" ]] || die not-directory "$@"
   [[ -z "$expect_items" ]] \
-    || die "--expect-items is only allowed with --file; round mode requires --expect-items-from-round so the delegated set and its protected additions cannot be bypassed"
+    || die file-mode-required "$@"
   check_id_token --issue "$issue"
   check_id_token --round-id "$round_id"
   want_round="$round_id"
@@ -630,16 +746,16 @@ elif [[ "${1:-}" == --* ]]; then
   # a silent downgrade to the weaker fix/bundled fallback gate.
   if [[ "$expect_from_round" == "true" ]]; then
     [[ -z "$expect_items" ]] \
-      || die "--expect-items and --expect-items-from-round are mutually exclusive: one expected-set source"
+      || die item-source-conflict "$@"
     round_record="$worktree/tmp/dev-round-$issue-$round_id.json"
     [[ -f "$round_record" && ! -L "$round_record" ]] \
-      || die "round record $round_record not found — was dev-round-write run when the round was stamped?"
+      || die round-missing "$@"
     jq empty "$round_record" >/dev/null 2>&1 \
-      || die "round record $round_record is not parseable JSON"
+      || die round-json "$@"
     jq -e --arg want "$round_id" '
       ((.round_id? | type) == "string") and (.round_id == $want)
     ' "$round_record" >/dev/null 2>&1 \
-      || die "round record $round_record does not carry internal round_id '$round_id' — not this round's record"
+      || die round-mismatch "$@"
     # Full record schema, not just the token: a record dev-round-write could
     # not have written (wrong issue, missing schema_version, ill-typed or
     # empty items/text) is no source of truth for the expected set.
@@ -665,7 +781,7 @@ elif [[ "${1:-}" == --* ]]; then
             and ((.text | gsub("[[:space:]]"; "")) != ""))
       and (([.items[].n] | length) == ([.items[].n] | unique | length))
     ' "$round_record" >/dev/null 2>&1 \
-      || die "round record $round_record fails the dev-round schema (schema_version 2, issue '$issue', base_sha of exactly 40 lowercase hex, unique repository-relative adds[] whose paths carry no ASCII whitespace and do not begin with '-', a cut that is missing, null or boolean, non-empty items[] of unique integer n + non-empty text) — see skills/orch/schemas/dev-round.md"
+      || die round-schema "$@"
     expect_items="$(jq -r '[.items[].n | tostring] | join(",")' "$round_record")"
   fi
 else
@@ -685,7 +801,7 @@ fi
 require_round_record_flag() {
   [[ "$round_mode" == "true" && "$expect_from_round" != "true" && -f "$file" ]] || return 0
   if jq -e '(.kind? // "") == "fix"' "$file" >/dev/null 2>&1; then
-    die "round-mode receipt $file is kind fix: pass --expect-items-from-round so the delegated item set and its protected additions are checked"
+    die expected-round-required
   fi
 }
 
@@ -695,7 +811,7 @@ check_once() {
   out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo" "$round_record")" || rc=$?
   if (( rc == 0 )); then
     verdict="$(jq -r '.verdict' <<<"$out")" || {
-      printf '%s: could not read the emitted artifact verdict\n' "$PROG" >&2
+      message verdict-unreadable >&2
       return 2
     }
     kind="$(jq -r '.kind' "$file")"
@@ -717,10 +833,10 @@ check_once() {
 # Shared tail: --expect-items grammar (both modes), then validate — once, or,
 # with --wait, repeatedly until the verdict leaves "wait" or the deadline lands.
 if [[ -n "$expect_items" && ! "$expect_items" =~ $EXPECT_GRAMMAR ]]; then
-  die "--expect-items must be comma-separated item numbers, got '$expect_items'"
+  die invalid-item-numbers "$@"
 fi
-[[ "$wait_secs" =~ ^[0-9]+$ ]] || die "--wait must be a non-negative integer (seconds), got '$wait_secs'"
-[[ "$interval" =~ ^[1-9][0-9]*$ ]] || die "--interval must be a positive integer (seconds), got '$interval'"
+[[ "$wait_secs" =~ ^[0-9]+$ ]] || die invalid-wait "$@"
+[[ "$interval" =~ ^[1-9][0-9]*$ ]] || die invalid-interval "$@"
 if (( wait_secs > 0 )); then
   # Blocking watchdog: only "wait" (no artifact yet) keeps polling; the first
   # accept/retry verdict returns immediately, so an armed background invocation

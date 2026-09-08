@@ -41,7 +41,6 @@
 
 set -euo pipefail
 
-PROG="branch-size-check"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 print_usage() {
@@ -63,8 +62,101 @@ source "$SCRIPT_DIR/lib/branch-growth.sh"
 ID_GRAMMAR='^[A-Za-z0-9._-]+$'
 DELTA_GRAMMAR='^([0-9]+) lines(, ([0-9]+) test lines)?$'
 
+# Callers preserve positional values for this diagnostic catalog.
+message() {
+  local _message_key="$1"
+  shift
+  case "$_message_key" in
+    worktree-value)
+      printf 'branch-size-check: worktree-value option=%s\n' "--worktree"
+      printf '%s\n' "--worktree requires a value"
+      ;;
+    issue-value)
+      printf 'branch-size-check: issue-value option=%s\n' "--issue"
+      printf '%s\n' "--issue requires a value"
+      ;;
+    state-dir-value)
+      printf 'branch-size-check: state-dir-value option=%s\n' "--state-dir"
+      printf '%s\n' "--state-dir requires a path"
+      ;;
+    unknown-argument)
+      printf 'branch-size-check: unknown-argument arg1=%s\n' "$1"
+      printf '%s\n' "unknown argument: $1"
+      ;;
+    missing-worktree)
+      printf 'branch-size-check: missing-worktree option=%s\n' "--worktree"
+      printf '%s\n' "--worktree is required"
+      ;;
+    not-directory)
+      printf 'branch-size-check: not-directory worktree=%s\n' "$worktree"
+      printf '%s\n' "--worktree path '$worktree' is not a directory"
+      ;;
+    missing-issue)
+      printf 'branch-size-check: missing-issue option=%s\n' "--issue"
+      printf '%s\n' "--issue is required (the normalized workflow-state key)"
+      ;;
+    invalid-issue)
+      printf 'branch-size-check: invalid-issue issue=%s\n' "$issue"
+      printf '%s\n' "--issue '$issue' must match ${ID_GRAMMAR} with no '..'"
+      ;;
+    missing-jq)
+      printf 'branch-size-check: missing-jq exit=%s\n' "2"
+      printf '%s\n' "jq is required"
+      ;;
+    not-repository)
+      printf 'branch-size-check: not-repository worktree=%s\n' "$worktree"
+      printf '%s\n' "--worktree path '$worktree' is not inside a git repository"
+      ;;
+    missing-gh)
+      printf 'branch-size-check: missing-gh issue=%s\n' "$issue"
+      printf '%s\n' "gh is required to read GitHub issue '$issue'"
+      ;;
+    github-read)
+      printf 'branch-size-check: github-read issue=%s\n' "$issue"
+      printf '%s\n' "GitHub issue '$issue' could not be read"
+      ;;
+    missing-linear)
+      printf 'branch-size-check: missing-linear issue=%s\n' "$issue"
+      printf '%s\n' "the linear skill is required to read '$issue'"
+      ;;
+    linear-read)
+      printf 'branch-size-check: linear-read issue=%s\n' "$issue"
+      printf '%s\n' "issue '$issue' could not be read from the Linear cache"
+      ;;
+    invalid-delta)
+      printf 'branch-size-check: invalid-delta issue=%s delta-line=%s\n' "$issue" "$delta_line"
+      printf '%s\n' "the expected delta stated by '$issue' does not parse: '$delta_line' — state it as '250 lines' or '250 lines, 120 test lines'"
+      ;;
+    measurement-failed)
+      printf 'branch-size-check: measurement-failed worktree=%s\n' "$worktree"
+      printf '%s\n' "$BRANCH_GROWTH_ERROR"
+      ;;
+    base-missing)
+      printf 'branch-size-check: base-missing BRANCH-GROWTH-BASE-REF=%s worktree=%s\n' "$BRANCH_GROWTH_BASE_REF" "$worktree"
+      printf '%s\n' "base ref '$BRANCH_GROWTH_BASE_REF' names no commit in '$worktree'"
+      ;;
+    head-missing)
+      printf 'branch-size-check: head-missing worktree=%s\n' "$worktree"
+      printf '%s\n' "HEAD names no commit in '$worktree'"
+      ;;
+    state-write)
+      printf 'branch-size-check: state-write verdict=%s issue=%s\n' "$verdict" "$issue"
+      printf '%s\n' "the $verdict verdict for '$issue' could not be recorded in workflow state"
+      ;;
+    result)
+      printf 'branch-size-check: %s production=%s tests=%s mirror=%s allowance=%s test-allowance=%s\n' \
+        "$verdict" "$production_lines" "$test_lines" "$mirror_lines" "${allowance:-none}" "${test_allowance:-none}"
+      case "$verdict" in
+        pass) printf 'The branch is within its stated allowance.\n' ;;
+        allowance_missing) printf 'No allowance was stated. Report the measured counts for review.\n' ;;
+        production_over|tests_over) printf 'Cut the branch to its stated allowance before pushing.\n' ;;
+      esac
+      ;;
+  esac
+}
+
 die() {
-  printf '%s: %s\n' "$PROG" "$1" >&2
+  message "$@" >&2
   exit 2
 }
 
@@ -74,26 +166,26 @@ state_dir=""
 as_json=false
 while (( $# > 0 )); do
   case "$1" in
-    --worktree)  [[ $# -ge 2 ]] || die "--worktree requires a value";  worktree="$2";  shift 2 ;;
-    --issue)     [[ $# -ge 2 ]] || die "--issue requires a value";     issue="$2";     shift 2 ;;
-    --state-dir) [[ $# -ge 2 ]] || die "--state-dir requires a path";  state_dir="$2"; shift 2 ;;
+    --worktree)  [[ $# -ge 2 ]] || die worktree-value "$@";  worktree="$2";  shift 2 ;;
+    --issue)     [[ $# -ge 2 ]] || die issue-value "$@";     issue="$2";     shift 2 ;;
+    --state-dir) [[ $# -ge 2 ]] || die state-dir-value "$@";  state_dir="$2"; shift 2 ;;
     --json)      as_json=true; shift ;;
-    *) die "unknown argument: $1" ;;
+    *) die unknown-argument "$@" ;;
   esac
 done
 
-[[ -n "$worktree" ]] || die "--worktree is required"
-[[ -d "$worktree" ]] || die "--worktree path '$worktree' is not a directory"
-[[ -n "$issue" ]] || die "--issue is required (the normalized workflow-state key)"
+[[ -n "$worktree" ]] || die missing-worktree "$@"
+[[ -d "$worktree" ]] || die not-directory "$@"
+[[ -n "$issue" ]] || die missing-issue "$@"
 [[ "$issue" =~ $ID_GRAMMAR && "$issue" != *..* ]] \
-  || die "--issue '$issue' must match ${ID_GRAMMAR} with no '..'"
-command -v jq >/dev/null 2>&1 || die "jq is required"
+  || die invalid-issue "$@"
+command -v jq >/dev/null 2>&1 || die missing-jq "$@"
 
 state_flags=()
 [[ -z "$state_dir" ]] || state_flags=(--state-dir "$state_dir")
 
 REPO_ROOT="$(git -C "$worktree" rev-parse --show-toplevel 2>/dev/null)" \
-  || die "--worktree path '$worktree' is not inside a git repository"
+  || die not-repository "$@"
 export PROJECT_ROOT="$REPO_ROOT"
 export SCRIPT_DIR
 # shellcheck source=lib/kendex-env.sh
@@ -107,23 +199,23 @@ render_roots="${ORCH_SIZE_RENDER_ROOTS:-.agents .claude .codex .pi}"
 # say the issue states none, so it is an environment failure, never a verdict.
 issue_body=""
 if [[ "$issue" == issue-* ]]; then
-  command -v gh >/dev/null 2>&1 || die "gh is required to read GitHub issue '$issue'"
+  command -v gh >/dev/null 2>&1 || die missing-gh "$@"
   # gh and the Linear CLI both resolve their repository from the working
   # directory, which is the caller's, not the worktree's. The subshell scopes
   # the move; PROJECT_ROOT is dropped so the Linear cache honors the caller's
   # own LINEAR_CACHE_ROOT redirect.
   issue_body="$( (cd "$REPO_ROOT" && gh issue view "${issue#issue-}" --json body --jq '.body // ""') 2>/dev/null)" \
-    || die "GitHub issue '$issue' could not be read"
+    || die github-read "$@"
 else
   [[ -x "$SCRIPT_DIR/../../linear/scripts/linear.sh" ]] \
-    || die "the linear skill is required to read '$issue'"
+    || die missing-linear "$@"
   # The CLI answers on stderr when it has no issue to give, so both streams are
   # read: a JSON object naming no issue is the cache answering that it holds
   # none, and anything else is a read that did not happen at all.
   raw="$( (cd "$REPO_ROOT" && env -u PROJECT_ROOT "$SCRIPT_DIR/../../linear/scripts/linear.sh" \
     cache issues get "$issue" --format=raw) 2>&1 || true)"
   jq -e 'type == "object" and has("issue")' <<<"$raw" >/dev/null 2>&1 \
-    || die "issue '$issue' could not be read from the Linear cache"
+    || die linear-read "$@"
   issue_body="$(jq -r '.issue.description // ""' <<<"$raw")"
 fi
 
@@ -138,22 +230,22 @@ allowance=""
 test_allowance=""
 if [[ -n "$delta_line" ]]; then
   [[ "$delta_line" =~ $DELTA_GRAMMAR ]] \
-    || die "the expected delta stated by '$issue' does not parse: '$delta_line' — state it as '250 lines' or '250 lines, 120 test lines'"
+    || die invalid-delta "$@"
   allowance="${BASH_REMATCH[1]}"
   test_allowance="${BASH_REMATCH[3]}"
 fi
 
 # --- Measure ----------------------------------------------------------------
 if ! branch_size_classified "$worktree" "$SCRIPT_DIR/resolve-base-branch" HEAD "$render_roots"; then
-  die "$BRANCH_GROWTH_ERROR"
+  die measurement-failed "$@"
 fi
 production_lines="$BRANCH_SIZE_PRODUCTION"
 test_lines="$BRANCH_SIZE_TEST"
 mirror_lines="$BRANCH_SIZE_MIRROR"
 base_sha="$(git -C "$worktree" rev-parse --verify "$BRANCH_GROWTH_BASE_REF^{commit}")" \
-  || die "base ref '$BRANCH_GROWTH_BASE_REF' names no commit in '$worktree'"
+  || die base-missing "$@"
 head_sha="$(git -C "$worktree" rev-parse --verify 'HEAD^{commit}')" \
-  || die "HEAD names no commit in '$worktree'"
+  || die head-missing "$@"
 
 verdict="pass"
 reason=""
@@ -185,21 +277,18 @@ record="$(jq -n \
 
 "$SCRIPT_DIR/workflow-state" ${state_flags[@]+"${state_flags[@]}"} update "$issue" \
   --argjson size_check "$record" '.pr.size_check = $size_check' >/dev/null \
-  || die "the $verdict verdict for '$issue' could not be recorded in workflow state"
+  || die state-write "$@"
 
 [[ "$as_json" != "true" ]] || printf '%s\n' "$record"
 
 case "$verdict" in
   pass)
-    [[ "$as_json" == "true" ]] || printf '%s: production %s of %s lines added; tests %s%s; render mirror %s lines excluded\n' \
-      "$PROG" "$production_lines" "$allowance" "$test_lines" \
-      "${test_allowance:+ of $test_allowance}" "$mirror_lines"
+    [[ "$as_json" == "true" ]] || message result
     exit 0 ;;
   allowance_missing)
-    printf '%s: no allowance to judge by: %s; report the counts for review\n' "$PROG" "$reason" >&2
+    message result >&2
     exit 0 ;;
 esac
 
-printf '%s: submit refused: %s; cut the branch back to the Done-when before pushing\n' \
-  "$PROG" "$reason" >&2
+message result >&2
 exit 3

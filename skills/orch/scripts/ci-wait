@@ -4,6 +4,134 @@
 # codes — is print_usage below: run with --help.
 set -euo pipefail
 
+# Diagnostic text is centralized; the first line identifies its reason and values.
+ci_message() {
+  local _message_key="$1"
+  shift
+  case "$_message_key" in
+    unknown-option)
+      printf 'ci-wait: unknown-option option=%s\n' "$1"
+      printf '%s\n' "ci-wait: unknown option '$1'"
+      ;;
+    missing-pr)
+      printf 'ci-wait: missing-pr operand=%s\n' "PR"
+      printf '%s\n' "ci-wait: missing required <PR#> argument"
+      ;;
+    invalid-pr)
+      printf 'ci-wait: invalid-pr pr=%s\n' "$PR_NUM"
+      printf '%s\n' "ci-wait: PR number must be a positive integer (got '$PR_NUM')"
+      ;;
+    invalid-poll)
+      printf 'ci-wait: invalid-poll value=%s\n' "$POLL_INTERVAL"
+      printf '%s\n' "ci-wait: poll_interval must be a positive integer (got '$POLL_INTERVAL')"
+      ;;
+    invalid-wait)
+      printf 'ci-wait: invalid-wait value=%s\n' "$MAX_WAIT"
+      printf '%s\n' "ci-wait: max_wait must be a positive integer (got '$MAX_WAIT')"
+      ;;
+    passed)
+      printf 'ci-wait: passed pr=%s\n' "$PR_NUM"
+      printf '%s\n' "CI passed"
+      ;;
+    failed)
+      printf 'ci-wait: failed pr=%s\n' "$PR_NUM"
+      printf '%s\n' "CI failed:"
+      ;;
+    timeout)
+      printf 'ci-wait: timeout elapsed=%s verdict=%s\n' "$elapsed" "$verdict"
+      printf '%s\n' "CI timeout after ${elapsed}s (verdict: $verdict)"
+      ;;
+    error)
+      printf 'ci-wait: error pr=%s\n' "$PR_NUM"
+      printf '%s\n' "CI error: $error_msg"
+      ;;
+    missing-gh)
+      printf 'ci-wait: missing-gh command=%s\n' "gh"
+      printf '%s\n' "ci-wait: gh CLI not found on PATH"
+      ;;
+    auth-fallback)
+      printf 'ci-wait: auth-fallback source=%s\n' "keyring"
+      printf '%s\n' "Warning: GH_TOKEN/GITHUB_TOKEN failed gh auth; unsetting them and using gh keyring auth."
+      ;;
+    auth-unavailable)
+      printf 'ci-wait: auth-unavailable command=%s\n' "gh"
+      printf '%s\n' "ci-wait: no working GitHub auth path."
+      ;;
+    auth-sources)
+      printf 'ci-wait: auth-sources methods=%s\n' "env,keyring,bot"
+      printf '%s\n' "Tried: env GH_TOKEN/GITHUB_TOKEN, gh keyring, project GH_BOT_TOKEN."
+      ;;
+    auth-help)
+      printf 'ci-wait: auth-help command=%s\n' "gh-auth-login"
+      printf '%s\n' "Run: gh auth login   (or set a valid GH_BOT_TOKEN in .env.local)."
+      ;;
+    repo-unresolved)
+      printf 'ci-wait: repo-unresolved remote=%s\n' "origin"
+      printf '%s\n' "Could not resolve GitHub repo (gh repo view and git remote both failed)"
+      ;;
+    conflicting)
+      printf 'ci-wait: conflicting pr=%s state=%s\n' "$PR_NUM" "$merge_state"
+      printf '%s\n' "PR #$PR_NUM has merge conflicts (state: $merge_state)"
+      ;;
+    conflict-blocked)
+      printf 'ci-wait: conflict-blocked pr=%s\n' "$PR_NUM"
+      printf '%s\n' "CI will not trigger until conflicts are resolved."
+      ;;
+    conflict-repair)
+      printf 'ci-wait: conflict-repair pr=%s\n' "$PR_NUM"
+      printf '%s\n' "Rebase onto the default branch and force-push to fix."
+      ;;
+    merge-state-unknown)
+      printf 'ci-wait: merge-state-unknown pr=%s\n' "$PR_NUM"
+      printf '%s\n' "Could not determine merge state, continuing..."
+      ;;
+    transient-failure)
+      printf 'ci-wait: transient-failure pattern=%s\n' "$pattern"
+      printf '%s\n' "Detected transient failure: $pattern"
+      ;;
+    missing-library)
+      printf 'ci-wait: missing-library path=%s\n' "$CI_RUN_CORRELATION_LIB"
+      printf '%s\n' "ci-wait: missing required library $CI_RUN_CORRELATION_LIB (github skill not installed?)"
+      ;;
+    checks-failed)
+      printf 'ci-wait: checks-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
+      printf '%s\n' "gh pr checks failed for PR #$PR_NUM in $REPO:"
+      ;;
+    probe-unreadable)
+      printf 'ci-wait: probe-unreadable probe=%s\n' "$probe_name"
+      printf '%s\n' "no-CI probe inconclusive ($probe_name lookup failed); continuing to wait for checks"
+      ;;
+    probe-skipped)
+      printf 'ci-wait: probe-skipped probe=%s input=%s\n' "$probe_name" "$probe_input"
+      printf '%s\n' "no-CI probe inconclusive ($probe_name not probed: the PR's $probe_input lookup failed); continuing to wait for checks"
+      ;;
+    none-configured)
+      printf 'ci-wait: none-configured base=%s\n' "$base_branch"
+      printf '%s\n' "CI: none configured (no active workflows, no required checks on $base_branch)"
+      ;;
+    no-checks)
+      printf 'ci-wait: no-checks pr=%s elapsed=%s grace=%s\n' "$PR_NUM" "$elapsed" "$NO_CHECKS_GRACE"
+      printf '%s\n' "No CI checks after ${elapsed}s (grace ${NO_CHECKS_GRACE}s)"
+      ;;
+    dispatch-causes)
+      printf 'ci-wait: dispatch-causes pr=%s\n' "$PR_NUM"
+      printf '%s\n' "Possible causes: merge conflicts, draft status, approval-gated CI not yet dispatched, or webhook delay."
+      ;;
+    dispatch-grace)
+      printf 'ci-wait: dispatch-grace grace=%s\n' "$NO_CHECKS_GRACE"
+      printf '%s\n' "Raise CI_WAIT_NO_CHECKS_GRACE if this repo's CI dispatch is slower."
+      ;;
+    conflict-dispatch)
+      printf 'ci-wait: conflict-dispatch state=%s\n' "$merge_state"
+      printf '%s\n' "PR has merge conflicts (state: $merge_state) — CI will not trigger."
+      ;;
+    retry)
+      printf 'ci-wait: retry attempt=%s limit=%s\n' "$((retries + 1))" "$max_retries"
+      printf '%s\n' "Retrying transient failure (attempt $((retries + 1))/$max_retries)..."
+      ;;
+  esac
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
@@ -102,7 +230,7 @@ while [[ $# -gt 0 ]]; do
       # under `set -u` it dies later as an unbound-variable abort naming a
       # variable the caller never typed, and a backgrounded wrapper then exits
       # 0 while the wait silently never happened.
-      echo "ci-wait: unknown option '$1'" >&2
+      ci_message unknown-option "$@" >&2
       print_usage >&2
       exit 2
       ;;
@@ -111,7 +239,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ "${#POSITIONAL[@]}" -lt 1 ]; then
-  echo "ci-wait: missing required <PR#> argument" >&2
+  ci_message missing-pr "$@" >&2
   print_usage >&2
   exit 2
 fi
@@ -121,19 +249,19 @@ POLL_INTERVAL="${POSITIONAL[1]:-180}"
 MAX_WAIT="${POSITIONAL[2]:-600}"
 
 if ! [[ "$PR_NUM" =~ ^[0-9]+$ ]] || [ "$PR_NUM" -lt 1 ]; then
-  echo "ci-wait: PR number must be a positive integer (got '$PR_NUM')" >&2
+  ci_message invalid-pr "$@" >&2
   print_usage >&2
   exit 2
 fi
 
 if ! [[ "$POLL_INTERVAL" =~ ^[0-9]+$ ]] || [ "$POLL_INTERVAL" -lt 1 ]; then
-  echo "ci-wait: poll_interval must be a positive integer (got '$POLL_INTERVAL')" >&2
+  ci_message invalid-poll "$@" >&2
   print_usage >&2
   exit 2
 fi
 
 if ! [[ "$MAX_WAIT" =~ ^[0-9]+$ ]] || [ "$MAX_WAIT" -lt 1 ]; then
-  echo "ci-wait: max_wait must be a positive integer (got '$MAX_WAIT')" >&2
+  ci_message invalid-wait "$@" >&2
   print_usage >&2
   exit 2
 fi
@@ -185,29 +313,29 @@ emit_result() {
   case "$status" in
     complete)
       if [[ "$verdict" == "pass" ]]; then
-        echo "CI passed"
+        ci_message passed "$@"
       else
-        echo "CI failed:"
+        ci_message failed "$@"
         jq -r '.failed[] | "  \(.name): \(.state // .bucket // "FAILED")"' <<<"$classes"
       fi
       ;;
     timeout)
-      echo "CI timeout after ${elapsed}s (verdict: $verdict)"
+      ci_message timeout "$@"
       jq -r '.pending[]? | "  pending: \(.name)"' <<<"$classes"
       ;;
     error)
-      echo "CI error: $error_msg"
+      ci_message error "$@"
       ;;
   esac
 }
 
 emit_error() {
-  emit_result "error" "$last_check_classes" "$1"
+  emit_result "error" "$last_check_classes" "$(ci_message "$@")"
 }
 
 if ! command -v gh >/dev/null 2>&1; then
-  emit_error "gh CLI not found on PATH"
-  echo "ci-wait: gh CLI not found on PATH" >&2
+  emit_error missing-gh
+  ci_message missing-gh "$@" >&2
   exit 3
 fi
 
@@ -223,7 +351,7 @@ if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
     if [[ "$auth_status" -ne 124 && "${KENDEX_GITHUB_SELECTED_TOKEN_SOURCE:-}" != "GH_BOT_TOKEN" ]]; then
       KEYRING_PROBED=true
       if orch_github_keyring_auth_status; then
-        echo "Warning: GH_TOKEN/GITHUB_TOKEN failed gh auth; unsetting them and using gh keyring auth." >&2
+        ci_message auth-fallback "$@" >&2
         unset GH_TOKEN GITHUB_TOKEN
         export KENDEX_GITHUB_AUTH_FALLBACK="keyring"
         AUTH_READY=true
@@ -255,11 +383,11 @@ if [[ "$AUTH_READY" != "true" ]]; then
 fi
 
 if [[ "$AUTH_READY" != "true" ]]; then
-  emit_error "no working GitHub auth path"
+  emit_error auth-unavailable
   {
-    echo "ci-wait: no working GitHub auth path."
-    echo "Tried: env GH_TOKEN/GITHUB_TOKEN, gh keyring, project GH_BOT_TOKEN."
-    echo "Run: gh auth login   (or set a valid GH_BOT_TOKEN in .env.local)."
+    ci_message auth-unavailable "$@"
+    ci_message auth-sources "$@"
+    ci_message auth-help "$@"
   } >&2
   exit 3
 fi
@@ -278,8 +406,8 @@ if [ -z "$REPO" ]; then
   REPO="${REPO%.git}"
 fi
 if [ -z "$REPO" ]; then
-  emit_error "could not resolve GitHub repo (gh repo view and git remote both failed)"
-  echo "Could not resolve GitHub repo (gh repo view and git remote both failed)" >&2
+  emit_error repo-unresolved
+  ci_message repo-unresolved "$@" >&2
   exit 1
 fi
 
@@ -287,14 +415,14 @@ fi
 merge_state=$(gh pr view "$PR_NUM" --repo "$REPO" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null || echo "UNKNOWN")
 case "$merge_state" in
   DIRTY|CONFLICTING)
-    emit_error "PR #$PR_NUM has merge conflicts (state: $merge_state); CI will not trigger until conflicts are resolved"
-    echo "PR #$PR_NUM has merge conflicts (state: $merge_state)" >&2
-    echo "CI will not trigger until conflicts are resolved." >&2
-    echo "Rebase onto the default branch and force-push to fix." >&2
+    emit_error conflicting
+    ci_message conflicting "$@" >&2
+    ci_message conflict-blocked "$@" >&2
+    ci_message conflict-repair "$@" >&2
     exit 1
     ;;
   UNKNOWN)
-    echo "Could not determine merge state, continuing..." >&2
+    ci_message merge-state-unknown "$@" >&2
     ;;
 esac
 
@@ -348,7 +476,7 @@ is_transient_failure() {
 
   for pattern in "${TRANSIENT_PATTERNS[@]}"; do
     if grep -qi -e "$pattern" <<<"$logs"; then
-      echo "Detected transient failure: $pattern" >&2
+      ci_message transient-failure "$@" >&2
       return 0
     fi
   done
@@ -361,7 +489,7 @@ is_transient_failure() {
 # the full rationale.
 CI_RUN_CORRELATION_LIB="$SCRIPT_DIR/../../github/scripts/lib/ci-run-correlation.sh"
 if [[ ! -f "$CI_RUN_CORRELATION_LIB" ]]; then
-  echo "ci-wait: missing required library $CI_RUN_CORRELATION_LIB (github skill not installed?)" >&2
+  ci_message missing-library "$@" >&2
   exit 1
 fi
 # shellcheck source=../../github/scripts/lib/ci-run-correlation.sh
@@ -480,8 +608,8 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
   checks_status=$?
   set -e
   if [ "$checks_status" -ne 0 ] && ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$checks_json"; then
-    emit_error "gh pr checks failed for PR #$PR_NUM in $REPO"
-    echo "gh pr checks failed for PR #$PR_NUM in $REPO:" >&2
+    emit_error checks-failed
+    ci_message checks-failed "$@" >&2
     cat "$checks_stderr" >&2
     exit 1
   fi
@@ -524,11 +652,11 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
         probe_name="${probe_result%%:*}"
         case "${probe_result#*:}" in
           probe_failed)
-            echo "no-CI probe inconclusive ($probe_name lookup failed); continuing to wait for checks" >&2
+            ci_message probe-unreadable "$@" >&2
             ;;
           probe_unattempted)
             if [ "$probe_name" = "statuses" ]; then probe_input="head-sha"; else probe_input="base-branch"; fi
-            echo "no-CI probe inconclusive ($probe_name not probed: the PR's $probe_input lookup failed); continuing to wait for checks" >&2
+            ci_message probe-skipped "$@" >&2
             ;;
         esac
       done
@@ -540,19 +668,19 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
               reason: ("no CI configured: no active workflows and no required checks on " + $base),
               pending_checks: [], failed_checks: [], passed_checks: []}'
         else
-          echo "CI: none configured (no active workflows, no required checks on $base_branch)"
+          ci_message none-configured "$@"
         fi
         exit 0
       fi
     fi
     if [ $no_checks_count -ge $max_no_checks ]; then
-      emit_error "no CI checks registered on PR #$PR_NUM after ${elapsed}s (merge conflicts, draft status, approval-gated CI not yet dispatched, or webhook delay)"
-      echo "No CI checks after ${elapsed}s (grace ${NO_CHECKS_GRACE}s)" >&2
-      echo "Possible causes: merge conflicts, draft status, approval-gated CI not yet dispatched, or webhook delay." >&2
-      echo "Raise CI_WAIT_NO_CHECKS_GRACE if this repo's CI dispatch is slower." >&2
+      emit_error no-checks
+      ci_message no-checks "$@" >&2
+      ci_message dispatch-causes "$@" >&2
+      ci_message dispatch-grace "$@" >&2
       merge_state=$(gh pr view "$PR_NUM" --repo "$REPO" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null || echo "UNKNOWN")
       if [ "$merge_state" = "DIRTY" ] || [ "$merge_state" = "CONFLICTING" ]; then
-        echo "PR has merge conflicts (state: $merge_state) — CI will not trigger." >&2
+        ci_message conflict-dispatch "$@" >&2
       fi
       exit 1
     fi
@@ -621,7 +749,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
 
         # Try auto-retry for transient failures
         if [ -n "$failed_run" ] && [ $retries -lt $max_retries ] && is_transient_failure "$failed_run"; then
-          echo "Retrying transient failure (attempt $((retries + 1))/$max_retries)..." >&2
+          ci_message retry "$@" >&2
           gh run rerun "$failed_run" --repo "$REPO" --failed 2>/dev/null || true
           retries=$((retries + 1))
           seen_in_progress=false  # Reset because rerun will produce new checks

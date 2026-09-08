@@ -38,14 +38,14 @@ pw_state_file() { printf '%s/%s__%s' "$PW_STATE_DIR" "$(pw_slug "$1")" "$(pw_slu
 pw_stage_state() {
   local file="$1" tmp="$1.$$.tmp"
   [[ ! -e "$file" || -f "$file" ]] \
-    || { pw_discard_temps; die "could not write the pr-watch state file $file (not a regular file; set OVERSEE_WATCH_STATE_DIR)"; }
+    || { pw_discard_temps; die state-target-invalid "" "path=$file"; }
   printf '%s' "$2" > "$tmp" \
-    || { pw_discard_temps; die "could not write the pr-watch state file $file (set OVERSEE_WATCH_STATE_DIR)"; }
+    || { pw_discard_temps; die state-write-failed "" "path=$file"; }
 }
 
 pw_commit_state() {
   mv -f "$1.$$.tmp" "$1" \
-    || { pw_discard_temps; die "could not replace the pr-watch state file $1 (set OVERSEE_WATCH_STATE_DIR)"; }
+    || { pw_discard_temps; die state-replace-failed "" "path=$1"; }
 }
 
 # Every temp this pass may have staged. Sweeping the whole fleet is right from
@@ -71,16 +71,16 @@ pw_init_state() {
   [[ -n "$PR_WATCH" || "${TRIAGE_ENABLED:-0}" -eq 1 || ${#LANES[@]} -gt 0 || ${#ITEMS[@]} -gt 0 ]] || return 0
   local i state_file
   mkdir -p "$PW_STATE_DIR" \
-    || die "could not create the pr-watch state directory $PW_STATE_DIR (set OVERSEE_WATCH_STATE_DIR)"
+    || die state-directory-create-failed "" "path=$PW_STATE_DIR"
   [[ -w "$PW_STATE_DIR" ]] \
-    || die "the pr-watch state directory $PW_STATE_DIR is not writable (set OVERSEE_WATCH_STATE_DIR)"
+    || die state-directory-unwritable "" "path=$PW_STATE_DIR"
   for i in "${!REPOS[@]}"; do
     state_file="$(pw_state_file "${REPOS[$i]}")"
     PW_SEEN[$i]=""
     PW_HAD_STATE[$i]=0
     [[ -f "$state_file" ]] || continue
     PW_SEEN[$i]="$(cat "$state_file" 2>/dev/null)" \
-      || die "cannot read the pr-watch state file: $state_file (set OVERSEE_WATCH_STATE_DIR)"
+      || die state-read-failed "" "path=$state_file"
     PW_HAD_STATE[$i]=1
   done
 }
@@ -128,7 +128,7 @@ check_pr_watch() {
     # Non-zero with no per-PR lines is pr-watch's GLOBAL failure shape
     # (pr-watch.sh --help): it reports on stderr only, and nothing here can be
     # trusted.
-    [[ -n "$out" ]] || die "pr-watch failed for $repo (rc=$rc) with no per-PR lines: ${err:-<no stderr>}"
+    [[ -n "$out" ]] || die reducer-failed "${err:-<no stderr>}" "repo=$repo" "exit=$rc"
     # heal-dispatched is the reducer reporting its OWN bounded writer dispatch,
     # not attention on the PR it is attributed to. Keyed like the rest it would
     # wake the overseer for a line whose handler is "nothing to do", and its
@@ -161,7 +161,7 @@ check_pr_watch() {
     if awk -F'\t' '$2 == "error" { found = 1 } END { exit !found }' <<<"$new_keys"; then
       event=1
     elif [[ "$PW_PASSES" -eq 1 && "${PW_HAD_STATE[$i]}" -eq 0 ]]; then
-      echo "oversee-watch: pr-watch attention present at start for $repo (rc=$rc, $(grep -c . <<<"$new_keys") line(s)) — the fleet's baseline, reported with the next event; only NEW lines become events" >&2
+      ow_message reducer-baseline "repo=$repo" "exit=$rc" "count=$(grep -c . <<<"$new_keys")" >&2
     else
       event=1
     fi

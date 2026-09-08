@@ -322,7 +322,7 @@ needle() { printf '%s' "${1//+/ }"; }
 observe() {
   local got="" token name value n
   for token in $1; do
-    name="${token%%=*}"
+    name="${token%=*}"
     case "$name" in
       rc) value="$RC" ;;
       passed|failed|pending) value="$(json ".${name}_checks | length")" ;;
@@ -398,12 +398,12 @@ echo "=== the auth ladder: env token, keyring, bot token ==="
 # token wins over a project op:// reference without reading it; a valid
 # selected token is validated once and ignores a stale keyring status.
 table "$JSON" \
-  'a stale GH_TOKEN is unset with a warning and the keyring works|||GH_TOKEN=bad-token|rc=0 verdict=pass stderr~unsetting+them=true' \
-  'no env tokens: the keyring works with no warning||||rc=0 verdict=pass stderr~unsetting+them=false' \
+  'a stale GH_TOKEN is unset with a warning and the keyring works|||GH_TOKEN=bad-token|rc=0 verdict=pass stderr~ci-wait:+auth-fallback+source=keyring=true' \
+  'no env tokens: the keyring works with no warning||||rc=0 verdict=pass stderr~ci-wait:+auth-fallback+source=keyring=false' \
   'stale token, keyring denied, no bot token: exit 3 with a named error|envlocal=||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 status=error error_named=true' \
   'stale token, keyring denied: .env.local GH_BOT_TOKEN recovers, each token validated once|envlocal=export GH_BOT_TOKEN=ghs_VALIDBOT123||GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1,STUB_GH_VALID_TOKEN=ghs_VALIDBOT123|rc=0 verdict=pass api_user_calls=2' \
   'an inherited GH_BOT_TOKEN wins over the project op:// reference, which is never read|envlocal=export GH_BOT_TOKEN=op://vault/github/bot||GH_BOT_TOKEN=ghs_ENVBOT123,STUB_GH_DENY_KEYRING=1,STUB_GH_VALID_TOKEN=ghs_ENVBOT123|rc=0 verdict=pass op_calls=none' \
-  'a valid selected token validates once and ignores a stale keyring status|||GH_TOKEN=ghs_VALIDUSER123,STUB_GH_VALID_TOKEN=ghs_VALIDUSER123,STUB_GH_AUTH_STATUS_FAIL=1|rc=0 verdict=pass stderr~unsetting+them=false api_user_calls=1'
+  'a valid selected token validates once and ignores a stale keyring status|||GH_TOKEN=ghs_VALIDUSER123,STUB_GH_VALID_TOKEN=ghs_VALIDUSER123,STUB_GH_AUTH_STATUS_FAIL=1|rc=0 verdict=pass stderr~ci-wait:+auth-fallback+source=keyring=false api_user_calls=1'
 
 # A hanging keyring auth is bounded: the one case off the virtual clock, since
 # the hang is what is under test (STUB_CLOCK= sends the stub's sleep to the
@@ -447,10 +447,10 @@ echo "=== text mode prints a result line for every terminal status ==="
 # The line beyond its leading words is not a contract anything parses; the
 # leading words are text-only, so a JSON default flip fails these rows.
 table '1 1 30' \
-  'passed||||rc=0 stdout~CI+passed=true' \
-  'failed|||STUB_PR_CHECKS_MODE=failure|rc=1 stdout~CI+failed=true' \
-  'timeout||1 1 5|STUB_PR_CHECKS_MODE=pending_always|rc=1 stdout~CI+timeout=true' \
-  'error|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=3|rc=1 stdout~CI+error=true'
+  'passed||||rc=0 stdout~ci-wait:+passed+pr=1=true' \
+  'failed|||STUB_PR_CHECKS_MODE=failure|rc=1 stdout~ci-wait:+failed+pr=1=true' \
+  'timeout||1 1 5|STUB_PR_CHECKS_MODE=pending_always|rc=1 stdout~ci-wait:+timeout+elapsed=5+verdict=pending=true' \
+  'error|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=3|rc=1 stdout~ci-wait:+error+pr=1=true'
 
 echo "=== the repo slug falls back to the origin URL without its .git suffix ==="
 # When `gh repo view` answers empty, owner/repo comes from the origin URL; the

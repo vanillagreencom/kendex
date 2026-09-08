@@ -305,6 +305,20 @@ lane_context_columns() {
     }'
 }
 
+lane_context_message() {
+  case "$1" in
+    empty)
+      printf 'lane-context: empty count=0\nNo live lane claims to measure.\n'
+      ;;
+    legend)
+      printf 'lane-context: percent kind=consumed\n'
+      printf 'CONTEXT_USED_PCT: percent of the context window CONSUMED. A Codex lane prints what is LEFT or what is USED; only LEFT is converted here.\n'
+      printf 'lane-context: tokens kind=window-percent absent=-\n'
+      printf 'CONTEXT_TOKENS: that percent of the window the status line names, as Claude does with (1M context); a dash where the line names no window.\n'
+      ;;
+  esac
+}
+
 # Table for the records on stdin. The legend is part of the output, not a
 # nicety: a bare percentage column is read in whichever direction the reader
 # last saw one, and the two harnesses print opposite directions.
@@ -312,7 +326,7 @@ lane_context_render() {
   local recs
   recs="$(cat)"
   if [[ "$(jq -r 'length' <<<"$recs")" == "0" ]]; then
-    printf 'No live lane claims — nothing to measure.\n'
+    lane_context_message empty
     return 0
   fi
   jq -r '
@@ -322,6 +336,5 @@ lane_context_render() {
              (if .context_tokens == null then "-" else (.context_tokens | tostring) end),
              .status ] | @tsv)
   ' <<<"$recs" | lane_context_columns
-  printf 'CONTEXT_USED_PCT: percent of the context window CONSUMED. A Codex lane prints what is LEFT or what is USED; only LEFT is converted here.\n'
-  printf 'CONTEXT_TOKENS: that percent of the window the status line names, as Claude does with (1M context); a dash where the line names no window.\n'
+  lane_context_message legend
 }

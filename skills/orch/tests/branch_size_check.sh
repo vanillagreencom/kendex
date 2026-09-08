@@ -178,7 +178,7 @@ missing_error="$(run_check "$CHECK_BIN" 2>&1 >/dev/null)"
 missing_rc=$?
 set -e
 assert_eq "$missing_rc" "0" "an issue stating no allowance is reported, not refused and not defaulted"
-assert_eq "$([[ "$missing_error" == *"no allowance to judge by"* && "$missing_error" == *"50 production, 14 test"* ]] && echo yes)" \
+assert_eq "$([[ "${missing_error%%$'\n'*}" == "branch-size-check: allowance_missing production=50 tests=14 mirror="*" allowance=none test-allowance=none" ]] && echo yes)" \
   "yes" "the report names the missing line and the counts measured"
 assert_eq "$("$STATE" --state-dir "$WT/tmp" get KEN-SIZE '.pr.size_check.verdict, .pr.size_check.production_allowance' | paste -sd, -)" \
   "allowance_missing,null" "the record says nothing was judged and invents no allowance"
@@ -192,7 +192,7 @@ prod_error="$(run_check "$CHECK_BIN" 2>&1 >/dev/null)"
 prod_rc=$?
 set -e
 assert_eq "$prod_rc" "3" "a branch past its production allowance is refused before the push"
-assert_eq "$([[ "$prod_error" == *"100 production lines added"* && "$prod_error" == *"allows 40"* ]] && echo yes)" \
+assert_eq "$([[ "${prod_error%%$'\n'*}" == "branch-size-check: production_over production=100 tests="*" allowance=40 test-allowance=20" ]] && echo yes)" \
   "yes" "the production refusal prints the count and the allowance"
 assert_eq "$("$STATE" --state-dir "$WT/tmp" get KEN-SIZE '.pr.size_check.verdict')" "production_over" \
   "the refusal is recorded with its reason"
@@ -219,7 +219,7 @@ test_error="$(run_check "$CHECK_BIN" 2>&1 >/dev/null)"
 test_rc=$?
 set -e
 assert_eq "$test_rc" "3" "a branch past its test allowance is refused before the push"
-assert_eq "$([[ "$test_error" == *"50 test lines added"* && "$test_error" == *"allows 20"* ]] && echo yes)" \
+assert_eq "$([[ "${test_error%%$'\n'*}" == "branch-size-check: tests_over production="*" tests=50 mirror="*" test-allowance=20" ]] && echo yes)" \
   "yes" "the test refusal prints the count and the allowance"
 
 # A private copy of its own: a mutant already carrying the production mutation

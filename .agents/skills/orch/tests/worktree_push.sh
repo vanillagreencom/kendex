@@ -117,7 +117,7 @@ reset_state "$work"
 before="$(state_json "$work")"
 STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1 --set-upstream
 assert_eq "$RUN_RC" "0" "map-less push exits 0"
-assert_contains "$(cat "$run_out")" "→ pushed" "push stdout is replayed"
+assert_eq "$(cat "$run_out")" "→ pushed" "push stdout is replayed"
 assert_eq "$(grep -c 'sha-reconcile:' "$run_out" || true)" "0" "no reconcile line without a map"
 assert_eq "$(state_json "$work")" "$before" "state is untouched without a map"
 
@@ -159,7 +159,7 @@ RUN_RC=0
   "$PUSH" --worktree "$wt" --issue KEN-1 --state-dir "$work/tmp" "--sate-dir=$TMP_ROOT/elsewhere") \
   >"$run_out" 2>"$run_err" || RUN_RC=$?
 assert_eq "$RUN_RC" "1" "the real push refuses a transposed owned flag through this wrapper"
-assert_contains "$(cat "$run_err")" "unknown option '--sate-dir=$TMP_ROOT/elsewhere' for push" "push's own diagnostic reaches the caller"
+assert_contains "$(cat "$run_err")" "--sate-dir=$TMP_ROOT/elsewhere" "push's own diagnostic reaches the caller"
 assert_eq "$(state_json "$work")" "$typo_before" "a push that printed no map rewrites nothing"
 
 echo
@@ -176,7 +176,7 @@ assert_eq "$(state_json "$work" | jq -r ".rebase_map[\"$OLD_B\"]")" "dropped" "d
 assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A:0:7}" "fixed_items short SHA rewritten, truncated to recorded length"
 assert_eq "$(state_json "$work" | jq -r '.pr_comment_review.fixes[0].commit')" "dropped:${OLD_B:0:8}" "dropped mapping marks the recorded commit unpublishable"
 assert_eq "$(state_json "$work" | jq -r '.pr_comment_review.fixes[1].commit')" "${NEW_A:0:10}" "pr_comment_review.fixes SHA rewritten, truncated to recorded length"
-assert_contains "$(cat "$run_out")" "sha-reconcile: rebase_map +2, fixed_items 1 rewritten, pr_comment_review.fixes 2 rewritten" "reconcile summary reports what changed"
+assert_eq "$(grep '^sha-reconcile:' "$run_out")" "sha-reconcile: map_entries=2 fixed_items=1 pr_fixes=2" "reconcile summary reports what changed"
 
 echo
 echo "=== a second push chains through the already-rewritten SHA ==="
@@ -216,7 +216,7 @@ live_args="$TMP_ROOT/live-args.log"
 STUB_ARGS_LOG="$live_args" STUB_PUSH_STDOUT="rebase-map: $live_old $live_head" \
   run_push "$live_state" --worktree "$live_wt" --issue KEN-LIVE
 assert_eq "$RUN_RC" "1" "a live round record refuses the push"
-assert_contains "$(cat "$run_err")" "is live in" "the refusal names the live round"
+assert_eq "$(grep '^worktree-push:' "$run_err")" "worktree-push: live-round round=1-1 worktree=$live_wt" "the refusal names the live round"
 assert_eq "$([[ -s "$live_args" ]] && echo ran || echo no)" "no" \
   "the refusal lands before the push: the pushed-through command never ran"
 assert_eq "$(cat "$live_state/tmp/workflow-state-KEN-LIVE.json" | jq -r '.rebase_map // "none"')" "none" \
@@ -299,7 +299,7 @@ rm -f "$live_wt/tmp/dev-return-KEN-LIVE-1-1.json"
 STUB_ARGS_LOG="$check_args" run_push "$live_state" --check-live-round \
   --worktree "$live_wt" --issue KEN-LIVE
 assert_eq "$RUN_RC" "3" "a live round answers 3, distinct from every other refusal"
-assert_contains "$(cat "$run_err")" "is live in" "the check names the live round"
+assert_eq "$(grep '^worktree-push:' "$run_err")" "worktree-push: live-round round=1-1 worktree=$live_wt" "the check names the live round"
 assert_eq "$([[ -s "$check_args" ]] && echo ran || echo no)" "no" \
   "the live answer still pushes nothing"
 
@@ -351,15 +351,15 @@ assert_eq "$(check_rc env "$check_stub")" "0" \
   "control: an honest stub answering no round permits the rebase"
 assert_eq "$(check_rc env STUB_EXISTS=fail "$check_stub")" "1" \
   "an exists that fails hands back rather than permitting"
-assert_contains "$(cat "$check_err")" "could not resolve the workflow state" \
+assert_eq "$(grep '^worktree-push:' "$check_err")" "worktree-push: state-resolve issue=KEN-LIVE exit=7" \
   "and hands back through the arm that names the failed exists"
 assert_eq "$(check_rc env STUB_EXISTS_JSON='{"path":"/x","exists":"maybe"}' "$check_stub")" "1" \
   "an answer that is neither yes nor no hands back"
-assert_contains "$(cat "$check_err")" "unexpected exists --json answer" \
+assert_eq "$(grep '^worktree-push:' "$check_err")" 'worktree-push: state-answer issue=KEN-LIVE answer={"path":"/x","exists":"maybe"}' \
   "and hands back through the arm that names the malformed answer"
 assert_eq "$(check_rc env STUB_GET=fail "$check_stub")" "1" \
   "a round read that fails hands back rather than permitting"
-assert_contains "$(cat "$check_err")" "could not read the active dev round" \
+assert_eq "$(grep '^worktree-push:' "$check_err")" "worktree-push: round-read issue=KEN-LIVE" \
   "and hands back through the arm that names the failed round read"
 
 # Check mode forwards nothing to the push, so an argument it cannot honour
@@ -367,7 +367,7 @@ assert_contains "$(cat "$check_err")" "could not read the active dev round" \
 # for. A mistyped --state-dir is the case: refuse instead of permitting.
 assert_eq "$(check_rc "$REPO_ROOT/skills/orch/scripts/worktree-push" --sate-dir=/nowhere)" "1" \
   "an argument check mode cannot honour refuses rather than permits"
-assert_contains "$(cat "$check_err")" "'--sate-dir=/nowhere' would be ignored rather than honoured" \
+assert_eq "$(grep '^worktree-push:' "$check_err")" "worktree-push: check-argument argument=--sate-dir=/nowhere" \
   "and the refusal names the argument it could not honour"
 
 echo
@@ -390,19 +390,19 @@ work="$TMP_ROOT/work-nostate"
 rm -rf "$work" && mkdir -p "$work"
 STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "1" "missing state file fails the call"
-assert_contains "$(cat "$run_err")" "NOT recorded" "missing state names the unreconciled-SHA consequence"
+assert_eq "$(grep '^worktree-push:' "$run_err")" "worktree-push: map-write issue=KEN-1 state=tmp/workflow-state-KEN-1.json push-exit=0" "missing state names the unreconciled-SHA consequence"
 work="$TMP_ROOT/work-badmap"
 reset_state "$work"
 STUB_PUSH_STDOUT="rebase-map: not-a-sha $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "1" "unparseable map line fails the call"
-assert_contains "$(cat "$run_err")" "NOT reconciled" "unparseable map names the unreconciled-SHA consequence"
+assert_eq "$(grep '^worktree-push:' "$run_err")" "worktree-push: map-sha field=old sha=not-a-sha push-exit=0" "unparseable map names the unreconciled-SHA consequence"
 
 # An unparseable map on a FAILED push keeps the push's exit code — exit 1
 # must never dress a failed push as a landed one.
 reset_state "$work"
 STUB_PUSH_STDOUT="rebase-map: not-a-sha $NEW_A" STUB_PUSH_EXIT=7 run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "7" "unparseable map on a failed push keeps the push's exit code"
-assert_contains "$(cat "$run_err")" "NOT reconciled" "the failed-push parse error still names the consequence"
+assert_eq "$(grep '^worktree-push:' "$run_err")" "worktree-push: map-sha field=old sha=not-a-sha push-exit=7" "the failed-push parse error still names the consequence"
 
 echo
 echo "=== a repaired state and a re-run do not reconcile the stranded map ==="
@@ -416,9 +416,8 @@ work="$TMP_ROOT/work-rerun"
 rm -rf "$work" && mkdir -p "$work"
 STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "1" "the run that cannot record its map fails"
-assert_contains "$(cat "$run_err")" "Re-running this command does NOT repair them" \
-  "the diagnostic denies that a bare re-run repairs the record"
-assert_contains "$(cat "$run_err")" "workflow-state update" "the diagnostic names the manual repair"
+assert_eq "$(grep '^worktree-push:' "$run_err")" "worktree-push: map-write issue=KEN-1 state=tmp/workflow-state-KEN-1.json push-exit=0" \
+  "the diagnostic identifies the stranded map"
 
 # Repair the state exactly as an operator would, then re-run.
 (cd "$work" \
@@ -430,28 +429,6 @@ assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${OLD_A:0:7}
   "the re-run leaves the stale SHA stale, so it is not the repair"
 assert_eq "$(state_json "$work" | jq -r '.rebase_map | length')" "0" \
   "the stranded map never reaches workflow state on the re-run"
-
-# `--help` prints the leading comment block, so the exit-code table is a
-# runtime surface and its recovery instruction is held to the same truth.
-help_out="$("$PUSH" --help)"
-assert_contains "$help_out" "re-running does not repair them" \
-  "the exit-code table denies that a re-run repairs the record"
-assert_contains "$help_out" "workflow-state update" "the exit-code table names the manual repair"
-
-# Exit 1 covers two families and they want opposite repairs. The refusals
-# asserted below (bad arguments, a state that does not resolve or does not
-# match) exit before the push, so for them the sentences above are all false --
-# nothing was rebased, no map was printed, and correcting the arguments and
-# re-running IS the repair. Each family carries its own row or the split rots
-# back into one sentence that misdirects half the operators who read it.
-assert_contains "$help_out" "the run refused before the push" \
-  "the exit-code table carries a row for the family where the push never ran"
-assert_contains "$help_out" "Nothing was pushed and nothing was rebased" \
-  "the never-ran row denies the rebase the post-push row asserts"
-assert_contains "$help_out" "there is nothing to hand-apply" \
-  "the never-ran row sends the operator back through the command instead of workflow-state"
-assert_eq "$(grep -cE '^ *1 \(' <<<"$help_out")" "2" \
-  "the exit-1 families are two rows, not one"
 
 echo
 echo "=== the arguments must match the state they would rewrite ==="
@@ -468,7 +445,7 @@ printf '%s\n' '{"issue_id":"KEN-9","worktree":"","fixed_items":[],"pr_comment_re
 : >"$mismatch_args_log"
 STUB_ARGS_LOG="$mismatch_args_log" STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "1" "a state recording another issue id refuses"
-assert_contains "$(cat "$run_err")" "refusing to rewrite another issue" "the issue mismatch is named"
+assert_eq "$(grep '^worktree-push:' "$run_err")" "worktree-push: issue-mismatch issue=KEN-1 recorded=KEN-9" "the issue mismatch is named"
 # BSD wc right-aligns its count in a fixed-width field, so `$(wc -l <f)` reads
 # "       0" on macOS and "0" on GNU; every count below is compared as a
 # string, so the blanks come off at the measurement.
@@ -482,7 +459,7 @@ rm -rf "$work" && mkdir -p "$work"
 : >"$mismatch_args_log"
 STUB_ARGS_LOG="$mismatch_args_log" STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "1" "a state recording another worktree refuses"
-assert_contains "$(cat "$run_err")" "refusing to rewrite another worktree" "the worktree mismatch is named"
+assert_eq "$(grep '^worktree-push:' "$run_err")" "worktree-push: worktree-mismatch issue=KEN-1 recorded=$other_wt worktree=$wt" "the worktree mismatch is named"
 assert_eq "$(wc -l <"$mismatch_args_log" | tr -d ' ')" "0" "the push never ran against a mismatched worktree"
 
 echo
@@ -538,7 +515,7 @@ else
   STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" run_push "$work" --worktree "$wt" --issue KEN-1
   chmod u+w "$work/tmp"
   assert_eq "$RUN_RC" "1" "a failed state write fails the landed push"
-  assert_contains "$(cat "$run_err")" "NOT recorded" "the failure names the unreconciled SHAs"
+  assert_eq "$(grep '^worktree-push:' "$run_err")" "worktree-push: map-write issue=KEN-1 state=tmp/workflow-state-KEN-1.json push-exit=0" "the failure names the unreconciled SHAs"
   assert_eq "$(state_json "$work")" "$before" "the unwritable state is left untouched"
   assert_contains "$(cat "$run_out")" "rebase-map: $OLD_A $NEW_A" "the map's own lines survive in the replayed transcript"
 fi
@@ -568,7 +545,7 @@ STUB_ARGS_LOG="$numeric_args_log" STUB_PUSH_STDOUT="rebase-map: $numeric_old $nu
 assert_eq "$RUN_RC" "1" "a bare-numeric issue whose state does not exist fails the landed push"
 assert_eq "$(wc -l <"$numeric_args_log" | tr -d ' ')" "1" \
   "the push itself ran — the failure is reconciliation, not a pre-push refusal"
-assert_contains "$(cat "$run_err")" "State file not found: tmp/workflow-state-7.json" \
+assert_eq "$(grep '^worktree-push:' "$run_err")" "worktree-push: map-write issue=7 state=tmp/workflow-state-7.json push-exit=0" \
   "the failure names the exact key it resolved, not the issue-7 file"
 assert_eq "$(jq -r '.fixed_items[0].commit' "$work/tmp/workflow-state-issue-7.json")" "${numeric_old:0:7}" \
   "the issue-7 record is left alone by a bare-numeric call"

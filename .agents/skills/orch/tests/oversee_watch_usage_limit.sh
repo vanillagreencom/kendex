@@ -244,12 +244,12 @@ screen "banner:You've hit your weekly limit"
 run
 expect="rc=0 first=EVENT+usage-limit+gh-2"
 assert_eq "$(watch "$expect")" "$expect" "the run that reports the wall notes the missing claim" "$ERR"
-assert_eq "$(grep -c 'no live lane claim' "$ERR")" "1" "and prints the note once"
+assert_eq "$(grep -c 'oversee-watch: claim-missing lane=gh-2' "$ERR")" "1" "and prints the note once"
 rm -f "$STUB_DIR/pane-gh-2.calls" "$STUB_DIR/cmd-gh-2.calls"
 run
 expect="rc=0 first=$HEARTBEAT out~EVENT+usage-limit=false"
 assert_eq "$(watch "$expect")" "$expect" "a re-run over the same wall reports nothing" "$ERR"
-assert_eq "$(grep -c 'no live lane claim' "$ERR" || true)" "0" "and the note about an event it did not print stays silent"
+assert_eq "$(grep -c 'oversee-watch: claim-missing lane=gh-2' "$ERR" || true)" "0" "and the note about an event it did not print stays silent"
 
 echo "=== the reset the banner states ==="
 # SURFACE 1: the reset parsed out of each banner form the grammar accepts,
@@ -346,6 +346,25 @@ WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TZ=UTC
 expect="first=EVENT+lane-asking+gh-2 out~EVENT+usage-limit=false"
 assert_eq "$(watch "$expect")" "$expect" \
   "control: without the arm the column-0 row is the turn and the banner above it goes unreported" "$ERR"
+
+cat > "$TMP_ROOT/bin/grep" <<'EOF'
+#!/usr/bin/env bash
+if [[ -f "$STUB_DIR/reset-grep-fail" && "${1:-}" == "-Em1" ]]; then
+  printf '%s\n' 'E_RESET_GREP' >&2
+  exit 2
+fi
+exec /usr/bin/grep "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/grep"
+new_case reset_scan_failure
+screen "banner:$BANNER"
+touch "$STUB_DIR/reset-grep-fail"
+run TZ=UTC
+assert_eq "$RC" "2" "a reset-clause search failure exits 2"
+assert_eq "$(grep -Fxc 'oversee-watch: reset-scan-failed exit=2' "$ERR")" "1" \
+  "a reset-clause search failure emits its stable reason and exit"
+assert_eq "$(grep -Fxc 'E_RESET_GREP' "$ERR")" "1" \
+  "the reset-clause failure keeps the tool detail after its header"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

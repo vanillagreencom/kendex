@@ -9,6 +9,9 @@
 # three-channel rule: answer on stdout, diagnostic on the error file, ran-or-not
 # on the exit status.
 #
+# measurement_declaration stdout is a parsed protocol: absent:, declared:<text>,
+# or invalid:<detail>. A rejected detail starts with a stable diagnostic line.
+# zero_sample_detail prints that detail or an empty string.
 # Sourced by: review-artifact-gates.sh.
 
 set -euo pipefail
@@ -34,18 +37,18 @@ measurement_declaration() {
     .measurement_failed as $m
     | if $m == null then "absent:"
       elif ($m | type) != "string"
-        then "invalid:measurement_failed must be a string, got \($m | type)"
+        then "invalid:review-artifact-check: measurement_declaration type=\($m | type)\nmeasurement_failed must be a string."
       else ($m | trimmed) as $t
         | if ($t | length) == 0
-            then "invalid:measurement_failed is blank"
+            then "invalid:review-artifact-check: measurement_declaration state=blank\nName the instrument and what it did."
           elif ($t | ascii_downcase | test("^(n/?a|none|null|nil|nothing|unknown|unavailable|tbd|failed|error|yes|no)[.!]*$"))
-            then "invalid:measurement_failed is a null token (\"\($t)\") and names no instrument"
+            then "invalid:review-artifact-check: measurement_declaration state=null_token value=\($t | @json)\nThe token names no instrument."
           elif (($t | test("[A-Za-z]")) | not)
-            then "invalid:measurement_failed is punctuation only and names no instrument"
+            then "invalid:review-artifact-check: measurement_declaration state=punctuation\nPunctuation names no instrument."
           elif ($t | length) < 20
-            then "invalid:measurement_failed is \($t | length) characters and names no instrument"
+            then "invalid:review-artifact-check: measurement_declaration characters=\($t | length) minimum=20\nName the instrument and what it did."
           elif ($t | words) < 3
-            then "invalid:measurement_failed is \($t | words) word(s) and names no instrument"
+            then "invalid:review-artifact-check: measurement_declaration words=\($t | words) minimum=3\nName the instrument and what it did."
           else "declared:" + $t
           end
       end
@@ -76,8 +79,8 @@ measurement_declaration() {
 # an instrument failure that was not its own.
 #
 # The declaration escape is NOT read here. measurement_declaration adjudicates
-# it once and artifact_content_gates skips this gate outright, so there is one
-# reading of the field rather than two that can drift.
+# it once. artifact_content_gates records the finding as suppressed when a
+# declaration is valid, so both paths share the same measurement.
 zero_sample_detail() {
   gate_filter "$1" '
     # gate:zero-sample
@@ -104,23 +107,23 @@ zero_sample_detail() {
       ((.qa_metadata? // {}) | if type == "object" then (.perf_qa? // null) else null end) as $pq
       | if ($pq == null) then []
         elif (($pq | type) != "object")
-          then ["qa_metadata.perf_qa is not an object, so it carries no benchmark evidence"]
+          then ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa type=\($pq | type)\nThe benchmark payload must be an object."]
         else ($pq.percentiles?) as $p
           | if ($p == null)
-              then ["qa_metadata.perf_qa declares no percentiles block (a required field)"]
+              then ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.percentiles state=missing\nThe benchmark payload requires percentiles."]
             elif ((($p | type) != "object") and (($p | type) != "array"))
-              then ["qa_metadata.perf_qa.percentiles is neither an object nor an array"]
+              then ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.percentiles type=\($p | type)\nPercentiles must be an object or an array."]
             elif (($p | length) == 0)
-              then ["qa_metadata.perf_qa.percentiles is empty"]
+              then ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.percentiles count=0\nPercentiles must contain measurements."]
             elif (([$p | .. | numbers | select(. > 0)] | length) == 0)
-              then ["qa_metadata.perf_qa.percentiles carries no measured value above zero"]
+              then ["review-artifact-check: perf_evidence field=qa_metadata.perf_qa.percentiles positive_values=0\nPercentiles must contain a measured value above zero."]
             else [] end
         end ;
 
     ( [ cites[] | select(.den == 0)
-        | "\(.kind) citation \"\(.label)\" in the summary or qa_metadata reports zero samples" ]
+        | "review-artifact-check: zero_sample measurement=\(.kind) samples=\(.den)\nThe citation \"\(.label)\" reports no samples." ]
       + [ cites[] | select(.threads != null and .threads == 0)
-        | "stability citation \"\(.label)\" in the summary or qa_metadata reports zero threads" ]
+        | "review-artifact-check: zero_sample measurement=stability threads=\(.threads)\nThe citation \"\(.label)\" reports no threads." ]
       + perf_zero )
     | (first(.[]) // "")
   '

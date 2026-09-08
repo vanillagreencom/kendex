@@ -91,7 +91,7 @@ observe() {
   local got="" token name value needle
   set -f
   for token in $1; do
-    name="${token%%=*}"
+    name="${token%=*}"
     case "$name" in
       rc) value="$RC" ;;
       written) value="$([[ -n "$OUT" && -f "$OUT" ]] && echo yes || echo no)" ;;
@@ -171,43 +171,43 @@ echo "=== every refusal exits 2 on its own guard and writes nothing ==="
 # rather than stored. Every implement row's commit `c` is unresolvable, so the
 # stderr clause is what proves the row's own guard fired.
 table \
-  "a bad --kind|--worktree $WT --kind review --issue i --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~--kind+must+be+implement+or+fix=true" \
-  "a missing --round-id|--worktree $WT --kind implement --issue i --branch b --commit c --validate pass|rc=2 stderr~--round-id+is+required=true" \
-  "a missing --issue|--worktree $WT --kind implement --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~--issue+is+required=true" \
-  "a value flag with no value at the end|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate|rc=2 stderr~--validate+requires+a+value=true" \
-  "a missing --worktree|--kind implement --issue i --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~--worktree+is+required=true" \
-  "a nonexistent --worktree: the writer's own guard, not the base resolver's|--worktree $TMP_ROOT/nope --kind implement --issue i --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~--worktree+path=true" \
-  "a bad --validate|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate weird|rc=2 stderr~--validate+must+be+'pass'+or+begin+with+'FAILING:'=true" \
-  "a verdict that only begins with pass, note and all|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass_with_notes --validate-note explained|rc=2 stderr~--validate+must+be+'pass'+or+begin+with+'FAILING:'=true" \
-  "a path-unsafe --issue|--worktree $WT --kind implement --issue a/b --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~--issue+'a/b'+must+match=true" \
-  "a path-traversal --issue|--worktree $WT --kind implement --issue .. --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~--issue+'..'+must+match=true" \
-  "a path-unsafe --round-id|--worktree $WT --kind implement --issue i --round-id a/../b --branch b --commit c --validate pass|rc=2 stderr~--round-id+'a/../b'+must+match=true" \
-  "a path-traversal --round-id|--worktree $WT --kind implement --issue i --round-id .. --branch b --commit c --validate pass|rc=2 stderr~--round-id+'..'+must+match=true" \
-  "a missing --summary-file|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary-file $TMP_ROOT/nope.md|rc=2 stderr~does+not+exist=true" \
-  "a bad --item DECISION|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --item 1 Fixed x|rc=2 stderr~--item+DECISION+must+be+Applied=true" \
-  "an empty --item REASONING|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --item 1 Applied EMPTY|rc=2 stderr~REASONING+must+be+non-empty=true" \
-  "a non-numeric --item N|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --item x Applied x|rc=2 stderr~--item+N+must+be+a+non-negative+integer=true" \
-  "--item with too few arguments|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --item 1 Applied|rc=2 stderr~--item+requires+exactly+3+arguments=true" \
-  "a fix with no --item|--worktree $WT --kind fix --issue issue-noitems --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~at+least+one+--item+is+required=true" \
-  "a bundled implement with no --item|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --bundled|rc=2 stderr~at+least+one+--item+is+required=true" \
-  "an unknown argument|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --frobnicate|rc=2 stderr~unknown+argument:+--frobnicate=true" \
-  "both --summary and --summary-file|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary inline --summary-file $SUMMARY_FILE|rc=2 stderr~mutually+exclusive=true" \
-  "--summary plus an empty --summary-file value: presence, not content|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary inline --summary-file EMPTY|rc=2 stderr~mutually+exclusive=true" \
-  "an explicitly empty --summary-file alone|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary-file EMPTY|rc=2 stderr~--summary-file+requires+a+non-empty+path=true" \
-  "a whitespace-only --summary: an empty deliverable is not a record|--worktree $WT --kind implement --issue issue-blanksum --round-id $RID --branch b --commit %H --validate pass --summary SPACES|rc=2 stderr~--summary+must+contain+non-whitespace=true" \
-  "--summary with no value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary|rc=2 stderr~--summary+requires+a+value=true" \
-  "--summary followed by another flag: an option token is not a value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary --no-summary|rc=2 stderr~--summary+requires+a+value,+got+flag+'--no-summary'=true" \
-  "--summary-file followed by another flag|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary-file --no-summary|rc=2 stderr~--summary-file+requires+a+value,+got+flag+'--no-summary'=true" \
-  "--branch followed by another flag|--worktree $WT --kind implement --issue i --round-id $RID --branch --commit c --validate pass|rc=2 stderr~--branch+requires+a+value,+got+flag+'--commit'=true" \
-  "--validate-note followed by another flag|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-note --qa-label needs-review|rc=2 stderr~--validate-note+requires+a+value,+got+flag+'--qa-label'=true" \
-  "--item REASONING as an option token|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --item 1 Applied --bundled|rc=2 stderr~REASONING+must+be+text,+got+flag+'--bundled'=true" \
-  "a duplicate --summary|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary first --summary second|rc=2 stderr~--summary+supplied+more+than+once=true" \
-  "a duplicate --summary-file|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary-file $SUMMARY_FILE --summary-file $SUMMARY_FILE|rc=2 stderr~--summary-file+supplied+more+than+once=true" \
-  "a duplicate --branch|--worktree $WT --kind implement --issue i --round-id $RID --branch b --branch b2 --commit c --validate pass|rc=2 stderr~--branch+supplied+more+than+once=true" \
-  "a duplicate --validate|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate pass|rc=2 stderr~--validate+supplied+more+than+once=true" \
-  "an empty --commit|--worktree $WT --kind implement --issue i --round-id $RID --branch b --validate pass --commit EMPTY|rc=2 stderr~--commit+is+required=true" \
-  "a whitespace-only --validate-note|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-note SPACES|rc=2 stderr~--validate-note+must+contain+non-whitespace=true" \
-  "--validate-note with no value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-note|rc=2 stderr~--validate-note+requires+a+value=true"
+  "a bad --kind|--worktree $WT --kind review --issue i --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~dev-return-write:+invalid-kind+value=review=true" \
+  "a missing --round-id|--worktree $WT --kind implement --issue i --branch b --commit c --validate pass|rc=2 stderr~dev-return-write:+required+option=--round-id=true" \
+  "a missing --issue|--worktree $WT --kind implement --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~dev-return-write:+required+option=--issue=true" \
+  "a value flag with no value at the end|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate|rc=2 stderr~dev-return-write:+missing-value+option=--validate=true" \
+  "a missing --worktree|--kind implement --issue i --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~dev-return-write:+required+option=--worktree=true" \
+  "a nonexistent --worktree: the writer's own guard, not the base resolver's|--worktree $TMP_ROOT/nope --kind implement --issue i --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~dev-return-write:+not-directory+path=$TMP_ROOT/nope=true" \
+  "a bad --validate|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate weird|rc=2 stderr~dev-return-write:+invalid-validate+value=weird=true" \
+  "a verdict that only begins with pass, note and all|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass_with_notes --validate-note explained|rc=2 stderr~dev-return-write:+invalid-validate+value=pass_with_notes=true" \
+  "a path-unsafe --issue|--worktree $WT --kind implement --issue a/b --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~dev-return-write:+invalid-id+option=--issue+value=a/b=true" \
+  "a path-traversal --issue|--worktree $WT --kind implement --issue .. --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~dev-return-write:+invalid-id+option=--issue+value=..=true" \
+  "a path-unsafe --round-id|--worktree $WT --kind implement --issue i --round-id a/../b --branch b --commit c --validate pass|rc=2 stderr~dev-return-write:+invalid-id+option=--round-id+value=a/../b=true" \
+  "a path-traversal --round-id|--worktree $WT --kind implement --issue i --round-id .. --branch b --commit c --validate pass|rc=2 stderr~dev-return-write:+invalid-id+option=--round-id+value=..=true" \
+  "a missing --summary-file|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary-file $TMP_ROOT/nope.md|rc=2 stderr~dev-return-write:+missing-file+path=$TMP_ROOT/nope.md=true" \
+  "a bad --item DECISION|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --item 1 Fixed x|rc=2 stderr~dev-return-write:+item-decision+value=Fixed=true" \
+  "an empty --item REASONING|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --item 1 Applied EMPTY|rc=2 stderr~dev-return-write:+item-empty+item=1=true" \
+  "a non-numeric --item N|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --item x Applied x|rc=2 stderr~dev-return-write:+item-number+value=x=true" \
+  "--item with too few arguments|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --item 1 Applied|rc=2 stderr~dev-return-write:+item-arguments+count=2=true" \
+  "a fix with no --item|--worktree $WT --kind fix --issue issue-noitems --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~dev-return-write:+missing-items+kind=fix+bundled=false+count=0=true" \
+  "a bundled implement with no --item|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --bundled|rc=2 stderr~dev-return-write:+missing-items+kind=implement+bundled=true+count=0=true" \
+  "an unknown argument|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --frobnicate|rc=2 stderr~dev-return-write:+unknown-argument+argument=--frobnicate=true" \
+  "both --summary and --summary-file|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary inline --summary-file $SUMMARY_FILE|rc=2 stderr~dev-return-write:+summary-conflict+options=--summary,--summary-file=true" \
+  "--summary plus an empty --summary-file value: presence, not content|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary inline --summary-file EMPTY|rc=2 stderr~dev-return-write:+summary-conflict+options=--summary,--summary-file=true" \
+  "an explicitly empty --summary-file alone|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary-file EMPTY|rc=2 stderr~dev-return-write:+required+option=--summary-file=true" \
+  "a whitespace-only --summary: an empty deliverable is not a record|--worktree $WT --kind implement --issue issue-blanksum --round-id $RID --branch b --commit %H --validate pass --summary SPACES|rc=2 stderr~dev-return-write:+empty-text+option=--summary=true" \
+  "--summary with no value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary|rc=2 stderr~dev-return-write:+missing-value+option=--summary=true" \
+  "--summary followed by another flag: an option token is not a value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary --no-summary|rc=2 stderr~dev-return-write:+flag-value+option=--summary+value=--no-summary=true" \
+  "--summary-file followed by another flag|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary-file --no-summary|rc=2 stderr~dev-return-write:+flag-value+option=--summary-file+value=--no-summary=true" \
+  "--branch followed by another flag|--worktree $WT --kind implement --issue i --round-id $RID --branch --commit c --validate pass|rc=2 stderr~dev-return-write:+flag-value+option=--branch+value=--commit=true" \
+  "--validate-note followed by another flag|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-note --qa-label needs-review|rc=2 stderr~dev-return-write:+flag-value+option=--validate-note+value=--qa-label=true" \
+  "--item REASONING as an option token|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --item 1 Applied --bundled|rc=2 stderr~dev-return-write:+item-flag+item=1+value=--bundled=true" \
+  "a duplicate --summary|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary first --summary second|rc=2 stderr~dev-return-write:+duplicate+option=--summary=true" \
+  "a duplicate --summary-file|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --summary-file $SUMMARY_FILE --summary-file $SUMMARY_FILE|rc=2 stderr~dev-return-write:+duplicate+option=--summary-file=true" \
+  "a duplicate --branch|--worktree $WT --kind implement --issue i --round-id $RID --branch b --branch b2 --commit c --validate pass|rc=2 stderr~dev-return-write:+duplicate+option=--branch=true" \
+  "a duplicate --validate|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate pass|rc=2 stderr~dev-return-write:+duplicate+option=--validate=true" \
+  "an empty --commit|--worktree $WT --kind implement --issue i --round-id $RID --branch b --validate pass --commit EMPTY|rc=2 stderr~dev-return-write:+required+option=--commit=true" \
+  "a whitespace-only --validate-note|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-note SPACES|rc=2 stderr~dev-return-write:+empty-text+option=--validate-note=true" \
+  "--validate-note with no value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-note|rc=2 stderr~dev-return-write:+missing-value+option=--validate-note=true"
 assert_eq "$([[ -f "$WT/tmp/dev-return-issue-noitems-$RID.json" ]] && echo yes || echo no)" "no" "a rejected invocation writes no artifact at the target path"
 
 echo

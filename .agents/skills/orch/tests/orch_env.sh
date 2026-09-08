@@ -78,13 +78,15 @@ assert_eq "$got" "many" "non-numeric default does not enforce numeric values"
 
 # Test 7: usage errors exit 2.
 set +e
-(cd "$proj_bare" && "$ORCH_ENV" CI_FIX_MAX_CYCLES >/dev/null 2>&1)
+(cd "$proj_bare" && "$ORCH_ENV" CI_FIX_MAX_CYCLES >/dev/null 2>"$TMP_ROOT/args.err")
 missing_arg_code=$?
-(cd "$proj_bare" && "$ORCH_ENV" 'bad-name!' 6 >/dev/null 2>&1)
+(cd "$proj_bare" && "$ORCH_ENV" 'bad-name!' 6 >/dev/null 2>"$TMP_ROOT/name.err")
 bad_name_code=$?
 set -e
 assert_eq "$missing_arg_code" "2" "missing DEFAULT argument exits 2"
 assert_eq "$bad_name_code" "2" "invalid variable name exits 2"
+assert_eq "$(sed -n '1p' "$TMP_ROOT/args.err")" "orch-env: argument-count count=1" "missing operand identifies the count"
+assert_eq "$(sed -n '1p' "$TMP_ROOT/name.err")" "orch-env: invalid-name name=bad-name!" "invalid variable identifies the name"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

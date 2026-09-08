@@ -100,9 +100,64 @@ print_lanes_index() {
 	sed -n '/^# Usage:/,/^# Options:/p' "$0" | sed 's/^# \{0,1\}//'
 }
 
-die() { printf '%s: %s\n' "$PROG" "$1" >&2; exit 1; }
+# Callers preserve positional values for this diagnostic catalog.
+message() {
+  local _message_key="$1"
+  shift
+  case "$_message_key" in
+    missing-jq)
+      printf 'lanes: missing-jq exit=%s\n' "1"
+      printf '%s\n' "jq is required"
+      ;;
+    pick-claims)
+      printf 'lanes: pick-claims exit=%s\n' "1"
+      printf '%s\n' "in-flight lane claims could not be read; refusing to pick (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
+      ;;
+    missing-value)
+      printf 'lanes: missing-value arg1=%s\n' "$1"
+      printf '%s\n' "$1 requires a value"
+      ;;
+    unknown-option)
+      printf 'lanes: unknown-option arg1=%s\n' "$1"
+      printf '%s\n' "unknown option: $1"
+      ;;
+    invalid-percent)
+      printf 'lanes: invalid-percent option=%s\n' "--max-pct"
+      printf '%s\n' "--max-pct must be an integer 0-100"
+      ;;
+    invalid-harness)
+      printf 'lanes: invalid-harness option=%s\n' "--harness"
+      printf '%s\n' "--harness must be claude, codex, or all"
+      ;;
+    invalid-pick-harness)
+      printf 'lanes: invalid-pick-harness option=%s\n' "--harness"
+      printf '%s\n' "pick --harness must be claude or codex"
+      ;;
+    context-claims)
+      printf 'lanes: context-claims exit=%s\n' "1"
+      printf '%s\n' "in-flight lane claims could not be read; refusing to report context (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
+      ;;
+    unknown-subcommand)
+      printf 'lanes: unknown-subcommand SUB=%s\n' "$SUB"
+      printf '%s\n' "unknown subcommand: $SUB (expected list, pick, or context)"
+      ;;
+    settings-rejected)
+      printf 'lanes: settings-rejected path=%s\n' "$PROJECT_ROOT"
+      printf 'The settings load failed. No lane can be selected from partial settings.\n'
+      ;;
+    no-candidate)
+      printf 'lanes: no-candidate harness=%s max-pct=%s\n' "$harness" "$max_pct"
+      printf 'No lane is below the usage limit. Lanes considered:\n'
+      ;;
+  esac
+}
 
-need_jq() { command -v jq >/dev/null 2>&1 || die "jq is required"; }
+die() {
+  message "$@" >&2
+  exit 1
+}
+
+need_jq() { command -v jq >/dev/null 2>&1 || die missing-jq; }
 
 # ── Enumeration ──────────────────────────────────────────────────────────────
 #
@@ -486,15 +541,14 @@ cmd_pick() {
 	# An unreadable claim store reads as "no launches in flight", which is the
 	# one thing it must not read as: picking on it can stack a second session
 	# onto an account already running one.
-	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die "in-flight lane claims could not be read; refusing to pick (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
+	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die pick-claims "$@"
 	chosen="$(jq -c --argjson max "$max_pct" '
 		[ .[] | select(.status == "ok" and .headroom_pct != null and (100 - .headroom_pct) < $max) ]
 		| sort_by([(.claims // 0), -.headroom_pct]) | first // null
 	' <<<"$lanes")"
 	if [[ -z "$chosen" || "$chosen" == "null" ]]; then
 		{
-			printf '%s: no %s lane is below %s%% used.\n' "$PROG" "$harness" "$max_pct"
-			printf 'Lanes considered:\n'
+			message no-candidate
 			render_table <<<"$lanes"
 		} >&2
 		return 3
@@ -509,7 +563,7 @@ cmd_pick() {
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
-need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || die "$1 requires a value"; }
+need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || die missing-value "$@"; }
 
 # The one parser. It answers every form that produces no lane work — the
 # command index, a help request, a bad option — so the dry run below decides
@@ -543,11 +597,11 @@ parse_argv() {
 			--json) AS_JSON=true; shift ;;
 			--refresh) ALLOW_REFRESH=true; shift ;;
 			--help|-h) print_lanes_usage; exit 0 ;;
-			*) die "unknown option: $1" ;;
+			*) die unknown-option "$@" ;;
 		esac
 	done
 
-	[[ "$MAX_PCT" =~ ^[0-9]{1,3}$ ]] || die "--max-pct must be an integer 0-100"
+	[[ "$MAX_PCT" =~ ^[0-9]{1,3}$ ]] || die invalid-percent "$@"
 }
 
 # `.env.local` is sourced as shell, so anything answering without doing lane
@@ -573,7 +627,7 @@ source "$SCRIPT_DIR/lib/kendex-env.sh"
 # here: continuing past it would select a lane from whatever exported before
 # the bad line — a successful-looking answer from partial configuration.
 kendex_load_project_env "$PROJECT_ROOT" || {
-  echo "$PROG: refusing to run on a rejected settings load (see error above)" >&2
+  message settings-rejected >&2
   exit 1
 }
 # Live claims are read ONCE per run, before any lane is measured: the pruning
@@ -606,14 +660,14 @@ parse_argv "$@"
 case "$SUB" in
 	list)
 		HARNESS="${HARNESS:-all}"
-		[[ "$HARNESS" =~ ^(claude|codex|all)$ ]] || die "--harness must be claude, codex, or all"
+		[[ "$HARNESS" =~ ^(claude|codex|all)$ ]] || die invalid-harness "$@"
 		load_lane_claims
 		out="$(collect_lanes "$HARNESS" "$ALLOW_REFRESH")"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else render_table <<<"$out"; fi
 		;;
 	pick)
 		HARNESS="${HARNESS:-claude}"
-		[[ "$HARNESS" =~ ^(claude|codex)$ ]] || die "pick --harness must be claude or codex"
+		[[ "$HARNESS" =~ ^(claude|codex)$ ]] || die invalid-pick-harness "$@"
 		cmd_pick "$HARNESS" "$MAX_PCT" "$AS_JSON" "$ALLOW_REFRESH"
 		;;
 	context)
@@ -621,9 +675,9 @@ case "$SUB" in
 		# An unreadable claim store is not an empty fleet: reporting no lanes
 		# would read as "every lane has room", which is the answer that sends
 		# a lane into its wall.
-		[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die "in-flight lane claims could not be read; refusing to report context (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
+		[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die context-claims "$@"
 		out="$(lane_context_collect "$LANE_CLAIMS_LIVE" lane_alias_for)"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else lane_context_render <<<"$out"; fi
 		;;
-	*) die "unknown subcommand: $SUB (expected list, pick, or context)" ;;
+	*) die unknown-subcommand "$@" ;;
 esac

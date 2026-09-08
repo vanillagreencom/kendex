@@ -33,7 +33,7 @@ rc=0
 out="$( (cd "$TMP_ROOT/badcfg" && LANES_HOME="$TMP_ROOT/home" ORCH_LANES_FETCH_CMD=true "$LANES" pick --harness claude) 2>"$TMP_ROOT/err")" || rc=$?
 assert_eq "$rc" "1" "a refused settings load terminates lanes before any lane work"
 assert_eq "$out" "" "no lane result is produced from a partial settings read"
-if grep -q "refusing to run on a rejected settings load" "$TMP_ROOT/err"; then
+if grep -Fxq "lanes: settings-rejected path=$TMP_ROOT/badcfg" "$TMP_ROOT/err"; then
   PASS=$((PASS + 1)); printf '  ok    the refusal names the settings load, not the lane inventory\n'
 else
   FAIL=$((FAIL + 1)); printf '  FAIL  the refusal names the settings load, not the lane inventory\n        stderr: %s\n' "$(cat "$TMP_ROOT/err")"
@@ -75,7 +75,7 @@ for flag in --harness --max-pct; do
   rc=0
   out="$(run_bounded 10 "$LANES" list "$flag")" || rc=$?
   assert_eq "$rc" "1" "lanes list $flag with no value exits 1 rather than looping"
-  assert_eq "$out" "lanes: $flag requires a value" \
+  assert_eq "${out%%$'\n'*}" "lanes: missing-value arg1=$flag" \
     "lanes list $flag with no value names the flag"
 done
 
@@ -85,7 +85,7 @@ for flag in --harness --max-pct; do
   rc=0
   out="$(run_bounded 10 "$LANES" list "$flag=")" || rc=$?
   assert_eq "$rc" "1" "lanes list $flag= with an empty value exits 1"
-  assert_eq "$out" "lanes: $flag requires a value" \
+  assert_eq "${out%%$'\n'*}" "lanes: missing-value arg1=$flag" \
     "lanes list $flag= with an empty value names the flag"
 done
 

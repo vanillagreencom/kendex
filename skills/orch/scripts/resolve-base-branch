@@ -3,6 +3,19 @@
 
 set -euo pipefail
 
+# Message text is centralized; callers supply the reason and relevant values.
+message() {
+  local reason="$1"
+  shift
+  printf '%s: %s' resolve-base-branch "$reason"
+  printf ' %s' "$@"
+  printf '\n'
+  case "$reason" in
+  not-directory) printf '%s\n' 'The worktree path is not an existing directory.' ;;
+  not-worktree) printf '%s\n' 'The directory is not inside a Git worktree.' ;;
+  esac
+}
+
 worktree="${1:-.}"
 remote_head=""
 
@@ -11,7 +24,7 @@ remote_head=""
 # with exit 0, handing callers an unverified base. Both arms
 # require an existing directory.
 if [[ ! -d "$worktree" ]]; then
-    echo "resolve-base-branch: worktree path does not exist or is not a directory: $worktree" >&2
+    message not-directory "path=$worktree" >&2
     exit 1
 fi
 
@@ -27,7 +40,7 @@ else
     # and exits 0, so a status-only check would accept a path no git
     # resolution can answer for.
     if [[ "$(git -C "$worktree" rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]]; then
-        echo "resolve-base-branch: not inside a git work tree: $worktree" >&2
+        message not-worktree "path=$worktree" >&2
         exit 1
     fi
     remote_head="$(git -C "$worktree" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null || true)"

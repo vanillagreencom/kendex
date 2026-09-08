@@ -90,19 +90,19 @@ err="$TMP_ROOT/asking-capture-fail"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "capture failure exits 2 after the window probe" "$err"
 assert_eq "$out" "" "capture failure emits no window-gone event" "$err"
-assert_contains "$(cat "$err")" "pane capture failed for 'gh-2'" \
+assert_contains "$(cat "$err")" "oversee-watch: pane-capture-failed lane=gh-2" \
   "capture failure names the probe" "$err"
-assert_contains "$(cat "$err")" "capture failed: gh-2" \
+assert_contains "$(cat "$err")" "E_CAPTURE lane=gh-2" \
   "capture failure preserves tmux stderr" "$err"
 
 new_case lane_asking_identity_failure
-printf 'identity unavailable\n' > "$STUB_DIR/pane-key-fail-gh-2"
+printf 'E_IDENTITY\n' > "$STUB_DIR/pane-key-fail-gh-2"
 err="$TMP_ROOT/asking-identity-fail"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "identity probe failure exits 2" "$err"
 assert_eq "$out" "" "identity probe failure emits no window-gone event" "$err"
-assert_contains "$(cat "$err")" "pane identity probe failed for 'gh-2': identity unavailable" \
-  "identity probe failure preserves tmux stderr" "$err"
+assert_eq "$(grep '^oversee-watch: pane-identity-failed ' "$err"; tail -n 1 "$err")" \
+  "$(printf '%s\n' 'oversee-watch: pane-identity-failed lane=gh-2' 'E_IDENTITY')" "identity probe failure preserves tmux stderr" "$err"
 
 new_case lane_asking_identity_malformed
 printf 'not-a-pane-key\n' > "$STUB_DIR/pane-key-gh-2.txt"
@@ -110,7 +110,7 @@ err="$TMP_ROOT/asking-identity-malformed"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "malformed identity exits 2" "$err"
 assert_eq "$out" "" "malformed identity emits no window-gone event" "$err"
-assert_contains "$(cat "$err")" "malformed result for 'gh-2': not-a-pane-key" \
+assert_contains "$(cat "$err")" "oversee-watch: pane-identity-invalid lane=gh-2 value=not-a-pane-key" \
   "the malformed identity value is preserved" "$err"
 
 # Control: a pane without a prompt emits no lane-asking event.
@@ -152,7 +152,7 @@ out="$(run_watch OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/absent-pr-watch" -- --max
 assert_eq "$rc" "2" "a lane-asking baseline write failure exits 2" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT lane-asking gh-2" \
   "the event is delivered before its baseline write" "$err"
-assert_contains "$(cat "$err")" "could not write the pr-watch state file" \
+assert_contains "$(cat "$err")" "oversee-watch: state-target-invalid path=$STATE_DIR/owner_repo__none" \
   "the baseline write failure names its target" "$err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

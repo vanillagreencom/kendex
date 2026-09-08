@@ -4,7 +4,114 @@
 # lives. The authoritative contract — verdicts, progress signal, probes,
 # late-findings guard, JSON output, environment, auth, exit codes — is
 # print_usage below: run with --help.
+# --json stdout is the result object consumed by merge-pr queue routing.
+# The error field contains a diagnostic key/value first line and English below.
 set -euo pipefail
+
+# Each diagnostic keeps its stable fields and explanation in one place.
+queue_message() {
+  local message_key="$1"
+  shift
+  case "$message_key" in
+    missing-gh)
+      printf 'queue-wait: missing-gh command=%s\n' "gh"
+      printf '%s\n' "gh CLI not found on PATH"
+      ;;
+    auth-unavailable)
+      printf 'queue-wait: auth-unavailable command=%s\n' "gh"
+      printf '%s\n' "no working GitHub auth path. Use gh auth login or set a valid GH_BOT_TOKEN in .env.local."
+      ;;
+    repo-unresolved)
+      printf 'queue-wait: repo-unresolved remote=%s\n' "origin"
+      printf '%s\n' "could not resolve GitHub repo (gh repo view and git remote both failed)"
+      ;;
+    pr-view-failed)
+      printf 'queue-wait: pr-view-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
+      printf '%s\n' "gh pr view failed for PR #$PR_NUM in $REPO"
+      ;;
+    repo-shape)
+      printf 'queue-wait: repo-shape repo=%q\n' "$REPO"
+      printf '%s\n' "could not split '$REPO' into owner/repo for the merge-queue query"
+      ;;
+    queue-rejected)
+      printf 'queue-wait: queue-rejected pr=%s detail=%q\n' "$PR_NUM" "$gql_error"
+      printf '%s\n' "merge-queue query rejected by GitHub: $gql_error"
+      ;;
+    queue-unreadable)
+      printf 'queue-wait: queue-unreadable pr=%s repo=%s polls=%s\n' "$PR_NUM" "$REPO" "$malformed_polls"
+      printf '%s\n' "merge-queue query returned no readable pull request for PR #$PR_NUM in $REPO after $malformed_polls polls"
+      ;;
+    queue-fetch-failed)
+      printf 'queue-wait: queue-fetch-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
+      printf '%s\n' "merge-queue query failed for PR #$PR_NUM in $REPO"
+      ;;
+    unknown-option)
+      printf 'queue-wait: unknown-option option=%q\n' "$1"
+      printf '%s\n' "queue-wait: unknown option '$1'"
+      ;;
+    missing-pr)
+      printf 'queue-wait: missing-pr operand=%s\n' "PR"
+      printf '%s\n' "queue-wait: missing required <PR#> argument"
+      ;;
+    auth-fallback)
+      printf 'queue-wait: auth-fallback source=%s\n' "keyring"
+      printf '%s\n' "Warning: GH_TOKEN/GITHUB_TOKEN failed gh auth; unsetting them and using gh keyring auth."
+      ;;
+    transient-error)
+      printf 'queue-wait: transient-error count=%s operation=%s\n' "$transient_api_errors" "$error_key"
+      printf '%s\n' "queue-wait: transient GitHub error #$transient_api_errors: $what${detail:+ ($detail)}"
+      ;;
+    retry)
+      printf 'queue-wait: retry seconds=%s\n' "$retry_interval"
+      printf '%s\n' "queue-wait: retrying in ${retry_interval}s"
+      ;;
+    invalid-pr)
+      printf 'queue-wait: invalid-pr value=%q\n' "$PR_NUM"
+      printf '%s\n' "queue-wait: PR number must be numeric (got '$PR_NUM')"
+      ;;
+    invalid-poll)
+      printf 'queue-wait: invalid-poll value=%q\n' "$POLL_INTERVAL"
+      printf '%s\n' "queue-wait: poll_interval must be a positive integer (got '$POLL_INTERVAL')"
+      ;;
+    invalid-wait)
+      printf 'queue-wait: invalid-wait value=%q\n' "$MAX_WAIT"
+      printf '%s\n' "queue-wait: max_wait must be a positive integer (got '$MAX_WAIT')"
+      ;;
+    poll-budget)
+      printf 'queue-wait: poll-budget interval=%s budget=%s\n' "$POLL_INTERVAL" "$MAX_WAIT"
+      printf '%s\n' "queue-wait: poll_interval (${POLL_INTERVAL}s) exceeds max_wait (${MAX_WAIT}s) — that polls once and overshoots the budget. Arg order is: queue-wait <PR#> [poll_interval] [max_wait]."
+      ;;
+    mutation-failed)
+      printf 'queue-wait: mutation-failed operation=%s pr=%s\n' "$what" "$PR_NUM"
+      printf '%s\n' "queue-wait: $what failed for PR #$PR_NUM${reason:+: $reason}"
+      ;;
+    late-findings)
+      printf 'queue-wait: late-findings threads=%s pr=%s\n' "$count" "$PR_NUM"
+      printf '%s\n' "queue-wait: late-findings guard: $count unresolved review thread(s) on PR #$PR_NUM while queued/armed — disarming and dequeuing"
+      ;;
+    guard-blind)
+      printf 'queue-wait: guard-blind failures=%s pr=%s\n' "$guard_fetch_failures" "$PR_NUM"
+      printf '%s\n' "queue-wait: late-findings guard: thread fetch failed $guard_fetch_failures consecutive probes — no thread evidence while PR #$PR_NUM sits queued/armed; still retrying"
+      ;;
+    checks-blind)
+      printf 'queue-wait: checks-blind failures=%s commit=%s repo=%s\n' "$checkrun_fetch_failures" "$head_oid" "$REPO"
+      printf '%s\n' "queue-wait: progress signal: check-run read failed $checkrun_fetch_failures consecutive polls for commit $head_oid in $REPO — check-run movement unknown (never counted as zero); still retrying"
+      ;;
+    repository-gone)
+      printf 'queue-wait: repository-gone path=%q pr=%s\n' "$PROJECT_ROOT" "$PR_NUM"
+      printf '%s\n' "queue-wait: the repository this wait started in is gone ($PROJECT_ROOT); refusing to keep polling PR #$PR_NUM"
+      ;;
+    queue-retry)
+      printf 'queue-wait: queue-retry failures=%s\n' "$malformed_polls"
+      printf '%s\n' "queue-wait: unreadable merge-queue response (#$malformed_polls); retrying"
+      ;;
+    guard-failed)
+      printf 'queue-wait: guard-failed operation=%q pr=%s threads=%s still-armed=%s\n' "$failed" "$PR_NUM" "$count" "possible"
+      printf '%s\n' "guard mutation failed ($failed) for PR #$PR_NUM — the PR may be STILL QUEUED or armed with $count unresolved thread(s) and the merge may still fire; dequeue/disarm manually, then triage"
+      ;;
+    *) printf 'queue-wait: message-key key=%q\n' "$message_key"; return 2 ;;
+  esac
+}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -15,13 +122,14 @@ source "$SCRIPT_DIR/lib/gh-auth.sh"
 source "$SCRIPT_DIR/lib/review-threads.sh"
 
 print_usage() {
+  printf 'queue-wait: usage command=%s\n' 'queue-wait'
   cat <<'USAGE'
 Usage: queue-wait <PR#> [poll_interval] [max_wait] [--json] [--no-check-probe]
                   [--no-guard]
 
 Wait for a merge-queue / auto-merge outcome on a PR. Every exit path emits
-a final result on stdout — a "Merge queue: ..." line, or a JSON object with
---json — so callers can route merged vs ejected vs disarmed vs still-queued
+a final result on stdout: a stable verdict line with English below, or a JSON
+object with --json, so callers can route merged vs ejected vs disarmed vs still-queued
 deterministically (kendex#819); the exceptions are the usage errors, which
 exit 2 and print to stderr, and exit 4. It is the merge-pr queue watch as one
 simple command (accepted by the Codex approval=never classifier where a
@@ -239,7 +347,7 @@ while [[ $# -gt 0 ]]; do
       # An unrecognized flag must never fall through into a positional slot:
       # it would be consumed as a PR#/interval and die later with a diagnostic
       # naming an argument the caller never typed, same as ci-wait).
-      echo "queue-wait: unknown option '$1'" >&2
+      queue_message unknown-option "$1" >&2
       print_usage >&2
       exit 2
       ;;
@@ -248,7 +356,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "${#POSITIONAL[@]}" -lt 1 ]]; then
-  echo "queue-wait: missing required <PR#> argument" >&2
+  queue_message missing-pr >&2
   print_usage >&2
   exit 2
 fi
@@ -259,17 +367,17 @@ START_TIME="$(date +%s)"
 elapsed=0
 
 if ! [[ "$PR_NUM" =~ ^[0-9]+$ ]]; then
-  echo "queue-wait: PR number must be numeric (got '$PR_NUM')" >&2
+  queue_message invalid-pr >&2
   exit 2
 fi
 
 if ! [[ "$POLL_INTERVAL" =~ ^[0-9]+$ ]] || [ "$POLL_INTERVAL" -lt 1 ]; then
-  echo "queue-wait: poll_interval must be a positive integer (got '$POLL_INTERVAL')" >&2
+  queue_message invalid-poll >&2
   exit 2
 fi
 
 if ! [[ "$MAX_WAIT" =~ ^[0-9]+$ ]] || [ "$MAX_WAIT" -lt 1 ]; then
-  echo "queue-wait: max_wait must be a positive integer (got '$MAX_WAIT')" >&2
+  queue_message invalid-wait >&2
   exit 2
 fi
 
@@ -277,7 +385,7 @@ fi
 # stated budget. There is no legitimate use, and the two-argument form reads
 # as "wait up to <max_wait>", so catch the swapped-argument shape here.
 if [ "$POLL_INTERVAL" -gt "$MAX_WAIT" ]; then
-  echo "queue-wait: poll_interval (${POLL_INTERVAL}s) exceeds max_wait (${MAX_WAIT}s) — that polls once and overshoots the budget. Arg order is: queue-wait <PR#> [poll_interval] [max_wait]." >&2
+  queue_message poll-budget >&2
   exit 2
 fi
 
@@ -446,6 +554,7 @@ emit_result() {
         + (if $error == "" then {} else {error: $error} end)'
     return 0
   fi
+  printf 'queue-wait: result status=%s verdict=%s pr=%s cause=%s polls=%s progressing=%s\n' "$status" "$verdict" "$PR_NUM" "${last_cause:-none}" "$polls" "$progressing"
   case "$verdict" in
     merged)
       echo "Merge queue: merged (PR #$PR_NUM${last_merged_at:+ at $last_merged_at})"
@@ -492,12 +601,15 @@ emit_result() {
 }
 
 emit_error() {
-  emit_result "error" "unknown" "$1"
+  local message
+  message="$(queue_message "$1")" || return $?
+  emit_result "error" "unknown" "$message" || return $?
+  printf '%s\n' "$message" >&2
 }
 
 if ! command -v gh >/dev/null 2>&1; then
-  emit_error "gh CLI not found on PATH"
-  echo "queue-wait: gh CLI not found on PATH" >&2
+  emit_error missing-gh
+
   exit 3
 fi
 
@@ -513,7 +625,7 @@ if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
     if [[ "$auth_status" -ne 124 && "${KENDEX_GITHUB_SELECTED_TOKEN_SOURCE:-}" != "GH_BOT_TOKEN" ]]; then
       KEYRING_PROBED=true
       if orch_github_keyring_auth_status; then
-        echo "Warning: GH_TOKEN/GITHUB_TOKEN failed gh auth; unsetting them and using gh keyring auth." >&2
+        queue_message auth-fallback >&2
         unset GH_TOKEN GITHUB_TOKEN
         export KENDEX_GITHUB_AUTH_FALLBACK="keyring"
         AUTH_READY=true
@@ -545,12 +657,7 @@ if [[ "$AUTH_READY" != "true" ]]; then
 fi
 
 if [[ "$AUTH_READY" != "true" ]]; then
-  emit_error "no working GitHub auth path"
-  {
-    echo "queue-wait: no working GitHub auth path."
-    echo "Tried: env GH_TOKEN/GITHUB_TOKEN, gh keyring, project GH_BOT_TOKEN."
-    echo "Run: gh auth login   (or set a valid GH_BOT_TOKEN in .env.local)."
-  } >&2
+  emit_error auth-unavailable
   exit 3
 fi
 
@@ -564,15 +671,15 @@ if [ -z "$REPO" ]; then
   REPO="${REPO%.git}"
 fi
 if [ -z "$REPO" ]; then
-  emit_error "could not resolve GitHub repo (gh repo view and git remote both failed)"
-  echo "Could not resolve GitHub repo (gh repo view and git remote both failed)" >&2
+  emit_error repo-unresolved
+
   exit 1
 fi
 REPO_OWNER="${REPO%%/*}"
 REPO_NAME="${REPO#*/}"
 if [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ] || [ "$REPO_OWNER" = "$REPO" ]; then
-  emit_error "could not split '$REPO' into owner/repo for the merge-queue query"
-  echo "Could not split '$REPO' into owner/repo" >&2
+  emit_error repo-shape
+
   exit 1
 fi
 
@@ -604,17 +711,17 @@ gh_failure_is_transient() {
 # backed-off interval so the caller can `continue` the poll loop. When the
 # budget is already spent the failure becomes terminal instead.
 transient_retry() {
-  local what="$1" detail
+  local error_key="$1" what detail
+  what="$(queue_message "$error_key")" || return $?
   detail="$(head -c 200 "$GH_ERR_FILE" 2>/dev/null | tr '\n' ' ')"
   transient_api_errors=$((transient_api_errors + 1))
-  echo "queue-wait: transient GitHub error #$transient_api_errors: $what${detail:+ ($detail)}" >&2
+  queue_message transient-error >&2
   update_elapsed
   if [ "$elapsed" -ge "$MAX_WAIT" ]; then
-    emit_error "$what"
-    echo "$what" >&2
+    emit_error "$error_key"
     exit 1
   fi
-  echo "queue-wait: retrying in ${retry_interval}s" >&2
+  queue_message retry >&2
   sleep_within_budget "$retry_interval"
   retry_interval=$((retry_interval * 2))
   if [ "$retry_interval" -gt "$RETRY_INTERVAL_CAP" ]; then
@@ -665,7 +772,7 @@ run_guard_mutation() {
   fi
   reason=$(jq -r '[.errors[]?.message] | join("; ")' <<<"$resp" 2>/dev/null || true)
   [ -n "$reason" ] || reason="$(head -c 200 "$GH_ERR_FILE" 2>/dev/null | tr '\n' ' ')"
-  echo "queue-wait: $what failed for PR #$PR_NUM${reason:+: $reason}" >&2
+  queue_message mutation-failed >&2
   return 1
 }
 
@@ -677,10 +784,10 @@ run_guard_mutation() {
 # `pullRequestId`. Exits 1 either way — a partial or full mutation failure
 # is loud, naming the failed half, with the PR stated still queued.
 guard_fire() {
-  local count="$1" failed=""
-  echo "queue-wait: late-findings guard: $count unresolved review thread(s) on PR #$PR_NUM while queued/armed — disarming and dequeuing" >&2
+  local count="$1" failed="" guard_message
+  queue_message late-findings >&2
   if [ -z "$last_pr_node_id" ]; then
-    failed="no PR node id from the queue query"
+    failed="missing-pr-id"
   else
     if [[ "$last_auto_merge" == "true" ]] && ! run_guard_mutation disablePullRequestAutoMerge; then
       failed="disablePullRequestAutoMerge"
@@ -691,8 +798,9 @@ guard_fire() {
   fi
   if [ -n "$failed" ]; then
     last_cause="late_findings_dequeue_failed"
-    emit_result "error" "dequeued" "guard mutation failed ($failed) for PR #$PR_NUM — the PR may be STILL QUEUED or armed with $count unresolved thread(s) and the merge may still fire; dequeue/disarm manually, then triage"
-    echo "queue-wait: guard mutation FAILED ($failed) for PR #$PR_NUM — still queued/armed past unresolved review findings" >&2
+    guard_message="$(queue_message guard-failed)" || exit 1
+    emit_result "error" "dequeued" "$guard_message"
+    printf '%s\n' "$guard_message" >&2
     exit 1
   fi
   last_cause="late_findings"
@@ -717,7 +825,7 @@ guard_probe() {
   if ! count=$(count_unresolved_threads); then
     guard_fetch_failures=$((guard_fetch_failures + 1))
     if [ $((guard_fetch_failures % GUARD_FETCH_WARN_POLLS)) -eq 0 ]; then
-      echo "queue-wait: late-findings guard: thread fetch failed $guard_fetch_failures consecutive probes — no thread evidence while PR #$PR_NUM sits queued/armed; still retrying" >&2
+      queue_message guard-blind >&2
     fi
     return 0
   fi
@@ -770,7 +878,7 @@ observe_progress() {
       count=""
       checkrun_fetch_failures=$((checkrun_fetch_failures + 1))
       if [ "$checkrun_fetch_failures" -eq "$CHECKRUN_FETCH_WARN_POLLS" ]; then
-        echo "queue-wait: progress signal: check-run read failed $checkrun_fetch_failures consecutive polls for commit $head_oid in $REPO — check-run movement unknown (never counted as zero); still retrying" >&2
+        queue_message checks-blind >&2
       fi
     fi
   fi
@@ -868,7 +976,7 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   # pointed at nothing, so the wait stops here rather than polling on and
   # handing back a verdict.
   if [ ! -d "$PROJECT_ROOT" ]; then
-    echo "queue-wait: the repository this wait started in is gone ($PROJECT_ROOT); refusing to keep polling PR #$PR_NUM" >&2
+    queue_message repository-gone >&2
     exit 4
   fi
   polls=$((polls + 1))
@@ -881,11 +989,11 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   set -e
   if [ "$view_status" -ne 0 ] || ! jq -e '.state? // empty' >/dev/null 2>&1 <<<"$view_json"; then
     if gh_failure_is_transient "$view_status"; then
-      transient_retry "gh pr view failed for PR #$PR_NUM in $REPO"
+      transient_retry pr-view-failed
       continue
     fi
-    emit_error "gh pr view failed for PR #$PR_NUM in $REPO"
-    echo "gh pr view failed for PR #$PR_NUM in $REPO:" >&2
+    emit_error pr-view-failed
+
     cat "$GH_ERR_FILE" >&2
     exit 1
   fi
@@ -916,13 +1024,13 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   queue_status=$?
   set -e
   if [ "$queue_status" -ne 0 ] && gh_failure_is_transient "$queue_status"; then
-    transient_retry "merge-queue query failed for PR #$PR_NUM in $REPO"
+    transient_retry queue-fetch-failed
     continue
   fi
   if jq -e '(.errors? | type) == "array" and ((.errors | length) > 0)' >/dev/null 2>&1 <<<"$queue_json"; then
     gql_error=$(jq -r '[.errors[].message] | join("; ")' <<<"$queue_json")
-    emit_error "merge-queue query rejected by GitHub: $gql_error"
-    echo "queue-wait: merge-queue GraphQL query rejected: $gql_error" >&2
+    emit_error queue-rejected
+
     exit 1
   fi
   if [ "$queue_status" -ne 0 ] \
@@ -931,12 +1039,12 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
     # "not queued" and trigger a spurious ejection.
     malformed_polls=$((malformed_polls + 1))
     if [ "$malformed_polls" -ge "$MAX_MALFORMED_POLLS" ]; then
-      emit_error "merge-queue query returned no readable pull request for PR #$PR_NUM in $REPO after $malformed_polls polls"
-      echo "queue-wait: merge-queue query returned no readable pull request for PR #$PR_NUM in $REPO:" >&2
+      emit_error queue-unreadable
+
       cat "$GH_ERR_FILE" >&2
       exit 1
     fi
-    echo "queue-wait: unreadable merge-queue response (#$malformed_polls); retrying" >&2
+    queue_message queue-retry >&2
     sleep_within_budget "$POLL_INTERVAL"
     continue
   fi

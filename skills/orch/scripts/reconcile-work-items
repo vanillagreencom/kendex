@@ -45,12 +45,36 @@ for _arg in "$@"; do
 done
 unset _arg
 
+message() {
+  local key="$1"
+  shift
+  printf 'reconcile-work-items: %s' "$key"
+  printf ' %s' "$@"
+  printf '\n'
+  case "$key" in
+    not-repository) printf 'The command must run inside a Git repository.\n' ;;
+    invalid-threshold) printf 'The stale threshold must be a non-negative integer.\n' ;;
+    missing-command) printf 'Install the required command.\n' ;;
+    missing-cache) printf 'Run linear.sh sync to create the issue cache.\n' ;;
+    invalid-cache) printf 'The cache must contain issue rows with identifier, state, and a timestamp on started rows.\n' ;;
+    temporary-directory) printf 'The scratch directory could not be created.\n' ;;
+    scan-failed) printf 'The issue scan failed.\n' ;;
+    clock-failed) printf 'The current time could not be read.\n' ;;
+    invalid-timestamp) printf 'The started issue timestamp could not be parsed.\n' ;;
+    container-parked) printf 'All non-canceled children are Done. Close the parent or state why it remains open.\n' ;;
+    started-stale) printf 'The started issue has passed the stale threshold. Finish its lifecycle or restate its scope.\n' ;;
+    done-unchecked) printf 'The Done issue still has unchecked acceptance criteria. Reopen it or record completion evidence.\n' ;;
+    findings) printf 'The tracker state differs from the work.\n' ;;
+    clean) printf 'Every issue state matches its work.\n' ;;
+  esac
+}
+
 config_error() {
-  echo "::error::reconcile-work-items: $*" >&2
+  message "$@" >&2
   exit 2
 }
 
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || config_error "not inside a git repository"
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || config_error not-repository "path=$PWD"
 export REPO_ROOT
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
@@ -58,14 +82,14 @@ kendex_load_project_env "$REPO_ROOT"
 
 STALE_HOURS="${RECONCILE_STALE_HOURS:-24}"
 case "$STALE_HOURS" in
-  "" | *[!0-9]* | 0*[0-9]) config_error "RECONCILE_STALE_HOURS must be a non-negative integer, got '$STALE_HOURS'" ;;
+  "" | *[!0-9]* | 0*[0-9]) config_error invalid-threshold "value=$STALE_HOURS" ;;
 esac
 GH_CLI="${RECONCILE_GH_CLI:-gh}"
 
-command -v jq >/dev/null 2>&1 || config_error "jq is required"
+command -v jq >/dev/null 2>&1 || config_error missing-command command=jq
 
 CACHE="$REPO_ROOT/.cache/linear/issues.json"
-[ -f "$CACHE" ] || config_error "no linear cache at $CACHE — run linear.sh sync first"
+[ -f "$CACHE" ] || config_error missing-cache "path=$CACHE"
 # Structural validation up front: an array of rows missing the fields the
 # scans key on would otherwise be skipped silently and report clean.
 jq -e 'type == "array" and all(.[];
@@ -75,15 +99,15 @@ jq -e 'type == "array" and all(.[];
     and (.state.name | type == "string")
     and (.state.type | type == "string")
     and (.state.type != "started" or ((.updatedAt | type == "string") and (.updatedAt | test("\\S")))))' "$CACHE" >/dev/null 2>&1 \
-  || config_error "linear cache at $CACHE is not an array of issue rows with identifier, state.name/state.type, and a nonblank updatedAt on started rows"
+  || config_error invalid-cache "path=$CACHE"
 
 findings=0
-note() { findings=$((findings + 1)); printf '%s\n' "$1"; }
+note() { findings=$((findings + 1)); message "$@"; }
 
 # --- container-parked --------------------------------------------------------
 # Non-terminal parents whose non-canceled children (by parent identifier) are
 # all completed. Trashed/archived rows never count as children or parents.
-TMPD="$(mktemp -d)" || config_error "could not create a scratch directory"
+TMPD="$(mktemp -d)" || config_error temporary-directory command=mktemp
 trap 'rm -rf -- "$TMPD"' EXIT
 
 jq -r '
@@ -101,19 +125,19 @@ jq -r '
   # Done children is that contract working, not a parked container.
   | select($parent.title | test("\\(one PR\\)"; "i") | not)
   | [$parent.identifier, $parent.title, $parent.state.name] | @tsv
-' "$CACHE" >"$TMPD/containers" || config_error "container scan failed"
+' "$CACHE" >"$TMPD/containers" || config_error scan-failed scan=container
 while IFS=$'\t' read -r pid ptitle pstate; do
   [ -n "$pid" ] || continue
-  note "container-parked: $pid [$pstate] — every non-canceled child is Done; close it or say why it stays open ($ptitle)"
+  note container-parked "issue=$pid" "state=$pstate" "title=$ptitle"
 done <"$TMPD/containers"
 
 # --- started-stale -----------------------------------------------------------
-now_epoch="$(date -u +%s)" || config_error "could not read the clock"
+now_epoch="$(date -u +%s)" || config_error clock-failed command=date
 jq -r '
   .[] | select((.trashed // false) == false and .archivedAt == null)
   | select(.state.type == "started")
   | [.identifier, .title, .state.name, .updatedAt] | @tsv
-' "$CACHE" >"$TMPD/started" || config_error "started scan failed"
+' "$CACHE" >"$TMPD/started" || config_error scan-failed scan=started
 while IFS=$'\t' read -r iid ititle istate iupdated; do
   [ -n "$iid" ] || continue
   updated_epoch="$(date -u -d "$iupdated" +%s 2>/dev/null)" || updated_epoch=""
@@ -126,7 +150,7 @@ while IFS=$'\t' read -r iid ititle istate iupdated; do
     updated_epoch="$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$trimmed" +%s 2>/dev/null)" || updated_epoch=""
   fi
   # A timestamp neither form can read must never silently shrink the check.
-  [ -n "$updated_epoch" ] || config_error "could not parse updatedAt '$iupdated' for $iid — the started-stale check cannot run"
+  [ -n "$updated_epoch" ] || config_error invalid-timestamp "issue=$iid" "updated-at=$iupdated"
   age_hours=$(((now_epoch - updated_epoch) / 3600))
   [ "$age_hours" -ge "$STALE_HOURS" ] || continue
   branch="$(printf '%s' "$iid" | tr '[:upper:]' '[:lower:]')"
@@ -143,13 +167,13 @@ while IFS=$'\t' read -r iid ititle istate iupdated; do
       if [ "$open" -gt 0 ]; then
         continue # a live PR is a live item, whatever the clock says
       elif [ "$merged" -gt 0 ]; then
-        pr_state="PR merged"
+        pr_state="merged"
       else
-        pr_state="no PR"
+        pr_state="absent"
       fi
     fi
   fi
-  note "started-stale: $iid [$istate] — untouched ${age_hours}h, $pr_state; finish the lifecycle or restate the scope ($ititle)"
+  note started-stale "issue=$iid" "state=$istate" "age-hours=$age_hours" "pr=$pr_state" "title=$ititle"
 done <"$TMPD/started"
 
 # --- done-unchecked ----------------------------------------------------------
@@ -158,14 +182,14 @@ jq -r '
   | select(.state.type == "completed")
   | select((.description // "") | test("- \\[ \\]"))
   | [.identifier, .title] | @tsv
-' "$CACHE" >"$TMPD/done" || config_error "done scan failed"
+' "$CACHE" >"$TMPD/done" || config_error scan-failed scan=done
 while IFS=$'\t' read -r iid ititle; do
   [ -n "$iid" ] || continue
-  note "done-unchecked: $iid [Done] — the description still carries unchecked \`- [ ]\` acceptance criteria; reopen or check them off with evidence ($ititle)"
+  note done-unchecked "issue=$iid" "title=$ititle"
 done <"$TMPD/done"
 
 if [ "$findings" -gt 0 ]; then
-  echo "reconcile-work-items: $findings finding(s) — the tracker disagrees with the work"
+  message findings "count=$findings"
   exit 1
 fi
-echo "reconcile-work-items: clean — every item's state matches its work"
+message clean count=0

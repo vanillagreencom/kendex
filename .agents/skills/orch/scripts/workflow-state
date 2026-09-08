@@ -1,8 +1,169 @@
 #!/usr/bin/env bash
 # Workflow state file management for multi-agent orch
 # Usage: workflow-state <command> <issue_id> [args...]
+# The review-pr workflow consumes cap output as `below COUNT/LIMIT` or
+# `at-cap COUNT/LIMIT`. Without a count source, cap prints the limit alone.
+# submit-pr and ci-fix consume head-budget output as `continue COUNT/LIMIT`
+# or `at-cap COUNT/LIMIT`. post-pr-stop reports `recorded` or `kept`.
 
 set -euo pipefail
+
+# Callers preserve their positional values for this diagnostic catalog.
+state_message() {
+  local _message_key="$1"
+  shift
+  case "$_message_key" in
+    state-missing)
+      printf 'workflow-state: state-missing state-file=%s\n' "$state_file"
+      printf '%s\n' "Error: State file not found: $state_file"
+      printf "Run workflow-state init with the issue ID first.\n"
+      ;;
+    lock-failed)
+      printf 'workflow-state: lock-failed lock-file=%s\n' "$lock_file"
+      printf '%s\n' "Error: could not acquire lock on $lock_file"
+      ;;
+    jq-failed)
+      printf 'workflow-state: jq-failed state=%s\n' "$state_file"
+      printf '%s\n' "Error: jq expression failed: $jq_expr"
+      ;;
+    invalid-json)
+      printf 'workflow-state: invalid-json path=%s\n' "$tmp_file"
+      printf '%s\n' "Error: jq produced invalid JSON"
+      ;;
+    unknown-option)
+      printf 'workflow-state: unknown-option arg1=%s\n' "$1"
+      printf '%s\n' "Unknown option: $1"
+      ;;
+    binding-arguments)
+      printf 'workflow-state: binding-arguments arg1=%s\n' "$1"
+      printf '%s\n' "Error: $1 needs a NAME and a VALUE"
+      ;;
+    argjson-value)
+      printf 'workflow-state: argjson-value arg1=%s\n' "$2"
+      printf '%s\n' "Error: --argjson $2 is not exactly one JSON value"
+      ;;
+    slurpfile-arguments)
+      printf 'workflow-state: slurpfile-arguments option=%s\n' "--slurpfile"
+      printf '%s\n' "Error: --slurpfile needs a NAME and a FILE"
+      ;;
+    slurpfile-missing)
+      printf 'workflow-state: slurpfile-missing arg1=%s arg2=%s\n' "$2" "$3"
+      printf '%s\n' "Error: --slurpfile $2: no such file: $3"
+      ;;
+    slurpfile-value)
+      printf 'workflow-state: slurpfile-value arg1=%s arg2=%s\n' "$2" "$3"
+      printf '%s\n' "Error: --slurpfile $2 is not exactly one JSON value: $3"
+      ;;
+    extra-expression)
+      printf 'workflow-state: extra-expression count=%s\n' "2"
+      printf '%s\n' "Error: update takes exactly one jq expression"
+      ;;
+    missing-expression)
+      printf 'workflow-state: missing-expression count=%s\n' "0"
+      printf '%s\n' "Error: update needs a jq expression"
+      ;;
+    report-shape)
+      printf 'workflow-state: report-shape path=%s\n' "$state_file"
+      printf '%s\n' "Error: update-report expression must produce exactly one {state: <object>, report: <any>}"
+      ;;
+    stop-arguments)
+      printf 'workflow-state: stop-arguments command=%s\n' "post-pr-stop"
+      printf '%s\n' "Error: post-pr-stop needs an action and issue_id"
+      ;;
+    stop-fields)
+      printf 'workflow-state: stop-fields action=%s\n' "$action"
+      printf '%s\n' "Error: post-pr-stop $action needs issue_id, name, gate, remaining, and comment-file"
+      ;;
+    stop-action)
+      printf 'workflow-state: stop-action action=%s\n' "$action"
+      printf '%s\n' "Error: unknown post-pr-stop action: $action"
+      ;;
+    budget-arguments)
+      printf 'workflow-state: budget-arguments command=%s\n' "head-budget"
+      printf '%s\n' "Error: head-budget needs an action, issue_id, and kind"
+      ;;
+    budget-kind)
+      printf 'workflow-state: budget-kind kind=%s\n' "$kind"
+      printf '%s\n' "Error: unknown head budget: $kind"
+      ;;
+    budget-fields)
+      printf 'workflow-state: budget-fields command=%s\n' "head-budget"
+      printf '%s\n' "Error: head-budget take needs issue_id, kind, and head"
+      ;;
+    budget-action)
+      printf 'workflow-state: budget-action action=%s\n' "$action"
+      printf '%s\n' "Error: unknown head-budget action: $action"
+      ;;
+    lock-unavailable)
+      printf 'workflow-state: lock-unavailable path=%s\n' "$lock_file"
+      printf '%s\n' "Error: could not acquire lock"
+      ;;
+    json-invalid)
+      printf 'workflow-state: json-invalid path=%s\n' "$tmp_file"
+      printf '%s\n' "Error: invalid JSON"
+      ;;
+    append-field)
+      printf 'workflow-state: append-field command=%s\n' "append-file"
+      printf '%s\n' "Error: append-file needs a field"
+      ;;
+    append-missing)
+      printf 'workflow-state: append-missing file=%s\n' "$file"
+      printf '%s\n' "Error: append-file: no such file: $file"
+      ;;
+    append-value)
+      printf 'workflow-state: append-value file=%s\n' "$file"
+      printf '%s\n' "Error: append-file: $file is not exactly one JSON value"
+      ;;
+    unknown-cap)
+      printf 'workflow-state: unknown-cap setting=%s known=%s\n' "$1" "$(cap_table | awk -F'\t' '{ printf "%s%s", sep, $1; sep = "," }')"
+      printf '%s\n' "Error: unknown round cap: $1 (known: $(cap_table | awk -F'\t' '{ printf "%s%s", sep, $1; sep = ", " }'))"
+      ;;
+    missing-issue)
+      printf 'workflow-state: missing-issue option=%s\n' "--issue"
+      printf '%s\n' "Error: --issue needs an ID"
+      ;;
+    missing-count)
+      printf 'workflow-state: missing-count option=%s\n' "--count"
+      printf '%s\n' "Error: --count needs a number"
+      ;;
+    cap-argument)
+      printf 'workflow-state: cap-argument arg1=%s\n' "$1"
+      printf '%s\n' "Error: cap: unknown argument: $1"
+      ;;
+    cap-source-conflict)
+      printf 'workflow-state: cap-source-conflict options=%s\n' "--issue,--count"
+      printf '%s\n' "Error: cap takes --issue or --count, not both"
+      ;;
+    cap-count-required)
+      printf 'workflow-state: cap-count-required setting=%s\n' "$setting"
+      printf '%s\n' "Error: cap: $setting is not measured against workflow state; pass --count"
+      ;;
+    invalid-count)
+      printf 'workflow-state: invalid-count count=%s\n' "$count"
+      printf '%s\n' "Error: cap: count is not a whole number: $count"
+      ;;
+    cap-unresolved)
+      printf 'workflow-state: cap-unresolved setting=%s\n' "REVIEW_MAX_CYCLES"
+      printf '%s\n' "workflow-state: could not resolve REVIEW_MAX_CYCLES; rereview_panel not set"
+      ;;
+    cycle-cap)
+      printf 'workflow-state: cycle-cap count=%s limit=%s\n' "$(jq -r '.entered' <<<"$report")" "$cap"
+      printf '%s\n' "workflow-state: rereview_cycles is at the cap ($(jq -r '.entered' <<<"$report") >= REVIEW_MAX_CYCLES=$cap, entries already taken): the fix loop is over — no further re-review cycle and no further fix round; follow review-pr § 4 At The Cap, \"Capped items are escalated, never dropped\" — one update per still-outstanding blocker and category==fix suggestion records it in escalated_items (outcome \"blocked\") and drops its superseded fixed_items entry in the same write — then go to review-pr § 5 (verdict pass) and report them"
+      ;;
+    exists-issue)
+      printf 'workflow-state: exists-issue command=%s\n' "exists"
+      printf '%s\n' "Error: exists requires an issue_id"
+      ;;
+    state-dir-value)
+      printf 'workflow-state: state-dir-value option=%s\n' "--state-dir"
+      printf '%s\n' "Error: --state-dir requires a path argument"
+      ;;
+    unknown-command)
+      printf 'workflow-state: unknown-command arg1=%s\n' "$1"
+      printf '%s\n' "Unknown command: $1"
+      ;;
+  esac
+}
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 export PROJECT_ROOT
@@ -20,8 +181,7 @@ get_state_file() {
 ensure_state_exists() {
     local state_file="$1"
     if [[ ! -f "$state_file" ]]; then
-        echo "Error: State file not found: $state_file" >&2
-        echo "Run 'workflow-state init <issue_id>' first" >&2
+        state_message state-missing "$@" >&2
         exit 1
     fi
 }
@@ -40,17 +200,17 @@ atomic_update() {
     local tmp_file="${state_file}.tmp"
 
     (
-        orch_take_lock 200 "$lock_file" 10 || { echo "Error: could not acquire lock on $lock_file" >&2; exit 1; }
+        orch_take_lock 200 "$lock_file" 10 || { state_message lock-failed "$@" >&2; exit 1; }
 
         if ! jq ${jq_args[@]+"${jq_args[@]}"} "$jq_expr" "$state_file" > "$tmp_file" 2>&1; then
-            echo "Error: jq expression failed: $jq_expr" >&2
+            state_message jq-failed "$@" >&2
             rm -f "$tmp_file"
             exit 1
         fi
 
         # Validate output is valid JSON
         if ! jq empty "$tmp_file" 2>/dev/null; then
-            echo "Error: jq produced invalid JSON" >&2
+            state_message invalid-json "$@" >&2
             rm -f "$tmp_file"
             exit 1
         fi
@@ -72,7 +232,7 @@ cmd_init() {
             --branch) branch="$2"; shift 2 ;;
             --qa-labels) qa_labels="$2"; shift 2 ;;
             --sub-issues) sub_issues="$2"; shift 2 ;;
-            *) echo "Unknown option: $1" >&2; exit 1 ;;
+            *) state_message unknown-option "$@" >&2; exit 1 ;;
         esac
     done
 
@@ -159,28 +319,28 @@ cmd_update() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --arg|--argjson)
-                [[ $# -ge 3 ]] || { echo "Error: $1 needs a NAME and a VALUE" >&2; return 1; }
+                [[ $# -ge 3 ]] || { state_message binding-arguments "$@" >&2; return 1; }
                 # Count the parsed values, never their truthiness: `jq -e .`
                 # takes its status from the OUTPUT, so it rejects the perfectly
                 # valid scalars false and null. Slurping also rejects a stream
                 # of several values, which is not one binding.
                 if [[ "$1" == "--argjson" ]] && ! jq -s -e 'length == 1' >/dev/null 2>&1 <<<"$3"; then
-                    echo "Error: --argjson $2 is not exactly one JSON value" >&2; return 1
+                    state_message argjson-value "$@" >&2; return 1
                 fi
                 jq_args+=("$1" "$2" "$3"); shift 3 ;;
             --slurpfile)
-                [[ $# -ge 3 ]] || { echo "Error: --slurpfile needs a NAME and a FILE" >&2; return 1; }
-                [[ -f "$3" ]] || { echo "Error: --slurpfile $2: no such file: $3" >&2; return 1; }
+                [[ $# -ge 3 ]] || { state_message slurpfile-arguments "$@" >&2; return 1; }
+                [[ -f "$3" ]] || { state_message slurpfile-missing "$@" >&2; return 1; }
                 if ! jq -s -e 'length == 1' >/dev/null 2>&1 < "$3"; then
-                    echo "Error: --slurpfile $2 is not exactly one JSON value: $3" >&2; return 1
+                    state_message slurpfile-value "$@" >&2; return 1
                 fi
                 jq_args+=(--slurpfile "$2" "$3"); shift 3 ;;
             *)
-                [[ "$have_expr" -eq 0 ]] || { echo "Error: update takes exactly one jq expression" >&2; return 1; }
+                [[ "$have_expr" -eq 0 ]] || { state_message extra-expression "$@" >&2; return 1; }
                 jq_expr="$1"; have_expr=1; shift ;;
         esac
     done
-    [[ "$have_expr" -eq 1 ]] || { echo "Error: update needs a jq expression" >&2; return 1; }
+    [[ "$have_expr" -eq 1 ]] || { state_message missing-expression "$@" >&2; return 1; }
 
     local state_file
     state_file=$(get_state_file "$issue_id")
@@ -211,17 +371,17 @@ cmd_update_report() {
     # file exists to race on, so concurrent calls for the same issue each
     # return exactly their own transition's evidence.
     (
-        orch_take_lock 200 "$lock_file" 10 || { echo "Error: could not acquire lock on $lock_file" >&2; exit 1; }
+        orch_take_lock 200 "$lock_file" 10 || { state_message lock-failed "$@" >&2; exit 1; }
 
         local combined
         if ! combined=$(jq -c ${jq_args[@]+"${jq_args[@]}"} "$jq_expr" "$state_file" 2>&1); then
-            echo "Error: jq expression failed: $jq_expr" >&2
+            state_message jq-failed "$@" >&2
             exit 1
         fi
         # Exactly ONE {state, report} object: a stream of several would write
         # multiple top-level documents into the state file.
         if ! jq -e -s 'length == 1 and (.[0].state | type == "object") and (.[0] | has("report"))' >/dev/null 2>&1 <<<"$combined"; then
-            echo "Error: update-report expression must produce exactly one {state: <object>, report: <any>}" >&2
+            state_message report-shape "$@" >&2
             exit 1
         fi
         jq -c '.state' <<<"$combined" > "$tmp_file"
@@ -232,10 +392,10 @@ cmd_update_report() {
 
 cmd_post_pr_stop() {
     local action="${1:-}" issue_id="${2:-}"
-    [[ -n "$action" && -n "$issue_id" ]] || { echo "Error: post-pr-stop needs an action and issue_id" >&2; return 2; }
+    [[ -n "$action" && -n "$issue_id" ]] || { state_message stop-arguments "$@" >&2; return 2; }
     case "$action" in
         record|record-if-empty)
-            [[ $# -eq 6 ]] || { echo "Error: post-pr-stop $action needs issue_id, name, gate, remaining, and comment-file" >&2; return 2; }
+            [[ $# -eq 6 ]] || { state_message stop-fields "$@" >&2; return 2; }
             local name="$3" gate="$4" remaining="$5" comment_file="$6" mode="replace"
             [[ "$action" == "record-if-empty" ]] && mode="if-empty"
             local report result tmp_comment
@@ -255,13 +415,13 @@ cmd_post_pr_stop() {
             fi
             printf '%s\n' "$result"
             ;;
-        *) echo "Error: unknown post-pr-stop action: $action" >&2; return 2 ;;
+        *) state_message stop-action "$@" >&2; return 2 ;;
     esac
 }
 
 cmd_head_budget() {
     local action="${1:-}" issue_id="${2:-}" kind="${3:-}"
-    [[ -n "$action" && -n "$issue_id" && -n "$kind" ]] || { echo "Error: head-budget needs an action, issue_id, and kind" >&2; return 2; }
+    [[ -n "$action" && -n "$issue_id" && -n "$kind" ]] || { state_message budget-arguments "$@" >&2; return 2; }
     # review-wait resets on a changed head; ci-fix must not, which is what the
     # flag exists for. Every ci-fix cycle pushes its fix, so the next take
     # always sees a new head, and resetting there would give each retry a fresh
@@ -270,11 +430,11 @@ cmd_head_budget() {
     case "$kind" in
         review-wait) field=review_wait; setting=REVIEW_MAX_EXTERNAL_ROUNDS; head_keyed=true ;;
         ci-fix) field=ci_fix; setting=CI_FIX_MAX_CYCLES; head_keyed=false ;;
-        *) echo "Error: unknown head budget: $kind" >&2; return 2 ;;
+        *) state_message budget-kind "$@" >&2; return 2 ;;
     esac
     case "$action" in
         take)
-            [[ $# -eq 4 ]] || { echo "Error: head-budget take needs issue_id, kind, and head" >&2; return 2; }
+            [[ $# -eq 4 ]] || { state_message budget-fields "$@" >&2; return 2; }
             local head="$4" limit report
             limit=$(cap_limit "$setting") || return 1
             report=$(cmd_update_report "$issue_id" '
@@ -288,7 +448,7 @@ cmd_head_budget() {
               end' --arg field "$field" --arg head "$head" --argjson limit "$limit" --argjson head_keyed "$head_keyed") || return 1
             jq -r '"\(.verdict) \(.attempts)/\(.limit)"' <<<"$report"
             ;;
-        *) echo "Error: unknown head-budget action: $action" >&2; return 2 ;;
+        *) state_message budget-action "$@" >&2; return 2 ;;
     esac
 }
 
@@ -310,9 +470,9 @@ cmd_append() {
         local tmp_file="${state_file}.tmp"
         local lock_file="${state_file}.lock"
         (
-            orch_take_lock 200 "$lock_file" 10 || { echo "Error: could not acquire lock" >&2; exit 1; }
+            orch_take_lock 200 "$lock_file" 10 || { state_message lock-unavailable "$@" >&2; exit 1; }
             jq --arg v "$value" ".${field} += [\$v]" "$state_file" > "$tmp_file" 2>&1 || { rm -f "$tmp_file"; exit 1; }
-            jq empty "$tmp_file" 2>/dev/null || { echo "Error: invalid JSON" >&2; rm -f "$tmp_file"; exit 1; }
+            jq empty "$tmp_file" 2>/dev/null || { state_message json-invalid "$@" >&2; rm -f "$tmp_file"; exit 1; }
             mv "$tmp_file" "$state_file"
         ) 200>"$lock_file"
     fi
@@ -327,10 +487,10 @@ cmd_append_file() {
     local field="$2"
     local file="$3"
 
-    [[ -n "$field" ]] || { echo "Error: append-file needs a field" >&2; return 1; }
-    [[ -f "$file" ]] || { echo "Error: append-file: no such file: $file" >&2; return 1; }
+    [[ -n "$field" ]] || { state_message append-field "$@" >&2; return 1; }
+    [[ -f "$file" ]] || { state_message append-missing "$@" >&2; return 1; }
     if ! jq -s -e 'length == 1' >/dev/null 2>&1 < "$file"; then
-        echo "Error: append-file: $file is not exactly one JSON value" >&2; return 1
+        state_message append-value "$@" >&2; return 1
     fi
 
     local state_file
@@ -355,7 +515,7 @@ cap_table() {
 # One cap's "<field><tab><default>", or the one refusal naming every known cap.
 cap_row() {
     cap_table | awk -F'\t' -v want="$1" '$1 == want { print $2 "\t" $3; found = 1 } END { exit found ? 0 : 1 }' && return 0
-    echo "Error: unknown round cap: $1 (known: $(cap_table | awk -F'\t' '{ printf "%s%s", sep, $1; sep = ", " }'))" >&2
+    state_message unknown-cap "$@" >&2
     return 2
 }
 
@@ -381,11 +541,11 @@ cmd_cap() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --issue) [[ $# -ge 2 ]] || { echo "Error: --issue needs an ID" >&2; return 2; }
+            --issue) [[ $# -ge 2 ]] || { state_message missing-issue "$@" >&2; return 2; }
                      issue_id="$2"; shift 2 ;;
-            --count) [[ $# -ge 2 ]] || { echo "Error: --count needs a number" >&2; return 2; }
+            --count) [[ $# -ge 2 ]] || { state_message missing-count "$@" >&2; return 2; }
                      count="$2"; have_count=1; shift 2 ;;
-            *) echo "Error: cap: unknown argument: $1" >&2; return 2 ;;
+            *) state_message cap-argument "$@" >&2; return 2 ;;
         esac
     done
 
@@ -399,17 +559,17 @@ cmd_cap() {
         return 0
     fi
     if [[ "$have_count" -eq 1 && -n "$issue_id" ]]; then
-        echo "Error: cap takes --issue or --count, not both" >&2; return 2
+        state_message cap-source-conflict "$@" >&2; return 2
     fi
 
     if [[ "$have_count" -eq 0 ]]; then
-        [[ -n "$field" ]] || { echo "Error: cap: $setting is not measured against workflow state; pass --count" >&2; return 2; }
+        [[ -n "$field" ]] || { state_message cap-count-required "$@" >&2; return 2; }
         local state_file
         state_file=$(get_state_file "$issue_id")
         ensure_state_exists "$state_file"
         count=$(jq -r "(.${field} // 0) | tostring" "$state_file") || return 1
     fi
-    [[ "$count" =~ ^[0-9]+$ ]] || { echo "Error: cap: count is not a whole number: $count" >&2; return 2; }
+    [[ "$count" =~ ^[0-9]+$ ]] || { state_message invalid-count "$@" >&2; return 2; }
 
     if (( count >= limit )); then
         printf 'at-cap %s/%s\n' "$count" "$limit"
@@ -442,10 +602,10 @@ cmd_set() {
     # Nothing else spends that budget: `cycles` is the general fix-round tally, and § 7's QA re-check and § 2 verification pass write `qa_recheck_panel` and `verification_panel`, fields this branch never matches.
     if [[ "$field" == "rereview_panel" && "$value" == "{"* ]]; then
         local cap report
-        cap=$(cap_limit REVIEW_MAX_CYCLES) || { echo "workflow-state: could not resolve REVIEW_MAX_CYCLES; rereview_panel not set" >&2; return 1; }
+        cap=$(cap_limit REVIEW_MAX_CYCLES) || { state_message cap-unresolved "$@" >&2; return 1; }
         report=$(cmd_update_report "$issue_id" "(.rereview_cycles // 0) as \$n | if \$n >= $cap then {state: ., report: {refused: true, entered: \$n}} else {state: (.rereview_panel = $value | .rereview_cycles = \$n + 1), report: {refused: false}} end") || return 1
         if [[ "$(jq -r '.refused' <<<"$report")" == "true" ]]; then
-            echo "workflow-state: rereview_cycles is at the cap ($(jq -r '.entered' <<<"$report") >= REVIEW_MAX_CYCLES=$cap, entries already taken): the fix loop is over — no further re-review cycle and no further fix round; follow review-pr § 4 At The Cap, \"Capped items are escalated, never dropped\" — one update per still-outstanding blocker and category==fix suggestion records it in escalated_items (outcome \"blocked\") and drops its superseded fixed_items entry in the same write — then go to review-pr § 5 (verdict pass) and report them" >&2
+            state_message cycle-cap "$@" >&2
             return 1
         fi
         return 0
@@ -459,9 +619,9 @@ cmd_set() {
         local tmp_file="${state_file}.tmp"
         local lock_file="${state_file}.lock"
         (
-            orch_take_lock 200 "$lock_file" 10 || { echo "Error: could not acquire lock" >&2; exit 1; }
+            orch_take_lock 200 "$lock_file" 10 || { state_message lock-unavailable "$@" >&2; exit 1; }
             jq --arg v "$value" ".${field} = \$v" "$state_file" > "$tmp_file" 2>&1 || { rm -f "$tmp_file"; exit 1; }
-            jq empty "$tmp_file" 2>/dev/null || { echo "Error: invalid JSON" >&2; rm -f "$tmp_file"; exit 1; }
+            jq empty "$tmp_file" 2>/dev/null || { state_message json-invalid "$@" >&2; rm -f "$tmp_file"; exit 1; }
             mv "$tmp_file" "$state_file"
         ) 200>"$lock_file"
     fi
@@ -522,7 +682,7 @@ cmd_exists() {
 
     local issue_id="${1:-}"
     if [[ -z "$issue_id" ]]; then
-        echo "Error: exists requires an issue_id" >&2
+        state_message exists-issue "$@" >&2
         exit 2
     fi
 
@@ -678,7 +838,7 @@ parse_global_opts() {
         case "$1" in
             --state-dir)
                 if [[ $# -lt 2 || -z "$2" ]]; then
-                    echo "Error: --state-dir requires a path argument" >&2
+                    state_message state-dir-value "$@" >&2
                     exit 2
                 fi
                 STATE_DIR_FLAG="$2"
@@ -688,7 +848,7 @@ parse_global_opts() {
             --state-dir=*)
                 STATE_DIR_FLAG="${1#--state-dir=}"
                 if [[ -z "$STATE_DIR_FLAG" ]]; then
-                    echo "Error: --state-dir requires a path argument" >&2
+                    state_message state-dir-value "$@" >&2
                     exit 2
                 fi
                 GLOBAL_OPTS=$((GLOBAL_OPTS + 1))
@@ -749,5 +909,5 @@ case "$1" in
     new-round-id) shift; cmd_new_round_id "$@" ;;
     path)      shift; cmd_path "$@" ;;
     exists)    shift; cmd_exists "$@" ;;
-    *) echo "Unknown command: $1" >&2; cmd_help >&2; exit 1 ;;
+    *) state_message unknown-command "$@" >&2; cmd_help >&2; exit 1 ;;
 esac

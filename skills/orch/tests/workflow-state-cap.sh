@@ -113,7 +113,7 @@ got="$(cd "$no_settings" && env -u CI_FIX_MAX_CYCLES "$WS" --state-dir "$cd_sd" 
 # included in one place was missing from the others. Both must now name exactly the
 # settings the table resolves.
 roster_of() { tr ',' '\n' <<<"$1" | tr -d ' ' | grep -v '^$' | sort; }
-refusal_roster="$(roster_of "$("$WS" --state-dir "$cd_sd" cap NOT_A_CAP 2>&1 >/dev/null | sed 's/.*(known: //; s/)$//')")"
+refusal_roster="$(roster_of "$("$WS" --state-dir "$cd_sd" cap NOT_A_CAP 2>&1 >/dev/null | sed -n '1s/.* known=//p')")"
 help_roster="$("$WS" help | sed -n 's/^ *\([A-Z][A-Z_]*\) (.*/\1/p' | sort)"
 [[ -n "$refusal_roster" && "$refusal_roster" == "$help_roster" ]] \
   && ok "the refusal and the help name the same caps" \

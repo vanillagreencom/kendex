@@ -12,6 +12,7 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 # shellcheck source=lib/waiter-assertions.sh
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(cd "$TMP_ROOT" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # Two projects: `gate` has the review-gate engine beside orch, `nogate` has
@@ -88,11 +89,11 @@ run() {
 #   rc              exit status
 #   mode            stdout whole
 #   stdout          `empty` when nothing was printed, else `lines`
-#   stdout~<text>   whether stdout carries <text>
-#   stderr~<text>   whether stderr carries <text>
+#   stdout_line     the first stdout line, spaces encoded as +
+#   stderr_line     the first stable diagnostic record, spaces encoded as +
 #   gh              `called` when the gh stub was reached, else `uncalled`
 observe() {
-  local got="" token name value needle
+  local got="" token name value
   set -f
   for token in $1; do
     name="${token%%=*}"
@@ -100,8 +101,11 @@ observe() {
       rc) value="$RC" ;;
       mode) value="${OUT// /+}" ;;
       stdout) value="$([[ -n "$OUT" ]] && echo lines || echo empty)" ;;
-      stdout~*) needle="${name#stdout~}"; value="$(grep -qF -- "${needle//+/ }" <<<"$OUT" && echo true || echo false)" ;;
-      stderr~*) needle="${name#stderr~}"; value="$(grep -qF -- "${needle//+/ }" "$ERR" && echo true || echo false)" ;;
+      stdout_line) value="${OUT%%$'\n'*}"; value="${value// /+}" ;;
+      stderr_line)
+        value="$(awk '/^(approval-wait|kendex-env): [a-z-]+ .*=/ { print; exit }' "$ERR")"
+        value="${value//"$TMP_ROOT"/<tmp>}"; value="${value// /+}"
+        ;;
       gh) value="$([[ -s "$GH_CALLS" ]] && echo called || echo uncalled)" ;;
       *) echo "observe: unknown field $name" >&2; exit 1 ;;
     esac
@@ -161,23 +165,22 @@ resolve_table \
   "control: a .env.local PR_REVIEW_GATE keeps full precedence|gate||dotenvlocal:PR_REVIEW_GATE=review|mode=review" \
   "REVIEW_GATE_SETTINGS_FILE=/dev/null forces the default over a settings-file off|gate|REVIEW_GATE_SETTINGS_FILE=/dev/null|settings:REVIEW_GATE_MODE=off|mode=approval" \
   "REVIEW_GATE_SETTINGS_FILE names another settings file|gate|REVIEW_GATE_SETTINGS_FILE=alt-settings.toml|alt:REVIEW_GATE_MODE=off|mode=off" \
-  "a duplicate REVIEW_GATE_MODE assignment fails loud, naming the cause|gate||settings:REVIEW_GATE_MODE=off,REVIEW_GATE_MODE=enforce|rc=2 stderr~assigned+more+than+once=true" \
+  "a duplicate REVIEW_GATE_MODE assignment fails loud, naming the cause|gate||settings:REVIEW_GATE_MODE=off,REVIEW_GATE_MODE=enforce|rc=2 stderr_line=approval-wait:+mode-resolution+setting=REVIEW_GATE_MODE" \
   "the fallback loader reads the committed settings file|nogate||settings:REVIEW_GATE_MODE=off|mode=off" \
   "the fallback ignores a machine-local .kendex off for the mode key too|nogate||kendex:REVIEW_GATE_MODE=off|mode=approval" \
-  "a duplicate assignment fails the fallback loud, exit 1, and resolves no mode|nogate||settings:REVIEW_GATE_MODE=off,REVIEW_GATE_MODE=enforce|rc=1 stdout=empty stderr~assigned+more+than+once=true"
+  "a duplicate assignment fails the fallback loud, exit 1, and resolves no mode|nogate||settings:REVIEW_GATE_MODE=off,REVIEW_GATE_MODE=enforce|rc=1 stdout=empty stderr_line=kendex-env:+duplicate-key+file=<tmp>/nogate/kendex.settings.toml+key=REVIEW_GATE_MODE"
 
 echo "=== the arg parser answers -h, --help and its own errors before gh ==="
-# `label|args|expect`; the usage text carries the exit-code table, the
-# proceeded status and the on-timeout setting the workflow quotes.
+# `label|args|expect`; keys identify the usage response and parser refusals.
 stage gate ""
 for row in \
-  "--help prints the contract on stdout, exits 0 and never invokes gh|--help|rc=0 stdout~Usage:+approval-wait=true stdout~Exit+codes:=true stdout~proceeded=true stdout~PR_REVIEW_ON_TIMEOUT=true gh=uncalled" \
-  "-h prints usage|-h|rc=0 stdout~Usage:+approval-wait=true" \
-  "a bare help prints usage|help|rc=0 stdout~Usage:+approval-wait=true" \
-  "an unknown flag exits 2, is named, and never invokes gh|--bogus-flag|rc=2 stderr~unknown+option=true gh=uncalled" \
-  "a missing PR# exits 2 and names the argument||rc=2 stderr~missing+required+<PR#>=true" \
-  "--mode without a value exits 2 and names the requirement|1 --mode|rc=2 stderr~requires+a+value=true" \
-  "--on-timeout without a value exits 2|1 --on-timeout|rc=2"; do
+  "--help prints the contract on stdout, exits 0 and never invokes gh|--help|rc=0 stdout_line=approval-wait:+usage+command=approval-wait gh=uncalled" \
+  "-h prints usage|-h|rc=0 stdout_line=approval-wait:+usage+command=approval-wait" \
+  "a bare help prints usage|help|rc=0 stdout_line=approval-wait:+usage+command=approval-wait" \
+  "an unknown flag exits 2, is named, and never invokes gh|--bogus-flag|rc=2 stderr_line=approval-wait:+unknown-option+option=--bogus-flag gh=uncalled" \
+  "a missing PR# exits 2 and names the argument||rc=2 stderr_line=approval-wait:+missing-pr+operand=PR" \
+  "--mode without a value exits 2 and names the requirement|1 --mode|rc=2 stderr_line=approval-wait:+missing-mode+option=--mode" \
+  "--on-timeout without a value exits 2|1 --on-timeout|rc=2 stderr_line=approval-wait:+missing-timeout+option=--on-timeout"; do
   IFS='|' read -r label args expect <<<"$row"
   [[ -n "$expect" ]] || { printf 'usage: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
   # shellcheck disable=SC2086

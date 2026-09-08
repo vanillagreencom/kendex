@@ -207,10 +207,13 @@ observe() {
       claim_pane) value="$(cat "$RUN"/state/claims/*.claim 2>/dev/null | cut -f2 || true)" ;;
       out_lanes) value="$(lane_names "$OUT")" ;;
       summary)
-        if grep -qE 'across [0-9]+ lanes' <<<"$OUT"; then
-          value="spread=$(grep -oE 'across [0-9]+ lanes' <<<"$OUT" | head -1 | grep -oE '[0-9]+')"
-        elif grep -q 'on lane CLAUDE_CONFIG_DIR=' <<<"$OUT"; then
-          value="lane=$(lane_names "$(grep -o 'on lane CLAUDE_CONFIG_DIR=[^ ]*' <<<"$OUT" | head -1)")"
+        local summary_line lane_count
+        summary_line="$(grep '^open-terminal: summary ' <<<"$OUT" || true)"
+        lane_count="$(awk '{for (i=1;i<=NF;i++) if ($i ~ /^lanes=/) print substr($i,7)}' <<<"$summary_line")"
+        if [[ "${lane_count:-0}" -gt 1 ]]; then
+          value="spread=$lane_count"
+        elif [[ "$summary_line" == *' lane=CLAUDE_CONFIG_DIR='* ]]; then
+          value="lane=$(lane_names "$summary_line")"
         else
           value=none
         fi

@@ -169,6 +169,7 @@ watch() {
   set -f
   for token in $1; do
     name="${token%%=*}"
+    case "$token" in *~*) name="${token%=*}" ;; esac
     needle="${name#*~}"; needle="${needle//+/ }"
     case "$name" in
       rc) value="$RC" ;;
@@ -229,14 +230,14 @@ lane_table \
   "a shell then a live command is a transient, not an exit|new|-|bash_once|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false" \
   "a login shell (-bash) counts as a bare shell|new|-|login|2|first=EVENT+lane-exited+gh-2" \
   "a shell pane with a child is a live lane, probed once per pass, the harness pane never probed|new|-|fish_child|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false probes=2 probed~9001=false" \
-  "a lane whose child probe cannot run stays watched, the note naming the status once per run|new|-|fish_probe2|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false stderr~could+not+list+the+children+of+the+pane+behind+'gh-2'=true stderr~pgrep+-P+exited+2=true notes~could+not+list+the+children=1" \
-  "the note names the fatal status that occurred, never a fixed one|new|-|fish_probe3|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false stderr~pgrep+-P+exited+3=true stderr~pgrep+-P+exited+2=false" \
+  "a lane whose child probe cannot run stays watched, the note naming the status once per run|new|-|fish_probe2|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false stderr~oversee-watch:+child-probe-failed+lane=gh-2+exit=2=true notes~oversee-watch:+child-probe-failed=1" \
+  "the note names the fatal status that occurred, never a fixed one|new|-|fish_probe3|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false stderr~oversee-watch:+child-probe-failed+lane=gh-2+exit=3=true stderr~oversee-watch:+child-probe-failed+lane=gh-2+exit=2=false" \
   "control: a bare fish prompt with no child is the event on the second pass|new|fish_prompt|fish|2|first=EVENT+lane-exited+gh-2" \
   "control: a live pane command is not an exit|new|-|codex|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false" \
   "a blank pane does not swallow the event|new|blank|zsh|2|rc=0 first=EVENT+lane-exited+gh-2" \
-  "a liveness reply with no command exits 2, emits nothing, and is preserved|new|-|obs:9002|2|rc=2 lines=0 stderr~malformed+result+for+'gh-2':+9002=true" \
-  "a liveness reply with a non-pid exits 2, emits nothing, and is preserved|new|-|obs:fish fish|2|rc=2 lines=0 stderr~malformed+result+for+'gh-2':+fish+fish=true" \
-  "an unreadable pane command is a fail-closed probe error, never window-gone|new|-|nocmd|2|rc=2 lines=0 stderr~pane+command+probe+failed+for+'gh-2':+can't+find+window:+gh-2=true"
+  "a liveness reply with no command exits 2, emits nothing, and is preserved|new|-|obs:9002|2|rc=2 lines=0 stderr~oversee-watch:+pane-command-invalid+lane=gh-2+value=9002=true" \
+  "a liveness reply with a non-pid exits 2, emits nothing, and is preserved|new|-|obs:fish fish|2|rc=2 lines=0 stderr~oversee-watch:+pane-command-invalid+lane=gh-2+value=fish+fish=true" \
+  "an unreadable pane command is a fail-closed probe error, never window-gone|new|-|nocmd|2|rc=2 lines=0 stderr~oversee-watch:+pane-command-failed+lane=gh-2=true stderr~E_COMMAND+lane=gh-2=true"
 
 echo "=== lane-asking: a question nobody has answered ==="
 # A selection prompt is a question, never an idle prompt; the check reads the

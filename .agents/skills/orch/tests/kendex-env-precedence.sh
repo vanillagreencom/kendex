@@ -185,22 +185,22 @@ s6_case() { # NAME CONTENT EXPECT_SUBSTRING [EXPORT_ASSIGNMENT]
     FAIL=$((FAIL + 1)); printf '  FAIL  scenario 6: %s fails the load (code=%s err=%s)\n' "$name" "$code" "$err"
   fi
 }
-s6_case "a duplicate key inside [env]" $'[env]\nDUP = "a"\nDUP = "b"' "DUP is assigned more than once in [env]"
+s6_case "a duplicate key inside [env]" $'[env]\nDUP = "a"\nDUP = "b"' "kendex-env: duplicate-key file=$PROJ6/kendex.settings.toml key=DUP"
 # The malformed-file checks run BEFORE the parent-env skip: a parent export
 # of the same key must not turn a refused file into a loadable one.
-s6_case "a duplicate key the parent also exports" $'[env]\nDUP = "a"\nDUP = "b"' "DUP is assigned more than once in [env]" "DUP=parent-value"
+s6_case "a duplicate key the parent also exports" $'[env]\nDUP = "a"\nDUP = "b"' "kendex-env: duplicate-key file=$PROJ6/kendex.settings.toml key=DUP" "DUP=parent-value"
 # `seen` spans the whole file, not one section run: re-entering [env]
 # through another table is the same ambiguity as two adjacent lines.
-s6_case "a duplicate split across re-entered [env] sections" $'[env]\nDUP = "a"\n[other]\nX = "x"\n[env]\nDUP = "b"' "DUP is assigned more than once in [env]"
-s6_case "a single-quoted value" $'[env]\nSQ = \x27sv\x27' "unsupported syntax for SQ"
-s6_case "an array value" $'[env]\nARR = ["a", "b"]' "unsupported syntax for ARR"
-s6_case "a backslash in the value" $'[env]\nBS = "a\\b"' "unsupported syntax for BS"
-s6_case "an unquoted value" $'[env]\nUNQ = bare' "unsupported syntax for UNQ"
+s6_case "a duplicate split across re-entered [env] sections" $'[env]\nDUP = "a"\n[other]\nX = "x"\n[env]\nDUP = "b"' "kendex-env: duplicate-key file=$PROJ6/kendex.settings.toml key=DUP"
+s6_case "a single-quoted value" $'[env]\nSQ = \x27sv\x27' "kendex-env: value-syntax file=$PROJ6/kendex.settings.toml key=SQ"
+s6_case "an array value" $'[env]\nARR = ["a", "b"]' "kendex-env: value-syntax file=$PROJ6/kendex.settings.toml key=ARR"
+s6_case "a backslash in the value" $'[env]\nBS = "a\\b"' "kendex-env: value-syntax file=$PROJ6/kendex.settings.toml key=BS"
+s6_case "an unquoted value" $'[env]\nUNQ = bare' "kendex-env: value-syntax file=$PROJ6/kendex.settings.toml key=UNQ"
 # Headers are held to the same fail-loud standard: a `[`-leading line the
 # reader cannot parse hides ([env] with a trailing comment) or leaks (a
 # quoted foreign header after [env]) whole tables if it passes as content.
-s6_case "a commented [env] header" $'[env] # comment\nHIDDEN = "x"' "unsupported table header shape"
-s6_case "a quoted foreign header after [env]" $'[env]\nGOOD = "y"\n["notes"]\nLEAK = "z"' "unsupported table header shape"
+s6_case "a commented [env] header" $'[env] # comment\nHIDDEN = "x"' "kendex-env: table-header file=$PROJ6/kendex.settings.toml lineno="
+s6_case "a quoted foreign header after [env]" $'[env]\nGOOD = "y"\n["notes"]\nLEAK = "z"' "kendex-env: table-header file=$PROJ6/kendex.settings.toml lineno="
 # Scenario 8: a source is skipped only when ABSENT. A present-but-unusable
 # source (directory, dangling symlink, unreadable file) fails the load
 # loud, naming the path — silently treating it as absent would let a
@@ -228,9 +228,9 @@ s8_case() { # NAME STAGE EXPECT_SUBSTRING — STAGE runs inside the project dir
     FAIL=$((FAIL + 1)); printf '  FAIL  scenario 8: %s fails the load and names the path\n        code=%s stderr: %s\n' "$name" "$code" "$err"
   fi
 }
-s8_case "a DIRECTORY at .env.local" 'mkdir .env.local' ".env.local: source exists but is not a regular file"
-s8_case "a DANGLING SYMLINK at kendex.settings.toml" 'ln -s missing.toml kendex.settings.toml' "kendex.settings.toml: source is a symlink that does not resolve"
-s8_case "a DIRECTORY at .kendex/settings.toml" 'mkdir -p .kendex/settings.toml' "settings.toml: source exists but is not a regular file"
+s8_case "a DIRECTORY at .env.local" 'mkdir .env.local' "kendex-env: not-file arg1=$TMP_ROOT/proj8/.env.local"
+s8_case "a DANGLING SYMLINK at kendex.settings.toml" 'ln -s missing.toml kendex.settings.toml' "kendex-env: unresolved-link arg1=$TMP_ROOT/proj8/kendex.settings.toml"
+s8_case "a DIRECTORY at .kendex/settings.toml" 'mkdir -p .kendex/settings.toml' "kendex-env: not-file arg1=$TMP_ROOT/proj8/.kendex/settings.toml"
 # A .env.local whose contents RUN and fail: the load must carry that status
 # out, never swallow it and resolve on the layers below. The body has to be
 # parseable — a syntax error aborts the whole subshell on its own, so it
@@ -241,7 +241,7 @@ s8_case "a FAILING .env.local command" 'printf "no_such_cmd_xyz\n" > .env.local'
 if [ "$(id -u)" -eq 0 ]; then
   printf '  skip  scenario 8: unreadable-source pin needs a non-root reader (chmod 000 cannot deny root)\n'
 else
-  s8_case "an UNREADABLE kendex.settings.toml" 'printf "[env]\nX = \"y\"\n" > kendex.settings.toml && chmod 000 kendex.settings.toml' "kendex.settings.toml: source exists but is unreadable"
+  s8_case "an UNREADABLE kendex.settings.toml" 'printf "[env]\nX = \"y\"\n" > kendex.settings.toml && chmod 000 kendex.settings.toml' "kendex-env: unreadable arg1=$TMP_ROOT/proj8/kendex.settings.toml"
 fi
 
 # Scenario 9: the per-line path forks no subshell. A wrapper delegating to

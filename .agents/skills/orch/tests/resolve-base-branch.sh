@@ -81,7 +81,7 @@ code=$?
 set -e
 assert_eq "$code" "1" "nonexistent worktree path exits 1"
 assert_eq "$out" "" "nonexistent path prints no base branch"
-assert_contains "$(cat "$TMP_ROOT/err")" "does not exist" "nonexistent path names the failure"
+assert_contains "$(cat "$TMP_ROOT/err")" "resolve-base-branch: not-directory path=$TMP_ROOT/does-not-exist" "nonexistent path names the failure"
 
 # Case 4: the override arm validates the path too — WORKTREE_DEFAULT_BRANCH
 # must not launder a nonexistent worktree into an exit-0 answer.
@@ -99,7 +99,7 @@ out="$(env -u WORKTREE_DEFAULT_BRANCH GIT_CEILING_DIRECTORIES="$TMP_ROOT" "$RBB"
 code=$?
 set -e
 assert_eq "$code" "1" "non-repository directory exits 1"
-assert_contains "$(cat "$TMP_ROOT/err")" "not inside a git work tree" "non-repository names the failure"
+assert_contains "$(cat "$TMP_ROOT/err")" "resolve-base-branch: not-worktree path=$TMP_ROOT/plain-dir" "non-repository names the failure"
 
 # Case 4b: the override arm serves NON-REPOSITORY directories — git is never
 # consulted there, and callers legitimately resolve with the override from an
@@ -120,7 +120,7 @@ out="$("$RBB" "$UPSTREAM" 2>"$TMP_ROOT/err")"
 code=$?
 set -e
 assert_eq "$code" "1" "bare repository exits 1 (printed boolean checked, not status)"
-assert_contains "$(cat "$TMP_ROOT/err")" "not inside a git work tree" "bare repository names the failure"
+assert_contains "$(cat "$TMP_ROOT/err")" "resolve-base-branch: not-worktree path=$UPSTREAM" "bare repository names the failure"
 
 # Case 5c: an existing path that is a FILE takes the same arm as missing,
 # with wording that covers it.
@@ -130,7 +130,7 @@ out="$("$RBB" "$TMP_ROOT/a-file" 2>"$TMP_ROOT/err")"
 code=$?
 set -e
 assert_eq "$code" "1" "non-directory path exits 1"
-assert_contains "$(cat "$TMP_ROOT/err")" "is not a directory" "non-directory wording covers the file case"
+assert_contains "$(cat "$TMP_ROOT/err")" "resolve-base-branch: not-directory path=$TMP_ROOT/a-file" "non-directory identifies the file case"
 
 # Case 6: a valid repo with NO resolvable origin/HEAD still falls back to
 # main with exit 0 — the fallback is for unresolvable HEADS, not bad paths.

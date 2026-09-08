@@ -67,6 +67,8 @@ git -C "$CLONE" worktree list --porcelain | grep -Fq "$STALE_TREE" && fail "stal
 
 BASE_TREE="$TMP_ROOT/base"$'\n'"tree"
 git -C "$CLONE" worktree add -q "$BASE_TREE" main
+BASE_TREE="$(cd -- "$BASE_TREE" && pwd -P)"
+BASE_TREE_HEADER="${BASE_TREE//$'\n'/\\n}"
 printf 'five\n' >> "$SEED/file"
 git -C "$SEED" add file
 git -C "$SEED" commit -q -m five
@@ -90,7 +92,7 @@ rc=0
 out="$($SYNC "$CLONE" 2>"$TMP_ROOT/local-ahead.err")" || rc=$?
 [[ $rc -ne 0 ]] && ok "owned local-ahead base fails closed" || fail "owned local-ahead base fails closed"
 assert_eq "$out" "" "local-ahead refusal prints no branch"
-grep -Fq "local $local_ahead_sha, origin $origin_sha" "$TMP_ROOT/local-ahead.err" && ok "local-ahead refusal names both SHAs" || fail "local-ahead refusal names both SHAs"
+grep -Fxq "sync-base: base-mismatch local=$local_ahead_sha origin=$origin_sha" "$TMP_ROOT/local-ahead.err" && ok "local-ahead refusal names both SHAs" || fail "local-ahead refusal names both SHAs"
 git -C "$BASE_TREE" reset -q --hard "$origin_sha"
 
 printf 'dirty\n' >> "$BASE_TREE/local"
@@ -104,7 +106,7 @@ out="$($SYNC "$CLONE" 2>"$TMP_ROOT/tracked-dirty.err")" || rc=$?
 [[ $rc -ne 0 ]] && ok "nonconflicting tracked dirtiness fails closed" || fail "nonconflicting tracked dirtiness fails closed"
 assert_eq "$out" "" "tracked-dirty sync prints no branch"
 assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$before" "tracked-dirty base does not advance"
-grep -Fq 'base checkout is dirty' "$TMP_ROOT/tracked-dirty.err" && ok "tracked-dirty refusal names the checkout" || fail "tracked-dirty refusal names the checkout"
+grep -Fxq "sync-base: dirty path=$BASE_TREE_HEADER" "$TMP_ROOT/tracked-dirty.err" && ok "tracked-dirty refusal names the checkout" || fail "tracked-dirty refusal names the checkout"
 grep -Fq ' local' "$TMP_ROOT/tracked-dirty.err" && ok "tracked-dirty refusal names the path" || fail "tracked-dirty refusal names the path"
 git -C "$BASE_TREE" restore local
 out="$($SYNC "$CLONE" 2>"$TMP_ROOT/sync.err")"
@@ -146,8 +148,8 @@ out="$($SYNC "$CLONE" 2>"$TMP_ROOT/untracked-clobber.err")" || rc=$?
 [[ $rc -ne 0 ]] && ok "untracked clobber fails closed" || fail "untracked clobber fails closed"
 assert_eq "$out" "" "untracked clobber prints no branch"
 assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$before" "untracked clobber does not advance the base"
-grep -Fq 'untracked working tree files would be overwritten' "$TMP_ROOT/untracked-clobber.err" && ok "untracked clobber refusal names the overwrite" || fail "untracked clobber refusal names the overwrite"
 grep -Fq 'clobber' "$TMP_ROOT/untracked-clobber.err" && ok "untracked clobber refusal names the path" || fail "untracked clobber refusal names the path"
+assert_eq "$(sed -n '1p' "$TMP_ROOT/untracked-clobber.err")" "sync-base: fast-forward-failed path=$BASE_TREE_HEADER ref=origin/main" "untracked clobber starts with the stable refusal"
 assert_eq "$(cat "$BASE_TREE/clobber")" "local clobber" "untracked clobber is preserved"
 rm -f -- "$BASE_TREE/clobber"
 out="$($SYNC "$CLONE" 2>"$TMP_ROOT/sync.err")"
@@ -165,6 +167,7 @@ out="$($SYNC "$CLONE" 2>"$TMP_ROOT/ignored-clobber.err")" || rc=$?
 assert_eq "$out" "" "ignored untracked clobber prints no branch"
 assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$before" "ignored untracked clobber does not advance the base"
 grep -Fq 'ignored-clobber' "$TMP_ROOT/ignored-clobber.err" && ok "ignored collision refusal names the path" || fail "ignored collision refusal names the path"
+assert_eq "$(sed -n '1p' "$TMP_ROOT/ignored-clobber.err")" "sync-base: fast-forward-failed path=$BASE_TREE_HEADER ref=origin/main" "ignored collision starts with the stable refusal"
 assert_eq "$(cat "$BASE_TREE/ignored-clobber")" "local ignored clobber" "ignored collision preserves local data"
 
 rm -f -- "$BASE_TREE/ignored-clobber"
@@ -219,7 +222,24 @@ rc=0
 out="$($SYNC "$CLONE" 2>"$TMP_ROOT/diverged.err")" || rc=$?
 [[ $rc -ne 0 ]] && ok "divergent base fails closed" || fail "divergent base fails closed"
 assert_eq "$out" "" "failed sync prints no branch"
-grep -Fq 'Not possible to fast-forward' "$TMP_ROOT/diverged.err" && ok "divergence reports the fast-forward refusal" || fail "divergence reports the fast-forward refusal"
+assert_eq "$(sed -n '1p' "$TMP_ROOT/diverged.err")" "sync-base: fast-forward-failed path=$BASE_TREE_HEADER ref=origin/main" "divergence starts with the stable refusal"
+
+git -C "$CLONE" worktree remove --force "$BASE_TREE"
+rc=0
+out="$($SYNC "$CLONE" 2>"$TMP_ROOT/ref-update.err")" || rc=$?
+[[ $rc -ne 0 ]] && ok "divergent unowned base ref fails closed" || fail "divergent unowned base ref fails closed"
+assert_eq "$out" "" "failed ref update prints no branch"
+assert_eq "$(sed -n '1p' "$TMP_ROOT/ref-update.err")" "sync-base: ref-update-failed ref=refs/heads/main" "ref update starts with the stable refusal"
+
+origin_url="$(git -C "$CLONE" remote get-url origin)"
+git -C "$CLONE" remote set-url origin "$TMP_ROOT/missing-origin.git"
+rc=0
+out="$($SYNC "$CLONE" 2>"$TMP_ROOT/fetch-failed.err")" || rc=$?
+[[ $rc -ne 0 ]] && ok "remote fetch failure fails closed" || fail "remote fetch failure fails closed"
+assert_eq "$out" "" "failed remote fetch prints no branch"
+assert_eq "$(sed -n '1p' "$TMP_ROOT/fetch-failed.err")" "sync-base: fetch-failed ref=origin/main" "remote fetch starts with the stable refusal"
+grep -Fq "$TMP_ROOT/missing-origin.git" "$TMP_ROOT/fetch-failed.err" && ok "remote fetch keeps the tool detail" || fail "remote fetch keeps the tool detail"
+git -C "$CLONE" remote set-url origin "$origin_url"
 
 MERGE_WORKFLOW="$REPO_ROOT/skills/orch/workflows/merge-pr.md"
 grep -Fq 'scripts/sync-base [MAIN_REPO_ROOT]' "$MERGE_WORKFLOW" && ok "merge-pr delegates base synchronization to the script" || fail "merge-pr delegates base synchronization to the script"
@@ -227,6 +247,10 @@ grep -Fq 'merge --ff-only "origin/[BASE_BRANCH]"' "$MERGE_WORKFLOW" && fail "mer
 grep -Fq 'scripts/resolve-base-branch [MAIN_REPO_ROOT]' "$MERGE_WORKFLOW" && ok "merge-pr resolves the failed sync base branch" || fail "merge-pr resolves the failed sync base branch"
 grep -Fq 'rev-parse "refs/heads/[BASE_BRANCH]"' "$MERGE_WORKFLOW" && ok "merge-pr collects the stale local SHA" || fail "merge-pr collects the stale local SHA"
 grep -Fq 'rev-parse "refs/remotes/origin/[BASE_BRANCH]"' "$MERGE_WORKFLOW" && ok "merge-pr collects the stale origin SHA" || fail "merge-pr collects the stale origin SHA"
+
+rc=0
+"$SYNC" one two >/dev/null 2>"$TMP_ROOT/arguments.err" || rc=$?
+assert_eq "$rc:$(sed -n '1p' "$TMP_ROOT/arguments.err")" "2:sync-base: argument-count count=2" "excess operands identify the argument count"
 
 printf 'sync-base: %d pass, %d fail\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

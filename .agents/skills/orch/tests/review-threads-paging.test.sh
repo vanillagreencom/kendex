@@ -300,9 +300,9 @@ for body_name in null_threads bad_isresolved; do
   rc=0; out="$(run_aw "$body" 2>"$aw_err")" || rc=$?
   eq "$rc" "1" "$body_name: approval-wait exits 1 rather than counting an unverifiable page"
   eq "$(jq -r .status <<<"$out")" "error" "$body_name: it reports status error"
-  grep -Fq "review thread query failed" <<<"$(jq -r '.error // ""' <<<"$out")" \
-    && ok "$body_name: the error names the thread query" \
-    || bad "$body_name: the error names the thread query" "$out"
+  eq "$(jq -r '.error | split("\n")[0]' <<<"$out")" \
+    "approval-wait: threads-failed pr=7 repo=owner/repo" \
+    "$body_name: the error identifies the thread query"
   eq "$(jq -r '.transient_api_errors // "null"' <<<"$out")" "null" \
     "$body_name: an empty error file classifies terminal, never transient"
   eq "$(jq -r '.elapsed_seconds < 3' <<<"$out")" "true" \

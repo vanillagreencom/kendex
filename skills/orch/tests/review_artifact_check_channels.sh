@@ -118,7 +118,7 @@ json() { jq -r "$@" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 # too, so a literal plus cannot be pinned; no field carries one.
 #   rc               exit status
 #   parses           whether stdout is one JSON value
-#   detail~<text>    whether the detail names <text>
+#   detail~key:value whether the first detail line carries key=value
 #   cntrl            the number of control characters in the detail
 observe() {
   local got="" token name value needle
@@ -128,10 +128,12 @@ observe() {
     case "$name" in
       rc) value="$RC" ;;
       parses) value="$(printf '%s' "$OUT" | jq -e . >/dev/null 2>&1 && echo true || echo false)" ;;
-      detail~*) needle="${name#detail~}"; value="$(json '.detail // ""' | grep -qF -- "${needle//+/ }" && echo true || echo false)" ;;
+      detail~*) needle="${name#detail~}"; value="$(json --arg needle "${needle/:/=}" '(.detail // "" | split("\n")[0] | split(" ")) | index($needle) != null')" ;;
+      diagnostic) value="$(json '.detail // "" | split("\n")[0] | split(" ")[1]')" ;;
       # counted on jq's raw output with tr, which sees a newline: a line
       # reader never does, and a jq regex over a backslash-u control range is
       # a literal character set that matches the "u" in "null"
+      detail_text) value="$(json '.detail // "" | split("\n")[1]')"; value="${value// /+}" ;;
       cntrl) value="$(jq -j '.detail // ""' <<<"$OUT" 2>/dev/null | LC_ALL=C tr -cd '[:cntrl:]' | wc -c | tr -d ' ')" ;;
       *) value="$(json "if has(\"$name\") then .$name else \"ABSENT\" end")"; value="${value// /+}" ;;
     esac
@@ -185,17 +187,17 @@ echo "=== a gate that could not run is never silence, and never the answer chann
 # it into stdout, so any diagnostic that left the exit status alone became a
 # rejection with a wrong cause AND was echoed back as a fabricated declaration.
 check_table \
-  "--file: a torn read in a gate exits 1 as invalid, carrying jq's diagnostic and real status^zeroed^torn_zs^file^rc=1 ok=false reason=invalid detail~simulated+torn+read=true detail~jq+exited+5=true" \
+  "--file: a torn read in a gate exits 1 as invalid, carrying jq's diagnostic and real status^zeroed^torn_zs^file^rc=1 ok=false reason=invalid detail~jq_exit:5=true" \
   "--wait: the same torn read is not returned as ok=true^zeroed^torn_zs^wait^rc=1 ok=false reason=invalid" \
-  "the shim breaks only the zero-sample gate: an earlier gate still answers under it^noreview^torn_zs^file^reason=no_review" \
+  "the shim breaks only the zero-sample gate: an earlier gate still answers under it^noreview^torn_zs^file^rc=1 reason=no_review" \
   "control: with real jq --wait reports the real rejection^zeroed^real^wait^rc=1 reason=zero_sample" \
   "control: with real jq the clean artifact is valid^measured^real^file^rc=0 reason=valid" \
-  "--file: a torn read in a predicate gate is invalid, not a later gate's verdict^noreview^torn_pred^file^rc=1 reason=invalid detail~simulated+torn+read=true" \
+  "--file: a torn read in a predicate gate is invalid, not a later gate's verdict^noreview^torn_pred^file^rc=1 reason=invalid detail~jq_exit:5=true" \
   "control: with real jq the predicate answers no_review^noreview^real^file^rc=1 reason=no_review" \
-  "a torn read in the .verdict check itself is a gate failure, not a missing verdict^clean^torn_verdict^file^rc=1 reason=invalid detail~jq+exited+5=true detail~no+.verdict+field=false" \
+  "a torn read in the .verdict check itself is a gate failure, not a missing verdict^clean^torn_verdict^file^rc=1 reason=invalid detail~jq_exit:5=true diagnostic=gate_failed" \
   "a stderr diagnostic is neither a finding nor an echoed declaration^clean^chatty^file^rc=0 reason=valid measurement_failed=ABSENT" \
   "JQ_COLORS=zz, the real variable from the report, leaves the verdict alone^clean^colors^file^rc=0 reason=valid measurement_failed=ABSENT" \
-  "a real rejection survives a chatty jq, its detail the gate's finding not the chatter^zeroed^chatty^file^rc=1 reason=zero_sample detail~killed+0/0=true"
+  "a real rejection survives a chatty jq, its detail the gate's finding not the chatter^zeroed^chatty^file^rc=1 reason=zero_sample detail~measurement:mutation=true detail~samples:0=true"
 
 echo "=== no mode exits without a parseable result ==="
 # emit needs jq too, so with jq unavailable the script exited 127 with empty
@@ -219,28 +221,25 @@ check_table \
   "control: --file with a working emit accepts the same artifact^clean^real^file^rc=0 ok=true" \
   "control: glob with a working emit accepts the same artifact^clean^real^glob^rc=0 ok=true" \
   "control: --wait with a working emit accepts the same artifact^clean^real^wait^rc=0 ok=true" \
-  "an unusable TMPDIR exits 1 with a parseable rejection naming mktemp, not jq^measured^notmp^file^rc=1 parses=true ok=false reason=invalid detail~mktemp=true" \
+  "an unusable TMPDIR exits 1 with a parseable rejection naming mktemp, not jq^measured^notmp^file^rc=1 parses=true ok=false reason=invalid detail~dependency:mktemp=true" \
   "control: a writable TMPDIR leaves the same artifact valid^measured^tmpok^file^rc=0 reason=valid"
 
 echo "=== the last-resort emitter cannot emit unparseable JSON ==="
 # emit_unavailable interpolates its detail into a JSON literal with no encoder
 # available, on purpose: it runs when jq or mktemp has already failed. The
-# details it carries are jq's stderr and mktemp's failure text, exactly the
-# strings full of newlines and tabs that JSON cannot carry raw. Pinned by
-# PARSING the output; a substring check would pass on the broken form. And
-# normalising must not empty the message: the newline row pins both lines
-# joined across the former break, so a normaliser that kept the newline as
-# an escape (valid JSON, the break still in the detail) fails on the join
-# and on the count.
+# detail remains JSON data even when it contains newlines or tabs. The
+# diagnostic prefix has one newline; raw control characters in the supplied
+# detail become spaces. The marker row checks that normalization retains both
+# parts of the supplied value.
 emit_table \
-  "a plain message^nothing special here^parses=true ok=false reason=invalid" \
-  "a newline: parses, the two lines joined by a space, no control character left^jq: error at line 3\\nCannot iterate over null^parses=true ok=false reason=invalid detail~jq:+error+at+line+3+Cannot+iterate+over+null=true cntrl=0" \
-  "a tab^jq: parse error:\\tunexpected token^parses=true ok=false reason=invalid" \
-  "a carriage return^mktemp: failed\\rretrying^parses=true ok=false reason=invalid" \
-  "all three plus DEL^a\\nb\\tc\\rd\\177e^parses=true ok=false reason=invalid cntrl=0" \
-  "a double quote^mktemp: cannot create \"/nonexistent/tmp.XXXX\"^parses=true ok=false reason=invalid" \
-  "a backslash^jq: error: bad escape \\\\q in string^parses=true ok=false reason=invalid" \
-  "every hazard at once^jq: \\\\ error \"here\"\\nand\\tthere\\rgone\\177^parses=true ok=false reason=invalid cntrl=0"
+  "a plain message^nothing special here^rc=0 parses=true ok=false reason=invalid" \
+  "a newline: parses with one diagnostic line break^left-token\\nright-token^rc=0 parses=true ok=false reason=invalid detail~dependency:unknown=true detail_text=left-token+right-token cntrl=1" \
+  "a tab^jq: parse error:\\tunexpected token^rc=0 parses=true ok=false reason=invalid" \
+  "a carriage return^mktemp: failed\\rretrying^rc=0 parses=true ok=false reason=invalid" \
+  "all three plus DEL^a\\nb\\tc\\rd\\177e^rc=0 parses=true ok=false reason=invalid cntrl=1" \
+  "a double quote^mktemp: cannot create \"/nonexistent/tmp.XXXX\"^rc=0 parses=true ok=false reason=invalid" \
+  "a backslash^jq: error: bad escape \\\\q in string^rc=0 parses=true ok=false reason=invalid" \
+  "every hazard at once^jq: \\\\ error \"here\"\\nand\\tthere\\rgone\\177^rc=0 parses=true ok=false reason=invalid cntrl=1"
 
 # NOT ASSERTED: the INT/TERM traps beside the EXIT trap. On the bash this suite
 # runs under, a --wait watchdog killed with SIGTERM already cleans up through

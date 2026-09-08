@@ -3,6 +3,27 @@
 
 set -euo pipefail
 
+# Callers preserve positional values for this diagnostic catalog.
+git_context_message() {
+  local _message_key="$1"
+  shift
+  case "$_message_key" in
+    issue-unmatched)
+      printf 'git-context: issue-unmatched branch=%s\n' "$branch"
+      printf '%s\n' "Error: no issue id matched branch '$branch'"
+      ;;
+    timestamp-format)
+      printf 'git-context: timestamp-format format=%s\n' "$format"
+      printf '%s\n' "Error: unknown timestamp format '$format'"
+      ;;
+    unknown-command)
+      printf 'git-context: unknown-command cmd=%s\n' "$cmd"
+      printf '%s\n' "Unknown command: $cmd"
+      ;;
+  esac
+}
+
+
 cmd="${1:-help}"
 shift || true
 
@@ -33,7 +54,7 @@ case "$cmd" in
             *) printf '%s' "$issue_id" | tr '[:lower:]' '[:upper:]'; printf '\n' ;;
             esac
         else
-            echo "Error: no issue id matched branch '$branch'" >&2
+            git_context_message issue-unmatched "$@" >&2
             exit 1
         fi
         ;;
@@ -55,7 +76,7 @@ case "$cmd" in
             compact) date +%Y%m%d-%H%M%S ;;
             epoch) date +%s ;;
             iso) date -u +%Y-%m-%dT%H:%M:%SZ ;;
-            *) echo "Error: unknown timestamp format '$format'" >&2; exit 2 ;;
+            *) git_context_message timestamp-format "$@" >&2; exit 2 ;;
         esac
         ;;
     help|--help|-h)
@@ -72,7 +93,7 @@ Commands:
 EOF
         ;;
     *)
-        echo "Unknown command: $cmd" >&2
+        git_context_message unknown-command "$@" >&2
         exit 1
         ;;
 esac

@@ -78,16 +78,16 @@ OUT=""; RC=0
 OUT="$(cd "$R" && GH_REPO=elsewhere/other GITHUB_REPOSITORY=elsewhere/other RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 
 [ "$RC" -eq 1 ] && ok "findings exit 1" || bad "exit code" "rc=$RC out=$OUT"
-case "$OUT" in *"container-parked: T-1"*) ok "the parked container is reported" ;; *) bad "parked container" "$OUT" ;; esac
+case "$OUT" in *"container-parked issue=T-1"*) ok "the parked container is reported" ;; *) bad "parked container" "$OUT" ;; esac
 # A "(one PR)" root with Done children is the single-PR bundle contract
 # working, never a parked container.
-case "$OUT" in *"container-parked: T-16"*) bad "one-PR bundle flagged as parked" "$OUT" ;; *) ok "a (One PR) bundle root is not container-parked (case-insensitive marker)" ;; esac
-case "$OUT" in *"container-parked: T-5"*) bad "healthy container reported" "$OUT" ;; *) ok "a container with a pending child stays quiet" ;; esac
+case "$OUT" in *"container-parked issue=T-16"*) bad "one-PR bundle flagged as parked" "$OUT" ;; *) ok "a (One PR) bundle root is not container-parked (case-insensitive marker)" ;; esac
+case "$OUT" in *"container-parked issue=T-5"*) bad "healthy container reported" "$OUT" ;; *) ok "a container with a pending child stays quiet" ;; esac
 case "$OUT" in *"T-8"*) bad "closed container reported" "$OUT" ;; *) ok "a closed container stays quiet" ;; esac
-case "$OUT" in *"started-stale: T-10"*"PR merged"*) ok "the stale started item with a merged PR is reported" ;; *) bad "stale merged" "$OUT" ;; esac
+case "$OUT" in *"started-stale issue=T-10"*"pr=merged"*) ok "the stale started item with a merged PR is reported" ;; *) bad "stale merged" "$OUT" ;; esac
 case "$OUT" in *"T-11"*) bad "fresh started reported" "$OUT" ;; *) ok "a fresh started item stays quiet" ;; esac
 case "$OUT" in *"T-12"*) bad "live-PR started reported" "$OUT" ;; *) ok "a stale item with a live PR stays quiet" ;; esac
-case "$OUT" in *"done-unchecked: T-13"*) ok "the Done item with open boxes is reported" ;; *) bad "done unchecked" "$OUT" ;; esac
+case "$OUT" in *"done-unchecked issue=T-13"*) ok "the Done item with open boxes is reported" ;; *) bad "done unchecked" "$OUT" ;; esac
 case "$OUT" in *"T-14"*) bad "all-checked reported" "$OUT" ;; *) ok "a Done item with every box checked stays quiet" ;; esac
 case "$OUT" in *"T-15"*) bad "trashed reported" "$OUT" ;; *) ok "a trashed row stays out of every check" ;; esac
 

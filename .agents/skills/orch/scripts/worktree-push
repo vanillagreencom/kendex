@@ -18,7 +18,8 @@
 #     form `dropped:<recorded-sha>` when the mapping is `dropped` — the
 #     commit does not exist on the branch, so publishers must omit it or
 #     cite the upstream equivalent, never print it as a live SHA;
-#   - prints one `sha-reconcile:` summary line naming what changed.
+#   - prints `sha-reconcile: map_entries=N fixed_items=N pr_fixes=N`.
+#     submit-pr routes this summary and the exit code before publishing SHAs.
 #
 # A fix round in flight is refused rather than reconciled: its record pins the
 # commit the delegated agent is working from, and the rebase this command runs
@@ -102,16 +103,47 @@ usage() {
 	awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
 }
 
+# Each diagnostic starts with a stable reason and its relevant values.
+# Explanation text lives here; callers select the reason and supply values.
+message() {
+	local reason="$1"
+	shift
+	printf 'worktree-push: %s' "$reason"
+	printf ' %s' "$@"
+	printf '\n'
+	case "$reason" in
+	missing-value) printf 'The option requires a value.\n' ;;
+	required) printf 'The required option is missing.\n' ;;
+	invalid-issue) printf 'The issue ID must be safe for a state file path.\n' ;;
+	check-argument) printf 'The live-round check cannot forward push arguments.\n' ;;
+	not-executable) printf 'The worktree script is not executable.\n' ;;
+	missing-command) printf 'Install the command to reconcile rebased SHAs.\n' ;;
+	not-directory) printf 'The worktree directory does not resolve.\n' ;;
+	not-worktree) printf 'The directory is not a Git worktree.\n' ;;
+	state-resolve) printf 'Workflow state could not be resolved. No push ran.\n' ;;
+	state-answer) printf 'The workflow-state existence result is invalid. No push ran.\n' ;;
+	state-read) printf 'Workflow state could not be read. No push ran.\n' ;;
+	issue-mismatch) printf 'Workflow state belongs to another issue. No push ran.\n' ;;
+	state-worktree) printf 'The worktree recorded in workflow state does not resolve.\n' ;;
+	worktree-mismatch) printf 'Workflow state belongs to another worktree. No push ran.\n' ;;
+	round-read) printf 'The active dev round could not be read. No push ran.\n' ;;
+	live-round) printf 'The active fix round has no dev-return receipt. Land its receipt or stamp a fresh dev_round_id before rebasing.\n' ;;
+	temp-file) printf 'The push output could not be captured. No push ran.\n' ;;
+	map-scan) printf 'The push output could not be scanned. Recorded SHAs are not reconciled.\n' ;;
+	map-sha) printf 'A rebase-map SHA is invalid. Recorded SHAs are not reconciled.\n' ;;
+	map-build) printf 'The rebase map could not be assembled. Recorded SHAs are not reconciled.\n' ;;
+	map-write) printf 'The rebase map was not recorded. A retry cannot recover it. Repair workflow state, then apply the replayed rebase-map lines with workflow-state update before publishing recorded SHAs.\n' ;;
+	esac
+}
+
 fail() {
-	printf 'worktree-push: %s\n' "$1" >&2
+	message "$@" >&2
 	exit 1
 }
 
-# The one refusal with two exit codes: 3 answers --check-live-round's question,
-# and 1 is this script's ordinary "refused before the push".
+# Check mode distinguishes a live round from an unreadable state.
 refuse_live_round() {
-	printf 'worktree-push: fix round %s is live in %s (its round record has no dev-return receipt); a rebase would move the branch off the commit that round is working from — land that round'"'"'s dev-return receipt, or stamp a fresh dev_round_id, then retry\n' \
-		"$1" "$worktree_abs" >&2
+	message live-round "round=$1" "worktree=$worktree_abs" >&2
 	if [[ "$check_live_round" == true ]]; then
 		exit 3
 	fi
@@ -127,7 +159,7 @@ push_args=()
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--worktree)
-		[[ $# -ge 2 ]] || fail "--worktree requires a path"
+		[[ $# -ge 2 ]] || fail missing-value option=--worktree
 		worktree="$2"
 		shift 2
 		;;
@@ -136,7 +168,7 @@ while [[ $# -gt 0 ]]; do
 		shift
 		;;
 	--issue)
-		[[ $# -ge 2 ]] || fail "--issue requires an issue id"
+		[[ $# -ge 2 ]] || fail missing-value option=--issue
 		issue="$2"
 		shift 2
 		;;
@@ -145,7 +177,7 @@ while [[ $# -gt 0 ]]; do
 		shift
 		;;
 	--state-dir)
-		[[ $# -ge 2 ]] || fail "--state-dir requires a path"
+		[[ $# -ge 2 ]] || fail missing-value option=--state-dir
 		state_dir="$2"
 		shift 2
 		;;
@@ -171,24 +203,24 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-[[ -n "$worktree" ]] || fail "--worktree is required"
-[[ -n "$issue" ]] || fail "--issue is required"
-[[ "$issue" =~ $ISSUE_GRAMMAR && "$issue" != *..* ]] || fail "invalid issue id: $issue"
+[[ -n "$worktree" ]] || fail required option=--worktree
+[[ -n "$issue" ]] || fail required option=--issue
+[[ "$issue" =~ $ISSUE_GRAMMAR && "$issue" != *..* ]] || fail invalid-issue "issue=$issue"
 # Check mode never reaches the push, so nothing forwards push_args and a
 # mistyped flag would simply vanish: --sate-dir=... would leave the check
 # reading a different workflow state and answering about the wrong one. An
 # argument the check cannot honour leaves its answer unfounded, and an
 # unfounded answer is not permission to rebase.
 if [[ "$check_live_round" == true ]] && (( ${#push_args[@]} > 0 )); then
-	fail "--check-live-round takes no push arguments, and '${push_args[0]}' would be ignored rather than honoured"
+	fail check-argument "argument=${push_args[0]}"
 fi
-[[ -x "$WORKTREE_BIN" ]] || fail "worktree script is not executable at $WORKTREE_BIN"
-command -v jq >/dev/null 2>&1 || fail "jq is required to reconcile rebased SHAs"
+[[ -x "$WORKTREE_BIN" ]] || fail not-executable "path=$WORKTREE_BIN"
+command -v jq >/dev/null 2>&1 || fail missing-command command=jq
 
 worktree_abs="$(cd -P -- "$worktree" 2>/dev/null && pwd -P)" \
-	|| fail "not a directory: $worktree"
+	|| fail not-directory "path=$worktree"
 git -C "$worktree_abs" rev-parse --absolute-git-dir >/dev/null 2>&1 \
-	|| fail "not a git worktree: $worktree_abs"
+	|| fail not-worktree "path=$worktree_abs"
 
 state_flags=()
 [[ -z "$state_dir" ]] || state_flags=(--state-dir "$state_dir")
@@ -225,7 +257,7 @@ reconcile_map() {
 		    }
 		  }')" || return 1
 
-	printf 'sha-reconcile: rebase_map +%s, fixed_items %s rewritten, pr_comment_review.fixes %s rewritten\n' \
+	printf 'sha-reconcile: map_entries=%s fixed_items=%s pr_fixes=%s\n' \
 		"$(jq -r '.map_entries' <<<"$report")" \
 		"$(jq -r '.fixed_items' <<<"$report")" \
 		"$(jq -r '.pr_fixes' <<<"$report")"
@@ -242,25 +274,25 @@ reconcile_map() {
 state_exists_rc=0
 state_info="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} exists --json "$issue")" || state_exists_rc=$?
 if [[ "$state_exists_rc" -ne 0 ]]; then
-	fail "could not resolve the workflow state for '$issue' (exists exit $state_exists_rc; the error above says why); refusing to push a rebase with no definite reconciliation target"
+	fail state-resolve "issue=$issue" "exit=$state_exists_rc"
 fi
 state_file="$(jq -r '.path // ""' <<<"$state_info")"
 state_present="$(jq -r '.exists' <<<"$state_info")"
 [[ -n "$state_file" && ( "$state_present" == "true" || "$state_present" == "false" ) ]] \
-	|| fail "unexpected exists --json answer for '$issue': $state_info"
+	|| fail state-answer "issue=$issue" "answer=$state_info"
 if [[ "$state_present" == "true" ]]; then
 	state_issue="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.issue_id // ""')" \
-		|| fail "could not read the workflow state for $issue"
+		|| fail state-read "issue=$issue"
 	if [[ "$state_issue" != "$issue" ]]; then
-		fail "workflow state for '$issue' records issue_id '$state_issue'; refusing to rewrite another issue's record"
+		fail issue-mismatch "issue=$issue" "recorded=$state_issue"
 	fi
 	state_wt="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.worktree // ""')" \
-		|| fail "could not read the workflow state for $issue"
+		|| fail state-read "issue=$issue"
 	if [[ -n "$state_wt" ]]; then
 		state_wt_abs="$(cd -P -- "$state_wt" 2>/dev/null && pwd -P)" \
-			|| fail "workflow state for $issue records worktree '$state_wt', which does not resolve; refusing to reconcile against it"
+			|| fail state-worktree "issue=$issue" "path=$state_wt"
 		[[ "$state_wt_abs" == "$worktree_abs" ]] \
-			|| fail "workflow state for $issue records worktree '$state_wt_abs', not '$worktree_abs'; refusing to rewrite another worktree's record"
+			|| fail worktree-mismatch "issue=$issue" "recorded=$state_wt_abs" "worktree=$worktree_abs"
 	fi
 fi
 # Refuse before the push, where nothing is rebased and nothing needs repair.
@@ -271,7 +303,7 @@ fi
 # to read, and a record from a prior round does not block.
 if [[ "$state_present" == "true" ]]; then
 	active_round="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.dev_round_id // ""')" \
-		|| fail "could not read the active dev round for $issue"
+		|| fail round-read "issue=$issue"
 	if [[ -n "$active_round" ]] \
 		&& [[ -e "$worktree_abs/tmp/dev-round-$issue-$active_round.json" ]] \
 		&& [[ ! -e "$worktree_abs/tmp/dev-return-$issue-$active_round.json" ]]; then
@@ -282,7 +314,7 @@ fi
 # whole run: nothing is pushed, nothing is rebased.
 [[ "$check_live_round" != true ]] || exit 0
 
-push_out="$(mktemp)" || fail "could not create a temporary file for the push output"
+push_out="$(mktemp)" || fail temp-file command=mktemp
 trap 'rm -f "$push_out"' EXIT
 
 # Push stderr streams through live; stdout is captured, then replayed once
@@ -297,7 +329,7 @@ push_rc=0
 # (|| true keeps the dying-stdout case from suppressing the diagnostic).
 fail_post_push() {
 	cat "$push_out" || true
-	printf 'worktree-push: %s\n' "$1" >&2
+	message "$@" >&2
 	if [[ "$push_rc" -ne 0 ]]; then
 		exit "$push_rc"
 	fi
@@ -308,17 +340,17 @@ map_lines=''
 grep_rc=0
 map_lines="$(grep '^rebase-map: ' "$push_out")" || grep_rc=$?
 [[ "$grep_rc" -le 1 ]] \
-	|| fail_post_push "could not scan the push output for rebase-map lines (grep exit $grep_rc, push exit $push_rc); recorded SHAs are NOT reconciled"
+	|| fail_post_push map-scan "exit=$grep_rc" "push-exit=$push_rc"
 
 map_json='{}'
 if [[ -n "$map_lines" ]]; then
 	while IFS=' ' read -r _ old new; do
 		[[ "$old" =~ $SHA_GRAMMAR ]] \
-			|| fail_post_push "unparseable rebase-map line (old SHA '$old', push exit $push_rc); recorded SHAs are NOT reconciled"
+			|| fail_post_push map-sha field=old "sha=$old" "push-exit=$push_rc"
 		[[ "$new" == "dropped" || "$new" =~ $SHA_GRAMMAR ]] \
-			|| fail_post_push "unparseable rebase-map line (new SHA '$new', push exit $push_rc); recorded SHAs are NOT reconciled"
+			|| fail_post_push map-sha field=new "sha=$new" "push-exit=$push_rc"
 		map_json="$(jq -c --arg o "$old" --arg n "$new" '. + {($o): $n}' <<<"$map_json")" \
-			|| fail_post_push "could not assemble the rebase map (push exit $push_rc); recorded SHAs are NOT reconciled"
+			|| fail_post_push map-build "push-exit=$push_rc"
 	done <<<"$map_lines"
 fi
 
@@ -335,8 +367,7 @@ if reconcile_map "$map_json"; then
 	exit "$push_rc"
 fi
 
-printf 'worktree-push: the rebase map was NOT recorded for %s; recorded SHAs are NOT reconciled. Re-running this command does NOT repair them — the rebase is already done, so the next run prints no map and reports success over the same stale record. Repair workflow state, then apply the rebase-map lines replayed above by hand with `workflow-state update` (they are the only copy)\n' \
-	"$issue" >&2
+message map-write "issue=$issue" "state=$state_file" "push-exit=$push_rc" >&2
 if [[ "$push_rc" -ne 0 ]]; then
 	exit "$push_rc"
 fi

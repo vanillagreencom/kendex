@@ -263,7 +263,7 @@ observe() {
   local got="" token name value needle
   set -f
   for token in $1; do
-    name="${token%%=*}"
+    name="${token%=*}"
     needle="${name#*~}"; needle="${needle//+/ }"
     case "$name" in
       rc) value="$RC" ;;
@@ -332,13 +332,13 @@ echo "=== open-terminal claude handoff: per-task launch flags ==="
 # shell-executed launch command; a bracketed model id is an ordinary value.
 # The tmux-only verify timeout is never validated on a GUI launch.
 launch_table \
-  "linear:claude renders the caller's launch flags before the brief, no warning|gui|-|--model opus[1m] --effort max --dangerously-skip-permissions|-|rc=0 cmd~'--model'+'opus[1m]'+'--effort'+'max'+'--dangerously-skip-permissions'+'$BRIEFN'=true stderr~WARNING=false" \
+  "linear:claude renders the caller's launch flags before the brief, no warning|gui|-|--model opus[1m] --effort max --dangerously-skip-permissions|-|rc=0 cmd~'--model'+'opus[1m]'+'--effort'+'max'+'--dangerously-skip-permissions'+'$BRIEFN'=true stderr~open-terminal:+permission-prompt=false" \
   "github:claude renders the same|github|-|--effort max --dangerously-skip-permissions|-|rc=0 cmd~'--effort'+'max'+'--dangerously-skip-permissions'+'/orch+start+github+acme/widgets#42'=true" \
-  "a second launch renders its own flags, nothing leaking from another launch or a stored default|gui|-|--model sonnet --permission-mode bypassPermissions|-|rc=0 cmd~'--model'+'sonnet'+'--permission-mode'+'bypassPermissions'+'$BRIEFN'=true cmd~'--effort'+'max'=false stderr~WARNING=false" \
-  "an unflagged launch renders no model, effort or permission default, and warns it will stall unattended|gui|-|-|-|tail=claude+-n+CC-737+'$BRIEFN' stderr~handoff+autonomy+is+void=true" \
-  "a prompting override still launches, rendered as given, and warns loudly|gui|-|--permission-mode plan|-|rc=0 cmd~'--permission-mode'+'plan'+'$BRIEFN'=true stderr~WARNING=true stderr~handoff+autonomy+is+void=true" \
-  "metacharacter launch flags refuse to launch, naming the option, and nothing runs|gui|-|--flag; touch $TMP_ROOT/pwned|-|rc=1 stderr~--launch-flags=true launched=false" \
-  "a broken tmux-only verify setting does not abort a GUI launch, which never reads it|gui|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~ORCH_TMUX_VERIFY_SECS=false"
+  "a second launch renders its own flags, nothing leaking from another launch or a stored default|gui|-|--model sonnet --permission-mode bypassPermissions|-|rc=0 cmd~'--model'+'sonnet'+'--permission-mode'+'bypassPermissions'+'$BRIEFN'=true cmd~'--effort'+'max'=false stderr~open-terminal:+permission-prompt=false" \
+  "an unflagged launch renders no model, effort or permission default, and warns it will stall unattended|gui|-|-|-|rc=0 tail=claude+-n+CC-737+'$BRIEFN' stderr~open-terminal:+permission-prompt+flags==true" \
+  "a prompting override still launches, rendered as given, and warns loudly|gui|-|--permission-mode plan|-|rc=0 cmd~'--permission-mode'+'plan'+'$BRIEFN'=true stderr~open-terminal:+permission-prompt+flags=--permission-mode+plan=true" \
+  "metacharacter launch flags refuse to launch, naming the option, and nothing runs|gui|-|--flag; touch $TMP_ROOT/pwned|-|rc=1 stderr~open-terminal:+flags-invalid+option=--launch-flags+value=--flag;+touch+$TMP_ROOT/pwned=true launched=false" \
+  "a broken tmux-only verify setting does not abort a GUI launch, which never reads it|gui|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS=false"
 
 # The rendered line is executed by a shell in the launch directory, so a
 # bracketed model id is glob syntax there. With the tokens unquoted, a single
@@ -388,23 +388,23 @@ echo "=== open-terminal claude handoff: tmux brief delivery ==="
 # checked, and each failure names its own cause: a window never created, or launch keystrokes that failed on a
 # briefless lane, is a failed lane, never a launched one.
 launch_table \
-  "the brief visible on the first pass is delivery: no re-send, the flags sent, scrollback captured|tmux|-|--dangerously-skip-permissions|delivered|rc=0 out~Opened+tmux+window+'CC-737'=true out~Re-delivered=false log~'--dangerously-skip-permissions'+'$BRIEFN'=true log~capture-pane+-pJ+-S+-+-t+%7=true resends=0" \
-  "a dialog ate the brief: the launcher waits for a ready composer and re-sends exactly the start command once|tmux|-|-|echo,ready,delivered|rc=0 out~Re-delivered+brief+to+'CC-737'=true resends=1 fullresends=1" \
-  "two dialog passes before readiness: one dismissing Enter per pass, the brief typed once after|tmux|ORCH_TMUX_VERIFY_SECS=3|-|echo,echo,echo,echo,echo,ready,delivered|rc=0 out~Re-delivered+brief+to+'CC-737'=true enters=4 resends=1" \
-  "the echoed command alone is not delivery: one re-send, then a loud per-lane failure|tmux|-|-|echo,ready,ready|rc=1 stderr~brief+undelivered+to+'CC-737'=true stderr~handoff+lane(s)+failed=true out~Done:+launched+1=false resends=1" \
-  "unsent composer text is not delivery: one re-send, then the failure|tmux|-|-|composer|rc=1 stderr~brief+undelivered+to+'CC-737'=true resends=1" \
-  "a brief left sitting in the composer is submitted by the nudge, not typed a second time|tmux|ORCH_TMUX_VERIFY_SECS=2|-|draft,draft,draft,delivered|rc=0 out~Done:+launched+1=true resends=0 enters=2" \
-  "a composer that stays occupied is a failed lane, and never has a second brief typed into it|tmux|-|-|draft|rc=1 stderr~never+reached+a+ready+composer=true resends=0" \
-  "a lane that comes up on the very last nudge is seen, not reported stuck|tmux|-|-|echo,echo,delivered|rc=0 out~Confirmed+'CC-737'+launched=true resends=0 enters=2" \
-  "an older TUI's shortcuts footer is still read as ready|tmux|-|-|echo,ready-legacy,delivered|rc=0 out~Re-delivered+brief+to+'CC-737'=true resends=1" \
-  "a turn in its first frames is launched and never typed into, before any counter or marker shows|tmux|-|-|earlyturn|rc=0 out~Done:+launched+1=true resends=0 enters=1" \
-  "a turn in flight is a launched lane whatever its transcript line reads as: no re-send|tmux|-|-|working|rc=0 out~Done:+launched+1=true resends=0 enters=1" \
-  "a lane that starts working while the launcher waits for a composer ends the wait launched, nothing typed into it|tmux|-|-|echo,working|rc=0 out~Confirmed+'CC-737'+launched=true resends=0 enters=1" \
-  "a composer that never becomes ready is a failed lane, named as stuck|tmux|-|-|echo,echo|rc=1 stderr~never+reached+a+ready+composer=true out~Done:+launched+1=false" \
-  "a sign-in step animating a spinner is still a stuck lane, not a working one|tmux|-|-|signin|rc=1 stderr~never+reached+a+ready+composer=true out~Done:+launched+1=false" \
+  "the brief visible on the first pass is delivery: no re-send, the flags sent, scrollback captured|tmux|-|--dangerously-skip-permissions|delivered|rc=0 out~open-terminal:+tmux-opened+item=CC-737=true out~open-terminal:+brief-redelivered=false log~'--dangerously-skip-permissions'+'$BRIEFN'=true log~capture-pane+-pJ+-S+-+-t+%7=true resends=0" \
+  "a dialog ate the brief: the launcher waits for a ready composer and re-sends exactly the start command once|tmux|-|-|echo,ready,delivered|rc=0 out~open-terminal:+brief-redelivered+item=CC-737=true resends=1 fullresends=1" \
+  "two dialog passes before readiness: one dismissing Enter per pass, the brief typed once after|tmux|ORCH_TMUX_VERIFY_SECS=3|-|echo,echo,echo,echo,echo,ready,delivered|rc=0 out~open-terminal:+brief-redelivered+item=CC-737=true enters=4 resends=1" \
+  "the echoed command alone is not delivery: one re-send, then a loud per-lane failure|tmux|-|-|echo,ready,ready|rc=1 stderr~open-terminal:+brief-undelivered+item=CC-737=true stderr~open-terminal:+summary+launched=0+skipped=0+failed=1=true out~open-terminal:+summary+launched=1=false resends=1" \
+  "unsent composer text is not delivery: one re-send, then the failure|tmux|-|-|composer|rc=1 stderr~open-terminal:+brief-undelivered+item=CC-737=true resends=1" \
+  "a brief left sitting in the composer is submitted by the nudge, not typed a second time|tmux|ORCH_TMUX_VERIFY_SECS=2|-|draft,draft,draft,delivered|rc=0 out~open-terminal:+summary+launched=1=true resends=0 enters=2" \
+  "a composer that stays occupied is a failed lane, and never has a second brief typed into it|tmux|-|-|draft|rc=1 stderr~open-terminal:+composer-stuck+item=CC-737=true resends=0" \
+  "a lane that comes up on the very last nudge is seen, not reported stuck|tmux|-|-|echo,echo,delivered|rc=0 out~open-terminal:+launch-confirmed+item=CC-737=true resends=0 enters=2" \
+  "an older TUI's shortcuts footer is still read as ready|tmux|-|-|echo,ready-legacy,delivered|rc=0 out~open-terminal:+brief-redelivered+item=CC-737=true resends=1" \
+  "a turn in its first frames is launched and never typed into, before any counter or marker shows|tmux|-|-|earlyturn|rc=0 out~open-terminal:+summary+launched=1=true resends=0 enters=1" \
+  "a turn in flight is a launched lane whatever its transcript line reads as: no re-send|tmux|-|-|working|rc=0 out~open-terminal:+summary+launched=1=true resends=0 enters=1" \
+  "a lane that starts working while the launcher waits for a composer ends the wait launched, nothing typed into it|tmux|-|-|echo,working|rc=0 out~open-terminal:+launch-confirmed+item=CC-737=true resends=0 enters=1" \
+  "a composer that never becomes ready is a failed lane, named as stuck|tmux|-|-|echo,echo|rc=1 stderr~open-terminal:+composer-stuck+item=CC-737=true out~open-terminal:+summary+launched=1=false" \
+  "a sign-in step animating a spinner is still a stuck lane, not a working one|tmux|-|-|signin|rc=1 stderr~open-terminal:+composer-stuck+item=CC-737=true out~open-terminal:+summary+launched=1=false" \
   "a huge scrollback with the delivered brief near its start is delivery: no duplicate brief|tmux|-|-|huge|rc=0 resends=0" \
-  "a window that was never created is a failed lane, not a launched one|tmux|OT_TMUX_FAIL=new-window|-|delivered|rc=1 stderr~new-window+failed=true stderr~handoff+lane(s)+failed=true out~Done:+launched+1=false" \
-  "launch keystrokes failing on a briefless lane is a failed lane too|tmux-codex|OT_TMUX_FAIL=send-keys|-|-|rc=1 stderr~send-keys+failed+launching=true out~Done:+launched+1=false"
+  "a window that was never created is a failed lane, not a launched one|tmux|OT_TMUX_FAIL=new-window|-|delivered|rc=1 stderr~open-terminal:+tmux-failed+operation=new-window+item=CC-737=true stderr~open-terminal:+summary+launched=0+skipped=0+failed=1=true out~open-terminal:+summary+launched=1=false" \
+  "launch keystrokes failing on a briefless lane is a failed lane too|tmux-codex|OT_TMUX_FAIL=send-keys|-|-|rc=1 stderr~open-terminal:+tmux-failed+operation=send-keys+item=CC-737=true out~open-terminal:+summary+launched=1=false"
 
 echo "=== the turn-in-flight reading can fail, both ways ==="
 # `pane_working` is the whole of it, so it is the mutation both controls take.
@@ -412,8 +412,8 @@ echo "=== the turn-in-flight reading can fail, both ways ==="
 # this closed: a healthy mid-turn lane reported as a stuck composer, exit 1.
 mutant working-blind lib/pane-working.sh 's/^pane_working() {/pane_working() { return 1;/' pane_working
 launch_table \
-  "control: with the turn reading gone, a turn in flight fails as a stuck composer|tmux|-|-|working|rc=1 stderr~never+reached+a+ready+composer=true out~Done:+launched+1=false" \
-  "control: and so does a lane that starts working during the composer wait|tmux|-|-|echo,working|rc=1 stderr~never+reached+a+ready+composer=true"
+  "control: with the turn reading gone, a turn in flight fails as a stuck composer|tmux|-|-|working|rc=1 stderr~open-terminal:+composer-stuck+item=CC-737=true out~open-terminal:+summary+launched=1=false" \
+  "control: and so does a lane that starts working during the composer wait|tmux|-|-|echo,working|rc=1 stderr~open-terminal:+composer-stuck+item=CC-737=true"
 # Widen it to the spinner frames — the shape this fix was first written with —
 # and the failure exit stops covering the pane it is for: Claude Code animates
 # one frame set across every long-running screen, sign-in included, so the
@@ -421,20 +421,20 @@ launch_table \
 # success.
 mutant working-spinner lib/pane-working.sh "s/^pane_working() {/pane_working() { grep -q '\xe2\x9c\xbb' <<<\"\$1\" \&\& return 0;/" pane_working
 launch_table \
-  "control: keyed on the spinner instead, the sign-in step reports launched|tmux|-|-|signin|rc=0 out~Done:+launched+1=true stderr~never+reached+a+ready+composer=false"
+  "control: keyed on the spinner instead, the sign-in step reports launched|tmux|-|-|signin|rc=0 out~open-terminal:+summary+launched=1=true stderr~open-terminal:+composer-stuck+item=CC-737=false"
 # The composer read can fail the same two ways. Drop the composer filter and
 # the draft above passes as a submitted prompt: the │ the old filter looks for
 # is on none of the 146 captures of v2.1.261, so nothing else stands between a
 # half-typed brief and a lane called launched.
 mutant composer-blind open-terminal 's/ | grep -Ev -- "\$COMPOSER_RE"//' 'the composer filter'
 launch_table \
-  "control: without the composer filter, a draft the operator is still typing reports launched|tmux|-|-|draft|rc=0 out~Done:+launched+1=true resends=0"
+  "control: without the composer filter, a draft the operator is still typing reports launched|tmux|-|-|draft|rc=0 out~open-terminal:+summary+launched=1=true resends=0"
 # Key readiness on the old footer alone and the re-send path goes unreachable:
 # v2.1.261 never draws it, so a dialog that ate the brief can only ever reach
 # the failure exit, never the recovery the launcher exists to perform.
 mutant ready-legacy-only open-terminal 's/^READY_RE=.*/READY_RE="\\? for shortcuts"/' 'the readiness marker'
 launch_table \
-  "control: keyed on the old footer alone, a dialog that ate the brief can never be recovered|tmux|-|-|echo,ready,ready|rc=1 stderr~never+reached+a+ready+composer=true resends=0"
+  "control: keyed on the old footer alone, a dialog that ate the brief can never be recovered|tmux|-|-|echo,ready,ready|rc=1 stderr~open-terminal:+composer-stuck+item=CC-737=true resends=0"
 # Readiness that does not insist on an EMPTY composer types into an occupied
 # one, and `send-keys -l` appends: the lane is handed
 # `/orch start CC-737/orch start CC-737` and submits it.
@@ -445,7 +445,7 @@ launch_table \
 # never looked at: the lane that came up on it is reported stuck.
 mutant last-pass-blind open-terminal 's@^    screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1$@    (( waited < TMUX_VERIFY_SECS )) || return 1; screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1@;/^    (( waited < TMUX_VERIFY_SECS )) || return 1$/d' 'the read-before-budget order'
 launch_table \
-  "control: deciding before the capture reports a lane that came up on the last nudge as stuck|tmux|-|-|echo,echo,delivered|rc=1 stderr~never+reached+a+ready+composer=true"
+  "control: deciding before the capture reports a lane that came up on the last nudge as stuck|tmux|-|-|echo,echo,delivered|rc=1 stderr~open-terminal:+composer-stuck+item=CC-737=true"
 # Require a transcript-activity marker on top of the brief and the first
 # frames of a turn read as an idle, ready composer: the counter is not drawn
 # yet, the spinner frame is one this script does not read, and the composer is
@@ -463,12 +463,12 @@ echo "=== open-terminal claude handoff: the verify timeout ==="
 # than hanging the launch or wrapping into negative arithmetic and an
 # instant resend. A codex tmux lane never reads it.
 launch_table \
-  "a non-integer is a config error naming the setting, not a delivery failure|tmux|ORCH_TMUX_VERIFY_SECS=abc|-|delivered|rc=1 stderr~ORCH_TMUX_VERIFY_SECS=true stderr~brief+undelivered=false" \
-  "zero is rejected the same way|tmux|ORCH_TMUX_VERIFY_SECS=0|-|delivered|rc=1 stderr~ORCH_TMUX_VERIFY_SECS=true" \
-  "leading zeros are base 10, not octal, and do not count toward the clamp|tmux|ORCH_TMUX_VERIFY_SECS=0000000000000000008|-|delivered|rc=0 stderr~value+too+great=false stderr~clamped=false" \
-  "an overflow-sized value is clamped loudly, with no instant resend|tmux|ORCH_TMUX_VERIFY_SECS=10000000000000000000|-|delivered|rc=0 stderr~clamped+to+120=true resends=0" \
-  "a runaway value is clamped loudly and still verifies|tmux|ORCH_TMUX_VERIFY_SECS=99999|-|delivered|rc=0 stderr~clamped+to+120=true" \
-  "a codex tmux lane never validates the claude-verification timeout|tmux-codex|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~ORCH_TMUX_VERIFY_SECS=false"
+  "a non-integer is a config error naming the setting, not a delivery failure|tmux|ORCH_TMUX_VERIFY_SECS=abc|-|delivered|rc=1 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS+value=abc=true stderr~open-terminal:+brief-undelivered=false" \
+  "zero is rejected the same way|tmux|ORCH_TMUX_VERIFY_SECS=0|-|delivered|rc=1 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS+value=0=true" \
+  "leading zeros are base 10, not octal, and do not count toward the clamp|tmux|ORCH_TMUX_VERIFY_SECS=0000000000000000008|-|delivered|rc=0 stderr~open-terminal:+verify-seconds-invalid=false stderr~open-terminal:+verify-seconds-clamped=false" \
+  "an overflow-sized value is clamped loudly, with no instant resend|tmux|ORCH_TMUX_VERIFY_SECS=10000000000000000000|-|delivered|rc=0 stderr~open-terminal:+verify-seconds-clamped+value=10000000000000000000+limit=120=true resends=0" \
+  "a runaway value is clamped loudly and still verifies|tmux|ORCH_TMUX_VERIFY_SECS=99999|-|delivered|rc=0 stderr~open-terminal:+verify-seconds-clamped+value=99999+limit=120=true" \
+  "a codex tmux lane never validates the claude-verification timeout|tmux-codex|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS=false"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

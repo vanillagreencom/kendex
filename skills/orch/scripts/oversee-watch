@@ -11,6 +11,9 @@
 # context once. Live tracker and pane reads remain authoritative; persisted
 # state holds only edge keys. Usage, event details, configuration, and failure
 # contracts live in usage().
+# Stdout is the overseer protocol: the EVENT records documented in usage(),
+# their record or pane payloads, and the optional `pr-watch rc=N` context block.
+# Consumers handle every EVENT in order. Those records are not prose messages.
 
 set -euo pipefail
 
@@ -136,8 +139,77 @@ Environment:
                               rows — plus claims/
 USAGE
 }
-die() { echo "oversee-watch: $*" >&2; exit 2; }
-need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || die "$1 requires a value"; }
+# stderr messages start `oversee-watch: REASON field=value ...`. Backslash,
+# tab, carriage return and newline in field values are escaped. Tool error
+# details and the English explanation follow the stable header.
+ow_message() { # REASON FIELD=VALUE...
+  local reason="$1" text field
+  shift
+  case "$reason" in
+    missing-value) text='The option requires a value.' ;;
+    option-unknown) text='The option is not supported. Use --help for supported options.' ;;
+    state-directory-create-failed) text='The watch state directory could not be created. Check OVERSEE_WATCH_STATE_DIR.' ;;
+    state-directory-unwritable) text='The watch state directory is not writable. Check OVERSEE_WATCH_STATE_DIR.' ;;
+    interval-invalid) text='The interval must be a non-negative integer.' ;;
+    max-loops-invalid) text='The loop limit must be a positive integer.' ;;
+    tmux-missing) text='Run in the tmux session that owns these lanes, or omit the lanes.' ;;
+    since-invalid) text='Use a UTC timestamp in YYYY-MM-DDTHH:MM:SSZ form.' ;;
+    helper-missing) text='The required helper is not executable. Check the named setting.' ;;
+    item-invalid) text='The work item is not a supported issue identifier.' ;;
+    command-missing) text='The required command is not on PATH.' ;;
+    auth-failed) text='No configured GitHub credential works. Run gh auth login.' ;;
+    repo-unresolved) text='Specify a repository because GitHub could not resolve it.' ;;
+    repo-duplicate) text='Name each repository once.' ;;
+    pr-list-failed) text='The GitHub PR list command failed.' ;;
+    pr-list-invalid) text='The GitHub PR list output could not be parsed.' ;;
+    triage-state-failed) text='The fleet triage verdict log could not be read.' ;;
+    triage-item-invalid) text='The fleet triage log contains an invalid issue identifier.' ;;
+    time-failed) text='The current UTC time could not be read.' ;;
+    tracker-list-failed) text='The tracker list command failed.' ;;
+    tracker-list-invalid) text='The tracker list output could not be parsed.' ;;
+    worktree-query-failed) text='The worktree helper query failed.' ;;
+    handoff-read-failed) text='The handoff record could not be read.' ;;
+    limit-scan-failed) text='The lane screen could not be searched for a usage limit.' ;;
+    reset-scan-failed) text='The limit banner could not be searched for its reset clause.' ;;
+    window-list-failed) text='The tmux window list could not be read.' ;;
+    pane-command-failed) text='The pane command could not be read.' ;;
+    pane-command-invalid) text='The pane command reply is malformed.' ;;
+    pane-identity-failed) text='The pane identity could not be read.' ;;
+    pane-identity-invalid) text='The pane identity reply is malformed.' ;;
+    pane-capture-failed) text='The pane could not be captured.' ;;
+    pane-publish-failed) text='The pane capture could not be published.' ;;
+    state-write-failed) text='The watch state file could not be written. Check OVERSEE_WATCH_STATE_DIR.' ;;
+    state-replace-failed) text='The watch state file could not be replaced. Check OVERSEE_WATCH_STATE_DIR.' ;;
+    state-read-failed) text='The watch state file could not be read. Check OVERSEE_WATCH_STATE_DIR.' ;;
+    reducer-failed) text='The PR reducer failed without per-PR output.' ;;
+    triage-disabled) text='Team triage is skipped because LINEAR_TEAM is empty. Other watch checks continue.' ;;
+    reducer-missing) text='The PR reducer is missing. Other watch checks continue.' ;;
+    items-omitted) text='No work items were supplied. Merged and handoff checks are skipped.' ;;
+    lanes-omitted) text='No lane windows were supplied. Pane checks are skipped; the named checks continue.' ;;
+    child-probe-failed) text='The child-process probe could not run. Shell panes remain watched.' ;;
+    claim-missing) text='The pane has no live lane claim. The usage event names no account.' ;;
+    reducer-baseline) text='The initial PR attention is the baseline. Only new attention produces events.' ;;
+    state-target-invalid) text='The watch state target is not a regular file.' ;;
+    *) printf 'oversee-watch: message-invalid reason=%s\n' "$reason" >&2; return 2 ;;
+  esac
+  printf 'oversee-watch: %s' "$reason"
+  for field in "$@"; do
+    field="${field//\\/\\\\}"
+    field="${field//$'\t'/\\t}"
+    field="${field//$'\r'/\\r}"
+    field="${field//$'\n'/\\n}"
+    printf ' %s' "$field"
+  done
+  printf '\n%s\n' "$text"
+}
+die() { # REASON TOOL_DETAIL FIELD=VALUE...
+  local reason="$1" detail="$2"
+  shift 2
+  ow_message "$reason" "$@" >&2
+  [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
+  exit 2
+}
+need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || die missing-value "" "option=$1"; }
 
 # The one parser. It answers a help request and a bad option itself, so the dry
 # run below decides those before any configuration is read, off these arms and
@@ -171,7 +243,7 @@ parse_argv() {
       # The bare word too: `help` is an answered form on the sibling orch CLIs,
       # and here it would otherwise be read as a lane window name.
       --help | -h | help) usage; exit 0 ;;
-      -*) usage >&2; die "unknown option '$1'" ;;
+      -*) ow_message option-unknown "option=$1" >&2; usage >&2; exit 2 ;;
       *) LANES+=("$1"); shift ;;
     esac
   done
@@ -227,9 +299,9 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 # is read. The live pane capture remains authoritative.
 watch_state_init() {
   mkdir -p "$PW_STATE_DIR" \
-    || die "could not create the oversee-watch state directory $PW_STATE_DIR (set OVERSEE_WATCH_STATE_DIR)"
+    || die state-directory-create-failed "" "path=$PW_STATE_DIR"
   [[ -w "$PW_STATE_DIR" ]] \
-    || die "the oversee-watch state directory $PW_STATE_DIR is not writable (set OVERSEE_WATCH_STATE_DIR)"
+    || die state-directory-unwritable "" "path=$PW_STATE_DIR"
 }
 
 # Per-lane rows in the first repository's baseline, beside the reducer's
@@ -333,10 +405,10 @@ DIALOG_ROW_RE='^(❯|›) [0-9]+[.] '
 
 parse_argv "$@"
 
-[[ "$INTERVAL" =~ ^[0-9]+$ ]] || die "--interval must be a non-negative integer (got '$INTERVAL')"
-[[ "$MAX_LOOPS" =~ ^[0-9]+$ && "$MAX_LOOPS" -ge 1 ]] || die "--max-loops must be a positive integer (got '$MAX_LOOPS')"
+[[ "$INTERVAL" =~ ^[0-9]+$ ]] || die interval-invalid "" "value=$INTERVAL"
+[[ "$MAX_LOOPS" =~ ^[0-9]+$ && "$MAX_LOOPS" -ge 1 ]] || die max-loops-invalid "" "value=$MAX_LOOPS"
 if [[ ${#LANES[@]} -gt 0 && -z "${TMUX:-}" ]]; then
-  die "lane windows given (${LANES[*]}) but not inside tmux; drop the lanes or run from the tmux session that owns them"
+  die tmux-missing "" "lanes=${LANES[*]}"
 fi
 
 # No floor by default: the floor must not move between runs, and a run has no
@@ -344,8 +416,8 @@ fi
 SINCE_EPOCH=0
 if [[ -n "$SINCE" ]]; then
   [[ "$SINCE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
-    || die "--since '$SINCE' must be a UTC timestamp ending in Z (YYYY-MM-DDTHH:MM:SSZ)"
-  SINCE_EPOCH="$(to_epoch "$SINCE")" || die "--since '$SINCE' is not an ISO8601 timestamp (UTC, Z suffix)"
+    || die since-invalid "" "value=$SINCE"
+  SINCE_EPOCH="$(to_epoch "$SINCE")" || die since-invalid "" "value=$SINCE"
 fi
 
 TRIAGE_ENABLED=0
@@ -358,12 +430,12 @@ TRIAGE_ENABLED=0
 if [[ -n "$SINCE" ]]; then
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
     [[ -x "$TRACKER" ]] \
-      || die "tracker CLI not found at $TRACKER; triage needs it (set OVERSEE_WATCH_TRACKER)"
+      || die helper-missing "" "path=$TRACKER" "setting=OVERSEE_WATCH_TRACKER"
     [[ -x "$WORKFLOW_STATE" ]] \
-      || die "workflow-state CLI not found at $WORKFLOW_STATE; triage needs it (set OVERSEE_WATCH_WORKFLOW_STATE)"
+      || die helper-missing "" "path=$WORKFLOW_STATE" "setting=OVERSEE_WATCH_WORKFLOW_STATE"
     TRIAGE_ENABLED=1
   else
-    echo "oversee-watch: LINEAR_TEAM is unset or empty; skipping the team triage check (pr-watch/merged/window/lane-asking checks still run)" >&2
+    ow_message triage-disabled "setting=LINEAR_TEAM" "value=${LINEAR_TEAM:-}" >&2
   fi
 fi
 
@@ -371,13 +443,13 @@ fi
 # one branch per line, for the jq membership test.
 ITEM_BRANCHES=""
 for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
-  [[ "$item" =~ ^[A-Za-z0-9._-]+$ ]] || die "--item '$item' is not an issue id (issue-N or PROJ-123)"
+  [[ "$item" =~ ^[A-Za-z0-9._-]+$ ]] || die item-invalid "" "item=$item"
   ITEM_BRANCHES+="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"$'\n'
 done
 
-command -v gh >/dev/null 2>&1 || die "gh CLI not found on PATH"
-command -v jq >/dev/null 2>&1 || die "jq not found on PATH"
-command -v cksum >/dev/null 2>&1 || die "cksum not found on PATH"
+command -v gh >/dev/null 2>&1 || die command-missing "" "command=gh"
+command -v jq >/dev/null 2>&1 || die command-missing "" "command=jq"
+command -v cksum >/dev/null 2>&1 || die command-missing "" "command=cksum"
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -391,12 +463,12 @@ orch_sanitize_gh_env
 if ! orch_github_auth_status; then
   unset GH_TOKEN GITHUB_TOKEN
   { orch_load_env_bot_token "$PROJECT_ROOT" && orch_github_auth_status; } \
-    || die "no working GitHub auth path (tried env GH_TOKEN/GITHUB_TOKEN, gh keyring, project GH_BOT_TOKEN). Run: gh auth login"
+    || die auth-failed "" "service=github"
 fi
 
 if [[ ${#REPOS[@]} -eq 0 ]]; then
   resolved="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
-  [[ -n "$resolved" ]] || die "could not resolve the repository (gh repo view failed); pass --repo OWNER/REPO"
+  [[ -n "$resolved" ]] || die repo-unresolved "" "option=--repo"
   REPOS=("$resolved")
 fi
 # One canonical spelling per repository, settled once, HERE — below the default
@@ -413,32 +485,32 @@ for repo_i in "${!REPOS[@]}"; do
   repo_raw="${REPOS[$repo_i]}"
   REPOS[$repo_i]="$(printf '%s' "$repo_raw" | tr '[:upper:]' '[:lower:]')"
   if grep -qxF -- "${REPOS[$repo_i]}" <<<"$repos_seen"; then
-    die "--repo '$repo_raw' given twice; name each repository once"
+    die repo-duplicate "" "repo=$repo_raw"
   fi
   repos_seen+="${REPOS[$repo_i]}"$'\n'
 done
 if [[ -x "$PR_WATCH" ]]; then
   :
 else
-  echo "oversee-watch: pr-watch.sh not found at $PR_WATCH; skipping the review-gate reducer (merged/triage/window/lane-asking checks still run)" >&2
+  ow_message reducer-missing "path=$PR_WATCH" >&2
   PR_WATCH=""
 fi
 if [[ -z "$ITEM_BRANCHES" ]]; then
-  echo "oversee-watch: no --item given; skipping the merged and handoff checks (pr-watch/triage/window/lane-asking checks still run)" >&2
+  ow_message items-omitted "count=0" "skipped=merged,handoff" >&2
 else
   # Handoff fails CLOSED like triage: a lane that handed off and exited is
   # otherwise a lane-exited the overseer relaunches from nothing.
   [[ -x "$WORKFLOW_STATE" ]] \
-    || die "workflow-state CLI not found at $WORKFLOW_STATE; the handoff check needs it (set OVERSEE_WATCH_WORKFLOW_STATE)"
+    || die helper-missing "" "path=$WORKFLOW_STATE" "setting=OVERSEE_WATCH_WORKFLOW_STATE"
   [[ -x "$WORKTREE_CLI" ]] \
-    || die "worktree CLI not found at $WORKTREE_CLI; the handoff check needs it to name an item's worktree (set WORKTREE_CLI)"
+    || die helper-missing "" "path=$WORKTREE_CLI" "setting=WORKTREE_CLI"
 fi
 # Inside tmux the pane checks are how an item's lane is watched, so a run
 # naming items and no window is told which checks it is not running, as the
 # two notes above say for the reducer and the merged check. Outside tmux there
 # is no pane to read and nothing to note.
 if [[ -n "${TMUX:-}" && -n "$ITEM_BRANCHES" && ${#LANES[@]} -eq 0 ]]; then
-  echo "oversee-watch: no lane window given; skipping the window-gone/lane-exited/usage-limit/lane-asking/idle-after-return checks (pr-watch/merged/triage/handoff checks still run)" >&2
+  ow_message lanes-omitted "count=0" "active=pr-watch,merged,triage,handoff" >&2
 fi
 
 watch_state_init
@@ -458,7 +530,7 @@ check_merged() {
     hits=""
     for repo in "${REPOS[@]}"; do
       list="$(gh pr list --repo "$repo" --head "$branch" --state merged --limit 10 --json number,headRefName,headRepositoryOwner,mergedAt 2>"$errf")" \
-        || die "gh pr list --state merged failed for $repo (--head $branch): $(cat "$errf")"
+        || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=merged" "branch=$branch"
       hit="$(jq -r --arg branch "$branch" --arg owner "${repo%%/*}" --arg repo "$repo" --argjson since "$SINCE_EPOCH" '
         [ .[]
           | select(.headRefName | ascii_downcase == $branch)
@@ -467,7 +539,7 @@ check_merged() {
           | select((.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $since)
           | "\(.number) \(.headRefName) \($repo)" ]
         | .[]' <<<"$list" 2>"$errf")" \
-        || die "could not parse gh pr list output for $repo ($branch): $(cat "$errf")"
+        || die pr-list-invalid "$(cat "$errf")" "repo=$repo" "branch=$branch"
       [[ -z "$hit" ]] || hits+="$hit"$'\n'
     done
     if [[ -z "$hits" ]]; then
@@ -495,12 +567,12 @@ check_triage() {
   local errf="$WORK_DIR/triage.err" now age days out ids verdicts pr_keys triage_keys="" seen id new_ids="" next rc=0
   verdicts="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.triaged // [] | map(select(.verdict == "kept" or .verdict == "canceled") | .issue) | .[]' 2>"$errf")" || rc=$?
   [[ "$rc" -eq 0 ]] \
-    || die "could not read the fleet triage verdict log (rc=$rc): $(cat "$errf")"
+    || die triage-state-failed "$(cat "$errf")" "exit=$rc"
   verdicts="$(awk 'NF && !seen[$0]++' <<<"$verdicts")"
   while IFS= read -r id; do
     [[ -n "$id" ]] || continue
     [[ "$id" =~ ^[A-Za-z0-9._-]+$ ]] \
-      || die "fleet triage verdict log returned an invalid issue id: '$id'"
+      || die triage-item-invalid "" "item=$id"
     [[ -z "$triage_keys" ]] || triage_keys+=$'\n'
     triage_keys+="triage"$'\t'"$id"
   done <<<"$verdicts"
@@ -515,7 +587,7 @@ check_triage() {
     pw_commit_state "$(pw_state_file "${REPOS[0]}")"
     PW_SEEN[0]="$next"
   fi
-  now="$(date -u +%s)" || die "could not read the current UTC time for triage"
+  now="$(date -u +%s)" || die time-failed "" "clock=UTC"
   age=$((now - SINCE_EPOCH))
   [[ "$age" -ge 0 ]] || age=0
   # Linear's live list accepts whole-day windows. Round up, then apply the
@@ -523,19 +595,19 @@ check_triage() {
   days=$((age / 86400 + 1))
   out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --created-since "${days}d" --max --format=safe 2>"$errf")" || rc=$?
   [[ "$rc" -eq 0 ]] \
-    || die "tracker list failed for team $LINEAR_TEAM (rc=$rc): $(cat "$errf")"
+    || die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "exit=$rc"
   ids="$(jq -r --argjson since "$SINCE_EPOCH" '
     def created_epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
-    if type != "array" then error("tracker output is not an array") else . end
+    if type != "array" then error("tracker-type expected=array actual=\(type)") else . end
     | [ .[]
       | if ((.created_at? | type) == "string" and (.created_at | length) > 0)
-        then . else error("tracker item has no created_at") end
+        then . else error("tracker-field field=created_at value=\(.created_at | tojson)") end
       | select((.created_at | created_epoch) >= $since)
       | if ((.id? | type) == "string" and (.id | test("^[A-Za-z0-9._-]+$")))
-        then .id else error("tracker item has no valid id") end ]
+        then .id else error("tracker-field field=id value=\(.id | tojson)") end ]
     | unique[]
   ' <<<"$out" 2>"$errf")" \
-    || die "could not parse tracker list output for team $LINEAR_TEAM: $(cat "$errf")"
+    || die tracker-list-invalid "$(cat "$errf")" "team=$LINEAR_TEAM"
   seen="$(awk -F'\t' '$1 == "triage" && NF == 2 { print $2 }' <<<"${PW_SEEN[0]}")"
   while IFS= read -r id; do
     [[ -n "$id" ]] || continue
@@ -560,9 +632,9 @@ item_state_dir() {
   # A CLI that fails is not a missing worktree: read as one, the state read
   # goes to this checkout, finds nothing, and the handoff is dropped.
   exists="$("$WORKTREE_CLI" exists "$item" 2>"$errf")" \
-    || die "worktree exists failed for $item: $(cat "$errf")"
+    || die worktree-query-failed "$(cat "$errf")" "operation=exists" "item=$item"
   if [[ "$exists" == "true" ]]; then
-    wt="$("$WORKTREE_CLI" path "$item")" || die "worktree path failed for $item"
+    wt="$("$WORKTREE_CLI" path "$item")" || die worktree-query-failed "" "operation=path" "item=$item"
     printf '%s/%s\n' "$wt" "$STATE_DIR_SETTING"
     return 0
   fi
@@ -588,7 +660,7 @@ check_handoff() {
       continue
     fi
     rec="$("$WORKFLOW_STATE" --state-dir "$dir" get "$item" '.handoff | select(type == "object" and .resumed_at == null) | tojson' 2>"$errf")" \
-      || die "could not read the handoff record for $item under $dir: $(cat "$errf")"
+      || die handoff-read-failed "$(cat "$errf")" "item=$item" "path=$dir"
     if [[ -z "$rec" ]]; then
       state="$(lane_row_clear handoff "$state" "$item")"
       continue
@@ -643,7 +715,7 @@ LANE_PROBE_NOTED=0
 note_probe_unusable() {
   [[ "$LANE_PROBE_NOTED" -eq 0 ]] || return 0
   LANE_PROBE_NOTED=1
-  echo "oversee-watch: could not list the children of the pane behind '$1' (pgrep -P exited $LANE_PROBE_RC); shell panes stay watched rather than reported exited" >&2
+  ow_message child-probe-failed "lane=$1" "exit=$LANE_PROBE_RC" >&2
 }
 
 # The pane lines strictly below the last user turn — the whole pane when the
@@ -687,7 +759,7 @@ lane_limit_banner() {
   local slice="$1" banner rc=0
   banner="$(grep -E -- "$USAGE_LIMIT_RE" <<<"$slice")" || rc=$?
   [[ "$rc" -le 1 ]] \
-    || die "could not search a lane's pane for a limit banner (grep exited $rc)"
+    || die limit-scan-failed "" "exit=$rc"
   [[ -n "$banner" ]] || return 0
   ! grep -Eq -- "$WORKING_RE" <<<"$slice" || return 0
   printf '%s\n' "$banner"
@@ -748,7 +820,7 @@ observe_lanes() {
     i=$((i + 1))
     capture="$(lane_pane_file "$i")"
     rm -f "$capture" "$capture.$$.tmp"
-    existing="$(lane_session_windows "$lane")" || die "tmux list-windows failed for '$lane': $existing"
+    existing="$(lane_session_windows "$lane")" || die window-list-failed "$existing" "lane=$lane"
     if ! grep -qxF -- "${lane#*:}" <<<"$existing"; then
       LANE_OBS+="$i"$'\t'"gone"$'\t\t\t\n'
       state="$(lane_row_clear lane-asking "$state" "$lane")"
@@ -759,21 +831,21 @@ observe_lanes() {
     fi
     errf="$WORK_DIR/lane-probe.$i.err"
     obs="$(tmux display-message -p -t "$lane" '#{pane_pid} #{pane_current_command}' 2>"$errf")" \
-      || die "pane command probe failed for '$lane': $(cat "$errf")"
+      || die pane-command-failed "$(cat "$errf")" "lane=$lane"
     [[ "$obs" =~ ^[0-9]+[[:blank:]]+[^[:space:]] ]] \
-      || die "pane command probe returned a malformed result for '$lane': ${obs:-<empty>}"
+      || die pane-command-invalid "" "lane=$lane" "value=${obs:-<empty>}"
     key="$(tmux display-message -p -t "$lane" '#{pid} #{pane_id}' 2>"$errf")" \
-      || die "pane identity probe failed for '$lane': $(cat "$errf")"
+      || die pane-identity-failed "$(cat "$errf")" "lane=$lane"
     [[ "$key" =~ ^[0-9]+[[:blank:]]+%[^[:space:]]+$ ]] \
-      || die "pane identity probe returned a malformed result for '$lane': ${key:-<empty>}"
+      || die pane-identity-invalid "" "lane=$lane" "value=${key:-<empty>}"
     # -J joins what tmux wrapped, as open-terminal already reads a pane:
     # without it a narrow window puts `resets ...` on a line of its own, which
     # is not a banner line, and the reset disappears with the pane's width.
     if ! tmux capture-pane -t "$lane" -pJ >"$capture.$$.tmp" 2>"$errf"; then
       rm -f "$capture.$$.tmp"
-      die "pane capture failed for '$lane': $(cat "$errf")"
+      die pane-capture-failed "$(cat "$errf")" "lane=$lane"
     fi
-    mv "$capture.$$.tmp" "$capture" || die "could not publish the pane capture behind '$lane'"
+    mv "$capture.$$.tmp" "$capture" || die pane-publish-failed "" "lane=$lane"
     pid="${obs%%[[:blank:]]*}"
     cmd="${obs#*[[:blank:]]}"
     LANE_OBS+="$i"$'\t'"ready"$'\t'"$pid"$'\t'"$cmd"$'\t'"$key"$'\n'
@@ -941,7 +1013,7 @@ check_lanes() {
       # claim's liveness uses — so no other lane can answer for it.
       claimed="$(lane_claims_config_dir "$claims" "${pane_key%% *}" "${pane_key##* }")"
       if [[ -z "$claimed" && -n "$claims" ]]; then
-        echo "oversee-watch: no live lane claim for the pane behind '$lane'; the usage-limit event names no account" >&2
+        ow_message claim-missing "lane=$lane" >&2
       fi
       echo "EVENT $event $lane${claimed:+ $claimed}$reset_note"
       [[ -z "$pane" ]] || pane_tail "$pane"
@@ -1027,7 +1099,7 @@ heartbeat() {
   for repo in "${REPOS[@]}"; do
     open="$(gh pr list --repo "$repo" --state open --limit 50 --json number,headRefName,title \
       --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>"$errf")" \
-      || die "gh pr list --state open failed for $repo: $(cat "$errf")"
+      || die pr-list-failed "$(cat "$errf")" "repo=$repo" "state=open"
     [[ -z "$open" ]] || open_all+="$(pw_prefix "$repo" "$open")"$'\n'
   done
   echo "EVENT heartbeat loops=$MAX_LOOPS interval=${INTERVAL}s since=${SINCE:-none}"
@@ -1049,7 +1121,7 @@ PASS_NOW=""
 PASS_EVENT=0
 while :; do
   loop=$((loop + 1))
-  PASS_NOW="$(date -u +%s)" || die "could not read the current UTC time"
+  PASS_NOW="$(date -u +%s)" || die time-failed "" "clock=UTC"
   PASS_EVENT=0
   observe_lanes
   check_pr_watch

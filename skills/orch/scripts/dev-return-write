@@ -73,8 +73,36 @@ source "$SCRIPT_DIR/lib/branch-growth.sh"
 # whitespace, so a value can never escape the tmp/ directory.
 ID_GRAMMAR='^[A-Za-z0-9._-]+$'
 
+# All refusals identify the reason and values before the explanation.
 die() {
-  printf '%s: %s\n' "$PROG" "$1" >&2
+  local reason="$1"
+  shift
+  {
+    printf '%s: %s' "$PROG" "$reason"
+    printf ' %s' "$@"
+    printf '\n'
+    case "$reason" in
+      missing-value) printf 'The option requires a value.\n' ;;
+      flag-value) printf 'The next option cannot be used as this option value.\n' ;;
+      duplicate) printf 'The option was supplied more than once.\n' ;;
+      required) printf 'The required option is absent or empty.\n' ;;
+      invalid-id) printf 'The ID must be safe for a file path.\n' ;;
+      item-arguments) printf 'An item needs its number, decision, and reasoning.\n' ;;
+      item-number) printf 'The item number must be a non-negative integer.\n' ;;
+      item-decision) printf 'The decision must be Applied, Skipped, or Blocked.\n' ;;
+      item-empty) printf 'The item reasoning is empty.\n' ;;
+      item-flag) printf 'An option cannot be used as item reasoning.\n' ;;
+      unknown-argument) printf 'The argument is not supported.\n' ;;
+      not-directory) printf 'The worktree path is not a directory.\n' ;;
+      invalid-kind) printf 'The kind must be implement or fix.\n' ;;
+      invalid-validate) printf 'The validation result must be pass or start with FAILING:.\n' ;;
+      empty-text) printf 'The text must contain a non-whitespace character.\n' ;;
+      summary-conflict) printf 'Supply one summary source.\n' ;;
+      missing-file) printf 'The summary file does not exist.\n' ;;
+      missing-items) printf 'A fix or bundled receipt must contain an item.\n' ;;
+      baseline-read) printf '%s\n' "$BRANCH_GROWTH_ERROR" ;;
+    esac
+  } >&2
   exit 2
 }
 
@@ -121,9 +149,9 @@ need() {
   # $1 = flag name, $2 = current argc ($#), $3 = the would-be value. A value
   # option needs at least 2 args, and the value must not be one of this
   # script's own flag tokens — that shape is a forgotten value, not a value.
-  (( $2 >= 2 )) || die "$1 requires a value"
+  (( $2 >= 2 )) || die missing-value "option=$1"
   if is_own_flag "$3"; then
-    die "$1 requires a value, got flag '$3' (value missing?)"
+    die flag-value "option=$1" "value=$3"
   fi
 }
 
@@ -132,16 +160,16 @@ no_dup() {
   # twice would silently last-win — the same quiet-misrecording class as the
   # summary-source precedence this writer refuses. Repeatable flags
   # (--qa-label, --item) never route through here.
-  [[ "$2" == "false" ]] || die "$1 supplied more than once"
+  [[ "$2" == "false" ]] || die duplicate "option=$1"
 }
 
 # Validate a path-forming token (--issue / --round-id): non-empty, matches the
 # path-safe grammar, and contains no '..'. Shared verbatim with dev-artifact-check.
 check_id_token() {
   # $1 = flag name, $2 = value.
-  [[ -n "$2" ]] || die "$1 is required (non-empty)"
+  [[ -n "$2" ]] || die required "option=$1"
   [[ "$2" =~ $ID_GRAMMAR && "$2" != *..* ]] \
-    || die "$1 '$2' must match ${ID_GRAMMAR} with no '..' (path-safe: no '/' or whitespace)"
+    || die invalid-id "option=$1" "value=$2"
 }
 
 worktree=""
@@ -192,25 +220,25 @@ while (( $# > 0 )); do
     --item)
       # Consumes exactly 3 args: N DECISION REASONING.
       if (( $# < 4 )); then
-        die "--item requires exactly 3 arguments: N DECISION REASONING"
+        die item-arguments "count=$(($# - 1))"
       fi
       n="$2"; decision="$3"; reasoning="$4"
       if ! [[ "$n" =~ ^[0-9]+$ ]]; then
-        die "--item N must be a non-negative integer, got '$n'"
+        die item-number "value=$n"
       fi
       case "$decision" in
         Applied|Skipped|Blocked) ;;
-        *) die "--item DECISION must be Applied|Skipped|Blocked, got '$decision'" ;;
+        *) die item-decision "value=$decision" ;;
       esac
       if [[ -z "$reasoning" ]]; then
-        die "--item REASONING must be non-empty (item $n)"
+        die item-empty "item=$n"
       fi
       # Same forgotten-value guard as need(): N and DECISION are already
       # domain-checked above, but a missing REASONING would otherwise swallow
       # the next flag as the recorded rationale. Prose merely beginning with
       # '--' stays legal — only this script's own flag tokens are rejected.
       if is_own_flag "$reasoning"; then
-        die "--item REASONING must be text, got flag '$reasoning' (item $n; value missing?)"
+        die item-flag "item=$n" "value=$reasoning"
       fi
       item_n+=("$n")
       item_decision+=("$decision")
@@ -218,30 +246,30 @@ while (( $# > 0 )); do
       shift 4
       ;;
     -h|--help) usage; exit 0 ;;
-    *) die "unknown argument: $1" ;;
+    *) die unknown-argument "argument=$1" ;;
   esac
 done
 
 # --- Validate required fields ---
-[[ -n "$worktree" ]] || die "--worktree is required"
-[[ -d "$worktree" ]] || die "--worktree path '$worktree' is not a directory"
+[[ -n "$worktree" ]] || die required option=--worktree
+[[ -d "$worktree" ]] || die not-directory "path=$worktree"
 case "$kind" in
   implement|fix) ;;
-  "") die "--kind is required (implement|fix)" ;;
-  *)  die "--kind must be implement or fix, got '$kind'" ;;
+  "") die required option=--kind ;;
+  *)  die invalid-kind "value=$kind" ;;
 esac
 check_id_token --issue "$issue"
 check_id_token --round-id "$round_id"
-[[ -n "$branch" ]]   || die "--branch is required (non-empty)"
-[[ -n "$commit" ]]   || die "--commit is required (non-empty)"
-[[ -n "$validate" ]] || die "--validate is required (non-empty)"
+[[ -n "$branch" ]]   || die required option=--branch
+[[ -n "$commit" ]]   || die required option=--commit
+[[ -n "$validate" ]] || die required option=--validate
 [[ "$validate" == "pass" || "$validate" == FAILING:* ]] \
-  || die "--validate must be 'pass' or begin with 'FAILING:', got '$validate'"
+  || die invalid-validate "value=$validate"
 # An empty or whitespace-only note is worse than none: it looks like a recorded
 # caveat while carrying nothing. Reject it rather than storing "".
 if [[ -n "${validate_note+set}" && -n "$validate_note" ]]; then
   [[ -n "${validate_note//[[:space:]]/}" ]] \
-    || die "--validate-note must contain non-whitespace text"
+    || die empty-text option=--validate-note
 fi
 # One summary source only — accepting both would need a precedence rule, and a
 # silently ignored flag is exactly the class of quiet misrecording this writer
@@ -249,31 +277,31 @@ fi
 # ''" (e.g. an empty path variable) is still a supplied second source, and
 # treating it as absent would silently drop the caller's intent.
 if [[ "$summary_given" == "true" && "$summary_file_given" == "true" ]]; then
-  die "--summary and --summary-file are mutually exclusive: provide one summary source"
+  die summary-conflict options=--summary,--summary-file
 fi
 if [[ "$summary_given" == "true" ]]; then
   # An empty or whitespace-only summary looks like a recorded deliverable while
   # carrying nothing — refuse it, matching the --validate-note rule.
   [[ -n "${summary_text//[[:space:]]/}" ]] \
-    || die "--summary must contain non-whitespace text"
+    || die empty-text option=--summary
 fi
 if [[ "$summary_file_given" == "true" ]]; then
   # An explicitly supplied empty path is a caller config error (typically an
   # unset path variable) — never a no-op.
-  [[ -n "$summary_file" ]] || die "--summary-file requires a non-empty path"
-  [[ -f "$summary_file" ]] || die "--summary-file path '$summary_file' does not exist"
+  [[ -n "$summary_file" ]] || die required option=--summary-file
+  [[ -f "$summary_file" ]] || die missing-file "path=$summary_file"
 fi
 
 # A fix or bundled artifact without items is incomplete — reject before writing.
 if [[ "$kind" == "fix" || "$bundled" == "true" ]]; then
   if (( ${#item_n[@]} == 0 )); then
-    die "at least one --item is required for --kind fix or --bundled"
+    die missing-items "kind=$kind" "bundled=$bundled" count=0
   fi
 fi
 
 if [[ "$kind" == "implement" ]]; then
   branch_baseline_lines "$worktree" "$SCRIPT_DIR/resolve-base-branch" "$commit" baseline_lines \
-    || die "$BRANCH_GROWTH_ERROR"
+    || die baseline-read "path=$worktree" "commit=$commit"
 fi
 
 # --- Build the two variable-length arrays deterministically with jq ---
