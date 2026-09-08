@@ -3,7 +3,8 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { buildInventory } from "../extensions/manager/inventory.ts";
-import { getConfigValue } from "../extensions/manager/settings.ts";
+import { applyMessage, managerNotice, parseSettingInput } from "../extensions/manager/format.ts";
+import { getConfigValue, getOrCreateRecord } from "../extensions/manager/settings.ts";
 import { EXTERNAL_CONFIG_RESOLVER_SYMBOL, type ExternalConfigResolver, type SettingsSchema } from "../extensions/manager/types.ts";
 
 const rootTmp = join(process.cwd(), "tmp", "pi-extension-manager-settings-tests");
@@ -89,29 +90,20 @@ test("a registered resolver supplies the value when no manager scope holds the k
 	expect(seen).toEqual([["enabled", project]]);
 });
 
-test("manager project scope outranks a registered resolver", () => {
-	const project = setupProject({ scope: "project", value: true });
-	registerResolver(() => ({ explicit: true, source: "~/.pi/agent/external.json", value: false }));
-
-	const config = getConfigValue(inventory(project), PACKAGE_ID, SCHEMA);
-	expect(config).toEqual({ explicit: true, scope: "project", value: true });
+test("manager scopes outrank a registered resolver", () => {
+	for (const scope of ["project", "user"] as const) {
+		const project = setupProject({ scope, value: true });
+		registerResolver(() => ({ explicit: true, source: "~/.pi/agent/external.json", value: false }));
+		expect(getConfigValue(inventory(project), PACKAGE_ID, SCHEMA)).toEqual({ explicit: true, scope, value: true });
+	}
 });
 
-test("manager user scope outranks a registered resolver", () => {
-	const project = setupProject({ scope: "user", value: true });
-	registerResolver(() => ({ explicit: true, source: "~/.pi/agent/external.json", value: false }));
-
-	const config = getConfigValue(inventory(project), PACKAGE_ID, SCHEMA);
-	expect(config).toEqual({ explicit: true, scope: "user", value: true });
-});
-
-test("a resolver that reports nothing falls back to the schema default", () => {
+test("a resolver without an explicit value falls back to the schema default", () => {
 	const project = setupProject();
-	registerResolver(() => undefined);
-	expect(getConfigValue(inventory(project), PACKAGE_ID, SCHEMA)).toEqual({ explicit: false, scope: "default", value: true });
-
-	registerResolver(() => ({ explicit: false, value: false }));
-	expect(getConfigValue(inventory(project), PACKAGE_ID, SCHEMA)).toEqual({ explicit: false, scope: "default", value: true });
+	for (const resolution of [undefined, { explicit: false, value: false }]) {
+		registerResolver(() => resolution);
+		expect(getConfigValue(inventory(project), PACKAGE_ID, SCHEMA)).toEqual({ explicit: false, scope: "default", value: true });
+	}
 });
 
 test("a throwing resolver falls back to the schema default instead of breaking the modal", () => {
@@ -149,4 +141,23 @@ test("resolver results are reused across reads of one inventory", () => {
 
 	expect(getConfigValue(inventory(project), PACKAGE_ID, SCHEMA).value).toBe(false);
 	expect(calls).toBe(2);
+});
+
+test("setting schema refusals and save notices expose stable keys and values", () => {
+	const refusals = [
+		{ schema: { key: "flag", type: "boolean" }, input: "maybe", firstLine: "pi-extension-manager: setting-boolean=flag" },
+		{ schema: { key: "limit", type: "number" }, input: "many", firstLine: "pi-extension-manager: setting-number=limit" },
+		{ schema: { key: "style", type: "enum", enumValues: ["plain"] }, input: "fancy", firstLine: "pi-extension-manager: setting-enum=style" },
+	] as const;
+	for (const row of refusals) {
+		expect(() => parseSettingInput(row.schema as SettingsSchema, row.input)).toThrow(row.firstLine);
+	}
+
+	const saveModes = ["live", "reload", "session", "restart"] as const;
+	for (const apply of saveModes) {
+		expect(applyMessage({ key: "style", type: "string", apply }).split("\n")[0]).toBe(`pi-extension-manager: setting-saved=style:${apply}`);
+	}
+
+	expect(() => getOrCreateRecord({ config: false }, "config")).toThrow("pi-extension-manager: object-required=config");
+	expect(managerNotice("sample", "line\nbreak", "details").split("\n")[0]).toBe("pi-extension-manager: sample=line?break");
 });

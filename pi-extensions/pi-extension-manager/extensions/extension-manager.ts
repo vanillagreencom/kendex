@@ -20,6 +20,7 @@ import {
 	mergedManagerState,
 	updateManagerState,
 } from "./manager/settings.js";
+import { managerNotice } from "./manager/format.js";
 import { kickNpmUpdateCheck } from "./manager/versions.js";
 import { INSTALL_SYMBOL, MANAGER_ID, KENDEX_OPEN_QUICK_SETTINGS_SYMBOL } from "./manager/types.js";
 
@@ -38,13 +39,13 @@ export default async function extensionManager(pi: ExtensionAPI): Promise<void> 
 			updateManagerState(file, (state) => {
 				state.config[MANAGER_ID] = { ...(state.config[MANAGER_ID] ?? {}), enabled: true };
 			});
-			ctx.ui.notify("Extension manager enabled. Run /reload to restore the full UI.", "info");
+			ctx.ui.notify(managerNotice("manager-enabled", MANAGER_ID, "Extension manager enabled. Run /reload to restore the full UI."), "info");
 		};
 		pi.registerCommand(host.commands.manager, {
 			description: "Extension manager recovery command.",
 			handler: async (args, ctx) => {
 				if (args.trim().toLowerCase() !== "enable") {
-					ctx.ui.notify(`Extension manager UI is disabled. Run /${host.commands.recover}, then /reload, to restore it.`, "warning");
+					ctx.ui.notify(managerNotice("manager-disabled", MANAGER_ID, `Extension manager UI is disabled. Run /${host.commands.recover}, then /reload, to restore it.`), "warning");
 					return;
 				}
 				await enableRecovery(ctx);
@@ -139,7 +140,7 @@ export default async function extensionManager(pi: ExtensionAPI): Promise<void> 
 					const suffix = withUpdates.length > 3 ? `, +${withUpdates.length - 3} more` : "";
 					message = `${withUpdates.length} extension updates available: ${names}${suffix}. Run /${host.commands.manager} for update commands.`;
 				}
-				(ctx as ExtensionContext).ui?.notify(message, "warning");
+				(ctx as ExtensionContext).ui?.notify(managerNotice("updates-available", withUpdates.length, message), "warning");
 			}
 		}
 	});

@@ -5,6 +5,7 @@ import {
 	ansiYellow,
 	applyMessage,
 	formatSettingValue,
+	managerNotice,
 	isPlainSearchInput,
 	nextSettingValue,
 	notifyReset,
@@ -142,11 +143,11 @@ function resetQuickSetting(pi: ExtensionAPI, ctx: ExtensionCommandContext | Exte
 	const config = getConfigValue(inventory, row.extensionId, row.schema);
 	const label = row.schema.label ?? row.schema.key;
 	if (!config.explicit) {
-		ctx.ui.notify(`${label} is already using its default.`, "info");
+		ctx.ui.notify(managerNotice("setting-default", row.schema.key, `${label} is already using its default.`), "info");
 		return;
 	}
 	if (!isManagerOwned(config)) {
-		ctx.ui.notify(`${label} is set by ${externalSource(config)} and cannot be reset from here. Edit that file, or press enter to override it in Pi settings.`, "warning");
+		ctx.ui.notify(managerNotice("setting-external", externalSource(config), `${label} cannot be reset here. Edit the source file, or press enter to override it in Pi settings.`), "warning");
 		return;
 	}
 	resetConfigKeys(inventory, row.extensionId, [row.schema.key]);
@@ -161,10 +162,10 @@ function resetQuickSettingsForExtension(pi: ExtensionAPI, ctx: ExtensionCommandC
 	if (managed.length === 0) {
 		if (external.length > 0) {
 			const sources = [...new Set(external.map((entry) => externalSource(entry.config)))].join(", ");
-			ctx.ui.notify(`${label} has no settings stored in Pi settings; ${external.length === 1 ? "1 value comes" : `${external.length} values come`} from ${sources}.`, "warning");
+			ctx.ui.notify(managerNotice("settings-external", `${extensionId}:${external.length}:${sources}`, `${label} has no settings stored in Pi settings.`), "warning");
 			return;
 		}
-		ctx.ui.notify(`${label} settings are already using defaults.`, "info");
+		ctx.ui.notify(managerNotice("settings-default", extensionId, `${label} settings are already using defaults.`), "info");
 		return;
 	}
 	resetConfigKeys(inventory, extensionId, managed.map((entry) => entry.row.schema.key));
@@ -172,7 +173,7 @@ function resetQuickSettingsForExtension(pi: ExtensionAPI, ctx: ExtensionCommandC
 	notifyReset(ctx, `${label} settings`, managed.map((entry) => entry.row.schema));
 	if (external.length > 0) {
 		const sources = [...new Set(external.map((entry) => externalSource(entry.config)))].join(", ");
-		ctx.ui.notify(`${external.length} ${label} value${external.length === 1 ? " is" : "s are"} still set by ${sources}.`, "warning");
+		ctx.ui.notify(managerNotice("settings-external-remain", `${extensionId}:${external.length}:${sources}`, `${label} still has values set by external files.`), "warning");
 	}
 }
 
@@ -233,7 +234,7 @@ function createQuickSettingsComponent(pi: ExtensionAPI, ctx: ExtensionCommandCon
 			ui.editing = undefined;
 			requestRender();
 		} catch (error) {
-			ctx.ui.notify(stringifyError(error), "error");
+			ctx.ui.notify(managerNotice("setting-save-failed", row.schema.key, stringifyError(error)), "error");
 		}
 	};
 
@@ -422,7 +423,7 @@ export async function openQuickSettings(pi: ExtensionAPI, ctx: ExtensionCommandC
 	await host.prepare(ctx.cwd);
 	const inventory = buildInventory(pi, ctx as ExtensionContext);
 	if (settingPackages(inventory).length === 0) {
-		ctx.ui.notify("No kendex extension settings are declared by installed packages.", "info");
+		ctx.ui.notify(managerNotice("settings-packages", 0, "No kendex extension settings are declared by installed packages."), "info");
 		return;
 	}
 	let initialTab: TopTab = TAB_ALL;
@@ -430,7 +431,7 @@ export async function openQuickSettings(pi: ExtensionAPI, ctx: ExtensionCommandC
 		const tabs = quickSettingsTabs(quickSettingRows(inventory));
 		const resolved = resolveQuickSettingsTab(tabs, initialTabHint);
 		if (resolved) initialTab = resolved;
-		else ctx.ui.notify(`No settings tab matches "${initialTabHint}". Showing All.`, "warning");
+		else ctx.ui.notify(managerNotice("settings-tab-missing", initialTabHint, "No matching settings tab exists. Showing All."), "warning");
 	}
 	const ui: QuickSettingsUiState = { scroll: 0, search: "", selected: 0, tab: initialTab };
 	const releaseModalLock = acquirekendexModalLock();

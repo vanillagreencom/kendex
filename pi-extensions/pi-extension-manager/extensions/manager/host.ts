@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
+import { managerNotice, stringifyError } from "./format.js";
 import { findProjectPiDir, rootAnchored, userPiDir } from "./paths.js";
 import { MANAGER_ID, type InventoryItem, type PackageManifest, type SettingsFile } from "./types.js";
 
@@ -16,7 +17,7 @@ export interface OmpRuntime {
 type Context = { cwd: string; isProjectTrusted?: () => boolean };
 
 function record(value: unknown, label: string): Record<string, unknown> {
-	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(managerNotice("object-required", label, "Expected an object."));
 	return value as Record<string, unknown>;
 }
 
@@ -26,7 +27,7 @@ function optionalRecord(value: unknown, label: string): Record<string, unknown> 
 
 function strings(value: unknown, label: string): string[] {
 	if (value === undefined) return [];
-	if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) throw new Error(`${label} must be a string array`);
+	if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) throw new Error(managerNotice("string-array-required", label, "Expected an array of strings."));
 	return value;
 }
 
@@ -64,7 +65,12 @@ export class HostAdapter {
 	read(path: string): Record<string, unknown> {
 		if (!existsSync(path)) return {};
 		const text = readFileSync(path, "utf8");
-		const parsed = this.omp && /\.ya?ml$/.test(path) ? this.omp.YAML.parse(text) : JSON.parse(text);
+		let parsed: unknown;
+		try {
+			parsed = this.omp && /\.ya?ml$/.test(path) ? this.omp.YAML.parse(text) : JSON.parse(text);
+		} catch (error) {
+			throw new Error(managerNotice("config-parse", path, stringifyError(error)));
+		}
 		const json = record(parsed, path);
 		const kendex = optionalRecord(json.kendex, `${path}: kendex`);
 		const manager = optionalRecord(kendex.extensionManager, `${path}: extensionManager`);
@@ -94,7 +100,7 @@ export class HostAdapter {
 	}
 
 	write(file: SettingsFile): void {
-		if (file.projectTrusted === false) throw new Error(`Project settings are not trusted: ${file.path}`);
+		if (file.projectTrusted === false) throw new Error(managerNotice("project-untrusted", file.path, "Project settings are not trusted."));
 		// Revalidate before writing: malformed persisted input is never replaced with defaults.
 		this.read(file.path);
 		const text = this.omp && /\.ya?ml$/.test(file.path) ? this.omp.YAML.stringify(file.json) : JSON.stringify(file.json, null, 2);
@@ -122,7 +128,7 @@ export class HostAdapter {
 	settingsSupported(packageName: string): boolean { return !this.omp || packageName === MANAGER_ID; }
 
 	assertSettingsSupported(packageName: string): void {
-		if (!this.settingsSupported(packageName)) throw new Error("Settings for other extensions are unsupported on this host; use the owning extension's settings.");
+		if (!this.settingsSupported(packageName)) throw new Error(managerNotice("settings-unsupported", packageName, "Use the owning extension to change its settings on this host."));
 	}
 
 	private lock(path: string): Record<string, unknown> {
@@ -130,7 +136,7 @@ export class HostAdapter {
 		const plugins = optionalRecord(json.plugins, `${path}: plugins`);
 		for (const [name, value] of Object.entries(plugins)) {
 			const state = record(value, `${path}: ${name}`);
-			if (typeof state.enabled !== "boolean") throw new Error(`${path}: ${name}.enabled must be boolean`);
+			if (typeof state.enabled !== "boolean") throw new Error(managerNotice("boolean-required", `${path}: ${name}.enabled`, "Expected a boolean."));
 			if (state.enabledFeatures !== null) strings(state.enabledFeatures, `${path}: ${name}.enabledFeatures`);
 		}
 		return json;
@@ -139,7 +145,7 @@ export class HostAdapter {
 	/** Undefined selects Pi's package-settings inventory, not an empty native inventory. */
 	installedItems(cwd: string): InventoryItem[] | undefined {
 		if (!this.omp) return undefined;
-		if (!this.projectRoots.has(cwd)) throw new Error("Host project paths have not been prepared");
+		if (!this.projectRoots.has(cwd)) throw new Error(managerNotice("project-unprepared", cwd, "Host project paths have not been prepared."));
 		const registry = this.projectRoots.get(cwd);
 		const userRoot = this.omp.getPluginsDir();
 		const roots: { root: string; scope: "user" | "project" }[] = [{ root: userRoot, scope: "user" }];
@@ -212,8 +218,8 @@ export class HostAdapter {
 	/** A refusal shared by the action handler and its UI hint. */
 	toggleUnavailable(item: InventoryItem): string | undefined {
 		if (!this.omp) return undefined;
-		if (item.kind !== "package" || !item.packageName || item.state === "shadowed" || typeof item.metadata?.lockPath !== "string") return "Module and shadowed-item toggles are unsupported; use the host extension controls.";
-		if (item.metadata.suppressed) return `Enable is blocked by project plugin overrides: ${item.metadata.overridesPath}`;
+		if (item.kind !== "package" || !item.packageName || item.state === "shadowed" || typeof item.metadata?.lockPath !== "string") return managerNotice("toggle-unsupported", item.id, "Use the host extension controls to change modules or shadowed items.");
+		if (item.metadata.suppressed) return managerNotice("plugin-override", String(item.metadata.overridesPath), "Project plugin overrides block enablement.");
 		return undefined;
 	}
 
@@ -238,7 +244,7 @@ export let host = new HostAdapter();
 
 /** Select by runtime API, never by the existence of another host's directories. */
 export async function selectHost(runtime: Record<string, unknown>, loadOmp: () => Promise<OmpRuntime>): Promise<HostAdapter> {
-	if (typeof runtime.getAgentDir !== "function") throw new Error("Unsupported host: missing getAgentDir");
+	if (typeof runtime.getAgentDir !== "function") throw new Error(managerNotice("host-api-missing", "getAgentDir", "The host does not provide getAgentDir."));
 	const agent = runtime.getAgentDir as () => string;
 	if (typeof runtime.Settings === "function") return host = new HostAdapter(agent, await loadOmp());
 	if (typeof runtime.SettingsManager === "function") {
@@ -247,7 +253,7 @@ export async function selectHost(runtime: Record<string, unknown>, loadOmp: () =
 			return rootAnchored(reported, process.platform === "win32") ? resolve(reported) : userPiDir();
 		});
 	}
-	throw new Error("Unsupported host settings API");
+	throw new Error(managerNotice("host-api-missing", "settings", "The host settings API is unsupported."));
 }
 
 export async function initializeHost(): Promise<void> {

@@ -8,8 +8,7 @@ const fixture = join(import.meta.dir, "fixtures", "bootstrap.ts");
 test("runtime bootstrap registers host commands and recovery updates the global layer", async () => {
 	mkdirSync(root, { recursive: true });
 	try {
-		for (const kind of ["pi", "omp"]) {
-			for (const mode of ["enabled", "disabled"]) {
+		for (const [kind, mode] of [["pi", "enabled"], ["pi", "disabled"], ["omp", "enabled"], ["omp", "disabled"]]) {
 				const home = join(root, `${kind}-${mode}`);
 				const child = Bun.spawn([process.execPath, fixture, home, kind, mode], {
 					stdout: "ignore", stderr: "pipe", timeout: 10_000,
@@ -18,7 +17,6 @@ test("runtime bootstrap registers host commands and recovery updates the global 
 				const stderr = await new Response(child.stderr).text();
 				const status = await child.exited;
 				expect({ kind, mode, status, stderr }).toEqual({ kind, mode, status: 0, stderr: "" });
-			}
 		}
 	} finally {
 		rmSync(root, { recursive: true, force: true });

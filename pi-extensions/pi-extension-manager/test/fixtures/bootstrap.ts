@@ -35,7 +35,11 @@ await extensionManager(api as never);
 const manager = kind === "omp" ? "kendex:extensions" : "extensions";
 assert.deepEqual([...commands.keys()], mode === "disabled" ? [manager, `${manager}:enable`] : [manager, `${manager}:settings`]);
 if (mode === "disabled") {
-	await commands.get(`${manager}:enable`)!.handler("", { cwd, isProjectTrusted: () => true, ui: { notify() {} } });
+	const notices: string[] = [];
+	const ctx = { cwd, isProjectTrusted: () => true, ui: { notify(message: string) { notices.push(message.split("\n")[0]); } } };
+	await commands.get(manager)!.handler("", ctx);
+	await commands.get(`${manager}:enable`)!.handler("", ctx);
+	assert.deepEqual(notices, ["pi-extension-manager: manager-disabled=@vanillagreen/pi-extension-manager", "pi-extension-manager: manager-enabled=@vanillagreen/pi-extension-manager"]);
 	const parsed = (kind === "omp" ? YAML.parse : JSON.parse)(readFileSync(userPath, "utf8")) as ReturnType<typeof config>;
 	assert.equal(parsed.kendex.extensionManager.config["@vanillagreen/pi-extension-manager"].enabled, true);
 	assert.deepEqual(parsed.unknown, { keep: true });

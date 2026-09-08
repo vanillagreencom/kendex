@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { spawnSync as realSpawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -100,12 +100,14 @@ test("npm update and uninstall execution use configured npmCommand and scope-loc
 
 	const update = planUpdate(item, inv, { cwd: project } as never)!;
 	expect(update.command).toContain("'mise' 'exec' 'node@22.19' '--' 'npm' install @scope/pkg@latest");
-	expect(runUpdate(update).ok).toBe(true);
+	const updated = runUpdate(update);
+	expect([updated.ok, updated.message.split("\n")[0]]).toEqual([true, "pi-extension-manager: npm-updated=@scope/pkg"]);
 	expect(spawnSyncMock).toHaveBeenLastCalledWith("mise", ["exec", "node@22.19", "--", "npm", "install", "@scope/pkg@latest"], expect.objectContaining({ cwd: npmDir }));
 
 	const uninstall = planUninstall(item, inv, { cwd: project } as never)!;
 	expect(uninstall.command).toContain("'mise' 'exec' 'node@22.19' '--' 'npm' uninstall @scope/pkg");
-	expect(runUninstall(uninstall, inv).ok).toBe(true);
+	const removed = runUninstall(uninstall, inv);
+	expect([removed.ok, removed.message.split("\n")[0]]).toEqual([true, "pi-extension-manager: npm-uninstalled=@scope/pkg"]);
 	expect(spawnSyncMock).toHaveBeenLastCalledWith("mise", ["exec", "node@22.19", "--", "npm", "uninstall", "@scope/pkg"], expect.objectContaining({ cwd: npmDir }));
 });
 
@@ -122,7 +124,7 @@ test("npm update reports cwd preparation failures", async () => {
 		description: "",
 	});
 	expect(result.ok).toBe(false);
-	expect(result.message).toContain("Failed to prepare npm working directory");
+	expect(result.message.split("\n")[0]).toBe(`pi-extension-manager: npm-cwd=${badCwd}`);
 	expect(spawnSyncMock).not.toHaveBeenCalled();
 });
 
@@ -142,7 +144,7 @@ test("invalid npmCommand is surfaced in npm action plans", async () => {
 	item.updateSource = "npm";
 	item.npmName = "@scope/bad-command";
 	const plan = planUpdate(item, inv, { cwd: project } as never)!;
-	expect(plan.description).toContain("invalid npmCommand");
+	expect(plan.description.split("\n")[0]).toBe("pi-extension-manager: npm-command-invalid=user");
 });
 
 // The strip has to precede `npm uninstall`: npm 7+ does not reliably run a
@@ -209,4 +211,21 @@ test("toggling a package under the kendex packages/ layout writes and removes it
 	const on = buildInventory({} as never, ctx);
 	toggleItem({} as never, ctx, on, on.packages.find((pkg) => pkg.packageName === "@scope/clonepkg")!);
 	expect(readFileSync(target, "utf8")).toContain("Append pkg instructions");
+});
+
+test("append-system launch failures expose the action and script path", async () => {
+	const packageDir = join(rootTmp, "append-launch");
+	mkdirSync(join(packageDir, "scripts"), { recursive: true });
+	writeFileSync(join(packageDir, "scripts", "append-system.mjs"), "");
+	spawnSyncMock.mockImplementation(() => ({ status: null, stdout: "", stderr: "", error: new Error("node unavailable"), signal: null, output: [], pid: 0 }));
+	await useSpawnMock();
+	const warning = spyOn(console, "warn").mockImplementation(() => {});
+	try {
+		const { syncAppendSystemForPackage } = await import("../extensions/manager/append-system.ts");
+		syncAppendSystemForPackage({ kind: "package", packageName: "@scope/append", packageDir } as never, false);
+		expect(warning).toHaveBeenCalledTimes(1);
+		expect(String(warning.mock.calls[0]![0]).split("\n")[0]).toBe(`pi-extension-manager: append-system-launch=install:${join(packageDir, "scripts", "append-system.mjs")}`);
+	} finally {
+		warning.mockRestore();
+	}
 });
