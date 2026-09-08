@@ -39,7 +39,9 @@ run_pf() { # [args...] — run in $R; sets OUT and RC
 # The finding heads in `$OUT`, in output order, one per line: the
 # `path:line: [lane]` prefix of every line of that shape, never the message.
 # A row compares this whole, so a fixture that also trips a neighbouring lane
-# cannot pass on the finding it planted.
+# cannot pass on the finding it planted. The contract is the paths every
+# fixture here produces: a head whose path carries a space is not read, so a
+# row over such a path would see an empty list rather than its finding.
 pf_fired() {
   printf '%s\n' "$OUT" | sed -n 's/^\([^ :][^ ]*:[0-9][0-9]*: \[[a-z-]*\]\).*/\1/p'
 }
@@ -68,18 +70,17 @@ pf_needs_absent() { # NEEDS
 # `argv` is `-` or the preflight flags, `needs` is `-` or a tool
 # (`pf_needs_absent`), `rc` is exact, `fired` is the exact ordered
 # `;`-separated list of finding heads the run must print (`-` for none),
-# compared whole against `pf_fired`; a leading `~` makes it a containment pin
-# (each listed head present, absent heads allowed), for a world whose
-# incidental finding is ruled out of the row. `says` is `;`-separated
-# fragments `$OUT` must carry, or `-`; it is the last field, so `read` keeps
-# a `|` inside it. A row with an empty field asserts
-# nothing and refuses the run; a world that cannot be built refuses it too;
-# a table that asserted no row exits 2 from its own counter, so a fixture
-# failure or a probe run never reads as green. `PF_TABLE_PROBE=1` renders
-# each row's status, fired list and finding lines instead of asserting.
+# compared whole against `pf_fired`. `says` is `;`-separated fragments `$OUT`
+# must carry, or `-`; it is the last field, so `read` keeps a `|` inside it.
+# A row with an empty field asserts nothing and refuses the run, as does a
+# world word `pf_world` does not know or any failure its return status
+# carries; a table that asserted no row exits 2 from its own counter, so a
+# fixture failure or a probe run never reads as green. `PF_TABLE_PROBE=1`
+# renders each row's status, fired list and finding lines instead of
+# asserting.
 pf_table() {
   local title="$1" rows="$2" row label world argv needs rc fired says
-  local field before reason got want head miss frag lines
+  local field before reason got miss frag lines
   before=$((PASS + FAIL))
   printf '=== %s ===\n' "$title"
   while IFS= read -r row; do
@@ -114,28 +115,10 @@ EOF
       bad "$label" "want rc=$rc; got rc=$RC fired=$got: $(printf '%s' "$OUT" | tr '\n' ' ')"
       continue
     fi
-    case "$fired" in
-      '~'*)
-        want="${fired#'~'}"
-        miss=""
-        while IFS= read -r head; do
-          [ -n "$head" ] || continue
-          case ";$got;" in *";$head;"*) ;; *) miss="${miss:+$miss;}$head" ;; esac
-        done <<EOF
-$(printf '%s\n' "$want" | tr ';' '\n')
-EOF
-        if [ -n "$miss" ]; then
-          bad "$label" "fired list lacks [$miss]; fired: $got"
-          continue
-        fi
-        ;;
-      *)
-        if [ "$got" != "$fired" ]; then
-          bad "$label" "want fired=$fired; got fired=$got"
-          continue
-        fi
-        ;;
-    esac
+    if [ "$got" != "$fired" ]; then
+      bad "$label" "want fired=$fired; got fired=$got"
+      continue
+    fi
     miss=""
     if [ "$says" != - ]; then
       while IFS= read -r frag; do

@@ -60,9 +60,9 @@ YML
 pf_world() {
   seed "$1"
   case "$1" in
-    syntax) printf '#!/usr/bin/env bash\nset -euo pipefail\necho "unterminated\n' >"$R/scripts/broken.sh" ;;
+    syntax) printf '#!/usr/bin/env bash\nset -euo pipefail\nif [ 1 = 1 ]; then\n' >"$R/scripts/broken.sh" ;;
     scerror) printf '#!/usr/bin/env bash\nset -euo pipefail\nexit 300\n' >"$R/scripts/exitcode.sh" ;;
-    masked) printf '#!/usr/bin/env bash\nset -euo pipefail\nf() {\n  local d="$(mktemp -d)"\n  echo "$d"\n}\nf\n' >"$R/scripts/masked.sh" ;;
+    masked) printf '#!/usr/bin/env bash\nset -euo pipefail\ntrap '"'"'echo done'"'"' EXIT\nf() {\n  local d="$(mktemp -d)"\n  echo "$d"\n}\nf\n' >"$R/scripts/masked.sh" ;;
     mktemp) printf '#!/usr/bin/env bash\necho loose\nTMP="$(mktemp -d)"\necho "$TMP"\n' >"$R/scripts/loose.sh" ;;
     strict) printf '#!/usr/bin/env bash\necho fresh\n' >"$R/scripts/fresh.sh" ;;
     swallow) printf '#!/usr/bin/env bash\nset -euo pipefail\necho existing\ngrep -q x -- "$1" || true\n' >"$R/scripts/existing.sh" ;;
@@ -162,9 +162,9 @@ pf_world() {
 # look-ahead claim is the distance between line 3 and line 7 of `bare.sh`,
 # which one planted assignment shows on its own.
 IFS= read -r -d '' rows <<'ROWS' || :
-an unparseable new script fails, attributed to shell-syntax|syntax|-|-|1|scripts/broken.sh:3: [shell-syntax]|-
+an unparseable new script fails, attributed to shell-syntax|syntax|-|-|1|scripts/broken.sh:4: [shell-syntax]|-
 an out-of-range exit status fails as a shellcheck error|scerror|-|shellcheck|1|scripts/exitcode.sh:3: [shellcheck-errors]|SC2242
-a masking local-and-assign fails on the line that introduced it|masked|-|shellcheck|1|~scripts/masked.sh:4: [masked-returns]|SC2155
+a masking local-and-assign fails on the line that introduced it|masked|-|shellcheck|1|scripts/masked.sh:5: [masked-returns]|SC2155
 an mktemp assignment in an errexit-less file fails as fail-open|mktemp|-|-|1|scripts/loose.sh:3: [fail-open]|unchecked mktemp
 a new script that never sets -e/-u/pipefail fails as fail-open|strict|-|-|1|scripts/fresh.sh:0: [fail-open]|new shell file without strict mode
 a grep whose status or-true drops fails as fail-open, naming the command|swallow|-|-|1|scripts/existing.sh:4: [fail-open]|grep || true swallows exit 2
