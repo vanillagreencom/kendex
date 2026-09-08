@@ -74,6 +74,11 @@ resolve() {
 #            exits 1
 observe() {
   local got="" token name value needle
+  # $1 is split on whitespace into fields; pathname expansion must not also
+  # rewrite a token, so a bracket in an err~ phrase can never match a file in
+  # the caller's working directory. The call sites are command substitutions,
+  # so this stays inside the subshell.
+  set -f
   for token in $1; do
     name="${token%%=*}"
     case "$name" in
@@ -233,7 +238,7 @@ world_table \
   ".env.local beats both settings files|$ROOT|[env];REVIEW_GATE_TP = \"nested\"|REVIEW_GATE_TP=dotenv;REVIEW_GATE_MODE=enforce|unset|REVIEW_GATE_TP|dflt||rc=0 out=dotenv" \
   "REVIEW_GATE_MODE ignores .env.local and reads the settings file|$ROOT|[env];REVIEW_GATE_TP = \"nested\"|REVIEW_GATE_TP=dotenv;REVIEW_GATE_MODE=enforce|unset|REVIEW_GATE_MODE|enforce||rc=0 out=off" \
   'REVIEW_GATE_MODE ignores the machine-local .kendex/settings.toml|[env];REVIEW_GATE_TP = "root"|[env];REVIEW_GATE_MODE = "off"|REVIEW_GATE_TP=dotenv;REVIEW_GATE_MODE=enforce|unset|REVIEW_GATE_MODE|enforce||rc=0 out=enforce' \
-  'REVIEW_GATE_MODE falls to the default over a dotenv-only value|[env];REVIEW_GATE_TP = "root"|-|REVIEW_GATE_TP=dotenv;REVIEW_GATE_MODE=enforce|unset|REVIEW_GATE_MODE|enforce||rc=0 out=enforce' \
+  'REVIEW_GATE_MODE falls to the default over a dotenv-only value|[env];REVIEW_GATE_TP = "root"|-|REVIEW_GATE_TP=dotenv;REVIEW_GATE_MODE=off|unset|REVIEW_GATE_MODE|enforce||rc=0 out=enforce' \
   'a double-quoted dotenv value with a trailing comment extracts the content|[env];REVIEW_GATE_TP = "root"|-|REVIEW_GATE_TD="spaced value" # note|unset|REVIEW_GATE_TD|dflt||rc=0 out=spaced+value' \
   'a quote inside the trailing comment never leaks into the value|[env];REVIEW_GATE_TP = "root"|-|REVIEW_GATE_TD="900" # say "quiet"|unset|REVIEW_GATE_TD|dflt||rc=0 out=900' \
   'an export-form dotenv assignment is recognized|[env];REVIEW_GATE_TP = "root"|-|export REVIEW_GATE_TD=42|unset|REVIEW_GATE_TD|dflt||rc=0 out=42' \
