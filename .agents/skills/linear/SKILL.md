@@ -68,6 +68,16 @@ The cache is `.cache/linear` under the physical worktree root ([README.md](READM
 
 `LINEAR_API_KEY` belongs in `.env.local`; non-secret defaults in committed `kendex.settings.toml` `[env]`. A key from project files beats one inherited from the environment, and `auth-check` warns (fingerprints only) when it shadows a differing inherited key.
 
+## Shared label maintenance
+
+`LINEAR_TEAM` requires a target before writes; it does not restrict an API key or check a label's owning team. `auth-check` verifies authentication and the local target, not the key's permission mask. Inspect key permissions in Linear settings; report fingerprints only.
+
+Before changing a label definition, read its ID, team, parent and group status. An empty team means workspace scope. Read issue use across affected teams and check references in their manifests, scripts, gates and generated instructions. A team-restricted key cannot establish workspace-wide issue use.
+
+The workspace owner coordinates shared label changes with affected repository maintainers. A repository taxonomy names that owner. Keep generic labels shared and project-specific labels team-scoped. Obtain approval for the concrete affected set and the exact proposed change before any shared-label definition change, replacement or deletion. Issue-label assignment authority does not authorize changing a shared label definition.
+
+Prepare dependent repository corrections before the label change. After an authorized change, refresh each affected inventory, render instructions from their source, and run its taxonomy and repository checks. Record the label IDs, issue assignments and repository commits together. If the API cannot change scope, prepare a replacement plan with history and recovery limits before requesting migration approval.
+
 ## Issue Creation Routing
 
 Never create a tracked issue directly from an orchestration or review session. Route it through the TPM pipeline (project-management skill), which owns labels, project, priority, estimate, and relations.
