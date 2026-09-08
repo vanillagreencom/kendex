@@ -121,32 +121,36 @@ settings
 # Every payload shape a shipped harness sends, each counted as a row rather
 # than a bare FAIL: the two spellings of the command field, an argument array,
 # and Copilot's object and string forms in both directions.
-shape() { # EXPECTED PAYLOAD_JSON LABEL
-  local expected="$1" payload="$2" label="$3" status=0 output
+shape() { # EXPECTED FIRST PAYLOAD_JSON LABEL
+  local expected="$1" want_first="$2" payload="$3" label="$4" status=0 output
   output="$(printf '%s' "$payload" | bash "$hook" 2>"$scratch/stderr")" || status=$?
   first="$(first_line "$scratch/stderr")"
   cause="$(cause_below "$scratch/stderr")"
-  if [ "$status" -eq "$expected" ]; then
+  # The status alone cannot tell a refusal for the right reason from one for
+  # the wrong reason, and every shape here is meant to reach the policy.
+  if [ "$status" -eq "$expected" ] && [ "$first" = "$want_first" ]; then
     printf 'PASS %s\n' "$label"
     passed=$((passed + 1))
   else
-    printf 'FAIL %s: exit %s, expected %s: %s%s\n' "$label" "$status" "$expected" "$output" "$(cat "$scratch/stderr")"
+    printf 'FAIL %s: exit %s (want %s), first %s (want %s)\n' \
+      "$label" "$status" "$expected" "$first" "$want_first"
     failed=$((failed + 1))
   fi
 }
 # The table counts its own rows: an emptied row list is a refusal, never a
 # silently shorter run.
 before=$((passed + failed))
-while IFS='|' read -r expected filter label; do
+while IFS='|' read -r expected want_first filter label; do
   [ -n "$expected" ] || continue
-  shape "$expected" "$(jq -nc --arg cwd "$repo" "$filter")" "$label"
+  [ "$want_first" != - ] || want_first='-'
+  shape "$expected" "$want_first" "$(jq -nc --arg cwd "$repo" "$filter")" "$label"
 done <<'SHAPES'
-2|{tool_input:{cmd:"qs -c vshell"},cwd:$cwd}|a refused command under the cmd field
-2|{tool_input:{command:["qs","-c","vshell"]},cwd:$cwd}|a refused command as an argument array
-2|{toolName:"bash",toolArgs:{command:"qs -c vshell"},cwd:$cwd}|a refused command under a Copilot toolArgs object
-0|{toolName:"bash",toolArgs:{command:"git status"},cwd:$cwd}|an allowed command under a Copilot toolArgs object
-2|{toolName:"bash",toolArgs:"{\"command\":\"qs -c vshell\"}",cwd:$cwd}|a refused command under a Copilot toolArgs string
-0|{toolName:"bash",toolArgs:"{\"command\":\"git status\"}",cwd:$cwd}|an allowed command under a Copilot toolArgs string
+2|command-safety: refused=policy|{tool_input:{cmd:"qs -c vshell"},cwd:$cwd}|a refused command under the cmd field
+2|command-safety: refused=policy|{tool_input:{command:["qs","-c","vshell"]},cwd:$cwd}|a refused command as an argument array
+2|command-safety: refused=policy|{toolName:"bash",toolArgs:{command:"qs -c vshell"},cwd:$cwd}|a refused command under a Copilot toolArgs object
+0|-|{toolName:"bash",toolArgs:{command:"git status"},cwd:$cwd}|an allowed command under a Copilot toolArgs object
+2|command-safety: refused=policy|{toolName:"bash",toolArgs:"{\"command\":\"qs -c vshell\"}",cwd:$cwd}|a refused command under a Copilot toolArgs string
+0|-|{toolName:"bash",toolArgs:"{\"command\":\"git status\"}",cwd:$cwd}|an allowed command under a Copilot toolArgs string
 SHAPES
 [ "$((passed + failed))" -gt "$before" ] || { printf 'FAIL no payload shape was asserted\n'; failed=$((failed + 1)); }
 
@@ -212,8 +216,7 @@ settings
 before=$((passed + failed))
 while IFS='|' read -r payload label; do
   [ -n "$payload" ] || continue
-  shape 2 "$payload" "$label"
-  assert_first 'command-safety: payload=invalid-json' "the payload key names it: $label"
+  shape 2 'command-safety: payload=invalid-json' "$payload" "$label"
 done <<'PAYLOADS'
 not JSON|a payload that is not JSON is refused unread
 {"tool_input":{"command":false}}|a command that is not a string is refused unread

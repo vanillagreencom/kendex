@@ -35,7 +35,10 @@
 #   rc       the exit status
 #   first    line 1, the hook's own name stripped: every hook opens with
 #            `<hook-name>: <key>=<value>` and replays a captured cause under
-#            it, so position 1 is the contract, and the reader's
+#            it, so position 1 is the contract. A line 1 that is not this
+#            hook's keyed line, or carries no `key=value`, is `malformed` — a
+#            value no row expects, so a diagnostic in front of the key reddens
+#            the row instead of passing as `refusal`. The reader's
 #            own keys are the same in every hook, so `payload=invalid-json` and
 #            `missing-tools=jq` are pinned here as the values themselves.
 #            `{tools}` stands for PAYLOAD_TOOLS, the whole dependency list of
@@ -96,19 +99,24 @@ payload_world() { # name tool... -> a directory holding those tools and nothing 
   done
 }
 
-payload_first() { # -> line 1's key=value, or `refusal`
+payload_first() { # -> line 1's key=value, `refusal`, or `malformed`
   local line="" kv
   # One line, read in the shell: a `head` here would stop reading while the
   # writer still writes, and its SIGPIPE would read as an empty stderr.
   IFS= read -r line <"$PAYLOAD_ROOT/stderr" || :
   [ -n "$line" ] || { printf -- '-'; return; }
+  # Not this hook's keyed line at all: `malformed`, never `refusal`. The two
+  # were the same value once, and a diagnostic standing where the key belongs
+  # then passed as the hook's own refusal.
   case "$line" in
     "$PAYLOAD_PREFIX"*) kv="${line#"$PAYLOAD_PREFIX"}" ;;
-    *) printf 'refusal'; return ;;
+    *) printf 'malformed'; return ;;
   esac
   case "$kv" in
     missing-tools=* | payload=*) printf '%s' "$kv" ;;
-    *) printf 'refusal' ;;
+    # The hook's own key for the command it read; the hook's suite pins which.
+    *=*) printf 'refusal' ;;
+    *) printf 'malformed' ;;
   esac
 }
 
