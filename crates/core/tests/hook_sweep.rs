@@ -156,40 +156,30 @@ fn sweep(f: &Fixture) -> kendex_core::engine::EngineReport {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_sweep_proves_an_anchored_hook_before_taking_it() {
-    for state in ["edited", "untouched"] {
+    for edited in [true, false] {
         let f = fixture();
         apply_now(&f);
         let script = f.project.join(".claude/hooks/guard.sh");
         assert!(script.is_file());
-        if state == "edited" {
+        if edited {
             fs::write(&script, GUARD.replace("exit 0", "exit 1")).unwrap();
         }
 
         undeclare(&f);
         let report = sweep(&f);
         apply::execute(&f.env, &report.plan).unwrap();
-
-        match state {
-            "edited" => {
-                assert!(
-                    report.drift.iter().any(|row| row.detail.contains("edited")),
-                    "their edit is a conflict, not a casualty: {:?}",
-                    report.drift
-                );
-                assert!(script.is_file(), "and the edited script stays");
-            }
-            _ => {
-                assert!(
-                    report
-                        .drift
-                        .iter()
-                        .all(|row| !row.detail.contains("edited")),
-                    "untouched bytes are provably ours: {:?}",
-                    report.drift
-                );
-                assert!(!script.exists(), "so the sweep takes them");
-            }
-        }
+        assert_eq!(
+            (
+                report
+                    .drift
+                    .iter()
+                    .any(|row| row.cause == Some(DriftCause::LocalEdit)),
+                script.exists(),
+            ),
+            (edited, edited),
+            "edited={edited}: {:?}",
+            report.drift,
+        );
     }
 }
 
@@ -212,11 +202,16 @@ fn the_sweep_holds_a_hook_whose_current_record_has_no_anchor() {
         // the registration is really in: unwrapping a wrong path to an
         // empty string would pass the after-check on nothing at all.
         let registry = harness.registry(&f.project);
-        assert!(
-            fs::read_to_string(&registry).unwrap().contains("guard.sh"),
-            "{}",
-            registry.display()
-        );
+        let registered: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&registry).unwrap()).unwrap();
+        let event = match harness {
+            Harness::Claude => "PreToolUse",
+            Harness::Pi => "tool_call",
+        };
+        let command = registered["hooks"][event][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        assert_eq!(kendex_core::hook::command_stem(command), "guard");
 
         // Take the anchor out and leave the version alone. The record
         // stays one this build wrote and would read; what it does not
@@ -257,10 +252,8 @@ fn the_sweep_holds_a_hook_whose_current_record_has_no_anchor() {
             "the sweep leaves the script: {}",
             script.display()
         );
-        let after = fs::read_to_string(&registry).unwrap();
-        assert!(
-            after.contains("guard.sh"),
-            "and leaves it registered to run: {after}"
-        );
+        let after: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&registry).unwrap()).unwrap();
+        assert_eq!(after, registered);
     }
 }

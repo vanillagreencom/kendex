@@ -1,6 +1,5 @@
-//! The session-start hook script's contract, exercised against /bin/sh:
-//! every failure path emits exactly one line, resumed and compacted
-//! sessions stay silent, and the hook never exits non-zero.
+//! The generated hook preserves the CLI report protocol, identifies its own
+//! notices by stable keys, and never blocks a session.
 #![cfg(unix)]
 
 use std::fs;
@@ -8,9 +7,11 @@ use std::path::Path;
 
 use kendex_core::drift;
 
-/// The hook script's contract, exercised against /bin/sh with a stub
-/// `kendex` on PATH: every failure path emits exactly one line, and the
-/// hook never exits non-zero.
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::rooted;
+
+/// Run the actual generated script with a private CLI stub.
 #[allow(clippy::unwrap_used)]
 fn run_hook(dir: &Path, stdin: &str, env: &[(&str, &str)], stub: Option<&str>) -> (String, i32) {
     use std::io::Write;
@@ -52,130 +53,151 @@ fn run_hook(dir: &Path, stdin: &str, env: &[(&str, &str)], stub: Option<&str>) -
     )
 }
 
-#[test]
-#[allow(clippy::unwrap_used)]
-fn the_hook_script_honors_its_contract() {
-    let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path();
+type HookCase = (
+    &'static str,
+    &'static str,
+    &'static [(&'static str, &'static str)],
+    Option<&'static str>,
+    Option<&'static str>,
+    &'static str,
+);
 
-    // Kill switch: silent, exit 0.
-    let (out, code) = run_hook(dir, "{}", &[("KENDEX_DRIFT_HOOK", "off")], None);
-    assert_eq!((out.as_str(), code), ("", 0));
-
-    // Resumed and compacted sessions are skipped.
-    let (out, code) = run_hook(
-        dir,
+const CASES: &[HookCase] = &[
+    (
+        "disabled",
+        "{}",
+        &[("KENDEX_DRIFT_HOOK", "off")],
+        None,
+        None,
+        "",
+    ),
+    (
+        "resume",
         r#"{"source":"resume"}"#,
         &[],
         Some("#!/bin/sh\necho drift\nexit 1\n"),
-    );
-    assert_eq!((out.as_str(), code), ("", 0));
-    let (out, code) = run_hook(
-        dir,
+        None,
+        "",
+    ),
+    (
+        "compact",
         r#"{"source":"compact"}"#,
         &[],
         Some("#!/bin/sh\necho drift\nexit 1\n"),
-    );
-    assert_eq!((out.as_str(), code), ("", 0));
-    // Pi's carrier re-runs extensions in place on reload — an already
-    // delivered report must not repeat.
-    let (out, code) = run_hook(
-        dir,
+        None,
+        "",
+    ),
+    (
+        "reload",
         r#"{"source":"reload"}"#,
         &[],
         Some("#!/bin/sh\necho drift\nexit 1\n"),
-    );
-    assert_eq!((out.as_str(), code), ("", 0));
-
-    // Missing binary: exactly one "skipped" line, exit 0.
-    let (out, code) = run_hook(dir, "{}", &[], None);
-    assert_eq!(out.lines().count(), 1, "{out}");
-    assert!(out.contains("skipped"), "{out}");
-    assert_eq!(code, 0);
-
-    // Exit 2 and nothing said: exactly one "could not run" line.
-    let (out, code) = run_hook(dir, "{}", &[], Some("#!/bin/sh\nexit 2\n"));
-    assert_eq!(out.lines().count(), 1, "{out}");
-    assert!(out.contains("could not run (exit 2)"), "{out}");
-    assert_eq!(code, 0);
-
-    // Exit 2 with kendex's own Error: line (stderr): nothing was checked,
-    // so it is a failure to run, and the diagnostic reaches the agent.
-    let (out, code) = run_hook(
-        dir,
+        None,
+        "",
+    ),
+    (
+        "unavailable",
+        "{}",
+        &[],
+        None,
+        Some("kendex-drift-unavailable: command=kendex"),
+        "",
+    ),
+    (
+        "empty failure",
+        "{}",
+        &[],
+        Some("#!/bin/sh\nexit 2\n"),
+        Some("kendex-drift-failed: exit=2"),
+        "",
+    ),
+    (
+        "CLI failure",
         "{}",
         &[],
         Some("#!/bin/sh\necho 'Error: loading lock file' >&2\nexit 2\n"),
-    );
-    assert!(
-        out.starts_with("kendex check could not run (exit 2)"),
-        "{out}"
-    );
-    assert!(out.contains("Error: loading lock file"), "{out}");
-    assert!(!out.contains("incomplete"), "{out}");
-    assert_eq!(code, 0);
-
-    // Exit 2 with a report: the check ran and says what it could not
-    // check, so the report is relayed under an "incomplete" line.
-    let (out, code) = run_hook(
-        dir,
+        Some("kendex-drift-failed: exit=2"),
+        "Error: loading lock file\n",
+    ),
+    (
+        "CLI usage failure",
+        "{}",
+        &[],
+        Some("#!/bin/sh\necho 'error: unrecognized subcommand' >&2\nexit 2\n"),
+        Some("kendex-drift-failed: exit=2"),
+        "error: unrecognized subcommand\n",
+    ),
+    (
+        "incomplete",
         "{}",
         &[],
         Some("#!/bin/sh\nprintf 'stale:\\n  x\\ncould not check:\\n  lock: bad\\n'\nexit 2\n"),
-    );
-    assert!(out.starts_with("kendex check incomplete (exit 2)"), "{out}");
-    assert!(out.contains("stale:") && out.contains("lock: bad"), "{out}");
-    assert!(!out.contains("could not run"), "{out}");
-    assert_eq!(code, 0);
-
-    // Any other exit code is not a kendex verdict.
-    let (out, code) = run_hook(dir, "{}", &[], Some("#!/bin/sh\necho fatal\nexit 3\n"));
-    assert!(
-        out.starts_with("kendex check could not run (exit 3)"),
-        "{out}"
-    );
-    assert!(out.contains("fatal"), "{out}");
-    assert_eq!(code, 0);
-
-    // A signal or a timeout kills the check before it says anything. The
-    // empty-output arm belongs to exit 2 alone, so this keeps the colon
-    // over a blank line — the same text the shell and Pi hooks print.
-    let (out, code) = run_hook(dir, "{}", &[], Some("#!/bin/sh\nexit 3\n"));
-    assert_eq!(
-        (out.as_str(), code),
-        (
-            "kendex check could not run (exit 3); drift status unknown:\n\n",
-            0
-        )
-    );
-
-    // Drift: the report passes through, exit stays 0.
-    let (out, code) = run_hook(
-        dir,
+        Some("kendex-drift-incomplete: exit=2"),
+        "stale:\n  x\ncould not check:\n  lock: bad\n",
+    ),
+    (
+        "unexpected exit",
+        "{}",
+        &[],
+        Some("#!/bin/sh\necho fatal\nexit 3\n"),
+        Some("kendex-drift-failed: exit=3"),
+        "fatal\n",
+    ),
+    (
+        "empty unexpected exit",
+        "{}",
+        &[],
+        Some("#!/bin/sh\nexit 3\n"),
+        Some("kendex-drift-failed: exit=3"),
+        "",
+    ),
+    (
+        "drift relay",
         r#"{"source":"startup"}"#,
         &[],
         Some("#!/bin/sh\necho 'stale:'\nexit 1\n"),
-    );
-    assert_eq!((out.as_str(), code), ("stale:\n", 0));
-
-    // Clean: silent, whatever kendex said on stderr on the way.
-    let (out, code) = run_hook(dir, "{}", &[], Some("#!/bin/sh\nexit 0\n"));
-    assert_eq!((out.as_str(), code), ("", 0));
-    let (out, code) = run_hook(dir, "{}", &[], Some("#!/bin/sh\necho noise >&2\nexit 0\n"));
-    assert_eq!((out.as_str(), code), ("", 0));
-
-    // #3: an error: line inside a could-not-check line is part of a
-    // completed report, not the pre-check failure shape.
-    let (out, code) = run_hook(
-        dir,
+        None,
+        "stale:\n",
+    ),
+    ("clean", "{}", &[], Some("#!/bin/sh\nexit 0\n"), None, ""),
+    (
+        "clean stderr",
+        "{}",
+        &[],
+        Some("#!/bin/sh\necho noise >&2\nexit 0\n"),
+        None,
+        "",
+    ),
+    (
+        "error inside report",
         "{}",
         &[],
         Some(
             "#!/bin/sh\nprintf 'could not check:\\n  source github.com/x/y unreachable since 2026-08-01: error: cannot lock ref\\n'\nexit 2\n",
         ),
-    );
-    assert!(out.starts_with("kendex check incomplete (exit 2)"), "{out}");
-    assert!(out.contains("error: cannot lock ref"), "{out}");
-    assert!(!out.contains("could not run"), "{out}");
-    assert_eq!(code, 0);
+        Some("kendex-drift-incomplete: exit=2"),
+        "could not check:\n  source github.com/x/y unreachable since 2026-08-01: error: cannot lock ref\n",
+    ),
+];
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_hook_script_honors_its_contract() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = rooted(&tmp);
+
+    // A notice has a key line, an unpinned explanation line, and the CLI
+    // report. Without a notice, the complete output is relayed CLI data.
+    for &(name, input, env, stub, key, report) in CASES {
+        let (out, code) = run_hook(&dir, input, env, stub);
+        let observed = match key {
+            Some(_) => {
+                let (first, rest) = out.split_once('\n').unwrap();
+                let (_, payload) = rest.split_once('\n').unwrap();
+                (Some(first), payload, code)
+            }
+            None => (None, out.as_str(), code),
+        };
+        assert_eq!(observed, (key, report, 0), "{name}: {out}");
+    }
 }

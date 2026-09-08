@@ -104,10 +104,8 @@ fn an_event_gemini_does_not_have_is_reported_never_faked() {
     let f = fixture("[hooks.done]\nsource = \"cat\"\n");
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(
-        report
-            .notes
-            .iter()
-            .any(|note| note.contains("event TaskCompleted has no Gemini counterpart")),
+        report.notes.iter().any(|note| note.lines().next()
+            == Some("kendex-hook-unsupported: harness=gemini event=TaskCompleted hook=done")),
         "{:?}",
         report.notes
     );
@@ -121,32 +119,17 @@ fn an_event_gemini_does_not_have_is_reported_never_faked() {
 #[allow(clippy::unwrap_used)]
 fn an_agent_installed_while_the_feature_is_off_is_reported_inert() {
     let f = fixture("[agents.rust]\nsource = \"cat\"\n");
-    fs::write(
-        settings(&f),
-        "{\"experimental\": {\"enableAgents\": false}}",
-    )
-    .unwrap();
-    let report = apply_now(&f);
-    assert!(
-        report
-            .warnings
-            .iter()
-            .any(|w| w.message.contains("installs but stays inert")),
-        "{:?}",
-        report.warnings
-    );
-    assert!(f.project.join(".gemini/agents/rust.md").is_file());
-
-    fs::write(settings(&f), "{\"experimental\": {\"enableAgents\": true}}").unwrap();
-    let quiet = audit(&f.env, &f.scope).unwrap();
-    assert!(
-        !quiet
-            .warnings
-            .iter()
-            .any(|w| w.message.contains("stays inert")),
-        "{:?}",
-        quiet.warnings
-    );
+    apply_now(&f);
+    for (enabled, expected) in [(false, true), (true, false)] {
+        fs::write(
+            settings(&f),
+            format!("{{\"experimental\": {{\"enableAgents\": {enabled}}}}}"),
+        )
+        .unwrap();
+        let report = audit(&f.env, &f.scope).unwrap();
+        assert_eq!(report.warnings.iter().any(|w| w.message.lines().next() == Some("kendex-agents-disabled: harness=gemini agent=rust setting=experimental.enableAgents")), expected, "enabled={enabled}: {:?}", report.warnings);
+        assert!(f.project.join(".gemini/agents/rust.md").is_file());
+    }
 }
 
 /// A settings file that never met the nested schema belongs to a CLI that
@@ -162,17 +145,19 @@ fn an_un_upgraded_settings_file_blocks_the_kinds_that_live_in_it() {
     fs::write(settings(&f), legacy).unwrap();
 
     let report = apply_now(&f);
-    let said = |text: &str| report.notes.iter().any(|note| note.contains(text));
-    assert!(
-        said("nothing was registered for Gemini"),
-        "{:?}",
-        report.notes
-    );
-    assert!(
-        said("nothing was declared for Gemini"),
-        "{:?}",
-        report.notes
-    );
+    for record in [
+        "kendex-settings-unmanageable: harness=gemini kind=hook item=audit",
+        "kendex-settings-unmanageable: harness=gemini kind=mcp-server item=gh",
+    ] {
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.lines().next() == Some(record)),
+            "{record}: {:?}",
+            report.notes
+        );
+    }
     assert_eq!(fs::read_to_string(settings(&f)).unwrap(), legacy);
     assert!(!f.project.join(".gemini/hooks").exists());
     // The agent is a file of its own, so nothing about the settings file
@@ -196,9 +181,8 @@ fn a_system_wide_override_is_named_rather_than_argued_with() {
 
     let report = apply_now(&f);
     assert!(
-        report.warnings.iter().any(|w| w
-            .message
-            .contains("system-wide Gemini settings also set `hooks`")),
+        report.warnings.iter().any(|w| w.message.lines().next()
+            == Some("kendex-settings-overridden: harness=gemini item=audit key=hooks")),
         "{:?}",
         report.warnings
     );
@@ -224,7 +208,8 @@ fn a_project_declaration_leaves_the_machine_wide_record_exactly_as_it_was() {
         report
             .warnings
             .iter()
-            .any(|w| w.message.contains("stays inert")),
+            .any(|w| w.message.lines().next()
+                == Some("kendex-mcp-disabled: harness=gemini server=gh")),
         "{:?}",
         report.warnings
     );
@@ -250,7 +235,8 @@ fn a_server_gemini_gates_out_of_its_list_is_reported_inert() {
         report
             .warnings
             .iter()
-            .any(|w| w.message.contains("gate which servers load")),
+            .any(|w| w.message.lines().next()
+                == Some("kendex-mcp-filtered: harness=gemini server=gh")),
         "{:?}",
         report.warnings
     );
@@ -266,9 +252,8 @@ fn a_skill_installed_for_another_tool_is_noted_as_visible_to_gemini() {
     let f = fixture("[skills.deploy]\nsource = \"cat\"\nharnesses = [\"claude\"]\n");
     let report = apply_now(&f);
     assert!(
-        report.notes.iter().any(|note| note.contains("Gemini CLI")
-            && note.contains("read `.agents/skills` too")
-            && note.contains("one definition, counted once")),
+        report.notes.iter().any(|note| note.lines().next()
+            == Some("kendex-shared-skills: readers=gemini path=.agents/skills")),
         "{:?}",
         report.notes
     );

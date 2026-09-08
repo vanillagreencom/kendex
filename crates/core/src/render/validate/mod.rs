@@ -51,6 +51,9 @@ pub enum Severity {
 }
 
 /// One structural problem with a rendering, and what to do about it.
+/// Validator messages start with a stable reason and relevant values.
+/// Values use `names::shown` so quoted input cannot split the record line.
+/// English explanation follows the record; remediation is separate.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Finding {
     pub message: String,
@@ -146,8 +149,10 @@ fn segment_findings(harness: HarnessId, name: &str) -> Vec<Finding> {
     }
     vec![Finding::breakage(
         format!(
-            "`{name}` points out of the directory {} reads, so the item lands somewhere it is never loaded from",
-            harness.display_name()
+            "kendex-name-outside-directory: harness={record_arg0} name={record_name}\n`{name}` points out of the directory {arg1} reads, so the item lands somewhere it is never loaded from",
+            arg1 = harness.display_name(),
+            record_arg0 = crate::names::shown(harness.name()),
+            record_name = crate::names::shown(name),
         ),
         "rename the item to a plain name with no `/`, `\\` or `..`",
     )]
@@ -160,7 +165,10 @@ fn kebab_findings(harness: HarnessId, name: &str, max_len: Option<usize>) -> Vec
         let legal = to_lower_kebab(name);
         findings.push(Finding::breakage(
             format!(
-                "{tool} will not load `{name}` — it takes lowercase letters, digits and single hyphens"
+                "kendex-name-rejected: harness={record_arg0} name={record_name} suggested={record_legal}\n{tool} will not load `{name}` — it takes lowercase letters, digits and single hyphens",
+                record_arg0 = crate::names::shown(harness.name()),
+                record_name = crate::names::shown(name),
+                record_legal = crate::names::shown(&legal),
             ),
             match legal.is_empty() {
                 true => format!(
@@ -175,7 +183,13 @@ fn kebab_findings(harness: HarnessId, name: &str, max_len: Option<usize>) -> Vec
     let length = name.chars().count();
     if let Some(max_len) = max_len.filter(|max| length > *max) {
         findings.push(Finding::breakage(
-            format!("`{name}` is {length} characters and {tool} stops at {max_len}"),
+            format!(
+                "kendex-name-too-long: harness={record_arg0} name={record_name} length={record_length} limit={record_max_len}\n`{name}` is {length} characters and {tool} stops at {max_len}",
+                record_arg0 = crate::names::shown(harness.name()),
+                record_name = crate::names::shown(name),
+                record_length = length,
+                record_max_len = max_len,
+            ),
             format!("shorten the name to {max_len} characters or fewer"),
         ));
     }
@@ -208,10 +222,14 @@ fn to_lower_kebab(name: &str) -> String {
 
 /// The frontmatter of a generated markdown file, or the finding that says
 /// the loader has nothing to read.
-fn frontmatter_map(text: &str, tool: &str) -> Result<crate::frontmatter::Map, Finding> {
+fn frontmatter_map(text: &str, harness: HarnessId) -> Result<crate::frontmatter::Map, Finding> {
+    let tool = harness.display_name();
     let (yaml, _) = crate::frontmatter::split(text).map_err(|problem| {
         Finding::breakage(
-            format!("{tool} reads this file's frontmatter and there is none — {problem}"),
+            format!(
+                "kendex-frontmatter-missing: harness={record_arg0}\n{tool} reads this file's frontmatter and there is none — {problem}",
+                record_arg0 = crate::names::shown(harness.name()),
+            ),
             "give the item `---` frontmatter with a name and a description in the catalog",
         )
     })?;
@@ -219,7 +237,10 @@ fn frontmatter_map(text: &str, tool: &str) -> Result<crate::frontmatter::Map, Fi
         .map(|parsed| parsed.map)
         .map_err(|problem| {
             Finding::breakage(
-                format!("{tool} cannot read this file's frontmatter — {problem}"),
+                format!(
+                    "kendex-frontmatter-invalid: harness={record_arg0}\n{tool} cannot read this file's frontmatter — {problem}",
+                    record_arg0 = crate::names::shown(harness.name()),
+                ),
                 "fix the item's frontmatter in the catalog: one `key: value` per line, no tabs",
             )
         })

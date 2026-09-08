@@ -61,16 +61,18 @@ fn an_every_agent_hook_registers_on_codex_and_removal_reverses_it() {
     kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     let registry = fs::read_to_string(w.project.join(".codex/hooks.json")).unwrap();
-    assert!(
-        registry.contains("./scripts/guard.sh"),
-        "the person's command is registered verbatim: {registry}"
+    let registry: serde_json::Value = serde_json::from_str(&registry).unwrap();
+    assert_eq!(
+        registry["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+        "./scripts/guard.sh"
     );
     assert!(
         !w.project.join(".codex/hooks").exists(),
         "a command-bodied hook writes no script of its own"
     );
     let config = fs::read_to_string(w.project.join(".codex/config.toml")).unwrap();
-    assert!(config.contains("hooks"), "the feature flag rides along");
+    let config: toml::Value = toml::from_str(&config).unwrap();
+    assert_eq!(config["features"]["hooks"].as_bool(), Some(true));
 
     // The registration is in sync — a second audit owes nothing.
     let clean = audit(&w.env, &scope(&w)).unwrap();
@@ -93,36 +95,59 @@ fn an_every_agent_hook_registers_on_codex_and_removal_reverses_it() {
     .unwrap();
     kendex_core::apply::execute(&w.env, &removal.plan).unwrap();
     let registry = fs::read_to_string(w.project.join(".codex/hooks.json")).unwrap();
-    assert!(
-        !registry.contains("guard.sh"),
-        "the registration is reversed: {registry}"
+    let registry: serde_json::Value = serde_json::from_str(&registry).unwrap();
+    assert_eq!(
+        registry["hooks"]["PreToolUse"]
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or_default(),
+        0
     );
 }
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_scoped_hook_off_claude_is_prose_plus_a_warning_and_no_registration() {
-    let w = world();
-    declare(
-        &w,
-        "name = \"guard-pretooluse\"\nevent = \"PreToolUse\"\ncommand = \"./scripts/guard.sh\"\nagents = \"reviewer\"\n",
-    );
-
-    let report = audit(&w.env, &scope(&w)).unwrap();
-    let warning = report
-        .warnings
-        .iter()
-        .find(|warning| warning.name == "guard-pretooluse")
-        .expect("the downgrade is said per item");
-    assert!(
-        warning.message.contains("cannot tell agents apart"),
-        "{warning:?}"
-    );
-    kendex_core::apply::execute(&w.env, &report.plan).unwrap();
-    assert!(
-        !w.project.join(".codex/hooks.json").exists(),
-        "nothing is registered for a hook codex cannot scope"
-    );
+fn a_custom_hook_refusal_names_its_delivery_limit() {
+    for (harness, event, agents, record) in [
+        (
+            "codex",
+            "PreToolUse",
+            "reviewer",
+            "kendex-custom-hook-unscoped: harness=codex hook=guard-pretooluse",
+        ),
+        (
+            "codex",
+            "TaskCompleted",
+            "all",
+            "kendex-custom-hook-advisory: harness=codex hook=guard-pretooluse event=TaskCompleted",
+        ),
+        (
+            "antigravity",
+            "PreToolUse",
+            "all",
+            "kendex-custom-hook-unlisted: hook=guard-pretooluse harness=antigravity",
+        ),
+    ] {
+        let w = world();
+        fs::create_dir_all(w.project.join(".agents")).unwrap();
+        fs::write(w.project.join("kendex.toml"), format!("schema = 6\n[install]\nharnesses = [\"{harness}\"]\n[[custom-hooks]]\nname = \"guard-pretooluse\"\nevent = \"{event}\"\ncommand = \"./scripts/guard.sh\"\nagents = \"{agents}\"\n")).unwrap();
+        let report = audit(&w.env, &scope(&w)).unwrap();
+        let notices: Vec<_> = report
+            .warnings
+            .iter()
+            .map(|warning| warning.message.as_str())
+            .chain(report.notes.iter().map(String::as_str))
+            .collect();
+        assert!(
+            notices
+                .iter()
+                .any(|notice| notice.lines().next() == Some(record)),
+            "{record}: {notices:?}"
+        );
+        kendex_core::apply::execute(&w.env, &report.plan).unwrap();
+        assert!(!w.project.join(".codex/hooks.json").exists(), "{record}");
+        assert!(!w.project.join(".agents/hooks.json").exists(), "{record}");
+    }
 }
 
 #[test]
@@ -160,9 +185,10 @@ fn an_every_agent_hook_on_claude_lives_in_settings_not_agent_files() {
     kendex_core::apply::execute(&w.env, &report.plan).unwrap();
 
     let settings = fs::read_to_string(w.project.join(".claude/settings.json")).unwrap();
-    assert!(
-        settings.contains("./scripts/guard.sh"),
-        "the hook is registered where the whole session reads it: {settings}"
+    let settings: serde_json::Value = serde_json::from_str(&settings).unwrap();
+    assert_eq!(
+        settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+        "./scripts/guard.sh"
     );
     let clean = audit(&w.env, &scope(&w)).unwrap();
     assert!(clean.drift.is_empty(), "{:?}", clean.drift);

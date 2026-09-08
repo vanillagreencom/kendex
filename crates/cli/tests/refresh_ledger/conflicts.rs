@@ -257,15 +257,13 @@ fn a_hook_that_skips_a_tool_names_the_file_that_decides_it() {
         "[hooks.block-unsafe-rm]\nsource = \"cat\"\n",
     );
 
-    let printed = said(&kendex(
-        home,
-        &project,
-        &["apply", "--plan", "--scope", "project"],
-    ));
+    let output = kendex(home, &project, &["apply", "--plan", "--scope", "project"]);
+    let printed = said(&output);
+    assert_eq!(output.status.code(), Some(0), "{printed}");
     assert!(
-        printed.contains(
-            "hook block-unsafe-rm: skips pi — pi is not in the hook's own harnesses line in the catalog; add it there, or list this hook's harnesses in kendex.toml without pi"
-        ),
-        "the note names what decides the skip and both answers to it: {printed}"
+        printed.lines().any(|line| line.starts_with(
+            r"note: kendex-hook-excluded: hook=block-unsafe-rm harness=pi source=catalog field=harnesses\n"
+        )),
+        "the note identifies the catalog field that decides the skip: {printed}"
     );
 }

@@ -198,8 +198,8 @@ fn a_project_agent_installs_nothing_and_the_report_says_why() {
     let f = fixture("[agents.rust]\nsource = \"cat\"\n");
     let report = apply_now(&f);
     assert!(
-        report.notes.iter().any(|note| note
-            == "agent rust: Antigravity cannot hold one at this scope — nothing was installed"),
+        report.notes.iter().any(|note| note.lines().next()
+            == Some("kendex-item-unsupported: kind=agent name=rust harnesses=antigravity")),
         "{:?}",
         report.notes
     );
@@ -259,7 +259,7 @@ fn a_hook_registers_under_its_name_in_the_roots_hooks_json() {
     // The command finds the script when it runs and names no directory of
     // this machine's, so a repository can commit the registry it is in.
     let command = entry["command"].as_str().unwrap();
-    assert!(command.contains("p='.agents/hooks/audit.sh'"), "{command}");
+    assert_eq!(kendex_core::hook::command_stem(command), "audit");
     assert!(
         !command.contains(&*f.project.to_string_lossy()),
         "{command}"
@@ -292,26 +292,38 @@ fn a_hook_registers_under_its_name_in_the_roots_hooks_json() {
     assert_eq!(after["lint"]["PostToolUse"][0]["matcher"], "run_command");
 }
 
-/// A hook that names no harness is written for the `tool_input` payload;
-/// Antigravity sends `toolCall.args`, so the hook would run and read
-/// nothing. It installs nowhere on Antigravity and the plan says why.
+/// Unlisted payloads and unsupported events both refuse registration with
+/// the reason that applies to the supplied hook.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_hook_naming_no_harness_stays_out_of_antigravity() {
-    let f = fixture("[hooks.audit]\nsource = \"cat\"\n");
-    fs::write(f.env.home.join("catalog/hooks/audit.sh"), UNNAMED_HOOK).unwrap();
-    let report = apply_now(&f);
-
-    assert!(!f.project.join(".agents/hooks.json").exists());
-    assert!(!f.project.join(".agents/hooks/audit.sh").exists());
-    assert!(
-        report
-            .notes
-            .iter()
-            .any(|note| note.starts_with("hook audit: skips antigravity")),
-        "{:?}",
-        report.notes
-    );
+fn a_hook_the_harness_cannot_run_stays_out_of_antigravity() {
+    for (hook, record) in [
+        (
+            UNNAMED_HOOK.to_owned(),
+            "kendex-hook-unlisted: harness=antigravity hook=audit",
+        ),
+        (
+            AUDIT_HOOK.replace("PreToolUse", "TaskCompleted"),
+            "kendex-hook-unsupported: harness=antigravity event=TaskCompleted hook=audit",
+        ),
+    ] {
+        let f = fixture("[hooks.audit]\nsource = \"cat\"\n");
+        fs::write(f.env.home.join("catalog/hooks/audit.sh"), hook).unwrap();
+        let report = apply_now(&f);
+        assert!(!f.project.join(".agents/hooks.json").exists(), "{record}");
+        assert!(
+            !f.project.join(".agents/hooks/audit.sh").exists(),
+            "{record}"
+        );
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.lines().next() == Some(record)),
+            "{record}: {:?}",
+            report.notes
+        );
+    }
 }
 
 /// What kendex writes is what kendex reads back: the scan finds the entry
@@ -464,10 +476,13 @@ fn a_server_with_env_references_is_refused_with_the_reason() {
     let f = fixture("[mcp-servers.tokened]\nsource = \"cat\"\n");
     let report = apply_now(&f);
     assert!(
-        report
-            .drift
-            .iter()
-            .any(|row| row.name == "tokened" && row.detail.contains("documents no substitution")),
+        report.drift.iter().any(|row| row.name == "tokened"
+            && row.kind == kendex_core::model::ItemKind::McpServer
+            && row.harness == kendex_core::model::HarnessId::Antigravity
+            && row.state == kendex_core::engine::DriftState::Conflict
+            && row.cause.is_none()
+            && row.detail.lines().next()
+                == Some("kendex-mcp-env-unsupported: harness=antigravity")),
         "{:?}",
         report.drift
     );

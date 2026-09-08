@@ -9,7 +9,9 @@ pub(super) fn gemini(text: &str) -> Vec<Finding> {
         Ok(table) => table,
         Err(problem) => {
             return vec![Finding::breakage(
-                format!("Gemini reads commands as TOML and this one does not parse — {problem}"),
+                format!(
+                    "kendex-command-invalid: harness=gemini format=toml\nGemini reads commands as TOML and this one does not parse — {problem}"
+                ),
                 "check the command's body in the catalog for control characters",
             )];
         }
@@ -23,13 +25,13 @@ pub(super) fn gemini(text: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
     if !filled("prompt") {
         findings.push(Finding::breakage(
-            "the Gemini command has no prompt, so typing it would do nothing",
+            "kendex-command-key-missing: harness=gemini key=prompt\nthe Gemini command has no prompt, so typing it would do nothing",
             "give the command a body in the catalog",
         ));
     }
     if !filled("description") {
         findings.push(Finding::advisory(
-            "the Gemini command has no description, so it lists with nothing beside it",
+            "kendex-command-key-missing: harness=gemini key=description\nthe Gemini command has no description, so it lists with nothing beside it",
             "add `description:` to the command's frontmatter, or open its body with a line saying what it does",
         ));
     }
@@ -53,7 +55,7 @@ pub(super) fn pi(text: &str) -> Vec<Finding> {
         return Vec::new();
     }
     vec![Finding::advisory(
-        "the command runs a shell inline with !`…`, which Pi does not expand — the model reads the backticked command as text",
+        "kendex-command-inline-unsupported: harness=pi syntax=!`command`\nthe command runs a shell inline with !`…`, which Pi does not expand — the model reads the backticked command as text",
         "state the command's output in the prose, or drop Pi from this command's harnesses",
     )]
 }

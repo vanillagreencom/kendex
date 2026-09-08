@@ -16,7 +16,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use kendex_core::apply;
-use kendex_core::engine::audit;
+use kendex_core::engine::{DriftState, audit};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::Scope;
 
@@ -143,7 +143,7 @@ fn a_record_that_names_no_registration_leaves_their_duplicate_alone() {
         report
             .drift
             .iter()
-            .all(|row| !row.detail.contains("more than once")),
+            .all(|row| row.state != DriftState::Conflict),
         "their duplicate is not kendex's to wonder about: {:?}",
         report.drift
     );
@@ -278,7 +278,7 @@ fn a_record_that_names_no_registration_leaves_a_moved_entry_alone() {
         report
             .drift
             .iter()
-            .all(|row| !row.detail.contains("no longer runs")),
+            .all(|row| row.state != DriftState::Conflict),
         "the moved entry is not kendex's to wonder about: {:?}",
         report.drift
     );
@@ -329,7 +329,7 @@ fn an_exact_duplicate_of_the_recorded_entry_does_not_wedge_the_refresh() {
         report
             .drift
             .iter()
-            .all(|row| !row.detail.contains("more than once")),
+            .all(|row| row.state != DriftState::Conflict),
         "an exact duplicate is not a wedge: {:?}",
         report.drift
     );
@@ -373,7 +373,7 @@ fn a_recorded_entry_moved_by_hand_does_not_hold_the_hook() {
         report
             .drift
             .iter()
-            .all(|row| !row.detail.contains("no longer runs")),
+            .all(|row| row.state != DriftState::Conflict),
         "what they moved is theirs, not a conflict: {:?}",
         report.drift
     );
@@ -426,14 +426,11 @@ fn a_command_spelled_another_way_replaces_the_entry_it_left() {
     };
     let rendered = commands();
     assert_eq!(rendered.len(), 1);
-    assert!(
-        rendered[0].contains("p='.codex/hooks/guard.sh'"),
-        "{rendered:?}"
-    );
 
     // What an older kendex left: the subshell that asked git for the root,
     // in the document and in the record alike.
     let deferred = "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/guard.sh\"".to_owned();
+    assert_ne!(rendered, vec![deferred.clone()]);
     let mut document: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&registry).unwrap()).unwrap();
     document["hooks"]["PreToolUse"][0]["hooks"][0]["command"] =

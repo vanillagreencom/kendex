@@ -14,15 +14,8 @@ use crate::model::{HarnessId, Scope};
 
 pub const HOOK_NAME: &str = "kendex-drift";
 
-/// The hook script, in the catalog hook format. The contract lines:
-/// `KENDEX_DRIFT_HOOK=off` kills it, resumed and compacted
-/// sessions are skipped, a missing binary prints one "skipped" line, and
-/// it always exits 0 — a drift report must never block a session. Exit
-/// codes classify the way `hooks/session-drift-check.sh` and the pi-hooks
-/// port classify them: 1 is the report verbatim, 2 is the report under an
-/// "incomplete" line — or "could not run" when the output is an Error:
-/// or usage error: line from before the check read anything, or nothing
-/// at all — and any other code is "could not run".
+/// The session-start script. Its header defines the CLI report protocol and
+/// the stable keys of notices the hook adds. It never blocks a session.
 pub const HOOK_SCRIPT: &str = r#"#!/bin/sh
 # ---
 # name: kendex-drift
@@ -31,9 +24,23 @@ pub const HOOK_SCRIPT: &str = r#"#!/bin/sh
 # timeout: 20
 # harnesses: [claude-code, pi]
 # ---
-# kendex drift report — what is stale, gone from its source, broken, or
-# not evaluated yet, each line naming its fix. Silent when everything is
-# current: a clean session starts clean.
+# kendex check --quiet protocol: exit 0 is silent, exit 1 relays the report.
+# Exit 2 with empty output or a leading Error:/error: is a pre-check failure;
+# other exit-2 output is an incomplete report. Other exits are failures.
+# Error:/error: belongs to the CLI's parsed error protocol. The remaining
+# report is opaque data; Claude and Pi receive it without interpretation.
+# Shell substitution removes trailing newlines; a relayed report gets one.
+# Hook notices start with a stable key and command or exit value. English
+# follows on the next line, then any report. The hook always exits 0.
+
+notice() {
+  case "$1" in
+    unavailable) explanation="The drift check was skipped because kendex is not on PATH." ;;
+    failed) explanation="The drift check could not run. Drift status is unknown." ;;
+    incomplete) explanation="The drift check is incomplete. Some drift status is unknown." ;;
+  esac
+  printf 'kendex-drift-%s: %s\n%s\n' "$1" "$2" "$explanation"
+}
 
 [ "${KENDEX_DRIFT_HOOK:-}" = "off" ] && exit 0
 
@@ -51,7 +58,7 @@ case "$input" in
 esac
 
 if ! command -v kendex >/dev/null 2>&1; then
-  echo "kendex: drift check skipped (kendex is not on PATH)"
+  notice unavailable "command=kendex"
   exit 0
 fi
 
@@ -65,18 +72,11 @@ case "$code" in
   1) ;;
   2)
     case "$report" in
-      "") echo "kendex check could not run (exit 2); drift status unknown" ;;
-      Error:* | error:*)
-        printf 'kendex check could not run (exit 2); drift status unknown:\n%s\n' "$report" ;;
-      *)
-        printf 'kendex check incomplete (exit 2); some drift status unknown:\n%s\n' "$report" ;;
+      "" | Error:* | error:*) notice failed "exit=$code" ;;
+      *) notice incomplete "exit=$code" ;;
     esac
-    exit 0
     ;;
-  *)
-    printf 'kendex check could not run (exit %s); drift status unknown:\n%s\n' "$code" "$report"
-    exit 0
-    ;;
+  *) notice failed "exit=$code" ;;
 esac
 if [ -n "$report" ]; then
   printf '%s\n' "$report"

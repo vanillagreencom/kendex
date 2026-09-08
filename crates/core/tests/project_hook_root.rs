@@ -300,13 +300,20 @@ fn a_hook_with_no_script_above_the_working_directory_refuses() {
     let gone = f.project.parent().unwrap().join("gone");
     fs::create_dir_all(&gone).unwrap();
 
+    // Capture the registered command's output after shell initialization.
+    // A fresh shell may diagnose its deleted cwd before executing our body.
+    let hook_stderr = f.project.parent().unwrap().join("hook.stderr");
+    let captured = format!(
+        "{{ {command}; }} 2> {}",
+        kendex_core::names::quoted(hook_stderr.to_str().unwrap()),
+    );
     for (what, script) in [
-        ("from a directory with no script above it", command.clone()),
+        ("from a directory with no script above it", captured.clone()),
         (
-            "from a directory removed under the shell",
+            "from a directory removed under a fresh shell",
             format!(
                 "rmdir \"$PWD\" && exec sh -c {}",
-                kendex_core::names::quoted(&command)
+                kendex_core::names::quoted(&captured),
             ),
         ),
     ] {
@@ -336,11 +343,11 @@ fn a_hook_with_no_script_above_the_working_directory_refuses() {
             .unwrap()
             .read_to_string(&mut stderr)
             .unwrap();
-        assert_eq!(status.code(), Some(1), "{what}: {stderr}");
-        assert!(
-            stderr.contains("kendex: no directory above")
-                && stderr.contains(".codex/hooks/audit.sh"),
-            "{what}: the refusal names the start and the file: {stderr}"
+        let emitted = fs::read_to_string(&hook_stderr).unwrap();
+        assert_eq!(
+            (status.code(), emitted.lines().next()),
+            (Some(1), Some("kendex-hook-missing: .codex/hooks/audit.sh")),
+            "{what}: hook={emitted}, shell={stderr}"
         );
     }
 }

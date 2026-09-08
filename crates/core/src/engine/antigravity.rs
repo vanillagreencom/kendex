@@ -12,15 +12,17 @@ use crate::model::{HarnessId, ItemKind};
 pub(super) fn hook(name: &str, hook: &HookSpec, state: &mut DesiredState) -> Option<HookSpec> {
     if hook.harnesses.is_none() {
         state.notes.push(format!(
-            "hook {name}: skips antigravity — {}",
-            crate::hook::by_name_only(HarnessId::Antigravity)
+            "kendex-hook-unlisted: harness=antigravity hook={record_name}\n{arg0}",
+            arg0 = crate::hook::by_name_only(HarnessId::Antigravity),
+            record_name = crate::names::shown(name),
         ));
         return None;
     }
     let Some(registered) = crate::harness::antigravity::hook_for(hook) else {
-        state.notes.push(format!(
-            "hook {name}: event {} has no Antigravity counterpart, and hanging it on a near-miss would run it at the wrong moment",
-            hook.event
+        state.notes.push(super::targets::unsupported_hook_event(
+            name,
+            &hook.event,
+            HarnessId::Antigravity,
         ));
         return None;
     };
@@ -30,8 +32,9 @@ pub(super) fn hook(name: &str, hook: &HookSpec, state: &mut DesiredState) -> Opt
             name: name.to_owned(),
             harness: Some(HarnessId::Antigravity),
             message: format!(
-                "Antigravity matches `{}` against its own tool names, and this matcher carries syntax kendex cannot restate in them — it installs as written and may never match",
-                hook.matcher.as_deref().unwrap_or_default()
+                "kendex-hook-matcher-untranslated: harness=antigravity hook={record_name} matcher={record_arg0}\nAntigravity matches this against its own tool names, and this matcher carries syntax kendex cannot restate in them — it installs as written and may never match",
+                record_name = crate::names::shown(name),
+                record_arg0 = crate::names::shown(hook.matcher.as_deref().unwrap_or_default()),
             ),
             remediation: Some(
                 "write the matcher as plain tool names separated by `|`, or check it against Antigravity's names (`run_command`, `view_file`, `write_to_file`)"
@@ -69,16 +72,22 @@ mod server_tests {
 
     #[test]
     fn a_remote_server_is_keyed_server_url_and_a_command_server_kept() {
-        assert_eq!(
-            super::server(&json!({"type": "http", "url": "https://mcp.example"})),
-            json!({"serverUrl": "https://mcp.example"})
-        );
-        assert_eq!(
-            super::server(&json!({"type": "sse", "url": "https://mcp.example/sse"})),
-            json!({"serverUrl": "https://mcp.example/sse"})
-        );
-        let stdio = json!({"command": "gh-mcp", "args": ["--stdio"]});
-        assert_eq!(super::server(&stdio), stdio);
+        for (input, expected) in [
+            (
+                json!({"type": "http", "url": "https://mcp.example"}),
+                json!({"serverUrl": "https://mcp.example"}),
+            ),
+            (
+                json!({"type": "sse", "url": "https://mcp.example/sse"}),
+                json!({"serverUrl": "https://mcp.example/sse"}),
+            ),
+            (
+                json!({"command": "gh-mcp", "args": ["--stdio"]}),
+                json!({"command": "gh-mcp", "args": ["--stdio"]}),
+            ),
+        ] {
+            assert_eq!(super::server(&input), expected, "{input}");
+        }
         // The endpoint stays visible to the safety rules under its new key.
         let scored = crate::quality::McpEntry::from_json(&super::server(
             &json!({"type": "http", "url": "https://u:secret@mcp.example"}),
