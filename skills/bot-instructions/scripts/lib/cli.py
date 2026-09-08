@@ -23,8 +23,20 @@ from . import run, tree, verbs
 SPEC_FILES = ("SKILL.md", "schemas/renders.md")
 
 
+class _Parser(argparse.ArgumentParser):
+    """Argparse exits on its own, before `main` can catch anything, so it
+    writes the record itself. The value is the argument the caller gave, which
+    is what they have to change."""
+
+    def error(self, message):
+        given = sys.argv[1] if len(sys.argv) > 1 else "(none)"
+        print(f"bot-instructions: usage={given}", file=sys.stderr)
+        print(message, file=sys.stderr)
+        raise SystemExit(2)
+
+
 def parser():
-    p = argparse.ArgumentParser(
+    p = _Parser(
         prog="bot-instructions",
         description="Render every review bot's instruction file from one doctrine "
                     "source plus [bot-instructions].",

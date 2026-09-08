@@ -44,7 +44,7 @@ a drift finding exits 1|rendered stale-copilot|check|1|drift|-
 git unable to answer exits 2 under the source key|rendered no-git|check|2|source|-
 a spec copy with no doctrine source exits 2 under the spec key|rendered spec:no-doctrine|check|2|spec|-
 flag misuse exits 2 before any read, under the usage key|rendered|render --staged|2|usage|--staged
-an unknown verb exits 2 from the parser|rendered|bogus|2|-|-
+an unknown verb exits 2 from the parser under the usage key|rendered|bogus|2|usage|-
 "
 
 # A row renders the key, so the value beside it is asserted here, on a world
@@ -65,6 +65,60 @@ if [ "$count" = 1 ]; then
 else
   bad 'one condition prints one record' "printed $count"
 fi
+
+# Each branch below computes its own value, so each is pinned exactly:
+# the whole first line and the status, not a fragment.
+bi_record() { # -> the first line of a run's stderr, in $bi_first
+  bi_first="$(printf '%s\n' "$1" | sed -n '1p')"
+}
+
+exact() { # LABEL EXPECTED-FIRST-LINE ACTUAL-FIRST-LINE ACTUAL-STATUS EXPECTED-STATUS
+  if [ "$3" = "$2" ] && [ "$4" = "$5" ]; then
+    ok "$1"
+  else
+    bad "$1" "first line: $3 (exit $4)"
+  fi
+}
+
+# spec: its value is the spec root, chosen by a different branch than the repo.
+spec_repo="$(bi_rendered_repo exit-spec-value)" || exit 1
+spec_dir="$BI_TMP/spec-value-empty"
+rm -rf -- "${spec_dir:?}"
+mkdir -p "$spec_dir/schemas"
+printf -- '---\nmetadata:\n  version: "x"\n---\n\n# no doctrine\n' > "$spec_dir/SKILL.md"
+cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" "$spec_dir/schemas/renders.md"
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main check --repo "$spec_repo" --spec "$spec_dir" ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'the spec record names the spec root, not the repository' \
+  "bot-instructions: spec=$spec_dir" "$bi_first" "$status" 2
+
+# usage: argparse exits before the handlers, so its own record is asserted.
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main bogus ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'an unknown verb refuses with the usage record naming it' \
+  "bot-instructions: usage=bogus" "$bi_first" "$status" 2
+
+# usage: the flag-misuse branch, whose value is the flag.
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main render --staged --repo "$spec_repo" ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'flag misuse refuses with the usage record naming the flag' \
+  "bot-instructions: usage=--staged" "$bi_first" "$status" 2
+
+# findings: the value is the count, which no other case pins.
+drift_repo="$(bi_rendered_repo exit-findings-count)" || exit 1
+printf '\nstale\n' >> "$drift_repo/.github/copilot-instructions.md"
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main check --repo "$drift_repo" ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'the findings record carries the count and exits 1' \
+  "bot-instructions: findings=1" "$bi_first" "$status" 1
 
 # A crash is 2 as well: the tool failed, nothing in the tree is wrong, and
 # Python's own exit for an uncaught exception is 1. A dispatched dependency
