@@ -64,32 +64,37 @@ fn installed_catalog_passes_comment_and_prose_lanes() {
     let controls = [
         (
             "comments",
+            "comments: issue-number=",
             ".claude/skills/review-gate/templates/review-gate-writer.yml",
             "# Regression history: #2107\n",
         ),
         (
             "comments",
+            "comments: issue-number=",
             ".claude/hooks/command-safety.sh",
             "# Regression history: #2107\n",
         ),
         (
             "comments",
+            "comments: issue-number=",
             ".claude/skills/commit-guards/scripts/install-git-hooks",
             "# Regression history: #2107\n",
         ),
         (
             "prose",
+            "prose: match=history reference:",
             ".claude/skills/review-gate/SKILL.md",
             "Regression history: #2107\n",
         ),
     ];
     // Stage only each planted output for its control. A failure must name
     // that output, so an unrelated catalog finding cannot pass the control.
-    for (lane, relative, defect) in controls {
+    for (lane, record, relative, defect) in controls {
         let path = project.join(relative);
         let original = fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("installed control {relative}: {error}"));
-        fs::write(&path, format!("{original}\n{defect}")).unwrap();
+        let planted = format!("{original}\n{defect}");
+        fs::write(&path, &planted).unwrap();
         success(command(
             &home,
             &project,
@@ -99,8 +104,10 @@ fn installed_catalog_passes_comment_and_prose_lanes() {
         let output = command(&home, &project, &scripts.join(lane), &[]);
         assert_eq!(output.status.code(), Some(1), "{output:?}");
         let said = String::from_utf8_lossy(&output.stdout);
-        assert!(said.contains(relative), "{said}");
-        assert!(said.contains("history reference"), "{said}");
+        let line = planted.lines().count();
+        let source = defect.strip_prefix('#').unwrap_or(defect).trim_end();
+        let expected = format!("{record}{relative}:{line}:{source}");
+        assert_eq!(said.lines().next(), Some(expected.as_str()), "{said}");
         fs::write(path, original).unwrap();
         success(command(
             &home,
