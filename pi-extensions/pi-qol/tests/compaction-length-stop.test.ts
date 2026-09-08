@@ -62,8 +62,11 @@ const rows: Array<{ stopReason: string; accepted: boolean }> = [
 	{ accepted: true, stopReason: "stop" },
 ];
 
+if (rows.length === 0) throw new Error("Compaction stop-reason table is empty");
+
 for (const row of rows) {
 	test(`generateQolSummary ${row.accepted ? "accepts" : "rejects"} a summary with stopReason ${row.stopReason}`, async () => {
+		expect.hasAssertions();
 		stubComplete(row.stopReason);
 		const run = generateQolSummary(makeCtx(), { conversationText: "user: hello", purpose: "compaction" });
 		if (row.accepted) {
