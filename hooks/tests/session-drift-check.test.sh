@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # Tests for the session-drift-check hook.
 #
-# The hook is a thin adapter over `kendex check --quiet`: exit 0 → silence,
-# exit 1 → the report verbatim on stdout, exit 2 → an "incomplete" line plus
-# the report, or a "could not run" line when the output is an Error:/error:
-# line from before the check ran, anything else → a "could not run" line
-# plus the output. These cases drive it with a fake `kendex` on PATH that
-# replays a scripted exit code and output, so no real install is consulted.
+# The hook is a thin adapter over `kendex check --quiet`, and its stdout is
+# the session-start context channel, so the exact text is the contract. The
+# mapping rows drive it with a fake `kendex` on PATH that replays a scripted
+# exit code and output, so no real install is consulted.
+#
+# A row is `label|fake rc|fake out|stdout`:
+#   fake rc   the exit status the fake kendex returns
+#   fake out  the fake's output by word (fake_out maps it); `-` for none
+#   stdout    the hook's exact stdout, `\n` for a newline and `{out}` for the
+#             fake's output; `-` when empty
+# Every row also asserts the hook's exit 0 and the argv `check --quiet`.
 #
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (a no-op hook, an always-print hook) can be run against these same
@@ -38,6 +43,23 @@ fi
 exit "${FAKE_RC:-0}"
 EOF
 chmod +x "$BIN_DIR/kendex"
+
+REPORT=$'kendex drift — project scope:\n  1 outdated — run `kendex refresh` to update:\n    ! orch (skill)'
+
+# The fake's output by word.
+fake_out() {
+  case "$1" in
+    -) : ;;
+    report) printf '%s' "$REPORT" ;;
+    unevaluated) printf '%s' $'not yet evaluated:\n  33 package(s) changed upstream and are not yet re-evaluated' ;;
+    could-not-check) printf '%s' $'could not check:\n  manifest: expected a table' ;;
+    error-inside-a-line) printf '%s' $'could not check:\n  source github.com/x/y unreachable since 2026-08-01: error: cannot lock ref' ;;
+    Error-line) printf '%s' 'Error: loading lock file' ;;
+    usage-error) printf '%s' $'error: unexpected argument \'--bogus\' found\n\nUsage: kendex check --quiet' ;;
+    fatal) printf '%s' 'kendex: fatal' ;;
+    *) printf 'unknown fake output word: %s\n' "$1" >&2; exit 1 ;;
+  esac
+}
 
 # Run the hook with a SessionStart payload on stdin (source from $HOOK_SOURCE,
 # default startup). Extra VAR=value args are passed through the environment.
@@ -82,70 +104,81 @@ assert_contains() {
   fi
 }
 
-assert_not_contains() {
-  local got="$1" needle="$2" name="$3"
-  if [[ "$got" != *"$needle"* ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected not to contain: %s\n        got:      %s\n' "$name" "$needle" "$got"
-  fi
+# Text as one line: every backslash doubled first, then every newline written
+# as `\n`, so a hook that printed the two characters `\n` instead of a line
+# break renders as `\\n` and cannot match a row.
+escape_nl() {
+  local text="$1"
+  text="${text//\\/\\\\}"
+  printf '%s' "${text//$'\n'/\\n}"
 }
 
-echo "session-drift-check: clean install"
-capture FAKE_RC=0 FAKE_OUT=""
-assert_eq "$rc" 0 "exits 0 on a clean install"
-assert_eq "$out" "" "prints nothing on a clean install"
-assert_eq "$(cat "$ARGS_LOG")" "check --quiet" "invokes kendex check --quiet"
+calls() {
+  local text
+  text="$(paste -s -d ';' "$ARGS_LOG")"
+  [[ "$text" != "" ]] && printf '%s' "$text" || printf -- '-'
+}
 
-echo "session-drift-check: drift found"
-REPORT=$'kendex drift — project scope:\n  1 outdated — run `kendex refresh` to update:\n    ! orch (skill)'
-capture FAKE_RC=1 FAKE_OUT="$REPORT"
-assert_eq "$rc" 0 "exits 0 so drift never blocks the session"
-assert_eq "$out" "$REPORT"$'\n' "relays the report verbatim on stdout"
+# One mapping row: the hook's exit, the fake's argv and the whole stdout,
+# trailing newlines kept.
+run_row() { # fake-rc fake-out-word
+  local rc=0 fake text
+  # A word fake_out refuses must end the run, not test the empty-output arm:
+  # the substitution swallows its exit, so the status is carried out by hand.
+  fake="$(fake_out "$2")" || { printf 'the fake output word could not be mapped: %s\n' "$2" >&2; return 1; }
+  : >"$ARGS_LOG"
+  : >"$CWD_LOG"
+  env -u CLAUDE_PROJECT_DIR -u KENDEX_DRIFT_HOOK \
+    PATH="$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
+    FAKE_RC="$1" FAKE_OUT="$fake" \
+    bash "$HOOK" <<<'{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' \
+    >"$TMP_ROOT/stdout" 2>/dev/null || rc=$?
+  text="$(cat "$TMP_ROOT/stdout"; printf x)"
+  text="${text%x}"
+  [[ "$text" != "" ]] && text="$(escape_nl "$text")" || text='-'
+  printf 'rc=%s calls=%s out=%s' "$rc" "$(calls)" "$text"
+}
 
-echo "session-drift-check: packages not yet evaluated"
-UNEVALUATED=$'not yet evaluated:\n  33 package(s) changed upstream and are not yet re-evaluated'
-capture FAKE_RC=1 FAKE_OUT="$UNEVALUATED"
-assert_eq "$out" "$UNEVALUATED"$'\n' "relays a not-yet-evaluated report verbatim, never as a failure"
+run_table() {
+  local title="$1" rows="$2" label fake_rc fake_word stdout fake_text want got row field before=$((PASS + FAIL))
+  echo "=== $title ==="
+  while IFS= read -r row; do
+    [[ "$row" != "" ]] || continue
+    IFS='|' read -r label fake_rc fake_word stdout <<<"$row"
+    for field in "$label" "$fake_rc" "$fake_word" "$stdout"; do
+      [[ "$field" != "" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+    done
+    # The word is mapped once, here, where a refusal ends the run: inside the
+    # substitutions below its exit would be swallowed and the row would test
+    # the empty-output arm instead.
+    fake_text="$(fake_out "$fake_word")" || { printf 'a row names a fake output word fake_out refuses: %s\n' "$row" >&2; exit 1; }
+    got="$(run_row "$fake_rc" "$fake_word")"
+    # A rendering aid for writing rows; the run is refused after the loop.
+    if [[ "${HOOKS_TABLE_PROBE:-}" == 1 ]]; then
+      printf '%s => %s\n' "$label" "$got"
+      continue
+    fi
+    want="${stdout//\{out\}/$(escape_nl "$fake_text")}"
+    assert_eq "$got" "rc=0 calls=check --quiet out=$want" "$label"
+  done <<<"$rows"
+  [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
+}
 
-echo "session-drift-check: could not check"
-capture FAKE_RC=2 FAKE_OUT=$'could not check:\n  manifest: expected a table'
-assert_eq "$rc" 0 "exits 0 when part of the check could not be made"
-assert_contains "$out" "kendex check incomplete (exit 2)" "names the incomplete check and exit code"
-assert_contains "$out" "manifest: expected a table" "carries the check's own diagnostic"
-assert_not_contains "$out" "could not run" "a completed run is never called a crash"
-capture FAKE_RC=2 FAKE_OUT=$'could not check:\n  source github.com/x/y unreachable since 2026-08-01: error: cannot lock ref'
-assert_contains "$out" "kendex check incomplete (exit 2)" "an error: inside a report line is still a completed report"
-assert_contains "$out" "error: cannot lock ref" "carries the fetch error the line quotes"
-assert_not_contains "$out" "could not run" "only an error: at the start of the output is the pre-check shape"
-
-echo "session-drift-check: failed before the check ran"
-capture FAKE_RC=2 FAKE_OUT=""
-assert_eq "$rc" 0 "exits 0 when the check fails saying nothing"
-assert_eq "$out" $'kendex check could not run (exit 2); drift status unknown\n' "exit 2 with no output is a failure to run, not an empty partial report"
-capture FAKE_RC=2 FAKE_OUT="Error: loading lock file"
-assert_eq "$rc" 0 "exits 0 when the check fails before reading anything"
-assert_contains "$out" "kendex check could not run (exit 2)" "an Error: line at exit 2 is a failure to run"
-assert_contains "$out" "Error: loading lock file" "carries kendex's own diagnostic"
-assert_not_contains "$out" "incomplete" "nothing checked is never called partial"
-capture FAKE_RC=2 FAKE_OUT=$'error: unexpected argument \'--bogus\' found\n\nUsage: kendex check --quiet'
-assert_contains "$out" "kendex check could not run (exit 2)" "a usage error: at exit 2 is a failure to run"
-assert_not_contains "$out" "incomplete" "a usage error is never called partial"
-
-echo "session-drift-check: check failed"
-capture FAKE_RC=3 FAKE_OUT="kendex: fatal"
-assert_eq "$rc" 0 "exits 0 when the check itself fails"
-assert_contains "$out" "kendex check could not run (exit 3)" "names the failure and exit code"
-assert_contains "$out" "kendex: fatal" "carries the failure's own output"
-# A signal or a timeout kills the check before it says anything. The
-# empty-output arm belongs to exit 2 alone, so this keeps the colon over a
-# blank line — the same text the embedded and Pi hooks print.
-capture FAKE_RC=3 FAKE_OUT=""
-assert_eq "$rc" 0 "exits 0 when the check dies saying nothing"
-assert_eq "$out" $'kendex check could not run (exit 3); drift status unknown:\n\n' \
-  "exit 3 with no output keeps the shape every rendering prints"
+# The empty-output arm belongs to exit 2 alone: a signal or a timeout kills
+# the check before it says anything, and the exit 3 row keeps the colon over
+# a blank line, the same text the embedded and Pi hooks print.
+run_table "the kendex check exit to stdout mapping" "\
+a clean install prints nothing|0|-|-
+drift found: the report verbatim|1|report|{out}\n
+not yet evaluated: the report verbatim, never as a failure|1|unevaluated|{out}\n
+could not check: incomplete, carrying the check's own diagnostic|2|could-not-check|kendex check incomplete (exit 2); some drift status unknown:\n{out}\n
+an error: inside a report line is still a completed report|2|error-inside-a-line|kendex check incomplete (exit 2); some drift status unknown:\n{out}\n
+exit 2 with no output is a failure to run, not an empty partial report|2|-|kendex check could not run (exit 2); drift status unknown\n
+an Error: line at exit 2 is a failure to run, carrying kendex's own diagnostic|2|Error-line|kendex check could not run (exit 2); drift status unknown:\n{out}\n
+a usage error: at exit 2 is a failure to run, never partial|2|usage-error|kendex check could not run (exit 2); drift status unknown:\n{out}\n
+exit 3 names the failure and exit code and carries the output|3|fatal|kendex check could not run (exit 3); drift status unknown:\n{out}\n
+exit 3 with no output keeps the shape every rendering prints|3|-|kendex check could not run (exit 3); drift status unknown:\n\n
+"
 
 echo "session-drift-check: unreadable stdin"
 # Strict mode must not let a failed payload read abort the session start.
@@ -307,5 +340,5 @@ assert_eq "$rc" 0 "exits 0 without a kendex binary"
 assert_eq "$out" "kendex drift check skipped: kendex is not on PATH" "says why it skipped without a kendex binary"
 
 echo
-echo "passed: $PASS  failed: $FAIL"
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
