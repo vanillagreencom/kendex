@@ -4571,22 +4571,23 @@ case "${1:-}" in
       [[ -z "$UPSTREAM" ]] && SET_UPSTREAM="-u"
     fi
 
+    PUSH_UPSTREAM_ARGS=()
+    PUSH_REF=HEAD
     if [[ -n "$SET_UPSTREAM" ]]; then
-      # ${arr[@]+...} guard: empty-array expansion is an unbound variable
-      # under Bash 3.2 with set -u.
-      if ! git_with_github_https_auth -C "$WT_PATH" push "$SET_UPSTREAM" ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" "HEAD:refs/heads/${CURRENT_BRANCH}"; then
-        if [[ ${#PUSH_LEASE[@]} -gt 0 ]]; then
-          worktree_message push-rejected "$REMOTE/$CURRENT_BRANCH" "Error: Push rejected. Remote '$REMOTE/$CURRENT_BRANCH' may have changed since the force-with-lease expectation; fetch and rebase/merge before retrying." >&2
-        fi
-        exit 1
+      PUSH_UPSTREAM_ARGS=("$SET_UPSTREAM")
+      PUSH_REF="HEAD:refs/heads/${CURRENT_BRANCH}"
+    fi
+    PUSH_OUTPUT=""
+    # Capture Git's vendor text so a failed push can emit its stable record
+    # first. A successful push is defined by its exit status and stays quiet.
+    if ! PUSH_OUTPUT="$(git_with_github_https_auth -C "$WT_PATH" push ${PUSH_UPSTREAM_ARGS[@]+"${PUSH_UPSTREAM_ARGS[@]}"} ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" "$PUSH_REF" 2>&1)"; then
+      if [[ ${#PUSH_LEASE[@]} -gt 0 ]]; then
+        worktree_message push-rejected "$REMOTE/$CURRENT_BRANCH" "Error: Push rejected. Remote '$REMOTE/$CURRENT_BRANCH' may have changed since the force-with-lease expectation; fetch and rebase/merge before retrying." >&2
+      else
+        worktree_message push-failed "$REMOTE/${CURRENT_BRANCH:-HEAD}" "Error: Push to '$REMOTE/${CURRENT_BRANCH:-HEAD}' failed." >&2
       fi
-    else
-      if ! git_with_github_https_auth -C "$WT_PATH" push ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" HEAD; then
-        if [[ ${#PUSH_LEASE[@]} -gt 0 ]]; then
-          worktree_message push-rejected "$REMOTE/$CURRENT_BRANCH" "Error: Push rejected. Remote '$REMOTE/$CURRENT_BRANCH' may have changed since the force-with-lease expectation; fetch and rebase/merge before retrying." >&2
-        fi
-        exit 1
-      fi
+      [[ -n "$PUSH_OUTPUT" ]] && sed 's/^/  git: /' <<<"$PUSH_OUTPUT" >&2
+      exit 1
     fi
     clear_restack_push_authorization "$WT_PATH"
     ;;
