@@ -66,7 +66,15 @@ for (const row of riskRows) {
 			: undefined;
 		try {
 			const result = transcriptRiskState(row.messages, row.threshold);
-			expect({ ...result, error: result.error, charsAboveFloor: result.chars > row.charFloor }).toEqual(row.expected);
+			const observed = {
+				chars: result.chars,
+				error: result.error,
+				exceeded: result.exceeded,
+				messageCount: result.messageCount,
+				threshold: result.threshold,
+				charsAboveFloor: result.chars > row.charFloor,
+			};
+			expect(observed).toStrictEqual(row.expected);
 		} finally {
 			serializer?.mockRestore();
 		}
