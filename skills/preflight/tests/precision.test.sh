@@ -6,28 +6,10 @@
 # real defect in the same fixture, so "clean" can never mean "the run did
 # nothing".
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
-TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-PF="$SKILL_DIR/scripts/preflight"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-
-PASS=0
-FAIL=0
-SKIP=0
-ok() {
-  PASS=$((PASS + 1))
-  printf '  ok    %s\n' "$1"
-}
-bad() {
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"
-}
-skipped() {
-  SKIP=$((SKIP + 1))
-  printf '  skip  %s (%s)\n' "$1" "$2"
-}
 
 SEED_TEMPLATE="$TMP/.seed-template"
 
@@ -82,23 +64,19 @@ build_seed_template() {
   git -C "$R" checkout -qb feature
 }
 
-run_pf() {
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && "$PF" "$@" 2>&1)" || RC=$?
-}
-
-clean() { # LABEL — exit 0, a clean verdict, and a diff that was not empty
+clean() { # LABEL COUNT — exit 0 and the clean verdict over exactly COUNT files
+  # A verdict over an empty diff proves nothing, so no caller may claim one.
+  [ "$2" -gt 0 ] || {
+    printf 'clean: a verdict over 0 changed files is not evidence: %s\n' "$1" >&2
+    exit 1
+  }
   if [ "$RC" -ne 0 ]; then
     bad "$1" "rc=$RC out=$OUT"
     return
   fi
   case "$OUT" in
-    *"preflight: clean (0 changed file(s))"*)
-      bad "$1" "the fixture produced an EMPTY diff — the clean verdict proves nothing: $OUT"
-      ;;
-    *"preflight: clean ("*) ok "$1" ;;
-    *) bad "$1" "rc=$RC out=$OUT" ;;
+    *"preflight: clean ($2 changed file(s))"*) ok "$1" ;;
+    *) bad "$1" "want the clean verdict over $2 changed file(s); rc=$RC out=$OUT" ;;
   esac
 }
 
@@ -270,7 +248,7 @@ echo "$FATAL $LITERAL"
 EOF
 git -C "$R" add -A
 run_pf
-clean "no lane fires on placeholders, URLs, quoted or data-file or test-file doc cites, foreign subtrees, referenced TODOs, strict scripts, wired suites, trapped scratch dirs, captured statuses, here-string, read-to-EOF and OR-list pipeline shapes, guarded or deliberately fatal command-substitution assignments, the same shapes named in a comment or a string, or JSON-with-comments"
+clean "no lane fires on placeholders, URLs, quoted or data-file or test-file doc cites, foreign subtrees, referenced TODOs, strict scripts, wired suites, trapped scratch dirs, captured statuses, here-string, read-to-EOF and OR-list pipeline shapes, guarded or deliberately fatal command-substitution assignments, the same shapes named in a comment or a string, or JSON-with-comments" 16
 
 echo "=== control: the same fixture still fails on a real defect ==="
 printf 'And a citation that is dead: `docs/gone.md`.\n' >>"$R/README.md"
@@ -287,247 +265,6 @@ fires "a line-suffixed local citation is not mistaken for a repo qualifier" "scr
 fires "the trapped scratch dir beside it does not shield an untrapped one" "scripts/notrap.sh:3: [mktemp-trap]"
 fires "the captured status beside it does not shield a swallowed one" "scripts/swallow.sh:4: [fail-open] git || true swallows exit 2"
 fires "the wired suites beside it, and the workflow path filter globbing everything, do not wire an unwired one" "tests/orphan.test.sh:0: [unwired-suite]"
-
-echo "=== a runner set that proves nothing decides nothing ==="
-seed norunner
-printf '#!/usr/bin/env bash\nset -euo pipefail\necho orphan\n' >"$R/tests/orphan.test.sh"
-git -C "$R" add -A
-run_pf
-clean "a new suite in a repository with no workflow, manifest or run-all script is not called unwired"
-
-# The same suite, once a runner exists to read: the silence above was the
-# missing runner set, not a lane that never runs.
-mkdir -p "$R/.github/workflows"
-printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/other.test.sh\n' >"$R/.github/workflows/ci.yml"
-git -C "$R" add -A
-run_pf
-fires "once one runner exists, the same suite is unwired" "tests/orphan.test.sh:0: [unwired-suite]"
-
-# A runner this tool cannot read leaves the set incomplete, and an
-# incomplete set cannot prove a suite unwired.
-ln -s ../nowhere/package.json "$R/package.json"
-git -C "$R" add -A
-run_pf
-clean "an unreadable runner leaves the suite unproven rather than unwired"
-
-# A package manifest below the repo root runs what lives beside it, so a
-# suite in its subtree is wired even when no path anywhere names the suite.
-seed manifestdir
-mkdir -p "$R/pkg/tests" "$R/.github/workflows"
-printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test --workspaces\n' >"$R/.github/workflows/ci.yml"
-printf '{\n  "name": "pkg",\n  "scripts": { "test": "node --test" }\n}\n' >"$R/pkg/package.json"
-git -C "$R" add -A
-git -C "$R" commit -qm pkg
-printf '#!/usr/bin/env bash\nset -euo pipefail\necho pkg\n' >"$R/pkg/tests/pkg.test.sh"
-git -C "$R" add -A
-run_pf
-clean "a suite beside a package manifest is wired by that manifest, with no path naming it"
-
-# Outside that manifest's subtree the same suite has nothing running it.
-printf '#!/usr/bin/env bash\nset -euo pipefail\necho far\n' >"$R/tests/far.test.sh"
-git -C "$R" add -A
-run_pf
-fires "a suite outside every manifest subtree is still unwired" "tests/far.test.sh:0: [unwired-suite]"
-
-echo "=== a bare vitest/jest invocation wires its default include glob ==="
-# A root manifest scripting `vitest run` names no path and carries no glob,
-# yet the runner's own default include executes every *.test.ts it matches.
-seed vitestdefault
-printf '{\n  "scripts": { "test": "vitest run" },\n  "devDependencies": { "vitest": "^3.0.0" }\n}\n' >"$R/package.json"
-git -C "$R" add -A
-git -C "$R" commit -qm "vitest runner with no explicit include"
-mkdir -p "$R/src/__tests__"
-printf 'export {}\n' >"$R/src/__tests__/session.test.ts"
-printf 'export {}\n' >"$R/src/__tests__/session.test.mjs"
-git -C "$R" add -A
-run_pf
-clean "a bare vitest run script wires the ts and mjs suites its default include matches"
-
-# The default include reaches no shell suite, so the lane still runs red
-# in the same fixture.
-printf '#!/usr/bin/env bash\nset -euo pipefail\necho orphan\n' >"$R/tests/orphan.test.sh"
-git -C "$R" add -A
-run_pf
-fires "the vitest default include does not reach a shell suite" "tests/orphan.test.sh:0: [unwired-suite]"
-
-# The same word as a dependency key is not an invocation: nothing runs.
-seed vitestdep
-printf '{\n  "scripts": { "test": "node run-tests.js" },\n  "devDependencies": { "vitest": "^3.0.0" }\n}\n' >"$R/package.json"
-git -C "$R" add -A
-git -C "$R" commit -qm "vitest as a dependency, never invoked"
-printf 'export {}\n' >"$R/orphan.test.ts"
-git -C "$R" add -A
-run_pf
-fires "vitest named only as a dependency wires nothing" "orphan.test.ts:0: [unwired-suite]"
-
-# Jest's default testMatch covers mc-prefixed extensions too, so a jest
-# script wires ts and mjs suites alike.
-seed jestdefault
-printf '{\n  "scripts": { "test": "jest --ci" }\n}\n' >"$R/package.json"
-git -C "$R" add -A
-git -C "$R" commit -qm "jest runner with no explicit testMatch"
-printf 'export {}\n' >"$R/a.test.ts"
-printf 'export {}\n' >"$R/b.test.mjs"
-git -C "$R" add -A
-run_pf
-clean "a jest script wires the ts and mjs suites its default testMatch covers"
-
-# A workflow invoking vitest runs from the repo root, so its default
-# include wires a suite far from .github/workflows.
-seed workflowbare
-mkdir -p "$R/.github/workflows"
-printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: vitest\n' >"$R/.github/workflows/ci.yml"
-git -C "$R" add -A
-git -C "$R" commit -qm "workflow invoking bare vitest"
-printf 'export {}\n' >"$R/w.test.ts"
-git -C "$R" add -A
-run_pf
-clean "a workflow invoking bare vitest wires a root-level suite"
-
-# The same invocation single-quoted is still an invocation.
-seed workflowsq
-mkdir -p "$R/.github/workflows"
-printf "name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: 'vitest'\n" >"$R/.github/workflows/ci.yml"
-git -C "$R" add -A
-git -C "$R" commit -qm "workflow invoking single-quoted vitest"
-printf 'export {}\n' >"$R/wq.test.ts"
-git -C "$R" add -A
-run_pf
-clean "a single-quoted vitest invocation wires the suite"
-
-# A validate script under sub/tools runs from the tree that owns tools/:
-# its default include wires that subtree and nothing outside it.
-seed validatescope
-mkdir -p "$R/sub/tools"
-printf '#!/usr/bin/env bash\nset -euo pipefail\nvitest run\n' >"$R/sub/tools/validate-js"
-git -C "$R" add -A
-git -C "$R" commit -qm "validate script invoking vitest below the root"
-printf 'export {}\n' >"$R/sub/app.test.ts"
-printf 'export {}\n' >"$R/far.test.ts"
-git -C "$R" add -A
-run_pf
-fires "a suite outside the validate script's tree still fires" "far.test.ts:0: [unwired-suite]"
-case "$OUT" in *"sub/app.test.ts"*) bad "the validate script wires the suite in its own tree" "$OUT" ;; *) ok "the validate script wires the suite in its own tree" ;; esac
-
-# A script value that is exactly the runner name, no arguments.
-seed barequote
-printf '{\n  "scripts": { "test": "vitest" }\n}\n' >"$R/package.json"
-git -C "$R" add -A
-git -C "$R" commit -qm "script value of bare vitest with no arguments"
-printf 'export {}\n' >"$R/q.test.ts"
-git -C "$R" add -A
-run_pf
-clean "a script value of exactly vitest wires the suite"
-
-# A Makefile recipe line that ends at the runner name.
-seed makeend
-printf 'test:\n\tvitest\n' >"$R/Makefile"
-git -C "$R" add -A
-git -C "$R" commit -qm "Makefile recipe ending in vitest"
-printf 'export {}\n' >"$R/m.test.ts"
-git -C "$R" add -A
-run_pf
-clean "a Makefile recipe line ending in vitest wires the suite"
-
-# A manager prefix is an invocation: the token directly before the
-# runner name decides.
-seed npxprefix
-printf '{\n  "scripts": { "test": "npx vitest" }\n}\n' >"$R/package.json"
-git -C "$R" add -A
-git -C "$R" commit -qm "vitest behind an npx prefix"
-printf 'export {}\n' >"$R/n.test.ts"
-git -C "$R" add -A
-run_pf
-clean "an npx-prefixed vitest invocation wires the suite"
-
-# So is an exec form.
-seed execform
-printf '{\n  "scripts": { "test": "pnpm exec vitest" }\n}\n' >"$R/package.json"
-git -C "$R" add -A
-git -C "$R" commit -qm "vitest behind pnpm exec"
-printf 'export {}\n' >"$R/e.test.ts"
-git -C "$R" add -A
-run_pf
-clean "a pnpm exec vitest invocation wires the suite"
-
-# Environment assignment words before the runner are part of the
-# invocation, not a different command.
-seed envassign
-printf '{\n  "scripts": { "test": "CI=1 vitest run" }\n}\n' >"$R/package.json"
-git -C "$R" add -A
-git -C "$R" commit -qm "vitest behind an environment assignment"
-printf 'export {}\n' >"$R/v.test.ts"
-git -C "$R" add -A
-run_pf
-clean "an env-assignment-prefixed vitest invocation wires the suite"
-
-# A quoted assignment value with embedded spaces is still one
-# assignment word.
-seed quotedassign
-printf '{\n  "scripts": { "test": "NODE_OPTIONS='"'"'--experimental-vm-modules --trace-warnings'"'"' jest" }\n}\n' >"$R/package.json"
-git -C "$R" add -A
-git -C "$R" commit -qm "jest behind a quoted multi-flag assignment"
-printf 'export {}\n' >"$R/qa.test.ts"
-git -C "$R" add -A
-run_pf
-clean "a quoted-value assignment before jest wires the suite"
-
-# And a chained invocation after a shell connector.
-seed chained
-printf '{\n  "scripts": { "test": "node setup.js && vitest run" }\n}\n' >"$R/package.json"
-git -C "$R" add -A
-git -C "$R" commit -qm "vitest chained after a setup command"
-printf 'export {}\n' >"$R/c.test.ts"
-git -C "$R" add -A
-run_pf
-clean "a vitest invocation chained after && wires the suite"
-
-# A comment is not an invocation: a workflow whose only vitest reference
-# is a comment wires nothing.
-seed prosecomment
-mkdir -p "$R/.github/workflows"
-printf 'name: ci\non: push\n# TO''DO(#1): migrate to vitest — run: vitest someday\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/other.test.sh\n' >"$R/.github/workflows/ci.yml"
-git -C "$R" add -A
-git -C "$R" commit -qm "workflow mentioning vitest only in a comment"
-printf 'export {}\n' >"$R/p.test.ts"
-git -C "$R" add -A
-run_pf
-fires "a workflow comment naming vitest wires nothing" "p.test.ts:0: [unwired-suite]"
-
-# Neither is a trailing comment: a connector and invocation living after
-# a whitespace-opened # wire nothing.
-seed trailingcomment
-mkdir -p "$R/.github/workflows"
-printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok # ; vitest\n' >"$R/.github/workflows/ci.yml"
-git -C "$R" add -A
-git -C "$R" commit -qm "workflow naming vitest only in a trailing comment"
-printf 'export {}\n' >"$R/t.test.ts"
-git -C "$R" add -A
-run_pf
-fires "a trailing comment naming vitest wires nothing" "t.test.ts:0: [unwired-suite]"
-
-# Prose fields are not invocations either: a description and a keywords
-# array naming both runners wire nothing.
-seed prosejson
-printf '{\n  "description": "tested with vitest and jest",\n  "keywords": ["vitest", "jest"],\n  "scripts": { "test": "node run-tests.js" }\n}\n' >"$R/package.json"
-git -C "$R" add -A
-git -C "$R" commit -qm "manifest naming the runners only in prose"
-printf 'export {}\n' >"$R/k.test.ts"
-git -C "$R" add -A
-run_pf
-fires "manifest prose naming vitest and jest wires nothing" "k.test.ts:0: [unwired-suite]"
-
-# A vitest runner below the repo root runs from its own directory and says
-# nothing about a suite outside that subtree.
-seed vitestscope
-mkdir -p "$R/pkg"
-printf '{\n  "scripts": { "test": "vitest run" }\n}\n' >"$R/pkg/package.json"
-git -C "$R" add -A
-git -C "$R" commit -qm "vitest runner below the repo root"
-printf 'export {}\n' >"$R/far.test.ts"
-git -C "$R" add -A
-run_pf
-fires "a sub-package vitest runner wires nothing outside its subtree" "far.test.ts:0: [unwired-suite]"
 
 echo "=== inert trap text arms nothing; quoted command text swallows nothing; an untracked runner wires ==="
 seed inert
@@ -561,7 +298,7 @@ seed bigtrap
   awk 'BEGIN { for (i = 0; i < 4200; i++) print "echo padding line " i " keeps this file past a pipe buffer" }'
 } >"$R/scripts/big.sh"
 run_pf
-clean "a 200 KB new script whose trap is on line 4 is not reported as untrapped"
+clean "a 200 KB new script whose trap is on line 4 is not reported as untrapped" 1
 
 echo "=== control: the same large file without the trap still fires ==="
 grep -v '^trap ' -- "$R/scripts/big.sh" >"$R/scripts/big.new"
@@ -591,7 +328,7 @@ printf '/* fs.mkdirSync("%s/x"); */\n * fs.mkdirSync("%s/y");\nmodule.exports = 
 printf 'import os\nos.makedirs("%s", exist_ok=True)\n' /tmp >"$R/src/bareroot.py"
 git -C "$R" add -A
 run_pf
-clean "temp-path literals as config values, fixture strings, messages, TMPDIR-accessor creations, commented-out calls (line and block), and bare-root creation are nobody's finding"
+clean "temp-path literals as config values, fixture strings, messages, TMPDIR-accessor creations, commented-out calls (line and block), and bare-root creation are nobody's finding" 11
 
 echo "=== control: a real creation beside those values still fails ==="
 printf 'import os\nos.makedirs("%s/real")\n' /tmp >"$R/src/creates.py"
@@ -605,7 +342,7 @@ printf '#!/usr/bin/env bash\necho old\nTMP="$(mktemp -d)"\necho "$TMP"\n' >"$R/s
 printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background.\necho old\necho more\n' >"$R/scripts/pointer.sh"
 git -C "$R" add -A
 run_pf
-clean "appending to files whose older lines violate two lanes reports nothing"
+clean "appending to files whose older lines violate two lanes reports nothing" 2
 
 echo "=== control: touching those same lines makes them this diff's problem ==="
 printf '#!/usr/bin/env bash\necho old\nTMP="$(mktemp -d -t x)"\necho "$TMP"\n' >"$R/scripts/old.sh"
@@ -626,7 +363,7 @@ repo_root() {
 }
 EOF
 run_pf
-clean "a new sourced lib without a strict-mode preamble is not a finding"
+clean "a new sourced lib without a strict-mode preamble is not a finding" 1
 
 echo "=== control: the same bytes executed, and real fail-open shapes inside a lib, still fail ==="
 cp "$R/scripts/lib/common.sh" "$R/scripts/common.sh"
@@ -659,7 +396,7 @@ cp "$R/tools/test-lexer" "$R/tests/fixtures/test-input"
 printf 'cases to run by hand\n' >"$R/docs/test-plan"
 git -C "$R" add -A
 run_pf
-clean "a new tools/test-<name> suite without errexit, wired by a tools/test-* glob, is not a finding; a fixture and a text file of that name are not suites"
+clean "a new tools/test-<name> suite without errexit, wired by a tools/test-* glob, is not a finding; a fixture and a text file of that name are not suites" 4
 
 echo "=== control: the same bytes under a non-suite name, and a suite the glob does not reach, still fail ==="
 cp "$R/tools/test-lexer" "$R/tools/lexer"
@@ -697,11 +434,7 @@ git -C "$R" rm -q docs/legacy.md scripts/old.sh
 printf '# Guide\n\nStill here.\n' >"$R/docs/guide.md"
 git -C "$R" add -A
 run_pf
-if [ "$RC" -eq 0 ] && case "$OUT" in *"preflight: clean (1 changed file(s))"*) true ;; *) false ;; esac; then
-  ok "deleting two files that contained violations leaves only the edited file in scope"
-else
-  bad "deleting two files that contained violations leaves only the edited file in scope" "rc=$RC out=$OUT"
-fi
+clean "deleting two files that contained violations leaves only the edited file in scope" 1
 
 echo "=== vendored harness mirrors are not this repo's prose ==="
 seed mirror
@@ -709,7 +442,7 @@ mkdir -p "$R/.agents/skills/foo" "$R/.claude/skills/foo/scripts"
 printf '# Foo\n\nSee `docs/gone.md` for background.\n' >"$R/.agents/skills/foo/SKILL.md"
 printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background.\necho run\n' >"$R/.claude/skills/foo/scripts/run"
 run_pf
-clean "a vendored skill's citations are not this repo's prose claims"
+clean "a vendored skill's citations are not this repo's prose claims" 2
 printf 'See `docs/gone.md`.\n' >>"$R/README.md"
 run_pf
 fires "the same dead citation outside the mirror still fires" "README.md:2: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
@@ -743,7 +476,7 @@ printf '#!/usr/bin/env bash\nset -euo pipefail\necho vendored\n' >"$R/.agents/sk
 mkdir -p "$R/.pi/kendex/hooks"
 printf '#!/usr/bin/env bash\nD="$(mktemp -d)"\necho hook\n' >"$R/.pi/kendex/hooks/guard.sh"
 run_pf
-clean "a vendored skill's strict mode, scratch cleanup, masked returns and suite wiring are upstream's to fix"
+clean "a vendored skill's strict mode, scratch cleanup, masked returns and suite wiring are upstream's to fix" 4
 
 echo "=== control: the same bytes this repo authors itself still fail ==="
 cp "$R/.agents/skills/foo/scripts/run" "$R/scripts/run.sh"
@@ -795,7 +528,7 @@ printf 'CREATE OR REPLACE VIEW w AS SELECT 1, 2;\n' >"$R/src/main/resources/db/m
 printf '# revision id, still no checksum\n' >"$R/store/migrations/0001_initial.py"
 git -C "$R" add -A
 run_pf
-clean "a new version, an edited note beside it, an edited .sql outside a migrations directory, an edited repeatable migration in either directory, a mode-only change, a nested .sql, and a Python migration"
+clean "a new version, an edited note beside it, an edited .sql outside a migrations directory, an edited repeatable migration in either directory, a mode-only change, a nested .sql, and a Python migration" 8
 printf 'CREATE TABLE t (id INTEGER); -- clearer\n' >"$R/store/migrations/V1__init.sql"
 git -C "$R" add -A
 run_pf
@@ -837,7 +570,7 @@ printf '{\n  // Existing editor-folder convention.\n  "name": "editor",\n}\n' >"
 printf '{\n  // Existing container-folder convention.\n  "name": "container",\n}\n' >"$R/project/.devcontainer/devcontainer.json"
 git -C "$R" add -A
 run_pf
-clean "the .jsonc kind and every shipped JSONC path convention accept comments and trailing commas"
+clean "the .jsonc kind and every shipped JSONC path convention accept comments and trailing commas" 4
 
 seed jsoncsetting
 mkdir -p "$R/themes/white/apps" "$R/config"
@@ -845,7 +578,7 @@ printf '{\n  // The producer declares this .json file as JSONC.\n  "name": "whit
 printf '[env]\nPREFLIGHT_JSONC_GLOBS = "**/themes/*/apps/vscode-theme.json"\n' >"$R/kendex.settings.toml"
 git -C "$R" add -A
 run_pf
-clean "a project setting accepts the reported VS Code theme path"
+clean "a project setting accepts the reported VS Code theme path" 2
 printf '{\n  "broken":\n}\n' >"$R/config/strict.json"
 git -C "$R" add -A
 run_pf
@@ -859,13 +592,12 @@ git -C "$R" commit -qm "add V2"
 printf 'CREATE TABLE w (id INTEGER, n TEXT);\n' >"$R/store/migrations/V2__later.sql"
 git -C "$R" add -A
 run_pf --staged
-clean "correcting a migration this branch added, in the staged scope that diffs against HEAD"
+clean "correcting a migration this branch added, in the staged scope that diffs against HEAD" 1
 run_pf
-clean "and the base scope reads the same file as added"
+clean "and the base scope reads the same file as added" 1
 printf 'CREATE TABLE t (id INTEGER); -- clearer\n' >"$R/store/migrations/V1__init.sql"
 git -C "$R" add -A
 run_pf --staged
 fires "the base's own migration, staged, still fails" "store/migrations/V1__init.sql:0: [applied-migration-edited]"
 
-printf '\n%s passed, %s failed, %s skipped\n' "$PASS" "$FAIL" "$SKIP"
-[ "$FAIL" -eq 0 ]
+pf_summary
