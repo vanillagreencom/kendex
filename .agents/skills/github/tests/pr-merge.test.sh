@@ -3,7 +3,7 @@
 # review-thread gate, the terminal states (a merged or closed PR
 # short-circuits every mode, before and after a state lookup that failed
 # once), the guarded mutation and its post-call outcomes, and the two
-# overrides. The ci-classify-refusal suite is ci-classify-refusal.sh; both
+# overrides. Its sibling ci-classify-refusal.test.sh and this file both
 # source lib/check-stub.sh for the gh stub.
 #
 # A row is `label|world|argv|rc|out|err|calls`:
