@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { commands } from "@/bindings";
+import { type AccountStatus, commands } from "@/bindings";
 import {
   ADA,
   account,
@@ -9,7 +9,12 @@ import {
   serves,
   unreadable,
 } from "@/test/account-store";
-import { hasCredential, type SettledAccount, useAccountStore } from "./account";
+import {
+  type AccountState,
+  hasCredential,
+  type SettledAccount,
+  useAccountStore,
+} from "./account";
 import { type AccountRead, setAccountReader } from "./account-read";
 
 // `vi.mock` is hoisted above the imports, so its factory cannot reach one.
@@ -37,35 +42,54 @@ beforeEach(() => {
 
 afterEach(() => setAccountReader(null));
 
+/** A reader whose answers are released by hand, in any order. */
+const staged = () => {
+  const gates: ((answer: AccountRead) => void)[] = [];
+  setAccountReader(
+    () => new Promise<AccountRead>((resolve) => gates.push(resolve)),
+  );
+  return gates;
+};
+
 describe("the account state a read settles on", () => {
   it("starts out knowing nothing", () => {
     expect(account()).toEqual({ kind: "loading" });
   });
 
-  it("is signed out when no credential is stored", async () => {
-    answers({ state: "signed-out" });
-    await load();
-    expect(account()).toEqual({ kind: "signed-out" });
-  });
-
-  it("carries every state the command settles on", async () => {
-    answers({ state: "signed-in", identity: ADA });
-    await load();
-    expect(account()).toEqual({
-      kind: "signed-in",
-      identity: ADA,
-    });
-
-    answers({ state: "offline", identity: ADA });
-    await load();
-    expect(account()).toEqual({
-      kind: "offline",
-      identity: ADA,
-    });
-
-    answers({ state: "expired" });
-    await load();
-    expect(account()).toEqual({ kind: "expired" });
+  it("carries the command's settled state", async () => {
+    const rows = [
+      {
+        name: "no credential",
+        wire: { state: "signed-out" },
+        expected: { kind: "signed-out" },
+      },
+      {
+        name: "accepted credential",
+        wire: { state: "signed-in", identity: ADA },
+        expected: { kind: "signed-in", identity: ADA },
+      },
+      {
+        name: "cached identity",
+        wire: { state: "offline", identity: ADA },
+        expected: { kind: "offline", identity: ADA },
+      },
+      {
+        name: "rejected credential",
+        wire: { state: "expired" },
+        expected: { kind: "expired" },
+      },
+    ] satisfies {
+      name: string;
+      wire: AccountStatus["state"];
+      expected: SettledAccount;
+    }[];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      fresh();
+      answers(row.wire);
+      await load();
+      expect(account(), row.name).toEqual(row.expected);
+    }
   });
 
   it("keeps the expired explanation on the read that follows it", async () => {
@@ -86,80 +110,72 @@ describe("the account state a read settles on", () => {
     });
   });
 
-  it("carries the identity the backend names", async () => {
-    serves({ kind: "signed-in", identity: ADA });
-    await load();
-    expect(account()).toEqual({
-      kind: "signed-in",
-      identity: ADA,
-    });
-  });
-
-  it("is offline with the cached identity when the server is unreachable", async () => {
-    serves({ kind: "offline", identity: ADA });
-    await load();
-    expect(account()).toEqual({
-      kind: "offline",
-      identity: ADA,
-    });
-  });
-
-  it("is expired when the credential is no longer accepted", async () => {
-    serves({ kind: "expired" });
-    await load();
-    expect(account()).toEqual({ kind: "expired" });
+  it("keeps the state and identity supplied by the reader", async () => {
+    const rows = [
+      { kind: "signed-in", identity: ADA },
+      { kind: "offline", identity: ADA },
+      { kind: "expired" },
+    ] satisfies SettledAccount[];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const state of rows) {
+      fresh();
+      serves(state);
+      await load();
+      expect(account(), state.kind).toEqual(state);
+    }
   });
 });
 
 // A read that failed learned nothing, so it takes nothing away.
 describe("a read that could not be made", () => {
-  it("becomes offline when the directory was asked and a name is in hand", async () => {
-    useAccountStore.setState({
-      account: { kind: "signed-in", identity: ADA },
-    });
-    unreadable("no route to kendex.ai", "unreachable");
-    await load();
-    expect(account()).toEqual({
-      kind: "offline",
-      identity: ADA,
-    });
-    expect(useAccountStore.getState().readError).toBe("no route to kendex.ai");
-  });
-
-  // Offline says kendex.ai was reached on some date and not since. A
-  // refusal on this machine never asked it anything, so the state stands
-  // as the last read left it and the reason is all this one adds.
-  it("leaves the name it had alone when the machine refused", async () => {
-    useAccountStore.setState({
-      account: { kind: "signed-in", identity: ADA },
-    });
-    unreadable();
-    await load();
-    expect(account()).toEqual({
-      kind: "signed-in",
-      identity: ADA,
-    });
-    expect(useAccountStore.getState().readError).toBe("keychain locked");
-  });
-
-  it("leaves a credential with no name signed in", async () => {
-    useAccountStore.setState({
-      account: { kind: "signed-in", identity: null },
-    });
-    unreadable();
-    await load();
-    expect(account()).toEqual({
-      kind: "signed-in",
-      identity: null,
-    });
-    expect(useAccountStore.getState().readError).toBe("keychain locked");
-  });
-
-  it("claims no state at all when nothing was ever read", async () => {
-    unreadable();
-    await load();
-    expect(account()).toEqual({ kind: "loading" });
-    expect(useAccountStore.getState().readError).toBe("keychain locked");
+  it("keeps what a failed read still knows about the credential", async () => {
+    const rows = [
+      {
+        name: "unreachable directory",
+        before: { kind: "signed-in", identity: ADA },
+        failure: "unreachable",
+        message: "no route to kendex.ai",
+        expected: { kind: "offline", identity: ADA },
+      },
+      {
+        name: "local refusal with identity",
+        before: { kind: "signed-in", identity: ADA },
+        failure: "local",
+        message: "keychain locked",
+        expected: { kind: "signed-in", identity: ADA },
+      },
+      {
+        name: "local refusal without identity",
+        before: { kind: "signed-in", identity: null },
+        failure: "local",
+        message: "keychain locked",
+        expected: { kind: "signed-in", identity: null },
+      },
+      {
+        name: "nothing ever read",
+        before: { kind: "loading" },
+        failure: "local",
+        message: "keychain locked",
+        expected: { kind: "loading" },
+      },
+    ] satisfies {
+      name: string;
+      before: AccountState;
+      failure: "local" | "unreachable";
+      message: string;
+      expected: AccountState;
+    }[];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      fresh();
+      useAccountStore.setState({ account: row.before });
+      unreadable(row.message, row.failure);
+      await load();
+      expect(
+        { account: account(), error: useAccountStore.getState().readError },
+        row.name,
+      ).toEqual({ account: row.expected, error: row.message });
+    }
   });
 
   it("settles on the next read that lands", async () => {
@@ -230,13 +246,6 @@ describe("a read that could not be made", () => {
 // A surface offering the retry has to tell a read still on its way from one
 // that was never made, and only the store knows which it is.
 describe("whether a read is out", () => {
-  /** A reader whose answer is released by hand. */
-  const staged = () => {
-    const gates: ((answer: AccountRead) => void)[] = [];
-    setAccountReader(() => new Promise<AccountRead>((r) => gates.push(r)));
-    return gates;
-  };
-
   const reading = () => useAccountStore.getState().reading;
 
   // Read off the store's own initial state, not the one a test set up: a
@@ -412,13 +421,6 @@ describe("a read racing a deliberate change", () => {
     expect(useAccountStore.getState().error).toBe("the approval was denied");
   });
 
-  /** A reader whose answers are released by hand, in any order. */
-  const staged = () => {
-    const gates: ((answer: AccountRead) => void)[] = [];
-    setAccountReader(() => new Promise<AccountRead>((r) => gates.push(r)));
-    return gates;
-  };
-
   const signedIn: AccountRead = {
     ok: { kind: "signed-in", identity: ADA },
   };
@@ -544,20 +546,21 @@ describe("which states go looking for submissions", () => {
     } as Awaited<ReturnType<typeof commands.mineSubmissions>>);
   });
 
-  const asks = async (state: SettledAccount) => {
-    useAccountStore.setState({ account: state, submissions: null });
-    await useAccountStore.getState().loadSubmissions();
-    return vi.mocked(commands.mineSubmissions).mock.calls.length > 0;
-  };
-
-  it("asks while a credential is held", async () => {
-    expect(await asks({ kind: "signed-in", identity: ADA })).toBe(true);
-    vi.clearAllMocks();
-    expect(await asks({ kind: "offline", identity: ADA })).toBe(true);
-  });
-
-  it("does not ask once it is signed out or expired", async () => {
-    expect(await asks({ kind: "signed-out" })).toBe(false);
-    expect(await asks({ kind: "expired" })).toBe(false);
+  it("asks for submissions exactly while a credential is held", async () => {
+    const rows = [
+      { state: { kind: "signed-in", identity: ADA }, calls: 1 },
+      { state: { kind: "offline", identity: ADA }, calls: 1 },
+      { state: { kind: "signed-out" }, calls: 0 },
+      { state: { kind: "expired" }, calls: 0 },
+    ] satisfies { state: SettledAccount; calls: number }[];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      vi.mocked(commands.mineSubmissions).mockClear();
+      useAccountStore.setState({ account: row.state, submissions: null });
+      await useAccountStore.getState().loadSubmissions();
+      expect(commands.mineSubmissions, row.state.kind).toHaveBeenCalledTimes(
+        row.calls,
+      );
+    }
   });
 });

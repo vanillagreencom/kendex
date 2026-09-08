@@ -301,86 +301,86 @@ const pressUpdate = async (host: HTMLElement) => {
 };
 
 describe("the package page after an update started from its Projects tab", () => {
-  it("re-reads its files, its version and its update offer", async () => {
+  const outcomes = [
+    {
+      name: "re-reads its files, its version and its update offer",
+      outcome: "ok",
+      before: ["BEFORE.md", "v1"],
+      after: ["AFTER.md", "v2"],
+      absent: ["BEFORE.md", "v1"],
+      update: true,
+    },
+    {
+      name: "re-reads them when the write answers an error",
+      outcome: "write-error",
+      before: ["BEFORE.md"],
+      after: ["AFTER.md", "v2"],
+      absent: ["BEFORE.md"],
+      update: false,
+    },
+    {
+      name: "re-reads them when the read behind the write fails",
+      outcome: "read-error",
+      before: ["BEFORE.md", "v1"],
+      after: ["AFTER.md", "v2"],
+      absent: ["BEFORE.md", "v1"],
+      update: false,
+    },
+  ];
+  expect(outcomes).toHaveLength(3);
+  it.each(outcomes)("$name", async (row) => {
     const write = engineWrites();
-    // The standing read the store lands behind its own apply.
-    vi.mocked(commands.updatesOverview).mockImplementation(() =>
-      Promise.resolve({
+    if (row.outcome === "write-error") {
+      vi.mocked(commands.packageUpdate).mockImplementation(() => {
+        write.landed = true;
+        return Promise.resolve({ status: "error", error: "the apply stopped" });
+      });
+      vi.mocked(commands.updatesOverview).mockResolvedValue({
         status: "ok",
         data: {
-          rows: [rowAt(write.landed ? NEW : OLD, !write.landed)],
+          rows: [rowAt(OLD, true)],
           warnings: [],
           unreadable: [],
           lastFetched: null,
         },
-      }),
-    );
-
+      });
+    } else if (row.outcome === "read-error") {
+      vi.mocked(commands.updatesOverview).mockRejectedValue(
+        new Error("overview wedged"),
+      );
+    } else {
+      vi.mocked(commands.updatesOverview).mockImplementation(() =>
+        Promise.resolve({
+          status: "ok",
+          data: {
+            rows: [rowAt(write.landed ? NEW : OLD, !write.landed)],
+            warnings: [],
+            unreadable: [],
+            lastFetched: null,
+          },
+        }),
+      );
+    }
     const host = await openPage();
-    expect(host.textContent).toContain("BEFORE.md");
-    expect(host.textContent).toContain("v1");
-    expect(header(host)).toContain(UPDATE_LABEL);
-
+    const before = host.textContent ?? "";
+    const updateBefore = header(host)?.includes(UPDATE_LABEL);
     await pressUpdate(host);
-
-    expect(host.textContent).toContain("AFTER.md");
-    expect(host.textContent).not.toContain("BEFORE.md");
-    expect(host.textContent).toContain("v2");
-    expect(host.textContent).not.toContain("v1");
-    expect(header(host)).not.toContain(UPDATE_LABEL);
-  });
-
-  // An error is no account of what is on disk — `lib/rescan.ts`'s header
-  // is the reasoning. Reading it as "nothing moved" is what leaves a page
-  // on screen the machine does not match.
-  it("re-reads them when the write answers an error", async () => {
-    const write = engineWrites();
-    // The write landed and the command answered an error over it.
-    vi.mocked(commands.packageUpdate).mockImplementation(() => {
-      write.landed = true;
-      return Promise.resolve({ status: "error", error: "the apply stopped" });
-    });
-    // Nothing confirmed a later commit, so the rows stay where they were.
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: {
-        rows: [rowAt(OLD, true)],
-        warnings: [],
-        unreadable: [],
-        lastFetched: null,
+    const after = host.textContent ?? "";
+    expect(
+      {
+        before: row.before.filter((value) => before.includes(value)),
+        after: row.after.filter((value) => after.includes(value)),
+        absent: row.absent.filter((value) => after.includes(value)),
+        updateBefore: row.update ? updateBefore : null,
+        updateAfter: row.update ? header(host)?.includes(UPDATE_LABEL) : null,
       },
+      row.name,
+    ).toEqual({
+      before: row.before,
+      after: row.after,
+      absent: [],
+      updateBefore: row.update ? true : null,
+      updateAfter: row.update ? false : null,
     });
-
-    const host = await openPage();
-    expect(host.textContent).toContain("BEFORE.md");
-
-    await pressUpdate(host);
-
-    expect(host.textContent).toContain("AFTER.md");
-    expect(host.textContent).not.toContain("BEFORE.md");
-    expect(host.textContent).toContain("v2");
-  });
-
-  // A write that commits and then cannot be read back is still a write: the
-  // store keeps the rows it had, so the commit the page watches never moves,
-  // and the files and version under it would go on describing the copy the
-  // update replaced. The header says the standing needs a check; the Overview
-  // has no such excuse.
-  it("re-reads them when the read behind the write fails", async () => {
-    engineWrites();
-    vi.mocked(commands.updatesOverview).mockRejectedValue(
-      new Error("overview wedged"),
-    );
-
-    const host = await openPage();
-    expect(host.textContent).toContain("BEFORE.md");
-    expect(host.textContent).toContain("v1");
-
-    await pressUpdate(host);
-
-    expect(host.textContent).toContain("AFTER.md");
-    expect(host.textContent).not.toContain("BEFORE.md");
-    expect(host.textContent).toContain("v2");
-    expect(host.textContent).not.toContain("v1");
   });
 });

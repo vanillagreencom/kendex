@@ -161,13 +161,11 @@ describe("turning a declared repository back on", () => {
     return button;
   };
 
-  it("names the place it would turn on", () => {
-    expect(turnOn().textContent).toBe("Turn on in beta");
-  });
-
-  it("turns on the holder it named, not the page's own scope", async () => {
+  it("names and turns on the holder rather than the page's scope", async () => {
     toggle.mockReset();
-    await userEvent.click(turnOn());
+    const button = turnOn();
+    expect(button.textContent).toBe("Turn on in beta");
+    await userEvent.click(button);
     expect(toggle).toHaveBeenCalledWith(holder.scope, "beta-kit", true);
   });
 });
@@ -210,11 +208,13 @@ describe("a repository page on another host", () => {
     );
   };
 
-  it("turns on the declaration that holds it", () => {
-    expect(buttons(drawElsewhere([holder]))).toEqual(["Turn on in beta"]);
-  });
-
-  it("offers Subscribe where nothing declares it", () => {
-    expect(buttons(drawElsewhere([]))).toEqual(["Subscribe"]);
+  it("offers the action for the repository's declared state", () => {
+    const rows = [
+      { name: "declared", held: [holder], labels: ["Turn on in beta"] },
+      { name: "undeclared", held: [], labels: ["Subscribe"] },
+    ];
+    expect(rows).toHaveLength(2);
+    for (const row of rows)
+      expect(buttons(drawElsewhere(row.held)), row.name).toEqual(row.labels);
   });
 });

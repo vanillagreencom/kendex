@@ -2,21 +2,26 @@ import { describe, expect, it } from "vitest";
 import { editorOpenPath } from "./editor-path";
 
 describe("editorOpenPath", () => {
-  it("strips SKILL.md so the editor opens the whole skill folder", () => {
-    expect(editorOpenPath("/home/user/.claude/skills/foo/SKILL.md")).toBe(
-      "/home/user/.claude/skills/foo",
-    );
-  });
-
-  it("strips it behind a Windows separator too", () => {
-    expect(editorOpenPath("C:\\Users\\u\\.claude\\skills\\foo\\SKILL.md")).toBe(
-      "C:\\Users\\u\\.claude\\skills\\foo",
-    );
-  });
-
-  it("leaves non-skill paths unchanged", () => {
-    expect(editorOpenPath("/home/user/.claude/hooks/pre-commit.sh")).toBe(
-      "/home/user/.claude/hooks/pre-commit.sh",
-    );
+  it("opens skill folders and preserves other paths", () => {
+    const rows = [
+      {
+        name: "Unix skill",
+        path: "/home/user/.claude/skills/foo/SKILL.md",
+        expected: "/home/user/.claude/skills/foo",
+      },
+      {
+        name: "Windows skill",
+        path: "C:\\Users\\u\\.claude\\skills\\foo\\SKILL.md",
+        expected: "C:\\Users\\u\\.claude\\skills\\foo",
+      },
+      {
+        name: "other file",
+        path: "/home/user/.claude/hooks/pre-commit.sh",
+        expected: "/home/user/.claude/hooks/pre-commit.sh",
+      },
+    ];
+    expect(rows.length, "editor path table is empty").toBeGreaterThan(0);
+    for (const row of rows)
+      expect(editorOpenPath(row.path), row.name).toBe(row.expected);
   });
 });

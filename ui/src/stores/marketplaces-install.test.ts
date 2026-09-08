@@ -195,91 +195,103 @@ describe("answering", () => {
     });
   });
 
-  it("a yes runs the declaration that was shown, in that scope, and shows the installer's own last word", async () => {
-    const { toast } = await import("sonner");
-    vi.mocked(commands.repoEffectsApply).mockResolvedValue({
-      status: "ok",
-      data: {
+  it("shows the installer's last nonblank line or the silent fallback", async () => {
+    const rows = [
+      {
+        name: "installer's own last word",
         stdout: ["writing helper", "hooks: skipped — core.hooksPath is set"],
-        stderr: [],
+        expected: "hooks: skipped — core.hooksPath is set",
       },
-    });
-    expect(await useMarketplacesStore.getState().applyRepoEffect()).toBe(true);
-    expect(commands.repoEffectsApply).toHaveBeenCalledWith(
-      PROJECT,
-      disclosure("guards").declared,
-    );
-    // Not "Applied": the installer said it armed nothing, and that is
-    // what the person reads.
-    expect(toast.success).toHaveBeenCalledWith(
-      "hooks: skipped — core.hooksPath is set",
-    );
-    expect(useMarketplacesStore.getState().pendingEffects?.queue).toEqual([
-      disclosure("linter"),
-    ]);
+      {
+        name: "silent installer",
+        stdout: [],
+        expected: repoEffectsAppliedToast("guards"),
+      },
+      {
+        name: "trailing blank lines",
+        stdout: ["hooks armed", "", "  "],
+        expected: "hooks armed",
+      },
+      {
+        name: "only blank lines",
+        stdout: ["", ""],
+        expected: repoEffectsAppliedToast("guards"),
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      vi.clearAllMocks();
+      useMarketplacesStore.setState({
+        pendingEffects: {
+          scope: PROJECT,
+          queue: [disclosure("guards"), disclosure("linter")],
+        },
+      });
+      vi.mocked(commands.repoEffectsApply).mockResolvedValue({
+        status: "ok",
+        data: { stdout: row.stdout, stderr: [] },
+      });
+      expect(
+        await useMarketplacesStore.getState().applyRepoEffect(),
+        row.name,
+      ).toBe(true);
+      expect(commands.repoEffectsApply, row.name).toHaveBeenCalledWith(
+        PROJECT,
+        disclosure("guards").declared,
+      );
+      expect(toast.success, row.name).toHaveBeenCalledWith(row.expected);
+      expect(
+        useMarketplacesStore.getState().pendingEffects?.queue,
+        row.name,
+      ).toEqual([disclosure("linter")]);
+    }
   });
 
-  it("a silent installer gets the canned line", async () => {
-    const { toast } = await import("sonner");
-    vi.mocked(commands.repoEffectsApply).mockResolvedValue({
-      status: "ok",
-      data: { stdout: [], stderr: [] },
-    });
-    await useMarketplacesStore.getState().applyRepoEffect();
-    expect(toast.success).toHaveBeenCalledWith(
-      repoEffectsAppliedToast("guards"),
-    );
-  });
-
-  it("a trailing blank line is not the installer's last word", async () => {
-    const { toast } = await import("sonner");
-    vi.mocked(commands.repoEffectsApply).mockResolvedValue({
-      status: "ok",
-      data: { stdout: ["hooks armed", "", "  "], stderr: [] },
-    });
-    await useMarketplacesStore.getState().applyRepoEffect();
-    expect(toast.success).toHaveBeenCalledWith("hooks armed");
-  });
-
-  it("an installer that printed only blank lines gets the canned line", async () => {
-    const { toast } = await import("sonner");
-    vi.mocked(commands.repoEffectsApply).mockResolvedValue({
-      status: "ok",
-      data: { stdout: ["", ""], stderr: [] },
-    });
-    await useMarketplacesStore.getState().applyRepoEffect();
-    expect(toast.success).toHaveBeenCalledWith(
-      repoEffectsAppliedToast("guards"),
-    );
-  });
-
-  it("a clean exit with something on stderr still reaches the person", async () => {
-    const { toast } = await import("sonner");
-    vi.mocked(commands.repoEffectsApply).mockResolvedValue({
-      status: "ok",
-      data: {
+  it("opens a detailed dialog exactly when the installer writes nonblank stderr", async () => {
+    const rows = [
+      {
+        name: "stderr remedy",
         stdout: ["hooks: skipped"],
         stderr: ["core.hooksPath is set", "unset it and run this again"],
+        toast: "hooks: skipped",
+        dialog: {
+          open: true,
+          title: repoEffectsSaidTitle("guards"),
+          message:
+            "core.hooksPath is set\nunset it and run this again\nhooks: skipped",
+        },
       },
-    });
-    expect(await useMarketplacesStore.getState().applyRepoEffect()).toBe(true);
-    // The summary is the headline; the remedy is the part a toast drops.
-    expect(toast.success).toHaveBeenCalledWith("hooks: skipped");
-    const { dialog } = useProblemsStore.getState();
-    expect(dialog.open).toBe(true);
-    expect(dialog.title).toBe(repoEffectsSaidTitle("guards"));
-    expect(dialog.message).toBe(
-      "core.hooksPath is set\nunset it and run this again\nhooks: skipped",
-    );
-  });
-
-  it("a clean exit with nothing on stderr opens no dialog", async () => {
-    vi.mocked(commands.repoEffectsApply).mockResolvedValue({
-      status: "ok",
-      data: { stdout: ["hooks armed"], stderr: ["", "  "] },
-    });
-    await useMarketplacesStore.getState().applyRepoEffect();
-    expect(useProblemsStore.getState().dialog.open).toBe(false);
+      {
+        name: "blank stderr",
+        stdout: ["hooks armed"],
+        stderr: ["", "  "],
+        toast: "hooks armed",
+        dialog: { open: false },
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      vi.clearAllMocks();
+      useProblemsStore.getState().closeError();
+      useMarketplacesStore.setState({
+        pendingEffects: {
+          scope: PROJECT,
+          queue: [disclosure("guards"), disclosure("linter")],
+        },
+      });
+      vi.mocked(commands.repoEffectsApply).mockResolvedValue({
+        status: "ok",
+        data: { stdout: row.stdout, stderr: row.stderr },
+      });
+      expect(
+        await useMarketplacesStore.getState().applyRepoEffect(),
+        row.name,
+      ).toBe(true);
+      expect(toast.success, row.name).toHaveBeenCalledWith(row.toast);
+      expect(useProblemsStore.getState().dialog, row.name).toMatchObject(
+        row.dialog,
+      );
+    }
   });
 
   it("a no runs nothing and says the package is installed unarmed", async () => {
@@ -325,27 +337,23 @@ describe("answering", () => {
 describe("what an install says about a package that left with it", () => {
   const RAN = "commit-guards: running scripts/install-git-hooks --uninstall";
 
-  it("says what the install ran in the repository", async () => {
-    vi.mocked(commands.marketplaceInstall).mockResolvedValue({
-      status: "ok",
-      data: {
-        packages: [],
-        repoEffects: { shown: [], withheld: [] },
-        undone: [RAN],
-      },
-    });
-
-    await install();
-
-    expect(toast.message).toHaveBeenCalledWith(RAN);
-  });
-
-  it("stays quiet when the install took no armed package away", async () => {
-    vi.mocked(toast.message).mockClear();
-    vi.mocked(commands.marketplaceInstall).mockResolvedValue(installed([]));
-
-    await install();
-
-    expect(toast.message).not.toHaveBeenCalled();
+  it("relays a departing package's report and stays quiet when none left", async () => {
+    const rows = [
+      { name: "uninstaller ran", undone: [RAN], calls: [[RAN]] },
+      { name: "no armed package left", undone: undefined, calls: [] },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      vi.mocked(toast.message).mockClear();
+      vi.mocked(commands.marketplaceInstall).mockResolvedValue({
+        status: "ok",
+        data: {
+          ...installed([]).data,
+          ...(row.undone === undefined ? {} : { undone: row.undone }),
+        },
+      });
+      await install();
+      expect(vi.mocked(toast.message).mock.calls, row.name).toEqual(row.calls);
+    }
   });
 });

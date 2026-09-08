@@ -46,15 +46,9 @@ const render = (view: PackageView | null) =>
   );
 
 describe("the available package's facts column", () => {
-  it("says where the package comes from", () => {
-    expect(render(checked)).toContain("kendex");
-  });
-
-  // The score and the findings that produced it are one block, in the main
-  // column. A number here and its findings elsewhere would be two claims
-  // about one reading, and the caveat would end up under only one of them.
-  it("leaves the whole safety reading to the main column", () => {
+  it("names its source and leaves the safety reading to the main column", () => {
     const html = render(checked);
+    expect(html).toContain("kendex");
     expect(html).not.toContain("100/100");
     expect(html).not.toContain(SAFETY_CAVEAT);
   });

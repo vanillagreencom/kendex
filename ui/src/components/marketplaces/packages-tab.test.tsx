@@ -156,20 +156,23 @@ describe("ordering the packages list", () => {
 });
 
 describe("searching the packages list", () => {
-  it("lists every package until something is typed", async () => {
-    const rows = await listed("");
-    expect(rows).toHaveLength(2);
-  });
-
-  it("matches a word from the summary", async () => {
-    const rows = await listed("shellcheck");
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toContain("preflight");
-  });
-
-  it("does not match a word found only in the description", async () => {
-    const rows = await listed("debug");
-    expect(rows).toHaveLength(0);
+  it("searches summaries without matching description-only words", async () => {
+    const rows = [
+      { name: "unfiltered", query: "", count: 2, first: null },
+      {
+        name: "summary word",
+        query: "shellcheck",
+        count: 1,
+        first: "preflight",
+      },
+      { name: "description-only word", query: "debug", count: 0, first: null },
+    ];
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      const found = await listed(row.query);
+      expect(found, row.name).toHaveLength(row.count);
+      if (row.first !== null) expect(found[0], row.name).toContain(row.first);
+    }
   });
 });
 
@@ -262,36 +265,44 @@ describe("the marketplace column's revision line", () => {
     );
   };
 
-  it("names the marketplace and shortens the commit it is pinned to", () => {
-    const [cell] = marketplaceCells([{ ...kit, rev: null, commit: COMMIT }]);
-    expect(cell).toContain("kit");
-    expect(cell).toContain("@ 0123456");
-  });
-
-  // A manifest may pin an uppercase id, and rev keeps the spelling it was
-  // declared with. Core reads forty ASCII hex digits either way, so the
-  // column must too — otherwise all forty land where the helper promises a
-  // short revision.
-  it("shortens an uppercase pin, the way core reads one", () => {
-    const [cell] = marketplaceCells([
-      { ...kit, rev: COMMIT.toUpperCase(), commit: null },
-    ]);
-    expect(cell).toContain("@ 0123456");
-    expect(cell).not.toContain(COMMIT.toUpperCase());
-  });
-
-  // A tracked ref outranks the commit the cache happens to hold, and
-  // release/2026 shortened would read as an unrelated tag called release.
-  it("shows a tracked branch whole, over the commit behind it", () => {
-    const [cell] = marketplaceCells([
-      { ...kit, rev: "release/2026", commit: COMMIT },
-    ]);
-    expect(cell).toContain("@ release/2026");
-    expect(cell).not.toContain("0123456");
-  });
-
-  it("carries no revision line for a subscription that declares none", () => {
-    const [cell] = marketplaceCells([{ ...kit, rev: null, commit: null }]);
-    expect(cell).not.toContain("@");
+  it("shows complete refs, shortened commits and no absent revision", () => {
+    const rows = [
+      {
+        name: "cached commit",
+        rev: null,
+        commit: COMMIT,
+        shown: ["kit", "@ 0123456"],
+        absent: [],
+      },
+      {
+        name: "uppercase pinned commit",
+        rev: COMMIT.toUpperCase(),
+        commit: null,
+        shown: ["@ 0123456"],
+        absent: [COMMIT.toUpperCase()],
+      },
+      {
+        name: "tracked branch",
+        rev: "release/2026",
+        commit: COMMIT,
+        shown: ["@ release/2026"],
+        absent: ["0123456"],
+      },
+      {
+        name: "no revision",
+        rev: null,
+        commit: null,
+        shown: [],
+        absent: ["@"],
+      },
+    ];
+    expect(rows).toHaveLength(4);
+    for (const row of rows) {
+      const [cell] = marketplaceCells([
+        { ...kit, rev: row.rev, commit: row.commit },
+      ]);
+      for (const text of row.shown) expect(cell, row.name).toContain(text);
+      for (const text of row.absent) expect(cell, row.name).not.toContain(text);
+    }
   });
 });

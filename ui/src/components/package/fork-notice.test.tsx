@@ -55,78 +55,85 @@ const edited = (extra: Partial<UpdateRow>) =>
   updateRow("rev", null, { kind: "agent", blockedByLocalEdit: true, ...extra });
 
 describe("package page edited notice", () => {
-  it("shows nothing without an edited row for this package", () => {
-    expect(render([updateRow("rev", null, { kind: "agent" })])).toBe("");
+  it("shows only the actions available for each edited rendering", () => {
+    const rows = [
+      {
+        name: "unedited",
+        input: updateRow("rev", null, { kind: "agent" }),
+        present: [],
+        absent: [],
+        empty: true,
+      },
+      {
+        name: "forkable rendering",
+        input: edited({
+          editedHarnesses: ["claude"],
+          forkableHarness: "claude",
+        }),
+        present: [">Keep as my own<", ">Discard edits…<"],
+        absent: [],
+      },
+      {
+        name: "several edited renderings",
+        input: edited({
+          editedHarnesses: ["claude", "opencode"],
+          forkableHarness: null,
+        }),
+        present: [
+          "Edited in Claude Code and OpenCode.",
+          "would drop the other edits",
+          ">Discard all edits…<",
+          ">View changes in Claude Code<",
+          ">View changes in OpenCode<",
+        ],
+        absent: [">Keep as my own<", ">View changes<"],
+      },
+      {
+        name: "lone non-forkable rendering",
+        input: edited({ editedHarnesses: ["opencode"], forkableHarness: null }),
+        present: ["OpenCode&#x27;s copy can&#x27;t be kept as your own."],
+        absent: [">Keep as my own<"],
+      },
+      {
+        name: "owner-held derived package",
+        input: edited({
+          editedHarnesses: ["claude"],
+          forkableHarness: null,
+          derived: true,
+          pinned: true,
+          canDiscard: true,
+          canTakeLatest: false,
+        }),
+        present: [">Discard edits…<"],
+        absent: [">Keep as my own<"],
+      },
+      {
+        name: "no replacement at source",
+        input: edited({
+          editedHarnesses: ["claude"],
+          forkableHarness: "claude",
+          canDiscard: false,
+          canTakeLatest: false,
+        }),
+        present: [">View changes<"],
+        absent: [">Discard edits…<"],
+      },
+    ];
+    expect(rows).toHaveLength(6);
+    for (const entry of rows) {
+      const html = render([entry.input]);
+      if (entry.empty) expect(html, entry.name).toBe("");
+      else
+        expect(
+          {
+            present: entry.present.filter((text) => html.includes(text)),
+            forbidden: entry.absent.filter((text) => html.includes(text)),
+          },
+          entry.name,
+        ).toEqual({ present: entry.present, forbidden: [] });
+    }
   });
 
-  it("offers the fork only through the rendering the engine can take", () => {
-    const html = render([
-      edited({ editedHarnesses: ["claude"], forkableHarness: "claude" }),
-    ]);
-    expect(html).toContain(">Keep as my own<");
-    expect(html).toContain(">Discard edits…<");
-  });
-
-  it("names the edited tools and offers only a full discard for several", () => {
-    const html = render([
-      edited({
-        editedHarnesses: ["claude", "opencode"],
-        forkableHarness: null,
-      }),
-    ]);
-    expect(html).not.toContain(">Keep as my own<");
-    expect(html).toContain("Edited in Claude Code and OpenCode.");
-    expect(html).toContain("would drop the other edits");
-    expect(html).toContain(">Discard all edits…<");
-    expect(html).toContain(">View changes in Claude Code<");
-    expect(html).toContain(">View changes in OpenCode<");
-    expect(html).not.toContain(">View changes<");
-  });
-
-  it("says why a lone non-forkable rendering cannot become a fork", () => {
-    const html = render([
-      edited({ editedHarnesses: ["opencode"], forkableHarness: null }),
-    ]);
-    expect(html).not.toContain(">Keep as my own<");
-    // Static markup escapes the apostrophes.
-    expect(html).toContain(
-      "OpenCode&#x27;s copy can&#x27;t be kept as your own.",
-    );
-  });
-
-  it("keeps Discard edits for an owner-held derived package", () => {
-    const html = render([
-      edited({
-        editedHarnesses: ["claude"],
-        forkableHarness: null,
-        derived: true,
-        pinned: true,
-        canDiscard: true,
-        canTakeLatest: false,
-      }),
-    ]);
-    expect(html).not.toContain(">Keep as my own<");
-    expect(html).toContain(">Discard edits…<");
-  });
-
-  it("hides the discard when the source has nothing to put in its place", () => {
-    const html = render([
-      edited({
-        editedHarnesses: ["claude"],
-        forkableHarness: "claude",
-        canDiscard: false,
-        canTakeLatest: false,
-      }),
-    ]);
-    expect(html).not.toContain(">Discard edits…<");
-    expect(html).toContain(">View changes<");
-  });
-
-  // Keeping the files as a fork copies what is on disk and reads nothing
-  // off the row, so what the row's own standing says about it decides
-  // nothing: a flip settling in its scope leaves it live, and so does a
-  // check that failed. What bars it is that it commits — `running()`, a
-  // check out or a write out, which is the pair varied here.
   it("holds Keep as my own for the work already running, and nothing else", () => {
     const rows = [
       edited({ editedHarnesses: ["claude"], forkableHarness: "claude" }),
@@ -136,18 +143,35 @@ describe("package page edited notice", () => {
       if (!tag) throw new Error("no Keep as my own button");
       return tag.includes('disabled=""');
     };
-    expect(forkHeld(render(rows))).toBe(false);
-    expect(forkHeld(render(rows, [], { busy: true }))).toBe(true);
-    expect(forkHeld(render(rows, [], { checking: true }))).toBe(true);
-    // The two the discard beside it waits for, which this one does not.
-    expect(forkHeld(render(rows, [{ scope: { scope: "global" } }]))).toBe(
-      false,
-    );
+    const states = [
+      { name: "idle", settling: [], running: {}, expected: false },
+      {
+        name: "write running",
+        settling: [],
+        running: { busy: true },
+        expected: true,
+      },
+      {
+        name: "check running",
+        settling: [],
+        running: { checking: true },
+        expected: true,
+      },
+      {
+        name: "same-scope flip",
+        settling: [{ scope: { scope: "global" } }],
+        running: {},
+        expected: false,
+      },
+    ];
+    expect(states).toHaveLength(4);
+    for (const state of states)
+      expect(
+        forkHeld(render(rows, state.settling, state.running)),
+        state.name,
+      ).toBe(state.expected);
   });
 
-  // Discarding applies the row's latest commit off a `pinned` a settling
-  // flip may have painted, so takeNewVersion refuses for that scope. The
-  // button says so rather than inviting a click that only errors.
   it("holds Discard edits while a flip settles in this scope", () => {
     const rows = [
       edited({ editedHarnesses: ["claude"], forkableHarness: "claude" }),
@@ -157,17 +181,32 @@ describe("package page edited notice", () => {
       if (!tag) throw new Error("no Discard edits button");
       return tag.includes('disabled=""');
     };
-    expect(discardHeld(render(rows))).toBe(false);
-    expect(discardHeld(render(rows, [{ scope: { scope: "global" } }]))).toBe(
-      true,
-    );
-    expect(
-      discardHeld(
-        render(rows, [{ scope: { scope: "project", root: "/home/me/app" } }]),
-      ),
-    ).toBe(false);
-    // A check about to replace the rows bars it for the same reason the
-    // flip does: the `latest` it would apply is not confirmed.
-    expect(discardHeld(render(rows, [], { checking: true }))).toBe(true);
+    const states = [
+      { name: "idle", settling: [], running: {}, expected: false },
+      {
+        name: "same-scope flip",
+        settling: [{ scope: { scope: "global" } }],
+        running: {},
+        expected: true,
+      },
+      {
+        name: "other-scope flip",
+        settling: [{ scope: { scope: "project", root: "/home/me/app" } }],
+        running: {},
+        expected: false,
+      },
+      {
+        name: "check running",
+        settling: [],
+        running: { checking: true },
+        expected: true,
+      },
+    ];
+    expect(states).toHaveLength(4);
+    for (const state of states)
+      expect(
+        discardHeld(render(rows, state.settling, state.running)),
+        state.name,
+      ).toBe(state.expected);
   });
 });

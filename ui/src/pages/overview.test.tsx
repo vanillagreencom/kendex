@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ObservedItem, ScanResult, UnreadableScope } from "@/bindings";
@@ -85,6 +86,19 @@ vi.mock("@/stores/audit", async (importOriginal) => {
   }));
 });
 
+/** Read the count from the named tile, so another tile cannot supply it. */
+const tileValue = (html: string, label: string): string | null | undefined => {
+  const page = document.createElement("div");
+  page.innerHTML = html;
+  return [...page.querySelectorAll("button")]
+    .find((button) =>
+      [...button.querySelectorAll("p")].some(
+        (line) => line.textContent === label,
+      ),
+    )
+    ?.querySelector("p")?.textContent;
+};
+
 const scanned: ScanResult = {
   harnesses: [],
   items: [],
@@ -119,28 +133,43 @@ beforeEach(() => {
 // its loading skeleton for the rest of the session: a read that came back
 // unable to answer is not a read still on its way.
 describe("Home when the first scan fails", () => {
-  it("shows skeletons while the scan is genuinely still running", () => {
-    const html = renderToStaticMarkup(<OverviewPage />);
-    expect(html).toContain('data-slot="skeleton"');
-    expect(html).not.toContain(esc(SCAN_FAILED_TITLE));
-  });
-
-  it("says the scan failed and offers the retry, with no skeletons", () => {
-    stub.scan.error = "config unreadable";
-    const html = renderToStaticMarkup(<OverviewPage />);
-    expect(html).toContain(esc(SCAN_FAILED_TITLE));
-    expect(html).toContain("config unreadable");
-    expect(html).toContain(SCAN_AGAIN_LABEL);
-    expect(html).not.toContain('data-slot="skeleton"');
-  });
-
-  // An empty message is still a failure — testing it by truthiness would
-  // read "" as no error and hold the skeletons for the session.
-  it("treats a failure with an empty message as a failure, not a wait", () => {
-    stub.scan.error = "";
-    const html = renderToStaticMarkup(<OverviewPage />);
-    expect(html).toContain(esc(SCAN_FAILED_TITLE));
-    expect(html).not.toContain('data-slot="skeleton"');
+  it("renders the initial scan outcome", () => {
+    const rows = [
+      {
+        name: "shows skeletons while the scan is genuinely still running",
+        error: null,
+        present: ['data-slot="skeleton"'],
+        absent: [esc(SCAN_FAILED_TITLE)],
+      },
+      {
+        name: "says the scan failed and offers the retry, with no skeletons",
+        error: "config unreadable",
+        present: [
+          esc(SCAN_FAILED_TITLE),
+          "config unreadable",
+          SCAN_AGAIN_LABEL,
+        ],
+        absent: ['data-slot="skeleton"'],
+      },
+      {
+        name: "treats a failure with an empty message as a failure, not a wait",
+        error: "",
+        present: [esc(SCAN_FAILED_TITLE)],
+        absent: ['data-slot="skeleton"'],
+      },
+    ];
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      stub.scan.error = row.error;
+      const html = renderToStaticMarkup(<OverviewPage />);
+      expect(
+        {
+          present: row.present.filter((value) => html.includes(value)),
+          absent: row.absent.filter((value) => html.includes(value)),
+        },
+        row.name,
+      ).toEqual({ present: row.present, absent: [] });
+    }
   });
 });
 
@@ -148,26 +177,39 @@ describe("Home when the first scan fails", () => {
 // but drawing it with nothing said presents counts and activity as current
 // when kendex knows they are not.
 describe("Home when a later scan fails", () => {
-  it("still draws the last result and says the figures are last-known", () => {
-    stub.scan = { result: scanned, error: "no disk", scanning: false };
-    const html = renderToStaticMarkup(<OverviewPage />);
-    expect(html).toContain(SCAN_STALE_TITLE);
-    expect(html).toContain("no disk");
-    expect(html).toContain(SCAN_AGAIN_LABEL);
-    // The figures themselves are still on the page.
-    expect(html).toContain("Harnesses");
-  });
-
-  it("carries no stale note while the result is current", () => {
-    stub.scan = { result: scanned, error: null, scanning: false };
-    expect(renderToStaticMarkup(<OverviewPage />)).not.toContain(
-      SCAN_STALE_TITLE,
-    );
-  });
-
-  it("marks retained figures stale on a failure with an empty message", () => {
-    stub.scan = { result: scanned, error: "", scanning: false };
-    expect(renderToStaticMarkup(<OverviewPage />)).toContain(SCAN_STALE_TITLE);
+  it("marks retained scan results by the read outcome", () => {
+    const rows = [
+      {
+        name: "still draws the last result and says the figures are last-known",
+        error: "no disk",
+        present: [SCAN_STALE_TITLE, "no disk", SCAN_AGAIN_LABEL, "Harnesses"],
+        absent: [],
+      },
+      {
+        name: "carries no stale note while the result is current",
+        error: null,
+        present: [],
+        absent: [SCAN_STALE_TITLE],
+      },
+      {
+        name: "marks retained figures stale on a failure with an empty message",
+        error: "",
+        present: [SCAN_STALE_TITLE],
+        absent: [],
+      },
+    ];
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      stub.scan = { result: scanned, error: row.error, scanning: false };
+      const html = renderToStaticMarkup(<OverviewPage />);
+      expect(
+        {
+          present: row.present.filter((value) => html.includes(value)),
+          absent: row.absent.filter((value) => html.includes(value)),
+        },
+        row.name,
+      ).toEqual({ present: row.present, absent: [] });
+    }
   });
 });
 
@@ -175,21 +217,31 @@ describe("Home when a later scan fails", () => {
 // update check contributing silence would read as kendex having looked
 // and found nothing.
 describe("Home when the update check fails", () => {
-  it("says updates couldn't be checked in the attention list", () => {
-    stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = { auditedAt: Date.now(), read: READ_LANDED };
-    stub.updates = { read: readFailed("no network"), unreadable: [] };
-    expect(renderToStaticMarkup(<OverviewPage />)).toContain(
-      esc(UPDATES_ATTENTION_TITLE),
-    );
-  });
-
-  it("claims nothing when the check answered", () => {
-    stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = { auditedAt: Date.now(), read: READ_LANDED };
-    expect(renderToStaticMarkup(<OverviewPage />)).not.toContain(
-      esc(UPDATES_ATTENTION_TITLE),
-    );
+  it("renders update attention only for a failed check", () => {
+    const rows = [
+      {
+        name: "says updates couldn't be checked in the attention list",
+        read: readFailed("no network"),
+        shown: true,
+      },
+      {
+        name: "claims nothing when the check answered",
+        read: READ_LANDED,
+        shown: false,
+      },
+    ];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      stub.scan = { result: scanned, error: null, scanning: false };
+      stub.audit = { auditedAt: Date.now(), read: READ_LANDED };
+      stub.updates = { read: row.read, unreadable: [] };
+      expect(
+        renderToStaticMarkup(<OverviewPage />).includes(
+          esc(UPDATES_ATTENTION_TITLE),
+        ),
+        row.name,
+      ).toBe(row.shown);
+    }
   });
 });
 
@@ -220,57 +272,67 @@ describe("Home when a place cannot be read at all", () => {
 // skeleton on it alone would hold the section in "still looking" for the
 // session and swallow every other attention row.
 describe("Home when the audit fails", () => {
-  // The audit is the slowest read in the app and does not hold this
-  // section: every row bar the audit's own failure comes from the scan or
-  // the update check, so waiting on it would hide rows that were ready.
-  it("shows the section as soon as the scan answers, audit or no audit", () => {
-    stub.scan = { result: scanned, error: null, scanning: false };
-    stub.updates = { read: readFailed("no network"), unreadable: [] };
-    const html = renderToStaticMarkup(<OverviewPage />);
-    expect(html).not.toContain('data-slot="skeleton"');
-    expect(html).toContain(esc(UPDATES_ATTENTION_TITLE));
-    expect(html).not.toContain(esc(AUDIT_ATTENTION_TITLE));
-  });
-
-  it("holds the skeleton until the scan answers", () => {
-    stub.scan = { result: null, error: null, scanning: true };
-    expect(renderToStaticMarkup(<OverviewPage />)).toContain(
-      'data-slot="skeleton"',
-    );
-  });
-
-  it("drops the skeleton and says the audit failed, with the retry", () => {
-    stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = {
-      auditedAt: null,
-      read: readFailed("audit crashed"),
-    };
-    const html = renderToStaticMarkup(<OverviewPage />);
-    expect(html).toContain(esc(AUDIT_ATTENTION_TITLE));
-    expect(html).toContain(TRY_AGAIN_LABEL);
-    expect(html).not.toContain('data-slot="skeleton"');
-  });
-
-  it("no longer suppresses the other failure rows", () => {
-    stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = {
-      auditedAt: null,
-      read: readFailed("audit crashed"),
-    };
-    stub.updates = { read: readFailed("no network"), unreadable: [] };
-    expect(renderToStaticMarkup(<OverviewPage />)).toContain(
-      esc(UPDATES_ATTENTION_TITLE),
-    );
-  });
-
-  // The inverse control: a healthy Home must carry no audit row, or the
-  // row's gate could be anything at all and the suite would not notice.
-  it("claims nothing when the audit answered clean", () => {
-    stub.scan = { result: scanned, error: null, scanning: false };
-    stub.audit = { auditedAt: Date.now(), read: READ_LANDED };
-    expect(renderToStaticMarkup(<OverviewPage />)).not.toContain(
-      esc(AUDIT_ATTENTION_TITLE),
-    );
+  it("keeps scan readiness and audit attention separate", () => {
+    const rows = [
+      {
+        name: "shows the section as soon as the scan answers, audit or no audit",
+        result: scanned,
+        audit: { auditedAt: null, read: READ_LANDED },
+        updates: readFailed("no network"),
+        present: [esc(UPDATES_ATTENTION_TITLE)],
+        absent: ['data-slot="skeleton"', esc(AUDIT_ATTENTION_TITLE)],
+      },
+      {
+        name: "holds the skeleton until the scan answers",
+        result: null,
+        audit: { auditedAt: null, read: READ_LANDED },
+        updates: READ_LANDED,
+        present: ['data-slot="skeleton"'],
+        absent: [],
+      },
+      {
+        name: "drops the skeleton and says the audit failed, with the retry",
+        result: scanned,
+        audit: { auditedAt: null, read: readFailed("audit crashed") },
+        updates: READ_LANDED,
+        present: [esc(AUDIT_ATTENTION_TITLE), TRY_AGAIN_LABEL],
+        absent: ['data-slot="skeleton"'],
+      },
+      {
+        name: "no longer suppresses the other failure rows",
+        result: scanned,
+        audit: { auditedAt: null, read: readFailed("audit crashed") },
+        updates: readFailed("no network"),
+        present: [esc(UPDATES_ATTENTION_TITLE)],
+        absent: [],
+      },
+      {
+        name: "claims nothing when the audit answered clean",
+        result: scanned,
+        audit: { auditedAt: Date.now(), read: READ_LANDED },
+        updates: READ_LANDED,
+        present: [],
+        absent: [esc(AUDIT_ATTENTION_TITLE)],
+      },
+    ];
+    expect(rows).toHaveLength(5);
+    for (const row of rows) {
+      stub.scan = {
+        result: row.result,
+        error: null,
+        scanning: row.result === null,
+      };
+      stub.audit = row.audit;
+      stub.updates = { read: row.updates, unreadable: [] };
+      const html = renderToStaticMarkup(<OverviewPage />);
+      expect(
+        {
+          present: row.present.filter((value) => html.includes(value)),
+          absent: row.absent.filter((value) => html.includes(value)),
+        },
+        row.name,
+      ).toEqual({ present: row.present, absent: [] });
+    }
   });
 });
 
@@ -291,35 +353,50 @@ describe("the Installed tile", () => {
       scanning: false,
     };
     const html = renderToStaticMarkup(<OverviewPage />);
-    expect(html).toContain(">1<");
-    expect(html).not.toContain(">2<");
+    expect(tileValue(html, "Installed")).toBe("1");
   });
 });
 
 // `marketplaceCount` reading `rows.length` with no regard for how the read
 // went would present a failed read as a definite zero.
 describe("the Marketplaces tile when its read is not current", () => {
-  it("shows a dash and the failure note instead of a definite zero", () => {
-    stub.scan = { result: scanned, error: null, scanning: false };
-    stub.market = { read: readFailed("the overview could not be read") };
-    const html = renderToStaticMarkup(<OverviewPage />);
-    expect(html).toContain(">—<");
-    expect(html).toContain(esc(MARKETPLACES_UNCHECKED_DETAIL));
-    expect(html).not.toContain("browse and subscribe");
-  });
-
-  it("shows the dash alone while the first read is still on its way", () => {
-    stub.scan = { result: scanned, error: null, scanning: false };
-    stub.market = { read: READ_PENDING };
-    const html = renderToStaticMarkup(<OverviewPage />);
-    expect(html).toContain(">—<");
-    expect(html).not.toContain(esc(MARKETPLACES_UNCHECKED_DETAIL));
-  });
-
-  it("counts a current read, zero included", () => {
-    stub.scan = { result: scanned, error: null, scanning: false };
-    const html = renderToStaticMarkup(<OverviewPage />);
-    expect(html).toContain("browse and subscribe");
-    expect(html).not.toContain(esc(MARKETPLACES_UNCHECKED_DETAIL));
+  it("renders the count and detail for the marketplace read state", () => {
+    const rows = [
+      {
+        name: "shows a dash and the failure note instead of a definite zero",
+        read: readFailed("the overview could not be read"),
+        value: "—",
+        present: [esc(MARKETPLACES_UNCHECKED_DETAIL)],
+        absent: ["browse and subscribe"],
+      },
+      {
+        name: "shows the dash alone while the first read is still on its way",
+        read: READ_PENDING,
+        value: "—",
+        present: [],
+        absent: [esc(MARKETPLACES_UNCHECKED_DETAIL)],
+      },
+      {
+        name: "counts a current read, zero included",
+        read: READ_LANDED,
+        value: "0",
+        present: ["browse and subscribe"],
+        absent: [esc(MARKETPLACES_UNCHECKED_DETAIL)],
+      },
+    ];
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      stub.scan = { result: scanned, error: null, scanning: false };
+      stub.market = { read: row.read };
+      const html = renderToStaticMarkup(<OverviewPage />);
+      expect(
+        {
+          value: tileValue(html, "Marketplaces"),
+          present: row.present.filter((value) => html.includes(value)),
+          absent: row.absent.filter((value) => html.includes(value)),
+        },
+        row.name,
+      ).toEqual({ value: row.value, present: row.present, absent: [] });
+    }
   });
 });

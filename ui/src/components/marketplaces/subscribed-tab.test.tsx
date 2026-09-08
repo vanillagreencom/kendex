@@ -64,54 +64,73 @@ beforeEach(() => {
   stub.read = { status: "landed", error: null };
 });
 
-// Empty rows after a read that failed are not a confirmed emptiness:
-// "No marketplaces yet" with a Subscribe pitch would draw the failure as
-// the exact good news nobody could check.
-describe("SubscribedTab with nothing to list", () => {
-  it("invites a subscription only after a read confirmed the emptiness", () => {
-    const html = renderToStaticMarkup(<SubscribedTab onSubscribe={() => {}} />);
-    expect(html).toContain(MARKETPLACES_EMPTY_TITLE);
-    expect(html).not.toContain(esc(MARKETPLACES_CHECK_FAILED_TITLE));
-  });
-
-  // Before the first read answers there is nothing to report either way.
-  // "No marketplaces yet" here asserts an emptiness nobody has checked, and
-  // the failure state names a failure that has not happened.
-  it("says neither while the first read is still out", () => {
-    stub.read = { status: "pending", error: null };
-    const html = renderToStaticMarkup(<SubscribedTab onSubscribe={() => {}} />);
-    expect(html).not.toContain(MARKETPLACES_EMPTY_TITLE);
-    expect(html).not.toContain(esc(MARKETPLACES_CHECK_FAILED_TITLE));
-  });
-
-  it("shows the failure with the retry when the read failed, not the pitch", () => {
-    stub.read = { status: "failed", error: "offline" };
-    const html = renderToStaticMarkup(<SubscribedTab onSubscribe={() => {}} />);
-    expect(html).toContain(esc(MARKETPLACES_CHECK_FAILED_TITLE));
-    expect(html).toContain("offline");
-    expect(html).toContain(TRY_AGAIN_LABEL);
-    expect(html).not.toContain(MARKETPLACES_EMPTY_TITLE);
-  });
-});
-
-// Rows kept from before a failed read stay on screen, but headed as the
-// last read that answered rather than as confirmed subscriptions.
-describe("SubscribedTab with rows a failed read left behind", () => {
-  it("draws them under the stale note with the retry", () => {
-    stub.rows = [kept];
-    stub.read = { status: "failed", error: "offline" };
-    const html = renderToStaticMarkup(<SubscribedTab onSubscribe={() => {}} />);
-    expect(html).toContain(MARKETPLACES_UNCONFIRMED_TITLE);
-    expect(html).toContain("offline");
-    expect(html).toContain(TRY_AGAIN_LABEL);
-    // The kept rows are still drawn under it.
-    expect(html).toContain("kit");
-  });
-
-  it("carries no stale note over rows from a current read", () => {
-    stub.rows = [kept];
-    const html = renderToStaticMarkup(<SubscribedTab onSubscribe={() => {}} />);
-    expect(html).not.toContain(MARKETPLACES_UNCONFIRMED_TITLE);
+describe("SubscribedTab read outcomes", () => {
+  it("keeps confirmed emptiness, pending reads and stale rows distinct", () => {
+    const rows: {
+      name: string;
+      held: MarketplaceRow[];
+      read: typeof stub.read;
+      shown: string[];
+      absent: string[];
+    }[] = [
+      {
+        name: "confirmed empty",
+        held: [],
+        read: { status: "landed", error: null },
+        shown: [MARKETPLACES_EMPTY_TITLE],
+        absent: [esc(MARKETPLACES_CHECK_FAILED_TITLE)],
+      },
+      {
+        name: "pending empty",
+        held: [],
+        read: { status: "pending", error: null },
+        shown: [],
+        absent: [
+          MARKETPLACES_EMPTY_TITLE,
+          esc(MARKETPLACES_CHECK_FAILED_TITLE),
+        ],
+      },
+      {
+        name: "failed empty",
+        held: [],
+        read: { status: "failed", error: "offline" },
+        shown: [
+          esc(MARKETPLACES_CHECK_FAILED_TITLE),
+          "offline",
+          TRY_AGAIN_LABEL,
+        ],
+        absent: [MARKETPLACES_EMPTY_TITLE],
+      },
+      {
+        name: "failed with retained rows",
+        held: [kept],
+        read: { status: "failed", error: "offline" },
+        shown: [
+          MARKETPLACES_UNCONFIRMED_TITLE,
+          "offline",
+          TRY_AGAIN_LABEL,
+          "kit",
+        ],
+        absent: [],
+      },
+      {
+        name: "current with rows",
+        held: [kept],
+        read: { status: "landed", error: null },
+        shown: [],
+        absent: [MARKETPLACES_UNCONFIRMED_TITLE],
+      },
+    ];
+    expect(rows).toHaveLength(5);
+    for (const row of rows) {
+      stub.rows = row.held;
+      stub.read = row.read;
+      const html = renderToStaticMarkup(
+        <SubscribedTab onSubscribe={() => {}} />,
+      );
+      for (const text of row.shown) expect(html, row.name).toContain(text);
+      for (const text of row.absent) expect(html, row.name).not.toContain(text);
+    }
   });
 });
 

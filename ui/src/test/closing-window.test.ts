@@ -11,22 +11,40 @@ const OVERFLOWS_AT = 2 ** 31;
 
 describe("resolveClosingWindowMs", () => {
   it("honours what a run asks for", () => {
-    expect(resolveClosingWindowMs("2500")).toBe(2500);
-    expect(resolveClosingWindowMs(String(OVERFLOWS_AT - 1))).toBe(
-      OVERFLOWS_AT - 1,
-    );
+    const rows = [
+      { name: "2500", raw: "2500", expected: 2500 },
+      {
+        name: "largest timer value",
+        raw: String(OVERFLOWS_AT - 1),
+        expected: OVERFLOWS_AT - 1,
+      },
+    ];
+    expect(
+      rows.length,
+      "accepted closing-window table is empty",
+    ).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(resolveClosingWindowMs(row.raw), row.name).toBe(row.expected);
+    }
   });
 
-  it.for([
-    ["unset", undefined],
-    ["empty", ""],
-    ["not a number", "soon"],
-    ["zero", "0"],
-    ["a sign typo", "-5000"],
-    ["infinite", "1e400"],
-    ["past what setTimeout holds", String(OVERFLOWS_AT)],
-  ] as const)("falls back to the default when %s", ([, raw]) => {
-    expect(resolveClosingWindowMs(raw)).toBe(DEFAULT_CLOSING_WINDOW_MS);
+  it("falls back to the default for unusable input", () => {
+    const rows = [
+      ["unset", undefined],
+      ["empty", ""],
+      ["not a number", "soon"],
+      ["zero", "0"],
+      ["a sign typo", "-5000"],
+      ["infinite", "1e400"],
+      ["past what setTimeout holds", String(OVERFLOWS_AT)],
+    ] as const;
+    expect(
+      rows.length,
+      "fallback closing-window table is empty",
+    ).toBeGreaterThan(0);
+    for (const [name, raw] of rows) {
+      expect(resolveClosingWindowMs(raw), name).toBe(DEFAULT_CLOSING_WINDOW_MS);
+    }
   });
 
   it("keeps the shipped default at 50ms", () => {

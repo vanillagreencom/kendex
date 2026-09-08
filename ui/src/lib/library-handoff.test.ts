@@ -70,7 +70,9 @@ describe("isNarrowed", () => {
   });
 
   it("counts every picker on the strip", () => {
-    for (const name of ["kind", "harness", "tag", "from", "edited"] as const) {
+    const names = ["kind", "harness", "tag", "from", "edited"] as const;
+    expect(names.length, "library picker table is empty").toBeGreaterThan(0);
+    for (const name of names) {
       expect(
         isNarrowed({
           ...EVERYTHING,

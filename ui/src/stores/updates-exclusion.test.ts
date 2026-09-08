@@ -111,18 +111,19 @@ describe("the check and the writes exclude each other", () => {
   const checkRan = async () => {
     vi.mocked(commands.updatesRefresh).mockClear();
     await store().check();
-    return vi.mocked(commands.updatesRefresh).mock.calls.length > 0;
+    return vi.mocked(commands.updatesRefresh).mock.calls.length;
   };
 
   // One case, both directions, every path in `WRITES`. `busy` and
   // `checking` each close one direction and neither closes both.
   it("refuses a check while any write is out, and a write while a check is out", async () => {
+    expect(WRITES.length).toBeGreaterThan(0);
     for (const [at, [command, start]] of WRITES.entries()) {
       const out = park();
       vi.mocked(command).mockReturnValue(out.promise);
       const writing = start();
 
-      expect(await checkRan()).toBe(false);
+      expect(await checkRan()).toBe(0);
       // And no second write. `busy` is a flag rather than a count, so a
       // second write let in would release it the moment it finished — with
       // the first still committing — and refusing the second is what closes

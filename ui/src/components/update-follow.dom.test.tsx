@@ -345,85 +345,57 @@ describe("the Follow source switch", () => {
       ),
     ).toHaveLength(1);
   });
-
-  // What a landed flip refreshes, and when. The apply resolves the package
-  // at its source's tip and moves installed bytes, so the scan that lists
-  // them and the audit that scored them both answer for content that is
-  // gone until they are asked again — the same three reads `updateOne` runs
-  // behind the identical apply. Read behind the write, never beside it: a
-  // scan that starts before the apply answers reports the bytes it is about
-  // to replace, which is the staleness itself with an extra call.
-  it("reads the standing, the scan and the audit back after a landed flip", async () => {
-    const write = pending<typeof okMoved>(okMoved);
-    vi.mocked(commands.packageSetRev).mockReturnValue(write.promise as never);
+  it("reads the standing, scan and audit after each successful Follow direction and outcome", async () => {
+    const cases = [
+      {
+        name: "Follow off with moved files",
+        initialRows: rows,
+        follow: false,
+        result: okMoved,
+      },
+      {
+        name: "Follow on with moved files",
+        initialRows: heldRows,
+        follow: true,
+        result: okMoved,
+      },
+      {
+        name: "Follow off with nothing moved",
+        initialRows: rows,
+        follow: false,
+        result: ok,
+      },
+    ];
+    expect(cases).toHaveLength(3);
     mount(<Live />);
     await openPlaces();
-
-    await act(async () => {
-      followSwitch("gh", USER_LEVEL_PLACE).click();
-    });
-
-    expect(commands.packageSetRev).toHaveBeenCalled();
-    expect(commands.scanMachine).not.toHaveBeenCalled();
-    expect(commands.auditAll).not.toHaveBeenCalled();
-
-    write.answer(okMoved);
-    await settle();
-
-    expect(commands.updatesOverview).toHaveBeenCalled();
-    expect(commands.scanMachine).toHaveBeenCalled();
-    expect(commands.auditAll).toHaveBeenCalled();
-  });
-
-  // The direction the flip is for: Follow back ON resolves the package at
-  // its source's tip, which is what moves installed bytes. Every other test
-  // here starts from a following row and switches OFF, so a rescan run only
-  // on the off direction would pass them all.
-  it("reads the scan and the audit back after Follow is switched on", async () => {
-    useUpdatesStore.setState({ rows: heldRows });
-    const write = pending<typeof okMoved>(okMoved);
-    vi.mocked(commands.packageSetRev).mockReturnValue(write.promise as never);
-    mount(<Live />);
-    await openPlaces();
-    expect(following(followSwitch("gh", USER_LEVEL_PLACE))).toBe(false);
-
-    await act(async () => {
-      followSwitch("gh", USER_LEVEL_PLACE).click();
-    });
-
-    // A null revision is the write that lets the package follow again.
-    expect(commands.packageSetRev).toHaveBeenCalledWith(
-      { scope: "global" },
-      "skill",
-      "gh",
-      null,
-    );
-    expect(commands.scanMachine).not.toHaveBeenCalled();
-
-    write.answer(okMoved);
-    await settle();
-
-    expect(commands.scanMachine).toHaveBeenCalled();
-    expect(commands.auditAll).toHaveBeenCalled();
-  });
-
-  // A flip that answers with nothing moved is asked for anyway. No field of
-  // that answer is a complete account of what the apply wrote — `moved`
-  // covers two of the drift states, `removed` the other destructive one,
-  // and a dropped rendering answers with all three empty — so gating the
-  // rescan on any of them is the stale page this reads against.
-  it("reads the scan and the audit back after a flip that moved nothing", async () => {
-    vi.mocked(commands.packageSetRev).mockResolvedValue(ok as never);
-    mount(<Live />);
-    await openPlaces();
-
-    await act(async () => {
-      followSwitch("gh", USER_LEVEL_PLACE).click();
-    });
-    await settle();
-
-    expect(commands.scanMachine).toHaveBeenCalled();
-    expect(commands.auditAll).toHaveBeenCalled();
+    for (const one of cases) {
+      await act(async () => {
+        vi.clearAllMocks();
+        useUpdatesStore.setState({ rows: one.initialRows });
+      });
+      const write = pending<typeof okMoved>(one.result);
+      vi.mocked(commands.packageSetRev).mockReturnValue(write.promise as never);
+      expect(following(followSwitch("gh", USER_LEVEL_PLACE)), one.name).toBe(
+        !one.follow,
+      );
+      await act(async () => {
+        followSwitch("gh", USER_LEVEL_PLACE).click();
+      });
+      expect(commands.packageSetRev, one.name).toHaveBeenCalledWith(
+        { scope: "global" },
+        "skill",
+        "gh",
+        one.follow ? null : "1111111111",
+      );
+      expect(commands.scanMachine, one.name).not.toHaveBeenCalled();
+      expect(commands.auditAll, one.name).not.toHaveBeenCalled();
+      write.answer(one.result);
+      await settle();
+      expect(commands.updatesOverview, one.name).toHaveBeenCalled();
+      expect(commands.scanMachine, one.name).toHaveBeenCalled();
+      expect(commands.auditAll, one.name).toHaveBeenCalled();
+    }
   });
 
   it("refuses a second flip, in the settling scope or any other", async () => {

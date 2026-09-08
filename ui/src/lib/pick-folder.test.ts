@@ -12,39 +12,45 @@ vi.mock("sonner", () => ({
 }));
 
 describe("pickFolder", () => {
-  // Two cases assert toast.error was never called, so each one needs the spy
-  // clean regardless of which case ran before it.
-  beforeEach(() => {
-    vi.mocked(toast.error).mockClear();
-  });
+  beforeEach(() => vi.mocked(toast.error).mockClear());
 
-  it("returns the chosen path without a toast", async () => {
-    vi.mocked(commands.pickFolder).mockResolvedValue({
-      status: "ok",
-      data: "/home/x/acme-web",
-    });
-
-    expect(await pickFolder()).toBe("/home/x/acme-web");
-    expect(toast.error).not.toHaveBeenCalled();
-  });
-
-  it("silently returns null on cancel — no toast for a cancelled picker", async () => {
-    vi.mocked(commands.pickFolder).mockResolvedValue({
-      status: "ok",
-      data: null,
-    });
-
-    expect(await pickFolder()).toBeNull();
-    expect(toast.error).not.toHaveBeenCalled();
-  });
-
-  it("toasts and returns null when the picker itself fails", async () => {
-    vi.mocked(commands.pickFolder).mockResolvedValue({
-      status: "error",
-      error: "picker unavailable",
-    });
-
-    expect(await pickFolder()).toBeNull();
-    expect(toast.error).toHaveBeenCalledWith("picker unavailable");
+  it("returns each picker outcome and only reports failures", async () => {
+    const rows: {
+      name: string;
+      response: Awaited<ReturnType<typeof commands.pickFolder>>;
+      path: string | null;
+      errors: string[][];
+    }[] = [
+      {
+        name: "chosen folder",
+        response: { status: "ok", data: "/home/x/acme-web" },
+        path: "/home/x/acme-web",
+        errors: [],
+      },
+      {
+        name: "cancelled picker",
+        response: { status: "ok", data: null },
+        path: null,
+        errors: [],
+      },
+      {
+        name: "picker failure",
+        response: { status: "error", error: "picker unavailable" },
+        path: null,
+        errors: [["picker unavailable"]],
+      },
+    ];
+    expect(rows.length, "folder picker outcome table is empty").toBeGreaterThan(
+      0,
+    );
+    for (const row of rows) {
+      vi.mocked(toast.error).mockClear();
+      vi.mocked(commands.pickFolder).mockResolvedValue(row.response);
+      const path = await pickFolder();
+      expect(
+        { path, errors: vi.mocked(toast.error).mock.calls },
+        row.name,
+      ).toEqual({ path: row.path, errors: row.errors });
+    }
   });
 });

@@ -52,12 +52,36 @@ describe("filterItems", () => {
   ];
 
   it("filters by kind, harness, and search over name+description", () => {
-    expect(filterItems(items, { scope: "all", kind: "agent" })).toHaveLength(1);
-    expect(filterItems(items, { scope: "all", harness: "pi" })).toHaveLength(1);
-    expect(filterItems(items, { scope: "all", search: "GITHUB" })).toHaveLength(
-      1,
+    const rows = [
+      {
+        name: "kind",
+        filter: { scope: "all", kind: "agent" },
+        expected: ["review"],
+      },
+      {
+        name: "harness",
+        filter: { scope: "all", harness: "pi" },
+        expected: ["review"],
+      },
+      {
+        name: "description",
+        filter: { scope: "all", search: "GITHUB" },
+        expected: ["gh"],
+      },
+      {
+        name: "unfiltered",
+        filter: { scope: "all" },
+        expected: ["deploy", "review", "gh"],
+      },
+    ] as const;
+    expect(rows.length, "library item filter table is empty").toBeGreaterThan(
+      0,
     );
-    expect(filterItems(items, { scope: "all" })).toHaveLength(3);
+    for (const row of rows)
+      expect(
+        filterItems(items, row.filter).map((one) => one.name),
+        row.name,
+      ).toEqual(row.expected);
   });
 });
 
@@ -69,9 +93,20 @@ describe("filterItems by where it lives", () => {
   ];
 
   it("narrows to one project, to personal, or to everything", () => {
-    expect(filterItems(items, { scope: { project: "/a" } })).toHaveLength(1);
-    expect(filterItems(items, { scope: "global" })).toHaveLength(1);
-    expect(filterItems(items, { scope: "all" })).toHaveLength(3);
+    const rows = [
+      { name: "one project", scope: { project: "/a" }, expected: ["a"] },
+      { name: "personal", scope: "global", expected: ["g"] },
+      { name: "everything", scope: "all", expected: ["a", "b", "g"] },
+    ] as const;
+    expect(
+      rows.length,
+      "library location filter table is empty",
+    ).toBeGreaterThan(0);
+    for (const row of rows)
+      expect(
+        filterItems(items, { scope: row.scope }).map((one) => one.name),
+        row.name,
+      ).toEqual(row.expected);
   });
 
   it("combines where it lives with the other filters", () => {
@@ -241,7 +276,10 @@ describe("recentItems", () => {
       item({ name: "b", modifiedAt: 2 }),
       item({ name: "c", modifiedAt: 3 }),
     ]);
-    expect(recentItems(groups, 2)).toHaveLength(2);
+    expect(recentItems(groups, 2).map((group) => group.name)).toEqual([
+      "c",
+      "b",
+    ]);
   });
 });
 

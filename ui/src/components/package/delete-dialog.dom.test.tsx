@@ -56,7 +56,11 @@ const openDialog = async (scopes: Scope[]) => {
     />,
   );
   await settle();
-  return document.body.textContent ?? "";
+  const dialog = [
+    ...document.querySelectorAll('[data-slot="dialog-content"]'),
+  ].at(-1);
+  if (!dialog) throw new Error("the open dialog has no content");
+  return dialog.textContent ?? "";
 };
 
 const rowsFor = (origins: [Scope, Origin][]): ProvenanceRow[] =>
@@ -110,49 +114,75 @@ describe("the Delete dialog", () => {
     expect(said).toContain("User level");
   });
 
-  it("names the marketplace it can be installed from again", async () => {
-    from([VG, MARKET("acme")]);
-
-    expect(await openDialog([VG])).toContain(reinstallFrom(["acme"]));
-  });
-
-  // Each place records the source it was installed from, so the copies
-  // this one deletion reaches can come from different marketplaces. One
-  // of them is not an answer: it sends the reader somewhere that never
-  // held the rest.
-  it("names every marketplace the deleted copies came from", async () => {
-    from([VG, MARKET("beta")], [HYPR, MARKET("acme")]);
-
-    const said = await openDialog([VG, HYPR]);
-    expect(said).toContain("acme");
-    expect(said).toContain("beta");
-    expect(said).toContain(reinstallFrom(["acme", "beta"]));
-  });
-
-  // A place of the reader's own beside a marketplace one leaves the
-  // marketplace worth naming; there is nowhere to send them for the other.
-  it("names the marketplace beside a copy that is the reader's own", async () => {
-    from([VG, MARKET("acme")], [HYPR, OWN]);
-
-    const said = await openDialog([VG, HYPR]);
-    expect(said).toContain(reinstallFrom(["acme"]));
-    expect(said).not.toContain(REINSTALL_OWN);
-  });
-
-  it("says so where the copy is the reader's own", async () => {
-    from([VG, OWN]);
-
-    expect(await openDialog([VG])).toContain(REINSTALL_OWN);
-  });
-
-  // Where the package came from is a read like any other: unread is not
-  // "your own", and the dialog would rather say nothing than guess.
-  it("claims no origin when the read does not answer", async () => {
-    useProvenanceStore.setState({ rows: [], loaded: false });
-
-    const said = await openDialog([VG]);
-    expect(said).not.toContain(REINSTALL_OWN);
-    expect(said).not.toContain(reinstallFrom(["acme"]));
+  it("names all known reinstall sources without inventing an origin", async () => {
+    const rows: {
+      name: string;
+      origins: [Scope, Origin][] | null;
+      scopes: Scope[];
+      present: string[];
+      absent: string[];
+    }[] = [
+      {
+        name: "marketplace",
+        origins: [[VG, MARKET("acme")]],
+        scopes: [VG],
+        present: [reinstallFrom(["acme"])],
+        absent: [],
+      },
+      {
+        name: "several marketplaces sorted",
+        origins: [
+          [VG, MARKET("beta")],
+          [HYPR, MARKET("acme")],
+        ],
+        scopes: [VG, HYPR],
+        present: ["acme", "beta", reinstallFrom(["acme", "beta"])],
+        absent: [],
+      },
+      {
+        name: "marketplace beside own",
+        origins: [
+          [VG, MARKET("acme")],
+          [HYPR, OWN],
+        ],
+        scopes: [VG, HYPR],
+        present: [reinstallFrom(["acme"])],
+        absent: [REINSTALL_OWN],
+      },
+      {
+        name: "own copy",
+        origins: [[VG, OWN]],
+        scopes: [VG],
+        present: [REINSTALL_OWN],
+        absent: [],
+      },
+      {
+        name: "unknown origin",
+        origins: null,
+        scopes: [VG],
+        present: [],
+        absent: [REINSTALL_OWN, reinstallFrom(["acme"])],
+      },
+    ];
+    expect(rows).toHaveLength(5);
+    for (const entry of rows) {
+      if (entry.origins !== null) from(...entry.origins);
+      else {
+        useProvenanceStore.setState({ rows: [], loaded: false });
+        vi.mocked(commands.libraryProvenance).mockResolvedValue({
+          status: "error",
+          error: "not in this test",
+        });
+      }
+      const said = await openDialog(entry.scopes);
+      expect(
+        {
+          present: entry.present.filter((text) => said.includes(text)),
+          forbidden: entry.absent.filter((text) => said.includes(text)),
+        },
+        entry.name,
+      ).toEqual({ present: entry.present, forbidden: [] });
+    }
   });
 });
 

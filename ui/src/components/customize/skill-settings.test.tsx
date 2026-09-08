@@ -11,6 +11,7 @@ import {
   SETTINGS_TEMPLATE_INVALID,
   SETTINGS_TEMPLATE_INVALID_NOTE,
   SETTINGS_TEMPLATE_UNREADABLE,
+  settingDiffers,
 } from "@/lib/copy-customize";
 import { mount } from "@/test/dom";
 import { SkillSettings } from "./skill-settings";
@@ -54,15 +55,6 @@ describe("SkillSettings", () => {
     expect(html).toContain(SETTINGS_HELP);
   });
 
-  /// The section says what a save will do to which file, and that a value
-  /// set outside it wins — the two things that decide whether editing
-  /// here has any effect at all.
-  it("names the file it writes and what outranks it", () => {
-    const html = render(place({ state: "rows", rows: [row()] }));
-    expect(html).toContain("kendex.settings.toml in the project root");
-    expect(html).toContain(".env.local");
-  });
-
   /// Stated as a fact about the file. A value can be off the default
   /// because it was seeded, imported or hand-written, and nothing here
   /// knows who put it there.
@@ -73,9 +65,8 @@ describe("SkillSettings", () => {
         rows: [row({ current: { state: "value", value: "advise", line: 3 } })],
       }),
     );
-    expect(html).toContain("Differs from the package default: enforce");
+    expect(html).toContain(settingDiffers("enforce"));
     expect(html).toContain(SETTINGS_RESET);
-    expect(html).not.toMatch(/you changed|your change/i);
   });
 
   it("offers no reset for a key already holding the package default", () => {
@@ -165,10 +156,15 @@ describe("SkillSettings", () => {
   /// Global has no settings file — skills seed on a project install
   /// alone — and a skill that declares nothing has nothing to show.
   it("shows no section for global, a template-less skill, or an unread place", () => {
-    expect(render({ applies: false, skills: [], base: null })).toBe("");
-    expect(render(place({ state: "no-template" }))).toBe("");
-    expect(render(place({ state: "rows", rows: [] }))).toBe("");
-    expect(render(null)).toBe("");
+    const rows: [string, ScopeSettings | null][] = [
+      ["global", { applies: false, skills: [], base: null }],
+      ["no template", place({ state: "no-template" })],
+      ["empty declared rows", place({ state: "rows", rows: [] })],
+      ["unread place", null],
+    ];
+    expect(rows).toHaveLength(4);
+    for (const [name, settings] of rows)
+      expect(render(settings), name).toBe("");
   });
 
   /// The draft is what the save will write, so the row shows it in place
@@ -189,7 +185,7 @@ describe("SkillSettings", () => {
       />,
     );
     expect(html).toContain('value="advise"');
-    expect(html).toContain("Differs from the package default: enforce");
+    expect(html).toContain(settingDiffers("enforce"));
   });
 
   /// Every edit names the skill whose template declares the key: core

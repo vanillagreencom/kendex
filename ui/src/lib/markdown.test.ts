@@ -25,7 +25,7 @@ describe("renderMarkdown", () => {
     expect(html).not.toContain("<a ");
   });
 
-  it("keeps http(s) and mailto links", () => {
+  it("keeps HTTPS links with their isolation attributes", () => {
     const html = renderMarkdown("[docs](https://example.com/skill)");
     expect(html).toContain('href="https://example.com/skill"');
     expect(html).toContain('rel="noopener noreferrer"');

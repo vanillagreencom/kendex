@@ -94,7 +94,7 @@ describe("what the account row draws", () => {
   it("shows the name and its initial when signed in", () => {
     const host = show({ kind: "signed-in", identity: ADA });
     expect(seen(host)).toContain(ADA.name);
-    expect(seen(host)).toContain("A");
+    expect(rowOf(host).querySelector("[aria-hidden]")?.textContent).toBe("A");
     expect(seen(host)).not.toContain(ACCOUNT_OFFLINE_LABEL);
   });
 
@@ -119,18 +119,19 @@ describe("where the row leads", () => {
 // reader, not a pointer alone: the trigger takes focus and carries the words
 // as its own text.
 describe("how the sentence behind a row reaches a person", () => {
-  it.each([
-    ["settled", { kind: "signed-out" }, null],
-    ["failed-read", { kind: "loading" }, "no network"],
-  ] as [string, AccountState, string | null][])(
-    "focuses the %s row and keeps it a button",
-    (_state, account, readError) => {
+  it("focuses every row and keeps it a button", () => {
+    const rows = [
+      ["settled", { kind: "signed-out" }, null],
+      ["failed-read", { kind: "loading" }, "no network"],
+    ] as [string, AccountState, string | null][];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const [_state, account, readError] of rows) {
       const row = rowOf(show(account, readError));
       row.focus();
       expect(document.activeElement).toBe(row);
       expect(row.tagName).toBe("BUTTON");
-    },
-  );
+    }
+  });
 });
 
 // One Row draws every settled state, so what holds for one holds for all:
@@ -139,29 +140,34 @@ describe("how the sentence behind a row reaches a person", () => {
 // that fails after one that landed changes no state, so the row reads as
 // the last good answer left it and the cause is on the page it opens.
 describe("what every settled row holds to", () => {
-  it.each(SETTLED)("holds on the %s row", (_state, account) => {
-    const clean = show(account);
-    const afterFailure = show(account, "keychain locked");
-    expect(clean.textContent).not.toContain(ADA.githubLogin);
-    expect(afterFailure.textContent).not.toContain("keychain locked");
-    expect(afterFailure.querySelectorAll("[title]")).toHaveLength(0);
-    expect(seen(afterFailure)).toBe(seen(clean));
-    expect(spoken(afterFailure)).toBe(spoken(clean));
+  it("holds on every settled row", () => {
+    const rows = SETTLED;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const [_state, account] of rows) {
+      const clean = show(account);
+      const afterFailure = show(account, "keychain locked");
+      expect(clean.textContent).not.toContain(ADA.githubLogin);
+      expect(afterFailure.textContent).not.toContain("keychain locked");
+      expect(afterFailure.querySelectorAll("[title]")).toHaveLength(0);
+      expect(seen(afterFailure)).toBe(seen(clean));
+      expect(spoken(afterFailure)).toBe(spoken(clean));
+    }
   });
 });
 
 // Each row's sentence is its own: what the state means for the two that
 // mean something the row cannot show, and where the click goes for the rest.
 describe("the sentence behind each row", () => {
-  it.each([
-    ["signed-in", { kind: "signed-in", identity: ADA }, ACCOUNT_ROW_TITLE],
-    ["signed-out", { kind: "signed-out" }, ACCOUNT_ROW_TITLE],
-    ["expired", { kind: "expired" }, ACCOUNT_EXPIRED_TITLE],
-    ["offline", { kind: "offline", identity: ADA }, ACCOUNT_OFFLINE_TITLE],
-  ] as [string, AccountState, string][])(
-    "says what the %s row means",
-    (_state, account, sentence) => {
+  it("says what every settled row means", () => {
+    const rows = [
+      ["signed-in", { kind: "signed-in", identity: ADA }, ACCOUNT_ROW_TITLE],
+      ["signed-out", { kind: "signed-out" }, ACCOUNT_ROW_TITLE],
+      ["expired", { kind: "expired" }, ACCOUNT_EXPIRED_TITLE],
+      ["offline", { kind: "offline", identity: ADA }, ACCOUNT_OFFLINE_TITLE],
+    ] as [string, AccountState, string][];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const [_state, account, sentence] of rows) {
       expect(spoken(show(account))).toBe(sentence);
-    },
-  );
+    }
+  });
 });

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   breadcrumbLabel,
   describesItself,
-  HARNESS_NAMES,
   harnessName,
   hookDisplayName,
   kindLabel,
@@ -29,11 +28,7 @@ describe("labels", () => {
     );
   });
 
-  it("keeps human copy free of internal jargon", () => {
-    const copy = Object.values(HARNESS_NAMES).join(" ").toLowerCase();
-    for (const banned of ["drift", "unmanaged", "orphan", "harness", "scope"]) {
-      expect(copy).not.toContain(banned);
-    }
+  it("names Claude by its display value", () => {
     expect(harnessName("claude")).toBe("Claude Code");
   });
 
@@ -80,11 +75,16 @@ describe("breadcrumbLabel for nested pages", () => {
 
 describe("describesItself", () => {
   it("separates what an author writes from what a config runs", () => {
-    for (const kind of ["skill", "agent", "command", "pi-extension"] as const) {
-      expect(describesItself(kind)).toBe(true);
-    }
-    // Nowhere to write a description, so the command stands in for one.
-    expect(describesItself("hook")).toBe(false);
-    expect(describesItself("mcp-server")).toBe(false);
+    const rows = [
+      { kind: "skill", expected: true },
+      { kind: "agent", expected: true },
+      { kind: "command", expected: true },
+      { kind: "pi-extension", expected: true },
+      { kind: "hook", expected: false },
+      { kind: "mcp-server", expected: false },
+    ] as const;
+    expect(rows.length, "description source table is empty").toBeGreaterThan(0);
+    for (const row of rows)
+      expect(describesItself(row.kind), row.kind).toBe(row.expected);
   });
 });

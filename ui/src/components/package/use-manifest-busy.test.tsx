@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Scope } from "@/bindings";
 import { useManifestBusy, useVersionsBusy } from "./use-package-data";
 
@@ -64,6 +64,16 @@ const render = (switching: boolean, scopes: Scope[] = [GLOBAL]) =>
 // not rendered while one is out. Save, Delete and the toggle write through
 // the audit or editor store and take no part in that: gating them on a
 // mirror fetch would only cost a save.
+beforeEach(() => {
+  Object.assign(stub, {
+    audit: false,
+    updates: false,
+    checking: false,
+    saving: false,
+    settling: [],
+  });
+});
+
 describe("useVersionsBusy", () => {
   it("adds a running check, and nothing else does", () => {
     stub.checking = true;
@@ -75,39 +85,107 @@ describe("useVersionsBusy", () => {
 });
 
 describe("useManifestBusy", () => {
-  it("is one gate over the audit apply, a version switch, updates-store work, and a save", () => {
-    expect(render(false)).toContain("idle");
-    expect(render(true)).toContain("busy");
-    stub.updates = true;
-    expect(render(false)).toContain("busy");
-    stub.updates = false;
-    stub.audit = true;
-    expect(render(false)).toContain("busy");
-    stub.audit = false;
-    stub.saving = true;
-    expect(render(false)).toContain("busy");
-    stub.saving = false;
+  it("holds each manifest writer independently", () => {
+    const rows = [
+      {
+        name: "idle",
+        switching: false,
+        audit: false,
+        updates: false,
+        saving: false,
+        expected: "idle",
+      },
+      {
+        name: "version switch",
+        switching: true,
+        audit: false,
+        updates: false,
+        saving: false,
+        expected: "busy",
+      },
+      {
+        name: "updates work",
+        switching: false,
+        audit: false,
+        updates: true,
+        saving: false,
+        expected: "busy",
+      },
+      {
+        name: "audit apply",
+        switching: false,
+        audit: true,
+        updates: false,
+        saving: false,
+        expected: "busy",
+      },
+      {
+        name: "editor save",
+        switching: false,
+        audit: false,
+        updates: false,
+        saving: true,
+        expected: "busy",
+      },
+    ];
+    expect(rows).toHaveLength(5);
+    for (const entry of rows) {
+      Object.assign(stub, {
+        audit: entry.audit,
+        updates: entry.updates,
+        saving: entry.saving,
+      });
+      expect(render(entry.switching), entry.name).toBe(
+        `<span>${entry.expected}</span>`,
+      );
+    }
   });
 
-  // These controls command the engine directly, outside the updates store's
-  // chain, and a flip's apply rewrites the same manifest — two commands that
-  // both read it before either applies lose one of the two edits.
-  it("holds while a Follow source flip settles in this package's scope", () => {
-    stub.settling = [{ scope: { scope: "global" } }];
-    expect(render(false, [GLOBAL])).toContain("busy");
-    expect(render(false, [PROJECT])).toContain("idle");
-    stub.settling = [];
-    expect(render(false, [GLOBAL])).toContain("idle");
-  });
-
-  // Remove and the enable/disable toggle write every place the package is
-  // installed in, not only the one the page was opened at, and a settling
-  // flip is rewriting one of those manifests.
-  it("holds for a flip in any scope the page's controls write", () => {
-    stub.settling = [{ scope: { scope: "project", root: "/home/me/app" } }];
-    expect(render(false, [GLOBAL])).toContain("idle");
-    expect(render(false, [GLOBAL, PROJECT])).toContain("busy");
-    stub.settling = [];
-    expect(render(false, [GLOBAL, PROJECT])).toContain("idle");
+  it("holds only while a flip settles in any scope the controls write", () => {
+    const rows = [
+      {
+        name: "same scope",
+        settling: [GLOBAL],
+        scopes: [GLOBAL],
+        expected: "busy",
+      },
+      {
+        name: "other scope",
+        settling: [GLOBAL],
+        scopes: [PROJECT],
+        expected: "idle",
+      },
+      {
+        name: "global flip cleared",
+        settling: [],
+        scopes: [GLOBAL],
+        expected: "idle",
+      },
+      {
+        name: "project flip outside write scopes",
+        settling: [PROJECT],
+        scopes: [GLOBAL],
+        expected: "idle",
+      },
+      {
+        name: "project among write scopes",
+        settling: [PROJECT],
+        scopes: [GLOBAL, PROJECT],
+        expected: "busy",
+      },
+      {
+        name: "project flip cleared",
+        settling: [],
+        scopes: [GLOBAL, PROJECT],
+        expected: "idle",
+      },
+    ];
+    expect(rows).toHaveLength(6);
+    for (const entry of rows) {
+      stub.settling = entry.settling.map((scope) => ({ scope }));
+      expect(render(false, entry.scopes), entry.name).toBe(
+        `<span>${entry.expected}</span>`,
+      );
+    }
   });
 });

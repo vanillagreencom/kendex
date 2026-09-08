@@ -388,7 +388,12 @@ describe("customizedHere", () => {
       ...empty(),
       forks: { skill: { gh: { source: "cat", repo: "o/r" } as never } },
     };
-    for (const updatesLoaded of [true, false]) {
+    const readStates = [true, false];
+    expect(
+      readStates.length,
+      "manifest fork read-state table is empty",
+    ).toBeGreaterThan(0);
+    for (const updatesLoaded of readStates) {
       const s = source({ manifests: { "/work/vg": manifest }, updatesLoaded });
       expect(customizedHere(s, VG)).toMatchObject([
         {

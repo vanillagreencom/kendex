@@ -26,28 +26,34 @@ describe("PackageHeader", () => {
     why: "settings",
   };
 
-  it("prints what the mark says about the package", () => {
-    expect(render(mark)).toContain("Customized in vg · 1 of 3 places");
-  });
-
-  it("says nothing where no place holds anything", () => {
-    expect(render(null)).not.toContain("Customized");
-  });
-
-  // The header is the one place that says a package is customized: the
-  // kind icon takes the colour and the words sit under the name, not in
-  // a pill of their own.
-  it("marks it with the icon colour and the words, not with a badge", () => {
-    const shown = render(mark);
-    // The kind icon takes the customized colour.
-    expect(shown).toContain("translate-y-[0.1875rem] text-customized");
-    // And the words are plain text, not a pill.
-    expect(shown).not.toContain("badge");
-  });
-
-  it("leaves the icon muted where nothing is customized", () => {
-    const shown = render(null);
-    expect(shown).toContain("translate-y-[0.1875rem] text-muted-foreground");
-    expect(shown).not.toContain("text-customized");
+  it("renders the mark and icon for customized and unchanged packages", () => {
+    const rows = [
+      {
+        name: "customized",
+        value: mark,
+        color: "text-customized",
+        text: "Customized in vg · 1 of 3 places",
+      },
+      {
+        name: "unchanged",
+        value: null,
+        color: "text-muted-foreground",
+        text: null,
+      },
+    ];
+    expect(rows).toHaveLength(2);
+    for (const entry of rows) {
+      const shown = render(entry.value);
+      expect(shown, entry.name).toContain(
+        `translate-y-[0.1875rem] ${entry.color}`,
+      );
+      if (entry.text !== null) {
+        expect(shown).toContain(entry.text);
+        expect(shown).not.toContain("badge");
+      } else {
+        expect(shown).not.toContain("Customized");
+        expect(shown).not.toContain("text-customized");
+      }
+    }
   });
 });

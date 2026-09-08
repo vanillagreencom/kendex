@@ -44,7 +44,9 @@ const picker = (dependencies: PackageDependencies) =>
  *  extra can be ticked, is settled once for both. */
 describe("a package's declared dependencies on both surfaces", () => {
   it("names each list, says what each state means, and ticks nothing by default", () => {
-    for (const html of [facts(declared), picker(declared)]) {
+    const surfaces = [facts(declared), picker(declared)];
+    expect(surfaces).toHaveLength(2);
+    for (const html of surfaces) {
       expect(html).toContain("Requires");
       expect(html).toContain("code-quality");
       expect(html).toContain(DEPENDENCY_INSTALLED_NOTE);
@@ -82,7 +84,9 @@ describe("a dependency landing where the records cannot be read", () => {
   };
 
   it("says why on both surfaces, rather than calling it not offered", () => {
-    for (const html of [facts(unknown), picker(unknown)]) {
+    const surfaces = [facts(unknown), picker(unknown)];
+    expect(surfaces).toHaveLength(2);
+    for (const html of surfaces) {
       expect(html).toContain(esc(DEPENDENCY_UNKNOWN_NOTE));
       expect(html).not.toContain(DEPENDENCY_NOT_OFFERED_NOTE);
     }

@@ -107,9 +107,12 @@ describe("the stale note", () => {
       />,
     );
     const note = host.querySelector('[role="alert"], .border-warning\\/30');
-    expect(note?.textContent).toContain(
-      "The file this draft came from changed after you opened it",
-    );
+    expect(note).not.toBeNull();
+    expect(
+      [...(note?.querySelectorAll("button") ?? [])].map(
+        (button) => button.textContent,
+      ),
+    ).toContain("Reload");
     expect(host.textContent).not.toContain("kendex.toml");
   });
 });

@@ -70,7 +70,9 @@ describe("a toggle the engine refuses", () => {
     // Nothing committed, so nothing downstream re-reads: the caches stand
     // and the overview is not asked again.
     expect(commands.marketplacesOverview).not.toHaveBeenCalled();
-    expect(useMarketplacesStore.getState().summaries.kept).toBeDefined();
+    expect(useMarketplacesStore.getState().summaries.kept).toEqual({
+      provenance: "acme/kit",
+    });
   });
 });
 
@@ -100,118 +102,130 @@ describe("a bare repository page's action", () => {
 
   // Turning a source off drops the packages it carried, so the toggle can
   // run a departing package's uninstaller — and the window has to say so.
-  it("says what turning a source off ran in the repository", async () => {
-    vi.mocked(commands.sourceToggle).mockResolvedValue({
-      status: "ok",
-      data: {
-        sources: [],
+  it("relays a toggle's removal report when a package left", async () => {
+    const rows = [
+      {
+        name: "uninstaller ran",
+        enabled: false,
         undone: [
           "commit-guards: running scripts/install-git-hooks --uninstall",
         ],
+        calls: [
+          ["commit-guards: running scripts/install-git-hooks --uninstall"],
+        ],
       },
-    });
-    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
-      status: "ok",
-      data: [],
-    });
-
-    await useMarketplacesStore
-      .getState()
-      .toggle({ scope: "global" }, "kit", false);
-
-    expect(toast.message).toHaveBeenCalledWith(
-      "commit-guards: running scripts/install-git-hooks --uninstall",
-    );
-  });
-
-  it("stays quiet when the toggle took no armed package away", async () => {
-    vi.mocked(toast.message).mockClear();
-    vi.mocked(commands.sourceToggle).mockResolvedValue({
-      status: "ok",
-      data: { sources: [] },
-    });
-    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
-      status: "ok",
-      data: [],
-    });
-
-    await useMarketplacesStore
-      .getState()
-      .toggle({ scope: "global" }, "kit", true);
-
-    expect(toast.message).not.toHaveBeenCalled();
-  });
-
-  it("stays neutral until the identity is known, then matches by it", () => {
-    const disabled = { ...row("acme/kit", "acme/kit"), enabled: false };
-    // The page was opened as "Acme/Kit": before the summary or the directory
-    // row supplies the identity, no spelling is compared.
-    expect(repoAction([disabled], READ_PENDING, null).kind).toBe("checking");
-    expect(
-      repoAction([disabled], READ_LANDED, "github.com/acme/kit").kind,
-    ).toBe("turn-on");
-  });
-
-  // An identity that never arrives is not one still on its way: a page the
-  // directory does not list waits on its summary, and a failed summary
-  // brings none. Once the list read has settled the page is told what this
-  // build can tell it.
-  it("settles rather than waiting for an identity no read will bring", () => {
-    const disabled = { ...row("acme/kit", "acme/kit"), enabled: false };
-    expect(repoAction([disabled], READ_LANDED, null).kind).toBe("subscribe");
-  });
-
-  // The identity is core's `repo_identity`, one string per repository on
-  // any host — so a GitLab declaration is found the way a GitHub one is.
-  // `repoKey` is null there, and matching on it would offer a Subscribe the
-  // engine refuses as a duplicate, and never a Turn on for a switched-off
-  // declaration. One declared row and one undeclared repository, so a
-  // comparison that never matches and one that always does each redden a
-  // row.
-  it("matches a non-GitHub repository by identity, declared or not", () => {
-    const gitlab = "https://gitlab.com/acme/kit";
-    const declared = row(gitlab, null);
-    const table: [MarketplaceRow[], string, string][] = [
-      [[declared], gitlab, "refresh"],
-      [[{ ...declared, enabled: false }], gitlab, "turn-on"],
-      [[declared], "https://gitlab.com/acme/other", "subscribe"],
+      {
+        name: "no armed package left",
+        enabled: true,
+        undone: undefined,
+        calls: [],
+      },
     ];
-    for (const [rows, identity, kind] of table) {
-      expect(repoAction(rows, READ_LANDED, identity).kind).toBe(kind);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const entry of rows) {
+      vi.mocked(toast.message).mockClear();
+      vi.mocked(commands.sourceToggle).mockResolvedValue({
+        status: "ok",
+        data: {
+          sources: [],
+          ...(entry.undone === undefined ? {} : { undone: entry.undone }),
+        },
+      });
+      vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+        status: "ok",
+        data: [],
+      });
+      await useMarketplacesStore
+        .getState()
+        .toggle({ scope: "global" }, "kit", entry.enabled);
+      expect(vi.mocked(toast.message).mock.calls, entry.name).toEqual(
+        entry.calls,
+      );
     }
   });
 
-  // Before the first read answers there are no rows to look in, so every
-  // repository would look undeclared and Subscribe would be offered over
-  // one this machine already holds — which the engine then refuses as a
-  // duplicate, with the person having pressed a button for nothing.
-  it("stays neutral while the first read of the list is still out", () => {
-    expect(repoAction([], READ_PENDING, "github.com/acme/kit").kind).toBe(
-      "checking",
-    );
-    expect(repoAction([], READ_LANDED, "github.com/acme/kit").kind).toBe(
-      "subscribe",
-    );
-  });
-
-  // A FIRST read that failed leaves no rows at all, so every repository
-  // looks undeclared. Offering Subscribe there is the guess the engine
-  // then refuses as a duplicate, with the person having pressed a button
-  // for nothing.
-  it("stays neutral when the first read failed and left no rows", () => {
-    expect(
-      repoAction([], readFailed("offline"), "github.com/acme/kit").kind,
-    ).toBe("checking");
-  });
-
-  // A read that failed is not the same: the rows it kept are what this
-  // machine last knew, and the engine refuses anything they were wrong
-  // about. Holding the page neutral there would leave no way back.
-  it("acts on rows a failed read left, rather than going neutral", () => {
-    const declared = row("acme/kit", "acme/kit");
-    expect(
-      repoAction([declared], readFailed("offline"), "github.com/acme/kit").kind,
-    ).toBe("refresh");
+  it("selects the action from the known identity and subscription read", () => {
+    const disabled = { ...row("acme/kit", "acme/kit"), enabled: false };
+    const gitlab = "https://gitlab.com/acme/kit";
+    const declared = row(gitlab, null);
+    const table = [
+      {
+        name: "identity pending",
+        rows: [disabled],
+        read: READ_PENDING,
+        identity: null,
+        kind: "checking",
+      },
+      {
+        name: "disabled identity known",
+        rows: [disabled],
+        read: READ_LANDED,
+        identity: "github.com/acme/kit",
+        kind: "turn-on",
+      },
+      {
+        name: "identity never arrived",
+        rows: [disabled],
+        read: READ_LANDED,
+        identity: null,
+        kind: "subscribe",
+      },
+      {
+        name: "non-GitHub enabled",
+        rows: [declared],
+        read: READ_LANDED,
+        identity: gitlab,
+        kind: "refresh",
+      },
+      {
+        name: "non-GitHub disabled",
+        rows: [{ ...declared, enabled: false }],
+        read: READ_LANDED,
+        identity: gitlab,
+        kind: "turn-on",
+      },
+      {
+        name: "non-GitHub undeclared",
+        rows: [declared],
+        read: READ_LANDED,
+        identity: "https://gitlab.com/acme/other",
+        kind: "subscribe",
+      },
+      {
+        name: "first overview pending",
+        rows: [],
+        read: READ_PENDING,
+        identity: "github.com/acme/kit",
+        kind: "checking",
+      },
+      {
+        name: "overview confirmed empty",
+        rows: [],
+        read: READ_LANDED,
+        identity: "github.com/acme/kit",
+        kind: "subscribe",
+      },
+      {
+        name: "first overview failed",
+        rows: [],
+        read: readFailed("offline"),
+        identity: "github.com/acme/kit",
+        kind: "checking",
+      },
+      {
+        name: "failed overview kept rows",
+        rows: [row("acme/kit", "acme/kit")],
+        read: readFailed("offline"),
+        identity: "github.com/acme/kit",
+        kind: "refresh",
+      },
+    ];
+    expect(table.length).toBeGreaterThan(0);
+    for (const entry of table)
+      expect(
+        repoAction(entry.rows, entry.read, entry.identity).kind,
+        entry.name,
+      ).toBe(entry.kind);
   });
 
   it("offers Subscribe only when nothing declares the repository", () => {
@@ -227,9 +241,8 @@ describe("a bare repository page's action", () => {
 });
 
 describe("a repository page carried on as a subscription", () => {
-  it("re-asks every summary when a subscription is toggled", async () => {
-    const repoKey = catalogKey({ by: "repo", repo: "Acme/Kit" });
-    const otherKey = catalogKey({ by: "repo", repo: "other/repo" });
+  it("invalidates summaries when a holder changes, regardless of spelling", async () => {
+    const scope = { scope: "global" as const };
     const summary = {
       provenance: "acme/kit",
       repoKey: "acme/kit",
@@ -240,107 +253,63 @@ describe("a repository page carried on as a subscription", () => {
       counts: {},
       warning: null,
     };
-    useMarketplacesStore.setState({
-      rows: [row("acme/kit", "acme/kit")],
-      summaries: {
-        [repoKey]: {
-          ...summary,
-          subscription: { scope: { scope: "global" }, source: "kit" },
-        },
-        [otherKey]: {
-          ...summary,
-          provenance: "other/repo",
-          repoKey: "other/repo",
-          repoIdentity: "github.com/other/repo",
-          subscription: { scope: { scope: "global" }, source: "other" },
-        },
-      },
-    });
-    vi.mocked(commands.sourceToggle).mockResolvedValue({
-      status: "ok",
-      data: { sources: [] },
-    });
-    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
-      status: "ok",
-      data: [],
-    });
-
-    await useMarketplacesStore
-      .getState()
-      .toggle({ scope: "global" }, "kit", false);
-
-    const summaries = useMarketplacesStore.getState().summaries;
-    expect(summaries[repoKey]).toBeUndefined();
-    expect(summaries[otherKey]).toBeUndefined();
-  });
-
-  it("re-asks a summary whose holder spells the repository another way", async () => {
-    const repoKey = catalogKey({ by: "repo", repo: "acme/kit" });
-    useMarketplacesStore.setState({
-      rows: [row("git@github.com:acme/kit.git", "acme/kit")],
-      summaries: {
-        [repoKey]: {
-          // Carried on as the subscription: provenance is its declaration.
-          provenance: "git@github.com:acme/kit.git",
-          repoKey: "acme/kit",
-          repoIdentity: "github.com/acme/kit",
-          commit: null,
-          meta: null,
-          mode: "discovered",
-          counts: {},
-          warning: null,
-          subscription: { scope: { scope: "global" }, source: "kit" },
-        },
-      },
-    });
-    vi.mocked(commands.sourceToggle).mockResolvedValue({
-      status: "ok",
-      data: { sources: [] },
-    });
-    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
-      status: "ok",
-      data: [],
-    });
-
-    await useMarketplacesStore
-      .getState()
-      .toggle({ scope: "global" }, "kit", false);
-
-    expect(useMarketplacesStore.getState().summaries[repoKey]).toBeUndefined();
-  });
-
-  it("re-asks again when the holder is turned back on", async () => {
     const repoKey = catalogKey({ by: "repo", repo: "Acme/Kit" });
-    // Turned off earlier: the summary reloaded bare, carried by nothing.
-    useMarketplacesStore.setState({
-      rows: [{ ...row("acme/kit", "acme/kit"), enabled: false }],
-      summaries: {
-        [repoKey]: {
-          provenance: "acme/kit",
-          repoKey: "acme/kit",
-          repoIdentity: "github.com/acme/kit",
-          commit: null,
-          meta: null,
-          mode: "discovered",
-          counts: {},
-          warning: null,
-          subscription: null,
+    const otherKey = catalogKey({ by: "repo", repo: "other/repo" });
+    const lowerKey = catalogKey({ by: "repo", repo: "acme/kit" });
+    const entries = [
+      {
+        name: "all summaries",
+        rows: [row("acme/kit", "acme/kit")],
+        summaries: {
+          [repoKey]: { ...summary, subscription: { scope, source: "kit" } },
+          [otherKey]: {
+            ...summary,
+            provenance: "other/repo",
+            repoKey: "other/repo",
+            repoIdentity: "github.com/other/repo",
+            subscription: { scope, source: "other" },
+          },
         },
+        enabled: false,
+        refreshed: [],
       },
-    });
-    vi.mocked(commands.sourceToggle).mockResolvedValue({
-      status: "ok",
-      data: { sources: [] },
-    });
-    vi.mocked(commands.marketplacesOverview).mockResolvedValue({
-      status: "ok",
-      data: [row("acme/kit", "acme/kit")],
-    });
-
-    await useMarketplacesStore
-      .getState()
-      .toggle({ scope: "global" }, "kit", true);
-
-    expect(useMarketplacesStore.getState().summaries[repoKey]).toBeUndefined();
+      {
+        name: "alternate declaration spelling",
+        rows: [row("git@github.com:acme/kit.git", "acme/kit")],
+        summaries: {
+          [lowerKey]: {
+            ...summary,
+            provenance: "git@github.com:acme/kit.git",
+            subscription: { scope, source: "kit" },
+          },
+        },
+        enabled: false,
+        refreshed: [],
+      },
+      {
+        name: "holder turned back on",
+        rows: [{ ...row("acme/kit", "acme/kit"), enabled: false }],
+        summaries: { [repoKey]: { ...summary, subscription: null } },
+        enabled: true,
+        refreshed: [row("acme/kit", "acme/kit")],
+      },
+    ];
+    expect(entries.length).toBeGreaterThan(0);
+    for (const entry of entries) {
+      useMarketplacesStore.setState({
+        rows: entry.rows,
+        summaries: entry.summaries,
+      });
+      vi.mocked(commands.sourceToggle).mockResolvedValue({
+        status: "ok",
+        data: { sources: [] },
+      });
+      vi.mocked(commands.marketplacesOverview).mockResolvedValue({
+        status: "ok",
+        data: entry.refreshed,
+      });
+      await useMarketplacesStore.getState().toggle(scope, "kit", entry.enabled);
+      expect(useMarketplacesStore.getState().summaries, entry.name).toEqual({});
+    }
   });
 });

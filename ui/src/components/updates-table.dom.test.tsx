@@ -311,7 +311,9 @@ describe("the row's Ignore item", () => {
     const confirm = () => button(IGNORE_CONFIRM_LABEL);
     expect(confirm().disabled).toBe(false);
 
-    for (const flag of ["checking", "busy"] as const) {
+    const flags = ["checking", "busy"] as const;
+    expect(flags).toHaveLength(2);
+    for (const flag of flags) {
       await act(async () => {
         useUpdatesStore.setState({ [flag]: true });
       });

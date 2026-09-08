@@ -84,16 +84,29 @@ describe("CustomizedIndex", () => {
   // settings to clear does not offer it.
   it("offers Remove only where settings exist to remove", () => {
     useScanStore.setState({ result: null });
-    const bare = render([row({ edited: false, forked: true })]);
-    expect(bare).toContain(NOT_INSTALLED_HERE);
-    expect(bare).not.toContain(REMOVE_CUSTOMIZATION);
-    const withSettings = render([
-      row({
-        edited: false,
-        customization: { ...row().customization, instructions: "x" },
-      }),
-    ]);
-    expect(withSettings).toContain(REMOVE_CUSTOMIZATION);
+    const cases = [
+      {
+        name: "fork without settings",
+        item: row({ edited: false, forked: true }),
+        removable: false,
+      },
+      {
+        name: "settings to clear",
+        item: row({
+          edited: false,
+          customization: { ...row().customization, instructions: "x" },
+        }),
+        removable: true,
+      },
+    ];
+    expect(cases).toHaveLength(2);
+    for (const entry of cases) {
+      const shown = render([entry.item]);
+      expect(shown.includes(REMOVE_CUSTOMIZATION), entry.name).toBe(
+        entry.removable,
+      );
+      if (!entry.removable) expect(shown).toContain(NOT_INSTALLED_HERE);
+    }
   });
 
   // "Nothing yet" is a claim about the place, and the hand-edit facts it
@@ -102,17 +115,52 @@ describe("CustomizedIndex", () => {
   // failure, that packages may be missing. Either note sits under
   // whatever the manifest alone could list.
   it("claims nothing is customized only after the update read lands", () => {
-    const pending = render([], "pending");
-    expect(pending).toContain(CUSTOMIZED_CHECKING);
-    expect(pending).not.toContain(NOTHING_CUSTOMIZED);
-    const failed = render([], "failed");
-    expect(failed).toContain(CUSTOMIZED_UPDATES_UNCHECKED);
-    expect(failed).not.toContain(NOTHING_CUSTOMIZED);
-    const some = render([row({ edited: false })], "failed");
-    expect(some).toContain("gh");
-    expect(some).toContain(CUSTOMIZED_UPDATES_UNCHECKED);
-    const landed = render([], "landed");
-    expect(landed).toContain(NOTHING_CUSTOMIZED);
-    expect(landed).not.toContain(CUSTOMIZED_CHECKING);
+    const states: {
+      name: string;
+      items: CustomizedHere[];
+      read: ReadStatus;
+      present: string[];
+      absent: string[];
+    }[] = [
+      {
+        name: "pending empty place",
+        items: [],
+        read: "pending",
+        present: [CUSTOMIZED_CHECKING],
+        absent: [NOTHING_CUSTOMIZED],
+      },
+      {
+        name: "failed empty place",
+        items: [],
+        read: "failed",
+        present: [CUSTOMIZED_UPDATES_UNCHECKED],
+        absent: [NOTHING_CUSTOMIZED],
+      },
+      {
+        name: "failed place with a manifest row",
+        items: [row({ edited: false })],
+        read: "failed",
+        present: ["gh", CUSTOMIZED_UPDATES_UNCHECKED],
+        absent: [],
+      },
+      {
+        name: "landed empty place",
+        items: [],
+        read: "landed",
+        present: [NOTHING_CUSTOMIZED],
+        absent: [CUSTOMIZED_CHECKING],
+      },
+    ];
+    expect(states).toHaveLength(4);
+    for (const state of states) {
+      const shown = render(state.items, state.read);
+      expect(
+        {
+          present: state.present.filter((text) => shown.includes(text)),
+          forbidden: state.absent.filter((text) => shown.includes(text)),
+        },
+        state.name,
+      ).toEqual({ present: state.present, forbidden: [] });
+    }
   });
 });

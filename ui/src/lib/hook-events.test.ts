@@ -9,27 +9,31 @@ const EVENTS: HookEvent[] = [
 ];
 
 describe("matchingEvents", () => {
-  it("returns everything when nothing has been typed", () => {
-    expect(matchingEvents(EVENTS, "  ")).toHaveLength(3);
-  });
-
-  it("matches the name, whatever case it is typed in", () => {
-    expect(matchingEvents(EVENTS, "pretool").map((e) => e.name)).toEqual([
-      "PreToolUse",
-    ]);
-  });
-
-  /** The point of the filter: finding an event you cannot name. */
-  it("matches what the event fires on, not only its name", () => {
-    expect(matchingEvents(EVENTS, "session").map((e) => e.name)).toEqual([
-      "SessionStart",
-    ]);
-    expect(matchingEvents(EVENTS, "runs a tool").map((e) => e.name)).toEqual([
-      "PreToolUse",
-    ]);
-  });
-
-  it("returns nothing when nothing matches", () => {
-    expect(matchingEvents(EVENTS, "webhook")).toEqual([]);
+  it("finds events by name or description", () => {
+    const rows = [
+      {
+        name: "blank query",
+        query: "  ",
+        expected: ["PreToolUse", "PostToolUse", "SessionStart"],
+      },
+      {
+        name: "case-insensitive name",
+        query: "pretool",
+        expected: ["PreToolUse"],
+      },
+      { name: "session", query: "session", expected: ["SessionStart"] },
+      {
+        name: "description only",
+        query: "runs a tool",
+        expected: ["PreToolUse"],
+      },
+      { name: "no match", query: "webhook", expected: [] },
+    ];
+    expect(rows.length, "hook event query table is empty").toBeGreaterThan(0);
+    for (const row of rows)
+      expect(
+        matchingEvents(EVENTS, row.query).map((event) => event.name),
+        row.name,
+      ).toEqual(row.expected);
   });
 });

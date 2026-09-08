@@ -80,7 +80,9 @@ describe("VersionMenu's two writes under a running check", () => {
       useUpdatesStore.setState({ checking: true });
     });
 
-    for (const label of [SWITCH_VERSION_LABEL, FOLLOW_SOURCE_LABEL]) {
+    const labels = [SWITCH_VERSION_LABEL, FOLLOW_SOURCE_LABEL];
+    expect(labels).toHaveLength(2);
+    for (const label of labels) {
       expect(button(label).disabled).toBe(true);
       expect(button(label).title).toBe(UPDATES_ONE_AT_A_TIME_NOTE);
     }

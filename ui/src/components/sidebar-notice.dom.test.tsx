@@ -133,28 +133,23 @@ describe("what the card says", () => {
     await press(container, APP_UPDATE_NOTES_LABEL);
     expect(commands.openUrl).toHaveBeenCalledWith(NOTES);
   });
-
-  it("stays away while this build is the latest", async () => {
-    vi.mocked(commands.appUpdateCheck).mockResolvedValue(
-      view({ kind: "upToDate", version: RUNNING }),
-    );
-    expect((await show()).textContent).toBe("");
-  });
-
-  // A card claims a named release is out. A check that did not land is no
-  // evidence of one, and the surface that reports on checking owns the
-  // error.
-  it("stays away when the check itself failed", async () => {
-    vi.mocked(commands.appUpdateCheck).mockResolvedValue({
-      status: "error",
-      error: "no network",
-    });
-    expect((await show()).textContent).toBe("");
-  });
-
-  it("stays away while this version is hidden", async () => {
-    vi.mocked(commands.appUpdateCheck).mockResolvedValue(available(true));
-    expect((await show()).textContent).toBe("");
+  it("stays away for current, unreadable and hidden releases", async () => {
+    const rows = [
+      {
+        name: "current",
+        response: view({ kind: "upToDate", version: RUNNING }),
+      },
+      {
+        name: "unreadable",
+        response: { status: "error" as const, error: "no network" },
+      },
+      { name: "hidden", response: available(true) },
+    ];
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      vi.mocked(commands.appUpdateCheck).mockResolvedValue(row.response);
+      expect((await show()).textContent, row.name).toBe("");
+    }
   });
 });
 
@@ -204,41 +199,27 @@ describe("the action each channel allows", () => {
     expect(container.textContent).toContain(APP_UPDATE_UNKNOWN_NOTE);
     expect(container.textContent).not.toContain(APP_UPDATE_INSTALL_LABEL);
   });
-
-  // Update now replaces the app and restarts into it, so anything the
-  // person needs to know about the command it leaves behind has to be on
-  // the card before the button is pressed. Afterwards there is no card.
-  it("names the installer that owns the command, and how to move it", async () => {
-    const container = await show(
-      { kind: "direct" },
-      {
-        kind: "managed",
-        manager: "Homebrew",
-        command: "brew upgrade kendex-cli",
-      },
-    );
-    expect(container.textContent).toContain(APP_UPDATE_INSTALL_LABEL);
-    expect(container.textContent).toContain(
-      appUpdateCommandManagedNote("Homebrew"),
-    );
-    expect(container.textContent).toContain("brew upgrade kendex-cli");
-  });
-
-  // The name comes from the channel, so a different installer reads as
-  // itself rather than as whatever the first case happened to be.
-  it("names whichever installer the channel carries", async () => {
-    const container = await show(
-      { kind: "direct" },
-      {
-        kind: "managed",
-        manager: "an AUR helper",
-        command: "paru -S kendex",
-      },
-    );
-    expect(container.textContent).toContain(
-      appUpdateCommandManagedNote("an AUR helper"),
-    );
-    expect(container.textContent).not.toContain("Homebrew");
+  it("names the installer the command channel carries", async () => {
+    const rows = [
+      { manager: "Homebrew", command: "brew upgrade kendex-cli" },
+      { manager: "an AUR helper", command: "paru -S kendex" },
+    ];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      const container = await show(
+        { kind: "direct" },
+        { kind: "managed", ...row },
+      );
+      expect(container.textContent, row.manager).toContain(
+        appUpdateCommandManagedNote(row.manager),
+      );
+      if (row.manager === "Homebrew") {
+        expect(container.textContent).toContain(APP_UPDATE_INSTALL_LABEL);
+        expect(container.textContent).toContain("brew upgrade kendex-cli");
+      } else {
+        expect(container.textContent).not.toContain("Homebrew");
+      }
+    }
   });
 
   // The command is kendex's own and the app cannot write where it sits,

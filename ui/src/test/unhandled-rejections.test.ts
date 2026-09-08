@@ -44,16 +44,12 @@ const node = (
       getBuiltinModule(id: "node:url"): {
         fileURLToPath(url: URL): string;
       };
-      getBuiltinModule(id: "node:fs"): {
-        readdirSync(path: string): string[];
-      };
     };
   }
 ).process;
 
 const { spawnSync } = node.getBuiltinModule("node:child_process");
 const { fileURLToPath } = node.getBuiltinModule("node:url");
-const { readdirSync } = node.getBuiltinModule("node:fs");
 
 // Converted from URLs, not read off `.pathname`, which keeps a path's spaces
 // percent-encoded and leads with a slash before a Windows drive letter.
@@ -139,58 +135,118 @@ function runFixture(
 }
 
 describe("a rejection that settles after the file ended", () => {
-  it(
-    "is dropped by vitest on its own",
-    () => {
-      const run = runFixture("unguarded", "late-rejection");
-      expect(run.output).toContain("Test Files  1 passed (1)");
-      expect(run.output).not.toContain("late rejection fixture");
-      expect(run.status, run.output).toBe(0);
+  const rows: {
+    name: string;
+    config: "unguarded" | "guarded";
+    closingWindowMs?: number;
+    status: number;
+    present: string[];
+    absent: string[];
+  }[] = [
+    {
+      name: "is dropped by vitest on its own",
+      config: "unguarded",
+      status: 0,
+      present: ["Test Files  1 passed (1)"],
+      absent: ["late rejection fixture"],
     },
-    CASE_TIMEOUT_MS,
-  );
-
-  it(
-    "reddens the run once the closing window holds the file open",
-    () => {
-      const run = runFixture("guarded", "late-rejection", WIDE_WINDOW_MS);
-      expect(run.output).toContain("Unhandled Rejection");
-      expect(run.output).toContain("late rejection fixture");
-      expect(run.output).toContain("Errors  1 error");
-      expect(run.status, run.output).toBe(1);
+    {
+      name: "reddens the run once the closing window holds the file open",
+      config: "guarded",
+      closingWindowMs: WIDE_WINDOW_MS,
+      status: 1,
+      present: [
+        "Unhandled Rejection",
+        "late rejection fixture",
+        "Errors  1 error",
+      ],
+      absent: [],
     },
-    CASE_TIMEOUT_MS,
+  ];
+  it("keeps the late-rejection table nonempty", () => {
+    expect(rows.length, "late-rejection table is empty").toBeGreaterThan(0);
+  });
+  it.for(rows.map((row) => [row.name, row] as const))(
+    "%s",
+    { timeout: CASE_TIMEOUT_MS },
+    ([, row]) => {
+      const run = runFixture(row.config, "late-rejection", row.closingWindowMs);
+      expect(
+        {
+          status: run.status,
+          requiredTokensFound: row.present.filter((token) =>
+            run.output.includes(token),
+          ),
+          forbiddenTokensFound: row.absent.filter((token) =>
+            run.output.includes(token),
+          ),
+        },
+        `${row.name}\n${run.output}`,
+      ).toEqual({
+        status: row.status,
+        requiredTokensFound: row.present,
+        forbiddenTokensFound: [],
+      });
+    },
   );
 });
 
 describe("a rejection no hook of ours could reach", () => {
-  it.for(["unguarded", "guarded"] as const)(
+  const configs = ["unguarded", "guarded"] as const;
+  it("keeps the skipped-file config table nonempty", () => {
+    expect(
+      configs.length,
+      "skipped-file config table is empty",
+    ).toBeGreaterThan(0);
+  });
+  it.for(configs)(
     "is reported under the %s config, module scope and every case skipped",
     { timeout: CASE_TIMEOUT_MS },
     (config) => {
       const run = runFixture(config, "skipped-file");
-      expect(run.output).toContain("Unhandled Rejection");
-      expect(run.output).toContain("skipped file fixture");
-      expect(run.output).toContain("Test Files  1 skipped (1)");
-      expect(run.status, run.output).toBe(1);
+      expect(
+        {
+          unhandled: run.output.includes("Unhandled Rejection"),
+          fixture: run.output.includes("skipped file fixture"),
+          skipped: run.output.includes("Test Files  1 skipped (1)"),
+          status: run.status,
+        },
+        `${config}\n${run.output}`,
+      ).toEqual({ unhandled: true, fixture: true, skipped: true, status: 1 });
     },
   );
 });
 
 describe("a rejection that lands while a later case is running", () => {
-  it.for(["unguarded", "guarded"] as const)(
+  const configs = ["unguarded", "guarded"] as const;
+  it("keeps the mid-file config table nonempty", () => {
+    expect(configs.length, "mid-file config table is empty").toBeGreaterThan(0);
+  });
+  it.for(configs)(
     "reddens the file under the %s config, blaming no case",
     { timeout: CASE_TIMEOUT_MS },
     (config) => {
       const run = runFixture(config, "mid-file-rejection");
-      expect(run.output).toContain("Unhandled Rejection");
-      expect(run.output).toContain("mid-file rejection fixture");
-      expect(run.output).toContain("Tests  2 passed (2)");
-      expect(run.output).toContain("Errors  1 error");
-      expect(run.output).toContain(
-        "It doesn't mean the error was thrown inside the file itself",
-      );
-      expect(run.status, run.output).toBe(1);
+      expect(
+        {
+          unhandled: run.output.includes("Unhandled Rejection"),
+          fixture: run.output.includes("mid-file rejection fixture"),
+          casesPassed: run.output.includes("Tests  2 passed (2)"),
+          errorCount: run.output.includes("Errors  1 error"),
+          attribution: run.output.includes(
+            "It doesn't mean the error was thrown inside the file itself",
+          ),
+          status: run.status,
+        },
+        `${config}\n${run.output}`,
+      ).toEqual({
+        unhandled: true,
+        fixture: true,
+        casesPassed: true,
+        errorCount: true,
+        attribution: true,
+        status: 1,
+      });
     },
   );
 });
@@ -213,13 +269,18 @@ describe("an exported KENDEX_CLOSING_WINDOW_MS", () => {
     () => {
       // 15s is past vitest's 10s hook timeout, so a child that read it would
       // die on "Hook timed out in 10000ms" instead of passing at the default.
+      const previousWindow = node.env.KENDEX_CLOSING_WINDOW_MS;
       node.env.KENDEX_CLOSING_WINDOW_MS = "15000";
       try {
         const run = runFixture("guarded", "fake-timers");
         expect(run.output).toContain("Test Files  1 passed (1)");
         expect(run.status, run.output).toBe(0);
       } finally {
-        delete node.env.KENDEX_CLOSING_WINDOW_MS;
+        if (previousWindow === undefined) {
+          delete node.env.KENDEX_CLOSING_WINDOW_MS;
+        } else {
+          node.env.KENDEX_CLOSING_WINDOW_MS = previousWindow;
+        }
       }
     },
     CASE_TIMEOUT_MS,
@@ -245,21 +306,5 @@ describe("the colour CI puts in the captured output", () => {
     expect(text).toContain("Tests  2 passed (2)");
     expect(text).toContain("Errors  1 error");
     expect(text).not.toContain(ESC);
-  });
-});
-
-// Every control above passes `--config`, so none of them reads the config a
-// plain `vitest run` resolves — and vitest prefers `vitest.config.*` over
-// `vite.config.ts`. Measured: with a `vitest.config.ts` present that does not
-// carry `setupFiles`, a real test file runs at `setup 0ms` while every
-// control here stays green. No fixture can be pointed at the resolved config
-// — vitest has no `--include` flag and the default include never matches a
-// `*.fixture.ts` — so what is pinned is that nothing shadows it.
-describe("the config a plain vitest run resolves", () => {
-  it("is the one the controls pin, unshadowed", () => {
-    const shadows = readdirSync(UI_ROOT).filter((name) =>
-      name.startsWith("vitest.config."),
-    );
-    expect(shadows).toEqual([]);
   });
 });

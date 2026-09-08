@@ -67,16 +67,19 @@ beforeEach(() => {
 
 describe("the start-of-session note on a project's card", () => {
   it("says what agents here get in each state, with a button only while off", () => {
-    expect(row("off").textContent).toContain(SESSION_NOTE_OFF);
-    expect(button(row("off"), ADD_SESSION_NOTE_LABEL)).toBeDefined();
-
-    const on = row("on");
-    expect(on.textContent).toContain(SESSION_NOTE_ON);
-    expect(button(on, ADD_SESSION_NOTE_LABEL)).toBeUndefined();
-
-    const waiting = row("waiting");
-    expect(waiting.textContent).toContain(SESSION_NOTE_WAITING);
-    expect(button(waiting, ADD_SESSION_NOTE_LABEL)).toBeUndefined();
+    const states = [
+      { state: "off", note: SESSION_NOTE_OFF, add: true },
+      { state: "on", note: SESSION_NOTE_ON, add: false },
+      { state: "waiting", note: SESSION_NOTE_WAITING, add: false },
+    ] as const;
+    expect(states).toHaveLength(3);
+    for (const { state, note, add } of states) {
+      const host = row(state);
+      expect(host.textContent, state).toContain(note);
+      expect(button(host, ADD_SESSION_NOTE_LABEL) !== undefined, state).toBe(
+        add,
+      );
+    }
   });
 
   // What it is and what changes on disk are said before the ask, in the
@@ -137,14 +140,16 @@ describe("the start-of-session note on a project's card", () => {
     );
     await act(async () => button(host, ADD_SESSION_NOTE_LABEL)?.click());
     await settle();
-    for (const slot of ["dialog-title", "dialog-content", "dialog-overlay"]) {
+    const slots = ["dialog-title", "dialog-content", "dialog-overlay"];
+    expect(slots).toHaveLength(3);
+    for (const slot of slots) {
       const target = document.body.querySelector<HTMLElement>(
         `[data-slot="${slot}"]`,
       );
       if (!target) throw new Error(`no ${slot} on screen`);
       await act(async () => target.click());
+      expect(onOpen, slot).not.toHaveBeenCalled();
     }
-    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it("puts a refusal in the problems dialog under the note's own title", async () => {

@@ -45,82 +45,103 @@ const withInventory = (
     />,
   );
 
-// An automatic list drawn as an empty box reads as "this agent has no
-// skills", which is a different claim from the one the section is making.
-describe("the automatic state", () => {
-  it("names the skills the catalog gives the agent", () => {
-    const shown = render(null, { orch: ["dev", "github"] });
-    expect(shown).toContain(SKILLS_AUTOMATIC);
-    expect(shown).toContain("dev");
-    expect(shown).toContain("github");
-  });
-
-  it("offers no Remove on a list that is not the reader's", () => {
-    expect(render(null, { orch: ["dev"] })).not.toContain("Remove dev");
-    expect(render(["dev"], {})).toContain("Remove dev");
-  });
-
-  it("says so plainly where the catalog assigns nothing", () => {
-    const shown = render(null, { orch: [] });
-    expect(shown).toContain(SKILLS_AUTOMATIC_NONE);
-  });
-
-  // Nothing recorded is not the same fact as nothing assigned, and the
-  // section may not print the second over the first.
-  it("keeps an unrecorded assignment apart from an empty one", () => {
-    const shown = render(null, {});
-    expect(shown).toContain(SKILLS_AUTOMATIC_UNRECORDED);
-    expect(shown).not.toContain(SKILLS_AUTOMATIC_NONE);
-  });
-});
-
-// A reviewer agent with no row of its own renders the row set on its base
-// agent. Naming the catalog's list there says the agent gets skills it
-// does not get, over a list the person wrote by hand.
-describe("a row this agent inherits", () => {
-  const inherited = { skills: ["worktree"], under: "rust" };
-
-  it("names the inherited list, not the catalog's", () => {
-    const shown = render(
-      null,
-      { "reviewer-rust": ["dev"] },
-      inherited,
-      "reviewer-rust",
-    );
-    expect(shown).toContain("worktree");
-    expect(shown).not.toContain(">dev<");
-    expect(shown).toContain(skillsInherited("rust"));
-    expect(shown).not.toContain(SKILLS_AUTOMATIC);
-  });
-
-  // The row lives under another agent, and the controls here write this
-  // agent's own. An X that silently changed nothing is worse than none.
-  it("offers no Remove on a row that is not this agent's", () => {
-    const shown = render(null, {}, inherited, "reviewer-rust");
-    expect(shown).not.toContain("Remove worktree");
-  });
-
-  it("prefers this agent's own row when it has one", () => {
-    const shown = render(["dev"], {}, inherited, "reviewer-rust");
-    expect(shown).toContain("Remove dev");
-    expect(shown).not.toContain(skillsInherited("rust"));
-  });
-});
-
-// The editor drops a place's inventory when its read fails, so "no entry
-// for this agent" and "no inventory at all" both arrive as undefined.
-// Only the first is a fact about the agent.
-describe("a place whose inventory was not read", () => {
-  it("makes no claim about what the agent gets", () => {
-    const shown = withInventory(null, null);
-    expect(shown).not.toContain(SKILLS_AUTOMATIC_UNRECORDED);
-    expect(shown).not.toContain(SKILLS_AUTOMATIC_NONE);
-    expect(shown).not.toContain(SKILLS_AUTOMATIC);
-  });
-
-  // The claim is still made where an inventory was read and holds nothing
-  // for this agent — that is a fact, and dropping it would lose it.
-  it("still says so where the inventory was read and has no entry", () => {
-    expect(render(null, {})).toContain(SKILLS_AUTOMATIC_UNRECORDED);
+// The note and removal affordance depend on which assignment this place knows.
+describe("the skill assignment this place shows", () => {
+  it("distinguishes automatic, chosen, inherited and unread assignments", () => {
+    const inherited = { skills: ["worktree"], under: "rust" };
+    const rows = [
+      {
+        name: "automatic list",
+        chosen: null,
+        automatic: { orch: ["dev", "github"] },
+        contains: [SKILLS_AUTOMATIC, "dev", "github"],
+        absent: [],
+      },
+      {
+        name: "automatic list is not removable",
+        chosen: null,
+        automatic: { orch: ["dev"] },
+        contains: [],
+        absent: ["Remove dev"],
+      },
+      {
+        name: "chosen list is removable",
+        chosen: ["dev"],
+        automatic: {},
+        contains: ["Remove dev"],
+        absent: [],
+      },
+      {
+        name: "empty assignment",
+        chosen: null,
+        automatic: { orch: [] },
+        contains: [SKILLS_AUTOMATIC_NONE],
+        absent: [],
+      },
+      {
+        name: "unrecorded assignment in a read inventory",
+        chosen: null,
+        automatic: {},
+        contains: [SKILLS_AUTOMATIC_UNRECORDED],
+        absent: [SKILLS_AUTOMATIC_NONE],
+      },
+      {
+        name: "inherited list overrides automatic",
+        chosen: null,
+        automatic: { "reviewer-rust": ["dev"] },
+        inherited,
+        agent: "reviewer-rust",
+        contains: ["worktree", skillsInherited("rust")],
+        absent: [">dev<", SKILLS_AUTOMATIC],
+      },
+      {
+        name: "inherited list is not removable",
+        chosen: null,
+        automatic: {},
+        inherited,
+        agent: "reviewer-rust",
+        contains: [],
+        absent: ["Remove worktree"],
+      },
+      {
+        name: "own row overrides inherited",
+        chosen: ["dev"],
+        automatic: {},
+        inherited,
+        agent: "reviewer-rust",
+        contains: ["Remove dev"],
+        absent: [skillsInherited("rust")],
+      },
+      {
+        name: "unread inventory makes no assignment claim",
+        chosen: null,
+        automatic: null,
+        contains: [],
+        absent: [
+          SKILLS_AUTOMATIC_UNRECORDED,
+          SKILLS_AUTOMATIC_NONE,
+          SKILLS_AUTOMATIC,
+        ],
+      },
+    ];
+    expect(rows).toHaveLength(9);
+    for (const entry of rows) {
+      const shown =
+        entry.automatic === null
+          ? withInventory(null, entry.chosen)
+          : render(
+              entry.chosen,
+              entry.automatic as Record<string, string[]>,
+              entry.inherited,
+              entry.agent,
+            );
+      expect(
+        {
+          present: entry.contains.filter((text) => shown.includes(text)),
+          forbidden: entry.absent.filter((text) => shown.includes(text)),
+        },
+        entry.name,
+      ).toEqual({ present: entry.contains, forbidden: [] });
+    }
   });
 });

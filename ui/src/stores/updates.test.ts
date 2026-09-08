@@ -2,6 +2,7 @@ import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
+import { updateRow } from "@/components/updates-test-rows";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
 import { READ_LANDED } from "@/lib/read-state";
@@ -34,35 +35,14 @@ vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() },
 }));
 
-function row(overrides: Partial<UpdateRow>): UpdateRow {
-  return {
-    scope: { scope: "global" },
-    kind: "skill",
-    name: "gh",
-    source: "kendex",
+const row = (overrides: Partial<UpdateRow>): UpdateRow =>
+  updateRow("gh", null, {
     repo: "owner/catalog",
     repoIdentity: "owner/catalog",
     current: { commit: "a".repeat(40), label: "v1", date: null },
     latest: { commit: "b".repeat(40), label: "v2", date: null },
-    updateAvailable: true,
-    pinned: false,
-    ignored: false,
-    blockedByLocalEdit: false,
-    editedHarnesses: [],
-    forkableHarness: null,
-    canDiscard: true,
-    canTakeLatest: true,
-    holdOwner: null,
-    derived: false,
-    requiredBy: [],
-    forked: false,
-    forkEdited: false,
-    mixed: false,
-    removedUpstream: false,
-    noPerPackageUpdate: null,
     ...overrides,
-  };
-}
+  });
 
 describe("updates store", () => {
   beforeEach(() => {
@@ -88,34 +68,36 @@ describe("updates store", () => {
   // the page saying "Not checked for updates yet" over a check that ran.
   const CHECKED_AT = 1_700_000_000;
 
-  it("lands the age a read reports", async () => {
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: {
-        rows: [row({})],
-        warnings: [],
-        unreadable: [],
-        lastFetched: CHECKED_AT,
+  it("lands the age reported by a read or a check", async () => {
+    const rows = [
+      {
+        name: "read",
+        command: commands.updatesOverview,
+        read: () => useUpdatesStore.getState().reload(),
       },
-    });
-    await useUpdatesStore.getState().reload();
-    expect(useUpdatesStore.getState().lastFetched).toBe(CHECKED_AT);
-  });
-
-  // The refresh lands on the side-effect chain rather than the plain-read
-  // path, so it carries the age through different code.
-  it("lands the age a check reports", async () => {
-    vi.mocked(commands.updatesRefresh).mockResolvedValue({
-      status: "ok",
-      data: {
-        rows: [row({})],
-        warnings: [],
-        unreadable: [],
-        lastFetched: CHECKED_AT,
+      {
+        name: "check",
+        command: commands.updatesRefresh,
+        read: () => useUpdatesStore.getState().check(),
       },
-    });
-    await useUpdatesStore.getState().check();
-    expect(useUpdatesStore.getState().lastFetched).toBe(CHECKED_AT);
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const test of rows) {
+      useUpdatesStore.setState({ lastFetched: null });
+      vi.mocked(test.command).mockResolvedValue({
+        status: "ok",
+        data: {
+          rows: [row({})],
+          warnings: [],
+          unreadable: [],
+          lastFetched: CHECKED_AT,
+        },
+      });
+      await test.read();
+      expect(useUpdatesStore.getState().lastFetched, test.name).toBe(
+        CHECKED_AT,
+      );
+    }
   });
 
   // A check that failed fetched nothing, so the age it had is still when
@@ -242,6 +224,7 @@ describe("updates store", () => {
       data: { rows: fresh, warnings: [], unreadable: [], lastFetched: null },
     });
     await useUpdatesStore.getState().check();
+    expect(useUpdatesStore.getState().rows).toEqual(fresh);
 
     resolveLoad({
       status: "ok",
@@ -345,43 +328,6 @@ describe("updates store", () => {
     });
     await reloading;
     expect(useUpdatesStore.getState().reading).toBe(false);
-  });
-
-  // The control for the exclusion in `updates-exclusion.test.ts`: with
-  // nothing committing meanwhile, a check still outranks every read out.
-  // That landing-time rank is what the exclusion protects, and what
-  // refusing writes beside a check must not take away.
-  it("still outranks a read that was out when the check answers", async () => {
-    let landRead!: (
-      value: Awaited<ReturnType<typeof commands.updatesOverview>>,
-    ) => void;
-    vi.mocked(commands.updatesOverview).mockReturnValue(
-      new Promise((resolve) => {
-        landRead = resolve;
-      }),
-    );
-    const reloading = useUpdatesStore.getState().reload();
-
-    const fresh = [row({ name: "fresh" })];
-    vi.mocked(commands.updatesRefresh).mockResolvedValue({
-      status: "ok",
-      data: { rows: fresh, warnings: [], unreadable: [], lastFetched: null },
-    });
-    await useUpdatesStore.getState().check();
-    expect(useUpdatesStore.getState().rows).toEqual(fresh);
-
-    landRead({
-      status: "ok",
-      data: {
-        rows: [row({ name: "stale" })],
-        warnings: [],
-        unreadable: [],
-        lastFetched: null,
-      },
-    });
-    await reloading;
-
-    expect(useUpdatesStore.getState().rows).toEqual(fresh);
   });
 
   // A failed mute may still have committed before erroring, so the store
@@ -555,17 +501,18 @@ describe("updates store", () => {
   // something else forced a read. Both arms of the choice `applyRow` makes
   // between the two single-package commands, since a held row moves its
   // hold through the other one.
-  it.each([
-    ["a follower", row({}), commands.packageUpdate, "the apply stopped"],
-    [
-      "a held row",
-      row({ pinned: true }),
-      commands.packageSetRev,
-      "manifest busy",
-    ],
-  ])(
-    "reads the machine back when %s answers with an error",
-    async (_what, subject, command, error) => {
+  it("reads the machine behind each failed package apply", async () => {
+    const rows = [
+      ["a follower", row({}), commands.packageUpdate, "the apply stopped"],
+      [
+        "a held row",
+        row({ pinned: true }),
+        commands.packageSetRev,
+        "manifest busy",
+      ],
+    ] as const;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const [_what, subject, command, error] of rows) {
       useProblemsStore.setState({
         dialog: { open: false, title: "", steps: [], actions: [] },
       });
@@ -581,8 +528,8 @@ describe("updates store", () => {
       // The refusal is still the person's to see, and nothing claims a move.
       expect(useProblemsStore.getState().dialog.message).toBe(error);
       expect(toast.success).not.toHaveBeenCalled();
-    },
-  );
+    }
+  });
 
   // The backend can persist the preference and then fail building its
   // overview: the reconciling read lands what actually committed instead
@@ -629,7 +576,7 @@ describe("updates store", () => {
     expect(useProblemsStore.getState().dialog.message).toBe("half done");
   });
 
-  it("muting keeps the row, flagged — and unmuting brings it back", async () => {
+  it("muting keeps the row flagged and excludes it from the badge", async () => {
     const muted = [row({ ignored: true })];
     vi.mocked(commands.updateSetIgnored).mockResolvedValue({
       status: "ok",
@@ -656,82 +603,49 @@ describe("updates store", () => {
     expect(visibleUpdateCount(useUpdatesStore.getState().rows)).toBe(0);
   });
 
-  it("updating a held package moves its hold to the latest version", async () => {
-    vi.mocked(commands.packageSetRev).mockResolvedValue({
-      status: "ok",
-      data: {
-        view: {
-          scope: { scope: "global" },
-          drift: [],
-          plan: [],
-          notes: [],
-          warnings: [],
-          safety: [],
-          adoptable: ADOPTABLE,
-          exits: [],
-        },
-        heldBack: [],
-        removed: [],
-        moved: [],
+  it("updates held and following packages through their own command", async () => {
+    const rows = [
+      {
+        name: "held package",
+        subject: row({ pinned: true }),
+        command: commands.packageSetRev,
+        other: commands.packageUpdate,
+        args: [{ scope: "global" }, "skill", "gh", "b".repeat(40)],
       },
-    });
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
-    });
-    vi.mocked(commands.scanMachine).mockResolvedValue({
-      status: "ok",
-      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
-    });
-    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
-
-    await useUpdatesStore.getState().updateOne(row({ pinned: true }));
-
-    expect(commands.packageSetRev).toHaveBeenCalledWith(
-      { scope: "global" },
-      "skill",
-      "gh",
-      "b".repeat(40),
-    );
-    expect(commands.packageUpdate).not.toHaveBeenCalled();
-  });
-
-  it("updating a following package applies just that package", async () => {
-    vi.mocked(commands.packageUpdate).mockResolvedValue({
-      status: "ok",
-      data: {
-        view: {
-          scope: { scope: "global" },
-          drift: [],
-          plan: [],
-          notes: [],
-          warnings: [],
-          safety: [],
-          adoptable: ADOPTABLE,
-          exits: [],
-        },
-        heldBack: [],
-        removed: [],
-        moved: [],
+      {
+        name: "following package",
+        subject: row({}),
+        command: commands.packageUpdate,
+        other: commands.packageSetRev,
+        args: [{ scope: "global" }, "skill", "gh"],
       },
-    });
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
-    });
-    vi.mocked(commands.scanMachine).mockResolvedValue({
-      status: "ok",
-      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
-    });
-    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
-
-    await useUpdatesStore.getState().updateOne(row({}));
-
-    expect(commands.packageUpdate).toHaveBeenCalledWith(
-      { scope: "global" },
-      "skill",
-      "gh",
-    );
-    expect(commands.packageSetRev).not.toHaveBeenCalled();
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const test of rows) {
+      vi.mocked(commands.packageSetRev).mockReset();
+      vi.mocked(commands.packageUpdate).mockReset();
+      vi.mocked(test.command).mockResolvedValue({
+        status: "ok",
+        data: {
+          view: {
+            scope: { scope: "global" },
+            drift: [],
+            plan: [],
+            notes: [],
+            warnings: [],
+            safety: [],
+            adoptable: ADOPTABLE,
+            exits: [],
+          },
+          heldBack: [],
+          removed: [],
+          moved: [],
+        },
+      });
+      machineAnswers();
+      await useUpdatesStore.getState().updateOne(test.subject);
+      expect(test.command, test.name).toHaveBeenCalledWith(...test.args);
+      expect(test.other, test.name).not.toHaveBeenCalled();
+    }
   });
 });

@@ -42,6 +42,9 @@ describe("the harness row's name", () => {
     );
     if (!name) throw new Error("no show-everything button rendered");
     expect(name.textContent).toBe("Claude Code");
+    expect(name.getAttribute("aria-label")).toBe(
+      "Show everything in Claude Code",
+    );
 
     await userEvent.click(name);
     const nav = useNavStore.getState();
@@ -51,42 +54,25 @@ describe("the harness row's name", () => {
     expect(nav.libraryFilter?.scope).toBeUndefined();
   });
 
-  it("opens on a click while a selection stands elsewhere", async () => {
-    const host = mount("/home/u/.claude");
-    const name = host.querySelector<HTMLButtonElement>(
-      `button[aria-label="${label}"]`,
-    );
-    if (!name) throw new Error("no show-everything button rendered");
-    // A completed click on the button is intent to open even while text
-    // stands selected somewhere — on WebKit a button click leaves the
-    // selection be, so a guard on the selection would make this a dead
-    // click.
-    vi.spyOn(window, "getSelection").mockReturnValue({
-      isCollapsed: false,
-    } as Selection);
-    await userEvent.click(name);
-    expect(useNavStore.getState().page).toBe("library");
-  });
-
-  it("still opens from the keyboard while a selection stands", async () => {
-    const host = mount("/home/u/.claude");
-    const name = host.querySelector<HTMLButtonElement>(
-      `button[aria-label="${label}"]`,
-    );
-    if (!name) throw new Error("no show-everything button rendered");
-    vi.spyOn(window, "getSelection").mockReturnValue({
-      isCollapsed: false,
-    } as Selection);
-    name.focus();
-    await userEvent.keyboard("{Enter}");
-    expect(useNavStore.getState().page).toBe("library");
-  });
-
-  // One phrase for one affordance: the project card announces its name
-  // button with the same helper, and a harness row drifting to its own
-  // wording would make the same control read as two different ones.
-  it("announces itself with the project card's label", () => {
-    expect(label).toBe("Show everything in Claude Code");
+  it("opens by pointer and keyboard while a selection stands elsewhere", async () => {
+    const methods = ["pointer", "keyboard"] as const;
+    expect(methods).toHaveLength(2);
+    for (const method of methods) {
+      const host = mount("/home/u/.claude");
+      const name = host.querySelector<HTMLButtonElement>(
+        `button[aria-label="${label}"]`,
+      );
+      if (!name) throw new Error("no show-everything button rendered");
+      vi.spyOn(window, "getSelection").mockReturnValue({
+        isCollapsed: false,
+      } as Selection);
+      if (method === "pointer") await userEvent.click(name);
+      else {
+        name.focus();
+        await userEvent.keyboard("{Enter}");
+      }
+      expect(useNavStore.getState().page, method).toBe("library");
+    }
   });
 
   it("offers nothing to show for a harness that is not installed", () => {

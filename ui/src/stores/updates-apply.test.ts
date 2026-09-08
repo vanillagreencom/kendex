@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Scope, UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
+import { updateRow } from "@/components/updates-test-rows";
 import { ADOPTABLE } from "@/lib/adoptable";
 import {
   ALREADY_CURRENT_TOAST,
@@ -33,35 +34,14 @@ vi.mock("sonner", () => ({
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
 
-function row(overrides: Partial<UpdateRow>): UpdateRow {
-  return {
-    scope: { scope: "global" },
-    kind: "skill",
-    name: "gh",
-    source: "kendex",
+const row = (overrides: Partial<UpdateRow>): UpdateRow =>
+  updateRow("gh", null, {
     repo: "owner/catalog",
     repoIdentity: "owner/catalog",
     current: { commit: "a".repeat(40), label: "v1", date: null },
     latest: { commit: "b".repeat(40), label: "v2", date: null },
-    updateAvailable: true,
-    pinned: false,
-    ignored: false,
-    blockedByLocalEdit: false,
-    editedHarnesses: [],
-    forkableHarness: null,
-    canDiscard: true,
-    canTakeLatest: true,
-    holdOwner: null,
-    derived: false,
-    requiredBy: [],
-    forked: false,
-    forkEdited: false,
-    mixed: false,
-    removedUpstream: false,
-    noPerPackageUpdate: null,
     ...overrides,
-  };
-}
+  });
 
 describe("what a bulk run says it did", () => {
   beforeEach(() => {

@@ -28,31 +28,33 @@ const offer = (over: Partial<ProjectOffer> = {}): ProjectOffer => ({
 // The rows of the design's state table that decide which segments the
 // offer draws, `docs/design/post-refresh-commit-flow.md` § State table.
 describe("the choices an offer carries", () => {
-  it("offers all three where nothing removed one", () => {
-    expect(routesFor(offer())).toEqual(["commit", "push", "pr"]);
-  });
-
-  it("offers commit only with no remote", () => {
-    expect(
-      routesFor(
-        offer({
+  it("offers the routes allowed by each offer", () => {
+    const rows: { name: string; offer: ProjectOffer; routes: string[] }[] = [
+      { name: "all routes", offer: offer(), routes: ["commit", "push", "pr"] },
+      {
+        name: "no remote",
+        offer: offer({
           remote: null,
           repo: null,
           push: { kind: "noRemote" },
           pullRequest: { kind: "noRemote" },
         }),
-      ),
-    ).toEqual(["commit"]);
-  });
-
-  it("keeps the push where only gh is missing", () => {
-    expect(
-      routesFor(offer({ repo: null, pullRequest: { kind: "ghMissing" } })),
-    ).toEqual(["commit", "push"]);
-  });
-
-  it("drops the pull request where one is already open", () => {
-    expect(routesFor(offer({ openNumber: 41 }))).toEqual(["commit", "push"]);
+        routes: ["commit"],
+      },
+      {
+        name: "gh missing",
+        offer: offer({ repo: null, pullRequest: { kind: "ghMissing" } }),
+        routes: ["commit", "push"],
+      },
+      {
+        name: "pull request open",
+        offer: offer({ openNumber: 41 }),
+        routes: ["commit", "push"],
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows)
+      expect(routesFor(row.offer), row.name).toEqual(row.routes);
   });
 });
 

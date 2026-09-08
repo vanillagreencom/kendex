@@ -50,13 +50,6 @@ beforeEach(() => {
 });
 
 describe("Scan again", () => {
-  it("reads the machine and scores it again, not one without the other", async () => {
-    await rescanEverything();
-
-    expect(commands.scanMachine).toHaveBeenCalledTimes(1);
-    expect(commands.auditAll).toHaveBeenCalledTimes(1);
-  });
-
   // The third standing read. A reader of the join guessing when something
   // might have installed misses a route — an install redirected into
   // another project is the one that gets through. Reading it here is what
@@ -78,6 +71,8 @@ describe("Scan again", () => {
 
     await rescanEverything();
 
+    expect(commands.scanMachine).toHaveBeenCalledTimes(1);
+    expect(commands.auditAll).toHaveBeenCalledTimes(1);
     expect(commands.libraryProvenance).toHaveBeenCalledTimes(1);
     expect(useProvenanceStore.getState().rows).toHaveLength(1);
   });

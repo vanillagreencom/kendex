@@ -104,6 +104,8 @@ describe("a harness row's kind badge", () => {
   it("shows the row count of the view its click opens", () => {
     const host = mount(<HarnessList />);
     const badge = badgeCount(host, "Claude Code");
+    expect(badge).toBe(2);
+    expect(badgeCount(host, "Codex")).toBe(1);
 
     act(() => skillBadge(host, "Claude Code").click());
     expect(useNavStore.getState().libraryFilter).toEqual({
@@ -111,14 +113,5 @@ describe("a harness row's kind badge", () => {
       kind: "skill",
     });
     expect(badge).toBe(destinationRows());
-  });
-
-  // The must-fail control: three installations of two packages sit behind
-  // the Claude row, so 3 is the pre-fix number this case rejects. Without
-  // it the equality above would hold on any pair that moved together.
-  it("counts packages rather than the installations behind them", () => {
-    const host = mount(<HarnessList />);
-    expect(badgeCount(host, "Claude Code")).toBe(2);
-    expect(badgeCount(host, "Codex")).toBe(1);
   });
 });

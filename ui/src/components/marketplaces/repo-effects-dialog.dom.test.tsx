@@ -169,24 +169,29 @@ describe("the answer", () => {
     expect(useMarketplacesStore.getState().pendingEffects).toBeNull();
   });
 
-  it("a no runs nothing and closes", async () => {
-    vi.mocked(commands.repoEffectsApply).mockClear();
-    const body = show([guards]);
-    await userEvent.click(
-      button(body, REPO_EFFECTS_DECLINE_LABEL) as HTMLButtonElement,
-    );
-    await settle();
-    expect(commands.repoEffectsApply).not.toHaveBeenCalled();
-    expect(useMarketplacesStore.getState().pendingEffects).toBeNull();
-  });
-
-  it("closing the dialog is a no", async () => {
-    vi.mocked(commands.repoEffectsApply).mockClear();
-    show([guards]);
-    await userEvent.keyboard("{Escape}");
-    await settle();
-    expect(commands.repoEffectsApply).not.toHaveBeenCalled();
-    expect(useMarketplacesStore.getState().pendingEffects).toBeNull();
+  it("declining by button or Escape runs nothing and closes", async () => {
+    const rows = ["button", "Escape"] as const;
+    expect(rows).toHaveLength(2);
+    useMarketplacesStore.setState({ pendingEffects: null, busy: false });
+    mount(<RepoEffectsDialog />);
+    for (const row of rows) {
+      vi.mocked(commands.repoEffectsApply).mockClear();
+      useMarketplacesStore.setState({
+        pendingEffects: { scope: PROJECT, queue: [guards] },
+      });
+      await settle();
+      if (row === "button") {
+        await userEvent.click(
+          button(
+            document.body,
+            REPO_EFFECTS_DECLINE_LABEL,
+          ) as HTMLButtonElement,
+        );
+      } else await userEvent.keyboard("{Escape}");
+      await settle();
+      expect(commands.repoEffectsApply, row).not.toHaveBeenCalled();
+      expect(useMarketplacesStore.getState().pendingEffects, row).toBeNull();
+    }
   });
 
   it("while an answer is running, neither button nor Escape answers again", async () => {

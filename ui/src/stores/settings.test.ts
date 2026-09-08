@@ -350,28 +350,29 @@ describe("settings store", () => {
   // than rejecting past the store. A page built from whichever two answered
   // would offer actions against tools it could not reach, or draw a size the
   // window is not at, with nothing on screen having said so.
-  it.each([
-    [
-      "the capability table",
-      () =>
-        vi.mocked(commands.capabilityTable).mockResolvedValue({
-          status: "error",
-          error: "the capability table could not be read",
-        }),
-      "the capability table could not be read",
-    ],
-    [
-      "the window's size",
-      () =>
-        vi.mocked(commands.windowZoomState).mockResolvedValue({
-          status: "error",
-          error: "the window could not be asked its size",
-        }),
-      "the window could not be asked its size",
-    ],
-  ])(
-    "shows the error modal when %s could not be read, and holds no settings",
-    async (_what, breakRead, message) => {
+  it("reports each failed settings dependency", async () => {
+    const rows = [
+      [
+        "the capability table",
+        () =>
+          vi.mocked(commands.capabilityTable).mockResolvedValue({
+            status: "error",
+            error: "the capability table could not be read",
+          }),
+        "the capability table could not be read",
+      ],
+      [
+        "the window's size",
+        () =>
+          vi.mocked(commands.windowZoomState).mockResolvedValue({
+            status: "error",
+            error: "the window could not be asked its size",
+          }),
+        "the window could not be asked its size",
+      ],
+    ] as const;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const [_what, breakRead, message] of rows) {
       vi.mocked(commands.getSettings).mockResolvedValue({
         status: "ok",
         data: { settings, base: "file" },
@@ -389,8 +390,8 @@ describe("settings store", () => {
       expect(dialog.title).toBe("Couldn't load your settings");
       expect(dialog.message).toBe(message);
       expect(useSettingsStore.getState().settings).toBeNull();
-    },
-  );
+    }
+  });
 
   it("shows the error modal and returns an empty list when discovering projects fails", async () => {
     vi.mocked(commands.discoverProjects).mockResolvedValue({

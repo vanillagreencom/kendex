@@ -22,31 +22,37 @@ describe("nav store — marketplaces", () => {
     });
   });
 
-  it("takes the search shortcut to the Library from a page with no box", () => {
-    useNavStore.getState().goTo("harnesses");
-    useNavStore.getState().focusSearch();
-
-    const state = useNavStore.getState();
-    expect(state.page).toBe("library");
-    expect(state.searchFocus).toBe(1);
-  });
-
-  it("keeps the page when its own search box is already on screen", () => {
-    useNavStore.getState().goToMarketplaces("packages");
-    useNavStore.getState().focusSearch();
-
-    const state = useNavStore.getState();
-    expect(state.page).toBe("marketplaces");
-    expect(state.searchFocus).toBe(1);
-  });
-
-  it("falls through to the Library from a tab with no search box", () => {
-    useNavStore.getState().goToMarketplaces("subscribed");
-    useNavStore.getState().focusSearch();
-
-    // Subscribed has no box on screen — a bumped counter would focus
-    // nothing, so the shortcut goes where a search can actually happen.
-    expect(useNavStore.getState().page).toBe("library");
+  it("focuses the search box belonging to the current page", () => {
+    const rows = [
+      {
+        name: "page without search",
+        open: () => useNavStore.getState().goTo("harnesses"),
+        page: "library",
+        focus: 1,
+      },
+      {
+        name: "packages tab",
+        open: () => useNavStore.getState().goToMarketplaces("packages"),
+        page: "marketplaces",
+        focus: 1,
+      },
+      {
+        name: "subscribed tab",
+        open: () => useNavStore.getState().goToMarketplaces("subscribed"),
+        page: "library",
+        focus: null,
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      useNavStore.setState({ searchFocus: 0 });
+      row.open();
+      useNavStore.getState().focusSearch();
+      const state = useNavStore.getState();
+      expect(state.page, row.name).toBe(row.page);
+      if (row.focus !== null)
+        expect(state.searchFocus, row.name).toBe(row.focus);
+    }
   });
 
   it("remembers which Marketplaces tab was open through back", () => {

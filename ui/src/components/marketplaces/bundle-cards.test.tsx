@@ -30,34 +30,55 @@ const text = (node: { textContent: string | null }): string =>
   node.textContent ?? "";
 
 describe("the Bundles tab", () => {
-  // A pending read must not look like a catalog with no sets: the tab
-  // would say the marketplace offers none while its read is still out.
-  it("says it is reading while the read is pending, never that there are none", () => {
-    const host = mount(
-      <BundleCards catalog={catalog} bundles={undefined} error={undefined} />,
-    );
-    expect(text(host)).toContain("Reading its curated sets");
-    expect(text(host)).not.toContain("doesn't offer curated sets");
-  });
-
-  it("shows the read error rather than an empty tab", () => {
-    const host = mount(
-      <BundleCards
-        catalog={catalog}
-        bundles={undefined}
-        error="fetch refused"
-      />,
-    );
-    expect(host.querySelector('[role="alert"]')).not.toBeNull();
-    expect(text(host)).toContain("fetch refused");
-    expect(text(host)).not.toContain("doesn't offer curated sets");
-  });
-
-  it("says the marketplace offers none only for a read that landed empty", () => {
-    const host = mount(
-      <BundleCards catalog={catalog} bundles={[]} error={undefined} />,
-    );
-    expect(text(host)).toContain("doesn't offer curated sets");
+  it("distinguishes pending, failed and landed-empty bundle reads", () => {
+    const rows: {
+      name: string;
+      bundles: BundleDetail[] | undefined;
+      error: string | undefined;
+      shown: string;
+      absent: string | null;
+      alert: boolean;
+    }[] = [
+      {
+        name: "pending",
+        bundles: undefined,
+        error: undefined,
+        shown: "Reading its curated sets",
+        absent: "doesn't offer curated sets",
+        alert: false,
+      },
+      {
+        name: "failed",
+        bundles: undefined,
+        error: "fetch refused",
+        shown: "fetch refused",
+        absent: "doesn't offer curated sets",
+        alert: true,
+      },
+      {
+        name: "landed empty",
+        bundles: [],
+        error: undefined,
+        shown: "doesn't offer curated sets",
+        absent: null,
+        alert: false,
+      },
+    ];
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      const host = mount(
+        <BundleCards
+          catalog={catalog}
+          bundles={row.bundles}
+          error={row.error}
+        />,
+      );
+      expect(text(host), row.name).toContain(row.shown);
+      if (row.absent !== null)
+        expect(text(host), row.name).not.toContain(row.absent);
+      if (row.alert)
+        expect(host.querySelector('[role="alert"]')).not.toBeNull();
+    }
   });
 
   // The badge is the only thing on a card that says how much of a set is

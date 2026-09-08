@@ -1,16 +1,39 @@
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 import { readDue } from "./use-catalog";
 
-describe("a cached read is due", () => {
-  it("when a mutation has emptied the slot", () => {
-    // Loaded, then dropCatalogCaches ran: present flips false, and with
-    // nothing refusing the read it is asked again.
-    expect(readDue(true, false, true)).toBe(false);
-    expect(readDue(false, false, true)).toBe(true);
-  });
-
-  it("never while a refusal stands or the catalog is not ready", () => {
-    expect(readDue(false, true, true)).toBe(false);
-    expect(readDue(false, false, false)).toBe(false);
-  });
+it("reads an invalidated cache only when ready and not refused", () => {
+  const rows = [
+    {
+      name: "the loaded slot is still present",
+      present: true,
+      failed: false,
+      ready: true,
+      due: false,
+    },
+    {
+      name: "a mutation emptied the slot",
+      present: false,
+      failed: false,
+      ready: true,
+      due: true,
+    },
+    {
+      name: "a refusal stands",
+      present: false,
+      failed: true,
+      ready: true,
+      due: false,
+    },
+    {
+      name: "the catalog is not ready",
+      present: false,
+      failed: false,
+      ready: false,
+      due: false,
+    },
+  ];
+  expect(rows).toHaveLength(4);
+  for (const row of rows) {
+    expect(readDue(row.present, row.failed, row.ready), row.name).toBe(row.due);
+  }
 });

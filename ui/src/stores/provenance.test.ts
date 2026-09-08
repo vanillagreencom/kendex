@@ -41,40 +41,96 @@ const ROWS: ProvenanceRow[] = [
 ];
 
 describe("the From column's join", () => {
-  it("matches by kind, name, and any of the group's scopes", () => {
-    const origin = originFor(ROWS, "skill", "gh", [{ scope: "global" }]);
-    expect(origin).toEqual({
-      origin: "marketplace",
-      source: "kendex",
-      repo: "acme/kendex",
-    });
-    // The same name in another scope answers with that scope's origin —
-    // a fork there does not relabel the global install.
-    expect(
-      originFor(ROWS, "skill", "gh", [{ scope: "project", root: "/work/app" }]),
-    ).toEqual({ origin: "own", forkedFrom: "kendex", source: "local" });
-    // A same-named item of another kind never borrows this one's origin.
-    expect(originFor(ROWS, "hook", "gh", [{ scope: "global" }])).toBeNull();
+  it("matches the origin by kind, name and scope", () => {
+    const rows = [
+      {
+        name: "global marketplace",
+        kind: "skill" as const,
+        scopes: [{ scope: "global" as const }],
+        expected: {
+          origin: "marketplace",
+          source: "kendex",
+          repo: "acme/kendex",
+        },
+      },
+      {
+        name: "project fork",
+        kind: "skill" as const,
+        scopes: [{ scope: "project" as const, root: "/work/app" }],
+        expected: { origin: "own", forkedFrom: "kendex", source: "local" },
+      },
+      {
+        name: "another kind",
+        kind: "hook" as const,
+        scopes: [{ scope: "global" as const }],
+        expected: null,
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows)
+      expect(originFor(ROWS, row.kind, "gh", row.scopes), row.name).toEqual(
+        row.expected,
+      );
   });
 
-  it("labels origins in product words with the detail on hover", () => {
-    expect(
-      originLabel({ origin: "marketplace", source: "kendex", repo: "r" }),
-    ).toBe("kendex");
-    expect(
-      originTitle({ origin: "marketplace", source: "kendex", repo: "r" }),
-    ).toBe("r");
-    expect(
-      originLabel({ origin: "own", forkedFrom: "kendex", source: "local" }),
-    ).toBe("Your own");
-    expect(
-      originTitle({ origin: "own", forkedFrom: "kendex", source: "local" }),
-    ).toBe("forked from kendex");
-    expect(
-      originTitle({ origin: "own", forkedFrom: null, source: "local" }),
-    ).toBeUndefined();
-    expect(originLabel({ origin: "unmanaged" })).toBe("Not managed");
-    expect(originLabel(null)).toBe("");
+  it("carries the source, category and hover detail for each origin", () => {
+    const marketplace = {
+      origin: "marketplace" as const,
+      source: "kendex",
+      repo: "r",
+    };
+    const own = {
+      origin: "own" as const,
+      forkedFrom: "kendex",
+      source: "local",
+    };
+    const rows: {
+      name: string;
+      read: typeof originTitle;
+      origin: Parameters<typeof originLabel>[0];
+      expected: string | undefined;
+    }[] = [
+      {
+        name: "marketplace label",
+        read: originLabel,
+        origin: marketplace,
+        expected: "kendex",
+      },
+      {
+        name: "marketplace title",
+        read: originTitle,
+        origin: marketplace,
+        expected: "r",
+      },
+      {
+        name: "own label",
+        read: originLabel,
+        origin: own,
+        expected: "Your own",
+      },
+      {
+        name: "fork title",
+        read: originTitle,
+        origin: own,
+        expected: "forked from kendex",
+      },
+      {
+        name: "own without fork",
+        read: originTitle,
+        origin: { ...own, forkedFrom: null },
+        expected: undefined,
+      },
+      {
+        name: "unmanaged",
+        read: originLabel,
+        origin: { origin: "unmanaged" },
+        expected: "Not managed",
+      },
+      { name: "unknown", read: originLabel, origin: null, expected: "" },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows)
+      expect(row.read(row.origin), row.name).toBe(row.expected);
   });
 });
 

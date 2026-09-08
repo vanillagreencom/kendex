@@ -21,34 +21,55 @@ function item(overrides: Partial<ObservedItem>): ObservedItem {
 }
 
 describe("filterItems by tag", () => {
-  it("keeps only items carrying the tag", () => {
-    const items = [
-      item({ name: "reviewer", tags: ["review", "testing"] }),
-      item({ name: "shipper", tags: ["release"] }),
-      item({ name: "untagged" }),
+  it("keeps the selected tag and leaves an absent filter open", () => {
+    const rows: {
+      name: string;
+      items: ObservedItem[];
+      tag?: "review";
+      expected: string[];
+    }[] = [
+      {
+        name: "selected tag",
+        items: [
+          item({ name: "reviewer", tags: ["review", "testing"] }),
+          item({ name: "shipper", tags: ["release"] }),
+          item({ name: "untagged" }),
+        ],
+        tag: "review",
+        expected: ["reviewer"],
+      },
+      {
+        name: "no tag filter",
+        items: [item({ name: "a" }), item({ name: "b", tags: ["docs"] })],
+        expected: ["a", "b"],
+      },
     ];
-    const kept = filterItems(items, { scope: "all", tag: "review" });
-    expect(kept.map((i) => i.name)).toEqual(["reviewer"]);
-  });
-
-  it("keeps everything when no tag is asked for", () => {
-    const items = [item({ name: "a" }), item({ name: "b", tags: ["docs"] })];
-    expect(filterItems(items, { scope: "all" })).toHaveLength(2);
+    expect(rows.length, "tag filter table is empty").toBeGreaterThan(0);
+    for (const row of rows)
+      expect(
+        filterItems(row.items, { scope: "all", tag: row.tag }).map(
+          (one) => one.name,
+        ),
+        row.name,
+      ).toEqual(row.expected);
   });
 });
 
 describe("groupItems tags", () => {
-  // Two installations of one item can be copies that disagree; what the
-  // item is for is everything either of them claims, said once.
-  it("unions the tags across installations without repeating one", () => {
-    const group = groupItems([
-      item({ harness: "claude", tags: ["review", "testing"] }),
-      item({ harness: "pi", tags: ["testing", "docs"] }),
-    ])[0];
-    expect(group.tags).toEqual(["review", "testing", "docs"]);
-  });
-
-  it("has no tags when nothing claimed any", () => {
-    expect(groupItems([item({})])[0].tags).toEqual([]);
+  it("unions the tags of all installations without duplicates", () => {
+    const rows = [
+      {
+        name: "different installations",
+        items: [
+          item({ harness: "claude", tags: ["review", "testing"] }),
+          item({ harness: "pi", tags: ["testing", "docs"] }),
+        ],
+        expected: ["review", "testing", "docs"],
+      },
+      { name: "no tags", items: [item({})], expected: [] },
+    ];
+    expect(rows.length, "grouped tag table is empty").toBeGreaterThan(0);
+    for (const row of rows)
+      expect(groupItems(row.items)[0].tags, row.name).toEqual(row.expected);
   });
 });

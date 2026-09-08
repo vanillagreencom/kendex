@@ -60,26 +60,39 @@ beforeEach(() => {
 });
 
 describe("opening a marketplace", () => {
-  it("asks for the catalog's declared sets and shows them in the Bundles tab", async () => {
+  const rows = [
+    {
+      name: "asks for the catalog's declared sets and shows them in the Bundles tab",
+      response: { status: "ok", data: [starter] },
+      shown: ["starter", "the six things to begin with"],
+    },
+    {
+      name: "shows the read's own error when the catalog's sets cannot be read",
+      response: { status: "error", error: "the catalog is unreadable" },
+      shown: ["the catalog is unreadable"],
+    },
+  ] satisfies {
+    name: string;
+    response: Awaited<ReturnType<typeof commands.marketplaceBundles>>;
+    shown: string[];
+  }[];
+  expect(rows).toHaveLength(2);
+  it.each(rows)("$name", async (row) => {
+    useMarketplacesStore.setState({ catalogBundles: {}, readErrors: {} });
+    vi.mocked(commands.marketplaceBundles).mockResolvedValue(row.response);
     const host = mount(<MarketplaceDetailPage />);
     await settle();
-
-    expect(commands.marketplaceBundles).toHaveBeenCalledWith(catalog);
-    expect(host.textContent).toContain("starter");
-    expect(host.textContent).toContain("the six things to begin with");
-    expect(host.textContent).not.toContain("doesn't offer curated sets");
-  });
-
-  it("shows the read's own error when the catalog's sets cannot be read", async () => {
-    vi.mocked(commands.marketplaceBundles).mockResolvedValue({
-      status: "error",
-      error: "the catalog is unreadable",
+    expect(
+      {
+        request: vi.mocked(commands.marketplaceBundles).mock.lastCall,
+        shown: row.shown.map((value) => host.textContent?.includes(value)),
+        empty: host.textContent?.includes("doesn't offer curated sets"),
+      },
+      row.name,
+    ).toEqual({
+      request: [catalog],
+      shown: row.shown.map(() => true),
+      empty: false,
     });
-
-    const host = mount(<MarketplaceDetailPage />);
-    await settle();
-
-    expect(host.textContent).toContain("the catalog is unreadable");
-    expect(host.textContent).not.toContain("doesn't offer curated sets");
   });
 });
