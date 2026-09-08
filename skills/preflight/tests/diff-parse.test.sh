@@ -287,10 +287,10 @@ a plain text carrier cannot forge a header over another file's record|plain-text
 control: the plain text fixture without the forged line reports the same finding|plain-text-plain|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 a forged '---'/'+++' PAIR cannot re-point the parse either|forged-header-pair|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 a rejected header record leaves the lines after it attributed to their own file|forged-line-is-content|--staged|-|1|zz.txt:4: [hardcoded-temp-path]|-
-content the run cannot read is exit 2, naming the path|unreadable|-|nonroot|2|-|docs/new.md
+content the run cannot read is exit 2, naming the path|unreadable|-|nonroot|2|-|preflight: unreadable=docs/new.md
 control: the same file readable produces the ordinary verdict|readable|-|-|1|docs/new.md:3: [docs-cited-paths]|-
 control: the staged file reports the ordinary verdict while its blob is readable|vanished-blob-control|--staged|-|1|docs/new.md:3: [docs-cited-paths]|-
-a staged blob the index lookup cannot materialize is exit 2, naming the path|vanished-blob|--staged|-|2|-|docs/new.md
+a staged blob the index lookup cannot materialize is exit 2, naming the path|vanished-blob|--staged|-|2|-|preflight: unreadable=docs/new.md
 ROWS
 pf_table "what the diff parse may withhold" "$rows"
 

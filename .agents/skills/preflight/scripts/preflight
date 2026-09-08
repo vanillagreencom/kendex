@@ -250,26 +250,33 @@ if [ -n "$REPO_OPT" ]; then
   cd -- "$REPO_OPT" 2>/dev/null || env_error repo-path "$REPO_OPT" "--repo names something that is not a directory this run can enter"
 fi
 # These two run before the run's own temporary directory exists, so they
-# share one capture file directly under the root mktemp would use. Their
-# diagnostic is replayed after the record rather than discarded: the record
-# names the condition, the dependency names the cause.
-pf_early_err="${TMPDIR:-/tmp}/preflight-early-$$.err"
-: >"$pf_early_err" 2>/dev/null || pf_early_err=/dev/null
-# Read AFTER the substitution, never inside it: a variable set in a command
-# substitution belongs to that subshell and would be gone here.
-pf_early_read() { PF_DEP_ERR="$(cat "$pf_early_err" 2>/dev/null)"; }
-
-REPO_ROOT="$(git rev-parse --show-toplevel 2>"$pf_early_err")" || {
-  pf_early_read
+# take their stderr through the substitution they are already read through
+# rather than a file: a predictable name under a shared directory, opened
+# with truncation, is a symlink another process can aim at anything this
+# caller may write. On success the substitution holds the answer, which is
+# checked to be a directory so a warning cannot pass for one; on failure it
+# holds the cause, replayed after the record.
+pf_early=""
+pf_early="$(git rev-parse --show-toplevel 2>&1)" || {
+  PF_DEP_ERR="$pf_early"
   env_error not-a-repo "$PWD" "no git repository contains this directory, so there is no diff to read"
 }
+[ -d "$pf_early" ] || {
+  PF_DEP_ERR="$pf_early"
+  env_error not-a-repo "$PWD" "the repository root could not be read as a directory"
+}
+REPO_ROOT="$pf_early"
 cd "$REPO_ROOT"
 
-TMP="$(mktemp -d 2>"$pf_early_err")" || {
-  pf_early_read
+pf_early="$(mktemp -d 2>&1)" || {
+  PF_DEP_ERR="$pf_early"
   env_error tmpdir "${TMPDIR:-/tmp}" "a scratch directory could not be created under it"
 }
-rm -f -- "$pf_early_err"
+[ -d "$pf_early" ] || {
+  PF_DEP_ERR="$pf_early"
+  env_error tmpdir "${TMPDIR:-/tmp}" "the scratch directory it named is not a directory"
+}
+TMP="$pf_early"
 # cleanup re-exits with the status it interrupted: under errexit a failing rm
 # would otherwise replace the contract exit code with its own.
 cleanup() {
@@ -321,8 +328,9 @@ content_of() { # IDX PATH — sets CONTENT; nonzero when there is no content to 
       # An index entry the change set just listed has content by definition,
       # so a lookup that misses it (a corrupt or missing object) or a write
       # that cannot land is a failed read, never a shape with nothing to read.
-      { git show ":0:$2" >"$out.part" 2>/dev/null && mv -- "$out.part" "$out"; } || {
+      { git show ":0:$2" >"$out.part" 2>"$TMP/dep.err" && mv -- "$out.part" "$out"; } || {
         rm -f "$out.part"
+        PF_DEP_ERR="$(cat "$TMP/dep.err" 2>/dev/null)"
         env_error unreadable "$2" "the staged content could not be read; refusing to report clean over a file no lane read"
       }
     fi
@@ -346,10 +354,14 @@ content_is_binary() { # CONTENT-PATH PATH — 0 when git would call the content 
   # A read that FAILS is no verdict at all. Skipping it would leave the path
   # inside a clean count no lane ever read, so it is loud instead — the policy
   # the commit-guards lanes take for this same condition.
-  total="$(head -c "$BINARY_SAMPLE" -- "$1" | wc -c)" \
-    || env_error unreadable "$2" "the content could not be read to classify it; refusing to report clean over a file no lane read"
-  stripped="$(head -c "$BINARY_SAMPLE" -- "$1" | LC_ALL=C tr -d '\000' | wc -c)" \
-    || env_error unreadable "$2" "the content could not be read to classify it; refusing to report clean over a file no lane read"
+  total="$( { head -c "$BINARY_SAMPLE" -- "$1" | wc -c; } 2>"$TMP/dep.err" )" || {
+    PF_DEP_ERR="$(cat "$TMP/dep.err" 2>/dev/null)"
+    env_error unreadable "$2" "the content could not be read to classify it; refusing to report clean over a file no lane read"
+  }
+  stripped="$( { head -c "$BINARY_SAMPLE" -- "$1" | LC_ALL=C tr -d '\000' | wc -c; } 2>"$TMP/dep.err" )" || {
+    PF_DEP_ERR="$(cat "$TMP/dep.err" 2>/dev/null)"
+    env_error unreadable "$2" "the content could not be read to classify it; refusing to report clean over a file no lane read"
+  }
   [ "$((total))" -ne "$((stripped))" ]
 }
 
@@ -966,9 +978,12 @@ build_runner_index() {
       printf '%s\n' "$scope" >>"$TMP/runner.defaultglob"
     done
     status=0
-    LC_ALL=C tr -cs 'A-Za-z0-9_*./-' '\n' <"$c" | LC_ALL=C grep -e / |
-      RN="$r" awk 'BEGIN { p = ENVIRON["RN"] } { print p "\t" $0 }' >>"$TMP/runner.toks.raw" || status=$?
-    [ "$status" -le 1 ] || env_error runner-unreadable "$r" "the unwired-suite lane could not read this runner"
+    { LC_ALL=C tr -cs 'A-Za-z0-9_*./-' '\n' <"$c" | LC_ALL=C grep -e / |
+      RN="$r" awk 'BEGIN { p = ENVIRON["RN"] } { print p "\t" $0 }' >>"$TMP/runner.toks.raw"; } 2>"$TMP/dep.err" || status=$?
+    [ "$status" -le 1 ] || {
+      PF_DEP_ERR="$(cat "$TMP/dep.err" 2>/dev/null)"
+      env_error runner-unreadable "$r" "the unwired-suite lane could not read this runner"
+    }
   done <"$TMP/runner.names"
   LC_ALL=C sort -u "$TMP/runner.toks.raw" >"$TMP/runner.toks"
 }
