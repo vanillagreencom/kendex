@@ -50,14 +50,14 @@ describe("skills block extraction", () => {
 		assert.ok(!result.includes("Some other system prompt"));
 	});
 
-	it("no skills in prompt → undefined", () => {
-		assert.strictEqual(extractSkillsBlock("Just a normal prompt"), undefined);
-		assert.strictEqual(extractSkillsBlock(undefined), undefined);
-		assert.strictEqual(extractSkillsBlock(""), undefined);
-	});
-
-	it("malformed: start marker but no end marker → undefined", () => {
-		const partial = "The following skills provide specialized instructions for specific tasks.\nBut no closing tag.";
-		assert.strictEqual(extractSkillsBlock(partial), undefined);
+	it("returns no block for absent or incomplete skills input", () => {
+		for (const input of [
+			"Just a normal prompt",
+			undefined,
+			"",
+			"The following skills provide specialized instructions for specific tasks.\nBut no closing tag.",
+		]) {
+			assert.strictEqual(extractSkillsBlock(input), undefined, JSON.stringify(input) ?? "undefined");
+		}
 	});
 });

@@ -18,44 +18,16 @@ const toolResult = () => ({ role: "toolResult", content: [], toolCallId: "t1" })
 const assistant = () => ({ role: "assistant", content: [] });
 
 describe("planDeferredUserReplay", () => {
-	it("captures BOTH trailing users after a tool result (kendex#967 shape)", () => {
-		const messages = [assistant(), toolResult(), user("u_a"), user("u_b")];
-
-		const plan = planDeferredUserReplay(messages);
-
-		assert.equal(plan.runStart, 2);
-		assert.equal(plan.userMessageCount, 2);
-		// Both messages, in order, in one combined replay prompt.
-		assert.equal(plan.prompt, "u_a\n\nu_b");
-		// Caller contract: prompt captured → cursor lands at messages.length,
-		// covering exactly the messages that were deferred.
-		assert.equal(messages.length, plan.runStart + plan.userMessageCount);
-	});
-
-	it("keeps the single trailing user unchanged", () => {
-		const plan = planDeferredUserReplay([assistant(), toolResult(), user("steer")]);
-
-		assert.equal(plan.runStart, 2);
-		assert.equal(plan.userMessageCount, 1);
-		assert.equal(plan.prompt, "steer");
-	});
-
-	it("returns no prompt when the context does not end in a user message", () => {
-		const plan = planDeferredUserReplay([assistant(), toolResult()]);
-
-		assert.equal(plan.runStart, 2);
-		assert.equal(plan.userMessageCount, 0);
-		assert.equal(plan.prompt, null);
-	});
-
-	it("returns no prompt for an all-empty user run so the caller can diagnose it", () => {
-		const plan = planDeferredUserReplay([assistant(), toolResult(), user(""), user("  ")]);
-
-		// runStart still marks the run — the caller holds the cursor here instead
-		// of silently claiming messages that were never captured.
-		assert.equal(plan.runStart, 2);
-		assert.equal(plan.userMessageCount, 2);
-		assert.equal(plan.prompt, null);
+	it("captures the complete trailing user run", () => {
+		for (const { name, messages, expected } of [
+			{ name: "both trailing users", messages: [assistant(), toolResult(), user("u_a"), user("u_b")], expected: { runStart: 2, userMessageCount: 2, prompt: "u_a\n\nu_b", blocks: null } },
+			{ name: "single trailing user", messages: [assistant(), toolResult(), user("steer")], expected: { runStart: 2, userMessageCount: 1, prompt: "steer", blocks: null } },
+			{ name: "no trailing user", messages: [assistant(), toolResult()], expected: { runStart: 2, userMessageCount: 0, prompt: null, blocks: null } },
+			{ name: "empty user run", messages: [assistant(), toolResult(), user(""), user("  ")], expected: { runStart: 2, userMessageCount: 2, prompt: null, blocks: null } },
+		]) {
+			const plan = planDeferredUserReplay(messages);
+			assert.deepEqual({ ...plan, capturedEnd: plan.runStart + plan.userMessageCount }, { ...expected, capturedEnd: messages.length }, name);
+		}
 	});
 });
 
@@ -89,7 +61,7 @@ describe("planDeferredUserReplay image blocks (kendex#993)", () => {
 		const plan = planDeferredUserReplay(messages);
 
 		assert.equal(plan.prompt, null);
-		assert.ok(Array.isArray(plan.blocks) && plan.blocks.length > 0, "image-only run still produces a replay payload");
+		assert.deepEqual(plan.blocks, [{ type: "image", source: { type: "base64", media_type: "image/png", data: "aGk=" } }]);
 	});
 
 	it("returns null blocks for a text-only run", () => {

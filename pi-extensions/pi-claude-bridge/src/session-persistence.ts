@@ -168,12 +168,12 @@ export function shouldRestorePersistedBridgeEntry(
 	currentPiSessionId: string | undefined,
 	currentCwd: string | undefined,
 ): string | undefined {
-	if (!persisted.piSessionId) return "missing piSessionId";
+	if (!persisted.piSessionId) return "restore-session-missing=piSessionId\nMissing piSessionId.";
 	if (currentPiSessionId && persisted.piSessionId !== currentPiSessionId) {
-		return `piSessionId mismatch (persisted=${persisted.piSessionId} current=${currentPiSessionId})`;
+		return `restore-session-mismatch=${persisted.piSessionId} current=${currentPiSessionId}\nThe persisted session differs from the active session.`;
 	}
 	if (currentCwd && canonicalize(persisted.cwd) !== canonicalize(currentCwd)) {
-		return `cwd mismatch (persisted=${persisted.cwd} current=${currentCwd})`;
+		return `restore-cwd-mismatch=${persisted.cwd} current=${currentCwd}\nThe persisted working directory differs from the active directory.`;
 	}
 	return undefined;
 }
@@ -419,7 +419,7 @@ export function planIncrementalPromptBatch(
 // throwing — CC may be more tolerant than our checks, so a false positive
 // shouldn't block the user. Pure logic is in session-verify.js; this wrapper
 // fans each warning out to debug log + piUI notify + diagDump.
-function verifyWrittenSession(
+export function verifyWrittenSession(
 	jsonlPath: string,
 	expectedSessionId: string,
 	expectedRecordCount: number,
@@ -436,7 +436,7 @@ function verifyWrittenSession(
 		// reason — an absolute cwd carries the username; the diagDump keeps the
 		// absolute forms.
 		safeNotify(
-			`Session file issue: ${msg}\n` +
+			`${msg}\n` +
 			`cwd=${displayPath(cwd)} realpath=${displayPath(safeRealpath(cwd))}\n` +
 			`Please copy and paste this message into a new issue at https://github.com/vanillagreencom/kendex/issues/new` +
 			(DEBUG ? ` and attach ${DEBUG_LOG_PATH}` : ` (rerun with CLAUDE_BRIDGE_DEBUG=1 to capture a debug log)`),

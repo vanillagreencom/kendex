@@ -107,6 +107,10 @@ describe("jsonSchemaToZodShape", () => {
 			required: ["item"],
 		});
 
-		assert.throws(() => z.object(shape).parse({ item: { name: "a", stray: 1 } }));
+		const result = z.object(shape).safeParse({ item: { name: "a", stray: 1 } });
+		assert.deepEqual(
+			result.error?.issues.map(({ code, keys, path }) => ({ code, keys, path })),
+			[{ code: "unrecognized_keys", keys: ["stray"], path: ["item"] }],
+		);
 	});
 });

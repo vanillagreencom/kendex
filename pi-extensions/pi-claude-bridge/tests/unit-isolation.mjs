@@ -46,18 +46,15 @@ function withTempDir(fn) {
 }
 
 describe("isolatedFromEnv", () => {
-	it("is off when unset, empty, or falsy", () => {
-		for (const value of [undefined, "", "0", "false", "off", "no", "nonsense"]) {
+	it("parses the isolated-mode flag spellings", () => {
+		for (const [value, expected] of [
+			[undefined, false], ["", false], ["0", false], ["false", false],
+			["off", false], ["no", false], ["nonsense", false],
+			["1", true], ["true", true], ["yes", true], ["on", true],
+			[" TRUE ", true], ["Yes", true],
+		]) {
 			withEnv({ CLAUDE_BRIDGE_ISOLATED: value }, () => {
-				assert.equal(isolatedFromEnv(), false, `value: ${value}`);
-			});
-		}
-	});
-
-	it("accepts the same truthy spellings as the connector flag", () => {
-		for (const value of ["1", "true", "yes", "on", " TRUE ", "Yes"]) {
-			withEnv({ CLAUDE_BRIDGE_ISOLATED: value }, () => {
-				assert.equal(isolatedFromEnv(), true, `value: ${value}`);
+				assert.equal(isolatedFromEnv(), expected, `value: ${value}`);
 			});
 		}
 	});

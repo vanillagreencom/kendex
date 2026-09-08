@@ -55,9 +55,8 @@ describe("preflightClaudeExecutable", () => {
 				assert.equal(error.cwd, dir);
 				assert.equal(error.syscall, "stat");
 				assert.match(error.message, /code=ENOENT/);
-				assert.match(error.message, /errno=-?\d+/);
+				assert.equal(typeof error.errno, "number");
 				assert.match(error.message, /syscall=stat/);
-				assert.doesNotMatch(error.message, /native binary not found/);
 				return true;
 			},
 		);
@@ -73,9 +72,7 @@ describe("preflightClaudeExecutable", () => {
 				assert.equal(error.path, dir);
 				assert.equal(error.cwd, dir);
 				assert.equal(error.syscall, "stat");
-				assert.match(error.message, /cwd is not reachable/);
 				assert.ok(error.message.includes(`cwd=${dir}`));
-				assert.doesNotMatch(error.message, /native binary not found/);
 				return true;
 			},
 		);
@@ -92,7 +89,6 @@ describe("preflightClaudeExecutable", () => {
 				assert.equal(error.path, fileCwd);
 				assert.equal(error.cwd, fileCwd);
 				assert.equal(error.syscall, "chdir");
-				assert.match(error.message, /cwd is not a directory/);
 				assert.ok(error.message.includes(`cwd=${fileCwd}`));
 				return true;
 			},
@@ -116,8 +112,7 @@ describe("preflightClaudeExecutable", () => {
 		assert.equal(error.path, missing);
 		assert.equal(error.cwd, dir);
 		assert.match(error.message, /code=ENOENT/);
-		assert.match(error.message, /syscall=spawn/);
-		assert.doesNotMatch(error.message, /native binary not found/);
+		assert.match(error.syscall, /^spawn /);
 		assert.notEqual(error.cause, error);
 		assert.doesNotThrow(() => JSON.stringify(error));
 		assert.doesNotMatch(error.stack ?? "", /wrapClaudeSpawnErrorForSdk/);

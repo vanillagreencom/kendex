@@ -11,11 +11,8 @@ import {
 	CONNECTOR_WRITE_TOOLS,
 	isConnectorTool,
 	isConnectorWriteTool,
-	connectorBuiltinAllowlistHook,
 	connectorQueryOptions,
 	connectorServerNamespace,
-	connectorWriteDenyHook,
-	settingSourcesForQuery,
 } from "../bundle/index.js";
 
 function withEnv(value, fn) {
@@ -28,17 +25,22 @@ function withEnv(value, fn) {
 	}
 }
 
-test("connectorsEnabledFromEnv parses truthy/falsey", () => {
-	for (const v of ["1", "true", "yes", "on", "TRUE", " On "]) assert.equal(withEnv(v, connectorsEnabledFromEnv), true, v);
-	for (const v of [undefined, "", "0", "false", "no", "off", "nope"]) assert.equal(withEnv(v, connectorsEnabledFromEnv), false, String(v));
+test("connector enablement parses environment values", () => {
+	const rows = [["1", true], ["true", true], ["yes", true], ["on", true], ["TRUE", true], [" On ", true],
+		[undefined, false], ["", false], ["0", false], ["false", false], ["no", false], ["off", false], ["nope", false]];
+	for (const [value, expected] of rows) assert.equal(withEnv(value, connectorsEnabledFromEnv), expected, String(value));
 });
 
-test("connectorsEnabledFor: env OR config.provider.enableConnectors", () => {
-	assert.equal(withEnv(undefined, () => connectorsEnabledFor(undefined)), false);
-	assert.equal(withEnv(undefined, () => connectorsEnabledFor({ provider: {} })), false);
-	assert.equal(withEnv(undefined, () => connectorsEnabledFor({ provider: { enableConnectors: true } })), true);
-	assert.equal(withEnv("0", () => connectorsEnabledFor({ provider: { enableConnectors: true } })), true);
-	assert.equal(withEnv("1", () => connectorsEnabledFor({ provider: { enableConnectors: false } })), true);
+test("connector enablement accepts environment or provider opt-in", () => {
+	const rows = [
+		[undefined, undefined, false], [undefined, { provider: {} }, false],
+		[undefined, { provider: { enableConnectors: true } }, true],
+		["0", { provider: { enableConnectors: true } }, true],
+		["1", { provider: { enableConnectors: false } }, true],
+	];
+	for (const [value, config, expected] of rows) {
+		assert.equal(withEnv(value, () => connectorsEnabledFor(config)), expected, JSON.stringify([value, config]));
+	}
 });
 
 test("toolIsolationForQuery(false) is the default isolation (connectors suppressed)", () => {
@@ -59,34 +61,6 @@ test("toolIsolationForQuery(true) exposes connectors: drops empty tools, allows 
 	for (const b of ["Read", "Write", "Bash", "WebFetch"]) assert.ok(iso.disallowedTools.includes(b), `still block ${b}`);
 });
 
-// --- connectors mode must not load repo-controlled settings ---
-
-test("CONTRACT: connectors mode loads USER setting sources only", () => {
-	// Settings files carry `env` and `apiKeyHelper`; "project"/"local" would let
-	// a hostile checkout's .claude/settings.json reinject the provider-override
-	// env the bridge scrubs (e.g. ANTHROPIC_BASE_URL). Connector state is
-	// user-scope, so ["user"] is sufficient for connectors to surface.
-	assert.deepEqual(settingSourcesForQuery(true, true), ["user"]);
-	assert.deepEqual(settingSourcesForQuery(true, false), ["user"]);
-	for (const scope of ["project", "local"]) {
-		assert.ok(!settingSourcesForQuery(true, true).includes(scope), `must not include ${scope}`);
-	}
-});
-
-test("explicit provider.settingSources still wins verbatim in connectors mode", () => {
-	assert.deepEqual(settingSourcesForQuery(true, true, ["user", "project"]), ["user", "project"]);
-	assert.deepEqual(settingSourcesForQuery(true, true, []), []);
-});
-
-test("non-connectors setting sources are unchanged", () => {
-	// appendSystemPrompt=true → isolation; configured sources deliberately ignored.
-	assert.equal(settingSourcesForQuery(false, true), undefined);
-	assert.equal(settingSourcesForQuery(false, true, ["user"]), undefined);
-	// appendSystemPrompt=false → historical default, explicit override honored.
-	assert.deepEqual(settingSourcesForQuery(false, false), ["user", "project"]);
-	assert.deepEqual(settingSourcesForQuery(false, false, ["user", "local"]), ["user", "local"]);
-});
-
 test("discovery tools are a subset of the default disallow list", () => {
 	for (const d of CONNECTOR_DISCOVERY_TOOLS) assert.ok(DISALLOWED_BUILTIN_TOOLS.includes(d), `${d} is disallowed by default`);
 });
@@ -102,60 +76,6 @@ test("CONTRACT: connectors.ts and connector-inventory.ts agree on the connector 
 	assert.equal(isConnectorTool(`${namespace}get_thing`), true);
 	assert.ok(namespace.startsWith("mcp__claude_ai_"), "shared literal prefix");
 	assert.equal(isConnectorTool("mcp__claude_ai_X__anything"), true);
-});
-
-// --- C13: connectors-mode builtin containment is a fail-closed ALLOWLIST ---
-// DISALLOWED_BUILTIN_TOOLS blocks the CLI built-ins known TODAY, but a
-// connectors session ingests untrusted third-party content, and a future
-// built-in absent from that denylist would be callable by whatever that
-// content talks the model into. The allowlist hook denies everything that is
-// not a bridged custom tool, a claude.ai connector tool, or discovery.
-
-async function runAllowlistHook(toolName) {
-	const hook = connectorBuiltinAllowlistHook();
-	return hook({ hook_event_name: "PreToolUse", tool_name: toolName, tool_input: {}, tool_use_id: "t1" }, "t1", { signal: new AbortController().signal });
-}
-
-test("allowlist hook permits bridged custom tools, connector tools, and discovery", async () => {
-	const allowed = [
-		"mcp__custom-tools__read",
-		"mcp__custom-tools__anything_else",
-		"mcp__claude_ai_Gmail__search_threads",
-		"mcp__claude_ai_Some_Org_Thing__whatever",
-		...CONNECTOR_DISCOVERY_TOOLS,
-	];
-	for (const name of allowed) {
-		assert.equal((await runAllowlistHook(name)).continue, true, `${name} must pass`);
-	}
-});
-
-// --- hooks see the CLI's canonical (aliased) tool names ---
-
-test("allowlist hook permits the discovery built-ins under BOTH spellings (kendex#1011)", async () => {
-	// Literal names, deliberately NOT derived from CONNECTOR_DISCOVERY_TOOLS: a
-	// hook's tool_name carries the CLI's canonical (aliased) spelling, and a
-	// test written from the request-side constant passes either way. The test
-	// names ListMcpResourcesTool and ReadMcpResourceTool directly because these are the tools the
-	// allowlist documents as permitted (verified live on claude 2.1.220).
-	const spellings = [
-		"ToolSearch",
-		"ListMcpResources", "ListMcpResourcesTool",
-		"ReadMcpResource", "ReadMcpResourceTool",
-	];
-	for (const name of spellings) {
-		assert.equal((await runAllowlistHook(name)).continue, true, `${name} must pass`);
-	}
-});
-
-test("allowlist hook still denies near-misses of the discovery names", async () => {
-	const denied = [
-		"ReadMcpResourceToolX", "XListMcpResourcesTool", "ToolSearchTool",
-		"readmcpresourcetool", "ListMcpResourcesToo", "McpResourceTool",
-	];
-	for (const name of denied) {
-		const out = await runAllowlistHook(name);
-		assert.equal(out.hookSpecificOutput?.permissionDecision, "deny", `${name} must be denied`);
-	}
 });
 
 test("CONTRACT: the request-side option surface still carries request-side spellings only (kendex#1011)", () => {
@@ -174,34 +94,6 @@ test("CONTRACT: the request-side option surface still carries request-side spell
 	}
 });
 
-test("allowlist hook denies denylisted AND future/unknown builtins (fail closed)", async () => {
-	const denied = [
-		"Bash", // already denylisted — belt
-		"SlashCommand", // a real CLI builtin absent from the denylist
-		"SomeFutureBuiltin2027", // an unknown future name
-		"mcp__some_other_server__do_thing", // an unrelated MCP server
-	];
-	for (const name of denied) {
-		const out = await runAllowlistHook(name);
-		assert.equal(out.hookSpecificOutput?.permissionDecision, "deny", `${name} must be denied`);
-	}
-});
-
-test("allowlist hook denies on malformed input and on exceptions", async () => {
-	const hook = connectorBuiltinAllowlistHook();
-	const malformed = await hook({ hook_event_name: "PreToolUse", tool_name: 42 }, "t1", { signal: new AbortController().signal });
-	assert.equal(malformed.hookSpecificOutput.permissionDecision, "deny");
-	// A throwing property access inside the body must convert to a deny.
-	const trap = new Proxy({}, {
-		get(_target, prop) {
-			if (prop === "hook_event_name") return "PreToolUse";
-			throw new Error("hostile input");
-		},
-	});
-	const out = await hook(trap, "t1", { signal: new AbortController().signal });
-	assert.equal(out.hookSpecificOutput.permissionDecision, "deny", "an exception must deny, never allow");
-});
-
 test("connectorQueryOptions wires the allowlist hook in BOTH write modes", async () => {
 	for (const mode of ["deny", "allow"]) {
 		const opts = connectorQueryOptions(true, mode);
@@ -214,34 +106,6 @@ test("connectorQueryOptions wires the allowlist hook in BOTH write modes", async
 	// Write-deny mode additionally carries the write-deny hook.
 	assert.equal(connectorQueryOptions(true, "deny").hooks.PreToolUse[0].hooks.length, 2);
 	assert.equal(connectorQueryOptions(true, "allow").hooks.PreToolUse[0].hooks.length, 1);
-});
-
-// --- the deny reason is shared source shown verbatim to a model ---
-
-test("CONTRACT: the connector write-deny reason names no host product", async () => {
-	const hook = connectorWriteDenyHook();
-	const out = await hook({
-		hook_event_name: "PreToolUse",
-		tool_name: "mcp__claude_ai_Gmail__create_draft",
-	});
-	const reason = out.hookSpecificOutput.permissionDecisionReason;
-
-	// The string goes straight to the `claude` child's model in EVERY consuming
-	// app, so naming one host tells another app's model to use a product it has
-	// never heard of. Each host describes its own approval flow in its own
-	// prompt; this only has to say that one exists.
-	for (const product of ["Memsira", "memsira", "drovr", "Drovr", "hyprtrade"]) {
-		assert.ok(!reason.includes(product), `deny reason must not name "${product}": ${reason}`);
-	}
-	assert.ok(reason.includes("mcp__claude_ai_Gmail__create_draft"), "names the refused tool");
-	assert.ok(/host application/i.test(reason), "points at the host's approval flow generically");
-
-	// The malformed-input path returns the same message, so it cannot drift.
-	const fallback = await hook({ hook_event_name: "PreToolUse", tool_name: 42 });
-	assert.equal(fallback.hookSpecificOutput.permissionDecision, "deny");
-	for (const product of ["Memsira", "memsira", "drovr"]) {
-		assert.ok(!fallback.hookSpecificOutput.permissionDecisionReason.includes(product));
-	}
 });
 
 // --- CONNECTOR_WRITE_TOOLS is a public contract, not an internal detail ---

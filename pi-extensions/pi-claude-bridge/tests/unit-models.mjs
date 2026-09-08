@@ -87,18 +87,25 @@ describe("MODELS projection", () => {
 
 describe("model fallback pairing", () => {
 	it("configures Opus 4.8 safety fallback for the two models whose classifiers decline", () => {
-		assert.equal(fallbackModelForPrimaryModel(FABLE_MODEL_ID), FABLE_FALLBACK_MODEL_ID);
-		assert.equal(fallbackModelForPrimaryModel(OPUS_5_MODEL_ID), FABLE_FALLBACK_MODEL_ID);
-		assert.equal(fallbackModelForPrimaryModel(FABLE_FALLBACK_MODEL_ID), undefined);
-		assert.equal(fallbackModelForPrimaryModel(SONNET_5_MODEL_ID), undefined);
-		assert.equal(fallbackModelForPrimaryModel("claude-sonnet-4-6"), undefined);
+		for (const [id, expected] of [
+			[FABLE_MODEL_ID, FABLE_FALLBACK_MODEL_ID],
+			[OPUS_5_MODEL_ID, FABLE_FALLBACK_MODEL_ID],
+			[FABLE_FALLBACK_MODEL_ID, undefined],
+			[SONNET_5_MODEL_ID, undefined],
+			["claude-sonnet-4-6", undefined],
+		]) {
+			assert.equal(fallbackModelForPrimaryModel(id), expected, id);
+		}
 	});
 
 	it("labels every model in a configured fallback pairing", () => {
-		for (const id of [FABLE_MODEL_ID, OPUS_5_MODEL_ID, FABLE_FALLBACK_MODEL_ID]) {
-			assert.notEqual(modelDisplayName(id), id);
+		for (const [id, expected] of [
+			[FABLE_MODEL_ID, "Claude Fable 5.1"],
+			[OPUS_5_MODEL_ID, "Claude Opus 5"],
+			[FABLE_FALLBACK_MODEL_ID, "Claude Opus 4.8"],
+			["gpt-9", "gpt-9"],
+		]) {
+			assert.equal(modelDisplayName(id), expected, id);
 		}
-		assert.equal(modelDisplayName("claude-opus-5"), "Claude Opus 5");
-		assert.equal(modelDisplayName("gpt-9"), "gpt-9");
 	});
 });

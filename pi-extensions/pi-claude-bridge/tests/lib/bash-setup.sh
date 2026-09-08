@@ -37,23 +37,30 @@ setup_test_env() {
 	export DIR LOGDIR DEBUG_LOG LOGFILE PATH
 }
 
-# Kill all descendant processes (children, grandchildren, etc.).
-# Use as: trap kill_descendants EXIT
-kill_descendants() {
-	pkill -P $$ 2>/dev/null || true
-	sleep 1
+# GNU timeout owns each command's process group. The calling script owns its PID.
+TEST_COMMAND_PID=""
+run_test_command() {
+	timeout "$@" &
+	TEST_COMMAND_PID=$!
+	local status=0
+	wait "$TEST_COMMAND_PID" || status=$?
+	cleanup_test_command
+	return "$status"
 }
 
-# Require an environment variable or exit with error.
-# Usage: require_env VARNAME
-require_env() {
-	local var="$1"
-	local val="${!var:-}"
-	if [[ -z "$val" ]]; then
-		echo "ERROR: $var not set (see .env.test)"
-		exit 1
+cleanup_test_command() {
+	if [[ -n "$TEST_COMMAND_PID" ]]; then
+		kill -- "-$TEST_COMMAND_PID" 2>/dev/null || true
+		kill -KILL -- "-$TEST_COMMAND_PID" 2>/dev/null || true
+		wait "$TEST_COMMAND_PID" 2>/dev/null || true
+		TEST_COMMAND_PID=""
 	fi
-	echo "$val"
+}
+
+# Output contract: the first line is key=value; explanation follows.
+test_notice() {
+	printf '%s=%s\n' "$1" "$2"
+	if [[ -n "${3:-}" ]]; then printf '%s\n' "$3"; fi
 }
 
 # Check for required commands or exit with error.
@@ -62,7 +69,7 @@ require_command() {
 	local cmd
 	for cmd in "$@"; do
 		if ! command -v "$cmd" >/dev/null 2>&1; then
-			echo "ERROR: $cmd is required but not installed"
+			test_notice missing_command "$cmd" "Install the required command." >&2
 			exit 1
 		fi
 	done

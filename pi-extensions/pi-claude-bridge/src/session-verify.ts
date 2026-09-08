@@ -57,28 +57,28 @@ export function verifyWrittenSession(jsonlPath: string, expectedSessionId: strin
 	try {
 		st = statSync(jsonlPath);
 	} catch (e) {
-		warnings.push(`file missing after save — path=${jsonlPath} err=${e.message}`);
+		warnings.push(`session-file-missing=${jsonlPath}\nFile missing after save: ${e.message}`);
 		return warnings;
 	}
 	let summary;
 	try {
 		summary = summarizeJsonl(jsonlPath);
 	} catch (e) {
-		warnings.push(`file unreadable — path=${jsonlPath} size=${st.size} err=${e.message}`);
+		warnings.push(`session-file-unreadable=${jsonlPath}\nFile unreadable: size=${st.size} error=${e.message}`);
 		return warnings;
 	}
 	if (summary.count !== expectedRecordCount) {
-		warnings.push(`record count mismatch — expected=${expectedRecordCount} actual=${summary.count} path=${jsonlPath} bytes=${st.size}`);
+		warnings.push(`session-record-count=${summary.count} expected=${expectedRecordCount}\nRecord count differs: path=${jsonlPath} bytes=${st.size}`);
 		return warnings;
 	}
 	try {
 		const firstRec = JSON.parse(summary.firstLine ?? "");
 		const lastRec = JSON.parse(summary.lastLine ?? "");
 		if (firstRec.sessionId !== expectedSessionId || lastRec.sessionId !== expectedSessionId) {
-			warnings.push(`sessionId drift — expected=${expectedSessionId} first=${firstRec.sessionId} last=${lastRec.sessionId}`);
+			warnings.push(`session-id-drift=${expectedSessionId} first=${firstRec.sessionId} last=${lastRec.sessionId}\nSession identity differs from the expected identity.`);
 		}
 	} catch (e) {
-		warnings.push(`malformed JSONL — path=${jsonlPath} err=${e.message}`);
+		warnings.push(`session-json-invalid=${jsonlPath}\nMalformed JSONL: ${e.message}`);
 	}
 	return warnings;
 }

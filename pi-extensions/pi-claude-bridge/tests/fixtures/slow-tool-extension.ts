@@ -1,6 +1,7 @@
 // Test extension: registers a tool that blocks for a configurable duration,
 // giving the test harness time to inject messages via RPC while the tool
 // handler is waiting for a result.
+// The response text is a parsed test protocol: slow_tool_ms=<elapsed milliseconds>.
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -15,11 +16,19 @@ export default function (pi: ExtensionAPI) {
 		parameters: params,
 		async execute(_id, params, signal) {
 			const delay = (params.seconds ?? 5) * 1000;
-			await new Promise((r, reject) => {
-				const timer = setTimeout(r, delay);
-				signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("aborted")); }, { once: true });
+			await new Promise<void>((resolve, reject) => {
+				const onAbort = () => {
+					clearTimeout(timer);
+					reject(new Error("tool_state=aborted"));
+				};
+				const timer = setTimeout(() => {
+					signal?.removeEventListener("abort", onAbort);
+					resolve();
+				}, delay);
+				if (signal?.aborted) onAbort();
+				else signal?.addEventListener("abort", onAbort, { once: true });
 			});
-			return { content: [{ type: "text" as const, text: `SlowTool completed after ${delay}ms` }], details: {} };
+			return { content: [{ type: "text" as const, text: `slow_tool_ms=${delay}` }], details: {} };
 		},
 	});
 }

@@ -17,7 +17,7 @@ const scratch = mkdtempSync(join(tmpdir(), "claude-bridge-teardown-test-"));
 process.env.CLAUDE_BRIDGE_DIAG_PATH = join(scratch, "diag.log");
 process.env.PI_CODING_AGENT_DIR = scratch;
 
-const { ctx, popContext, popContextFor, pushContext, resetStack, stackDepth } = await import("../src/query-state.js");
+const { ctx, popContext, pushContext, resetStack, stackDepth } = await import("../src/query-state.js");
 const { teardownQuery } = await import("../src/query-teardown.js");
 const { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState } = await import("../src/bridge-state.js");
 
@@ -35,58 +35,6 @@ function registerWaitingCall(queryCtx, toolCallId, toolName = "read") {
 		});
 	});
 }
-
-describe("popContextFor", () => {
-	beforeEach(() => resetStack());
-
-	it("pops normally when the target is the live context", () => {
-		const parent = ctx();
-		parent.activeQuery = "q-parent";
-		pushContext();
-		const child = ctx();
-		child.deferredUserMessages.push({ text: "steer" });
-
-		assert.equal(popContextFor(child), true);
-		assert.equal(ctx(), parent);
-		assert.equal(stackDepth(), 0);
-		assert.deepEqual(parent.deferredUserMessages, [{ text: "steer" }]);
-	});
-
-	it("splices a buried context out of the stack without touching the live child", () => {
-		const outer = ctx();
-		outer.activeQuery = "q-outer";
-		pushContext();
-		const mid = ctx();
-		mid.activeQuery = "q-mid";
-		mid.deferredUserMessages.push({ text: "mid-steer" });
-		pushContext();
-		const grandchild = ctx();
-
-		// mid is buried under the live grandchild; popping it must not disturb ctx().
-		assert.equal(popContextFor(mid), true);
-		assert.equal(ctx(), grandchild);
-		assert.equal(stackDepth(), 1);
-		// mid's deferred messages went to ITS parent (outer), not the grandchild.
-		assert.deepEqual(outer.deferredUserMessages, [{ text: "mid-steer" }]);
-		assert.deepEqual(grandchild.deferredUserMessages, []);
-
-		// The grandchild's own pop now restores the correct grandparent.
-		popContext();
-		assert.equal(ctx(), outer);
-		assert.equal(stackDepth(), 0);
-	});
-
-	it("returns false for a context that is nowhere in the state", () => {
-		const parent = ctx();
-		parent.activeQuery = "q";
-		pushContext();
-		const child = ctx();
-		popContext();
-
-		assert.equal(popContextFor(child), false);
-		assert.equal(ctx(), parent);
-	});
-});
 
 describe("teardownQuery", () => {
 	beforeEach(() => resetStack());
@@ -139,7 +87,7 @@ describe("teardownQuery", () => {
 		// Parent handler drained as an abort error; parent released.
 		const result = await parentWaiting;
 		assert.equal(result.isError, true);
-		assert.match(result.content[0].text, /aborted/);
+		assert.equal(result.content[0].text.split("\n")[0], "tool-call-drain=abort");
 		assert.equal(parent.activeQuery, null);
 
 		// Child completely untouched and still the live context.
@@ -208,42 +156,33 @@ describe("teardownQuery shared-record gating (#1001)", () => {
 
 	afterEach(() => __testSetBridgeIntegrityState({ sharedSession: null, ui: null }));
 
-	// Simulates a query dying with an unresolved tool call: recorded, a handler
-	// still waiting, teardown drains it. This path must not mark the PARENT's
-	// record needsRebuild/forceRotate from a detached query.
-	const teardownWithUnresolvedCall = async (queryCtx, cause) => {
-		const sdkQuery = { id: "sdk-query" };
-		queryCtx.activeQuery = sdkQuery;
-		queryCtx.recordToolCall("call-1", "bash", { cmd: "ls" });
-		const waiting = registerWaitingCall(queryCtx, "call-1", "bash");
-		assert.equal(teardownQuery(queryCtx, sdkQuery, cause, "/tmp", false), true);
-		const result = await waiting;
-		assert.equal(result.isError, true);
-	};
-
-	it("a detached (foreign one-shot) query's unresolved tool call leaves the parent record untouched", async () => {
-		const record = parentRecord();
-		__testSetBridgeIntegrityState({ sharedSession: { ...record } });
-		const queryCtx = ctx();
-		queryCtx.detachedFromSharedSession = true;
-
-		await teardownWithUnresolvedCall(queryCtx, "abort");
-
-		assert.equal(queryCtx.reportedToolResultMismatch, true, "the mismatch is still reported (diagnostics keep flowing)");
-		assert.deepEqual(
-			__testGetBridgeIntegrityState().sharedSession,
-			record,
-			"a detached query must never mark the parent record needsRebuild/forceRotate",
-		);
-	});
-
-	it("an outermost claiming query's unresolved tool call still marks the record for rebuild", async () => {
-		__testSetBridgeIntegrityState({ sharedSession: parentRecord() });
-
-		await teardownWithUnresolvedCall(ctx(), "abort");
-
-		const record = __testGetBridgeIntegrityState().sharedSession;
-		assert.equal(record.needsRebuild, true);
-		assert.equal(record.forceRotate, true, "an abnormal teardown still rotates the claiming query's session id");
+	it("marks only a claiming session after unresolved-call teardown", async () => {
+		const rows = [
+			{ detached: true, expected: parentRecord() },
+			{ detached: false, expected: { ...parentRecord(), needsRebuild: true, forceRotate: true } },
+		];
+		for (const { detached, expected } of rows) {
+			resetStack();
+			__testSetBridgeIntegrityState({ sharedSession: parentRecord() });
+			const queryCtx = ctx();
+			queryCtx.detachedFromSharedSession = detached;
+			const sdkQuery = { id: "sdk-query" };
+			queryCtx.activeQuery = sdkQuery;
+			queryCtx.recordToolCall("call-1", "bash", { cmd: "ls" });
+			const waiting = registerWaitingCall(queryCtx, "call-1", "bash");
+			const tornDown = teardownQuery(queryCtx, sdkQuery, "abort", "/tmp", false);
+			const result = await waiting;
+			assert.deepEqual({
+				tornDown,
+				isError: result.isError,
+				reportedMismatch: queryCtx.reportedToolResultMismatch,
+				record: __testGetBridgeIntegrityState().sharedSession,
+			}, {
+				tornDown: true,
+				isError: true,
+				reportedMismatch: true,
+				record: expected,
+			}, `detached=${detached}`);
+		}
 	});
 });

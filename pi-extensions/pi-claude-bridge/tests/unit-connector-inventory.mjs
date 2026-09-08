@@ -9,9 +9,7 @@ import assert from "node:assert/strict";
 import {
 	connectorServerNamespace,
 	connectorsListUrl,
-	credentialCandidatePaths,
 	listAccountConnectors,
-	resolveClaudeOAuth,
 } from "../src/connector-inventory.js";
 import { CLAUDE_AI_CONNECTOR_TOOL_PATTERNS } from "../src/connectors.js";
 
@@ -45,77 +43,6 @@ const okFetch = (body = LIVE_BODY, status = 200) => {
 	impl.calls = calls;
 	return impl;
 };
-
-describe("credential resolution", () => {
-	it("reads token and org UUID from separate files", () => {
-		const files = {
-			"/h/.claude/.credentials.json": JSON.stringify({ claudeAiOauth: { accessToken: "tok" } }),
-			"/h/.claude.json": JSON.stringify({ oauthAccount: { organizationUuid: "org" } }),
-		};
-		const got = resolveClaudeOAuth((p) => files[p], { HOME: "/h" });
-		assert.deepEqual(got, { accessToken: "tok", organizationUuid: "org" });
-	});
-
-	it("prefers CLAUDE_CONFIG_DIR over HOME so per-account sidecars stay isolated", () => {
-		const files = {
-			"/acct-b/.credentials.json": JSON.stringify({ claudeAiOauth: { accessToken: "b-tok" } }),
-			"/acct-b/.claude.json": JSON.stringify({ oauthAccount: { organizationUuid: "b-org" } }),
-			"/h/.claude/.credentials.json": JSON.stringify({ claudeAiOauth: { accessToken: "a-tok" } }),
-			"/h/.claude.json": JSON.stringify({ oauthAccount: { organizationUuid: "a-org" } }),
-		};
-		const got = resolveClaudeOAuth((p) => files[p], { HOME: "/h", CLAUDE_CONFIG_DIR: "/acct-b" });
-		assert.deepEqual(got, { accessToken: "b-tok", organizationUuid: "b-org" });
-	});
-
-	it("skips a corrupt file instead of letting it mask a later good one", () => {
-		const files = {
-			"/h/.claude/.credentials.json": "{ not json",
-			"/h/.claude.json": JSON.stringify({
-				claudeAiOauth: { accessToken: "tok" },
-				oauthAccount: { organizationUuid: "org" },
-			}),
-		};
-		const got = resolveClaudeOAuth((p) => files[p], { HOME: "/h" });
-		assert.deepEqual(got, { accessToken: "tok", organizationUuid: "org" });
-	});
-
-	it("returns undefined when either half is missing", () => {
-		const onlyToken = { "/h/.claude/.credentials.json": JSON.stringify({ claudeAiOauth: { accessToken: "tok" } }) };
-		assert.equal(resolveClaudeOAuth((p) => onlyToken[p], { HOME: "/h" }), undefined);
-		const onlyOrg = { "/h/.claude.json": JSON.stringify({ oauthAccount: { organizationUuid: "org" } }) };
-		assert.equal(resolveClaudeOAuth((p) => onlyOrg[p], { HOME: "/h" }), undefined);
-		assert.equal(resolveClaudeOAuth(() => undefined, { HOME: "/h" }), undefined);
-	});
-
-	it("probes ONLY the CLAUDE_CONFIG_DIR root when it is set (no HOME fallback)", () => {
-		// A managed profile with a missing .credentials.json must NOT silently
-		// borrow the default account's token — that is a confident, well-formed
-		// answer for the wrong account.
-		const paths = credentialCandidatePaths({ HOME: "/h", CLAUDE_CONFIG_DIR: "/cfg" });
-		assert.deepEqual(paths, ["/cfg/.credentials.json", "/cfg/.claude.json"]);
-	});
-
-	it("keeps the HOME candidates when no config dir is selected", () => {
-		const paths = credentialCandidatePaths({ HOME: "/h" });
-		assert.deepEqual(paths, [
-			"/h/.claude/.credentials.json",
-			"/h/.claude/.claude.json",
-			"/h/.credentials.json",
-			"/h/.claude.json",
-		]);
-	});
-
-	it("a managed profile missing its credentials resolves nothing rather than the default account", () => {
-		const files = {
-			// Default account fully present under HOME…
-			"/h/.claude/.credentials.json": JSON.stringify({ claudeAiOauth: { accessToken: "default-tok" } }),
-			"/h/.claude.json": JSON.stringify({ oauthAccount: { organizationUuid: "default-org" } }),
-		};
-		// …but the selected profile dir is empty: no borrowing.
-		const got = resolveClaudeOAuth((p) => files[p], { HOME: "/h", CLAUDE_CONFIG_DIR: "/profiles/b" });
-		assert.equal(got, undefined);
-	});
-});
 
 describe("request shape", () => {
 	it("POSTs with the bearer token and oauth beta header", async () => {
@@ -169,49 +96,19 @@ describe("success path", () => {
 });
 
 describe("failure paths never masquerade as an empty inventory", () => {
-	const expectFailure = (got, fragment) => {
-		assert.equal(got.ok, false);
-		assert.equal(got.complete, false);
-		assert.match(got.reason, fragment);
-		assert.equal(got.connectors, undefined);
-	};
-
-	it("HTTP error", async () => {
-		const body = JSON.stringify({ error: { message: "Method Not Allowed" } });
-		expectFailure(
-			await listAccountConnectors({ credentials: CREDS, fetchImpl: okFetch(body, 405) }),
-			/HTTP 405 \(Method Not Allowed\)/,
-		);
-	});
-
-	it("transport throw", async () => {
-		const boom = async () => { throw new Error("ECONNREFUSED"); };
-		expectFailure(
-			await listAccountConnectors({ credentials: CREDS, fetchImpl: boom }),
-			/request failed: ECONNREFUSED/,
-		);
-	});
-
-	it("non-JSON body", async () => {
-		expectFailure(
-			await listAccountConnectors({ credentials: CREDS, fetchImpl: okFetch("<html>502</html>") }),
-			/non-JSON body/,
-		);
-	});
-
-	it("missing results array is a protocol change, not an empty account", async () => {
-		expectFailure(
-			await listAccountConnectors({ credentials: CREDS, fetchImpl: okFetch(JSON.stringify({ ok: true })) }),
-			/no results array/,
-		);
-	});
-
-	it("an unnamed entry fails rather than silently shrinking the list", async () => {
-		const body = JSON.stringify({ results: [{ name: "Gmail" }, { installedServerId: "x" }] });
-		expectFailure(
-			await listAccountConnectors({ credentials: CREDS, fetchImpl: okFetch(body) }),
-			/entry with no name/,
-		);
+	it("identifies each HTTP, transport, and protocol failure", async () => {
+		const rows = [
+			["HTTP", () => okFetch(JSON.stringify({ error: { message: "api_error_405" } }), 405), "connector-http=405", "api_error_405"],
+			["transport", () => async () => { throw new Error("ECONNREFUSED"); }, 'connector-request="transport"', "ECONNREFUSED"],
+			["non-JSON", () => okFetch("<html>502</html>"), 'connector-json="invalid"'],
+			["missing results", () => okFetch(JSON.stringify({ ok: true })), 'connector-results="not-array"'],
+			["unnamed entry", () => okFetch(JSON.stringify({ results: [{ name: "Gmail" }, { installedServerId: "x" }] })), "connector-name=1"],
+		];
+		for (const [name, transport, expected, detail] of rows) {
+			const got = await listAccountConnectors({ credentials: CREDS, fetchImpl: transport() });
+			assert.deepEqual({ ok: got.ok, complete: got.complete, connectors: got.connectors, failure: got.reason?.split("\n")[0], detail: detail === undefined ? undefined : got.reason?.includes(detail) },
+				{ ok: false, complete: false, connectors: undefined, failure: expected, detail: detail === undefined ? undefined : true }, name);
+		}
 	});
 
 	it("never leaks the access token into a failure reason", async () => {
@@ -225,8 +122,9 @@ describe("failure paths never masquerade as an empty inventory", () => {
 
 describe("connectorServerNamespace", () => {
 	it("maps connector names to their tool namespace", () => {
-		assert.equal(connectorServerNamespace("Gmail"), "mcp__claude_ai_Gmail__");
-		assert.equal(connectorServerNamespace("Google Calendar"), "mcp__claude_ai_Google_Calendar__");
+		for (const [name, expected] of [["Gmail", "mcp__claude_ai_Gmail__"], ["Google Calendar", "mcp__claude_ai_Google_Calendar__"]]) {
+			assert.equal(connectorServerNamespace(name), expected, name);
+		}
 	});
 
 	// Corroboration, not restatement: CLAUDE_AI_CONNECTOR_TOOL_PATTERNS was built

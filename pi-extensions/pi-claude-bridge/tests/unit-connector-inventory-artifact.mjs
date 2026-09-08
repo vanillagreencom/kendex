@@ -95,6 +95,6 @@ describe("shipped connector API", () => {
 		});
 		assert.equal(result.ok, false);
 		assert.equal(result.connectors, undefined);
-		assert.match(result.reason, /HTTP 500/);
+		assert.equal(result.reason.split("\n")[0], "connector-http=500");
 	});
 });

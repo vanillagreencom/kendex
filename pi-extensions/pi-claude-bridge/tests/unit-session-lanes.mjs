@@ -1,3 +1,4 @@
+import { waitFor } from "./lib/wait-for.mjs";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -211,7 +212,7 @@ describe("provider request session lanes", () => {
 		}));
 		const results = requests.map(({ stream }) => collect(stream));
 
-		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(await waitFor(() => gates.size === requests.length), true, "all SDK queries started");
 		assert.deepEqual(started.sort(), requests.map(({ label }) => label).sort());
 		for (const gate of gates.values()) gate.resolve();
 
@@ -262,7 +263,7 @@ describe("provider request session lanes", () => {
 			{ sessionId: "child", signal: childAbort.signal },
 		));
 
-		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(await waitFor(() => gates.size === 2), true, "parent and child SDK queries started");
 		childAbort.abort();
 		gates.get("parent").resolve();
 
@@ -389,7 +390,7 @@ describe("provider request session lanes", () => {
 		assert.equal(runInRequestLane("B", () => ctx().pendingResults.get("call-B")?.content?.[0]?.text), "B-output", "B's queued result is intact");
 
 		for (const gate of gates.values()) gate.resolve();
-		await new Promise((resolve) => setTimeout(resolve, 30));
+		assert.equal(await waitFor(() => ["A", "B"].every((lane) => runInRequestLane(lane, () => ctx().activeQuery === null))), true, "both query teardowns completed");
 		assert.equal(runInRequestLane("A", () => ctx().activeQuery), null);
 		assert.equal(runInRequestLane("B", () => ctx().activeQuery), null);
 	});
@@ -410,11 +411,11 @@ describe("provider request session lanes", () => {
 		// async context (an AbortSignal listener runs in the aborter's context).
 		const childAbort = new AbortController();
 		const child = collect(streamClaudeAgentSdk(model, { messages: [userMessage("child")] }, { sessionId: "child", signal: childAbort.signal }));
-		await new Promise((resolve) => setTimeout(resolve, 20));
+		await child;
 		assert.ok(runInRequestLane("child", () => ctx().activeQuery), "child is mid tool call");
 		runInRequestLane("parent", () => childAbort.abort());
 		await child;
-		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(await waitFor(() => runInRequestLane("child", () => ctx().activeQuery === null)), true, "child teardown completed");
 		assert.deepEqual(
 			runInRequestLane("parent", () => __testGetBridgeIntegrityState().sharedSession),
 			parentRecord,
@@ -425,11 +426,11 @@ describe("provider request session lanes", () => {
 		// A DEFAULT-lane query aborted from a named lane marks the default record, not the named lane.
 		const directAbort = new AbortController();
 		const direct = collect(streamClaudeAgentSdk(model, { messages: [userMessage("direct")] }, { signal: directAbort.signal }));
-		await new Promise((resolve) => setTimeout(resolve, 20));
+		await direct;
 		assert.ok(ctx().activeQuery, "direct-host query is mid tool call");
 		runInRequestLane("parent", () => directAbort.abort());
 		await direct;
-		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(await waitFor(() => ctx().activeQuery === null), true, "direct-host teardown completed");
 		assert.deepEqual(runInRequestLane("parent", () => __testGetBridgeIntegrityState().sharedSession), parentRecord, "named lane untouched by a default-lane abort");
 		assert.equal(__testGetBridgeIntegrityState().sharedSession?.needsRebuild, true, "the default lane record carries the abort mark");
 		assert.equal(__testGetBridgeIntegrityState().sharedSession?.forceRotate, true);
@@ -455,7 +456,7 @@ describe("provider request session lanes", () => {
 		for (const n of [1, 2, 3]) {
 			await collect(streamClaudeAgentSdk(model, { messages: [userMessage(`summary-${n}`)] }, { sessionId: `summary-${n}`, cacheRetention: "none" }));
 		}
-		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(await waitFor(() => __testQueryLaneCount() === 1), true, "one-shot query lanes released");
 
 		assert.equal(runInRequestLane("turn-1", () => __testGetBridgeIntegrityState().sharedSession?.sessionId), "sdk-turn");
 		assert.equal(__testQueryLaneCount(), 1, "only the regular turn's query lane remains");
@@ -549,7 +550,7 @@ describe("provider request session lanes", () => {
 		}
 
 		cancelScheduledSessionPersistence(managerA);
-		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(await waitFor(() => entries.length === 1), true, "surviving marker persisted");
 
 		assert.deepEqual(entries.map((entry) => entry.data.piSessionId), ["pi-B"], "B's pending persist survives A's shutdown");
 		assert.equal(entries[0].data.sessionId, "sdk-B");
@@ -564,7 +565,7 @@ describe("provider request session lanes", () => {
 				schedulePersistSharedSession({ sessionManager });
 			}
 		});
-		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(await waitFor(() => entries.length === 1), true, "latest marker persisted");
 
 		assert.equal(entries.length, 1, "the later schedule supersedes the pending one");
 		assert.equal(entries[0].data.cursor, 1);

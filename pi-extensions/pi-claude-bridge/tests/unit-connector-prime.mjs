@@ -1,3 +1,4 @@
+import { waitFor } from "./lib/wait-for.mjs";
 // A failed connector prime must NOT be cached for the process lifetime.
 // A transient failure at provider registration must not pin `{}` for the scope,
 // leave later turns undeclared, or make the disk-cache fallback
@@ -35,14 +36,6 @@ function okInventoryFetch() {
 	});
 }
 
-async function waitFor(predicate, timeoutMs = 1000) {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		if (predicate()) return true;
-		await new Promise((resolve) => setTimeout(resolve, 10));
-	}
-	return predicate();
-}
 
 beforeEach(() => {
 	root = mkdtempSync(join(tmpdir(), "bridge-prime-"));

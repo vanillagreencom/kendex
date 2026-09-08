@@ -1,3 +1,4 @@
+import { waitFor } from "./lib/wait-for.mjs";
 /**
  * Account-scoped session persistence: the persisted bridge-session marker must
  * carry ONLY the opaque accountProfileId — config-dir paths are
@@ -72,7 +73,7 @@ describe("account-scoped session persistence", () => {
 				getSessionId: () => "pi-session",
 			},
 		});
-		await new Promise((resolve) => setTimeout(resolve, 10));
+		assert.equal(await waitFor(() => entries.length === 1), true, "session marker persisted");
 
 		assert.equal(entries.length, 1);
 		assert.equal(entries[0].type, "claude-bridge-session");

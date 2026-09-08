@@ -517,6 +517,7 @@ function connectorWriteDenyOutput(toolName: string) {
 			hookEventName: "PreToolUse" as const,
 			permissionDecision: "deny" as const,
 			permissionDecisionReason:
+				`connector-write-denied=${JSON.stringify(toolName)}\n` +
 				`Connector write tool "${toolName}" is blocked in read-only connector mode. ` +
 				`Connector writes must go through the host application's gated approval flow.`,
 		},

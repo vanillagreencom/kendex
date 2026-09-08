@@ -159,6 +159,7 @@ export function reapStaleQueuedResults(c: QueryContext): void {
 	diagDump("stale_queued_tool_results_parked", { count: stale.length, stale });
 	appendIntegrityEntry("stale_queued_tool_results_parked", { count: stale.length, stale });
 	safeNotify(
+		`queued-results-parked=${JSON.stringify({ count: stale.length, tools: names })}\n` +
 		`Claude bridge: parked ${stale.length} early tool result(s) whose handler has not arrived (${names.slice(0, 6).join(", ")}${names.length > 6 ? ", …" : ""}). ` +
 		`A late handler can still consume them.`,
 		"warning",

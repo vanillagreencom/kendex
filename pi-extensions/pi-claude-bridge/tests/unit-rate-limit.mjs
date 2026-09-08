@@ -3,6 +3,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { classifyClaudeFailure } from "../src/account-router.ts";
 import {
 	DEFAULT_STREAM_IDLE_TIMEOUT_MS,
 	STREAM_IDLE_BACKOFF_HINT_MS,
@@ -40,73 +41,44 @@ describe("rate-limit reset timestamps", () => {
 });
 
 describe("rate_limit_event allowed_warning", () => {
-	it("suppresses low fractional utilization for seven_day warnings", () => {
-		const warning = formatAllowedRateLimitWarning({
-			status: "allowed_warning",
-			rateLimitType: "seven_day",
-			utilization: 0.01,
-		});
-
-		assert.equal(warning, undefined);
+	it("warns only when SDK utilization reaches the threshold", () => {
+		for (const [utilization, expected] of [[0.01, undefined], [1, ["seven_day", "/usage"]], [0.91, ["seven_day", "/usage"]]]) {
+			const warning = formatAllowedRateLimitWarning({ status: "allowed_warning", rateLimitType: "seven_day", utilization });
+			assert.deepEqual(warning?.match(/seven_day|\/usage/g), expected, String(utilization));
+		}
 	});
 
-	// Exact 1 falls between the fractional (0<v<1) and percent (1<v<=100)
-	// branches unless handled directly, which suppresses the warning.
-	// at precisely 100% utilization. It now reads as the fractional form (100%):
-	// the fail-closed direction, since under the percent convention 1% is below
-	// the threshold anyway and nothing is lost by warning.
-	it("warns at exact 1, read as the fractional form (100%)", () => {
-		const warning = formatAllowedRateLimitWarning({
-			status: "allowed_warning",
-			rateLimitType: "seven_day",
-			utilization: 1,
-		});
-
-		assert.equal(warning, "Claude rate limit warning: nearing seven_day limit; check Claude Code /usage for exact utilization.");
-	});
-
-	it("normalizes the full boundary matrix", () => {
-		assert.equal(normalizeRateLimitUtilization(0), 0);
-		assert.equal(normalizeRateLimitUtilization(0.5), 50);
-		assert.equal(normalizeRateLimitUtilization(1), 100);
-		assert.equal(normalizeRateLimitUtilization(1.5), 1.5);
-		assert.equal(normalizeRateLimitUtilization(100), 100);
-		assert.equal(normalizeRateLimitUtilization(101), undefined);
-		assert.equal(normalizeRateLimitUtilization(NaN), undefined);
-		assert.equal(normalizeRateLimitUtilization(-1), undefined);
-		assert.equal(normalizeRateLimitUtilization("91"), undefined);
-		assert.equal(normalizeRateLimitUtilization(undefined), undefined);
-	});
-
-	it("normalizes fractional and percent values before thresholding", () => {
-		assert.equal(normalizeRateLimitUtilization(0.91), 91);
-		assert.equal(normalizeRateLimitUtilization(91), 91);
-		assert.equal(
-			formatAllowedRateLimitWarning({
-				status: "allowed_warning",
-				rateLimitType: "seven_day",
-				utilization: 0.91,
-			}),
-			"Claude rate limit warning: nearing seven_day limit; check Claude Code /usage for exact utilization.",
-		);
+	it("normalizes SDK fractional and percent utilization", () => {
+		for (const [input, expected] of [
+			[0, 0], [0.5, 50], [1, 100], [1.5, 1.5], [100, 100],
+			[101, undefined], [NaN, undefined], [-1, undefined],
+			["91", undefined], [undefined, undefined], [0.91, 91], [91, 91],
+		]) {
+			assert.equal(normalizeRateLimitUtilization(input), expected, String(input));
+		}
 	});
 });
 
 describe("stream-idle timeout", () => {
 	it("parses env timeout with seconds default and disable value", () => {
-		assert.equal(streamIdleTimeoutMsFromEnv({}), DEFAULT_STREAM_IDLE_TIMEOUT_MS);
-		assert.equal(streamIdleTimeoutMsFromEnv({ CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT: "45" }), 45_000);
-		assert.equal(streamIdleTimeoutMsFromEnv({ CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT: "250ms" }), 250);
-		assert.equal(streamIdleTimeoutMsFromEnv({ CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT: "2m" }), 120_000);
-		assert.equal(streamIdleTimeoutMsFromEnv({ CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT: "0" }), 0);
-		assert.equal(streamIdleTimeoutMsFromEnv({ CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT: "bogus" }), DEFAULT_STREAM_IDLE_TIMEOUT_MS);
+		for (const [env, expected] of [
+			[{}, DEFAULT_STREAM_IDLE_TIMEOUT_MS],
+			[{ CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT: "45" }, 45_000],
+			[{ CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT: "250ms" }, 250],
+			[{ CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT: "2m" }, 120_000],
+			[{ CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT: "0" }, 0],
+			[{ CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT: "bogus" }, DEFAULT_STREAM_IDLE_TIMEOUT_MS],
+		]) {
+			assert.equal(streamIdleTimeoutMsFromEnv(env), expected, JSON.stringify(env));
+		}
 	});
 
 	it("builds an error that existing rate-limit classifiers can detect", () => {
 		const message = buildStreamIdleTimeoutErrorMessage(90_000);
-		assert.match(message, /stream idle timeout/i);
-		assert.match(message, /529 overloaded\/rate limit/i);
-		assert.match(message, new RegExp(String(STREAM_IDLE_BACKOFF_HINT_MS / 1000)));
+		assert.equal(classifyClaudeFailure(message), "rate-limit");
+		assert.match(message, /\b529\b/);
+		assert.match(message, /\b90s\b/);
+		assert.match(message, new RegExp(`\\b${STREAM_IDLE_BACKOFF_HINT_MS / 1000}s\\b`));
 	});
 
 	it("fires only while a Pi stream is waiting for first assistant output", () => {

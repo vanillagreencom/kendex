@@ -122,7 +122,8 @@ export function findUnpairedToolUses(messages: Array<{ role?: string; content?: 
 }
 
 export const LOST_TOOL_RESULT_TEXT =
-	"Claude bridge: the result of this tool call was lost before the session was rebuilt "
+	"tool-result-lost=interrupted\n"
+	+ "Claude bridge: the result of this tool call was lost before the session was rebuilt "
 	+ "(the turn was interrupted). Treat the call as failed — it may or may not have executed. "
 	+ "Re-run the tool if its output is still needed.";
 

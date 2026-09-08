@@ -36017,7 +36017,8 @@ async function listAccountConnectors(deps) {
   const { credentials, apiBase, signal } = deps;
   const fetchImpl = deps.fetchImpl ?? fetch;
   const url2 = connectorsListUrl(credentials.organizationUuid, apiBase);
-  const fail = (reason) => ({ ok: false, complete: false, reason: redactSecret(reason, credentials.accessToken) });
+  const fail = (key, value, reason) => ({ ok: false, complete: false, reason: redactSecret(`${key}=${JSON.stringify(value)}
+${reason}`, credentials.accessToken) });
   let response;
   try {
     response = await fetchImpl(url2, {
@@ -36031,32 +36032,32 @@ async function listAccountConnectors(deps) {
       signal
     });
   } catch (error51) {
-    return fail(`connector list request failed: ${errorText(error51)}`);
+    return fail("connector-request", "transport", `connector list request failed: ${errorText(error51)}`);
   }
   let bodyText;
   try {
     bodyText = await response.text();
   } catch (error51) {
-    return fail(`connector list response unreadable: ${errorText(error51)}`);
+    return fail("connector-response", "unreadable", `connector list response unreadable: ${errorText(error51)}`);
   }
   if (!response.ok) {
-    return fail(`connector list returned HTTP ${response.status}${apiErrorSuffix(bodyText)}`);
+    return fail("connector-http", response.status, `connector list returned HTTP ${response.status}${apiErrorSuffix(bodyText)}`);
   }
   let parsed;
   try {
     parsed = JSON.parse(bodyText);
   } catch {
-    return fail("connector list returned a non-JSON body");
+    return fail("connector-json", "invalid", "connector list returned a non-JSON body");
   }
   if (!Array.isArray(parsed?.results)) {
-    return fail("connector list response had no results array");
+    return fail("connector-results", "not-array", "connector list response had no results array");
   }
   const connectors = [];
   for (const raw of parsed.results) {
     const entry = raw;
     const name = nonEmptyString(entry?.name);
     if (!name) {
-      return fail("connector list contained an entry with no name");
+      return fail("connector-name", connectors.length, "connector list contained an entry with no name");
     }
     connectors.push({
       name,
@@ -36369,7 +36370,8 @@ function connectorWriteDenyOutput(toolName) {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
-      permissionDecisionReason: `Connector write tool "${toolName}" is blocked in read-only connector mode. Connector writes must go through the host application's gated approval flow.`
+      permissionDecisionReason: `connector-write-denied=${JSON.stringify(toolName)}
+Connector write tool "${toolName}" is blocked in read-only connector mode. Connector writes must go through the host application's gated approval flow.`
     }
   };
 }
@@ -36761,7 +36763,8 @@ var DRAIN_CAUSE_TEXT = {
 };
 function interruptedToolCallResult(cause) {
   return {
-    content: [{ type: "text", text: `Claude bridge: ${DRAIN_CAUSE_TEXT[cause]} before this tool call's result was delivered. The call did not complete and produced no output.` }],
+    content: [{ type: "text", text: `tool-call-drain=${cause}
+Claude bridge: ${DRAIN_CAUSE_TEXT[cause]} before this tool call's result was delivered. The call did not complete and produced no output.` }],
     isError: true
   };
 }
@@ -36780,7 +36783,7 @@ function drainPendingToolCalls(queryCtx, cause) {
 }
 function strandedToolCallResult() {
   return {
-    content: [{ type: "text", text: "Claude bridge: this tool call was never forwarded to Pi before its turn ended, so it did not execute and no result can arrive. Re-run the tool." }],
+    content: [{ type: "text", text: "tool-call-stranded=unforwarded\nClaude bridge: this tool call was never forwarded to Pi before its turn ended, so it did not execute and no result can arrive. Re-run the tool." }],
     isError: true
   };
 }
@@ -37004,7 +37007,7 @@ var QueryContext = class {
   turnSawStreamEvent = false;
   turnSawToolCall = false;
   get turnBlocks() {
-    if (!this.turnOutput) throw new Error("turnBlocks accessed before resetTurnState");
+    if (!this.turnOutput) throw new Error("turn-state-uninitialized=turnBlocks\nturnBlocks accessed before resetTurnState");
     return this.turnOutput.content;
   }
   resetTurnState(model) {
@@ -37238,13 +37241,13 @@ function stackDepth() {
 }
 function pushContext() {
   const state = lane();
-  if (!state.current.activeQuery) throw new Error("pushContext() called with no active query");
+  if (!state.current.activeQuery) throw new Error("query-stack-push=inactive\npushContext() called with no active query");
   state.stack.push(state.current);
   state.current = new QueryContext();
 }
 function popContext() {
   const state = lane();
-  if (state.stack.length === 0) throw new Error("popContext() called with empty stack");
+  if (state.stack.length === 0) throw new Error("query-stack-pop=empty\npopContext() called with empty stack");
   const parent = state.stack[state.stack.length - 1];
   parent.deferredUserMessages.push(...state.current.deferredUserMessages);
   state.current = state.stack.pop();
@@ -37340,7 +37343,7 @@ function findUnpairedToolUses(messages) {
   }
   return missing;
 }
-var LOST_TOOL_RESULT_TEXT = "Claude bridge: the result of this tool call was lost before the session was rebuilt (the turn was interrupted). Treat the call as failed \u2014 it may or may not have executed. Re-run the tool if its output is still needed.";
+var LOST_TOOL_RESULT_TEXT = "tool-result-lost=interrupted\nClaude bridge: the result of this tool call was lost before the session was rebuilt (the turn was interrupted). Treat the call as failed \u2014 it may or may not have executed. Re-run the tool if its output is still needed.";
 function insertLostToolResultPlaceholders(messages, missing) {
   const block = (id2) => ({ type: "tool_result", tool_use_id: id2, content: LOST_TOOL_RESULT_TEXT, is_error: true });
   const byAssistant = /* @__PURE__ */ new Map();
@@ -37527,7 +37530,8 @@ function reportToolResultMismatch(queryCtx, reason, cwd, opts = {}) {
       unmatchedResultIds: progress.unmatchedResultIds
     });
     safeNotify(
-      `Claude bridge: tool result delivery interrupted during ${reason}; delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, waiting=${progress.waitingCount}, queued=${progress.queuedCount}, unmatched=${progress.unmatchedResultCount}${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. ` + (queryCtx.detachedFromSharedSession ? `Detached one-shot query \u2014 shared Claude session record left untouched; ${diagGuidance()}.` : `Claude session will rebuild before the next turn; ${diagGuidance()}.`),
+      `tool-result-mismatch=${JSON.stringify({ delivered: progress.deliveredCount, expected: progress.expectedCount, resolved: progress.resolvedCount, diagnostic: DEBUG ? diagLogPath() : "CLAUDE_BRIDGE_DEBUG=1" })}
+Claude bridge: tool result delivery interrupted during ${reason}; delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, waiting=${progress.waitingCount}, queued=${progress.queuedCount}, unmatched=${progress.unmatchedResultCount}${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. ` + (queryCtx.detachedFromSharedSession ? `Detached one-shot query \u2014 shared Claude session record left untouched; ${diagGuidance()}.` : `Claude session will rebuild before the next turn; ${diagGuidance()}.`),
       "error"
     );
     return true;
@@ -37687,7 +37691,9 @@ function claudeAuthSourceLabel(env = process.env) {
   return "Claude Code login";
 }
 function buildNativeProvider(piAi2, models, streamSimple, env = process.env, hasCredentials = () => hasClaudeCredentials(env)) {
-  if (!supportsNativeProvider(piAi2)) throw new Error(NATIVE_PROVIDER_UNSUPPORTED_MESSAGE);
+  if (!supportsNativeProvider(piAi2)) {
+    throw Object.assign(new Error(NATIVE_PROVIDER_UNSUPPORTED_MESSAGE), { code: "CLAUDE_BRIDGE_NATIVE_PROVIDER_UNSUPPORTED" });
+  }
   const stamped = models.map((model) => ({ ...model, api: "claude-bridge", baseUrl: "claude-bridge", provider: PROVIDER_ID }));
   const streams = {
     stream: streamSimple,
@@ -53144,28 +53150,33 @@ function verifyWrittenSession(jsonlPath, expectedSessionId, expectedRecordCount)
   try {
     st2 = statSync3(jsonlPath);
   } catch (e) {
-    warnings.push(`file missing after save \u2014 path=${jsonlPath} err=${e.message}`);
+    warnings.push(`session-file-missing=${jsonlPath}
+File missing after save: ${e.message}`);
     return warnings;
   }
   let summary;
   try {
     summary = summarizeJsonl(jsonlPath);
   } catch (e) {
-    warnings.push(`file unreadable \u2014 path=${jsonlPath} size=${st2.size} err=${e.message}`);
+    warnings.push(`session-file-unreadable=${jsonlPath}
+File unreadable: size=${st2.size} error=${e.message}`);
     return warnings;
   }
   if (summary.count !== expectedRecordCount) {
-    warnings.push(`record count mismatch \u2014 expected=${expectedRecordCount} actual=${summary.count} path=${jsonlPath} bytes=${st2.size}`);
+    warnings.push(`session-record-count=${summary.count} expected=${expectedRecordCount}
+Record count differs: path=${jsonlPath} bytes=${st2.size}`);
     return warnings;
   }
   try {
     const firstRec = JSON.parse(summary.firstLine ?? "");
     const lastRec = JSON.parse(summary.lastLine ?? "");
     if (firstRec.sessionId !== expectedSessionId || lastRec.sessionId !== expectedSessionId) {
-      warnings.push(`sessionId drift \u2014 expected=${expectedSessionId} first=${firstRec.sessionId} last=${lastRec.sessionId}`);
+      warnings.push(`session-id-drift=${expectedSessionId} first=${firstRec.sessionId} last=${lastRec.sessionId}
+Session identity differs from the expected identity.`);
     }
   } catch (e) {
-    warnings.push(`malformed JSONL \u2014 path=${jsonlPath} err=${e.message}`);
+    warnings.push(`session-json-invalid=${jsonlPath}
+Malformed JSONL: ${e.message}`);
   }
   return warnings;
 }
@@ -53481,12 +53492,14 @@ function canonicalize(p) {
   }
 }
 function shouldRestorePersistedBridgeEntry(persisted, currentPiSessionId, currentCwd) {
-  if (!persisted.piSessionId) return "missing piSessionId";
+  if (!persisted.piSessionId) return "restore-session-missing=piSessionId\nMissing piSessionId.";
   if (currentPiSessionId && persisted.piSessionId !== currentPiSessionId) {
-    return `piSessionId mismatch (persisted=${persisted.piSessionId} current=${currentPiSessionId})`;
+    return `restore-session-mismatch=${persisted.piSessionId} current=${currentPiSessionId}
+The persisted session differs from the active session.`;
   }
   if (currentCwd && canonicalize(persisted.cwd) !== canonicalize(currentCwd)) {
-    return `cwd mismatch (persisted=${persisted.cwd} current=${currentCwd})`;
+    return `restore-cwd-mismatch=${persisted.cwd} current=${currentCwd}
+The persisted working directory differs from the active directory.`;
   }
   return void 0;
 }
@@ -53640,7 +53653,7 @@ function verifyWrittenSession2(jsonlPath, expectedSessionId, expectedRecordCount
   for (const msg of warnings) {
     debug(`WARNING session verify: ${msg}`);
     safeNotify(
-      `Session file issue: ${msg}
+      `${msg}
 cwd=${displayPath(cwd)} realpath=${displayPath(safeRealpath(cwd))}
 Please copy and paste this message into a new issue at https://github.com/vanillagreencom/kendex/issues/new` + (DEBUG ? ` and attach ${DEBUG_LOG_PATH}` : ` (rerun with CLAUDE_BRIDGE_DEBUG=1 to capture a debug log)`),
       "warning"
@@ -54009,7 +54022,8 @@ function reapStaleQueuedResults(c) {
   diagDump("stale_queued_tool_results_parked", { count: stale.length, stale });
   appendIntegrityEntry("stale_queued_tool_results_parked", { count: stale.length, stale });
   safeNotify(
-    `Claude bridge: parked ${stale.length} early tool result(s) whose handler has not arrived (${names.slice(0, 6).join(", ")}${names.length > 6 ? ", \u2026" : ""}). A late handler can still consume them.`,
+    `queued-results-parked=${JSON.stringify({ count: stale.length, tools: names })}
+Claude bridge: parked ${stale.length} early tool result(s) whose handler has not arrived (${names.slice(0, 6).join(", ")}${names.length > 6 ? ", \u2026" : ""}). A late handler can still consume them.`,
     "warning"
   );
 }

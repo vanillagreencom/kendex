@@ -23,33 +23,17 @@ const ENTRY = (overrides = {}) => ({
 });
 
 describe("shouldRestorePersistedBridgeEntry", () => {
-	it("accepts an entry whose piSessionId and cwd match the active session", () => {
-		assert.equal(shouldRestorePersistedBridgeEntry(ENTRY(), "pi-A", "/repo"), undefined);
-	});
-
-	it("rejects entries copied across pi sessions (the fork case)", () => {
-		const reason = shouldRestorePersistedBridgeEntry(ENTRY({ piSessionId: "pi-PARENT" }), "pi-FORK", "/repo");
-		assert.match(reason ?? "", /piSessionId mismatch/);
-	});
-
-	it("rejects legacy entries that predate piSessionId tagging", () => {
-		const reason = shouldRestorePersistedBridgeEntry(ENTRY({ piSessionId: undefined }), "pi-A", "/repo");
-		assert.match(reason ?? "", /missing piSessionId/);
-	});
-
-	it("rejects entries whose cwd no longer matches", () => {
-		const reason = shouldRestorePersistedBridgeEntry(ENTRY({ cwd: "/old" }), "pi-A", "/new");
-		assert.match(reason ?? "", /cwd mismatch/);
-	});
-
-	it("accepts when current cwd is unknown (older host plumbing)", () => {
-		assert.equal(shouldRestorePersistedBridgeEntry(ENTRY(), "pi-A", undefined), undefined);
-	});
-
-	it("accepts when current piSessionId is unknown but the entry has one", () => {
-		// Without a current id we cannot prove a mismatch; the fingerprint check
-		// downstream will catch most divergences. Accepting here matches the
-		// defensive 'when in doubt let downstream filter' policy.
-		assert.equal(shouldRestorePersistedBridgeEntry(ENTRY(), undefined, "/repo"), undefined);
+	it("checks the persisted identity against the active session", () => {
+		const rows = [
+			{ name: "matching identity", entry: ENTRY(), currentId: "pi-A", cwd: "/repo", expected: undefined },
+			{ name: "forked session", entry: ENTRY({ piSessionId: "pi-PARENT" }), currentId: "pi-FORK", cwd: "/repo", expected: "restore-session-mismatch=pi-PARENT current=pi-FORK" },
+			{ name: "missing session identity", entry: ENTRY({ piSessionId: undefined }), currentId: "pi-A", cwd: "/repo", expected: "restore-session-missing=piSessionId" },
+			{ name: "changed directory", entry: ENTRY({ cwd: "/old" }), currentId: "pi-A", cwd: "/new", expected: "restore-cwd-mismatch=/old current=/new" },
+			{ name: "unknown current directory", entry: ENTRY(), currentId: "pi-A", cwd: undefined, expected: undefined },
+			{ name: "unknown current session", entry: ENTRY(), currentId: undefined, cwd: "/repo", expected: undefined },
+		];
+		for (const { name, entry, currentId, cwd, expected } of rows) {
+			assert.equal(shouldRestorePersistedBridgeEntry(entry, currentId, cwd)?.split("\n")[0], expected, name);
+		}
 	});
 });

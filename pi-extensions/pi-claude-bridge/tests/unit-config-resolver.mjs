@@ -20,6 +20,7 @@ function withTempDirs(fn) {
 		mkdirSync(user, { recursive: true });
 		mkdirSync(join(project, ".pi"), { recursive: true });
 		process.env.PI_CODING_AGENT_DIR = user;
+		process.env.HOME = join(root, "home");
 		delete process.env.CLAUDE_BRIDGE_ISOLATED;
 		return fn({ root, user, project });
 	} finally {
@@ -35,8 +36,9 @@ function withTempDirs(fn) {
 
 describe("resolveExternalConfigValue", () => {
 	it("reports no value when no legacy config file exists", () => withTempDirs(({ project }) => {
-		assert.deepEqual(resolveExternalConfigValue("enabled", project), { explicit: false, value: undefined });
-		assert.deepEqual(resolveExternalConfigValue("fastMode", project), { explicit: false, value: undefined });
+		for (const key of ["enabled", "fastMode"]) {
+			assert.deepEqual(resolveExternalConfigValue(key, project), { explicit: false, value: undefined }, key);
+		}
 	}));
 
 	it("reports a global legacy value with the file that supplied it", () => withTempDirs(({ user, project }) => {
@@ -88,11 +90,14 @@ describe("resolveExternalConfigValue", () => {
 			},
 		}));
 
-		assert.equal(resolveExternalConfigValue("enableConnectors", project).value, true);
-		assert.equal(resolveExternalConfigValue("forceEffort", project).value, "max");
-		assert.deepEqual(resolveExternalConfigValue("modelEffortOverrides", project).value, { "claude-opus-4-8": "max" });
-		assert.equal(resolveExternalConfigValue("pathToClaudeCodeExecutable", project).value, "/opt/claude/bin/claude");
-		assert.equal(resolveExternalConfigValue("includeAppendSystemPromptMd", project).value, true);
+		for (const [key, expected] of [
+			["enableConnectors", true], ["forceEffort", "max"],
+			["modelEffortOverrides", { "claude-opus-4-8": "max" }],
+			["pathToClaudeCodeExecutable", "/opt/claude/bin/claude"],
+			["includeAppendSystemPromptMd", true],
+		]) {
+			assert.deepEqual(resolveExternalConfigValue(key, project).value, expected, key);
+		}
 	}));
 
 	it("resolves the flat manifest key shape the same way loadConfig does", () => withTempDirs(({ user, project }) => {
@@ -113,13 +118,14 @@ describe("resolveExternalConfigValue", () => {
 	}));
 
 	it("drops values the loader would normalize away", () => withTempDirs(({ user, project }) => {
-		writeFileSync(join(user, "claude-bridge.json"), JSON.stringify({
-			provider: { connectorWriteMode: "read-only", forceEffort: "ultracode" },
-		}));
-
-		assert.equal(resolveExternalConfigValue("forceEffort", project).explicit, false);
-		assert.equal(resolveExternalConfigValue("connectorWriteMode", project).explicit, false);
-		assert.equal(loadConfig(project).provider?.forceEffort, undefined);
+		for (const [key, value] of [["forceEffort", "ultracode"], ["connectorWriteMode", "read-only"]]) {
+			writeFileSync(join(user, "claude-bridge.json"), JSON.stringify({ provider: { [key]: value } }));
+			assert.deepEqual(
+				{ explicit: resolveExternalConfigValue(key, project).explicit, loaded: loadConfig(project).provider?.[key] },
+				{ explicit: false, loaded: undefined },
+				key,
+			);
+		}
 	}));
 
 	it("ignores the project legacy file in isolated mode", () => withTempDirs(({ user, project }) => {
@@ -146,8 +152,9 @@ describe("resolveExternalConfigValue", () => {
 			kendex: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": { enabled: true, fastMode: true } } } },
 		}));
 
-		assert.equal(resolveExternalConfigValue("enabled", project).explicit, false);
-		assert.equal(resolveExternalConfigValue("fastMode", project).explicit, false);
+		for (const key of ["enabled", "fastMode"]) {
+			assert.equal(resolveExternalConfigValue(key, project).explicit, false, key);
+		}
 	}));
 
 	it("reports no value for keys it does not own", () => withTempDirs(({ user, project }) => {

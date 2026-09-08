@@ -3,7 +3,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { sanitizeToolId, convertPiMessages } from "../src/convert.js";
+import { convertPiMessages } from "../src/convert.js";
 import { findUnpairedToolUses, recoverLaterToolResults } from "../src/tool-pairing-audit.js";
 
 /** Shorthand: convert pi messages and return just the anthropic messages. */
@@ -14,34 +14,18 @@ function convert(messages, customToolNameToSdk) {
 // --- Tests ---
 
 describe("tool ID sanitization", () => {
-	it("Kimi-style IDs with dots and colons", () => {
-		const msgs = [
-			{ role: "assistant", content: [{ type: "toolCall", id: "functions.bash:0", name: "bash", arguments: { cmd: "ls" } }] },
-			{ role: "toolResult", toolCallId: "functions.bash:0", content: "file.txt" },
-		];
-		const result = convert(msgs);
-		assert.equal(result[0].content[0].id, "functions_bash_0");
-		assert.equal(result[1].content[0].tool_use_id, "functions_bash_0");
-	});
-
-	it("IDs with spaces and special chars", () => {
-		const msgs = [
-			{ role: "assistant", content: [{ type: "toolCall", id: "tool call#1@foo", name: "bash", arguments: {} }] },
-			{ role: "toolResult", toolCallId: "tool call#1@foo", content: "ok" },
-		];
-		const result = convert(msgs);
-		assert.equal(result[0].content[0].id, "tool_call_1_foo");
-		assert.equal(result[1].content[0].tool_use_id, "tool_call_1_foo");
-	});
-
-	it("already-valid Anthropic IDs pass through unchanged", () => {
-		const msgs = [
-			{ role: "assistant", content: [{ type: "toolCall", id: "toolu_abc123-XYZ", name: "read", arguments: {} }] },
-			{ role: "toolResult", toolCallId: "toolu_abc123-XYZ", content: "data" },
-		];
-		const result = convert(msgs);
-		assert.equal(result[0].content[0].id, "toolu_abc123-XYZ");
-		assert.equal(result[1].content[0].tool_use_id, "toolu_abc123-XYZ");
+	it("sanitizes tool-use and tool-result IDs identically", () => {
+		for (const [id, name, args, content, expected] of [
+			["functions.bash:0", "bash", { cmd: "ls" }, "file.txt", "functions_bash_0"],
+			["tool call#1@foo", "bash", {}, "ok", "tool_call_1_foo"],
+			["toolu_abc123-XYZ", "read", {}, "data", "toolu_abc123-XYZ"],
+		]) {
+			const result = convert([
+				{ role: "assistant", content: [{ type: "toolCall", id, name, arguments: args }] },
+				{ role: "toolResult", toolCallId: id, content },
+			]);
+			assert.deepEqual([result[0].content[0].id, result[1].content[0].tool_use_id], [expected, expected], id);
+		}
 	});
 
 	it("tool_use and tool_result IDs stay paired after sanitization", () => {
@@ -61,112 +45,29 @@ describe("tool ID sanitization", () => {
 });
 
 describe("empty text block filtering", () => {
-	it("assistant with empty text + toolCall → only toolCall", () => {
-		const msgs = [
-			{ role: "assistant", content: [
-				{ type: "text", text: "" },
-				{ type: "toolCall", id: "abc", name: "read", arguments: {} },
-			]},
-		];
-		const result = convert(msgs);
-		assert.equal(result.length, 1);
-		assert.equal(result[0].content.length, 1);
-		assert.equal(result[0].content[0].type, "tool_use");
-	});
-
-	it("assistant with only empty text → placeholder", () => {
-		const msgs = [
-			{ role: "assistant", content: [{ type: "text", text: "" }] },
-		];
-		const result = convert(msgs);
-		assert.equal(result.length, 1);
-		assert.equal(result[0].content[0].text, "[incompatible content omitted]");
-	});
-
-	it("assistant with non-empty text → preserved", () => {
-		const msgs = [
-			{ role: "assistant", content: [{ type: "text", text: "Hello world" }] },
-		];
-		const result = convert(msgs);
-		assert.equal(result.length, 1);
-		assert.equal(result[0].content[0].text, "Hello world");
-	});
-
-	it("assistant with multiple text blocks, some empty", () => {
-		const msgs = [
-			{ role: "assistant", content: [
-				{ type: "text", text: "" },
-				{ type: "text", text: "real content" },
-				{ type: "text", text: "" },
-			]},
-		];
-		const result = convert(msgs);
-		assert.equal(result.length, 1);
-		assert.equal(result[0].content.length, 1);
-		assert.equal(result[0].content[0].text, "real content");
+	it("filters empty assistant text while retaining usable blocks", () => {
+		for (const { name, content, expected } of [
+			{ name: "empty text before tool", content: [{ type: "text", text: "" }, { type: "toolCall", id: "abc", name: "read", arguments: {} }], expected: [{ type: "tool_use", id: "abc", name: "Read", input: {} }] },
+			{ name: "only empty text", content: [{ type: "text", text: "" }], expected: [{ type: "text", text: "[incompatible content omitted]" }] },
+			{ name: "non-empty text", content: [{ type: "text", text: "Hello world" }], expected: [{ type: "text", text: "Hello world" }] },
+			{ name: "interleaved empty text", content: [{ type: "text", text: "" }, { type: "text", text: "real content" }, { type: "text", text: "" }], expected: [{ type: "text", text: "real content" }] },
+		]) {
+			assert.deepEqual(convert([{ role: "assistant", content }]), [{ role: "assistant", content: expected }], name);
+		}
 	});
 });
 
 describe("thinking block filtering", () => {
-	it("non-Anthropic provider thinking blocks dropped", () => {
-		const msgs = [
-			{ role: "assistant", content: [
-				{ type: "thinking", thinking: "let me think..." },
-				{ type: "text", text: "answer" },
-			]},
-		];
-		const result = convert(msgs);
-		assert.equal(result.length, 1);
-		assert.equal(result[0].content.length, 1);
-		assert.equal(result[0].content[0].type, "text");
-	});
-
-	it("canonical pi-claude thinking with signature is preserved", () => {
-		const msgs = [
-			{ role: "assistant", provider: "pi-claude", content: [
-				{ type: "thinking", thinking: "reasoning...", thinkingSignature: "sig123" },
-				{ type: "text", text: "answer" },
-			]},
-		];
-		const result = convert(msgs);
-		assert.equal(result[0].content.length, 2);
-		assert.equal(result[0].content[0].type, "thinking");
-		assert.equal(result[0].content[0].signature, "sig123");
-	});
-
-	it("Anthropic provider via api field", () => {
-		const msgs = [
-			{ role: "assistant", api: "anthropic", content: [
-				{ type: "thinking", thinking: "hmm", thinkingSignature: "sig456" },
-				{ type: "text", text: "done" },
-			]},
-		];
-		const result = convert(msgs);
-		assert.equal(result[0].content.length, 2);
-		assert.equal(result[0].content[0].type, "thinking");
-	});
-
-	it("Anthropic provider thinking WITHOUT signature → dropped", () => {
-		const msgs = [
-			{ role: "assistant", provider: "pi-claude", content: [
-				{ type: "thinking", thinking: "no sig" },
-				{ type: "text", text: "answer" },
-			]},
-		];
-		const result = convert(msgs);
-		assert.equal(result[0].content.length, 1);
-		assert.equal(result[0].content[0].type, "text");
-	});
-
-	it("assistant with only thinking (non-Anthropic) → placeholder", () => {
-		const msgs = [
-			{ role: "assistant", content: [
-				{ type: "thinking", thinking: "deep thoughts" },
-			]},
-		];
-		const result = convert(msgs);
-		assert.equal(result.length, 1);
-		assert.equal(result[0].content[0].text, "[incompatible content omitted]");
+	it("preserves signed Claude thinking and filters incompatible thinking", () => {
+		for (const { name, provenance = {}, content, expected } of [
+			{ name: "other provider", content: [{ type: "thinking", thinking: "let me think..." }, { type: "text", text: "answer" }], expected: [{ type: "text", text: "answer" }] },
+			{ name: "canonical provider", provenance: { provider: "pi-claude" }, content: [{ type: "thinking", thinking: "reasoning...", thinkingSignature: "sig123" }, { type: "text", text: "answer" }], expected: [{ type: "thinking", thinking: "reasoning...", signature: "sig123" }, { type: "text", text: "answer" }] },
+			{ name: "Anthropic API", provenance: { api: "anthropic" }, content: [{ type: "thinking", thinking: "hmm", thinkingSignature: "sig456" }, { type: "text", text: "done" }], expected: [{ type: "thinking", thinking: "hmm", signature: "sig456" }, { type: "text", text: "done" }] },
+			{ name: "missing signature", provenance: { provider: "pi-claude" }, content: [{ type: "thinking", thinking: "no sig" }, { type: "text", text: "answer" }], expected: [{ type: "text", text: "answer" }] },
+			{ name: "only incompatible thinking", content: [{ type: "thinking", thinking: "deep thoughts" }], expected: [{ type: "text", text: "[incompatible content omitted]" }] },
+		]) {
+			assert.deepEqual(convert([{ role: "assistant", ...provenance, content }]), [{ role: "assistant", content: expected }], name);
+		}
 	});
 
 	it("non-Claude assistant provider provenance is preserved", () => {
@@ -343,21 +244,14 @@ describe("message structure", () => {
 		assert.equal(result[3].content[0].text, "The file says hello world.");
 	});
 
-	it("user string content", () => {
-		assert.equal(convert([{ role: "user", content: "hello" }])[0].content, "hello");
-	});
-
-	it("user empty string → [empty]", () => {
-		assert.equal(convert([{ role: "user", content: "" }])[0].content, "[empty]");
-	});
-
-	it("user with array content containing text blocks", () => {
-		const result = convert([{ role: "user", content: [{ type: "text", text: "hi" }] }]);
-		assert.deepEqual(result[0].content, [{ type: "text", text: "hi" }]);
-	});
-
-	it("user with empty text blocks in array → [image] fallback", () => {
-		assert.equal(convert([{ role: "user", content: [{ type: "text", text: "" }] }])[0].content, "[image]");
+	it("converts user text content shapes", () => {
+		for (const [content, expected] of [
+			["hello", "hello"], ["", "[empty]"],
+			[[{ type: "text", text: "hi" }], [{ type: "text", text: "hi" }]],
+			[[{ type: "text", text: "" }], "[image]"],
+		]) {
+			assert.deepEqual(convert([{ role: "user", content }])[0].content, expected, JSON.stringify(content));
+		}
 	});
 
 	it("tool name mapping: pi names → SDK names", () => {

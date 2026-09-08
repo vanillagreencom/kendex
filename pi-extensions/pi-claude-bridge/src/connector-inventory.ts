@@ -244,8 +244,8 @@ export async function listAccountConnectors(deps: ListConnectorsDeps): Promise<C
 	// fetch/proxy layer is free to put the request headers — and therefore the
 	// bearer token — into the message it throws, and that message would otherwise
 	// land in a reason string that callers log.
-	const fail = (reason: string): ConnectorInventory =>
-		({ ok: false, complete: false, reason: redactSecret(reason, credentials.accessToken) });
+	const fail = (key: string, value: string | number, reason: string): ConnectorInventory =>
+		({ ok: false, complete: false, reason: redactSecret(`${key}=${JSON.stringify(value)}\n${reason}`, credentials.accessToken) });
 
 	let response: Response;
 	try {
@@ -260,32 +260,32 @@ export async function listAccountConnectors(deps: ListConnectorsDeps): Promise<C
 			signal,
 		});
 	} catch (error) {
-		return fail(`connector list request failed: ${errorText(error)}`);
+		return fail("connector-request", "transport", `connector list request failed: ${errorText(error)}`);
 	}
 
 	let bodyText: string;
 	try {
 		bodyText = await response.text();
 	} catch (error) {
-		return fail(`connector list response unreadable: ${errorText(error)}`);
+		return fail("connector-response", "unreadable", `connector list response unreadable: ${errorText(error)}`);
 	}
 
 	if (!response.ok) {
-		return fail(`connector list returned HTTP ${response.status}${apiErrorSuffix(bodyText)}`);
+		return fail("connector-http", response.status, `connector list returned HTTP ${response.status}${apiErrorSuffix(bodyText)}`);
 	}
 
 	let parsed: Json;
 	try {
 		parsed = JSON.parse(bodyText) as Json;
 	} catch {
-		return fail("connector list returned a non-JSON body");
+		return fail("connector-json", "invalid", "connector list returned a non-JSON body");
 	}
 
 	// A missing/!Array `results` is a protocol change, not an empty account. Treat
 	// it as failure — reporting "no connectors" here would recreate exactly the
 	// silent-wrong-answer failure this module exists to remove.
 	if (!Array.isArray(parsed?.results)) {
-		return fail("connector list response had no results array");
+		return fail("connector-results", "not-array", "connector list response had no results array");
 	}
 
 	const connectors: ConnectorEntry[] = [];
@@ -296,7 +296,7 @@ export async function listAccountConnectors(deps: ListConnectorsDeps): Promise<C
 		// so silently keeping it would understate the inventory in a way the
 		// caller could not detect. Fail instead.
 		if (!name) {
-			return fail("connector list contained an entry with no name");
+			return fail("connector-name", connectors.length, "connector list contained an entry with no name");
 		}
 		connectors.push({
 			name,

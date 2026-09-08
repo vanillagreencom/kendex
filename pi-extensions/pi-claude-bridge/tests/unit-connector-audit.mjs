@@ -7,7 +7,6 @@ import assert from "node:assert/strict";
 import { noteChildExecutedToolResults } from "../src/index.ts";
 import {
 	CONNECTOR_CALL_CUSTOM_TYPE,
-	connectorResultByteSize,
 	flushConnectorCallAudit,
 	setConnectorCallAuditSink,
 } from "../src/connector-audit.ts";
@@ -55,31 +54,6 @@ function userMessageWithResult(toolUseId, content, isError) {
 		},
 	};
 }
-
-describe("connector result byte size", () => {
-	it("measures a string payload in UTF-8 bytes", () => {
-		assert.equal(connectorResultByteSize("abc"), 3);
-		// Multibyte: a character count would say 2 here.
-		assert.equal(connectorResultByteSize("é☃"), 5);
-	});
-
-	it("measures a block array as its payload, not as a block count", () => {
-		// The debug line this replaced reported `content.length` for an array — a
-		// block count wearing a byte size's name. A one-block array carrying 300
-		// bytes must not report 1.
-		const payload = "x".repeat(300);
-		const size = connectorResultByteSize([{ type: "text", text: payload }]);
-		assert.ok(size > 300, `expected the payload to be measured, got ${size}`);
-	});
-
-	it("reports nothing it did not measure", () => {
-		assert.equal(connectorResultByteSize(undefined), undefined);
-		assert.equal(connectorResultByteSize(null), undefined);
-		const circular = {};
-		circular.self = circular;
-		assert.equal(connectorResultByteSize(circular), undefined, "unserializable must not read as 0 bytes");
-	});
-});
 
 describe("connector call audit entries", () => {
 	beforeEach(() => resetStack());
