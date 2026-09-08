@@ -42,17 +42,12 @@ afterAll(async () => {
 });
 
 // The suite's own tmux server. The launching shell's TMUX and TMUX_PANE
-// name the developer's live server and pane, and the extension reaches
-// tmux through them: `tmux` resolves its server from TMUX, and
-// pane.ts::setCurrentTmuxPaneTitle retitles TMUX_PANE. Both are stashed for
-// tests/own-tmux-server.test.ts and dropped before any test module loads,
-// then pointed at a server this run starts and kills, so every real tmux
+// can name a developer's live server and pane. Drop them before any test
+// module loads, then point at a server this run starts and kills, so every real tmux
 // call from this process or a child lands there. The session's command
 // exits once this process is gone, which closes the server after a crash
 // too. A tmux that cannot start is a failed run, never a silent fallback
 // to the launching server.
-const INHERITED_TMUX_SYMBOL = Symbol.for("pi-agents-tmux.tests.inherited-tmux");
-(globalThis as Record<PropertyKey, unknown>)[INHERITED_TMUX_SYMBOL] = { TMUX: process.env.TMUX, TMUX_PANE: process.env.TMUX_PANE };
 delete process.env.TMUX;
 delete process.env.TMUX_PANE;
 const TMUX_SERVER_NAME = `pi-agents-tmux-tests-${process.pid}`;

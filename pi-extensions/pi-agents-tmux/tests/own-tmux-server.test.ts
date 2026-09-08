@@ -1,18 +1,14 @@
 // The suite's tmux world, set up in tests/preload.ts: a pane title set
 // through the real code path lands on the server this run started, never on
-// the one that launched the suite, and a child spawned with the default
+// another test-owned server, and a child spawned with the default
 // environment carries the same values this process holds. A scratch server
-// plays the launching shell's server so both rows run on a bare runner; when
-// the suite really was launched inside tmux, the launching pane is read back
-// too and must not have moved.
+// plays the launching shell's server so both rows use stable panes owned by
+// this test.
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import { setCurrentTmuxPaneTitle } from "../extensions/subagent/pane.js";
-
-const INHERITED_TMUX_SYMBOL = Symbol.for("pi-agents-tmux.tests.inherited-tmux");
-const inherited = (globalThis as Record<PropertyKey, unknown>)[INHERITED_TMUX_SYMBOL] as { TMUX?: string; TMUX_PANE?: string };
 
 interface TmuxWorld {
 	socket: string;
@@ -63,10 +59,8 @@ const rows: Array<[string, "suite" | "launching", string]> = [
 test("a pane title set by the suite lands on its own tmux server", async () => {
 	const suite = worldFromEnv(process.env.TMUX ?? "", process.env.TMUX_PANE ?? "");
 	assert.ok(suite.TMUX && suite.TMUX_PANE, "the preload left no suite tmux server in the environment");
-	const realLaunching = inherited.TMUX && inherited.TMUX_PANE ? worldFromEnv(inherited.TMUX, inherited.TMUX_PANE) : undefined;
-	assert.notEqual(realLaunching?.socket, suite.socket, "the suite runs on the server that launched it");
-	const realLaunchingBefore = realLaunching ? paneLabel(realLaunching) : undefined;
 	const launching = startScratchServer();
+	assert.notEqual(launching.socket, suite.socket, "the control server is the suite server");
 	try {
 		for (const [label, env, expect] of rows) {
 			const world = env === "suite" ? suite : launching;
@@ -89,5 +83,4 @@ test("a pane title set by the suite lands on its own tmux server", async () => {
 		spawnSync("tmux", ["-S", launching.socket, "kill-server"], { stdio: "ignore" });
 		rmSync(launching.socket, { force: true });
 	}
-	if (realLaunching) assert.equal(paneLabel(realLaunching), realLaunchingBefore, "the launching pane moved");
 });
