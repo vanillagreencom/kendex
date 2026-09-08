@@ -1,3 +1,4 @@
+import { useWorld } from "./helpers/world.js";
 import { describe, expect, test } from "bun:test";
 
 import { visibleWidth } from "@earendil-works/pi-tui";
@@ -24,6 +25,8 @@ const markdownTheme = {
 function stripControl(text: string): string {
 	return text.replace(ANSI_RE, "");
 }
+
+useWorld();
 
 describe("compact user-message OSC 133 prompt zones", () => {
 	test("single-line upstream message markers move from content row to outer frame", () => {

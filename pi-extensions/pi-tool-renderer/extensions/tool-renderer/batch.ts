@@ -43,6 +43,19 @@ const TOOL_BATCH_MAX_OUTPUT_LINES = 2_000;
 const TOOL_BATCH_DEFAULT_CALL_TIMEOUT_MS = 120_000;
 const TOOL_BATCH_MIN_CALL_TIMEOUT_MS = 1_000;
 
+const batchMessages = {
+	empty: "batch_calls=0\nNo valid calls provided.",
+	limit: (count: number, max: number) => `batch_calls=${count} max_calls=${max}\nToo many calls (${count}). Max is ${max}.`,
+	unavailable: (tool: string) => `batch_tool_unavailable=${tool}\nBuilt-in tool unavailable: ${tool}`,
+	timeout: (tool: string, ms: number) => `batch_timeout_ms=${ms} tool=${tool}\ntool_batch inner call ${tool} timed out after ${ms}ms`,
+	error: (error: unknown) => `batch_error=${error instanceof Error ? error.name : typeof error}\n${error instanceof Error ? error.message : String(error)}`,
+	result: (succeeded: number, total: number) => `batch_succeeded=${succeeded} batch_total=${total}\nBatch: ${succeeded}/${total} succeeded`,
+};
+
+/** An owned diagnostic whose stable first line survives the tool result. */
+class BatchCallError extends Error {}
+
+
 function utf8Length(text: string): number {
 	return Buffer.byteLength(text, "utf8");
 }
@@ -224,7 +237,7 @@ function renderToolBatchText(items: BatchToolItem[], theme: any, expanded: boole
 
 function toolBatchOutput(items: BatchToolItem[]): string {
 	const failed = items.filter((item) => item.isError).length;
-	const lines = [`Batch: ${items.length - failed}/${items.length} succeeded`];
+	const lines = [batchMessages.result(items.length - failed, items.length)];
 	for (const item of items) {
 		const label = `${item.index + 1}. ${item.toolName}`;
 		lines.push("", `## ${label}`, item.isError ? "Status: failed" : "Status: completed", item.resultText || "(no output)");
@@ -262,10 +275,10 @@ export function registerToolBatch(pi: ExtensionAPI, agent: any, cwd: string): vo
 			const effectiveCwd = contextCwd(context, cwd);
 			const calls = normalizeBatchCalls(params?.calls);
 			const maxCalls = Math.max(1, Math.floor(settingNumber("batchMaxCalls", 8, effectiveCwd)));
-			if (calls.length === 0) return { content: [{ type: "text", text: "No valid calls provided." }], details: { failed: 0, items: [], succeeded: 0, total: 0 } };
+			if (calls.length === 0) return { content: [{ type: "text", text: batchMessages.empty }], details: { failed: 0, items: [], succeeded: 0, total: 0 }, isError: true };
 			if (calls.length > maxCalls) {
 				return {
-					content: [{ type: "text", text: `Too many calls (${calls.length}). Max is ${maxCalls}.` }],
+					content: [{ type: "text", text: batchMessages.limit(calls.length, maxCalls) }],
 					details: { failed: calls.length, items: [], succeeded: 0, total: calls.length },
 					isError: true,
 				};
@@ -289,16 +302,14 @@ export function registerToolBatch(pi: ExtensionAPI, agent: any, cwd: string): vo
 				let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 				try {
 					const original = getBuiltInTool(agent, effectiveCwd, call.tool);
-					if (!original?.execute) throw new Error(`Built-in tool unavailable: ${call.tool}`);
+					if (!original?.execute) throw new BatchCallError(batchMessages.unavailable(call.tool));
 					const timeoutPromise = new Promise<never>((_, reject) => {
 						timeoutHandle = setTimeout(() => {
 							// Reject the race promise BEFORE aborting so the timeout
 							// error wins over any AbortError the inner tool may raise
 							// in response to childController.abort().
 							reject(
-								new Error(
-									`tool_batch inner call ${call.tool} timed out after ${batchCallTimeoutMs}ms`,
-								),
+								new BatchCallError(batchMessages.timeout(call.tool, batchCallTimeoutMs)),
 							);
 							childController.abort();
 						}, batchCallTimeoutMs);
@@ -321,7 +332,7 @@ export function registerToolBatch(pi: ExtensionAPI, agent: any, cwd: string): vo
 						args: call.args,
 						index,
 						isError: true,
-						resultText: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+						resultText: error instanceof BatchCallError ? error.message : batchMessages.error(error),
 						toolName: call.tool,
 						truncated: false,
 					};
@@ -341,9 +352,8 @@ export function registerToolBatch(pi: ExtensionAPI, agent: any, cwd: string): vo
 		renderResult(result: any, { expanded, isPartial }: any, theme: any, context: any) {
 			if (isPartial) return makeTruncatedLines(renderToolBatchCallText(context?.args, theme, context?.cwd ?? cwd));
 			const details = result.details as BatchToolDetails | undefined;
-			if (!details?.items) return makeTruncatedLines(textContent(result) || "(no output)");
+			if (!details?.items?.length) return makeTruncatedLines(textContent(result) || "(no output)");
 			return makeTruncatedLines(renderToolBatchText(details.items, theme, expanded, context?.cwd ?? cwd));
 		},
 	});
 }
-

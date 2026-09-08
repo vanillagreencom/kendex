@@ -1,3 +1,4 @@
+import { useWorld } from "./helpers/world.js";
 import { describe, expect, test } from "bun:test";
 
 import { visibleWidth } from "@earendil-works/pi-tui";
@@ -21,6 +22,8 @@ const theme = {
 function stripControl(text: string): string {
 	return text.replace(ANSI_RE, "");
 }
+
+useWorld();
 
 describe("styled markdown code blocks", () => {
 	test("render code flush-left with background but no copy gutter", () => {
