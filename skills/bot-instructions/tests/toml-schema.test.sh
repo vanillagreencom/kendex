@@ -356,6 +356,8 @@ expect_finding() {
   bi_run "$@"
   if [ "$bi_status" -eq 0 ]; then
     bad "$label" "expected $want to red; the run passed"
+  elif [ "$bi_status" -ne 1 ]; then
+    bad "$label" "expected exit 1 with $want; exited $bi_status"
   elif ! printf '%s\n' "$bi_out" | grep -q "^$want:"; then
     bad "$label" "expected '$want:'; got: $(printf '%s' "$bi_out" | head -1)"
   elif printf '%s\n' "$bi_out" | grep -qF -- "$carries"; then

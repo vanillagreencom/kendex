@@ -214,10 +214,10 @@ bi_fired() {
 # The run rendered as `rc=<status> out=<data>`, by status class. 0 renders
 # the kind of the verb's first line (`clean`, `wrote`, `would-write`,
 # `nothing`, `adopted`, `points-at`; any other line verbatim). 1 renders the
-# fired validator set. 2 renders the source the first line names: the text
-# before its first `: `, or its first word when it names none (`git
-# ls-files -z`, `SKILL.md`, `--staged`, `usage`). A message's wording is
-# never rendered; the value it names is.
+# fired validator set. 2 renders the source the first line names, the text
+# before its first `: ` (`git ls-files -z`, `SKILL.md`, `usage`), or `-`
+# when the line names none; a value such a line carries is the row's `says`
+# column. A message's wording is never rendered; the value it names is.
 bi_render() {
   local out line
   line="${bi_out%%
@@ -238,7 +238,7 @@ bi_render() {
     *)
       case "$line" in
         *": "*) out="${line%%: *}" ;;
-        *) out="${line%% *}" ;;
+        *) out="-" ;;
       esac
       ;;
   esac

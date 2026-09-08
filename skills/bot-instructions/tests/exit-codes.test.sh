@@ -43,7 +43,7 @@ a clean repo checks with exit 0|rendered|check|0|clean|-
 a drift finding exits 1|rendered stale-copilot|check|1|drift|-
 git unable to answer exits 2, naming the command that could not|rendered no-git|check|2|git ls-files -z|-
 a spec copy with no doctrine source exits 2, naming the file|rendered spec:no-doctrine|check|2|SKILL.md|-
-flag misuse exits 2 before any read, naming the flag|rendered|render --staged|2|--staged|-
+flag misuse exits 2 before any read, naming the flag|rendered|render --staged|2|-|--staged
 an unknown verb exits 2 from the parser|rendered|bogus|2|usage|-
 "
 
