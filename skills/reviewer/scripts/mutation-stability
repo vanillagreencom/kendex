@@ -42,7 +42,7 @@ USAGE
 
 message() {
   level="$1" key="$2" field="$3" value="$4" text="$5"
-  printf '%s=%s %s=%s\n' "$level" "$key" "$field" "$value" >&2
+  printf '%s=%s %s=%q\n' "$level" "$key" "$field" "$value" >&2
   printf '%s\n' "$text" >&2
 }
 
