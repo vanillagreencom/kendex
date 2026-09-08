@@ -1,53 +1,74 @@
-// Integration-style test against the real pi-coding-agent serializeConversation
-// + convertToLlm helpers. The pure threshold math is covered in budget-guard.test.ts;
-// this exercises the wiring that converts a branch into a risk verdict and the
-// error path when serialization throws.
-
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import * as codingAgent from "@earendil-works/pi-coding-agent";
 import { transcriptRiskState } from "../extensions/qol/transcript-risk.ts";
 
-function userMessage(text: string) {
-	return { content: [{ text, type: "text" }], role: "user", timestamp: Date.now() } as any;
+type Message = Parameters<typeof transcriptRiskState>[0][number];
+
+function messages(text: string, reply: string): Message[] {
+	return [
+		{ content: [{ text, type: "text" }], role: "user", timestamp: 0 },
+		{ content: [{ text: reply, type: "text" }], role: "assistant", timestamp: 0 } as Message,
+	];
 }
 
-function assistantMessage(text: string) {
-	return { content: [{ text, type: "text" }], role: "assistant", timestamp: Date.now() } as any;
+// The preload owns the neutral serializer. These rows exercise the wrapper's
+// result and its dependency-error boundary, not Pi's serialization algorithm.
+const riskRows = [
+	{
+		name: "below the character budget",
+		messages: messages("hi", "hello"),
+		threshold: 1_000_000,
+		charFloor: 0,
+		serializerError: false,
+		expected: { chars: expect.any(Number), charsAboveFloor: true, error: undefined, exceeded: false, messageCount: 2, threshold: 1_000_000 },
+	},
+	{
+		name: "above the character budget",
+		messages: messages("x".repeat(50_000), "x".repeat(50_000)),
+		threshold: 10_000,
+		charFloor: 50_000,
+		serializerError: false,
+		expected: { chars: expect.any(Number), charsAboveFloor: true, error: undefined, exceeded: true, messageCount: 2, threshold: 10_000 },
+	},
+	{
+		name: "empty messages",
+		messages: [],
+		threshold: 1000,
+		charFloor: 0,
+		serializerError: false,
+		expected: { chars: 0, charsAboveFloor: false, error: undefined, exceeded: false, messageCount: 0, threshold: 1000 },
+	},
+	{
+		name: "disabled character budget",
+		messages: messages("hi", "hello").slice(0, 1),
+		threshold: 0,
+		charFloor: 0,
+		serializerError: false,
+		expected: { chars: 0, charsAboveFloor: false, error: undefined, exceeded: false, messageCount: 1, threshold: 0 },
+	},
+	{
+		name: "serializer dependency throws",
+		messages: messages("hi", "hello").slice(1),
+		threshold: 1000,
+		charFloor: 0,
+		serializerError: true,
+		expected: { chars: 0, charsAboveFloor: false, error: "boom", exceeded: false, messageCount: 1, threshold: 1000 },
+	},
+];
+
+if (riskRows.length === 0) throw new Error("Transcript risk table is empty");
+
+for (const row of riskRows) {
+	test(row.name, () => {
+		expect.hasAssertions();
+		const serializer = row.serializerError
+			? spyOn(codingAgent, "serializeConversation").mockImplementation(() => { throw new Error("boom"); })
+			: undefined;
+		try {
+			const result = transcriptRiskState(row.messages, row.threshold);
+			expect({ ...result, error: result.error, charsAboveFloor: result.chars > row.charFloor }).toEqual(row.expected);
+		} finally {
+			serializer?.mockRestore();
+		}
+	});
 }
-
-test("transcriptRiskState returns no warning when below the char budget", () => {
-	const messages = [userMessage("hi"), assistantMessage("hello")];
-	const result = transcriptRiskState(messages, 1_000_000);
-	expect(result.error).toBeUndefined();
-	expect(result.chars).toBeGreaterThan(0);
-	expect(result.exceeded).toBe(false);
-	expect(result.messageCount).toBe(2);
-});
-
-test("transcriptRiskState flags when the serialized payload exceeds the budget", () => {
-	const big = "x".repeat(50_000);
-	const messages = [userMessage(big), assistantMessage(big)];
-	const result = transcriptRiskState(messages, 10_000);
-	expect(result.error).toBeUndefined();
-	expect(result.exceeded).toBe(true);
-	expect(result.chars).toBeGreaterThan(50_000);
-});
-
-test("transcriptRiskState skips work when threshold is zero or messages empty", () => {
-	expect(transcriptRiskState([], 1000).exceeded).toBe(false);
-	expect(transcriptRiskState([userMessage("hi")], 0).exceeded).toBe(false);
-});
-
-test("transcriptRiskState returns an error state when serialization throws", () => {
-	const bad = [{ role: "assistant", content: { type: "weird", get text() { throw new Error("boom"); } } } as any];
-	const result = transcriptRiskState(bad, 1000);
-	// Either serialization tolerates the weirdness or it throws; in both
-	// cases the wrapper must return a defined result rather than throw.
-	expect(result.messageCount).toBe(1);
-	expect(result.exceeded).toBe(false);
-	// If serialization threw, the error field should carry the message;
-	// otherwise chars should be >= 0 and the call should still have completed.
-	if (result.error !== undefined) {
-		expect(typeof result.error).toBe("string");
-		expect(result.chars).toBe(0);
-	}
-});
