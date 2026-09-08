@@ -2,8 +2,7 @@
 //! verbs, and what `kendex check` says about a repository in each state.
 //!
 //! Two things are asserted, and the line between them is the rule. Where
-//! the package answers, what is asserted is relay: its own sentence and its
-//! own exit code, never a kendex paraphrase. Where it cannot be reached —
+//! the package answers, its stable records and exit code must reach the report. Where it cannot be reached —
 //! nothing local armed the repository, the render is gone, a directory
 //! would not open — kendex says only what it read off local state and names
 //! `kendex guard check`, and what is asserted is that it claims no more.
@@ -304,15 +303,7 @@ fn an_agent_of_the_same_name_is_not_consent_to_commit_hooks() {
     );
 }
 
-/// The package's two streams stay two streams.
-///
-/// Its contract is one summary line on stdout and its warnings on stderr
-/// (`install-git-hooks --help`), and a caller piping `kendex guard` is
-/// reading for that one line. Relaying both to stdout would hand them a
-/// `::warning::` stream to filter out.
-///
-/// `core.hooksPath` set is the case that prints both: the install stands
-/// down with a warning and still says what it did.
+/// Summary records stay on stdout and warning records stay on stderr.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn each_of_the_packages_streams_is_relayed_on_its_own() {
@@ -326,40 +317,32 @@ fn each_of_the_packages_streams_is_relayed_on_its_own() {
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
 
-    assert!(
-        stdout.contains("commit-guards git hooks:"),
-        "the summary line belongs on stdout: {stdout:?} {stderr:?}"
-    );
-    assert!(
-        !stdout.contains("::warning::"),
-        "a warning reached the stream a caller pipes: {stdout:?}"
-    );
-    assert!(
-        stderr.contains("::warning::"),
-        "the warning belongs on stderr: {stderr:?}"
-    );
-    // One line, so a caller can read it without filtering.
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert_eq!(
-        stdout.lines().count(),
+        stdout.lines().next(),
+        Some("commit-guards git hooks: skipped-hooks-path=.githooks"),
+        "{stdout:?}"
+    );
+    assert!(!stdout.contains("install-git-hooks:"), "{stdout:?}");
+    assert_eq!(
+        stderr.lines().next(),
+        Some("install-git-hooks: hooks-path-configured=.githooks"),
+        "{stderr:?}"
+    );
+    assert_eq!(
+        stdout
+            .lines()
+            .filter(|line| line.starts_with("commit-guards git hooks:"))
+            .count(),
         1,
-        "stdout is the summary and nothing else: {stdout:?}"
+        "{stdout:?}"
     );
 }
 
-/// A repository the package calls foreign is reported in the package's own
-/// sentence, under the package's own exit code.
-///
-/// The whole delegation, end to end: a grammar of kendex's own over the
-/// hook bytes would disagree with the package's about which files count
-/// as this package's. So the helper here is one the installer refuses to
-/// own — an executable
-/// file of the right name carrying none of its marker, which is exactly
-/// what the uninstaller preserves and the checker declines to vouch for —
-/// and what `kendex check` prints is the line `install-git-hooks --check`
-/// wrote about it.
+/// The package's foreign-helper record and exit code reach the check report.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn check_relays_the_packages_words_about_a_foreign_hook() {
+fn check_relays_the_packages_record_about_a_foreign_hook() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
@@ -383,13 +366,14 @@ fn check_relays_the_packages_words_about_a_foreign_hook() {
     // What the package says, asked directly.
     let theirs = run(home, &root, "kendex", &["guard", "check"]);
     assert_eq!(theirs.status.code(), Some(1), "{}", said(&theirs));
-    let sentence = String::from_utf8_lossy(&theirs.stdout).trim().to_owned();
-    assert!(
-        sentence.contains("was not written by this installer"),
-        "{sentence}"
+    let record = "commit-guards git hooks: not-armed=helper-foreign=kendex-guards";
+    assert_eq!(
+        String::from_utf8_lossy(&theirs.stdout).lines().next(),
+        Some(record),
+        "{theirs:?}"
     );
 
-    // And the same words, and the same verdict, out of `kendex check`.
+    // The same record and verdict must reach `kendex check`.
     let out = run(home, &root, "kendex", &["check"]);
     assert_eq!(
         out.status.code(),
@@ -399,36 +383,13 @@ fn check_relays_the_packages_words_about_a_foreign_hook() {
     );
     let text = said(&out);
     assert!(text.contains("commit hooks"), "{text}");
-    // The whole sentence, not a phrase near its front. This fixture's line
-    // is short enough that no bound would have cut it, so what this pins is
-    // provenance — every word came from the package — and not the bounding.
-    // Where the bounding is pinned is
-    // `the_packages_exit_two_is_could_not_check_and_its_sentence_survives_whole`,
-    // which asserts its own line outruns the fragment cut before relying on
-    // it, and `tests_render::a_relayed_line_past_the_bound_is_replaced_rather_than_cut`.
-    assert!(
-        text.contains(&sentence),
-        "the package's own sentence was not relayed whole:\n{text}\nit said: {sentence}"
-    );
+    assert!(text.contains(record), "{text}");
 }
 
-/// The package's exit codes become the report's classes, exit 2 included.
-///
-/// `core.hooksPath` set to a directory is the everyday exit 2: every husky
-/// or `.githooks` repository is in it, and the package stands down there
-/// rather than grade a directory it does not write. Read as "not armed"
-/// that would be drift with a remedy — `kendex guard install`, which stands
-/// down too — offered every session for a state nobody has measured.
-///
-/// The verdict is compared against what `kendex guard check` printed rather
-/// than against a phrase, because a phrase near the front of the sentence
-/// survives a relay that keeps only the front of it. That this line is long
-/// enough for the distinction to matter is asserted below rather than
-/// stated here: the package's wording and this fixture's hooksPath value
-/// both move, and a hand-counted length goes stale when either does.
+/// Exit 2 remains unknown, and a record past the fragment bound stays whole.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_packages_exit_two_is_could_not_check_and_its_sentence_survives_whole() {
+fn the_packages_exit_two_is_unknown_and_its_records_survive_whole() {
     let tmp = tempfile::tempdir().unwrap();
     let home = &rooted(&tmp);
     let root = repo(home);
@@ -451,16 +412,22 @@ fn the_packages_exit_two_is_could_not_check_and_its_sentence_survives_whole() {
     std::fs::write(&helper, &genuine).unwrap();
 
     // A configured hooks path: the package answers 2, and so does kendex.
-    git_ok(home, &root, &["config", "core.hooksPath", ".githooks"]);
+    let hooks_path = format!(".githooks/{}", "nested/".repeat(300 / "nested/".len() + 1));
+    git_ok(home, &root, &["config", "core.hooksPath", &hooks_path]);
     let theirs = run(home, &root, "kendex", &["guard", "check"]);
     assert_eq!(theirs.status.code(), Some(2), "{}", said(&theirs));
-    let sentence = String::from_utf8_lossy(&theirs.stdout).trim().to_owned();
-    assert!(
-        sentence.chars().count() > 300,
-        "this fixture only pins the relay while its sentence outruns the \
-         fragment bound: {} characters",
-        sentence.chars().count()
+    let record = format!("commit-guards git hooks: unknown=hooks-path-configured={hooks_path}");
+    assert!(record.chars().count() > 300, "{record}");
+    assert_eq!(
+        String::from_utf8_lossy(&theirs.stdout).lines().next(),
+        Some(record.as_str()),
+        "{theirs:?}"
     );
+    let warnings = String::from_utf8_lossy(&theirs.stderr);
+    let origin = warnings
+        .lines()
+        .find(|line| line.starts_with("install-git-hooks: hooks-path-origin="))
+        .expect("Git reported the configured hooks path origin");
 
     let out = run(home, &root, "kendex", &["check"]);
     assert_eq!(
@@ -470,9 +437,11 @@ fn the_packages_exit_two_is_could_not_check_and_its_sentence_survives_whole() {
         said(&out)
     );
     let text = said(&out);
+    assert!(text.contains(&record), "{text}");
+    assert!(text.contains(origin), "{text}");
     assert!(
-        text.contains(&sentence),
-        "the package's sentence did not survive whole:\n{text}\nit said: {sentence}"
+        text.contains("install-git-hooks: hooks-path-set=core.hooksPath"),
+        "{text}"
     );
 }
 
@@ -642,8 +611,10 @@ fn an_installer_that_exits_zero_with_no_verdict_is_not_all_clear() {
     // asserted to be a clean parse that says nothing.
     let installer = root.join(".agents/skills/commit-guards/scripts/install-git-hooks");
     let whole = std::fs::read_to_string(&installer).unwrap();
-    let cut: Vec<&str> = whole.lines().take(57).collect();
-    std::fs::write(&installer, format!("{}\n", cut.join("\n"))).unwrap();
+    let (cut, _) = whole
+        .split_once("\nGG_BOOT=")
+        .expect("the installer declares its script-directory bootstrap");
+    std::fs::write(&installer, format!("{cut}\n")).unwrap();
     let direct = std::process::Command::new(&installer)
         .args(["--repo", &root.to_string_lossy()])
         .current_dir(&root)

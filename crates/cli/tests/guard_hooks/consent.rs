@@ -311,11 +311,11 @@ fn a_verdict_that_points_at_stderr_arrives_with_it() {
     assert_eq!(out.status.code(), Some(2), "{text}");
     let line = commit_hooks_line(&text);
     assert!(
-        line.contains("is on stderr"),
+        line.contains("commit-guards git hooks: unknown=hooks-path-configured=.githooks"),
         "the fixture stopped being the pointer case: {line}"
     );
     assert!(
-        line.contains("Clear the setting at its source"),
+        line.contains("install-git-hooks: hooks-path-set=core.hooksPath"),
         "the verdict names a report kendex did not print: {line}"
     );
 }
