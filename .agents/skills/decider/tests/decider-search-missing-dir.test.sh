@@ -35,6 +35,15 @@ cat >"$HAS_DIR/docs/decisions/INDEX.md" <<'EOF'
 | 2026-01-10 | D001 | PROJ-100 | Use Redis for session caching | Fast and simple | If latency degrades | Active | [Full](D001-session-caching.md) |
 EOF
 
+NO_INDEX_DIR="$TMP_ROOT/no-index-project"
+mkdir -p "$NO_INDEX_DIR/docs/decisions"
+
+NO_JQ_BIN="$TMP_ROOT/no-jq-bin"
+mkdir -p "$NO_JQ_BIN"
+ln -s "$(command -v git)" "$NO_JQ_BIN/git"
+ln -s "$(command -v dirname)" "$NO_JQ_BIN/dirname"
+BASH_BIN="$(command -v bash)"
+
 NOT_A_DIR="$TMP_ROOT/not-a-dir"
 touch "$NOT_A_DIR"
 
@@ -51,6 +60,12 @@ run_decisions() {
       ;;
     existing)
       out=$( (cd "$HAS_DIR" && env -u DECISIONS_DIR DECISIONS_DIR=docs/decisions "$script" "$@") 2>"$ERR_FILE")
+      ;;
+    missing-index)
+      out=$( (cd "$NO_INDEX_DIR" && env -u DECISIONS_DIR DECISIONS_DIR=docs/decisions "$script" "$@") 2>"$ERR_FILE")
+      ;;
+    missing-dependency)
+      out=$( (cd "$HAS_DIR" && env -u DECISIONS_DIR PATH="$NO_JQ_BIN" DECISIONS_DIR=docs/decisions "$BASH_BIN" "$script" "$@") 2>"$ERR_FILE")
       ;;
     configured-file)
       out=$( (cd "$NO_DIR" && env -u DECISIONS_DIR DECISIONS_DIR="$NOT_A_DIR" "$script" "$@") 2>"$ERR_FILE")
@@ -93,10 +108,16 @@ evaluate_directory_rows() {
     fi
     executed_rows=$((executed_rows + 1))
     case "$action" in
+      dependency) run_decisions "$script" "$state" list ;;
       issue) run_decisions "$script" "$state" search --issue "$argument" ;;
+      issue-missing) run_decisions "$script" "$state" search --issue ;;
       keyword) run_decisions "$script" "$state" search "$argument" ;;
+      limit-missing) run_decisions "$script" "$state" search "$argument" --limit ;;
+      limit-invalid) run_decisions "$script" "$state" search "$argument" --limit nope ;;
+      search-empty) run_decisions "$script" "$state" search --limit 1 ;;
       list|next-id|help) run_decisions "$script" "$state" "$action" ;;
       get) run_decisions "$script" "$state" get "$argument" ;;
+      get-missing) run_decisions "$script" "$state" get ;;
       *) fail "unknown directory-row action: $action"; continue ;;
     esac
 
@@ -128,10 +149,8 @@ evaluate_directory_rows() {
     [[ "$needle_two" == '<not-a-dir>' ]] && needle_two="path=$NOT_A_DIR"
     case "$stderr_rule" in
       key-value)
-        actual_stderr=0,0
-        [[ "$first_line" == *"$needle_one"* ]] && actual_stderr=1,0
-        [[ "$first_line" == *"$needle_one"* && "$first_line" == *"$needle_two"* ]] && actual_stderr=1,1
-        expected=1,1
+        actual_stderr="$first_line"
+        expected="$needle_one $needle_two"
         ;;
       empty)
         actual_stderr="$err"
@@ -158,6 +177,14 @@ existing-keyword-miss~existing~keyword~zzz nonexistent term~0~exact~[]~empty~~
 existing-issue-miss~existing~issue~PROJ-999~0~exact~[]~empty~~
 existing-keyword-hit~existing~keyword~redis~0~ids~["D001"]~ignore~~
 existing-next-id~existing~next-id~~0~exact~D002~ignore~~
+missing-jq~missing-dependency~dependency~~1~ignore~~key-value~error=dependency-missing~command=jq
+missing-index~missing-index~list~~1~ignore~~key-value~error=index-missing~path=docs/decisions/INDEX.md
+missing-search-input~existing~search-empty~~1~ignore~~key-value~error=search-input-missing~value=query-or-issue
+missing-decision~existing~get~D999~1~ignore~~key-value~error=decision-not-found~id=D999
+missing-issue-value~existing~issue-missing~~1~ignore~~key-value~error=argument-value-missing~option=--issue
+missing-limit-value~existing~limit-missing~redis~1~ignore~~key-value~error=argument-value-missing~option=--limit
+invalid-limit-value~existing~limit-invalid~redis~1~ignore~~key-value~error=limit-invalid~value=nope
+missing-get-value~existing~get-missing~~1~ignore~~key-value~error=argument-value-missing~action=get
 configured-file-search~configured-file~issue~PROJ-557~1~exact~~key-value~error=decisions-dir-type~<not-a-dir>
 configured-file-next-id~configured-file~next-id~~1~ignore~~key-value~error=decisions-dir-type~<not-a-dir>
 DIRECTORY_CASES

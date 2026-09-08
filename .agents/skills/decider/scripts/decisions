@@ -293,13 +293,30 @@ search_decisions() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --issue) issue="$2"; shift 2 ;;
+      --issue)
+        if [[ $# -lt 2 ]]; then
+          emit_error argument-value-missing option=--issue "--issue requires an ID."
+          return 1
+        fi
+        issue="$2"; shift 2
+        ;;
       --issue=*) issue="${1#--issue=}"; shift ;;
-      --limit) limit="$2"; shift 2 ;;
+      --limit)
+        if [[ $# -lt 2 ]]; then
+          emit_error argument-value-missing option=--limit "--limit requires a number."
+          return 1
+        fi
+        limit="$2"; shift 2
+        ;;
       --limit=*) limit="${1#--limit=}"; shift ;;
       *) query="$1"; shift ;;
     esac
   done
+
+  if [[ ! "$limit" =~ ^[0-9]+$ ]]; then
+    emit_error limit-invalid "value=$limit" "--limit must be a non-negative integer."
+    return 1
+  fi
 
   if [[ -z "$issue" && -z "$query" ]]; then
     emit_error search-input-missing value=query-or-issue "Provide a search query or --issue ID."
@@ -450,7 +467,11 @@ cmd_next_id() {
 }
 
 cmd_get() {
-  local id="${1:?Usage: decisions get <DECISION_ID>}"
+  if [[ $# -lt 1 || -z "$1" ]]; then
+    emit_error argument-value-missing action=get "decisions get requires a decision ID."
+    return 1
+  fi
+  local id="$1"
 
   local match
   match=$(parse_index | jq --arg id "$id" '[.[] | select(.id == $id)] | .[0] // empty')
