@@ -162,13 +162,7 @@ evaluate_diagnostic_rows() {
         ;;
       malformed-warning)
         first_line="${err%%$'\n'*}"
-        first=0
-        second=0
-        third=0
-        [[ "$first_line" == *"notice=index-row-invalid"* ]] && first=1
-        [[ "$first_line" == *"path=$BAD_REPO/docs/decisions/INDEX.md"* ]] && second=1
-        [[ "$first_line" == *"line=6"* ]] && third=1
-        actual="$rc~$first~$second~$third"
+        actual="$rc~$first_line"
         ;;
       empty-stderr)
         actual="$rc~${err:-<empty>}"
@@ -178,10 +172,11 @@ evaluate_diagnostic_rows() {
         continue
         ;;
     esac
+    expected="${expected//<bad-index>/$BAD_REPO\/docs\/decisions\/INDEX.md}"
     record_row "$mode" "$name" "$actual" "$expected"
   done <<'DIAGNOSTIC_CASES'
 malformed-row-results~malformed~ids~D101,D103
-malformed-row-diagnostic~malformed~malformed-warning~0~1~1~1
+malformed-row-diagnostic~malformed~malformed-warning~0~notice=index-row-invalid path=<bad-index> line=6 cells=5
 healthy-index-diagnostic~healthy~empty-stderr~0~<empty>
 DIAGNOSTIC_CASES
   if [[ "$executed_rows" -eq 0 ]]; then
@@ -226,7 +221,7 @@ if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
   failures="$(evaluate_link_rows "$date_mutant" control)"
   expect_control_failure "$failures" date-enrichment "date mutation fails the enrichment row"
 
-  warning_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-warning/decisions" '| select((.value | split("|") | length) < 9)' '| select(false)' 1)"
+  warning_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-warning/decisions" '| select((.value | cells | length) < 8)' '| select(false)' 1)"
   failures="$(evaluate_diagnostic_rows "$warning_mutant" control)"
   expect_control_failure "$failures" malformed-row-diagnostic "warning suppression fails the diagnostic row"
 

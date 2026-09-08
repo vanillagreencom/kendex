@@ -220,11 +220,15 @@ parse_index() {
   # ever recorded, so every such row is named on stderr. stdout still carries
   # exactly the rows that parse.
   jq -R -s -r --arg f "$INDEX_FILE" '
+    def cells:
+      split("|")
+      | if .[0] == "" then .[1:] else . end
+      | if .[-1] == "" then .[:-1] else . end;
     split("\n")
     | to_entries[]
     | select(.value | test("^\\| [0-9]{4}-"))
-    | select((.value | split("|") | length) < 9)
-    | "notice=index-row-invalid path=\($f) line=\(.key + 1) cells=\(.value | split("|") | length)\nINDEX row needs at least 9 cells and was skipped: \(.value)"
+    | select((.value | cells | length) < 8)
+    | "notice=index-row-invalid path=\($f) line=\(.key + 1) cells=\(.value | cells | length)\nINDEX row needs at least 8 columns and was skipped: \(.value)"
   ' "$INDEX_FILE" >&2
   jq -R -s -c --arg dir "$DECISIONS_DIR" '
     def cell_path:
