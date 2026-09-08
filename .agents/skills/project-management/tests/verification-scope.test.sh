@@ -1,18 +1,12 @@
 #!/usr/bin/env bash
 # Audit checks must search paths that exist. The resolver derives them from the
-# repository — a narrow change set when one is known, otherwise every tracked
-# source root — so no workflow assumes a repository-root src/, and each issue
-# keeps its own scope so one issue's PR never decides another's verdict. This
-# exercises the resolver against fixtures and pins the workflow's use of it.
+# repository: a narrow change set when one is known, otherwise every tracked
+# source root. The workflow therefore needs no repository-root src/ assumption.
 #
-# The markdown checks at the tail pin STRUCTURE — the resolver route, the
-# .agents prefix, the docs-only mode, the verification_paths field, the
-# VERIFICATION_CONTEXTS placeholder — plus one absence check. Requiring the
-# `[WORKTREE]/src` literal covered nothing: a sentence inverting the rule
-# carries the literal and passes, while a meaning-preserving reword drops it
-# and fails. The absence check is what holds — the hardcoded root must not
-# appear at all.
+# The markdown checks at the tail pin structure only. Runtime rows separately
+# prove repository discovery and the exclusion of vendored .agents/ renders.
 set -euo pipefail
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -24,177 +18,281 @@ fail() {
   exit 1
 }
 
-require_jq() {
-  local json="$1" expression="$2" description="$3"
+[[ -x "$RESOLVER" ]] || fail "verification-scope is not executable"
+
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/verification-scope-test.XXXXXX")" \
+  || fail "could not create test scratch directory"
+trap 'rm -rf -- "$scratch"' EXIT
+
+case_root=""
+case_base_ref=""
+case_corrupt_index=""
+
+setup_fixture() {
+  local fixture_kind="$1" case_name="$2"
+
+  case_root="$scratch/$case_name"
+  case_base_ref=""
+  case_corrupt_index=""
+  mkdir -p "$case_root"
+
+  case "$fixture_kind" in
+    workspace|workspace-history|corrupt-index)
+      mkdir -p "$case_root/crate-a/src" "$case_root/crate-b/src" \
+        "$case_root/docs"
+      printf '[workspace]\nmembers = ["crate-a", "crate-b"]\n' \
+        >"$case_root/Cargo.toml"
+      printf 'pub fn alpha() {}\n' >"$case_root/crate-a/src/lib.rs"
+      printf 'fn main() {}\n' >"$case_root/crate-b/src/main.rs"
+      printf '# Audit notes\n' >"$case_root/docs/audit.md"
+      git -C "$case_root" init -q
+      git -C "$case_root" add .
+      if [[ "$fixture_kind" == "workspace-history" ]]; then
+        git -C "$case_root" config user.name "Verification Scope Test"
+        git -C "$case_root" config user.email \
+          "verification-scope@example.invalid"
+        git -C "$case_root" commit -qm "fixture: initial workspace"
+        case_base_ref="$(git -C "$case_root" rev-parse HEAD)"
+        printf 'pub fn beta() {}\n' >>"$case_root/crate-a/src/lib.rs"
+        git -C "$case_root" add crate-a/src/lib.rs
+        git -C "$case_root" commit -qm "fixture: change crate a"
+      elif [[ "$fixture_kind" == "corrupt-index" ]]; then
+        case_corrupt_index="$case_root/corrupt-index"
+        printf 'invalid index\n' >"$case_corrupt_index"
+      fi
+      ;;
+    documentation)
+      printf '# Documentation repository\n' >"$case_root/README.md"
+      git -C "$case_root" init -q
+      git -C "$case_root" add README.md
+      ;;
+    disconnected-history)
+      mkdir -p "$case_root/src"
+      printf 'fn main() {}\n' >"$case_root/src/main.rs"
+      git -C "$case_root" init -q
+      git -C "$case_root" config user.name "Verification Scope Test"
+      git -C "$case_root" config user.email \
+        "verification-scope@example.invalid"
+      git -C "$case_root" add src/main.rs
+      git -C "$case_root" commit -qm "fixture: first history"
+      case_base_ref="$(git -C "$case_root" rev-parse HEAD)"
+      git -C "$case_root" checkout -q --orphan disconnected
+      git -C "$case_root" rm -q -rf .
+      mkdir -p "$case_root/src"
+      printf 'fn disconnected() {}\n' >"$case_root/src/disconnected.rs"
+      git -C "$case_root" add src/disconnected.rs
+      git -C "$case_root" commit -qm "fixture: disconnected history"
+      ;;
+    render-repository)
+      mkdir -p "$case_root/src" \
+        "$case_root/.agents/skills/alpha/scripts" \
+        "$case_root/.agents/skills/beta/scripts"
+      printf 'fn main() {}\n' >"$case_root/src/main.rs"
+      printf '#!/usr/bin/env bash\ntrue\n' \
+        >"$case_root/.agents/skills/alpha/scripts/alpha.sh"
+      printf '#!/usr/bin/env bash\ntrue\n' \
+        >"$case_root/.agents/skills/beta/scripts/beta.sh"
+      git -C "$case_root" init -q
+      git -C "$case_root" add .
+      ;;
+    *)
+      fail "$case_name: unknown fixture kind $fixture_kind"
+      ;;
+  esac
+}
+
+success_failures=0
+
+require_success_result() {
+  local case_name="$1" json="$2" expression="$3" description="$4"
+
   if ! jq -e "$expression" >/dev/null <<<"$json"; then
-    fail "$description"
+    echo "FAIL: $case_name: $description" >&2
+    success_failures=$((success_failures + 1))
   fi
 }
 
-[[ -x "$RESOLVER" ]] || fail "verification-scope is not executable"
+run_success_case() {
+  local case_name="$1" fixture_kind="$2" invocation="$3"
+  local expression="$4" description="$5" result
 
-fixture="$(mktemp -d)"
-docs_fixture="$(mktemp -d)"
-history_fixture="$(mktemp -d)"
-render_fixture="$(mktemp -d)"
-trap 'rm -rf "$fixture" "$docs_fixture" "$history_fixture" "$render_fixture"' EXIT
+  setup_fixture "$fixture_kind" "$case_name"
+  case "$invocation" in
+    repository)
+      result="$($RESOLVER --worktree "$case_root")"
+      ;;
+    changed-a)
+      result="$($RESOLVER --worktree "$case_root" \
+        --changed-file crate-a/src/lib.rs)"
+      ;;
+    changed-b)
+      result="$($RESOLVER --worktree "$case_root" \
+        --changed-file crate-b/src/main.rs)"
+      ;;
+    base-ref)
+      result="$($RESOLVER --worktree "$case_root" \
+        --base-ref "$case_base_ref")"
+      ;;
+    changed-documentation)
+      result="$($RESOLVER --worktree "$case_root" \
+        --changed-file docs/audit.md)"
+      ;;
+    explicit-render)
+      result="$($RESOLVER --worktree "$case_root" \
+        --changed-file .agents/skills/alpha/scripts/alpha.sh)"
+      ;;
+    *)
+      fail "$case_name: unknown success invocation $invocation"
+      ;;
+  esac
+  require_success_result \
+    "$case_name" "$result" "$expression" "$description"
+}
 
-mkdir -p "$fixture/crate-a/src" "$fixture/crate-b/src" "$fixture/docs"
-printf '[workspace]\nmembers = ["crate-a", "crate-b"]\n' >"$fixture/Cargo.toml"
-printf 'pub fn alpha() {}\n' >"$fixture/crate-a/src/lib.rs"
-printf 'fn main() {}\n' >"$fixture/crate-b/src/main.rs"
-printf '# Audit notes\n' >"$fixture/docs/audit.md"
-git -C "$fixture" init -q
-git -C "$fixture" add .
+while IFS='^' read -r case_name fixture_kind invocation expression description; do
+  run_success_case \
+    "$case_name" "$fixture_kind" "$invocation" "$expression" "$description"
+done <<'SUCCESS_ROWS'
+repository-multicrate^workspace^repository^.mode == "repository" and (.source_roots == ["crate-a/src", "crate-b/src"]) and (.verification_paths == ["crate-a/src", "crate-b/src"]) and (.verification_paths | index("src") | not)^repository mode did not return the exact multi-crate scope
+changed-crate-a^workspace^changed-a^.verification_paths == ["crate-a/src/lib.rs"] and (.verification_paths | index("crate-b/src/main.rs") | not)^changed crate A did not retain its independent exact scope
+changed-crate-b^workspace^changed-b^.mode == "changed" and (.source_roots == ["crate-b/src"]) and (.verification_paths == ["crate-b/src/main.rs"]) and (.verification_paths | index("crate-a/src/lib.rs") | not)^changed crate B did not retain its independent exact scope
+base-ref-crate-a^workspace-history^base-ref^.mode == "changed" and (.changed_files == ["crate-a/src/lib.rs"]) and (.source_roots == ["crate-a/src"]) and (.verification_paths == ["crate-a/src/lib.rs"])^base-ref mode did not return the exact changed crate scope
+changed-documentation^workspace^changed-documentation^.mode == "docs-only" and (.code_verification_required == false) and (.source_roots == []) and (.verification_paths == ["docs/audit.md"])^documentation mode did not return the exact documentation scope
+repository-excludes-renders^render-repository^repository^.source_roots == ["src"] and (.verification_paths == ["src"]) and (.verification_paths | map(startswith(".agents/")) | any | not)^repository discovery did not return the exact non-render scope
+explicit-render-path^render-repository^explicit-render^.verification_paths == [".agents/skills/alpha/scripts/alpha.sh"]^explicit render path was not preserved exactly
+SUCCESS_ROWS
 
-repository_json="$($RESOLVER --worktree "$fixture")"
-require_jq "$repository_json" '.mode == "repository"' \
-  "repository fallback mode was not selected"
-require_jq "$repository_json" '.source_roots == ["crate-a/src", "crate-b/src"]' \
-  "multi-crate source roots were not discovered"
-require_jq "$repository_json" '.verification_paths | index("src") | not' \
-  "resolver invented a repository-root src directory"
-
-changed_json="$($RESOLVER --worktree "$fixture" --changed-file crate-b/src/main.rs)"
-require_jq "$changed_json" '.mode == "changed"' \
-  "changed-file mode was not selected"
-require_jq "$changed_json" '.source_roots == ["crate-b/src"]' \
-  "changed-file mode did not narrow to the affected crate"
-require_jq "$changed_json" '.verification_paths == ["crate-b/src/main.rs"]' \
-  "changed-file verification path was not preserved"
-
-# A multi-issue audit must retain an independent scope for each contract.
-issue_a_json="$($RESOLVER --worktree "$fixture" --changed-file crate-a/src/lib.rs)"
-issue_b_json="$($RESOLVER --worktree "$fixture" --changed-file crate-b/src/main.rs)"
-issue_contexts="$(jq -n \
-  --argjson issue_a "$issue_a_json" \
-  --argjson issue_b "$issue_b_json" \
-  '{"ISSUE-A": $issue_a, "ISSUE-B": $issue_b}')"
-require_jq "$issue_contexts" \
-  '.["ISSUE-A"].verification_paths == ["crate-a/src/lib.rs"]' \
-  "first issue did not retain its own verification scope"
-require_jq "$issue_contexts" \
-  '.["ISSUE-B"].verification_paths == ["crate-b/src/main.rs"]' \
-  "second issue did not retain its own verification scope"
-require_jq "$issue_contexts" \
-  '.["ISSUE-A"].verification_paths | index("crate-b/src/main.rs") | not' \
-  "second issue verification scope leaked into the first issue"
-require_jq "$issue_contexts" \
-  '.["ISSUE-B"].verification_paths | index("crate-a/src/lib.rs") | not' \
-  "first issue verification scope leaked into the second issue"
-
-git -C "$fixture" config user.name "Verification Scope Test"
-git -C "$fixture" config user.email "verification-scope@example.invalid"
-git -C "$fixture" commit -qm "fixture: initial workspace"
-base_ref="$(git -C "$fixture" rev-parse HEAD)"
-printf 'pub fn beta() {}\n' >>"$fixture/crate-a/src/lib.rs"
-git -C "$fixture" add crate-a/src/lib.rs
-git -C "$fixture" commit -qm "fixture: change crate a"
-
-base_json="$($RESOLVER --worktree "$fixture" --base-ref "$base_ref")"
-require_jq "$base_json" '.mode == "changed"' \
-  "base-ref mode did not resolve a changed scope"
-require_jq "$base_json" '.changed_files == ["crate-a/src/lib.rs"]' \
-  "base-ref mode did not preserve the branch change set"
-require_jq "$base_json" '.source_roots == ["crate-a/src"]' \
-  "base-ref mode did not narrow to the changed crate"
-
-docs_json="$($RESOLVER --worktree "$fixture" --changed-file docs/audit.md)"
-require_jq "$docs_json" '.mode == "docs-only"' \
-  "documentation-only change was not classified"
-require_jq "$docs_json" '.code_verification_required == false' \
-  "documentation-only audit still requires code verification"
-require_jq "$docs_json" '.source_roots == []' \
-  "documentation-only audit invented source roots"
-
-if "$RESOLVER" --worktree "$fixture" --docs-only \
-  --changed-file crate-a/src/lib.rs >/dev/null 2>&1; then
-  fail "--docs-only accepted a source file"
-fi
-if "$RESOLVER" --worktree "$fixture" \
-  --changed-file ../outside.rs >/dev/null 2>&1; then
-  fail "resolver accepted a path outside the worktree"
+if [[ "$success_failures" -ne 0 ]]; then
+  exit 1
 fi
 
-printf '# Documentation repository\n' >"$docs_fixture/README.md"
-git -C "$docs_fixture" init -q
-git -C "$docs_fixture" add README.md
-if no_source_output="$($RESOLVER --worktree "$docs_fixture" 2>&1)"; then
-  fail "repository fallback succeeded without tracked source roots"
-fi
-if [[ "$no_source_output" != *"no tracked source roots found"* ]]; then
-  fail "repository fallback did not explain the missing source scope"
+refusal_failures=0
+
+record_refusal_failure() {
+  local case_name="$1" description="$2" status="$3"
+  local expected_status="$4" diagnostic="$5" output="$6"
+
+  echo "FAIL: $case_name: $description" >&2
+  echo "  status: $status; expected: $expected_status" >&2
+  if [[ "$diagnostic" != "-" && "$output" != *"$diagnostic"* ]]; then
+    echo "  missing diagnostic: $diagnostic" >&2
+  fi
+  refusal_failures=$((refusal_failures + 1))
+}
+
+run_refusal_case() {
+  local case_name="$1" fixture_kind="$2" invocation="$3"
+  local expected_status="$4" diagnostic="$5" description="$6"
+  local output status matches
+
+  setup_fixture "$fixture_kind" "$case_name"
+  case "$invocation" in
+    forced-docs-code)
+      if output="$($RESOLVER --worktree "$case_root" --docs-only \
+        --changed-file crate-a/src/lib.rs 2>&1)"; then
+        status=0
+      else
+        status=$?
+      fi
+      ;;
+    outside-worktree)
+      if output="$($RESOLVER --worktree "$case_root" \
+        --changed-file ../outside.rs 2>&1)"; then
+        status=0
+      else
+        status=$?
+      fi
+      ;;
+    repository-without-source)
+      if output="$($RESOLVER --worktree "$case_root" 2>&1)"; then
+        status=0
+      else
+        status=$?
+      fi
+      ;;
+    disconnected-base)
+      if output="$($RESOLVER --worktree "$case_root" \
+        --base-ref "$case_base_ref" 2>&1)"; then
+        status=0
+      else
+        status=$?
+      fi
+      ;;
+    corrupt-index)
+      if output="$(GIT_INDEX_FILE="$case_corrupt_index" \
+        "$RESOLVER" --worktree "$case_root" 2>&1)"; then
+        status=0
+      else
+        status=$?
+      fi
+      ;;
+    *)
+      fail "$case_name: unknown refusal invocation $invocation"
+      ;;
+  esac
+
+  matches=true
+  [[ "$status" -eq "$expected_status" ]] || matches=false
+  if [[ "$diagnostic" != "-" && "$output" != *"$diagnostic"* ]]; then
+    matches=false
+  fi
+  if [[ "$matches" != true ]]; then
+    record_refusal_failure "$case_name" "$description" "$status" \
+      "$expected_status" "$diagnostic" "$output"
+  fi
+}
+
+while IFS='^' read -r case_name fixture_kind invocation expected_status \
+  diagnostic description; do
+  run_refusal_case "$case_name" "$fixture_kind" "$invocation" \
+    "$expected_status" "$diagnostic" "$description"
+done <<'REFUSAL_ROWS'
+forced-docs-rejects-code^workspace^forced-docs-code^1^-^forced docs mode did not reject source code with the exact refusal status
+outside-worktree-path^workspace^outside-worktree^1^-^resolver did not reject an outside path with the exact refusal status
+repository-without-source^documentation^repository-without-source^1^no tracked source roots found^repository fallback did not return its exact status and source-scope diagnostic
+disconnected-base-history^disconnected-history^disconnected-base^1^git diff failed for base ref^base-ref mode did not return its exact status and disconnected-history diagnostic
+ls-files-producer-failure^corrupt-index^corrupt-index^1^git ls-files failed^repository discovery did not return its exact status and producer diagnostic
+REFUSAL_ROWS
+
+if [[ "$refusal_failures" -ne 0 ]]; then
+  exit 1
 fi
 
-mkdir -p "$history_fixture/src"
-printf 'fn main() {}\n' >"$history_fixture/src/main.rs"
-git -C "$history_fixture" init -q
-git -C "$history_fixture" config user.name "Verification Scope Test"
-git -C "$history_fixture" config user.email "verification-scope@example.invalid"
-git -C "$history_fixture" add src/main.rs
-git -C "$history_fixture" commit -qm "fixture: first history"
-disconnected_base="$(git -C "$history_fixture" rev-parse HEAD)"
-git -C "$history_fixture" checkout -q --orphan disconnected
-git -C "$history_fixture" rm -q -rf .
-mkdir -p "$history_fixture/src"
-printf 'fn disconnected() {}\n' >"$history_fixture/src/disconnected.rs"
-git -C "$history_fixture" add src/disconnected.rs
-git -C "$history_fixture" commit -qm "fixture: disconnected history"
-if disconnected_output="$($RESOLVER --worktree "$history_fixture" \
-  --base-ref "$disconnected_base" 2>&1)"; then
-  fail "base-ref mode accepted disconnected histories"
-fi
-if [[ "$disconnected_output" != *"git diff failed for base ref"* ]]; then
-  fail "disconnected-history failure did not identify git diff"
-fi
+run_structural_case() {
+  local case_name="$1" expectation="$2" subject_key="$3"
+  local needle="$4" description="$5" subject
 
-# Repository discovery must skip the vendored .agents/ render tree: it holds
-# one source root per installed harness package and is not repository source.
-# An explicitly named .agents/ path is the caller's own choice and still counts.
-mkdir -p "$render_fixture/src" \
-  "$render_fixture/.agents/skills/alpha/scripts" \
-  "$render_fixture/.agents/skills/beta/scripts"
-printf 'fn main() {}\n' >"$render_fixture/src/main.rs"
-printf '#!/usr/bin/env bash\ntrue\n' >"$render_fixture/.agents/skills/alpha/scripts/alpha.sh"
-printf '#!/usr/bin/env bash\ntrue\n' >"$render_fixture/.agents/skills/beta/scripts/beta.sh"
-git -C "$render_fixture" init -q
-git -C "$render_fixture" add .
+  case "$subject_key" in
+    workflow) subject="$WORKFLOW" ;;
+    resolver) subject="$RESOLVER" ;;
+    *) fail "$case_name: unknown structural subject $subject_key" ;;
+  esac
 
-render_json="$($RESOLVER --worktree "$render_fixture")"
-require_jq "$render_json" '.source_roots == ["src"]' \
-  "repository discovery did not skip the vendored .agents/ render tree"
-require_jq "$render_json" \
-  '.verification_paths | map(startswith(".agents/")) | any | not' \
-  "vendored .agents/ roots leaked into the verification paths"
+  case "$expectation" in
+    present)
+      grep -Fq -- "$needle" "$subject" || fail "$case_name: $description"
+      ;;
+    absent)
+      if grep -Fq -- "$needle" "$subject"; then
+        fail "$case_name: $description"
+      fi
+      ;;
+    *)
+      fail "$case_name: unknown structural expectation $expectation"
+      ;;
+  esac
+}
 
-render_changed_json="$($RESOLVER --worktree "$render_fixture" \
-  --changed-file .agents/skills/alpha/scripts/alpha.sh)"
-require_jq "$render_changed_json" \
-  '.verification_paths == [".agents/skills/alpha/scripts/alpha.sh"]' \
-  "an explicitly named .agents/ path was dropped"
-
-corrupt_index="$docs_fixture/corrupt-index"
-printf 'invalid index\n' >"$corrupt_index"
-if producer_output="$(GIT_INDEX_FILE="$corrupt_index" \
-  "$RESOLVER" --worktree "$fixture" 2>&1)"; then
-  fail "repository discovery ignored a git ls-files producer failure"
-fi
-if [[ "$producer_output" != *"git ls-files failed"* ]]; then
-  fail "producer failure did not identify git ls-files"
-fi
-
-if grep -Fq '${WORKTREE:-.}/src/' "$WORKFLOW"; then
-  fail "tpm-audit still hardcodes a repository-root src directory"
-fi
-grep -Fq 'scripts/verification-scope' "$WORKFLOW" \
-  || fail "tpm-audit does not invoke verification-scope"
-grep -Fq '.agents/' "$RESOLVER" \
-  || fail "verification-scope lost the vendored-render exclusion"
-grep -Fq 'docs-only' "$WORKFLOW" \
-  || fail "tpm-audit does not document the docs-only path"
-grep -Fq 'verification_paths' "$WORKFLOW" \
-  || fail "tpm-audit does not consume resolved verification paths"
-grep -Fq 'VERIFICATION_CONTEXTS[ISSUE_KEY]' "$WORKFLOW" \
-  || fail "tpm-audit does not retain verification context per issue"
+while IFS='^' read -r case_name expectation subject_key needle description; do
+  run_structural_case \
+    "$case_name" "$expectation" "$subject_key" "$needle" "$description"
+done <<'STRUCTURAL_ROWS'
+workflow-no-hardcoded-src^absent^workflow^${WORKTREE:-.}/src/^tpm-audit still hardcodes a repository-root src directory
+workflow-resolver-route^present^workflow^scripts/verification-scope^tpm-audit does not invoke verification-scope
+resolver-render-marker^present^resolver^.agents/^verification-scope lost the vendored-render marker
+workflow-docs-mode^present^workflow^docs-only^tpm-audit does not document the docs-only path
+workflow-path-field^present^workflow^verification_paths^tpm-audit does not consume resolved verification paths
+workflow-issue-placeholder^present^workflow^VERIFICATION_CONTEXTS[ISSUE_KEY]^tpm-audit does not retain verification context per issue
+STRUCTURAL_ROWS
 
 echo "all pass"
