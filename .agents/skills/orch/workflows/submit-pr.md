@@ -35,7 +35,7 @@ git -C "[WORKTREE_PATH]" status --porcelain
 git -C "[WORKTREE_PATH]" diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD --stat
 ```
 
-Stop before pushing when the branch is empty (detached HEAD), equals the base branch, the working tree is dirty, or the committed diff against the base is empty. Then run `.agents/skills/preflight/scripts/preflight --base "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]" --repo [WORKTREE_PATH]` when installed. Reuse a successful full-validation result for the current commit from an accepted dev completion artifact or this submit session. Otherwise run the project's `DEV_VALIDATE_CMD`, resolved as in [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate). A changed commit needs a new result. Either check failing blocks the push. In managed lifecycle, return the failed preflight to the caller so the dev agent can normalize the branch and clean the worktree. Never create a PR from dirty or detached state.
+Stop before pushing when the branch is empty (detached HEAD), equals the base branch, the working tree is dirty, or the committed diff against the base is empty. Then run `.agents/skills/preflight/scripts/preflight --base "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]" --repo [WORKTREE_PATH]` when installed. Reuse a successful full-validation result for the current commit from an accepted dev completion artifact or this submit session. A failing dev validation artifact blocks submission and is reported without another validation run. When no dev result exists, run the project's `DEV_VALIDATE_CMD`, resolved as in [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate). A changed commit needs a new result. Either check failing blocks the push. In managed lifecycle, return the failed preflight to the caller so the dev agent can normalize the branch and clean the worktree. Never create a PR from dirty or detached state.
 
 ### 1.2 Size Check
 
@@ -124,7 +124,7 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
    [The § 1.2 counts, only when the issue states no allowance.]
 
    ## Proposed rules
-   [Each accepted dev artifact `validate_note` that starts `Proposed rule:`, with the prefix removed.]
+   [Each rule under `### Proposed Rules` in an accepted dev artifact's `summary`.]
 
    ## Test Plan
    [validation steps]
