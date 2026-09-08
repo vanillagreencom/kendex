@@ -17,6 +17,9 @@
     ],
     "image": "https://raw.githubusercontent.com/vanillagreencom/kendex/main/pi-extensions/pi-prompt-stash/assets/stash-popup.png"
   },
+  "scripts": {
+    "test": "bun test ./extensions/__tests__"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"

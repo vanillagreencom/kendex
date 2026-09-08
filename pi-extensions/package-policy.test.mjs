@@ -146,43 +146,11 @@ function suiteCounts() {
 	return packages().map(({ dir }) => [dir, suiteFiles(join(root, dir)).length]);
 }
 
-// Every package without a matching test file must be declared here because the
-// wiring gate has no test entry point to inspect. The reader accepts `tests/`,
-// `test/`, or `__tests__/` at any depth. It counts files, not test cases, so a
-// directory that contains only fixtures counts as covered.
-//
-// pi-prompt-stash: the stash behaviour — filterItems, previewText, loadItems,
-// saveItems, stashPrompt, safeFileName — sits unexported inside
-// `extensions/prompt-stash.ts`, which exports only its default entry point, so
-// a suite cannot reach it behind the editor shortcut and the pi-tui popup. The
-// two leaf modules beside it are importable and simply uncovered:
-// `extensions/settings.ts` is byte-identical to the copies pi-questions and
-// pi-task-panel vendor, and no suite in this tree imports any of the three —
-// pi-codex-minimal-tools/tests/settings.test.ts covers its own `src/settings.ts`,
-// a different file that happens to export a same-named recordProjectTrust.
-// The gate cannot determine when this reason expires: direction three below
-// fires only once the package gains tests, not when it becomes testable, so
-// exporting one of those functions tomorrow leaves the entry standing. It is
-// reviewed on this comment, not held by the gate.
-const NO_SUITE = ["pi-prompt-stash"];
-
-// Each direction the declaration can drift from the tree stays separate
-// because the remedies differ: add a suite, drop a stale entry, or correct a
-// name absent from the tree. Collapsing the last two makes a renamed or deleted
-// package report as one that gained tests, a
-// claim about a directory that is not there; `crates/core/src/pi_ext/renames.rs`
-// records prompt-stash -> pi-prompt-stash, so this repo has walked that path.
-// Taking the per-package suite counts as an argument is what lets the control
-// below run this exact reader over a mutated tree instead of asserting against
-// a second literal.
-function suiteDeclarationDrift(counts) {
-	const known = counts.map(([dir]) => dir);
-	const bare = counts.filter(([, files]) => files === 0).map(([dir]) => dir);
-	return [
-		...bare.filter((dir) => !NO_SUITE.includes(dir)).map((dir) => `${dir}: carries no test file and is not declared in NO_SUITE`),
-		...NO_SUITE.filter((dir) => !known.includes(dir)).map((dir) => `${dir}: declared in NO_SUITE but is not a package directory — the entry is stale`),
-		...NO_SUITE.filter((dir) => known.includes(dir) && !bare.includes(dir)).map((dir) => `${dir}: declared in NO_SUITE but carries test files — drop the declaration`),
-	];
+// Every package must carry a matching file under `tests/`, `test/`, or
+// `__tests__/`. Taking the counts as an argument lets the control below run
+// this reader over a mutated tree instead of asserting against another list.
+function packagesWithoutSuites(counts) {
+	return counts.filter(([, files]) => files === 0).map(([dir]) => `${dir}: carries no test file`);
 }
 
 // Packages whose declared CI entry point no enabled step invokes. Taking the
@@ -214,9 +182,9 @@ test("every Pi extension suite runs in CI under the package's own test script", 
 	assert.ok(bearing.length > 0, "no package carries test files — the suite-file walker is broken");
 
 	assert.deepEqual(
-		suiteDeclarationDrift(counts),
+		packagesWithoutSuites(counts),
 		[],
-		"a Pi package carries no test file without NO_SUITE declaring it, or a NO_SUITE entry is stale",
+		"a Pi package carries no test file",
 	);
 
 	assert.deepEqual(
@@ -253,28 +221,16 @@ test("a step conditioned on a shard the matrix does not run is reported, not acc
 	assert.deepEqual(unrunPackages(typo), ["pi-claude-bridge: no step on a shard the matrix runs invokes `npm run test:ci`"]);
 });
 
-// Must-fail control for the declaration above: with every package in the tree
-// either covered or declared, the drift reader returns the same empty list a
-// reader that had stopped looking would, so each direction it reports is
-// mutated here.
-test("a package with no test file is reported unless NO_SUITE declares it", () => {
+// Must-fail control for the reader above: with every package covered, a reader
+// that stopped looking would return the same empty list as the correct reader.
+test("a package with no test file is reported", () => {
 	const counts = suiteCounts();
-	assert.deepEqual(suiteDeclarationDrift(counts), [], "precondition: the real tree matches NO_SUITE");
+	assert.deepEqual(packagesWithoutSuites(counts), [], "precondition: every real package carries a suite");
 
-	const stripped = counts.find(([dir, files]) => files > 0 && !NO_SUITE.includes(dir));
+	const stripped = counts.find(([, files]) => files > 0);
 	assert.ok(stripped, "no covered package to strip — this control no longer mutates the tree it reads");
 	assert.deepEqual(
-		suiteDeclarationDrift(counts.map(([dir, files]) => [dir, dir === stripped[0] ? 0 : files])),
-		[`${stripped[0]}: carries no test file and is not declared in NO_SUITE`],
-	);
-
-	assert.ok(NO_SUITE.length > 0, "NO_SUITE is empty — the two declaration directions below mutate nothing");
-	assert.deepEqual(
-		suiteDeclarationDrift(counts.map(([dir, files]) => [dir, NO_SUITE.includes(dir) ? 1 : files])),
-		NO_SUITE.map((dir) => `${dir}: declared in NO_SUITE but carries test files — drop the declaration`),
-	);
-	assert.deepEqual(
-		suiteDeclarationDrift(counts.filter(([dir]) => !NO_SUITE.includes(dir))),
-		NO_SUITE.map((dir) => `${dir}: declared in NO_SUITE but is not a package directory — the entry is stale`),
+		packagesWithoutSuites(counts.map(([dir, files]) => [dir, dir === stripped[0] ? 0 : files])),
+		[`${stripped[0]}: carries no test file`],
 	);
 });

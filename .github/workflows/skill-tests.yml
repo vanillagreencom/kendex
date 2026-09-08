@@ -520,6 +520,13 @@ jobs:
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
           npm test
 
+      # Prompt stash mocks its Pi TUI value imports, so its suite needs no
+      # package install.
+      - name: pi-prompt-stash suite
+        if: matrix.shard == 'node'
+        working-directory: pi-extensions/pi-prompt-stash
+        run: npm test
+
       # pi-session-bridge imports nothing from Pi outside type positions, the
       # same case as pi-hooks above, so its suite runs with no install.
       - name: pi-session-bridge suite
