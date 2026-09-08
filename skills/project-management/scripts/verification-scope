@@ -107,7 +107,7 @@ capture_git_paths() {
   if [[ -n "$producer_output" ]]; then
     rm -f "$producer_output"
   fi
-  producer_output="$(mktemp "${TMPDIR:-/tmp}/verification-scope.XXXXXX")" \
+  producer_output="$(mktemp "${TMPDIR:-/tmp}/verification-scope.XXXXXX" 2>/dev/null)" \
     || refuse temp-create "path=${TMPDIR:-/tmp}" "Could not create a temporary file for Git output."
   if ! git -C "$repo_root" "$@" >"$producer_output" 2>/dev/null; then
     refuse git-command-failed "operation=$operation" "$diagnostic"
