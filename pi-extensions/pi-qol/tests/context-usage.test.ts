@@ -3,7 +3,6 @@ import { renderQolContextUsageMessage, type QolContextUsageMessageDetails } from
 
 const stubTheme: any = {
 	bold: (text: string) => `<b>${text}</b>`,
-	fg: (_color: string, text: string) => text,
 	italic: (text: string) => text,
 };
 
@@ -24,51 +23,66 @@ function baseDetails(overrides: Partial<QolContextUsageMessageDetails> = {}): Qo
 	};
 }
 
-function render(details: QolContextUsageMessageDetails): string {
-	const lines = renderQolContextUsageMessage({ details } as any, {} as any, stubTheme as any).render(200);
-	return lines.join("\n");
+function render(details: QolContextUsageMessageDetails) {
+	const styles: Array<{ color: string; text: string }> = [];
+	const theme = {
+		...stubTheme,
+		fg(color: string, text: string): string {
+			styles.push({ color, text });
+			return text;
+		},
+	};
+	const lines = renderQolContextUsageMessage({ details } as any, {} as any, theme).render(200);
+	const output = lines.join("\n");
+	return {
+		output,
+		warningTitles: styles.filter(({ color, text }) => color === "warning" && text.startsWith("<b>") && output.includes(text)).length,
+	};
 }
 
 const renderRows = [
 	{
 		name: "absent transcript risk",
 		risk: undefined,
-		observe: (output: string) => ({ risk: output.includes("Transcript risk"), payload: output.includes("Transcript payload") }),
-		expected: { risk: false, payload: false },
+		observe: ({ output, warningTitles }: ReturnType<typeof render>) => ({ warningTitles, threshold: output.includes("600,000") }),
+		expected: { warningTitles: 0, threshold: false },
 	},
 	{
 		name: "payload below the warning budget",
-		risk: { chars: 100_000, exceeded: false, messageCount: 50, threshold: 600_000 },
-		observe: (output: string) => ({ payload: output.includes("Transcript payload"), risk: /Transcript risk\b/.test(output) }),
-		expected: { payload: true, risk: false },
+		risk: { chars: 123_456, exceeded: false, messageCount: 50, threshold: 600_000 },
+		observe: ({ output, warningTitles }: ReturnType<typeof render>) => ({
+			payloadChars: output.includes("123,456"),
+			threshold: output.includes("/ 600,000"),
+			warningTitles,
+		}),
+		expected: { payloadChars: true, threshold: true, warningTitles: 0 },
 	},
 	{
 		name: "payload above the warning budget",
 		risk: { chars: 700_000, exceeded: true, messageCount: 100, threshold: 600_000 },
-		observe: (output: string) => ({
-			boldWarning: output.includes("<b>Transcript risk</b>"),
-			budget: output.includes(">= 600,000 char warn budget"),
-			advice: output.includes("compact soon or raise"),
+		observe: ({ output, warningTitles }: ReturnType<typeof render>) => ({
+			warningTitles,
+			payloadChars: output.includes("700,000"),
+			threshold: output.includes(">= 600,000"),
+			setting: output.includes("compaction.transcriptRiskWarnChars"),
 		}),
-		expected: { boldWarning: true, budget: true, advice: true },
+		expected: { warningTitles: 1, payloadChars: true, threshold: true, setting: true },
 	},
 	{
 		name: "serializer error stays on one line",
 		risk: { chars: 0, error: "TypeError:\nbad input", exceeded: false, messageCount: 50, threshold: 600_000 },
-		observe: (output: string) => ({
-			boldWarning: output.includes("<b>Transcript risk</b>"),
-			errorDetail: output.includes("risk calculation failed: TypeError: bad input"),
+		observe: ({ output, warningTitles }: ReturnType<typeof render>) => ({
+			warningTitles,
+			errorDetail: output.includes("TypeError: bad input"),
+			multilineError: output.includes("TypeError:\nbad input"),
 		}),
-		expected: { boldWarning: true, errorDetail: true },
+		expected: { warningTitles: 1, errorDetail: true, multilineError: false },
 	},
 ];
 
-if (renderRows.length === 0) throw new Error("Context usage renderer table is empty");
-
 for (const row of renderRows) {
 	test(row.name, () => {
-		expect.hasAssertions();
 		const output = render(baseDetails({ transcriptRisk: row.risk }));
-		expect(row.observe(output)).toEqual(row.expected);
+		expect(row.observe(output)).toStrictEqual(row.expected);
 	});
 }

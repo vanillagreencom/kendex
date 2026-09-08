@@ -78,98 +78,173 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	if (workdir) rmSync(workdir, { force: true, recursive: true });
-	if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-	else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
-	if (originalHome === undefined) delete process.env.HOME;
-	else process.env.HOME = originalHome;
+	try {
+		if (workdir) rmSync(workdir, { force: true, recursive: true });
+	} finally {
+		if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+		if (originalHome === undefined) delete process.env.HOME;
+		else process.env.HOME = originalHome;
+	}
 });
 
-test("parses common provider reset hints", () => {
-	const now = Date.UTC(2026, 4, 23, 12, 0, 0);
-	expect(parseDurationLikeMs("6m0s")).toBe(6 * 60 * 1000);
-	expect(extractResetAtFromHeaders({ "retry-after": "60" }, now)).toEqual({ resetAt: now + 60_000, source: "retry-after" });
-	expect(extractResetAtFromHeaders({ "retry-after-ms": "1500" }, now)).toEqual({ resetAt: now + 1500, source: "retry-after-ms" });
-	expect(extractResetAtFromHeaders({ "x-ratelimit-reset-requests": "6m0s" }, now)).toEqual({ resetAt: now + 360_000, source: "x-ratelimit-reset-requests" });
-	expect(extractResetAtFromHeaders({ "anthropic-ratelimit-requests-reset": "2026-05-23T12:05:00Z" }, now)).toEqual({ resetAt: now + 300_000, source: "anthropic-ratelimit-requests-reset" });
-});
+const now = Date.UTC(2026, 4, 23, 12, 0, 0);
 
-test("detects rate-limit text and reset times", () => {
-	const now = Date.UTC(2026, 4, 23, 12, 0, 0);
-	expect(looksLikeRateLimitText("Error: 429 Too Many Requests")).toBe(true);
-	expect(looksLikeRateLimitText("normal tool failure")).toBe(false);
-	expect(extractResetAtFromText("Rate limited. Try again in 2 minutes", now)).toEqual({ resetAt: now + 120_000, source: "text-duration" });
-});
-
-test("schedules configured resume message at reset plus buffer", async () => {
-	writeQolConfig({
-		"rateLimitAutoResume.bufferSeconds": 10,
-		"rateLimitAutoResume.enabled": true,
-		"rateLimitAutoResume.message": "resume now",
+for (const [input, expected] of [["6m0s", 6 * 60 * 1000]] as const) {
+	test(`parseDurationLikeMs: ${input}`, () => {
+		expect(parseDurationLikeMs(input)).toBe(expected);
 	});
-	const { clock, controller, ctx, notifications, sent } = makeHarness();
-	controller.noteAgentStart(ctx);
-	controller.noteExternalRateLimitEvent({ resetAtMs: clock.now() + 60_000, source: "test", status: "rejected" }, ctx);
-	controller.noteMessageEnd({ message: { errorMessage: "You're out of extra usage", role: "assistant", stopReason: "error" } }, ctx);
-	const scheduled = controller.noteAgentEnd({ messages: [{ errorMessage: "429 rate limit", role: "assistant" }] }, ctx);
+}
 
-	expect(scheduled).toBe(true);
-	expect(clock.timers[0]?.delayMs).toBe(70_000);
-	expect(controller.renderPreviewLines(200).join("\n")).toContain("[rate-limit]");
-	expect(notifications[0]?.message).toContain("Auto-resume scheduled");
+for (const [headers, expected] of [
+	[{ "retry-after": "60" }, { resetAt: now + 60_000, source: "retry-after" }],
+	[{ "retry-after-ms": "1500" }, { resetAt: now + 1500, source: "retry-after-ms" }],
+	[{ "x-ratelimit-reset-requests": "6m0s" }, { resetAt: now + 360_000, source: "x-ratelimit-reset-requests" }],
+	[{ "anthropic-ratelimit-requests-reset": "2026-05-23T12:05:00Z" }, { resetAt: now + 300_000, source: "anthropic-ratelimit-requests-reset" }],
+] as const) {
+	test(`extractResetAtFromHeaders: ${expected.source}`, () => {
+		expect(extractResetAtFromHeaders(headers, now)).toEqual(expected);
+	});
+}
 
-	clock.runNext();
-	await Promise.resolve();
-	expect(sent).toEqual([{ content: "resume now", options: undefined }]);
-});
+for (const [input, expected] of [
+	["Error: 429 Too Many Requests", true],
+	["normal tool failure", false],
+] as const) {
+	test(`looksLikeRateLimitText: ${input}`, () => {
+		expect(looksLikeRateLimitText(input)).toBe(expected);
+	});
+}
 
-test("does not schedule while disabled", () => {
-	writeQolConfig({ "rateLimitAutoResume.enabled": false });
-	const { clock, controller, ctx, sent } = makeHarness();
-	controller.noteAgentStart(ctx);
-	controller.noteExternalRateLimitEvent({ resetAtMs: clock.now() + 60_000, status: "rejected" }, ctx);
-	expect(controller.noteAgentEnd({ messages: [{ errorMessage: "429 rate limit", role: "assistant" }] }, ctx)).toBe(false);
-	expect(sent).toHaveLength(0);
-	expect(clock.timers).toHaveLength(0);
-});
+for (const [input, expected] of [
+	["Rate limited. Try again in 2 minutes", { resetAt: now + 120_000, source: "text-duration" }],
+] as const) {
+	test(`extractResetAtFromText: ${input}`, () => {
+		expect(extractResetAtFromText(input, now)).toEqual(expected);
+	});
+}
 
-test("does not schedule after a successful assistant turn even if a transient 429 hint was seen", () => {
-	writeQolConfig({ "rateLimitAutoResume.enabled": true });
-	const { clock, controller, ctx } = makeHarness();
-	controller.noteAgentStart(ctx);
-	controller.noteProviderResponse({ headers: { "retry-after": "60" }, status: 429 }, ctx);
-	const scheduled = controller.noteAgentEnd({ messages: [{ content: [{ text: "done", type: "text" }], role: "assistant", stopReason: "stop" }] }, ctx);
+type Harness = ReturnType<typeof makeHarness>;
 
-	expect(scheduled).toBe(false);
-	expect(clock.timers).toHaveLength(0);
-});
+const lifecycleRows: Array<{
+	name: string;
+	enabled: boolean;
+	actions: Array<(h: Harness) => unknown | Promise<unknown>>;
+	expected: unknown[];
+}> = [
+	...[
+		{
+			name: "external rate-limit event",
+			hint: ({ controller, ctx, clock }: Harness) => controller.noteExternalRateLimitEvent({ resetAtMs: clock.now() + 60_000, source: "test", status: "rejected" }, ctx),
+			messages: [{ errorMessage: "429 rate limit", role: "assistant" }],
+		},
+		{
+			name: "external reset retained through message_end without a reset",
+			hint: ({ controller, ctx, clock }: Harness) => {
+				controller.noteExternalRateLimitEvent({ resetAtMs: clock.now() + 60_000, source: "test", status: "rejected" }, ctx);
+				controller.noteMessageEnd({ message: { errorMessage: "You're out of extra usage", role: "assistant", stopReason: "error" } }, ctx);
+			},
+			messages: [{ errorMessage: "429 rate limit", role: "assistant" }],
+		},
+		{
+			name: "provider response headers",
+			hint: ({ controller, ctx }: Harness) => controller.noteProviderResponse({ headers: { "retry-after": "60" }, status: 429 }, ctx),
+			messages: [{ errorMessage: "429 rate limit", role: "assistant" }],
+		},
+		{
+			name: "message_end text",
+			hint: ({ controller, ctx }: Harness) => controller.noteMessageEnd({ message: { errorMessage: "You're out of extra usage. Try again in 60 seconds", role: "assistant", stopReason: "error" } }, ctx),
+			messages: [{ errorMessage: "request failed", role: "assistant", stopReason: "error" }],
+		},
+		{
+			name: "agent_end text",
+			hint: undefined,
+			messages: [{ errorMessage: "429 rate limit. Try again in 60 seconds", role: "assistant", stopReason: "error" }],
+		},
+	].map(({ name, hint, messages }) => ({
+		name: `${name} schedules the configured message after reset plus buffer`,
+		enabled: true,
+		actions: [
+			(h: Harness) => {
+				hint?.(h);
+				const scheduled = h.controller.noteAgentEnd({ messages }, h.ctx);
+				return {
+					scheduled,
+					delay: h.clock.timers[0]?.delayMs,
+					preview: h.controller.renderPreviewLines(200),
+					notifications: h.notifications.map(({ level }) => level),
+					sent: [...h.sent],
+				};
+			},
+			async ({ clock, sent }: Harness) => {
+				clock.runNext();
+				await Promise.resolve();
+				return sent;
+			},
+		],
+		expected: [
+			{ scheduled: true, delay: 70_000, preview: [expect.stringContaining("[rate-limit]")], notifications: ["warning"], sent: [] },
+			[{ content: "resume now", options: undefined }],
+		],
+	})),
+	{
+		name: "disabled setting creates no timer",
+		enabled: false,
+		actions: [({ clock, controller, ctx, sent }) => {
+			controller.noteExternalRateLimitEvent({ resetAtMs: clock.now() + 60_000, status: "rejected" }, ctx);
+			const scheduled = controller.noteAgentEnd({ messages: [{ errorMessage: "429 rate limit", role: "assistant" }] }, ctx);
+			return { scheduled, sent, timers: clock.timers };
+		}],
+		expected: [{ scheduled: false, sent: [], timers: [] }],
+	},
+	{
+		name: "successful assistant turn ignores a transient provider 429",
+		enabled: true,
+		actions: [({ clock, controller, ctx }) => {
+			controller.noteProviderResponse({ headers: { "retry-after": "60" }, status: 429 }, ctx);
+			const scheduled = controller.noteAgentEnd({ messages: [{ content: [{ text: "done", type: "text" }], role: "assistant", stopReason: "stop" }] }, ctx);
+			return { scheduled, timers: clock.timers };
+		}],
+		expected: [{ scheduled: false, timers: [] }],
+	},
+	...[
+		{ name: "setting disabled before delivery", cancel: (_h: Harness) => writeQolConfig({ "rateLimitAutoResume.enabled": false }), cleared: false },
+		{ name: "new turn before delivery", cancel: ({ controller, ctx }: Harness) => controller.noteAgentStart(ctx), cleared: true },
+	].map(({ name, cancel, cleared }) => ({
+		name,
+		enabled: true,
+		actions: [
+			({ controller, clock, ctx }: Harness) => {
+				controller.noteExternalRateLimitEvent({ resetAtMs: clock.now() + 60_000, status: "rejected" }, ctx);
+				return controller.noteAgentEnd({ messages: [{ errorMessage: "429 rate limit", role: "assistant" }] }, ctx);
+			},
+			async (h: Harness) => {
+				cancel(h);
+				const timerCleared = h.clock.timers[0]?.cleared;
+				h.clock.runNext();
+				await Promise.resolve();
+				return { timerCleared, sent: h.sent, preview: h.controller.renderPreviewLines(200) };
+			},
+		],
+		expected: [true, { timerCleared: cleared, sent: [], preview: [] }],
+	})),
+];
 
-test("does not send a pending auto-resume after the setting is disabled", async () => {
-	writeQolConfig({ "rateLimitAutoResume.enabled": true });
-	const { clock, controller, ctx, sent } = makeHarness();
-	controller.noteAgentStart(ctx);
-	controller.noteExternalRateLimitEvent({ resetAtMs: clock.now() + 60_000, status: "rejected" }, ctx);
-	controller.noteAgentEnd({ messages: [{ errorMessage: "429 rate limit", role: "assistant" }] }, ctx);
-
-	writeQolConfig({ "rateLimitAutoResume.enabled": false });
-	clock.runNext();
-	await Promise.resolve();
-
-	expect(sent).toHaveLength(0);
-	expect(controller.renderPreviewLines(200)).toEqual([]);
-});
-
-test("cancels pending auto-resume when a newer turn starts", async () => {
-	writeQolConfig({ "rateLimitAutoResume.enabled": true });
-	const { clock, controller, ctx, sent } = makeHarness();
-	controller.noteAgentStart(ctx);
-	controller.noteExternalRateLimitEvent({ resetAtMs: clock.now() + 60_000, status: "rejected" }, ctx);
-	controller.noteAgentEnd({ messages: [{ errorMessage: "429 rate limit", role: "assistant" }] }, ctx);
-
-	controller.noteAgentStart(ctx);
-	clock.runNext();
-	await Promise.resolve();
-
-	expect(sent).toHaveLength(0);
-	expect(controller.renderPreviewLines(200)).toEqual([]);
-});
+for (const row of lifecycleRows) {
+	test(`rate-limit lifecycle: ${row.name}`, async () => {
+		writeQolConfig({
+			"rateLimitAutoResume.bufferSeconds": 10,
+			"rateLimitAutoResume.enabled": row.enabled,
+			"rateLimitAutoResume.message": "resume now",
+		});
+		const harness = makeHarness();
+		try {
+			harness.controller.noteAgentStart(harness.ctx);
+			const observed: unknown[] = [];
+			for (const action of row.actions) observed.push(await action(harness));
+			expect(observed).toStrictEqual(row.expected);
+		} finally {
+			harness.controller.clearTimers();
+		}
+	});
+}

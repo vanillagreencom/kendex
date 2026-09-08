@@ -1,9 +1,3 @@
-// End-to-end wiring test: loads the qol extension against a fake Pi
-// event bus, fires `agent_end` with over-budget usage, and asserts
-// ctx.compact is invoked with the budget-guard sentinel. Guards against a
-// guard against removing the budget check from the
-// agent_end handler without any unit test catching it.
-
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -65,7 +59,7 @@ function makeFakeApi(): FakeApi {
 function makeCtx(overrides: Partial<any> = {}) {
 	return {
 		abort() {},
-		compact: mock(() => {}),
+		compact: mock((_options: CompactCall) => {}),
 		cwd: process.env.PI_CODING_AGENT_DIR ?? "/tmp",
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 90, tokens: 180_000 }),
 		getSystemPrompt: () => "",
@@ -82,14 +76,22 @@ function makeCtx(overrides: Partial<any> = {}) {
 		shutdown() {},
 		signal: undefined,
 		ui: {
-			notify() {},
+			notify: mock((_message: string, _level: string) => {}),
+			setEditorComponent() {},
+			setHeader() {},
+			setFooter() {},
 			setStatus() {},
+			setWidget() {},
 		},
 		...overrides,
 	};
 }
 
-function startSession(fake: FakeApi, ctx: any) {
+type Context = ReturnType<typeof makeCtx>;
+const startedSessions: Array<{ fake: FakeApi; ctx: Context }> = [];
+
+function startSession(fake: FakeApi, ctx: Context): void {
+	startedSessions.push({ fake, ctx });
 	fake.handlers.session_start!({ reason: "startup", type: "session_start" }, ctx);
 }
 
@@ -103,215 +105,237 @@ beforeEach(() => {
 	process.env.HOME = workdir;
 });
 
-afterEach(() => {
-	if (workdir) rmSync(workdir, { force: true, recursive: true });
-	if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-	else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
-	if (originalHome === undefined) delete process.env.HOME;
-	else process.env.HOME = originalHome;
+afterEach(async () => {
+	const failures: unknown[] = [];
+	try {
+		for (const { fake, ctx } of startedSessions.splice(0).reverse()) {
+			try {
+				await fake.handlers.session_shutdown!({ type: "session_shutdown" }, ctx);
+			} catch (error) {
+				failures.push(error);
+			}
+		}
+	} finally {
+		if (workdir) rmSync(workdir, { force: true, recursive: true });
+		if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+		if (originalHome === undefined) delete process.env.HOME;
+		else process.env.HOME = originalHome;
+	}
+	if (failures.length) throw new AggregateError(failures, "session_shutdown failed");
 });
 
-test("qol(pi) registers an agent_end handler", () => {
-	const fake = makeFakeApi();
-	qolDefault(fake.api);
-	expect(typeof fake.handlers.agent_end).toBe("function");
-	expect(typeof fake.handlers.agent_settled).toBe("function");
-});
+interface World {
+	fake: FakeApi;
+	ctx: Context;
+	settlement?: Promise<void>;
+	settled: boolean;
+	previousCtx?: Context;
+}
 
-test("agent_settled waits for staged compaction completion", async () => {
-	const fake = makeFakeApi();
-	qolDefault(fake.api);
-	const agentEndHandler = fake.handlers.agent_end;
-	const agentSettledHandler = fake.handlers.agent_settled;
-	expect(agentEndHandler).toBeDefined();
-	expect(agentSettledHandler).toBeDefined();
-	const ctx = makeCtx();
-	startSession(fake, ctx);
-	agentEndHandler!({ messages: [], type: "agent_end" }, ctx);
-	expect(ctx.compact.mock.calls.length).toBe(0);
-	const settlement = agentSettledHandler!({ type: "agent_settled" }, ctx) as Promise<void>;
-	expect(ctx.compact.mock.calls.length).toBe(1);
-	const arg = ctx.compact.mock.calls[0]?.[0] as CompactCall;
-	expect(arg.customInstructions ?? "").toContain(QOL_BUDGET_GUARD_SENTINEL);
-	let settled = false;
-	void settlement.then(() => { settled = true; });
+function agentEnd(h: World): number {
+	h.fake.handlers.agent_end!({ messages: [], type: "agent_end" }, h.ctx);
+	return h.ctx.compact?.mock.calls.length ?? 0;
+}
+
+async function agentSettled(h: World) {
+	h.settled = false;
+	h.settlement = h.fake.handlers.agent_settled!({ type: "agent_settled" }, h.ctx) as Promise<void>;
+	void h.settlement.then(() => { h.settled = true; });
 	await Promise.resolve();
-	expect(settled).toBe(false);
-	arg.onComplete?.();
-	await settlement;
-	expect(settled).toBe(true);
-});
+	return { calls: h.ctx.compact?.mock.calls.length ?? 0, settled: h.settled };
+}
 
-test("agent_settled waits for staged compaction error", async () => {
-	const fake = makeFakeApi();
-	qolDefault(fake.api);
-	const ctx = makeCtx();
-	startSession(fake, ctx);
-	fake.handlers.agent_end!({ messages: [], type: "agent_end" }, ctx);
-	const settlement = fake.handlers.agent_settled!({ type: "agent_settled" }, ctx) as Promise<void>;
-	let settled = false;
-	void settlement.then(() => { settled = true; });
-	await Promise.resolve();
-	expect(settled).toBe(false);
-	const arg = ctx.compact.mock.calls[0]?.[0] as CompactCall;
-	arg.onError?.(new Error("model down"));
-	await settlement;
-	expect(settled).toBe(true);
-});
+async function completeCompaction(h: World): Promise<boolean> {
+	const call = h.ctx.compact.mock.calls.at(-1)?.[0] as CompactCall | undefined;
+	call?.onComplete?.();
+	await h.settlement;
+	return h.settled;
+}
 
-test("agent_end does not fire the budget guard when usage is below threshold", async () => {
-	const fake = makeFakeApi();
-	qolDefault(fake.api);
-	const handler = fake.handlers.agent_end;
-	const ctx = makeCtx({
-		getContextUsage: () => ({ contextWindow: 200_000, percent: 30, tokens: 60_000 }),
-	});
-	startSession(fake, ctx);
-	handler!({ messages: [], type: "agent_end" }, ctx);
-	await fake.handlers.agent_settled!({ type: "agent_settled" }, ctx);
-	expect(ctx.compact.mock.calls.length).toBe(0);
-});
+function sessionCompact(h: World, fromExtension = true, ctx = h.ctx): void {
+	h.fake.handlers.session_compact!({ compactionEntry: {}, fromExtension, reason: "threshold", type: "session_compact" }, ctx);
+}
 
-test("agent_end deduplicates while compaction is pending or in flight", async () => {
-	const fake = makeFakeApi();
-	qolDefault(fake.api);
-	const agentEndHandler = fake.handlers.agent_end;
-	const agentSettledHandler = fake.handlers.agent_settled;
-	const ctx = makeCtx();
-	startSession(fake, ctx);
-	agentEndHandler!({ messages: [], type: "agent_end" }, ctx);
-	agentEndHandler!({ messages: [], type: "agent_end" }, ctx);
-	expect(ctx.compact.mock.calls.length).toBe(0);
-	const settlement = agentSettledHandler!({ type: "agent_settled" }, ctx) as Promise<void>;
-	await agentSettledHandler!({ type: "agent_settled" }, ctx);
-	expect(ctx.compact.mock.calls.length).toBe(1);
-	const arg = ctx.compact.mock.calls[0]?.[0] as CompactCall;
-	arg.onComplete?.();
-	await settlement;
-});
-
-test("agent_end does not re-fire the same trigger after session_compact", async () => {
-	const fake = makeFakeApi();
-	qolDefault(fake.api);
-	const agentEndHandler = fake.handlers.agent_end;
-	const agentSettledHandler = fake.handlers.agent_settled;
-	const sessionCompactHandler = fake.handlers.session_compact;
-	expect(sessionCompactHandler).toBeDefined();
-	const ctx = makeCtx();
-	startSession(fake, ctx);
-	agentEndHandler!({ messages: [], type: "agent_end" }, ctx);
-	const settlement = agentSettledHandler!({ type: "agent_settled" }, ctx) as Promise<void>;
-	expect(ctx.compact.mock.calls.length).toBe(1);
-	// Simulate Pi notifying us that compaction finished.
-	sessionCompactHandler!({ compactionEntry: {}, fromExtension: true, type: "session_compact" }, ctx);
-	const arg = ctx.compact.mock.calls[0]?.[0] as CompactCall;
-	arg.onComplete?.();
-	await settlement;
-	agentEndHandler!({ messages: [], type: "agent_end" }, ctx);
-	await agentSettledHandler!({ type: "agent_settled" }, ctx);
-	expect(ctx.compact.mock.calls.length).toBe(1);
-});
-
-test("Pi auto-compaction between agent_end and agent_settled resolves without dispatch", async () => {
-	const fake = makeFakeApi();
-	qolDefault(fake.api);
-	const agentEndHandler = fake.handlers.agent_end;
-	const agentSettledHandler = fake.handlers.agent_settled;
-	const sessionCompactHandler = fake.handlers.session_compact;
-	const ctx = makeCtx();
-	startSession(fake, ctx);
-
-	// Canonical Pi ordering: extension agent_end handlers run first, core then
-	// performs its post-agent compaction check, emits session_compact, and only
-	// after that emits agent_settled.
-	agentEndHandler!({ messages: [], type: "agent_end" }, ctx);
-	sessionCompactHandler!({ compactionEntry: {}, fromExtension: false, reason: "threshold", type: "session_compact" }, ctx);
-	await agentSettledHandler!({ type: "agent_settled" }, ctx);
-
-	expect(ctx.compact.mock.calls.length).toBe(0);
-	// Fake usage remains in the same trigger bucket. A later agent cycle stays
-	// suppressed until usage drops below threshold or advances to another key.
-	agentEndHandler!({ messages: [], type: "agent_end" }, ctx);
-	await agentSettledHandler!({ type: "agent_settled" }, ctx);
-	expect(ctx.compact.mock.calls.length).toBe(0);
-});
-
-test("agent_end notifies when ctx.compact is unavailable rather than poisoning future retries", async () => {
-	const fake = makeFakeApi();
-	qolDefault(fake.api);
-	const handler = fake.handlers.agent_end;
-	const ctx = makeCtx({ compact: undefined });
-	startSession(fake, ctx);
-	// First settled cycle: no ctx.compact, should not throw or poison the key.
-	handler!({ messages: [], type: "agent_end" }, ctx);
-	await fake.handlers.agent_settled!({ type: "agent_settled" }, ctx);
-	// Now provide ctx.compact and fire again - guard should still attempt
-	// because the previous attempt didn't poison the crossing key.
-	const compact = mock(() => {});
-	const ctxWithCompact = makeCtx({ compact, sessionManager: ctx.sessionManager });
-	handler!({ messages: [], type: "agent_end" }, ctxWithCompact);
-	const settlement = fake.handlers.agent_settled!({ type: "agent_settled" }, ctxWithCompact) as Promise<void>;
-	expect(compact.mock.calls.length).toBe(1);
-	const arg = compact.mock.calls[0]?.[0] as CompactCall;
-	arg.onComplete?.();
-	await settlement;
-});
-
-test("late session_compact from a reset session cannot consume the new session trigger", async () => {
-	const fake = makeFakeApi();
-	qolDefault(fake.api);
-	const ctxA = makeCtx({
-		sessionManager: { getBranch: () => [], getSessionFile: () => undefined, getSessionId: () => "session-a" },
-	});
-	const ctxB = makeCtx({
+async function switchSession(h: World): Promise<boolean> {
+	h.previousCtx = h.ctx;
+	h.ctx = makeCtx({
 		sessionManager: { getBranch: () => [], getSessionFile: () => undefined, getSessionId: () => "session-b" },
 	});
+	startSession(h.fake, h.ctx);
+	await h.settlement;
+	return h.settled;
+}
 
-	startSession(fake, ctxA);
-	fake.handlers.agent_end!({ messages: [], type: "agent_end" }, ctxA);
-	const settlementA = fake.handlers.agent_settled!({ type: "agent_settled" }, ctxA) as Promise<void>;
-	expect(ctxA.compact.mock.calls.length).toBe(1);
+const rows: Array<{
+	name: string;
+	start?: boolean;
+	setup?: (h: World) => void;
+	actions: Array<(h: World) => unknown | Promise<unknown>>;
+	expected: unknown[];
+}> = [
+	{
+		name: "registers end, settled and compact handlers",
+		start: false,
+		actions: [({ fake }) => [typeof fake.handlers.agent_end, typeof fake.handlers.agent_settled, typeof fake.handlers.session_compact]],
+		expected: [["function", "function", "function"]],
+	},
+	{
+		name: "settlement waits for compaction completion",
+		actions: [
+			agentEnd,
+			async (h) => ({
+				...await agentSettled(h),
+				instructions: (h.ctx.compact.mock.calls[0]?.[0] as CompactCall | undefined)?.customInstructions,
+			}),
+			completeCompaction,
+		],
+		expected: [0, { calls: 1, settled: false, instructions: expect.stringContaining(QOL_BUDGET_GUARD_SENTINEL) }, true],
+	},
+	{
+		name: "settlement waits for compaction error",
+		actions: [
+			agentEnd,
+			agentSettled,
+			async (h) => {
+				const call = h.ctx.compact.mock.calls[0]?.[0] as CompactCall;
+				call.onError?.(new Error("model down"));
+				await h.settlement;
+				return h.settled;
+			},
+		],
+		expected: [0, { calls: 1, settled: false }, true],
+	},
+	{
+		name: "below-threshold usage does not dispatch",
+		setup: (h) => { h.ctx.getContextUsage = () => ({ contextWindow: 200_000, percent: 30, tokens: 60_000 }); },
+		actions: [
+			agentEnd,
+			async (h) => {
+				await h.fake.handlers.agent_settled!({ type: "agent_settled" }, h.ctx);
+				return h.ctx.compact.mock.calls.length;
+			},
+		],
+		expected: [0, 0],
+	},
+	{
+		name: "repeated end and settled events deduplicate pending and in-flight work",
+		actions: [
+			agentEnd,
+			agentEnd,
+			agentSettled,
+			async (h) => {
+				await h.fake.handlers.agent_settled!({ type: "agent_settled" }, h.ctx);
+				return h.ctx.compact.mock.calls.length;
+			},
+			completeCompaction,
+		],
+		expected: [0, 0, { calls: 1, settled: false }, 1, true],
+	},
+	{
+		name: "session_compact suppresses the same trigger after completion",
+		actions: [
+			agentEnd,
+			agentSettled,
+			async (h) => {
+				sessionCompact(h);
+				return completeCompaction(h);
+			},
+			agentEnd,
+			async (h) => {
+				await h.fake.handlers.agent_settled!({ type: "agent_settled" }, h.ctx);
+				return h.ctx.compact.mock.calls.length;
+			},
+		],
+		expected: [0, { calls: 1, settled: false }, true, 1, 1],
+	},
+	{
+		name: "Pi auto-compaction between end and settled suppresses dispatch and the next cycle",
+		actions: [
+			agentEnd,
+			async (h) => {
+				sessionCompact(h, false);
+				await h.fake.handlers.agent_settled!({ type: "agent_settled" }, h.ctx);
+				return h.ctx.compact.mock.calls.length;
+			},
+			agentEnd,
+			async (h) => {
+				await h.fake.handlers.agent_settled!({ type: "agent_settled" }, h.ctx);
+				return h.ctx.compact.mock.calls.length;
+			},
+		],
+		expected: [0, 0, 0, 0],
+	},
+	{
+		name: "missing compact function warns and allows retry",
+		setup: (h) => { h.ctx.compact = undefined; },
+		actions: [
+			agentEnd,
+			async (h) => {
+				h.ctx.hasUI = true;
+				try {
+					await h.fake.handlers.agent_settled!({ type: "agent_settled" }, h.ctx);
+					return h.ctx.ui.notify.mock.calls.map((call: [string, string]) => call[1]);
+				} finally {
+					h.ctx.hasUI = false;
+				}
+			},
+			(h) => {
+				h.ctx = makeCtx({ sessionManager: h.ctx.sessionManager });
+				return agentEnd(h);
+			},
+			agentSettled,
+			completeCompaction,
+		],
+		expected: [0, ["warning"], 0, { calls: 1, settled: false }, true],
+	},
+	{
+		name: "late old-session compact event cannot consume a new-session trigger",
+		actions: [
+			agentEnd,
+			agentSettled,
+			switchSession,
+			agentEnd,
+			async (h) => {
+				sessionCompact(h, true, h.previousCtx);
+				return agentSettled(h);
+			},
+			completeCompaction,
+		],
+		expected: [0, { calls: 1, settled: false }, true, 0, { calls: 1, settled: false }, true],
+	},
+	{
+		name: "late old-session compact event cannot suppress retry after Already compacted",
+		actions: [
+			agentEnd,
+			agentSettled,
+			switchSession,
+			agentEnd,
+			agentSettled,
+			async (h) => {
+				sessionCompact(h, true, h.previousCtx);
+				const call = h.ctx.compact.mock.calls[0]?.[0] as CompactCall;
+				call.onError?.(new Error("Already compacted"));
+				await h.settlement;
+				return h.settled;
+			},
+			agentEnd,
+			agentSettled,
+			completeCompaction,
+		],
+		expected: [0, { calls: 1, settled: false }, true, 0, { calls: 1, settled: false }, true, 1, { calls: 2, settled: false }, true],
+	},
+];
 
-	startSession(fake, ctxB);
-	await settlementA;
-	fake.handlers.agent_end!({ messages: [], type: "agent_end" }, ctxB);
-	fake.handlers.session_compact!({ compactionEntry: {}, fromExtension: true, type: "session_compact" }, ctxA);
-	const settlementB = fake.handlers.agent_settled!({ type: "agent_settled" }, ctxB) as Promise<void>;
-
-	expect(ctxB.compact.mock.calls.length).toBe(1);
-	const compactB = ctxB.compact.mock.calls[0]?.[0] as CompactCall;
-	compactB.onComplete?.();
-	await settlementB;
-});
-
-test("late session_compact cannot make a new-session Already compacted error benign", async () => {
-	const fake = makeFakeApi();
-	qolDefault(fake.api);
-	const ctxA = makeCtx({
-		sessionManager: { getBranch: () => [], getSessionFile: () => undefined, getSessionId: () => "session-a" },
+for (const row of rows) {
+	test(`qol event wiring: ${row.name}`, async () => {
+		const fake = makeFakeApi();
+		qolDefault(fake.api);
+		const h: World = { fake, ctx: makeCtx(), settled: false };
+		row.setup?.(h);
+		if (row.start !== false) startSession(fake, h.ctx);
+		const observed: unknown[] = [];
+		for (const action of row.actions) observed.push(await action(h));
+		expect(observed).toStrictEqual(row.expected);
 	});
-	const ctxB = makeCtx({
-		sessionManager: { getBranch: () => [], getSessionFile: () => undefined, getSessionId: () => "session-b" },
-	});
-
-	startSession(fake, ctxA);
-	fake.handlers.agent_end!({ messages: [], type: "agent_end" }, ctxA);
-	const settlementA = fake.handlers.agent_settled!({ type: "agent_settled" }, ctxA) as Promise<void>;
-	startSession(fake, ctxB);
-	await settlementA;
-
-	fake.handlers.agent_end!({ messages: [], type: "agent_end" }, ctxB);
-	const firstSettlementB = fake.handlers.agent_settled!({ type: "agent_settled" }, ctxB) as Promise<void>;
-	expect(ctxB.compact.mock.calls.length).toBe(1);
-	fake.handlers.session_compact!({ compactionEntry: {}, fromExtension: true, type: "session_compact" }, ctxA);
-	const firstCompactB = ctxB.compact.mock.calls[0]?.[0] as CompactCall;
-	firstCompactB.onError?.(new Error("Already compacted"));
-	await firstSettlementB;
-
-	fake.handlers.agent_end!({ messages: [], type: "agent_end" }, ctxB);
-	const retrySettlementB = fake.handlers.agent_settled!({ type: "agent_settled" }, ctxB) as Promise<void>;
-	expect(ctxB.compact.mock.calls.length).toBe(2);
-	const retryCompactB = ctxB.compact.mock.calls[1]?.[0] as CompactCall;
-	retryCompactB.onComplete?.();
-	await retrySettlementB;
-});
+}
