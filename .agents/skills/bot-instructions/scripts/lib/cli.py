@@ -7,9 +7,11 @@ suites read:
     findings  bot-instructions: findings=N  first line, on stderr, exit 1
               then one line per finding
 
-The key is the error family and the value is the tree the run was about; the
-English that follows either record is for a person and carries no contract.
-Exit codes: 0 clean, 1 findings, 2 could not complete.
+The key names the condition and the value is that condition's subject: the
+repository or spec root for a failure reading them, the argument for a usage
+refusal, the interpreter for a launcher refusal, the count for findings. It is
+not always a path. The English that follows either record is for a person and
+carries no contract. Exit codes: 0 clean, 1 findings, 2 could not complete.
 """
 
 import argparse
@@ -25,8 +27,8 @@ SPEC_FILES = ("SKILL.md", "schemas/renders.md")
 
 class _Parser(argparse.ArgumentParser):
     """Argparse exits on its own, before `main` can catch anything, so it
-    writes the record itself. The value is the argument the caller gave, which
-    is what they have to change."""
+    writes the record itself. Its subject is the argument the caller gave,
+    which is what they have to change."""
 
     def error(self, message):
         given = sys.argv[1] if len(sys.argv) > 1 else "(none)"
