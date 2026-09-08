@@ -55,7 +55,7 @@ A new or modified check, guard, assertion, or test ships with a must-fail contro
 
 ## Tests
 
-- One control per behaviour surface, a public function, command, rule or contract, plus its inverse: the must-fail control § Prove Your Guards demands.
+- One must-fail control per changed surface is the whole mutation requirement. Do not run mutant batteries beyond it. The control plants one defect that turns the surface's test red; use the existing `HOOK_UNDER_TEST` and mutant-hook patterns as the shape. Each surface also tests its inverse.
 - N planted defects means N asserted rows. A fixture that plants several defects under one verdict passes while any one of them is caught, and is never allowed.
 - Shaped input (positions, settings keys, tamper classes) is one table-driven case: one loop, one assertion per row, the row list visible in the file.
 - Every hook or script refusal and notice starts with a stable first line: a short key and the relevant path, count, exit code or other value. Put the English explanation on following lines. Keep message text in one place per hook or script.
