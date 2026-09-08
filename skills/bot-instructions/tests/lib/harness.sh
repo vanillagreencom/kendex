@@ -205,6 +205,26 @@ expect_message() {
   else bad "$label" "expected '$want'; got: $(printf '%s' "$bi_out" | head -2 | tr '\n' ' ')"; fi
 }
 
+# The red control for one clause of a validator that has several: exit 1,
+# that validator alone, and the finding naming the clause (the fragment only
+# that clause's message carries), so a fixture that also trips a neighbouring
+# clause of the same validator cannot pass on the neighbour.
+expect_clause() {
+  local validator clause label fired
+  validator="$1"; clause="$2"; label="$3"; shift 3
+  bi_run "$@"
+  fired="$(bi_fired)"
+  if [ "$bi_status" -ne 1 ]; then
+    bad "$label" "expected exit 1 with $validator; exited $bi_status: $(printf '%s' "$bi_out" | head -2 | tr '\n' ' ')"
+  elif [ "$fired" != "$validator " ]; then
+    bad "$label" "expected exactly [$validator ]; fired: [$fired]"
+  elif ! bi_carries "$clause"; then
+    bad "$label" "expected the finding to name '$clause'; got: $(printf '%s' "$bi_out" | head -2 | tr '\n' ' ')"
+  else
+    ok "$label"
+  fi
+}
+
 # The validator names in `$bi_out`, sorted, space-separated, one trailing
 # space: the set `expect_red` and a table row compare against.
 bi_fired() {

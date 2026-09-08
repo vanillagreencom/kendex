@@ -40,11 +40,16 @@ git -C "$work" init -q .
 for f in a/f a/b/g ab/h top.md docs/x.md solo; do printf 'x\n' > "$work/$f"; done
 git -C "$work" add -A >/dev/null 2>&1
 
-# One vector: git's selection for the pattern against this package's.
+# One vector: git's selection for the pattern against this package's. An
+# `agree` row names the selection both must make (`-` for none), so a row on
+# which both select nothing is visibly that and never an agreement on a
+# fixture the pattern does not reach.
 vector() {
-  local pattern want_agree theirs mine
+  local pattern want_agree theirs mine want
   pattern="$1"
   want_agree="$2"
+  want="${3:-}"
+  [ "$want" != - ] || want=""
   local refused=0
   theirs="$(git -C "$work" ls-files -- ":(glob)$pattern" 2>/dev/null | LC_ALL=C sort | tr '\n' ' ' | sed 's/  *$//')" || refused=1
   git -C "$work" ls-files -- ":(glob)$pattern" >/dev/null 2>&1 || refused=1
@@ -61,10 +66,10 @@ PY
   mine="$(printf '%s' "$mine" | sed 's/  *$//')"
   case "$want_agree" in
     agree)
-      if [ "$refused" -eq 0 ] && [ "$theirs" = "$mine" ]; then
-        ok "agrees with git's wildmatch: $pattern"
+      if [ "$refused" -eq 0 ] && [ "$theirs" = "$want" ] && [ "$mine" = "$want" ]; then
+        ok "agrees with git's wildmatch: $pattern selects [$want]"
       else
-        bad "agrees with git's wildmatch: $pattern" "git [$theirs] refused=$refused vs this package [$mine]"
+        bad "agrees with git's wildmatch: $pattern selects [$want]" "git [$theirs] refused=$refused vs this package [$mine]"
       fi ;;
     disagree)
       if [ "$theirs" != "$mine" ]; then ok "the harness reports a disagreement: $pattern"
@@ -80,11 +85,22 @@ PY
 
 export BI_ROOT
 
-# Every shape the dialect permits.
-for p in 'a/**' 'a/*' '**' '*' '*.md' '**/*.md' '**/g' 'a/**/g' 'a/*/g' 'a/b/**' \
-         'a?f' 'a**' '[a]b/h' 'docs/**' 'top.md' 'solo/**' 'docs' 'doc?'; do
-  vector "$p" agree
+# Every shape the dialect permits, each with the selection it makes over the
+# tree above: `pattern|selection`. A list an edit emptied would let the
+# assertions below supply the suite's success, so each loop here floors on
+# its own count.
+floor() { # BEFORE LABEL — at least one assertion since BEFORE
+  [ "$((BI_PASS + BI_FAIL))" -gt "$1" ] || { printf '%s asserted no row\n' "$2" >&2; exit 2; }
+}
+before=$((BI_PASS + BI_FAIL))
+for row in 'a/**|a/b/g a/f' 'a/*|a/f' '**|a/b/g a/f ab/h docs/x.md solo top.md' \
+           '*|solo top.md' '*.md|top.md' '**/*.md|docs/x.md top.md' '**/g|a/b/g' \
+           'a/**/g|a/b/g' 'a/*/g|a/b/g' 'a/b/**|a/b/g' 'a?f|-' 'a**|a/b/g a/f ab/h' \
+           '[a]b/h|ab/h' 'docs/**|docs/x.md' 'top.md|top.md' 'solo/**|-' \
+           'docs|docs/x.md' 'doc?|-'; do
+  vector "${row%%|*}" agree "${row#*|}"
 done
+floor "$before" 'the agree table'
 
 # The harness's own control, on inputs the dialect refuses. An empty component
 # is the sharpest: git normalizes `a//f` to `a/f` and selects a file, and this
@@ -102,6 +118,7 @@ vector '../a/f' refused
 # sequences, and this is the difference: a ban list closes the shapes someone
 # thought of, and every byte below is outside the class whether or not anyone
 # named it.
+before=$((BI_PASS + BI_FAIL))
 for bad_pattern in '{a,ab}/**' '@(a|ab)/**' 'a,b' 'a#b' 'a!b' 'a"b'; do
   if python3 -c "
 import sys, os
@@ -119,6 +136,7 @@ raise SystemExit(1)
     bad "the dialect refuses: $bad_pattern"
   fi
 done
+floor "$before" 'the refused-pattern table'
 
 # `**/` translates to `(?:[^/]*/)*`, and nesting those is exponential in the
 # number of `**`: rejecting a deep path took seconds at a dozen, inside the
@@ -131,11 +149,17 @@ sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
 from lib import globs
 
 paths = ["a", "a/b", "a/x/b", "b", "a/x/y/b", "a/b/c", "x/b", "a/x/y/z/b"]
+compared = 0
 for n in range(1, 6):
     many = "a/" + "**/" * n + "b"
     for p in paths:
         if bool(globs.matching(many, [p])) != bool(globs.matching("a/**/b", [p])):
             sys.exit(f"{many!r} and 'a/**/b' disagree on {p!r}")
+        compared += 1
+# The equivalence half floors on its own count: an emptied path list would
+# leave the cost probe below to supply this assertion's success.
+if not compared:
+    sys.exit("the collapse matrix compared no path")
 # In a child with a hard deadline: uncollapsed, twenty `**` against a
 # twenty-deep path does not return in any time a CI lane will wait, and a
 # control that waits with it reports a timeout rather than a failure.
