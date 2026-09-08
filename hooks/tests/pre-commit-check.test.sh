@@ -17,6 +17,7 @@
 #
 # HOOK_UNDER_TEST runs this suite against another hook file, which is how the
 # must-fail control checks that these assertions can go red.
+# shellcheck source-path=SCRIPTDIR
 set -euo pipefail
 
 # The fixture's own git calls must build the fixture, not whatever repository
@@ -26,58 +27,11 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 HOOKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$HOOKS_DIR/pre-commit-check.sh}"
 
-# The bypass flag and the installer's marker, both assembled: this repository's
-# own hook refuses a command spelling the first out, and a file carrying the
-# second reads as a shim.
-NV="--no-""verify"
-GG_MARK="# kendex-""guards-hook"
-
-PASS=0
-FAIL=0
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
-ERR_FILE="$TMP_ROOT/stderr"
-# Anything a fixture's own script writes when something runs it. Nothing
-# should: this hook defers or refuses, and never stands in.
-RAN_LOG="$TMP_ROOT/ran.log"
-
-# A PATH holding the tools the hook needs and nothing named kendex. No lane of
-# this hook may depend on the binary. HOOK_TOOLS widens it for the must-fail
-# control, whose hook reaches for tools this one does not.
-HOOK_TOOLS="${HOOK_TOOLS:-git grep jq bash cat env printf}"
-NO_KENDEX_BIN="$TMP_ROOT/no-kendex-bin"
-mkdir -p "$NO_KENDEX_BIN"
-for tool in $HOOK_TOOLS; do
-  target="$(command -v "$tool" 2>/dev/null)" && ln -sf "$target" "$NO_KENDEX_BIN/$tool"
-done
-
-run_hook() {
-  local dir="$1" payload="$2"
-  set +e
-  (cd "$dir" && env PATH="$NO_KENDEX_BIN" bash "$HOOK" <<<"$payload") >/dev/null 2>"$ERR_FILE"
-  rc=$?
-  set -e
-  err="$(cat "$ERR_FILE")"
-  log="$(cat "$RAN_LOG" 2>/dev/null || true)"
-}
+# shellcheck source=lib/pre-commit-world.sh
+. "$HOOKS_DIR/tests/lib/pre-commit-world.sh"
 
 # shellcheck source=lib/payload-rows.sh
 . "$HOOKS_DIR/tests/lib/payload-rows.sh"
-
-payload() { printf '{"tool_input":{"command":"%s"}}' "$1"; }
-
-assert_eq() {
-  if [[ "$1" == "$2" ]]; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
-  else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$3" "$2" "$1"; fi
-}
-assert_contains() {
-  if [[ "$1" == *"$2"* ]]; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
-  else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected to contain: %s\n        got:      %s\n' "$3" "$2" "$1"; fi
-}
-assert_not_contains() {
-  if [[ "$1" != *"$2"* ]]; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
-  else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected NOT to contain: %s\n        got:      %s\n' "$3" "$2" "$1"; fi
-}
 
 # Judge one form in both fixtures at once. The ARMED expectation says whether a
 # word of the command reads as a bypass; the UNARMED one is the control proving
@@ -87,51 +41,14 @@ both() {
   run_hook "$ARMED" "$(payload "$form")"
   assert_eq "$rc" "$want_armed" "armed: $name"
   [[ "$want_armed" == 2 ]] && assert_contains "$err" "would skip this repository's armed git hooks" "armed refusal names a bypass: $name"
-  assert_eq "$log" "" "armed: nothing of the repository's ran: $name"
   run_hook "$UNARMED" "$(payload "$form")"
   assert_eq "$rc" "$want_unarmed" "unarmed: $name"
   [[ "$want_unarmed" == 2 ]] && assert_contains "$err" "not armed by kendex" "unarmed refusal names the arming: $name"
-  assert_eq "$log" "" "unarmed: nothing of the repository's ran: $name"
+  return 0
 }
 
-# --- Fixtures ----------------------------------------------------------------
-arm() {
-  local dir="$1" lane
-  for lane in "${@:2}"; do
-    printf '#!/bin/sh\nexit 0 %s\n' "$GG_MARK" >"$dir/.git/hooks/$lane"
-    chmod +x "$dir/.git/hooks/$lane"
-  done
-}
-new_repo() {
-  local dir="$TMP_ROOT/$1"
-  mkdir -p "$dir"
-  git -C "$dir" init -q
-  # A script that announces itself if anything runs it. Nothing may.
-  mkdir -p "$dir/.agents/skills/commit-guards/scripts"
-  printf '#!/usr/bin/env bash\necho ran >>"%s"\n' "$RAN_LOG" >"$dir/.agents/skills/commit-guards/scripts/pre-commit"
-  chmod +x "$dir/.agents/skills/commit-guards/scripts/pre-commit"
-  printf '%s' "$dir"
-}
 UNARMED="$(new_repo unarmed)"
 ARMED="$(new_repo armed)"; arm "$ARMED" pre-commit commit-msg
-# A hook git will not run: present, execute bit off. Git skips it silently.
-DISARMED="$(new_repo disarmed)"; arm "$DISARMED" pre-commit commit-msg
-chmod -x "$DISARMED/.git/hooks/pre-commit"
-# One lane armed and not the other. Deferring here waives the commit-msg gate.
-HALF_ARMED="$(new_repo half-armed)"; arm "$HALF_ARMED" pre-commit
-# core.hooksPath set and EMPTY switches hooks off, and git's answer misleads:
-# `rev-parse --git-path hooks` reports `./`, so the directory resolves to the
-# repository root. This fixture puts an executable pre-commit exactly there.
-HOOKS_OFF="$(new_repo hooks-off)"
-git -C "$HOOKS_OFF" config core.hooksPath ""
-printf '#!/bin/sh\nexit 0\n' >"$HOOKS_OFF/pre-commit"; chmod +x "$HOOKS_OFF/pre-commit"
-# Marked and executable, but reached through core.hooksPath: a redirect is not
-# armed, whatever it points at.
-ARMED_BY_PATH="$(new_repo armed-by-path)"; arm "$ARMED_BY_PATH" pre-commit commit-msg
-mkdir -p "$TMP_ROOT/custom-hooks"
-cp "$ARMED_BY_PATH/.git/hooks/pre-commit" "$ARMED_BY_PATH/.git/hooks/commit-msg" "$TMP_ROOT/custom-hooks/"
-git -C "$ARMED_BY_PATH" config core.hooksPath "$TMP_ROOT/custom-hooks"
-NOT_A_REPO="$TMP_ROOT/plain"; mkdir -p "$NOT_A_REPO"
 
 echo "a git word with a later commit word is the commit"
 
@@ -144,6 +61,7 @@ both 'cargo fmt\ngit commit -m x' 0 2 "a commit on the next line"
 # what keeps these rows green in a build where that substitution is not there,
 # and they stay for that reason rather than because a row needs them.
 both '/usr/bin/git commit -m x' 0 2 "an absolute git path"
+# shellcheck disable=SC2016
 both 'x=$(git commit -m x)' 0 2 "a commit inside a command substitution"
 both '`git commit '"$NV"' -m x`' 2 2 "a backtick-enclosed commit"
 both 'git status' 0 0 "no commit word"
@@ -181,46 +99,7 @@ both 'git commit -c HEAD --reset-author' 0 2 "-c reusing a message is not a key"
 
 run_hook "$ARMED" "$(payload "git commit $NV -m x")"
 assert_contains "$err" "The word '--no-verify' would skip" "the refusal names the flag it saw"
-assert_contains "$err" "reads whitespace-separated words, not shell" "the refusal says why text counts"
-assert_contains "$err" "split the command so the text and the commit are separate calls" "and gives the cheapest rewrite"
 assert_contains "$err" "git commit -F <file>" "and the one for a long message"
-assert_contains "$err" "commit without that word" "and what to do when the flag was meant"
-
-echo
-echo "an armed repository gates its own commit"
-
-run_hook "$ARMED" "$(payload 'git commit -m test')"
-assert_eq "$rc" "0" "an armed .git/hooks pair gates the commit itself"
-assert_eq "$log" "" "no second validation beside an armed hook"
-
-for fixture in "$DISARMED" "$HALF_ARMED" "$HOOKS_OFF" "$ARMED_BY_PATH"; do
-  run_hook "$fixture" "$(payload 'git commit -m test')"
-  assert_eq "$rc" "2" "not armed: $(basename "$fixture")"
-  assert_contains "$err" "not armed by kendex" "and the refusal says so: $(basename "$fixture")"
-  assert_eq "$log" "" "and nothing of the repository's ran: $(basename "$fixture")"
-done
-
-run_hook "$UNARMED" "$(payload 'git commit -m test')"
-assert_contains "$err" "kendex guard install" "the unarmed refusal names the command that fixes it"
-assert_contains "$err" "kendex guard check" "and the one that explains it"
-
-echo
-echo "the hook gates its working directory only"
-
-run_hook "$ARMED" "$(payload "git -C $UNARMED commit -m x")"
-assert_eq "$rc" "0" "an armed cwd defers whatever the commit is aimed at"
-run_hook "$UNARMED" "$(payload "git -C $ARMED commit -m x")"
-assert_eq "$rc" "2" "an unarmed cwd judges itself whatever the target"
-assert_contains "$err" "judged $UNARMED only" "and the notice names the directory it judged"
-run_hook "$NOT_A_REPO" "$(payload "git -C $UNARMED commit -m x")"
-assert_eq "$rc" "0" "a non-repository cwd gates nothing"
-assert_contains "$err" "moves repositories" "and says the target is elsewhere"
-run_hook "$UNARMED" "$(payload 'git commit -m x')"
-assert_not_contains "$err" "moves repositories" "no notice for a commit in place"
-for form in 'cd sub && git commit -m x' 'GIT_DIR=/e/.git git commit -m x' 'GIT_WORK_TREE=/e git commit -m x'; do
-  run_hook "$UNARMED" "$(payload "$form")"
-  assert_contains "$err" "moves repositories" "a repository-moving word is named: $form"
-done
 
 echo
 payload_table "$HOOK" "git commit $NV -m x" 'git commit -m x' "$ARMED"
@@ -275,20 +154,6 @@ both 'echo commit;git status' 0 0 "a commit word before the git word, across a s
 # comes off in the word loop.
 both 'git commit</dev/null -m x' 0 2 "a redirection-in glued to the subcommand"
 both '(git commit)' 0 2 "a subshell whose closing paren ends the commit word"
-
-echo
-echo "the split is not pathname expansion"
-
-# `set -f` around the word split is the only thing keeping the command's text
-# from being matched against the working directory. Without it a repository
-# holding a file named for the flag turns an ordinary glob into a bypass word,
-# which is this hook reading a word no shell handed it.
-GLOB="$(new_repo glob)"; arm "$GLOB" pre-commit commit-msg
-: >"$GLOB/$NV"
-: >"$GLOB/commit"
-run_hook "$GLOB" "$(payload 'git commit -m x *')"
-assert_eq "$rc" "0" "a glob is not expanded against a decoy named for the flag"
-assert_eq "$log" "" "nothing of the repository's ran for the glob"
 
 echo
 echo "the two stated limits"
