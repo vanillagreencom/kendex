@@ -1,16 +1,66 @@
 #!/usr/bin/env bash
-# Coverage and changed-path semantics stay independent of notice delivery.
-# HOOK_UNDER_TEST lets the same assertions reject a restored blocking hook.
+# doc-drift-check: an advisory Stop hook. Every changed non-markdown path is
+# matched against the nearest tracked non-root AGENTS.md above it and every
+# topic file whose Covers entry reaches it; a covering doc left unchanged is
+# named once on stdout as a lone {systemMessage} object, the notice Claude
+# Code shows. The changed set is read against the branch's merge-base with
+# the default branch, or the working tree alone where no base applies. The
+# hook always exits 0; a failed discovery command says so on stderr instead
+# of judging what it could not read.
+#
+# A row is `label|<columns>`; each table names its columns in order:
+#   world    the row's repository, built fresh by `build` from these words:
+#            `repo` (on main, no remote), `clone` (of a fresh repository, on
+#            feat, origin/HEAD -> origin/main) or `norepo` (a bare directory)
+#            first; then the sealed additions and branch moves `build` lists;
+#            `subdir` runs the hook from ui/; `break:<cmd>` puts a git whose
+#            <cmd> dies (or a dying sed) first on PATH
+#   change   the row's edits in order, from the words `change` lists;
+#            `stage` and `commit` take everything; `stopped` runs one Stop
+#            first; `-` for none
+#   payload  the Stop payload: `stop`, `active` (stop_hook_active true) or
+#            `raw` (not JSON); tables without the column feed `stop`
+#   rc       the exit status
+#   out      stdout reduced: `-` when empty; otherwise the notice's docs, each
+#            as `<doc>(<changed path>)`, sorted and joined by `,`; a stdout
+#            that is not a lone {systemMessage} object renders as
+#            `malformed:` and the text
+#   judged   the notice's Compared line with the arm-shared prefixes (`every
+#            change since <sha>, ` and `the working tree alone: `) removed;
+#            `-` without a notice. The clause is wording, but each is emitted
+#            by exactly one base-selection arm and the hook has no other
+#            observable for the base it chose
+#   err      every stderr line by kind, in order, joined by `;`:
+#            `unavailable=<git subcommand>` for the failed-probe line,
+#            `unavailable=exit <n>` for the trap's line, a `fixture:` line
+#            (the broken command's own stderr, passed through) verbatim,
+#            and `git` once for each run of git's own words, which are
+#            not pinned; `-` when empty
 set -euo pipefail
+
+# A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
+# GIT_WORK_TREE and GIT_INDEX_FILE, which take precedence over `git -C` and
+# would configure the real repository.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/doc-drift-check.sh}"
-
-PASS=0
-FAIL=0
+HOOK="$(cd "$TEST_DIR/.." && pwd)/doc-drift-check.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+PASS=0
+FAIL=0
+ROW=0
+
+assert_eq() {
+  local got="$1" want="$2" label="$3"
+  if [[ "$got" == "$want" ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$label"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$label" "$want" "$got"
+  fi
+}
 
 # Fixture git runs under the throwaway HOME so the caller's own git
 # configuration cannot decide what a fixture repository does.
@@ -18,472 +68,295 @@ fgit() {
   env HOME="$TMP_ROOT" git "$@"
 }
 
-# A fresh repository on a branch named main with no remote: a root AGENTS.md
-# (covers nothing), crates/core with its own AGENTS.md, a topic file
-# covering crates/core, and ui/ under no doc at all. Every case starts from
-# this clean tree and states its change.
-new_repo() {
-  local repo="$TMP_ROOT/repo.$1"
-  mkdir -p "$repo/crates/core/src" "$repo/docs/architecture" "$repo/ui/src"
-  fgit init -q "$repo"
-  fgit -C "$repo" symbolic-ref HEAD refs/heads/main
-  fgit -C "$repo" config user.email t@example.com
-  fgit -C "$repo" config user.name t
-  printf '# root\n' >"$repo/AGENTS.md"
-  printf '# core\n' >"$repo/crates/core/AGENTS.md"
-  printf '# Core\n\nCovers: crates/core\n' >"$repo/docs/architecture/core.md"
-  printf 'pub fn a() {}\n' >"$repo/crates/core/src/lib.rs"
-  printf 'export const a = 1;\n' >"$repo/ui/src/app.ts"
-  fgit -C "$repo" add -A
-  fgit -C "$repo" commit -q -m init
-  printf '%s' "$repo"
+# A repository on a branch named main with no remote: a root AGENTS.md
+# (covers nothing), crates/core with its own AGENTS.md, a topic covering
+# crates/core, and ui/ under no doc at all.
+seed_repo() { # DIR
+  mkdir -p "$1/crates/core/src" "$1/docs/architecture" "$1/ui/src"
+  fgit init -q "$1"
+  fgit -C "$1" symbolic-ref HEAD refs/heads/main
+  fgit -C "$1" config user.email t@example.com
+  fgit -C "$1" config user.name t
+  printf '# root\n' >"$1/AGENTS.md"
+  printf '# core\n' >"$1/crates/core/AGENTS.md"
+  printf '# Core\n\nCovers: crates/core\n' >"$1/docs/architecture/core.md"
+  printf 'pub fn a() {}\n' >"$1/crates/core/src/lib.rs"
+  printf 'export const a = 1;\n' >"$1/ui/src/app.ts"
+  fgit -C "$1" add -A
+  fgit -C "$1" commit -q -m init
 }
 
-# A clone of a fresh repository, so origin/HEAD resolves to origin/main,
-# checked out on a branch named feat.
-new_clone() {
-  local up clone="$TMP_ROOT/clone.$1"
-  up="$(new_repo "up.$1")"
-  fgit clone -q -- "$up" "$clone"
-  fgit -C "$clone" config user.email t@example.com
-  fgit -C "$clone" config user.name t
-  fgit -C "$clone" checkout -q -b feat
-  printf '%s' "$clone"
+# A world addition is sealed in a commit: an untracked topic is itself a
+# changed doc, and a changed doc is never named.
+seal() {
+  fgit -C "$REPO" add -A
+  fgit -C "$REPO" commit -q -m seal
 }
 
-# A git on PATH that passes every subcommand through except $1, which dies
-# with $2 the way a git too old for the flags or a broken index would.
-broken_git() {
-  local bin="$TMP_ROOT/broken.$1" real
-  real="$(command -v git)"
-  mkdir -p "$bin"
-  cat >"$bin/git" <<EOF
+# A PATH directory whose git dies on subcommand $1 with `fixture: $1 failed`
+# the way a broken index or unreadable refs would, or whose sed dies on
+# every call.
+broken() { # COMMAND
+  local dir="$REPO.bin" real
+  mkdir -p "$dir"
+  if [[ "$1" == sed ]]; then
+    printf '#!/usr/bin/env bash\necho "fixture: sed failed" >&2\nexit 19\n' >"$dir/sed"
+    chmod +x "$dir/sed"
+  else
+    real="$(command -v git)"
+    cat >"$dir/git" <<EOF
 #!/usr/bin/env bash
 for a in "\$@"; do
   if [ "\$a" = "$1" ]; then
-    echo "$2" >&2
+    echo "fixture: $1 failed" >&2
     exit 128
   fi
 done
 exec "$real" "\$@"
 EOF
-  chmod +x "$bin/git"
-  printf '%s' "$bin"
+    chmod +x "$dir/git"
+  fi
+  printf '%s' "$dir"
 }
 
-# Run the hook inside $1 with a Stop payload on stdin. $2 is the session id
-# (default s1), $3 the stop_hook_active value (default false). Captures
-# stdout JSON in $out, its message in $notice, stderr in $err and status in $rc.
-run_hook() {
-  local dir="$1" session="${2:-s1}" active="${3:-false}"
-  set +e
-  ( cd "$dir" && env HOME="$TMP_ROOT" bash "$HOOK" \
-    <<<"{\"session_id\":\"$session\",\"hook_event_name\":\"Stop\",\"stop_hook_active\":$active}" ) \
-    >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr"
-  rc=$?
-  set -e
-  out="$(cat "$TMP_ROOT/stdout")"
-  err="$(cat "$TMP_ROOT/stderr")"
-  notice=""
-  if [ -n "$out" ]; then
-    notice="$(jq -r '.systemMessage // empty' <"$TMP_ROOT/stdout")"
+build() { # WORLD — the row's repository, its run directory and PATH
+  local word
+  ROW=$((ROW + 1))
+  REPO="$TMP_ROOT/row$ROW"
+  RUN_DIR="$REPO"
+  RUN_PATH="$PATH"
+  for word in $1; do
+    case "$word" in
+      repo) seed_repo "$REPO" ;;
+      clone)
+        seed_repo "$REPO.up"
+        fgit clone -q -- "$REPO.up" "$REPO"
+        fgit -C "$REPO" config user.email t@example.com
+        fgit -C "$REPO" config user.name t
+        fgit -C "$REPO" checkout -q -b feat
+        ;;
+      norepo) mkdir -p "$REPO" ;;
+      nodocs) fgit -C "$REPO" rm -q crates/core/AGENTS.md docs/architecture/core.md; seal ;;
+      crates-agents) printf '# crates\n' >"$REPO/crates/AGENTS.md"; seal ;;
+      ignore-target) printf 'target/\n' >"$REPO/.gitignore"; seal ;;
+      ui-topic)
+        mkdir -p "$REPO/ui/lib"
+        printf '# UI\n\nCovers: ui/src/, crates/core,ui/lib\n' >"$REPO/docs/architecture/ui.md"
+        seal
+        ;;
+      selected-topic)
+        mkdir -p "$REPO/crates/eval/src"
+        printf '# Selected paths\n\nCovers: ui/src/app.ts, crates/*/src/eval*.rs\n' >"$REPO/docs/architecture/selected.md"
+        printf 'pub fn score() {}\n' >"$REPO/crates/eval/src/eval_score.rs"
+        seal
+        ;;
+      file-topic) printf '# Selected path\n\nCovers: ui/src/app.ts\n' >"$REPO/docs/architecture/selected.md"; seal ;;
+      root-topic) printf '# All\n\nCovers: . ./ /\n' >"$REPO/docs/architecture/all.md"; seal ;;
+      with-master) fgit -C "$REPO" branch master ;;
+      master) fgit -C "$REPO" branch -m main master ;;
+      trunk) fgit -C "$REPO" branch -m main trunk ;;
+      on-main) fgit -C "$REPO" checkout -q main ;;
+      on-feat) fgit -C "$REPO" checkout -q -b feat ;;
+      orphan) fgit -C "$REPO" checkout -q --orphan lone ;;
+      subdir) RUN_DIR="$REPO/ui" ;;
+      badconfig) printf 'this is not a config line\n' >"$REPO/.git/config" ;;
+      break:*) RUN_PATH="$(broken "${word#break:}"):$PATH" ;;
+      *) printf 'an unknown world word builds nothing: %s\n' "$word" >&2; exit 1 ;;
+    esac
+  done
+}
+
+change() { # WORDS — the row's edits, in order
+  local word
+  for word in $1; do
+    case "$word" in
+      -) ;;
+      code) printf 'pub fn more() {}\n' >>"$REPO/crates/core/src/lib.rs" ;;
+      agents) printf 'more\n' >>"$REPO/crates/core/AGENTS.md" ;;
+      topic) printf 'more\n' >>"$REPO/docs/architecture/core.md" ;;
+      md) printf 'more\n' >>"$REPO/crates/core/README.md"; printf 'note\n' >"$REPO/crates/core/NOTES.md" ;;
+      new) printf 'pub fn added() {}\n' >"$REPO/crates/core/src/added.rs" ;;
+      unicode) printf 'pub fn b() {}\n' >"$REPO/crates/core/src/über.rs" ;;
+      ui) printf 'export const b = 2;\n' >>"$REPO/ui/src/app.ts" ;;
+      other) printf 'export const other = 2;\n' >"$REPO/ui/src/app.tsx" ;;
+      lib) printf 'export const c = 3;\n' >"$REPO/ui/lib/c.ts" ;;
+      top) printf 'x\n' >"$REPO/top.rs" ;;
+      target) mkdir -p "$REPO/crates/core/target"; printf 'fn generated() {}\n' >"$REPO/crates/core/target/generated.rs" ;;
+      eval) printf 'pub fn more() {}\n' >>"$REPO/crates/eval/src/eval_score.rs" ;;
+      stage) fgit -C "$REPO" add -A ;;
+      commit) fgit -C "$REPO" add -A; fgit -C "$REPO" commit -q -m step ;;
+      stopped) run stop ;;
+      *) printf 'an unknown change word changes nothing: %s\n' "$word" >&2; exit 1 ;;
+    esac
+  done
+}
+
+run() { # PAYLOAD — sets RC and MESSAGE (the systemMessage, empty when stdout is not the notice object)
+  local payload
+  case "$1" in
+    stop) payload='{"session_id":"s1","hook_event_name":"Stop","stop_hook_active":false}' ;;
+    active) payload='{"session_id":"s1","hook_event_name":"Stop","stop_hook_active":true}' ;;
+    raw) payload='not json' ;;
+    *) printf 'an unknown payload word runs nothing: %s\n' "$1" >&2; exit 1 ;;
+  esac
+  RC=0
+  (cd "$RUN_DIR" && env HOME="$TMP_ROOT" PATH="$RUN_PATH" bash "$HOOK" <<<"$payload" \
+    >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || RC=$?
+  MESSAGE=""
+  if [[ -s "$TMP_ROOT/stdout" ]] && jq -e 'type == "object" and keys == ["systemMessage"] and (.systemMessage | type == "string" and length > 0)' \
+    <"$TMP_ROOT/stdout" >/dev/null 2>&1; then
+    MESSAGE="$(jq -r '.systemMessage' <"$TMP_ROOT/stdout")"
   fi
 }
 
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
+out_text() {
+  local line doc path out=""
+  [[ -s "$TMP_ROOT/stdout" ]] || { printf -- '-'; return; }
+  [[ "$MESSAGE" != "" ]] || { printf 'malformed:%s' "$(paste -s -d ';' - <"$TMP_ROOT/stdout")"; return; }
+  while IFS= read -r line; do
+    case "$line" in
+      "  "*" changed)")
+        line="${line#  }"
+        doc="${line%% (*}"
+        path="${line#* (}"
+        out="$out$doc(${path% changed)})"$'\n'
+        ;;
+    esac
+  done <<<"$MESSAGE"
+  printf '%s' "$out" | LC_ALL=C sort | paste -s -d ',' -
 }
 
-assert_contains() {
-  local got="$1" needle="$2" name="$3"
-  if [[ "$got" == *"$needle"* ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected to contain: %s\n        got:      %s\n' "$name" "$needle" "$got"
-  fi
+judged_text() {
+  [[ "$MESSAGE" != "" ]] || { printf -- '-'; return; }
+  printf '%s\n' "$MESSAGE" | sed -n 's/^Compared //p' |
+    sed -E 's/^every change since [0-9a-f]{40}, //; s/^the working tree alone: //'
 }
 
-assert_not_contains() {
-  local got="$1" needle="$2" name="$3"
-  if [[ "$got" != *"$needle"* ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected not to contain: %s\n        got:      %s\n' "$name" "$needle" "$got"
-  fi
+err_text() {
+  local line out=""
+  [[ -s "$TMP_ROOT/stderr" ]] || { printf -- '-'; return; }
+  while IFS= read -r line; do
+    case "$line" in
+      "doc-drift-check: notice unavailable: git "*" failed, so what changed is unknown:")
+        line="${line#doc-drift-check: notice unavailable: git }"
+        out="$out;unavailable=${line% failed, so what changed is unknown:}"
+        ;;
+      "doc-drift-check: notice unavailable (command exited "*")")
+        line="${line#*exited }"
+        out="$out;unavailable=exit ${line%)}"
+        ;;
+      fixture:*) out="$out;$line" ;;
+      *) [[ "$out" == *";git" ]] || out="$out;git" ;;
+    esac
+  done <"$TMP_ROOT/stderr"
+  printf '%s' "${out#;}"
 }
 
-assert_notice_json() {
-  if jq -e 'type == "object" and keys == ["systemMessage"] and (.systemMessage | type == "string" and length > 0)' <"$TMP_ROOT/stdout" >/dev/null; then
-    PASS=$((PASS + 1))
-    printf '  ok    stdout is a user-visible systemMessage object\n'
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  stdout is not a user-visible systemMessage object\n'
-  fi
-  assert_eq "$err" "" "a user notice emits no stderr"
+run_table() { # TITLE COLUMNS ROWS
+  local title="$1" cols="$2" rows="$3" row label col i got want before=$((PASS + FAIL))
+  local -a fields
+  echo "=== $title ==="
+  while IFS= read -r row; do
+    [[ "$row" != "" ]] || continue
+    IFS='|' read -r -a fields <<<"$row"
+    label="${fields[0]:-}"
+    i=1
+    for col in $cols; do
+      [[ "${fields[$i]:-}" != "" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+      i=$((i + 1))
+    done
+    [[ "$label" != "" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+    WORLD="" CHANGE="-" PAYLOAD="stop" want=""
+    i=1
+    for col in $cols; do
+      case "$col" in
+        world) WORLD="${fields[$i]}" ;;
+        change) CHANGE="${fields[$i]}" ;;
+        payload) PAYLOAD="${fields[$i]}" ;;
+        rc | out | judged | err) want="$want $col=${fields[$i]}" ;;
+        *) printf 'an unknown column asserts nothing: %s\n' "$col" >&2; exit 1 ;;
+      esac
+      i=$((i + 1))
+    done
+    build "$WORLD"
+    change "$CHANGE"
+    run "$PAYLOAD"
+    got=""
+    for col in $cols; do
+      case "$col" in
+        rc) got="$got rc=$RC" ;;
+        out) got="$got out=$(out_text)" ;;
+        judged) got="$got judged=$(judged_text)" ;;
+        err) got="$got err=$(err_text)" ;;
+      esac
+    done
+    # A rendering aid for writing rows; the run is refused after the loop.
+    if [[ "${HOOKS_TABLE_PROBE:-}" == 1 ]]; then
+      printf '%s => %s\n' "$label" "${got# }"
+      continue
+    fi
+    assert_eq "${got# }" "${want# }" "$label"
+  done <<<"$rows"
+  [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }
 
-echo "doc-drift-check: nothing changed"
-REPO="$(new_repo clean)"
-run_hook "$REPO"
-assert_eq "$rc" 0 "a clean tree exits 0"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
-assert_eq "$notice" "" "a clean tree prints nothing"
+CORE_DOCS='crates/core/AGENTS.md(crates/core/src/lib.rs),docs/architecture/core.md(crates/core/src/lib.rs)'
 
-echo "doc-drift-check: no covering docs anywhere"
-REPO="$(new_repo nodocs)"
-fgit -C "$REPO" rm -q crates/core/AGENTS.md docs/architecture/core.md
-fgit -C "$REPO" commit -q -m nodocs
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-run_hook "$REPO"
-assert_eq "$rc" 0 "code under a directory no doc covers passes"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
+run_table "coverage: which unchanged docs a changed path names" "world change out" "\
+a clean tree names nothing|repo|-|-
+code under a directory no doc covers|repo nodocs|code|-
+the nearest AGENTS.md and the covering topic, each with the path, never the root AGENTS.md|repo|code|$CORE_DOCS
+a changed nearest AGENTS.md is not named|repo|code agents|-
+a changed topic is not named|repo|code topic|-
+a staged topic change counts as changed|repo|code topic stage|-
+a changed nearer AGENTS.md passes despite an unchanged farther one|repo crates-agents|code agents|-
+the farther AGENTS.md is never named|repo crates-agents|code|$CORE_DOCS
+a markdown-only change names nothing|repo|md|-
+an untracked new file is a change, named by its path|repo|new|crates/core/AGENTS.md(crates/core/src/added.rs),docs/architecture/core.md(crates/core/src/added.rs)
+a staged new file is a change, named by its path|repo|new stage|crates/core/AGENTS.md(crates/core/src/added.rs),docs/architecture/core.md(crates/core/src/added.rs)
+code under no doc at all names nothing|repo|ui top|-
+the whole repository is judged from a subdirectory|repo subdir|code|$CORE_DOCS
+an ignored path is not a change|repo ignore-target|target|-
+a trailing-slash entry covers the directory|repo ui-topic|ui|docs/architecture/ui.md(ui/src/app.ts)
+a comma-joined entry covers the directory|repo ui-topic|lib|docs/architecture/ui.md(ui/lib/c.ts)
+a second topic naming the same directory is named beside the first|repo ui-topic|code|$CORE_DOCS,docs/architecture/ui.md(crates/core/src/lib.rs)
+an exact file entry reaches its topic|repo selected-topic|ui|docs/architecture/selected.md(ui/src/app.ts)
+a glob entry reaches its topic, * crossing /|repo selected-topic|eval|docs/architecture/selected.md(crates/eval/src/eval_score.rs)
+a topic two paths reach is named once, with the first path|repo selected-topic|ui eval|docs/architecture/selected.md(crates/eval/src/eval_score.rs)
+an exact file entry does not cover a sibling sharing its prefix|repo file-topic|other|-
+root entries cover nothing|repo root-topic|ui|-
+a non-ASCII path is code and keeps its bytes|repo|unicode|crates/core/AGENTS.md(crates/core/src/über.rs),docs/architecture/core.md(crates/core/src/über.rs)
+"
 
-echo "doc-drift-check: docs unchanged beside changed code"
-REPO="$(new_repo stale)"
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-run_hook "$REPO"
-assert_eq "$rc" 0 "reports without blocking when no covering doc changed"
-assert_notice_json
-assert_contains "$notice" "crates/core/AGENTS.md" "names the nearest AGENTS.md"
-assert_contains "$notice" "docs/architecture/core.md" "names the topic file covering the directory"
-assert_not_contains "$notice" $'\nAGENTS.md' "the root AGENTS.md covers nothing"
-assert_contains "$notice" "crates/core/src/lib.rs" "carries the changed path that reached the docs"
-assert_contains "$notice" "These unchanged documents may need an update" "states the notice"
-assert_not_contains "$notice" "bypass" "never suggests bypassing"
-assert_not_contains "$notice" "retry" "never asks for a retry"
+run_table "base selection: what the branch is compared against" "world change out judged" "\
+a committed change on a branch is judged against origin/HEAD|clone|code commit|$CORE_DOCS|the merge-base with origin/main
+an uncommitted doc change beside the committed code passes|clone|code commit agents|-|-
+a doc committed beside the code passes|clone|code agents commit|-|-
+a doc committed earlier on the branch passes|clone|topic commit code commit|-|-
+a commit on the default branch is not a change|clone on-main|code commit|-|-
+a working-tree change on the default branch is judged alone|clone on-main|code commit code|$CORE_DOCS|main is the default branch
+without origin/HEAD a local main is the base|repo on-feat|code commit|$CORE_DOCS|the merge-base with main
+main outranks master|repo with-master on-feat|code commit|$CORE_DOCS|the merge-base with main
+without main a local master is the base|repo master on-feat|code commit|$CORE_DOCS|the merge-base with master
+with no default branch a commit is not a change|repo trunk on-feat|code commit|-|-
+with no default branch the working tree is judged alone|repo trunk on-feat|code commit code|$CORE_DOCS|no origin/HEAD, main or master to compare against
+a commit sharing no history with the default is not a change|repo orphan|code commit|-|-
+a branch sharing no history is judged on its working tree|repo orphan|code commit code|$CORE_DOCS|HEAD shares no history with main
+"
 
-echo "doc-drift-check: repeated stops keep the same notice"
-first_notice="$notice"
-run_hook "$REPO" s1
-assert_eq "$rc" 0 "a consecutive stop exits 0"
-assert_notice_json
-assert_eq "$notice" "$first_notice" "unchanged documents produce the same notice again"
-run_hook "$REPO" s1 true
-assert_eq "$rc" 0 "an active stop still exits 0"
-assert_eq "$notice" "$first_notice" "payload state does not suppress the notice"
-run_hook "$REPO" '../unused'
-assert_eq "$rc" 0 "a session id is not needed"
-assert_eq "$notice" "$first_notice" "session content does not change the notice"
+run_table "every Stop reports independently" "world change payload rc out err" "\
+a repeated stop with stop_hook_active reports the same notice again|repo|code stopped|active|0|$CORE_DOCS|-
+a payload that is not JSON does not stop the notice|repo|code|raw|0|$CORE_DOCS|-
+"
 
-echo "doc-drift-check: docs changed beside code"
-REPO="$(new_repo touched)"
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-printf 'more\n' >>"$REPO/crates/core/AGENTS.md"
-run_hook "$REPO"
-assert_eq "$rc" 0 "a changed nearest AGENTS.md passes"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
-REPO="$(new_repo topic)"
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-printf 'more\n' >>"$REPO/docs/architecture/core.md"
-run_hook "$REPO"
-assert_eq "$rc" 0 "a changed topic file passes"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
-fgit -C "$REPO" add -A
-run_hook "$REPO"
-assert_eq "$rc" 0 "a staged doc change passes too"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
+run_table "a failed discovery command is advisory" "world change rc out err" "\
+a dying command cannot hold the stop and is reported|repo break:sed|code|0|-|fixture: sed failed;unavailable=exit 19
+a directory that is not a repository|norepo|-|0|-|unavailable=rev-parse;git
+unreadable repository metadata|repo badconfig|code|0|-|unavailable=rev-parse;git
+an unreadable changed set is not an empty one|repo break:ls-files|code|0|-|unavailable=ls-files;fixture: ls-files failed
+a merge-base git cannot answer is not judged as the working tree|clone break:merge-base|code commit|0|-|unavailable=merge-base;fixture: merge-base failed
+a default-branch probe git cannot answer is not read as absent|clone break:symbolic-ref|code commit|0|-|unavailable=symbolic-ref;fixture: symbolic-ref failed
+"
 
-echo "doc-drift-check: the nearest AGENTS.md is the one that counts"
-REPO="$(new_repo nearest)"
-printf '# crates\n' >"$REPO/crates/AGENTS.md"
-fgit -C "$REPO" add -A
-fgit -C "$REPO" commit -q -m crates
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-printf 'more\n' >>"$REPO/crates/core/AGENTS.md"
-run_hook "$REPO"
-assert_eq "$rc" 0 "a changed nearer AGENTS.md passes despite an unchanged farther one"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
-fgit -C "$REPO" checkout -q -- crates/core/AGENTS.md
-run_hook "$REPO"
-assert_not_contains "$notice" "crates/AGENTS.md" "the farther AGENTS.md is not named"
-
-echo "doc-drift-check: markdown-only change"
-REPO="$(new_repo mdonly)"
-printf 'more\n' >>"$REPO/crates/core/README.md"
-printf 'note\n' >"$REPO/crates/core/NOTES.md"
-run_hook "$REPO"
-assert_eq "$rc" 0 "a markdown-only change passes"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
-
-echo "doc-drift-check: an untracked new code file is a change"
-REPO="$(new_repo untracked)"
-printf 'pub fn added() {}\n' >"$REPO/crates/core/src/added.rs"
-run_hook "$REPO"
-assert_eq "$rc" 0 "an untracked new file under a covered directory reports without blocking"
-assert_contains "$notice" "crates/core/src/added.rs" "names the untracked path"
-
-echo "doc-drift-check: a staged new code file is a change"
-REPO="$(new_repo staged)"
-printf 'pub fn added() {}\n' >"$REPO/crates/core/src/added.rs"
-fgit -C "$REPO" add -A
-run_hook "$REPO"
-assert_eq "$rc" 0 "a staged new file under a covered directory reports without blocking"
-assert_contains "$notice" "crates/core/src/added.rs" "names the staged path"
-
-echo "doc-drift-check: a change outside every covered directory"
-REPO="$(new_repo outside)"
-printf 'export const b = 2;\n' >>"$REPO/ui/src/app.ts"
-printf 'x\n' >"$REPO/top.rs"
-run_hook "$REPO"
-assert_eq "$rc" 0 "code under no covered directory passes"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
-
-echo "doc-drift-check: the hook is run from a subdirectory"
-REPO="$(new_repo subdir)"
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-run_hook "$REPO/ui"
-assert_eq "$rc" 0 "the whole repository is judged from a subdirectory"
-assert_contains "$notice" "crates/core/AGENTS.md" "names the covering doc from a subdirectory"
-
-echo "doc-drift-check: ignored paths stay out of the changed set"
-REPO="$(new_repo ignored)"
-printf 'target/\n' >"$REPO/.gitignore"
-fgit -C "$REPO" add .gitignore
-fgit -C "$REPO" commit -q -m ignore
-mkdir -p "$REPO/crates/core/target"
-printf 'fn generated() {}\n' >"$REPO/crates/core/target/generated.rs"
-run_hook "$REPO"
-assert_eq "$rc" 0 "an ignored code file is not a change"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
-
-echo "doc-drift-check: a Covers: line with a trailing slash and commas"
-# The topic file is committed first: an untracked one is itself a changed
-# doc, and a changed doc passes.
-with_ui_topic() {
-  local repo
-  repo="$(new_repo "$1")"
-  mkdir -p "$repo/ui/lib"
-  printf '# UI\n\nCovers: ui/src/, crates/core,ui/lib\n' >"$repo/docs/architecture/ui.md"
-  fgit -C "$repo" add -A
-  fgit -C "$repo" commit -q -m ui
-  printf '%s' "$repo"
-}
-REPO="$(with_ui_topic covers)"
-printf 'export const b = 2;\n' >>"$REPO/ui/src/app.ts"
-run_hook "$REPO"
-assert_eq "$rc" 0 "a trailing-slash entry covers the directory"
-assert_contains "$notice" "docs/architecture/ui.md" "names the topic file"
-REPO="$(with_ui_topic covers2)"
-printf 'export const c = 3;\n' >"$REPO/ui/lib/c.ts"
-run_hook "$REPO"
-assert_eq "$rc" 0 "a comma-joined entry covers the directory"
-assert_contains "$notice" "docs/architecture/ui.md" "the comma-joined entry still reaches its topic"
-REPO="$(with_ui_topic covers3)"
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-run_hook "$REPO"
-assert_contains "$notice" "docs/architecture/ui.md" "a second topic file naming the same directory is named too"
-assert_contains "$notice" "docs/architecture/core.md" "beside the first"
-
-echo "doc-drift-check: one Covers matcher accepts a file and a glob"
-REPO="$(new_repo covers-paths)"
-mkdir -p "$REPO/crates/eval/src"
-printf '# Selected paths\n\nCovers: ui/src/app.ts, crates/*/src/eval*.rs\n' >"$REPO/docs/architecture/selected.md"
-printf 'pub fn score() {}\n' >"$REPO/crates/eval/src/eval_score.rs"
-fgit -C "$REPO" add -A
-fgit -C "$REPO" commit -q -m selected
-printf 'export const b = 2;\n' >>"$REPO/ui/src/app.ts"
-printf 'pub fn more() {}\n' >>"$REPO/crates/eval/src/eval_score.rs"
-run_hook "$REPO"
-assert_eq "$rc" 0 "an exact file and a glob both reach the topic"
-assert_contains "$notice" "docs/architecture/selected.md" "the shared path matcher names the topic"
-REPO="$(new_repo covers-file-sibling)"
-printf '# Selected path\n\nCovers: ui/src/app.ts\n' >"$REPO/docs/architecture/selected.md"
-fgit -C "$REPO" add -A
-fgit -C "$REPO" commit -q -m selected
-printf 'export const other = 2;\n' >"$REPO/ui/src/other.ts"
-run_hook "$REPO"
-assert_eq "$rc" 0 "an exact file entry does not cover a sibling"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
-
-echo "doc-drift-check: a Covers: entry of the root covers nothing"
-REPO="$(new_repo coversroot)"
-printf '# All\n\nCovers: . ./ /\n' >"$REPO/docs/architecture/all.md"
-printf 'export const b = 2;\n' >>"$REPO/ui/src/app.ts"
-run_hook "$REPO"
-assert_eq "$rc" 0 "root entries cover nothing"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
-
-echo "doc-drift-check: a non-ASCII path is still code"
-REPO="$(new_repo unicode)"
-printf 'pub fn b() {}\n' >"$REPO/crates/core/src/über.rs"
-run_hook "$REPO"
-assert_eq "$rc" 0 "an untracked crates/core/src/über.rs reaches the notice"
-assert_contains "$notice" "crates/core/src/über.rs" "the notice keeps the non-ASCII path"
-
-echo "doc-drift-check: payload parsing is not needed"
-REPO="$(new_repo payload)"
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-set +e
-( cd "$REPO" && env HOME="$TMP_ROOT" bash "$HOOK" <<<'not json' ) >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr"
-rc=$?
-set -e
-assert_eq "$rc" 0 "a notice does not depend on valid session JSON"
-assert_contains "$(jq -r .systemMessage <"$TMP_ROOT/stdout")" "crates/core/AGENTS.md" "still names the document"
-
-echo "doc-drift-check: a failed discovery command is advisory"
-BIN="$TMP_ROOT/broken-sed"
-mkdir -p "$BIN"
-printf '#!/usr/bin/env bash\necho "fixture sed failure" >&2\nexit 19\n' >"$BIN/sed"
-chmod +x "$BIN/sed"
-set +e
-( cd "$REPO" && env HOME="$TMP_ROOT" PATH="$BIN:$PATH" bash "$HOOK" ) >/dev/null 2>"$TMP_ROOT/stderr"
-rc=$?
-set -e
-assert_eq "$rc" 0 "a failed command cannot block a stop"
-assert_contains "$(cat "$TMP_ROOT/stderr")" "notice unavailable" "an incomplete check is not a clean result"
-assert_contains "$(cat "$TMP_ROOT/stderr")" "fixture sed failure" "keeps the command's own error"
-
-echo "doc-drift-check: repository discovery failures are advisory"
-NOREPO="$TMP_ROOT/norepo"
-mkdir -p "$NOREPO"
-printf 'pub fn added() {}\n' >"$NOREPO/added.rs"
-run_hook "$NOREPO"
-assert_eq "$rc" 0 "a directory that is not a repository reports without blocking"
-REPO="$(new_repo badconfig)"
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-printf 'this is not a config line\n' >"$REPO/.git/config"
-run_hook "$REPO"
-assert_eq "$rc" 0 "an unreadable .git/config reports without blocking"
-assert_contains "$err" "rev-parse failed" "names the probe that could not answer"
-
-echo "doc-drift-check: git cannot answer what changed"
-REPO="$(new_repo brokengit)"
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-BROKEN_BIN="$(broken_git ls-files 'fatal: unable to read index')"
-set +e
-( cd "$REPO" && env HOME="$TMP_ROOT" PATH="$BROKEN_BIN:$PATH" bash "$HOOK" <<<'{"session_id":"s1"}' ) \
-  >/dev/null 2>"$TMP_ROOT/stderr"
-rc=$?
-set -e
-assert_eq "$rc" 0 "an unreadable changed set reports discovery failure without blocking"
-assert_contains "$(cat "$TMP_ROOT/stderr")" "unable to read index" "carries git's own failure"
-
-echo "doc-drift-check: a committed code change on a branch"
-REPO="$(new_clone committed)"
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-fgit -C "$REPO" commit -q -am code
-run_hook "$REPO"
-assert_eq "$rc" 0 "a committed code change with no doc change reports without blocking"
-assert_contains "$notice" "crates/core/AGENTS.md" "names the docs the branch owes"
-assert_contains "$notice" "crates/core/src/lib.rs" "names the committed path"
-assert_contains "$notice" "the merge-base with origin/main" "says which base it judged against"
-printf 'more\n' >>"$REPO/crates/core/AGENTS.md"
-run_hook "$REPO" s2
-assert_eq "$rc" 0 "an uncommitted doc change beside the committed code passes"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
-
-echo "doc-drift-check: the doc changed in the same commit"
-REPO="$(new_clone samecommit)"
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-printf 'more\n' >>"$REPO/crates/core/AGENTS.md"
-fgit -C "$REPO" commit -q -am both
-run_hook "$REPO"
-assert_eq "$rc" 0 "a doc committed beside the code passes"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
-
-echo "doc-drift-check: the doc changed in an earlier commit on the branch"
-REPO="$(new_clone earlier)"
-printf 'more\n' >>"$REPO/docs/architecture/core.md"
-fgit -C "$REPO" commit -q -am doc
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-fgit -C "$REPO" commit -q -am code
-run_hook "$REPO"
-assert_eq "$rc" 0 "a doc committed earlier on the branch passes"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
-
-echo "doc-drift-check: on the default branch only the working tree counts"
-REPO="$(new_clone ondefault)"
-fgit -C "$REPO" checkout -q main
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-fgit -C "$REPO" commit -q -am code
-run_hook "$REPO"
-assert_eq "$rc" 0 "a commit on the default branch is not a change"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
-printf 'pub fn c() {}\n' >>"$REPO/crates/core/src/lib.rs"
-run_hook "$REPO"
-assert_eq "$rc" 0 "a working-tree change on the default branch still reports a notice"
-assert_contains "$notice" "main is the default branch" "says the working tree alone was judged"
-
-echo "doc-drift-check: no origin/HEAD falls back to main, then master"
-REPO="$(new_repo nomain)"
-fgit -C "$REPO" checkout -q -b feat
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-fgit -C "$REPO" commit -q -am code
-run_hook "$REPO"
-assert_eq "$rc" 0 "a committed change is judged against a local main"
-assert_contains "$notice" "the merge-base with main" "names main as the base"
-REPO="$(new_repo master)"
-fgit -C "$REPO" branch -m main master
-fgit -C "$REPO" checkout -q -b feat
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-fgit -C "$REPO" commit -q -am code
-run_hook "$REPO"
-assert_eq "$rc" 0 "a committed change is judged against a local master"
-assert_contains "$notice" "the merge-base with master" "names master as the base"
-
-echo "doc-drift-check: neither default branch judges the working tree"
-REPO="$(new_repo trunk)"
-fgit -C "$REPO" branch -m main trunk
-fgit -C "$REPO" checkout -q -b feat
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-fgit -C "$REPO" commit -q -am code
-run_hook "$REPO"
-assert_eq "$rc" 0 "a commit with no default branch to compare against is not a change"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
-printf 'pub fn c() {}\n' >>"$REPO/crates/core/src/lib.rs"
-run_hook "$REPO"
-assert_eq "$rc" 0 "a working-tree change still reports a notice"
-assert_contains "$notice" "no origin/HEAD, main or master" "says no base resolved"
-
-echo "doc-drift-check: a branch sharing no history with the default"
-REPO="$(new_repo orphan)"
-fgit -C "$REPO" checkout -q --orphan lone
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-fgit -C "$REPO" add -A
-fgit -C "$REPO" commit -q -m lone
-run_hook "$REPO"
-assert_eq "$rc" 0 "a commit with no merge-base is not a change"
-assert_eq "$out" "" "no notice when no unchanged covering doc remains"
-printf 'pub fn c() {}\n' >>"$REPO/crates/core/src/lib.rs"
-run_hook "$REPO"
-assert_eq "$rc" 0 "a working-tree change still reports a notice"
-assert_contains "$notice" "shares no history with main" "says no merge-base resolved"
-
-echo "doc-drift-check: git cannot answer the merge-base"
-REPO="$(new_clone brokenbase)"
-printf 'pub fn b() {}\n' >>"$REPO/crates/core/src/lib.rs"
-fgit -C "$REPO" commit -q -am code
-BROKEN_BIN="$(broken_git merge-base 'fatal: bad object HEAD')"
-set +e
-( cd "$REPO" && env HOME="$TMP_ROOT" PATH="$BROKEN_BIN:$PATH" bash "$HOOK" <<<'{"session_id":"s1"}' ) \
-  >/dev/null 2>"$TMP_ROOT/stderr"
-rc=$?
-set -e
-assert_eq "$rc" 0 "a merge-base git cannot answer reports failure without judging the working tree"
-assert_contains "$(cat "$TMP_ROOT/stderr")" "bad object HEAD" "carries git's own failure"
-assert_contains "$(cat "$TMP_ROOT/stderr")" "git merge-base failed" "names the probe that could not answer"
-BROKEN_BIN="$(broken_git symbolic-ref 'fatal: unable to read refs')"
-set +e
-( cd "$REPO" && env HOME="$TMP_ROOT" PATH="$BROKEN_BIN:$PATH" bash "$HOOK" <<<'{"session_id":"s1"}' ) \
-  >/dev/null 2>"$TMP_ROOT/stderr"
-rc=$?
-set -e
-assert_eq "$rc" 0 "a default-branch probe git cannot answer reports failure without reading as absent"
-assert_contains "$(cat "$TMP_ROOT/stderr")" "unable to read refs" "carries git's own failure"
-
-
-echo
-echo "passed: $PASS  failed: $FAIL"
-[ "$FAIL" -eq 0 ]
+printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
+[[ "$FAIL" -eq 0 ]]
