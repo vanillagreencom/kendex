@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: Block a recursive rm with a path operand that starts with a variable that may expand empty — a path outside the working tree wherever that variable is empty or unset. Names the rewrite the harness accepts without a prompt.
-# safety: The harness stops the whole session on that shape with a "Dangerous rm operation on possibly-empty variable path" prompt; refusing it here lets the agent rewrite and continue. One regex over the raw command decides: an rm, a recursion flag — a single-dash cluster carrying r or R, or `--recursive` — and an operand rooted in `$NAME`, `${NAME}` or `${NAME:-…}`, in either order and wherever in that command they stand. `${NAME:?…}` is the one form that cannot expand empty and it passes, and a redirection target is not an operand. Reading the three parts wherever they stand refuses a harmless command that merely spells them — `git rm -r --cached $X`, a quoted `rm -rf $X` inside an echo — and that is the accepted cost: it fails closed, so it stalls one command rather than deleting a tree. A bypass the shell would assemble — a quoted flag, a line continuation, a variable holding the flag — is not seen here; the harness prompt is the backstop, and this hook only spares the session that stall. Refusals carry the line `block-unsafe-rm: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first.
+# safety: The harness stops the whole session on that shape with a "Dangerous rm operation on possibly-empty variable path" prompt; refusing it here lets the agent rewrite and continue. One regex over the raw command decides: an rm, a recursion flag — a single-dash cluster carrying r or R, or `--recursive` — and an operand rooted in `$NAME`, `${NAME}` or `${NAME:-…}`, in either order and wherever in that command they stand. `${NAME:?…}` is the one form that cannot expand empty and it passes, and a redirection target is not an operand. Reading the three parts wherever they stand refuses a harmless command that merely spells them — `git rm -r --cached $X`, a quoted `rm -rf $X` inside an echo — and that is the accepted cost: it fails closed, so it stalls one command rather than deleting a tree. A bypass the shell would assemble — a quoted flag, a line continuation, a variable holding the flag — is not seen here; the harness prompt is the backstop, and this hook only spares the session that stall. Every refusal opens with `block-unsafe-rm: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # harnesses: [claude-code, cursor, opencode, codex]
 # ---
 
@@ -18,10 +18,10 @@ COMMAND=""
 # stable key for the condition and the value acted on — the missing tool, why
 # the payload could not be read, or the shape refused. The English explanation
 # and the rewrites follow on later lines.
-# A reader matches `^block-unsafe-rm: `, not line 1: a command this hook
-# runs may write its own diagnostic to the same stream first, and that line
-# names a cause the keyed one does not carry.
-refuse() { # KEY VALUE
+# The keyed line stands first, at position 1. What a command this hook runs
+# wrote is captured where the hook reads it and passed here as the cause, so
+# it is replayed under the key rather than ahead of it.
+refuse() { # KEY VALUE [CAUSE]
   printf 'block-unsafe-rm: %s=%s\n' "$1" "$2" >&2
   case "$1=$2" in
     missing-tools=*)
@@ -39,6 +39,9 @@ refuse() { # KEY VALUE
       echo "  rm -rf -- /absolute/literal/path" >&2
       ;;
   esac
+  # The cause a command this hook ran wrote, captured at the site and replayed
+  # here: under the keyed line, never ahead of it.
+  [ -z "${3:-}" ] || printf '%s\n' "$3" >&2
   exit 2
 }
 

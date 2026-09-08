@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: On harnesses that execute hooks, refuse shell tool command text matching COMMAND_SAFETY_DENY_PATTERN from project settings. An absent policy is inactive. Matching is textual, including quoted text, and does not inspect the desktop or running processes.
-# safety: When executed with a configured policy, blocks matching command text before the shell tool runs. Unreadable input, missing settings support, and invalid or explicitly empty patterns refuse execution. Refusals carry the line `command-safety: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first.
+# safety: When executed with a configured policy, blocks matching command text before the shell tool runs. Unreadable input, missing settings support, and invalid or explicitly empty patterns refuse execution. Every refusal opens with `command-safety: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # ---
 
@@ -15,22 +15,22 @@ set -euo pipefail
 # stable key for the condition and the value acted on — the missing tool, why
 # the payload could not be read, the state of the project policy, or the exit
 # status of a check that did not complete. The English explanation follows it.
-# A reader matches `^command-safety: `, not line 1: a command this hook
-# runs may write its own diagnostic to the same stream first, and that line
-# names a cause the keyed one does not carry.
+# The keyed line stands first, at position 1. What a command this hook runs
+# wrote is captured where the hook reads it and passed here as the cause, so
+# it is replayed under the key rather than ahead of it.
 # The EXIT trap below calls this, so the whole message is one group that
 # cannot carry a failure out: a write that fails there would leave with the
 # writer's status rather than the refusal's, which the harness runs past.
-refuse() { # KEY VALUE
+refuse() { # KEY VALUE [CAUSE]
   {
     printf 'command-safety: %s=%s\n' "$1" "$2"
     case "$1=$2" in
       missing-tools=*) echo "the commands ${2//,/, } are required and are not on PATH" ;;
       payload=unreadable) echo "the hook input could not be read" ;;
+    cwd=*) echo "the working directory $2 could not be entered" ;;
       payload=invalid-json) echo "the hook input is not valid JSON, or names no command this hook can read" ;;
       payload=invalid-cwd) echo "the payload's working directory is not a string" ;;
-      cwd=*) echo "the working directory $2 could not be entered" ;;
-      git=unreadable) echo "the Git working directory could not be resolved" ;;
+        git=unreadable) echo "the Git working directory could not be resolved" ;;
       hook=unlocatable) echo "this hook's own directory could not be read, so its installed dependencies cannot be found" ;;
       settings=no-loader) echo "the command-safety bundle requires the installed commit-guards settings loader" ;;
       settings=unreadable) echo "COMMAND_SAFETY_DENY_PATTERN could not be read" ;;
@@ -39,6 +39,9 @@ refuse() { # KEY VALUE
       refused=policy) echo "the command text matches this project's COMMAND_SAFETY_DENY_PATTERN" ;;
       exit=*) echo "the command safety check could not complete" ;;
     esac
+    # The cause a command this hook ran wrote, captured at the site and
+    # replayed here: under the keyed line, never ahead of it.
+    [ -z "${3:-}" ] || printf '%s\n' "$3"
   } >&2 || :
   exit 2
 }
@@ -53,7 +56,7 @@ for dependency in jq git grep cat dirname; do
   command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
-input="$(cat)" || refuse payload unreadable
+input="$(cat 2>&1)" || refuse payload unreadable "$input"
 command_text="$(jq -r '
   def command_arg:
     if type == "object" then (.command // .cmd)
@@ -71,12 +74,11 @@ command_text="$(jq -r '
 [ -n "$command_text" ] || exit 0
 cwd="$(jq -r 'if .cwd == null then "" elif .cwd | type == "string" then .cwd else error("invalid cwd") end' <<<"$input" 2>/dev/null)" || refuse payload invalid-cwd
 [ -n "$cwd" ] || cwd="$PWD"
-# The requested path is kept: the assignment below takes the substitution's
-# empty output when the directory cannot be entered, so the refusal would name
-# nothing. cd keeps its own words, which say whether the directory was missing,
-# was not a directory, or could not be read; `cwd=<path>` carries none of that.
+# The requested path is kept: the substitution below holds cd's own words when
+# the directory cannot be entered, and the physical path when it can, so the
+# refusal names the path it was asked for and replays the cause under it.
 requested_cwd="$cwd"
-cwd="$(cd -- "$cwd" && pwd -P)" || refuse cwd "$requested_cwd"
+cwd="$(cd -- "$cwd" 2>&1 && pwd -P)" || refuse cwd "$requested_cwd" "$cwd"
 root_status=0
 root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" || root_status=$?
 if [ "$root_status" -ne 0 ]; then
@@ -119,18 +121,27 @@ GG_CHECK=command-safety
 source "$lib/common.sh"
 # shellcheck source=../skills/commit-guards/scripts/lib/settings.sh
 source "$lib/settings.sh"
+# cd runs twice on purpose: a substitution cannot move this shell, so the
+# probe is what carries the cause into the refusal and the second one is the
+# move. The second failure is unreachable in practice — the probe just
+# succeeded — and refuses without a cause rather than not at all.
+if ! ROOT_ERR=$( (cd -- "$root") 2>&1 ); then
+  refuse cwd "$root" "$ROOT_ERR"
+fi
 cd -- "$root" || refuse cwd "$root"
-# The loader keeps its own diagnostic: it names the file and the line the
-# settings could not be read at, which `settings=unreadable` does not carry.
-pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "^$")" || refuse settings unreadable
+# The loader's diagnostic is captured, not left to precede the refusal: on
+# failure the substitution holds what it wrote — the file and the line — and a
+# successful read is silent, so the pattern is not mixed with a diagnostic.
+pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "^$" 2>&1)" || refuse settings unreadable "$pattern"
 [ -n "$pattern" ] || refuse settings empty
 [ "$pattern" != '^$' ] || exit 0
 status=0
-# grep keeps its own words on a pattern it cannot read: they name which part
-# of the pattern it choked on, which the keyed refusal cannot.
-printf '%s\n' "$command_text" | LC_ALL=C grep -E -- "$pattern" >/dev/null || status=$?
+# grep's words on a pattern it cannot read are captured: stderr becomes the
+# substitution's stdout and grep's own stdout is discarded, so the status still
+# decides and the cause reaches the refusal below its keyed line.
+GREP_ERR=$(printf '%s\n' "$command_text" | LC_ALL=C grep -E -- "$pattern" 2>&1 >/dev/null) || status=$?
 case "$status" in
   0) refuse refused policy ;;
   1) exit 0 ;;
-  *) refuse settings invalid-pattern ;;
+  *) refuse settings invalid-pattern "$GREP_ERR" ;;
 esac

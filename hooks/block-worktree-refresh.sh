@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`, `pin`, `fork`, `adopt`, `drift-hook`, `source add|remove|enable|disable`, `marketplace subscribe|unsubscribe`) when the working directory is a linked git worktree and the command does not name the global scope, and whenever a `cd` or `pushd` stands before the verb in the same command, since the directory the write lands in cannot then be read from the command. A project's kendex install is registered to the main checkout, so a project-scope write from a linked worktree renders into that checkout and removes what it does not expect there. Names the two forms that are right: the same command from the main checkout, or the verb's global form (`--global` for add, `--scope global` for update-pi, either for the rest).
-# safety: Reads the command text and asks git whether the working directory's git dir differs from its common dir, which is what makes a worktree linked; writes nothing. A git that cannot answer refuses. The verb is read as a word after a `kendex` word, wherever in the command it stands, so a command that merely spells the pair in prose is refused, and that is the accepted cost; the bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex verify`, `check`, `list`, `report` and every other verb pass; a command carrying `-g`, `--global` or `--scope global` in the verb's own segment, with no `--scope project` or `--scope all` beside it, passes because it names the scope this hook does not guard. A payload that cannot be read, an empty one included, is refused, never skipped. Refusals carry the line `block-worktree-refresh: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first.
+# safety: Reads the command text and asks git whether the working directory's git dir differs from its common dir, which is what makes a worktree linked; writes nothing. A git that cannot answer refuses. The verb is read as a word after a `kendex` word, wherever in the command it stands, so a command that merely spells the pair in prose is refused, and that is the accepted cost; the bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex verify`, `check`, `list`, `report` and every other verb pass; a command carrying `-g`, `--global` or `--scope global` in the verb's own segment, with no `--scope project` or `--scope all` beside it, passes because it names the scope this hook does not guard. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # ---
 
@@ -23,10 +23,10 @@ REASON=""
 # a stable key for the condition and the value acted on — the missing tool, why
 # the payload could not be read, the verb refused, or git's exit status. The
 # English explanation and the two forms that are right follow on later lines.
-# A reader matches `^block-worktree-refresh: `, not line 1: a command this hook
-# runs may write its own diagnostic to the same stream first, and that line
-# names a cause the keyed one does not carry.
-refuse() { # KEY VALUE
+# The keyed line stands first, at position 1. What a command this hook runs
+# wrote is captured where the hook reads it and passed here as the cause, so
+# it is replayed under the key rather than ahead of it.
+refuse() { # KEY VALUE [CAUSE]
   printf 'block-worktree-refresh: %s=%s\n' "$1" "$2" >&2
   case "$1=$2" in
     missing-tools=*)
@@ -64,6 +64,9 @@ refuse() { # KEY VALUE
       printf '%s\n' "$REASON" >&2
       ;;
   esac
+  # The cause a command this hook ran wrote, captured at the site and replayed
+  # here: under the keyed line, never ahead of it.
+  [ -z "${3:-}" ] || printf '%s\n' "$3" >&2
   exit 2
 }
 
@@ -76,10 +79,11 @@ for dependency in jq git cat; do
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
-# cat keeps its own words: they say which failure it was — a directory on
-# stdin, a closed descriptor, a read error — and `payload=unreadable` carries
-# the verdict, not the cause.
-INPUT=$(cat) || refuse payload unreadable
+# cat's words are captured, not left to precede the refusal: on failure the
+# substitution holds what it wrote, and the refusal replays it under the keyed
+# line. A cat that succeeds is silent, so the payload is not mixed with a
+# diagnostic on the passing side.
+INPUT=$(cat 2>&1) || refuse payload unreadable "$INPUT"
 # An empty payload is no payload: jq reads nothing from it and says nothing,
 # which would pass as an absent command.
 case "$INPUT" in

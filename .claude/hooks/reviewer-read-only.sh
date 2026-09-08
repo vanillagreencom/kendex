@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Edit|MultiEdit|NotebookEdit|Write|Bash
 # description: For a subagent whose agent_type starts with `reviewer-`, refuses every Edit, MultiEdit and NotebookEdit call; a Write whose path lies inside a git work tree unless it is the review artifact, `<dir>/tmp/review-*.json`; and a Bash command that runs `git commit` or `git push` (options between `git` and the verb allowed). Any other agent, and a payload naming no agent_type, passes. Claude Code only, the harness that names the calling subagent in the payload.
-# safety: Reads the payload and asks git whether a path is inside a work tree; writes nothing. A payload it cannot read is refused, never skipped. The refusal names the artifact path a reviewer may write and never suggests bypassing. Refusals carry the line `reviewer-read-only: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first.
+# safety: Reads the payload and asks git whether a path is inside a work tree; writes nothing. A payload it cannot read is refused, never skipped. The refusal names the artifact path a reviewer may write and never suggests bypassing. Every refusal opens with `reviewer-read-only: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # harnesses: [claude-code]
 # ---
@@ -27,10 +27,10 @@ ANSWER=""
 # the payload could not be read, the tool call refused, or the path a reviewer
 # may not write. The English explanation follows it, and it never names a
 # bypass.
-# A reader matches `^reviewer-read-only: `, not line 1: a command this hook
-# runs may write its own diagnostic to the same stream first, and that line
-# names a cause the keyed one does not carry.
-refuse() { # KEY VALUE
+# The keyed line stands first, at position 1. What a command this hook runs
+# wrote is captured where the hook reads it and passed here as the cause, so
+# it is replayed under the key rather than ahead of it.
+refuse() { # KEY VALUE [CAUSE]
   {
     printf 'reviewer-read-only: %s=%s\n' "$1" "$2"
     case "$1=$2" in
@@ -60,6 +60,9 @@ refuse() { # KEY VALUE
         printf '%s\n' "$ANSWER"
         ;;
     esac
+    # The cause a command this hook ran wrote, captured at the site and
+    # replayed here: under the keyed line, never ahead of it.
+    [ -z "${3:-}" ] || printf '%s\n' "$3"
   } >&2
   exit 2
 }
@@ -78,10 +81,11 @@ for dependency in jq git cat grep dirname; do
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
-# cat keeps its own words: they say which failure it was — a directory on
-# stdin, a closed descriptor, a read error — and `payload=unreadable` carries
-# the verdict, not the cause.
-INPUT=$(cat) || refuse payload unreadable
+# cat's words are captured, not left to precede the refusal: on failure the
+# substitution holds what it wrote, and the refusal replays it under the keyed
+# line. A cat that succeeds is silent, so the payload is not mixed with a
+# diagnostic on the passing side.
+INPUT=$(cat 2>&1) || refuse payload unreadable "$INPUT"
 
 # One jq read for the strings the decision needs. A payload that does not
 # parse, or whose agent_type or tool_name is not a string, is refused.

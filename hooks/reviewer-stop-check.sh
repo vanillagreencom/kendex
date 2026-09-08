@@ -4,7 +4,7 @@
 # event: SubagentStop
 # matcher:
 # description: Blocks a reviewer subagent's stop once when the worktree it reviewed is not clean. The worktree is the one the artifact path in the subagent's transcript names (`<worktree>/tmp/review-<agent>-*.json`, the newest mention); `git status --porcelain --untracked-files=all` there listing anything blocks, naming each path, and a transcript naming no artifact path blocks the same way, since the review contract is an artifact at that path. An agent_type not starting with `reviewer-` passes, as does `stop_hook_active` true; a block is recorded per agent_id under `<git common dir>/kendex/reviewer-stop/` so a later stop of the same subagent passes. Claude Code only, the harness with a SubagentStop event that names the agent.
-# safety: Reads the payload, the transcript and git status; the only write is the per-agent marker under the reviewed repository's git common dir. Exit 2 names the paths and asks for the reviewer's own files to be deleted and the rest reported, never bypassed. jq is required to read the payload; a payload, transcript or git that cannot be read is refused, never passed. Refusals carry the line `reviewer-stop-check: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first.
+# safety: Reads the payload, the transcript and git status; the only write is the per-agent marker under the reviewed repository's git common dir. Exit 2 names the paths and asks for the reviewer's own files to be deleted and the rest reported, never bypassed. jq is required to read the payload; a payload, transcript or git that cannot be read is refused, never passed. Every refusal opens with `reviewer-stop-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
 # harnesses: [claude-code]
 # ---
@@ -27,9 +27,9 @@ STATUS=""
 # the payload could not be read, the git subcommand that failed, the marker
 # path, or the worktree that is not clean. The English explanation and what to
 # do about it follow it, and never a bypass.
-# A reader matches `^reviewer-stop-check: `, not line 1: a command this hook
-# runs may write its own diagnostic to the same stream first, and that line
-# names a cause the keyed one does not carry.
+# The keyed line stands first, at position 1. What a command this hook runs
+# wrote is captured where the hook reads it and passed here as the cause, so
+# it is replayed under the key rather than ahead of it.
 refuse() { # KEY VALUE [DETAIL]
   {
     printf 'reviewer-stop-check: %s=%s\n' "$1" "$2"
@@ -65,9 +65,11 @@ refuse() { # KEY VALUE [DETAIL]
         ;;
       git=*)
         echo "git $2 failed, so the reviewed worktree's state is unknown:"
-        printf '%s\n' "${3:-}"
         ;;
     esac
+    # The cause a command this hook ran wrote, captured at the site and
+    # replayed here: under the keyed line, never ahead of it.
+    [ -z "${3:-}" ] || printf '%s\n' "$3"
   } >&2
   exit 2
 }
@@ -85,10 +87,11 @@ for dependency in jq git cat grep tail mkdir; do
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
-# cat keeps its own words: they say which failure it was — a directory on
-# stdin, a closed descriptor, a read error — and `payload=unreadable` carries
-# the verdict, not the cause.
-INPUT=$(cat) || refuse payload unreadable
+# cat's words are captured, not left to precede the refusal: on failure the
+# substitution holds what it wrote, and the refusal replays it under the keyed
+# line. A cat that succeeds is silent, so the payload is not mixed with a
+# diagnostic on the passing side.
+INPUT=$(cat 2>&1) || refuse payload unreadable "$INPUT"
 
 FIELDS=$(printf '%s' "$INPUT" | jq -r '
   def str($v): if $v == null then "" elif ($v | type) == "string" then $v else error("not a string") end;
@@ -139,10 +142,12 @@ record_and_block() { # KEY VALUE
   if [ -e "$MARKER" ]; then
     exit 0
   fi
-  # Both probes keep their own diagnostic on failure: it names why the write
-  # was refused, which the keyed line below, naming the path, does not.
-  if ! mkdir -p -- "$MARKER_DIR" || ! : >"$MARKER"; then
-    refuse marker "$MARKER"
+  # Both probes are captured rather than left to write first: the group runs
+  # the redirection in a subshell so the shell's own "cannot create" reaches
+  # the same variable mkdir's message would.
+  if ! MARKER_ERR=$(mkdir -p -- "$MARKER_DIR" 2>&1) ||
+    ! MARKER_ERR=$( { : >"$MARKER"; } 2>&1 ); then
+    refuse marker "$MARKER" "$MARKER_ERR"
   fi
   refuse "$1" "$2"
 }
@@ -152,13 +157,15 @@ record_and_block() { # KEY VALUE
 # holding a quote, a space or a backslash is not read; none of the
 # generated artifact paths hold one.
 set +e
-MENTIONS=$(grep -oE '(/[^/"[:space:]\\]+)+/tmp/review-[^/"[:space:]\\]*\.json' -- "$TRANSCRIPT")
+MENTIONS=$(grep -oE '(/[^/"[:space:]\\]+)+/tmp/review-[^/"[:space:]\\]*\.json' -- "$TRANSCRIPT" 2>&1)
 GREP_RC=$?
 set -e
 case "$GREP_RC" in
   0) ;;
   1) record_and_block artifact missing ;;
-  *) refuse transcript unread ;;
+  # A grep that could not read the transcript wrote its reason where its
+  # matches would have gone, so MENTIONS carries the cause.
+  *) refuse transcript unread "$MENTIONS" ;;
 esac
 ARTIFACT=$(printf '%s\n' "$MENTIONS" | tail -n 1)
 WORKTREE=${ARTIFACT%/tmp/review-*}

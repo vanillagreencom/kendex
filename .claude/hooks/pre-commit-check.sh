@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: On a git commit, defer to the working directory's armed git hooks — both pre-commit and commit-msg, marked and executable (kendex guard install arms them). Otherwise the commit is refused naming that command: arming is the local act that says a person wants this repository's committed scripts run on their commits, and this hook never runs them on their behalf. Where one is armed, a command carrying a word that would skip it is refused: the no-verify flag, a short-option cluster holding that letter, or a word carrying a core.hooksPath key (an attached -c value, the value after a bare -c, a --config-env, a git config argument, a GIT_CONFIG_* assignment). Git would skip the commit-msg hook too, and nothing here can check the message. A commit is a `git` word with a later `commit` word, both read as whitespace-separated words of the command with bash's non-whitespace metacharacters (`| & ; ( ) < >`) turned into spaces, which is where bash would have separated words of its own; a leading path, backtick or `$(` comes off the git word, and nothing comes off the commit word. Gates the working directory only: a commit aimed at another repository is gated by that repository's own armed hook, and by nothing here.
-# safety: Reads no shell. One rewrite runs before the words are read: every metacharacter bash(1) lists that is not whitespace (`| & ; ( ) < >`) becomes a space, because one left attached hides a word bash would have separated, and `true;git commit -m x` then ran unchecked where nothing was armed. The whitespace ones bash lists are IFS below. Nothing is deleted, so a quote character, a backslash, a line continuation and the braces of a brace expansion all stay in the word. A word is seen only where the command already spells it, so a bypass the shell would join, unquote or expand into the word is not seen here and reaches git, which then skips its armed hooks; where nothing is armed the commit is still refused whenever the `git` and `commit` words are themselves in the command, and the suite's two columns are where each form is named. The same reading runs the other way: a `git` word, a `commit` word and a bypass word the split leaves standing each count wherever they stand, a message, a heredoc body and a comment tail included, so a read-only command spelling them out is refused as the commit it is not. Quoting does not change that on its own, because the substitution runs before any word is looked at. Git's own armed hooks are the control, and this hook only decides whether to defer to them. Refusals carry the line `pre-commit-check: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first.
+# safety: Reads no shell. One rewrite runs before the words are read: every metacharacter bash(1) lists that is not whitespace (`| & ; ( ) < >`) becomes a space, because one left attached hides a word bash would have separated, and `true;git commit -m x` then ran unchecked where nothing was armed. The whitespace ones bash lists are IFS below. Nothing is deleted, so a quote character, a backslash, a line continuation and the braces of a brace expansion all stay in the word. A word is seen only where the command already spells it, so a bypass the shell would join, unquote or expand into the word is not seen here and reaches git, which then skips its armed hooks; where nothing is armed the commit is still refused whenever the `git` and `commit` words are themselves in the command, and the suite's two columns are where each form is named. The same reading runs the other way: a `git` word, a `commit` word and a bypass word the split leaves standing each count wherever they stand, a message, a heredoc body and a comment tail included, so a read-only command spelling them out is refused as the commit it is not. Quoting does not change that on its own, because the substitution runs before any word is looked at. Git's own armed hooks are the control, and this hook only decides whether to defer to them. Every refusal opens with `pre-commit-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 60
 # ---
 
@@ -18,10 +18,10 @@ MARKER="# kendex-guards-hook"
 # hooks/AGENTS.md names, and the English explanation and the rewrites follow on
 # later lines. Only the caller decides the status: `judged` is the notice
 # beside a command this hook allows, the rest are refusals.
-# A reader matches `^pre-commit-check: `, not line 1: a command this hook
-# runs may write its own diagnostic to the same stream first, and that line
-# names a cause the keyed one does not carry.
-message() { # KEY VALUE
+# The keyed line stands first, at position 1. What a command this hook runs
+# wrote is captured where the hook reads it and passed here as the cause, so
+# it is replayed under the key rather than ahead of it.
+message() { # KEY VALUE [CAUSE]
   printf 'pre-commit-check: %s=%s\n' "$1" "$2" >&2
   case "$1=$2" in
     missing-tools=*)
@@ -50,6 +50,9 @@ message() { # KEY VALUE
       echo "the command moves repositories (-C, --git-dir, --work-tree, cd, GIT_DIR, or GIT_WORK_TREE); this hook judged $2 only — the target repository is gated by its own armed git pre-commit hook, if any (kendex guard install there)" >&2
       ;;
   esac
+  # The cause a command this hook ran wrote, captured at the site and replayed
+  # here: under the keyed line, never ahead of it.
+  [ -z "${3:-}" ] || printf '%s\n' "$3" >&2
 }
 
 # jq is the only reader of the payload, and grep is what reads the marker out of

@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: Block a copy (cp, rsync, tar, git clone) whose source names a `.git` or `target` path component and whose destination is under /tmp, /var/tmp or $TMPDIR. Suggests reading the source in place or building a minimal fixture.
-# safety: Temp destinations are commonly RAM-backed tmpfs; a multi-gigabyte tree copy fills the filesystem and every process writing there then fails with ENOSPC. One regex over the raw command decides, in the order the words stand, so nothing is resolved, expanded or stat-ed: a source whose last path component IS `.git` or `target` is expensive by construction, and a destination spelled under a temp root is scratch. Both edges of that component are tested, so a word merely ending in one — a `…/bar.git` clone URL, a `build-target` directory — is not it. A source reached through a variable, and a repository named only by its working-tree path, are not seen; neither is a `tar -czf DEST SRC`, which spells the destination before the source. The reading runs the other way too: the three parts count wherever they stand, a quoted string and a comment tail included, so a read-only command spelling out a copy is refused as the copy it is not. Refusals carry the line `block-repo-copy: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first.
+# safety: Temp destinations are commonly RAM-backed tmpfs; a multi-gigabyte tree copy fills the filesystem and every process writing there then fails with ENOSPC. One regex over the raw command decides, in the order the words stand, so nothing is resolved, expanded or stat-ed: a source whose last path component IS `.git` or `target` is expensive by construction, and a destination spelled under a temp root is scratch. Both edges of that component are tested, so a word merely ending in one — a `…/bar.git` clone URL, a `build-target` directory — is not it. A source reached through a variable, and a repository named only by its working-tree path, are not seen; neither is a `tar -czf DEST SRC`, which spells the destination before the source. The reading runs the other way too: the three parts count wherever they stand, a quoted string and a comment tail included, so a read-only command spelling out a copy is refused as the copy it is not. Every refusal opens with `block-repo-copy: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # ---
 
 set -euo pipefail
@@ -17,10 +17,10 @@ COMMAND=""
 # stable key for the condition and the value acted on — the missing tool, why
 # the payload could not be read, or the copy verb the command spelled. The
 # English explanation and the alternatives follow on later lines.
-# A reader matches `^block-repo-copy: `, not line 1: a command this hook
-# runs may write its own diagnostic to the same stream first, and that line
-# names a cause the keyed one does not carry.
-refuse() { # KEY VALUE
+# The keyed line stands first, at position 1. What a command this hook runs
+# wrote is captured where the hook reads it and passed here as the cause, so
+# it is replayed under the key rather than ahead of it.
+refuse() { # KEY VALUE [CAUSE]
   printf 'block-repo-copy: %s=%s\n' "$1" "$2" >&2
   case "$1=$2" in
     missing-tools=*)
@@ -44,6 +44,9 @@ refuse() { # KEY VALUE
       echo '      d=$(mktemp -d); mkdir -p "$d/repo/.git" "$d/repo/target"; touch "$d/repo/f"' >&2
       ;;
   esac
+  # The cause a command this hook ran wrote, captured at the site and replayed
+  # here: under the keyed line, never ahead of it.
+  [ -z "${3:-}" ] || printf '%s\n' "$3" >&2
   exit 2
 }
 

@@ -271,9 +271,9 @@ T="$(transcript_for "$REPO")"
 chmod -w "$REPO/.git"
 run_hook "$T" reviewer-test m1
 chmod +w "$REPO/.git"
-assert_eq "rc=$rc first=$(first_line)" \
-  "rc=2 first=reviewer-stop-check: marker=$REPO/.git/kendex/reviewer-stop/m1" \
-  "a marker it cannot record refuses, and the value is the path"
+assert_eq "rc=$rc first=$(first_line) cause=$(cause_below)" \
+  "rc=2 first=reviewer-stop-check: marker=$REPO/.git/kendex/reviewer-stop/m1 cause=present" \
+  "a marker it cannot record refuses, the value is the path, and mkdir's words are under it"
 
 echo "reviewer-stop-check: a payload or transcript it cannot read refuses"
 REPO="$(new_repo bad)"

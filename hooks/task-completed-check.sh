@@ -4,7 +4,7 @@
 # event: TaskCompleted
 # matcher:
 # description: Before a task is marked complete, runs `cargo clippy --workspace --all-targets -- -D warnings` against the repository's Cargo.toml, or the nearest one above a changed file when the root has none, whenever a Rust file changed in the working tree, the index or as an untracked file, and refuses the completion naming the first error lines, or the output tail when there are none. Rust only.
-# safety: Refuses on any clippy failure and on a git that cannot list the changed set. Claude Code does not block on a hook that outruns its budget, so the budget is that harness's own default for a command hook; a cold build of a large workspace that outruns it completes the task unchecked, and a warm target directory is what keeps this gate closed. Refusals carry the line `task-completed-check: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first.
+# safety: Refuses on any clippy failure and on a git that cannot list the changed set. Claude Code does not block on a hook that outruns its budget, so the budget is that harness's own default for a command hook; a cold build of a large workspace that outruns it completes the task unchecked, and a warm target directory is what keeps this gate closed. Every refusal opens with `task-completed-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 600
 # harnesses: [claude-code]
 # ---
@@ -21,22 +21,24 @@ ISSUES=""
 # a stable key for the condition and the value acted on — the git subcommand
 # that could not answer, or the status clippy left. The English explanation and
 # the diagnostics follow it.
-# A reader matches `^task-completed-check: `, not line 1: a command this hook
-# runs may write its own diagnostic to the same stream first, and that line
-# names a cause the keyed one does not carry.
+# The keyed line stands first, at position 1. What a command this hook runs
+# wrote is captured where the hook reads it and passed here as the cause, so
+# it is replayed under the key rather than ahead of it.
 refuse() { # KEY VALUE [DETAIL]
   {
     printf 'task-completed-check: %s=%s\n' "$1" "$2"
     case "$1" in
       git)
         printf 'git %s failed, so what changed is unknown:\n' "$2"
-        printf '%s\n' "${3:-}"
         ;;
       clippy)
         echo "Clippy failed — fix before completing task:"
         printf '%s\n' "$ISSUES"
         ;;
     esac
+    # The cause a command this hook ran wrote, captured at the site and
+    # replayed here: under the keyed line, never ahead of it.
+    [ -z "${3:-}" ] || printf '%s\n' "$3"
   } >&2
   exit 2
 }

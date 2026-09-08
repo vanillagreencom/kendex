@@ -355,13 +355,13 @@ a payload that is not JSON does not stop the notice|repo|code|raw|0|$CORE_DOCS|-
 "
 
 run_table "a failed discovery command is advisory" "world change rc out err" "\
-a dying command cannot hold the stop and is reported|repo break:sed|code|0|-|fixture: sed failed;exit=19
+a dying command cannot hold the stop, and its words follow the key|repo break:sed|code|0|-|exit=19;fixture: sed failed
 a directory that is not a repository|norepo|-|0|-|git=rev-parse;git
 unreadable repository metadata|repo badconfig|code|0|-|git=rev-parse;git
 an unreadable changed set is not an empty one|repo break:ls-files|code|0|-|git=ls-files;fixture: ls-files failed
 a merge-base git cannot answer is not judged as the working tree|clone break:merge-base|code commit|0|-|git=merge-base;fixture: merge-base failed
 a default-branch probe git cannot answer is not read as absent|clone break:symbolic-ref|code commit|0|-|git=symbolic-ref;fixture: symbolic-ref failed
-a jq that cannot build the notice keeps its own words, and the trap says so under its key|repo break:jq|code|0|-|fixture: jq failed;exit=19
+a jq that cannot build the notice reports under its key, with its own words below|repo break:jq|code|0|-|exit=19;fixture: jq failed
 "
 
 run_table "the notice's own first line counts what it names" "world change stale" "\

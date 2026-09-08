@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: Refuse a command with a line that is only a `cd`. Where the shell persists across tool calls (Claude Code) a bare cd re-roots every later command and every hook that judges the working directory, while instruction files and hook paths stay with the launch directory; a cd into a worktree inside the repository, Claude Code's default `.claude/worktrees/<name>/`, also loads that tree's instruction files a second time as files there are read. Names the scoped form, `(cd /path && command)`, and, where the harness has one (Claude Code's EnterWorktree), its worktree tool for a move.
-# safety: Reads the command text only. On a harness that runs each command in a fresh shell (Codex, the Pi carrier) a bare cd changes nothing and the refusal costs one rewrite; the scoped form is right on every harness. Refusals carry the line `block-bare-cd: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first.
+# safety: Reads the command text only. On a harness that runs each command in a fresh shell (Codex, the Pi carrier) a bare cd changes nothing and the refusal costs one rewrite; the scoped form is right on every harness. Every refusal opens with `block-bare-cd: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # ---
 
 set -euo pipefail
@@ -13,10 +13,10 @@ set -euo pipefail
 # line is the contract a reader parses: the keys and values are the fixed set
 # hooks/AGENTS.md names, and the English explanation and the rewrite follow on
 # later lines.
-# A reader matches `^block-bare-cd: `, not line 1: a command this hook
-# runs may write its own diagnostic to the same stream first, and that line
-# names a cause the keyed one does not carry.
-refuse() { # KEY VALUE
+# The keyed line stands first, at position 1. What a command this hook runs
+# wrote is captured where the hook reads it and passed here as the cause, so
+# it is replayed under the key rather than ahead of it.
+refuse() { # KEY VALUE [CAUSE]
   printf 'block-bare-cd: %s=%s\n' "$1" "$2" >&2
   case "$1=$2" in
     missing-tools=*)
@@ -30,6 +30,9 @@ refuse() { # KEY VALUE
       echo "  Use a subshell instead: (cd /path && command). To work in a worktree, enter it with the harness's worktree tool where it has one (Claude Code's EnterWorktree) rather than cd." >&2
       ;;
   esac
+  # The cause a command this hook ran wrote, captured at the site and replayed
+  # here: under the keyed line, never ahead of it.
+  [ -z "${3:-}" ] || printf '%s\n' "$3" >&2
   exit 2
 }
 

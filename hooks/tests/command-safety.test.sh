@@ -28,11 +28,10 @@ settings() { # [SOURCE_FILE]: the file whose one COMMAND_SAFETY_DENY_PATTERN lin
 settings
 passed=0
 failed=0
-# `first` is the hook's own keyed line, found by its prefix rather than at
-# line 1: a command the hook runs may write its own diagnostic first, and that
-# line is not this hook's to pin. `-` when it wrote none. The reader is the
-# shared one; this suite runs the hook from a fixture copy, so it names the
-# hook and the stderr file rather than taking the suite-wide defaults.
+# `first` is line 1, the contract: the hook captures what a command it ran
+# wrote and replays it under the keyed line, so nothing precedes the key.
+# `cause` says whether that captured text is there. The reader is the shared
+# one; this suite writes stderr somewhere of its own, so it passes the path.
 first=-
 # shellcheck source=lib/first-line.sh
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/first-line.sh"
@@ -40,12 +39,23 @@ check() { # EXPECTED COMMAND LABEL [CWD] [HOOK]
   local expected="$1" command="$2" label="$3" payload_cwd="${4:-$repo}" payload_hook="${5:-$hook}" payload status=0 output
   payload="$(jq -nc --arg command "$command" --arg cwd "$payload_cwd" '{tool_input:{command:$command},cwd:$cwd}')"
   output="$(printf '%s' "$payload" | bash "$payload_hook" 2>"$scratch/stderr")" || status=$?
-  first="$(first_line command-safety "$scratch/stderr")"
+  first="$(first_line "$scratch/stderr")"
+  cause="$(cause_below "$scratch/stderr")"
   if [ "$status" -eq "$expected" ]; then
     printf 'PASS %s\n' "$label"
     passed=$((passed + 1))
   else
     printf 'FAIL %s: exit %s, expected %s: %s%s\n' "$label" "$status" "$expected" "$output" "$(cat "$scratch/stderr")"
+    failed=$((failed + 1))
+  fi
+}
+
+assert_cause() { # WANT LABEL
+  if [ "$cause" = "$1" ]; then
+    printf 'PASS %s\n' "$2"
+    passed=$((passed + 1))
+  else
+    printf 'FAIL %s: cause %s, expected %s\n' "$2" "$cause" "$1"
     failed=$((failed + 1))
   fi
 }
@@ -81,6 +91,7 @@ mv "$scratch/outside/.git" "$scratch/unresolved-git-marker"
 printf '[env\n' >"$repo/kendex.settings.toml"
 check 2 'git status' 'malformed project settings refuse'
 assert_first 'command-safety: settings=unreadable' 'and the value says the settings could not be read'
+assert_cause present "and the loader's own words are replayed under it"
 settings
 
 # Every payload shape a shipped harness sends, each counted as a row rather
@@ -89,7 +100,8 @@ settings
 shape() { # EXPECTED PAYLOAD_JSON LABEL
   local expected="$1" payload="$2" label="$3" status=0 output
   output="$(printf '%s' "$payload" | bash "$hook" 2>"$scratch/stderr")" || status=$?
-  first="$(first_line command-safety "$scratch/stderr")"
+  first="$(first_line "$scratch/stderr")"
+  cause="$(cause_below "$scratch/stderr")"
   if [ "$status" -eq "$expected" ]; then
     printf 'PASS %s\n' "$label"
     passed=$((passed + 1))
@@ -134,7 +146,7 @@ mkdir -p "$notools"
 status=0
 out="$(jq -nc --arg cwd "$repo" '{tool_input:{command:"git status"},cwd:$cwd}' \
   | env -i HOME="$HOME" PATH="$notools" "$(command -v bash)" "$hook" 2>&1 >/dev/null)" || status=$?
-keyed="$(printf '%s\n' "$out" | grep -m1 '^command-safety: ' || true)"
+keyed="${out%%$'\n'*}"
 if [ "$status" -eq 2 ] && [ "$keyed" = 'command-safety: missing-tools=jq,git,grep,cat,dirname' ]; then
   printf 'PASS with none of them the value is the whole list, in check order\n'
   passed=$((passed + 1))
@@ -146,7 +158,7 @@ fi
 status=0
 out="$(jq -nc --arg cwd "$repo" '{tool_input:{command:"git status"},cwd:$cwd}' \
   | env -i HOME="$HOME" PATH="$nodirname" "$(command -v bash)" "$hook" 2>&1 >/dev/null)" || status=$?
-keyed="$(printf '%s\n' "$out" | grep -m1 '^command-safety: ' || true)"
+keyed="${out%%$'\n'*}"
 if [ "$status" -eq 2 ] && [ "$keyed" = 'command-safety: missing-tools=dirname' ]; then
   printf 'PASS without dirname the refusal names it\n'
   passed=$((passed + 1))

@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: Refuse a command that kills processes by name or by argv pattern (`pkill`, `killall`), whatever flags follow. On a machine where several agents share one checkout and its worktrees, a pattern that matches a tool's name matches every lane running that tool, the caller's own shell included when its command line holds the pattern. Names the accepted forms: `kill <pid>` on a PID the caller recorded when it launched the process, or one whose `/proc/<pid>/cwd` the caller has read and found inside its own worktree.
-# safety: One regex over the raw command decides: a `pkill` or `killall` word between two word edges, wherever in the command it stands, a path prefix, a quote or a substitution around it included. Reading the word wherever it stands refuses a harmless command that merely spells it, an echo or a heredoc line included, and that is the accepted cost: it fails closed, so it stalls one command rather than ending another lane's run. A word is seen only where the command already spells it: a spelling the shell assembles from quotes or escapes (`p\kill`, `p'kill'`) is not seen here and reaches the shell, the frozen lexical-scanner class every guard in this directory declares. `kill`, `pgrep` and `ps` are not read, so the same hazard spelled as `kill $(pgrep -f …)` or `pgrep -f … | xargs kill` passes; the rule is the two verbs, and the remedy text is what asks for a PID. A payload that cannot be read, an empty one included, is refused, never skipped. Refusals carry the line `block-argv-kill: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first.
+# safety: One regex over the raw command decides: a `pkill` or `killall` word between two word edges, wherever in the command it stands, a path prefix, a quote or a substitution around it included. Reading the word wherever it stands refuses a harmless command that merely spells it, an echo or a heredoc line included, and that is the accepted cost: it fails closed, so it stalls one command rather than ending another lane's run. A word is seen only where the command already spells it: a spelling the shell assembles from quotes or escapes (`p\kill`, `p'kill'`) is not seen here and reaches the shell, the frozen lexical-scanner class every guard in this directory declares. `kill`, `pgrep` and `ps` are not read, so the same hazard spelled as `kill $(pgrep -f …)` or `pgrep -f … | xargs kill` passes; the rule is the two verbs, and the remedy text is what asks for a PID. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-argv-kill: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # ---
 
@@ -18,10 +18,10 @@ COMMAND=""
 # stable key for the condition and the value acted on — the missing tool, why
 # the payload could not be read, or the verb the command spelled. The English
 # explanation and the remedy follow on later lines.
-# A reader matches `^block-argv-kill: `, not line 1: a command this hook
-# runs may write its own diagnostic to the same stream first, and that line
-# names a cause the keyed one does not carry.
-refuse() { # KEY VALUE
+# The keyed line stands first, at position 1. What a command this hook runs
+# wrote is captured where the hook reads it and passed here as the cause, so
+# it is replayed under the key rather than ahead of it.
+refuse() { # KEY VALUE [CAUSE]
   printf 'block-argv-kill: %s=%s\n' "$1" "$2" >&2
   case "$1=$2" in
     missing-tools=*)
@@ -46,6 +46,9 @@ refuse() { # KEY VALUE
       echo "pgrep and ps are fine for finding a PID; the kill itself takes the PID." >&2
       ;;
   esac
+  # The cause a command this hook ran wrote, captured at the site and replayed
+  # here: under the keyed line, never ahead of it.
+  [ -z "${3:-}" ] || printf '%s\n' "$3" >&2
   exit 2
 }
 
@@ -58,10 +61,11 @@ for dependency in jq cat; do
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
-# cat keeps its own words: they say which failure it was — a directory on
-# stdin, a closed descriptor, a read error — and `payload=unreadable` carries
-# the verdict, not the cause.
-INPUT=$(cat) || refuse payload unreadable
+# cat's words are captured, not left to precede the refusal: on failure the
+# substitution holds what it wrote, and the refusal replays it under the keyed
+# line. A cat that succeeds is silent, so the payload is not mixed with a
+# diagnostic on the passing side.
+INPUT=$(cat 2>&1) || refuse payload unreadable "$INPUT"
 # An empty payload is no payload: jq reads nothing from it and says nothing,
 # which would pass as an absent command.
 case "$INPUT" in

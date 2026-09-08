@@ -3,7 +3,7 @@
 # name: session-drift-check
 # event: SessionStart
 # description: On a fresh session start (not resume or compact), runs `kendex check --quiet` and surfaces kendex drift to the agent — outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`, `-g` in a global section), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Prints nothing when the install is current. KENDEX_DRIFT_HOOK=off disables it.
-# safety: Informational only — never installs or removes anything and never touches the project's git state. The check never waits on the network; the only thing it may write is kendex's own cache bookkeeping under ~/.kendex/cache (fetch stamps), and when a source cache there is older than its TTL, a detached background process refreshes it (git fetch + reset, confined to that cache) and this hook does not wait for it. Every suggestion requires user approval before acting. Notices carry the line `session-drift-check: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first.
+# safety: Informational only — never installs or removes anything and never touches the project's git state. The check never waits on the network; the only thing it may write is kendex's own cache bookkeeping under ~/.kendex/cache (fetch stamps), and when a source cache there is older than its TTL, a detached background process refreshes it (git fetch + reset, confined to that cache) and this hook does not wait for it. Every suggestion requires user approval before acting. Every notice opens with `session-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key. The one passthrough is `kendex check`'s own report, relayed on stdout under the keyed line and preserved exactly.
 # timeout: 30
 # harnesses: [claude-code, codex]
 # ---
@@ -21,9 +21,9 @@ OUTPUT=""
 # unreachable project directory, what became of the check, or the status an
 # unguarded command left. The English explanation and kendex's own report
 # follow it. Every line goes to stdout, the session-start context channel.
-# A reader matches `^session-drift-check: `, not line 1: a command this hook
-# runs may write its own diagnostic to the same stdout first, and that line
-# names a cause the keyed one does not carry.
+# The keyed line stands first, at position 1. What a command this hook runs
+# wrote is captured where the hook reads it and passed here as the cause, so
+# it is replayed under the key rather than ahead of it.
 notice() { # KEY VALUE [DETAIL]
   printf 'session-drift-check: %s=%s\n' "$1" "$2"
   case "$1=$2" in
@@ -48,6 +48,9 @@ notice() { # KEY VALUE [DETAIL]
       ;;
     exit=*) printf 'kendex check could not run: drift hook failed at line %s (exit %s); drift status unknown\n' "${3:-}" "$2" ;;
   esac
+  # The cause a command this hook ran wrote, captured at the site and replayed
+  # here: under the keyed line, never ahead of it.
+  [ -z "${3:-}" ] || printf '%s\n' "$3" >&2
   return 0
 }
 

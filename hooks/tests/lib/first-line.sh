@@ -4,12 +4,10 @@
 # line is what a reader parses; a row pins it beside the exit status, and the
 # English below it is pinned nowhere.
 #
-# A reader matches the prefix `^<hook-name>: `, not line 1, and so does this
-# library: a command the hook runs may write its own diagnostic to the same
-# stream first — cat on a directory, the settings loader on a malformed file —
-# and that line names a cause the keyed one does not carry. Reading line 1
-# strictly would pin the absence of those diagnostics, which is not the
-# contract and costs the reader the cause.
+# The first line is the contract, at position 1: a hook captures what a command
+# it runs wrote and replays it under the keyed line, so nothing precedes the
+# key. `first_line` reads line 1 strictly, and `cause_below` says whether the
+# captured cause is there under it — the two halves a row asserts together.
 #
 # Usage, from a suite that defines ERR_FILE, `run_hook COMMAND` and
 # `run_payload RAW-JSON` (each leaving the status in `rc` and stderr in
@@ -33,18 +31,20 @@
 # an accumulator that appends from one that overwrites — a row per tool passes
 # either way, since only one name is ever missing.
 
-# NAME and FILE default to the suite's own hook and stderr; a suite whose
-# fixture runs a copy of the hook under another path passes them instead.
-first_line() { # [NAME] [FILE] -> the hook's own keyed line, `-` when it wrote none
-  local prefix line="" file
-  prefix="${1:-$(basename "${HOOK:?}" .sh)}: "
-  file="${2:-$ERR_FILE}"
-  # Read to the end in the shell: a `head` here stops reading while the hook
+# FILE defaults to the suite's own stderr; a suite whose fixture writes
+# somewhere else passes it instead.
+first_line() { # [FILE] -> line 1, `-` when nothing was written
+  local line="" file="${1:-$ERR_FILE}"
+  # One line, read in the shell: a `head` here stops reading while the hook
   # still writes, and its SIGPIPE would read as an empty stderr.
-  while IFS= read -r line; do
-    case "$line" in "$prefix"*) printf '%s' "$line"; return ;; esac
-  done <"$file"
-  printf -- '-'
+  IFS= read -r line <"$file" || :
+  printf '%s' "${line:--}"
+}
+
+cause_below() { # [FILE] -> `present` when anything stands under line 1
+  local file="${1:-$ERR_FILE}" n
+  n=$(awk 'NR > 1 && NF { found = 1 } END { print found + 0 }' <"$file")
+  [ "$n" = 1 ] && printf 'present' || printf 'absent'
 }
 
 first_table() { # ROWS

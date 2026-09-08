@@ -115,8 +115,9 @@ set +e
 "$BASH_BIN" "$HOOK" <"$TMP_ROOT" >/dev/null 2>"$ERR_FILE"
 rc=$?
 set -e
-assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=block-argv-kill: payload=unreadable' \
-  'a stdin that cannot be read refuses with the refusal status, not the read error'
+assert_eq "rc=$rc first=$(first_line) cause=$(cause_below)" \
+  'rc=2 first=block-argv-kill: payload=unreadable cause=present' \
+  'a stdin that cannot be read refuses with the keyed line first and the cause under it'
 
 payload_table "$HOOK" 'pkill -f x' 'kill 1234'
 
