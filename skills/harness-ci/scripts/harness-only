@@ -111,14 +111,15 @@ done
 # it and fail the real write — so a verdict printed first would already be on
 # stdout when the append died, and exit 2 is documented to carry no verdict.
 verdict() { # true|false [FIELDS REASON]
+  if [ -n "$output" ]; then
+    if ! { printf 'harness_only=%s\n' "$1" >>"$output"; } 2>/dev/null; then
+      die "cause=output-write-failed" \
+        "could not append the verdict to '$output'"
+    fi
+  fi
   if [ "$#" -gt 1 ]; then
     printf 'fallback: %s\n' "$2" >&2
     echo "harness-only: $3; running every lane" >&2
-  fi
-  if [ -n "$output" ]; then
-    printf 'harness_only=%s\n' "$1" >>"$output" ||
-      die "cause=output-write-failed" \
-        "could not append the verdict to '$output'"
   fi
   printf 'harness_only=%s\n' "$1"
   exit 0

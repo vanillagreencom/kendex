@@ -90,6 +90,15 @@ unwritable="$SANDBOX/no-such-dir/out.txt"
 wiring output-parent-absent \
   --repo "$repo" --event push --base "$base" --output "$unwritable"
 
+fallback_write_status=0
+fallback_write_stderr="$(bounded "$HARNESS_ONLY" \
+  --repo "$repo" --event schedule --base "$base" --output "$unwritable" \
+  2>&1 >/dev/null)" || fallback_write_status=$?
+fallback_write_first="$(printf '%s\n' "$fallback_write_stderr" | sed -n '1p')"
+assert_eq fallback-output-write-first \
+  "wiring-error: cause=output-write-failed exit 2" \
+  "$fallback_write_first exit $fallback_write_status"
+
 if [ -c /dev/full ]; then
   wiring output-write-fails \
     --repo "$repo" --event push --base "$base" --output /dev/full
