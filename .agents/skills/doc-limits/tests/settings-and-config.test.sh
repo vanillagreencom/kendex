@@ -178,6 +178,12 @@ done <<'INVALID_CLASS_CASES'
 =1k|class-pattern-empty|=1k
 INVALID_CLASS_CASES
 
+DOC_LIMITS_CLASSES="*.m$(printf '\t')d=1k"
+export DOC_LIMITS_CLASSES
+run
+expect 2 'invalid-class-tab-pattern'
+expect_first_line 'error=class-pattern-invalid setting=DOC_LIMITS_CLASSES' 'invalid-class-tab-pattern diagnostic'
+
 private_command invalid-classes
 [ ! -L "$MUTANT" ]
 [ "$(grep -Fxc 'parse_classes() { # SETTING-NAME VALUE — appends entries' "$MUTANT")" -eq 1 ]
@@ -276,6 +282,10 @@ while IFS='|' read -r name operation first_line; do
     header) printf '[env] # invalid\n' >"$R/.kendex/settings.toml" ;;
     syntax) printf '[env]\nDOC_LIMITS_CLASSES = 1\n' >"$R/.kendex/settings.toml" ;;
     dotenv) printf 'DOC_LIMITS_CLASSES="*.md=1k"tail\n' >"$R/.env.local" ;;
+    unreadable)
+      printf '[env]\nDOC_LIMITS_CLASSES = "*.md=1k"\n' >"$R/.kendex/settings.toml"
+      chmod 000 "$R/.kendex/settings.toml"
+      ;;
   esac
   run
   expect 2 "$name"
@@ -288,6 +298,7 @@ settings-bom|bom|doc-limits-error=settings-bom value=.kendex/settings.toml
 settings-header|header|doc-limits-error=settings-header value=1
 settings-syntax|syntax|doc-limits-error=settings-syntax value=DOC_LIMITS_CLASSES
 settings-dotenv|dotenv|doc-limits-error=settings-dotenv value=DOC_LIMITS_CLASSES
+settings-unreadable|unreadable|doc-limits-error=settings-unreadable value=.kendex/settings.toml
 SETTINGS_ERROR_CASES
 if [ "$SETTINGS_ERROR_ASSERTIONS" -eq 0 ]; then
   printf 'FAIL: SETTINGS_ERROR_CASES executed no assertions\n' >&2
@@ -396,6 +407,12 @@ run
 expect 2 'outside-repository'
 expect_first_line "error=repository-root-missing path=$(printf '%q' "$R")" 'outside-repository diagnostic precedes Git stderr'
 R="$REPO_FIXTURE"
+
+export TMPDIR="$TMP/missing-temp-parent"
+run
+expect 2 'temporary-directory-parent-missing'
+expect_first_line "error=temp-create-failed path=$(printf '%q' "$TMPDIR")" 'temporary-directory diagnostic'
+unset TMPDIR
 
 # Git is the real producer of policy lookup, document enumeration, and blob sizes.
 REAL_GIT="$(command -v git)"

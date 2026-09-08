@@ -129,6 +129,9 @@ while IFS='|' read -r name mode operation expected first_line; do
       printf '{}\n' >"$R/.kendex-generated.json"
       git -C "$R" add .kendex-generated.json
       ;;
+    inventory-unreadable)
+      chmod 000 "$R/.kendex-generated.json"
+      ;;
     carve-back)
       git -C "$R" checkout HEAD -- .kendex-generated.json
       printf '!.agents/skills/rendered/*\tmeasure this render explicitly\n' >"$R/tools/doc-limits-excludes"
@@ -150,11 +153,16 @@ inventory-invalid|worktree|invalid-inventory|2|error=inventory-invalid path=.ken
 inventory-invalid|staged|unchanged|2|error=inventory-invalid path=.kendex-generated.json
 render-carved-back|worktree|carve-back|1
 render-carved-back|staged|unchanged|1
+inventory-unreadable-shape|worktree|inventory-unreadable|2|error=inventory-read-failed path=.kendex-generated.json
 INVENTORY_CASES
 if [ "$INVENTORY_ASSERTIONS" -eq 0 ]; then
   printf 'FAIL: INVENTORY_CASES executed no assertions\n' >&2
   exit 1
 fi
+
+chmod 600 "$R/.kendex-generated.json"
+printf '[".agents/skills/rendered/SKILL.md"]\n' >"$R/.kendex-generated.json"
+git -C "$R" add .kendex-generated.json
 
 git -C "$R" rm -qf tools/doc-limits-excludes
 private_command generated-exclusion

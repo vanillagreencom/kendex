@@ -120,6 +120,36 @@ must_fail_first_line 'notice=documents-checked count=1' 'notice protocol control
 SR="$SOURCE_COMMAND"
 git -C "$R" rm -qf README.md
 
+DOCUMENT_PATH="bad$(printf '\t')path.md"
+bytes "$DOCUMENT_PATH" 1
+git -C "$R" add -- "$DOCUMENT_PATH"
+run --staged
+expect 2 'document-path-tab'
+expect_first_line "error=document-path-invalid path=$(printf '%q' "$DOCUMENT_PATH")" 'document-path-tab diagnostic'
+git -C "$R" rm -qf -- "$DOCUMENT_PATH"
+
+printf 'conflict\n' >"$R/conflict.md"
+git -C "$R" add conflict.md
+CONFLICT_OID="$(git -C "$R" hash-object conflict.md)"
+git -C "$R" rm -q --cached conflict.md
+printf '100644 %s 1\tconflict.md\n100644 %s 2\tconflict.md\n100644 %s 3\tconflict.md\n' "$CONFLICT_OID" "$CONFLICT_OID" "$CONFLICT_OID" | git -C "$R" update-index --index-info
+run --staged
+expect 2 'document-unmerged'
+expect_first_line 'error=document-unmerged path=conflict.md' 'document-unmerged diagnostic'
+private_command document-diagnostic
+[ "$(grep -Fxc '  [ "${entry##* }" = 0 ] || collection_error document-unmerged path "$f" "tracked document is unmerged: $f"' "$MUTANT")" -eq 1 ]
+sed 's/collection_error document-unmerged path/collection_error document-unmerged-renamed path/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --staged
+must_fail_first_line 'error=document-unmerged path=conflict.md' 'document diagnostic control: changing the stable key fails the unmerged row'
+SR="$SOURCE_COMMAND"
+git -C "$R" update-index --force-remove conflict.md
+rm "$R/conflict.md"
+
 bytes src/large.rs 100000
 git -C "$R" add src/large.rs
 export DOC_LIMITS_CLASSES='*=1k'
@@ -145,11 +175,15 @@ bytes AGENTS.md 16385
 git -C "$R" add AGENTS.md
 EXCLUSION_ASSERTIONS=0
 while IFS='|' read -r name operation expected first_line; do
+  rm -f "$R/tools/doc-limits-excludes"
   case "$operation" in
     reasoned) printf 'AGENTS.md\tdeliberate fixture exception\n' >"$R/tools/doc-limits-excludes" ;;
     missing-reason) printf 'AGENTS.md\n' >"$R/tools/doc-limits-excludes" ;;
     removed) : >"$R/tools/doc-limits-excludes" ;;
     empty-carve) printf '!\tmissing pattern\n' >"$R/tools/doc-limits-excludes" ;;
+    symlink)
+      ln -s ../AGENTS.md "$R/tools/doc-limits-excludes"
+      ;;
   esac
   git -C "$R" add tools/doc-limits-excludes
   run --staged
@@ -161,12 +195,14 @@ reasoned-exclusion|reasoned|0|notice=documents-checked count=0
 exclusion-missing-reason|missing-reason|2|error=excludes-row-invalid line=1
 exclusion-removed|removed|1|notice=document-over-limit path=AGENTS.md
 exclusion-empty-carve|empty-carve|2|error=excludes-carve-empty line=1
+exclusion-symlink|symlink|2|error=excludes-mode-invalid mode=120000
 EXCLUSION_CASES
 if [ "$EXCLUSION_ASSERTIONS" -eq 0 ]; then
   printf 'FAIL: EXCLUSION_CASES executed no assertions\n' >&2
   exit 1
 fi
 
+rm -f "$R/tools/doc-limits-excludes"
 printf 'AGENTS.md\n' >"$R/tools/doc-limits-excludes"
 git -C "$R" add tools/doc-limits-excludes
 private_command exclusion-diagnostic

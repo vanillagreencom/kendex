@@ -181,9 +181,15 @@ while IFS='|' read -r name operation mode expected first_line; do
       printf '[env]\nDOC_LIMITS_CLASSES = "*.md=1k"\n' >"$R/kendex.settings.toml"
       ;;
     stage-bom)
-      rm "$R/kendex.settings.toml"
+      rm -f "$R/kendex.settings.toml" "$R/.kendex/settings.toml"
       mkdir -p "$R/.kendex"
       printf '\357\273\277[env]\nDOC_LIMITS_CLASSES = "*.md=1k"\n' >"$R/.kendex/settings.toml"
+      git -C "$R" add .kendex/settings.toml
+      ;;
+    stage-symlink)
+      rm -f "$R/kendex.settings.toml" "$R/.kendex/settings.toml"
+      mkdir -p "$R/.kendex"
+      ln -s ../kendex.settings.toml "$R/.kendex/settings.toml"
       git -C "$R" add .kendex/settings.toml
       ;;
   esac
@@ -199,6 +205,7 @@ settings-staged-strict|split-settings|staged|1
 settings-worktree-relaxed|unchanged|worktree|0
 settings-relaxed-staged|stage-relaxed|staged|0
 settings-deleted-from-index|delete-settings|staged|0
+settings-staged-symlink|stage-symlink|staged|2|doc-limits-error=settings-index-symlink value=.kendex/settings.toml
 settings-staged-bom|stage-bom|staged|2|doc-limits-error=settings-bom value=.kendex/settings.toml
 SETTINGS_CASES
 if [ "$SETTINGS_ASSERTIONS" -eq 0 ]; then
