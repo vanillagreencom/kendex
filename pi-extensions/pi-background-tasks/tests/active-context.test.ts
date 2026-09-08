@@ -1,42 +1,35 @@
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { shouldAdoptActiveContext } from "../extensions/active-context.js";
 import { shouldRenderBackgroundWidget } from "../extensions/widget-visibility.js";
 
-describe("shouldAdoptActiveContext", () => {
-	test("adopts the first context seen", () => {
-		expect(shouldAdoptActiveContext(null, { hasUI: true })).toBe(true);
-		expect(shouldAdoptActiveContext(null, { hasUI: false })).toBe(true);
-		expect(shouldAdoptActiveContext(undefined, { hasUI: false })).toBe(true);
-	});
+test("context adoption retains UI while accepting first and headless contexts", () => {
+	expect.hasAssertions();
+	for (const [name, current, incoming, expected] of [
+		["first UI context", null, { hasUI: true }, true],
+		["first headless context", null, { hasUI: false }, true],
+		["undefined retained context", undefined, { hasUI: false }, true],
+		["UI replaces headless context", { hasUI: false }, { hasUI: true }, true],
+		["UI replaces UI context", { hasUI: true }, { hasUI: true }, true],
+		["headless context preserves UI", { hasUI: true }, { hasUI: false }, false],
+		["missing UI flag preserves UI", { hasUI: true }, {}, false],
+		["headless context replaces headless context", { hasUI: false }, { hasUI: false }, true],
+	] as const) {
+		expect(shouldAdoptActiveContext(current, incoming), name).toBe(expected);
+	}
+});
 
-	test("a UI context always replaces the retained one", () => {
-		expect(shouldAdoptActiveContext({ hasUI: false }, { hasUI: true })).toBe(true);
-		expect(shouldAdoptActiveContext({ hasUI: true }, { hasUI: true })).toBe(true);
-	});
-
-	// Direct RPC bash reaches the user_bash handler with no UI. Adopting that
-	// context would blank the mini-dashboard on the next refresh.
-	test("a non-UI context does not replace a retained UI context", () => {
-		expect(shouldAdoptActiveContext({ hasUI: true }, { hasUI: false })).toBe(false);
-		expect(shouldAdoptActiveContext({ hasUI: true }, {})).toBe(false);
-	});
-
-	test("headless sessions keep adopting non-UI contexts", () => {
-		expect(shouldAdoptActiveContext({ hasUI: false }, { hasUI: false })).toBe(true);
-	});
-
-	test("retaining the UI context keeps the widget rendering after an RPC bash", () => {
-		const uiCtx = { hasUI: true };
-		const rpcCtx = { hasUI: false };
-		const retained = shouldAdoptActiveContext(uiCtx, rpcCtx) ? rpcCtx : uiCtx;
-		expect(
-			shouldRenderBackgroundWidget({
-				hasUi: retained.hasUI,
-				mode: "compact",
-				showWidget: true,
-				trackedTaskCount: 1,
-				visibleTaskCount: 1,
-			}),
-		).toBe(true);
-	});
+test("retained UI context keeps the composed widget decision visible after headless input", () => {
+	expect.hasAssertions();
+	const uiCtx = { hasUI: true };
+	const rpcCtx = { hasUI: false };
+	const retained = shouldAdoptActiveContext(uiCtx, rpcCtx) ? rpcCtx : uiCtx;
+	expect(
+		shouldRenderBackgroundWidget({
+			hasUi: retained.hasUI,
+			mode: "compact",
+			showWidget: true,
+			trackedTaskCount: 1,
+			visibleTaskCount: 1,
+		}),
+	).toBe(true);
 });
