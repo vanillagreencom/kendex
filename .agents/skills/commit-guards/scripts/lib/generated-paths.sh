@@ -10,17 +10,22 @@ GENERATED_PATHS=""
 GENERATED_NL='
 '
 generated_paths_load() { # JSON — load the writer's exact paths, or refuse
-  GENERATED_PATHS="$(jq -ers '
+  local output="" status=0 explanation="Cannot read .kendex-generated.json. Install jq or refresh and stage the inventory."
+  output="$(jq -ers '
     if length == 1 then .[0] else "" | halt_error(20) end
     | if type == "array" and all(.[];
         type == "string" and length > 0
         and (contains("\n") or contains("\u0000") | not))
       then join("\n")
       else "" | halt_error(21) end
-  ' <<<"$1")" || {
-    gg_message inventory-status "$?" "Cannot read .kendex-generated.json. Install jq or refresh and stage the inventory." >&2
+  ' <<<"$1" 2>&1)" || status=$?
+  if [ "$status" -ne 0 ]; then
+    GENERATED_PATHS=""
+    [ -z "$output" ] || explanation="$output"
+    gg_message inventory-status "$status" "$explanation" >&2
     return 2
-  }
+  fi
+  GENERATED_PATHS="$output"
 }
 
 generated_path_contains() { # PATH — literal membership, never a glob

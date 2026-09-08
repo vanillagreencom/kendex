@@ -8,7 +8,7 @@
 # so the value reaches the reader on one line and carries nothing a terminal
 # would act on.
 gg_scrubbed() { # VALUE — the value on one line, controls replaced
-  printf '%s' "$1" | LC_ALL=C awk '{ gsub(/[\001-\010\013-\037\177]/, "?"); printf "%s%s", sep, $0; sep = "?" }'
+  printf '%s' "$1" | LC_ALL=C tr '\001-\010\012-\037\177' '?'
 }
 
 # A notice starts with its stable key and value. Explanation is for people;
@@ -24,4 +24,3 @@ gg_fail() { # KEY VALUE EXPLANATION — collection/configuration refusal
   gg_message "$@" >&2
   exit 2
 }
-
