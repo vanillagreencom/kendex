@@ -1,125 +1,18 @@
 #!/usr/bin/env bash
-# The repo guard delegates document sizes and changelog entries to their
-# shipped checks. The controls below run those checks on the same defects.
+# tools/guard at commit time, the last lane of the pre-commit chain: the
+# rooted() rule on new temporary fixtures, the bash32-lint lane, the
+# run-scoping scan, the compile checks a staged product change schedules, and
+# the verdicts guard leaves to the packages that own them. The --full lanes are guard-full.test.sh and the
+# render rule is guard-render.test.sh.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 unset DOC_LIMITS_CLASSES DOC_LIMITS_DEFAULT_CLASSES DOC_LIMITS_EXCLUDES DOC_LIMITS_SETTINGS_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GUARD="$(cd "$TEST_DIR/.." && pwd)/guard"
-REPO="$(cd "$TEST_DIR/../.." && pwd)"
+# shellcheck source=lib/guard-world.sh
+. "$TEST_DIR/lib/guard-world.sh"
 CHANGELOG_ENTRIES="$REPO/.agents/skills/commit-guards/scripts/changelog-entries"
 RATCHET="$REPO/.agents/skills/doc-limits/scripts/doc-limits"
-REAL_GIT="$(command -v git)"
-REAL_AWK="$(command -v awk)"
-TMP="$(mktemp -d)"
-mkdir -p "$TMP/nohooks"
-trap 'rm -rf "$TMP"' EXIT
-
-PASS=0
-FAIL=0
-ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
-
-R="$TMP/repo"
-mkdir -p "$R/.claude" "$R/tools"
-mkdir -p "$R/crates/core/tests"
-git -C "$R" init -q
-git -C "$R" symbolic-ref HEAD refs/heads/main
-git -C "$R" config user.email test@example.com
-git -C "$R" config user.name test
-printf '[]\n' >"$R/.kendex-generated.json"
-git -C "$R" config core.hooksPath "$TMP/nohooks"
-printf '# fixture\n' >"$R/AGENTS.md"
-cat >"$R/kendex.toml" <<'TOML'
-schema = 6
-[bot-instructions]
-schema = 1
-[bot-instructions.repo]
-name = "fixture"
-summary = "A repository for guard checks."
-TOML
-printf '%s\n' \
-  'fn existing_fixture() {' \
-  '    let tmp = tempfile::tempdir().unwrap();' \
-  '    drop(tmp);' \
-  '}' >"$R/crates/core/tests/existing_temp.rs"
-# The bash32-lint lane runs on every pass and resolves its exception entries
-# and its hand-named roster entries against the repository it runs in, so the
-# fixture derives each rather than copying a list that goes stale with it. An
-# exception directory holds no shell file; a roster one dies without one.
-# -E on the exception read, because `\|` alternation inside `\(...\)` is a GNU
-# BRE extension: BSD sed reads it as a literal bar, so the loop below creates
-# no exception directory and every guard pass dies in the bash32-lint lane.
-while IFS= read -r e; do
-  mkdir -p "$R/$e" && printf 'not shell\n' >"$R/$e/README.md"
-done < <(sed -nE 's#^NO_(SCAN|SHELL)="(.*)"$#\2#p' "$REPO/tools/bash32-lint" | tr ' ' '\n' | grep .)
-while IFS= read -r e; do
-  mkdir -p "$R/$e" && printf '#!/usr/bin/env bash\necho rostered\n' >"$R/$e/rostered.sh"
-done < <(sed -n 's#^  set -- \(.*\)$#\1#p' "$REPO/tools/bash32-lint" | tr ' ' '\n' | grep -v '[*]')
-mkdir -p "$R/skills/demo/scripts" "$R/skills/demo/tests" \
-  "$R/.agents/skills/demo/scripts" "$R/.agents/skills/demo/tests" \
-  "$R/agents" "$R/.claude/agents" "$R/.codex/agents" "$R/.pi/agents"
-printf '#!/usr/bin/env bash\necho demo\n' >"$R/skills/demo/scripts/demo.sh"
-printf '#!/usr/bin/env bash\necho tested\n' >"$R/skills/demo/tests/demo.test.sh"
-printf '#!/usr/bin/env bash\necho accented\n' >"$R/skills/demo/scripts/frappé.sh"
-cp "$R/skills/demo/scripts/demo.sh" "$R/.agents/skills/demo/scripts/demo.sh"
-cp "$R/skills/demo/tests/demo.test.sh" "$R/.agents/skills/demo/tests/demo.test.sh"
-cp "$R/skills/demo/scripts/frappé.sh" "$R/.agents/skills/demo/scripts/frappé.sh"
-printf '# demo agent\n' >"$R/agents/demo.md"
-printf '# demo agent render\n' >"$R/.claude/agents/demo.md"
-printf 'name = "demo"\n' >"$R/.codex/agents/demo.toml"
-printf '# demo agent render\n' >"$R/.pi/agents/demo.md"
-# One hook rendered to two of the three harness directories and not the
-# third, the way the real tree's hook sets differ, plus a hook test that
-# renders nowhere.
-mkdir -p "$R/hooks/tests" "$R/.claude/hooks" "$R/.codex/hooks" "$R/.pi/kendex/hooks"
-printf '#!/usr/bin/env bash\necho hooked\n' >"$R/hooks/demo.sh"
-printf '#!/usr/bin/env bash\necho hooked\n' >"$R/hooks/tests/demo.test.sh"
-cp "$R/hooks/demo.sh" "$R/.claude/hooks/demo.sh"
-cp "$R/hooks/demo.sh" "$R/.codex/hooks/demo.sh"
-printf '#!/usr/bin/env bash\necho other\n' >"$R/.pi/kendex/hooks/other.sh"
-git -C "$R" add -A
-git -C "$R" commit -q -m fixture
-
-run_guard() { # [VAR=VALUE...] — sets OUT and RC
-  OUT=""
-  RC=0
-  args=()
-  [ "${FULL_GUARD:-0}" -eq 0 ] || args+=(--full)
-  OUT="$(cd "$R" && env "$@" "$GUARD" ${args[@]+"${args[@]}"} 2>&1)" || RC=$?
-}
-
-echo "=== bot instructions: full validation reads the worktree; the staged check is the chain's lane ==="
-BOT="$REPO/.agents/skills/bot-instructions/scripts/bot-instructions"
-printf '\n[bot-instructions.bots]\ncodex = true\ncopilot = true\n' >>"$R/kendex.toml"
-printf '\n## Code Review Rules\n\nFixture rules.\n' >>"$R/AGENTS.md"
-git -C "$R" add -A
-"$BOT" adopt --repo "$R" >/dev/null
-"$BOT" render --repo "$R" >/dev/null
-git -C "$R" add -A
-run_guard
-[ "$RC" -eq 0 ] && ok "matching staged bot output passes" || bad "matching staged bot output passes" "$OUT"
-printf '\nStale instructions.\n' >>"$R/.github/copilot-instructions.md"
-run_guard
-[ "$RC" -eq 0 ] && ok "commit checks ignore unstaged bot edits" || bad "commit checks ignore unstaged bot edits" "$OUT"
-FULL_GUARD=1
-run_guard
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"drift:"*".github/copilot-instructions.md"* ]] \
-  && ok "full validation rejects stale worktree bot output" \
-  || bad "full validation rejects stale worktree bot output" "rc=$RC out=$OUT"
-FULL_GUARD=0
-git -C "$R" add .github/copilot-instructions.md
-"$BOT" render --repo "$R" >/dev/null
-run_guard
-# The commit-guards pre-commit chain runs `bot-instructions check --staged`
-# as its own lane before this script; a second staged run here would judge
-# the same index twice.
-[ "$RC" -eq 0 ] && [[ "$OUT" != *"drift:"* ]] \
-  && ok "commit checks leave the staged bot check to the chain's lane" \
-  || bad "commit checks leave the staged bot check to the chain's lane" "rc=$RC out=$OUT"
-git -C "$R" reset -q --hard HEAD
-rm -rf -- "$R/.github"
 
 echo "=== new temporary fixtures derive their canonical root at creation ==="
 mkdir -p "$R/crates/core/tests"
@@ -208,83 +101,10 @@ rm -f "$R/fake-bin/git" "$R/fake-bin/awk"
 git -C "$R" reset -q HEAD -- crates/core/tests/temp_path.rs
 rm -f "$R/crates/core/tests/temp_path.rs"
 
-FULL_GUARD=1
-echo "=== full validation compiles every cross target ==="
-mkdir -p "$R/fake-bin"
-cat >"$R/fake-bin/rustup" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-[ "$*" = "target list --installed" ]
-[ "${RUSTUP_LIST_RESULT:-0}" -eq 0 ]
-# Space-separated in, one target per line out, the shape guard greps.
-for t in ${RUSTUP_INSTALLED_TARGETS:-}; do printf '%s\n' "$t"; done
-SH
-cat >"$R/fake-bin/cargo" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "$*" >>"$CARGO_CALL_LOG"
-for t in ${CROSS_CHECK_FAIL:-}; do
-  if [ "$*" = "check -p kendex-core -p kendex-cli --all-targets --target $t" ]; then
-    exit 1
-  fi
-done
-SH
-chmod +x "$R/fake-bin/rustup" "$R/fake-bin/cargo"
-printf '[workspace]\n' >"$R/Cargo.toml"
-git -C "$R" add Cargo.toml
-CARGO_CALL_LOG="$TMP/cargo-calls"
-# The platforms the release builds and this host does not run. Written out
-# here on purpose: a list read back from guard would pass whatever guard
-# named.
-APPLE=aarch64-apple-darwin
-WINDOWS=x86_64-pc-windows-msvc
-BOTH="$APPLE $WINDOWS"
-check_call() { # TARGET — the one cargo line guard is allowed to run for it
-  printf 'check -p kendex-core -p kendex-cli --all-targets --target %s' "$1"
-}
-: >"$CARGO_CALL_LOG"
-run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_LIST_RESULT=1
-[ "$RC" -ne 0 ] && case "$OUT" in *"rustup could not list installed targets"*) true ;; *) false ;; esac \
-  && ok "a failed installed-target lookup blocks guard" \
-  || bad "a failed installed-target lookup blocks guard" "rc=$RC out=$OUT"
-run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS=x86_64-unknown-linux-gnu
-[ "$RC" -ne 0 ] &&
-  case "$OUT" in *"Rust target $APPLE is not installed"*) true ;; *) false ;; esac &&
-  case "$OUT" in *"Rust target $WINDOWS is not installed"*) true ;; *) false ;; esac \
-  && ok "every missing target is refused with its own install command" \
-  || bad "every missing target is refused with its own install command" "rc=$RC out=$OUT"
-if grep -qE -- "--target ($APPLE|$WINDOWS)\$" "$CARGO_CALL_LOG"; then
-  bad "a missing target is not handed to cargo" "$(cat "$CARGO_CALL_LOG")"
-else
-  ok "a missing target is not handed to cargo"
-fi
-: >"$CARGO_CALL_LOG"
-run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$WINDOWS"
-[ "$RC" -ne 0 ] && case "$OUT" in *"Rust target $APPLE is not installed"*) true ;; *) false ;; esac &&
-  [ "$(grep -cFx "$(check_call "$WINDOWS")" "$CARGO_CALL_LOG")" -eq 1 ] \
-  && ok "a missing target does not stop the targets after it" \
-  || bad "a missing target does not stop the targets after it" "rc=$RC out=$OUT log=$(cat "$CARGO_CALL_LOG")"
-for failing in "$APPLE" "$WINDOWS"; do
-  : >"$CARGO_CALL_LOG"
-  run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$BOTH" CROSS_CHECK_FAIL="$failing"
-  [ "$RC" -ne 0 ] && case "$OUT" in *"$failing core and CLI test targets failed to compile"*) true ;; *) false ;; esac \
-    && ok "a failing $failing compiler verdict blocks guard, naming it" \
-    || bad "a failing $failing compiler verdict blocks guard, naming it" "rc=$RC out=$OUT"
-done
-: >"$CARGO_CALL_LOG"
-run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$BOTH"
-[ "$RC" -eq 0 ] \
-  && ok "installed targets that all compile reach the host suite" \
-  || bad "installed targets that all compile reach the host suite" "rc=$RC out=$OUT"
-[ "$(grep -cFx "$(check_call "$APPLE")" "$CARGO_CALL_LOG")" -eq 1 ] &&
-  [ "$(grep -cFx "$(check_call "$WINDOWS")" "$CARGO_CALL_LOG")" -eq 1 ] \
-  && ok "guard asks cargo once for every cross target's core and CLI tests" \
-  || bad "guard asks cargo once for every cross target's core and CLI tests" "$(cat "$CARGO_CALL_LOG")"
-FULL_GUARD=0
-git -C "$R" reset -q HEAD -- Cargo.toml
-rm -f "$R/Cargo.toml"
-
 echo "=== the shipped packages' verdicts are not twinned here ==="
+# Guard delegates document sizes and changelog entries to their shipped
+# checks. The preconditions run those checks on the same defects: the
+# fixture reaches each package's bound, so guard's silence is a delegation.
 head -c 16385 /dev/zero | tr '\0' x >"$R/AGENTS.md"
 printf '// %s: unfinished\n' "TO""DO" >"$R/crates/marker.rs" # split, or todo-ban fails this file
 printf '#![allow(dead_code)]\n' >"$R/crates/blanket.rs"
@@ -294,154 +114,32 @@ LONG="$(head -c 260 /dev/zero | tr '\0' 'e')"
 printf -- '- %s\n' "$LONG" >"$R/changelog.d/fixed/ken-long.md"
 printf -- '- One entry.\n- A second entry.\n' >"$R/changelog.d/fixed/ken-two.md"
 git -C "$R" add -A
-run_guard
-[ "$RC" -eq 0 ] \
-  && ok "an over-limit document, a work marker, a blanket allow, a 300 KB file, a malformed and an over-long fragment all pass — the packages judge those" \
-  || bad "an over-limit document, a work marker, a blanket allow, a 300 KB file, a malformed and an over-long fragment all pass — the packages judge those" "rc=$RC out=$OUT"
-case "$OUT" in *Unreleased* | *changelog* | *fragment*) bad "guard names neither changelog scope" "$OUT" ;; *) ok "guard names neither changelog scope" ;; esac
 SR_OUT=""
 SR_RC=0
 SR_OUT="$(cd "$R" && "$RATCHET" 2>&1)" || SR_RC=$?
 [ "$SR_RC" -eq 1 ] && case "$SR_OUT" in *"AGENTS.md: 16385 bytes > 16384 bytes"*) true ;; *) false ;; esac \
-  && ok "control: doc-limits refuses the oversized document guard passed" \
-  || bad "control: doc-limits refuses the oversized document guard passed" "rc=$SR_RC out=$SR_OUT"
-# The control for the changelog: the package lane that owns fragments
-# refuses both defects, so that silence is a delegation too.
+  && ok "precondition: doc-limits refuses the oversized document" \
+  || bad "precondition: doc-limits refuses the oversized document" "rc=$SR_RC out=$SR_OUT"
 CE_OUT=""
 CE_RC=0
 CE_OUT="$(cd "$R" && "$CHANGELOG_ENTRIES" 2>&1)" || CE_RC=$?
 [ "$CE_RC" -eq 1 ] \
   && case "$CE_OUT" in *ken-long.md*) true ;; *) false ;; esac \
   && case "$CE_OUT" in *ken-two.md*) true ;; *) false ;; esac \
-  && ok "control: changelog-entries refuses the long entry and two-entry fragment guard passed" \
-  || bad "control: changelog-entries refuses the long entry and two-entry fragment guard passed" "rc=$CE_RC out=$CE_OUT"
-rm -f "$R/crates/marker.rs" "$R/crates/blanket.rs" "$R/crates/huge.bin" "$R/changelog.d/fixed/ken-long.md" "$R/changelog.d/fixed/ken-two.md"
-git -C "$R" add -A
+  && ok "precondition: changelog-entries refuses the long entry and the two-entry fragment" \
+  || bad "precondition: changelog-entries refuses the long entry and the two-entry fragment" "rc=$CE_RC out=$CE_OUT"
+run_guard
+[ "$RC" -eq 0 ] \
+  && ok "an over-limit document, a work marker, a blanket allow, a 300 KB file, a malformed and an over-long fragment all pass — the packages judge those" \
+  || bad "an over-limit document, a work marker, a blanket allow, a 300 KB file, a malformed and an over-long fragment all pass — the packages judge those" "rc=$RC out=$OUT"
+case "$OUT" in *Unreleased* | *changelog* | *fragment*) bad "guard names neither changelog scope" "$OUT" ;; *) ok "guard names neither changelog scope" ;; esac
+reset_world
 
-echo "=== the skill tree is 3.2-clean and renders land with their sources ==="
-git -C "$R" checkout -q -- .
-git -C "$R" clean -qfd
+echo "=== the skill tree is 3.2-clean ==="
 run_guard
 [ "$RC" -eq 0 ] \
   && ok "a 3.2-clean skill tree with every render in step passes" \
   || bad "a 3.2-clean skill tree with every render in step passes" "rc=$RC out=$OUT"
-
-# The controls below each remove one check from a copy of guard and expect
-# the defect to pass, proving the red above it came from that check and not
-# from a neighbour. The copy sits beside a copy of bash32-lint because guard
-# resolves its sibling tools next to itself.
-ln -s "$REPO/.agents" "$TMP/.agents"
-MUTANT_TOOLS="$TMP/mutant-tools"
-mkdir -p "$MUTANT_TOOLS"
-cp "$REPO/tools/bash32-lint" "$MUTANT_TOOLS/bash32-lint"
-mutant_guard() { # SED-EXPR — stage a guard copy with that edit applied
-  sed "$1" "$GUARD" >"$MUTANT_TOOLS/guard"
-  chmod +x "$MUTANT_TOOLS/guard"
-  ! cmp -s "$GUARD" "$MUTANT_TOOLS/guard"
-}
-run_mutant() { # — sets OUT and RC
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" 2>&1)" || RC=$?
-}
-
-echo "=== full validation runs the suites of the trees the branch touched ==="
-FULL_GUARD=1
-# A second skill whose suite fails whenever it runs: the selection is proven
-# by that suite staying silent until its tree is touched.
-mkdir -p "$R/skills/quiet/tests"
-printf '#!/usr/bin/env bash\nexit 1\n' >"$R/skills/quiet/tests/quiet.test.sh"
-git -C "$R" add skills/quiet
-git -C "$R" commit -q -m "chore: a skill whose suite fails"
-printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
-printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
-run_guard
-[ "$RC" -eq 0 ] && [[ "$OUT" == *"=== skills/demo/tests/demo.test.sh"* ]] && [[ "$OUT" != *"skills/quiet"* ]] \
-  && ok "a touched skill's suite runs in full validation and an untouched skill's does not" \
-  || bad "a touched skill's suite runs in full validation and an untouched skill's does not" "rc=$RC out=$OUT"
-printf 'echo touched\n' >>"$R/skills/quiet/tests/quiet.test.sh"
-run_guard
-[ "$RC" != 0 ] && [[ "$OUT" == *"skills/quiet suite failed"* ]] \
-  && ok "a touched skill's failing suite reds full validation, naming the skill" \
-  || bad "a touched skill's failing suite reds full validation, naming the skill" "rc=$RC out=$OUT"
-if mutant_guard '/suite failed (\$t)/d'; then
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the suite lane deleted the failing suite passes" \
-    || bad "control: with the suite lane deleted the failing suite passes" "rc=$RC out=$OUT"
-else
-  bad "control: the suite lane could not be deleted from a guard copy"
-fi
-FULL_GUARD=0
-git -C "$R" checkout -q -- skills .agents
-
-# The touched set is the branch diff against origin/main plus the working
-# tree. A move out of one tree into another, committed past origin/main so the
-# working tree is clean and the branch diff is the only read that sees it,
-# names the tree it left: that tree's suite runs.
-FULL_GUARD=1
-suite_lane_head="$(git -C "$R" rev-parse HEAD)"
-mkdir -p "$R/skills/quiet/scripts"
-printf '#!/usr/bin/env bash\necho quiet\n' >"$R/skills/quiet/scripts/quiet.sh"
-# A second script stays behind so the move leaves no empty roster directory.
-printf '#!/usr/bin/env bash\necho stays\n' >"$R/skills/quiet/scripts/stays.sh"
-git -C "$R" add skills/quiet
-git -C "$R" commit -q -m "chore: a script in the quiet skill"
-git -C "$R" update-ref refs/remotes/origin/main HEAD
-git -C "$R" mv skills/quiet/scripts/quiet.sh hooks/quiet.sh
-git -C "$R" commit -q -m "chore: move the quiet script into hooks"
-run_guard
-[ "$RC" != 0 ] && [[ "$OUT" == *"skills/quiet suite failed"* ]] \
-  && ok "a committed move out of a skill runs the suite of the tree it left" \
-  || bad "a committed move out of a skill runs the suite of the tree it left" "rc=$RC out=$OUT"
-if mutant_guard 's/diff --no-renames --name-only "\$suites_base"/diff --name-only "$suites_base"/'; then
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
-  [ "$RC" -eq 0 ] \
-    && ok "control: with rename detection back on the branch diff the source tree's suite stays silent" \
-    || bad "control: with rename detection back on the branch diff the source tree's suite stays silent" "rc=$RC out=$OUT"
-else
-  bad "control: --no-renames could not be removed from the branch diff in a guard copy"
-fi
-
-# A branch diff that fails must red the lane by itself: the working-tree read
-# beside it succeeds, so only the diff's own status can carry the failure.
-git -C "$R" update-ref refs/remotes/origin/main HEAD
-cat >"$R/fake-bin/git" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-is_suite_diff=0
-last=""
-for arg in "$@"; do last="$arg"; done
-if [[ " $* " == *" diff "* && " $* " == *" --no-renames "* && "$last" == "--" ]]; then
-  is_suite_diff=1
-fi
-[ "${FAIL_SUITE_DIFF:-0}" -eq 1 ] && [ "$is_suite_diff" -eq 1 ] && exit 2
-exec "$REAL_GIT" "$@"
-SH
-chmod +x "$R/fake-bin/git"
-run_guard PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" FAIL_SUITE_DIFF=1
-[ "$RC" != 0 ] && [[ "$OUT" == *"the touched-file set for the suite lane could not be read"* ]] \
-  && ok "a failed branch diff reds the suite lane beside a good working-tree read" \
-  || bad "a failed branch diff reds the suite lane beside a good working-tree read" "rc=$RC out=$OUT"
-if mutant_guard 's/{ branch_touched=""; say "the touched-file set for the suite lane could not be read (branch diff)"; }/branch_touched=""/'; then
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" FAIL_SUITE_DIFF=1 "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the diff's status unchecked the failed diff passes" \
-    || bad "control: with the diff's status unchecked the failed diff passes" "rc=$RC out=$OUT"
-else
-  bad "control: the branch diff's status check could not be removed from a guard copy"
-fi
-rm -f "$R/fake-bin/git"
-git -C "$R" reset -q --hard "$suite_lane_head"
-git -C "$R" update-ref -d refs/remotes/origin/main
-FULL_GUARD=0
-
 BASH4_LINE='mapfile -t demo_lines <"$0"'
 printf '%s\n' "$BASH4_LINE" >>"$R/skills/demo/tests/demo.test.sh"
 printf '%s\n' "$BASH4_LINE" >>"$R/.agents/skills/demo/tests/demo.test.sh"
@@ -491,256 +189,6 @@ run_guard
 git -C "$R" rm -q --cached skills/orch/scripts/ci-wait
 rm -rf -- "$R/skills/orch"
 
-printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
-run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"a render source changed without its tracked render"* ]] \
-  && [[ "$OUT" == *"skills/demo/scripts/demo.sh -> .agents/skills/demo/scripts/demo.sh"* ]] \
-  && ok "a source-only skill edit reds, naming the render left behind" \
-  || bad "a source-only skill edit reds, naming the render left behind" "rc=$RC out=$OUT"
-if mutant_guard '/\.agents\/\$f/d'; then
-  run_mutant
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the skills arm deleted the source-only edit passes" \
-    || bad "control: with the skills arm deleted the source-only edit passes" "rc=$RC out=$OUT"
-else
-  bad "control: the skills render arm could not be deleted from a guard copy"
-fi
-printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
-run_guard
-[ "$RC" -eq 0 ] \
-  && ok "the same edit with its render in the change passes" \
-  || bad "the same edit with its render in the change passes" "rc=$RC out=$OUT"
-git -C "$R" checkout -q -- skills .agents
-
-# A deletion is in the changed set too, so a render removed beside a living
-# source has to red; both gone together is a clean removal.
-printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
-rm -f "$R/.agents/skills/demo/scripts/demo.sh"
-run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo/scripts/demo.sh -> .agents/skills/demo/scripts/demo.sh"* ]] \
-  && ok "a skill source edited with its render deleted reds, naming the render" \
-  || bad "a skill source edited with its render deleted reds, naming the render" "rc=$RC out=$OUT"
-if mutant_guard 's/ && { \[ ! -e "\$1" \] || \[ -e "\$2" \]; }//'; then
-  run_mutant
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the outlives clause deleted the deleted render passes" \
-    || bad "control: with the outlives clause deleted the deleted render passes" "rc=$RC out=$OUT"
-else
-  bad "control: the outlives clause could not be deleted from a guard copy"
-fi
-rm -f "$R/skills/demo/scripts/demo.sh"
-run_guard
-[ "$RC" -eq 0 ] \
-  && ok "a skill source deleted with its render passes" \
-  || bad "a skill source deleted with its render passes" "rc=$RC out=$OUT"
-git -C "$R" checkout -q -- skills .agents
-
-# A path with a non-ASCII byte: git quotes it unless told not to, and the
-# quoted spelling would slip past the case arm.
-printf 'echo more\n' >>"$R/skills/demo/scripts/frappé.sh"
-run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo/scripts/frappé.sh -> .agents/skills/demo/scripts/frappé.sh"* ]] \
-  && ok "a source-only edit to a non-ASCII path reds, naming the render left behind" \
-  || bad "a source-only edit to a non-ASCII path reds, naming the render left behind" "rc=$RC out=$OUT"
-if mutant_guard 's/-c core.quotePath=false //g'; then
-  run_mutant
-  [ "$RC" -eq 0 ] \
-    && ok "control: with path quoting left on the non-ASCII edit passes" \
-    || bad "control: with path quoting left on the non-ASCII edit passes" "rc=$RC out=$OUT"
-else
-  bad "control: path quoting could not be turned back on in a guard copy"
-fi
-git -C "$R" checkout -q -- skills .agents
-
-# Rendered is judged at the tree, so each file in a rendered skill owes a
-# render the tree does not track yet.
-printf '#!/usr/bin/env bash\necho added\n' >"$R/skills/demo/scripts/added.sh"
-git -C "$R" add skills/demo/scripts/added.sh
-run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo/scripts/added.sh -> .agents/skills/demo/scripts/added.sh"* ]] \
-  && ok "a new script in a rendered skill with no render reds, naming it" \
-  || bad "a new script in a rendered skill with no render reds, naming it" "rc=$RC out=$OUT"
-if mutant_guard '/\.agents\/\$f/d'; then
-  run_mutant
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the skills arm deleted the new script passes" \
-    || bad "control: with the skills arm deleted the new script passes" "rc=$RC out=$OUT"
-else
-  bad "control: the skills render arm could not be deleted from a guard copy"
-fi
-cp "$R/skills/demo/scripts/added.sh" "$R/.agents/skills/demo/scripts/added.sh"
-git -C "$R" add .agents/skills/demo/scripts/added.sh
-run_guard
-[ "$RC" -eq 0 ] \
-  && ok "the new script with its render staged beside it passes" \
-  || bad "the new script with its render staged beside it passes" "rc=$RC out=$OUT"
-git -C "$R" reset -q HEAD -- skills .agents
-rm -f "$R/skills/demo/scripts/added.sh" "$R/.agents/skills/demo/scripts/added.sh"
-
-mkdir -p "$R/skills/other/scripts"
-printf '#!/usr/bin/env bash\necho local\n' >"$R/skills/other/scripts/local-only.sh"
-git -C "$R" add skills/other/scripts/local-only.sh
-run_guard
-[ "$RC" -eq 0 ] \
-  && ok "a source in a skill with no tracked render passes" \
-  || bad "a source in a skill with no tracked render passes" "rc=$RC out=$OUT"
-git -C "$R" reset -q HEAD -- skills/other
-rm -rf "$R/skills/other"
-
-# A rendered skill whose name carries a regex metacharacter: the prefix test
-# reads the name literally, or a bracket makes the match fail as not rendered.
-mkdir -p "$R/skills/demo[1/scripts" "$R/.agents/skills/demo[1/scripts"
-printf '#!/usr/bin/env bash\necho bracket\n' >"$R/skills/demo[1/scripts/b.sh"
-cp "$R/skills/demo[1/scripts/b.sh" "$R/.agents/skills/demo[1/scripts/b.sh"
-git -C "$R" add -A skills .agents
-git -C "$R" commit -q -m "chore: a skill with a bracket in its name"
-printf 'echo more\n' >>"$R/skills/demo[1/scripts/b.sh"
-run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo[1/scripts/b.sh -> .agents/skills/demo[1/scripts/b.sh"* ]] \
-  && ok "a source-only edit in a skill named with a bracket reds, naming the render" \
-  || bad "a source-only edit in a skill named with a bracket reds, naming the render" "rc=$RC out=$OUT"
-if mutant_guard 's|^  case "\$NL\$render_tracked\$NL" in \*"\$NL\$1/"\*) return 0 ;; esac$|  grep -q -- "^$1/" <<<"$render_tracked" \&\& return 0|'; then
-  run_mutant
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the name read as a pattern the bracket edit passes" \
-    || bad "control: with the name read as a pattern the bracket edit passes" "rc=$RC out=$OUT"
-else
-  bad "control: the literal prefix test could not be turned back into a pattern in a guard copy"
-fi
-git -C "$R" checkout -q -- skills .agents
-git -C "$R" reset -q --hard HEAD~1
-
-AGENT_RENDERS=(.claude/agents/demo.md .codex/agents/demo.toml .pi/agents/demo.md)
-for r in "${AGENT_RENDERS[@]}"; do
-  git -C "$R" checkout -q -- agents .claude/agents .codex .pi
-  printf '# amended\n' >>"$R/agents/demo.md"
-  for other in "${AGENT_RENDERS[@]}"; do
-    [ "$other" = "$r" ] || printf '# amended\n' >>"$R/$other"
-  done
-  run_guard
-  [ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/demo.md -> $r"* ]] \
-    && ok "an agent edit leaving $r behind reds, naming it" \
-    || bad "an agent edit leaving $r behind reds, naming it" "rc=$RC out=$OUT"
-done
-git -C "$R" checkout -q -- agents .claude/agents .codex .pi
-printf '# amended\n' >>"$R/agents/demo.md"
-if mutant_guard '/^  agents\/\*\.md)$/,/^    ;;$/d'; then
-  run_mutant
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the agent render lines deleted the lone agent edit passes" \
-    || bad "control: with the agent render lines deleted the lone agent edit passes" "rc=$RC out=$OUT"
-else
-  bad "control: the agent render lines could not be deleted from a guard copy"
-fi
-for other in "${AGENT_RENDERS[@]}"; do
-  printf '# amended\n' >>"$R/$other"
-done
-run_guard
-[ "$RC" -eq 0 ] \
-  && ok "an agent edit landing all three renders passes" \
-  || bad "an agent edit landing all three renders passes" "rc=$RC out=$OUT"
-git -C "$R" checkout -q -- agents .claude/agents .codex .pi
-
-printf '# amended\n' >>"$R/agents/demo.md"
-printf '# amended\n' >>"$R/.codex/agents/demo.toml"
-printf '# amended\n' >>"$R/.pi/agents/demo.md"
-rm -f "$R/.claude/agents/demo.md"
-run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/demo.md -> .claude/agents/demo.md"* ]] \
-  && [[ "$OUT" != *"-> .codex/agents/demo.toml"* ]] && [[ "$OUT" != *"-> .pi/agents/demo.md"* ]] \
-  && ok "an agent edit with one harness render deleted reds, naming that render alone" \
-  || bad "an agent edit with one harness render deleted reds, naming that render alone" "rc=$RC out=$OUT"
-git -C "$R" checkout -q -- agents .claude/agents .codex .pi
-
-# An agent definition owes a render to every harness directory that
-# tracks any, though none of its own is tracked yet. The control puts the
-# per-file judgement back — a render owed only when it is already tracked.
-printf '# fresh agent\n' >"$R/agents/fresh.md"
-git -C "$R" add agents/fresh.md
-run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"agents/fresh.md -> .claude/agents/fresh.md"* ]] \
-  && [[ "$OUT" == *"agents/fresh.md -> .codex/agents/fresh.toml"* ]] \
-  && [[ "$OUT" == *"agents/fresh.md -> .pi/agents/fresh.md"* ]] \
-  && ok "a new agent definition with no render reds, naming all three" \
-  || bad "a new agent definition with no render reds, naming all three" "rc=$RC out=$OUT"
-if mutant_guard 's|^require_render() { |require_render() { git ls-files --error-unmatch -- "$2" >/dev/null 2>\&1 \|\| return 0; |'; then
-  run_mutant
-  [ "$RC" -eq 0 ] \
-    && ok "control: with rendered judged per file the new agent passes" \
-    || bad "control: with rendered judged per file the new agent passes" "rc=$RC out=$OUT"
-else
-  bad "control: the per-file judgement could not be put back in a guard copy"
-fi
-printf '# fresh agent render\n' >"$R/.claude/agents/fresh.md"
-printf 'name = "fresh"\n' >"$R/.codex/agents/fresh.toml"
-printf '# fresh agent render\n' >"$R/.pi/agents/fresh.md"
-git -C "$R" add .claude/agents/fresh.md .codex/agents/fresh.toml .pi/agents/fresh.md
-run_guard
-[ "$RC" -eq 0 ] \
-  && ok "the new agent with its three renders staged beside it passes" \
-  || bad "the new agent with its three renders staged beside it passes" "rc=$RC out=$OUT"
-git -C "$R" reset -q HEAD -- agents .claude/agents .codex .pi
-rm -f "$R/agents/fresh.md" "$R/.claude/agents/fresh.md" "$R/.codex/agents/fresh.toml" "$R/.pi/agents/fresh.md"
-
-# Hooks are judged per file: the two harness copies this hook already has
-# are owed, the third harness directory is not, and a hook test that renders
-# nowhere owes nothing.
-printf 'echo more\n' >>"$R/hooks/demo.sh"
-run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"hooks/demo.sh -> .claude/hooks/demo.sh"* ]] \
-  && [[ "$OUT" == *"hooks/demo.sh -> .codex/hooks/demo.sh"* ]] \
-  && [[ "$OUT" != *"-> .pi/kendex/hooks/demo.sh"* ]] \
-  && ok "a hook edit reds, naming the two renders it has and not the third" \
-  || bad "a hook edit reds, naming the two renders it has and not the third" "rc=$RC out=$OUT"
-if mutant_guard '/^  hooks\/\*)$/,/^    ;;$/d'; then
-  run_mutant
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the hooks arm deleted the source-only hook edit passes" \
-    || bad "control: with the hooks arm deleted the source-only hook edit passes" "rc=$RC out=$OUT"
-else
-  bad "control: the hooks render arm could not be deleted from a guard copy"
-fi
-printf 'echo more\n' >>"$R/.claude/hooks/demo.sh"
-printf 'echo more\n' >>"$R/.codex/hooks/demo.sh"
-run_guard
-[ "$RC" -eq 0 ] \
-  && ok "a hook edit landing both tracked renders passes" \
-  || bad "a hook edit landing both tracked renders passes" "rc=$RC out=$OUT"
-git -C "$R" checkout -q -- hooks .claude/hooks .codex/hooks
-
-# Staging a render's deletion takes it out of the index, and the index alone
-# would then read the hook as unrendered and owe nothing. Both renders go, so
-# no surviving copy can red this for another reason: the union with HEAD is
-# what keeps the rule running, and the outlives clause is what refuses.
-printf 'echo more\n' >>"$R/hooks/demo.sh"
-git -C "$R" rm -q .claude/hooks/demo.sh .codex/hooks/demo.sh
-run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"hooks/demo.sh -> .claude/hooks/demo.sh"* ]] \
-  && [[ "$OUT" == *"hooks/demo.sh -> .codex/hooks/demo.sh"* ]] \
-  && ok "a hook edit staging its renders' deletion reds, naming both" \
-  || bad "a hook edit staging its renders' deletion reds, naming both" "rc=$RC out=$OUT"
-git -C "$R" reset -q HEAD -- .claude/hooks .codex/hooks
-git -C "$R" checkout -q -- hooks .claude/hooks .codex/hooks
-
-printf 'echo more\n' >>"$R/hooks/tests/demo.test.sh"
-run_guard
-[ "$RC" -eq 0 ] \
-  && ok "a hook test with no render anywhere passes" \
-  || bad "a hook test with no render anywhere passes" "rc=$RC out=$OUT"
-git -C "$R" checkout -q -- hooks
-
-# A harness directory that tracks nothing is owed nothing.
-git -C "$R" rm -q .pi/agents/demo.md
-git -C "$R" commit -q -m "chore: no pi renders"
-printf '# amended\n' >>"$R/agents/demo.md"
-printf '# amended\n' >>"$R/.claude/agents/demo.md"
-printf '# amended\n' >>"$R/.codex/agents/demo.toml"
-run_guard
-[ "$RC" -eq 0 ] \
-  && ok "an agent edit with no pi render tracked anywhere passes without one" \
-  || bad "an agent edit with no pi render tracked anywhere passes without one" "rc=$RC out=$OUT"
-git -C "$R" reset -q --hard HEAD~1
-
 echo "=== commit compile scheduling follows product changes ==="
 mkdir -p "$R/crates/core/src" "$R/crates/cli/src" "$R/ui" "$R/fake-bin"
 printf '[workspace]\n' >"$R/Cargo.toml"
@@ -782,10 +230,19 @@ run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
   && ! grep -Eq 'crates/cli|cargo (test|doc)|npm|--workspace|--target ' "$COMPILE_LOG" \
   && ok "Rust checks select the touched crate and omit full suites" \
   || bad "Rust scoped checks" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
-for command in 'check --manifest-path crates/core/Cargo.toml --all-targets' 'clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet -- -D warnings'; do
+# A failing compiler call blocks with guard's own clause for that call. The
+# table counts its own rows: an emptied row list is a red, never a green.
+before=$((PASS + FAIL))
+while IFS='|' read -r command clause; do
   run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" FAIL_COMPILE="$command"
-  [ "$RC" -eq 1 ] && ok "the $command failure blocks" || bad "compiler failure blocks" "$OUT"
-done
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: $clause"* ]] \
+    && ok "the $command failure blocks, naming it" \
+    || bad "the $command failure blocks, naming it" "rc=$RC out=$OUT"
+done <<'ROWS'
+check --manifest-path crates/core/Cargo.toml --all-targets|crates/core/Cargo.toml failed to compile
+clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet -- -D warnings|crates/core/Cargo.toml clippy failed
+ROWS
+[ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the compiler failures" >&2; exit 2; }
 git -C "$R" reset -q HEAD -- crates/core/src/lib.rs
 git -C "$R" checkout -q -- crates/core/src/lib.rs
 printf 'export const value = 1;\n' >"$R/ui/test.ts"
@@ -797,10 +254,17 @@ run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
   && ! grep -Eq 'cargo|npm.* test' "$COMPILE_LOG" \
   && ok "UI changes run types and lint without tests or Rust" \
   || bad "UI scoped checks" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
-for command in 'run --prefix ui check:types' 'run --prefix ui check:lint'; do
+before=$((PASS + FAIL))
+while IFS='|' read -r command clause; do
   run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" FAIL_COMPILE="$command"
-  [ "$RC" -eq 1 ] && ok "the $command failure blocks" || bad "UI check failure blocks" "$OUT"
-done
+  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: $clause"* ]] \
+    && ok "the $command failure blocks, naming it" \
+    || bad "the $command failure blocks, naming it" "rc=$RC out=$OUT"
+done <<'ROWS'
+run --prefix ui check:types|tsc failed
+run --prefix ui check:lint|biome failed
+ROWS
+[ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the UI failures" >&2; exit 2; }
 git -C "$R" reset -q HEAD -- ui/test.ts
 printf '# workspace changed\n' >>"$R/Cargo.toml"
 git -C "$R" add Cargo.toml
@@ -811,61 +275,5 @@ run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
   && ok "shared Rust inputs compile the workspace without running tests" \
   || bad "shared Rust input scheduling" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
 
-echo "=== a test binary's death by a signal is named apart from a failing test ==="
-FULL_GUARD=1
-# The compile-scheduling stub above is put back at the end of the block.
-cp "$R/fake-bin/cargo" "$TMP/compile-cargo"
-cat >"$R/fake-bin/cargo" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-[ "$*" = "test --workspace --quiet" ] || exit 0
-printf '%s\n' "$CARGO_TEST_STDERR" >&2
-exit 101
-SH
-chmod +x "$R/fake-bin/cargo"
-# cargo's own report of a runner whose executable died, as it prints it.
-DEATH="$(printf '%s\n' \
-  'error: test failed, to rerun pass `-p kendex-core --test review_fixes`' \
-  '' \
-  'Caused by:' \
-  '  process didn'"'"'t exit successfully: `target/debug/deps/review_fixes-ff58 --quiet` (signal: 11, SIGSEGV: invalid memory reference)')"
-ASSERTION="$(printf '%s\n' \
-  'test a_case ... FAILED' \
-  'error: test failed, to rerun pass `-p kendex-core --test review_fixes`')"
-# The same death line for a compiler cargo launched, under cargo's compile
-# failure rather than its test failure.
-COMPILER_DEATH="$(printf '%s\n' \
-  'error: could not compile `kendex-core` (lib test)' \
-  '' \
-  'Caused by:' \
-  '  process didn'"'"'t exit successfully: `rustc --crate-name kendex_core ...` (signal: 9, SIGKILL: kill)')"
-run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" COMPILE_LOG="$COMPILE_LOG" CARGO_TEST_STDERR="$DEATH"
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: a test binary died by a signal"*"review_fixes-ff58"*"SIGSEGV"* ]] \
-  && [[ "$OUT" != *"guard: tests failed"* ]] \
-  && ok "a runner killed by a signal is reported as the artifact's death, not a failing test" \
-  || bad "a runner killed by a signal is reported as the artifact's death, not a failing test" "rc=$RC out=$OUT"
-run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" COMPILE_LOG="$COMPILE_LOG" CARGO_TEST_STDERR="$ASSERTION"
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: tests failed"* ]] && [[ "$OUT" != *"died by a signal"* ]] \
-  && ok "a failing assertion still reads as tests failed" \
-  || bad "a failing assertion still reads as tests failed" "rc=$RC out=$OUT"
-run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" COMPILE_LOG="$COMPILE_LOG" CARGO_TEST_STDERR="$COMPILER_DEATH"
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: tests failed"* ]] && [[ "$OUT" != *"died by a signal"* ]] \
-  && ok "a compiler killed by a signal is not named as a test binary's death" \
-  || bad "a compiler killed by a signal is not named as a test binary's death" "rc=$RC out=$OUT"
-if mutant_guard 's/if \[ -n "\$death" \]; then/if false; then/'; then
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" COMPILE_LOG="$COMPILE_LOG" CARGO_TEST_STDERR="$DEATH" "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
-  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: tests failed"* ]] && [[ "$OUT" != *"died by a signal"* ]] \
-    && ok "control: with the death check removed the same death reads as tests failed" \
-    || bad "control: with the death check removed the same death reads as tests failed" "rc=$RC out=$OUT"
-else
-  bad "control: the death check could not be removed from a guard copy"
-fi
-cp "$TMP/compile-cargo" "$R/fake-bin/cargo"
-git -C "$R" reset -q HEAD -- Cargo.toml
-git -C "$R" checkout -q -- Cargo.toml
-FULL_GUARD=0
-
-printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
