@@ -4,10 +4,11 @@
 # repository it places its scratch under. The rows past that point drive eight
 # harnesses and a model turn each and are not run here.
 #
-# Every refusal is read as `rc=<status> first=<key>=<value>` — the script's
-# stable first line with its `harness-smoke: ` prefix off, `-` when it said no
-# such line — so a row pins the clause its own branch emits rather than the
-# exit status ten branches share.
+# Every refusal is read as `rc=<status> first=<key>=<value>` — LINE 1 of the
+# run's output with its `harness-smoke: ` prefix off, `-` when line 1 is
+# something else — so a row pins the clause its own branch emits rather than
+# the exit status ten branches share, and anything a dependency wrote ahead
+# of the keyed line reds the row.
 #
 # A row is `label|argv|cwd|path|rc|first`:
 #   argv   the arguments as written, `-` for none
@@ -81,7 +82,10 @@ run() { # ARGV CWD PATH-KIND — `rc=<status> first=<key>=<value>`
   # a row's PATH need not carry an interpreter, and what it does carry is the
   # row's assertion.
   (cd "$dir" && PATH="$path" "$BASH" "$SMOKE" ${argv[@]+"${argv[@]}"} >"$TMP/out" 2>&1) || rc=$?
-  said="$(awk '/^harness-smoke: / { sub(/^harness-smoke: /, ""); print; exit }' "$TMP/out")"
+  # LINE 1, not the first line matching the prefix: the keyed line has to be
+  # the first thing the run says, and a dependency reaching the stream ahead
+  # of it is the defect this reads for.
+  said="$(sed -n '1s/^harness-smoke: //p' "$TMP/out")"
   printf 'rc=%s first=%s' "$rc" "${said:--}"
 }
 
@@ -121,6 +125,16 @@ a harness it does not install into is refused|--only nope|repo|real|2|unknown-ha
 a harness it does install into is not refused for its name|--only claude --bogus|repo|real|2|argument=--bogus
 a command it needs and cannot find is refused by name|--keep|repo|empty|2|missing-tool=kendex
 no repository around the run is refused, naming where it stood|-|scratch|stubs|2|not-in-repo=SCRATCH"
+
+# The keyed line being first is half the claim; the cause the dependency gave
+# has to survive under it.
+echo "=== a dependency's own words are replayed under the keyed line ==="
+cause_out="$( (cd "$SCRATCH" && PATH="$TMP/stub-bin" "$BASH" "$SMOKE" 2>&1) )" || true
+if [ "$(printf '%s\n' "$cause_out" | sed -n 1p)" = "harness-smoke: not-in-repo=$SCRATCH" ]; then
+  ok "the keyed line is line 1 when git has failed"
+else
+  bad "the keyed line is line 1 when git has failed" "$(printf '%s' "$cause_out" | tr '\n' ';')"
+fi
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

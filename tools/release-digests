@@ -32,9 +32,10 @@
 # is one `::error::` GitHub Actions annotation carrying the English: the
 # workflow-command grammar ends an annotation at the newline, so that text is
 # one line, and it is the line the release job surfaces. message_text is the
-# only place a key's English lives. A reader matches `^release-digests: `,
-# not line 1: sha256sum and the signer write their own diagnostics first, and
-# Actions finds the annotation by scanning the log rather than by position.
+# only place a key's English lives. The hash and signer calls have words of
+# their own; they are captured and replayed under the keyed line and its
+# annotation, so the keyed line is the first line. Actions finds the
+# annotation by scanning the log rather than by position.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -65,9 +66,20 @@ message_text() { # KEY VALUE [EXTRA...] — the English for one key, one line
       printf 'no explanation is defined for this key: tools/release-digests is broken.\n' ;;
   esac
 }
-die() { # KEY VALUE [EXTRA...] — nothing further is written or signed
+emit() { # KEY VALUE [EXTRA...] — the keyed line, then its annotation
   printf 'release-digests: %s=%s\n' "$1" "$2" >&2
   printf '::error::%s\n' "$(message_text "$@")" >&2
+}
+die() { # KEY VALUE [EXTRA...] — nothing further is written or signed
+  emit "$@"
+  exit 1
+}
+die_cause() { # KEY VALUE CAUSE — CAUSE is the failing command's own words
+  # Captured and replayed under the keyed line and its annotation rather than
+  # left to reach the stream first: the refusal's first line has to be the
+  # keyed one, and the command's own words are still what name the cause.
+  emit "$1" "$2"
+  [ -z "$3" ] || printf '%s\n' "$3" >&2
   exit 1
 }
 
@@ -123,9 +135,11 @@ only_match() { # PATTERN — the one file in DIST matching it
 digest() {
   local file=$1 line
   if command -v sha256sum >/dev/null 2>&1; then
-    line=$(sha256sum "$file") || die digest-unreadable "$file"
+    line=$(sha256sum "$file" 2>/dev/null) ||
+      die_cause digest-unreadable "$file" "$(sha256sum "$file" 2>&1 >/dev/null)"
   else
-    line=$(shasum -a 256 "$file") || die digest-unreadable "$file"
+    line=$(shasum -a 256 "$file" 2>/dev/null) ||
+      die_cause digest-unreadable "$file" "$(shasum -a 256 "$file" 2>&1 >/dev/null)"
   fi
   line=${line%% *}
   [ "${#line}" -eq 64 ] || die digest-malformed "$file" "$line"
@@ -155,6 +169,9 @@ JSON
 [ "$document_only" -eq 0 ] || exit 0
 
 for file in "$command_binary" "$document"; do
-  "$ROOT/ui/node_modules/.bin/tauri" signer sign "$file" || die signer "$file"
+  signer_out=""
+  signer_out=$("$ROOT/ui/node_modules/.bin/tauri" signer sign "$file" 2>&1) ||
+    die_cause signer "$file" "$signer_out"
+  printf '%s\n' "$signer_out"
   [ -s "${file}.sig" ] || die signature "$file"
 done

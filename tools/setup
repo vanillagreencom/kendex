@@ -23,9 +23,9 @@ INSTALLER=.agents/skills/commit-guards/scripts/install-git-hooks
 # Every line this script says opens with `setup: <key>=<value>` — the key
 # names the outcome, the value is the path or the short enum the reader acts
 # on — and explains itself on the lines under it. message_text is the only
-# place a key's English lives. A reader matches `^setup: `, not line 1: git
-# and the installer write their own reports first, and the installer's is
-# exactly what the not-armed remedy points back at.
+# place a key's English lives. git's diagnostic and the installer's report
+# are captured and replayed under the keyed line, so the keyed line is the
+# first line and the report the not-armed remedy points at is still there.
 #
 # The not-armed arm points back at the installer's report rather than
 # asserting one cause: the installer has already said, per hook, WHY it did
@@ -48,7 +48,7 @@ message_text() { # KEY VALUE — the English for one key, and the whole of it
     not-armed)
       printf '%s\n' \
         "the guard shims are not armed; that installer step is the one that refused." \
-        "The report above names the reason for each hook, and the remedy follows from it." \
+        "The report below names the reason for each hook, and the remedy follows from it." \
         "Where the reason is an interpreter the installer will not vouch for:" \
         "$INSTALLER --uninstall takes out a hook holding nothing but kendex's own lines," \
         "and a hook still there after that run holds lines of your own — delete that one by" \
@@ -69,15 +69,39 @@ refuse() { # KEY VALUE — nothing was armed
   message_text "$1" "$2" >&2
   exit 1
 }
+refuse_cause() { # KEY VALUE CAUSE — CAUSE is the failing command's own words
+  # Captured and replayed under the keyed line rather than left to reach the
+  # stream first: the refusal's first line has to be the keyed one, and the
+  # installer's report is still what names the reason for each hook.
+  printf 'setup: %s=%s\n' "$1" "$2" >&2
+  message_text "$1" "$2" >&2
+  [ -z "$3" ] || printf '%s\n' "$3" >&2
+  exit 1
+}
 
 # The first probe of all, and it is read for whether it RAN before it is read
 # for what it said. A `$(...)` that failed hands back an empty string, which
 # spells a plausible answer here — a change of directory that stays put — and
 # the run would go on to arm hooks in whatever clone it happened to be in.
 ROOT=""
-ROOT="$(git rev-parse --show-toplevel)" || refuse worktree none
+# git's own diagnostic is asked for only once this has failed, so the happy
+# path runs it once and the refusal path replays what it said.
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" ||
+  refuse_cause worktree none "$(git rev-parse --show-toplevel 2>&1 >/dev/null)"
 cd "$ROOT" || refuse unenterable "$ROOT"
 
-"$INSTALLER" || refuse not-armed install
-"$INSTALLER" --check || refuse not-armed check
+# The installer's report is collected rather than printed where it falls: a
+# refusal has to open with its keyed line, and the report is what the remedy
+# points at. A run that arms prints the same report, unchanged.
+report=""
+if report="$("$INSTALLER" 2>&1)"; then
+  printf '%s\n' "$report"
+else
+  refuse_cause not-armed install "$report"
+fi
+if report="$("$INSTALLER" --check 2>&1)"; then
+  printf '%s\n' "$report"
+else
+  refuse_cause not-armed check "$report"
+fi
 note armed "$ROOT"

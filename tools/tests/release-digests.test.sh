@@ -7,11 +7,11 @@
 # a test can run.
 #
 # Every run renders as `rc=<n> out=<o> doc=<d>`:
-#   out  the run's stable first line, `<key>=<value>`, with the
+#   out  LINE 1 of the run's output, `<key>=<value>` with the
 #        `release-digests: ` prefix off; `-` when the run said nothing; every
-#        line verbatim joined by `;` when it said something carrying no such
-#        line, so a run that stopped some other way cannot render as one that
-#        stopped for the row's reason
+#        line verbatim joined by `;` when line 1 is something else, so a run
+#        that stopped some other way — or one a dependency spoke over — cannot
+#        render as one that stopped for the row's reason
 #   doc  the document DIST/digests-TARGET.json: `absent`, or its fields as
 #        `schema=<n> version=<v> target=<t> command=<hex> app=<hex>` read
 #        through jq, or `unparsed:<text>` when jq cannot read it
@@ -102,11 +102,14 @@ build() {
   stage $files
 }
 
-out_text() { # — the run's stable first line, `-` when it said nothing
+out_text() { # — LINE 1 of the run's output, `-` when it said nothing
+  # Line 1, not the first line carrying the prefix: the keyed line has to be
+  # the first thing the run says, so anything a dependency wrote ahead of it
+  # renders as the whole text and reds the row.
   local text first
   text="$(cat "$TMP/out")"
   [[ "$text" != "" ]] || { printf -- '-'; return; }
-  first="$(awk '/^release-digests: / { sub(/^release-digests: /, ""); print; exit }' "$TMP/out")"
+  first="$(sed -n '1s/^release-digests: //p' "$TMP/out")"
   if [[ "$first" != "" ]]; then
     printf '%s' "$first"
   else

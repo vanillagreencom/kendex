@@ -61,9 +61,10 @@
 # says for itself opens with `harness-smoke: <key>=<value>` — the key names
 # the condition, the value is the path, the count or the short enum the reader
 # acts on — and explains itself on the lines under it. message_text is the
-# only place a key's English lives. A reader matches `^harness-smoke: `, not
-# line 1: git, kendex and each harness write their own diagnostics into the
-# same stream, and a row's evidence points at the log that holds them.
+# only place a key's English lives. Where a failing command has words of its
+# own they are captured and replayed under the keyed line, so the keyed line
+# is the first line; each harness's own output goes to its log under LOGS,
+# which a row's evidence names.
 set -euo pipefail
 
 usage() {
@@ -116,6 +117,14 @@ refuse() { # KEY VALUE [EXTRA] — nothing was measured
   say "$@"
   exit 2
 }
+refuse_cause() { # KEY VALUE CAUSE — CAUSE is the failing command's own words
+  # Captured and replayed under the keyed line rather than left to reach the
+  # stream first: the refusal's first line has to be the keyed one, and the
+  # command's own words are still what name the cause.
+  say "$1" "$2"
+  [ -z "$3" ] || printf '%s\n' "$3" >&2
+  exit 2
+}
 
 HARNESSES="claude codex opencode cursor pi gemini copilot antigravity"
 ONLY="$HARNESSES"
@@ -143,12 +152,17 @@ for tool in kendex git jq node; do
   command -v "$tool" >/dev/null 2>&1 || refuse missing-tool "$tool"
 done
 
-ROOT=$(git rev-parse --show-toplevel) || refuse not-in-repo "$PWD"
+# git's own diagnostic is asked for only once this has failed, so the happy
+# path runs it once and the refusal path replays what it said.
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) ||
+  refuse_cause not-in-repo "$PWD" "$(git rev-parse --show-toplevel 2>&1 >/dev/null)"
 # The run owns a fresh subtree under the parent it was given, and the
 # cleanup below removes that subtree alone: --dir tmp must not empty tmp/.
 PARENT=${DIR:-$ROOT/tmp}
-mkdir -p "$PARENT" || refuse scratch "$PARENT"
-DIR=$(mktemp -d "$PARENT/harness-smoke.XXXXXX") || refuse scratch "$PARENT"
+scratch_err=""
+scratch_err=$(mkdir -p "$PARENT" 2>&1) || refuse_cause scratch "$PARENT" "$scratch_err"
+DIR=$(mktemp -d "$PARENT/harness-smoke.XXXXXX" 2>/dev/null) ||
+  refuse_cause scratch "$PARENT" "$(mktemp -d "$PARENT/harness-smoke.XXXXXX" 2>&1 >/dev/null)"
 DIR=$(cd "$DIR" && pwd -P) || refuse scratch "$PARENT"
 cleanup() {
   if [ "$KEEP" -eq 1 ]; then

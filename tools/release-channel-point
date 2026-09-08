@@ -32,10 +32,10 @@
 # workflow-command grammar ends an annotation at the newline, so that text is
 # one line, and it is the line the release job surfaces. message_text is the
 # only place a key's English lives, and it reads CHANNEL, NEW_VERSION and
-# `absent` from the run rather than taking them per call. A reader matches
-# `^release-channel-point: `, not line 1: `gh` and `jq` write their own
-# diagnostics first, and Actions finds the annotation under the keyed line by
-# scanning the log rather than by position.
+# `absent` from the run rather than taking them per call. The `gh` and `jq`
+# calls have words of their own; they are captured and replayed under the
+# keyed line and its annotation, so the keyed line is the first line. Actions
+# finds the annotation by scanning the log rather than by position.
 set -euo pipefail
 
 message_text() { # KEY VALUE [EXTRA] — the English for one key, one line
@@ -75,9 +75,13 @@ note() { # KEY VALUE [EXTRA] — the channel was left as it was, on purpose
   printf 'release-channel-point: %s=%s\n' "$1" "$2"
   printf '::notice::%s\n' "$(message_text "$@")"
 }
-fail() { # KEY VALUE [EXTRA] — this run stops, and says what it did
+fail() { # KEY VALUE EXTRA CAUSE — this run stops, and says what it did
+  # CAUSE is the failing command's own words, captured at the call and
+  # replayed under the keyed line and its annotation rather than left to
+  # reach the log first: a stop's first line has to be the keyed one.
   printf 'release-channel-point: %s=%s\n' "$1" "$2"
-  printf '::error::%s\n' "$(message_text "$@")"
+  printf '::error::%s\n' "$(message_text "$1" "$2" "${3:-}")"
+  [ -z "${4:-}" ] || printf '%s\n' "$4"
   exit 1
 }
 
@@ -108,11 +112,13 @@ state=unknown
 why=""
 why_arg=""
 why_extra=""
+why_cause=""
 current=""
 absent=""
-if ! tags=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate --jq '.[].tag_name'); then
+if ! tags=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate --jq '.[].tag_name' 2>&1); then
   why=releases
   why_arg="$GITHUB_REPOSITORY"
+  why_cause="$tags"
 elif ! grep -qxF "$CHANNEL" <<< "$tags"; then
   # Noted, not created. Publishing the channel is a write, and no write may
   # happen before the verdict below authorizes one: every exit between here
@@ -120,9 +126,10 @@ elif ! grep -qxF "$CHANNEL" <<< "$tags"; then
   # into being on its way to stopping would make that sentence false.
   absent=1
   state=fresh
-elif ! assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --jq '.assets[].name'); then
+elif ! assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --jq '.assets[].name' 2>&1); then
   why=assets
   why_arg="$CHANNEL"
+  why_cause="$assets"
 elif ! grep -qxF latest.json <<< "$assets"; then
   # Carrying nothing is a channel no write has landed on, and this run may
   # take it. Carrying something without a latest.json is a channel a write
@@ -135,12 +142,16 @@ elif ! grep -qxF latest.json <<< "$assets"; then
   else
     state=fresh
   fi
-elif ! gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
-     --dir manifest --pattern latest.json --clobber; then
+elif ! download_out=$(gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
+     --dir manifest --pattern latest.json --clobber 2>&1); then
   why=manifest-download
   why_arg="$CHANNEL"
+  why_cause="$download_out"
 else
-  current=$(jq -r '.version // empty' manifest/latest.json) || current=""
+  current=$(jq -r '.version // empty' manifest/latest.json 2>&1) || {
+    why_cause="$current"
+    current=""
+  }
   if [ -n "$current" ]; then
     state=carrying
   else
@@ -199,7 +210,7 @@ case "$verdict" in
     exit 0 ;;
   *)
     [ -n "$why" ] || { why=unordered; why_arg="$NEW_VERSION"; why_extra="$current"; }
-    fail "$why" "$why_arg" "$why_extra" ;;
+    fail "$why" "$why_arg" "$why_extra" "$why_cause" ;;
 esac
 
 # What `dist` holds, resolved before the write. An unmatched glob left literal
@@ -221,19 +232,28 @@ for file in $MANIFESTS; do
   if [ -z "$short" ]; then short="${file#dist/}"; else short="$short or ${file#dist/}"; fi
 done
 if [ -n "$short" ]; then
-  fail missing-manifest "$short"
+  fail missing-manifest "$short" "" ""
 fi
 # The write begins here, past the verdict and past the list. A channel that
 # did not exist is published now.
+# Each write's output is captured and replayed: on the way through it is what
+# `gh` would have printed anyway, and on a stop it belongs under the keyed
+# line rather than ahead of it.
 if [ -n "$absent" ]; then
-  if ! gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" --prerelease \
+  create_out=""
+  if create_out=$(gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" --prerelease \
        --title "Pre-release channel" \
-       --notes "The update manifests of the newest kendex pre-release. Nothing here is a download; each manifest names assets on the release it came from."; then
-    fail create "$CHANNEL"
+       --notes "The update manifests of the newest kendex pre-release. Nothing here is a download; each manifest names assets on the release it came from." 2>&1); then
+    printf '%s\n' "$create_out"
+  else
+    fail create "$CHANNEL" "" "$create_out"
   fi
 fi
-if ! gh release upload "$CHANNEL" "${publishing[@]}" \
-     --repo "$GITHUB_REPOSITORY" --clobber; then
+upload_out=""
+if upload_out=$(gh release upload "$CHANNEL" "${publishing[@]}" \
+     --repo "$GITHUB_REPOSITORY" --clobber 2>&1); then
+  printf '%s\n' "$upload_out"
+else
   # `gh` deletes before it uploads and uploads in parallel, so a failure can
   # leave anything from the whole set to nothing at all, old assets a
   # cancelled worker never deleted included. This run does not read back
@@ -241,7 +261,7 @@ if ! gh release upload "$CHANNEL" "${publishing[@]}" \
   # state nobody established is what stops anyone looking. The next run does
   # read it, and its own refusals say what it found.
   if [ -n "$absent" ]; then
-    fail upload-created "$CHANNEL"
+    fail upload-created "$CHANNEL" "" "$upload_out"
   fi
-  fail upload "$CHANNEL"
+  fail upload "$CHANNEL" "" "$upload_out"
 fi

@@ -143,9 +143,10 @@ PATTERN="$PATTERN"'|\$('"$BASH4_VARS"')([^A-Za-z0-9_]|$)|\$\{('"$BASH4_VARS"')\}
 # Every line this lint says for itself opens with `bash32-lint: <key>=<value>`
 # — the key names the condition and the value is the path, the count or the
 # short enum the reader acts on — and explains itself on the lines under it.
-# message_text below is the only place a key's English lives. A reader
-# matches `^bash32-lint: `, not line 1: git and grep write their own
-# diagnostics first, and those name the cause this lint only points at.
+# message_text below is the only place a key's English lives. Where a failing
+# command has words of its own — git's, or bash -n's — they are captured and
+# replayed under the keyed line, so the keyed line is the first line and the
+# cause is still there.
 message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
   case "$1" in
     not-in-repo)
@@ -177,7 +178,7 @@ message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
     constructs)
       echo "Bash 4+ constructs in shell that must run under Bash 3.2; every hit follows." ;;
     syntax)
-      echo "shell files that do not parse; bash -n named each above." ;;
+      echo "shell files that do not parse; bash -n names each below." ;;
     clean)
       printf '%s shell file(s) across %s director(ies), and no Bash 4+ construct in any of them.\n' "$2" "$3" ;;
     *)
@@ -194,6 +195,14 @@ say() { # KEY VALUE [EXTRA] — a refusal, on stderr
 }
 die() { # KEY VALUE — a scan that could not run, never a clean tree
   say "$1" "$2"
+  exit 2
+}
+die_cause() { # KEY VALUE CAUSE — CAUSE is the failing command's own words
+  # Captured and replayed under the keyed line rather than left to reach the
+  # stream first: the refusal's first line has to be the keyed one, and the
+  # dependency's own words are still what name the cause.
+  say "$1" "$2"
+  [ -z "$3" ] || printf '%s\n' "$3" >&2
   exit 2
 }
 
@@ -231,7 +240,10 @@ fi
 # A run outside a repository therefore ends here rather than scanning: the
 # exceptions could not be judged, and a scan whose roster went unchecked is
 # not a clean tree either.
-ROOT="$(git rev-parse --show-toplevel)" || die not-in-repo "$PWD"
+# git's own diagnostic is asked for only once this has failed, so the happy
+# path runs it once and the refusal path replays what it said.
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" ||
+  die_cause not-in-repo "$PWD" "$(git rev-parse --show-toplevel 2>&1 >/dev/null)"
 if [ "$#" -eq 0 ]; then
   cd "$ROOT" || die unenterable "$ROOT"
   set -- skills/*/scripts skills/*/tests hooks
@@ -293,8 +305,9 @@ for d in $dirs; do
   # that as the directory's contents scans less than it reports.
   listing=""
   status=0
-  listing="$(find "$d" -type f | LC_ALL=C sort)" || status=$?
-  [ "$status" -eq 0 ] || die listing "$d"
+  listing="$(find "$d" -type f 2>/dev/null | LC_ALL=C sort)" || status=$?
+  [ "$status" -eq 0 ] ||
+    die_cause listing "$d" "$(find "$d" -type f 2>&1 >/dev/null)"
   while IFS= read -r f; do
     # An empty listing reads as one empty line here. Left to is_shell it would
     # be refused as a file that could not be classified, naming nothing; the
@@ -320,6 +333,7 @@ done
 
 violations=""
 syntax_fail=0
+syntax_text=""
 violation_count=0
 count=0
 for f in $files; do
@@ -329,8 +343,9 @@ for f in $files; do
   # else a scan that did not run.
   hits=""
   status=0
-  hits="$(grep -nE -- "$PATTERN" "$f")" || status=$?
-  [ "$status" -le 1 ] || die scan "$f"
+  hits="$(grep -nE -- "$PATTERN" "$f" 2>/dev/null)" || status=$?
+  [ "$status" -le 1 ] ||
+    die_cause scan "$f" "$(grep -nE -- "$PATTERN" "$f" 2>&1 >/dev/null)"
   # The name is data, never program text. Prefixing each hit with a sed
   # program built from "$f" made a path holding `|` close the s command's
   # delimiter: sed died, every hit for that file was discarded, and the run
@@ -346,8 +361,15 @@ for f in $files; do
 $hits
 EOF
   fi
-  # A construct this set does not name still has to be syntax.
-  bash -n -- "$f" || syntax_fail=$((syntax_fail + 1))
+  # A construct this set does not name still has to be syntax. bash's own
+  # complaint is collected rather than printed where it falls: it belongs
+  # under this run's keyed line, not before it.
+  parse=""
+  parse="$(bash -n -- "$f" 2>&1)" || {
+    syntax_fail=$((syntax_fail + 1))
+    syntax_text="$syntax_text$parse
+"
+  }
 done
 
 if [ -n "$violations" ]; then
@@ -357,6 +379,7 @@ if [ -n "$violations" ]; then
 fi
 if [ "$syntax_fail" -gt 0 ]; then
   say syntax "$syntax_fail"
+  printf '%s' "$syntax_text" >&2
   exit 1
 fi
 

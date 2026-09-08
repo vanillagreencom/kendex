@@ -206,7 +206,9 @@ fi
 #          `ROOT/NO_SCAN` the same directory spelled absolute, any other
 #          word itself; `-` for none
 #   exit   the exit status
-#   first  the lint's stable first line as `<key>=<value>`, the value written
+#   first  LINE 1 of the stream the run answered on, as `<key>=<value>` with
+#          the `bash32-lint: ` prefix off — empty, and so a red row, when
+#          anything reached that stream ahead of it. The value written
 #          as an argv token above or as `#` where the value is a count this
 #          row cannot pin to one number. Every row here exits 2 but one, so
 #          the key is what tells one refusal from another.
@@ -381,10 +383,15 @@ run() { # run CWD ARGV — `rc=<status> first=<key>=<value>`, or `rc=skipped-as-
   (cd "$dir" && PATH="$W_PATH" "$W_LINT" ${argv[@]+"${argv[@]}"} >"$W/stdout" 2>"$W/stderr") || rc=$?
   # The modes an unreadable world set come off, so the EXIT trap can remove it.
   chmod -R u+rwX "$W"
-  # The lint's stable first line, whichever stream carried it: a verdict goes
-  # to stdout and a refusal to stderr, and every row reads the same field.
-  said="$(awk '/^bash32-lint: / { sub(/^bash32-lint: /, ""); print; exit }' \
-    "$W/stdout" "$W/stderr")"
+  # LINE 1 of the stream that carried the answer, not the first line matching
+  # the prefix: a refusal writes to stderr and a verdict to stdout, and the
+  # keyed line has to be the first line of whichever it used. A dependency's
+  # words reaching the stream ahead of it is the defect this reads for.
+  if [ -s "$W/stderr" ]; then
+    said="$(sed -n '1s/^bash32-lint: //p' "$W/stderr")"
+  else
+    said="$(sed -n '1s/^bash32-lint: //p' "$W/stdout")"
+  fi
   printf 'rc=%s first=%s' "$rc" "${said:--}"
 }
 
@@ -447,6 +454,19 @@ EOF
     exit 2
   }
 }
+
+echo "=== a dependency's own words are replayed under the keyed line ==="
+cause_probe="$TMP/cause"
+mkdir -p "$cause_probe"
+cause_out="$( (cd "$cause_probe" && "$LINT" 2>&1) )" || true
+cause_first="$(printf '%s\n' "$cause_out" | sed -n 1p)"
+if [ "$cause_first" = "bash32-lint: not-in-repo=$cause_probe" ] &&
+  printf '%s\n' "$cause_out" | grep -q 'not a git repository'; then
+  ok "git's own diagnostic follows the keyed line instead of preceding it"
+else
+  bad "git's own diagnostic follows the keyed line instead of preceding it" \
+    "$(printf '%s' "$cause_out" | tr '\n' ';')"
+fi
 
 run_table "the fail-closed paths" "\
 a directory holding no shell file ends the run|empty|root|W/empty|2|no-shell=W/empty

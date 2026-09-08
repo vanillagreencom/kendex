@@ -105,7 +105,8 @@ for hook in pre-commit commit-msg; do
 done
 RC=0
 OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"setup: armed="*) false ;; *"setup: not-armed="*) true ;; *) false ;; esac \
+[ "$RC" -ne 0 ] && [ "$(printf '%s\n' "$OUT" | sed -n 1p)" = "setup: not-armed=install" ] \
+  && case "$OUT" in *"install-git-hooks:"*) true ;; *) false ;; esac \
   && ok "setup stops with its remedy instead of reporting the clone armed" \
   || bad "setup stops with its remedy instead of reporting the clone armed" "rc=$RC out=$OUT"
 
@@ -194,7 +195,8 @@ NOREPO="$TMP/no-repo"
 mkdir -p "$NOREPO"
 RC=0
 OUT="$(cd "$NOREPO" && "$R/tools/setup" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"setup: armed="*) false ;; *"setup: worktree=none"*) true ;; *) false ;; esac \
+[ "$RC" -ne 0 ] && [ "$(printf '%s\n' "$OUT" | sed -n 1p)" = "setup: worktree=none" ] &&
+  case "$OUT" in *"not a git repository"*) true ;; *) false ;; esac \
   && ok "setup run outside a work tree names that, not the installer" \
   || bad "setup run outside a work tree names that, not the installer" "rc=$RC out=$OUT"
 
