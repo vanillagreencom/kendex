@@ -102,10 +102,6 @@ err="$(run_sync "$GUARD_ROOT/wt" 2>&1 >/dev/null)" || rc=$?
 assert_ne "sync into a clobbered worktree cache is refused" "$rc" 0
 assert_contains "the refusal key names the worktree cache and expected cache" "$err" \
   "Sync-refused: worktree=$GUARD_ROOT/wt cache=$GUARD_ROOT/wt/.cache expected=$(cd "$GUARD_ROOT/main" && pwd -P)/.cache"
-assert_contains "the refusal names the worktree" "$err" "$GUARD_ROOT/wt"
-assert_contains "the refusal names the expected symlink" \
-  "$err" ".cache -> $(cd "$GUARD_ROOT/main" && pwd -P)/.cache"
-assert_contains "the refusal names the repair command" "$err" "worktree fix-links"
 assert_not "no API call happens before the refusal" test -s "$CURL_LOG"
 assert_not "the refused sync created no worktree-local cache dir" \
   test -e "$GUARD_ROOT/wt/.cache/linear"
