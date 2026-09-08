@@ -2,36 +2,36 @@ import { describe, expect, it } from "vitest";
 import type { WriteRefused } from "@/bindings";
 import { refusalKind, refusalWords } from "./refusal";
 
-// A transport failure folds to its message alone (`bindings.test.ts`), which
-// is neither arm of `WriteRefused`. Read by `kind` it misses every arm and
-// lands in whatever the reader does last: the editor tests `stale` first, so
-// a broken pipe falls past it to a blank error, and the settings write tests
-// `failed` first, so the same pipe is reported as a file that moved. These
-// two are what every reader of a shaped refusal asks instead.
-describe("a refusal the engine shaped", () => {
-  it("answers with its own kind and the words that go with it", () => {
-    const failed: WriteRefused = { kind: "failed", message: "disk is full" };
-    expect(refusalKind(failed)).toBe("failed");
-    expect(refusalWords(failed)).toBe("disk is full");
-  });
+describe("refusal values", () => {
+  it("keeps the kind and words of each refusal shape", () => {
+    const rows: {
+      name: string;
+      refusal: WriteRefused | string;
+      expected: { kind: string | null; words: string | null };
+    }[] = [
+      {
+        name: "failed",
+        refusal: { kind: "failed", message: "disk is full" },
+        expected: { kind: "failed", words: "disk is full" },
+      },
+      {
+        name: "stale",
+        refusal: { kind: "stale" },
+        expected: { kind: "stale", words: null },
+      },
+      {
+        name: "transport string",
+        refusal: "the channel is gone",
+        expected: { kind: null, words: "the channel is gone" },
+      },
+    ];
 
-  it("answers with no words where its kind carries none", () => {
-    const stale: WriteRefused = { kind: "stale" };
-    expect(refusalKind(stale)).toBe("stale");
-    expect(refusalWords(stale)).toBeNull();
-  });
-});
-
-describe("a transport failure folded into a refusal's place", () => {
-  // Cast because no refusal type admits it: the fold has no shape it could
-  // invent that fits every command's refusal, so it leaves the message.
-  const folded = "the channel is gone" as unknown as WriteRefused;
-
-  it("claims no kind of its own", () => {
-    expect(refusalKind(folded)).toBeNull();
-  });
-
-  it("answers with the message as the words", () => {
-    expect(refusalWords(folded)).toBe("the channel is gone");
+    expect(rows.length, "refusal shape table is empty").toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(
+        { kind: refusalKind(row.refusal), words: refusalWords(row.refusal) },
+        row.name,
+      ).toEqual(row.expected);
+    }
   });
 });
