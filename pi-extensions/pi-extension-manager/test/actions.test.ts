@@ -232,3 +232,19 @@ test("append-system launch failures expose the action and script path", async ()
 		warning.mockRestore();
 	}
 });
+
+test("npm action exits expose an exit code or signal", async () => {
+	await useSpawnMock();
+	const { runUninstall, runUpdate } = await import("../extensions/manager/actions.ts");
+	const item = { id: "package:@scope/pkg", displayName: "Pkg", kind: "package", state: "active", stateReason: "", description: "", provider: "npm", scope: "user", sourcePath: "", sourceName: "npm:@scope/pkg", packageName: "@scope/pkg" };
+	const method = { kind: "npm", npmName: "@scope/pkg", scope: "user", cwd: rootTmp, command: "npm", argsPrefix: [] };
+	const rows = [
+		{ result: { status: 7, signal: null }, run: () => runUpdate({ item, method } as never), firstLine: "pi-extension-manager: npm-update-exit=7" },
+		{ result: { status: null, signal: "SIGTERM" }, run: () => runUninstall({ item, method } as never, { settingsFiles: [] } as never), firstLine: "pi-extension-manager: npm-uninstall-exit=SIGTERM" },
+	] as const;
+	for (const row of rows) {
+		spawnSyncMock.mockImplementation(() => ({ ...row.result, stdout: "", stderr: "", error: undefined, output: [], pid: 0 } as never));
+		const outcome = row.run();
+		expect([outcome.ok, outcome.message.split("\n")[0]]).toEqual([false, row.firstLine]);
+	}
+});

@@ -21,6 +21,13 @@ function launchFailure(command: string, error: unknown): string {
 	return managerNotice("command-launch", command, `Could not start the command: ${stringifyError(error)}`);
 }
 
+function exitFailure(key: string, result: ReturnType<typeof runCommand>): string {
+	const value = result.status ?? result.signal ?? "unknown";
+	const detail = (result.stderr ?? "").trim() || (result.stdout ?? "").trim()
+		|| (result.signal ? `signal ${result.signal}` : result.status !== null ? `exit ${result.status}` : "unknown termination");
+	return managerNotice(key, value, detail);
+}
+
 function npmRootFromPackageDir(packageDir: string | undefined): string | undefined {
 	if (!packageDir) return undefined;
 	const marker = `${sep}node_modules${sep}`;
@@ -124,8 +131,7 @@ export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: b
 		const result = runCommand("kendex", args);
 		if (result.error) return { ok: false, message: launchFailure("kendex", result.error) };
 		if ((result.status ?? 1) !== 0) {
-			const stderr = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit ${result.status}`;
-			return { ok: false, message: managerNotice("kendex-uninstall-exit", result.status ?? 1, stderr) };
+			return { ok: false, message: exitFailure("kendex-uninstall-exit", result) };
 		}
 		// `kendex remove` already handled APPEND_SYSTEM.md, so no extra cleanup here.
 		return { ok: true, message: managerNotice("kendex-uninstalled", plan.item.packageName!, `Removed ${plan.item.displayName} via kendex.`) };
@@ -141,8 +147,7 @@ export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: b
 		const result = runCommand(plan.method.command, [...plan.method.argsPrefix, ...args], { cwd: plan.method.cwd });
 		if (result.error) return { ok: false, message: launchFailure(plan.method.command, result.error) };
 		if ((result.status ?? 1) !== 0) {
-			const stderr = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit ${result.status}`;
-			return { ok: false, message: managerNotice("npm-uninstall-exit", result.status ?? 1, stderr) };
+			return { ok: false, message: exitFailure("npm-uninstall-exit", result) };
 		}
 		const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
 		return { ok: true, message: managerNotice("npm-uninstalled", plan.method.npmName, `Uninstall succeeded${stripped ? "; removed Pi settings entry." : " (no settings entry to remove)."}`) };
@@ -190,8 +195,7 @@ export function runUpdate(plan: UpdatePlan): { ok: boolean; message: string } {
 		const result = runCommand("kendex", args);
 		if (result.error) return { ok: false, message: launchFailure("kendex", result.error) };
 		if ((result.status ?? 1) !== 0) {
-			const stderr = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit ${result.status}`;
-			return { ok: false, message: managerNotice("kendex-update-exit", result.status ?? 1, stderr) };
+			return { ok: false, message: exitFailure("kendex-update-exit", result) };
 		}
 		return { ok: true, message: managerNotice("kendex-updated", plan.item.packageName!, `Updated ${plan.item.displayName} via kendex.`) };
 	}
@@ -201,8 +205,7 @@ export function runUpdate(plan: UpdatePlan): { ok: boolean; message: string } {
 	const result = runCommand(plan.method.command, [...plan.method.argsPrefix, ...args], { cwd: plan.method.cwd });
 	if (result.error) return { ok: false, message: launchFailure(plan.method.command, result.error) };
 	if ((result.status ?? 1) !== 0) {
-		const stderr = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit ${result.status}`;
-		return { ok: false, message: managerNotice("npm-update-exit", result.status ?? 1, stderr) };
+		return { ok: false, message: exitFailure("npm-update-exit", result) };
 	}
 	return { ok: true, message: managerNotice("npm-updated", plan.method.npmName, "Package updated via npm.") };
 }
