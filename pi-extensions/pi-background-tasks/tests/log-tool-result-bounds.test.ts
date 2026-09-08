@@ -1,230 +1,77 @@
-// bg_task / bg_status log tool-result transcript bounds.
-//
-// `bg_task log` and `bg_status log` add `details.tasks[i].outputTail` to the
-// transcript; their text content is bounded by `logTailMaxChars` (default
-// 10000) and the `details.task` snapshot is bounded by the wake manifest.
-// The test exercises the bound through the tool-result path that writes the
-// transcript.
+import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
+import { DEFAULT_LOG_TAIL_MAX_CHARS as cap } from "../extensions/constants.js";
+import type { BackgroundTaskSnapshot, BackgroundLogTruncation } from "../extensions/types.js";
+import { WAKE_MANIFEST_FIELD_MAX_CHARS as fieldCap } from "../extensions/wake-events.js";
+import { privateLogRoot } from "./fixtures/log-settings.js";
 
-import { describe, expect, test } from "bun:test";
+const logFile = "/tmp/kendex-pi-bg/bg-log-1-1700000000000.log";
+const marker = "retained log tail\n";
+const tail = marker + "z".repeat(cap - marker.length - 1) + "!";
+const rows = [
+	{ name: "bg_task huge log and metadata", tool: "bg_task", output: "z".repeat(cap * 3) + tail, huge: true, path: logFile },
+	{ name: "bg_status huge log and metadata", tool: "bg_status", output: "z".repeat(cap * 3) + tail, huge: true, path: logFile },
+	{ name: "bg_task long log path", tool: "bg_task", output: "z".repeat(cap * 3) + tail, huge: true, path: "/tmp/" + "L".repeat(5_000) },
+	{ name: "bg_status long log path", tool: "bg_status", output: "z".repeat(cap * 3) + tail, huge: true, path: "/tmp/" + "L".repeat(5_000) },
+	{ name: "bg_task small output", tool: "bg_task", output: "all good\n", huge: false, path: logFile },
+	{ name: "bg_status small output", tool: "bg_status", output: "all good\n", huge: false, path: logFile },
+	{ name: "bg_task empty output", tool: "bg_task", output: "", huge: false, path: logFile },
+	{ name: "bg_status empty output", tool: "bg_status", output: "", huge: false, path: logFile },
+];
 
-import { bashBackgroundAckText } from "../extensions/auto-background.js";
-import { DEFAULT_LOG_TAIL_MAX_CHARS } from "../extensions/constants.js";
-import {
-	TASK_DISPLAY_NAME_MAX_CHARS,
-	buildTaskSummaryLine,
-	formatTaskLog,
-	taskDisplayNameForTranscript,
-	taskLogTruncation,
-} from "../extensions/format.js";
-import { taskSnapshot } from "../extensions/snapshot.js";
-import type { BashBackgroundDecision, ManagedTask } from "../extensions/types.js";
-import { WAKE_MANIFEST_FIELD_MAX_CHARS, compactBackgroundTaskSnapshot, emptyOutputWakeBudget, truncateForTranscript } from "../extensions/wake-events.js";
-
-function logTask(overrides: Partial<ManagedTask> = {}): ManagedTask {
-	const base: ManagedTask = {
-		child: null,
-		closed: true,
-		command: "echo log",
-		cwd: "/tmp",
-		exitCode: 0,
-		exitNotified: true,
-		expiresAt: null,
-		forceKillTimer: null,
-		id: "bg-log-1",
-		lastAnnouncedLength: 0,
-		lastOutputAt: 1_700_000_000_500,
-		logFile: "/tmp/bg-log-1.log",
-		matcher: null,
-		notifyMode: "always",
-		notifyOnExit: true,
-		notifyOnOutput: false,
-		output: "",
-		outputBytes: 0,
-		outputPatternMatched: false,
-		outputTimer: null,
-		outputWakeBudget: emptyOutputWakeBudget(),
-		pendingWakes: [],
-		pid: 4242,
-		startedAt: 1_700_000_000_000,
-		status: "completed",
-		stopReason: null,
-		timeoutTimer: null,
-		title: "log",
-		updatedAt: 1_700_000_000_500,
-		voidedWakeSequences: [],
-		voidedWakes: new Set(),
-		wakeEvents: [],
-		wakeSequence: 0,
-	};
-	return { ...base, ...overrides };
+interface ChildResult {
+	result: { content: { type: string; text: string }[]; details: { action: string; task: BackgroundTaskSnapshot; fullOutputPath?: string; truncation?: BackgroundLogTruncation } };
+	calls: unknown[];
 }
 
-describe("taskLogTruncation (kendex#210)", () => {
-	test("returns undefined for output below the cap", () => {
-		const output = "short\n".repeat(10);
-		expect(taskLogTruncation(output, "/tmp/log")).toBeUndefined();
-	});
-
-	test("returns a truncation descriptor pointing at the log file for huge output", () => {
-		const huge = "x".repeat(DEFAULT_LOG_TAIL_MAX_CHARS * 4);
-		const t = taskLogTruncation(huge, "/tmp/log");
-		expect(t).toBeDefined();
-		expect(t!.direction).toBe("tail");
-		expect(t!.truncated).toBe(true);
-		expect(t!.fullOutputPath).toBe("/tmp/log");
-		expect(t!.shownChars).toBe(DEFAULT_LOG_TAIL_MAX_CHARS);
-		expect(t!.totalChars).toBe(huge.length);
-	});
-});
-
-describe("formatTaskLog (kendex#210)", () => {
-	test("emits the full output when below the cap", () => {
-		const output = "all good\n".repeat(50);
-		expect(formatTaskLog(output, "/tmp/log")).toBe(output);
-	});
-
-	test("clips to the default cap and points at the on-disk log path", () => {
-		const huge = "y".repeat(DEFAULT_LOG_TAIL_MAX_CHARS * 5);
-		const formatted = formatTaskLog(huge, "/tmp/big.log");
-		expect(formatted.startsWith("[...truncated]\n")).toBe(true);
-		expect(formatted).toContain("/tmp/big.log");
-		expect(formatted).toContain(`Showing last ${DEFAULT_LOG_TAIL_MAX_CHARS} of ${huge.length} character(s)`);
-		// Allow the truncation banner + path tail to add a small amount of
-		// envelope text on top of the bounded slice.
-		expect(formatted.length).toBeLessThan(DEFAULT_LOG_TAIL_MAX_CHARS + 256);
-	});
-
-	test("(empty) sentinel for falsy output", () => {
-		expect(formatTaskLog("", "/tmp/log")).toBe("(empty)");
-	});
-});
-
-describe("transcript-facing content strings (kendex#210 round 2)", () => {
-	test("buildTaskSummaryLine clamps title/command to the display cap", () => {
-		const task = taskSnapshot(logTask({ command: "Q".repeat(50_000), title: "T".repeat(50_000) }));
-		const line = buildTaskSummaryLine(task);
-		// The summary line carries one bounded display name + short prefix
-		// columns; keep the whole line under a few hundred chars so a
-		// bg_task list rendered into chat content cannot bloat.
-		expect(line.length).toBeLessThan(TASK_DISPLAY_NAME_MAX_CHARS + 128);
-	});
-
-	test("taskDisplayNameForTranscript falls back to command when title is empty", () => {
-		const long = "Q".repeat(5_000);
-		expect(taskDisplayNameForTranscript({ title: "", command: long }).length).toBeLessThanOrEqual(TASK_DISPLAY_NAME_MAX_CHARS);
-	});
-
-	test("bashBackgroundAckText bounds command/cwd/logFile/notifyPattern", () => {
-		const snapshot = taskSnapshot(logTask({
-			command: "C".repeat(200_000),
-			cwd: "/path/" + "P".repeat(5_000),
-			logFile: "/tmp/" + "L".repeat(5_000),
-			notifyOnOutput: true,
-			notifyPattern: "R".repeat(5_000),
-			dedupeKey: "D".repeat(5_000),
-		}));
-		const decision: BashBackgroundDecision = {
-			forced: false,
-			notifyOnExit: true,
-			notifyOnOutput: true,
-			reason: "test",
-			title: "test",
-		};
-		const text = bashBackgroundAckText(snapshot, decision);
-		// One-line bounded fields plus envelope text; total well under 4 KB.
-		expect(Buffer.byteLength(text, "utf8")).toBeLessThan(4_096);
-		// No verbatim 4097-char bombs survived.
-		expect(text).not.toContain("C".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
-		expect(text).not.toContain("P".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
-		expect(text).not.toContain("L".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
-		expect(text).not.toContain("R".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
-		expect(text).not.toContain("D".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
-	});
-
-	test("truncateForTranscript produces a bounded `Stopped …` message shape (kendex#210 round 3 unit check)", () => {
-		// Unit-level companion to `stop-content-e2e.test.ts`: documents the
-		// bounded format `requestStop` uses for stop tool-result content so
-		// the helper layer can be checked independently. The
-		// end-to-end test exercises the production call path; this one
-		// verifies the shared helper still produces a payload that fits the
-		// template under multi-KB input.
-		const huge = "B".repeat(100_000);
-		const task = logTask({ command: huge });
-		const safeCommand = truncateForTranscript(task.command, WAKE_MANIFEST_FIELD_MAX_CHARS) ?? "";
-		const stoppedMessage = `Stopped ${task.id} (${safeCommand}).`;
-		const stoppingMessage = `Stopping ${task.id} (${safeCommand}).`;
-
-		expect(safeCommand.length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
-		for (const message of [stoppedMessage, stoppingMessage]) {
-			expect(Buffer.byteLength(message, "utf8")).toBeLessThan(WAKE_MANIFEST_FIELD_MAX_CHARS + 128);
-			expect(message).not.toContain("B".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
-		}
-	});
-
-	test("formatTaskLog truncation banner uses a bounded log path", () => {
-		const huge = "z".repeat(DEFAULT_LOG_TAIL_MAX_CHARS * 4);
-		const longPath = "/tmp/" + "L".repeat(10_000);
-		const formatted = formatTaskLog(huge, longPath);
-		// The on-disk log path is bounded inside the truncation banner so a
-		// pathologically long taskDir cannot bloat the inline log payload.
-		expect(formatted).not.toContain("L".repeat(WAKE_MANIFEST_FIELD_MAX_CHARS + 1));
-		expect(formatted.length).toBeLessThan(DEFAULT_LOG_TAIL_MAX_CHARS + WAKE_MANIFEST_FIELD_MAX_CHARS + 256);
-	});
-
-	test("taskLogTruncation descriptor uses a bounded fullOutputPath", () => {
-		const huge = "z".repeat(DEFAULT_LOG_TAIL_MAX_CHARS * 4);
-		const longPath = "/tmp/" + "L".repeat(10_000);
-		const truncation = taskLogTruncation(huge, longPath);
-		expect(truncation).toBeDefined();
-		expect(truncation!.fullOutputPath.length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
-	});
-});
-
-describe("log tool-result details bound the task snapshot (kendex#210)", () => {
-	test("log action keeps task command/title/cwd/logFile under the wake manifest cap", () => {
-		const task = logTask({
-			command: "C".repeat(200_000),
-			title: "T".repeat(2_000),
-			cwd: "/path/" + "P".repeat(5_000),
-			logFile: "/tmp/" + "L".repeat(5_000),
-		});
-		const compact = compactBackgroundTaskSnapshot(taskSnapshot(task));
-		expect(compact.command.length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
-		expect(compact.title.length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
-		expect(compact.cwd.length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
-		expect(compact.logFile.length).toBeLessThanOrEqual(WAKE_MANIFEST_FIELD_MAX_CHARS);
-	});
-
-	test("a log tool-result-shaped payload stays under the byte cap with huge output and metadata", () => {
-		const huge = "z".repeat(DEFAULT_LOG_TAIL_MAX_CHARS * 4);
-		// A realistic log path. The test targets
-		// command/title/cwd bombs, which the compact manifest bounds.
-		const realisticLogFile = "/tmp/kendex-pi-bg/bg-log-1-1700000000000.log";
-		const task = logTask({
-			command: "Q".repeat(200_000),
-			title: "T".repeat(5_000),
-			cwd: "/" + "C".repeat(5_000),
-			logFile: realisticLogFile,
-		});
-		const compactSnapshot = compactBackgroundTaskSnapshot(taskSnapshot(task));
-		const truncation = taskLogTruncation(huge, task.logFile);
-
-		// Approximate the tool result that registrations.ts produces: bounded
-		// text + bounded task manifest + fullOutputPath + truncation marker.
-		const payload = {
-			content: [{ type: "text", text: formatTaskLog(huge, task.logFile) }],
-			details: {
-				action: "log",
-				task: compactSnapshot,
-				...(truncation ? { fullOutputPath: task.logFile, truncation } : {}),
+test("registered log tool result rows", () => {
+	expect.assertions(rows.length + 1);
+	expect(rows.length, "registered log table must contain cases").toBeGreaterThan(0);
+	const root = privateLogRoot();
+	try {
+		const inputs = rows.map((row) => ({
+			tool: row.tool, output: row.output,
+			task: {
+				id: "bg-log-1", pid: 4242, logFile: row.path,
+				command: row.huge ? "Q".repeat(200_000) : "echo log",
+				title: row.huge ? "T".repeat(5_000) : "log",
+				cwd: row.huge ? "/" + "C".repeat(5_000) : "/path/work",
+				procIdent: { pid: 4242, startToken: "private-start", comm: "private-command" },
 			},
-		};
-		const payloadBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
-		// Bounded text (~10KB) + bounded manifest (~1KB) + envelope <= 16KB.
-		expect(payloadBytes).toBeLessThan(16_384);
-		expect(payload.details.fullOutputPath).toBe(task.logFile);
-		expect(payload.details.truncation?.fullOutputPath).toBe(task.logFile);
-		expect(payload.details.truncation?.shownChars).toBe(DEFAULT_LOG_TAIL_MAX_CHARS);
-	});
+		}));
+		const child = spawnSync(process.execPath, [join(import.meta.dir, "fixtures", "registered-log.ts")], {
+			cwd: root, env: { ...process.env, PI_CODING_AGENT_DIR: join(root, "agent"), PI_BG_TASK_DIR: join(root, "logs") },
+			input: JSON.stringify(inputs), encoding: "utf8", timeout: 10_000, killSignal: "SIGKILL", maxBuffer: 2_000_000,
+		});
+		if (child.error) throw new Error(`registered log child spawn failed: ${child.error.message}`);
+		if (child.status !== 0) throw new Error(`registered log child exited ${child.status ?? child.signal}: ${child.stderr}`);
+		const results: ChildResult[] = JSON.parse(child.stdout);
+		if (results.length !== rows.length) throw new Error(`registered log child returned ${results.length} rows; expected ${rows.length}`);
+		for (const [index, row] of rows.entries()) {
+			const { result, calls } = results[index]!;
+			const task = result.details.task;
+			const safePath = row.path.length <= fieldCap ? row.path : "/tmp/" + "L".repeat(fieldCap - 6) + "…";
+			const text = row.huge
+				? `[...truncated]\n${tail}\n\n[Background log truncated. Showing last ${cap} of ${row.output.length} character(s). Full log: ${safePath}]`
+				: row.output || "(empty)";
+			expect({
+				content: result.content, action: result.details.action,
+				task: { id: task.id, pid: task.pid, command: task.command, title: task.title, cwd: task.cwd, logFile: task.logFile },
+				fullOutputPath: result.details.fullOutputPath, truncation: result.details.truncation,
+				bounded: Buffer.byteLength(JSON.stringify(result), "utf8") < 16_384,
+				internalIdentity: task.procIdent, calls,
+			}, row.name).toStrictEqual({
+				content: [{ type: "text", text }], action: "log",
+				task: { id: "bg-log-1", pid: 4242, command: row.huge ? "Q".repeat(fieldCap - 1) + "…" : "echo log", title: row.huge ? "T".repeat(fieldCap - 1) + "…" : "log", cwd: row.huge ? "/" + "C".repeat(fieldCap - 2) + "…" : "/path/work", logFile: safePath },
+				fullOutputPath: row.huge ? safePath : undefined,
+				truncation: row.huge ? { direction: "tail", truncated: true, fullOutputPath: safePath, shownChars: cap, totalChars: row.output.length } : undefined,
+				bounded: true, internalIdentity: undefined,
+				calls: [{ id: row.tool === "bg_task" ? "bg-log-1" : null, pid: row.tool === "bg_status" ? 4242 : null }, { outputSameTask: true }, { rememberSameTask: true }],
+			});
+		}
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });
