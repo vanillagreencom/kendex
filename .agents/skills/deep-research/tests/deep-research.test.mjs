@@ -8,6 +8,7 @@ import test from "node:test";
 const script = new URL("../scripts/deep-research", import.meta.url).pathname;
 
 function diagnostic(result) {
+  assert.equal(result.status, 1);
   const parsed = JSON.parse(result.stderr.trim().split(/\r?\n/, 1)[0]);
   assert.equal(parsed.ok, false);
   assert.equal(typeof parsed.error, "string");
@@ -16,7 +17,12 @@ function diagnostic(result) {
 }
 
 function hasProblem(result, level, key, value) {
-  return result.problems.some((problem) => problem.level === level && problem.key === key && problem.value === value);
+  const problems = result.problems.filter((problem) => problem.level === level);
+  const legacy = result[`${level}s`];
+  assert.equal(Array.isArray(legacy), true);
+  assert.equal(legacy.length, problems.length);
+  assert.equal(legacy.every((message) => typeof message === "string" && message.length > 0), true);
+  return problems.some((problem) => problem.key === key && problem.value === value);
 }
 
 test("doctor reports runtime status", () => {
