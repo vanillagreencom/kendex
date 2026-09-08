@@ -9,7 +9,7 @@ doctrine text does not come through that file at all.
 
 **Two of the table's rows are enforced elsewhere, and this is not their copy.**
 The glob row is `globs.check`; the `[bot-instructions.cadence] qodo_commands` row is
-`config._cadence` reading `constants.QODO_VERBS`. `tests/toml-schema.test.sh`
+`config._cadence` reading `constants.QODO_VERBS`. `tests/toml-refusals.test.sh`
 holds the table against these three, so a row added to either side without the
 other reds.
 
