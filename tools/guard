@@ -11,7 +11,10 @@
 # Repository scans read the working tree. Bot instructions use the index at
 # commit time so their configuration, doctrine and outputs agree.
 # Every finding opens with `guard: <key>=<value>` and explains itself below
-# that line; say() and finding_text() hold the shape and the text.
+# that line; say() and finding_text() hold the shape and the text. A reader
+# matches `^guard: `, not line 1: the compilers, linters and suites this
+# script runs write their own diagnostics into the same stream, and those
+# name the cause a finding only points at.
 set -uo pipefail
 # Resolved before the cd below: the sibling tools this script runs live
 # beside it, not necessarily in the repository it judges.

@@ -61,7 +61,9 @@
 # says for itself opens with `harness-smoke: <key>=<value>` — the key names
 # the condition, the value is the path, the count or the short enum the reader
 # acts on — and explains itself on the lines under it. message_text is the
-# only place a key's English lives.
+# only place a key's English lives. A reader matches `^harness-smoke: `, not
+# line 1: git, kendex and each harness write their own diagnostics into the
+# same stream, and a row's evidence points at the log that holds them.
 set -euo pipefail
 
 usage() {

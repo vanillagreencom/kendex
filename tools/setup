@@ -23,7 +23,9 @@ INSTALLER=.agents/skills/commit-guards/scripts/install-git-hooks
 # Every line this script says opens with `setup: <key>=<value>` — the key
 # names the outcome, the value is the path or the short enum the reader acts
 # on — and explains itself on the lines under it. message_text is the only
-# place a key's English lives.
+# place a key's English lives. A reader matches `^setup: `, not line 1: git
+# and the installer write their own reports first, and the installer's is
+# exactly what the not-armed remedy points back at.
 #
 # The not-armed arm points back at the installer's report rather than
 # asserting one cause: the installer has already said, per hook, WHY it did

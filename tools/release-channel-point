@@ -32,7 +32,10 @@
 # workflow-command grammar ends an annotation at the newline, so that text is
 # one line, and it is the line the release job surfaces. message_text is the
 # only place a key's English lives, and it reads CHANNEL, NEW_VERSION and
-# `absent` from the run rather than taking them per call.
+# `absent` from the run rather than taking them per call. A reader matches
+# `^release-channel-point: `, not line 1: `gh` and `jq` write their own
+# diagnostics first, and Actions finds the annotation under the keyed line by
+# scanning the log rather than by position.
 set -euo pipefail
 
 message_text() { # KEY VALUE [EXTRA] — the English for one key, one line

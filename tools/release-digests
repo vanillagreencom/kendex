@@ -32,7 +32,9 @@
 # is one `::error::` GitHub Actions annotation carrying the English: the
 # workflow-command grammar ends an annotation at the newline, so that text is
 # one line, and it is the line the release job surfaces. message_text is the
-# only place a key's English lives.
+# only place a key's English lives. A reader matches `^release-digests: `,
+# not line 1: sha256sum and the signer write their own diagnostics first, and
+# Actions finds the annotation by scanning the log rather than by position.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

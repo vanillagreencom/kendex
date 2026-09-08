@@ -143,7 +143,9 @@ PATTERN="$PATTERN"'|\$('"$BASH4_VARS"')([^A-Za-z0-9_]|$)|\$\{('"$BASH4_VARS"')\}
 # Every line this lint says for itself opens with `bash32-lint: <key>=<value>`
 # — the key names the condition and the value is the path, the count or the
 # short enum the reader acts on — and explains itself on the lines under it.
-# message_text below is the only place a key's English lives.
+# message_text below is the only place a key's English lives. A reader
+# matches `^bash32-lint: `, not line 1: git and grep write their own
+# diagnostics first, and those name the cause this lint only points at.
 message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
   case "$1" in
     not-in-repo)
