@@ -93,5 +93,13 @@ message="$(printf '%s\n' "$message" | LC_ALL=C awk '{ printf "%s<%s>", sep, $0; 
 assert_eq "a multiline dependency cause prefixes every explanation line" \
   "<probe: dependency=2>;<  first cause>;<  forged: record=value>" "$message"
 
+echo "=== a captured dependency cause keeps its trailing newlines ==="
+printf 'first cause\n\n' >"$TMP/cause"
+cause_rc=0
+cause_message="$(GG_CHECK=probe gg_fail_cause dependency 2 "$TMP/cause" fallback 2>&1)" || cause_rc=$?
+cause_message="$(printf '%s\n' "$cause_message" | LC_ALL=C awk '{ printf "%s<%s>", sep, $0; sep = ";" }')"
+assert_eq "the sentinel preserves both final newline bytes" \
+  "rc=2 <probe: dependency=2>;<  first cause>;<  >;<  >" "rc=$cause_rc $cause_message"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

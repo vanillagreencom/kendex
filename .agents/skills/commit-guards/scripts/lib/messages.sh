@@ -37,6 +37,12 @@ gg_fail() { # KEY VALUE EXPLANATION — collection/configuration refusal
 
 gg_fail_cause() { # KEY VALUE ERRFILE FALLBACK — stable refusal before a dependency cause
   local cause="$4"
-  [ ! -s "$3" ] || cause="$(cat -- "$3" 2>/dev/null)" || cause="$4"
+  if [ -s "$3" ]; then
+    if cause="$(cat -- "$3" 2>/dev/null && printf x)"; then
+      cause="${cause%x}"
+    else
+      cause="$4"
+    fi
+  fi
   gg_fail "$1" "$2" "$cause"
 }
