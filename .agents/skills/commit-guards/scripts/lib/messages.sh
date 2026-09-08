@@ -22,10 +22,12 @@ gg_scrubbed() { # VALUE — the value on one line, controls replaced
 # A notice starts with its stable key and value. Explanation is for people;
 # callers and tests select the first line and do not parse its wording.
 gg_message() { # KEY VALUE EXPLANATION — message on stdout
-  local value
+  local value line
   value="$(gg_scrubbed "$2")" || return 2
   printf '%s: %s=%s\n' "${GG_CHECK:-commit-guards}" "$1" "$value"
-  printf '  %s\n' "$3"
+  while IFS= read -r line || [ -n "$line" ]; do
+    printf '  %s\n' "$line"
+  done <<<"$3"
 }
 
 gg_fail() { # KEY VALUE EXPLANATION — collection/configuration refusal

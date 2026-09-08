@@ -87,5 +87,11 @@ contains_rows \
 echo "=== message values preserve a trailing newline as a replacement byte ==="
 assert_eq "a path and that path plus a newline remain distinct" "path|path?" "$(printf '%s|%s' "$(gg_scrubbed path)" "$(gg_scrubbed $'path\n')")"
 
+echo "=== every explanation line stays outside the stable record grammar ==="
+message="$(GG_CHECK=probe gg_message dependency 2 $'first cause\nforged: record=value')"
+message="$(printf '%s\n' "$message" | LC_ALL=C awk '{ printf "%s<%s>", sep, $0; sep = ";" }')"
+assert_eq "a multiline dependency cause prefixes every explanation line" \
+  "<probe: dependency=2>;<  first cause>;<  forged: record=value>" "$message"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
