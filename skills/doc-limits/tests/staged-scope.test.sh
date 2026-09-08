@@ -23,6 +23,24 @@ expect() { # EXPECTED-EXIT LABEL: assert the preceding run's result
     FAIL=$((FAIL + 1)); printf '  FAIL: %s: exit %s\n%s\n' "$2" "$RC" "$OUT"
   fi
 }
+expect_first_line() { # EXPECTED LABEL
+  local first="${OUT%%$'\n'*}"
+  if [ "$first" = "$1" ]; then
+    PASS=$((PASS + 1)); printf '  ok: %s\n' "$2"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL: %s: first line <%s>\n' "$2" "$first"
+  fi
+}
+must_fail_first_line() { # FORMER-LINE LABEL
+  local assertion_rc=0
+  (PASS=0; FAIL=0; expect_first_line "$1" "$2"; [ "$FAIL" -eq 0 ]) >"$TMP/control.log" || assertion_rc=$?
+  if [ "$assertion_rc" -ne 0 ]; then
+    PASS=$((PASS + 1)); printf '  ok: %s\n' "$2"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL: %s: first-line assertion stayed green\n' "$2"
+    cat "$TMP/control.log"
+  fi
+}
 must_fail() { # FORMER-EXIT MUTANT-EXIT LABEL: prove the former assertion turns red
   local assertion_rc=0
   (PASS=0; FAIL=0; expect "$1" "$3"; [ "$FAIL" -eq 0 ]) >"$TMP/control.log" || assertion_rc=$?
@@ -148,7 +166,7 @@ git -C "$R" add AGENTS.md
 unset DOC_LIMITS_CLASSES
 
 SETTINGS_ASSERTIONS=0
-while IFS='|' read -r name operation mode expected; do
+while IFS='|' read -r name operation mode expected first_line; do
   case "$operation" in
     split-settings)
       printf '[env]\nDOC_LIMITS_CLASSES = "*.md=1k"\n' >"$R/kendex.settings.toml"
@@ -162,24 +180,46 @@ while IFS='|' read -r name operation mode expected; do
       git -C "$R" rm -q --cached kendex.settings.toml
       printf '[env]\nDOC_LIMITS_CLASSES = "*.md=1k"\n' >"$R/kendex.settings.toml"
       ;;
+    stage-bom)
+      rm "$R/kendex.settings.toml"
+      mkdir -p "$R/.kendex"
+      printf '\357\273\277[env]\nDOC_LIMITS_CLASSES = "*.md=1k"\n' >"$R/.kendex/settings.toml"
+      git -C "$R" add .kendex/settings.toml
+      ;;
   esac
   case "$mode" in
     worktree) run ;;
     staged) run --staged ;;
   esac
   expect "$expected" "$name"
+  [ -z "$first_line" ] || expect_first_line "$first_line" "$name diagnostic"
   SETTINGS_ASSERTIONS=$((SETTINGS_ASSERTIONS + 1))
 done <<'SETTINGS_CASES'
 settings-staged-strict|split-settings|staged|1
 settings-worktree-relaxed|unchanged|worktree|0
 settings-relaxed-staged|stage-relaxed|staged|0
 settings-deleted-from-index|delete-settings|staged|0
+settings-staged-bom|stage-bom|staged|2|doc-limits-error=settings-bom value=.kendex/settings.toml
 SETTINGS_CASES
 if [ "$SETTINGS_ASSERTIONS" -eq 0 ]; then
   printf 'FAIL: SETTINGS_CASES executed no assertions\n' >&2
   exit 1
 fi
 
+private_command staged-settings-label
+MUTANT_SETTINGS="$(dirname "$MUTANT")/lib/settings.sh"
+[ "$(grep -Fxc '        sr_env_table "$file" "$source" >/dev/null || return 1' "$MUTANT_SETTINGS")" -eq 1 ]
+sed 's/^        sr_env_table "\$file" "\$source" >\/dev\/null || return 1$/        sr_env_table "$file" >\/dev\/null || return 1/' "$TEST_DIR/../scripts/lib/settings.sh" >"$MUTANT_SETTINGS.changed"
+if cmp -s "$TEST_DIR/../scripts/lib/settings.sh" "$MUTANT_SETTINGS.changed"; then exit 1; fi
+mv "$MUTANT_SETTINGS.changed" "$MUTANT_SETTINGS"
+bash -n "$MUTANT_SETTINGS"
+SR="$MUTANT"
+run --staged
+must_fail_first_line 'doc-limits-error=settings-bom value=.kendex/settings.toml' 'staged settings label control: the snapshot path fails the BOM row'
+SR="$SOURCE_COMMAND"
+
+git -C "$R" rm -qf .kendex/settings.toml
+printf '[env]\nDOC_LIMITS_CLASSES = "*.md=1k"\n' >"$R/kendex.settings.toml"
 git -C "$R" add kendex.settings.toml
 git -C "$R" commit -qm 'strict settings control'
 printf '[env]\nDOC_LIMITS_CLASSES = "*.md=2k"\n' >"$R/kendex.settings.toml"

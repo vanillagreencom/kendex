@@ -271,13 +271,14 @@ sr_settings_resolve() { # FILE — the path to actually read; nonzero + ::error 
 # to any reader here, so a BOM-prefixed first line silently misfiles the
 # header or assignment it hides. Refuse the source whole, same discipline
 # as the header rule. Read via stdin so the path is never an operand.
-sr_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
+sr_bom_guard() { # FILE [LABEL] — 0 = no leading BOM; 1 + ::error otherwise
+  local label="${2:-$1}"
   if [ ! -r "$1" ]; then
-    sr_message error settings-unreadable "$1" "::error::$1: settings source is not readable" >&2
+    sr_message error settings-unreadable "$label" "::error::$label: settings source is not readable" >&2
     return 1
   fi
   if [ "$(head -c 3 < "$1" 2>/dev/null)" = "$(printf '\357\273\277')" ]; then
-    sr_message error settings-bom "$1" "::error::$1: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
+    sr_message error settings-bom "$label" "::error::$label: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
     return 1
   fi
 }
@@ -306,11 +307,11 @@ sr_settings_grep() { # REGEX FILE — matching lines on stdout; 1 = no match
 # containing `=` as a variable assignment and would read no input while the
 # resolver silently returns defaults. awk failing to read the source is an
 # unreadable source and fails loud, same discipline as sr_settings_grep.
-sr_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
+sr_env_table() { # FILE [LABEL] — [env]-table lines on stdout; 1 + ::error on a
                  # malformed header or leading BOM; 2 + ::error when unreadable
-  local status=0
-  sr_bom_guard "$1" || return 1
-  awk -v src="$1" '
+  local status=0 label="${2:-$1}"
+  sr_bom_guard "$1" "$label" || return 1
+  awk -v src="$label" '
     /^[[:space:]]*\[/ && !/^[[:space:]]*\[[A-Za-z0-9_.-]+\][[:space:]]*$/ {
       printf "doc-limits-error=settings-header value=%d\n::error::%s:%d: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)\n", NR, src, NR > "/dev/stderr"
       exit 3
@@ -352,13 +353,13 @@ sr_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
   ' < "$1" || status=$?
   [ "$status" -ne 3 ] || return 1
   if [ "$status" -ne 0 ]; then
-    sr_message error settings-awk "$1" "::error::$1: unreadable while resolving a setting (awk exit $status)" >&2
+    sr_message error settings-awk "$label" "::error::$label: unreadable while resolving a setting (awk exit $status)" >&2
     return 2
   fi
 }
 
 sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
-  local name="$1" default="$2" line val file table status matches
+  local name="$1" default="$2" line val file source table status matches
   case "$name" in
     "" | [0-9]* | *[!A-Za-z0-9_]*)
       sr_message error settings-key "$name" "::error::sr_setting: invalid key name '$name' (shell identifier shape required: [A-Za-z_][A-Za-z0-9_]*)" >&2
@@ -372,16 +373,17 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       set -- ".kendex/settings.toml" "kendex.settings.toml"
     fi
     for file in "$@"; do
+      source="$file"
       file="$(sr_settings_source "$file")" || return 1
       sr_settings_usable "$file" || return 1
       if [ -f "$file" ]; then
-        sr_env_table "$file" >/dev/null || return 1
+        sr_env_table "$file" "$source" >/dev/null || return 1
       fi
     done
     file="$(sr_settings_source ".env.local")" || return 1
     sr_settings_usable "$file" || return 1
     if [ -f "$file" ]; then
-      sr_bom_guard "$file" || return 1
+      sr_bom_guard "$file" ".env.local" || return 1
       if [ ! -r "$file" ]; then
         sr_message error settings-unreadable "$file" "::error::$file: unreadable while resolving a setting (permission denied)" >&2
         return 1
@@ -400,7 +402,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   local_env="$(sr_settings_source ".env.local")" || return 1
   sr_settings_usable "$local_env" || return 1
   if [ -f "$local_env" ]; then
-    sr_bom_guard "$local_env" || return 1
+    sr_bom_guard "$local_env" ".env.local" || return 1
     status=0
     matches="$(sr_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" "$local_env")" || status=$?
     [ "$status" -le 1 ] || return 1
@@ -415,10 +417,11 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     fi
   fi
   for file in "$@"; do
+  source="$file"
   file="$(sr_settings_source "$file")" || return 1
   sr_settings_usable "$file" || return 1
   if [ -f "$file" ]; then
-    table="$(sr_env_table "$file")" || return 1
+    table="$(sr_env_table "$file" "$source")" || return 1
     status=0
     matches="$(printf '%s\n' "$table" | grep -E -- "^[[:space:]]*${name}[[:space:]]*=")" || status=$?
     [ "$status" -le 1 ] || return 1
