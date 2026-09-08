@@ -148,7 +148,8 @@ MD_GLOBS_SHOWN="$GG_PATH_GLOBS_SHOWN"
 # The index's paths, one per line, are what a reference may land on. A path
 # holding a newline splits here and can be no link target; that direction
 # is loud (the link fails), never a pass.
-git ls-files -z >"$GG_TMP/tracked.z" || gg_fail index-read "$?" "Git could not list tracked files."
+git ls-files -z >"$GG_TMP/tracked.z" 2>"$GG_TMP/dependency.err" \
+  || gg_fail_cause index-read "$?" "$GG_TMP/dependency.err" "Git could not list tracked files."
 LC_ALL=C tr '\0' '\n' <"$GG_TMP/tracked.z" >"$GG_TMP/tracked"
 
 DEC_JUDGE=0
@@ -240,7 +241,8 @@ while IFS= read -r -d '' sig_path; do
 done <"$GG_TMP/sig.z"
 
 gg_require_merged_index
-git ls-files -sz >"$GG_TMP/src-files.z" || gg_fail index-read "$?" "Git could not list tracked files."
+git ls-files -sz >"$GG_TMP/src-files.z" 2>"$GG_TMP/dependency.err" \
+  || gg_fail_cause index-read "$?" "$GG_TMP/dependency.err" "Git could not list tracked files."
 GG_WALK_SKIPPED=0
 : >"$GG_TMP/skipped.z"
 while IFS= read -r -d '' rec; do

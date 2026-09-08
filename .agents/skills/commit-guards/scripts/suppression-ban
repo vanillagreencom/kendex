@@ -157,7 +157,8 @@ BARE_ERE='#\[allow\([[:space:]]*([a-z_:]+[[:space:]]*,[[:space:]]*)*(dead_code|u
 # skip the gate) rather than silently splitting into garbage rows.
 NL='
 '
-git ls-files -z -- '*.rs' >"$GG_TMP/rs.z" || gg_fail rust-paths "$?" "git ls-files failed enumerating *.rs"
+git ls-files -z -- '*.rs' >"$GG_TMP/rs.z" 2>"$GG_TMP/dependency.err" \
+  || gg_fail_cause rust-paths "$?" "$GG_TMP/dependency.err" "git ls-files failed enumerating *.rs"
 while IFS= read -r -d '' f; do
   case "$f" in
     *"$NL"*) gg_fail path-newline "$f" "tracked path contains a newline, unrepresentable in line-oriented records; rename the file: '$f'" ;;

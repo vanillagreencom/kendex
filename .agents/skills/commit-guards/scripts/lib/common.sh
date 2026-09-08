@@ -199,9 +199,11 @@ gg_resolve_path() { # FLAG-VALUE KEY DEFAULT LABEL — normalized path on stdout
 # finish or abort the merge.
 gg_require_merged_index() { # PATHSPEC... — returns only when nothing is unmerged
   local rows status=0 paths count=0 unmerged
-  rows="$(git ls-files --unmerged -- "$@")" || status=$?
+  [ -n "$GG_TMP" ] || gg_tmpdir
+  rows="$(git ls-files --unmerged -- "$@" 2>"$GG_TMP/unmerged.err")" || status=$?
   [ "$status" -eq 0 ] \
-    || gg_fail unmerged-read "$status" "could not read the index for unmerged paths (git ls-files exit $status)"
+    || gg_fail_cause unmerged-read "$status" "$GG_TMP/unmerged.err" "could not read the index for unmerged paths (git ls-files exit $status)"
+  [ ! -s "$GG_TMP/unmerged.err" ] || cat -- "$GG_TMP/unmerged.err" >&2
   [ -n "$rows" ] || return 0
   paths="$(printf '%s\n' "$rows" | cut -f2- | LC_ALL=C sort -u)"
   count="$(printf '%s\n' "$paths" | grep -c .)" || count=0

@@ -68,7 +68,13 @@ call() { # LIB SNIPPET
     shift 2
     eval "$1"
   ' _ "$COMMON" "$1" "$2" 2>"$TMP/error")" || rc=$?
-  err="$(LC_ALL=C awk '/^[a-z-]+: [a-z-]+=/ { print }' "$TMP/error")"
+  err="$(LC_ALL=C awk '
+    /^[a-z-]+: [a-z-]+=/ { print; next }
+    /^[[:space:]]*dependency-order-control:/ {
+      sub(/^[[:space:]]*/, "")
+      print
+    }
+  ' "$TMP/error")"
   out="${out}${out:+${err:+$'\n'}}${err}"
   line "$rc" "$out"
 }
@@ -132,7 +138,7 @@ assert_eq "the fixture really is mid-merge (three index stages)" 3 "$(git -C "$R
 # A git that cannot list the unmerged paths at all: the probe's failure is
 # never read as "nothing unmerged".
 mkdir -p "$ROOT/git-shim-unmerged"
-printf '#!/usr/bin/env bash\ncase " $* " in *" --unmerged "*) echo "git ls-files: simulated failure" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' "$(command -v git)" >"$ROOT/git-shim-unmerged/git"
+printf '#!/usr/bin/env bash\ncase " $* " in *" --unmerged "*) echo "dependency-order-control: unmerged-read" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' "$(command -v git)" >"$ROOT/git-shim-unmerged/git"
 chmod +x "$ROOT/git-shim-unmerged/git"
 
 echo "=== gg_require_merged_index ==="
@@ -142,7 +148,7 @@ rows=(
   "an unmerged index is a collection error naming the path and the remedy|||rc=2 $REFUSAL"
   "an unmerged path outside the pathspec does not block that scan||'*.rs'|rc=0"
   "an unmerged path inside the pathspec does block it||'f.txt'|rc=2 $REFUSAL"
-  "a probe that could not list the unmerged paths is a collection error, never an empty list|$ROOT/git-shim-unmerged||rc=2 probe: unmerged-read=128"
+  "a probe that could not list the unmerged paths prints its stable refusal before the dependency cause|$ROOT/git-shim-unmerged||rc=2 probe: unmerged-read=128;dependency-order-control: unmerged-read"
 )
 for row in "${rows[@]}"; do
   IFS='|' read -r label SHIM pathspec expect <<<"$row"

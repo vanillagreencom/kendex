@@ -212,7 +212,8 @@ gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
   # `ls-files -s` emits one record per STAGE for an unmerged path, so the walk
   # would read rival blobs as separate files.
   gg_require_merged_index
-  git ls-files -sz >"$GG_TMP/files.z" || gg_fail index-read "$?" "git ls-files failed"
+  git ls-files -sz >"$GG_TMP/files.z" 2>"$GG_TMP/dependency.err" \
+    || gg_fail_cause index-read "$?" "$GG_TMP/dependency.err" "git ls-files failed"
   while IFS= read -r -d '' rec; do
     # Record shape: "<mode> <sha> <stage>\t<path>".
     f="${rec#*"$GG_TAB"}"
