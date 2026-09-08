@@ -157,9 +157,14 @@ if git ls-files --error-unmatch -- "$DEC_DIR" >/dev/null 2>&1; then
 fi
 
 lines_of() { # BLOBFILE PATH — md-blocks' line stream, refusing what it cannot end
-  local status=0
+  local status=0 block_stderr
   LC_ALL=C awk -f "$SHAPES_AWK" -f "$BLOCKS_AWK" -v mode=lines -- "$1" >"$GG_TMP/lines" 2>"$GG_TMP/lines.err" || status=$?
-  [ ! -s "$GG_TMP/lines.err" ] || gg_message block-stderr "$2:$status" "$(cat -- "$GG_TMP/lines.err")" >&2
+  if [ -s "$GG_TMP/lines.err" ]; then
+    # not-a-path: the parser diagnostic is text, not a file name.
+    block_stderr="$(cat -- "$GG_TMP/lines.err")" \
+      || gg_fail diagnostic-read "$GG_TMP/lines.err" "Could not read parser diagnostics."
+    gg_message block-stderr "$2:$status" "$block_stderr" >&2
+  fi
   if [ "$status" -ne 0 ]; then
     local refusal
     refusal="$(grep '^R' -- "$GG_TMP/lines" | head -n 1 || true)"

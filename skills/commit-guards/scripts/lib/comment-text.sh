@@ -279,7 +279,9 @@ gg_comment_text() { # FAMILY FILE PATH [WANT] — records on stdout
   }
   ' "$file" 2>"$GG_TMP/extract.err" || status=$?
   if [ "$status" -ne 0 ]; then
-    reason="$(cat -- "$GG_TMP/extract.err")"
+    # not-a-path: the extractor diagnostic is text, not a file name.
+    reason="$(cat -- "$GG_TMP/extract.err")" \
+      || gg_fail diagnostic-read "$GG_TMP/extract.err" "Could not read extractor diagnostics."
     GG_COMMENT_ERROR_DETAIL="${reason:-The extractor exited with status $status.}"
     case "$reason" in
       unclosed-* | unknown-family:*) GG_COMMENT_ERROR="$reason" ;;

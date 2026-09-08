@@ -103,7 +103,12 @@ while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
   gg_read_blob "$sha" "$f" "markdown file"
   status=0
   LC_ALL=C awk -f "$SHAPES_AWK" -f "$BLOCKS_AWK" -v mode=check "$GG_TMP/blob" >"$GG_TMP/verdict" 2>"$GG_TMP/verdict.err" || status=$?
-  [ ! -s "$GG_TMP/verdict.err" ] || gg_message block-stderr "$f:$status" "$(cat -- "$GG_TMP/verdict.err")" >&2
+  if [ -s "$GG_TMP/verdict.err" ]; then
+    # not-a-path: the parser diagnostic is text, not a file name.
+    block_stderr="$(cat -- "$GG_TMP/verdict.err")" \
+      || gg_fail diagnostic-read "$GG_TMP/verdict.err" "Could not read parser diagnostics."
+    gg_message block-stderr "$f:$status" "$block_stderr" >&2
+  fi
   while IFS="$GG_TAB" read -r kind line text; do
     case "$kind" in
       V)
