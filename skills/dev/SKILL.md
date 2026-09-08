@@ -67,7 +67,7 @@ Execute workflow sections in order; a "**Skip if**" condition is the workflow's 
 
 ## Validation
 
-The validation gate is complete: the affected suite passes; one must-fail control exists per changed surface; the repo's validation command passes once on the head; CI is green; and the review gate passes. An agent adds no proof, rerun, receipt, isolation step, or approval step outside this list. If the agent believes the list misses a rule, it proposes the rule once in the PR body and does not perform it. Production gate and guard changes keep the per-rule must-fail control that [code-quality § Prove Your Guards](../code-quality/SKILL.md#prove-your-guards) requires; that control is inside this list.
+The validation gate and role ownership are complete in [dev-implement.md § 5. Validate](workflows/dev-implement.md#5-validate). Run no proof, rerun, receipt, isolation step, or approval step that section does not name. That section also owns the one proposed-rule route and the per-rule control for production gate and guard changes.
 
 ### Long-Running Validation
 

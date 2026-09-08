@@ -138,6 +138,8 @@ Before writing a refusal, a validator, a lock, a retry, or a test, read [dev SKI
 - **Work outside scope?** Note it under Discovered Work in § 9.
 - **Need deeper research?** Add the `needs-research` label, pause, report.
 
+For every callee whose call the change deletes, run `git grep -n -F --untracked --exclude-standard -e <callee> --`, then apply [code-quality § Cleanup](../../code-quality/SKILL.md#cleanup).
+
 ### 4.3 Update Documentation And Decisions
 
 Update docs when the implementation changes a documented API or architecture.
@@ -148,21 +150,30 @@ Update docs when the implementation changes a documented API or architecture.
 
 ## 5. Validate
 
-Before deterministic validation, run `git grep -n -F --untracked --exclude-standard -e <callee> --` for every callee whose call the change deletes, then apply [code-quality § Cleanup](../../code-quality/SKILL.md#cleanup); the build and tests below validate every deletion.
+The validation gate is this complete list:
 
-Deterministic gates first — every finding is fixed here, never carried into review. Preflight runs when installed (`test -x .agents/skills/preflight/scripts/preflight`); the doc-limits gate runs when installed (`test -x .agents/skills/doc-limits/scripts/doc-limits`):
+- The affected suite passes. It consists of installed preflight and doc-limits gates, the delegation's required verification commands in their § 2.4 normalized form, and Visual QA when the issue has the `design` label.
+- One must-fail control per changed surface turns that surface's test red once. A production gate or guard change keeps the per-rule control that [code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards) requires inside this item.
+- The command that `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints passes once against the round's final worktree contents. An empty value is a validation failure named `DEV_VALIDATE_CMD`, with the note `DEV_VALIDATE_CMD is empty; set it in kendex.settings.toml [env] to the project's full test, lint and typecheck command`. Run nothing in its place.
+- After the dev agent returns its local result, the orchestrator gets green CI and a passing review gate. The dev agent does not claim or reproduce these downstream results.
+
+Run no proof, rerun, receipt, isolation step, or approval step outside this list. If an agent believes the list misses a rule, it reports the proposed rule once in its return. The orchestrator puts it once in the PR body. Neither role performs the proposed rule.
+
+Run preflight when installed (`test -x .agents/skills/preflight/scripts/preflight`):
 
 ```bash
 .agents/skills/preflight/scripts/preflight --repo [WORKTREE_PATH]
 ```
 
+Run doc-limits when installed (`test -x .agents/skills/doc-limits/scripts/doc-limits`):
+
 ```bash
 .agents/skills/doc-limits/scripts/doc-limits
 ```
 
-Run the project's full validation once before completion. Its successful result is recorded in the completion artifact for submit to reuse on the same commit. The command is the one `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints, run from the worktree root, plus the delegation's required verification commands in their § 2.4 normalized form. An empty value is a validation failure named `DEV_VALIDATE_CMD`, with the note `DEV_VALIDATE_CMD is empty; set it in kendex.settings.toml [env] to the project's full test, lint and typecheck command`; run nothing in its place, and never substitute a documented or guessed command. Failure handling and long-running runs: [dev SKILL.md § Validation](../SKILL.md#validation).
+Run the delegation's required verification commands, then the project's full validation command. Record the full validation result in the completion artifact for submit to reuse on the same contents. Failure handling and long-running runs: [dev SKILL.md § Validation](../SKILL.md#validation).
 
-A script written only to produce a number for the issue is not committed; put its result in the PR body. Every check, guard, assertion, or test this change adds or modifies must have a must-fail control that runs red once ([code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards)); an uncommitted measurement is not a check the change adds or modifies.
+A script written only to produce a number for the issue is not committed; report its result in the return for the orchestrator to put in the PR body. An uncommitted measurement is not a check the change adds or modifies.
 
 **Visual QA** — **skip if** the issue has no `design` label. Otherwise use the project's visual QA skills to confirm what your change affects renders correctly, not the full checklist. Do NOT capture golden baselines.
 
