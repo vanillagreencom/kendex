@@ -3,9 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
-// Separate processes isolate peer mocks, the stack registry, settings and the clock
-// from other suites that run real background tasks.
-for (const [scenario, seconds] of [
+const lifecycleCases = [
 	["expiry-above", 15],
 	["expiry-below", 15],
 	["sibling", 15],
@@ -16,8 +14,14 @@ for (const [scenario, seconds] of [
 	["boundary-at", 2_147_483.647],
 	["thirty-days", 2_592_000],
 	["overflow", 1e308],
-] as const) {
-	test(`widget lifecycle: ${scenario}`, () => {
+] as const;
+
+// Separate processes isolate peer mocks, the stack registry, settings and the clock
+// from other suites that run real background tasks.
+test("widget lifecycle scenarios", () => {
+	expect.assertions(lifecycleCases.length + 1);
+	expect(lifecycleCases.length).toBeGreaterThan(0);
+	for (const [scenario, seconds] of lifecycleCases) {
 		const root = resolve(import.meta.dir, "../../../tmp");
 		mkdirSync(root, { recursive: true });
 		const dir = mkdtempSync(resolve(root, "widget-lifecycle-"));
@@ -28,9 +32,11 @@ for (const [scenario, seconds] of [
 				encoding: "utf8",
 				timeout: 10_000,
 			});
-			expect({ error: result.error?.message, status: result.status, stderr: result.stderr }).toEqual({ error: undefined, status: 0, stderr: "" });
+			expect({ scenario, error: result.error?.message, status: result.status, stderr: result.stderr, stdout: result.stdout }).toEqual({
+				scenario, error: undefined, status: 0, stderr: "", stdout: `widget lifecycle completed: ${scenario}\n`,
+			});
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
-	});
-}
+	}
+}, lifecycleCases.length * 10_000);

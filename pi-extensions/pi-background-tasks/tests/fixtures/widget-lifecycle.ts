@@ -169,3 +169,4 @@ try {
 } finally {
 	await active.emit("session_shutdown");
 }
+console.log(`widget lifecycle completed: ${scenario}`);
