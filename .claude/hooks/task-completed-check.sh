@@ -4,7 +4,7 @@
 # event: TaskCompleted
 # matcher:
 # description: Before a task is marked complete, runs `cargo clippy --workspace --all-targets -- -D warnings` against the repository's Cargo.toml, or the nearest one above a changed file when the root has none, whenever a Rust file changed in the working tree, the index or as an untracked file, and refuses the completion naming the first error lines, or the output tail when there are none. Rust only.
-# safety: Refuses on any clippy failure and on a git that cannot list the changed set. Claude Code does not block on a hook that outruns its budget, so the budget is that harness's own default for a command hook; a cold build of a large workspace that outruns it completes the task unchecked, and a warm target directory is what keeps this gate closed.
+# safety: Refuses on any clippy failure and on a git that cannot list the changed set. Claude Code does not block on a hook that outruns its budget, so the budget is that harness's own default for a command hook; a cold build of a large workspace that outruns it completes the task unchecked, and a warm target directory is what keeps this gate closed. Refusals carry the line `task-completed-check: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first.
 # timeout: 600
 # harnesses: [claude-code]
 # ---

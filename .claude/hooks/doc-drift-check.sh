@@ -4,7 +4,7 @@
 # event: Stop
 # matcher:
 # description: Shows the user a notice through stdout systemMessage JSON when unchanged documents may need an update after covered code changes. The notice opens with `doc-drift-check: stale=<count>` and lists the documents under it; stdout carries that one object and nothing else. Uses the nearest tracked non-root AGENTS.md and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Every Stop reports independently. Claude Code only.
-# safety: Read-only notice. Always exits 0, including when discovery fails; failures report that the notice is unavailable. Does not parse session payloads or write session state.
+# safety: Read-only notice. Always exits 0, including when discovery fails; failures report that the notice is unavailable. Does not parse session payloads or write session state. Notices carry the line `doc-drift-check: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first. jq keeps its own words, which name why the notice could not be built.
 # timeout: 30
 # harnesses: [claude-code]
 # ---

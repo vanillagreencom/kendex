@@ -4,7 +4,7 @@
 # event: PreToolUse
 # matcher: Edit|MultiEdit|NotebookEdit|Write|Bash
 # description: For a subagent whose agent_type starts with `reviewer-`, refuses every Edit, MultiEdit and NotebookEdit call; a Write whose path lies inside a git work tree unless it is the review artifact, `<dir>/tmp/review-*.json`; and a Bash command that runs `git commit` or `git push` (options between `git` and the verb allowed). Any other agent, and a payload naming no agent_type, passes. Claude Code only, the harness that names the calling subagent in the payload.
-# safety: Reads the payload and asks git whether a path is inside a work tree; writes nothing. A payload it cannot read is refused, never skipped. The refusal names the artifact path a reviewer may write and never suggests bypassing.
+# safety: Reads the payload and asks git whether a path is inside a work tree; writes nothing. A payload it cannot read is refused, never skipped. The refusal names the artifact path a reviewer may write and never suggests bypassing. Refusals carry the line `reviewer-read-only: <key>=<value>`; a reader matches that prefix, not line 1, because a command this hook runs may write its own diagnostic first.
 # timeout: 10
 # harnesses: [claude-code]
 # ---
@@ -78,9 +78,10 @@ for dependency in jq git cat grep dirname; do
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
-# cat keeps its own voice: "Is a directory" names the cause, and the keyed
-# refusal below it names the verdict.
-INPUT=$(cat) || refuse payload unreadable
+# cat's own words add nothing the refusal does not carry: the payload could
+# not be read, and there is no second cause to name. Silencing it keeps the
+# keyed line the only thing this hook writes here.
+INPUT=$(cat 2>/dev/null) || refuse payload unreadable
 
 # One jq read for the strings the decision needs. A payload that does not
 # parse, or whose agent_type or tool_name is not a string, is refused.
