@@ -113,6 +113,29 @@ done <<'SHAPES'
 SHAPES
 [ "$((passed + failed))" -gt "$before" ] || { printf 'FAIL no payload shape was asserted\n'; failed=$((failed + 1)); }
 
+# A cwd the payload names and the hook cannot enter: the value is the path as
+# it was requested, not the empty string the failed probe would leave behind.
+check 2 'git status' 'a cwd that cannot be entered refuses' "$scratch/gone"
+assert_first "command-safety: cwd=$scratch/gone" 'and the value is the path the payload asked for'
+
+# Every external command this hook runs, one world each: without dirname it
+# cannot find its own directory, and the refusal must still open with the key.
+nodirname="$scratch/nodirname"
+mkdir -p "$nodirname"
+for tool in jq git grep cat; do
+  ln -sf "$(command -v "$tool")" "$nodirname/$tool"
+done
+status=0
+out="$(jq -nc --arg cwd "$repo" '{tool_input:{command:"git status"},cwd:$cwd}' \
+  | env -i HOME="$HOME" PATH="$nodirname" "$(command -v bash)" "$hook" 2>&1 >/dev/null)" || status=$?
+if [ "$status" -eq 2 ] && [ "${out%%$'\n'*}" = 'command-safety: missing-tools=dirname' ]; then
+  printf 'PASS without dirname the refusal names it\n'
+  passed=$((passed + 1))
+else
+  printf 'FAIL without dirname the refusal names it: exit %s, first line %s\n' "$status" "${out%%$'\n'*}"
+  failed=$((failed + 1))
+fi
+
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "^other-command$"\n' >"$repo/kendex.settings.toml"
 check 0 'qs -c vshell' 'policy is configured, not tied to Quickshell'
 check 2 'other-command' 'a different project policy takes effect'

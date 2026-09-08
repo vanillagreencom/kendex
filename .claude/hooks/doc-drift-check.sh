@@ -24,9 +24,12 @@ set -euo pipefail
 notice() { # KEY VALUE [DETAIL]
   case "$1" in
     stale)
+      # jq's own diagnostic is dropped: a jq that cannot run leaves the EXIT
+      # trap to say so under its own key, and a notice this hook could not
+      # build is not a line it owns.
       jq -n --arg systemMessage \
         "$(printf 'doc-drift-check: stale=%s\nThese unchanged documents may need an update:\n%sCompared %s\n' \
-          "$2" "$STALE" "$JUDGED")" '{systemMessage: $systemMessage}'
+          "$2" "$STALE" "$JUDGED")" '{systemMessage: $systemMessage}' 2>/dev/null
       ;;
     git)
       {

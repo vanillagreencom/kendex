@@ -61,12 +61,16 @@ refuse() { # KEY VALUE
   exit 2
 }
 
-# jq is the only reader of the payload; git answers whether a path is inside
-# a work tree. Without them the call cannot be judged, and an unjudged call
-# is refused rather than let through. The value names every one of them the PATH is
-# missing, in the order checked.
+# Every external command this hook runs. jq reads the payload and git answers
+# whether a path is inside a work tree; cat hands the payload over, grep decides
+# the Bash arm, and dirname walks up to the nearest existing directory. An
+# unchecked absence is not a stall but a pass: a missing grep makes the
+# git-write test a no-match, and a missing dirname aborts the Write arm on a
+# status the harness runs past. So the whole set is checked before anything is
+# judged, and the value names every one of them the PATH is missing, in the
+# order checked.
 MISSING=""
-for dependency in jq git; do
+for dependency in jq git cat grep dirname; do
   command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"

@@ -46,7 +46,7 @@ refuse() { # KEY VALUE
 # of `||`, which reads the settings loader's guarded probes as failures.
 trap 'rc=$?; case $rc in 0 | 2) ;; *) refuse exit "$rc" ;; esac' EXIT
 MISSING=""
-for dependency in jq git grep cat; do
+for dependency in jq git grep cat dirname; do
   command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
@@ -68,7 +68,11 @@ command_text="$(jq -r '
 [ -n "$command_text" ] || exit 0
 cwd="$(jq -r 'if .cwd == null then "" elif .cwd | type == "string" then .cwd else error("invalid cwd") end' <<<"$input" 2>/dev/null)" || refuse payload invalid-cwd
 [ -n "$cwd" ] || cwd="$PWD"
-cwd="$(cd -- "$cwd" && pwd -P)" || refuse cwd "$cwd"
+# The requested path is kept: the assignment below takes the substitution's
+# empty output when the directory cannot be entered, so the refusal would name
+# nothing. cd's own diagnostic is dropped for the same reason the others are.
+requested_cwd="$cwd"
+cwd="$(cd -- "$cwd" 2>/dev/null && pwd -P)" || refuse cwd "$requested_cwd"
 root_status=0
 root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" || root_status=$?
 if [ "$root_status" -ne 0 ]; then
@@ -111,7 +115,7 @@ GG_CHECK=command-safety
 source "$lib/common.sh"
 # shellcheck source=../skills/commit-guards/scripts/lib/settings.sh
 source "$lib/settings.sh"
-cd -- "$root" || refuse cwd "$root"
+cd -- "$root" 2>/dev/null || refuse cwd "$root"
 # The loader's own diagnostic is dropped so the refusal's keyed line is the
 # first line of this hook's stderr; the same settings error reaches the author
 # from the commit-guards chain, which reads the file on every commit.

@@ -204,17 +204,30 @@ assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: git=unrea
   "a git failure that is not 'not a git repository' refuses the write"
 assert_contains "$(cat "$TMP_ROOT/stderr")" "unable to read the repository configuration" "carries git's own failure"
 
-echo "reviewer-read-only: without the tools that read the payload"
-NOJQ_BIN="$TMP_ROOT/nojq"
-mkdir -p "$NOJQ_BIN"
-for tool in cat sed grep dirname git; do
-  real="$(type -P "$tool" 2>/dev/null || true)"
-  [ -n "$real" ] && [ -x "$real" ] || continue
-  ln -sf "$real" "$NOJQ_BIN/$tool"
-done
-run_payload '{"agent_type":"generalist","tool_name":"Edit","tool_input":{"file_path":"x"}}' "$NOJQ_BIN"
-assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: missing-tools=jq" \
-  "no jq refuses rather than guessing at the payload, whoever the agent is, and names it"
+echo "reviewer-read-only: without the tools it runs"
+# One world per declared dependency, each holding every other tool and not
+# that one: the refusal names the missing tool and nothing is judged without
+# it. A row per tool is what keeps the inventory honest — an absent grep does
+# not stall this hook, it passes the call through.
+tools_table() { # TOOLS
+  local tool other bin before=$((PASS + FAIL))
+  for tool in $1; do
+    bin="$TMP_ROOT/without-$tool"
+    rm -rf -- "$bin"
+    mkdir -p "$bin"
+    for other in $1; do
+      [ "$other" != "$tool" ] || continue
+      real="$(type -P "$other" 2>/dev/null || true)"
+      [ -n "$real" ] && [ -x "$real" ] || continue
+      ln -sf "$real" "$bin/$other"
+    done
+    run_payload '{"agent_type":"generalist","tool_name":"Edit","tool_input":{"file_path":"x"}}' "$bin"
+    assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: missing-tools=$tool" \
+      "without $tool the call is refused, and the value names it"
+  done
+  [ "$((PASS + FAIL))" -gt "$before" ] || { echo "tools: no row was asserted" >&2; exit 2; }
+}
+tools_table "jq git cat grep dirname"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

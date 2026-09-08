@@ -33,7 +33,11 @@ HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/reviewer-stop-check.sh}"
 
 PASS=0
 FAIL=0
-TMP_ROOT="$(mktemp -d)"
+# Physical, not as mktemp spelled it: git reports a canonical
+# --show-toplevel, so on a host whose temp root is a symlink (macOS, where
+# /var is /private/var) a logical fixture path would never equal the value the
+# hook prints.
+TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 BASH_BIN="$(command -v bash)"
 ERR_FILE="$TMP_ROOT/stderr"
@@ -257,6 +261,20 @@ run_hook "$T" reviewer-test e2
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: git=rev-parse --git-common-dir" \
   "outside any repository the block cannot be recorded and the probe is the value"
 
+echo "reviewer-stop-check: the marker cannot be recorded"
+# A git directory the hook may read and not write: mkdir and the redirection
+# both fail there, and each writes its own diagnostic, so this is the row that
+# holds the keyed line first on that path.
+REPO="$(new_repo unwritable)"
+T="$(transcript_for "$REPO")"
+: >"$REPO/probe.sh"
+chmod -w "$REPO/.git"
+run_hook "$T" reviewer-test m1
+chmod +w "$REPO/.git"
+assert_eq "rc=$rc first=$(first_line)" \
+  "rc=2 first=reviewer-stop-check: marker=$REPO/.git/kendex/reviewer-stop/m1" \
+  "a marker it cannot record refuses, and the value is the path"
+
 echo "reviewer-stop-check: a payload or transcript it cannot read refuses"
 REPO="$(new_repo bad)"
 T="$(transcript_for "$REPO")"
@@ -307,16 +325,29 @@ assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: git=stat
 assert_contains "$(cat "$TMP_ROOT/stderr")" "unable to read index" "carries git's own failure"
 
 echo "reviewer-stop-check: without jq"
-NOJQ_BIN="$TMP_ROOT/nojq"
-mkdir -p "$NOJQ_BIN"
-for tool in cat sed grep tail dirname git; do
-  real="$(type -P "$tool" 2>/dev/null || true)"
-  [ -n "$real" ] && [ -x "$real" ] || continue
-  ln -sf "$real" "$NOJQ_BIN/$tool"
-done
-run_payload "{\"agent_type\":\"generalist\",\"agent_id\":\"h1\",\"transcript_path\":\"$T\"}" "$NOJQ_BIN"
-assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: missing-tools=jq" \
-  "no jq refuses rather than guessing at the payload, and names it"
+# One world per declared dependency, each holding every other tool and not
+# that one: the refusal names the missing tool and nothing is judged without
+# it. A row per tool is what keeps the inventory honest — an absent tail does
+# not stall this hook, it passes the call through.
+tools_table() { # TOOLS
+  local tool other bin before=$((PASS + FAIL))
+  for tool in $1; do
+    bin="$TMP_ROOT/without-$tool"
+    rm -rf -- "$bin"
+    mkdir -p "$bin"
+    for other in $1; do
+      [ "$other" != "$tool" ] || continue
+      real="$(type -P "$other" 2>/dev/null || true)"
+      [ -n "$real" ] && [ -x "$real" ] || continue
+      ln -sf "$real" "$bin/$other"
+    done
+    run_payload '{"agent_type":"generalist","agent_id":"h1","transcript_path":"/nonexistent"}' "$bin"
+    assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: missing-tools=$tool" \
+      "without $tool the call is refused, and the value names it"
+  done
+  [ "$((PASS + FAIL))" -gt "$before" ] || { echo "tools: no row was asserted" >&2; exit 2; }
+}
+tools_table "jq git cat grep tail mkdir"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

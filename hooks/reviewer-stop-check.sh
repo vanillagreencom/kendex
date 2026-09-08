@@ -69,10 +69,15 @@ refuse() { # KEY VALUE [DETAIL]
   exit 2
 }
 
-# jq reads the payload and git answers for the worktree. The value names every
-# one of them the PATH is missing, in the order checked.
+# Every external command this hook runs. jq reads the payload and git answers
+# for the worktree; cat hands the payload over, grep finds the artifact paths in
+# the transcript, tail takes the newest, and mkdir records the marker. An
+# unchecked absence is not a stall but a pass: a missing tail aborts the
+# artifact assignment on a status the harness runs past. So the whole set is
+# checked before anything is judged, and the value names every one of them the
+# PATH is missing, in the order checked.
 MISSING=""
-for dependency in jq git; do
+for dependency in jq git cat grep tail mkdir; do
   command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
@@ -130,7 +135,9 @@ record_and_block() { # KEY VALUE
   if [ -e "$MARKER" ]; then
     exit 0
   fi
-  if ! mkdir -p -- "$MARKER_DIR" || ! : >"$MARKER"; then
+  # Both probes write their own diagnostic on failure, and it would stand
+  # ahead of the keyed line; the refusal below is what names the path.
+  if ! mkdir -p -- "$MARKER_DIR" 2>/dev/null || ! : >"$MARKER" 2>/dev/null; then
     refuse marker "$MARKER"
   fi
   refuse "$1" "$2"
