@@ -1,349 +1,127 @@
-// Orphan-running liveness watcher tests.
-//
-// Scenario: Pi dies, bg_task keeps running. On restart, restoredTaskFromSnapshot
-// rehydrates the task as `running` because kill -0 still reports the pid
-// alive (child handle is gone). Without a watcher, no `exit` event ever
-// fires when the orphan eventually dies and the silent stall returns.
-//
-// These tests drive createOrphanWatcher with a deterministic
-// isProcessAlive + clock and assert that:
-//   1. checkOnce skips tasks with live pids.
-//   2. checkOnce finalizes + emits a canonical exit event when the pid
-//      transitions alive -> dead between polls.
-//   3. Tasks that are not orphan-running (still has child handle, or
-//      already terminal) are ignored.
-//   4. Multiple orphans across a single check are all finalized.
+import { expect, test } from "bun:test";
+import { createOrphanWatcher } from "../extensions/orphan-watcher.js";
+import type { BackgroundTaskStatus, BackgroundTaskTerminationReason, ManagedTask, ProcessIdentity } from "../extensions/types.js";
+import { fakeIdent, recordingHooks } from "./fixtures/lifecycle.js";
+import { orphanTask } from "./fixtures/orphan-watcher.js";
 
-import { describe, expect, test } from "bun:test";
-import { createOrphanWatcher, isOrphanRunning } from "../extensions/orphan-watcher.js";
-import type { LifecycleHooks } from "../extensions/lifecycle.js";
-import type { BackgroundTaskSnapshot, ManagedTask, ProcessIdentity, TaskEventType } from "../extensions/types.js";
-
-function fakeIdent(pid: number, overrides: Partial<ProcessIdentity> = {}): ProcessIdentity {
-	return { pid, startToken: `start-${pid}`, comm: "approval-wait", ...overrides };
+type TaskState = [string, BackgroundTaskStatus, number | null, boolean | undefined, boolean, BackgroundTaskTerminationReason | undefined];
+type Event = [string, BackgroundTaskTerminationReason];
+type Finalized = [string, "pid-gone" | "pid-reused"];
+interface Poll {
+	identities: Record<number, ProcessIdentity | null>;
+	expected: { finalized: number; states: TaskState[]; events: Event[]; callbacks: Finalized[]; hooks: [number, number, number, number] };
 }
+interface WatcherRow { name: string; tasks: Partial<ManagedTask>[]; polls: Poll[] }
 
-function fakeSnapshot(overrides: Partial<BackgroundTaskSnapshot> = {}): BackgroundTaskSnapshot {
-	const defaultPid = overrides.pid ?? 2409160;
-	return {
-		command: "approval-wait 81",
-		cwd: "/tmp/worktree",
-		exitCode: null,
-		exitNotified: false,
-		expiresAt: null,
-		id: "bg-3",
-		lastOutputAt: null,
-		logFile: "/tmp/log.txt",
-		notifyOnExit: true,
-		notifyOnOutput: false,
-		notifyPattern: undefined,
-		outputBytes: 0,
-		pid: defaultPid,
-		procIdent: fakeIdent(defaultPid),
-		sessionId: "sess-1",
-		startedAt: 1_700_000_000_000,
-		status: "running",
-		title: "bot review wait PR 81",
-		updatedAt: 1_700_000_000_000,
-		...overrides,
-	};
-}
+const rows: WatcherRow[] = [
+	{
+		name: "matching live identity stays running",
+		tasks: [{ id: "bg-1", pid: 4242 }],
+		polls: [{ identities: { 4242: fakeIdent(4242) }, expected: { finalized: 0, states: [["bg-1", "running", null, false, false, undefined]], events: [], callbacks: [], hooks: [0, 0, 0, 0] } }],
+	},
+	{
+		name: "dead pid finalizes with pid-gone callback and termination annotation",
+		tasks: [{ id: "bg-1", pid: 4242 }],
+		polls: [{ identities: { 4242: null }, expected: { finalized: 1, states: [["bg-1", "failed", null, true, true, "orphaned-pid-gone"]], events: [["bg-1", "orphaned-pid-gone"]], callbacks: [["bg-1", "pid-gone"]], hooks: [2, 2, 1, 1] } }],
+	},
+	{
+		name: "exec changes comm but keeps original pid and start token",
+		tasks: [{ id: "bg-bash-exec", pid: 4242, command: "/bin/bash -lc 'sleep 5'", procIdent: { pid: 4242, startToken: "19283746", comm: "bash" } }],
+		polls: [{ identities: { 4242: { pid: 4242, startToken: "19283746", comm: "sleep" } }, expected: { finalized: 0, states: [["bg-bash-exec", "running", null, false, false, undefined]], events: [], callbacks: [], hooks: [0, 0, 0, 0] } }],
+	},
+	{
+		name: "reused pid finalizes with pid-reused callback and termination annotation",
+		tasks: [{ id: "bg-3", pid: 12345, command: "approval-wait 81", procIdent: fakeIdent(12345) }],
+		polls: [{ identities: { 12345: { ...fakeIdent(12345), startToken: "start-RECYCLED", comm: "unrelated" } }, expected: { finalized: 1, states: [["bg-3", "failed", null, true, true, "orphaned-pid-reused"]], events: [["bg-3", "orphaned-pid-reused"]], callbacks: [["bg-3", "pid-reused"]], hooks: [2, 2, 1, 1] } }],
+	},
+	{
+		name: "matching first poll then reused pid",
+		tasks: [{ id: "bg-3", pid: 12345, procIdent: fakeIdent(12345) }],
+		polls: [
+			{ identities: { 12345: fakeIdent(12345) }, expected: { finalized: 0, states: [["bg-3", "running", null, false, false, undefined]], events: [], callbacks: [], hooks: [0, 0, 0, 0] } },
+			{ identities: { 12345: { ...fakeIdent(12345), startToken: "start-RECYCLED", comm: "unrelated" } }, expected: { finalized: 1, states: [["bg-3", "failed", null, true, true, "orphaned-pid-reused"]], events: [["bg-3", "orphaned-pid-reused"]], callbacks: [["bg-3", "pid-reused"]], hooks: [2, 2, 1, 1] } },
+		],
+	},
+	{
+		name: "matching first poll then dead pid",
+		tasks: [{ id: "bg-3", pid: 4242, notifyOnExit: true }],
+		polls: [
+			{ identities: { 4242: fakeIdent(4242) }, expected: { finalized: 0, states: [["bg-3", "running", null, false, false, undefined]], events: [], callbacks: [], hooks: [0, 0, 0, 0] } },
+			{ identities: { 4242: null }, expected: { finalized: 1, states: [["bg-3", "failed", null, true, true, "orphaned-pid-gone"]], events: [["bg-3", "orphaned-pid-gone"]], callbacks: [["bg-3", "pid-gone"]], hooks: [2, 2, 1, 1] } },
+		],
+	},
+	{
+		name: "mixed non-orphan and dead orphan tasks",
+		tasks: [{ id: "bg-running-child", restored: false }, { id: "bg-already-terminal", status: "completed", exitCode: 0 }, { id: "bg-orphan-dead", pid: 4242 }],
+		polls: [{ identities: { 2409160: null, 4242: null }, expected: {
+			finalized: 1,
+			states: [["bg-running-child", "running", null, false, false, undefined], ["bg-already-terminal", "completed", 0, false, false, undefined], ["bg-orphan-dead", "failed", null, true, true, "orphaned-pid-gone"]],
+			events: [["bg-orphan-dead", "orphaned-pid-gone"]], callbacks: [["bg-orphan-dead", "pid-gone"]], hooks: [2, 2, 1, 1],
+		} }],
+	},
+	{
+		name: "multiple dead orphans finalize in task order",
+		tasks: [{ id: "bg-1", pid: 1111 }, { id: "bg-2", pid: 2222 }, { id: "bg-3", pid: 3333 }],
+		polls: [{ identities: { 1111: null, 2222: null, 3333: null }, expected: {
+			finalized: 3,
+			states: [["bg-1", "failed", null, true, true, "orphaned-pid-gone"], ["bg-2", "failed", null, true, true, "orphaned-pid-gone"], ["bg-3", "failed", null, true, true, "orphaned-pid-gone"]],
+			events: [["bg-1", "orphaned-pid-gone"], ["bg-2", "orphaned-pid-gone"], ["bg-3", "orphaned-pid-gone"]],
+			callbacks: [["bg-1", "pid-gone"], ["bg-2", "pid-gone"], ["bg-3", "pid-gone"]], hooks: [6, 6, 3, 3],
+		} }],
+	},
+	{
+		name: "finalized orphan has no effects on subsequent poll",
+		tasks: [{ id: "bg-1", pid: 4242 }],
+		polls: [
+			{ identities: { 4242: null }, expected: { finalized: 1, states: [["bg-1", "failed", null, true, true, "orphaned-pid-gone"]], events: [["bg-1", "orphaned-pid-gone"]], callbacks: [["bg-1", "pid-gone"]], hooks: [2, 2, 1, 1] } },
+			{ identities: { 4242: null }, expected: { finalized: 0, states: [["bg-1", "failed", null, true, true, "orphaned-pid-gone"]], events: [["bg-1", "orphaned-pid-gone"]], callbacks: [["bg-1", "pid-gone"]], hooks: [2, 2, 1, 1] } },
+		],
+	},
+	{
+		name: "no recorded identity uses current pid liveness",
+		tasks: [{ id: "bg-legacy", pid: 4242, procIdent: undefined }],
+		polls: [{ identities: { 4242: fakeIdent(4242) }, expected: { finalized: 0, states: [["bg-legacy", "running", null, false, false, undefined]], events: [], callbacks: [], hooks: [0, 0, 0, 0] } }],
+	},
+];
 
-function orphanTask(overrides: Partial<ManagedTask> = {}): ManagedTask {
-	const snapshot = fakeSnapshot(overrides);
-	return {
-		...snapshot,
-		child: null,
-		closed: false,
-		forceKillTimer: null,
-		lastAnnouncedLength: 0,
-		matcher: null,
-		output: "",
-		outputTimer: null,
-		stopReason: null,
-		timeoutTimer: null,
-		restored: true,
-		...overrides,
-	};
-}
-
-function recordingHooks(): LifecycleHooks & { events: { type: TaskEventType; task: ManagedTask }[]; persists: number } {
-	const events: { type: TaskEventType; task: ManagedTask }[] = [];
-	let persists = 0;
-	const hooks: LifecycleHooks = {
-		rememberSnapshot: (task) => ({ ...task }),
-		persistSnapshots: () => { persists += 1; return { appendEntry: true, sidecar: true }; },
-		sendTaskEvent: (type, task) => { events.push({ type, task }); return true; },
-		refreshUi: () => {},
-		clearTaskTimers: () => {},
-	};
-	return Object.assign(hooks, { events, get persists() { return persists; } });
-}
-
-describe("isOrphanRunning", () => {
-	test("alive restored running task with valid pid → true", () => {
-		expect(isOrphanRunning(orphanTask({ pid: 4242 }))).toBe(true);
-	});
-
-	test("non-restored task → false (in-process child still owns it)", () => {
-		const task = orphanTask({ restored: false });
-		expect(isOrphanRunning(task)).toBe(false);
-	});
-
-	test("terminal status → false", () => {
-		expect(isOrphanRunning(orphanTask({ status: "stopped" }))).toBe(false);
-	});
-
-	test("task with live child handle → false (in-session, not orphan)", () => {
-		const task = orphanTask();
-		(task as ManagedTask).child = {} as ManagedTask["child"];
-		expect(isOrphanRunning(task)).toBe(false);
-	});
-
-	test("invalid pid → false", () => {
-		expect(isOrphanRunning(orphanTask({ pid: 0 }))).toBe(false);
-		expect(isOrphanRunning(orphanTask({ pid: -1 }))).toBe(false);
-	});
-});
-
-// Identity probe stubs: null = pid gone, returning an identity = pid
-// alive. Tests parameterize identity (startToken/comm) to model
-// PID-reuse where the kernel handed the same pid to an unrelated
-// process.
-const probeDead = () => null;
-const probeAliveSame = (pid: number) => fakeIdent(pid);
-const probeAliveReused = (pid: number) => fakeIdent(pid, { startToken: "start-RECYCLED", comm: "unrelated" });
-
-describe("createOrphanWatcher.checkOnce", () => {
-	test("alive pid + identity match → no finalize", () => {
-		const hooks = recordingHooks();
-		const tasks = [orphanTask({ id: "bg-1", pid: 4242 })];
+test("orphan watcher poll outcomes", () => {
+	expect.assertions(rows.length + 1);
+	expect(rows.length, "orphan watcher table must contain rows").toBeGreaterThan(0);
+	for (const row of rows) {
+		const tasks = row.tasks.map((task) => orphanTask(task));
+		const recorder = recordingHooks();
+		let identities: Poll["identities"] = {};
+		const callbacks: { id: string; reason: "pid-gone" | "pid-reused"; sameTask: boolean }[] = [];
 		const watcher = createOrphanWatcher({
-			getTasks: () => tasks,
-			hooks,
-			identityProbe: probeAliveSame,
+			getTasks: () => tasks, hooks: recorder.hooks,
+			identityProbe(pid) {
+				const identity = identities[pid];
+				if (identity === undefined) throw new Error(`unexpected identity probe for ${pid}`);
+				return identity;
+			},
+			unitActiveProbe() { throw new Error("unexpected systemd unit probe"); },
+			setIntervalFn() { throw new Error("checkOnce must not arm a timer"); },
+			clearIntervalFn() { throw new Error("checkOnce must not clear an interval"); },
+			onFinalize(task, reason) { callbacks.push({ id: task.id, reason, sameTask: tasks.includes(task) }); },
 		});
-		const result = watcher.checkOnce();
-		expect(result.finalized).toBe(0);
-		expect(hooks.events).toHaveLength(0);
-		expect(tasks[0]?.status).toBe("running");
-	});
-
-	test("dead pid → finalize + emit canonical exit event", () => {
-		const hooks = recordingHooks();
-		const tasks = [orphanTask({ id: "bg-1", pid: 4242 })];
-		let seenReason: string | null = null;
-		const watcher = createOrphanWatcher({
-			getTasks: () => tasks,
-			hooks,
-			identityProbe: probeDead,
-			onFinalize: (_, reason) => { seenReason = reason; },
-		});
-		const result = watcher.checkOnce();
-		expect(result.finalized).toBe(1);
-		expect(seenReason).toBe("pid-gone");
-		expect(tasks[0]?.status).toBe("failed");
-		expect(tasks[0]?.exitCode).toBeNull();
-		expect(tasks[0]?.exitNotified).toBe(true);
-		expect(hooks.events).toHaveLength(1);
-		expect(hooks.events[0]?.type).toBe("exit");
-	});
-
-	test("comm drift (bash -lc 'sleep N') → still running, no finalize", () => {
-		// A typical workload is /bin/bash -lc "sleep 5". After the shell exec(2)s the target
-		// the pid and start time stay identical but /proc/<pid>/comm
-		// rotates "bash" -> "sleep". The watcher must rely on startToken
-		// only, NOT comm, or it will falsely finalize a live task.
-		const hooks = recordingHooks();
-		const task = orphanTask({
-			id: "bg-bash-exec",
-			pid: 4242,
-			command: "/bin/bash -lc 'sleep 5'",
-			procIdent: { pid: 4242, startToken: "19283746", comm: "bash" },
-		});
-		const watcher = createOrphanWatcher({
-			getTasks: () => [task],
-			hooks,
-			identityProbe: (pid: number) => ({ pid, startToken: "19283746", comm: "sleep" }),
-		});
-		const result = watcher.checkOnce();
-		expect(result.finalized).toBe(0);
-		expect(hooks.events).toHaveLength(0);
-		expect(task.status).toBe("running");
-	});
-
-	test("PID reuse: alive pid with mismatched startToken → finalize with pid-reused reason", () => {
-		// The orphan exited before the OS reused PID 12345 for an
-		// unrelated process (different start time). Bare kill -0 would
-		// call it alive; startToken comparison detects the reuse and
-		// treats the original task as gone.
-		const hooks = recordingHooks();
-		const tasks = [orphanTask({
-			id: "bg-3",
-			pid: 12345,
-			command: "approval-wait 81",
-			procIdent: fakeIdent(12345),
-		})];
-		let seenReason: string | null = null;
-		const watcher = createOrphanWatcher({
-			getTasks: () => tasks,
-			hooks,
-			identityProbe: probeAliveReused,
-			onFinalize: (_, reason) => { seenReason = reason; },
-		});
-		const result = watcher.checkOnce();
-		expect(result.finalized).toBe(1);
-		expect(seenReason).toBe("pid-reused");
-		expect(tasks[0]?.status).toBe("failed");
-		expect(tasks[0]?.exitNotified).toBe(true);
-		expect(hooks.events).toHaveLength(1);
-		expect(hooks.events[0]?.task.id).toBe("bg-3");
-	});
-
-	test("PID reuse mid-poll: orphan exits, then identity mismatch on next poll → finalize", () => {
-		// Mirrors the kernel race the MAJOR fix targets: poll 1 sees the
-		// original orphan alive (identity matches). Between poll 1 and
-		// poll 2, the orphan exits and the OS hands PID 12345 to an
-		// unrelated process. Poll 2 sees kill -0 return alive, but the
-		// identity probe returns a different startToken/comm — we detect
-		// reuse and finalize.
-		const hooks = recordingHooks();
-		const tasks = [orphanTask({ id: "bg-3", pid: 12345, procIdent: fakeIdent(12345) })];
-		let reused = false;
-		const watcher = createOrphanWatcher({
-			getTasks: () => tasks,
-			hooks,
-			identityProbe: (pid: number) => reused ? probeAliveReused(pid) : probeAliveSame(pid),
-		});
-
-		const first = watcher.checkOnce();
-		expect(first.finalized).toBe(0);
-		expect(hooks.events).toHaveLength(0);
-
-		reused = true;
-		const second = watcher.checkOnce();
-		expect(second.finalized).toBe(1);
-		expect(hooks.events).toHaveLength(1);
-		expect(hooks.events[0]?.task.id).toBe("bg-3");
-		expect(tasks[0]?.exitNotified).toBe(true);
-	});
-
-	test("Pi-died scenario: orphan stays alive across polls then dies", () => {
-		const hooks = recordingHooks();
-		const tasks = [orphanTask({ id: "bg-3", pid: 4242, notifyOnExit: true })];
-		let alive = true;
-		const watcher = createOrphanWatcher({
-			getTasks: () => tasks,
-			hooks,
-			identityProbe: (pid: number) => alive ? probeAliveSame(pid) : null,
-		});
-
-		const first = watcher.checkOnce();
-		expect(first.finalized).toBe(0);
-		expect(hooks.events).toHaveLength(0);
-
-		alive = false;
-		const second = watcher.checkOnce();
-		expect(second.finalized).toBe(1);
-		expect(hooks.events).toHaveLength(1);
-		expect(hooks.events[0]?.task.id).toBe("bg-3");
-		expect(tasks[0]?.exitNotified).toBe(true);
-	});
-
-	test("non-orphan tasks are ignored", () => {
-		const hooks = recordingHooks();
-		const tasks = [
-			orphanTask({ id: "bg-running-child", restored: false }),
-			orphanTask({ id: "bg-already-terminal", status: "completed", exitCode: 0 }),
-			orphanTask({ id: "bg-orphan-dead", pid: 4242 }),
-		];
-		const watcher = createOrphanWatcher({
-			getTasks: () => tasks,
-			hooks,
-			identityProbe: probeDead,
-		});
-		const result = watcher.checkOnce();
-		expect(result.finalized).toBe(1);
-		expect(hooks.events[0]?.task.id).toBe("bg-orphan-dead");
-	});
-
-	test("multiple orphans dead at the same time all finalize", () => {
-		const hooks = recordingHooks();
-		const tasks = [
-			orphanTask({ id: "bg-1", pid: 1111 }),
-			orphanTask({ id: "bg-2", pid: 2222 }),
-			orphanTask({ id: "bg-3", pid: 3333 }),
-		];
-		const watcher = createOrphanWatcher({
-			getTasks: () => tasks,
-			hooks,
-			identityProbe: probeDead,
-		});
-		const result = watcher.checkOnce();
-		expect(result.finalized).toBe(3);
-		expect(hooks.events.map((e) => e.task.id)).toEqual(["bg-1", "bg-2", "bg-3"]);
-		for (const task of tasks) {
-			expect(task.exitNotified).toBe(true);
+		const observed = [];
+		for (const poll of row.polls) {
+			identities = poll.identities;
+			const { finalized } = watcher.checkOnce();
+			const hooks = recorder.observe(tasks);
+			// Store primitive task fields before a later poll changes the task.
+			observed.push({
+				finalized,
+				states: tasks.map((task) => [task.id, task.status, task.exitCode, task.exitNotified, task.closed, task.terminationReason]),
+				events: hooks.events,
+				callbacks: callbacks.map((callback) => ({ ...callback })),
+				hooks: [hooks.persists, hooks.remembers, hooks.refreshes, hooks.timerClears],
+			});
 		}
-	});
-
-	test("idempotent: once finalized, subsequent checkOnce does nothing", () => {
-		const hooks = recordingHooks();
-		const tasks = [orphanTask({ id: "bg-1", pid: 4242 })];
-		const watcher = createOrphanWatcher({
-			getTasks: () => tasks,
-			hooks,
-			identityProbe: probeDead,
-		});
-		expect(watcher.checkOnce().finalized).toBe(1);
-		expect(watcher.checkOnce().finalized).toBe(0);
-		expect(hooks.events).toHaveLength(1);
-	});
-
-	test("orphan with no procIdent degrades to PID-only liveness", () => {
-		const hooks = recordingHooks();
-		const task = orphanTask({ id: "bg-legacy", pid: 4242 });
-		delete (task as Partial<ManagedTask>).procIdent;
-		const watcher = createOrphanWatcher({
-			getTasks: () => [task],
-			hooks,
-			identityProbe: probeAliveSame,
-		});
-		expect(watcher.checkOnce().finalized).toBe(0);
-	});
-});
-
-describe("createOrphanWatcher start/stop", () => {
-	test("start arms an interval; stop cancels it", () => {
-		const hooks = recordingHooks();
-		let armed = false;
-		let cleared = false;
-		const watcher = createOrphanWatcher({
-			getTasks: () => [],
-			hooks,
-			identityProbe: probeDead,
-			pollMs: 5_000,
-			setIntervalFn: () => { armed = true; return { unref: () => {} } as unknown as NodeJS.Timeout; },
-			clearIntervalFn: () => { cleared = true; },
-		});
-		watcher.start();
-		expect(armed).toBe(true);
-		watcher.stop();
-		expect(cleared).toBe(true);
-	});
-
-	test("start is idempotent (second start does not arm a second timer)", () => {
-		const hooks = recordingHooks();
-		let armCount = 0;
-		const watcher = createOrphanWatcher({
-			getTasks: () => [],
-			hooks,
-			pollMs: 5_000,
-			setIntervalFn: () => { armCount += 1; return { unref: () => {} } as unknown as NodeJS.Timeout; },
-			clearIntervalFn: () => {},
-		});
-		watcher.start();
-		watcher.start();
-		expect(armCount).toBe(1);
-	});
+		expect(observed, row.name).toStrictEqual(row.polls.map(({ expected }) => ({
+			...expected,
+			events: expected.events.map(([id, reason]) => ({ id, reason, type: "exit", sameTask: true })),
+			callbacks: expected.callbacks.map(([id, reason]) => ({ id, reason, sameTask: true })),
+		})));
+	}
 });
