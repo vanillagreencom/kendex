@@ -1,3 +1,7 @@
+// Text contract: pi-claude-bridge/src/prompt-context.ts selects the block
+// starting with "You MUST respond in caveman " and splits blocks on blank
+// lines. Keep the active prompt in one block. tests/unit-instructions.ts
+// pins the entire text passed through that parser to the model.
 // Pure prompt-rendering logic for pi-caveman. Kept free of pi-coding-agent
 // imports so it can be unit-tested without a Pi runtime. Settings reads are
 // driven by `cwd` plus the `PI_CODING_AGENT_DIR` env var, exactly as pi-core
