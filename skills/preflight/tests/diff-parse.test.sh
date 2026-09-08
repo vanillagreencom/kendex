@@ -270,7 +270,7 @@ control: the added dead citation fires with no attributes row|attrs-none|--stage
 --staged still reads the added line under a '-diff' row|attrs-nodiff|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 the 'binary' attribute macro cannot withhold them either|attrs-macro|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 --base still reads the added line under a '-diff' row|attrs-base|-|-|1|docs/staged.md:3: [docs-cited-paths]|-
-a changed file whose own bytes are binary contributes no lines|binary-nul|--staged|-|0|-|preflight: clean (1 changed file(s))
+a changed file whose own bytes are binary contributes no lines|binary-nul|--staged|-|0|-|preflight: clean=1
 control: the same bytes without the NUL are read as text|binary-nonul|--staged|-|1|docs/staged.md:1: [docs-cited-paths]|-
 a NUL past the leading 8000 bytes leaves the file text, as it is to git|binary-window|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
 a binary file still reaches the whole-file lanes; only its lines are withheld|binary-wholefile-nul|--staged|-|1|tests/new.test.sh:0: [unwired-suite]|-

@@ -196,7 +196,7 @@ the staged scope sees the same edit|migrationedit|--staged|-|1|store/migrations/
 Flyway's own directory is in the default set|migrationflyway|-|-|1|src/main/resources/db/migration/V1__init.sql:0: [applied-migration-edited]|an applied migration was edited
 deleting one is the same finding|migrationdelete|-|-|1|store/migrations/V1__init.sql:0: [applied-migration-edited]|an applied migration was deleted
 renaming one names where it went|migrationrename|-|-|1|store/migrations/V2__more.sql:0: [applied-migration-edited]|an applied migration was renamed to store/migrations/V2__later.sql
-the verdict line counts findings and changed files|verdict|-|-|1|docs/guide.md:5: [docs-cited-paths];docs/guide.md:6: [docs-cited-paths]|preflight: 2 finding(s) across 1 changed file(s)
+the verdict line counts findings and changed files|verdict|-|-|1|docs/guide.md:5: [docs-cited-paths];docs/guide.md:6: [docs-cited-paths]|preflight: findings=2
 ROWS
 pf_table "every lane's must-fail control" "$rows"
 

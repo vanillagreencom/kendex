@@ -167,10 +167,15 @@ not change the exit status.
 
 Output protocol, which callers and this package's suites parse:
   finding   path:line: [lane] message      line 0 for a whole-file finding
-  verdict   preflight: clean (N changed file(s))          on a clean run
-            preflight: N finding(s) across M changed file(s)   with findings
+  verdict   preflight: clean=N              N changed files, no findings
+            preflight: findings=N           N findings
+            Each carries its English count on the next line, and a run with
+            skipped lanes adds `preflight: not-run=lane,lane` as its own
+            record.
   refusal   preflight: key=value           first line, on stderr, exit 2
   not-run   preflight: not-run=lane        first line, per skipped lane
+            A value carrying a newline or a tab has it escaped as the two
+            characters \n or \t, so a record is always one line.
             Both carry their English explanation on the next line, which is
             for a person and is not part of the contract.
 The suites assert this whole protocol: the finding heads row by row through
@@ -191,7 +196,13 @@ EOF
 # sentence.
 env_error() { # KEY VALUE EXPLANATION...
   pf_key="$1"
-  pf_value="$2"
+  # The value goes into a line-oriented record, and some conditions refused
+  # here are ABOUT a path holding a newline or a tab: written raw, such a
+  # value would split the record that carries it. Both are escaped here, in
+  # the one place a value is formatted, so one refusal is always one first
+  # line and the reader sees the two characters rather than the byte.
+  pf_value="${2//$'\n'/\\n}"
+  pf_value="${pf_value//$'\t'/\\t}"
   shift 2
   printf 'preflight: %s=%s\n' "$pf_key" "$pf_value" >&2
   printf '%s\n' "$*" >&2
@@ -310,11 +321,17 @@ content_is_binary() { # CONTENT-PATH PATH — 0 when git would call the content 
 # is judged on content by the verdict below, before the patch is taken.
 git_diff() { git -c core.quotePath=false -c diff.noprefix=false -c diff.mnemonicPrefix=false diff --no-ext-diff --no-textconv --text "$@"; }
 
-resolve_base() { # -> merge-base commit on stdout; nonzero when none resolves
+# Runs inside a command substitution, so it must NOT refuse: an `exit` there
+# ends only the subshell and the caller would refuse a second time, printing
+# two records for one condition. It reports the condition through its status
+# and the caller emits the single refusal.
+#   0 a base is on stdout    2 the named ref does not resolve
+#   1 no default candidate   3 the named ref shares no merge base
+resolve_base() { # -> merge-base commit on stdout; nonzero names the condition
   local cand base
   if [ -n "$BASE_REF" ]; then
-    git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null || env_error base-ref "$BASE_REF" "the ref does not resolve to a commit in this repository"
-    base="$(git merge-base HEAD "$BASE_REF" 2>/dev/null)" || env_error merge-base "$BASE_REF" "HEAD and this ref share no merge base, so there is no range to read"
+    git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null || return 2
+    base="$(git merge-base HEAD "$BASE_REF" 2>/dev/null)" || return 3
     printf '%s' "$base"
     return 0
   fi
@@ -340,7 +357,14 @@ case "$MODE" in
     ;;
   base)
     git rev-parse --verify --quiet HEAD >/dev/null || env_error no-commits base "the repository has no commits; pass --all"
-    BASE="$(resolve_base)" || env_error base-unresolved "origin/HEAD,origin/main,main" "none of these resolved; pass --base REF or --all"
+    base_status=0
+    BASE="$(resolve_base)" || base_status=$?
+    case "$base_status" in
+      0) ;;
+      2) env_error base-ref "$BASE_REF" "the ref does not resolve to a commit in this repository" ;;
+      3) env_error merge-base "$BASE_REF" "HEAD and this ref share no merge base, so there is no range to read" ;;
+      *) env_error base-unresolved "origin/HEAD,origin/main,main" "none of these resolved; pass --base REF or --all" ;;
+    esac
     git_diff --name-only --diff-filter=d -z "$BASE" -- >"$TMP/files.z" || env_error git-failed "diff-$BASE" "reading the diff against this base failed"
     git_diff --name-only --no-renames --diff-filter=A "$BASE" -- >"$TMP/newfiles.list" || env_error git-failed "diff-$BASE" "reading the diff against this base failed"
     # A file never added is invisible to `git diff` yet is part of the change
@@ -1328,18 +1352,21 @@ LC_ALL=C sort -u "$TMP/skipped.tsv" >"$TMP/skipped.unique"
 # what a caller matches, the English is for a person.
 while IFS="$TAB" read -r lane reason; do
   printf 'preflight: not-run=%s\n%s\n' "$lane" "$reason"
-  case ", $SKIPPED, " in
-    *", $lane, "*) ;;
-    *) SKIPPED="${SKIPPED:+$SKIPPED, }$lane" ;;
+  case ",$SKIPPED," in
+    *",$lane,"*) ;;
+    *) SKIPPED="${SKIPPED:+$SKIPPED,}$lane" ;;
   esac
 done <"$TMP/skipped.unique"
-SKIP_NOTE="${SKIPPED:+; not run: $SKIPPED}"
+# The skipped set is its own record rather than a clause riding on the
+# verdict's first line, so a caller reads one key per line.
+SKIP_NOTE="${SKIPPED:+
+preflight: not-run=$SKIPPED}"
 COUNT="$(awk 'END { print NR }' "$TMP/findings.tsv")"
 if [ "$COUNT" -gt 0 ]; then
   LC_ALL=C sort -t"$TAB" -k1,1 -k2,2n "$TMP/findings.tsv" | while IFS="$TAB" read -r p n lane msg; do
     printf '%s:%s: [%s] %s\n' "$p" "$n" "$lane" "$msg"
   done
-  printf 'preflight: %s finding(s) across %s changed file(s)%s\n' "$COUNT" "$FILE_COUNT" "$SKIP_NOTE"
+  printf 'preflight: findings=%s\nacross %s changed file(s)%s\n' "$COUNT" "$FILE_COUNT" "$SKIP_NOTE"
   exit 1
 fi
-printf 'preflight: clean (%s changed file(s))%s\n' "$FILE_COUNT" "$SKIP_NOTE"
+printf 'preflight: clean=%s\nno findings across that many changed file(s)%s\n' "$FILE_COUNT" "$SKIP_NOTE"

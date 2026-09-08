@@ -45,11 +45,12 @@ for lane in shellcheck-errors masked-returns data-syntax; do
 done
 has 'JSON: jq is unavailable' && has 'TOML: taplo or python3 with tomllib is unavailable' \
   && ok 'data-syntax identifies each unavailable format' || bad 'data format skip details'
-summary="$(printf '%s\n' "$OUT" | tail -n 1)"
-case "$summary" in
-  'preflight: clean ('*'; not run: data-syntax, masked-returns, shellcheck-errors') ok 'clean summary lists the skipped lanes' ;;
-  *) bad 'clean summary lists the skipped lanes' ;;
-esac
+has 'preflight: clean=5' \
+  && ok 'the verdict record carries the changed-file count' \
+  || bad 'the verdict record carries the changed-file count'
+has 'preflight: not-run=data-syntax,masked-returns,shellcheck-errors' \
+  && ok 'the verdict names every skipped lane in one record' \
+  || bad 'the verdict names every skipped lane in one record'
 [ "$(printf '%s\n' "$OUT" | grep -cF 'preflight: not-run=shellcheck-errors')" -eq 1 ] \
   && ok 'multiple shell files produce one skip detail' || bad 'skip detail deduplication'
 

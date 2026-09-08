@@ -135,25 +135,25 @@ pf_world() {
 # vitest default include cannot reach, which is coverage this audit round did
 # not add.
 IFS= read -r -d '' rows <<'ROWS' || :
-a new suite in a repository with no runner at all is not called unwired|none -- tests/orphan.test.sh|-|-|0|-|preflight: clean (1 changed file(s))
+a new suite in a repository with no runner at all is not called unwired|none -- tests/orphan.test.sh|-|-|0|-|preflight: clean=1
 once one runner exists to read, the same suite is unwired|workflow .github/workflows/ci.yml bash tests/other.test.sh -- tests/orphan.test.sh|-|-|1|tests/orphan.test.sh:0: [unwired-suite]|-
-an unreadable runner leaves the suite unproven rather than unwired|workflow .github/workflows/ci.yml bash tests/other.test.sh + dangling package.json ../nowhere/package.json -- tests/orphan.test.sh|-|-|0|-|preflight: clean (3 changed file(s))
-a suite beside a package manifest is wired by that manifest, with no path naming it|workflow .github/workflows/ci.yml npm test --workspaces + manifest pkg/package.json "name": "pkg", "scripts": { "test": "node --test" } -- pkg/tests/pkg.test.sh|-|-|0|-|preflight: clean (3 changed file(s))
+an unreadable runner leaves the suite unproven rather than unwired|workflow .github/workflows/ci.yml bash tests/other.test.sh + dangling package.json ../nowhere/package.json -- tests/orphan.test.sh|-|-|0|-|preflight: clean=3
+a suite beside a package manifest is wired by that manifest, with no path naming it|workflow .github/workflows/ci.yml npm test --workspaces + manifest pkg/package.json "name": "pkg", "scripts": { "test": "node --test" } -- pkg/tests/pkg.test.sh|-|-|0|-|preflight: clean=3
 a suite outside every manifest subtree is still unwired|workflow .github/workflows/ci.yml npm test --workspaces + manifest pkg/package.json "name": "pkg", "scripts": { "test": "node --test" } -- pkg/tests/pkg.test.sh tests/far.test.sh|-|-|1|tests/far.test.sh:0: [unwired-suite]|-
-a bare vitest run script wires the ts and mjs suites its default include matches|manifest package.json "scripts": { "test": "vitest run" }, "devDependencies": { "vitest": "^3.0.0" } -- src/__tests__/session.test.ts src/__tests__/session.test.mjs|-|-|0|-|preflight: clean (3 changed file(s))
+a bare vitest run script wires the ts and mjs suites its default include matches|manifest package.json "scripts": { "test": "vitest run" }, "devDependencies": { "vitest": "^3.0.0" } -- src/__tests__/session.test.ts src/__tests__/session.test.mjs|-|-|0|-|preflight: clean=3
 the vitest default include does not reach a shell suite|manifest package.json "scripts": { "test": "vitest run" }, "devDependencies": { "vitest": "^3.0.0" } -- src/__tests__/session.test.ts src/__tests__/session.test.mjs tests/orphan.test.sh|-|-|1|tests/orphan.test.sh:0: [unwired-suite]|-
 vitest named only as a dependency wires nothing|manifest package.json "scripts": { "test": "node run-tests.js" }, "devDependencies": { "vitest": "^3.0.0" } -- orphan.test.ts|-|-|1|orphan.test.ts:0: [unwired-suite]|-
-a jest script wires the ts and mjs suites its default testMatch covers|manifest package.json "scripts": { "test": "jest --ci" } -- a.test.ts b.test.mjs|-|-|0|-|preflight: clean (3 changed file(s))
-a workflow invoking bare vitest wires a root-level suite|workflow .github/workflows/ci.yml vitest -- w.test.ts|-|-|0|-|preflight: clean (2 changed file(s))
-a single-quoted vitest invocation wires the suite|workflow .github/workflows/ci.yml 'vitest' -- wq.test.ts|-|-|0|-|preflight: clean (2 changed file(s))
+a jest script wires the ts and mjs suites its default testMatch covers|manifest package.json "scripts": { "test": "jest --ci" } -- a.test.ts b.test.mjs|-|-|0|-|preflight: clean=3
+a workflow invoking bare vitest wires a root-level suite|workflow .github/workflows/ci.yml vitest -- w.test.ts|-|-|0|-|preflight: clean=2
+a single-quoted vitest invocation wires the suite|workflow .github/workflows/ci.yml 'vitest' -- wq.test.ts|-|-|0|-|preflight: clean=2
 a validate script wires its own tree and nothing outside it|validate sub/tools/validate-js vitest run -- sub/app.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
-a script value of exactly vitest wires the suite|manifest package.json "scripts": { "test": "vitest" } -- q.test.ts|-|-|0|-|preflight: clean (2 changed file(s))
-a Makefile recipe line ending in vitest wires the suite|make vitest -- m.test.ts|-|-|0|-|preflight: clean (2 changed file(s))
-an npx-prefixed vitest invocation wires the suite|manifest package.json "scripts": { "test": "npx vitest" } -- n.test.ts|-|-|0|-|preflight: clean (2 changed file(s))
-a pnpm exec vitest invocation wires the suite|manifest package.json "scripts": { "test": "pnpm exec vitest" } -- e.test.ts|-|-|0|-|preflight: clean (2 changed file(s))
-an env-assignment-prefixed vitest invocation wires the suite|manifest package.json "scripts": { "test": "CI=1 vitest run" } -- v.test.ts|-|-|0|-|preflight: clean (2 changed file(s))
-a quoted-value assignment before jest wires the suite|manifest package.json "scripts": { "test": "NODE_OPTIONS='--experimental-vm-modules --trace-warnings' jest" } -- qa.test.ts|-|-|0|-|preflight: clean (2 changed file(s))
-a vitest invocation chained after && wires the suite|manifest package.json "scripts": { "test": "node setup.js && vitest run" } -- c.test.ts|-|-|0|-|preflight: clean (2 changed file(s))
+a script value of exactly vitest wires the suite|manifest package.json "scripts": { "test": "vitest" } -- q.test.ts|-|-|0|-|preflight: clean=2
+a Makefile recipe line ending in vitest wires the suite|make vitest -- m.test.ts|-|-|0|-|preflight: clean=2
+an npx-prefixed vitest invocation wires the suite|manifest package.json "scripts": { "test": "npx vitest" } -- n.test.ts|-|-|0|-|preflight: clean=2
+a pnpm exec vitest invocation wires the suite|manifest package.json "scripts": { "test": "pnpm exec vitest" } -- e.test.ts|-|-|0|-|preflight: clean=2
+an env-assignment-prefixed vitest invocation wires the suite|manifest package.json "scripts": { "test": "CI=1 vitest run" } -- v.test.ts|-|-|0|-|preflight: clean=2
+a quoted-value assignment before jest wires the suite|manifest package.json "scripts": { "test": "NODE_OPTIONS='--experimental-vm-modules --trace-warnings' jest" } -- qa.test.ts|-|-|0|-|preflight: clean=2
+a vitest invocation chained after && wires the suite|manifest package.json "scripts": { "test": "node setup.js && vitest run" } -- c.test.ts|-|-|0|-|preflight: clean=2
 a whole-line comment naming vitest wires nothing|validate tools/validate-js # a note: migrate to vitest - run: vitest someday -- p.test.ts|-|-|1|p.test.ts:0: [unwired-suite]|-
 a trailing comment naming vitest wires nothing|workflow .github/workflows/ci.yml echo ok # ; vitest -- t.test.ts|-|-|1|t.test.ts:0: [unwired-suite]|-
 manifest prose naming vitest and jest wires nothing|manifest package.json "description": "tested with vitest and jest", "keywords": ["vitest", "jest"], "scripts": { "test": "node run-tests.js" } -- k.test.ts|-|-|1|k.test.ts:0: [unwired-suite]|-

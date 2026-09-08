@@ -75,7 +75,7 @@ clean() { # LABEL COUNT — exit 0 and the clean verdict over exactly COUNT file
     return
   fi
   case "$OUT" in
-    *"preflight: clean ($2 changed file(s))"*) ok "$1" ;;
+    *"preflight: clean=$2"*) ok "$1" ;;
     *) bad "$1" "want the clean verdict over $2 changed file(s); rc=$RC out=$OUT" ;;
   esac
 }

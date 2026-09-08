@@ -201,10 +201,10 @@ a non-ignored untracked file is in scope; an ignored one is not|untracked|-|-|1|
 --staged sees only the index, so the untracked file is out of scope|untracked|--staged|-|0|-|-
 an untracked doc in an untracked directory has its dead citation reported|newdir|-|-|1|docs/new/guide.md:3: [docs-cited-paths]|cites a path that does not exist: docs/new/missing.md
 content comes from the index, so line 3 is the staged line|rewound|--staged|-|1|docs/staged.md:3: [docs-cited-paths]|-
-an untouched branch has nothing in the default scope|everything|-|-|0|-|preflight: clean (0 changed file(s))
+an untouched branch has nothing in the default scope|everything|-|-|0|-|preflight: clean=0
 --all reaches the committed violation the default scope ignores|everything|--all|-|1|docs/legacy.md:3: [docs-cited-paths]|changed file(s)
 --base main sees the commit made on the branch|based|--base main|-|1|docs/loose.md:3: [docs-cited-paths]|-
---base HEAD compares against itself and finds nothing|based|--base HEAD|-|0|-|preflight: clean
+--base HEAD compares against itself and finds nothing|based|--base HEAD|-|0|-|preflight: clean=0
 --repo relocates the run without a cd|repo-relocate|--repo {R} --base main|-|1|docs/loose.md:3: [docs-cited-paths]|-
 an unknown flag is a usage error|based|--nonsense|-|2|-|preflight: usage=--nonsense
 a --base ref that resolves to nothing is an environment error|based|--base does-not-exist|-|2|-|preflight: base-ref=does-not-exist
@@ -216,5 +216,60 @@ with no remote-tracking refs left, the local main branch is the last fallback|ba
 with nothing left to compare against, the run fails closed instead of reporting clean|base-none|-|-|2|-|preflight: base-unresolved=origin/HEAD,origin/main,main
 ROWS
 pf_table "what each scope may speak about" "$rows"
+
+# The rows above match a fragment wherever it appears, so they cannot see a
+# SECOND record printed under the first. These two cases assert the whole
+# refusal: how many records it is, and that the value never splits the line
+# carrying it.
+
+pf_scope_seed protocol
+# Captured whole, never piped into a reader that closes early: `head` in a
+# pipefail suite SIGPIPEs its producer and aborts the run.
+refusal_out() { # ARGS... -> everything the run wrote to stderr
+  ( cd "$R" && "$PF" "$@" 2>&1 >/dev/null ) || :
+}
+refusal_records() { # TEXT -> how many `preflight: ` records it holds
+  printf '%s\n' "$1" | grep -c '^preflight: ' || :
+}
+refusal_first() { # TEXT -> its first line
+  printf '%s\n' "$1" | sed -n '1p'
+}
+
+out="$(refusal_out --base does-not-exist)"
+records="$(refusal_records "$out")"
+if [ "$records" = 1 ]; then
+  ok "an unresolvable --base prints exactly one refusal record"
+else
+  bad "an unresolvable --base prints exactly one refusal record" "printed $records"
+fi
+
+first="$(refusal_first "$out")"
+if [ "$first" = "preflight: base-ref=does-not-exist" ]; then
+  ok "its record names the key and the ref that did not resolve"
+else
+  bad "its record names the key and the ref that did not resolve" "first line: $first"
+fi
+
+# A newline in a changed path is the condition `unrepresentable-path` refuses,
+# so it is the value most able to break the record that carries it.
+pf_scope_seed newline-path
+printf 'x\n' > "$R/bad
+name.md"
+git -C "$R" add -A >/dev/null 2>&1
+out="$(refusal_out --staged)"
+records="$(refusal_records "$out")"
+if [ "$records" = 1 ]; then
+  ok "a newline-bearing path still prints exactly one refusal record"
+else
+  bad "a newline-bearing path still prints exactly one refusal record" "printed $records"
+fi
+
+first="$(refusal_first "$out")"
+case "$first" in
+  'preflight: unrepresentable-path='*'\n'*)
+    ok "the newline in its value is escaped, so the record stays one line" ;;
+  *)
+    bad "the newline in its value is escaped, so the record stays one line" "first line: $first" ;;
+esac
 
 pf_summary
