@@ -230,7 +230,9 @@ run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
   && ! grep -Eq 'crates/cli|cargo (test|doc)|npm|--workspace|--target ' "$COMPILE_LOG" \
   && ok "Rust checks select the touched crate and omit full suites" \
   || bad "Rust scoped checks" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
-# A failing compiler call blocks with guard's own clause for that call.
+# A failing compiler call blocks with guard's own clause for that call. The
+# table counts its own rows: an emptied row list is a red, never a green.
+before=$((PASS + FAIL))
 while IFS='|' read -r command clause; do
   run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" FAIL_COMPILE="$command"
   [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: $clause"* ]] \
@@ -240,6 +242,7 @@ done <<'ROWS'
 check --manifest-path crates/core/Cargo.toml --all-targets|crates/core/Cargo.toml failed to compile
 clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet -- -D warnings|crates/core/Cargo.toml clippy failed
 ROWS
+[ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the compiler failures" >&2; exit 2; }
 git -C "$R" reset -q HEAD -- crates/core/src/lib.rs
 git -C "$R" checkout -q -- crates/core/src/lib.rs
 printf 'export const value = 1;\n' >"$R/ui/test.ts"
@@ -251,6 +254,7 @@ run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
   && ! grep -Eq 'cargo|npm.* test' "$COMPILE_LOG" \
   && ok "UI changes run types and lint without tests or Rust" \
   || bad "UI scoped checks" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
+before=$((PASS + FAIL))
 while IFS='|' read -r command clause; do
   run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" FAIL_COMPILE="$command"
   [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: $clause"* ]] \
@@ -260,6 +264,7 @@ done <<'ROWS'
 run --prefix ui check:types|tsc failed
 run --prefix ui check:lint|biome failed
 ROWS
+[ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the UI failures" >&2; exit 2; }
 git -C "$R" reset -q HEAD -- ui/test.ts
 printf '# workspace changed\n' >>"$R/Cargo.toml"
 git -C "$R" add Cargo.toml

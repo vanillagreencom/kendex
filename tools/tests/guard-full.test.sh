@@ -98,6 +98,8 @@ run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTA
   [ "$(grep -cFx "$(check_call "$WINDOWS")" "$CARGO_CALL_LOG")" -eq 1 ] \
   && ok "a missing target does not stop the targets after it" \
   || bad "a missing target does not stop the targets after it" "rc=$RC out=$OUT log=$(cat "$CARGO_CALL_LOG")"
+# The loop counts its own rows: an emptied target list is a red, never a green.
+before=$((PASS + FAIL))
 for failing in "$APPLE" "$WINDOWS"; do
   : >"$CARGO_CALL_LOG"
   run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$BOTH" CROSS_CHECK_FAIL="$failing"
@@ -105,6 +107,7 @@ for failing in "$APPLE" "$WINDOWS"; do
     && ok "a failing $failing compiler verdict blocks guard, naming it" \
     || bad "a failing $failing compiler verdict blocks guard, naming it" "rc=$RC out=$OUT"
 done
+[ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the cross-target failures" >&2; exit 2; }
 : >"$CARGO_CALL_LOG"
 run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$BOTH"
 [ "$RC" -eq 0 ] \
