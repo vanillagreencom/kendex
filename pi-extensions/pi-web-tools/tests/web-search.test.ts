@@ -16,9 +16,10 @@ for (const row of [
 	test(`web_search execute: ${row.name}`, async (t) => {
 		const appended: StoredWebContent[] = [];
 		t.mock.method(globalThis, "fetch", async (url: URL | string | Request) => {
-			if (String(url).includes("api.perplexity.ai")) return new Response("rate limited", { status: 429 });
-			if (String(url).includes("mcp.exa.ai")) return new Response(`data: ${JSON.stringify({ result: { content: [{ type: "text", text: "Title: Fallback\nURL: https://example.com/fallback\nHighlights:\nFallback snippet" }] } })}\n\n`);
-			if (String(url).includes("duckduckgo.com")) return new Response(Array.from({ length: row.count }, (_, index) => `<div class="result"><a class="result__a" href="https://example.com/${index}">Result ${index}</a><div class="result__snippet">Snippet ${index}</div></div>`).join("\n"));
+			const hostname = new URL(String(url)).hostname;
+			if (hostname === "api.perplexity.ai") return new Response("rate limited", { status: 429 });
+			if (hostname === "mcp.exa.ai") return new Response(`data: ${JSON.stringify({ result: { content: [{ type: "text", text: "Title: Fallback\nURL: https://example.com/fallback\nHighlights:\nFallback snippet" }] } })}\n\n`);
+			if (hostname === "html.duckduckgo.com") return new Response(Array.from({ length: row.count }, (_, index) => `<div class="result"><a class="result__a" href="https://example.com/${index}">Result ${index}</a><div class="result__snippet">Snippet ${index}</div></div>`).join("\n"));
 			throw new Error("unexpected endpoint");
 		});
 		const settings = { ...DEFAULT_SETTINGS, warnings: [], apiKeys: row.fallback ? { perplexity: "pplx" } : {}, enabledProviders: row.fallback ? DEFAULT_SETTINGS.enabledProviders : ["duckduckgo" as const] };
@@ -31,7 +32,7 @@ for (const row of [
 			printedCount: text.includes(`Results: ${row.expectedCount}`),
 			provider: result.details.provider,
 			printedProvider: text.includes(row.fallback ? "exa-mcp" : "duckduckgo"),
-			url: row.fallback ? text.includes("https://example.com/fallback") : text.includes("https://example.com/0"),
+			url: row.fallback ? text.split(/\s+/).includes("https://example.com/fallback") : text.split(/\s+/).includes("https://example.com/0"),
 			fetchGuidance: text.includes("web_fetch"),
 			storedGuidance: text.includes("get_web_content"),
 			warning: result.details.warnings?.some((warning: string) => warning.includes("perplexity")) ?? false,
@@ -44,5 +45,5 @@ test("web_search renderer shows source URLs and hides content ids", () => {
 	const theme = { fg: (_tone: string, text: string) => text, bold: (text: string) => text };
 	const tool = createWebSearchToolDefinition({} as any, () => ({}) as any);
 	const text = tool.renderResult({ details: { provider: "exa", results: [{ title: "Example", url: "https://example.com/path", contentId: "web-123" }] } }, {}, theme, { args: { query: "q" } }).render(200).join("\n");
-	assert.deepEqual({ title: text.includes("Web Search (Exa) q · 1 results"), url: text.includes("https://example.com/path"), id: text.includes("content id web-123") }, { title: true, url: true, id: false });
+	assert.deepEqual({ title: text.includes("Web Search (Exa) q · 1 results"), url: text.split(/\s+/).includes("https://example.com/path"), id: text.includes("content id web-123") }, { title: true, url: true, id: false });
 });

@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { GeminiApiClient, geminiSearch } from "../src/providers/gemini-api.js";
 
-for (const params of [{ query: "rust async", includeDomains: ["docs.rs"], excludeDomains: ["spam.io"] }]) {
-	test("Gemini request includes search and domain hints", () => {
-		const body = new GeminiApiClient({ apiKey: "k" }).buildSearchBody(params);
+const bodyParams = { query: "rust async", includeDomains: ["docs.rs"], excludeDomains: ["spam.io"] };
+test("Gemini request includes the search tool", () => {
+	assert.deepEqual(new GeminiApiClient({ apiKey: "k" }).buildSearchBody(bodyParams).tools, [{ googleSearch: {} }]);
+});
+for (const { name, pattern } of [{ name: "included domain", pattern: /\bdocs\.rs\b/ }, { name: "excluded domain", pattern: /\bspam\.io\b/ }]) {
+	test(`Gemini request: ${name}`, () => {
+		const body = new GeminiApiClient({ apiKey: "k" }).buildSearchBody(bodyParams);
 		const text = (body.contents as Array<{ parts: Array<{ text: string }> }>)[0]!.parts[0]!.text;
-		assert.deepEqual({ tools: body.tools, domains: [text.includes("docs.rs"), text.includes("spam.io")] }, { tools: [{ googleSearch: {} }], domains: [true, true] });
+		assert.match(text, pattern);
 	});
 }
+
 for (const row of [
 	{ name: "grounded results", key: "k", status: 200, response: { candidates: [{ content: { parts: [{ text: "Tokio is the dominant async runtime." }] }, groundingMetadata: { groundingChunks: [{ web: { uri: "https://tokio.rs", title: "Tokio" } }, { web: { uri: "https://docs.rs/futures", title: "futures" } }, { web: { uri: "https://tokio.rs", title: "dup" } }] } }] }, expected: { answer: "Tokio is the dominant async runtime.", urls: ["https://tokio.rs", "https://docs.rs/futures"], provider: "gemini", count: 2 } },
 	{ name: "HTTP failure", key: "k", status: 403, response: {}, expected: { error: true, status: true } },
