@@ -149,7 +149,7 @@ run
 expect 2 'diagnostics-load-failure'
 expect_first_line "doc-limits-error=diagnostics-load value=$(printf '%q' "$MUTANT_DIAGNOSTICS")" 'diagnostics-load failure'
 MUTANT_SETTINGS="$(dirname "$MUTANT")/lib/settings.sh"
-[ "$(grep -Fxc "  printf 'doc-limits-error=diagnostics-load value=%q\\n%s\\n' \"\$sr_settings_script_dir/diagnostics.sh\" 'Could not load the diagnostics library.' >&2" "$MUTANT_SETTINGS")" -eq 1 ]
+[ "$(grep -Fxc "  printf 'doc-limits-error=diagnostics-load value=%q\\n%s\\n' \"\$sr_settings_script_dir/diagnostics.sh\" 'Could not load the diagnostics library.' >&2" "$MUTANT_SETTINGS")" -eq 2 ]
 sed 's/doc-limits-error=diagnostics-load/doc-limits-error=diagnostics-renamed/' "$MUTANT_SETTINGS" >"$MUTANT_SETTINGS.changed"
 if cmp -s "$MUTANT_SETTINGS" "$MUTANT_SETTINGS.changed"; then exit 1; fi
 mv "$MUTANT_SETTINGS.changed" "$MUTANT_SETTINGS"
