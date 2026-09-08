@@ -19,6 +19,10 @@
 # must-fail control checks that these assertions can go red.
 set -euo pipefail
 
+# The fixture's own git calls must build the fixture, not whatever repository
+# a wrapper's redirection variables name.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 HOOKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$HOOKS_DIR/pre-commit-check.sh}"
 
@@ -220,6 +224,11 @@ done
 
 echo
 payload_table "$HOOK" "git commit $NV -m x" 'git commit -m x' "$ARMED"
+# The table's refusal column says the hook read the command and refused it;
+# which arm refused is this suite's pin, and the armed bypass arm is the one
+# that must be reached through the Copilot shape.
+run_hook "$ARMED" "$(jq -nc --arg c "git commit $NV -m x" '{toolName:"bash",toolArgs:{command:$c}}')"
+assert_contains "$err" "would skip this repository's armed git hooks" "the bypass under toolArgs is named"
 
 run_hook "$UNARMED" '{"note":"about to commit with git"}'
 assert_eq "$rc" "0" "a payload with no command field is left alone"

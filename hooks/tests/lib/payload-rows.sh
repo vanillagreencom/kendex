@@ -136,8 +136,8 @@ payload_table() { # hook refusing passing [dir]
   local hook="$1" refusing="$2" passing="$3" dir="${4:-$PWD}"
   local label shape command world rc err row field text path got before=$((PASS + FAIL))
   PAYLOAD_BASH="$(command -v bash)"
-  PAYLOAD_ROOT="$TMP_ROOT/payload-rows"
-  rm -rf "$PAYLOAD_ROOT"
+  PAYLOAD_ROOT="${TMP_ROOT:?}/payload-rows"
+  rm -rf -- "${TMP_ROOT:?}/payload-rows"
   mkdir -p "$PAYLOAD_ROOT"
   # cat is the other half of the reader: jq reads the payload, cat is what
   # hands it over, and a hook that reaches `INPUT=$(cat)` without it dies

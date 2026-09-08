@@ -36,10 +36,8 @@ assert_contains() {
   if grep -qF -- "$2" "$1"; then pass "$3"; else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        wanted: %s\n        in:\n%s\n' "$3" "$2" "$(cat "$1")"; fi
 }
 
-# The command reaches the hook JSON-encoded, exactly as the harness sends it.
-# jq does the encoding rather than sed: a Bash tool call is routinely several
-# lines, and a raw newline inside a JSON string is not JSON, so a sed-built
-# fixture could not express a multi-line row at all.
+# The command reaches the hook JSON-encoded, exactly as the harness sends it,
+# with jq doing the encoding so every escape is JSON's own.
 json_for() {
   jq -nc --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}'
 }
