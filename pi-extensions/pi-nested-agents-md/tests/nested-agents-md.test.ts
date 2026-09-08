@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { CONFIG_ID } from "../extensions/config.ts";
-import nestedAgentsMd, { directoriesBetween, INSTRUCTIONS_FILE } from "../extensions/nested-agents-md.ts";
+import nestedAgentsMd, { INSTRUCTIONS_FILE } from "../extensions/nested-agents-md.ts";
 
 type Handler = (event: Record<string, unknown>, ctx: Record<string, unknown>) => Promise<unknown> | unknown;
 
@@ -94,31 +94,21 @@ afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-// The walk's own bound. Every read the handler makes reaches the root through
-// the cwd chain as well, since the root is an ancestor of the cwd, so a walk
-// that overran the root would still attach nothing there; this is what holds
-// the bound itself, and the refusal that keeps a miscall from walking to the
-// filesystem top.
-describe("directoriesBetween", () => {
-	test("lists the directories below the root, root-most first, the root excluded", () => {
-		expect(directoriesBetween("/r/a/b/x.ts", "/r")).toEqual(["/r/a", "/r/a/b"]);
-		expect(directoriesBetween("/r/x.ts", "/r")).toEqual([]);
-	});
-
-	test("refuses a file outside the root rather than walking to the top", () => {
-		expect(() => directoriesBetween("/elsewhere/x.ts", "/r")).toThrow("is not under /r");
-	});
-});
-
 describe("attaching", () => {
-	test("the first read under a directory attaches its AGENTS.md after the file, naming the path", async () => {
-		const root = fixture();
-		const { toolResult } = install();
-		const blocks = texts(await toolResult(readEvent(join(root, "a/shallow.ts")), ctx(root)));
-		expect(blocks).toHaveLength(2);
-		expect(blocks[0]).toBe("the file");
-		expect(blocks[1]).toBe(`[Directory instructions from ${join(root, "a", INSTRUCTIONS_FILE)}]\n# a rules\n`);
-	});
+	for (const row of [
+		{ name: "a shallow absolute read", path: "a/shallow.ts", relative: false, instructions: ["a"], repeat: undefined },
+		{ name: "a deep read orders both files and consumes the shallow file", path: "a/b/deep.ts", relative: false, instructions: ["a", "a/b"], repeat: "a/shallow.ts" },
+		{ name: "a relative read resolves against the session cwd", path: "a/shallow.ts", relative: true, instructions: ["a"], repeat: undefined },
+	]) {
+		test(row.name, async () => {
+			const root = fixture();
+			const { toolResult } = install();
+			const blocks = texts(await toolResult(readEvent(row.relative ? row.path : join(root, row.path)), ctx(root)));
+			expect(blocks).toEqual(["the file", ...row.instructions.map((dir) =>
+				`instructions_path=${join(root, dir, INSTRUCTIONS_FILE)}\n# ${dir === "a" ? "a" : "b"} rules\n`)]);
+			if (row.repeat) expect(await toolResult(readEvent(join(root, row.repeat)), ctx(root))).toBeUndefined();
+		});
+	}
 
 	test("the project root's own AGENTS.md is never attached", async () => {
 		const root = fixture();
@@ -136,25 +126,6 @@ describe("attaching", () => {
 		expect(await toolResult(readEvent(join(root, "a/other.ts")), ctx(root))).toBeUndefined();
 	});
 
-	test("a read two levels deep attaches both intermediate files, root-most first", async () => {
-		const root = fixture();
-		const { toolResult } = install();
-		const blocks = texts(await toolResult(readEvent(join(root, "a/b/deep.ts")), ctx(root)));
-		expect(blocks).toHaveLength(3);
-		expect(blocks[1]).toContain(join(root, "a", INSTRUCTIONS_FILE));
-		expect(blocks[1]).toContain("# a rules");
-		expect(blocks[2]).toContain(join(root, "a", "b", INSTRUCTIONS_FILE));
-		expect(blocks[2]).toContain("# b rules");
-		// The deep read took `a/` with it, so a shallower read has nothing left.
-		expect(await toolResult(readEvent(join(root, "a/shallow.ts")), ctx(root))).toBeUndefined();
-	});
-
-	test("a relative path resolves against the session's cwd", async () => {
-		const root = fixture();
-		const { toolResult } = install();
-		const blocks = texts(await toolResult(readEvent("a/shallow.ts"), ctx(root)));
-		expect(blocks[1]).toContain("# a rules");
-	});
 
 	test("a directory Pi loaded at startup — the cwd or one above it — is not attached again", async () => {
 		const root = fixture();
@@ -178,19 +149,19 @@ describe("attaching", () => {
 });
 
 describe("attaching nothing", () => {
-	test("a path outside the project root, spelled directly or reached through a symlink", async () => {
-		const root = fixture();
-		const outside = realpathSync(mkdtempSync(join(tmpdir(), "pi-nested-agents-md-outside-")));
-		roots.push(outside);
-		write(outside, `${INSTRUCTIONS_FILE}`, "# outside rules\n");
-		write(outside, "leaf/file.ts", "x");
-		symlinkSync(outside, join(root, "a", "escape"));
-		const { toolResult } = install();
-		expect(await toolResult(readEvent(join(outside, "leaf/file.ts")), ctx(root))).toBeUndefined();
-		// The spelled path sits under `a/`, whose AGENTS.md has not been
-		// attached; the file it resolves to does not, so not even that is.
-		expect(await toolResult(readEvent(join(root, "a/escape/leaf/file.ts")), ctx(root))).toBeUndefined();
-	});
+	for (const spelling of ["direct", "symlink"] as const) {
+		test(`a path outside the project root through ${spelling}`, async () => {
+			const root = fixture();
+			const outside = realpathSync(mkdtempSync(join(tmpdir(), "pi-nested-agents-md-outside-")));
+			roots.push(outside);
+			write(outside, `${INSTRUCTIONS_FILE}`, "# outside rules\n");
+			write(outside, "leaf/file.ts", "x");
+			symlinkSync(outside, join(root, "a", "escape"));
+			const { toolResult } = install();
+			const path = spelling === "direct" ? join(outside, "leaf/file.ts") : join(root, "a/escape/leaf/file.ts");
+			expect(await toolResult(readEvent(path), ctx(root))).toBeUndefined();
+		});
+	}
 
 	test("a directory holding no AGENTS.md", async () => {
 		const root = fixture();
@@ -207,14 +178,17 @@ describe("attaching nothing", () => {
 		expect(await toolResult(readEvent(join(bare, "a/file.ts")), ctx(bare))).toBeUndefined();
 	});
 
-	test("a failed read, and a tool other than read", async () => {
-		const root = fixture();
-		const { toolResult } = install();
-		expect(await toolResult({ ...readEvent(join(root, "a/shallow.ts")), isError: true }, ctx(root))).toBeUndefined();
-		expect(await toolResult({ ...readEvent(join(root, "a/shallow.ts")), toolName: "bash" }, ctx(root))).toBeUndefined();
-		// Neither consumed `a/`: the next real read still attaches it.
-		expect(texts(await toolResult(readEvent(join(root, "a/shallow.ts")), ctx(root)))).toHaveLength(2);
-	});
+	for (const row of [
+		{ name: "a failed read", patch: { isError: true } },
+		{ name: "a tool other than read", patch: { toolName: "bash" } },
+	]) {
+		test(row.name, async () => {
+			const root = fixture();
+			const { toolResult } = install();
+			expect(await toolResult({ ...readEvent(join(root, "a/shallow.ts")), ...row.patch }, ctx(root))).toBeUndefined();
+			expect(texts(await toolResult(readEvent(join(root, "a/shallow.ts")), ctx(root)))).toHaveLength(2);
+		});
+	}
 
 	test("the master toggle off, read from the trusted project's settings", async () => {
 		const root = fixture();
@@ -231,7 +205,7 @@ describe("attaching nothing", () => {
 
 describe("an unreadable AGENTS.md", () => {
 	// Root reads a mode-000 file, so under it the case cannot be planted.
-	test.skipIf(process.getuid?.() === 0)("is reported in one line, once, and the read still succeeds", async () => {
+	test.skipIf(process.getuid?.() === 0)("reports its key and path once while the read succeeds", async () => {
 		const root = fixture();
 		const unreadable = join(root, "a", INSTRUCTIONS_FILE);
 		chmodSync(unreadable, 0o000);
@@ -239,8 +213,7 @@ describe("an unreadable AGENTS.md", () => {
 			const { toolResult } = install();
 			const blocks = texts(await toolResult(readEvent(join(root, "a/b/deep.ts")), ctx(root)));
 			expect(blocks).toHaveLength(3);
-			expect(blocks[1]).not.toContain("\n");
-			expect(blocks[1]).toContain(unreadable);
+			expect(blocks[1]?.split("\n")[0]).toBe(`unreadable_path=${unreadable}`);
 			expect(blocks[1]).not.toContain("# a rules");
 			expect(blocks[2]).toContain("# b rules");
 			expect(await toolResult(readEvent(join(root, "a/shallow.ts")), ctx(root))).toBeUndefined();
