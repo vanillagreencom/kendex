@@ -6,7 +6,8 @@ import { fakeSdkQuery } from "./lib/fake-sdk-query.mjs";
 afterEach(() => __testSetSdkQueryFactory());
 
 describe("account host probe (probeProfile)", () => {
-	it("settles within its deadline and kills a stalled probe child", async () => {
+	it("settles within its deadline and kills a stalled probe child", async (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout"] });
 		// probeProfile is a published entry point and `signal` is optional: a
 		// wedged child (never ends, even after close) must not hang the returned
 		// promise forever.
@@ -26,11 +27,15 @@ describe("account host probe (probeProfile)", () => {
 			},
 		}));
 
-		const result = await probeClaudeAccountProfile({
+		const pending = probeClaudeAccountProfile({
 			profile: { profileId: "a", label: "account-a" },
 			cwd: process.cwd(),
 			deadlineMs: 100,
 		});
+		t.mock.timers.tick(99);
+		assert.equal(closed, false, "the child stays open before its deadline");
+		t.mock.timers.tick(1);
+		const result = await pending;
 		assert.deepEqual(result, {});
 		assert.equal(closed, true, "the expired probe must kill its child");
 	});
