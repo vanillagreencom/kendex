@@ -18,25 +18,32 @@ function sidecarRoot(home: string, override: string | undefined): string {
 	const child = spawnSync(process.execPath, ["-e", `
 import { piUserDir } from ${module};
 process.stdout.write(piUserDir());
-`], { encoding: "utf8", env });
-	if (child.status !== 0) throw new Error(child.stderr);
+`], { encoding: "utf8", env, timeout: 5_000, killSignal: "SIGKILL" });
+	if (child.error) throw child.error;
+	if (child.status !== 0) throw new Error(`sidecar-root child exited ${child.status ?? child.signal}: ${child.stderr}`);
 	return child.stdout;
 }
 
 describe("background-task sidecar root", () => {
-	test("a blank, relative or tilde override lands under the person's own home", () => {
+	test("resolves each override spelling to its exact sidecar root", () => {
 		const home = mkdtempSync(join(tmpdir(), "pi-bg-home-"));
 		const absolute = mkdtempSync(join(tmpdir(), "pi-bg-absolute-"));
 		try {
 			const fallback = join(home, ".pi", "agent");
-			for (const override of [undefined, "", "   ", "relative/agent"]) {
-				expect(sidecarRoot(home, override), `override ${JSON.stringify(override)}`).toBe(fallback);
+			const rows: Array<{ name: string; override: string | undefined; expected: string }> = [
+				{ name: "missing override", override: undefined, expected: fallback },
+				{ name: "empty override", override: "", expected: fallback },
+				{ name: "whitespace override", override: "   ", expected: fallback },
+				{ name: "relative override", override: "relative/agent", expected: fallback },
+				{ name: "home shorthand", override: "~", expected: home },
+				{ name: "home-relative override", override: "~/elsewhere", expected: join(home, "elsewhere") },
+				{ name: "absolute override", override: absolute, expected: absolute },
+			];
+			expect.assertions(rows.length + 1);
+			expect(rows.length, "sidecar root table must contain cases").toBeGreaterThan(0);
+			for (const { name, override, expected } of rows) {
+				expect(sidecarRoot(home, override), name).toBe(expected);
 			}
-			expect(sidecarRoot(home, "~")).toBe(home);
-			expect(sidecarRoot(home, "~/elsewhere")).toBe(join(home, "elsewhere"));
-			// The control: an absolute override is taken as given, which is the
-			// only shape the rest of this package's suites exercise.
-			expect(sidecarRoot(home, absolute)).toBe(absolute);
 		} finally {
 			for (const dir of [home, absolute]) rmSync(dir, { recursive: true, force: true });
 		}
