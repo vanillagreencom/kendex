@@ -7,6 +7,14 @@ import test from "node:test";
 
 const script = new URL("../scripts/deep-research", import.meta.url).pathname;
 
+function diagnostic(result) {
+  return JSON.parse(result.stderr.trim().split(/\r?\n/, 1)[0]);
+}
+
+function hasProblem(result, level, key, value) {
+  return result.problems.some((problem) => problem.level === level && problem.key === key && problem.value === value);
+}
+
 test("doctor reports runtime status", () => {
   const result = spawnSync(process.execPath, [script, "doctor"], { encoding: "utf8" });
   assert.equal(result.status, 0);
@@ -36,10 +44,12 @@ test("out-of-range num-results and text-max-characters fail with Exa limits", ()
   const env = { ...process.env, EXA_MOCK_RESPONSE_FILE: mock };
   const tooMany = spawnSync(process.execPath, [script, "report", "q", "--num-results", "150"], { encoding: "utf8", env });
   assert.notEqual(tooMany.status, 0);
-  assert.match(tooMany.stderr, /Invalid --num-results 150.*1-100/);
+  assert.equal(diagnostic(tooMany).key, "num-results-invalid");
+  assert.equal(diagnostic(tooMany).value, "150");
   const tooLong = spawnSync(process.execPath, [script, "report", "q", "--text-max-characters", "16000"], { encoding: "utf8", env });
   assert.notEqual(tooLong.status, 0);
-  assert.match(tooLong.stderr, /Invalid --text-max-characters 16000.*1-10000/);
+  assert.equal(diagnostic(tooLong).key, "text-max-characters-invalid");
+  assert.equal(diagnostic(tooLong).value, "16000");
 });
 
 // The template and the validator's required-section list must not drift apart:
@@ -65,7 +75,7 @@ test("findings template carries every section validate requires", () => {
   writeFileSync(gutted, filled.replace("## Risks / Unknowns", "## Unrelated Heading"));
   const caught = spawnSync(process.execPath, [script, "validate", gutted, raw], { encoding: "utf8" });
   assert.notEqual(caught.status, 0);
-  assert.ok(JSON.parse(caught.stdout).errors.some((e) => /Risks \/ Unknowns/.test(e)));
+  assert.equal(hasProblem(JSON.parse(caught.stdout), "error", "report-section-missing", "Risks / Unknowns"), true);
 });
 
 test("invalid --timeout names the flag rather than aborting the request", () => {
@@ -76,7 +86,8 @@ test("invalid --timeout names the flag rather than aborting the request", () => 
   for (const bad of ["abc", "0", "1.5"]) {
     const result = spawnSync(process.execPath, [script, "report", "q", "--timeout", bad], { encoding: "utf8", env });
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /Invalid --timeout/);
+    assert.equal(diagnostic(result).key, "timeout-invalid");
+    assert.equal(diagnostic(result).value, bad);
   }
 });
 
@@ -87,7 +98,8 @@ test("missing key fails with setup instructions", () => {
   const cwd = mkdtempSync(join(tmpdir(), "deep-research-no-env-"));
   const result = spawnSync(process.execPath, [script, "report", "question"], { encoding: "utf8", env, cwd });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /EXA_API_KEY/);
+  assert.equal(diagnostic(result).key, "credential-missing");
+  assert.equal(diagnostic(result).value, "EXA_API_KEY");
 });
 
 test("mocked report writes findings and raw output", () => {
@@ -154,7 +166,8 @@ test("invalid mode fails clearly", () => {
   writeFileSync(mock, JSON.stringify({ answer: "Answer", results: [] }));
   const result = spawnSync(process.execPath, [script, "report", "question", "--mode", "slow"], { encoding: "utf8", env: { ...process.env, EXA_MOCK_RESPONSE_FILE: mock } });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /Invalid --mode slow/);
+  assert.equal(diagnostic(result).key, "mode-invalid");
+  assert.equal(diagnostic(result).value, "slow");
 });
 
 test("full mode aggregates multiple mock responses and dedupes URLs", () => {
@@ -249,12 +262,12 @@ test("validate ignores Markdown backticks around a report-referenced sidecar pat
   writeFileSync(output, readFileSync(output, "utf8").replace(/- Raw metadata sidecar: .*/, "- Raw metadata sidecar: `" + raw + "`"));
   const okJson = JSON.parse(spawnSync(process.execPath, [script, "validate", output, raw], { encoding: "utf8" }).stdout);
   assert.equal(okJson.ok, true);
-  assert.ok(!okJson.warnings.some((w) => w.startsWith("Report references sidecar")), `unexpected sidecar warning: ${JSON.stringify(okJson.warnings)}`);
+  assert.equal(okJson.problems.some((problem) => problem.key === "sidecar-reference-mismatch"), false);
 
   // A genuinely-different (still backticked) path must still warn — the fix must not over-suppress.
   writeFileSync(output, readFileSync(output, "utf8").replace(/- Raw metadata sidecar: .*/, "- Raw metadata sidecar: `" + join(dir, "other.raw.json") + "`"));
   const mismatchJson = JSON.parse(spawnSync(process.execPath, [script, "validate", output, raw], { encoding: "utf8" }).stdout);
-  assert.ok(mismatchJson.warnings.some((w) => w.startsWith("Report references sidecar")), `expected a sidecar mismatch warning: ${JSON.stringify(mismatchJson.warnings)}`);
+  assert.equal(hasProblem(mismatchJson, "warning", "sidecar-reference-mismatch", join(dir, "other.raw.json")), true);
 });
 
 test("validate errors when standard mode lacks synthesis and flags evidence-brief lite", () => {
@@ -269,14 +282,14 @@ test("validate errors when standard mode lacks synthesis and flags evidence-brie
   assert.equal(standardValidate.status, 1);
   const standardJson = JSON.parse(standardValidate.stdout);
   assert.equal(standardJson.ok, false);
-  assert.ok(standardJson.errors.some((e) => /Mode standard requests server-side synthesis/.test(e)));
+  assert.equal(hasProblem(standardJson, "error", "synthesis-missing", "standard"), true);
   const lite = spawnSync(process.execPath, [script, "report", "question", "--mode", "lite", "--output", output], { encoding: "utf8", env: { ...process.env, EXA_MOCK_RESPONSE_FILE: mock } });
   assert.equal(lite.status, 0, lite.stderr);
   const liteValidate = spawnSync(process.execPath, [script, "validate", output, raw], { encoding: "utf8" });
   assert.equal(liteValidate.status, 0, liteValidate.stderr);
   const liteJson = JSON.parse(liteValidate.stdout);
   assert.equal(liteJson.ok, true);
-  assert.ok(liteJson.warnings.some((w) => /evidence brief/.test(w)));
+  assert.equal(hasProblem(liteJson, "warning", "synthesis-missing", "lite"), true);
 });
 
 test("validate errors on queryCount mismatch and missing files", () => {
@@ -292,12 +305,12 @@ test("validate errors on queryCount mismatch and missing files", () => {
   writeFileSync(raw, JSON.stringify(sidecar));
   const mismatch = spawnSync(process.execPath, [script, "validate", output, raw], { encoding: "utf8" });
   assert.equal(mismatch.status, 1);
-  assert.ok(JSON.parse(mismatch.stdout).errors.some((e) => /queryCount is 5/.test(e)));
+  assert.equal(hasProblem(JSON.parse(mismatch.stdout), "error", "query-count-mismatch", 5), true);
   const missing = spawnSync(process.execPath, [script, "validate", join(dir, "nope.md"), join(dir, "nope.json")], { encoding: "utf8" });
   assert.equal(missing.status, 1);
   const missingJson = JSON.parse(missing.stdout);
-  assert.ok(missingJson.errors.some((e) => /Report not found/.test(e)));
-  assert.ok(missingJson.errors.some((e) => /Raw sidecar not found/.test(e)));
+  assert.equal(hasProblem(missingJson, "error", "report-not-found", join(dir, "nope.md")), true);
+  assert.equal(hasProblem(missingJson, "error", "raw-sidecar-not-found", join(dir, "nope.json")), true);
 });
 
 test("validate warns when Key Findings duplicates the Executive Summary", () => {
@@ -311,7 +324,7 @@ test("validate warns when Key Findings duplicates the Executive Summary", () => 
   const result = spawnSync(process.execPath, [script, "validate", report, raw], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   const json = JSON.parse(result.stdout);
-  assert.ok(json.warnings.some((w) => /duplicates the Executive Summary/.test(w)));
+  assert.equal(hasProblem(json, "warning", "report-sections-duplicate", "Executive Summary+Key Findings"), true);
 });
 
 // The loader reads .env.local only — the .env fallback is removed — and an
@@ -336,7 +349,8 @@ test("a key present only in .env is ignored; .env.local and process env keep the
   writeFileSync(join(dir, ".env"), `EXA_MOCK_RESPONSE_FILE=${dotenvMock}\nEXA_API_KEY=from-dotenv\n`);
   const ignored = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
   assert.notEqual(ignored.status, 0);
-  assert.match(ignored.stderr, /EXA_API_KEY is required/);
+  assert.equal(diagnostic(ignored).key, "credential-missing");
+  assert.equal(diagnostic(ignored).value, "EXA_API_KEY");
 
   // .env.local supplies the value when the process does not carry the key.
   const localOut = join(dir, "local.md");
@@ -364,7 +378,8 @@ test("a key present only in .env is ignored; .env.local and process env keep the
     cwd: dir,
   });
   assert.notEqual(emptied.status, 0);
-  assert.match(emptied.stderr, /EXA_API_KEY is required/);
+  assert.equal(diagnostic(emptied).key, "credential-missing");
+  assert.equal(diagnostic(emptied).value, "EXA_API_KEY");
 
   // Within the file itself, dotenv last-wins: a repeated key's LATER line
   // replaces the earlier one — the first assignment must not block its own
