@@ -299,14 +299,17 @@ EOF
 run_pf
 clean "an OR-list handler and an elif condition check mktemp status" 2
 
-echo "=== control: an operator inside mktemp does not check the assignment ==="
+echo "=== control: inner and later operators do not check the assignment ==="
 cat >"$R/scripts/lib/or-list.sh" <<'EOF'
 #!/usr/bin/env bash
 read_error_file="$(mktemp || true)"
+later_error_file="$(mktemp)"; false || true
 trap 'rm -f "${read_error_file:-}"' EXIT
 EOF
 run_pf
-fires "an operator hidden inside the substitution leaves the assignment unchecked" "scripts/lib/or-list.sh:2: [fail-open] unchecked mktemp"
+fires "inner and later operators leave both assignments unchecked" \
+  "scripts/lib/or-list.sh:2: [fail-open] unchecked mktemp" \
+  "scripts/lib/or-list.sh:3: [fail-open] unchecked mktemp"
 
 echo "=== inert trap text arms nothing; quoted command text swallows nothing; an untracked runner wires ==="
 seed inert

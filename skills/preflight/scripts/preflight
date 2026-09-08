@@ -733,15 +733,14 @@ has_exit_trap() { # FILE
 # counter — the commonest line in this repo's own tooling — is not the shape.
 SUBST_ASSIGN_RE='^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*="?\$\([^(]'
 # A substitution assignment's status is checked when the assignment is the
-# condition, or when an operator follows the substitution's closing `)`.
-# Reading only the tail keeps an operator inside the substitution out.
+# condition, or when an operator immediately follows the substitution.
+# Reading only the tail keeps an operator inside the substitution out, and
+# requiring the operator at the tail's start keeps a later command out.
 substitution_status_checked() { # LINE
   if grep -Eq -- '^[[:space:]]*(if|elif)[[:space:]]+(![[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*="?\$\([^(]' <<<"$1"; then
     return 0
   fi
-  case "${1##*)}" in
-    *'||'* | *'&&'*) return 0 ;;
-  esac
+  grep -Eq -- '^"?[[:space:]]*(&&|\|\|)' <<<"${1##*)}" && return 0
   return 1
 }
 # The guard the assignment was written to reach: a test naming the assigned
