@@ -603,7 +603,7 @@ expect_green 'source catalog selection also applies with no derived exclusions o
 printf 'schema = 6\nbot-instructions = "text"\n' > "$repo/kendex-local.toml"
 expect_red toml-schema 'a bot configuration scalar is refused as a table error' \
   check --repo "$repo"
-expect_message 'kendex-local.toml [bot-instructions]: expected a table' \
+expect_finding toml-schema 'kendex-local.toml [bot-instructions]: expected a table' \
   'the scalar refusal identifies the selected file and table' check --repo "$repo"
 printf 'schema = 6\n' > "$repo/kendex-local.toml"
 expect_red toml-schema 'a missing bot table is refused' \

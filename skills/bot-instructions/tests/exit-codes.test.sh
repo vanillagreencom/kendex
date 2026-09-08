@@ -6,49 +6,53 @@
 # spec copy is unusable — exiting 1 reads as a violation in the tree, and a
 # lane that sorts its verdicts by code files a tool outage under "fix your
 # repo". The lane blocks either way; what it tells the operator is wrong.
+#
+# One table: a world, a verb, the exact status and what the first line names
+# (`bi_render` in lib/harness.sh). A crash outside the package's error family
+# is the one world no verb reaches from the command line, so it is driven
+# in-process below the table.
 
 . "$(dirname "$0")/lib/harness.sh"
 
-expect_status() {
-  local want label
-  want="$1"; label="$2"; shift 2
-  bi_run "$@"
-  if [ "$bi_status" -eq "$want" ]; then ok "$label"
-  else bad "$label" "exit $bi_status: $(printf '%s' "$bi_out" | head -2 | tr '\n' ' ')"; fi
+# `rendered` is a fresh repo that checks clean; the words after it move it
+# off that state: `stale-copilot` appends to a generated file, `no-git`
+# deletes the repository, `spec:no-doctrine` names a spec copy whose SKILL.md
+# carries a version and no `## Doctrine` section.
+bi_world() {
+  local word
+  repo="$(bi_rendered_repo "exit-$1-$$-$RANDOM")" || return 1
+  shift
+  for word in "$@"; do
+    case "$word" in
+      stale-copilot) printf '\nstale\n' >> "$repo/.github/copilot-instructions.md" ;;
+      no-git) rm -rf -- "${repo:?}/.git" ;;
+      spec:no-doctrine)
+        BI_SPEC="$BI_TMP/spec-no-doctrine"
+        rm -rf -- "${BI_SPEC:?}"
+        mkdir -p "$BI_SPEC/schemas"
+        printf -- '---\nmetadata:\n  version: "x"\n---\n\n# no doctrine here\n' > "$BI_SPEC/SKILL.md"
+        cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" "$BI_SPEC/schemas/renders.md"
+        ;;
+      *) printf 'unknown world word: %s\n' "$word" >&2; return 1 ;;
+    esac
+  done
 }
 
-repo="$(bi_rendered_repo exit-clean)" || exit 1
-expect_status 0 'a clean repo checks with exit 0' check --repo "$repo"
-
-# A finding is 1: the tree disagrees with a fresh render.
-printf '\nstale\n' >> "$repo/.github/copilot-instructions.md"
-expect_status 1 'a drift finding exits 1' check --repo "$repo"
-git -C "$repo" checkout -- . >/dev/null 2>&1
-
-# A source that cannot answer is 2, not 1: with git gone the run has no
-# tracked-path list to judge anything by, and nothing in the tree is wrong.
-rm -rf -- "${repo:?}/.git"
-expect_status 2 'git unable to answer exits 2' check --repo "$repo"
-if printf '%s\n' "$bi_out" | grep -q 'git ls-files'; then
-  ok 'and the message names the command that could not answer'
-else
-  bad 'and the message names the command that could not answer' "$bi_out"
-fi
-
-# An unusable spec copy is 2 for the same reason: the doctrine the render
-# would be built from is missing, so no verdict about the repo exists.
-repo="$(bi_rendered_repo exit-spec)" || exit 1
-spec="$BI_TMP/exit-spec-copy"
-mkdir -p "$spec/schemas"
-printf -- '---\nmetadata:\n  version: "x"\n---\n\n# no doctrine here\n' > "$spec/SKILL.md"
-cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" "$spec/schemas/renders.md"
-expect_status 2 'a spec copy with no doctrine source exits 2' check --repo "$repo" --spec "$spec"
+bi_table "the status, and what the first line names" "\
+a clean repo checks with exit 0|rendered|check|0|clean|-
+a drift finding exits 1|rendered stale-copilot|check|1|drift|-
+git unable to answer exits 2, naming the command that could not|rendered no-git|check|2|git ls-files -z|-
+a spec copy with no doctrine source exits 2, naming the file|rendered spec:no-doctrine|check|2|SKILL.md|-
+flag misuse exits 2 before any read, naming the flag|rendered|render --staged|2|--staged|-
+an unknown verb exits 2 from the parser|rendered|bogus|2|usage|-
+"
 
 # A crash is 2 as well: the tool failed, nothing in the tree is wrong, and
 # Python's own exit for an uncaught exception is 1. A dispatched dependency
 # raising something outside the package's error family reaches the last
 # handler, and the traceback still prints.
-crash_out="$(cd "$BI_ROOT/skills/bot-instructions/scripts" && PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" <<'PY' 2>&1
+repo="$(bi_rendered_repo exit-crash)" || exit 1
+crash_out="$(cd "$BI_ROOT/skills/bot-instructions/scripts" && python3 - "$repo" <<'PY' 2>&1
 import sys
 sys.path.insert(0, ".")
 from lib import cli, tree
@@ -64,8 +68,5 @@ else
   bad 'a crash outside the package error family exits 2 with its traceback' \
       "exit $crash_status: $(printf '%s' "$crash_out" | tail -2 | tr '\n' ' ')"
 fi
-
-# Flag misuse stays 2, as argparse already had it.
-expect_status 2 'flag misuse exits 2' render --staged --repo "$repo"
 
 bi_summary
