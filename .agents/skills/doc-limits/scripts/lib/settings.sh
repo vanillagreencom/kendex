@@ -35,10 +35,11 @@
 # Refusals start with the stable diagnostics protocol; source values remain
 # the resolver's stdout protocol and never include diagnostic text.
 sr_settings_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
-. "$sr_settings_script_dir/diagnostics.sh" 2>/dev/null || {
+if [ ! -f "$sr_settings_script_dir/diagnostics.sh" ] || [ ! -r "$sr_settings_script_dir/diagnostics.sh" ]; then
   printf 'doc-limits-error=diagnostics-load value=%q\n%s\n' "$sr_settings_script_dir/diagnostics.sh" 'Could not load the diagnostics library.' >&2
   return 1
-}
+fi
+. "$sr_settings_script_dir/diagnostics.sh"
 unset sr_settings_script_dir
 
 # Extract the value of one parsed dotenv assignment (text after `KEY=`).
