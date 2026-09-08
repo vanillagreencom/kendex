@@ -103,10 +103,10 @@ else
   reason_status=$?
 fi
 case "$reason" in
-  *"event 'schedule'"*"running every lane"*) reason_contract=present ;;
-  *) reason_contract="$reason" ;;
+  "fallback: cause=unsupported-event event=schedule"*) reason_contract=present ;;
+  *) reason_contract="$(printf '%s\n' "$reason" | sed -n '1p')" ;;
 esac
-assert_eq unsupported-event-report "present exit 0" \
+assert_eq unsupported-event-stable-report "present exit 0" \
   "$reason_contract exit $reason_status"
 
 git -C "$repo" rm -q .kendex-generated.json

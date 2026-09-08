@@ -68,6 +68,16 @@ flag-value-output|flag-value|--output|--head
 CASES
 require_rows argument "$argument_row_count"
 
+if missing_event_stderr="$(bounded "$HARNESS_ONLY" --repo "$repo" --base "$base" 2>&1 >/dev/null)"; then
+  missing_event_status=0
+else
+  missing_event_status=$?
+fi
+missing_event_first="$(printf '%s\n' "$missing_event_stderr" | sed -n '1p')"
+assert_eq missing-event-stable-report \
+  "wiring-error: cause=missing-event option=--event exit 2" \
+  "$missing_event_first exit $missing_event_status"
+
 if verdict_dash="$(classify --repo "$repo" --event push --base "$base" --head -)"; then
   dash_status=0
 else

@@ -18,8 +18,9 @@
 #   --output  append the verdict line to this file. Default $GITHUB_OUTPUT.
 #
 # stdout carries the verdict line and nothing else: harness_only=true|false.
-# The changed paths and the reason behind a false go to stderr, where the job
-# log shows them.
+# A stderr refusal starts with `wiring-error: cause=...`. A false-verdict
+# notice starts with `fallback: cause=...`. The English explanation follows
+# that stable key/value line in the job log.
 #
 # Exit 0 on any verdict. Exit 2 on a WIRING error — an unknown flag, a missing
 # --event, a flag where a value belongs, an unwritable --output. Those are
@@ -57,8 +58,13 @@ Prints harness_only=true|false on stdout. Exit 2 on a wiring error.
 USAGE
 }
 
-die() { # MESSAGE — a wiring error, never a verdict
-  echo "harness-only: $1" >&2
+stable_value() { # VALUE
+  printf '%q' "$1"
+}
+
+die() { # FIELDS MESSAGE — a wiring error, never a verdict
+  printf 'wiring-error: %s\n' "$1" >&2
+  echo "harness-only: $2" >&2
   exit 2
 }
 
@@ -71,9 +77,13 @@ die() { # MESSAGE — a wiring error, never a verdict
 # a verdict for a call that named no event at all. No option here takes a value
 # that starts with a dash; a path that does is reachable as `./-name`.
 need_value() { # FLAG REMAINING NEXT
-  [ "$2" -ge 2 ] || die "$1 needs a value"
+  [ "$2" -ge 2 ] || die \
+    "cause=missing-value option=$(stable_value "$1")" \
+    "$1 needs a value"
   case "$3" in
-    -?*) die "$1 needs a value, got the flag '$3'" ;;
+    -?*) die \
+      "cause=flag-used-as-value option=$(stable_value "$1") value=$(stable_value "$3")" \
+      "$1 needs a value, got the flag '$3'" ;;
   esac
 }
 
@@ -85,25 +95,30 @@ while [ "$#" -gt 0 ]; do
     --repo) need_value "$1" "$#" "${2:-}"; repo="$2"; shift 2 ;;
     --output) need_value "$1" "$#" "${2:-}"; output="$2"; shift 2 ;;
     -h | --help) usage; exit 0 ;;
-    *) die "unknown argument '$1'" ;;
+    *) die "cause=unknown-argument argument=$(stable_value "$1")" \
+      "unknown argument '$1'" ;;
   esac
 done
 
-[ -n "$event" ] || die "--event is required"
-[ -n "$head" ] || die "--head cannot be empty"
+[ -n "$event" ] || die "cause=missing-event option=--event" \
+  "--event is required"
+[ -n "$head" ] || die "cause=empty-value option=--head" \
+  "--head cannot be empty"
 
 
 # The output FILE is written before stdout, never after. A zero-length probe
 # proves only that the file opens — /dev/full and a full filesystem both accept
 # it and fail the real write — so a verdict printed first would already be on
 # stdout when the append died, and exit 2 is documented to carry no verdict.
-verdict() { # true|false [REASON]
+verdict() { # true|false [FIELDS REASON]
   if [ "$#" -gt 1 ]; then
-    echo "harness-only: $2; running every lane" >&2
+    printf 'fallback: %s\n' "$2" >&2
+    echo "harness-only: $3; running every lane" >&2
   fi
   if [ -n "$output" ]; then
     printf 'harness_only=%s\n' "$1" >>"$output" ||
-      die "could not append the verdict to '$output'"
+      die "cause=output-write-failed" \
+        "could not append the verdict to '$output'"
   fi
   printf 'harness_only=%s\n' "$1"
   exit 0
@@ -127,60 +142,85 @@ git_repo() { git -C "$repo" -c core.quotePath=false "$@"; }
 case "$event" in
   pull_request) range_style=merge_base ;;
   merge_group | push) range_style=endpoints ;;
-  *) verdict false "no diff endpoints are defined for event '$event'" ;;
+  *) verdict false \
+    "cause=unsupported-event event=$(stable_value "$event")" \
+    "no diff endpoints are defined for event '$event'" ;;
 esac
 
-[ -n "$base" ] || verdict false "no base endpoint was given for event '$event'"
+[ -n "$base" ] || verdict false \
+  "cause=missing-base event=$(stable_value "$event")" \
+  "no base endpoint was given for event '$event'"
 
 for endpoint in "$base" "$head"; do
   git_repo cat-file -e "${endpoint}^{commit}" 2>/dev/null ||
-    verdict false "endpoint '$endpoint' does not resolve to a commit"
+    verdict false \
+      "cause=unresolved-endpoint endpoint=$(stable_value "$endpoint")" \
+      "endpoint '$endpoint' does not resolve to a commit"
 done
 
 if [ "$range_style" = merge_base ]; then
   range="$base...$head"
   changed="$(git_repo diff --name-only --no-renames "$range")" ||
-    verdict false "the diff '$range' is unreadable"
+    verdict false \
+      "cause=unreadable-diff range=$(stable_value "$range")" \
+      "the diff '$range' is unreadable"
 else
   changed="$(git_repo diff --name-only --no-renames "$base" "$head")" ||
-    verdict false "the diff '$base' '$head' is unreadable"
+    verdict false \
+      "cause=unreadable-diff base=$(stable_value "$base") head=$(stable_value "$head")" \
+      "the diff '$base' '$head' is unreadable"
 fi
 
 # An empty list is not "nothing to run": it is also what a diff that silently
 # read nothing looks like, and neither answer is worth a waiver.
 [ -n "$changed" ] ||
-  verdict false "the diff between '$base' and '$head' is empty"
+  verdict false \
+    "cause=empty-diff base=$(stable_value "$base") head=$(stable_value "$head")" \
+    "the diff between '$base' and '$head' is empty"
 
 printf '%s\n' "$changed" | sed -e 's/^/harness-only: changed: /' >&2
 
 # Read the writer's exact output paths at both selected endpoints. A missing
 # inventory runs product checks, including the commit that first installs it.
 if [ "$range_style" = merge_base ]; then
-  base="$(git_repo merge-base "$base" "$head")" || verdict false "merge base is unreadable"
+  base="$(git_repo merge-base "$base" "$head")" || verdict false \
+    "cause=unreadable-merge-base" "merge base is unreadable"
 fi
-base_inventory="$(git_repo show "$base:.kendex-generated.json" 2>/dev/null)" || verdict false "base generated paths are absent or unreadable"
-head_inventory="$(git_repo show "$head:.kendex-generated.json" 2>/dev/null)" || verdict false "head generated paths are absent or unreadable"
+base_inventory="$(git_repo show "$base:.kendex-generated.json" 2>/dev/null)" || verdict false \
+  "cause=unreadable-base-inventory base=$(stable_value "$base")" \
+  "base generated paths are absent or unreadable"
+head_inventory="$(git_repo show "$head:.kendex-generated.json" 2>/dev/null)" || verdict false \
+  "cause=unreadable-head-inventory head=$(stable_value "$head")" \
+  "head generated paths are absent or unreadable"
 # The array contains files, never folder prefixes. A file must be generated
 # at each endpoint where it exists, so adopting a render as source runs checks.
 for inventory in "$base_inventory" "$head_inventory"; do
   jq -e 'type == "array" and all(.[]; type == "string")' <<<"$inventory" >/dev/null 2>&1 \
-    || verdict false "generated paths are invalid"
+    || verdict false "cause=invalid-generated-paths" \
+      "generated paths are invalid"
 done
 printf '%s\n%s\n' "$base_inventory" "$head_inventory" | jq -es '
   .[0] as $base | .[1] | all(.[]; . as $path | ($base | index($path)) != null)
-' >/dev/null 2>&1 || verdict false "generated ownership gains paths and requires product checks"
+' >/dev/null 2>&1 || verdict false "cause=generated-ownership-gain" \
+  "generated ownership gains paths and requires product checks"
 while IFS= read -r path; do
   [ -n "$path" ] || continue
   seen=false
   for endpoint in "$base" "$head"; do
-    entry="$(git_repo ls-tree "$endpoint" -- "$path")" || verdict false "file lookup failed"
+    entry="$(git_repo ls-tree "$endpoint" -- "$path")" || verdict false \
+      "cause=file-lookup-failed path=$(stable_value "$path")" \
+      "file lookup failed"
     [ -n "$entry" ] || continue
     seen=true
     inventory="$base_inventory"
     [ "$endpoint" != "$head" ] || inventory="$head_inventory"
     jq -e --arg path "$path" 'index($path) != null' <<<"$inventory" >/dev/null 2>&1 \
-      || verdict false "a changed file is product source or its ownership is unreadable"
+      || verdict false \
+        "cause=product-source-or-unreadable-ownership path=$(stable_value "$path")" \
+        "a changed file is product source or its ownership is unreadable"
   done
-  [ "$seen" = true ] || verdict false "a changed path could not be read"
+  [ "$seen" = true ] || verdict false \
+    "cause=unreadable-changed-path path=$(stable_value "$path")" \
+    "a changed path could not be read"
 done <<<"$changed"
 verdict true
