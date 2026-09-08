@@ -211,6 +211,7 @@ while IFS=$'\t' read -r name kind expected_line; do
     unknown) out=$("$MS" --unknown 2>&1) || rc=$? ;;
     arguments) out=$("$MS" 2>&1) || rc=$? ;;
     temp) out=$(MUTATION_STABILITY_SETTLE=1 TMPDIR="$TMP/absent" "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test true --build true --mutate true 2>&1) || rc=$? ;;
+    temp-space) out=$(MUTATION_STABILITY_SETTLE=1 TMPDIR="$TMP/space absent" "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test true --build true --mutate true 2>&1) || rc=$? ;;
     archive) out=$(MUTATION_STABILITY_SETTLE=1 "$MS" --worktree "$REPO" --sha not-a-sha --test true --build true --mutate true 2>&1) || rc=$? ;;
     control-build) out=$(MUTATION_STABILITY_SETTLE=1 "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test true --build false --mutate true 2>&1) || rc=$? ;;
     mutate) out=$(MUTATION_STABILITY_SETTLE=1 "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test 'printf "test result: ok. 1 passed; 0 failed; 0 ignored\n"' --build true --mutate 'printf "mutation detail\n" >&2; false' 2>&1) || rc=$? ;;
@@ -223,6 +224,7 @@ missing option value	missing-value	error=argument-value-missing option=--worktre
 unknown option	unknown	error=argument-unknown argument=--unknown
 missing required options	arguments	error=arguments-missing set=worktree-sha-test-build-mutate
 temporary workspace failure	temp	error=temp-create-failed path=$TMP/absent
+temporary workspace path escaping	temp-space	error=temp-create-failed path=$TMP/space\ absent
 archive failure	archive	error=archive-failed sha=not-a-sha
 control build failure	control-build	error=control-build-failed exit=1
 mutation command failure	mutate	error=mutate-command-failed exit=1
