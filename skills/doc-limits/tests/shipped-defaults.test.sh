@@ -32,11 +32,13 @@ expect_first_line() { # EXPECTED LABEL
   fi
 }
 must_fail_first_line() { # FORMER-LINE LABEL
-  local first="${OUT%%$'\n'*}"
-  if [ "$first" != "$1" ]; then
+  local assertion_rc=0
+  (PASS=0; FAIL=0; expect_first_line "$1" "$2"; [ "$FAIL" -eq 0 ]) >"$TMP/control.log" || assertion_rc=$?
+  if [ "$assertion_rc" -ne 0 ]; then
     PASS=$((PASS + 1)); printf '  ok: %s\n' "$2"
   else
-    FAIL=$((FAIL + 1)); printf '  FAIL: %s: mutant retained <%s>\n' "$2" "$first"
+    FAIL=$((FAIL + 1)); printf '  FAIL: %s: first-line assertion stayed green\n' "$2"
+    cat "$TMP/control.log"
   fi
 }
 must_fail() { # FORMER-EXIT MUTANT-EXIT LABEL: prove the former assertion turns red

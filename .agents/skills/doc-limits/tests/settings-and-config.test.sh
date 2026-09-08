@@ -32,11 +32,13 @@ expect_first_line() { # EXPECTED LABEL
   fi
 }
 must_fail_first_line() { # FORMER-LINE LABEL
-  local first="${OUT%%$'\n'*}"
-  if [ "$first" != "$1" ]; then
+  local assertion_rc=0
+  (PASS=0; FAIL=0; expect_first_line "$1" "$2"; [ "$FAIL" -eq 0 ]) >"$TMP/control.log" || assertion_rc=$?
+  if [ "$assertion_rc" -ne 0 ]; then
     PASS=$((PASS + 1)); printf '  ok: %s\n' "$2"
   else
-    FAIL=$((FAIL + 1)); printf '  FAIL: %s: mutant retained <%s>\n' "$2" "$first"
+    FAIL=$((FAIL + 1)); printf '  FAIL: %s: first-line assertion stayed green\n' "$2"
+    cat "$TMP/control.log"
   fi
 }
 must_fail() { # FORMER-EXIT MUTANT-EXIT LABEL: prove the former assertion turns red
@@ -154,11 +156,18 @@ run
 must_fail 2 1 'diagnostics-load control: wrong loader exit fails the refusal'
 SR="$SOURCE_COMMAND"
 
-for value in '*.md=0k' '*.md=400' '*.md=invalid' '*.md' '=1k'; do
+while IFS='|' read -r value key relevant; do
   export DOC_LIMITS_CLASSES="$value"
   run
   expect 2 "invalid-class: $value"
-done
+  expect_first_line "error=$key value=$(printf '%q' "$relevant")" "invalid-class diagnostic: $value"
+done <<'INVALID_CLASS_CASES'
+*.md=0k|class-threshold-invalid|0k
+*.md=400|class-threshold-invalid|400
+*.md=invalid|class-threshold-invalid|invalid
+*.md|class-entry-invalid|*.md
+=1k|class-pattern-empty|=1k
+INVALID_CLASS_CASES
 
 private_command invalid-classes
 [ ! -L "$MUTANT" ]
@@ -174,6 +183,19 @@ for value in '*.md=0k' '*.md=400' '*.md=invalid' '*.md' '=1k'; do
   run
   must_fail 2 0 "invalid-class table control: $value"
 done
+SR="$SOURCE_COMMAND"
+
+private_command class-diagnostic
+[ "$(grep -Fxc '      *) config_error class-threshold-invalid value "$craw" "$name: entry '\''$pair'\'' needs a positive integer with the '\''k'\'' byte suffix" ;;' "$MUTANT")" -eq 1 ]
+sed 's/config_error class-threshold-invalid value "$craw"/config_error class-threshold-renamed value "$craw"/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+export DOC_LIMITS_CLASSES='*.md=400'
+run
+must_fail_first_line 'error=class-threshold-invalid value=400' 'class diagnostic control: changing the stable key fails the suffix row'
 SR="$SOURCE_COMMAND"
 
 CLASS_ORDER_ASSERTIONS=0
@@ -310,23 +332,37 @@ chmod +x "$TMP/bin/git"
 export PATH="$TMP/bin:$PATH"
 
 COLLECTION_ASSERTIONS=0
-while IFS='|' read -r name fault expected; do
+while IFS='|' read -r name fault expected first_line; do
   export GIT_FAULT="$fault"
   run --staged
   expect "$expected" "$name"
+  expect_first_line "$first_line" "$name diagnostic"
   COLLECTION_ASSERTIONS=$((COLLECTION_ASSERTIONS + 1))
 done <<'COLLECTION_CASES'
-git-policy-lookup-failure|policy-lookup|2
-git-enumeration-failure|enumeration|2
-git-batch-empty-failure|batch-empty-failure|2
-git-batch-failure|batch-complete-failure|2
-empty-successful-batch-response|batch-empty-success|2
-collection-restored|none|1
+git-policy-lookup-failure|policy-lookup|2|doc-limits-error=settings-index-query value=9
+git-enumeration-failure|enumeration|2|error=documents-enumeration-failed exit=9
+git-batch-empty-failure|batch-empty-failure|2|error=blob-sizes-read-failed exit=9
+git-batch-failure|batch-complete-failure|2|error=blob-sizes-read-failed exit=9
+empty-successful-batch-response|batch-empty-success|2|error=blob-size-response-incomplete path=AGENTS.md
+collection-restored|none|1|notice=document-over-limit path=AGENTS.md
 COLLECTION_CASES
 if [ "$COLLECTION_ASSERTIONS" -eq 0 ]; then
   printf 'FAIL: COLLECTION_CASES executed no assertions\n' >&2
   exit 1
 fi
+
+private_command collection-diagnostic
+[ "$(grep -Fxc 'git ls-files -s -z >"$TMP/files.z" 2>/dev/null || collection_error documents-enumeration-failed exit "$?" "could not enumerate tracked documents"' "$MUTANT")" -eq 1 ]
+sed 's/collection_error documents-enumeration-failed exit/collection_error documents-enumeration-renamed exit/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+export GIT_FAULT=enumeration
+run --staged
+must_fail_first_line 'error=documents-enumeration-failed exit=9' 'collection diagnostic control: changing the stable key fails enumeration'
+SR="$SOURCE_COMMAND"
 
 private_command enumeration-guard
 [ ! -L "$MUTANT" ]

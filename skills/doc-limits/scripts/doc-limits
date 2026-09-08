@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Diagnostic protocol: refusals start error=KEY FIELD=VALUE; notices start
+# Diagnostic protocol: command refusals start error=KEY FIELD=VALUE; settings
+# refusals start doc-limits-error=KEY value=VALUE; notices start
 # notice=KEY FIELD=VALUE. English detail follows on the next line.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -333,7 +334,7 @@ while IFS="$TAB" read -r oid f limit class; do
   [ "$actual_oid" = "$oid" ] && [ "$kind" = blob ] \
     || collection_error document-blob-read-failed path "$f" "could not read document blob: $f"
   if [ "$STAGED" -eq 0 ] && [ -f "$f" ] && [ ! -L "$f" ]; then
-    n="$(wc -c <"$f" 2>/dev/null)" || collection_error document-measure-failed path "$f" "could not measure tracked document: $f"
+    n="$(wc -c 2>/dev/null <"$f")" || collection_error document-measure-failed path "$f" "could not measure tracked document: $f"
     n="${n#"${n%%[![:space:]]*}"}"
   fi
   case "$n" in "" | *[!0-9]*) collection_error document-byte-count-invalid path "$f" "invalid byte count for tracked document: $f" ;; esac
