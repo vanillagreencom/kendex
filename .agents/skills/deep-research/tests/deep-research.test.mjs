@@ -25,6 +25,21 @@ function hasProblem(result, level, key, value) {
   return problems.some((problem) => problem.key === key && problem.value === value);
 }
 
+function completeReport() {
+  return [
+    "# Findings: q",
+    "## Research Question", "q",
+    "## Executive Summary", "Summary",
+    "## Key Findings", "Finding",
+    "## Evidence and Sources", "- [1] Source — https://example.com",
+    "## Tradeoffs / Alternatives", "Tradeoff",
+    "## Recommendation / Decision Criteria", "Recommendation",
+    "## Risks / Unknowns", "Risk",
+    "## Revisit Conditions", "Condition",
+    "## Research Metadata", "- Mode: lite",
+  ].join("\n\n");
+}
+
 test("doctor reports runtime status", () => {
   const result = spawnSync(process.execPath, [script, "doctor"], { encoding: "utf8" });
   assert.equal(result.status, 0);
@@ -186,6 +201,50 @@ test("large refusal JSON is complete before exit", () => {
   const parsed = diagnostic(result);
   assert.equal(parsed.key, "command-unknown");
   assert.equal(parsed.value, command);
+});
+
+test("every command refusal keeps its stable key and value", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-refusals-"));
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "op"), "#!/usr/bin/env bash\nexit 1\n");
+  chmodSync(join(bin, "op"), 0o755);
+  for (let index = 0; index < 26; index += 1) writeFileSync(join(dir, `context-${index}.md`), "context");
+
+  const noSecrets = { ...process.env };
+  delete noSecrets.EXA_API_KEY;
+  delete noSecrets.EXA_MOCK_RESPONSE_FILE;
+
+  const noFetch = join(dir, "no-fetch.mjs");
+  writeFileSync(noFetch, "globalThis.fetch = undefined;\n");
+  const failedFetch = join(dir, "failed-fetch.mjs");
+  writeFileSync(failedFetch, "globalThis.fetch = async () => ({ ok: false, status: 503, statusText: 'unavailable', text: async () => 'unavailable' });\n");
+  const invalidMock = join(dir, "invalid.json");
+  writeFileSync(invalidMock, "{");
+
+  const additionalQueries = Array.from({ length: 11 }, () => ["--additional-query", "variant"]).flat();
+  const cases = [
+    { args: ["report", "q", "--output"], key: "argument-value-missing", value: "--output" },
+    { args: ["report", "q", "--unknown"], key: "argument-unknown", value: "--unknown" },
+    { args: ["report", "q", "--context-glob", "a*b*c"], key: "context-glob-invalid", value: "a*b*c", cwd: dir },
+    { args: ["report", "q", "--context-glob", "context-*.md"], key: "context-glob-limit", value: 26, cwd: dir },
+    { args: ["report", "q", "--type", "unknown"], key: "type-invalid", value: "unknown" },
+    { args: ["report", "q", "--format", "unknown"], key: "format-invalid", value: "unknown" },
+    { args: ["report", "q", ...additionalQueries], key: "additional-query-limit", value: 11 },
+    { args: ["report"], key: "query-missing", value: "query-or-file" },
+    { args: ["validate"], key: "argument-missing", value: "report+raw" },
+    { args: ["report", "q"], key: "secret-reference-unresolved", value: "EXA_API_KEY", env: { ...noSecrets, EXA_API_KEY: "op://vault/exa/key", PATH: `${bin}:${process.env.PATH}` } },
+    { args: ["report", "q"], key: "runtime-fetch-missing", value: process.version, env: { ...noSecrets, NODE_OPTIONS: `--import=${noFetch}` } },
+    { args: ["report", "q"], key: "exa-request-failed", value: 503, env: { ...noSecrets, EXA_API_KEY: "key", NODE_OPTIONS: `--import=${failedFetch}` } },
+    { args: ["report", "q"], key: "unexpected-error", value: "SyntaxError", env: { ...noSecrets, EXA_MOCK_RESPONSE_FILE: invalidMock } },
+  ];
+
+  for (const row of cases) {
+    const result = spawnSync(process.execPath, [script, ...row.args], { encoding: "utf8", cwd: row.cwd, env: row.env ?? noSecrets });
+    const parsed = diagnostic(result);
+    assert.equal(parsed.key, row.key, row.key);
+    assert.equal(parsed.value, row.value, row.key);
+  }
 });
 
 test("full mode aggregates multiple mock responses and dedupes URLs", () => {
@@ -357,6 +416,35 @@ test("validate warns when Key Findings duplicates the Executive Summary", () => 
   assert.equal(result.status, 0, result.stderr);
   const json = JSON.parse(result.stdout);
   assert.equal(hasProblem(json, "warning", "report-sections-duplicate", "Executive Summary+Key Findings"), true);
+});
+
+test("every validation problem keeps its stable key and value", () => {
+  const validSidecar = {
+    metadata: { researchMode: "lite", queryCount: 1, additionalQueries: [], additionalQueriesApplied: "none", synthesis: true },
+    raw: { answer: "Answer", results: [{ url: "https://example.com" }] },
+  };
+  const cases = [
+    { key: "report-empty", level: "error", status: 1, value: "report", report: "" },
+    { key: "raw-sidecar-invalid-json", level: "error", status: 1, value: "raw", rawText: "{" },
+    { key: "raw-sidecar-metadata-missing", level: "error", status: 1, value: "raw", sidecar: { raw: validSidecar.raw } },
+    { key: "raw-sidecar-payload-missing", level: "error", status: 1, value: "raw", sidecar: { metadata: validSidecar.metadata } },
+    { key: "additional-queries-applied-conflict", level: "error", status: 1, value: "none", sidecar: { ...validSidecar, metadata: { ...validSidecar.metadata, queryCount: 2, additionalQueries: ["variant"] } } },
+    { key: "additional-queries-metadata-missing", level: "warning", status: 0, value: "raw", sidecar: { ...validSidecar, metadata: { researchMode: "lite", queryCount: 1, additionalQueriesApplied: "none", synthesis: true } } },
+    { key: "synthesis-metadata-mismatch", level: "warning", status: 0, value: false, sidecar: { ...validSidecar, metadata: { ...validSidecar.metadata, synthesis: false } } },
+    { key: "sources-empty", level: "warning", status: 0, value: 0, sidecar: { ...validSidecar, raw: { answer: "Answer", results: [] } } },
+  ];
+
+  for (const row of cases) {
+    const dir = mkdtempSync(join(tmpdir(), `deep-research-${row.key}-`));
+    const report = join(dir, "findings.md");
+    const raw = join(dir, "findings.raw.json");
+    writeFileSync(report, row.report ?? completeReport());
+    writeFileSync(raw, row.rawText ?? JSON.stringify(row.sidecar ?? validSidecar));
+    const result = spawnSync(process.execPath, [script, "validate", report, raw], { encoding: "utf8" });
+    assert.equal(result.status, row.status, row.key);
+    const expectedValue = row.value === "report" ? report : row.value === "raw" ? raw : row.value;
+    assert.equal(hasProblem(JSON.parse(result.stdout), row.level, row.key, expectedValue), true, row.key);
+  }
 });
 
 // The loader reads .env.local only — the .env fallback is removed — and an
