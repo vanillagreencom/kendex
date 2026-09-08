@@ -166,6 +166,8 @@ Once the PR exists, this run is a continuing action. Clear any stop a capped run
 
 Do not wait for a bot re-review round — late comments are caught by the § 4 gate, the § 6.1 gate-3 check, or queue-wait's late-findings guard, which reaches `merge-pr.md` § 5 step 1 as the `dequeued` verdict and routes to its Late-findings triage cycle.
 
+After any `review-pr-comments` return that accepted a fix artifact, rebuild the PR body from § 2 step 3 and update it with § 2 step 4 before continuing at the caller's return point. This carries each new proposed rule into the existing `## Proposed rules` section once.
+
 The **re-submit set** is the issues this session filed for work the cap did not deny. A filing that stood in for a fix the cap refused — one made at or past `REVIEW_MAX_EXTERNAL_ROUNDS`, or deferred rather than fixed — is recorded in `pr_comment_review.issues_created` and reported in the PR body, and never enters the set: implementing it here is the fix the cap refused, one step later. The re-submit set needs implementing before merge, bounded at two re-submit cycles:
 
 ```bash

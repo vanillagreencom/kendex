@@ -146,6 +146,10 @@ Update docs when the implementation changes a documented API or architecture.
 
 **Skip decision recording if** no alternatives were considered and no trade-offs made. Otherwise follow the decider skill's create-decision workflow: `.agents/skills/decider/scripts/decisions next-id`, a template from `templates/decision-entry.md`, the file per `schemas/decision-format.md`, the INDEX.md row per `templates/index-row.md`, `// REVISIT(DXXX):` markers in code where applicable, and the decision ID cited in the § 9 summary.
 
+### 4.4 Reflect
+
+Follow [dev SKILL.md § Reflect](../SKILL.md#reflect). Complete every repository edit from reflection before validation.
+
 ---
 
 ## 5. Validate
@@ -185,7 +189,7 @@ A script written only to produce a number for the issue is not committed; report
 
 ## 6. Reflect
 
-Follow [dev SKILL.md § Reflect](../SKILL.md#reflect).
+Reflection is complete in § 4.4. Make no repository edit here.
 
 ---
 

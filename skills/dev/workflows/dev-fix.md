@@ -42,6 +42,10 @@ Before a fix returns, grep for every other reader of the field, caller of the he
 
 Note anything a fix revealed about deeper problems, and cite the decision ID or rule behind every skip.
 
+### 2.1 Reflect
+
+Follow [dev SKILL.md § Reflect](../SKILL.md#reflect). Complete every repository edit from reflection before validation.
+
 ---
 
 ## 3. Validate And Commit
@@ -70,7 +74,7 @@ Append `[validate: FAILING_CHECK]` when validation failures remain.
 
 ## 4. Reflect
 
-Follow [dev SKILL.md § Reflect](../SKILL.md#reflect).
+Reflection is complete in § 2.1. Make no repository edit here.
 
 ---
 
