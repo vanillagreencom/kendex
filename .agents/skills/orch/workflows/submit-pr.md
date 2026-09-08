@@ -124,7 +124,7 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
    [The § 1.2 counts, only when the issue states no allowance.]
 
    ## Proposed rules
-   [Each rule under `### Proposed Rules` in an accepted dev artifact's `summary`.]
+   [Each string in workflow state `pr_comment_review.proposed_rules`.]
 
    ## Test Plan
    [validation steps]
