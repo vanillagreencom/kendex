@@ -124,9 +124,9 @@ pub(super) fn opencode_instruction_prefix(scope: &Scope) -> &'static str {
 /// command's first path-shaped word.
 fn project_command(rel: &str) -> String {
     format!(
-        "p={}; r=$(cd -P . && pwd); case $r in /*) ;; *) r=;; esac; \
+        "p={}; r=$({{ cd -P . && pwd; }} 2>/dev/null); case $r in /*) ;; *) r=;; esac; \
 while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || {{ r=${{r%/*}}; [ -n \"$r\" ] || r=/; }}; done; \
-[ -n \"$r\" ] || {{ echo \"kendex: no directory above $PWD holds $p; run kendex refresh in the project\" >&2; exit 1; }}; bash \"$r/$p\"",
+[ -n \"$r\" ] || {{ printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }}; bash \"$r/$p\"",
         crate::names::quoted(rel),
     )
 }

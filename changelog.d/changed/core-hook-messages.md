@@ -1,0 +1,1 @@
+- Session drift notices, missing project-hook refusals and unsupported hook events start with stable keys and their relevant values. Explanations follow on separate lines.

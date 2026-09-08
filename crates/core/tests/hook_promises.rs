@@ -12,7 +12,8 @@ use std::path::PathBuf;
 
 use kendex_core::engine::{EngineReport, audit};
 use kendex_core::env::{Env, FakeOs};
-use kendex_core::model::{HarnessId, Scope};
+use kendex_core::harness::{Enforcement, hook_enforcement};
+use kendex_core::model::{HarnessId, ItemKind, Scope};
 
 /// Authored in Claude's vocabulary, like every hook a catalog ships.
 const GUARD: &str = "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: check shell commands\n# ---\nexit 0\n";
@@ -64,7 +65,7 @@ fn plan(f: &Fixture) -> EngineReport {
 /// Cursor and OpenCode have no hook surface of their own: what installs
 /// there is prose the model is free to ignore. Presenting that as the same
 /// protection Claude Code runs is the failure the enforcement axis exists
-/// to prevent, so it is said in the warning and in the plan itself.
+/// to prevent. The warning and typed enforcement result must agree.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_says_which_tools_run_it_and_which_only_read_it() {
@@ -74,43 +75,34 @@ fn a_hook_says_which_tools_run_it_and_which_only_read_it() {
     );
     let report = plan(&f);
 
-    let advisory: Vec<HarnessId> = report
+    let advisory: Vec<_> = report
         .warnings
         .iter()
-        .filter(|w| w.message.contains("advisory on"))
-        .filter_map(|w| w.harness)
+        .filter(|warning| warning.kind == ItemKind::Hook && warning.name == "guard")
+        .map(|warning| (warning.harness, warning.remediation.is_some()))
         .collect();
     assert_eq!(
         advisory,
-        [HarnessId::Opencode, HarnessId::Cursor],
-        "{:?}",
-        report.warnings
+        [
+            (Some(HarnessId::Opencode), true),
+            (Some(HarnessId::Cursor), true),
+            (Some(HarnessId::Pi), true),
+        ]
     );
-    for warning in report
-        .warnings
-        .iter()
-        .filter(|w| w.message.contains("advisory"))
-    {
-        assert!(
-            warning
-                .remediation
-                .as_ref()
-                .is_some_and(|fix| fix.contains("or accept it as guidance on")),
-            "{warning:?}"
-        );
-    }
 
-    let described = |text: &str| report.plan.ops.iter().any(|op| op.line().contains(text));
-    assert!(described("Install hook guard for Cursor (advisory)"));
-    assert!(described("Install hook guard for OpenCode (advisory)"));
-    for tool in ["Claude Code", "Codex", "Gemini CLI", "GitHub Copilot"] {
-        assert!(
-            described(&format!("Install hook guard for {tool}")),
-            "{tool}"
-        );
-        assert!(
-            !described(&format!("Install hook guard for {tool} (advisory)")),
-            "{tool}"
+    for (harness, expected) in [
+        (HarnessId::Opencode, Enforcement::Advisory),
+        (HarnessId::Cursor, Enforcement::Advisory),
+        (HarnessId::Pi, Enforcement::Advisory),
+        (HarnessId::Claude, Enforcement::Enforced),
+        (HarnessId::Codex, Enforcement::Enforced),
+        (HarnessId::Gemini, Enforcement::Enforced),
+        (HarnessId::Copilot, Enforcement::Enforced),
+    ] {
+        assert_eq!(
+            hook_enforcement(&f.env, &f.scope, harness),
+            expected,
+            "{harness:?}"
         );
     }
 }
@@ -130,7 +122,7 @@ fn a_matcher_that_cannot_be_translated_installs_as_written_and_is_named() {
     let named: Vec<HarnessId> = report
         .warnings
         .iter()
-        .filter(|w| w.message.contains("may never match"))
+        .filter(|w| w.kind == ItemKind::Hook && w.name == "loose")
         .filter_map(|w| w.harness)
         .collect();
     assert_eq!(

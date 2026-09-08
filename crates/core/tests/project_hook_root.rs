@@ -304,10 +304,7 @@ fn a_hook_with_no_script_above_the_working_directory_refuses() {
         ("from a directory with no script above it", command.clone()),
         (
             "from a directory removed under the shell",
-            format!(
-                "rmdir \"$PWD\" && exec sh -c {}",
-                kendex_core::names::quoted(&command)
-            ),
+            format!("rmdir \"$PWD\" && {{ {command}; }}"),
         ),
     ] {
         let mut child = scrubbed(
@@ -336,11 +333,10 @@ fn a_hook_with_no_script_above_the_working_directory_refuses() {
             .unwrap()
             .read_to_string(&mut stderr)
             .unwrap();
-        assert_eq!(status.code(), Some(1), "{what}: {stderr}");
-        assert!(
-            stderr.contains("kendex: no directory above")
-                && stderr.contains(".codex/hooks/audit.sh"),
-            "{what}: the refusal names the start and the file: {stderr}"
+        assert_eq!(
+            (status.code(), stderr.lines().next()),
+            (Some(1), Some("kendex-hook-missing: .codex/hooks/audit.sh")),
+            "{what}: {stderr}"
         );
     }
 }

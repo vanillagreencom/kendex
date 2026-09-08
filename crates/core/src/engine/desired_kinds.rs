@@ -110,35 +110,21 @@ pub(super) fn restated_hook_artifact(
     harness: HarnessId,
     state: &mut DesiredState,
 ) -> Option<Artifact> {
-    if harness == HarnessId::Codex && codex_event(&hook.event).is_none() {
+    let event = match harness {
+        HarnessId::Codex => codex_event(&hook.event).map(|_| hook.event.as_str()),
+        HarnessId::Pi => crate::harness::pi_listener(&hook.event),
+        _ => Some(hook.event.as_str()),
+    };
+    let Some(event) = event else {
         state.notes.push(format!(
-            "hook {name}: event {} unsupported on codex — advisory prose lands with the customization editor",
-            hook.event
+            "kendex-hook-unsupported: harness={} event={} hook={name}\nThis harness cannot run the hook event. Nothing is installed for it.",
+            harness.name(), hook.event
         ));
         return None;
-    }
-    // Pi fires a fixed set of listeners through the pi-hooks carrier;
-    // an event outside that set cannot run there and installs nothing —
-    // honesty over prose (a stale advisory drift claim is worse than
-    // none). A mappable event is restated in the listener's name, and
-    // a scope with no carrier registered anywhere Pi loads gets the
-    // downgrade said per item, because the rendered registry is prose
-    // until something executes it.
-    let hook = match harness {
-        HarnessId::Pi => {
-            let Some(listener) = crate::harness::pi_listener(&hook.event) else {
-                state.notes.push(format!(
-                    "hook {name}: event {} unsupported on pi — pi fires no such listener",
-                    hook.event
-                ));
-                return None;
-            };
-            HookSpec {
-                event: listener.to_owned(),
-                ..hook.clone()
-            }
-        }
-        _ => hook.clone(),
+    };
+    let hook = HookSpec {
+        event: event.to_owned(),
+        ..hook.clone()
     };
     // Gemini and Copilot each name the lifecycle events their own way,
     // so the hook is restated in the reader's words — and whatever their

@@ -87,9 +87,11 @@ fn the_drift_hook_installs_as_a_declared_item_and_is_idempotent() {
             ][..]
         )
     );
-    assert!(
-        drift::hook::HOOK_SCRIPT.contains("harnesses: [claude-code, pi]"),
-        "the script itself must apply to pi"
+    assert_eq!(
+        kendex_core::hook::parse_hook(drift::hook::HOOK_SCRIPT)
+            .unwrap()
+            .harnesses,
+        Some(vec!["claude-code".to_owned(), "pi".to_owned()]),
     );
 
     // The ordinary refresh renders it.

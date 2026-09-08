@@ -15,8 +15,9 @@ use std::path::{Path, PathBuf};
 use kendex_core::engine::audit;
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::harness::{Enforcement, pi_listener};
-use kendex_core::model::Scope;
+use kendex_core::model::{HarnessId, ItemKind, Scope};
 use kendex_core::pi_ext::carrier;
+use serde_json::Value;
 
 struct World {
     _tmp: tempfile::TempDir,
@@ -84,17 +85,17 @@ const DISPATCHED: [&str; 4] = ["tool_call", "tool_result", "turn_end", "session_
 
 #[test]
 fn events_map_onto_the_listeners_pi_actually_fires() {
-    assert_eq!(pi_listener("PreToolUse"), Some("tool_call"));
-    assert_eq!(pi_listener("PostToolUse"), Some("tool_result"));
-    assert_eq!(pi_listener("Stop"), Some("turn_end"));
-    assert_eq!(pi_listener("TaskCompleted"), Some("turn_end"));
-    assert_eq!(pi_listener("SessionStart"), Some("session_start"));
-    assert_eq!(
-        pi_listener("PostCompact"),
-        None,
-        "pi fires no such listener"
-    );
-    assert_eq!(pi_listener("UserPromptSubmit"), None);
+    for (event, listener) in [
+        ("PreToolUse", Some("tool_call")),
+        ("PostToolUse", Some("tool_result")),
+        ("Stop", Some("turn_end")),
+        ("TaskCompleted", Some("turn_end")),
+        ("SessionStart", Some("session_start")),
+        ("PostCompact", None),
+        ("UserPromptSubmit", None),
+    ] {
+        assert_eq!(pi_listener(event), listener, "{event}");
+    }
 }
 
 #[test]
@@ -151,14 +152,17 @@ fn a_mappable_event_renders_the_registry_in_pi_listener_names() {
         script.is_file(),
         "the hook script lands beside the registry"
     );
-    let registry = fs::read_to_string(w.project.join(".pi/kendex/hooks.json")).unwrap();
-    assert!(
-        registry.contains("tool_call"),
-        "the registry speaks pi's listener names: {registry}"
-    );
-    assert!(
-        !registry.contains("PreToolUse"),
-        "the harness event name never reaches pi: {registry}"
+    let registry: Value =
+        serde_json::from_str(&fs::read_to_string(w.project.join(".pi/kendex/hooks.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        registry["hooks"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["tool_call"],
     );
 
     // No downgrade warning while the carrier is registered.
@@ -167,7 +171,9 @@ fn a_mappable_event_renders_the_registry_in_pi_listener_names() {
         !report
             .warnings
             .iter()
-            .any(|warning| warning.message.contains("carrier")),
+            .any(|warning| warning.kind == ItemKind::Hook
+                && warning.name == "guard"
+                && warning.harness == Some(HarnessId::Pi)),
         "{:?}",
         report.warnings
     );
@@ -183,10 +189,8 @@ fn an_unmappable_event_installs_nothing_on_pi() {
 
     let report = audit(&w.env, &scope(&w)).unwrap();
     assert!(
-        report
-            .notes
-            .iter()
-            .any(|note| note.contains("unsupported on pi")),
+        report.notes.iter().any(|note| note.lines().next()
+            == Some("kendex-hook-unsupported: harness=pi event=PostCompact hook=guard")),
         "{:?}",
         report.notes
     );
@@ -208,7 +212,11 @@ fn labels_downgrade_per_item_when_the_carrier_is_missing() {
     let warning = report
         .warnings
         .iter()
-        .find(|warning| warning.message.contains("carrier"))
+        .find(|warning| {
+            warning.kind == ItemKind::Hook
+                && warning.name == "guard"
+                && warning.harness == Some(HarnessId::Pi)
+        })
         .unwrap_or_else(|| panic!("no carrier warning: {:?}", report.warnings));
     assert!(
         warning
@@ -272,10 +280,15 @@ fn the_older_layout_beside_the_root_is_left_exactly_where_it_is() {
     let report = audit(&w.env, &scope(&w)).unwrap();
     kendex_core::apply::execute(&w.env, &report.plan).unwrap();
     assert!(home.join("hooks/guard.sh").is_file());
-    assert!(
-        fs::read_to_string(home.join("hooks.json"))
-            .unwrap()
-            .contains("guard.sh")
+    let restored: Value =
+        serde_json::from_str(&fs::read_to_string(home.join("hooks.json")).unwrap()).unwrap();
+    assert_eq!(
+        kendex_core::hook::command_stem(
+            restored["hooks"]["tool_call"][0]["hooks"][0]["command"]
+                .as_str()
+                .unwrap()
+        ),
+        "guard"
     );
 
     // And the pass after it settles.
@@ -359,10 +372,12 @@ fn a_declared_custom_hook_fires_through_the_carrier() {
 
     let report = audit(&w.env, &scope(&w)).unwrap();
     kendex_core::apply::execute(&w.env, &report.plan).unwrap();
-    let registry = fs::read_to_string(w.project.join(".pi/kendex/hooks.json")).unwrap();
-    assert!(
-        registry.contains("ken-941-fired"),
-        "the person's command rides in the registry: {registry}"
+    let registry: Value =
+        serde_json::from_str(&fs::read_to_string(w.project.join(".pi/kendex/hooks.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        registry["hooks"]["tool_call"][0]["hooks"][0]["command"],
+        "echo ken-941-fired >&2; exit 2",
     );
 
     // The real carrier, driven the way Pi drives it: one bash tool call.
@@ -394,10 +409,14 @@ fn a_declared_custom_hook_fires_through_the_carrier() {
         "carrier run failed: {}",
         String::from_utf8_lossy(&run.stderr)
     );
-    let verdict = String::from_utf8_lossy(&run.stdout);
+    let verdict: Value = serde_json::from_slice(&run.stdout).unwrap();
+    assert_eq!(verdict["block"], true);
     assert!(
-        verdict.contains("\"block\":true") && verdict.contains("ken-941-fired"),
-        "the declared hook did not fire: {verdict}"
+        verdict["reason"]
+            .as_str()
+            .unwrap()
+            .contains("ken-941-fired"),
+        "{verdict}"
     );
 }
 
@@ -432,13 +451,18 @@ fn a_declared_hook_on_the_other_listeners_fires_through_the_carrier() {
 
     let report = audit(&w.env, &scope(&w)).unwrap();
     kendex_core::apply::execute(&w.env, &report.plan).unwrap();
-    let registry = fs::read_to_string(w.project.join(".pi/kendex/hooks.json")).unwrap();
-    for listener in DISPATCHED {
-        assert!(
-            registry.contains(listener),
-            "no {listener} registration in the render: {registry}"
-        );
-    }
+    let registry: Value =
+        serde_json::from_str(&fs::read_to_string(w.project.join(".pi/kendex/hooks.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        registry["hooks"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        DISPATCHED.into_iter().collect(),
+    );
 
     // The real carrier, driven the way Pi drives a tool result.
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -466,13 +490,19 @@ fn a_declared_hook_on_the_other_listeners_fires_through_the_carrier() {
         "carrier run failed: {}",
         String::from_utf8_lossy(&run.stderr)
     );
-    let patch = String::from_utf8_lossy(&run.stdout);
+    let patch: Value = serde_json::from_slice(&run.stdout).unwrap();
+    let text: Vec<_> = patch["content"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|block| block["text"].as_str().unwrap())
+        .collect();
     assert!(
-        patch.contains("ken-1189-post"),
+        text.iter().any(|text| text.contains("ken-1189-post")),
         "the declared PostToolUse hook did not reach the tool result: {patch}"
     );
     assert!(
-        patch.contains("Everything up-to-date"),
+        text.contains(&"Everything up-to-date"),
         "the tool's own result was dropped rather than added to: {patch}"
     );
 }
