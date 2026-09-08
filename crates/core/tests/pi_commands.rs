@@ -176,7 +176,7 @@ fn a_shell_inline_installs_with_a_warning() {
     let warned: Vec<_> = report
         .warnings
         .iter()
-        .map(|w| (w.kind, w.name.as_str(), w.harness, w.message.as_str()))
+        .map(|w| (w.kind, w.name.as_str(), w.harness, w.message.lines().next()))
         .collect();
     assert_eq!(
         warned,
@@ -184,7 +184,7 @@ fn a_shell_inline_installs_with_a_warning() {
             ItemKind::Command,
             "diff",
             Some(HarnessId::Pi),
-            "the command runs a shell inline with !`…`, which Pi does not expand — the model reads the backticked command as text",
+            Some("kendex-command-inline-unsupported: harness=pi syntax=!`command`"),
         )]
     );
 }
