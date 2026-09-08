@@ -11,7 +11,7 @@ test("shell minimizer configuration", () => {
 			const result = minimizeShellOutput(text, "cargo test", cwd);
 			if (enabled) {
 				expect(result.dropped).toBeGreaterThan(0);
-				expect(result.text).toContain("[output-policy:minimized-lines=");
+				expect(result.text).toContain(`[output-policy:minimized-lines=${result.dropped}]`);
 				expect(result.text).toContain(tail);
 			} else {
 				expect(result).toEqual({ text, dropped: 0 });
