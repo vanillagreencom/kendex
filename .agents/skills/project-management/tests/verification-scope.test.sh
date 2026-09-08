@@ -175,20 +175,21 @@ refusal_rows_executed=0
 
 record_refusal_failure() {
   local case_name="$1" description="$2" status="$3"
-  local expected_status="$4" diagnostic="$5" output="$6"
+  local expected_status="$4" expected_key="$5" expected_value="$6" output="$7"
 
   echo "FAIL: $case_name: $description" >&2
   echo "  status: $status; expected: $expected_status" >&2
-  if [[ "$diagnostic" != "-" && "$output" != *"$diagnostic"* ]]; then
-    echo "  missing diagnostic: $diagnostic" >&2
+  echo "  expected first-line fields: $expected_key $expected_value" >&2
+  if [[ "$output" != *"$expected_key"* || "$output" != *"$expected_value"* ]]; then
+    echo "  actual output: $output" >&2
   fi
   refusal_failures=$((refusal_failures + 1))
 }
 
 run_refusal_case() {
   local case_name="$1" fixture_kind="$2" invocation="$3"
-  local expected_status="$4" diagnostic="$5" description="$6"
-  local output status matches
+  local expected_status="$4" expected_key="$5" expected_value="$6" description="$7"
+  local output status matches first_line
 
   setup_fixture "$fixture_kind" "$case_name"
   case "$invocation" in
@@ -237,27 +238,27 @@ run_refusal_case() {
   esac
 
   matches=true
+  first_line="${output%%$'\n'*}"
   [[ "$status" -eq "$expected_status" ]] || matches=false
-  if [[ "$diagnostic" != "-" && "$output" != *"$diagnostic"* ]]; then
-    matches=false
-  fi
+  [[ "$first_line" == *"$expected_key"* ]] || matches=false
+  [[ "$first_line" == *"$expected_value"* ]] || matches=false
   if [[ "$matches" != true ]]; then
     record_refusal_failure "$case_name" "$description" "$status" \
-      "$expected_status" "$diagnostic" "$output"
+      "$expected_status" "$expected_key" "$expected_value" "$output"
   fi
 }
 
 while IFS='^' read -r case_name fixture_kind invocation expected_status \
-  diagnostic description; do
+  expected_key expected_value description; do
   run_refusal_case "$case_name" "$fixture_kind" "$invocation" \
-    "$expected_status" "$diagnostic" "$description"
+    "$expected_status" "$expected_key" "$expected_value" "$description"
   refusal_rows_executed=$((refusal_rows_executed + 1))
 done <<'REFUSAL_ROWS'
-forced-docs-rejects-code^workspace^forced-docs-code^1^-^forced docs mode did not reject source code with the exact refusal status
-outside-worktree-path^workspace^outside-worktree^1^-^resolver did not reject an outside path with the exact refusal status
-repository-without-source^documentation^repository-without-source^1^no tracked source roots found^repository fallback did not return its exact status and source-scope diagnostic
-disconnected-base-history^disconnected-history^disconnected-base^1^git diff failed for base ref^base-ref mode did not return its exact status and disconnected-history diagnostic
-ls-files-producer-failure^corrupt-index^corrupt-index^1^git ls-files failed^repository discovery did not return its exact status and producer diagnostic
+forced-docs-rejects-code^workspace^forced-docs-code^1^error=docs-only-nondoc^path=crate-a/src/lib.rs^forced docs mode did not reject source code with the exact refusal status
+outside-worktree-path^workspace^outside-worktree^1^error=path-escape^path=../outside.rs^resolver did not reject an outside path with the exact refusal status
+repository-without-source^documentation^repository-without-source^1^error=source-roots-empty^count=0^repository fallback did not return its exact status and source-scope diagnostic
+disconnected-base-history^disconnected-history^disconnected-base^1^error=git-command-failed^operation=diff^base-ref mode did not return its exact status and disconnected-history diagnostic
+ls-files-producer-failure^corrupt-index^corrupt-index^1^error=git-command-failed^operation=ls-files^repository discovery did not return its exact status and producer diagnostic
 REFUSAL_ROWS
 
 [[ "$refusal_rows_executed" -gt 0 ]] \
