@@ -129,6 +129,23 @@ run
 must_fail 1 0 'precedence table control: disabling .env.local fails dotenv-local-over-local'
 SR="$SOURCE_COMMAND"
 
+private_command diagnostics-load
+MUTANT_DIAGNOSTICS="$(dirname "$MUTANT")/lib/diagnostics.sh"
+[ "$(grep -Fxc 'source "$SCRIPT_DIR/lib/settings.sh" || exit 2' "$MUTANT")" -eq 1 ]
+rm "$MUTANT_DIAGNOSTICS"
+SR="$MUTANT"
+run
+expect 2 'diagnostics-load-failure'
+expect_first_line "doc-limits-error=diagnostics-load value=$(printf '%q' "$MUTANT_DIAGNOSTICS")" 'diagnostics-load failure'
+sed 's#^source "\$SCRIPT_DIR/lib/settings.sh" || exit 2$#source "$SCRIPT_DIR/lib/settings.sh" || exit 1#' "$MUTANT" >"$MUTANT.changed"
+if cmp -s "$MUTANT" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+run
+must_fail 2 1 'diagnostics-load control: wrong loader exit fails the refusal'
+SR="$SOURCE_COMMAND"
+
 for value in '*.md=0k' '*.md=400' '*.md=invalid' '*.md' '=1k'; do
   export DOC_LIMITS_CLASSES="$value"
   run
@@ -196,6 +213,18 @@ unset DOC_LIMITS_CLASSES
 printf '[env]\nDUP = "a"\nDUP = "b"\n' >"$R/kendex.settings.toml"
 run
 expect 2 'duplicate-settings-key'
+expect_first_line 'doc-limits-error=settings-duplicate value=DUP' 'duplicate-settings-key diagnostic'
+private_command settings-diagnostic
+MUTANT_SETTINGS="$(dirname "$MUTANT")/lib/settings.sh"
+[ "$(grep -Fxc '        printf "doc-limits-error=settings-duplicate value=%s\n::error::%s: %s is assigned more than once in [env] (each key must be unique in the table)\n", key, src, key > "/dev/stderr"' "$MUTANT_SETTINGS")" -eq 1 ]
+sed 's/doc-limits-error=settings-duplicate value=%s/doc-limits-error=settings-renamed value=%s/' "$MUTANT_SETTINGS" >"$MUTANT_SETTINGS.changed"
+if cmp -s "$MUTANT_SETTINGS" "$MUTANT_SETTINGS.changed"; then exit 1; fi
+mv "$MUTANT_SETTINGS.changed" "$MUTANT_SETTINGS"
+bash -n "$MUTANT_SETTINGS"
+SR="$MUTANT"
+run
+must_fail_first_line 'doc-limits-error=settings-duplicate value=DUP' 'settings diagnostic control: changing the stable key fails the duplicate assertion'
+SR="$SOURCE_COMMAND"
 rm "$R/kendex.settings.toml" "$R/.env.local" "$R/.kendex/settings.toml"
 printf '*.md\tfixture exception\n!AGENTS.md\tkeep root instructions checked\n' >"$R/tools/doc-limits-excludes"
 export DOC_LIMITS_CLASSES='*.md=1k'

@@ -4,7 +4,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/settings.sh
-source "$SCRIPT_DIR/lib/settings.sh"
+source "$SCRIPT_DIR/lib/settings.sh" || exit 2
 # shellcheck source=../../commit-guards/scripts/lib/generated-paths.sh
 source "$SCRIPT_DIR/../../commit-guards/scripts/lib/generated-paths.sh"
 TAB="$(printf '\t')"

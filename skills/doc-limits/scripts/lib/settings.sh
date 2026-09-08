@@ -32,6 +32,15 @@
 # The caller cds to the repo root before resolving, so the default settings
 # path is relative.
 
+# Refusals start with the stable diagnostics protocol; source values remain
+# the resolver's stdout protocol and never include diagnostic text.
+sr_settings_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+. "$sr_settings_script_dir/diagnostics.sh" 2>/dev/null || {
+  printf 'doc-limits-error=diagnostics-load value=%q\n%s\n' "$sr_settings_script_dir/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  return 1
+}
+unset sr_settings_script_dir
+
 # Extract the value of one parsed dotenv assignment (text after `KEY=`).
 # Quoted values end at the FIRST closing delimiter — dotenv/shell
 # semantics; an embedded delimiter would need escaping, which this parser
@@ -86,9 +95,9 @@ sr_settings_usable() { # PATH — 0 = readable-shaped or absent; 1 + ::error oth
   { [ -e "$1" ] || [ -L "$1" ]; } || return 0
   [ ! -f "$1" ] || return 0
   if [ ! -e "$1" ]; then
-    echo "::error::$1: settings source is a symlink that does not resolve (dangling target, cycle, or over-long chain); a source is skipped only when it is absent" >&2
+    sr_message error settings-symlink "$1" "::error::$1: settings source is a symlink that does not resolve (dangling target, cycle, or over-long chain); a source is skipped only when it is absent" >&2
   else
-    echo "::error::$1: settings source exists but is not a regular file (directory, FIFO, socket or device); a source is skipped only when it is absent" >&2
+    sr_message error settings-type "$1" "::error::$1: settings source exists but is not a regular file (directory, FIFO, socket or device); a source is skipped only when it is absent" >&2
   fi
   return 1
 }
@@ -205,7 +214,7 @@ sr_settings_resolve() { # FILE — the path to actually read; nonzero + ::error 
         0)
           entry="$(git ls-tree HEAD -- ":(literal)$file" 2>/dev/null)" || tree_status=$?
           if [ "$tree_status" -ne 0 ]; then
-            echo "::error::$file: could not probe HEAD while resolving a setting (git ls-tree exit $tree_status); refusing to treat it as untracked" >&2
+            sr_message error settings-head-tree "$tree_status" "::error::$file: could not probe HEAD while resolving a setting (git ls-tree exit $tree_status); refusing to treat it as untracked" >&2
             return 1
           fi
           case "${entry:+tracked}" in
@@ -218,7 +227,7 @@ sr_settings_resolve() { # FILE — the path to actually read; nonzero + ::error 
           ;;
         1) ;;
         *)
-          echo "::error::$file: could not resolve HEAD while resolving a setting (git rev-parse exit $head_status); refusing to treat it as untracked" >&2
+          sr_message error settings-head "$head_status" "::error::$file: could not resolve HEAD while resolving a setting (git rev-parse exit $head_status); refusing to treat it as untracked" >&2
           return 1
           ;;
       esac
@@ -226,19 +235,19 @@ sr_settings_resolve() { # FILE — the path to actually read; nonzero + ::error 
       return 0
       ;;
     *)
-      echo "::error::$file: could not query the index while resolving a setting (git ls-files exit $status); refusing to treat it as untracked" >&2
+      sr_message error settings-index-query "$status" "::error::$file: could not query the index while resolving a setting (git ls-files exit $status); refusing to treat it as untracked" >&2
       return 1
       ;;
   esac
   status=0
   entry="$(git ls-files -s -- ":(literal)$file" 2>/dev/null)" || status=$?
   if [ "$status" -ne 0 ]; then
-    echo "::error::$file: could not read its index mode while resolving a setting (git ls-files exit $status)" >&2
+    sr_message error settings-index-mode "$status" "::error::$file: could not read its index mode while resolving a setting (git ls-files exit $status)" >&2
     return 1
   fi
   case "${entry%% *}" in
     120000)
-      echo "::error::$file: tracked as a symlink; staged settings resolution cannot read through it" >&2
+      sr_message error settings-index-symlink "$file" "::error::$file: tracked as a symlink; staged settings resolution cannot read through it" >&2
       return 1
       ;;
   esac
@@ -247,7 +256,7 @@ sr_settings_resolve() { # FILE — the path to actually read; nonzero + ::error 
   if [ ! -f "$copy" ]; then
     if ! git show ":$file" >"$copy" 2>/dev/null; then
       rm -f -- "$copy"
-      echo "::error::$file: could not read the staged copy while resolving a setting" >&2
+      sr_message error settings-index-read "$file" "::error::$file: could not read the staged copy while resolving a setting" >&2
       return 1
     fi
   fi
@@ -259,8 +268,12 @@ sr_settings_resolve() { # FILE — the path to actually read; nonzero + ::error 
 # header or assignment it hides. Refuse the source whole, same discipline
 # as the header rule. Read via stdin so the path is never an operand.
 sr_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
+  if [ ! -r "$1" ]; then
+    sr_message error settings-unreadable "$1" "::error::$1: settings source is not readable" >&2
+    return 1
+  fi
   if [ "$(head -c 3 < "$1" 2>/dev/null)" = "$(printf '\357\273\277')" ]; then
-    echo "::error::$1: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
+    sr_message error settings-bom "$1" "::error::$1: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
     return 1
   fi
 }
@@ -271,9 +284,9 @@ sr_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
 # resolved value.
 sr_settings_grep() { # REGEX FILE — matching lines on stdout; 1 = no match
   local status=0
-  grep -E -- "$1" "$2" || status=$?
+  grep -E -- "$1" "$2" 2>/dev/null || status=$?
   if [ "$status" -gt 1 ]; then
-    echo "::error::$2: unreadable while resolving a setting (grep exit $status)" >&2
+    sr_message error settings-grep "$2" "::error::$2: unreadable while resolving a setting (grep exit $status)" >&2
     return 2
   fi
   return "$status"
@@ -295,7 +308,7 @@ sr_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
   sr_bom_guard "$1" || return 1
   awk -v src="$1" '
     /^[[:space:]]*\[/ && !/^[[:space:]]*\[[A-Za-z0-9_.-]+\][[:space:]]*$/ {
-      printf "::error::%s:%d: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)\n", src, NR > "/dev/stderr"
+      printf "doc-limits-error=settings-header value=%d\n::error::%s:%d: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)\n", NR, src, NR > "/dev/stderr"
       exit 3
     }
     /^[[:space:]]*\[/ {
@@ -319,7 +332,7 @@ sr_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
       sub(/[[:space:]]*=.*$/, "", key)
       if (key !~ /^[A-Za-z_][A-Za-z0-9_]*$/) { print; next }
       if (key in seen) {
-        printf "::error::%s: %s is assigned more than once in [env] (each key must be unique in the table)\n", src, key > "/dev/stderr"
+        printf "doc-limits-error=settings-duplicate value=%s\n::error::%s: %s is assigned more than once in [env] (each key must be unique in the table)\n", key, src, key > "/dev/stderr"
         exit 3
       }
       seen[key] = 1
@@ -327,7 +340,7 @@ sr_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
       sub(/^[^=]*=[[:space:]]*/, "", value)
       sub(/[[:space:]]+$/, "", value)
       if (value !~ /^"[^"\\]*"[[:space:]]*(#.*)?$/) {
-        printf "::error::%s: unsupported syntax for %s (expected a single-line basic string, no double quote and no backslash: %s = \"value\")\n", src, key, key > "/dev/stderr"
+        printf "doc-limits-error=settings-syntax value=%s\n::error::%s: unsupported syntax for %s (expected a single-line basic string, no double quote and no backslash: %s = \"value\")\n", key, src, key, key > "/dev/stderr"
         exit 3
       }
       print
@@ -335,7 +348,7 @@ sr_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
   ' < "$1" || status=$?
   [ "$status" -ne 3 ] || return 1
   if [ "$status" -ne 0 ]; then
-    echo "::error::$1: unreadable while resolving a setting (awk exit $status)" >&2
+    sr_message error settings-awk "$1" "::error::$1: unreadable while resolving a setting (awk exit $status)" >&2
     return 2
   fi
 }
@@ -344,7 +357,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   local name="$1" default="$2" line val file table status matches
   case "$name" in
     "" | [0-9]* | *[!A-Za-z0-9_]*)
-      echo "::error::sr_setting: invalid key name '$name' (shell identifier shape required: [A-Za-z_][A-Za-z0-9_]*)" >&2
+      sr_message error settings-key "$name" "::error::sr_setting: invalid key name '$name' (shell identifier shape required: [A-Za-z_][A-Za-z0-9_]*)" >&2
       return 1
       ;;
   esac
@@ -366,7 +379,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     if [ -f "$file" ]; then
       sr_bom_guard "$file" || return 1
       if [ ! -r "$file" ]; then
-        echo "::error::$file: unreadable while resolving a setting (permission denied)" >&2
+        sr_message error settings-unreadable "$file" "::error::$file: unreadable while resolving a setting (permission denied)" >&2
         return 1
       fi
     fi
@@ -390,7 +403,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     line="$(printf '%s\n' "$matches" | tail -n 1)"
     if [ -n "$line" ]; then
       if ! val="$(sr_dotenv_value "${line#*=}")"; then
-        echo "::error::.env.local: unsupported syntax for $name (a quoted value must end at its closing quote, optionally followed by a comment)" >&2
+        sr_message error settings-dotenv "$name" "::error::.env.local: unsupported syntax for $name (a quoted value must end at its closing quote, optionally followed by a comment)" >&2
         return 1
       fi
       printf '%s' "$val"
@@ -407,7 +420,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     [ "$status" -le 1 ] || return 1
     if [ "$status" -eq 0 ]; then
       if [ "$(printf '%s\n' "$matches" | grep -c .)" -gt 1 ]; then
-        echo "::error::$file: $name is assigned more than once in [env] (each key must be unique in the table)" >&2
+        sr_message error settings-duplicate "$name" "::error::$file: $name is assigned more than once in [env] (each key must be unique in the table)" >&2
         return 1
       fi
       # The first line in-shell, never `printf | head -n 1`: head closes the
@@ -416,7 +429,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       # file sets no mode of its own; it runs in the caller's, which does.
       line="${matches%%$'\n'*}"
       if ! printf '%s\n' "$line" | grep -Eq -- "^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"[^\"\\\\]*\"[[:space:]]*(#.*)?\$"; then
-        echo "::error::$file: unsupported syntax for $name (expected a single-line basic string with no '\"' and no '\\': $name = \"value\")" >&2
+        sr_message error settings-syntax "$name" "::error::$file: unsupported syntax for $name (expected a single-line basic string with no '\"' and no '\\': $name = \"value\")" >&2
         return 1
       fi
       val="$(printf '%s\n' "$line" | sed -n "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*\$/\1/p")"
