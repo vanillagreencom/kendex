@@ -11,22 +11,24 @@ const baseConfig = { maxEventBytes: DEFAULT_MAX_EVENT_BYTES, previewBytes: DEFAU
 
 describe("sanitizeBridgeEvent", () => {
 	for (const row of [
-		{ name: "short delta", delta: "Hello world", length: 11, previewBytes: DEFAULT_PREVIEW_BYTES, large: false },
-		{ name: "large delta", delta: "x".repeat(500_000), length: 500_000, previewBytes: 64, large: true },
+		{ name: "short delta", payload: { role: "assistant", contentIndex: 0, type: "text", delta: "Hello world" }, expected: { role: "assistant", contentIndex: 0, type: "text", deltaLength: 11, deltaBytes: 11, deltaPreview: "Hello world" }, previewBytes: DEFAULT_PREVIEW_BYTES, raw: false },
+		{ name: "large delta", payload: { role: "assistant", contentIndex: 0, delta: "x".repeat(500_000) }, expected: { deltaLength: 500_000 }, previewBytes: 64, raw: true },
+		{ name: "assistant message envelope", payload: { assistantMessageEvent: { message: { id: "msg_42", role: "assistant", contentIndex: 2, type: "text", text: "z".repeat(800) } } }, expected: { role: "assistant", contentIndex: 2, messageId: "msg_42", type: "text", deltaLength: 800 }, previewBytes: DEFAULT_PREVIEW_BYTES, raw: false },
+		{ name: "message content array", payload: { message: { role: "assistant", content: [{ type: "text", text: "intro" }, { type: "text", text: "final body " + "y".repeat(400) }] } }, expected: { role: "assistant" }, previewBytes: DEFAULT_PREVIEW_BYTES, raw: false },
 	]) {
 		test(`message update ${row.name}`, () => {
-			const payload = { role: "assistant", contentIndex: 0, type: "text", delta: row.delta };
-			const result = sanitizeBridgeEvent("message_update", payload, { ...baseConfig, previewBytes: row.previewBytes });
+			const result = sanitizeBridgeEvent("message_update", row.payload, { ...baseConfig, previewBytes: row.previewBytes });
 			const data = result.data as Record<string, unknown>;
-			expect(data).toMatchObject({ role: "assistant", type: "text", contentIndex: 0, deltaLength: row.length, deltaBytes: row.length });
+			expect(data).toMatchObject(row.expected);
 			expect(typeof data.deltaPreview).toBe("string");
+			expect((data.deltaPreview as string).length).toBeGreaterThan(0);
 			expect((data.deltaPreview as string).length).toBeLessThanOrEqual(row.previewBytes);
 			expect("delta" in data).toBe(false);
 			expect(result.truncated).toBe(true);
-			if (row.large) {
-				expect(result.raw).toEqual(payload);
+			if (row.raw) {
+				expect(result.raw).toEqual(row.payload);
 				expect(result.originalBytes).toBeGreaterThan(100_000);
-			} else expect(data.deltaPreview).toBe("Hello world");
+			}
 		});
 	}
 
@@ -78,37 +80,31 @@ describe("sanitizeBridgeEvent", () => {
 		expect("messages" in data).toBe(false);
 	});
 
-	test("input events retain source and streaming behavior while compacting prompt text", () => {
-		const payload = {
-			text: "please adjust the current plan " + "x".repeat(200),
-			source: "extension",
-			streamingBehavior: "followUp",
-			images: [{ source: { type: "base64", data: "image-data" } }],
-		};
-		const result = sanitizeBridgeEvent("input", payload, { ...baseConfig, previewBytes: 48 });
-		const data = result.data as Record<string, unknown>;
-
-		expect(data.source).toBe("extension");
-		expect(data.streamingBehavior).toBe("followUp");
-		expect(data.imagesCount).toBe(1);
-		expect(data.textBytes).toBe(Buffer.byteLength(payload.text, "utf8"));
-		expect(data.textLength).toBe(payload.text.length);
-		expect((data.textPreview as string).length).toBeLessThanOrEqual(48);
-		expect(data.textTruncated).toBe(true);
-		expect("text" in data).toBe(false);
-		expect("images" in data).toBe(false);
-		expect(result.truncated).toBe(true);
-		expect(result.raw).toEqual(payload);
-	});
-
-	test("input event compaction treats idle prompts as undefined streaming behavior", () => {
-		const result = sanitizeBridgeEvent("input", { text: "idle prompt", source: "interactive" }, baseConfig);
-		const data = result.data as Record<string, unknown>;
-
-		expect(data.textPreview).toBe("idle prompt");
-		expect(data.source).toBe("interactive");
-		expect("streamingBehavior" in data).toBe(false);
-	});
+	for (const row of [
+		{ name: "streaming extension input", payload: { text: "please adjust the current plan " + "x".repeat(200), source: "extension", streamingBehavior: "followUp", images: [{ source: { type: "base64", data: "image-data" } }] }, previewBytes: 48, streamed: true },
+		{ name: "idle interactive input", payload: { text: "idle prompt", source: "interactive" }, previewBytes: DEFAULT_PREVIEW_BYTES, streamed: false },
+	]) {
+		test(row.name, () => {
+			const result = sanitizeBridgeEvent("input", row.payload, { ...baseConfig, previewBytes: row.previewBytes });
+			const data = result.data as Record<string, unknown>;
+			expect(data.source).toBe(row.payload.source);
+			if (row.streamed) {
+				expect(data.streamingBehavior).toBe("followUp");
+				expect(data.imagesCount).toBe(1);
+				expect(data.textBytes).toBe(Buffer.byteLength(row.payload.text, "utf8"));
+				expect(data.textLength).toBe(row.payload.text.length);
+				expect((data.textPreview as string).length).toBeLessThanOrEqual(48);
+				expect(data.textTruncated).toBe(true);
+				expect("text" in data).toBe(false);
+				expect("images" in data).toBe(false);
+				expect(result.truncated).toBe(true);
+				expect(result.raw).toEqual(row.payload);
+			} else {
+				expect(data.textPreview).toBe("idle prompt");
+				expect("streamingBehavior" in data).toBe(false);
+			}
+		});
+	}
 
 	for (const row of [
 		{ name: "small unknown event", event: "bridge_pong", payload: { ok: true, count: 3 }, maxEventBytes: DEFAULT_MAX_EVENT_BYTES, truncated: false },
@@ -169,46 +165,6 @@ describe("sanitizeBridgeEvent", () => {
 	});
 
 
-	test("message_update reads role/contentIndex/delta from assistantMessageEvent envelope", () => {
-		const payload = {
-			assistantMessageEvent: {
-				message: {
-					id: "msg_42",
-					role: "assistant",
-					contentIndex: 2,
-					type: "text",
-					text: "z".repeat(800),
-				},
-			},
-		};
-		const result = sanitizeBridgeEvent("message_update", payload, baseConfig);
-		const data = result.data as Record<string, unknown>;
-		expect(data.role).toBe("assistant");
-		expect(data.contentIndex).toBe(2);
-		expect(data.messageId).toBe("msg_42");
-		expect(data.type).toBe("text");
-		expect(data.deltaLength).toBe(800);
-		expect(typeof data.deltaPreview).toBe("string");
-		expect(result.truncated).toBe(true);
-	});
-
-	test("message_update falls back to message.content array text", () => {
-		const payload = {
-			message: {
-				role: "assistant",
-				content: [
-					{ type: "text", text: "intro" },
-					{ type: "text", text: "final body " + "y".repeat(400) },
-				],
-			},
-		};
-		const result = sanitizeBridgeEvent("message_update", payload, baseConfig);
-		const data = result.data as Record<string, unknown>;
-		expect(data.role).toBe("assistant");
-		expect(typeof data.deltaPreview).toBe("string");
-		expect((data.deltaPreview as string).length).toBeGreaterThan(0);
-		expect(result.truncated).toBe(true);
-	});
 
 	for (const row of [
 		{ name: "camel id", event: "tool_execution_start", payload: { toolName: "Read", toolCallId: "tcl_1", input: { path: "/x" } }, expected: { toolUseId: "tcl_1" }, errorBytes: false },
