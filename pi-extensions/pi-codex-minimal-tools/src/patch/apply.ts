@@ -34,7 +34,7 @@ export function resolvePatchPath(pathValue: string, options: ApplyPatchOptions):
 	const cwd = resolve(options.cwd);
 	const rel = relative(cwd, absolute);
 	const insideCwd = rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-	if (!insideCwd && !options.allowAbsolutePaths) throw new Error(`Patch path escapes cwd: ${pathValue}`);
+	if (!insideCwd && !options.allowAbsolutePaths) throw Object.assign(new Error(`patch_path_outside=${pathValue}\nPatch path escapes cwd: ${pathValue}`), { code: "PATCH_PATH_OUTSIDE", path: pathValue });
 	return absolute;
 }
 
@@ -85,14 +85,14 @@ async function readUtf8(path: string): Promise<string> {
 	try {
 		return await readFile(path, "utf8");
 	} catch (error) {
-		throw new Error(`Failed to read ${path}: ${error instanceof Error ? error.message : String(error)}`);
+		throw Object.assign(new Error(`patch_read_failed=${path}\nFailed to read ${path}: ${error instanceof Error ? error.message : String(error)}`, { cause: error }), { code: "PATCH_READ_FAILED", path });
 	}
 }
 
 function replaceUnique(content: string, oldText: string, newText: string, path: string): string | undefined {
 	const first = content.indexOf(oldText);
 	if (first < 0) return undefined;
-	if (content.indexOf(oldText, first + oldText.length) >= 0) throw new Error(`Patch context is ambiguous in ${path}`);
+	if (content.indexOf(oldText, first + oldText.length) >= 0) throw Object.assign(new Error(`patch_context_ambiguous=${path}\nPatch context is ambiguous in ${path}`), { code: "PATCH_CONTEXT_AMBIGUOUS", path });
 	return `${content.slice(0, first)}${newText}${content.slice(first + oldText.length)}`;
 }
 
@@ -159,7 +159,7 @@ export async function applyParsedPatch(parsed: ParsedPatch, options: ApplyPatchO
 		const applied = files.map((file) => `${file.kind} ${file.path}`).join(", ") || "none";
 		const message = error instanceof Error ? error.message : String(error);
 		await restoreSnapshots([...snapshots.values()]);
-		throw new Error(`${message}\nPartial apply status: completed actions before failure: ${applied}. Rolled back touched files; review the working tree before retrying.`);
+		throw Object.assign(new Error(`${message}\nPartial apply status: completed actions before failure: ${applied}. Rolled back touched files; review the working tree before retrying.`, { cause: error }), error instanceof Error ? { code: (error as NodeJS.ErrnoException).code, path: (error as NodeJS.ErrnoException).path } : {});
 	}
 	return {
 		files,

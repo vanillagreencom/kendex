@@ -36,7 +36,7 @@ function assertWithinCwd(absolutePath: string, cwd: string, displayPath: string)
 	const cwdAbsolute = resolve(cwd);
 	const rel = relative(cwdAbsolute, absolutePath);
 	if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) return;
-	throw new Error(`view_image path escapes the workspace: ${displayPath}`);
+	throw Object.assign(new Error(`image_path_outside=${displayPath}\nview_image path escapes the workspace: ${displayPath}`), { code: "IMAGE_PATH_OUTSIDE", path: displayPath });
 }
 
 export function normalizeImagePath(pathValue: string, cwd: string, options?: ViewImageOptions): { absolutePath: string; displayPath: string } {
@@ -63,18 +63,18 @@ export async function validateImagePath(input: ViewImageInput, cwd: string, opti
 	} catch {
 		throw new Error(`Image not found: ${normalized.displayPath}`);
 	}
-	if (fileStat.isDirectory()) throw new Error(`view_image expected a file but got a directory: ${normalized.displayPath}`);
+	if (fileStat.isDirectory()) throw Object.assign(new Error(`image_directory=${normalized.displayPath}\nview_image expected a file but got a directory: ${normalized.displayPath}`), { code: "IMAGE_DIRECTORY", path: normalized.displayPath });
 	if (!fileStat.isFile()) throw new Error(`view_image expected a regular image file: ${normalized.displayPath}`);
 	if (options?.workspaceOnly) {
 		try {
 			assertWithinCwd(await realpath(normalized.absolutePath), await realpath(cwd), normalized.displayPath);
 		} catch (error) {
-			if (error instanceof Error && error.message.includes("escapes the workspace")) throw error;
+			if (error instanceof Error && (error as NodeJS.ErrnoException).code === "IMAGE_PATH_OUTSIDE") throw error;
 			throw new Error(`Unable to validate image path: ${normalized.displayPath}`);
 		}
 	}
 	const mimeType = mimeTypeForImagePath(normalized.absolutePath);
-	if (!mimeType) throw new Error(`Unsupported image file type for view_image: ${normalized.displayPath}`);
+	if (!mimeType) throw Object.assign(new Error(`image_type=${normalized.displayPath}\nUnsupported image file type for view_image: ${normalized.displayPath}`), { code: "IMAGE_TYPE", path: normalized.displayPath });
 	return { ...normalized, detail, mimeType, sizeBytes: fileStat.size };
 }
 

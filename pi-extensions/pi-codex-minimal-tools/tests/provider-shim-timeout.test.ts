@@ -1,32 +1,23 @@
 import assert from "node:assert/strict";
-import test, { afterEach } from "node:test";
-import { fetchWithResponseHeaderTimeout, responseHeaderTimeoutMsFromOptions } from "../src/provider-shim.js";
+import { setImmediate } from "node:timers/promises";
+import test from "node:test";
+import { fetchWithResponseHeaderTimeout } from "../src/provider-shim.js";
 
-const originalFetch = globalThis.fetch;
-
-afterEach(() => {
-	globalThis.fetch = originalFetch;
-});
-
-test("responseHeaderTimeoutMsFromOptions uses Pi HTTP timeout when provided", () => {
-	assert.equal(responseHeaderTimeoutMsFromOptions({ timeoutMs: 45_000 } as any), 45_000);
-	assert.equal(responseHeaderTimeoutMsFromOptions({ timeoutMs: 0 } as any), 20_000);
-	assert.equal(responseHeaderTimeoutMsFromOptions(undefined), 20_000);
-});
-
-test("fetchWithResponseHeaderTimeout aborts when SSE response headers stall", async () => {
-	globalThis.fetch = ((_url: RequestInfo | URL, init?: RequestInit) =>
-		new Promise<Response>((_resolve, reject) => {
-			const signal = init?.signal;
-			if (signal?.aborted) {
-				reject(new Error("aborted before fetch"));
-				return;
-			}
-			signal?.addEventListener("abort", () => reject(new Error("aborted by test")), { once: true });
-		})) as typeof fetch;
-
-	await assert.rejects(
-		() => fetchWithResponseHeaderTimeout("https://example.test/backend-api/codex/responses", { method: "POST" }, undefined, 1),
-		/Codex Responses SSE response headers timed out after 1ms/,
-	);
+test("response header timeout aborts a pending fetch at its configured deadline", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	let signal: AbortSignal | null | undefined;
+	t.mock.method(globalThis, "fetch", (_url: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+		signal = init?.signal;
+		signal?.addEventListener("abort", () => reject(signal?.reason), { once: true });
+	}));
+	const pending = fetchWithResponseHeaderTimeout("https://example.test/backend-api/codex/responses", { method: "POST" }, undefined, 45_000);
+	const rejection = assert.rejects(pending, { code: "RESPONSE_HEADER_TIMEOUT", timeoutMs: 45_000 });
+	assert.ok(signal);
+	t.mock.timers.tick(44_999);
+	await setImmediate();
+	assert.equal(signal.aborted, false);
+	t.mock.timers.tick(1);
+	await setImmediate();
+	assert.equal(signal.aborted, true);
+	await rejection;
 });
