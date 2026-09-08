@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Resolve repository-aware paths for tpm-audit code and deliverable checks.
+# Diagnostic protocol: each refusal starts with `error=KEY FIELD=VALUE`.
+# English guidance follows on the next line.
 set -euo pipefail
 
 usage() {
@@ -34,8 +36,11 @@ absolute worktree before any search or read.
 EOF
 }
 
-fail() {
-  echo "verification-scope: $*" >&2
+refuse() { # KEY FIELD=VALUE EXPLANATION
+  local key="$1" field="$2"
+  shift 2
+  printf 'error=%s %s\n' "$key" "$field" >&2
+  printf 'verification-scope: %s\n' "$*" >&2
   exit 1
 }
 
@@ -47,17 +52,17 @@ declare -a explicit_paths=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --worktree)
-      [[ $# -ge 2 ]] || fail "--worktree requires a path"
+      [[ $# -ge 2 ]] || refuse argument-missing option=--worktree "--worktree requires a path."
       worktree="$2"
       shift 2
       ;;
     --base-ref)
-      [[ $# -ge 2 ]] || fail "--base-ref requires a ref"
+      [[ $# -ge 2 ]] || refuse argument-missing option=--base-ref "--base-ref requires a ref."
       base_ref="$2"
       shift 2
       ;;
     --changed-file)
-      [[ $# -ge 2 ]] || fail "--changed-file requires a repository-relative path"
+      [[ $# -ge 2 ]] || refuse argument-missing option=--changed-file "--changed-file requires a repository-relative path."
       explicit_paths+=("$2")
       shift 2
       ;;
@@ -70,18 +75,18 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      fail "unknown argument: $1"
+      refuse argument-unknown "value=$1" "The argument is not supported."
       ;;
   esac
 done
 
-[[ -d "$worktree" ]] || fail "worktree does not exist: $worktree"
+[[ -d "$worktree" ]] || refuse worktree-missing "path=$worktree" "The worktree does not exist."
 repo_root="$(git -C "$worktree" rev-parse --show-toplevel 2>/dev/null)" \
-  || fail "worktree is not inside a Git repository: $worktree"
+  || refuse worktree-not-repository "path=$worktree" "The worktree is not inside a Git repository."
 repo_root="$(cd "$repo_root" && pwd -P)"
 
 if [[ -n "$base_ref" && ${#explicit_paths[@]} -gt 0 ]]; then
-  fail "use either --base-ref or --changed-file, not both"
+  refuse scope-input-conflict value=base-ref+changed-file "Use either --base-ref or --changed-file, not both."
 fi
 
 declare -a candidates=()
@@ -96,16 +101,16 @@ cleanup() {
 trap cleanup EXIT
 
 capture_git_paths() {
-  local diagnostic="$1"
-  shift
+  local operation="$1" diagnostic="$2"
+  shift 2
 
   if [[ -n "$producer_output" ]]; then
     rm -f "$producer_output"
   fi
-  producer_output="$(mktemp "${TMPDIR:-/tmp}/verification-scope.XXXXXX")" \
-    || fail "could not create temporary file for Git output"
-  if ! git -C "$repo_root" "$@" >"$producer_output"; then
-    fail "$diagnostic"
+  producer_output="$(mktemp "${TMPDIR:-/tmp}/verification-scope.XXXXXX" 2>/dev/null)" \
+    || refuse temp-create "path=${TMPDIR:-/tmp}" "Could not create a temporary file for Git output."
+  if ! git -C "$repo_root" "$@" >"$producer_output" 2>/dev/null; then
+    refuse git-command-failed "operation=$operation" "$diagnostic"
   fi
 }
 
@@ -117,12 +122,12 @@ normalize_path() {
   if [[ "$path" == "$repo_root"/* ]]; then
     path="${path#"$repo_root"/}"
   elif [[ "$path" == /* ]]; then
-    fail "path is outside the worktree: $path"
+    refuse path-outside "path=$path" "The path is outside the worktree."
   fi
-  [[ -n "$path" ]] || fail "empty changed path"
+  [[ -n "$path" ]] || refuse path-empty value=empty "The changed path is empty."
   case "$path" in
     ..|../*|*/..|*/../*)
-      fail "path escapes the worktree: $path"
+      refuse path-escape "path=$path" "The path escapes the worktree."
       ;;
   esac
   printf '%s\n' "$path"
@@ -136,8 +141,9 @@ if [[ ${#explicit_paths[@]} -gt 0 ]]; then
 elif [[ -n "$base_ref" ]]; then
   basis="base-ref"
   git -C "$repo_root" rev-parse --verify --quiet "${base_ref}^{commit}" >/dev/null \
-    || fail "base ref is not a commit: $base_ref"
+    || refuse base-ref-invalid "ref=$base_ref" "The base ref is not a commit."
   capture_git_paths \
+    diff \
     "git diff failed for base ref '$base_ref'; verify the ref and that it shares history with HEAD" \
     diff --name-only -z "${base_ref}...HEAD" --
   while IFS= read -r -d '' path; do
@@ -224,7 +230,7 @@ mode="repository"
 if [[ "$force_docs_only" == true ]]; then
   for path in ${candidates[@]+"${candidates[@]}"}; do
     is_doc_path "$path" \
-      || fail "--docs-only path is not documentation: $path"
+      || refuse docs-only-nondoc "path=$path" "The --docs-only path is not documentation."
   done
   mode="docs-only"
 elif [[ ${#candidates[@]} -gt 0 ]]; then
@@ -250,6 +256,7 @@ add_source_root() {
 
 if [[ "$mode" == "repository" ]]; then
   capture_git_paths \
+    ls-files \
     "git ls-files failed while discovering tracked source roots" \
     ls-files -z
   while IFS= read -r -d '' path; do
@@ -269,7 +276,7 @@ elif [[ "$mode" == "changed" ]]; then
 fi
 
 if [[ "$mode" == "repository" && ${#source_roots[@]} -eq 0 ]]; then
-  fail "no tracked source roots found outside the vendored .agents/ render tree; pass changed paths or --docs-only for a documentation-only audit"
+  refuse source-roots-empty count=0 "No source roots were found outside the vendored .agents render tree. Pass changed paths or --docs-only for a documentation-only audit."
 fi
 
 declare -a verification_paths=()

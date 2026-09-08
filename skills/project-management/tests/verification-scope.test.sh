@@ -66,6 +66,9 @@ setup_fixture() {
       git -C "$case_root" init -q
       git -C "$case_root" add README.md
       ;;
+    plain)
+      printf 'not a repository\n' >"$case_root/file.txt"
+      ;;
     disconnected-history)
       mkdir -p "$case_root/src"
       printf 'fn main() {}\n' >"$case_root/src/main.rs"
@@ -175,23 +178,59 @@ refusal_rows_executed=0
 
 record_refusal_failure() {
   local case_name="$1" description="$2" status="$3"
-  local expected_status="$4" diagnostic="$5" output="$6"
+  local expected_status="$4" expected_key="$5" expected_value="$6" output="$7"
 
   echo "FAIL: $case_name: $description" >&2
   echo "  status: $status; expected: $expected_status" >&2
-  if [[ "$diagnostic" != "-" && "$output" != *"$diagnostic"* ]]; then
-    echo "  missing diagnostic: $diagnostic" >&2
+  echo "  expected first-line fields: $expected_key $expected_value" >&2
+  if [[ "$output" != *"$expected_key"* || "$output" != *"$expected_value"* ]]; then
+    echo "  actual output: $output" >&2
   fi
   refusal_failures=$((refusal_failures + 1))
 }
 
 run_refusal_case() {
   local case_name="$1" fixture_kind="$2" invocation="$3"
-  local expected_status="$4" diagnostic="$5" description="$6"
-  local output status matches
+  local expected_status="$4" expected_key="$5" expected_value="$6" description="$7"
+  local output status matches first_line
 
   setup_fixture "$fixture_kind" "$case_name"
+  expected_value="${expected_value//<root>/$case_root}"
+  expected_value="${expected_value//<scratch>/$scratch}"
   case "$invocation" in
+    argument-worktree)
+      if output="$($RESOLVER --worktree 2>&1)"; then status=0; else status=$?; fi
+      ;;
+    argument-base)
+      if output="$($RESOLVER --worktree "$case_root" --base-ref 2>&1)"; then status=0; else status=$?; fi
+      ;;
+    argument-changed)
+      if output="$($RESOLVER --worktree "$case_root" --changed-file 2>&1)"; then status=0; else status=$?; fi
+      ;;
+    argument-unknown)
+      if output="$($RESOLVER --unknown 2>&1)"; then status=0; else status=$?; fi
+      ;;
+    worktree-missing)
+      if output="$($RESOLVER --worktree "$scratch/absent-worktree" 2>&1)"; then status=0; else status=$?; fi
+      ;;
+    worktree-not-repository)
+      if output="$($RESOLVER --worktree "$case_root" 2>&1)"; then status=0; else status=$?; fi
+      ;;
+    scope-conflict)
+      if output="$($RESOLVER --worktree "$case_root" --base-ref HEAD --changed-file crate-a/src/lib.rs 2>&1)"; then status=0; else status=$?; fi
+      ;;
+    temp-create)
+      if output="$(TMPDIR="$case_root/missing-temp" $RESOLVER --worktree "$case_root" 2>&1)"; then status=0; else status=$?; fi
+      ;;
+    absolute-path)
+      if output="$($RESOLVER --worktree "$case_root" --changed-file "$scratch/outside.rs" 2>&1)"; then status=0; else status=$?; fi
+      ;;
+    empty-path)
+      if output="$($RESOLVER --worktree "$case_root" --changed-file '' 2>&1)"; then status=0; else status=$?; fi
+      ;;
+    invalid-base)
+      if output="$($RESOLVER --worktree "$case_root" --base-ref does-not-exist 2>&1)"; then status=0; else status=$?; fi
+      ;;
     forced-docs-code)
       if output="$($RESOLVER --worktree "$case_root" --docs-only \
         --changed-file crate-a/src/lib.rs 2>&1)"; then
@@ -237,27 +276,37 @@ run_refusal_case() {
   esac
 
   matches=true
+  first_line="${output%%$'\n'*}"
   [[ "$status" -eq "$expected_status" ]] || matches=false
-  if [[ "$diagnostic" != "-" && "$output" != *"$diagnostic"* ]]; then
-    matches=false
-  fi
+  [[ "$first_line" == "$expected_key $expected_value" ]] || matches=false
   if [[ "$matches" != true ]]; then
     record_refusal_failure "$case_name" "$description" "$status" \
-      "$expected_status" "$diagnostic" "$output"
+      "$expected_status" "$expected_key" "$expected_value" "$output"
   fi
 }
 
 while IFS='^' read -r case_name fixture_kind invocation expected_status \
-  diagnostic description; do
+  expected_key expected_value description; do
   run_refusal_case "$case_name" "$fixture_kind" "$invocation" \
-    "$expected_status" "$diagnostic" "$description"
+    "$expected_status" "$expected_key" "$expected_value" "$description"
   refusal_rows_executed=$((refusal_rows_executed + 1))
 done <<'REFUSAL_ROWS'
-forced-docs-rejects-code^workspace^forced-docs-code^1^-^forced docs mode did not reject source code with the exact refusal status
-outside-worktree-path^workspace^outside-worktree^1^-^resolver did not reject an outside path with the exact refusal status
-repository-without-source^documentation^repository-without-source^1^no tracked source roots found^repository fallback did not return its exact status and source-scope diagnostic
-disconnected-base-history^disconnected-history^disconnected-base^1^git diff failed for base ref^base-ref mode did not return its exact status and disconnected-history diagnostic
-ls-files-producer-failure^corrupt-index^corrupt-index^1^git ls-files failed^repository discovery did not return its exact status and producer diagnostic
+missing-worktree-option^workspace^argument-worktree^1^error=argument-missing^option=--worktree^missing worktree option value did not return its exact diagnostic
+missing-base-option^workspace^argument-base^1^error=argument-missing^option=--base-ref^missing base option value did not return its exact diagnostic
+missing-changed-option^workspace^argument-changed^1^error=argument-missing^option=--changed-file^missing changed-file option value did not return its exact diagnostic
+unknown-option^workspace^argument-unknown^1^error=argument-unknown^value=--unknown^unknown option did not return its exact diagnostic
+missing-worktree^workspace^worktree-missing^1^error=worktree-missing^path=<scratch>/absent-worktree^missing worktree did not return its exact diagnostic
+non-repository-worktree^plain^worktree-not-repository^1^error=worktree-not-repository^path=<root>^plain directory did not return its exact diagnostic
+conflicting-scope-inputs^workspace^scope-conflict^1^error=scope-input-conflict^value=base-ref+changed-file^conflicting scope inputs did not return their exact diagnostic
+temporary-file-failure^workspace^temp-create^1^error=temp-create^path=<root>/missing-temp^temporary-file failure did not return its exact diagnostic first
+absolute-changed-path^workspace^absolute-path^1^error=path-outside^path=<scratch>/outside.rs^absolute outside path did not return its exact diagnostic
+empty-changed-path^workspace^empty-path^1^error=path-empty^value=empty^empty changed path did not return its exact diagnostic
+invalid-base-ref^workspace^invalid-base^1^error=base-ref-invalid^ref=does-not-exist^invalid base ref did not return its exact diagnostic
+forced-docs-rejects-code^workspace^forced-docs-code^1^error=docs-only-nondoc^path=crate-a/src/lib.rs^forced docs mode did not reject source code with the exact refusal status
+outside-worktree-path^workspace^outside-worktree^1^error=path-escape^path=../outside.rs^resolver did not reject an outside path with the exact refusal status
+repository-without-source^documentation^repository-without-source^1^error=source-roots-empty^count=0^repository fallback did not return its exact status and source-scope diagnostic
+disconnected-base-history^disconnected-history^disconnected-base^1^error=git-command-failed^operation=diff^base-ref mode did not return its exact status and disconnected-history diagnostic
+ls-files-producer-failure^corrupt-index^corrupt-index^1^error=git-command-failed^operation=ls-files^repository discovery did not return its exact status and producer diagnostic
 REFUSAL_ROWS
 
 [[ "$refusal_rows_executed" -gt 0 ]] \
