@@ -68,7 +68,9 @@ resolve() {
 
 # observe EXPECT — the run's value of every field EXPECT names, in order:
 #   rc       exit status
-#   out      the resolved value, `+` for a space, `-` for empty
+#   out      the resolved value, `+` for a space, `-` for empty; a value the
+#            encoding cannot tell apart (one carrying `+`, or a literal `-`)
+#            renders as UNENCODABLE rather than as its collision
 #   err~<t>  whether stderr names <t>, `+` read as a space: the one phrase
 #            that tells this refusal from its neighbours, since every refusal
 #            exits 1
@@ -83,7 +85,11 @@ observe() {
     name="${token%%=*}"
     case "$name" in
       rc) value="$RC" ;;
-      out) value="${OUT// /+}"; value="${value:--}" ;;
+      out)
+        case "$OUT" in
+          *+*|-) value="UNENCODABLE($OUT)" ;;
+          *) value="${OUT// /+}"; value="${value:--}" ;;
+        esac ;;
       err~*)
         needle="${name#err~}"; needle="${needle//+/ }"
         value="$(grep -qF -- "$needle" <<<"$ERR" && echo true || echo false)" ;;
@@ -106,7 +112,7 @@ echo "=== a file named by REVIEW_GATE_SETTINGS_FILE ==="
 # malformed file: kendex-env refuses the same files before its parent-env
 # skip, so a per-key extractor would split the family contract.
 file_table() {
-  local row label lines name default env expect
+  local row label lines name default env expect before=$((PASS + FAIL))
   for row in "$@"; do
     IFS='|' read -r label lines name default env expect <<<"$row"
     [[ -n "$expect" ]] || { printf 'file_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
@@ -114,6 +120,7 @@ file_table() {
     resolve "$TMP" "$TMP/settings.toml" "$env" "$name" "$default"
     assert_eq "$(observe "$expect")" "$expect" "$label"
   done
+  [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "file_table: no row was asserted" >&2; exit 2; }
 }
 file_table \
   'a column-one assignment reads|[env];REVIEW_GATE_T1 = "col1"|REVIEW_GATE_T1|dflt||rc=0 out=col1' \
@@ -159,13 +166,14 @@ printf '[env]\nREVIEW_GATE_TN = "dashfile"\n' >"$TMP/-e"
 printf '[env]\nREVIEW_GATE_TN = "eqfile"\n' >"$TMP/policy=on.toml"
 write_spec "$TMP/unreadable.settings.toml" UNREADABLE
 path_table() {
-  local row label path env expect
+  local row label path env expect before=$((PASS + FAIL))
   for row in "$@"; do
     IFS='|' read -r label path env expect <<<"$row"
     [[ -n "$expect" ]] || { printf 'path_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
     resolve "$TMP" "$path" "$env" REVIEW_GATE_TN dflt
     assert_eq "$(observe "$expect")" "$expect" "$label"
   done
+  [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "path_table: no row was asserted" >&2; exit 2; }
 }
 path_table \
   "a DIRECTORY settings path is a config error, not a silent default|$TMP/nonregular.dir||rc=1 out=- err~not+a+regular+file=true" \
@@ -212,7 +220,7 @@ echo "=== the default sources under a working directory ==="
 # config error, never a skipped layer, even under an exported value.
 WORLD_N=0
 world_table() {
-  local row label root nested dotenv file name default env expect dir
+  local row label root nested dotenv file name default env expect dir before=$((PASS + FAIL))
   for row in "$@"; do
     IFS='|' read -r label root nested dotenv file name default env expect <<<"$row"
     [[ -n "$expect" ]] || { printf 'world_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
@@ -225,6 +233,7 @@ world_table() {
     resolve "$dir" "$file" "$env" "$name" "$default"
     assert_eq "$(observe "$expect")" "$expect" "$label"
   done
+  [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "world_table: no row was asserted" >&2; exit 2; }
 }
 ROOT='[env];REVIEW_GATE_TP = "root";REVIEW_GATE_MODE = "off"'
 world_table \
