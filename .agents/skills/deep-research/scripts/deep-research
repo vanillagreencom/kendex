@@ -2,7 +2,7 @@
 // Diagnostic protocol: command refusals write one JSON object to stderr with
 // {ok:false,key,value,error}. Validate keeps errors/warnings and adds problems
 // with {level,key,value}; English remains display text, not a test contract.
-import { existsSync } from "node:fs";
+import { existsSync, writeSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -35,7 +35,22 @@ const defaultOutputSchema = {
 };
 
 function jsonOut(stream, value) { stream.write(`${JSON.stringify(value)}\n`); }
-function fail(key, value, message, extra = {}) { jsonOut(process.stderr, { ok: false, key, value: value ?? null, error: message, ...extra }); process.exit(1); }
+function fail(key, value, message, extra = {}) {
+  const body = Buffer.from(`${JSON.stringify({ ok: false, key, value: value ?? null, error: message, ...extra })}\n`);
+  let offset = 0;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  while (offset < body.length) {
+    try {
+      const written = writeSync(process.stderr.fd, body, offset, body.length - offset);
+      if (written > 0) offset += written;
+      else Atomics.wait(pause, 0, 0, 1);
+    } catch (error) {
+      if (error?.code !== "EAGAIN") throw error;
+      Atomics.wait(pause, 0, 0, 1);
+    }
+  }
+  process.exit(1);
+}
 
 function helpPayload() {
   return {

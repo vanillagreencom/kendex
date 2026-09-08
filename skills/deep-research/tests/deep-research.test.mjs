@@ -180,6 +180,14 @@ test("invalid mode fails clearly", () => {
   assert.equal(diagnostic(result).value, "slow");
 });
 
+test("large refusal JSON is complete before exit", () => {
+  const command = "x".repeat(96 * 1024);
+  const result = spawnSync(process.execPath, [script, command], { encoding: "utf8" });
+  const parsed = diagnostic(result);
+  assert.equal(parsed.key, "command-unknown");
+  assert.equal(parsed.value, command);
+});
+
 test("full mode aggregates multiple mock responses and dedupes URLs", () => {
   const dir = mkdtempSync(join(tmpdir(), "deep-research-full-"));
   const mock = join(dir, "mock.json");
