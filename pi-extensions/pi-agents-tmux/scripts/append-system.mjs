@@ -74,7 +74,13 @@ try {
 			notice("source-missing", sourcePath, `The appendSystem source for ${name} is missing.`);
 			process.exit(0);
 		}
-		const content = readFileSync(sourcePath, "utf8").trim();
+		let content;
+		try {
+			content = readFileSync(sourcePath, "utf8").trim();
+		} catch (err) {
+			notice("source-read", sourcePath, `Unable to read the appendSystem source for ${name}: ${err?.message ?? err}`);
+			process.exit(0);
+		}
 		if (!content) {
 			notice("source-empty", sourcePath, `The appendSystem source for ${name} is empty.`);
 			process.exit(0);
