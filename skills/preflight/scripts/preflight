@@ -737,7 +737,8 @@ SUBST_ASSIGN_RE='^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*="?\$\([^(]'
 # Reading only the tail keeps an operator inside the substitution out, and
 # requiring the operator at the tail's start keeps a later command out.
 substitution_status_checked() { # LINE
-  if grep -Eq -- '^[[:space:]]*(if|elif)[[:space:]]+(![[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*="?\$\([^(]' <<<"$1"; then
+  if grep -Eq -- '^[[:space:]]*(if|elif)[[:space:]]+(![[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*="?\$\([^(]' <<<"$1" \
+    && ! grep -Eq -- '(&&|\|\|)' <<<"${1%%)*}"; then
     return 0
   fi
   grep -Eq -- '^"?[[:space:]]*(&&|\|\|)' <<<"${1##*)}" && return 0
