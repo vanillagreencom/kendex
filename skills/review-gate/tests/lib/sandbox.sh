@@ -50,6 +50,7 @@ printf 'sandbox\n' >"$PRISTINE/AGENTS.md"
 (
   cd "$PRISTINE"
   git init -q .
+  git config maintenance.auto false
   git config user.name "review-gate tests"
   git config user.email "tests@example.invalid"
   git add -A
