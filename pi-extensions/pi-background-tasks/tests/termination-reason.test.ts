@@ -5,13 +5,12 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { finalizeTaskLifecycle, type LifecycleHooks } from "../extensions/lifecycle.js";
+import type { LifecycleHooks } from "../extensions/lifecycle.js";
 import { createOrphanWatcher } from "../extensions/orphan-watcher.js";
 import { summarizeTaskStatus } from "../extensions/format.js";
 import { restoredTaskFromSnapshot, taskSnapshot } from "../extensions/snapshot.js";
 import type {
 	BackgroundTaskSnapshot,
-	BackgroundTaskTerminationReason,
 	ManagedTask,
 	ProcessIdentity,
 } from "../extensions/types.js";
@@ -71,70 +70,6 @@ function recordingHooks(): LifecycleHooks & { events: Array<{ type: string; reas
 		events,
 	};
 }
-
-describe("terminationReason annotation (kendex#97)", () => {
-	test("clean self-exit (exitCode 0, no stopReason) stamps self-exit", () => {
-		const task = fakeTask();
-		const hooks = recordingHooks();
-		finalizeTaskLifecycle(task, 0, hooks);
-		expect(task.status).toBe("completed");
-		expect(task.terminationReason).toBe("self-exit");
-		expect(hooks.events[0]?.reason).toBe("self-exit");
-	});
-
-	test("non-zero exit with no stopReason stamps self-exit (failed)", () => {
-		const task = fakeTask();
-		const hooks = recordingHooks();
-		finalizeTaskLifecycle(task, 1, hooks);
-		expect(task.status).toBe("failed");
-		expect(task.terminationReason).toBe("self-exit");
-	});
-
-	test("null exit code with no stopReason stamps external (signal we did not issue)", () => {
-		const task = fakeTask();
-		const hooks = recordingHooks();
-		finalizeTaskLifecycle(task, null, hooks);
-		expect(task.status).toBe("failed");
-		expect(task.terminationReason).toBe("external");
-	});
-
-	test("pre-stamped extension-stop survives the finalize", () => {
-		const task = fakeTask({ stopReason: "user", terminationReason: "extension-stop" });
-		const hooks = recordingHooks();
-		finalizeTaskLifecycle(task, null, hooks);
-		expect(task.status).toBe("stopped");
-		expect(task.terminationReason).toBe("extension-stop");
-	});
-
-	test("session-shutdown stopReason derives session-shutdown", () => {
-		const task = fakeTask({ stopReason: "shutdown" });
-		const hooks = recordingHooks();
-		finalizeTaskLifecycle(task, null, hooks);
-		expect(task.status).toBe("stopped");
-		expect(task.terminationReason).toBe("session-shutdown");
-	});
-
-	test("timeout stopReason derives timeout (status timed_out)", () => {
-		const task = fakeTask({ stopReason: "timeout" });
-		const hooks = recordingHooks();
-		finalizeTaskLifecycle(task, null, hooks);
-		expect(task.status).toBe("timed_out");
-		expect(task.terminationReason).toBe("timeout");
-	});
-
-	test("explicit terminationReason argument wins over the derivation", () => {
-		const task = fakeTask({ stopReason: "user", terminationReason: "extension-stop" });
-		const hooks = recordingHooks();
-		finalizeTaskLifecycle(
-			task,
-			null,
-			hooks,
-			undefined,
-			"orphaned-pid-reused" as BackgroundTaskTerminationReason,
-		);
-		expect(task.terminationReason).toBe("orphaned-pid-reused");
-	});
-});
 
 describe("restoredTaskFromSnapshot annotation (kendex#97)", () => {
 	test("running -> stopped coercion annotates reconcile-on-restart", () => {

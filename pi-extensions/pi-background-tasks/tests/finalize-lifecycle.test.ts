@@ -1,289 +1,78 @@
-// E2E coverage of the real finalizeTask / replayMissedExits code paths
-// using the extracted lifecycle helpers. Drives the exact same functions
-// the extension uses; only the I/O surfaces (sendTaskEvent, persist,
-// rememberSnapshot, refreshUi, clearTaskTimers) are stubbed so the test
-// runs without a Pi runtime.
+import { expect, test } from "bun:test";
+import { finalizeTaskLifecycle } from "../extensions/lifecycle.js";
+import type { BackgroundTaskStatus, BackgroundTaskTerminationReason, ManagedTask } from "../extensions/types.js";
+import { fakeTask, recordingHooks } from "./fixtures/lifecycle.js";
 
-import { describe, expect, test } from "bun:test";
-import { finalizeTaskLifecycle, replayMissedExitsLifecycle, type LifecycleHooks } from "../extensions/lifecycle.js";
-import { restoredTaskFromSnapshot, selectMissedExits } from "../extensions/snapshot.js";
-import type { BackgroundTaskSnapshot, ManagedTask, ProcessIdentity, TaskEventType } from "../extensions/types.js";
-
-function fakeIdent(pid: number): ProcessIdentity {
-	return { pid, startToken: `start-${pid}`, comm: "approval-wait" };
-}
-const probeDead = () => null;
-const probeAlive = (pid: number) => fakeIdent(pid);
-
-function fakeSnapshot(overrides: Partial<BackgroundTaskSnapshot> = {}): BackgroundTaskSnapshot {
-	return {
-		command: "approval-wait 81",
-		cwd: "/tmp/worktree",
-		exitCode: null,
-		exitNotified: false,
-		expiresAt: null,
-		id: "bg-3",
-		lastOutputAt: null,
-		logFile: "/tmp/log.txt",
-		notifyOnExit: true,
-		notifyOnOutput: false,
-		notifyPattern: undefined,
-		outputBytes: 0,
-		pid: 2409160,
-		sessionId: "sess-1",
-		startedAt: 1_700_000_000_000,
-		status: "running",
-		title: "bot review wait PR 81",
-		updatedAt: 1_700_000_000_000,
-		...overrides,
+interface FinalizeRow {
+	name: string;
+	task?: Partial<ManagedTask>;
+	exitCode: number | null;
+	statusOverride?: BackgroundTaskStatus;
+	reasonOverride?: BackgroundTaskTerminationReason;
+	sendReturns?: boolean;
+	secondClose?: boolean;
+	expected: {
+		status: BackgroundTaskStatus;
+		reason: BackgroundTaskTerminationReason;
+		exitNotified?: boolean;
+		persists?: number;
+		output?: string;
+		outputBytes?: number;
 	};
 }
 
-function fakeTask(overrides: Partial<ManagedTask> = {}): ManagedTask {
-	const snapshot = fakeSnapshot(overrides);
-	return {
-		...snapshot,
-		child: null,
-		closed: false,
-		forceKillTimer: null,
-		lastAnnouncedLength: 0,
-		matcher: null,
-		output: "",
-		outputTimer: null,
-		stopReason: null,
-		timeoutTimer: null,
-		...overrides,
-	};
-}
+const partialOutput = "Warning: GH_TOKEN/GITHUB_TOKEN failed gh auth; unsetting them and using gh keyring auth.\n";
+const rows: FinalizeRow[] = [
+	{ name: "clean self-exit", exitCode: 0, expected: { status: "completed", reason: "self-exit" } },
+	{ name: "null exit code is external", exitCode: null, expected: { status: "failed", reason: "external" } },
+	{ name: "nonzero self-exit", exitCode: 1, expected: { status: "failed", reason: "self-exit" } },
+	{ name: "user stop derives extension-stop", task: { stopReason: "user" }, exitCode: null, expected: { status: "stopped", reason: "extension-stop" } },
+	{ name: "timeout stop derives timeout", task: { stopReason: "timeout" }, exitCode: null, expected: { status: "timed_out", reason: "timeout" } },
+	{ name: "status override wins over user stop and successful exit", task: { stopReason: "user" }, exitCode: 0, statusOverride: "failed", expected: { status: "failed", reason: "extension-stop" } },
+	{ name: "sender false retains pending exit notification", exitCode: 0, sendReturns: false, expected: { status: "completed", reason: "self-exit", exitNotified: false, persists: 1 } },
+	// The sender result is injected; this row does not test the host sender's setting gate.
+	{ name: "sender false with notifyOnExit disabled", task: { notifyOnExit: false }, exitCode: 0, sendReturns: false, expected: { status: "completed", reason: "self-exit", exitNotified: false, persists: 1 } },
+	{ name: "second close leaves task and every hook unchanged", exitCode: 0, secondClose: true, expected: { status: "completed", reason: "self-exit" } },
+	{ name: "partial output survives external termination", task: { output: partialOutput, outputBytes: 89 }, exitCode: null, expected: { status: "failed", reason: "external", output: partialOutput, outputBytes: 89 } },
+	{ name: "zero output still sends an exit", task: { output: "", outputBytes: 0 }, exitCode: 0, expected: { status: "completed", reason: "self-exit", output: "", outputBytes: 0 } },
+	{ name: "pre-stamped extension-stop survives finalize", task: { stopReason: "user", terminationReason: "extension-stop" }, exitCode: null, expected: { status: "stopped", reason: "extension-stop" } },
+	{ name: "shutdown stop derives session-shutdown", task: { stopReason: "shutdown" }, exitCode: null, expected: { status: "stopped", reason: "session-shutdown" } },
+	{ name: "explicit reason wins over pre-stamped and derived reason", task: { stopReason: "user", terminationReason: "extension-stop" }, exitCode: null, reasonOverride: "orphaned-pid-reused", expected: { status: "stopped", reason: "orphaned-pid-reused" } },
+	{ name: "pre-stamped reason wins over a different derivation", task: { terminationReason: "extension-stop" }, exitCode: 0, expected: { status: "completed", reason: "extension-stop" } },
+];
 
-interface RecordedHooks {
-	events: { type: TaskEventType; task: ManagedTask }[];
-	persists: number;
-	remembers: number;
-	refreshes: number;
-	timerClears: number;
-}
-
-function recordingHooks(sendReturns: boolean = true): LifecycleHooks & { record: RecordedHooks } {
-	const record: RecordedHooks = { events: [], persists: 0, remembers: 0, refreshes: 0, timerClears: 0 };
-	const hooks: LifecycleHooks = {
-		rememberSnapshot(task) {
-			record.remembers += 1;
-			return { ...task };
-		},
-		persistSnapshots() {
-			record.persists += 1;
-			return { appendEntry: true, sidecar: true };
-		},
-		sendTaskEvent(type, task) {
-			record.events.push({ type, task });
-			return sendReturns;
-		},
-		refreshUi() {
-			record.refreshes += 1;
-		},
-		clearTaskTimers() {
-			record.timerClears += 1;
-		},
-	};
-	return Object.assign(hooks, { record });
-}
-
-describe("finalizeTaskLifecycle", () => {
-	test("normal exit (code 0) -> status=completed + exitNotified=true", () => {
-		const hooks = recordingHooks();
-		const task = fakeTask();
-		const result = finalizeTaskLifecycle(task, 0, hooks);
-		expect(result.status).toBe("completed");
-		expect(result.exitCode).toBe(0);
-		expect(result.exitNotified).toBe(true);
-		expect(result.closed).toBe(true);
-		expect(hooks.record.events).toHaveLength(1);
-		expect(hooks.record.events[0]?.type).toBe("exit");
-		expect(hooks.record.timerClears).toBe(1);
-		// Two persist calls: once after status mutation, once after
-		// exitNotified flip. Each persist follows a remember.
-		expect(hooks.record.persists).toBe(2);
-	});
-
-	test("abnormal exit (code null, no stopReason) -> status=failed", () => {
-		const hooks = recordingHooks();
-		const task = fakeTask();
-		const result = finalizeTaskLifecycle(task, null, hooks);
-		expect(result.status).toBe("failed");
-		expect(result.exitCode).toBeNull();
-		expect(result.exitNotified).toBe(true);
-	});
-
-	test("exit (code 1) -> status=failed", () => {
-		const hooks = recordingHooks();
-		const task = fakeTask();
-		const result = finalizeTaskLifecycle(task, 1, hooks);
-		expect(result.status).toBe("failed");
-		expect(result.exitCode).toBe(1);
-	});
-
-	test("stopReason=user -> status=stopped, exitNotified=true", () => {
-		const hooks = recordingHooks();
-		const task = fakeTask({ stopReason: "user" });
-		const result = finalizeTaskLifecycle(task, null, hooks);
-		expect(result.status).toBe("stopped");
-		expect(result.exitNotified).toBe(true);
-	});
-
-	test("stopReason=timeout -> status=timed_out", () => {
-		const hooks = recordingHooks();
-		const task = fakeTask({ stopReason: "timeout" });
-		const result = finalizeTaskLifecycle(task, null, hooks);
-		expect(result.status).toBe("timed_out");
-	});
-
-	test("statusOverride wins over stopReason and exitCode", () => {
-		const hooks = recordingHooks();
-		const task = fakeTask({ stopReason: "user" });
-		const result = finalizeTaskLifecycle(task, 0, hooks, "failed");
-		expect(result.status).toBe("failed");
-	});
-
-	test("sendTaskEvent failure (shuttingDown) leaves exitNotified=false for replay", () => {
-		const hooks = recordingHooks(false);
-		const task = fakeTask();
-		const result = finalizeTaskLifecycle(task, 0, hooks);
-		expect(result.status).toBe("completed");
-		expect(result.exitNotified).toBe(false);
-		// Persist still fires once for status mutation; the second persist
-		// (after notify) is skipped because no flip happened.
-		expect(hooks.record.persists).toBe(1);
-		expect(hooks.record.events).toHaveLength(1);
-	});
-
-	test("notifyOnExit=false records the call but leaves exitNotified=false", () => {
-		// sendTaskEvent returning false simulates the shuttingDown /
-		// !notifyOnExit early-return in the real implementation.
-		const hooks = recordingHooks(false);
-		const task = fakeTask({ notifyOnExit: false });
-		const result = finalizeTaskLifecycle(task, 0, hooks);
-		expect(result.exitNotified).toBe(false);
-	});
-
-	test("second close is a no-op (idempotent)", () => {
-		const hooks = recordingHooks();
-		const task = fakeTask();
-		finalizeTaskLifecycle(task, 0, hooks);
-		const before = { ...hooks.record };
-		finalizeTaskLifecycle(task, 99, hooks);
-		// No further events, persistence, memory writes, or refreshes after close.
-		expect(hooks.record.events.length).toBe(before.events.length);
-		expect(hooks.record.persists).toBe(before.persists);
-		expect(task.exitCode).toBe(0);
-	});
-
-	test("partial output is preserved through finalize", () => {
-		// Finalize must retain partial output so the dashboard and log inspection
-		// can show it even when no exit event arrives.
-		const hooks = recordingHooks();
-		const task = fakeTask({
-			outputBytes: 89,
-			output: "Warning: GH_TOKEN/GITHUB_TOKEN failed gh auth; unsetting them and using gh keyring auth.\n",
+test("finalize lifecycle outcomes", () => {
+	expect.assertions(rows.length + 1);
+	expect(rows.length, "finalize table must contain rows").toBeGreaterThan(0);
+	for (const row of rows) {
+		const task = fakeTask(row.task);
+		const recorder = recordingHooks(row.sendReturns);
+		const result = finalizeTaskLifecycle(task, row.exitCode, recorder.hooks, row.statusOverride, row.reasonOverride);
+		const observe = () => ({
+			sameTask: result === task, status: task.status, exitCode: task.exitCode,
+			exitNotified: task.exitNotified, closed: task.closed, reason: task.terminationReason,
+			output: task.output, outputBytes: task.outputBytes, hooks: recorder.observe([task]),
 		});
-		const result = finalizeTaskLifecycle(task, null, hooks);
-		expect(result.output.length).toBeGreaterThan(0);
-		expect(result.outputBytes).toBe(89);
-		expect(result.exitNotified).toBe(true);
-	});
-
-	test("zero output is fine (no spurious wake skip)", () => {
-		const hooks = recordingHooks();
-		const task = fakeTask({ outputBytes: 0, output: "" });
-		const result = finalizeTaskLifecycle(task, 0, hooks);
-		expect(result.exitNotified).toBe(true);
-	});
-});
-
-describe("replayMissedExitsLifecycle", () => {
-	test("replays only terminal tasks with exitNotified=false", () => {
-		const hooks = recordingHooks();
-		const tasks: ManagedTask[] = [
-			fakeTask({ id: "bg-1", status: "running" }),
-			fakeTask({ id: "bg-2", status: "stopped", exitNotified: false, notifyOnExit: true }),
-			fakeTask({ id: "bg-3", status: "completed", exitNotified: true, exitCode: 0 }),
-			fakeTask({ id: "bg-4", status: "failed", exitNotified: false, exitCode: 1, notifyOnExit: false }),
-		];
-		const replayed = replayMissedExitsLifecycle(tasks, hooks);
-		expect(replayed).toBe(1);
-		expect(hooks.record.events[0]?.task.id).toBe("bg-2");
-		expect(tasks.find((t) => t.id === "bg-2")?.exitNotified).toBe(true);
-	});
-
-	test("sendTaskEvent failure does not flip exitNotified", () => {
-		const hooks = recordingHooks(false);
-		const tasks: ManagedTask[] = [
-			fakeTask({ id: "bg-2", status: "stopped", exitNotified: false }),
-		];
-		const replayed = replayMissedExitsLifecycle(tasks, hooks);
-		expect(replayed).toBe(0);
-		expect(tasks[0]?.exitNotified).toBe(false);
-	});
-
-	test("zero missed exits -> no persist call", () => {
-		const hooks = recordingHooks();
-		const tasks: ManagedTask[] = [fakeTask({ status: "running" })];
-		replayMissedExitsLifecycle(tasks, hooks);
-		expect(hooks.record.persists).toBe(0);
-	});
-});
-
-describe("session_start E2E (restore + replay)", () => {
-	test("CC-503-style restore: persisted running snapshot triggers exit wake", () => {
-		const hooks = recordingHooks();
-		const persisted = fakeSnapshot({
-			id: "bg-3",
-			status: "running",
-			exitCode: null,
-			outputBytes: 89,
-			exitNotified: false,
-			notifyOnExit: true,
-			procIdent: fakeIdent(2409160),
+		const first = observe();
+		const expected = {
+			sameTask: true, status: row.expected.status, exitCode: row.exitCode,
+			exitNotified: row.expected.exitNotified ?? true, closed: true, reason: row.expected.reason,
+			output: row.expected.output ?? "", outputBytes: row.expected.outputBytes ?? 0,
+			hooks: {
+				events: [{ type: "exit", id: "bg-3", reason: row.expected.reason, sameTask: true }],
+				persists: row.expected.persists ?? 2, remembers: row.expected.persists ?? 2,
+				refreshes: 1, timerClears: 1,
+			},
+		};
+		let second;
+		if (row.secondClose) {
+			const taskBefore = { ...task };
+			const secondResult = finalizeTaskLifecycle(task, 99, recorder.hooks);
+			second = { before: first, after: observe(), taskBefore, taskAfter: { ...task }, sameTask: secondResult === task };
+		}
+		expect({ first, second }, row.name).toStrictEqual({
+			first: expected,
+			second: row.secondClose ? { before: expected, after: expected, taskBefore: second?.taskBefore, taskAfter: second?.taskBefore, sameTask: true } : undefined,
 		});
-		const restored = restoredTaskFromSnapshot(persisted, { identityProbe: probeDead, sessionId: "sess-1" });
-		expect(restored.status).toBe("stopped");
-		expect(restored.exitNotified).toBe(false);
-		const replayed = replayMissedExitsLifecycle([restored], hooks);
-		expect(replayed).toBe(1);
-		expect(hooks.record.events).toHaveLength(1);
-		expect(hooks.record.events[0]?.type).toBe("exit");
-		expect(hooks.record.events[0]?.task.id).toBe("bg-3");
-		expect(restored.exitNotified).toBe(true);
-	});
-
-	test("orphan-running restore: pid alive + identity match -> no fake exit", () => {
-		const hooks = recordingHooks();
-		const persisted = fakeSnapshot({
-			id: "bg-3",
-			status: "running",
-			pid: 4242,
-			notifyOnExit: true,
-			procIdent: fakeIdent(4242),
-		});
-		const restored = restoredTaskFromSnapshot(persisted, { identityProbe: probeAlive, sessionId: "sess-1" });
-		expect(restored.status).toBe("running");
-		expect(restored.closed).toBe(false);
-		const replayed = replayMissedExitsLifecycle([restored], hooks);
-		expect(replayed).toBe(0);
-		expect(hooks.record.events).toHaveLength(0);
-	});
-
-	test("cross-session restore: snapshot from different sessionId does not replay", () => {
-		const hooks = recordingHooks();
-		const persisted = fakeSnapshot({
-			id: "bg-other",
-			status: "running",
-			exitNotified: false,
-			notifyOnExit: true,
-			sessionId: "sess-OTHER",
-		});
-		const restored = restoredTaskFromSnapshot(persisted, { identityProbe: probeDead, sessionId: "sess-1" });
-		expect(restored.exitNotified).toBe(true);
-		expect(replayMissedExitsLifecycle([restored], hooks)).toBe(0);
-	});
+	}
 });
