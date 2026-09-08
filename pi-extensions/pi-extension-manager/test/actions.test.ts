@@ -111,20 +111,22 @@ test("npm update and uninstall execution use configured npmCommand and scope-loc
 	expect(spawnSyncMock).toHaveBeenLastCalledWith("mise", ["exec", "node@22.19", "--", "npm", "uninstall", "@scope/pkg"], expect.objectContaining({ cwd: npmDir }));
 });
 
-test("npm update reports cwd preparation failures", async () => {
+test("npm actions report cwd preparation failures", async () => {
 	await useSpawnMock();
-	const { runUpdate } = await import("../extensions/manager/actions.ts");
+	const { runUninstall, runUpdate } = await import("../extensions/manager/actions.ts");
 	const badCwd = join(rootTmp, "not-a-directory");
 	writeFileSync(badCwd, "file blocks mkdir");
 	spawnSyncMock.mockClear();
-	const result = runUpdate({
-		item: { id: "package:@scope/pkg", displayName: "Pkg", kind: "package", state: "active", stateReason: "", description: "", provider: "npm", scope: "user", sourcePath: "", sourceName: "npm:@scope/pkg", packageName: "@scope/pkg" },
-		method: { kind: "npm", npmName: "@scope/pkg", scope: "user", cwd: badCwd, command: "npm", argsPrefix: [] },
-		command: "npm install @scope/pkg@latest",
-		description: "",
-	});
-	expect(result.ok).toBe(false);
-	expect(result.message.split("\n")[0]).toBe(`pi-extension-manager: npm-cwd=${badCwd}`);
+	const item = { id: "package:@scope/pkg", displayName: "Pkg", kind: "package", state: "active", stateReason: "", description: "", provider: "npm", scope: "user", sourcePath: "", sourceName: "npm:@scope/pkg", packageName: "@scope/pkg" };
+	const method = { kind: "npm", npmName: "@scope/pkg", scope: "user", cwd: badCwd, command: "npm", argsPrefix: [] };
+	const rows = [
+		{ run: () => runUpdate({ item, method } as never), firstLine: `pi-extension-manager: npm-update-cwd=${badCwd}` },
+		{ run: () => runUninstall({ item, method } as never, { settingsFiles: [] } as never), firstLine: `pi-extension-manager: npm-uninstall-cwd=${badCwd}` },
+	];
+	for (const row of rows) {
+		const result = row.run();
+		expect([result.ok, result.message.split("\n")[0]]).toEqual([false, row.firstLine]);
+	}
 	expect(spawnSyncMock).not.toHaveBeenCalled();
 });
 
@@ -247,4 +249,17 @@ test("npm action exits expose an exit code or signal", async () => {
 		const outcome = row.run();
 		expect([outcome.ok, outcome.message.split("\n")[0]]).toEqual([false, row.firstLine]);
 	}
+});
+
+test("npm action launch failures identify the action", async () => {
+	await useSpawnMock();
+	const { runUninstall, runUpdate } = await import("../extensions/manager/actions.ts");
+	const item = { id: "package:@scope/pkg", displayName: "Pkg", kind: "package", state: "active", stateReason: "", description: "", provider: "npm", scope: "user", sourcePath: "", sourceName: "npm:@scope/pkg", packageName: "@scope/pkg" };
+	const method = { kind: "npm", npmName: "@scope/pkg", scope: "user", cwd: rootTmp, command: "npm", argsPrefix: [] };
+	spawnSyncMock.mockImplementation(() => ({ status: null, signal: null, stdout: "", stderr: "", error: new Error("missing"), output: [], pid: 0 } as never));
+	const rows = [
+		{ outcome: runUpdate({ item, method } as never), firstLine: "pi-extension-manager: npm-update-launch=npm" },
+		{ outcome: runUninstall({ item, method } as never, { settingsFiles: [] } as never), firstLine: "pi-extension-manager: npm-uninstall-launch=npm" },
+	];
+	for (const row of rows) expect([row.outcome.ok, row.outcome.message.split("\n")[0]]).toEqual([false, row.firstLine]);
 });

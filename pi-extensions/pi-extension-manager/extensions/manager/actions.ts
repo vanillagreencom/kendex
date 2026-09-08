@@ -17,8 +17,8 @@ import {
 	type UpdatePlan,
 } from "./types.js";
 
-function launchFailure(command: string, error: unknown): string {
-	return managerNotice("command-launch", command, `Could not start the command: ${stringifyError(error)}`);
+function launchFailure(key: string, command: string, error: unknown): string {
+	return managerNotice(key, command, `Could not start the command: ${stringifyError(error)}`);
 }
 
 function exitFailure(key: string, result: ReturnType<typeof runCommand>): string {
@@ -59,12 +59,12 @@ function npmCommandForScope(files: SettingsFile[], scope: InventoryItem["scope"]
 	return { command: "npm", argsPrefix: [], display: "npm" };
 }
 
-function ensureWorkingDir(cwd: string): { ok: true } | { ok: false; message: string } {
+function ensureWorkingDir(key: string, cwd: string): { ok: true } | { ok: false; message: string } {
 	try {
 		mkdirSync(cwd, { recursive: true });
 		return { ok: true };
 	} catch (error) {
-		return { ok: false, message: managerNotice("npm-cwd", cwd, `Could not prepare the npm working directory: ${stringifyError(error)}`) };
+		return { ok: false, message: managerNotice(key, cwd, `Could not prepare the npm working directory: ${stringifyError(error)}`) };
 	}
 }
 
@@ -129,7 +129,7 @@ export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: b
 		const args = ["remove", plan.method.packageName];
 		if (plan.method.scope === "user") args.push("--global");
 		const result = runCommand("kendex", args);
-		if (result.error) return { ok: false, message: launchFailure("kendex", result.error) };
+		if (result.error) return { ok: false, message: launchFailure("kendex-uninstall-launch", "kendex", result.error) };
 		if ((result.status ?? 1) !== 0) {
 			return { ok: false, message: exitFailure("kendex-uninstall-exit", result) };
 		}
@@ -138,14 +138,14 @@ export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: b
 	}
 	if (plan.method.kind === "npm") {
 		const args = ["uninstall", plan.method.npmName];
-		const prepared = ensureWorkingDir(plan.method.cwd);
+		const prepared = ensureWorkingDir("npm-uninstall-cwd", plan.method.cwd);
 		if (!prepared.ok) return prepared;
 		// Before npm deletes the package tree: npm 7+ does not reliably run a
 		// removed package's own `preuninstall`, and the script that owns the
 		// APPEND_SYSTEM.md block goes with the tree.
 		removeAppendSystemBlockForUninstall(plan.item);
 		const result = runCommand(plan.method.command, [...plan.method.argsPrefix, ...args], { cwd: plan.method.cwd });
-		if (result.error) return { ok: false, message: launchFailure(plan.method.command, result.error) };
+		if (result.error) return { ok: false, message: launchFailure("npm-uninstall-launch", plan.method.command, result.error) };
 		if ((result.status ?? 1) !== 0) {
 			return { ok: false, message: exitFailure("npm-uninstall-exit", result) };
 		}
@@ -193,17 +193,17 @@ export function runUpdate(plan: UpdatePlan): { ok: boolean; message: string } {
 		if (plan.method.scope === "user") args.push("--global");
 		args.push("--pi-extension", plan.method.packageName, "--harness", "pi", "-y");
 		const result = runCommand("kendex", args);
-		if (result.error) return { ok: false, message: launchFailure("kendex", result.error) };
+		if (result.error) return { ok: false, message: launchFailure("kendex-update-launch", "kendex", result.error) };
 		if ((result.status ?? 1) !== 0) {
 			return { ok: false, message: exitFailure("kendex-update-exit", result) };
 		}
 		return { ok: true, message: managerNotice("kendex-updated", plan.item.packageName!, `Updated ${plan.item.displayName} via kendex.`) };
 	}
 	const args = ["install", `${plan.method.npmName}@latest`];
-	const prepared = ensureWorkingDir(plan.method.cwd);
+	const prepared = ensureWorkingDir("npm-update-cwd", plan.method.cwd);
 	if (!prepared.ok) return prepared;
 	const result = runCommand(plan.method.command, [...plan.method.argsPrefix, ...args], { cwd: plan.method.cwd });
-	if (result.error) return { ok: false, message: launchFailure(plan.method.command, result.error) };
+	if (result.error) return { ok: false, message: launchFailure("npm-update-launch", plan.method.command, result.error) };
 	if ((result.status ?? 1) !== 0) {
 		return { ok: false, message: exitFailure("npm-update-exit", result) };
 	}
