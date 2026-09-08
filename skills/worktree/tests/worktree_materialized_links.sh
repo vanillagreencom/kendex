@@ -42,10 +42,8 @@ assert_eq() {
 
 # gh is quiet: no row asks about a pull request. BROKEN is a copy of the
 # script with no lib/ beside it, the shape a materialized harness leaves.
-mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/broken/scripts/lib"
+mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/broken/scripts"
 cp "$WORKTREE_SCRIPT" "$TMP_ROOT/broken/scripts/worktree"
-mkdir -p "$TMP_ROOT/broken/scripts/lib"
-cp "${WORKTREE_SCRIPT%/*}/lib/messages.sh" "$TMP_ROOT/broken/scripts/lib/messages.sh"
 chmod +x "$TMP_ROOT/broken/scripts/worktree"
 BROKEN="$TMP_ROOT/broken/scripts/worktree"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP_ROOT/bin/gh"
@@ -168,7 +166,7 @@ err_text() {
     -) printf '' ;;
     *+*) err_text "${1%%+*}"; printf ';'; err_text "${1#*+}" ;;
     materialized:*) printf 'worktree-links-materialized: <wt>' ;;
-    no-lib) printf 'worktree-env-library-missing: <broken>/scripts/lib/kendex-env.sh' ;;
+    no-lib) printf 'worktree-message-library: path=<broken>/scripts/lib/messages.sh recovery=fix-links-from-main' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
