@@ -1,120 +1,70 @@
 #!/usr/bin/env bash
-# Pins tools/release-digests: it names this lane's two downloads by the
-# rules the release publishes them under, measures each with SHA-256, and
-# writes one document naming the version and the target. The refusing
-# direction runs first in every pair, and each refusal is checked to have
-# left no document behind — a lane that half-wrote one would publish a
-# statement it never measured, which every client then holds its downloads
-# to. Signing is not driven here: it needs the release secret, so
-# --document-only is the mode a test can run.
+# tools/release-digests --document-only: a lane names its two downloads by
+# the rules the release publishes them under, measures each with SHA-256,
+# and writes one document naming the version and the target; a lane it
+# cannot account for is refused with nothing written. Signing is not
+# driven here: it needs the release secret, so --document-only is the mode
+# a test can run.
+#
+# Every run renders as `rc=<n> out=<o> doc=<d>`:
+#   out  the script's output (stdout and stderr together): its one
+#        `::error::` line reduced to the row's clause when the line carries
+#        it, otherwise every line verbatim joined by `;`; `-` when empty
+#   doc  the document DIST/digests-TARGET.json: `absent`, or its fields as
+#        `schema=<n> version=<v> target=<t> command=<hex> app=<hex>` read
+#        through jq, or `unparsed:<text>` when jq cannot read it
+#
+# The refusals table is `label|world|target|version|rc|clause|document`:
+#   world     what the Linux x86_64 lane staged, as words `build` maps onto
+#             files: `command`, `app`, `sig` (the app's signature), `app2`
+#             (another release's app download), `unstaged` (no directory)
+#   clause    text only that `die` arm emits. Every `die` exits 1, so the
+#             message is the one thing that separates one refusal from
+#             another; the clause pinned is the fragment naming the
+#             refusal, never the remedy the line goes on to give.
+#   document  `absent`: a lane that half-wrote a document would publish a
+#             statement it never measured, so every refusal row checks it.
+#
+# The lanes table is `label|target|staged|command file|app file`:
+#   staged        the files the lane's staging step left in DIST, each
+#                 written with its own name as content so no two share a
+#                 digest
+#   command file  the download the document's `command` must measure
+#   app file      the download its `app` must measure
+# The expected digests come from the host's sha256sum or shasum, the same
+# pick the script makes and the independent oracle of its arithmetic.
+#
+# jq is required: the document is a contract a client parses as JSON, and
+# a check that only sed can read would pass a document no client can.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIGESTS="$(cd "$TEST_DIR/.." && pwd)/release-digests"
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
-
+DIST="$TMP/dist"
+VERSION=9.9.9
 PASS=0
 FAIL=0
-ok() {
-  PASS=$((PASS + 1))
-  printf '  ok    %s\n' "$1"
-}
-bad() {
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"
+
+command -v jq >/dev/null 2>&1 || {
+  echo 'jq is required: the document under test is parsed as JSON by every client' >&2
+  exit 1
 }
 
-DIST="$TMP/dist"
-OUT=""
-RC=0
-
-# A lane that built the Linux x86_64 release: the command it staged and the
-# AppImage its bundler produced, beside the sibling files a lane also
-# stages and no document names.
-linux_lane() {
-  rm -rf "$DIST"
-  mkdir -p "$DIST"
-  printf 'the kendex command' >"$DIST/kendex-x86_64-unknown-linux-gnu"
-  printf 'the app download' >"$DIST/kendex_9.9.9_amd64.AppImage"
-  printf 'a signature' >"$DIST/kendex_9.9.9_amd64.AppImage.sig"
-  printf 'a package' >"$DIST/kendex_9.9.9_amd64.deb"
-}
-
-# Errexit is on, so a refusal is captured through an `if` rather than
-# ending the suite that is asking for it.
-run() { # run TARGET VERSION [DIST]
-  if OUT=$("$DIGESTS" --document-only "$1" "$2" "${3-$DIST}" 2>&1); then
-    RC=0
+assert_eq() {
+  local got="$1" want="$2" label="$3"
+  if [[ "$got" == "$want" ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$label"
   else
-    RC=$?
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$label" "$want" "$got"
   fi
 }
 
-document() { printf '%s/digests-%s.json' "$DIST" "$1"; }
-
-field() { # field NAME FILE
-  sed -n "s/.*\"$1\": \"\\([^\"]*\\)\".*/\\1/p" "$2"
-}
-
-# --- refusals ---------------------------------------------------------
-
-linux_lane
-run aarch64-unknown-linux-musl 9.9.9
-[ "$RC" -ne 0 ] && case "$OUT" in *"not a target this release builds"*) true ;; *) false ;; esac &&
-  ok "a target the release does not build is refused" ||
-  bad "a target the release does not build is refused" "rc=$RC out=$OUT"
-
-run x86_64-unknown-linux-gnu '9.9.9", "target": "elsewhere'
-[ "$RC" -ne 0 ] && case "$OUT" in *"not a version"*) true ;; *) false ;; esac &&
-  ok "a version carrying JSON of its own is refused" ||
-  bad "a version carrying JSON of its own is refused" "rc=$RC out=$OUT"
-
-run x86_64-unknown-linux-gnu 9.9.9 "$TMP/never-staged"
-[ "$RC" -ne 0 ] && case "$OUT" in *"is not a directory"*) true ;; *) false ;; esac &&
-  ok "a lane that staged nothing is refused" ||
-  bad "a lane that staged nothing is refused" "rc=$RC out=$OUT"
-
-linux_lane
-rm "$DIST/kendex-x86_64-unknown-linux-gnu"
-run x86_64-unknown-linux-gnu 9.9.9
-[ "$RC" -ne 0 ] && case "$OUT" in *"holds no kendex command"*) true ;; *) false ;; esac &&
-  ok "a lane missing its command is refused" ||
-  bad "a lane missing its command is refused" "rc=$RC out=$OUT"
-[ ! -f "$(document x86_64-unknown-linux-gnu)" ] &&
-  ok "a refused lane leaves no document behind" ||
-  bad "a refused lane leaves no document behind" "$(cat "$(document x86_64-unknown-linux-gnu)")"
-
-linux_lane
-rm "$DIST/kendex_9.9.9_amd64.AppImage"
-run x86_64-unknown-linux-gnu 9.9.9
-[ "$RC" -ne 0 ] && case "$OUT" in *"holds no app download"*) true ;; *) false ;; esac &&
-  ok "a lane missing its app download is refused" ||
-  bad "a lane missing its app download is refused" "rc=$RC out=$OUT"
-
-linux_lane
-printf 'another release' >"$DIST/kendex_5.0.0_amd64.AppImage"
-run x86_64-unknown-linux-gnu 9.9.9
-[ "$RC" -ne 0 ] && case "$OUT" in *"more than one app download"*) true ;; *) false ;; esac &&
-  ok "two app downloads in one lane are refused rather than picked between" ||
-  bad "two app downloads in one lane are refused rather than picked between" "rc=$RC out=$OUT"
-
-# --- the document ------------------------------------------------------
-
-linux_lane
-run x86_64-unknown-linux-gnu 9.9.9
-DOC=$(document x86_64-unknown-linux-gnu)
-[ "$RC" -eq 0 ] && [ -f "$DOC" ] &&
-  ok "the lane above, with nothing missing, writes its document" ||
-  bad "the lane above, with nothing missing, writes its document" "rc=$RC out=$OUT"
-
-[ "$(field version "$DOC")" = "9.9.9" ] && [ "$(field target "$DOC")" = "x86_64-unknown-linux-gnu" ] &&
-  ok "the document names the release and the target it was written for" ||
-  bad "the document names the release and the target it was written for" "$(cat "$DOC")"
-
-# The same pick tools/release-digests makes, for the same reason: macOS ships
-# shasum and no sha256sum, so the expectation this suite compares against has
-# to come from whichever the host has.
+# The same pick tools/release-digests makes, for the same reason: macOS
+# ships shasum and no sha256sum.
 sha256() { # FILE — the file's SHA-256 in lowercase hex
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1"
@@ -122,48 +72,127 @@ sha256() { # FILE — the file's SHA-256 in lowercase hex
     shasum -a 256 "$1"
   fi | cut -d' ' -f1
 }
-expect_command=$(sha256 "$DIST/kendex-x86_64-unknown-linux-gnu")
-expect_app=$(sha256 "$DIST/kendex_9.9.9_amd64.AppImage")
-[ "$(field command "$DOC")" = "$expect_command" ] && [ "$(field app "$DOC")" = "$expect_app" ] &&
-  ok "each digest is plain SHA-256 over the download it names" ||
-  bad "each digest is plain SHA-256 over the download it names" "$(cat "$DOC")"
 
-# The document is what a client parses, so a lane that wrote something
-# only sed can read would pass every check above and fail in the field.
-if command -v jq >/dev/null 2>&1; then
-  jq -e '.schema == 1 and (.command | test("^[0-9a-f]{64}$")) and (.app | test("^[0-9a-f]{64}$"))' \
-    "$DOC" >/dev/null 2>&1 &&
-    ok "the document is JSON carrying the schema this build reads" ||
-    bad "the document is JSON carrying the schema this build reads" "$(cat "$DOC")"
-fi
+# stage FILE... — a fresh DIST holding each file, its name as its content.
+stage() {
+  local file
+  rm -rf "$DIST"
+  mkdir -p "$DIST"
+  for file in "$@"; do
+    printf '%s' "$file" >"$DIST/$file"
+  done
+}
 
-# --- the lanes this host cannot build ----------------------------------
+# build WORLD — the Linux x86_64 lane's DIST from the world's words.
+build() {
+  local word files=""
+  for word in $1; do
+    case "$word" in
+      command) files="$files kendex-x86_64-unknown-linux-gnu" ;;
+      app) files="$files kendex_${VERSION}_amd64.AppImage" ;;
+      sig) files="$files kendex_${VERSION}_amd64.AppImage.sig" ;;
+      app2) files="$files kendex_5.0.0_amd64.AppImage" ;;
+      unstaged) rm -rf "$DIST"; return ;;
+      *) printf 'build: no file is staged for the word %s\n' "$word" >&2; exit 1 ;;
+    esac
+  done
+  # shellcheck disable=SC2086
+  stage $files
+}
 
-rm -rf "$DIST"
-mkdir -p "$DIST"
-printf 'the windows command' >"$DIST/kendex-x86_64-pc-windows-msvc.exe"
-printf 'the windows installer' >"$DIST/kendex_9.9.9_x64-setup.exe"
-printf 'a signature' >"$DIST/kendex_9.9.9_x64-setup.exe.sig"
-run x86_64-pc-windows-msvc 9.9.9
-DOC=$(document x86_64-pc-windows-msvc)
-[ "$RC" -eq 0 ] &&
-  [ "$(field command "$DOC")" = "$(sha256 "$DIST/kendex-x86_64-pc-windows-msvc.exe")" ] &&
-  [ "$(field app "$DOC")" = "$(sha256 "$DIST/kendex_9.9.9_x64-setup.exe")" ] &&
-  ok "the Windows lane measures the .exe command and the installer" ||
-  bad "the Windows lane measures the .exe command and the installer" "rc=$RC out=$OUT"
+out_text() { # CLAUSE — the run's output reduced, `-` when empty
+  local clause="$1" text
+  text="$(cat "$TMP/out")"
+  [[ "$text" != "" ]] || { printf -- '-'; return; }
+  if [[ "$clause" != "" && "$text" == "::error::"*"$clause"* && "$text" != *$'\n'* ]]; then
+    printf '%s' "$clause"
+  else
+    printf '%s' "$text" | paste -s -d ';' -
+  fi
+}
 
-rm -rf "$DIST"
-mkdir -p "$DIST"
-printf 'the mac command' >"$DIST/kendex-aarch64-apple-darwin"
-printf 'the mac archive' >"$DIST/kendex-aarch64-apple-darwin.app.tar.gz"
-printf 'a signature' >"$DIST/kendex-aarch64-apple-darwin.app.tar.gz.sig"
-printf 'a disk image' >"$DIST/kendex_9.9.9_aarch64.dmg"
-run aarch64-apple-darwin 9.9.9
-DOC=$(document aarch64-apple-darwin)
-[ "$RC" -eq 0 ] &&
-  [ "$(field app "$DOC")" = "$(sha256 "$DIST/kendex-aarch64-apple-darwin.app.tar.gz")" ] &&
-  ok "the macOS lane measures the archive its updater installs, not the dmg" ||
-  bad "the macOS lane measures the archive its updater installs, not the dmg" "rc=$RC out=$OUT"
+doc_text() { # TARGET — the document's fields, `absent`, or `unparsed:<text>`
+  local doc="$DIST/digests-$1.json" fields
+  [[ -e "$doc" ]] || { printf 'absent'; return; }
+  if fields="$(jq -r '"schema=\(.schema) version=\(.version) target=\(.target) command=\(.command) app=\(.app)"' "$doc" 2>/dev/null)"; then
+    printf '%s' "$fields"
+  else
+    printf 'unparsed:%s' "$(paste -s -d ';' - <"$doc")"
+  fi
+}
 
-printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
-[ "$FAIL" -eq 0 ]
+run() { # TARGET VERSION CLAUSE
+  local rc=0
+  "$DIGESTS" --document-only "$1" "$2" "$DIST" >"$TMP/out" 2>&1 || rc=$?
+  printf 'rc=%s out=%s doc=%s' "$rc" "$(out_text "$3")" "$(doc_text "$1")"
+}
+
+fields_present() { # ROW FIELD... — a row with an empty field asserts nothing
+  local row="$1" field
+  shift
+  for field in "$@"; do
+    [[ "$field" != "" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+  done
+}
+
+# A rendering aid for writing rows: every table renders, then the run is
+# refused.
+probe() { # LABEL GOT
+  [[ "${TOOLS_TABLE_PROBE:-}" == 1 ]] || return 1
+  printf '%s => %s\n' "$1" "$2"
+}
+
+asserted() { # BEFORE — refuses a table that asserted no row past that tally
+  [[ "${TOOLS_TABLE_PROBE:-}" != 1 ]] || return 0
+  [[ "$((PASS + FAIL))" -gt "$1" ]] || { echo "no row was asserted" >&2; exit 2; }
+}
+
+run_refusals() {
+  local title="$1" rows="$2" label world target version rc clause document got row before=$((PASS + FAIL))
+  echo "=== $title ==="
+  while IFS= read -r row; do
+    [[ "$row" != "" ]] || continue
+    IFS='|' read -r label world target version rc clause document <<<"$row"
+    fields_present "$row" "$label" "$world" "$target" "$version" "$rc" "$clause" "$document"
+    build "$world"
+    got="$(run "$target" "$version" "$clause")"
+    probe "$label" "$got" && continue
+    assert_eq "$got" "rc=$rc out=$clause doc=$document" "$label"
+  done <<<"$rows"
+  asserted "$before"
+}
+
+run_lanes() {
+  local title="$1" rows="$2" label target staged command_file app_file got row before=$((PASS + FAIL))
+  echo "=== $title ==="
+  while IFS= read -r row; do
+    [[ "$row" != "" ]] || continue
+    IFS='|' read -r label target staged command_file app_file <<<"$row"
+    fields_present "$row" "$label" "$target" "$staged" "$command_file" "$app_file"
+    # shellcheck disable=SC2086
+    stage $staged
+    got="$(run "$target" "$VERSION" "")"
+    probe "$label" "$got" && continue
+    assert_eq "$got" "rc=0 out=- doc=schema=1 version=$VERSION target=$target command=$(sha256 "$DIST/$command_file") app=$(sha256 "$DIST/$app_file")" "$label"
+  done <<<"$rows"
+  asserted "$before"
+}
+
+run_refusals "the refusals, each leaving no document" "\
+a target the release does not build is refused|command app sig|aarch64-unknown-linux-musl|9.9.9|1|not a target this release builds|absent
+a version carrying JSON of its own is refused|command app sig|x86_64-unknown-linux-gnu|9.9.9\", \"target\": \"elsewhere|1|not a version this release could have been built as|absent
+a lane that staged nothing is refused|unstaged|x86_64-unknown-linux-gnu|9.9.9|1|is not a directory|absent
+a lane missing its command is refused|app sig|x86_64-unknown-linux-gnu|9.9.9|1|holds no kendex command|absent
+a lane missing its app download is refused|command sig|x86_64-unknown-linux-gnu|9.9.9|1|holds no app download|absent
+two app downloads in one lane are refused rather than picked between|command app app2 sig|x86_64-unknown-linux-gnu|9.9.9|1|holds more than one app download|absent
+"
+
+run_lanes "the lanes, each measuring the two downloads its updater installs" "\
+the Linux lane measures the command and the AppImage, not the deb or the signature|x86_64-unknown-linux-gnu|kendex-x86_64-unknown-linux-gnu kendex_9.9.9_amd64.AppImage kendex_9.9.9_amd64.AppImage.sig kendex_9.9.9_amd64.deb|kendex-x86_64-unknown-linux-gnu|kendex_9.9.9_amd64.AppImage
+the Windows lane measures the .exe command and the installer|x86_64-pc-windows-msvc|kendex-x86_64-pc-windows-msvc.exe kendex_9.9.9_x64-setup.exe kendex_9.9.9_x64-setup.exe.sig|kendex-x86_64-pc-windows-msvc.exe|kendex_9.9.9_x64-setup.exe
+the macOS lane measures the archive its updater installs, not the dmg|aarch64-apple-darwin|kendex-aarch64-apple-darwin kendex-aarch64-apple-darwin.app.tar.gz kendex-aarch64-apple-darwin.app.tar.gz.sig kendex_9.9.9_aarch64.dmg|kendex-aarch64-apple-darwin|kendex-aarch64-apple-darwin.app.tar.gz
+"
+
+[[ "${TOOLS_TABLE_PROBE:-}" != 1 ]] || { echo "a probe run renders rows instead of asserting them" >&2; exit 2; }
+printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
+[[ "$FAIL" -eq 0 ]]
