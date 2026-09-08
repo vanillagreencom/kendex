@@ -9,11 +9,12 @@ compare_copies() { # ROOT
   local root="$1" source render canonical="$1/skills/orch/scripts/lib/kendex-env.sh" has_canonical=0
   local -a sources=("$root"/skills/*/scripts/lib/kendex-env.sh)
   # The expected set is the glob's own, never a count kept here: a skill
-  # vendoring the lib joins the scan by existing. Under-inclusion is closed by
-  # the floor (an unmatched glob is its own pattern, one entry) and by the one
-  # required member, the copy every other is compared against; either failing
-  # is a broken scan, not a sparse tree. Over-inclusion stays open: an extra
-  # match is compared like the rest.
+  # vendoring the lib joins the scan by existing. The floor (an unmatched glob
+  # is its own pattern, one entry) and the one required member, the copy every
+  # other is compared against, close a broken extractor only; either failing
+  # is a broken scan, not a sparse tree. Two directions stay open: a copy
+  # deleted from the tree leaves the scan green, and an extra match is
+  # compared like the rest.
   for source in "${sources[@]}"; do
     [[ $source != "$canonical" ]] || has_canonical=1
   done
