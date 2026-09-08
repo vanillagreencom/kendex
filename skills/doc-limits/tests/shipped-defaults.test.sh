@@ -23,6 +23,14 @@ expect() { # EXPECTED-EXIT LABEL: assert the preceding run's result
     FAIL=$((FAIL + 1)); printf '  FAIL: %s: exit %s\n%s\n' "$2" "$RC" "$OUT"
   fi
 }
+expect_first_line() { # EXPECTED LABEL
+  local first="${OUT%%$'\n'*}"
+  if [ "$first" = "$1" ]; then
+    PASS=$((PASS + 1)); printf '  ok: %s\n' "$2"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL: %s: first line <%s>\n' "$2" "$first"
+  fi
+}
 must_fail() { # FORMER-EXIT MUTANT-EXIT LABEL: prove the former assertion turns red
   local assertion_rc=0
   (PASS=0; FAIL=0; expect "$1" "$3"; [ "$FAIL" -eq 0 ]) >"$TMP/control.log" || assertion_rc=$?
@@ -56,13 +64,15 @@ while IFS=' ' read -r path limit; do
   git -C "$R" add -- "$path"
   run --staged
   expect 0 "$path at its class limit passes"
+  expect_first_line 'notice=documents-checked count=1' "$path pass notice"
   bytes "$path" "$((limit + 1))"
   git -C "$R" add -- "$path"
   run --staged
   expect 1 "$path one byte over fails"
+  expect_first_line "notice=document-over-limit path=$path" "$path failure notice"
   case "$OUT" in
-    *"$path: $((limit + 1)) bytes > $limit bytes"*) ;;
-    *) FAIL=$((FAIL + 1)); printf '  FAIL: wrong document or limit: %s\n' "$OUT" ;;
+    *"notice=documents-over-limit count=1"*) PASS=$((PASS + 1)); printf '  ok: %s\n' "$path failure count" ;;
+    *) FAIL=$((FAIL + 1)); printf '  FAIL: %s\n' "$path failure count" ;;
   esac
   git -C "$R" rm -qf -- "$path"
   CLASS_ASSERTIONS=$((CLASS_ASSERTIONS + 1))

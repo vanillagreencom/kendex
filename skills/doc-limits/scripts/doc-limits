@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Diagnostic protocol: refusals start error=KEY FIELD=VALUE; notices start
+# notice=KEY FIELD=VALUE. English detail follows on the next line.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/settings.sh
@@ -33,20 +35,30 @@ Class selection and exclusions: references/policy.md.
 Exit codes: 0 clean; 1 over-limit documents; 2 usage/config/collection error.
 EOF
 }
+diagnostic() {
+  local level="$1" key="$2" field="$3" value="$4" text="$5"
+  printf '%s=%s %s=%q\n' "$level" "$key" "$field" "$value" >&2
+  printf '::error::doc-limits: %s\n' "$text" >&2
+}
 config_error() {
-  echo "::error::doc-limits: $*" >&2
+  diagnostic error "$1" "$2" "$3" "$4"
   exit 2
 }
 collection_error() {
-  echo "::error::doc-limits: $*" >&2
+  diagnostic error "$1" "$2" "$3" "$4"
   exit 2
+}
+notice() {
+  local key="$1" field="$2" value="$3" text="$4"
+  printf 'notice=%s %s=%q\n' "$key" "$field" "$value"
+  printf '%s\n' "$text"
 }
 EXCLUDES_OPT=""
 EXCLUDES_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --excludes)
-      [ $# -ge 2 ] || config_error "--excludes requires a path"
+      [ $# -ge 2 ] || config_error argument-value-missing option --excludes "--excludes requires a path"
       shift
       EXCLUDES_OPT="$1"
       EXCLUDES_SET=1
@@ -54,13 +66,13 @@ while [ $# -gt 0 ]; do
     --excludes=*) EXCLUDES_OPT="${1#--excludes=}"; EXCLUDES_SET=1 ;;
     -h | --help) usage; exit 0 ;;
     --staged) STAGED=1 ;;
-    *) config_error "unknown argument '$1' (see --help)" ;;
+    *) config_error argument-unknown argument "$1" "unknown argument '$1' (see --help)" ;;
   esac
   shift
 done
-REPO_ROOT="$(git rev-parse --show-toplevel)" || config_error "not inside a git repository"
-cd "$REPO_ROOT" || config_error "could not enter the repository root $REPO_ROOT"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/doc-limits.XXXXXX")" || config_error "could not create a temporary directory"
+REPO_ROOT="$(git rev-parse --show-toplevel)" || config_error repository-root-missing path "$PWD" "not inside a git repository"
+cd "$REPO_ROOT" || config_error repository-root-unreadable path "$REPO_ROOT" "could not enter the repository root $REPO_ROOT"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/doc-limits.XXXXXX")" || config_error temp-create-failed path "${TMPDIR:-/tmp}" "could not create a temporary directory"
 trap 'rm -rf -- "${TMP:?}"' EXIT
 if [ "$STAGED" -eq 1 ]; then
   SR_SETTINGS_FROM_INDEX=1
@@ -88,22 +100,22 @@ parse_classes() { # SETTING-NAME VALUE — appends entries
     [ -n "$pair" ] || continue
     case "$pair" in
       *"="*) ;;
-      *) config_error "$name: entry '$pair' is not 'pattern=threshold'" ;;
+      *) config_error class-entry-invalid value "$pair" "$name: entry '$pair' is not 'pattern=threshold'" ;;
     esac
     cpat="${pair%=*}"
     craw="${pair##*=}"
     cpat="${cpat%"${cpat##*[![:space:]]}"}"
     craw="${craw#"${craw%%[![:space:]]*}"}"
-    [ -n "$cpat" ] || config_error "$name: entry '$pair' has an empty pattern"
+    [ -n "$cpat" ] || config_error class-pattern-empty value "$pair" "$name: entry '$pair' has an empty pattern"
     case "$cpat" in
-      *"$TAB"* | *"$NL"*) config_error "$name: entry '$pair' has a tab or newline in its pattern; the mapping is one line" ;;
+      *"$TAB"* | *"$NL"*) config_error class-pattern-invalid setting "$name" "$name: entry '$pair' has a tab or newline in its pattern; the mapping is one line" ;;
     esac
     case "$craw" in
       *k) cthr="${craw%k}" ;;
-      *) config_error "$name: entry '$pair' needs a positive integer with the 'k' byte suffix" ;;
+      *) config_error class-threshold-invalid value "$craw" "$name: entry '$pair' needs a positive integer with the 'k' byte suffix" ;;
     esac
     case "$cthr" in
-      "" | *[!0-9]* | 0*[0-9] | 0) config_error "$name: entry '$pair' needs a positive integer with the 'k' byte suffix" ;;
+      "" | *[!0-9]* | 0*[0-9] | 0) config_error class-threshold-invalid value "$craw" "$name: entry '$pair' needs a positive integer with the 'k' byte suffix" ;;
     esac
     cthr=$((cthr * 1024))
     CLASS_PATTERNS+=("$cpat")
@@ -116,7 +128,7 @@ parse_classes DOC_LIMITS_CLASSES "$CLASSES"
 DEFAULT_CLASSES="$(sr_setting DOC_LIMITS_DEFAULT_CLASSES "$SHIPPED_CLASSES")" || exit 2
 parse_classes DOC_LIMITS_DEFAULT_CLASSES "$DEFAULT_CLASSES"
 if [ "$EXCLUDES_SET" = "1" ]; then
-  [ -n "$EXCLUDES_OPT" ] || config_error "--excludes was given an empty path; pass a real path or omit the flag to use the configured default"
+  [ -n "$EXCLUDES_OPT" ] || config_error excludes-path-empty path "$EXCLUDES_OPT" "--excludes was given an empty path; pass a real path or omit the flag to use the configured default"
   EXCLUDES_FILE="$EXCLUDES_OPT"
 else
   EXCLUDES_FILE="$(sr_setting DOC_LIMITS_EXCLUDES "tools/doc-limits-excludes")" || exit 2
@@ -142,10 +154,11 @@ normalize_rel_path() { # PATH -> normalized on stdout; nonzero if it escapes
   [ -n "$out" ] || return 1
   printf '%s' "$out"
 }
-case "$EXCLUDES_FILE" in /*) config_error "excludes path must be repo-root-relative, got absolute: $EXCLUDES_FILE" ;; esac
-EXCLUDES_FILE="$(normalize_rel_path "$EXCLUDES_FILE")" || config_error "excludes path escapes the repository or normalizes empty"
-[ -n "$EXCLUDES_FILE" ] || config_error "excludes path resolved empty"
-case "$EXCLUDES_FILE" in -*) config_error "excludes path must not begin with '-': $EXCLUDES_FILE" ;; /*) config_error "excludes path must be repo-root-relative, got absolute: $EXCLUDES_FILE" ;; esac
+case "$EXCLUDES_FILE" in /*) config_error excludes-path-absolute path "$EXCLUDES_FILE" "excludes path must be repo-root-relative, got absolute: $EXCLUDES_FILE" ;; esac
+raw_excludes_file="$EXCLUDES_FILE"
+EXCLUDES_FILE="$(normalize_rel_path "$EXCLUDES_FILE")" || config_error excludes-path-invalid path "$raw_excludes_file" "excludes path escapes the repository or normalizes empty"
+[ -n "$EXCLUDES_FILE" ] || config_error excludes-path-empty path "$raw_excludes_file" "excludes path resolved empty"
+case "$EXCLUDES_FILE" in -*) config_error excludes-path-option path "$EXCLUDES_FILE" "excludes path must not begin with '-': $EXCLUDES_FILE" ;; /*) config_error excludes-path-absolute path "$EXCLUDES_FILE" "excludes path must be repo-root-relative, got absolute: $EXCLUDES_FILE" ;; esac
 staged_policy_state() { # PATH
   [ "$STAGED" -eq 1 ] || return 1
   read_index_file_mode "$1"
@@ -158,7 +171,7 @@ INDEX_FILE_MODE=""
 read_index_file_mode() { # PATH — sets INDEX_FILE_MODE ("" when untracked)
   local entry status=0
   entry="$(git ls-files -s -- ":(literal)$1")" || status=$?
-  [ "$status" -eq 0 ] || collection_error "could not query the index for $1 (git ls-files exit $status) — refusing to treat it as absent"
+  [ "$status" -eq 0 ] || collection_error index-query-failed exit "$status" "could not query the index for $1 (git ls-files exit $status) — refusing to treat it as absent"
   INDEX_FILE_MODE="${entry%% *}"
   [ -n "$entry" ] || INDEX_FILE_MODE=""
 }
@@ -172,20 +185,20 @@ read_head_file_mode() { # PATH — sets HEAD_FILE_MODE ("" when HEAD carries no 
   case "$head_status" in
     0) HEAD_EXISTS=1 ;;
     1) return 0 ;;
-    *) collection_error "could not resolve HEAD while probing for $1 (git rev-parse exit $head_status) — refusing to treat it as absent" ;;
+    *) collection_error head-query-failed exit "$head_status" "could not resolve HEAD while probing for $1 (git rev-parse exit $head_status) — refusing to treat it as absent" ;;
   esac
   entry="$(git ls-tree HEAD -- ":(literal)$1")" || status=$?
-  [ "$status" -eq 0 ] || collection_error "could not query HEAD for $1 (git ls-tree exit $status) — refusing to treat it as absent"
+  [ "$status" -eq 0 ] || collection_error head-tree-query-failed exit "$status" "could not query HEAD for $1 (git ls-tree exit $status) — refusing to treat it as absent"
   HEAD_FILE_MODE="${entry%% *}"
   [ -n "$entry" ] || HEAD_FILE_MODE=""
 }
 read_policy_from_index() { # PATH — stages the index copy of the list at $TMP/excludes
   case "$INDEX_FILE_MODE" in
     100*) ;;
-    *) config_error "$1 is tracked but is not a regular file in the index (mode $INDEX_FILE_MODE); it cannot be read as an exclusion list" ;;
+    *) config_error excludes-mode-invalid mode "$INDEX_FILE_MODE" "$1 is tracked but is not a regular file in the index (mode $INDEX_FILE_MODE); it cannot be read as an exclusion list" ;;
   esac
   git show ":$1" >"$TMP/excludes" \
-    || collection_error "could not read the tracked exclusion list from the index: $1 — refusing to run with zero exclusions"
+    || collection_error excludes-index-read-failed path "$1" "could not read the tracked exclusion list from the index: $1 — refusing to run with zero exclusions"
 }
 EXCLUDES_SOURCE="$EXCLUDES_FILE"
 EXCLUDES_LABEL="$EXCLUDES_FILE"
@@ -208,14 +221,14 @@ case "$excludes_state" in
     fi
     ;;
   2)
-    : >"$TMP/excludes" || collection_error "could not initialize the excludes scratch file"
+    : >"$TMP/excludes" || collection_error excludes-scratch-failed path "$TMP/excludes" "could not initialize the excludes scratch file"
     EXCLUDES_SOURCE="$TMP/excludes"
     ;;
 esac
 EXCLUDE_PATTERNS=()
 CARVE_PATTERNS=()
 if [ -f "$EXCLUDES_SOURCE" ]; then
-  [ -r "$EXCLUDES_SOURCE" ] || config_error "$EXCLUDES_LABEL: exists but cannot be read"
+  [ -r "$EXCLUDES_SOURCE" ] || config_error excludes-unreadable path "$EXCLUDES_LABEL" "$EXCLUDES_LABEL: exists but cannot be read"
   lineno=0
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno + 1))
@@ -225,7 +238,7 @@ if [ -f "$EXCLUDES_SOURCE" ]; then
     pat="${line%%"$TAB"*}"
     reason="${line#*"$TAB"}"
     if [ "$pat" = "$line" ] || [ -z "$pat" ] || [ -z "$reason" ]; then
-      config_error "$EXCLUDES_LABEL:$lineno: expected 'pattern<TAB>reason' (every exclusion carries its justification)"
+      config_error excludes-row-invalid line "$lineno" "$EXCLUDES_LABEL:$lineno: expected 'pattern<TAB>reason' (every exclusion carries its justification)"
     fi
     # A `!` pattern CARVES its matches back into the measured set, the only
     # way to govern documents living inside an excluded render tree
@@ -235,7 +248,7 @@ if [ -f "$EXCLUDES_SOURCE" ]; then
       "!"*)
         carve="${pat#!}"
         [ -n "$carve" ] \
-          || config_error "$EXCLUDES_LABEL:$lineno: '!' carves matching paths back into the measured set and needs a pattern after it"
+          || config_error excludes-carve-empty line "$lineno" "$EXCLUDES_LABEL:$lineno: '!' carves matching paths back into the measured set and needs a pattern after it"
         CARVE_PATTERNS+=("$carve")
         ;;
       *) EXCLUDE_PATTERNS+=("$pat") ;;
@@ -257,7 +270,7 @@ if [ "$STAGED" -eq 0 ] && [ ! -f "$INVENTORY_SOURCE" ]; then
   read_index_file_mode .kendex-generated.json
   if [ -n "$INDEX_FILE_MODE" ]; then
     git show :0:.kendex-generated.json >"$TMP/generated.json" \
-      || collection_error 'cannot read .kendex-generated.json from the index; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
+      || collection_error inventory-index-read-failed path .kendex-generated.json 'cannot read .kendex-generated.json from the index; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
     INVENTORY_SOURCE="$TMP/generated.json"
   fi
 fi
@@ -270,7 +283,7 @@ if [ ! -e "$INVENTORY_SOURCE" ] && [ ! -L "$INVENTORY_SOURCE" ]; then
   inventory='[]'
 else
   inventory="$(cat -- "$INVENTORY_SOURCE")" \
-    || collection_error 'cannot read .kendex-generated.json; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
+    || collection_error inventory-read-failed path "$INVENTORY_SOURCE" 'cannot read .kendex-generated.json; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'
 fi
 generated_paths_load "$inventory" || exit 2
 is_excluded() { # PATH — inclusion rows override both exclusion sources
@@ -292,7 +305,7 @@ path_threshold() { # PATH: first matching class, or no limit
 }
 # The index supplies both the tracked set and blob IDs. A single batch reads
 # their sizes, so staged checks do not materialize every document.
-git ls-files -s -z >"$TMP/files.z" || collection_error "could not enumerate tracked documents"
+git ls-files -s -z >"$TMP/files.z" || collection_error documents-enumeration-failed exit "$?" "could not enumerate tracked documents"
 : >"$TMP/documents.tsv"
 while IFS= read -r -d '' rec; do
   mode="${rec%% *}"
@@ -300,38 +313,38 @@ while IFS= read -r -d '' rec; do
   case "$f" in *.md) ;; *) continue ;; esac
   case "$mode" in 120000 | 160000) continue ;; esac
   case "$f" in
-    *"$NL"* | *"$TAB"*) config_error "tracked document path contains a tab or newline: '$f'" ;;
+    *"$NL"* | *"$TAB"*) config_error document-path-invalid path "$f" "tracked document path contains a tab or newline: '$f'" ;;
   esac
   is_excluded "$f" && continue
   path_threshold "$f"
   [ -n "$PT" ] || continue
   entry="${rec%%"$TAB"*}"
-  [ "${entry##* }" = 0 ] || collection_error "tracked document is unmerged: $f"
+  [ "${entry##* }" = 0 ] || collection_error document-unmerged path "$f" "tracked document is unmerged: $f"
   oid="${entry#* }"
   oid="${oid%% *}"
   printf '%s\t%s\t%s\t%s\n' "$oid" "$f" "$PT" "$PC" >>"$TMP/documents.tsv"
 done <"$TMP/files.z"
 cut -f1 "$TMP/documents.tsv" | git cat-file --batch-check >"$TMP/sizes" \
-  || collection_error "could not read document blob sizes"
+  || collection_error blob-sizes-read-failed exit "$?" "could not read document blob sizes"
 checked=0 violations=0
 while IFS="$TAB" read -r oid f limit class; do
-  IFS=' ' read -r actual_oid kind n <&3 || collection_error "document size response is incomplete: $f"
+  IFS=' ' read -r actual_oid kind n <&3 || collection_error blob-size-response-incomplete path "$f" "document size response is incomplete: $f"
   [ "$actual_oid" = "$oid" ] && [ "$kind" = blob ] \
-    || collection_error "could not read document blob: $f"
+    || collection_error document-blob-read-failed path "$f" "could not read document blob: $f"
   if [ "$STAGED" -eq 0 ] && [ -f "$f" ] && [ ! -L "$f" ]; then
-    n="$(wc -c <"$f")" || collection_error "could not measure tracked document: $f"
+    n="$(wc -c <"$f")" || collection_error document-measure-failed path "$f" "could not measure tracked document: $f"
     n="${n#"${n%%[![:space:]]*}"}"
   fi
-  case "$n" in "" | *[!0-9]*) collection_error "invalid byte count for tracked document: $f" ;; esac
+  case "$n" in "" | *[!0-9]*) collection_error document-byte-count-invalid path "$f" "invalid byte count for tracked document: $f" ;; esac
   if [ "$n" -gt "$limit" ]; then
-    printf 'doc-limits FAIL: %s: %s bytes > %s bytes (class %s)\n' "$f" "$n" "$limit" "$class"
+    notice document-over-limit path "$f" "doc-limits FAIL: $f: $n bytes > $limit bytes (class $class)"
     printf '  remedy: split the document at a natural seam, move detail to a linked reference, or delete content the code or another document already states; a document that must stay whole gets a row in %s with its reason\n' "$EXCLUDES_FILE"
     violations=$((violations + 1))
   fi
   checked=$((checked + 1))
 done <"$TMP/documents.tsv" 3<"$TMP/sizes"
 if [ "$violations" -gt 0 ]; then
-  printf 'doc-limits: %s over-limit document(s), %s checked\n' "$violations" "$checked"
+  notice documents-over-limit count "$violations" "doc-limits: $violations over-limit document(s), $checked checked"
   exit 1
 fi
-printf 'doc-limits: OK: %s document(s) checked\n' "$checked"
+notice documents-checked count "$checked" "doc-limits: OK: $checked document(s) checked"

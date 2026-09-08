@@ -23,6 +23,22 @@ expect() { # EXPECTED-EXIT LABEL: assert the preceding run's result
     FAIL=$((FAIL + 1)); printf '  FAIL: %s: exit %s\n%s\n' "$2" "$RC" "$OUT"
   fi
 }
+expect_first_line() { # EXPECTED LABEL
+  local first="${OUT%%$'\n'*}"
+  if [ "$first" = "$1" ]; then
+    PASS=$((PASS + 1)); printf '  ok: %s\n' "$2"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL: %s: first line <%s>\n' "$2" "$first"
+  fi
+}
+must_fail_first_line() { # FORMER-LINE LABEL
+  local first="${OUT%%$'\n'*}"
+  if [ "$first" != "$1" ]; then
+    PASS=$((PASS + 1)); printf '  ok: %s\n' "$2"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL: %s: mutant retained <%s>\n' "$2" "$first"
+  fi
+}
 must_fail() { # FORMER-EXIT MUTANT-EXIT LABEL: prove the former assertion turns red
   local assertion_rc=0
   (PASS=0; FAIL=0; expect "$1" "$3"; [ "$FAIL" -eq 0 ]) >"$TMP/control.log" || assertion_rc=$?
@@ -199,8 +215,25 @@ run
 must_fail 1 0 'carve-back control: disabling carve-back fails exclusion-carve-back'
 SR="$SOURCE_COMMAND"
 
+run --excludes
+expect 2 'missing-excludes-value'
+expect_first_line 'error=argument-value-missing option=--excludes' 'missing-excludes-value diagnostic'
+
+private_command excludes-diagnostic
+[ "$(grep -Fxc '      [ $# -ge 2 ] || config_error argument-value-missing option --excludes "--excludes requires a path"' "$MUTANT")" -eq 1 ]
+sed 's/config_error argument-value-missing option --excludes/config_error argument-value-renamed option --excludes/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --excludes
+must_fail_first_line 'error=argument-value-missing option=--excludes' 'diagnostic control: changing the stable key fails the missing-value assertion'
+SR="$SOURCE_COMMAND"
+
 run --unknown
 expect 2 'unknown-option'
+expect_first_line 'error=argument-unknown argument=--unknown' 'unknown-option diagnostic'
 
 # Git is the real producer of policy lookup, document enumeration, and blob sizes.
 REAL_GIT="$(command -v git)"
@@ -252,8 +285,8 @@ fi
 
 private_command enumeration-guard
 [ ! -L "$MUTANT" ]
-[ "$(grep -Fxc 'git ls-files -s -z >"$TMP/files.z" || collection_error "could not enumerate tracked documents"' "$MUTANT")" -eq 1 ]
-sed 's/^git ls-files -s -z >"\$TMP\/files.z" || collection_error "could not enumerate tracked documents"$/git ls-files -s -z >"$TMP\/files.z" || :/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc 'git ls-files -s -z >"$TMP/files.z" || collection_error documents-enumeration-failed exit "$?" "could not enumerate tracked documents"' "$MUTANT")" -eq 1 ]
+sed 's/^git ls-files -s -z >"\$TMP\/files.z" || collection_error documents-enumeration-failed exit "\$?" "could not enumerate tracked documents"$/git ls-files -s -z >"$TMP\/files.z" || :/' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
@@ -265,8 +298,8 @@ must_fail 2 0 'collection table control: bypassing enumeration failure fails git
 
 private_command batch-guard
 [ ! -L "$MUTANT" ]
-[ "$(grep -Fxc '  || collection_error "could not read document blob sizes"' "$MUTANT")" -eq 1 ]
-sed 's/^  || collection_error "could not read document blob sizes"$/  || :/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc '  || collection_error blob-sizes-read-failed exit "$?" "could not read document blob sizes"' "$MUTANT")" -eq 1 ]
+sed 's/^  || collection_error blob-sizes-read-failed exit "\$?" "could not read document blob sizes"$/  || :/' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
