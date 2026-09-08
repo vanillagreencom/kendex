@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { WAKE_MANIFEST_FIELD_MAX_CHARS as cap } from "../extensions/wake-events.js";
-import { runSpawnFixture } from "./fixtures/spawn-child-runner.js";
+import { runSpawnFixture, SPAWN_FIXTURE_TIMEOUT_MS } from "./fixtures/spawn-child-runner.js";
 
 interface StopObservation {
 	outcome: { kind: string };
@@ -43,4 +43,4 @@ test("registered stop content rows", () => {
 			state: { id: "bg-1", status: row.status }, remainingTimers: [], unexpected: [],
 		});
 	}
-});
+}, SPAWN_FIXTURE_TIMEOUT_MS * (rows.length + 1));

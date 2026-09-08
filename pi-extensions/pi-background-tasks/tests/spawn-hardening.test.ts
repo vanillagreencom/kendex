@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { runSpawnFixture } from "./fixtures/spawn-child-runner.js";
+import { runSpawnFixture, SPAWN_FIXTURE_TIMEOUT_MS } from "./fixtures/spawn-child-runner.js";
 
 const rows = [
 	{ name: "POSIX spawn requests a detached process group", platform: "linux", detached: true },
@@ -18,4 +18,4 @@ test("registered extension spawn hardening rows", () => {
 			signals: [], childSignals: [], unexpected: [], remainingTimers: [],
 		});
 	}
-});
+}, SPAWN_FIXTURE_TIMEOUT_MS * (rows.length + 1));

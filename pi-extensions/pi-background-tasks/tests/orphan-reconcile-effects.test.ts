@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { runSpawnFixture } from "./fixtures/spawn-child-runner.js";
+import { runSpawnFixture, SPAWN_FIXTURE_TIMEOUT_MS } from "./fixtures/spawn-child-runner.js";
 
 const rows = [
 	{ name: "gone orphan finalizes through the exact metadata hook order without signals", identity: "gone", finalized: 1, status: "failed", reason: "orphaned-pid-gone", reasonIsUndefined: false },
@@ -20,4 +20,4 @@ test("orphan reconciliation effect rows", () => {
 			signals: [], childSignals: [], spawns: [], syncCalls: [], unexpected: [],
 		});
 	}
-});
+}, SPAWN_FIXTURE_TIMEOUT_MS * (rows.length + 1));

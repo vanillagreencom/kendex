@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
-import { runSpawnFixture } from "./fixtures/spawn-child-runner.js";
+import { runSpawnFixture, SPAWN_FIXTURE_TIMEOUT_MS } from "./fixtures/spawn-child-runner.js";
 
 const unit = "kendex-pi-bg-bg-1-1700000000000.service";
 const term = { file: "systemctl", args: ["--user", "stop", "--no-block", unit] };
 const kill = { file: "systemctl", args: ["--user", "kill", "--signal=SIGKILL", unit] };
-const termSignal = { pid: -4242, signal: "SIGTERM" };
-const killSignal = { pid: -4242, signal: "SIGKILL" };
+const signalPid = process.platform === "win32" ? 4242 : -4242;
+const termSignal = { pid: signalPid, signal: "SIGTERM" };
+const killSignal = { pid: signalPid, signal: "SIGKILL" };
 const interval = { kind: "interval", ms: 30_000 };
 const timeout = { kind: "timeout", ms: 5_000 };
 const running = { id: "bg-1", pid: 4242, status: "running", reason: null, exitCode: null, exitNotified: false };
@@ -13,21 +14,23 @@ const running = { id: "bg-1", pid: 4242, status: "running", reason: null, exitCo
 const rows = [
 	{ name: "tool unit stop succeeds without wrapper signals", resource: true, caller: "tool", stopFails: false, killFails: false, signalGone: false, afterStatus: "running", reason: "extension-stop", finalStatus: "stopped", escalate: true, failureLogValues: 0 },
 	{ name: "tool unit stop failure returns an error without fallback signals", resource: true, caller: "tool", stopFails: true, killFails: true, signalGone: false, afterStatus: "running", reason: null, finalStatus: "running", escalate: false, failureLogValues: 1 },
-	{ name: "tool without resource control signals the owned process group", resource: false, caller: "tool", stopFails: false, killFails: false, signalGone: false, afterStatus: "running", reason: "extension-stop", finalStatus: "stopped", escalate: true, failureLogValues: 0 },
+	{ name: "tool without resource control signals the owned task", resource: false, caller: "tool", stopFails: false, killFails: false, signalGone: false, afterStatus: "running", reason: "extension-stop", finalStatus: "stopped", escalate: true, failureLogValues: 0 },
 	{ name: "tool with a gone process finalizes without an escalation timer", resource: false, caller: "tool", stopFails: false, killFails: false, signalGone: true, afterStatus: "stopped", reason: "extension-stop", finalStatus: "stopped", escalate: false, failureLogValues: 0 },
 	{ name: "shutdown unit stop succeeds without wrapper signals", resource: true, caller: "shutdown", stopFails: false, killFails: false, signalGone: false, afterStatus: "stopped", reason: "session-shutdown", finalStatus: "stopped", escalate: false, failureLogValues: 0 },
 	{ name: "shutdown failed unit stops preserve running state without fallback", resource: true, caller: "shutdown", stopFails: true, killFails: true, signalGone: false, afterStatus: "running", reason: null, finalStatus: "running", escalate: false, failureLogValues: 3 },
 	{ name: "shutdown successful TERM still stops after failed KILL", resource: true, caller: "shutdown", stopFails: false, killFails: true, signalGone: false, afterStatus: "stopped", reason: "session-shutdown", finalStatus: "stopped", escalate: false, failureLogValues: 1 },
 	{ name: "shutdown successful KILL stops after failed TERM", resource: true, caller: "shutdown", stopFails: true, killFails: false, signalGone: false, afterStatus: "stopped", reason: "session-shutdown", finalStatus: "stopped", escalate: false, failureLogValues: 1 },
-	{ name: "shutdown without resource control signals the owned group", resource: false, caller: "shutdown", stopFails: false, killFails: false, signalGone: false, afterStatus: "stopped", reason: "session-shutdown", finalStatus: "stopped", escalate: false, failureLogValues: 0 },
+	{ name: "shutdown without resource control signals the owned task", resource: false, caller: "shutdown", stopFails: false, killFails: false, signalGone: false, afterStatus: "stopped", reason: "session-shutdown", finalStatus: "stopped", escalate: false, failureLogValues: 0 },
 	{ name: "shutdown with a gone process refuses stopped state", resource: false, caller: "shutdown", stopFails: false, killFails: false, signalGone: true, afterStatus: "running", reason: null, finalStatus: "running", escalate: false, failureLogValues: 0 },
 ];
 
-// systemd-run is a Linux execution path. The child intercepts its native boundary.
-test.skipIf(process.platform !== "linux")("registered resource stop and shutdown rows", () => {
-	expect.assertions(rows.length + 1);
-	expect(rows.length, "resource stop table must contain cases").toBeGreaterThan(0);
-	for (const row of rows) {
+// Only the systemd rows require Linux; native-signal rows run on every platform.
+const supportedRows = rows.filter((row) => !row.resource || process.platform === "linux");
+
+test("registered resource stop and shutdown rows", () => {
+	expect.assertions(supportedRows.length + 1);
+	expect(supportedRows.length, "resource stop table must contain cases").toBeGreaterThan(0);
+	for (const row of supportedRows) {
 		const result = runSpawnFixture("spawn-extension.ts", { mode: "stop", ...row }) as Record<string, unknown>;
 		const shutdown = row.caller === "shutdown";
 		const outcome = result.outcome as { kind: string; action?: string; message?: string };
@@ -47,4 +50,4 @@ test.skipIf(process.platform !== "linux")("registered resource stop and shutdown
 			remainingTimers: [], unexpected: [],
 		});
 	}
-});
+}, SPAWN_FIXTURE_TIMEOUT_MS * (supportedRows.length + 1));
