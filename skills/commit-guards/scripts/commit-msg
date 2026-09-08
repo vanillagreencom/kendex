@@ -103,12 +103,16 @@ done
 # Read the message BEFORE cd-ing to the repo root: the FILE argument (git
 # passes .git/COMMIT_EDITMSG) is relative to the caller's directory.
 if [ -z "$MSG_FILE" ] || [ "$MSG_FILE" = "-" ]; then
-  MSG="$(cat)" || gg_fail message-stdin "$?" "could not read the commit message from stdin"
+  message_status=0
+  MSG="$(cat 2>&1)" || message_status=$?
+  [ "$message_status" -eq 0 ] || gg_fail message-stdin "$message_status" "${MSG:-could not read the commit message from stdin}"
 else
   [ -f "$MSG_FILE" ] || gg_fail message-missing "$MSG_FILE" "no such message file: $(gg_shown "$MSG_FILE")"
   # not-a-path: a commit message, and trailing blank lines are not part
   # of it — git strips them itself before the hook ever sees the file.
-  MSG="$(cat -- "$MSG_FILE")" || gg_fail message-read "$MSG_FILE" "could not read the commit message file: $(gg_shown "$MSG_FILE")"
+  message_status=0
+  MSG="$(cat -- "$MSG_FILE" 2>&1)" || message_status=$?
+  [ "$message_status" -eq 0 ] || gg_fail message-read "$MSG_FILE" "${MSG:-could not read the commit message file: $(gg_shown "$MSG_FILE")}"
 fi
 
 gg_repo_root_cd
@@ -167,12 +171,13 @@ if [ "$GENERATED" -eq 1 ]; then
 else
   HEADER_ERE="^($TYPE_ALT)(\([#A-Za-z0-9 _.,/-]+\))?!?: [^[:space:]]"
   match_status=0
+  match_error=""
   # LC_ALL=C, for the same reason gg_chars runs under it below: a bracket
   # range is a COLLATION range under a UTF-8 locale, so [A-Za-z] admits an
   # accented scope there and refuses it here. The class this gate documents
   # is ASCII, and it must be that class in every shell a hook is run from.
-  printf '%s\n' "$HEADER" | LC_ALL=C grep -qE "$HEADER_ERE" || match_status=$?
-  [ "$match_status" -le 1 ] || gg_fail header-scan "$match_status" "grep failed matching the header (exit $match_status)"
+  match_error="$(printf '%s\n' "$HEADER" | LC_ALL=C grep -qE "$HEADER_ERE" 2>&1)" || match_status=$?
+  [ "$match_status" -le 1 ] || gg_fail header-scan "$match_status" "${match_error:-grep failed matching the header (exit $match_status)}"
   if [ "$match_status" -eq 0 ]; then
     gg_message header-valid "$HEADER_SHOWN" "Conventional header accepted."
   else

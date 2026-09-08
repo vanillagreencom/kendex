@@ -129,17 +129,17 @@ case "$MODE" in
     # the ceiling. The index modes refuse an unresolved merge rather than
     # measure around it.
     gg_require_merged_index
-    git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT >"$GG_TMP/raw.z" || gg_fail staged-collect "$?" "git diff --cached failed collecting staged additions and changes"
+    git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT >"$GG_TMP/raw.z" 2>"$GG_TMP/dependency.err" || gg_fail_cause staged-collect "$?" "$GG_TMP/dependency.err" "git diff --cached failed collecting staged additions and changes"
     ;;
   base)
-    git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null || gg_fail base-ref "$BASE_REF" "--base ref '$BASE_REF' does not name a commit"
-    git -c diff.renames=true diff --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT "$BASE_REF...HEAD" >"$GG_TMP/raw.z" || gg_fail base-collect "$BASE_REF:$?" "git diff $BASE_REF...HEAD failed collecting additions and changes (no merge base?)"
+    git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null 2>"$GG_TMP/dependency.err" || gg_fail_cause base-ref "$BASE_REF" "$GG_TMP/dependency.err" "--base ref '$BASE_REF' does not name a commit"
+    git -c diff.renames=true diff --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT "$BASE_REF...HEAD" >"$GG_TMP/raw.z" 2>"$GG_TMP/dependency.err" || gg_fail_cause base-collect "$BASE_REF:$?" "$GG_TMP/dependency.err" "git diff $BASE_REF...HEAD failed collecting additions and changes (no merge base?)"
     ;;
   all)
     # ls-files -s emits one record per STAGE for an unmerged path, so the
     # walk below would size two or three rival blobs as separate files.
     gg_require_merged_index
-    git ls-files -sz >"$GG_TMP/files.z" || gg_fail index-read "$?" "git ls-files failed"
+    git ls-files -sz >"$GG_TMP/files.z" 2>"$GG_TMP/dependency.err" || gg_fail_cause index-read "$?" "$GG_TMP/dependency.err" "git ls-files failed"
     while IFS= read -r -d '' rec; do
       # Record shape: "<mode> <sha> <stage>\t<path>".
       mode="${rec%% *}"
@@ -183,12 +183,12 @@ while IFS= read -r -d '' sha \
   && IFS= read -r -d '' f; do
   is_lockfile "$f" && continue
   gg_is_excluded "$f" && continue
-  size="$(git cat-file -s "$sha")" || gg_fail blob-size "$f:$sha" "cannot read blob $sha for '$f' — its size is unmeasurable, refusing to skip it"
+  size="$(git cat-file -s "$sha" 2>"$GG_TMP/dependency.err")" || gg_fail_cause blob-size "$f:$sha" "$GG_TMP/dependency.err" "cannot read blob $sha for '$f' — its size is unmeasurable, refusing to skip it"
   checked=$((checked + 1))
   if [ "$size" -gt "$CEILING_BYTES" ]; then
     prior_size=""
     if gg_mode_is_regular "$srcmode"; then
-      prior_size="$(git cat-file -s "$srcsha")" || gg_fail prior-size "$f:$srcsha" "cannot read prior blob $srcsha for '$f' — its size is unmeasurable, refusing to skip it"
+      prior_size="$(git cat-file -s "$srcsha" 2>"$GG_TMP/dependency.err")" || gg_fail_cause prior-size "$f:$srcsha" "$GG_TMP/dependency.err" "cannot read prior blob $srcsha for '$f' — its size is unmeasurable, refusing to skip it"
     fi
     if [ -n "$prior_size" ] && [ "$prior_size" -gt "$CEILING_BYTES" ] && [ "$size" -le "$prior_size" ]; then
       continue

@@ -53,7 +53,10 @@ run() { # ENVS ARGS
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   # shellcheck disable=SC2086
   out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$BIN" $2 2>&1)" || rc=$?
-  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^[a-z][a-z-]*: [a-z-]+=/ { print }')"
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '
+    /^[a-z][a-z-]*: [a-z-]+=/ { print; next }
+    /^[[:space:]]*dependency-order-control:/ { sub(/^[[:space:]]*/, ""); print }
+  ')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
@@ -281,7 +284,7 @@ fx_unclosed_ts() { repo unclosed-ts; put a.ts "const re = /\`/g;\n// $W\n"; put 
 fx_shim_head() {
   repo shim-head
   mkdir -p "$R/shim"
-  printf '#!/bin/sh\ncase "$1" in -n) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v head)" >"$R/shim/head"
+  printf '#!/bin/sh\ncase "$1" in -n) echo "dependency-order-control: shebang-read" >&2; exit 1 ;; esac\nexec %s "$@"\n' "$(command -v head)" >"$R/shim/head"
   chmod +x "$R/shim/head"
   put run "#!/usr/bin/env bash\n# $W\n"
   stage
@@ -301,7 +304,7 @@ run_files \
   "an extension the table does not carry is named, not guessed at|notes.txt|# $W\n|COMMIT_GUARDS_COMMENT_PATHS=*.txt||rc=0 $(skip notes.txt grammar);comments: unmeasured-count=$(unread 1)"
 run_rows \
   "a regex literal holding a backtick opens a template literal that never closes (stated limit), and the later file's finding is kept|fx_unclosed_ts|||rc=2 $(extraction a.ts unclosed-string:1);$(hit "$ID" b.rs 1 " $W");$(incomplete 1 1 1)$(unread 1)" \
-  "a shebang read that fails is a collection error, not a path with no grammar|fx_shim_head|PATH=$TMP/shim-head/shim:$PATH,COMMIT_GUARDS_COMMENT_PATHS=run||rc=2 ${ERR}shebang-read=run" \
+  "a shebang read failure puts the stable record before head's cause|fx_shim_head|PATH=$TMP/shim-head/shim:$PATH,COMMIT_GUARDS_COMMENT_PATHS=run||rc=2 ${ERR}shebang-read=run;dependency-order-control: shebang-read" \
   "a symlink at a source path is named as unmeasured|fx_link|||rc=0 $(skip link.rs symlink);comments: unmeasured-count=$(unread 1)" \
   "a binary blob at a source path is named as unmeasured|fx_blob|||rc=0 $(skip blob.rs binary);comments: unmeasured-count=$(unread 1)" \
   "both together are two unmeasured paths and no clean file count|fx_link_blob|||rc=0 $(skip blob.rs binary);$(skip link.rs symlink);comments: unmeasured-count=$(unread 2)"

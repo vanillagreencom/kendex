@@ -38,6 +38,9 @@ assert_eq() { # LABEL EXPECT ACTUAL
 R="$ROOT/repo"
 mkdir -p "$R"
 git -C "$R" -c init.defaultBranch=main init -q
+mkdir -p "$ROOT/cat-shim"
+printf '#!/usr/bin/env bash\nif [ "${1:-}" = -- ] && [ "${2:-}" = %q ]; then echo "dependency-order-control: message-read" >&2; exit 9; fi\nexec %q "$@"\n' "$ROOT/msg" "$(command -v cat)" >"$ROOT/cat-shim/cat"
+chmod +x "$ROOT/cat-shim/cat"
 
 # One line for a run of the gate inside $R: the exit status, then every
 # printed line in order joined by ';' with the scratch root aliased. ENVS
@@ -62,7 +65,10 @@ judge() { # ENVS ARGS MSG
   out="$(cd "$R" && printf '%b\n' "$stdin" |
     env COMMIT_GUARDS_SETTINGS_FILE=/dev/null ${envs[@]+"${envs[@]}"} "$CM" ${args[@]+"${args[@]}"} 2>&1)" || rc=$?
   out="${out//"$ROOT"/<root>}"
-  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^commit-msg: [a-z-]+=/ { print }')"
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '
+    /^commit-msg: [a-z-]+=/ { print; next }
+    /^[[:space:]]*dependency-order-control:/ { sub(/^[[:space:]]*/, ""); print }
+  ')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
@@ -122,6 +128,7 @@ echo "=== the argv the hook contract passes ==="
 run_rows \
   "a message FILE is read whole, the way the hook passes it||@MSG@|# from the template\n\nfix(VST-214): ship the check family|rc=0 ${OK}fix(VST-214): ship the check family" \
   "'-' names stdin||-|fix(cli): read from the dash|rc=0 ${OK}fix(cli): read from the dash" \
+  "a message read failure puts the stable record before cat's cause|PATH=<root>/cat-shim:<path>|@MSG@|fix: unread|rc=2 commit-msg: message-read=<root>/msg;dependency-order-control: message-read" \
   "a missing message file is exit 2, never a pass||<root>/no-such-msg|fix: unread|rc=2 commit-msg: message-missing=<root>/no-such-msg" \
   "two positional arguments are exit 2||@MSG@ extra|fix: two files|rc=2 commit-msg: message-extra=extra" \
   "an unknown flag is exit 2||--bogus|fix: flagged|rc=2 commit-msg: argument-unknown=--bogus"
@@ -132,10 +139,10 @@ assert_eq "--help emits its usage record and exits 0" "rc=0 commit-msg: usage=co
 # that failed, never a pass and never a violation. The shim fails the one
 # call whose pattern opens with the type alternation and runs every other.
 mkdir -p "$ROOT/grep-shim"
-printf '#!/usr/bin/env bash\ncase " $* " in *" -qE ^("*) echo "grep: simulated failure" >&2; exit 2 ;; esac\nexec "%s" "$@"\n' "$(command -v grep)" >"$ROOT/grep-shim/grep"
+printf '#!/usr/bin/env bash\ncase " $* " in *" -qE ^("*) echo "dependency-order-control: header-scan" >&2; exit 2 ;; esac\nexec "%s" "$@"\n' "$(command -v grep)" >"$ROOT/grep-shim/grep"
 chmod +x "$ROOT/grep-shim/grep"
 run_rows \
-  "a grep that cannot run the header match is exit 2, never a verdict|PATH=<root>/grep-shim:<path>||fix: unmatched|rc=2 commit-msg: header-scan=2"
+  "a header scan failure puts the stable record before grep's cause|PATH=<root>/grep-shim:<path>||fix: unmatched|rc=2 commit-msg: header-scan=2;dependency-order-control: header-scan"
 
 echo "=== the type list is configuration, and it is validated ==="
 run_rows \

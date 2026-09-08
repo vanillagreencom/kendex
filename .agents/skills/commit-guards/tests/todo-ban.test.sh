@@ -51,7 +51,10 @@ run() { # SHIM ENVS ARGS
   [ -z "$2" ] || IFS=',' read -ra envs <<<"$2"
   # shellcheck disable=SC2086
   out="$(cd "$R" && env PATH="$path" ${envs[@]+"${envs[@]}"} "$TB" $3 2>&1)" || rc=$?
-  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^todo-ban: [a-z-]+=/ { print }')"
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '
+    /^todo-ban: [a-z-]+=/ { print; next }
+    /^[[:space:]]*dependency-order-control:/ { sub(/^[[:space:]]*/, ""); print }
+  ')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
@@ -332,7 +335,7 @@ for a in "\$@"; do
   [ "\$a" = "$2" ] && saw_match=1
 done
 if [ "\$saw_diff" = 1 ] && [ "\$saw_match" = 1 ]; then
-  echo "git diff: simulated execution failure" >&2
+  echo "dependency-order-control: $2" >&2
   exit 128
 fi
 exec "$REAL_GIT" "\$@"
@@ -350,7 +353,7 @@ cat >"$TMP/awk-shim/awk" <<EOF
 for a in "\$@"; do
   case "\$a" in
     *hunk*)
-      echo "awk: simulated hunk-parser failure" >&2
+      echo "dependency-order-control: staged-parse" >&2
       exit 1
       ;;
   esac
@@ -365,7 +368,7 @@ mkdir -p "$TMP/grep-shim"
 cat >"$TMP/grep-shim/grep" <<EOF
 #!/usr/bin/env bash
 for a in "\$@"; do
-  [ "\$a" != "-aE" ] || { echo "grep: simulated scan failure" >&2; exit 2; }
+  [ "\$a" != "-aE" ] || { echo "dependency-order-control: staged-scan" >&2; exit 2; }
 done
 exec "$REAL_GREP" "\$@"
 EOF
@@ -386,11 +389,11 @@ fx_shim_grep() { marked shim-grep; }
 fx_chunked() { seeded chunked; put a000.rs "// $TD: in the first chunk\n"; local i=1; while [ "$i" -lt 300 ]; do put "$(printf 'a%03d' "$i").rs" "fn f$i() {}\n"; i=$((i + 1)); done; stage; }
 run_rows \
   "shim-free control: the clean fixture passes with the real git|fx_shim_clean|||--staged|rc=0 $OK_STG" \
-  "a failed change-set collection is exit 2 carrying git's own line|fx_shim_raw|$TMP/raw-shim||--staged|rc=2 ${ERR}staged-collect=128" \
+  "a failed change-set collection puts the stable record before git's cause|fx_shim_raw|$TMP/raw-shim||--staged|rc=2 ${ERR}staged-collect=128;dependency-order-control: --raw" \
   "shim-free control: the staged marker fires with the real tools|fx_shim_control|||--staged|rc=1 $(hit ok.rs 2 "// $TD: staged for the per-file read");$(stg 1)" \
-  "a file whose added lines cannot be read is exit 2, naming it|fx_shim_hunk|$TMP/hunk-shim||--staged|rc=2 ${ERR}staged-read=ok.rs:128" \
-  "a hunk parser that fails is exit 2 naming the file, with no violation and no OK|fx_shim_awk|$TMP/awk-shim||--staged|rc=2 ${ERR}staged-parse=ok.rs:1" \
-  "a per-file scan that fails is exit 2 naming the file, never a file skipped|fx_shim_grep|$TMP/grep-shim||--staged|rc=2 ${ERR}staged-scan=ok.rs:2" \
+  "a file whose added lines cannot be read puts the record before git's cause|fx_shim_hunk|$TMP/hunk-shim||--staged|rc=2 ${ERR}staged-read=ok.rs:128;dependency-order-control: -U0" \
+  "a hunk parser failure puts the record before awk's cause|fx_shim_awk|$TMP/awk-shim||--staged|rc=2 ${ERR}staged-parse=ok.rs:1;dependency-order-control: staged-parse" \
+  "a per-file scan failure puts the record before grep's cause|fx_shim_grep|$TMP/grep-shim||--staged|rc=2 ${ERR}staged-scan=ok.rs:2;dependency-order-control: staged-scan" \
   "a marker in the first of 300 staged paths survives every later chunk|fx_chunked|||--staged|rc=1 $(hit a000.rs 1 "// $TD: in the first chunk");$(stg 1)"
 
 echo "=== the usage is answered ==="

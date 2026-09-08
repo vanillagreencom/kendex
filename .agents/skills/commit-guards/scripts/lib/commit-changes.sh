@@ -33,8 +33,8 @@ gg_commit_changes() { # sets GG_TMP/staged.z, written.z and product.z
   # shellcheck disable=SC2086
   git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% \
     $GG_COMMIT_BASE \
-    >"$GG_TMP/raw.z" \
-    || gg_fail commit-files "$?" "could not read the commit's file list — the changelog rule could not run"
+    >"$GG_TMP/raw.z" 2>"$GG_TMP/commit-files.err" \
+    || gg_fail_cause commit-files "$?" "$GG_TMP/commit-files.err" "could not read the commit's file list — the changelog rule could not run"
 
   # What "written" MEANS, over the record's full identity: a mode and a sha
   # together, never a sha alone. Equal shas are TWO states, and only the modes

@@ -47,8 +47,8 @@ run() { # ENVS ARGS
   out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$BC" $2 2>&1)" || rc=$?
   # shellcheck disable=SC2086
   out2="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$BC" $2 2>&1)" || rc2=$?
-  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^byte-ceiling: [a-z-]+=/ { print }')"
-  out2="$(printf '%s\n' "$out2" | LC_ALL=C awk '/^byte-ceiling: [a-z-]+=/ { print }')"
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^byte-ceiling: [a-z-]+=/ { print; next } /^[[:space:]]*dependency-order-control:/ { sub(/^[[:space:]]*/, ""); print }')"
+  out2="$(printf '%s\n' "$out2" | LC_ALL=C awk '/^byte-ceiling: [a-z-]+=/ { print; next } /^[[:space:]]*dependency-order-control:/ { sub(/^[[:space:]]*/, ""); print }')"
   line="rc=$rc${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
   line2="rc=$rc2${out2:+ $(printf '%s\n' "$out2" | LC_ALL=C paste -sd ';' -)}"
   printf '%s' "$line"
@@ -213,7 +213,7 @@ echo "=== fail-closed: a broken blob measurement is a collection error, never a 
 # A git ahead of PATH whose `cat-file -s` fails as an object read does.
 REAL_GIT="$(command -v git)"
 mkdir -p "$TMP/git-shim"
-printf '#!/usr/bin/env bash\nif [ "${1:-}" = cat-file ] && [ "${2:-}" = -s ]; then echo "fatal: simulated object read failure" >&2; exit 128; fi\nexec %q "$@"\n' "$REAL_GIT" >"$TMP/git-shim/git"
+printf '#!/usr/bin/env bash\nif [ "${1:-}" = cat-file ] && [ "${2:-}" = -s ]; then echo "dependency-order-control: blob-size" >&2; exit 128; fi\nexec %q "$@"\n' "$REAL_GIT" >"$TMP/git-shim/git"
 chmod +x "$TMP/git-shim/git"
 # Hashed outside any repository: the fixtures are sha1 by default, and a
 # host checkout under another object format must not answer for them.
@@ -226,7 +226,7 @@ chmod +x "$TMP/git-shim-prior/git"
 measure() { repo "$1"; put big.bin 2; } # NAME
 run_rows \
   "control: without the shim the oversized staged file fails|measure measure-real|$C=1||rc=1 $(over big.bin 2048 2 1);$(failed 1 1)" \
-  "an unmeasurable blob is exit 2 naming the blob and the file, with no verdict line, git's own words ahead of it|measure measure-shim|PATH=$TMP/git-shim:$PATH,$C=1||rc=2 ${ERR}blob-size=big.bin:$SHA2K" \
+  "an unmeasurable blob puts the stable record before git's cause|measure measure-shim|PATH=$TMP/git-shim:$PATH,$C=1||rc=2 ${ERR}blob-size=big.bin:$SHA2K;dependency-order-control: blob-size" \
   "an unmeasurable PRIOR blob is exit 2 too: the tighten-only baseline is not guessed|fx_grow_prior|PATH=$TMP/git-shim-prior:$PATH,$C=1||rc=2 ${ERR}prior-size=seed.bin:$SHA5K"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

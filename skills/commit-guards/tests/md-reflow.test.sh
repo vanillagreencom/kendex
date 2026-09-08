@@ -41,7 +41,10 @@ run() { # ENVS ARGS [TOOL]
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   # shellcheck disable=SC2086
   out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$tool" $2 2>&1)" || rc=$?
-  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^[a-z][a-z-]*: [a-z-]+=/ { print }')"
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '
+    /^[a-z][a-z-]*: [a-z-]+=/ { print; next }
+    /^[[:space:]]*dependency-order-control:/ { sub(/^[[:space:]]*/, ""); print }
+  ')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
@@ -166,13 +169,22 @@ fx_section() { repo section; write section.md 'Para\n\n<output_format>\nprose\n\
 fx_symlink() { clean_file symlink; ln -s clean.md "$R/link.md"; }
 fx_nul() { repo nul; write bin.md 'lead\0000Wrapped\ntext.\n'; }
 fx_gone() { repo gone; put doc.md "$WRAPPED"; rm -- "$R/doc.md"; } # staged, then removed from the work tree
+fx_awk_exit() {
+  repo awk-exit
+  write doc.md "$WRAPPED"
+  mkdir -p "$R/shim"
+  printf '#!/usr/bin/env bash\ncase " $* " in *" mode=reflow "*) echo "dependency-order-control: block-exit" >&2; exit 7 ;; esac\nexec %q "$@"\n' "$(command -v awk)" >"$R/shim/awk"
+  chmod +x "$R/shim/awk"
+}
 st_crlf() { bytes crlf.md; }
 st_open() { bytes open.md; }
 st_section() { bytes section.md; }
+st_awk_exit() { bytes doc.md; }
 run_rows \
   "a CRLF file is refused at exit 2, naming the line, and is not converted|fx_crlf||crlf.md|st_crlf|rc=2 $(refused crlf.md 1 'crlf') / crlf.md=$(q 'Line one\r\nLine two\r\n')" \
   "fence-unclosed is refused at exit 2, nothing written|fx_open||open.md|st_open|rc=2 $(refused open.md 3 'fence-unclosed') / open.md=$(q 'Para\n\n```\nopen\n')" \
   "a prompt-section block with no closing tag is refused at exit 2, naming the opener, nothing written|fx_section||section.md|st_section|rc=2 $(refused section.md 3 'block-unclosed:</output_format>') / section.md=$(q 'Para\n\n<output_format>\nprose\n\nmore\n')" \
+  "an AWK execution failure reports its status and keeps the file untouched|fx_awk_exit|PATH=$TMP/awk-exit/shim:$PATH|doc.md|st_awk_exit|rc=2 ${ERR}block-exit=doc.md:7;dependency-order-control: block-exit / doc.md=$(q "$WRAPPED")" \
   "a symlink is refused rather than rewritten through|fx_symlink||link.md||rc=2 ${ERR}symlink=link.md" \
   "a file holding a NUL byte is refused|fx_nul||bin.md||rc=2 ${ERR}binary=bin.md" \
   "a staged file missing from the work tree is refused: reflow works on the checkout|fx_gone||--staged||rc=2 ${ERR}worktree-file=doc.md" \

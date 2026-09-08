@@ -224,10 +224,10 @@ gg_require_merged_index() { # PATHSPEC... — returns only when nothing is unmer
 # LC_ALL=C — a translated prefix would slip past the match.
 gg_grep_guard() { # STATUS ERRFILE CONTEXT — returns only when the scan is complete
   local status="$1" errfile="$2" context="$3" first_err
-  [ ! -s "$errfile" ] || cat -- "$errfile" >&2
-  [ "$status" -le 1 ] || gg_fail grep-exit "$status" "git grep failed $context (exit $status)"
+  [ "$status" -le 1 ] || gg_fail_cause grep-exit "$status" "$errfile" "git grep failed $context (exit $status)"
   first_err="$(grep -E '^error:' -- "$errfile" | head -n 1 || true)"
-  [ -z "$first_err" ] || gg_fail grep-content "$status" "git grep could not read staged content while $context ($(gg_scrubbed "$first_err"))"
+  [ -z "$first_err" ] || gg_fail_cause grep-content "$status" "$errfile" "git grep could not read staged content while $context ($(gg_scrubbed "$first_err"))"
+  [ ! -s "$errfile" ] || cat -- "$errfile" >&2
 }
 
 # One banned shape, listed over INDEX content: the tracked files whose staged

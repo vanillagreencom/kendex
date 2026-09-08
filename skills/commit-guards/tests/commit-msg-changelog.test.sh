@@ -44,7 +44,10 @@ judge() { # ENVS MSG
   local envs=() rc=0 out
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   out="$(cd "$R" && printf '%b\n' "$2" | env ${envs[@]+"${envs[@]}"} "$CM" 2>&1)" || rc=$?
-  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^commit-msg: [a-z-]+=/ { print }')"
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '
+    /^commit-msg: [a-z-]+=/ { print; next }
+    /^[[:space:]]*dependency-order-control:/ { sub(/^[[:space:]]*/, ""); print }
+  ')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
@@ -79,6 +82,10 @@ fragment() { # PATH [TEXT]
   mkdir -p "$R/$(dirname "$1")"
   printf -- '- %s\n' "${2:-A fix consumers see.}" >"$R/$1"
 }
+
+mkdir -p "$ROOT/diff-shim"
+printf '#!/usr/bin/env bash\nsaw_diff=0\nsaw_cached=0\nsaw_raw=0\nfor a in "$@"; do [ "$a" = diff ] && saw_diff=1; [ "$a" = --cached ] && saw_cached=1; [ "$a" = --raw ] && saw_raw=1; done\nif [ "$saw_diff:$saw_cached:$saw_raw" = 1:1:1 ]; then echo "dependency-order-control: commit-files" >&2; exit 128; fi\nexec %q "$@"\n' "$(command -v git)" >"$ROOT/diff-shim/git"
+chmod +x "$ROOT/diff-shim/git"
 
 fx_docs_only() { base "$1"; printf 'notes\n' >"$R/docs/notes.md"; git -C "$R" add -A; }
 fx_crate() { base "$1"; touch_crate added; git -C "$R" add -A; }
@@ -188,6 +195,12 @@ for row in "${rows[@]}"; do
   $fixture
   assert_eq "$label" "$expect" "$(judge "$env" "$msg")"
 done
+
+echo "=== a commit file-list failure keeps its stable record first ==="
+fx_crate commit-files
+assert_eq "a commit file-list failure puts the stable record before git's cause" \
+  "rc=2 commit-msg: header-valid=fix(KEN-1): change a crate;commit-msg: commit-files=128;dependency-order-control: commit-files" \
+  "$(judge "PATH=$ROOT/diff-shim:$PATH" "$CRATE")"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

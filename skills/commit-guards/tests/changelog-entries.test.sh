@@ -40,7 +40,10 @@ run() { # ENVS ARGS
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   # shellcheck disable=SC2086
   out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$CE" $2 2>&1)" || rc=$?
-  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^changelog-entries: [a-z-]+=/ { print }')" || return 2
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '
+    /^changelog-entries: [a-z-]+=/ { print; next }
+    /^[[:space:]]*dependency-order-control:/ { sub(/^[[:space:]]*/, ""); print }
+  ')" || return 2
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
@@ -269,12 +272,20 @@ nul_at() { mkdir -p "$R/changelog.d/added"; { printf -- '- '; rep x "$(($1 - 2))
 fx_late_nul() { repo late-nul; nul_at 8000 late-nul.md; stage; }
 fx_last_nul() { repo last-nul; nul_at 7999 last-nul.md; stage; }
 fx_high_bytes() { repo high-bytes; frag fixed h.md "- $(rep '—' 250)\n"; }
+fx_encoding_tool() {
+  repo encoding-tool
+  frag fixed e.md '- A valid entry.\n'
+  mkdir -p "$R/shim"
+  printf '#!/usr/bin/env bash\nfor a in "$@"; do case "$a" in *"UTF8 ="*) echo "dependency-order-control: encoding-read" >&2; exit 2 ;; esac; done\nexec %q "$@"\n' "$(command -v awk)" >"$R/shim/awk"
+  chmod +x "$R/shim/awk"
+}
 run_rows \
   "a tracked symlink is refused, not followed and not skipped|fx_symlink|||rc=1 changelog-entries: fragment-symlink=changelog.d/fixed/link.md;$(summary 1 1)" \
   "control: the same tree without the link passes|fx_symlink_control|||rc=0 $(within 1)" \
   "a submodule gitlink is refused, not read as a file|fx_gitlink|||rc=1 changelog-entries: fragment-gitlink=changelog.d/fixed/sub.md;$(summary 1 1)" \
   "a binary blob is refused, not measured as text|fx_binary|||rc=1 changelog-entries: fragment-binary=changelog.d/fixed/bin.md;$(summary 1 0)" \
   "a blob git calls text, its NUL the first byte past the sample, is read as text, and the byte is refused rather than the file|fx_late_nul|||rc=2 ${ERR}encoding-line=changelog.d/added/late-nul.md:1" \
+  "an encoding tool failure puts the stable record before awk's cause|fx_encoding_tool|PATH=$TMP/encoding-tool/shim:$PATH||rc=2 ${ERR}encoding-read=changelog.d/fixed/e.md;dependency-order-control: encoding-read" \
   "control: a NUL at the sample's last byte is binary|fx_last_nul|||rc=1 changelog-entries: fragment-binary=changelog.d/added/last-nul.md;$(summary 1 0)" \
   "control: NUL-free high bytes are text and are measured|fx_high_bytes|||rc=1 $(long changelog.d/fixed/h.md 252 "- $(rep '—' 250)");$(summary 1 1)"
 # git itself calls the leading-NUL and last-byte blobs binary and the

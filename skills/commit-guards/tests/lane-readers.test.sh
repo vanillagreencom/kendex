@@ -54,7 +54,10 @@ lane() { # SHIM-DIR SCRIPT [ARG...]
   out="$(cd "$R" && PATH="${dir:+$dir:}$PATH" "$SCRIPTS/$script" "$@" 2>&1)" || rc=$?
   out="${out//"$R"/<repo>}"
   out="${out//"$ROOT"/<root>}"
-  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^[a-z-]+: [a-z-]+=/ { print }')"
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '
+    /^[a-z-]+: [a-z-]+=/ { print; next }
+    /^[[:space:]]*dependency-order-control:/ { sub(/^[[:space:]]*/, ""); print }
+  ')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | sed 's/[[:space:]]*$//' | paste -sd ';' -)}"
 }
 
@@ -186,9 +189,10 @@ assert_eq "control: the same bytes without the NUL are scanned as text" \
 # readers: every lane collects through them, so an incomplete scan is refused
 # HERE, once, including the call sites no default-lane run reaches.
 git_shim() { # ARG — a git that exits 128 for any call carrying ARG
-  local dir="$ROOT/git-shim-$1"
+  local dir="$ROOT/git-shim-$1" message="git $1: simulated failure"
   mkdir -p "$dir"
-  printf '#!/usr/bin/env bash\ncase " $* " in *" %s "*) echo "git %s: simulated failure" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' "$1" "$1" "$REAL_GIT" >"$dir/git"
+  [ "$1" != grep ] || message="dependency-order-control: grep-exit"
+  printf '#!/usr/bin/env bash\ncase " $* " in *" %s "*) echo "%s" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' "$1" "$message" "$REAL_GIT" >"$dir/git"
   chmod +x "$dir/git"
 }
 git_shim grep
@@ -229,12 +233,12 @@ A_HIT="todo-ban: match=work marker:a.rs:1:// $MARKER: stranded work;todo-ban: in
 # label | fixture | shim | lane args | expect
 rows=(
   "control: the staged marker trips with the real git|fx_readers readers-0||todo-ban|rc=1 $A_HIT"
-  "a git grep execution failure is a collection error, never OK|fx_readers readers-1|$ROOT/git-shim-grep|todo-ban|rc=2 todo-ban: grep-exit=128"
+  "a git grep execution failure puts the stable record before git's cause|fx_readers readers-1|$ROOT/git-shim-grep|todo-ban|rc=2 todo-ban: grep-exit=128;dependency-order-control: grep-exit"
   "a blob read that cannot run is exit 2, never a path skipped|fx_readers readers-2|$ROOT/git-shim-cat-file|todo-ban|rc=2 todo-ban: blob-read=a.rs::0:a.rs"
   "a vanished staged blob is exit 2 carrying git's own error line|fx_vanished readers-3||todo-ban|rc=2 todo-ban: grep-content=1"
   "a scan matching one file it read and one it could not is exit 2, never a violation|fx_vanished readers-4 second||todo-ban|rc=2 todo-ban: grep-content=0"
   "control: the staged marker fires with the real tools|fx_staged staged-0||todo-ban --staged|rc=1 todo-ban: match=work marker:ok.rs:2:// $MARKER: staged for the pre-filter to find;todo-ban: staged-count=1:0:tools/todo-ban-excludes"
-  "a broken staged pre-filter is a collection error, never OK|fx_staged staged-1|$ROOT/git-shim-grep|todo-ban --staged|rc=2 todo-ban: grep-exit=128"
+  "a broken staged pre-filter puts the stable record before git's cause|fx_staged staged-1|$ROOT/git-shim-grep|todo-ban --staged|rc=2 todo-ban: grep-exit=128;dependency-order-control: grep-exit"
   "a staged blob the sniff cannot read is exit 2, never a path skipped|fx_staged staged-2|$ROOT/git-shim-cat-file|todo-ban --staged|rc=2 todo-ban: blob-read=ok.rs:OID(ok.rs)"
   "a first block that cannot be sized is exit 2, never OK|fx_staged staged-3|$ROOT/wc-shim|todo-ban --staged|rc=2 todo-ban: content-sample=ok.rs:1"
   "a NUL-free count that cannot run is exit 2, never OK|fx_staged staged-4|$ROOT/tr-shim|todo-ban --staged|rc=2 todo-ban: content-sample=ok.rs:1"

@@ -17,6 +17,8 @@ SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 CM="$SKILL_DIR/scripts/commit-msg"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
+# shellcheck source=../scripts/lib/common.sh
+source "$SKILL_DIR/scripts/lib/common.sh"
 # shellcheck source=../scripts/lib/commit-parent.sh
 source "$SKILL_DIR/scripts/lib/commit-parent.sh"
 unset COMMIT_GUARDS_COMMIT_TYPES COMMIT_GUARDS_SUBJECT_MAX \
@@ -145,6 +147,32 @@ argv_rows \
   "a bare -- stops the scan: the flag behind it is a path|git commit -- lib.rs --amend|no" \
   "the wrapper's arguments ahead of commit are skipped: -c never reads as swallowing|git -c core.editor=true commit --amend|yes" \
   "a git that is not committing is not an amend|git rebase --amend|no"
+
+echo "=== an empty-tree dependency failure keeps its stable record first ==="
+EMPTY_REPO="$TMP/empty-parent"
+mkdir -p "$EMPTY_REPO" "$TMP/hash-shim"
+git -C "$EMPTY_REPO" -c init.defaultBranch=main init -q
+git -C "$EMPTY_REPO" config user.email test@example.com
+git -C "$EMPTY_REPO" config user.name test
+printf 'seed\n' >"$EMPTY_REPO/seed.txt"
+git -C "$EMPTY_REPO" add seed.txt
+git -C "$EMPTY_REPO" commit -qm seed
+printf '#!/usr/bin/env bash\nif [ "${1:-}" = hash-object ]; then echo "dependency-order-control: empty-tree" >&2; exit 128; fi\nexec %q "$@"\n' "$(command -v git)" >"$TMP/hash-shim/git"
+chmod +x "$TMP/hash-shim/git"
+empty_out="$({
+  cd "$EMPTY_REPO"
+  PATH="$TMP/hash-shim:$PATH"
+  GG_CHECK=commit-msg
+  gg_tmpdir
+  gg_is_amend() { return 0; }
+  gg_commit_base
+} 2>&1)" || empty_rc=$?
+empty_out="$(printf '%s\n' "$empty_out" | LC_ALL=C awk '
+  /^commit-msg: [a-z-]+=/ { print; next }
+  /^[[:space:]]*dependency-order-control:/ { sub(/^[[:space:]]*/, ""); print }
+' | paste -sd ';' -)"
+assert_eq "an empty-tree failure puts the stable record before git's cause" \
+  "rc=2 commit-msg: empty-tree=128;dependency-order-control: empty-tree" "rc=${empty_rc:-0} $empty_out"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -102,8 +102,8 @@ staged_lane() { # numbered violations on stdout, counted in GG_VIOLATIONS
   # dropped — it adds no line — while a file that moved AND changed arrives
   # as an addition and is read whole.
   git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% \
-    --diff-filter=AMT >"$GG_TMP/raw.z" \
-    || gg_fail staged-collect "$?" "could not collect the staged changes (git diff --cached --raw failed)"
+    --diff-filter=AMT >"$GG_TMP/raw.z" 2>"$GG_TMP/raw.err" \
+    || gg_fail_cause staged-collect "$?" "$GG_TMP/raw.err" "could not collect the staged changes (git diff --cached --raw failed)"
   # List, then detail — the shape gg_grep_lane uses, with the list SCOPED to
   # the change set. The scan names every file whose staged content carries a
   # marker at all, and the per-file diff below is reached only for those, so
@@ -170,11 +170,11 @@ staged_lane() { # numbered violations on stdout, counted in GG_VIOLATIONS
     # -a: a NUL past git's own binary sniff would otherwise make grep answer
     # with a one-line "binary file matches" summary, which this loop would
     # read as a violation record with no line number in it.
-    LC_ALL=C grep -aE -- "$MARKER_ERE" "$GG_TMP/added" >"$GG_TMP/hits" || grep_status=$?
+    LC_ALL=C grep -aE -- "$MARKER_ERE" "$GG_TMP/added" >"$GG_TMP/hits" 2>"$GG_TMP/hits.err" || grep_status=$?
     # 1 is "this file's additions carry no marker"; anything above it is a
     # scan that did not happen, which must never read as clean.
     [ "$grep_status" -le 1 ] \
-      || gg_fail staged-scan "$f:$grep_status" "could not scan the staged additions in '$f' (grep exit $grep_status)"
+      || gg_fail_cause staged-scan "$f:$grep_status" "$GG_TMP/hits.err" "could not scan the staged additions in '$f' (grep exit $grep_status)"
     [ "$grep_status" -eq 0 ] || continue
     while IFS= read -r rec; do
       gg_message match "work marker:$f:${rec%%"$GG_TAB"*}:${rec#*"$GG_TAB"}" "A staged line carries a work marker."

@@ -116,6 +116,6 @@ gg_commit_base() { # sets GG_COMMIT_BASE — the revision --cached diffs against
   GG_COMMIT_BASE="$(git rev-parse --verify --quiet HEAD^ 2>/dev/null)" && return 0
   # Amending a repository's first commit: its parent is the empty tree, hashed
   # rather than spelled out so a repository on any object format gets its own.
-  GG_COMMIT_BASE="$(git hash-object -t tree /dev/null)" \
-    || gg_fail empty-tree "$?" "could not name the empty tree — the commit's parent could not be resolved"
+  GG_COMMIT_BASE="$(git hash-object -t tree /dev/null 2>"$GG_TMP/commit-parent.err")" \
+    || gg_fail_cause empty-tree "$?" "$GG_TMP/commit-parent.err" "could not name the empty tree — the commit's parent could not be resolved"
 }

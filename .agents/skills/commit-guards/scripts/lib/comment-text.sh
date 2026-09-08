@@ -56,8 +56,8 @@ gg_comment_family() { # PATH BLOBFILE — family token on stdout, empty when non
     html | htm | xml | svg | vue | svelte) printf 'xml' ;;
     "")
       # No extension: the shebang decides, and only a shebang does.
-      first="$(head -n 1 -- "$blob" | LC_ALL=C tr -d '\r')" \
-        || gg_fail shebang-read "$path" "The first line could not be read."
+      first="$({ head -n 1 -- "$blob" | LC_ALL=C tr -d '\r'; } 2>"$GG_TMP/shebang.err")" \
+        || gg_fail_cause shebang-read "$path" "$GG_TMP/shebang.err" "The first line could not be read."
       case "$first" in
         "#!"*) ;;
         *) return 0 ;;

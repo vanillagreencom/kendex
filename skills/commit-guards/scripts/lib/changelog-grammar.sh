@@ -98,8 +98,9 @@ gg_changelog_blob() { # SHA LABEL — fills $GG_TMP/blob; 1 = not changelog text
   # only NUL past the leading sample would be measured as the short prefix
   # instead of refused. \200 is a stray continuation byte, which the grammar
   # below already rejects, so the line reports as the invalid UTF-8 it is.
-  bad="$(LC_ALL=C tr '\000' '\200' <"$GG_TMP/blob" | LC_ALL=C awk "$GG_UTF8_AWK")" \
-    || gg_fail encoding-read "$label" "could not read $(gg_shown "$label") to check its encoding"
+  if ! bad="$({ LC_ALL=C tr '\000' '\200' <"$GG_TMP/blob" | LC_ALL=C awk "$GG_UTF8_AWK"; } 2>"$GG_TMP/encoding.err")"; then
+    gg_fail_cause encoding-read "$label" "$GG_TMP/encoding.err" "could not read $(gg_shown "$label") to check its encoding"
+  fi
   if [ -n "$bad" ]; then
     gg_fail encoding-line "$label:$bad" "$(gg_shown "$label") line $bad is not valid UTF-8 — text with no character count cannot be measured"
   fi

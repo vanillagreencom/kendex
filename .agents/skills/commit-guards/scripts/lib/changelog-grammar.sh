@@ -29,7 +29,7 @@ gg_changelog_scopes() {
   # of many — so a path in both is a configuration that cannot pass. One
   # judgement, made here, for every lane that reads these settings.
   ! gg_matches_path_glob "$GG_CHANGELOG_RECORD" \
-    || gg_config_error "COMMIT_GUARDS_CHANGELOG_RECORD ($(gg_shown "$GG_CHANGELOG_RECORD")) is also matched by COMMIT_GUARDS_CHANGELOG_PATHS — the collated record is not a fragment"
+    || gg_fail changelog-overlap "$GG_CHANGELOG_RECORD" "COMMIT_GUARDS_CHANGELOG_RECORD ($(gg_shown "$GG_CHANGELOG_RECORD")) is also matched by COMMIT_GUARDS_CHANGELOG_PATHS — the collated record is not a fragment"
 }
 
 # A fragment is one Markdown list item: it opens with a hyphen and a space,
@@ -98,10 +98,11 @@ gg_changelog_blob() { # SHA LABEL — fills $GG_TMP/blob; 1 = not changelog text
   # only NUL past the leading sample would be measured as the short prefix
   # instead of refused. \200 is a stray continuation byte, which the grammar
   # below already rejects, so the line reports as the invalid UTF-8 it is.
-  bad="$(LC_ALL=C tr '\000' '\200' <"$GG_TMP/blob" | LC_ALL=C awk "$GG_UTF8_AWK")" \
-    || gg_collection_error "could not read $(gg_shown "$label") to check its encoding"
+  if ! bad="$({ LC_ALL=C tr '\000' '\200' <"$GG_TMP/blob" | LC_ALL=C awk "$GG_UTF8_AWK"; } 2>"$GG_TMP/encoding.err")"; then
+    gg_fail_cause encoding-read "$label" "$GG_TMP/encoding.err" "could not read $(gg_shown "$label") to check its encoding"
+  fi
   if [ -n "$bad" ]; then
-    gg_collection_error "$(gg_shown "$label") line $bad is not valid UTF-8 — text with no character count cannot be measured"
+    gg_fail encoding-line "$label:$bad" "$(gg_shown "$label") line $bad is not valid UTF-8 — text with no character count cannot be measured"
   fi
 }
 

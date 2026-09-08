@@ -8,7 +8,15 @@
 # so the value reaches the reader on one line and carries nothing a terminal
 # would act on.
 gg_scrubbed() { # VALUE — the value on one line, controls replaced
-  printf '%s' "$1" | LC_ALL=C tr '\001-\010\012-\037\177' '?'
+  local value="$1" code=1 octal byte
+  while [ "$code" -le 31 ] || [ "$code" -eq 127 ]; do
+    if [ "$code" -eq 9 ]; then code=$((code + 1)); continue; fi
+    printf -v octal '%03o' "$code"
+    printf -v byte '%b' "\\$octal"
+    value="${value//$byte/?}"
+    if [ "$code" -eq 31 ]; then code=127; else code=$((code + 1)); fi
+  done
+  printf '%s' "$value"
 }
 
 # A notice starts with its stable key and value. Explanation is for people;
@@ -23,4 +31,10 @@ gg_message() { # KEY VALUE EXPLANATION — message on stdout
 gg_fail() { # KEY VALUE EXPLANATION — collection/configuration refusal
   gg_message "$@" >&2
   exit 2
+}
+
+gg_fail_cause() { # KEY VALUE ERRFILE FALLBACK — stable refusal before a dependency cause
+  local cause="$4"
+  [ ! -s "$3" ] || cause="$(cat -- "$3" 2>/dev/null)" || cause="$4"
+  gg_fail "$1" "$2" "$cause"
 }
