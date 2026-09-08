@@ -15,6 +15,8 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/messages.sh
+source "$TEST_DIR/lib/messages.sh"
 PACKAGE_DIR="$(cd "$TEST_DIR/.." && pwd)"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$PACKAGE_DIR/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
@@ -346,7 +348,7 @@ run() {
   done
   (cd "${ROW_CWD:-$MAIN}" && PATH="${ROW_PATH:+$ROW_PATH:}$PATH" "${ROW_SCRIPT:-$WORKTREE_SCRIPT}" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
   printf 'rc=%s out=%s err=%s %s' "$rc" \
-    "$(alias_text <"$ROOT/out")" "$(alias_text <"$ROOT/err")" "$(state | sed 's/remote=,/remote=/')"
+    "$(message_records <"$ROOT/out" | alias_text)" "$(message_records <"$ROOT/err" | alias_text)" "$(state | sed 's/remote=,/remote=/')"
 }
 
 # --- the expected text ----------------------------------------------------------
@@ -357,14 +359,14 @@ err_text() {
   case "$spec" in
     *+*) printf '%s;%s' "$(err_text "${spec%%+*}")" "$(err_text "${spec#*+}")" ;;
     -) printf '' ;;
-    skip-rebase) printf '%s' "→ origin/main already contained in topic\; skipping rebase" ;;
-    map:*) printf '%s' "→ auto-rebase rewrote ${spec#map:} branch commit(s)\; rebase-map lines follow (kendex#728)" ;;
-    unknown:*) printf '%s' "Error: unknown option '${spec#unknown:}' for push;Run: <worktree> push --help" ;;
-    two:*) printf '%s' "Error: push takes a single issue ID or path (got '${spec#two:}')" ;;
-    empty) printf '%s' "Error: push target is empty — pass an issue ID or path, or no argument at all to push the current checkout" ;;
-    lease-rejected) printf '%s' "Error: Push rejected. Remote 'origin/topic' may have changed since the force-with-lease expectation\; fetch and rebase/merge before retrying." ;;
-    not-contained) printf '%s' "Error: Remote 'origin/topic' points at <external>, which is not contained in local branch 'topic'.;Fetch and rebase/merge 'origin/topic' before using worktree push." ;;
-    fetch-failed) printf '%s' "Error: Could not fetch remote branch 'topic' from remote 'broken' for force-with-lease.;  fatal: '<root>/missing.git' does not appear to be a git repository;  fatal: Could not read from remote repository.;  ;  Please make sure you have the correct access rights;  and the repository exists." ;;
+    skip-rebase) printf 'worktree-rebase-skipped: topic' ;;
+    map:*) printf 'worktree-rebase-count: %s' "${spec#map:}" ;;
+    unknown:*) printf 'worktree-push-option-unknown: %s' "${spec#unknown:}" ;;
+    two:*) printf 'worktree-push-target-count: 2' ;;
+    empty) printf 'worktree-push-target-empty: target' ;;
+    lease-rejected) printf 'worktree-push-rejected: origin/topic' ;;
+    not-contained) printf 'worktree-push-remote-uncontained: origin/topic' ;;
+    fetch-failed) printf 'worktree-remote-fetch-failed: broken/topic' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$spec" ;;
   esac
 }
@@ -372,7 +374,7 @@ err_text() {
 out_text() {
   case "$1" in
     -) printf '' ;;
-    usage) printf 'Usage: worktree push [ID|/path] [--set-upstream|-u] [--no-rebase]' ;;
+    usage) printf 'worktree-help: push' ;;
     map2) printf '%s' "rebase-map: <end~1> <head~1>;rebase-map: <end> <head>" ;;
     map-dropped) printf '%s' "rebase-map: <end~1> dropped;rebase-map: <end> <head>" ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;

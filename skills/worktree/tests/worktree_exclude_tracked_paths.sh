@@ -24,6 +24,8 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/messages.sh
+source "$TEST_DIR/lib/messages.sh"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -152,6 +154,7 @@ build() {
 # --- rendering ------------------------------------------------------------------
 
 alias_text() {
+  message_records |
   sed -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" |
     paste -s -d ';' -
 }
@@ -203,7 +206,7 @@ run() {
 err_text() {
   case "$1" in
     -) printf '' ;;
-    deleted:*) printf "Deleted branch '%s' — merged into origin/main." "${1#deleted:}" ;;
+    deleted:*) printf 'worktree-branch-deleted: %s' "${1#deleted:}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -212,8 +215,8 @@ out_text() {
   case "$1" in
     -) printf '' ;;
     wt:*) printf '<root>/trees/%s' "${1#wt:}" ;;
-    restored:*) printf 'Restored symlinks in <root>/trees/%s' "${1#restored:}" ;;
-    removed:*) printf 'Removed: <root>/trees/%s' "${1#removed:}" ;;
+    restored:*) printf 'worktree-links-restored: <root>/trees/%s' "${1#restored:}" ;;
+    removed:*) printf 'worktree-removed: <root>/trees/%s' "${1#removed:}" ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }

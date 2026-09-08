@@ -18,6 +18,8 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/messages.sh
+source "$TEST_DIR/lib/messages.sh"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -181,6 +183,7 @@ build() {
 # --- rendering ------------------------------------------------------------------
 
 alias_text() {
+  message_records |
   sed -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" \
     -e '/^To <root>\/origin-[a-z-]*\.git$/d' -e "/^branch '.*' set up to track/d" -e '/^ [-!*+=t] \[/d' \
     -e 's/;/\\;/g' |
@@ -225,14 +228,12 @@ err_text() {
   local spec="$1" id path
   case "$spec" in
     -) printf '' ;;
-    deleted:*) printf "Deleted branch '%s' — merged into origin/main." "${spec#deleted:}" ;;
-    active:*)
-      id="${spec#active:}"; path="${id#*:}"; id="${id%%:*}"
-      printf "Active work already exists for '%s'\\; refusing implicit reuse.;  Worktree: %s;  Branch: %s;  Working tree: clean;  Upstream: none (branch is unpublished or not tracking a remote);No local branch was rebased or modified.;Inspect or monitor the existing work instead of spawning another implementer.;If this session owns the worktree, opt in explicitly:;  <worktree> create %s --reuse;Use --restack instead only when intentionally resolving a rebase conflict." "$id" "$path" "$id" "$id" ;;
-    foreign-reuse:*) printf "Active or incomplete worktree path already exists for 'issue-foreign': %s;The exact path is not a registered worktree of <main>.;Refusing to delete, replace, or reuse it automatically. Inspect it, then remove it explicitly if abandoned." "${spec#foreign-reuse:}" ;;
-    foreign-remove:*) printf 'Error: %s is not a registered worktree of <main>\\; refusing to remove it.' "${spec#foreign-remove:}" ;;
-    no-paused:*) printf "Error: Restack state for %s is missing a paused rebase\\; refusing to run a rebase control command.;Only an exact paused state created by 'worktree create <ID> --restack' can be continued, skipped, or aborted." "${spec#no-paused:}" ;;
-    preserved:*) printf 'Error: Git could not remove merged worktree\\; preserving it for manual recovery: %s;  git: simulated worktree removal failure' "${spec#preserved:}" ;;
+    deleted:*) printf 'worktree-branch-deleted: %s' "${spec#deleted:}" ;;
+    active:*) id="${spec#active:}"; path="${id#*:}"; printf 'worktree-worktree-owned: %s' "$path" ;;
+    foreign-reuse:*) printf 'worktree-path-incomplete: %s' "${spec#foreign-reuse:}" ;;
+    foreign-remove:*) printf 'worktree-path-unregistered: %s' "${spec#foreign-remove:}" ;;
+    no-paused:*) printf 'worktree-restack-state: path=%s reason=no-paused-state' "${spec#no-paused:}" ;;
+    preserved:*) printf 'worktree-cleanup-remove-failed: %s' "${spec#preserved:}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$spec" ;;
   esac
 }
@@ -240,8 +241,8 @@ err_text() {
 out_text() {
   case "$1" in
     -) printf '' ;;
-    removed:*) printf 'Removed: %s' "${1#removed:}" ;;
-    cleaned:*) printf 'Cleaned: %s' "${1#cleaned:}" ;;
+    removed:*) printf 'worktree-removed: %s' "${1#removed:}" ;;
+    cleaned:*) printf 'worktree-cleaned: %s' "${1#cleaned:}" ;;
     *) printf '%s' "$1" ;;
   esac
 }

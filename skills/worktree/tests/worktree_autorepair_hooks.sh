@@ -16,6 +16,8 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/messages.sh
+source "$TEST_DIR/lib/messages.sh"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$SKILL_DIR/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
@@ -218,6 +220,7 @@ hooks() {
 # Paths by their names; the script's installed path, which the hook helper
 # resolves through the main checkout, is <worktree> like the direct one.
 alias_text() {
+  message_records |
   sed -e "s|$MAIN/.agents/skills/worktree/scripts/worktree|<worktree>|g" -e "s|$WT|<wt>|g" -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" \
     -e 's/;/\\;/g' | paste -s -d ';' -
 }
@@ -254,29 +257,24 @@ out_text() {
   case "$1" in
     -) printf '' ;;
     wt) printf '<wt>' ;;
-    restored) printf 'Restored symlinks in <wt>' ;;
+    restored) printf 'worktree-links-restored: <wt>' ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }
 
 # The refusal for a materialized entry holding what git does not track.
-refusal() {
-  local path="$1" entries="$2" count="$3"
-  printf "Warning: '%s' in <wt> should be a symlink to '<main>/%s' but is a real path holding %s entr(y/ies) git does not track or that differ from the index:;%s;  Auto-repair refuses to destroy untracked data. Move it into '<main>/%s' (or delete it),;  then restore the link from the main checkout:;    cd '<main>' && <worktree> fix-links '<wt>'" "$path" "$path" "$count" "$entries" "$path"
-}
 
 err_text() {
   case "$1" in
     *+*) printf '%s;%s' "$(err_text "${1%%+*}")" "$(err_text "${1#*+}")" ;;
     -) printf '' ;;
-    python-skipped) printf 'Warning: <main>/.git/hooks/post-rewrite is not a shell script\; not appending the auto-repair line.;  Have it run: <worktree> repair-links' ;;
-    symlink-skipped) printf 'Warning: <main>/.git/hooks/post-checkout is a symlink\; not modifying its target.;  Have it run: <worktree> repair-links' ;;
-    repaired:*) printf 'worktree auto-repair: restored symlink(s) in <wt>: %s' "${1#repaired:}" ;;
-    refuse-data:*) refusal "${1#refuse-data:}" "  - ${1#refuse-data:}/user-data.txt" 1 ;;
-    refuse-empty) refusal runtime '  - runtime/empty-sub (empty untracked directory)' 1 ;;
-    refuse-newline) refusal runtime '  - [scan mismatch: 1 entries by NUL count vs 0 reconstructed line entries — a name this listing cannot represent]' 1 ;;
-    refuse-noperm) refusal -dash '  - [scan failed: could not enumerate entries under -dash (exit 1)]' 1 ;;
-    unresolved:*) printf "Warning: WORKTREE_SYMLINKS entry 'harness' shadows tracked paths and these children could not be resolved:;  - %s (linking failed or blocked — see warning above);  Tracked paths were left to git\\; narrow the entry to the untracked subpaths to silence this." "${1#unresolved:}" ;;
+    python-skipped) printf 'worktree-hook-not-shell: <main>/.git/hooks/post-rewrite' ;;
+    symlink-skipped) printf 'worktree-hook-symlink: <main>/.git/hooks/post-checkout' ;;
+    repaired:*) printf 'worktree-links-repaired: path=<wt> links= %s' "${1#repaired:}" ;;
+    refuse-data:*) printf 'worktree-link-data-preserved: path=<wt>/%s count=1' "${1#refuse-data:}" ;;
+    refuse-empty|refuse-newline) printf 'worktree-link-data-preserved: path=<wt>/runtime count=1' ;;
+    refuse-noperm) printf 'worktree-link-data-preserved: path=<wt>/-dash count=1' ;;
+    unresolved:*) printf 'worktree-child-links-unresolved: harness' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }

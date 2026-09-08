@@ -20,6 +20,8 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/messages.sh
+source "$TEST_DIR/lib/messages.sh"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'chmod -R u+w "$TMP_ROOT" 2>/dev/null; rm -rf "$TMP_ROOT"' EXIT
@@ -170,6 +172,7 @@ build() {
 # the vendor's phrasing: GNU says `mkdir: cannot create directory 'p': cause`,
 # BSD says `mkdir: p: cause`, and the macOS CI leg runs Apple's userland.
 alias_text() {
+  message_records |
   sed -e "s|^mkdir: cannot create directory '\(.*\)': |mkdir: \1: |" \
       -e "s|^rm: cannot remove '\(.*\)': |rm: \1: |" \
       -e "s|$WT|<wt>|g" -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" |
@@ -207,18 +210,15 @@ run() {
 
 # The production text, held once: every refusal ends in the not-restored
 # report, whose "Still unhealthy" list names the entry and its state.
-not_restored_tail() {
-  printf '%s' ';  Any warning above names why. A path holding data git does not track is;  left in place deliberately: move it into '\''<main>'\'' (or delete it),;  then re-run this command.'
-}
 
 err_text() {
   case "$1" in
     -) printf '' ;;
-    absent) printf '%s%s' 'Error: fix-links did not restore every configured path in <wt>.;  Still unhealthy:;    - absent-here (no such path in the main checkout — create it there, or drop it from WORKTREE_SYMLINKS)' "$(not_restored_tail)" ;;
-    materialized) printf '%s%s' 'Warning: '\''harness/skills'\'' in <wt> should be a symlink to '\''<main>/harness/skills'\'' but is a real path holding 1 entr(y/ies) git does not track or that differ from the index:;  - harness/skills/untracked-work.txt;  Auto-repair refuses to destroy untracked data. Move it into '\''<main>/harness/skills'\'' (or delete it),;  then restore the link from the main checkout:;    cd '\''<main>'\'' && <worktree> fix-links '\''<wt>'\'';Warning: WORKTREE_SYMLINKS entry '\''harness'\'' shadows tracked paths and these children could not be resolved:;  - harness/skills (linking failed or blocked — see warning above);  Tracked paths were left to git; narrow the entry to the untracked subpaths to silence this.;Error: fix-links did not restore every configured path in <wt>.;  Still unhealthy:;    - harness/skills (still a real path, not a link)' "$(not_restored_tail)" ;;
-    relative-parent) printf '%s%s' 'Error: could not create the parent directory for relative symlink '\''notes.md/link'\'' in <wt>.;Error: fix-links did not restore every configured path in <wt>.;  Still unhealthy:;    - notes.md/link (absent)' "$(not_restored_tail)" ;;
-    mkdir-parent) printf '%s%s' 'mkdir: <wt>/notes.md: Not a directory;Error: fix-links did not restore every configured path in <wt>.' "$(not_restored_tail)" ;;
-    wrong-target) printf '%s%s' 'rm: <wt>/.claude/POINTER.md: Permission denied;Error: could not create relative symlink '\''.claude/POINTER.md'\'' -> '\''../AGENTS.md'\'' in <wt>.;Error: fix-links did not restore every configured path in <wt>.;  Still unhealthy:;    - .claude/POINTER.md (a symlink to ../notes.md, expected ../AGENTS.md)' "$(not_restored_tail)" ;;
+    absent) printf 'worktree-links-unrestored: <wt>' ;;
+    mkdir-parent) printf 'worktree-mkdir-failed: <wt>/notes.md/dir;worktree-links-unrestored: <wt>' ;;
+    materialized) printf 'worktree-link-data-preserved: path=<wt>/harness/skills count=1;worktree-child-links-unresolved: harness;worktree-links-unrestored: <wt>' ;;
+    relative-parent) printf 'worktree-relative-parent-failed: <wt>/notes.md/link;worktree-links-unrestored: <wt>' ;;
+    wrong-target) printf 'worktree-relative-remove-failed: <wt>/.claude/POINTER.md;worktree-links-unrestored: <wt>' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -226,7 +226,7 @@ err_text() {
 out_text() {
   case "$1" in
     -) printf '' ;;
-    restored) printf 'Restored symlinks in <wt>' ;;
+    restored) printf 'worktree-links-restored: <wt>' ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }

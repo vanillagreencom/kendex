@@ -6,6 +6,8 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/messages.sh
+source "$TEST_DIR/lib/messages.sh"
 WORKTREE_PACKAGE_DIR="$(cd "$TEST_DIR/.." && pwd)"
 WORKTREE_SCRIPT="$WORKTREE_PACKAGE_DIR/scripts/worktree"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
@@ -149,28 +151,28 @@ run_remove() {
   (cd "$MAIN" && PATH="$ROW_PATH" REAL_GIT_BIN="$REAL_GIT_BIN" \
     "$WORKTREE_SCRIPT" remove "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
   printf 'rc=%s out=%s err=%s %s' "$rc" \
-    "$(sed -e "s|$WT|<wt>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" -e '/^Usage: /q' "$ROOT/out" | paste -s -d ';' -)" \
-    "$(sed -e "s|$WT|<wt>|g" -e "s|$MAIN|<main>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" "$ROOT/err" | paste -s -d ';' -)" \
+    "$(message_records <"$ROOT/out" | sed -e "s|$WT|<wt>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" -e '/^Usage: /q' | paste -s -d ';' -)" \
+    "$(message_records <"$ROOT/err" | sed -e "s|$WT|<wt>|g" -e "s|$MAIN|<main>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" | paste -s -d ';' -)" \
     "$(remove_state)"
 }
 
 locked_block() {
-  printf '%s' "Error: <wt> is a locked worktree; refusing to remove it.;  Worktree: <wt>;  Lock reason: session guard: owner=topic;Nothing in the worktree was modified.;A lock usually means a live session owns this worktree; confirm it is finished first.;To release the lock and retry:;  git -C \"<main>\" worktree unlock \"<wt>\""
+  printf '%s' 'worktree-worktree-locked: <wt>'
 }
 
 refused_block() {
-  printf '%s' "Error: Git could not remove the worktree; preserving it for manual recovery: <wt>;  git: simulated worktree removal failure;  Branch: topic (not deleted);Nothing was removed before Git ran, so a refusal made before deletion started (a lock, for example) leaves the worktree exactly as it was.;Git's deletion is not atomic: if it failed partway through, the worktree may be partially removed — inspect its contents before retrying, and restore links with: <worktree> fix-links \"<wt>\""
+  printf '%s' 'worktree-remove-failed: <wt>'
 }
 
 unmerged_block() {
-  printf '%s' "Error: Removed worktree but could not delete local branch 'topic'.;  Remaining branch: topic;  Worktree path removed/pruned: <wt>;  Not merged into main, and no pull request merged into main carries this branch name;  After verifying it is safe, delete manually with: git -C \"<main>\" branch -D \"topic\""
+  printf '%s' 'worktree-branch-delete-failed: topic'
 }
 
 remove_out() {
   case "$1" in
     -) printf '' ;;
-    removed) printf 'Removed: <wt>' ;;
-    usage) printf 'Usage: worktree remove [ID|/path]' ;;
+    removed) printf 'worktree-removed: <wt>' ;;
+    usage) printf 'worktree-help: remove' ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }
@@ -178,8 +180,8 @@ remove_out() {
 remove_err() {
   case "$1" in
     -) printf '' ;;
-    deleted) printf "Deleted branch 'topic' — merged into main." ;;
-    unknown-option) printf '%s' "Error: unknown option '--bogus' for remove;Run: <worktree> remove --help" ;;
+    deleted) printf "worktree-branch-deleted: topic" ;;
+    unknown-option) printf '%s' "worktree-remove-option-unknown: --bogus" ;;
     unmerged) unmerged_block ;;
     locked) locked_block ;;
     refused) refused_block ;;

@@ -14,6 +14,8 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/messages.sh
+source "$TEST_DIR/lib/messages.sh"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -249,6 +251,7 @@ oid_name() {
 # own contract. A literal semicolon is escaped before the lines are joined
 # on it.
 alias_text() {
+  message_records |
   sed \
     -e "s|$WT|<wt>|g" \
     -e "s|$ROOT|<root>|g" \
@@ -346,16 +349,16 @@ err_text() {
   case "$spec" in
     *+*) printf '%s;%s' "$(err_text "${spec%%+*}")" "$(err_text "${spec#*+}")" ;;
     -) printf '' ;;
-    skip-rebase) printf '%s' "→ origin/main already contained in topic\; skipping rebase" ;;
-    dirty) printf '%s' "Error: <wt> has uncommitted changes\; refusing to replay over them.;Commit or discard them, then retry." ;;
-    merges) printf '%s' "Error: The replay range origin/main..topic in <wt> contains merge commits, which an ordered cherry-pick replay cannot represent.;Use the rebase engine (<worktree> create topic --reuse) or reconcile the merge manually." ;;
-    aborted) printf '%s' "Error: Cherry-pick replay onto origin/main failed for <wt> (conflicts).;Conflicting files:;  file.txt;The replay was aborted\; the worktree is back on its pre-replay state with no conflicts left to resolve.;Recovery options:;  1. Redo the replay and stop in the conflict state to resolve it:;       <worktree> create topic --restack --replay;  2. Discard local divergence and recreate fresh from origin/main:;       <worktree> remove topic && <worktree> create topic" ;;
-    paused) printf '%s' "Error: Cherry-pick replay onto origin/main stopped on conflicts in <wt>.;Conflicting files:;  file.txt;The replay is paused in the worktree so the conflicts can be resolved:;  1. Edit each conflicting file to remove the conflict markers.;  2. git -C \"<wt>\" add <file>    (each resolved file);  3. <worktree> restack continue \"<wt>\"    (repeat if it stops again);     If the resolved commit is empty: <worktree> restack skip \"<wt>\";To back out instead: <worktree> restack abort \"<wt>\"" ;;
-    refusal:*) printf '%s' "Error: Restack state for <wt> is ${spec#refusal:}\; refusing to run a rebase control command.;Only an exact paused state created by 'worktree create <ID> --restack' can be continued, skipped, or aborted." ;;
-    unreattachable) printf '%s' "  git:...;  git:<file.txt>;Error: Could not reattach <wt> to 'topic'\; the recorded restack state was preserved.;A 'rebase --quit' or 'cherry-pick --quit' leaves the conflicted index in place: stage or discard the paths Git names above.;Then re-run: <worktree> restack abort \"<wt>\"" ;;
-    remote-moved) printf '%s' "Error: Remote 'origin/topic' changed while the supported restack was paused\; refusing to continue or skip.;Abort the guarded restack before reconciling the moved remote." ;;
-    lease-rejected) printf '%s' "Error: Push rejected. Remote 'origin/topic' may have changed since the force-with-lease expectation\; fetch and rebase/merge before retrying." ;;
-    bare-flag) printf '%s' "Error: --replay selects the restack engine for --reuse/--restack\; combine it with one of them." ;;
+    skip-rebase) printf 'worktree-rebase-skipped: topic' ;;
+    dirty) printf 'worktree-replay-dirty: <wt>' ;;
+    merges) printf 'worktree-replay-merges: <wt>' ;;
+    aborted) printf 'worktree-replay-failed: <wt>' ;;
+    paused) printf 'worktree-replay-conflicts: <wt>' ;;
+    refusal:*) printf 'worktree-restack-state: path=<wt> reason=%s' "${spec#refusal:}" ;;
+    unreattachable) printf 'worktree-restack-reattach-failed: <wt>' ;;
+    remote-moved) printf 'worktree-restack-remote-moved: origin/topic' ;;
+    lease-rejected) printf 'worktree-push-rejected: origin/topic' ;;
+    bare-flag) printf 'worktree-replay-mode-required: --replay' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$spec" ;;
   esac
 }
@@ -364,9 +367,9 @@ out_text() {
   case "$1" in
     -) printf '' ;;
     wt) printf '<wt>' ;;
-    completed) printf 'Completed guarded restack for topic: <wt>' ;;
-    aborted) printf 'Aborted guarded restack and restored topic: <wt>' ;;
-    cleared) printf 'No restack was paused\; cleared the recorded restack state for topic: <wt>' ;;
+    completed) printf 'worktree-restack-complete: <wt>' ;;
+    aborted) printf 'worktree-restack-aborted: <wt>' ;;
+    cleared) printf 'worktree-restack-cleared: <wt>' ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }
@@ -384,7 +387,7 @@ continue completes the resolved replay and authorizes its exact head|conflict pu
 push after a completed replay publishes the rewritten head|conflict publish restack-replay resolve continue|push topic|0|-|skip-rebase|engine=none branch=topic head=end ref=end ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=- remote=end
 skip drops the represented commit and replays the refresh-only commit|merged restack-replay|restack skip topic|0|completed|-|engine=none branch=topic head=rebased ref=head ahead=1 dirty=- tree=file.txt:already merged plus main follow-up,other.txt:orig,refresh-only.txt:refresh only restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre
 abort restores the pre-replay branch and clears the record|conflict restack-replay|restack abort topic|0|aborted|-|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=-
-continue with HEAD checked out onto the branch is refused|conflict second restack-replay raw-checkout|restack continue topic|1|-|refusal:not the replay recorded by the worktree tool|engine=replay branch=topic head=end ref=end ahead=2 dirty=- tree=file.txt:feature,other.txt:orig,second.txt:second restack=remote:origin,branch:topic,expected:-,orig:end,base:base,pending:true,token:bound,mode:replay remote=-
+continue with HEAD checked out onto the branch is refused|conflict second restack-replay raw-checkout|restack continue topic|1|-|refusal:replay-mismatch|engine=replay branch=topic head=end ref=end ahead=2 dirty=- tree=file.txt:feature,other.txt:orig,second.txt:second restack=remote:origin,branch:topic,expected:-,orig:end,base:base,pending:true,token:bound,mode:replay remote=-
 abort with HEAD checked out onto the branch restores it|conflict second restack-replay raw-checkout|restack abort topic|0|aborted|-|engine=none branch=topic head=end ref=end ahead=2 dirty=- tree=file.txt:feature,other.txt:orig,second.txt:second restack=- remote=-
 abort after a hand cherry-pick quit refuses to force the checkout over the unmerged index|conflict restack-replay raw-quit|restack abort topic|1|-|unreattachable|engine=none branch=detached head=base ref=pre ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:unbound,mode:replay remote=-
 abort after a hand cherry-pick abort clears the orphaned record and reattaches the branch|conflict restack-replay raw-abort|restack abort topic|0|cleared|-|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=-

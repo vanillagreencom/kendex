@@ -16,6 +16,8 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/messages.sh
+source "$TEST_DIR/lib/messages.sh"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -129,6 +131,7 @@ build() {
 # --- rendering ------------------------------------------------------------------
 
 alias_text() {
+  message_records |
   sed -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" |
     paste -s -d ';' -
 }
@@ -164,8 +167,8 @@ run() {
 err_text() {
   case "$1" in
     -) printf '' ;;
-    generic) printf 'Warning: dependencies were not installed — installs run only in the main checkout. Run the install in <main>, then link its node_modules into worktrees with a WORKTREE_SYMLINKS entry.' ;;
-    no-source:*) printf "Warning: dependencies were not installed — WORKTREE_SYMLINKS entry '%s' has no source at <main>/%s. Run the install in the main checkout (<main>), then rerun fix-links to link it." "${1#no-source:}" "${1#no-source:}" ;;
+    generic) printf 'worktree-dependencies-missing: <main>' ;;
+    no-source:*) printf 'worktree-dependency-source-missing: <main>/%s' "${1#no-source:}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -174,7 +177,7 @@ out_text() {
   case "$1" in
     -) printf '' ;;
     wt:*) printf '<root>/.worktrees/repo/%s' "${1#wt:}" ;;
-    restored) printf 'Restored symlinks in %s' "$WT" | sed -e "s|$ROOT|<root>|" ;;
+    restored) printf 'worktree-links-restored: %s' "$WT" | sed -e "s|$ROOT|<root>|" ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }

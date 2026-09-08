@@ -18,6 +18,8 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/messages.sh
+source "$TEST_DIR/lib/messages.sh"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
@@ -260,6 +262,7 @@ gh_env() {
 # Paths and commits by their names; a literal semicolon is escaped before the
 # lines are joined on it.
 alias_text() {
+  message_records |
   sed -e "s|$WT|<wt>|g" -e "s|${OTHER:-NONE}|<other>|g" -e "s|$MAIN|<main>|g" \
     -e "s|$WORKTREE_SCRIPT|<worktree>|g" -e "s|${TIP:-NONE}|<tip>|g" -e "s|${MERGED:-NONE}|<merged>|g" \
     -e 's/;/\\;/g' |
@@ -296,20 +299,14 @@ run() {
 
 # --- the expected text ----------------------------------------------------------
 
-UNMERGED='not an ancestor of origin/main, and no pull request merged into main carries this branch name'
-MOVED='carries work past its merged pull request (merged under this name: #42\; none has this tip <tip> as its head)'
-UNDETERMINED='  A lookup that cannot answer never authorizes a removal\; restore the gh query and re-run cleanup.'
 MANUAL='  After verifying it is safe, delete manually with: git -C "<main>" branch -D "topic"'
 
-skip() { printf 'Skipped (%s): %s' "$1" "$2"; }
-drop() { printf '  Drop it explicitly with: <worktree> remove "%s"' "$1"; }
-kept() { printf '%s' "Error: Removed worktree but could not delete local branch 'topic'.;  Remaining branch: topic;  Worktree path removed/pruned: <wt>;  $1;$MANUAL"; }
 
 out_text() {
   case "$1" in
     -) printf '' ;;
-    cleaned) printf 'Cleaned: <wt>' ;;
-    removed) printf 'Removed: <wt>' ;;
+    cleaned) printf 'worktree-cleaned: <wt>' ;;
+    removed) printf 'worktree-removed: <wt>' ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }
@@ -317,17 +314,14 @@ out_text() {
 err_text() {
   case "$1" in
     -) printf '' ;;
-    other-unmerged) skip "branch 'other' is not merged — $UNMERGED" '<other>' ;;
-    unmerged) skip "branch 'topic' is not merged — $UNMERGED" '<wt>' ;;
-    moved) skip "branch 'topic' is not merged — not an ancestor of origin/main, and $MOVED" '<wt>' ;;
-    undetermined:*) printf '%s;%s' "$(skip "merge status of branch 'topic' could not be determined: ${1#undetermined:}" '<wt>')" "$UNDETERMINED" ;;
-    detached) printf '%s;%s' "$(skip 'no branch checked out — detached HEAD, so there is nothing to prove merged' '<wt>')" "$(drop '<wt>')" ;;
-    no-ref) printf '%s;%s' "$(skip "branch 'topic' has no ref in the main checkout" '<wt>')" "$(drop '<wt>')" ;;
-    enumeration-failed) printf '%s' "fatal: not a git repository (stubbed failure);Error: 'git -C \"<main>\" worktree list --porcelain -z' failed (exit 128).;  No worktree was inspected and none was collected\; this is not a clean sweep." ;;
-    deleted) printf "Deleted branch 'topic' — squash-merged in pull request #42." ;;
-    kept-unmerged) kept "Not merged into origin/main, and no pull request merged into main carries this branch name" ;;
-    kept-moved) kept "Not merged into origin/main, and $MOVED" ;;
-    kept-undetermined:*) kept "Merged-pull-request lookup could not answer: ${1#kept-undetermined:}" ;;
+    other-unmerged) printf 'worktree-cleanup-unmerged: <other>' ;;
+    unmerged|moved) printf 'worktree-cleanup-unmerged: <wt>' ;;
+    undetermined:*) printf 'worktree-cleanup-merge-unverified: <wt>' ;;
+    detached) printf 'worktree-cleanup-detached: <wt>' ;;
+    no-ref) printf 'worktree-cleanup-branch-missing: topic' ;;
+    enumeration-failed) printf 'worktree-cleanup-enumeration-failed: 128' ;;
+    deleted) printf 'worktree-branch-deleted: topic' ;;
+    kept-unmerged|kept-moved|kept-undetermined:*) printf 'worktree-branch-delete-failed: topic' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }

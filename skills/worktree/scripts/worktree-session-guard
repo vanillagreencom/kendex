@@ -1,15 +1,37 @@
 #!/usr/bin/env bash
 # Native Git worktree locks carrying an owner and a TTL heartbeat.
+# stdout protocol: claim/refresh return the owner; status/list emit complete
+# JSON records consumed by worktree's lease probe. Other notices use stable
+# worktree-<key>: <value> lines; English explanation is not a parsed protocol.
 set -euo pipefail
+MESSAGE_DIR=${BASH_SOURCE[0]%/*}
+[[ "$MESSAGE_DIR" != "${BASH_SOURCE[0]}" ]] || MESSAGE_DIR=.
+if [[ ! -f "$MESSAGE_DIR/lib/messages.sh" ]]; then
+  MESSAGE_LIBRARY_PATH="$MESSAGE_DIR/lib/messages.sh"
+  MESSAGE_LIBRARY_VALUE="$MESSAGE_LIBRARY_PATH"
+  MESSAGE_LIBRARY_VALUE="${MESSAGE_LIBRARY_VALUE//\\/\\\\}"
+  MESSAGE_LIBRARY_VALUE="${MESSAGE_LIBRARY_VALUE//$'\n'/\\n}"
+  MESSAGE_LIBRARY_VALUE="${MESSAGE_LIBRARY_VALUE//$'\r'/\\r}"
+  MESSAGE_LIBRARY_VALUE="${MESSAGE_LIBRARY_VALUE//$'\t'/\\t}"
+  {
+    printf 'worktree-message-library: path=%s recovery=fix-links-from-main\n' "$MESSAGE_LIBRARY_VALUE"
+    printf '  Worktree support library is missing: %s\n' "$MESSAGE_LIBRARY_VALUE"
+    printf '  Recover from the main checkout: cd <main checkout> && .agents/skills/worktree/scripts/worktree fix-links %q\n' "$PWD"
+  } >&2
+  exit 1
+fi
+# shellcheck source=lib/messages.sh
+source "$MESSAGE_DIR/lib/messages.sh"
 GUARD_MARKER='kendex-session-guard' GUARD_VERSION='v1'
 DEFAULT_TTL_MINUTES=720 EXIT_NO_LEASE=3 EXIT_UNMANAGED=4
 EXIT_ENUMERATION=5 EXIT_OWNED=75
 fail() {
-	printf 'worktree-session-guard: %s\n' "$1" >&2
+	worktree_message "$@" >&2
 	exit 1
 }
 
 usage() {
+	worktree_message guard-help commands
 	cat <<'EOF'
 Usage: worktree-session-guard <command> [PATH] [options]
 
@@ -85,7 +107,7 @@ absolute_path() {
 sanitize_owner() {
 	local value="$1"
 	[[ -n "$value" && ${#value} -le 64 && "$value" =~ ^[A-Za-z0-9._:@+-]+$ ]] \
-		|| fail "owner must use at most 64 characters from A-Z a-z 0-9 . _ : @ + -"
+		|| fail guard-owner-invalid "$value" "Owner must use at most 64 letters, digits, or . _ : @ + -."
 	printf '%s\n' "$value"
 }
 
@@ -100,7 +122,7 @@ iso_from_epoch() {
 	local epoch="$1" value=''
 	value="$(date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
 	[[ -n "$value" ]] || value="$(date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
-	[[ -n "$value" ]] || fail "cannot format epoch $epoch"
+	[[ -n "$value" ]] || fail guard-epoch-invalid "$epoch" "Cannot format the epoch."
 	printf '%s\n' "$value"
 }
 
@@ -226,8 +248,8 @@ acquire_guard_mutex() {
 	local common="$1" lock_path tries=0
 	lock_path="$common/kendex-worktree-session-guard.lock"
 	if command -v flock >/dev/null 2>&1; then
-		exec 9>"$lock_path" || fail "cannot open the session-guard lock file: $lock_path"
-		flock -x 9 || fail "cannot acquire the session-guard lock: $lock_path"
+		exec 9>"$lock_path" || fail guard-lock-open "$lock_path" "Cannot open the session lock file."
+		flock -x 9 || fail guard-lock-acquire "$lock_path" "Cannot acquire the session lock."
 		return 0
 	fi
 	# Armed before the loop, never after it wins: with no holder liveness a
@@ -241,7 +263,7 @@ acquire_guard_mutex() {
 	trap release_guard_mutex EXIT
 	while ! mkdir -- "$lock_path.d" 2>/dev/null; do
 		tries=$((tries + 1))
-		[[ "$tries" -lt 600 ]] || fail "cannot acquire the session-guard mutex after 60s: $lock_path.d. If no guard process is running, remove it: rmdir '$lock_path.d'"
+		[[ "$tries" -lt 600 ]] || fail guard-mutex-timeout "$lock_path.d" "Cannot acquire the session mutex. If no guard process is running, remove this directory."
 		sleep 0.1
 	done
 	GUARD_MUTEX_DIR="$lock_path.d"
@@ -249,8 +271,8 @@ acquire_guard_mutex() {
 
 write_lease() {
 	local file="$1" lease="$2" staged="$1.$$"
-	printf '%s\n' "$lease" >"$staged" || fail "cannot stage lease for $REQUESTED_PATH"
-	mv -f -- "$staged" "$file" || fail "cannot update lease for $REQUESTED_PATH"
+	printf '%s\n' "$lease" >"$staged" || fail guard-lease-stage "$REQUESTED_PATH" "Cannot stage the lease."
+	mv -f -- "$staged" "$file" || fail guard-lease-write "$REQUESTED_PATH" "Cannot update the lease."
 }
 
 read_lease() {
@@ -287,33 +309,40 @@ status_json() {
 		"$(json_escape "$claimed")" "$(json_escape "$heartbeat")" "$age" "$(json_escape "$reason")"
 }
 
+claimed_by() {
+	worktree_message guard-owner-conflict "path=$REQUESTED_PATH owner=$1" "Another session owns this worktree." >&2
+}
+
 release_current() {
 	local stale="$1" force="$2" ttl_seconds="$3" recorded age
-	read_lease || return "$EXIT_NO_LEASE"
-	lease_is_managed "$LEASE_TEXT" || return "$EXIT_UNMANAGED"
+	read_lease || { worktree_message guard-lease-missing "$REQUESTED_PATH" >&2; return "$EXIT_NO_LEASE"; }
+	lease_is_managed "$LEASE_TEXT" || { worktree_message guard-lock-unmanaged "$REQUESTED_PATH" >&2; return "$EXIT_UNMANAGED"; }
 	recorded="$(lease_field "$LEASE_TEXT" owner 2>/dev/null || true)"
 	if [[ "$stale" == true && "$force" != true ]]; then
 		age="$(lease_age "$LEASE_TEXT" 2>/dev/null || true)"
-		[[ "$age" =~ ^-?[0-9]+$ && "$age" -ge "$ttl_seconds" ]] || return "$EXIT_OWNED"
+		[[ "$age" =~ ^-?[0-9]+$ && "$age" -ge "$ttl_seconds" ]] || {
+			worktree_message guard-lease-not-stale "$REQUESTED_PATH" >&2
+			return "$EXIT_OWNED"
+		}
 	elif [[ "$force" != true && "$recorded" != "$OWNER" ]]; then
-		printf 'worktree-session-guard: %s is claimed by owner=%s\n' "$REQUESTED_PATH" "${recorded:-unknown}" >&2
+		claimed_by "${recorded:-unknown}"
 		return "$EXIT_OWNED"
 	fi
 	rm -f -- "$LOCK_FILE"
 }
 
 command="${1:-}"
-[[ -n "$command" ]] || { usage; exit 1; }
+[[ -n "$command" ]] || { worktree_message guard-command-required command >&2; usage; exit 1; }
 shift
 case "$command" in
 	-h | --help | help) usage; exit 0 ;;
 	claim | refresh | release | status)
-		[[ $# -gt 0 ]] || fail "$command requires a worktree path"
+		[[ $# -gt 0 ]] || fail guard-path-required "$command" "This command requires a worktree path."
 		path="$1"
 		shift
 		;;
 	list | sweep) path='' ;;
-	*) fail "unknown command: $command" ;;
+	*) fail guard-command-unknown "$command" "Unknown session-guard command." ;;
 esac
 
 # A flag a command does not implement is a usage failure, never a silent
@@ -324,7 +353,7 @@ require_flag_applies() {
 	case " $applicable " in
 		*" $command "*) return 0 ;;
 	esac
-	fail "$flag does not apply to $command (applies to: $applicable)"
+	fail guard-option-command "$flag=$command" "This option applies to: $applicable."
 }
 
 OWNER=''
@@ -337,14 +366,14 @@ force=false
 dry_run=false
 while [[ $# -gt 0 ]]; do
 	case "$1" in
-		--owner) require_flag_applies --owner 'claim refresh release status'; [[ $# -ge 2 ]] || fail '--owner requires a value'; OWNER="$(sanitize_owner "$2")"; owner_set=true; shift 2 ;;
-		--ttl-minutes) require_flag_applies --ttl-minutes 'release sweep'; [[ $# -ge 2 && "$2" =~ ^[0-9]{1,10}$ ]] || fail '--ttl-minutes requires a non-negative integer'; ttl="$2"; shift 2 ;;
+		--owner) require_flag_applies --owner 'claim refresh release status'; [[ $# -ge 2 ]] || fail guard-option-value --owner "This option requires a value."; OWNER="$(sanitize_owner "$2")"; owner_set=true; shift 2 ;;
+		--ttl-minutes) require_flag_applies --ttl-minutes 'release sweep'; [[ $# -ge 2 && "$2" =~ ^[0-9]{1,10}$ ]] || fail guard-ttl-invalid "${2:-}" "TTL must be a non-negative integer."; ttl="$2"; shift 2 ;;
 		--stale) require_flag_applies --stale 'release'; stale=true; shift ;;
 		--force) require_flag_applies --force 'release'; force=true; shift ;;
 		--dry-run) require_flag_applies --dry-run 'sweep'; dry_run=true; shift ;;
-		--repo) require_flag_applies --repo 'release status list sweep'; [[ $# -ge 2 ]] || fail '--repo requires a directory'; repo="$2"; repo_set=true; shift 2 ;;
+		--repo) require_flag_applies --repo 'release status list sweep'; [[ $# -ge 2 ]] || fail guard-option-value --repo "This option requires a directory."; repo="$2"; repo_set=true; shift 2 ;;
 		-h | --help) usage; exit 0 ;;
-		*) fail "unknown option: $1" ;;
+		*) fail guard-option-unknown "$1" "Unknown session-guard option." ;;
 	esac
 done
 [[ "$repo_set" == true || -z "$path" || ! -d "$path" ]] || repo="$path"
@@ -359,43 +388,43 @@ ttl_seconds="$((10#$ttl * 60))"
 
 case "$command" in
 	claim | refresh)
-		[[ -n "$OWNER" ]] || fail "$command requires an owner"
-		resolve_registration "$path" "$path" || fail "path is not a linked worktree: $path"
-		[[ "$DIRECTORY_PRESENT" == true ]] || fail "worktree directory is missing: $REQUESTED_PATH"
+		[[ -n "$OWNER" ]] || fail guard-owner-required "$command" "This command requires an owner."
+		resolve_registration "$path" "$path" || fail guard-worktree-invalid "$path" "Path is not a linked worktree."
+		[[ "$DIRECTORY_PRESENT" == true ]] || fail guard-worktree-missing "$REQUESTED_PATH" "The worktree directory is missing."
 		acquire_guard_mutex "$COMMON_DIR"
 		now="$(date -u +%s)"
 		if read_lease; then
-			lease_is_managed "$LEASE_TEXT" || { printf 'worktree-session-guard: %s is locked outside this guard\n' "$REQUESTED_PATH" >&2; exit "$EXIT_OWNED"; }
+			lease_is_managed "$LEASE_TEXT" || { worktree_message guard-lock-unmanaged "$REQUESTED_PATH" "The worktree lock belongs to another tool." >&2; exit "$EXIT_OWNED"; }
 			recorded="$(lease_field "$LEASE_TEXT" owner 2>/dev/null || true)"
-			[[ "$recorded" == "$OWNER" ]] || { printf 'worktree-session-guard: %s is claimed by owner=%s\n' "$REQUESTED_PATH" "${recorded:-unknown}" >&2; exit "$EXIT_OWNED"; }
+			[[ "$recorded" == "$OWNER" ]] || { claimed_by "${recorded:-unknown}"; exit "$EXIT_OWNED"; }
 			claimed="$(lease_field "$LEASE_TEXT" claimed_epoch 2>/dev/null || true)"
 			[[ "$claimed" =~ ^[0-9]+$ ]] || claimed="$now"
 	else
-			[[ "$command" == claim ]] || { printf 'worktree-session-guard: no lease to refresh on %s\n' "$REQUESTED_PATH" >&2; exit "$EXIT_NO_LEASE"; }
+			[[ "$command" == claim ]] || { worktree_message guard-lease-missing "$REQUESTED_PATH" "There is no lease to refresh." >&2; exit "$EXIT_NO_LEASE"; }
 			claimed="$now"
 		fi
 		write_lease "$LOCK_FILE" "$(lease_line "$OWNER" "$claimed" "$now")"
 		printf '%s\n' "$OWNER"
 		;;
 	status)
-		resolve_registration "$path" "$repo" || fail "path is not a linked worktree of $repo: $path"
+		resolve_registration "$path" "$repo" || fail guard-worktree-invalid "$path" "Path is not a linked worktree of $repo."
 		status_json
 		read_lease || exit "$EXIT_NO_LEASE"
 		lease_is_managed "$LEASE_TEXT" || exit "$EXIT_UNMANAGED"
 		if [[ -n "$OWNER" && "$(lease_field "$LEASE_TEXT" owner 2>/dev/null || true)" != "$OWNER" ]]; then
-			printf 'worktree-session-guard: %s is claimed by owner=%s\n' "$REQUESTED_PATH" "$(lease_field "$LEASE_TEXT" owner 2>/dev/null || printf unknown)" >&2
+			claimed_by "$(lease_field "$LEASE_TEXT" owner 2>/dev/null || printf unknown)"
 			exit "$EXIT_OWNED"
 		fi
 		;;
 	release)
-		resolve_registration "$path" "$repo" || fail "path is not a linked worktree of $repo: $path"
-		[[ -n "$OWNER" || "$stale" == true || "$force" == true ]] || fail 'release requires an owner, --stale, or --force'
+		resolve_registration "$path" "$repo" || fail guard-worktree-invalid "$path" "Path is not a linked worktree of $repo."
+		[[ -n "$OWNER" || "$stale" == true || "$force" == true ]] || fail guard-owner-required release "Release requires an owner, --stale, or --force."
 		acquire_guard_mutex "$COMMON_DIR"
 		release_current "$stale" "$force" "$ttl_seconds"
-		printf 'released %s\n' "$REQUESTED_PATH"
+		worktree_message guard-released "$REQUESTED_PATH"
 		;;
 	list | sweep)
-		common="$(resolve_common_dir "$repo")" || { printf 'worktree-session-guard: cannot enumerate %s\n' "$repo" >&2; exit "$EXIT_ENUMERATION"; }
+		common="$(resolve_common_dir "$repo")" || { worktree_message guard-enumeration-failed "$repo" "Cannot enumerate this repository." >&2; exit "$EXIT_ENUMERATION"; }
 		[[ "$command" == list ]] || acquire_guard_mutex "$common"
 		unevaluated=false
 		for registration in "$common"/worktrees/*; do
@@ -425,16 +454,16 @@ case "$command" in
 				unevaluable="its heartbeat_epoch is ${age#-}s in the future"
 			fi
 			if [[ -n "$unevaluable" ]]; then
-				printf 'worktree-session-guard: cannot evaluate the lease on %s: %s\n' "$REQUESTED_PATH" "$unevaluable" >&2
+				worktree_message guard-lease-invalid "$REQUESTED_PATH" "$unevaluable" >&2
 				unevaluated=true
 				continue
 			fi
 			[[ "$age" -ge "$ttl_seconds" ]] || continue
 			if [[ "$dry_run" == true ]]; then
-				printf 'would release %s (heartbeat %ss old)\n' "$REQUESTED_PATH" "$age"
+				worktree_message guard-would-release "$REQUESTED_PATH" "Heartbeat age: $age seconds."
 			else
 				rm -f -- "$LOCK_FILE"
-				printf 'released %s (heartbeat %ss old)\n' "$REQUESTED_PATH" "$age"
+				worktree_message guard-released "$REQUESTED_PATH" "Heartbeat age: $age seconds."
 			fi
 		done
 		[[ "$unevaluated" != true ]] || exit "$EXIT_ENUMERATION"

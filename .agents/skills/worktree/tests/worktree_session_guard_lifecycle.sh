@@ -27,6 +27,8 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/messages.sh
+source "$TEST_DIR/lib/messages.sh"
 WORKTREE_PACKAGE_DIR="$(cd "$TEST_DIR/.." && pwd)"
 WORKTREE_SCRIPT="$WORKTREE_PACKAGE_DIR/scripts/worktree"
 GUARD_SCRIPT="$WORKTREE_PACKAGE_DIR/scripts/worktree-session-guard"
@@ -216,6 +218,7 @@ state() {
 }
 
 alias_text() {
+  message_records |
   sed -e "s|$ROOT/trees/topic|<topic>|g" -e "s|$ROOT/trees/free|<free>|g" -e "s|$ROOT/trees/pending|<pending>|g" \
     -e "s|$NOGUARD_SCRIPTS/worktree-session-guard|<guard>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" -e "s|$MAIN|<main>|g" \
     -e 's/Lock reason: kendex-session-guard v1 owner=\([^ ]*\) pid=.*/Lock reason: <lease owner=\1>/' \
@@ -234,30 +237,29 @@ out_text() {
   case "$1" in
     -) printf '' ;;
     path) printf '<topic>' ;;
-    removed) printf 'Removed: <topic>' ;;
-    cleaned-free) printf 'Cleaned: <free>' ;;
-    cleaned-topic) printf 'Cleaned: <topic>' ;;
-    cleaned-both) printf 'Cleaned: <free>;Cleaned: <topic>' ;;
-    usage) printf 'Usage: worktree cleanup [--stale] [--ttl-minutes N]' ;;
+    removed) printf 'worktree-removed: <topic>' ;;
+    cleaned-free) printf 'worktree-cleaned: <free>' ;;
+    cleaned-topic) printf 'worktree-cleaned: <topic>' ;;
+    cleaned-both) printf 'worktree-cleaned: <free>;worktree-cleaned: <topic>' ;;
+    usage) printf 'worktree-help: cleanup' ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }
 
-LOCKED_TAIL='Nothing in the worktree was modified.;A lock usually means a live session owns this worktree\; confirm it is finished first.;To release the lock and retry:;  git -C "<main>" worktree unlock "<topic>"'
 
 err_text() {
   case "$1" in
     -) printf '' ;;
-    released:*) printf "Released session guard lease (owner=%s): <topic>;Deleted branch 'topic' — merged into origin/main." "${1#released:}" ;;
-    locked-other) printf '%s' "Error: <topic> is a locked worktree\; refusing to remove it.;  Worktree: <topic>;  Lock reason: <lease owner=OTHER-SESSION>;$LOCKED_TAIL" ;;
-    held) printf '%s' 'Skipped (a session holds a guard lease): <topic>;  Let that session release it, or pass --stale to collect leases past the 720m TTL.' ;;
-    fresh) printf '%s' 'Skipped (guard lease is not past the 720m TTL): <topic>' ;;
-    stale-released) printf '%s' 'Released stale session guard lease: <topic>' ;;
-    pending-skip) printf '%s' "Skipped (branch 'pending' has no commits of its own — pending work, not merged): <pending>;  Zero-commit worktrees are never collected\; drop it explicitly with: <worktree> remove \"<pending>\"" ;;
-    unknown-option) printf '%s' "Error: unknown option '--bogus' for cleanup;Run: <worktree> cleanup --help" ;;
-    ttl-nan) printf '%s' 'Error: --ttl-minutes must be a non-negative integer of at most 10 digits' ;;
-    unguarded) printf '%s' 'Warning: worktree-session-guard is not executable at <guard>\; session leases were NOT checked or released, so worktrees are unguarded.' ;;
-    reuse-foreign:*) printf 'Error: <topic> is claimed by another session\\; refusing to reuse it.;  worktree-session-guard: <topic> is claimed by owner=%s;Coordinate with the owning session instead of reusing its worktree.' "${1#reuse-foreign:}" ;;
+    released:*) printf 'worktree-lease-released: path=<topic> owner=%s;worktree-branch-deleted: topic' "${1#released:}" ;;
+    locked-other) printf 'worktree-worktree-locked: <topic>' ;;
+    held) printf 'worktree-cleanup-lease-held: <topic>' ;;
+    fresh) printf 'worktree-cleanup-lease-fresh: <topic>' ;;
+    stale-released) printf 'worktree-lease-stale-released: <topic>' ;;
+    pending-skip) printf 'worktree-cleanup-zero-commit: <pending>' ;;
+    unknown-option) printf 'worktree-cleanup-option-unknown: --bogus' ;;
+    ttl-nan) printf 'worktree-cleanup-ttl-invalid: abc' ;;
+    unguarded) printf 'worktree-session-guard-unavailable: <guard>' ;;
+    reuse-foreign:*) printf 'worktree-lease-foreign: <topic>;worktree-guard-owner-conflict: path=<topic> owner=%s' "${1#reuse-foreign:}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -340,12 +342,12 @@ assert_contains "$list_out" "\"path\":\"$REUSE_WT\"" "list includes the linked w
 assert_contains "$list_out" '"owner":"ISSUE-1"' "list includes the lease owner"
 
 dry_sweep_out="$("$GUARD_SCRIPT" sweep --repo "$REUSE_ROOT/main" --ttl-minutes 0 --dry-run)"
-assert_contains "$dry_sweep_out" "would release $REUSE_WT" "sweep dry-run reports the stale lease"
+assert_contains "$dry_sweep_out" "worktree-guard-would-release: $REUSE_WT" "sweep dry-run reports the stale lease"
 assert_eq "$(guard_status_code "$REUSE_WT" "$REUSE_ROOT/main" --owner ISSUE-1)" "0" \
   "sweep dry-run leaves the lease in place"
 
 sweep_out="$("$GUARD_SCRIPT" sweep --repo "$REUSE_ROOT/main" --ttl-minutes 0)"
-assert_contains "$sweep_out" "released $REUSE_WT" "sweep releases the stale lease"
+assert_contains "$sweep_out" "worktree-guard-released: $REUSE_WT" "sweep releases the stale lease"
 assert_eq "$(guard_status_code "$REUSE_WT" "$REUSE_ROOT/main")" "3" \
   "sweep leaves the worktree unlocked"
 
@@ -376,19 +378,22 @@ second_code=$?
 set -e
 assert_eq "$second_code" "75" "with the mutex free only the first owner holds the lease"
 
-echo "=== release refuses a flag it does not implement ==="
+echo "=== release refusal records ==="
 
-# --dry-run promises to preserve. release never implemented it, so accepting
-# and ignoring the flag deleted the very lease the caller asked to keep.
-set +e
-dry_err=$("$GUARD_SCRIPT" release "$MUTEX_WT" --owner OWNER-A --dry-run 2>&1 >/dev/null)
-dry_code=$?
-set -e
-assert_eq "$dry_code" "1" "release --dry-run is a usage failure"
-assert_contains "$dry_err" "--dry-run does not apply to release" \
-  "the refusal names the flag and the command"
-assert_eq "$(guard_status_code "$MUTEX_WT" "$MUTEX_ROOT/main" --owner OWNER-A)" "0" \
-  "the lease --dry-run promised to preserve is still held"
+git -C "$REUSE_ROOT/main" worktree add -q -b manual "$REUSE_ROOT/manual" main
+git -C "$REUSE_ROOT/main" worktree lock --reason manual "$REUSE_ROOT/manual"
+REFUSALS="unsupported flag|$MUTEX_WT|--owner OWNER-A --dry-run|1|worktree-guard-option-command: --dry-run=release|0
+foreign owner|$MUTEX_WT|--owner OWNER-B|75|worktree-guard-owner-conflict: path=$MUTEX_WT owner=OWNER-A|0
+fresh lease|$MUTEX_WT|--stale|75|worktree-guard-lease-not-stale: $MUTEX_WT|0
+missing lease|$REUSE_WT|--owner OWNER-A|3|worktree-guard-lease-missing: $REUSE_WT|3
+manual lock|$REUSE_ROOT/manual|--owner OWNER-A|4|worktree-guard-lock-unmanaged: $REUSE_ROOT/manual|4"
+while IFS='|' read -r label refusal_path flags expected_rc expected_record expected_state; do
+  read -r -a refusal_args <<<"$flags"
+  refusal_rc=0
+  refusal_err=$("$GUARD_SCRIPT" release "$refusal_path" "${refusal_args[@]}" 2>&1 >/dev/null) || refusal_rc=$?
+  assert_eq "rc=$refusal_rc record=${refusal_err%%$'\n'*} state=$(guard_status_code "$refusal_path" "$refusal_path" --owner OWNER-A)" \
+    "rc=$expected_rc record=$expected_record state=$expected_state" "$label"
+done <<<"$REFUSALS"
 
 echo "=== registrations resolve without a cwd or a directory ==="
 
@@ -412,7 +417,7 @@ gone_list="$("$GUARD_SCRIPT" list --repo "$REG_ROOT/main")"
 assert_contains "$gone_list" "\"path\":\"$REL_WT\"" "list still reports a destroyed worktree"
 assert_contains "$gone_list" '"directory_present":false' "list marks the directory gone"
 assert_contains "$("$GUARD_SCRIPT" sweep --repo "$REG_ROOT/main" --ttl-minutes 0)" \
-  "released $REL_WT" "sweep releases a destroyed worktree's lease"
+  "worktree-guard-released: $REL_WT" "sweep releases a destroyed worktree's lease"
 
 echo "=== a newline in a worktree path ==="
 
@@ -428,6 +433,21 @@ assert_eq "$(guard_status_code "$NL_WT" "$NL_ROOT/main" --owner NL-OWNER)" "0" \
 assert_contains "$("$GUARD_SCRIPT" list --repo "$NL_ROOT/main")" \
   "\"path\":\"${NL_WT//$'\n'/\\n}\"" \
   "list reports the newline path as one escaped JSON object"
+newline_rc=0
+newline_err=$("$GUARD_SCRIPT" refresh "$NL_WT" --owner NL-OTHER 2>&1 >/dev/null) || newline_rc=$?
+assert_eq "rc=$newline_rc record=${newline_err%%$'\n'*}" \
+  "rc=75 record=worktree-guard-owner-conflict: path=$NL_ROOT/trees/issue\\nnl owner=NL-OWNER" \
+  "a refusal keeps the newline path in one message record"
+
+BROKEN_GUARD_DIR="$TMP_ROOT/broken"$'\n'"guard"
+mkdir -p "$BROKEN_GUARD_DIR"
+cp "$GUARD_SCRIPT" "$BROKEN_GUARD_DIR/worktree-session-guard"
+chmod +x "$BROKEN_GUARD_DIR/worktree-session-guard"
+missing_helper_rc=0
+missing_helper_err=$("$BROKEN_GUARD_DIR/worktree-session-guard" status "$NL_WT" 2>&1 >/dev/null) || missing_helper_rc=$?
+assert_eq "rc=$missing_helper_rc record=${missing_helper_err%%$'\n'*}" \
+  "rc=1 record=worktree-message-library: path=${BROKEN_GUARD_DIR//$'\n'/\\n}/lib/messages.sh recovery=fix-links-from-main" \
+  "a missing helper path containing a newline stays in one bootstrap record"
 
 echo "=== the mkdir mutex serializes claims on a flock-less host ==="
 
