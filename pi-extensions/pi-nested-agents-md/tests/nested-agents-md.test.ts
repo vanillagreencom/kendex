@@ -214,6 +214,7 @@ describe("an unreadable AGENTS.md", () => {
 			const blocks = texts(await toolResult(readEvent(join(root, "a/b/deep.ts")), ctx(root)));
 			expect(blocks).toHaveLength(3);
 			expect(blocks[1]?.split("\n")[0]).toBe(`unreadable_path=${unreadable}`);
+			expect(blocks[1]?.split("\n")[1]?.length).toBeGreaterThan(0);
 			expect(blocks[1]).not.toContain("# a rules");
 			expect(blocks[2]).toContain("# b rules");
 			expect(await toolResult(readEvent(join(root, "a/shallow.ts")), ctx(root))).toBeUndefined();
