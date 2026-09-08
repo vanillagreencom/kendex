@@ -14,7 +14,7 @@ GG_RECORD_START=0
 GG_RECORD_END=0
 GG_RECORD_SECLINES=""
 gg_record_accepts() { # PARSED-FILE — 0 when the copy is a record this guard accepts
-  local file="$1" rc=0 kind a b low
+  local file="$1" rc=0 kind a b low count=0
   GG_RECORD_WHY=""
   GG_RECORD_KEY=""
   GG_RECORD_VALUE=""
@@ -33,9 +33,12 @@ gg_record_accepts() { # PARSED-FILE — 0 when the copy is a record this guard a
       return 1
       ;;
     4)
+      while IFS="$GG_TAB" read -r kind a b; do
+        [ "$kind" != heading-count ] || count="$a"
+      done <"$GG_TMP/bounds"
       GG_RECORD_WHY="carries more than one '## [Unreleased]' heading — which one is the section cannot be decided"
       GG_RECORD_KEY=record-heading-count
-      GG_RECORD_VALUE="$RECORD:2"
+      GG_RECORD_VALUE="$RECORD:$count"
       GG_RECORD_HARD=1
       return 1
       ;;

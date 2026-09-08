@@ -101,7 +101,12 @@ helper_program() { # -> the part of the helper every checkout writes alike
 # exit 1 verdict. Both block the commit.
 fail() { # KEY VALUE EXPLANATION
   value="$(printf '%s' "$2" | LC_ALL=C tr '\001-\037\177' '?')" || exit 2
-  printf 'kendex-guards: %s=%s\n  %s\n' "$1" "$value" "$3" >&2
+  printf 'kendex-guards: %s=%s\n' "$1" "$value" >&2
+  while IFS= read -r line || [ -n "$line" ]; do
+    printf '  %s\n' "$line" >&2
+  done <<HELPER_EXPLANATION
+$3
+HELPER_EXPLANATION
   echo "  The commit is blocked because a guard could not run. Re-arm the shims with 'kendex guard install', or bypass this commit with 'git commit --no-verify'." >&2
   exit 2
 }

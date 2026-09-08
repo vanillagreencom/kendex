@@ -101,6 +101,7 @@ echo "=== collation reads the record: an unusable shape is refused without a wri
 rows --collate \
   "no Unreleased heading is a violation naming the remedy|# Release notes\n|rc=1 changelog-entries: record-heading=CHANGELOG.md:missing;$VIOLATION $UNTOUCHED" \
   "two Unreleased headings cannot be decided between|# Log\n\n## [Unreleased]\n\n## [Unreleased]\n|rc=2 ${ERR}record-heading-count=CHANGELOG.md:2 $UNTOUCHED" \
+  "three Unreleased headings report the exact measured count|# Log\n\n## [Unreleased]\n\n## [Unreleased]\n\n## [Unreleased]\n|rc=2 ${ERR}record-heading-count=CHANGELOG.md:3 $UNTOUCHED" \
   "an unclosed code fence hides the section|# Log\n\n## [Unreleased]\n\n\`\`\`\nunclosed\n|rc=2 ${ERR}record-fence=CHANGELOG.md:unclosed $UNTOUCHED" \
   "a section name outside Keep a Changelog is a violation naming the set|# Log\n\n## [Unreleased]\n\n### Details\n\n- Note.\n|rc=1 changelog-entries: record-section=CHANGELOG.md:Details;$VIOLATION $UNTOUCHED" \
   "control: a usable record folds the fragment and keeps its edited note|# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Reworded note.\n|rc=0 changelog-entries: folded=1:CHANGELOG.md record=changed fragment=gone index=same"

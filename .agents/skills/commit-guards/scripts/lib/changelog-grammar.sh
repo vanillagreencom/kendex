@@ -218,9 +218,8 @@ function heading_text(l,   i, n, t) {
     if (inside) printf "end\t%d\n", NR
     inside = (lvl == 2 && tolower(heading_text(line)) == "[unreleased]")
     if (inside) {
-      if (seen) { rc = 4; exit rc }
-      seen = 1
-      printf "unreleased\t%d\n", NR
+      seen++
+      if (seen == 1) printf "unreleased\t%d\n", NR
     }
     next
   }
@@ -228,9 +227,11 @@ function heading_text(l,   i, n, t) {
   if (lvl == 3) printf "section\t%d\t%s\n", NR, heading_text(line)
 }
 END {
-  # A body that bailed lands here too, and its status is the one to keep: an
-  # unclosed fence past the second heading must not rename that refusal.
+  # A body that bailed lands here too, and its status is the one to keep.
   if (rc) exit rc
+  # The duplicate count outranks a later unclosed fence, as the former
+  # early exit did, but only after the parser measures every visible heading.
+  if (seen > 1) { printf "heading-count\t%d\n", seen; exit 4 }
   # The fence first: it is why the heading below it was never seen, and
   # reporting the missing heading would name the symptom over the cause.
   if (fence != "") exit 3

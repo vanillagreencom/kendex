@@ -107,6 +107,7 @@ fx_no_helper() { armed no-helper; stage a.txt 'hello\n'; rm "$R/.git/hooks/kende
 fx_no_helper_hook() { armed no-helper-hook; stage a.txt 'hello\n'; rm "$R/.git/hooks/kendex-guards"; }
 fx_no_skill() { armed no-skill; stage a.txt 'hello\n'; rm -rf -- "${R:?}/.agents/skills/commit-guards"; }
 fx_no_skill_hook() { armed no-skill-hook; stage a.txt 'hello\n'; rm -rf -- "${R:?}/.agents/skills/commit-guards"; }
+fx_no_skill_newline() { armed $'no-skill\npre-commit: lane-missing=forged'; stage a.txt 'hello\n'; rm -rf -- "${R:?}/.agents/skills/commit-guards"; }
 fx_armed_hook() { armed armed-hook; stage a.txt 'hello\n'; }
 fx_stale_path() { armed stale-path; stage a.txt 'hello\n'; edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts=.*|installed_scripts='$R/gone/scripts'|"; }
 fx_stale_path_marker() { armed stale-path-marker; stage_marker; edit "$R/.git/hooks/kendex-guards" "s|^installed_scripts=.*|installed_scripts='$R/gone/scripts'|"; }
@@ -123,6 +124,7 @@ run_rows \
   "a missing helper is exit 2 from the hook itself|fx_no_helper_hook|$ONE|hook||rc=2 $NO_HELPER|" \
   "an uninstalled skill tree blocks the commit and names every place searched|fx_no_skill|$ONE|commit|feat: add a|rc=1 $NO_SCRIPT|" \
   "an unreachable script is exit 2 from the hook itself|fx_no_skill_hook|$ONE|hook||rc=2 $NO_SCRIPT|" \
+  "a newline in a searched checkout cannot create another stable record|fx_no_skill_newline|$ONE|hook||rc=2 $NO_SCRIPT|" \
   "control: the hook exits 0 once the guard can run|fx_armed_hook|$ONE|hook||rc=0 $CHAIN_OK|" \
   "a stale baked path is rediscovered under .agents/skills|fx_stale_path|$ONE|commit|feat: add a|rc=0 $CHAIN_OK;${MSG_OK}feat: add a|helper=$X:ours['<repo>/gone/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
   "control: the rediscovered chain still blocks|fx_stale_path_marker|$ONE|commit|feat: add b|rc=1 $BLOCKED|" \
