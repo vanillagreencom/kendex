@@ -42,17 +42,15 @@ run_hook() { # command -> rc, stderr in ERR_FILE
   set -e
 }
 
-run_payload() { # raw-json [PATH] -> rc, stderr in ERR_FILE
+run_payload() { # raw-json -> rc, stderr in ERR_FILE
   set +e
-  if [ -n "${2:-}" ]; then
-    printf '%s' "$1" | env -i HOME="$HOME" PWD="$PWD" PATH="$2" "$BASH_BIN" "$HOOK" \
-      >/dev/null 2>"$ERR_FILE"
-  else
-    printf '%s' "$1" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
-  fi
+  printf '%s' "$1" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
   rc=$?
   set -e
 }
+
+# shellcheck source=lib/payload-rows.sh
+. "$TEST_DIR/lib/payload-rows.sh"
 
 echo "=== block-argv-kill: a kill by name or pattern is refused ==="
 run_hook 'pkill -f mutation-stability';        assert_eq "$rc" 2 'pkill with an argv pattern is refused'
@@ -105,43 +103,8 @@ rc=$?
 set -e
 assert_eq "$rc" 2 'a stdin that cannot be read refuses with the refusal status, not the read error'
 assert_contains "$ERR_FILE" 'could not read the hook payload' 'the read refusal names the cause'
-run_payload '{"tool_input":{"command":"pkill x"'
-assert_eq "$rc" 2 'a truncated JSON payload refuses rather than skipping the guard'
-assert_contains "$ERR_FILE" 'not valid JSON' 'the parse refusal names the cause'
-run_payload '{"tool_input":{"command":123}}'
-assert_eq "$rc" 2 'a command that is not a string refuses'
-run_payload '{"tool_input":{"command":false}}'
-assert_eq "$rc" 2 'a command of false refuses, not read as an absent one'
-run_payload '{"tool_input":"pkill x"}'
-assert_eq "$rc" 2 'a tool_input that is not an object refuses'
-run_payload '{"tool_input":{"command":""}}'
-assert_eq "$rc" 0 'an empty command is read, not a read failure'
-run_payload '{"tool_name":"Bash","tool_input":{}}'
-assert_eq "$rc" 0 'a payload naming no command passes'
-run_payload '{"command":"killall x"}'
-assert_eq "$rc" 2 'a top-level command field is read like a nested one'
 
-echo "=== block-argv-kill: Copilot carries the command under toolArgs ==="
-run_payload '{"sessionId":"s","timestamp":1,"cwd":"/w","toolName":"bash","toolArgs":{"command":"pkill -f x"}}'
-assert_eq "$rc" 2 'a Copilot toolArgs object is read'
-run_payload '{"toolName":"bash","toolArgs":"{\"command\":\"killall x\"}"}'
-assert_eq "$rc" 2 'a Copilot toolArgs JSON string is read'
-run_payload '{"toolName":"bash","toolArgs":{"command":"kill 1234"}}'
-assert_eq "$rc" 0 'a PID kill under toolArgs passes, so the shape is read rather than refused'
-run_payload '{"toolName":"bash","toolArgs":"not json"}'
-assert_eq "$rc" 2 'a toolArgs string that is not JSON refuses rather than skipping the guard'
-
-echo "=== block-argv-kill: a missing reader refuses ==="
-NOJQ_BIN="$TMP_ROOT/nojq"
-mkdir -p "$NOJQ_BIN"
-for tool in bash cat grep sed; do
-  target="$(command -v "$tool" 2>/dev/null)" && ln -sf "$target" "$NOJQ_BIN/$tool"
-done
-run_payload '{"tool_input":{"command":"pkill x"}}' "$NOJQ_BIN"
-assert_eq "$rc" 2 'without jq the guard refuses rather than skipping'
-assert_contains "$ERR_FILE" 'required to read the hook payload' 'the refusal names what is missing'
-run_payload '{"tool_input":{"command":"kill 1"}}' "$NOJQ_BIN"
-assert_eq "$rc" 2 'without jq even a harmless command is refused: nothing was read'
+payload_table "$HOOK" 'pkill -f x' 'kill 1234'
 
 echo
 echo "block-argv-kill: $PASS passed, $FAIL failed"
