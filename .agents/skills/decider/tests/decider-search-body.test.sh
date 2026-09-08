@@ -1,101 +1,155 @@
 #!/usr/bin/env bash
-# Body-scoped decision search.
-#
-# `decisions search` reads the decision document itself, not only the INDEX.md
-# summary columns (decision, rationale, id). A search over the summary alone
-# returns `[]` for a keyword that appears only in a decision's prose —
-# indistinguishable from "no decision governs this area", the opposite of the
-# truth — and that silently passes the pre-mutation guards that call this
-# search (orch review-pr § 1.1, dev-fix § 2, tpm-audit § 2, and the issue
-# template).
-#
-# Pinned here: the body match and the ranking contract: body matches surface
-# BELOW every summary match, so a summary match keeps its position and score
-# rather than being displaced by a body match.
+# Body search, scoring, and result ordering.
 set -euo pipefail
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 DECISIONS="$SKILL_DIR/scripts/decisions"
+# shellcheck source=lib/mutate-script.sh
+source "$TEST_DIR/lib/mutate-script.sh"
 
 PASS=0
 FAIL=0
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
+pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
+fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/docs/decisions"
-
-cat > "$REPO/docs/decisions/INDEX.md" <<'EOF'
+cat >"$REPO/docs/decisions/INDEX.md" <<'EOF'
 | Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |
 |------|----|----------|----------|-----------|--------------|--------|------|
 | 2026-01-01 | D027 | CC-1 | Performance measurement stack | Needs stable baselines | Never | Active | [D027](D027-perf.md) |
 | 2026-01-02 | D046 | CC-2 | Dev surface feature gating | Keeps prod lean | Never | Active | [D046](D046-gating.md) |
 | 2026-01-03 | D047 | CC-3 | Signature forgery guard | Prevents forgery | Never | Active | [D047](D047-forgery.md) |
 EOF
-
-# "hermetic" and "clippy" appear ONLY in prose — the exact shape from the report.
-printf '# D027\n\nBenchmarks run in a hermetic sandbox to avoid host drift.\n' \
-  > "$REPO/docs/decisions/D027-perf.md"
-printf '# D046\n\nClippy lints are enforced on the dev surface.\n' \
-  > "$REPO/docs/decisions/D046-gating.md"
-# D047 mentions forgery in title, rationale AND body — used for the ranking test.
-printf '# D047\n\nGuards against forgery of signatures.\n' \
-  > "$REPO/docs/decisions/D047-forgery.md"
+printf '# D027\n\nBenchmarks run in a hermetic sandbox against forgery and host drift.\n' >"$REPO/docs/decisions/D027-perf.md"
+printf '# D046\n\nClippy lints are enforced on the dev surface.\n' >"$REPO/docs/decisions/D046-gating.md"
+printf '# D047\n\nGuards against forgery of signatures.\n' >"$REPO/docs/decisions/D047-forgery.md"
 
 run_search() {
-  (cd "$REPO" && DECISIONS_DIR="$REPO/docs/decisions" "$DECISIONS" search "$@" 2>/dev/null)
+  local script="$1" query="$2"
+  set +e
+  out=$( (cd "$REPO" && DECISIONS_DIR="$REPO/docs/decisions" "$script" search "$query") 2>/dev/null)
+  rc=$?
+  set -e
 }
 
-echo "=== a keyword that appears only in a decision body is found ==="
+record_row() {
+  local mode="$1" name="$2" actual="$3" expected="$4"
+  if [[ "$actual" == "$expected" ]]; then
+    if [[ "$mode" == normal ]]; then
+      pass "$name"
+    fi
+  else
+    if [[ "$mode" == normal ]]; then
+      fail "$name (expected: $expected; got: $actual)"
+    else
+      table_failures+="|$name|"
+    fi
+  fi
+}
 
-assert_eq "$(run_search hermetic | jq -r '[.[].id] | join(",")')" "D027" \
-  "body-only keyword returns the governing decision"
-assert_eq "$(run_search clippy | jq -r '[.[].id] | join(",")')" "D046" \
-  "second body-only keyword returns its decision"
+evaluate_search_rows() {
+  local script="$1" mode="$2" only_row="${3:-}" name query projection expected setup
+  local projected projection_rc actual guard
+  local executed_rows=0
+  table_failures=""
+  while IFS='~' read -r name query projection expected setup; do
+    if [[ -n "$only_row" && "$name" != "$only_row" ]]; then
+      continue
+    fi
+    executed_rows=$((executed_rows + 1))
+    if [[ "$setup" == stray ]]; then
+      printf 'hermetic stray note not linked from INDEX\n' >"$REPO/docs/decisions/STRAY.md"
+    fi
+    run_search "$script" "$query"
+    set +e
+    case "$projection" in
+      ids)
+        projected=$(jq -cer 'if type == "array" then [.[].id] else error("not an array") end' <<<"$out" 2>/dev/null)
+        ;;
+      sorted-ids)
+        projected=$(jq -cer 'if type == "array" then [.[].id] | sort else error("not an array") end' <<<"$out" 2>/dev/null)
+        ;;
+      ids-scores)
+        projected=$(jq -cer 'if type == "array" then [.[] | "\(.id):\(.score)"] | join(",") else error("not an array") end' <<<"$out" 2>/dev/null)
+        ;;
+      *)
+        set -e
+        fail "unknown search-row projection: $projection"
+        continue
+        ;;
+    esac
+    projection_rc=$?
+    set -e
+    actual="$rc~$projection_rc~$projected"
+    record_row "$mode" "$name" "$actual" "0~0~$expected"
+  done <<'SEARCH_CASES'
+body-hermetic~hermetic~ids~["D027"]~none
+body-clippy~clippy~ids~["D046"]~none
+summary-body-score~forgery~ids-scores~D047:4.5,D027:0.5~none
+body-score~hermetic~ids-scores~D027:0.5~none
+and-across-fields~performance hermetic~ids~["D027"]~none
+and-across-decisions-miss~hermetic gating~ids~[]~none
+regex-bodies~hermetic|clippy~sorted-ids~["D027","D046"]~none
+keyword-miss~zzz-absent-token~ids~[]~none
+unindexed-file~hermetic~ids~["D027"]~stray
+SEARCH_CASES
+  if [[ "$executed_rows" -eq 0 ]]; then
+    guard="body-search table executed no rows"
+    [[ -n "$only_row" ]] && guard="body-search table selected no row: $only_row"
+    if [[ "$mode" == normal ]]; then
+      fail "$guard"
+      return 1
+    else
+      printf 'TABLE_GUARD:%s' "$guard"
+      return 1
+    fi
+  fi
+  if [[ "$mode" == control ]]; then
+    printf '%s' "$table_failures"
+  fi
+}
 
-echo "=== summary matches keep priority over body matches ==="
+echo "=== decisions body-search rows ==="
+evaluate_search_rows "$DECISIONS" normal
 
-# forgery is in D047's title (3) + rationale (1) + body (0.5).
-assert_eq "$(run_search forgery | jq -r '.[0].score')" "4.5" \
-  "summary weights unchanged; body adds a fractional bonus"
-# A body-only hit scores below any summary hit, so it can never displace one.
-assert_eq "$(run_search hermetic | jq -r '.[0].score')" "0.5" \
-  "body-only match scores below rationale (1pt)"
+if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
+  echo "=== must-fail controls ==="
+  ordering_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-score-sort/decisions" '] | sort_by(-.score) | .[:$limit]' '] | .[:$limit]' 1)"
+  failures="$(evaluate_search_rows "$ordering_mutant" control summary-body-score)"
+  if [[ "$failures" == *'|summary-body-score|'* ]]; then
+    pass "missing score sort fails the ranking row"
+  else
+    fail "missing score sort did not fail the ranking row"
+  fi
 
-echo "=== AND logic spans summary and body together ==="
+  search_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-search-table/decider/tests/decider-search-body.test.sh" SEARCH_CASES)"
+  if decider_test_fails_with "$search_table_mutant" "body-search table executed no rows"; then
+    pass "an empty body-search table fails its row-count guard"
+  else
+    fail "an empty body-search table missed its row-count guard ($DECIDER_CONTROL_DETAIL)"
+  fi
+  if decider_diagnostic_only_table_control "$search_table_mutant" "$TMP_ROOT/empty-search-table/decider/tests/diagnostic-only.test.sh" "body-search table executed no rows" 1; then
+    pass "a body-search-table diagnostic without a failure is rejected"
+  else
+    fail "a body-search-table diagnostic without a failure satisfied the control ($DECIDER_CONTROL_DETAIL)"
+  fi
+  set +e
+  selection_output="$(evaluate_search_rows "$ordering_mutant" control unknown-search-row 2>&1)"
+  selection_rc=$?
+  set -e
+  if [[ "$selection_rc" -ne 0 && "$selection_output" == *"TABLE_GUARD:body-search table selected no row: unknown-search-row"* ]]; then
+    pass "an unknown body-search row fails its selection guard"
+  else
+    fail "an unknown body-search row missed its selection guard"
+  fi
+fi
 
-# "performance" is in D027's title only; "hermetic" is in its body only.
-assert_eq "$(run_search "performance hermetic" | jq -r '[.[].id] | join(",")')" "D027" \
-  "one term in the summary and another in the body still satisfies AND"
-assert_eq "$(run_search "hermetic gating" | jq -r 'length')" "0" \
-  "AND still excludes when the terms live in different decisions"
-
-echo "=== regex mode also reaches bodies ==="
-
-assert_eq "$(run_search 'hermetic|clippy' | jq -r '[.[].id] | sort | join(",")')" "D027,D046" \
-  "regex alternation matches body text in both decisions"
-
-echo "=== a genuine miss is still an empty result ==="
-
-assert_eq "$(run_search zzz-absent-token | jq -r 'length')" "0" \
-  "unmatched keyword still returns an empty array"
-
-echo "=== unindexed files in the directory cannot influence results ==="
-
-printf 'hermetic stray note not linked from INDEX\n' > "$REPO/docs/decisions/STRAY.md"
-assert_eq "$(run_search hermetic | jq -r '[.[].id] | join(",")')" "D027" \
-  "a stray unindexed file adds no result"
-
-printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+echo
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
