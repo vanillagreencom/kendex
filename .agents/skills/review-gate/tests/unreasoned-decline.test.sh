@@ -202,6 +202,7 @@ page_row() { # page_row ROW — one page, one assertion on the whole line
   out=$(page "$nodes")
   [ "$out" = "$want" ] && ok "$label" || bad "$label" "$out (wanted: $want)"
 }
+TABLE_BEFORE=$((PASS + FAIL))
 for row in \
   "a no-colon decline with nothing after the word is counted|0 0 1 false END|r:H=Declined." \
   "a no-colon decline that is only a label is counted|0 0 1 false END|r:H=Declined, out of scope." \
@@ -232,6 +233,7 @@ for row in \
   "a path inside a mechanism still passes|0 0 0 false END|r:H=Declined: crates/core/src/lock.rs refuses that shape before the branch you name runs." \
   "a 50+-comment thread fails closed as malformed|malformed|r+:H=Tracked: KEN-1"
 do page_row "$row"; done
+[ "$((PASS + FAIL))" -gt "$TABLE_BEFORE" ] || { echo "page_row: no row was asserted" >&2; exit 2; }
 
 echo
 echo "--- must-fail probe: the term, reverted ---"

@@ -412,6 +412,7 @@ relay_row() {
 
 relay_battery() { # step script, label
   RELAY_STEP="$1"; RELAY_TAG="$2"
+  local before
   # Read from the step, not hardcoded: every wait a row pins is an exact
   # clamp plus this bound, so a retuned jitter must move them with it.
   RELAY_JITTER_MAX="$(grep -oE '^jitter_max=[0-9]+' "$1" | head -n 1 | cut -d= -f2 || true)"
@@ -429,6 +430,7 @@ relay_battery() { # step script, label
   # and never an error: the relay holds no statuses scope, so it can only
   # leave the gate stale, which the cron floor owns; a red would pin the PR
   # at UNSTABLE, the defect the split removed.
+  before=$((PASS + FAIL))
   for row in \
     "an ordinary PR-attached leg dispatches THIS workflow's file on the default branch, exactly once, under the per-attempt bound|0|main|0||none|||rc=0 calls=dispatch:review-gate-writer.yml bound=60 sleeps=0 note=none" \
     "a RENAMED consumer copy dispatches its own file|0|renamed|0||none|||rc=0 calls=dispatch:gate.yml sleeps=0 note=none" \
@@ -439,6 +441,7 @@ relay_battery() { # step script, label
     "the workflow_dispatch leg is refused by the step's own loop breaker, and says so|0|main|0|workflow_dispatch|none|||rc=0 calls=none sleeps=0 note=warning says~CONVERGE+leg=true" \
     "the schedule leg is refused by the same guard|0|main|0|schedule|none|||rc=0 calls=none sleeps=0 note=warning says~CONVERGE+leg=true"
   do relay_row "$row"; done
+  [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "relay_battery: no row was asserted" >&2; exit 2; }
 
   # The retry ladder against real response shapes. A failure with no answer
   # or a 5xx retries quickly: the 60s floor belongs to the rate-limit shapes.
@@ -453,6 +456,7 @@ relay_battery() { # step script, label
   # with a healthy window — are not slept on and not retried. Non-numeric or
   # out-of-range values are discarded before they can reach sleep or the
   # arithmetic.
+  before=$((PASS + FAIL))
   for row in \
     "a failure with NO response retries in 5s and names the cause|0|main|1 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 says~no+HTTP+response,+gh+exit+1=true" \
     "a dispatch killed by its own per-attempt bound retries in 5s and is reported as a timeout|0|main|124 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml bound=60,60 wait=5 sleeps=1 says~did+not+respond+within=true" \
@@ -474,16 +478,19 @@ relay_battery() { # step script, label
     "a non-numeric retry-after is discarded but an EXHAUSTED window still governs|0|main|1 0||403-retry-soon-spent-reset+70|||rc=0 wait=70 sleeps=1" \
     "an out-of-range retry-after is discarded before it can overflow the arithmetic|0|main|1 0||502-retry-huge|||rc=0 wait=5 sleeps=1"
   do relay_row "$row"; done
+  [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "relay_battery: no row was asserted" >&2; exit 2; }
 
   # The check_run opt-in's self-amplification breaker: the relay's if: is a
   # negative list, so with check_run enabled this workflow's own job
   # completions are relayable events, and the relay holds no concurrency
   # group. Its own jobs are refused by name; a reviewer's check run relays.
+  before=$((PASS + FAIL))
   for row in \
     "a check_run naming the relay's OWN job dispatches nothing, and says so|0|main|0|check_run|none|Request a gate convergence pass||rc=0 calls=none sleeps=0 note=warning" \
     "the write job's own check run is refused by the same guard|0|main|0|check_run|none|Evaluate and write the review gate||rc=0 calls=none sleeps=0 note=warning" \
     "a REVIEWER's check run still relays|0|main|0|check_run|none|CodeRabbit||rc=0 calls=dispatch:review-gate-writer.yml sleeps=0 note=none"
   do relay_row "$row"; done
+  [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "relay_battery: no row was asserted" >&2; exit 2; }
 
   # The invariant over the step's ENVIRONMENT. The step runs under `set -u`,
   # and every binding sits in repo-owned YAML a consumer may hand-edit, so a
@@ -496,6 +503,7 @@ relay_battery() { # step script, label
   # subshell, so a step that did not guard would sail on to warn, sleep,
   # "retry" and report an API answer it never received; each row pins that
   # nothing was dispatched, nothing was waited on, and the binding is named.
+  before=$((PASS + FAIL))
   for row in \
     "an unbound EVENT_NAME warns that the loop breaker cannot verify the leg, and the dispatch still happens|0|main|0||none||EVENT_NAME|rc=0 calls=dispatch:review-gate-writer.yml sleeps=0 note=warning says~EVENT_NAME+is+unbound=true" \
     "an unbound EVENT_NAME on the retry path still retries|0|main|1 0||502||EVENT_NAME|rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 note=warning" \
@@ -505,6 +513,7 @@ relay_battery() { # step script, label
     "an unbound GH_REPO dispatches nothing, waits for nothing, and is named|0|main|1 0||none||GH_REPO|rc=0 calls=none wait=none sleeps=0 note=warning says~env:+block+is+missing+GH_REPO=true" \
     "an unbound DISPATCH_REF dispatches nothing, waits for nothing, and is named|0|main|1 0||none||DISPATCH_REF|rc=0 calls=none wait=none sleeps=0 note=warning says~env:+block+is+missing+DISPATCH_REF=true"
   do relay_row "$row"; done
+  [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "relay_battery: no row was asserted" >&2; exit 2; }
 }
 
 echo "=== relay step behavior (request-converge, VST-210) ==="
