@@ -30,9 +30,14 @@ class _Parser(argparse.ArgumentParser):
     writes the record itself. Its subject is the argument the caller gave,
     which is what they have to change."""
 
+    given = ()
+
     def error(self, message):
-        given = sys.argv[1] if len(sys.argv) > 1 else "(none)"
-        print(f"bot-instructions: usage={given}", file=sys.stderr)
+        # The arguments this parse was handed, not the process's own: `main`
+        # may be called with an explicit list, and the offending token is not
+        # always the first one.
+        shown = " ".join(self.given) if self.given else "(none)"
+        print(f"bot-instructions: usage={shown}", file=sys.stderr)
         print(message, file=sys.stderr)
         raise SystemExit(2)
 
@@ -87,7 +92,9 @@ def _spec_source(repo, spec_root, work, staged):
 
 
 def main(argv=None):
-    args = parser().parse_args(argv)
+    p = parser()
+    p.given = tuple(sys.argv[1:] if argv is None else argv)
+    args = p.parse_args(argv)
     if args.staged and args.verb != "check":
         print("bot-instructions: usage=--staged", file=sys.stderr)
         print("--staged is a check mode; render and adopt write the working tree",
@@ -133,9 +140,13 @@ def main(argv=None):
         # reaches here (`run._as_finding`), so what arrives as a bare error is
         # a source git could not answer for, an unusable spec copy, or a
         # write that failed — none of them a violation in the tree.
-        # A spec failure is about the spec copy; everything else is about the
-        # repository the run was pointed at.
-        subject = spec_root if isinstance(exc, SpecError) else repo
+        # A failure reading the spec copy is about that copy, whichever
+        # family it arrives as: a spec file that will not decode raises a
+        # render failure, and naming the repository there would send a caller
+        # to the wrong tree. `subject` is set where the spec source is read.
+        subject = getattr(exc, "subject", None)
+        if subject is None:
+            subject = spec_root if isinstance(exc, SpecError) else repo
         print(f"bot-instructions: {exc.key}={subject}", file=sys.stderr)
         print(str(exc), file=sys.stderr)
         return 2

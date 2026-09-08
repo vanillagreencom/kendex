@@ -19,6 +19,9 @@ class BotInstructionsError(Exception):
     """
 
     key = "error"
+    # The record's value. Left unset, the command line decides from the
+    # family; a reader that knows better, such as the spec source, sets it.
+    subject = None
 
 
 class SpecError(BotInstructionsError):

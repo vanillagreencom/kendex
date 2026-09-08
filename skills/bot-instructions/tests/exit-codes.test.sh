@@ -120,6 +120,59 @@ bi_record "$out"
 exact 'the findings record carries the count and exits 1' \
   "bot-instructions: findings=1" "$bi_first" "$status" 1
 
+# The parser names the arguments it was given, not the process's first one:
+# a bad flag after a good verb must not point at the verb.
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main check --bogus ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'the usage record names the arguments the parse was given' \
+  "bot-instructions: usage=check --bogus" "$bi_first" "$status" 2
+
+# A spec copy that will not decode raises a render failure, not a spec one,
+# so this pins that the subject is still the spec copy.
+badspec_repo="$(bi_rendered_repo exit-spec-bytes)" || exit 1
+badspec="$BI_TMP/spec-not-utf8"
+rm -rf -- "${badspec:?}"
+mkdir -p "$badspec/schemas"
+printf 'metadata\xff\xfe\n' > "$badspec/SKILL.md"
+cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" "$badspec/schemas/renders.md"
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main check --repo "$badspec_repo" --spec "$badspec" ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'a spec copy that will not decode names the spec copy, not the repository' \
+  "bot-instructions: render=$badspec" "$bi_first" "$status" 2
+
+# The launcher's two runtime refusals, which no case reached before. Each runs
+# the launcher with a PATH that produces the condition.
+launcher="$BI_ROOT/skills/bot-instructions/scripts/bot-instructions"
+emptybin="$BI_TMP/no-python-bin"
+rm -rf -- "${emptybin:?}"
+mkdir -p "$emptybin"
+for tool in bash cat dirname pwd tr; do
+  real="$(command -v "$tool")" && ln -s "$real" "$emptybin/$tool"
+done
+status=0
+out="$( PATH="$emptybin" "$launcher" check 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'a missing python3 refuses under the python3 key' \
+  "bot-instructions: python3=missing" "$bi_first" "$status" 2
+
+oldbin="$BI_TMP/old-python-bin"
+rm -rf -- "${oldbin:?}"
+mkdir -p "$oldbin"
+for tool in bash cat dirname pwd tr; do
+  real="$(command -v "$tool")" && ln -s "$real" "$oldbin/$tool"
+done
+printf '#!/usr/bin/env bash\ncase "$1" in\n  -V) printf "Python 3.10.0\\n" ;;\n  *) exit 1 ;;\nesac\n' > "$oldbin/python3"
+chmod +x "$oldbin/python3"
+status=0
+out="$( PATH="$oldbin" "$launcher" check 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'an interpreter without tomllib refuses naming the version it found' \
+  "bot-instructions: python3=Python-3.10.0" "$bi_first" "$status" 2
+
 # A crash is 2 as well: the tool failed, nothing in the tree is wrong, and
 # Python's own exit for an uncaught exception is 1. A dispatched dependency
 # raising something outside the package's error family reaches the last
@@ -135,7 +188,10 @@ tree.open_tree = boom
 sys.exit(cli.main(["check", "--repo", sys.argv[1]]))
 PY
 )" && crash_status=0 || crash_status=$?
-if [ "$crash_status" -eq 2 ] && printf '%s\n' "$crash_out" | grep -q 'RuntimeError: dispatched dependency failed'; then
+crash_first="$(printf '%s\n' "$crash_out" | sed -n '1p')"
+if [ "$crash_status" -eq 2 ] \
+  && [ "$crash_first" = "bot-instructions: crashed=$repo" ] \
+  && printf '%s\n' "$crash_out" | grep -q 'RuntimeError: dispatched dependency failed'; then
   ok 'a crash outside the package error family exits 2 with its traceback'
 else
   bad 'a crash outside the package error family exits 2 with its traceback' \
