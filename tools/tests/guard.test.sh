@@ -228,6 +228,20 @@ run_guard
   && ok "a policy that is not a valid ERE reds with its own clause" \
   || bad "a policy that is not a valid ERE reds with its own clause" "rc=$RC out=$OUT"
 cp "$TMP/settings.orig" "$R/kendex.settings.toml"
+
+# The assignment moved out of [env] with its text intact: the settings loader
+# follows table headers, so this is no longer a policy the hook would apply
+# and the lane must not read the line as one. A line-matching reader would
+# find the same text and pass.
+awk '/^COMMAND_SAFETY_DENY_PATTERN = / { held = $0; next } { print }
+  END { print "[other]"; print held }' \
+  "$TMP/settings.orig" >"$R/kendex.settings.toml"
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-empty=kendex.settings.toml"* ]] \
+  && ok "an assignment outside [env] is not read as a policy" \
+  || bad "an assignment outside [env] is not read as a policy" "rc=$RC out=$OUT"
+cp "$TMP/settings.orig" "$R/kendex.settings.toml"
+
 git -C "$R" add kendex.settings.toml docs/authoring/command-safety.md
 run_guard
 [ "$RC" -eq 0 ] \

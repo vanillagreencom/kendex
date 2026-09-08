@@ -224,17 +224,33 @@ command_safety_policy() { # SOURCE_FILE — refuse|allow rows on stdin
     source "$guards/lib/common.sh"
     source "$guards/lib/settings.sh"
     gg_tmpdir
-    line=$(awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print; found++ }
-      END { exit(found == 1 ? 0 : 1) }' "$source") || { printf 'one-line\n'; exit 0; }
-    probe="$GG_TMP/kendex.settings.toml"
-    { printf '[env]\n'; printf '%s\n' "$line"; } >"$probe"
-    # Bind the extracted policy explicitly. An installed pre-commit turns on
-    # the loader's index mode, and a relative name would then be probed
-    # against the git index from a directory that is no repository. An
-    # explicit COMMIT_GUARDS_SETTINGS_FILE consults only itself, and an
-    # absolute path is never an index entry, so this reads the policy the
-    # lane extracted and nothing else. Child-local: the parent keeps its own
-    # environment, and the settings loader stays the only parser.
+    # A settings file is handed to the loader whole. gg_env_table is the
+    # stateful reader the hook itself goes through: it follows table headers,
+    # so an assignment outside [env] or one sitting inside a multiline string
+    # is not a policy, and it refuses a key assigned twice. Extracting a line
+    # first would put a second, weaker parser in front of that judge, and a
+    # deleted assignment with a lookalike line elsewhere in the file would
+    # read as a policy that is still there.
+    #
+    # The Markdown example carries its assignment inside prose, so there is no
+    # settings file to hand over and the line is extracted into one. That
+    # extraction is the whole of what this branch claims: exactly one line in
+    # the document spells the assignment.
+    case "$source" in
+      *.toml) probe="$PWD/$source" ;;
+      *)
+        line=$(awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print; found++ }
+          END { exit(found == 1 ? 0 : 1) }' "$source") || { printf 'one-line\n'; exit 0; }
+        probe="$GG_TMP/kendex.settings.toml"
+        { printf '[env]\n'; printf '%s\n' "$line"; } >"$probe"
+        ;;
+    esac
+    # Bind the source explicitly. An installed pre-commit turns on the
+    # loader's index mode, and a relative name would then be probed against
+    # the git index from a directory that is no repository. An explicit
+    # COMMIT_GUARDS_SETTINGS_FILE consults only itself, and an absolute path
+    # is never an index entry, so this reads the policy this lane means and
+    # nothing else. Child-local: the parent keeps its own environment.
     export COMMIT_GUARDS_SETTINGS_FILE="$probe"
     pattern=$(gg_setting COMMAND_SAFETY_DENY_PATTERN "") || { printf 'unreadable\n'; exit 0; }
     [ -n "$pattern" ] || { printf 'empty\n'; exit 0; }
@@ -261,7 +277,7 @@ command_safety_policy() { # SOURCE_FILE — refuse|allow rows on stdin
   while IFS='|' read -r verdict command; do
     [ -n "$verdict" ] || continue
     case "$verdict" in
-      one-line) say command-safety-lines "$source" ;;
+      one-line) say command-safety-lines "$source" ;; # the document branch only
       unreadable) say command-safety-unreadable "$source" ;;
       empty) say command-safety-empty "$source" ;;
       not-an-ere) say command-safety-not-an-ere "$source" ;;
