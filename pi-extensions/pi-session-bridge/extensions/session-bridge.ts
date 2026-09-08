@@ -47,7 +47,7 @@ const DEFAULT_MAX_LINE_BYTES = 1024 * 1024;
 const MAX_SKILL_EXPANSION_CACHE_SESSIONS = 100;
 
 const messages = {
-	loadedSkill: (name: string, args: string) => `skill_loaded=${name} invocation=${args}\nThe skill is already in this session's context.`,
+	loadedSkill: (name: string, args: string) => `skill_loaded=${name} invocation=${args.replace(/\s+/g, " ")}\nThe skill is already in this session's context.`,
 };
 
 /** Pi events the bridge republishes (after sanitizing) to subscribed clients. */

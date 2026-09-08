@@ -23,13 +23,13 @@ describe("skill expansion cache", () => {
 		expect(first.text).toContain(`<skill name="orch" location="${skillPath}">`);
 		expect(first.text).toContain("# Orchestration");
 
-		const second = expandLoadedSlashContent("/skill:orch start ABC-123", commands, readFileSync, {
+		const second = expandLoadedSlashContent("/skill:orch start\nABC-123\tready", commands, readFileSync, {
 			sessionId: "session-a",
 			skillExpansionCache: cache,
 		});
 		expect(second.expanded).toBe(true);
 		expect(second.kind).toBe("skill");
-		expect(second.text?.split("\n")[0]).toBe("skill_loaded=orch invocation=start ABC-123");
+		expect(second.text?.split("\n")[0]).toBe("skill_loaded=orch invocation=start ABC-123 ready");
 		expect(second.text).not.toContain("<skill");
 		expect(second.text).not.toContain("# Orchestration");
 

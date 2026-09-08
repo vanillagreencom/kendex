@@ -60,6 +60,7 @@ export function fakeCtx(dir: string): ExtensionContext {
 export async function shutdownBridge(handlers: Map<string, EventHandler>, dir: string): Promise<void> {
 	const shutdown = handlers.get("session_shutdown");
 	if (!shutdown) return;
+	handlers.delete("session_shutdown");
 	await shutdown({ reason: "test" }, fakeCtx(dir));
 }
 
