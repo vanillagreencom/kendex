@@ -170,8 +170,9 @@ Output protocol, which callers and this package's suites parse:
   verdict   preflight: clean (N changed file(s))          on a clean run
             preflight: N finding(s) across M changed file(s)   with findings
   refusal   preflight: key=value           first line, on stderr, exit 2
-            an English explanation follows on the next line and is not part
-            of the contract
+  not-run   preflight: not-run=lane        first line, per skipped lane
+            Both carry their English explanation on the next line, which is
+            for a person and is not part of the contract.
 The suites assert this whole protocol: the finding heads row by row through
 the harness, the verdict lines as exact text, and each refusal by its key,
 its value and the exit status.
@@ -1322,8 +1323,11 @@ fi
 # --- verdict -----------------------------------------------------------------
 SKIPPED=""
 LC_ALL=C sort -u "$TMP/skipped.tsv" >"$TMP/skipped.unique"
+# A lane that could not run says so with its own key line, the lane as the
+# value, and the reason underneath. Same shape as a refusal: the first line is
+# what a caller matches, the English is for a person.
 while IFS="$TAB" read -r lane reason; do
-  printf 'preflight: [%s] not run: %s\n' "$lane" "$reason"
+  printf 'preflight: not-run=%s\n%s\n' "$lane" "$reason"
   case ", $SKIPPED, " in
     *", $lane, "*) ;;
     *) SKIPPED="${SKIPPED:+$SKIPPED, }$lane" ;;
