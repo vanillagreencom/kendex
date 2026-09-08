@@ -29,33 +29,46 @@ function render(details: QolContextUsageMessageDetails): string {
 	return lines.join("\n");
 }
 
-test("renderer omits the transcript-risk block when risk is undefined", () => {
-	const output = render(baseDetails({ transcriptRisk: undefined }));
-	expect(output).not.toContain("Transcript risk");
-	expect(output).not.toContain("Transcript payload");
-});
+const renderRows = [
+	{
+		name: "absent transcript risk",
+		risk: undefined,
+		observe: (output: string) => ({ risk: output.includes("Transcript risk"), payload: output.includes("Transcript payload") }),
+		expected: { risk: false, payload: false },
+	},
+	{
+		name: "payload below the warning budget",
+		risk: { chars: 100_000, exceeded: false, messageCount: 50, threshold: 600_000 },
+		observe: (output: string) => ({ payload: output.includes("Transcript payload"), risk: /Transcript risk\b/.test(output) }),
+		expected: { payload: true, risk: false },
+	},
+	{
+		name: "payload above the warning budget",
+		risk: { chars: 700_000, exceeded: true, messageCount: 100, threshold: 600_000 },
+		observe: (output: string) => ({
+			boldWarning: output.includes("<b>Transcript risk</b>"),
+			budget: output.includes(">= 600,000 char warn budget"),
+			advice: output.includes("compact soon or raise"),
+		}),
+		expected: { boldWarning: true, budget: true, advice: true },
+	},
+	{
+		name: "serializer error stays on one line",
+		risk: { chars: 0, error: "TypeError:\nbad input", exceeded: false, messageCount: 50, threshold: 600_000 },
+		observe: (output: string) => ({
+			boldWarning: output.includes("<b>Transcript risk</b>"),
+			errorDetail: output.includes("risk calculation failed: TypeError: bad input"),
+		}),
+		expected: { boldWarning: true, errorDetail: true },
+	},
+];
 
-test("renderer shows a muted payload line when risk is present but below threshold", () => {
-	const output = render(baseDetails({
-		transcriptRisk: { chars: 100_000, exceeded: false, messageCount: 50, threshold: 600_000 },
-	}));
-	expect(output).toContain("Transcript payload");
-	expect(output).not.toMatch(/Transcript risk\b/);
-});
+if (renderRows.length === 0) throw new Error("Context usage renderer table is empty");
 
-test("renderer renders the bold transcript-risk warning when exceeded", () => {
-	const output = render(baseDetails({
-		transcriptRisk: { chars: 700_000, exceeded: true, messageCount: 100, threshold: 600_000 },
-	}));
-	expect(output).toContain("<b>Transcript risk</b>");
-	expect(output).toContain(">= 600,000 char warn budget");
-	expect(output).toContain("compact soon or raise");
-});
-
-test("renderer reports a sanitized error when transcript-risk calculation failed", () => {
-	const output = render(baseDetails({
-		transcriptRisk: { chars: 0, error: "TypeError: bad input", exceeded: false, messageCount: 50, threshold: 600_000 },
-	}));
-	expect(output).toContain("<b>Transcript risk</b>");
-	expect(output).toContain("risk calculation failed: TypeError: bad input");
-});
+for (const row of renderRows) {
+	test(row.name, () => {
+		expect.hasAssertions();
+		const output = render(baseDetails({ transcriptRisk: row.risk }));
+		expect(row.observe(output)).toEqual(row.expected);
+	});
+}
