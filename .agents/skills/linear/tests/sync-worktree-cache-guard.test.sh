@@ -22,6 +22,10 @@ source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LINEAR="$SKILL_DIR/scripts/linear.sh"
 assert_tmpdir TMP_BASE
+TMP_BASE="$(cd "$TMP_BASE" && pwd -P)" || {
+  printf 'FAIL: could not canonicalize the test scratch root\n' >&2
+  exit 1
+}
 
 CURL_LOG="$TMP_BASE/curl.log"
 
@@ -100,11 +104,8 @@ rc=0
 err="$(run_sync "$GUARD_ROOT/wt" 2>&1 >/dev/null)" || rc=$?
 
 assert_ne "sync into a clobbered worktree cache is refused" "$rc" 0
-assert_contains "the refusal is loud and greppable" "$err" "Sync refused"
-assert_contains "the refusal names the worktree" "$err" "$GUARD_ROOT/wt"
-assert_contains "the refusal names the expected symlink" \
-  "$err" ".cache -> $(cd "$GUARD_ROOT/main" && pwd -P)/.cache"
-assert_contains "the refusal names the repair command" "$err" "worktree fix-links"
+assert_contains "the refusal key names the worktree cache and expected cache" "$err" \
+  "Sync-refused: worktree=$GUARD_ROOT/wt cache=$GUARD_ROOT/wt/.cache expected=$(cd "$GUARD_ROOT/main" && pwd -P)/.cache"
 assert_not "no API call happens before the refusal" test -s "$CURL_LOG"
 assert_not "the refused sync created no worktree-local cache dir" \
   test -e "$GUARD_ROOT/wt/.cache/linear"
@@ -114,7 +115,8 @@ rc_full=0
 err_full="$(run_sync "$GUARD_ROOT/wt" --full 2>&1 >/dev/null)" || rc_full=$?
 
 assert_ne "--full is refused too" "$rc_full" 0
-assert_contains "the --full refusal is the same loud refusal" "$err_full" "Sync refused"
+assert_contains "the --full refusal has the same key and values" "$err_full" \
+  "Sync-refused: worktree=$GUARD_ROOT/wt cache=$GUARD_ROOT/wt/.cache expected=$(cd "$GUARD_ROOT/main" && pwd -P)/.cache"
 
 # --- control: bare sync on the healthy main checkout ---------------------------
 : >"$CURL_LOG"
@@ -152,7 +154,8 @@ rc_slash=0
 err_slash="$(run_sync "$SLASH_ROOT/wt" 2>&1 >/dev/null)" || rc_slash=$?
 
 assert_ne "'.cache//' is refused: the normalizer strips trailing slashes" "$rc_slash" 0
-assert_contains "the '.cache//' refusal is the same loud refusal" "$err_slash" "Sync refused"
+assert_contains "the '.cache//' refusal has the stable key" "$err_slash" \
+  "Sync-refused: worktree=$SLASH_ROOT/wt cache=$SLASH_ROOT/wt/.cache expected=$(cd "$SLASH_ROOT/main" && pwd -P)/.cache"
 
 # --- no worktree config at all: the issue's bare prescription still refuses ----
 BARE_ROOT="$TMP_BASE/bare"
@@ -161,4 +164,5 @@ rc_bare=0
 err_bare="$(run_sync "$BARE_ROOT/wt" 2>&1 >/dev/null)" || rc_bare=$?
 
 assert_ne "an unconfigured repo with a main .cache still refuses" "$rc_bare" 0
-assert_contains "the unconfigured refusal is the same loud refusal" "$err_bare" "Sync refused"
+assert_contains "the unconfigured refusal has the stable key" "$err_bare" \
+  "Sync-refused: worktree=$BARE_ROOT/wt cache=$BARE_ROOT/wt/.cache expected=$(cd "$BARE_ROOT/main" && pwd -P)/.cache"
