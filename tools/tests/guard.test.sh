@@ -461,6 +461,36 @@ else
 fi
 git -C "$R" checkout -q -- skills .agents
 
+echo "=== a caller carrying its own run scoping reds through the correlation lane ==="
+mkdir -p "$R/skills/github/scripts/commands"
+printf '#!/usr/bin/env bash\necho "def bucket: ."\n' >"$R/skills/github/scripts/commands/demo.sh"
+git -C "$R" add skills/github/scripts/commands/demo.sh
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"a caller carries its own scope_current_run or def bucket/def runid"* ]] \
+  && [[ "$OUT" == *"skills/github/scripts/commands/demo.sh:2:"* ]] \
+  && ok "a def bucket copy in a GitHub command reds the guard, naming the line" \
+  || bad "a def bucket copy in a GitHub command reds the guard, naming the line" "rc=$RC out=$OUT"
+if mutant_guard '/scope_current_run/d'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the correlation lane deleted the copy passes" \
+    || bad "control: with the correlation lane deleted the copy passes" "rc=$RC out=$OUT"
+else
+  bad "control: the correlation lane could not be deleted from a guard copy"
+fi
+git -C "$R" rm -q --cached skills/github/scripts/commands/demo.sh
+rm -rf -- "$R/skills/github"
+mkdir -p "$R/skills/orch/scripts"
+printf '#!/usr/bin/env bash\nscope_current_run() { :; }\n' >"$R/skills/orch/scripts/ci-wait"
+git -C "$R" add skills/orch/scripts/ci-wait
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"a caller carries its own scope_current_run or def bucket/def runid"* ]] \
+  && [[ "$OUT" == *"skills/orch/scripts/ci-wait:2:"* ]] \
+  && ok "a scope_current_run copy in orch ci-wait reds the guard, naming the line" \
+  || bad "a scope_current_run copy in orch ci-wait reds the guard, naming the line" "rc=$RC out=$OUT"
+git -C "$R" rm -q --cached skills/orch/scripts/ci-wait
+rm -rf -- "$R/skills/orch"
+
 printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
 run_guard
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"a render source changed without its tracked render"* ]] \

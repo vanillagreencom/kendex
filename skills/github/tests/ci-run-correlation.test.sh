@@ -1,187 +1,118 @@
 #!/usr/bin/env bash
-# `scope_current_run` is the one implementation for orch `ci-wait` and GitHub
-# `pr-merge.sh`. These tests pin its behavior and fail if either caller carries
-# a local copy.
+# scope_current_run, the one run-scoping for orch ci-wait and the GitHub
+# commands: which checks of a head survive the scoping (the current run of
+# each workflow ranked by when it last executed, tiebroken by run id, falling
+# back to run id alone while a run is pending or undated; run-less checks
+# deduped by name on startedAt; an aggregate status pointing at a superseded
+# run held EXPECTED) and which run ids head_runs then names. That no caller
+# carries its own copy of the function or of the jq taxonomy is tools/guard's
+# lane, not a row here.
+#
+# A row is `label|checks|scoped|runs`:
+#   checks  a fixture name (see checks_of): the head's checks as gh renders them
+#   scoped  every check the scoping keeps, in its order, as
+#           `<name>:<state>:<run id or ->` joined by `,`
+#   runs    head_runs over the scoped list, joined by `,`; `-` when empty
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-LIB="$REPO_ROOT/skills/github/scripts/lib/ci-run-correlation.sh"
-
+# shellcheck source=../scripts/lib/ci-run-correlation.sh
+source "$REPO_ROOT/skills/github/scripts/lib/ci-run-correlation.sh"
 PASS=0
 FAIL=0
-pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 
-[[ -f "$LIB" ]] || { echo "FATAL: shared library missing at $LIB"; exit 1; }
-# shellcheck source=../scripts/lib/ci-run-correlation.sh
-source "$LIB"
-
-echo "=== single implementation ==="
-
-for script in "$REPO_ROOT/skills/orch/scripts/ci-wait" \
-              "$REPO_ROOT/skills/github/scripts/commands/pr-merge.sh" \
-              "$REPO_ROOT/skills/github/scripts/commands/ci-classify-refusal.sh"; do
-  name="$(basename "$script")"
-  if grep -qE '^scope_current_run\(\)' "$script"; then
-    fail "$name defines its own scope_current_run (drift reintroduced — source the shared library instead)"
+assert_eq() {
+  local got="$1" want="$2" label="$3"
+  if [[ "$got" == "$want" ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$label"
   else
-    pass "$name does not define its own scope_current_run"
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        want: %s\n        got:  %s\n' "$label" "$want" "$got"
   fi
-  if grep -q 'ci-run-correlation.sh' "$script"; then
-    pass "$name sources the shared library"
-  else
-    fail "$name sources the shared library"
-  fi
-done
+}
 
-# The bucket taxonomy and run-id capture are exported as CI_RUN_JQ_DEFS; a
-# consumer inlining its own `def bucket`/`def runid` copy is the same drift one
-# layer down. This covers orch `ci-wait` as well as the GitHub commands. The
-# contract is these files as they are written: the scan reads the
-# spelling they use, not every spelling jq would accept.
-for script in "$REPO_ROOT/skills/orch/scripts/ci-wait" \
-              "$REPO_ROOT"/skills/github/scripts/commands/*.sh; do
-  name="$(basename "$script")"
-  if grep -qE 'def (bucket|runid):' "$script"; then
-    fail "$name inlines its own def bucket/def runid (prepend CI_RUN_JQ_DEFS from the shared library instead)"
-  else
-    pass "$name has no local def bucket/def runid copy"
-  fi
-done
+# --- the heads ----------------------------------------------------------------------
+R=https://x/actions/runs
+checks_of() {
+  case "$1" in
+    # an approval-gated repository dispatching an all-skipped no-op run after
+    # the substantive one, with the higher id
+    later-noop) printf '[{"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"%s/100/job/1"},{"name":"build","state":"SKIPPED","bucket":"skipping","workflow":"CI","startedAt":"2026-07-26T10:06:00Z","link":"%s/200/job/2"}]' "$R" "$R" ;;
+    # two checks with no run id at all, the same name, nine minutes apart
+    run-less) printf '[{"name":"external","state":"SUCCESS","bucket":"pass","workflow":"","startedAt":"2026-07-26T10:00:00Z","link":""},{"name":"external","state":"FAILURE","bucket":"fail","workflow":"","startedAt":"2026-07-26T10:09:00Z","link":""}]' ;;
+    two-workflows) printf '[{"name":"a","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"%s/100/job/1"},{"name":"b","state":"SUCCESS","bucket":"pass","workflow":"Guard","startedAt":"2026-07-26T10:00:00Z","link":"%s/50/job/2"}]' "$R" "$R" ;;
+    # a rerun keeps its original run id, so the successful rerun has the
+    # lower id and the later startedAt beside a cancelled run
+    rerun) printf '[{"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T12:22:11Z","link":"%s/30201726860/job/1"},{"name":"CI Gate Publisher","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T12:23:26Z","link":"%s/30201726860/job/2"},{"name":"CI Required","state":"SUCCESS","bucket":"pass","workflow":"","startedAt":"2026-07-26T12:28:48Z","link":"%s/30201726860"},{"name":"CI Gate Publisher","state":"FAILURE","bucket":"fail","workflow":"CI","startedAt":"2026-07-26T12:21:56Z","link":"%s/30201902682/job/9"},{"name":"build","state":"CANCELLED","bucket":"cancel","workflow":"CI","startedAt":"2026-07-26T12:21:45Z","link":"%s/30201902682/job/10"}]' "$R" "$R" "$R" "$R" "$R" ;;
+    # a newer run still queued carries Go's zero timestamp
+    queued-newer) printf '[{"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"%s/100/job/1"},{"name":"build","state":"QUEUED","bucket":"pending","workflow":"CI","startedAt":"0001-01-01T00:00:00Z","link":"%s/200/job/2"}]' "$R" "$R" ;;
+    # a newer run still pending, dated earlier than the finished one
+    pending-earlier) printf '[{"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"%s/100/job/1"},{"name":"build","state":"IN_PROGRESS","bucket":"pending","workflow":"CI","startedAt":"2026-07-26T09:00:00Z","link":"%s/200/job/2"}]' "$R" "$R" ;;
+    # a finished newer run whose timestamp gh never filled in
+    undated-newer) printf '[{"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"%s/100/job/1"},{"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"0001-01-01T00:00:00Z","link":"%s/200/job/2"}]' "$R" "$R" ;;
+    later-failure) printf '[{"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"%s/100/job/1"},{"name":"build","state":"FAILURE","bucket":"fail","workflow":"CI","startedAt":"2026-07-26T10:30:00Z","link":"%s/200/job/2"}]' "$R" "$R" ;;
+    # an aggregate status still pointing at the run a later one superseded
+    stale-aggregate) printf '[{"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"%s/100/job/1"},{"name":"CI Required","state":"SUCCESS","bucket":"pass","workflow":"","startedAt":"2026-07-26T10:01:00Z","link":"%s/100"},{"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:30:00Z","link":"%s/200/job/2"}]' "$R" "$R" "$R" ;;
+    # the same aggregate, the later run having failed
+    stale-aggregate-failed) printf '[{"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"%s/100/job/1"},{"name":"CI Required","state":"SUCCESS","bucket":"pass","workflow":"","startedAt":"2026-07-26T10:01:00Z","link":"%s/100"},{"name":"build","state":"FAILURE","bucket":"fail","workflow":"CI","startedAt":"2026-07-26T10:30:00Z","link":"%s/200/job/2"}]' "$R" "$R" "$R" ;;
+    # a custom commit status linking a run of its own beside the workflow's
+    status-run) printf '[{"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"%s/100/job/1"},{"name":"CI Required","state":"FAILURE","bucket":"fail","workflow":"","link":"%s/200"}]' "$R" "$R" ;;
+    # a workflow whose only run is an approval no-op
+    all-skipped) printf '[{"name":"build","state":"SKIPPED","bucket":"skipping","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"%s/100/job/1"}]' "$R" ;;
+    # a custom status linking a job (not the run) of the superseded run
+    status-job-link) printf '[{"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"%s/100/job/1"},{"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:30:00Z","link":"%s/200/job/2"},{"name":"CI Required","state":"SUCCESS","bucket":"pass","workflow":"","startedAt":"2026-07-26T10:01:00Z","link":"%s/100/job/9"}]' "$R" "$R" "$R" ;;
+    # a run-less check beside a run-linked one
+    runless-beside-job) printf '[{"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"%s/100/job/1"},{"name":"external","state":"SUCCESS","bucket":"pass","workflow":"","startedAt":"2026-07-26T10:05:00Z","link":""}]' "$R" ;;
+    *) echo "UNKNOWN-CHECKS: $1" >&2; exit 2 ;;
+  esac
+}
 
-echo "=== scoping behaviour ==="
+run() {
+  local out
+  out="$(checks_of "$1" | scope_current_run)"
+  printf 'scoped=%s runs=%s' \
+    "$(jq -r '[.[] | .name + ":" + .state + ":" + (((.link // "") | capture("/runs/(?<r>[0-9]+)")? | .r) // "-")] | join(",")' <<<"$out")" \
+    "$(jq -r "$CI_RUN_JQ_DEFS"'head_runs | if length == 0 then "-" else join(",") end' <<<"$out")"
+}
 
-run_scope() { scope_current_run <<<"$1"; }
-names_of() { jq -r '[.[] | .name] | sort | join(",")' <<<"$1"; }
+run_table() {
+  local title="$1" rows="$2" label checks scoped runs got row field before=$((PASS + FAIL))
+  echo "=== $title ==="
+  while IFS= read -r row; do
+    [[ "$row" != "" ]] || continue
+    IFS='|' read -r label checks scoped runs <<<"$row"
+    for field in "$label" "$checks" "$scoped" "$runs"; do
+      [[ "$field" != "" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+    done
+    got="$(run "$checks")"
+    # A rendering aid for writing rows; the run is refused after the loop.
+    if [[ "${GITHUB_TABLE_PROBE:-}" == 1 ]]; then
+      printf '%s => %s\n' "$label" "$got"
+      continue
+    fi
+    assert_eq "$got" "scoped=$scoped runs=$runs" "$label"
+  done <<<"$rows"
+  [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
+}
 
-# An approval-gated repo can dispatch an all-SKIPPED no-op run AFTER the
-# substantive one. The newer run must not win just because its id is higher.
-NOOP='[
- {"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"https://x/actions/runs/100/job/1"},
- {"name":"build","state":"SKIPPED","bucket":"skipping","workflow":"CI","startedAt":"2026-07-26T10:06:00Z","link":"https://x/actions/runs/200/job/2"}
-]'
-OUT="$(run_scope "$NOOP")"
-if [[ "$(jq -r '.[0].link' <<<"$OUT")" == *"/runs/100/"* ]] && [[ "$(jq 'length' <<<"$OUT")" == 1 ]]; then
-  pass "a later all-skipped run does not supersede the substantive one"
-else
-  fail "a later all-skipped run does not supersede the substantive one (got $OUT)"
-fi
+run_table "the run scoping" "\
+a later all-skipped run does not supersede the substantive one|later-noop|build:SUCCESS:100|100
+run-less checks dedupe by name, the latest startedAt winning|run-less|external:FAILURE:-|-
+distinct workflows are never collapsed into one another|two-workflows|a:SUCCESS:100,b:SUCCESS:50|50,100
+a rerun on its original, lower id outranks a cancelled higher one by execution time, and the aggregate it backs stays green|rerun|build:SUCCESS:30201726860,CI Gate Publisher:SUCCESS:30201726860,CI Required:SUCCESS:30201726860|30201726860
+a queued newer run with no timestamp still wins, by run id|queued-newer|build:QUEUED:200|200
+a pending newer run dated before the finished one still wins, by run id|pending-earlier|build:IN_PROGRESS:200|200
+a finished newer run gh left undated still wins, by run id|undated-newer|build:SUCCESS:200|200
+a later failing run stays terminal|later-failure|build:FAILURE:200|200
+an aggregate pointing at a superseded run is held EXPECTED and its run leaves head_runs|stale-aggregate|build:SUCCESS:200,CI Required:EXPECTED:100|200
+an aggregate is not held behind a later run that failed: the failure stands beside it|stale-aggregate-failed|build:FAILURE:200,CI Required:SUCCESS:100|100,200
+a status linking a run of its own names it beside the workflow's|status-run|build:SUCCESS:100,CI Required:FAILURE:200|100,200
+the only run of a workflow being an all-skipped no-op still scopes to it|all-skipped|build:SKIPPED:100|100
+a status linking a job of a superseded run is not an aggregate and is never held|status-job-link|build:SUCCESS:200,CI Required:SUCCESS:100|100,200
+a run-less check is kept after the run's own, never ahead of it|runless-beside-job|build:SUCCESS:100,external:SUCCESS:-|100
+"
 
-# Checks with no parseable run id are always kept, deduped by name on startedAt.
-NORUN='[
- {"name":"external","state":"SUCCESS","bucket":"pass","workflow":"","startedAt":"2026-07-26T10:00:00Z","link":""},
- {"name":"external","state":"FAILURE","bucket":"fail","workflow":"","startedAt":"2026-07-26T10:09:00Z","link":""}
-]'
-OUT="$(run_scope "$NORUN")"
-if [[ "$(jq 'length' <<<"$OUT")" == 1 ]] && [[ "$(jq -r '.[0].state' <<<"$OUT")" == "FAILURE" ]]; then
-  pass "run-less checks dedupe by name keeping the latest startedAt"
-else
-  fail "run-less checks dedupe by name keeping the latest startedAt (got $OUT)"
-fi
-
-# Distinct workflows are never collapsed into one another.
-TWO='[
- {"name":"a","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"https://x/actions/runs/100/job/1"},
- {"name":"b","state":"SUCCESS","bucket":"pass","workflow":"Guard","startedAt":"2026-07-26T10:00:00Z","link":"https://x/actions/runs/50/job/2"}
-]'
-OUT="$(run_scope "$TWO")"
-[[ "$(names_of "$OUT")" == "a,b" ]] \
-  && pass "distinct workflows are both preserved" \
-  || fail "distinct workflows are both preserved (got $(names_of "$OUT"))"
-
-echo "=== kendex#876 reported shape ==="
-
-# A rerun keeps its original run id. The fixture gives the successful rerun a
-# later `startedAt` than a canceled run with a higher id. Ranking by execution
-# time must select the rerun.
-DUP='[
- {"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T12:22:11Z","link":"https://x/actions/runs/30201726860/job/1"},
- {"name":"CI Gate Publisher","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T12:23:26Z","link":"https://x/actions/runs/30201726860/job/2"},
- {"name":"CI Required","state":"SUCCESS","bucket":"pass","workflow":"","startedAt":"2026-07-26T12:28:48Z","link":"https://x/actions/runs/30201726860"},
- {"name":"CI Gate Publisher","state":"FAILURE","bucket":"fail","workflow":"CI","startedAt":"2026-07-26T12:21:56Z","link":"https://x/actions/runs/30201902682/job/9"},
- {"name":"build","state":"CANCELLED","bucket":"cancel","workflow":"CI","startedAt":"2026-07-26T12:21:45Z","link":"https://x/actions/runs/30201902682/job/10"}
-]'
-OUT="$(run_scope "$DUP")"
-if jq -e '[.[] | select(.state == "FAILURE" or .state == "CANCELLED")] | length == 0' >/dev/null <<<"$OUT"; then
-  pass "the cancelled duplicate run's failures are scoped out (#876)"
-else
-  fail "the cancelled duplicate run's failures are scoped out (#876) (got $OUT)"
-fi
-if jq -e '[.[] | select(.name == "CI Required" and .state == "SUCCESS")] | length == 1' >/dev/null <<<"$OUT"; then
-  pass "the required aggregate stays green and is not rewritten"
-else
-  fail "the required aggregate stays green and is not rewritten (got $OUT)"
-fi
-if jq -e 'all(.[]; (.link | test("/runs/30201902682/") | not))' >/dev/null <<<"$OUT"; then
-  pass "no check from the cancelled run reaches the merge gate"
-else
-  fail "no check from the cancelled run reaches the merge gate (got $OUT)"
-fi
-
-echo "=== rank ordering guardrails ==="
-
-# Fail-closed must survive the switch away from run-id order. A newer run that
-# is still QUEUED has no usable timestamp; it must NOT lose to a completed older
-# run, or a merge could proceed while replacement work is in flight.
-QUEUED='[
- {"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"https://x/actions/runs/100/job/1"},
- {"name":"build","state":"QUEUED","bucket":"pending","workflow":"CI","startedAt":"0001-01-01T00:00:00Z","link":"https://x/actions/runs/200/job/2"}
-]'
-OUT="$(run_scope "$QUEUED")"
-if [[ "$(jq -r '.[0].link' <<<"$OUT")" == *"/runs/200/"* ]] && [[ "$(jq 'length' <<<"$OUT")" == 1 ]]; then
-  pass "a queued newer run with no timestamp still wins (run-id fallback)"
-else
-  fail "a queued newer run with no timestamp still wins (run-id fallback) (got $OUT)"
-fi
-
-# A genuinely later run that failed is still a failure — time ordering must not
-# become a way for an older green run to mask a real failure.
-LATERFAIL='[
- {"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"https://x/actions/runs/100/job/1"},
- {"name":"build","state":"FAILURE","bucket":"fail","workflow":"CI","startedAt":"2026-07-26T10:30:00Z","link":"https://x/actions/runs/200/job/2"}
-]'
-OUT="$(run_scope "$LATERFAIL")"
-if [[ "$(jq -r '.[0].state' <<<"$OUT")" == "FAILURE" ]] && [[ "$(jq 'length' <<<"$OUT")" == 1 ]]; then
-  pass "a later failing run stays terminal"
-else
-  fail "a later failing run stays terminal (got $OUT)"
-fi
-
-# The stale-aggregate rewrite follows the same ordering as run selection.
-STALE='[
- {"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"https://x/actions/runs/100/job/1"},
- {"name":"CI Required","state":"SUCCESS","bucket":"pass","workflow":"","startedAt":"2026-07-26T10:01:00Z","link":"https://x/actions/runs/100"},
- {"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:30:00Z","link":"https://x/actions/runs/200/job/2"}
-]'
-OUT="$(run_scope "$STALE")"
-if jq -e '[.[] | select(.name == "CI Required" and .state == "EXPECTED")] | length == 1' >/dev/null <<<"$OUT"; then
-  pass "an aggregate pointing at a superseded run is held pending"
-else
-  fail "an aggregate pointing at a superseded run is held pending (got $OUT)"
-fi
-if [[ "$(jq -r "$CI_RUN_JQ_DEFS"'head_runs | join(",")' <<<"$OUT")" == "200" ]]; then
-  pass "a status held EXPECTED keeps its retired run out of head_runs"
-else
-  fail "a status held EXPECTED keeps its retired run out of head_runs (got $(jq -c "$CI_RUN_JQ_DEFS"'head_runs' <<<"$OUT"))"
-fi
-
-echo "=== head_runs run scope ==="
-
-# A custom commit status linking a run of its own is first-class scope: on a
-# mixed head its run id appears BESIDE the workflow's, so a status failure's
-# fail: line never cites a run head-run: omits.
-MIXED='[
- {"name":"build","state":"SUCCESS","bucket":"pass","workflow":"CI","startedAt":"2026-07-26T10:00:00Z","link":"https://x/actions/runs/100/job/1"},
- {"name":"CI Required","state":"FAILURE","bucket":"fail","workflow":"","link":"https://x/actions/runs/200"}
-]'
-OUT="$(run_scope "$MIXED")"
-if [[ "$(jq -r "$CI_RUN_JQ_DEFS"'head_runs | join(",")' <<<"$OUT")" == "100,200" ]]; then
-  pass "a mixed head names the status-linked run beside the workflow run"
-else
-  fail "a mixed head names the status-linked run beside the workflow run (got $(jq -c "$CI_RUN_JQ_DEFS"'head_runs' <<<"$OUT"))"
-fi
-
-echo
-printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
