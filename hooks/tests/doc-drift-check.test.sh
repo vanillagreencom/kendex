@@ -315,7 +315,7 @@ a markdown-only change names nothing|repo|md|-
 an untracked new file is a change, named by its path|repo|new|crates/core/AGENTS.md(crates/core/src/added.rs),docs/architecture/core.md(crates/core/src/added.rs)
 a staged new file is a change, named by its path|repo|new stage|crates/core/AGENTS.md(crates/core/src/added.rs),docs/architecture/core.md(crates/core/src/added.rs)
 code under no doc at all names nothing|repo|ui top|-
-the whole repository is judged from a subdirectory|repo subdir|code|$CORE_DOCS
+an untracked new file from a subdirectory is named by its repository path|repo subdir|new|crates/core/AGENTS.md(crates/core/src/added.rs),docs/architecture/core.md(crates/core/src/added.rs)
 an ignored path is not a change|repo ignore-target|target|-
 a trailing-slash entry covers the directory|repo ui-topic|ui|docs/architecture/ui.md(ui/src/app.ts)
 a comma-joined entry covers the directory|repo ui-topic|lib|docs/architecture/ui.md(ui/lib/c.ts)
