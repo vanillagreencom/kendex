@@ -231,6 +231,10 @@ parse_index() {
     | "notice=index-row-invalid path=\($f) line=\(.key + 1) cells=\(.value | cells | length)\nINDEX row needs at least 8 columns and was skipped: \(.value)"
   ' "$INDEX_FILE" >&2
   jq -R -s -c --arg dir "$DECISIONS_DIR" '
+    def cells:
+      split("|")
+      | if .[0] == "" then .[1:] else . end
+      | if .[-1] == "" then .[:-1] else . end;
     def cell_path:
       . as $cell
       | ( [ $cell | scan("\\(([^)]+)\\)") ]
@@ -239,11 +243,11 @@ parse_index() {
       | if length > 0 then .[0][0] else "" end;
     [ split("\n")[]
       | select(test("^\\| [0-9]{4}-"))
-      | split("|")
-      | select(length >= 9)
+      | cells
+      | select(length >= 8)
       | map(sub("^\\s+"; "") | sub("\\s+$"; ""))
-      | { id: .[2], research: .[3], decision: .[4], rationale: .[5],
-          status: .[7], path: (.[8] | cell_path) }
+      | { id: .[1], research: .[2], decision: .[3], rationale: .[4],
+          status: .[6], path: (.[7] | cell_path) }
       | .path |= (if . == "" then "" else $dir + "/" + . end)
     ]' "$INDEX_FILE"
 }
