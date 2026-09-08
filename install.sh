@@ -28,7 +28,7 @@ version="latest"
 while [ $# -gt 0 ]; do
   case "$1" in
     --version)
-      [ "$#" -ge 2 ] || { message missing-option-value --version "A version must follow --version." >&2; exit 2; }
+      [ "$#" -ge 2 ] && [ -n "$2" ] || { message missing-option-value --version "A version must follow --version." >&2; exit 2; }
       version="$2"; shift 2 ;;
     -h|--help)
       message usage install.sh "Usage: install.sh [--version vX.Y.Z]"
@@ -114,8 +114,9 @@ install_cli() {
     :
   else
     rc=$?
-    message command-download-failed "$rc" "Could not download kendex-$target from $base." >&2
-    [ "$rc" -eq 22 ] && message release-asset-unavailable "$target" "Release $version may have no build for this target (see https://github.com/$repo/releases)." >&2
+    message command-download-failed "$rc" "The kendex command could not be downloaded." >&2
+    message command-download-url "$base/kendex-$target" "The command download used this URL." >&2
+    [ "$rc" -eq 22 ] && message release-http-error "$target" "The release server returned an HTTP error for this target." >&2
     exit 1
   fi
   chmod +x "$work/kendex"
@@ -265,7 +266,6 @@ fi
 
 case ":$PATH:" in
   *":$bindir:"*) ;;
-  *) message path-missing "$bindir" "This directory is not on your PATH. Add it, for example:"
-     echo "  echo 'export PATH=\"$bindir:\$PATH\"' >> ~/.profile" ;;
+  *) message path-missing "$bindir" "Add this directory to PATH in your shell profile." ;;
 esac
 "$bindir/kendex" --version || true

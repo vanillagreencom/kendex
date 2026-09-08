@@ -1,1 +1,1 @@
-- Installer notices and errors start with stable keys and values, so automation does not need to parse English explanations.
+- Installer notices and errors start with stable keys and values. Invalid version options report option errors before a download starts.

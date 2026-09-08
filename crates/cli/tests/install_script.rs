@@ -192,8 +192,8 @@ fn release_matrix_and_feed_name_the_same_targets() {
     assert_eq!(lanes, feed);
 }
 
-/// An HTTP asset failure names the release target; a connection failure
-/// retains its own exit code without blaming a missing release build.
+/// An HTTP failure names the release target; a connection failure
+/// retains its own exit code without claiming an HTTP response.
 #[test]
 fn download_failures_report_their_exit_code_and_release_target() {
     for (exit, target) in [(22, Some("x86_64-apple-darwin")), (7, None)] {
@@ -207,7 +207,7 @@ fn download_failures_report_their_exit_code_and_release_target() {
             value(&output.stderr, "command-download-failed"),
             Some(exit.to_string().as_str())
         );
-        assert_eq!(value(&output.stderr, "release-asset-unavailable"), target);
+        assert_eq!(value(&output.stderr, "release-http-error"), target);
         assert_eq!(value(&output.stdout, "command-installed"), None);
     }
 }
@@ -219,6 +219,24 @@ fn installer_options_report_a_stable_key_and_value() {
     for (args, code, key, expected) in [
         (&["--unknown"][..], 2, "unknown-option", "--unknown"),
         (&["--version"][..], 2, "missing-option-value", "--version"),
+        (
+            &["--version", ""][..],
+            2,
+            "missing-option-value",
+            "--version",
+        ),
+        (
+            &["--unknown\\tail"][..],
+            2,
+            "unknown-option",
+            "--unknown\\\\tail",
+        ),
+        (
+            &["--unknown\ninstall.sh: command-installed=/forged"][..],
+            2,
+            "unknown-option",
+            "--unknown\\ninstall.sh: command-installed=/forged",
+        ),
         (&["--help"][..], 0, "usage", "install.sh"),
     ] {
         let output = Command::new("sh")
@@ -233,6 +251,7 @@ fn installer_options_report_a_stable_key_and_value() {
             &output.stderr
         };
         assert_eq!(value(channel, key), Some(expected), "{output:?}");
+        assert_eq!(value(channel, "command-installed"), None, "{output:?}");
         assert!(
             std::str::from_utf8(channel)
                 .expect("message is UTF-8")
