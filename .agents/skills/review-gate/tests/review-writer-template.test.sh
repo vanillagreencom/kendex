@@ -187,7 +187,7 @@ _relay_once() { # shell-flags, step-path, read_only, ref, codes, event, headers,
   set -e
   RELAY_CALLS="$(cat "$RELAY_LOG")"
   RELAY_SLEEPS="$(cat "$SLEEP_LOG")"
-  RELAY_BOUNDS="$(sort -u "$TIMEOUT_LOG" | paste -sd, -)"
+  RELAY_BOUNDS="$(paste -sd, - < "$TIMEOUT_LOG")"
   # The step announces the CLAMPED wait and its JITTER separately and sleeps
   # their sum. Split them back out. The clamp is the whole deterministic
   # computation — it is what every case asserts and what the two shells are
@@ -343,9 +343,10 @@ ref_of() { # NAME -> the github.workflow_ref the step derives its file from
 #   wait     the clamped wait the step announced (the jitter is asserted
 #            against the recorded sleep per run in relay_run), or none
 #   sleeps   sleep calls the stub recorded
-#   bound    the distinct per-attempt bounds the timeout shim was handed, or
-#            none: the shim passes through, so the bound is proven here and
-#            the timeout-killed shape is modelled by an exit of 124
+#   bound    the per-attempt bound the timeout shim was handed, one per
+#            dispatch in order, or none: the shim passes through, so the
+#            bound is proven here and the timeout-killed shape is modelled
+#            by an exit of 124
 #   note     the annotation level(s) the step emitted: warning, error,
 #            warning+error, or none
 #   says~<t> whether the output carries <t>, `+` read as a space: the one
@@ -454,7 +455,7 @@ relay_battery() { # step script, label
   # arithmetic.
   for row in \
     "a failure with NO response retries in 5s and names the cause|0|main|1 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 says~no+HTTP+response,+gh+exit+1=true" \
-    "a dispatch killed by its own per-attempt bound retries in 5s and is reported as a timeout|0|main|124 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml bound=60 wait=5 sleeps=1 says~did+not+respond+within=true" \
+    "a dispatch killed by its own per-attempt bound retries in 5s and is reported as a timeout|0|main|124 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml bound=60,60 wait=5 sleeps=1 says~did+not+respond+within=true" \
     "retry-after is honored (secondary limit) and the warning names the status|0|main|1 0||403-retry-77|||rc=0 wait=77 sleeps=1 says~HTTP+403,+gh+exit+1=true" \
     "a window beyond the job's budget is NOT slept and the second attempt is skipped|0|main|1 0||403-retry-4000|||rc=0 calls=dispatch:review-gate-writer.yml wait=none sleeps=0 note=warning says~beyond+this+job's+budget=true" \
     "an EXHAUSTED window honors its reset epoch|0|main|1 0||403-spent-reset+90|||rc=0 wait=90 sleeps=1" \
