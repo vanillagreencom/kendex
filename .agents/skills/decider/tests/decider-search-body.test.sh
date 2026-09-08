@@ -55,12 +55,14 @@ record_row() {
 
 evaluate_search_rows() {
   local script="$1" mode="$2" only_row="${3:-}" name query projection expected setup
-  local projected projection_rc actual
+  local projected projection_rc actual guard
+  local executed_rows=0
   table_failures=""
   while IFS='~' read -r name query projection expected setup; do
     if [[ -n "$only_row" && "$name" != "$only_row" ]]; then
       continue
     fi
+    executed_rows=$((executed_rows + 1))
     if [[ "$setup" == stray ]]; then
       printf 'hermetic stray note not linked from INDEX\n' >"$REPO/docs/decisions/STRAY.md"
     fi
@@ -86,7 +88,7 @@ evaluate_search_rows() {
     set -e
     actual="$rc~$projection_rc~$projected"
     record_row "$mode" "$name" "$actual" "0~0~$expected"
-  done <<'CASES'
+  done <<'SEARCH_CASES'
 body-hermetic~hermetic~ids~["D027"]~none
 body-clippy~clippy~ids~["D046"]~none
 summary-body-score~forgery~ids-scores~D047:4.5,D027:0.5~none
@@ -96,7 +98,17 @@ and-across-decisions-miss~hermetic gating~ids~[]~none
 regex-bodies~hermetic|clippy~sorted-ids~["D027","D046"]~none
 keyword-miss~zzz-absent-token~ids~[]~none
 unindexed-file~hermetic~ids~["D027"]~stray
-CASES
+SEARCH_CASES
+  if [[ "$executed_rows" -eq 0 ]]; then
+    guard="body-search table executed no rows"
+    [[ -n "$only_row" ]] && guard="body-search table selected no row: $only_row"
+    if [[ "$mode" == normal ]]; then
+      fail "$guard"
+    else
+      printf 'TABLE_GUARD:%s' "$guard"
+      return 1
+    fi
+  fi
   if [[ "$mode" == control ]]; then
     printf '%s' "$table_failures"
   fi
@@ -112,6 +124,24 @@ if [[ "$failures" == *'|summary-body-score|'* ]]; then
   pass "missing score sort fails the ranking row"
 else
   fail "missing score sort did not fail the ranking row"
+fi
+
+if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
+  search_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-search-table/decider/tests/decider-search-body.test.sh" SEARCH_CASES)"
+  if decider_test_fails_with "$search_table_mutant" "body-search table executed no rows"; then
+    pass "an empty body-search table fails its row-count guard"
+  else
+    fail "an empty body-search table missed its row-count guard ($DECIDER_CONTROL_DETAIL)"
+  fi
+  set +e
+  selection_output="$(evaluate_search_rows "$ordering_mutant" control unknown-search-row 2>&1)"
+  selection_rc=$?
+  set -e
+  if [[ "$selection_rc" -ne 0 && "$selection_output" == *"TABLE_GUARD:body-search table selected no row: unknown-search-row"* ]]; then
+    pass "an unknown body-search row fails its selection guard"
+  else
+    fail "an unknown body-search row missed its selection guard"
+  fi
 fi
 
 echo

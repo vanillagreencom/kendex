@@ -84,12 +84,14 @@ record_row() {
 evaluate_directory_rows() {
   local script="$1" mode="$2" only_row="${3:-}" name state action argument expected_status
   local stdout_rule expected_stdout stderr_rule needle_one needle_two actual_stdout actual_stderr
-  local projected projection_rc actual expected
+  local projected projection_rc actual expected guard
+  local executed_rows=0
   table_failures=""
   while IFS='~' read -r name state action argument expected_status stdout_rule expected_stdout stderr_rule needle_one needle_two; do
     if [[ -n "$only_row" && "$name" != "$only_row" ]]; then
       continue
     fi
+    executed_rows=$((executed_rows + 1))
     case "$action" in
       issue) run_decisions "$script" "$state" search --issue "$argument" ;;
       keyword) run_decisions "$script" "$state" search "$argument" ;;
@@ -147,7 +149,7 @@ evaluate_directory_rows() {
 
     actual="$rc~$actual_stdout~$actual_stderr"
     record_row "$mode" "$name" "$actual" "$expected_status~$expected_stdout~$expected"
-  done <<'CASES'
+  done <<'DIRECTORY_CASES'
 configured-absent-issue~configured-absent~issue~PROJ-557~0~exact~[]~both~docs/decisions~not present
 configured-absent-keyword~configured-absent~keyword~ffi error handling~0~exact~[]~contains~not present~
 configured-absent-list~configured-absent~list~~0~exact~[]~contains~not present~
@@ -161,7 +163,17 @@ existing-keyword-hit~existing~keyword~redis~0~ids~["D001"]~ignore~~
 existing-next-id~existing~next-id~~0~exact~D002~ignore~~
 configured-file-search~configured-file~issue~PROJ-557~1~exact~~contains~is not a directory~
 configured-file-next-id~configured-file~next-id~~1~ignore~~contains~is not a directory~
-CASES
+DIRECTORY_CASES
+  if [[ "$executed_rows" -eq 0 ]]; then
+    guard="directory table executed no rows"
+    [[ -n "$only_row" ]] && guard="directory table selected no row: $only_row"
+    if [[ "$mode" == normal ]]; then
+      fail "$guard"
+    else
+      printf 'TABLE_GUARD:%s' "$guard"
+      return 1
+    fi
+  fi
   if [[ "$mode" == control ]]; then
     printf '%s' "$table_failures"
   fi
@@ -191,6 +203,24 @@ if [[ "$failures" == *'|configured-absent-keyword|'* ]]; then
   pass "absent keyword-search failure fails its row"
 else
   fail "absent keyword-search failure did not fail its row"
+fi
+
+if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
+  directory_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-directory-table/decider/tests/decider-search-missing-dir.test.sh" DIRECTORY_CASES)"
+  if decider_test_fails_with "$directory_table_mutant" "directory table executed no rows"; then
+    pass "an empty directory table fails its row-count guard"
+  else
+    fail "an empty directory table missed its row-count guard ($DECIDER_CONTROL_DETAIL)"
+  fi
+  set +e
+  selection_output="$(evaluate_directory_rows "$status_mutant" control unknown-directory-row 2>&1)"
+  selection_rc=$?
+  set -e
+  if [[ "$selection_rc" -ne 0 && "$selection_output" == *"TABLE_GUARD:directory table selected no row: unknown-directory-row"* ]]; then
+    pass "an unknown directory row fails its selection guard"
+  else
+    fail "an unknown directory row missed its selection guard"
+  fi
 fi
 
 echo

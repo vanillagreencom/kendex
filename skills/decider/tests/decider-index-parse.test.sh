@@ -80,9 +80,14 @@ record_row() {
 }
 
 evaluate_link_rows() {
-  local script="$1" mode="$2" name kind argument expected actual
+  local script="$1" mode="$2" only_row="${3:-}" name kind argument expected actual guard
+  local executed_rows=0
   table_failures=""
   while IFS='~' read -r name kind argument expected; do
+    if [[ -n "$only_row" && "$name" != "$only_row" ]]; then
+      continue
+    fi
+    executed_rows=$((executed_rows + 1))
     run_decisions "$script" "$REPO" "$REPO/docs/decisions" "${kind%%-*}" "$argument"
     case "$kind" in
       search-ids)
@@ -108,7 +113,7 @@ evaluate_link_rows() {
     fi
     actual="$rc~$projection_rc~$projected"
     record_row "$mode" "$name" "$actual" "0~0~$expected"
-  done <<'CASES'
+  done <<'LINK_CASES'
 md-link-body~search-ids~tokenone~D001
 backtick-body~search-ids~tokentwo~D002
 bare-body~search-ids~tokenthree~D003
@@ -118,16 +123,31 @@ date-enrichment~get-date~D001~2026-01-01
 date-unspaced~get-date~D003~2026-01-03
 empty-cell-path~get-empty-path~D004~<empty>
 empty-cell-date~get-date~D004~unknown
-CASES
+LINK_CASES
+  if [[ "$executed_rows" -eq 0 ]]; then
+    guard="link table executed no rows"
+    [[ -n "$only_row" ]] && guard="link table selected no row: $only_row"
+    if [[ "$mode" == normal ]]; then
+      fail "$guard"
+    else
+      printf 'TABLE_GUARD:%s' "$guard"
+      return 1
+    fi
+  fi
   if [[ "$mode" == control ]]; then
     printf '%s' "$table_failures"
   fi
 }
 
 evaluate_diagnostic_rows() {
-  local script="$1" mode="$2" name fixture projection expected actual first second
+  local script="$1" mode="$2" only_row="${3:-}" name fixture projection expected actual first second guard
+  local executed_rows=0
   table_failures=""
   while IFS='~' read -r name fixture projection expected; do
+    if [[ -n "$only_row" && "$name" != "$only_row" ]]; then
+      continue
+    fi
+    executed_rows=$((executed_rows + 1))
     if [[ "$fixture" == malformed ]]; then
       run_decisions "$script" "$BAD_REPO" "$BAD_REPO/docs/decisions" list
     else
@@ -155,11 +175,21 @@ evaluate_diagnostic_rows() {
         ;;
     esac
     record_row "$mode" "$name" "$actual" "$expected"
-  done <<'CASES'
+  done <<'DIAGNOSTIC_CASES'
 malformed-row-results~malformed~ids~D101,D103
 malformed-row-diagnostic~malformed~malformed-warning~0~1~1
 healthy-index-diagnostic~healthy~empty-stderr~0~<empty>
-CASES
+DIAGNOSTIC_CASES
+  if [[ "$executed_rows" -eq 0 ]]; then
+    guard="diagnostic table executed no rows"
+    [[ -n "$only_row" ]] && guard="diagnostic table selected no row: $only_row"
+    if [[ "$mode" == normal ]]; then
+      fail "$guard"
+    else
+      printf 'TABLE_GUARD:%s' "$guard"
+      return 1
+    fi
+  fi
   if [[ "$mode" == control ]]; then
     printf '%s' "$table_failures"
   fi
@@ -193,6 +223,40 @@ expect_control_failure "$failures" date-enrichment "date mutation fails the enri
 warning_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-warning/decisions" '| select((.value | split("|") | length) < 9)' '| select(false)' 1)"
 failures="$(evaluate_diagnostic_rows "$warning_mutant" control)"
 expect_control_failure "$failures" malformed-row-diagnostic "warning suppression fails the diagnostic row"
+
+if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
+  link_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-link-table/decider/tests/decider-index-parse.test.sh" LINK_CASES)"
+  if decider_test_fails_with "$link_table_mutant" "link table executed no rows"; then
+    pass "an empty link table fails its row-count guard"
+  else
+    fail "an empty link table missed its row-count guard ($DECIDER_CONTROL_DETAIL)"
+  fi
+  set +e
+  selection_output="$(evaluate_link_rows "$fallback_mutant" control unknown-link-row 2>&1)"
+  selection_rc=$?
+  set -e
+  if [[ "$selection_rc" -ne 0 && "$selection_output" == *"TABLE_GUARD:link table selected no row: unknown-link-row"* ]]; then
+    pass "an unknown link row fails its selection guard"
+  else
+    fail "an unknown link row missed its selection guard"
+  fi
+
+  diagnostic_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-diagnostic-table/decider/tests/decider-index-parse.test.sh" DIAGNOSTIC_CASES)"
+  if decider_test_fails_with "$diagnostic_table_mutant" "diagnostic table executed no rows"; then
+    pass "an empty diagnostic table fails its row-count guard"
+  else
+    fail "an empty diagnostic table missed its row-count guard ($DECIDER_CONTROL_DETAIL)"
+  fi
+  set +e
+  selection_output="$(evaluate_diagnostic_rows "$warning_mutant" control unknown-diagnostic-row 2>&1)"
+  selection_rc=$?
+  set -e
+  if [[ "$selection_rc" -ne 0 && "$selection_output" == *"TABLE_GUARD:diagnostic table selected no row: unknown-diagnostic-row"* ]]; then
+    pass "an unknown diagnostic row fails its selection guard"
+  else
+    fail "an unknown diagnostic row missed its selection guard"
+  fi
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

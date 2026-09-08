@@ -53,3 +53,52 @@ decider_mutate_script() {
 
   printf '%s' "$destination"
 }
+
+decider_empty_test_table() {
+  local source="$1" destination="$2" delimiter="$3"
+  local content="" start after_start rows old new mutant source_dir source_skill_dir
+  local destination_dir destination_skill_dir
+
+  if ! content="$(<"$source")"; then
+    printf 'could not read table-control source: %s\n' "$source" >&2
+    return 1
+  fi
+  start="  done <<'$delimiter'"
+  after_start="${content#*"$start"$'\n'}"
+  if [[ "$after_start" == "$content" ]]; then
+    printf 'table start not found: %s\n' "$delimiter" >&2
+    return 1
+  fi
+  rows="${after_start%%$'\n'"$delimiter"*}"
+  if [[ "$rows" == "$after_start" ]]; then
+    printf 'table end not found: %s\n' "$delimiter" >&2
+    return 1
+  fi
+  old="$start"$'\n'"$rows"$'\n'"$delimiter"
+  new="$start"$'\n'"$delimiter"
+  if ! mutant="$(decider_mutate_script "$source" "$destination" "$old" "$new" 1)"; then
+    return 1
+  fi
+
+  source_dir="${source%/*}"
+  source_skill_dir="${source_dir%/*}"
+  destination_dir="${destination%/*}"
+  destination_skill_dir="${destination_dir%/*}"
+  if ! cp -R "$source_skill_dir/scripts" "$destination_skill_dir/scripts"; then
+    printf 'could not copy production scripts for table control\n' >&2
+    return 1
+  fi
+
+  printf '%s' "$mutant"
+}
+
+decider_test_fails_with() {
+  local test_script="$1" expected="$2" output status
+  DECIDER_CONTROL_DETAIL=""
+  set +e
+  output=$(DECIDER_TABLE_CONTROL_RUN=1 "$test_script" 2>&1)
+  status=$?
+  set -e
+  DECIDER_CONTROL_DETAIL="status $status; output: $output"
+  [[ "$status" -ne 0 && "$output" == *"$expected"* ]]
+}

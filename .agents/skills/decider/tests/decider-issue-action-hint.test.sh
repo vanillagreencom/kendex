@@ -54,13 +54,15 @@ record_row() {
 }
 
 evaluate_action_rows() {
-  local script="$1" mode="$2" only_row="${3:-}" name kind argument expected actual
+  local script="$1" mode="$2" only_row="${3:-}" name kind argument expected actual guard
   local first second projected projection_rc
+  local executed_rows=0
   table_failures=""
   while IFS='~' read -r name kind argument expected; do
     if [[ -n "$only_row" && "$name" != "$only_row" ]]; then
       continue
     fi
+    executed_rows=$((executed_rows + 1))
     case "$kind" in
       issue)
         run_decisions "$script" issue "$argument"
@@ -98,12 +100,22 @@ evaluate_action_rows() {
         ;;
     esac
     record_row "$mode" "$name" "$actual" "$expected"
-  done <<'CASES'
+  done <<'ACTION_CASES'
 issue-action~issue~CC-125~1~~1~1
 issues-action~issues~CC-125~1~1
 generic-unknown-action~unknown~bogus~1~1~1
 supported-issue-lookup~lookup~CC-125~0~0~D001
-CASES
+ACTION_CASES
+  if [[ "$executed_rows" -eq 0 ]]; then
+    guard="action table executed no rows"
+    [[ -n "$only_row" ]] && guard="action table selected no row: $only_row"
+    if [[ "$mode" == normal ]]; then
+      fail "$guard"
+    else
+      printf 'TABLE_GUARD:%s' "$guard"
+      return 1
+    fi
+  fi
   if [[ "$mode" == control ]]; then
     printf '%s' "$table_failures"
   fi
@@ -119,6 +131,24 @@ if [[ "$failures" == *'|supported-issue-lookup|'* ]]; then
   pass "wrong lookup result fails the supported lookup row"
 else
   fail "wrong lookup result did not fail the supported lookup row"
+fi
+
+if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
+  action_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-action-table/decider/tests/decider-issue-action-hint.test.sh" ACTION_CASES)"
+  if decider_test_fails_with "$action_table_mutant" "action table executed no rows"; then
+    pass "an empty action table fails its row-count guard"
+  else
+    fail "an empty action table missed its row-count guard ($DECIDER_CONTROL_DETAIL)"
+  fi
+  set +e
+  selection_output="$(evaluate_action_rows "$lookup_mutant" control unknown-action-row 2>&1)"
+  selection_rc=$?
+  set -e
+  if [[ "$selection_rc" -ne 0 && "$selection_output" == *"TABLE_GUARD:action table selected no row: unknown-action-row"* ]]; then
+    pass "an unknown action row fails its selection guard"
+  else
+    fail "an unknown action row missed its selection guard"
+  fi
 fi
 
 echo

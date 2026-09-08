@@ -114,12 +114,14 @@ record_row() {
 
 evaluate_next_id_rows() {
   local script="$1" mode="$2" only_row="${3:-}" name repo_name environment expected_status
-  local stdout_rule expected_stdout stderr_rule repo actual_stdout actual_stderr actual expected
+  local stdout_rule expected_stdout stderr_rule repo actual_stdout actual_stderr actual expected guard
+  local executed_rows=0
   table_failures=""
   while IFS='~' read -r name repo_name environment expected_status stdout_rule expected_stdout stderr_rule; do
     if [[ -n "$only_row" && "$name" != "$only_row" ]]; then
       continue
     fi
+    executed_rows=$((executed_rows + 1))
     repo="$TMP_ROOT/$repo_name"
     run_next_id "$script" "$repo" "$environment"
     case "$stdout_rule" in
@@ -151,7 +153,7 @@ evaluate_next_id_rows() {
     esac
     actual="$rc~$actual_stdout~$actual_stderr"
     record_row "$mode" "$name" "$actual" "$expected_status~$expected_stdout~$expected"
-  done <<'CASES'
+  done <<'NEXT_ID_CASES'
 inferred-adr~adr-repo~default~0~exact~ADR-0036~empty
 ignore-prose-id~d-repo~default~0~exact~D002~ignore
 latest-scheme~mixed-repo~default~0~exact~ADR-0036~ignore
@@ -161,7 +163,17 @@ configured-prefix-after-bad-id~bad-last-repo~adr-prefix~0~exact~ADR-0036~ignore
 empty-default~empty-repo~default~0~exact~D001~ignore
 empty-configured~empty-repo~adr-configured~0~exact~ADR-0001~ignore
 invalid-width~empty-repo~invalid-width~1~ignore~~width
-CASES
+NEXT_ID_CASES
+  if [[ "$executed_rows" -eq 0 ]]; then
+    guard="next-ID table executed no rows"
+    [[ -n "$only_row" ]] && guard="next-ID table selected no row: $only_row"
+    if [[ "$mode" == normal ]]; then
+      fail "$guard"
+    else
+      printf 'TABLE_GUARD:%s' "$guard"
+      return 1
+    fi
+  fi
   if [[ "$mode" == control ]]; then
     printf '%s' "$table_failures"
   fi
@@ -177,6 +189,24 @@ if [[ "$failures" == *'|inferred-adr|'* ]]; then
   pass "wrong next ID fails the inferred scheme row"
 else
   fail "wrong next ID did not fail the inferred scheme row"
+fi
+
+if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
+  next_id_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-next-id-table/decider/tests/decider-next-id-scheme.test.sh" NEXT_ID_CASES)"
+  if decider_test_fails_with "$next_id_table_mutant" "next-ID table executed no rows"; then
+    pass "an empty next-ID table fails its row-count guard"
+  else
+    fail "an empty next-ID table missed its row-count guard ($DECIDER_CONTROL_DETAIL)"
+  fi
+  set +e
+  selection_output="$(evaluate_next_id_rows "$arithmetic_mutant" control unknown-next-id-row 2>&1)"
+  selection_rc=$?
+  set -e
+  if [[ "$selection_rc" -ne 0 && "$selection_output" == *"TABLE_GUARD:next-ID table selected no row: unknown-next-id-row"* ]]; then
+    pass "an unknown next-ID row fails its selection guard"
+  else
+    fail "an unknown next-ID row missed its selection guard"
+  fi
 fi
 
 echo
