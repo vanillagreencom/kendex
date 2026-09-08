@@ -111,11 +111,13 @@ for (const row of orderings) it(row.name, { timeout: 5000 }, async () => {
 });
 
 it("abort resolves waiting handlers and clears queued results before a fresh query", { timeout: 5000 }, async () => {
-	await withBridge(["t0", "t1", "t2", "t3", "queued"], async (bridge) => {
+	await withBridge(["t0", "t1", "t2", "t3", "queued", "queued-again"], async (bridge) => {
 		const handlers = [];
 		for (const id of ["t0", "t1", "t2", "t3"]) handlers.push((await bridge.handler(id)).result);
 		bridge.deliver([{ id: "t0", text: "resolved" }, { id: "queued", text: "stale" }]);
 		bridge.counts(3, 1);
+		bridge.deliver([{ id: "queued-again", text: "also stale" }]);
+		bridge.counts(3, 2);
 		bridge.abort();
 		const results = await Promise.all(handlers);
 		assert.equal(results[0].content[0].text, "resolved");
