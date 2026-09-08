@@ -17,6 +17,7 @@ describe("append-system lifecycle", () => {
 			{ name: "unmanaged scope", args: ["install"], manifest, unmanaged: true, key: "scope", value: "package", status: 0 },
 			{ name: "missing instructions", args: ["install"], manifest, key: "source-missing", value: "source", status: 0 },
 			{ name: "empty instructions", args: ["install"], manifest, content: "  \n", key: "source-empty", value: "source", status: 0 },
+			{ name: "unreadable instructions", args: ["install"], manifest, sourceDirectory: true, key: "operation", value: "install:@test/questions:EISDIR", status: 0 },
 		]) {
 			const root = mkdtempSync(join(tmpdir(), "append-system-"));
 			try {
@@ -26,6 +27,7 @@ describe("append-system lifecycle", () => {
 				copyFileSync(helper, script);
 				if (row.manifest !== undefined) writeFileSync(join(pkg, "package.json"), JSON.stringify(row.manifest));
 				if (row.content !== undefined) writeFileSync(join(pkg, "instructions.md"), row.content);
+				if ("sourceDirectory" in row && row.sourceDirectory) mkdirSync(join(pkg, "instructions.md"));
 				const result = spawnSync("node", [script, ...row.args], {
 					encoding: "utf8",
 					env: { ...process.env, PI_CODING_AGENT_DIR: join(root, "absent-pi") },
