@@ -32,7 +32,9 @@ git -C "$repo" commit -q -m "move generated output to product"
 generated_to_product="$(git -C "$repo" rev-parse HEAD)"
 
 # label | verdict | base | head
+move_row_count=0
 while IFS='|' read -r label expected case_base case_head; do
+  move_row_count=$((move_row_count + 1))
   assert_verdict "$label" "$expected" \
     --repo "$repo" --event push --base "$case_base" --head "$case_head"
 done <<CASES
@@ -40,5 +42,6 @@ product-to-generated|false|$product_base|$product_to_generated
 generated-to-generated|true|$product_to_generated|$generated_to_generated
 generated-to-product|false|$generated_to_generated|$generated_to_product
 CASES
+require_rows move "$move_row_count"
 
 report rename-into-render

@@ -45,7 +45,9 @@ run_argument_case() { # LABEL KIND OPTION VALUE
 }
 
 # label | shape | option under test | value
+argument_row_count=0
 while IFS='|' read -r label kind option value; do
+  argument_row_count=$((argument_row_count + 1))
   run_argument_case "$label" "$kind" "$option" "$value"
 done <<'CASES'
 unknown-flag|unknown|<none>|<none>
@@ -64,6 +66,7 @@ flag-value-head|flag-value|--head|--output
 flag-value-repo|flag-value|--repo|--head
 flag-value-output|flag-value|--output|--head
 CASES
+require_rows argument "$argument_row_count"
 
 if verdict_dash="$(classify --repo "$repo" --event push --base "$base" --head -)"; then
   dash_status=0
@@ -134,7 +137,9 @@ verdict_bytes=6861726e6573735f6f6e6c793d747275650a
 append_bytes=6f746865725f6b65793d6b6570740a6861726e6573735f6f6e6c793d747275650a
 
 # label | mode | stdout bytes | explicit-output bytes | environment-output bytes
+output_row_count=0
 while IFS='|' read -r label mode expected_stdout expected_explicit expected_env; do
+  output_row_count=$((output_row_count + 1))
   run_output_case "$label" "$mode" "$expected_stdout" "$expected_explicit" "$expected_env"
 done <<CASES
 explicit-output-append|explicit-append|$verdict_bytes|$append_bytes|
@@ -142,6 +147,7 @@ environment-output|environment|$verdict_bytes||$verdict_bytes
 explicit-output-precedence|explicit-precedence|$verdict_bytes|$verdict_bytes|
 stdout-only|stdout-only|$verdict_bytes||
 CASES
+require_rows output "$output_row_count"
 
 if paths="$("$HARNESS_ONLY" --repo "$repo" --event push --base "$base" 2>&1 >/dev/null)"; then
   paths_status=0

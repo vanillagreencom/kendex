@@ -45,7 +45,9 @@ run_rejected_input() { # LABEL REPO EVENT BASE HEAD
 }
 
 # label | repository | event | base | head
+rejected_row_count=0
 while IFS='|' read -r label case_repo event case_base case_head; do
+  rejected_row_count=$((rejected_row_count + 1))
   run_rejected_input "$label" "$case_repo" "$event" "$case_base" "$case_head"
 done <<CASES
 schedule|$repo|schedule|$base|$head
@@ -62,6 +64,7 @@ non-checkout|$SANDBOX|push|$base|$head
 absent-checkout|$SANDBOX/absent|push|$base|$head
 unborn-checkout|$empty|push|HEAD|<default>
 CASES
+require_rows rejected-input "$rejected_row_count"
 
 # Two valid roots with no shared ancestor make the pull-request diff fail.
 orphan="$(new_repo unrelated-histories)"

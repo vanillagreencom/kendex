@@ -21,7 +21,9 @@ case_verdict() { # LABEL EXPECTED PATH...
 }
 
 # label | verdict | changed paths
+path_row_count=0
 while IFS='|' read -r label expected paths; do
+  path_row_count=$((path_row_count + 1))
   # The table paths have no spaces. Word splitting makes each one an argument.
   # shellcheck disable=SC2086
   case_verdict "$label" "$expected" $paths
@@ -47,6 +49,7 @@ opencode.jsonc5|false|opencode.jsonc5
 .claudefoo|false|.claudefoo
 .agents|false|.agents
 CASES
+require_rows path-set "$path_row_count"
 
 # Seed the carrier manifest before changing its extension. Each verdict now
 # has one product path that can make it false.

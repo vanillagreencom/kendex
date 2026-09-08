@@ -38,7 +38,9 @@ mg_mixed_head="$(git -C "$mg" rev-parse HEAD)"
 
 # label | verdict | repository | event | base | head
 # A head beginning with default: checks that ref out and omits --head.
+event_row_count=0
 while IFS='|' read -r label expected case_repo event case_base case_head; do
+  event_row_count=$((event_row_count + 1))
   case "$case_head" in
     default:*)
       git -C "$case_repo" checkout -q --detach "${case_head#default:}"
@@ -59,5 +61,6 @@ merge-group-mixed|false|$mg|merge_group|$mg_base|$mg_mixed_head
 default-head-render|true|$mg|merge_group|$mg_base|default:$mg_render_head
 default-head-mixed|false|$mg|merge_group|$mg_base|default:$mg_mixed_head
 CASES
+require_rows event-ranges "$event_row_count"
 
 report event-ranges

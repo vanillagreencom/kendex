@@ -69,6 +69,13 @@ assert_eq() { # LABEL EXPECTED ACTUAL
   fi
 }
 
+require_rows() { # TABLE COUNT
+  if [ "$2" -eq 0 ]; then
+    printf 'FAIL: %s table executed no rows\n' "$1" >&2
+    exit 1
+  fi
+}
+
 assert_verdict() { # LABEL true|false ARGS...
   local label="$1" expected="$2" out status
   shift 2
