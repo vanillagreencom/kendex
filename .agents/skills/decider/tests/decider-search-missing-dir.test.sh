@@ -111,9 +111,13 @@ evaluate_directory_rows() {
       dependency) run_decisions "$script" "$state" list ;;
       issue) run_decisions "$script" "$state" search --issue "$argument" ;;
       issue-missing) run_decisions "$script" "$state" search --issue ;;
+      issue-empty) run_decisions "$script" "$state" search --issue= ;;
+      issue-regex-invalid) run_decisions "$script" "$state" search --issue "$argument" ;;
       keyword) run_decisions "$script" "$state" search "$argument" ;;
       limit-missing) run_decisions "$script" "$state" search "$argument" --limit ;;
+      limit-empty) run_decisions "$script" "$state" search "$argument" --limit= ;;
       limit-invalid) run_decisions "$script" "$state" search "$argument" --limit nope ;;
+      query-regex-invalid) run_decisions "$script" "$state" search "$argument" ;;
       search-empty) run_decisions "$script" "$state" search --limit 1 ;;
       list|next-id|help) run_decisions "$script" "$state" "$action" ;;
       get) run_decisions "$script" "$state" get "$argument" ;;
@@ -182,8 +186,12 @@ missing-index~missing-index~list~~1~ignore~~key-value~error=index-missing~path=d
 missing-search-input~existing~search-empty~~1~ignore~~key-value~error=search-input-missing~value=query-or-issue
 missing-decision~existing~get~D999~1~ignore~~key-value~error=decision-not-found~id=D999
 missing-issue-value~existing~issue-missing~~1~ignore~~key-value~error=argument-value-missing~option=--issue
+empty-issue-value~existing~issue-empty~~1~ignore~~key-value~error=argument-value-missing~option=--issue
 missing-limit-value~existing~limit-missing~redis~1~ignore~~key-value~error=argument-value-missing~option=--limit
+empty-limit-value~existing~limit-empty~redis~1~ignore~~key-value~error=argument-value-missing~option=--limit
 invalid-limit-value~existing~limit-invalid~redis~1~ignore~~key-value~error=limit-invalid~value=nope
+invalid-query-regex~existing~query-regex-invalid~(~1~ignore~~key-value~error=regex-invalid~value=(
+invalid-issue-regex~existing~issue-regex-invalid~[~1~ignore~~key-value~error=regex-invalid~value=[
 missing-get-value~existing~get-missing~~1~ignore~~key-value~error=argument-value-missing~action=get
 configured-file-search~configured-file~issue~PROJ-557~1~exact~~key-value~error=decisions-dir-type~<not-a-dir>
 configured-file-next-id~configured-file~next-id~~1~ignore~~key-value~error=decisions-dir-type~<not-a-dir>

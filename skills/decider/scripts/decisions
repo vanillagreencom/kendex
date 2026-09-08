@@ -5,8 +5,9 @@
 # Read-only lookups (search, list) treat an absent decisions directory as "no
 # decisions recorded": empty JSON array, note on stderr, exit 0. Commands that
 # feed the creation workflow (next-id, get) require an initialized directory.
-# Diagnostic protocol: a refusal starts with `error=KEY FIELD=VALUE`; a notice
-# starts with `notice=KEY FIELD=VALUE`. English guidance follows on later lines.
+# Diagnostic protocol: a refusal starts with `error=KEY` and one or more
+# `FIELD=VALUE` pairs; a notice starts with `notice=KEY` and the same field
+# form. English guidance follows on later lines.
 set -euo pipefail
 
 emit_error() { # KEY FIELD=VALUE EXPLANATION
@@ -197,6 +198,10 @@ split_decision_id() {
   return 1
 }
 
+regex_valid() { # REGEX
+  jq -n --arg regex "$1" '"" | test($regex)' >/dev/null 2>&1
+}
+
 # Parse the INDEX.md table into JSON, one jq pass over the whole file.
 #
 # Column order is a machine contract: a row is a line starting `| YYYY-` and
@@ -300,7 +305,14 @@ search_decisions() {
         fi
         issue="$2"; shift 2
         ;;
-      --issue=*) issue="${1#--issue=}"; shift ;;
+      --issue=*)
+        issue="${1#--issue=}"
+        if [[ -z "$issue" ]]; then
+          emit_error argument-value-missing option=--issue "--issue requires an ID."
+          return 1
+        fi
+        shift
+        ;;
       --limit)
         if [[ $# -lt 2 ]]; then
           emit_error argument-value-missing option=--limit "--limit requires a number."
@@ -308,7 +320,14 @@ search_decisions() {
         fi
         limit="$2"; shift 2
         ;;
-      --limit=*) limit="${1#--limit=}"; shift ;;
+      --limit=*)
+        limit="${1#--limit=}"
+        if [[ -z "$limit" ]]; then
+          emit_error argument-value-missing option=--limit "--limit requires a number."
+          return 1
+        fi
+        shift
+        ;;
       *) query="$1"; shift ;;
     esac
   done
@@ -334,6 +353,10 @@ search_decisions() {
 
   if [[ -n "$issue" ]]; then
     # Negative lookahead prevents PROJ-18 matching PROJ-189.
+    if ! regex_valid "$issue(?![0-9])"; then
+      emit_error regex-invalid "value=$issue" "The issue value is not a valid regular expression."
+      return 1
+    fi
     echo "$all" | jq --arg issue "$issue" '[
       .[] | select(.research | test($issue + "(?![0-9])"; "i")) |
       {id, decision, path}
@@ -342,6 +365,10 @@ search_decisions() {
   fi
 
   if echo "$query" | grep -qE '[|()\\]'; then
+    if ! regex_valid "$query"; then
+      emit_error regex-invalid "value=$query" "The search query is not a valid regular expression."
+      return 1
+    fi
     local rx_bodies
     rx_bodies=$(body_term_hits "$all" "$query")
     echo "$all" | jq --arg q "$query" --argjson limit "$limit" --argjson bodies "$rx_bodies" '[
