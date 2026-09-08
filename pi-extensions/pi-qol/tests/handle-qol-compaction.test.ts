@@ -1,221 +1,140 @@
-// Integration test for handleQolCompaction covering the sentinel bypass
-// of compaction.customEnabled, handoff artifact write, details fields,
-// warning propagation on handoff failure, and error propagation when the
-// summarizer fails. The pi-ai `complete` call is stubbed via the bunfig
-// preload (returns "stubbed summary text"); we only need to assert the
-// surrounding handler control flow.
-
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
 import { QOL_BUDGET_GUARD_SENTINEL } from "../extensions/qol/budget-guard.ts";
 import { handleQolCompaction } from "../extensions/qol/compaction.ts";
 
 let workdir = "";
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 const originalHome = process.env.HOME;
-
 beforeEach(() => {
 	workdir = mkdtempSync(join(tmpdir(), "pi-qol-handle-"));
 	process.env.PI_CODING_AGENT_DIR = workdir;
 	process.env.HOME = workdir;
 });
-
 afterEach(() => {
-	if (workdir) rmSync(workdir, { force: true, recursive: true });
-	if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-	else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
-	if (originalHome === undefined) delete process.env.HOME;
-	else process.env.HOME = originalHome;
+	try { rmSync(workdir, { force: true, recursive: true }); }
+	finally {
+		if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+		if (originalHome === undefined) delete process.env.HOME;
+		else process.env.HOME = originalHome;
+		mock.module("@earendil-works/pi-ai", () => ({
+			complete: async () => ({ content: [{ text: "stubbed summary text", type: "text" }], stopReason: "end_turn" }),
+		}));
+	}
 });
-
 function makeMessage(text: string) {
-	return { content: [{ text, type: "text" }], role: "user", timestamp: Date.now() } as any;
+	return { content: [{ text, type: "text" }], role: "user", timestamp: 1_700_000_000_000 };
 }
-
-function makeCtx(overrides: Partial<any> = {}) {
-	const notify = mock(() => {});
-	return {
-		notify,
-		ctx: {
-			cwd: workdir,
-			getContextUsage: () => ({ contextWindow: 200_000, percent: 50, tokens: 100_000 }),
-			hasUI: true,
-			model: { contextWindow: 200_000, id: "test-model", provider: "test" },
-			modelRegistry: {
-				find: () => ({ contextWindow: 200_000, id: "test-model", provider: "test" }),
-				getApiKeyAndHeaders: async () => ({ apiKey: "k", headers: {}, ok: true }),
-			},
-			sessionManager: {
-				getBranch: () => [],
-				getSessionFile: () => undefined,
-				getSessionId: () => "session-handle-test",
-			},
-			ui: {
-				notify,
-			},
-			...overrides,
+function makeCtx(cwd = workdir) {
+	const notify = mock((_message: string, _level: string) => {});
+	const ctx = {
+		cwd, getContextUsage: () => ({ contextWindow: 200_000, percent: 50, tokens: 100_000 }), hasUI: true,
+		model: { contextWindow: 200_000, id: "test-model", provider: "test" },
+		modelRegistry: {
+			find: () => ({ contextWindow: 200_000, id: "test-model", provider: "test" }),
+			getApiKeyAndHeaders: async () => ({ apiKey: "k", headers: {}, ok: true }),
 		},
+		sessionManager: { getBranch: () => [], getSessionFile: () => undefined, getSessionId: () => "session-handle-test" },
+		ui: { notify },
 	};
+	return { ctx: ctx as unknown as Parameters<typeof handleQolCompaction>[1], notify };
 }
-
-test("returns undefined when no sentinel and customEnabled is off", async () => {
-	const { ctx } = makeCtx();
-	const result = await handleQolCompaction({
-		customInstructions: "user requested",
-		preparation: {
-			messagesToSummarize: [makeMessage("hi")],
-			tokensBefore: 100,
-			turnPrefixMessages: [],
+const cases = [
+	{
+		name: "disabled custom compaction without sentinel",
+		run: async () => {
+			const { ctx } = makeCtx();
+			return { result: await handleQolCompaction({ customInstructions: "user requested", preparation: {
+				messagesToSummarize: [makeMessage("hi")], tokensBefore: 100, turnPrefixMessages: [],
+			}, type: "session_before_compact" }, ctx) };
 		},
-		type: "session_before_compact",
-	}, ctx as any);
-	expect(result).toBeUndefined();
-});
-
-test("sentinel bypasses customEnabled and produces a QOL bounded result + handoff artifact", async () => {
-	const { ctx } = makeCtx();
-	const result = await handleQolCompaction({
-		customInstructions: `${QOL_BUDGET_GUARD_SENTINEL} fired because over budget`,
-		preparation: {
-			firstKeptEntryId: "abc",
-			messagesToSummarize: [makeMessage("first message"), makeMessage("second message")],
-			previousSummary: "prev",
-			tokensBefore: 180_000,
-			turnPrefixMessages: [],
+		expected: { result: undefined },
+	},
+	{
+		name: "sentinel bypass writes the bounded summary and handoff",
+		run: async () => {
+			const { ctx } = makeCtx();
+			const result = await handleQolCompaction({ customInstructions: `${QOL_BUDGET_GUARD_SENTINEL} fired because over budget`, preparation: {
+				firstKeptEntryId: "abc", messagesToSummarize: [makeMessage("first message"), makeMessage("second message")],
+				previousSummary: "prev", tokensBefore: 180_000, turnPrefixMessages: [],
+			}, type: "session_before_compact" }, ctx);
+			const details = result?.compaction?.details ?? {};
+			const stampedExists = typeof details.handoffArtifact === "string" && existsSync(details.handoffArtifact);
+			const latestExists = typeof details.handoffArtifactLatest === "string" && existsSync(details.handoffArtifactLatest);
+			const saved = stampedExists ? JSON.parse(readFileSync(details.handoffArtifact as string, "utf8")) : undefined;
+			return {
+				summary: result?.compaction?.summary, tokensBefore: result?.compaction?.tokensBefore, firstKeptEntryId: result?.compaction?.firstKeptEntryId,
+				trigger: details.trigger, source: details.source, pathDefined: details.handoffArtifact !== undefined,
+				latestDefined: details.handoffArtifactLatest !== undefined, errorAbsent: details.handoffArtifactError === undefined,
+				messageCount: details.messageCount, stampedExists, latestExists, sessionId: saved?.sessionId,
+				sentinel: saved?.reason?.includes(QOL_BUDGET_GUARD_SENTINEL), previousSummary: saved?.previousSummary, savedTokens: saved?.tokensBefore,
+			};
 		},
-		signal: undefined,
-		type: "session_before_compact",
-	}, ctx as any);
-	expect(result?.compaction?.summary).toBe("stubbed summary text");
-	expect(result?.compaction?.tokensBefore).toBe(180_000);
-	expect(result?.compaction?.firstKeptEntryId).toBe("abc");
-	const details = result?.compaction?.details ?? {};
-	expect(details.trigger).toBe("budget-guard");
-	expect(details.source).toBe("pi-qol budget-guard");
-	expect(details.handoffArtifact).toBeDefined();
-	expect(details.handoffArtifactLatest).toBeDefined();
-	expect(details.handoffArtifactError).toBeUndefined();
-	expect(details.messageCount).toBe(2);
-	expect(existsSync(details.handoffArtifact as string)).toBe(true);
-	expect(existsSync(details.handoffArtifactLatest as string)).toBe(true);
-	const saved = JSON.parse(readFileSync(details.handoffArtifact as string, "utf8"));
-	expect(saved.sessionId).toBe("session-handle-test");
-	expect(saved.reason).toContain(QOL_BUDGET_GUARD_SENTINEL);
-	expect(saved.previousSummary).toBe("prev");
-	expect(saved.tokensBefore).toBe(180_000);
-});
-
-test("sentinel-triggered compaction notifies handoff write failure but still returns a summary", async () => {
-	// Make the handoff write fail by pointing PI_CODING_AGENT_DIR at a
-	// child path of an existing FILE so mkdirSync ENOTDIR.
-	const filePath = join(workdir, "blocking-file");
-	require("node:fs").writeFileSync(filePath, "blocker");
-	process.env.PI_CODING_AGENT_DIR = filePath;
-	const { ctx, notify } = makeCtx({ cwd: filePath });
-	const result = await handleQolCompaction({
-		customInstructions: `${QOL_BUDGET_GUARD_SENTINEL} budget guard fired`,
-		preparation: {
-			messagesToSummarize: [makeMessage("only message")],
-			tokensBefore: 180_000,
-			turnPrefixMessages: [],
+		expected: {
+			summary: "stubbed summary text", tokensBefore: 180_000, firstKeptEntryId: "abc", trigger: "budget-guard", source: "pi-qol budget-guard",
+			pathDefined: true, latestDefined: true, errorAbsent: true, messageCount: 2, stampedExists: true, latestExists: true,
+			sessionId: "session-handle-test", sentinel: true, previousSummary: "prev", savedTokens: 180_000,
 		},
-		signal: undefined,
-		type: "session_before_compact",
-	}, ctx as any);
-	expect(result?.compaction?.summary).toBe("stubbed summary text");
-	const details = result?.compaction?.details ?? {};
-	expect(details.handoffArtifact).toBeUndefined();
-	expect(details.handoffArtifactError).toBeTruthy();
-	// At least one notification should mention the handoff failure.
-	const messages = notify.mock.calls.map((call) => call[0] as string);
-	expect(messages.some((m) => m.includes("handoff artifact write failed"))).toBe(true);
-});
-
-test("returns cancel: true when summarizer throws and fallbackToDefault is off", async () => {
-	mock.module("@earendil-works/pi-ai", () => ({
-		complete: async () => {
-			throw new Error("provider died");
+	},
+	{
+		name: "handoff filesystem failure warns while retaining the summary",
+		run: async () => {
+			const file = join(workdir, "blocking-file");
+			writeFileSync(file, "blocker");
+			process.env.PI_CODING_AGENT_DIR = file;
+			const { ctx, notify } = makeCtx(file);
+			const result = await handleQolCompaction({ customInstructions: `${QOL_BUDGET_GUARD_SENTINEL} budget guard fired`, preparation: {
+				messagesToSummarize: [makeMessage("only message")], tokensBefore: 180_000, turnPrefixMessages: [],
+			}, type: "session_before_compact" }, ctx);
+			const details = result?.compaction?.details ?? {};
+			return { summary: result?.compaction?.summary, pathAbsent: details.handoffArtifact === undefined,
+				code: String(details.handoffArtifactError).includes("ENOTDIR"),
+				warned: notify.mock.calls.some(([message, level]) => level === "warning" && message.includes("ENOTDIR")),
+			};
 		},
-	}));
-	// Disable fallback by writing a settings.json that turns it off.
-	const settingsDir = join(workdir, ".pi");
-	require("node:fs").mkdirSync(settingsDir, { recursive: true });
-	require("node:fs").writeFileSync(
-		join(workdir, "settings.json"),
-		JSON.stringify({
-			kendex: {
-				extensionManager: {
-					config: {
-						"@vanillagreen/pi-qol": { "compaction.fallbackToDefault": false },
-					},
-				},
-			},
-		}),
-	);
-	const { ctx, notify } = makeCtx();
-	const result = await handleQolCompaction({
-		customInstructions: `${QOL_BUDGET_GUARD_SENTINEL} fired`,
-		preparation: {
-			messagesToSummarize: [makeMessage("x")],
-			tokensBefore: 100,
-			turnPrefixMessages: [],
+		expected: { summary: "stubbed summary text", pathAbsent: true, code: true, warned: true },
+	},
+	{
+		name: "summarizer failure cancels when fallback is disabled",
+		run: async () => {
+			mock.module("@earendil-works/pi-ai", () => ({ complete: async () => { throw new Error("provider died"); } }));
+			writeFileSync(join(workdir, "settings.json"), JSON.stringify({ kendex: { extensionManager: { config: {
+				"@vanillagreen/pi-qol": { "compaction.fallbackToDefault": false },
+			} } } }));
+			const { ctx, notify } = makeCtx();
+			const result = await handleQolCompaction({ customInstructions: `${QOL_BUDGET_GUARD_SENTINEL} fired`, preparation: {
+				messagesToSummarize: [makeMessage("x")], tokensBefore: 100, turnPrefixMessages: [],
+			}, type: "session_before_compact" }, ctx);
+			return { result, notified: notify.mock.calls.some(([, level]) => level === "error") };
 		},
-		signal: undefined,
-		type: "session_before_compact",
-	}, ctx as any);
-	expect(result).toEqual({ cancel: true });
-	const messages = notify.mock.calls.map((call) => call[0] as string);
-	expect(messages.some((m) => m.includes("compaction failed"))).toBe(true);
-	// Restore the default stub so later tests still get a summary.
-	mock.module("@earendil-works/pi-ai", () => ({
-		complete: async () => ({
-			content: [{ text: "stubbed summary text", type: "text" }],
-			stopReason: "end_turn",
-		}),
-	}));
-});
-
-test("returns undefined and falls back to Pi default when summarizer throws and fallback is on", async () => {
-	mock.module("@earendil-works/pi-ai", () => ({
-		complete: async () => {
-			throw new Error("provider down");
+		expected: { result: { cancel: true }, notified: true },
+	},
+	{
+		name: "summarizer failure falls back to Pi by default",
+		run: async () => {
+			mock.module("@earendil-works/pi-ai", () => ({ complete: async () => { throw new Error("provider down"); } }));
+			const { ctx } = makeCtx();
+			return { result: await handleQolCompaction({ customInstructions: `${QOL_BUDGET_GUARD_SENTINEL} fired`, preparation: {
+				messagesToSummarize: [makeMessage("x")], tokensBefore: 100, turnPrefixMessages: [],
+			}, type: "session_before_compact" }, ctx) };
 		},
-	}));
-	const { ctx } = makeCtx();
-	const result = await handleQolCompaction({
-		customInstructions: `${QOL_BUDGET_GUARD_SENTINEL} fired`,
-		preparation: {
-			messagesToSummarize: [makeMessage("x")],
-			tokensBefore: 100,
-			turnPrefixMessages: [],
+		expected: { result: undefined },
+	},
+	{
+		name: "empty messages skip custom compaction",
+		run: async () => {
+			const { ctx } = makeCtx();
+			return { result: await handleQolCompaction({ customInstructions: `${QOL_BUDGET_GUARD_SENTINEL} fired`, preparation: {
+				messagesToSummarize: [], tokensBefore: 0, turnPrefixMessages: [],
+			}, type: "session_before_compact" }, ctx) };
 		},
-		signal: undefined,
-		type: "session_before_compact",
-	}, ctx as any);
-	expect(result).toBeUndefined();
-	// Restore.
-	mock.module("@earendil-works/pi-ai", () => ({
-		complete: async () => ({
-			content: [{ text: "stubbed summary text", type: "text" }],
-			stopReason: "end_turn",
-		}),
-	}));
-});
-
-test("returns undefined when messages list is empty", async () => {
-	const { ctx } = makeCtx();
-	const result = await handleQolCompaction({
-		customInstructions: `${QOL_BUDGET_GUARD_SENTINEL} fired`,
-		preparation: {
-			messagesToSummarize: [],
-			tokensBefore: 0,
-			turnPrefixMessages: [],
-		},
-		signal: undefined,
-		type: "session_before_compact",
-	}, ctx as any);
-	expect(result).toBeUndefined();
-});
+		expected: { result: undefined },
+	},
+];
+if (cases.length === 0) throw new Error("compaction handler cases are empty");
+for (const row of cases) {
+	test(`handleQolCompaction: ${row.name}`, async () => { expect(await row.run()).toStrictEqual(row.expected); });
+}

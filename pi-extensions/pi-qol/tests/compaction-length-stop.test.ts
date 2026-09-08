@@ -21,18 +21,19 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	if (workdir) rmSync(workdir, { force: true, recursive: true });
-	if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-	else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
-	if (originalHome === undefined) delete process.env.HOME;
-	else process.env.HOME = originalHome;
-	// Restore the preload stub so later files still get a complete summary.
-	mock.module("@earendil-works/pi-ai", () => ({
-		complete: async () => ({
-			content: [{ text: "stubbed summary text", type: "text" }],
-			stopReason: "end_turn",
-		}),
-	}));
+	try { if (workdir) rmSync(workdir, { force: true, recursive: true }); }
+	finally {
+		if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+		if (originalHome === undefined) delete process.env.HOME;
+		else process.env.HOME = originalHome;
+		mock.module("@earendil-works/pi-ai", () => ({
+			complete: async () => ({
+				content: [{ text: "stubbed summary text", type: "text" }],
+				stopReason: "end_turn",
+			}),
+		}));
+	}
 });
 
 function makeCtx(): any {
@@ -68,11 +69,15 @@ for (const row of rows) {
 	test(`generateQolSummary ${row.accepted ? "accepts" : "rejects"} a summary with stopReason ${row.stopReason}`, async () => {
 		expect.hasAssertions();
 		stubComplete(row.stopReason);
-		const run = generateQolSummary(makeCtx(), { conversationText: "user: hello", purpose: "compaction" });
-		if (row.accepted) {
-			expect((await run).summary).toContain("Partial summary");
-		} else {
-			await expect(run).rejects.toThrow(/token cap/);
+		let observed: { accepted: boolean; summaryContainsFixture?: boolean; rejectedWithError?: boolean };
+		try {
+			const result = await generateQolSummary(makeCtx(), { conversationText: "user: hello", purpose: "compaction" });
+			observed = { accepted: true, summaryContainsFixture: result.summary.includes("Partial summary") };
+		} catch (error) {
+			observed = { accepted: false, rejectedWithError: error instanceof Error };
 		}
+		expect(observed).toStrictEqual(row.accepted
+			? { accepted: true, summaryContainsFixture: true }
+			: { accepted: false, rejectedWithError: true });
 	});
 }

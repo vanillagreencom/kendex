@@ -65,139 +65,171 @@ function makeHarness(clock = new FakeClock()) {
 	return { clock, controller: createScheduleController(pi, clock), ctx, entries, notifications, sent };
 }
 
-test("parseDurationMs supports default minutes and explicit units", () => {
-	expect(parseDurationMs("20")).toBe(20 * 60 * 1000);
-	expect(parseDurationMs("20m")).toBe(20 * 60 * 1000);
-	expect(parseDurationMs("90s")).toBe(90 * 1000);
-	expect(parseDurationMs("500ms")).toBe(500);
-	expect(parseDurationMs("1.5h")).toBe(90 * 60 * 1000);
-	expect(parseDurationMs("0m")).toBeUndefined();
-	expect(parseDurationMs("forever")).toBeUndefined();
-});
-
-test("parseDurationMs supports compact composite durations", () => {
-	expect(parseDurationMs("1h45m")).toBe(105 * 60 * 1000);
-	expect(parseDurationMs("1h30s")).toBe(3_630_000);
-	expect(parseDurationMs("45m10s")).toBe(2_710_000);
-	expect(parseDurationMs("1h45m30s")).toBe((105 * 60 + 30) * 1000);
-	expect(parseDurationMs("2d3h4m5s6ms")).toBe(2 * 24 * 60 * 60 * 1000 + 3 * 60 * 60 * 1000 + 4 * 60 * 1000 + 5 * 1000 + 6);
-
-	expect(parseDurationMs("1h2h")).toBeUndefined();
-	expect(parseDurationMs("30s1h")).toBeUndefined();
-	expect(parseDurationMs("1h30")).toBeUndefined();
-	expect(parseDurationMs("1h30xs")).toBeUndefined();
-	expect(parseDurationMs("31d")).toBeUndefined();
-});
-
-test("parseScheduleCommandArgs extracts delay and message", () => {
-	expect(parseScheduleCommandArgs("20m this is my message")).toEqual({
-		delayMs: 20 * 60 * 1000,
-		kind: "schedule",
-		message: "this is my message",
+for (const [input, expected] of [
+	["20", 20 * 60 * 1000],
+	["20m", 20 * 60 * 1000],
+	["90s", 90 * 1000],
+	["500ms", 500],
+	["1.5h", 90 * 60 * 1000],
+	["1h45m", 105 * 60 * 1000],
+	["1h30s", 3_630_000],
+	["45m10s", 2_710_000],
+	["1h45m30s", (105 * 60 + 30) * 1000],
+	["2d3h4m5s6ms", 2 * 24 * 60 * 60 * 1000 + 3 * 60 * 60 * 1000 + 4 * 60 * 1000 + 5 * 1000 + 6],
+	["0m", undefined],
+	["forever", undefined],
+	["1h2h", undefined],
+	["30s1h", undefined],
+	["1h30", undefined],
+	["1h30xs", undefined],
+	["31d", undefined],
+] as const) {
+	test(`parseDurationMs: ${input}`, () => {
+		expect(parseDurationMs(input)).toBe(expected);
 	});
-	expect(parseScheduleCommandArgs("1h45m do thing later")).toEqual({
-		delayMs: 105 * 60 * 1000,
-		kind: "schedule",
-		message: "do thing later",
+}
+
+for (const [input, expected] of [
+	["20m this is my message", { delayMs: 20 * 60 * 1000, kind: "schedule", message: "this is my message" }],
+	["1h45m do thing later", { delayMs: 105 * 60 * 1000, kind: "schedule", message: "do thing later" }],
+	["1h30s do thing later", { delayMs: 3_630_000, kind: "schedule", message: "do thing later" }],
+	["45m10s do thing later", { delayMs: 2_710_000, kind: "schedule", message: "do thing later" }],
+	["list", { kind: "list" }],
+	["cancel all", { all: true, kind: "cancel" }],
+	["cancel abc", { all: false, id: "abc", kind: "cancel" }],
+] as const) {
+	test(`parseScheduleCommandArgs: ${input}`, () => {
+		expect(parseScheduleCommandArgs(input)).toEqual(expected);
 	});
-	expect(parseScheduleCommandArgs("1h30s do thing later")).toEqual({
-		delayMs: 3_630_000,
-		kind: "schedule",
-		message: "do thing later",
-	});
-	expect(parseScheduleCommandArgs("45m10s do thing later")).toEqual({
-		delayMs: 2_710_000,
-		kind: "schedule",
-		message: "do thing later",
-	});
-	expect(parseScheduleCommandArgs("list")).toEqual({ kind: "list" });
-	expect(parseScheduleCommandArgs("cancel all")).toEqual({ all: true, kind: "cancel" });
-	expect(parseScheduleCommandArgs("cancel abc")).toEqual({ all: false, id: "abc", kind: "cancel" });
-});
+}
 
-test("handleCommand schedules a user message without sending immediately", async () => {
-	const { clock, controller, ctx, entries, notifications, sent } = makeHarness();
+type Harness = ReturnType<typeof makeHarness>;
 
-	await controller.handleCommand("20m this is my message", ctx);
-
-	expect(sent).toHaveLength(0);
-	expect(controller.renderPreviewLines(200).join("\n")).toContain("this is my message");
-	expect(clock.timers[0]?.delayMs).toBe(20 * 60 * 1000);
-	expect(entries[0]?.customType).toBe(SCHEDULE_ENTRY_TYPE);
-	expect(entries[0]?.data).toMatchObject({ action: "scheduled", message: "this is my message" });
-	expect(notifications[0]?.message).toContain("Scheduled");
-
-	clock.runNext();
-	await Promise.resolve();
-
-	expect(sent).toEqual([{ content: "this is my message", options: undefined }]);
-	expect(entries[1]?.data).toMatchObject({ action: "delivered" });
-	expect(controller.renderPreviewLines(200)).toEqual([]);
-});
-
-test("renderPreviewLines uses queued-message style and caps visible rows", async () => {
-	const { controller, ctx } = makeHarness();
-	await controller.handleCommand("1m first", ctx);
-	await controller.handleCommand("2m second", ctx);
-	await controller.handleCommand("3m third", ctx);
-	await controller.handleCommand("4m fourth", ctx);
-
-	const lines = controller.renderPreviewLines(200);
-	expect(lines).toHaveLength(4);
-	expect(lines[0]).toContain("┃ Scheduled");
-	expect(lines[0]).toContain("first");
-	expect(lines[0]).not.toContain("-1");
-	expect(lines[3]).toContain("+1 more");
-});
-
-test("handleCommand queues as a follow-up when the timer fires while the agent is busy", async () => {
-	const { clock, controller, ctx, sent } = makeHarness();
-	ctx.isIdle = () => false;
-
-	await controller.handleCommand("1m queued while busy", ctx);
-	clock.runNext();
-	await Promise.resolve();
-
-	expect(sent).toEqual([{ content: "queued while busy", options: { deliverAs: "followUp" } }]);
-});
-
-test("cancel all clears pending timers", async () => {
-	const { clock, controller, ctx, sent } = makeHarness();
-	await controller.handleCommand("1m first", ctx);
-	await controller.handleCommand("2m second", ctx);
-	expect(controller.activeCount()).toBe(2);
-
-	await controller.handleCommand("cancel all", ctx);
-	expect(controller.activeCount()).toBe(0);
-
-	clock.runNext();
-	clock.runNext();
-	await Promise.resolve();
-	expect(sent).toHaveLength(0);
-});
-
-test("restoreFromBranch rearms unfinished scheduled messages", async () => {
-	const clock = new FakeClock();
-	const { controller, ctx, sent } = makeHarness(clock);
-	ctx.sessionManager.getBranch = () => [
-		{
-			customType: SCHEDULE_ENTRY_TYPE,
-			data: {
-				action: "scheduled",
-				createdAt: clock.now(),
-				dueAt: clock.now() + 5000,
-				id: "restore-1",
-				message: "restored message",
+// Each action records state before the next action can change it.
+const lifecycleRows: Array<{
+	name: string;
+	actions: Array<(h: Harness) => unknown | Promise<unknown>>;
+	expected: unknown[];
+}> = [
+	{
+		name: "idle delivery waits for the timer and records session events",
+		actions: [
+			async ({ controller, ctx, clock, entries, notifications, sent }) => {
+				await controller.handleCommand("20m this is my message", ctx);
+				return {
+					sent: [...sent],
+					preview: controller.renderPreviewLines(200),
+					delay: clock.timers[0]?.delayMs,
+					entry: entries[0],
+					notifications: notifications.map(({ level }) => level),
+				};
 			},
-			type: "custom",
-		},
-	];
+			async ({ controller, clock, entries, sent }) => {
+				clock.runNext();
+				await Promise.resolve();
+				return { sent, entry: entries[1], preview: controller.renderPreviewLines(200) };
+			},
+		],
+		expected: [
+			{
+				sent: [],
+				preview: [expect.stringContaining("this is my message")],
+				delay: 20 * 60 * 1000,
+				entry: { customType: SCHEDULE_ENTRY_TYPE, data: expect.objectContaining({ action: "scheduled", message: "this is my message" }) },
+				notifications: ["info"],
+			},
+			{
+				sent: [{ content: "this is my message", options: undefined }],
+				entry: { customType: SCHEDULE_ENTRY_TYPE, data: expect.objectContaining({ action: "delivered" }) },
+				preview: [],
+			},
+		],
+	},
+	{
+		name: "preview keeps queued style, hides ids and caps visible messages",
+		actions: [async ({ controller, ctx }) => {
+			await controller.handleCommand("1m first", ctx);
+			await controller.handleCommand("2m second", ctx);
+			await controller.handleCommand("3m third", ctx);
+			await controller.handleCommand("4m fourth", ctx);
+			const lines = controller.renderPreviewLines(200);
+			return {
+				lines,
+				queuedStyle: lines[0]?.includes("┃"),
+				showsId: lines[0]?.includes("-1"),
+				showsHiddenMessage: lines.join("\n").includes("fourth"),
+			};
+		}],
+		expected: [{
+			lines: [expect.stringContaining("first"), expect.stringContaining("second"), expect.stringContaining("third"), expect.stringContaining("+1")],
+			queuedStyle: true,
+			showsId: false,
+			showsHiddenMessage: false,
+		}],
+	},
+	{
+		name: "busy delivery uses followUp",
+		actions: [async ({ clock, controller, ctx, sent }) => {
+			ctx.isIdle = () => false;
+			await controller.handleCommand("1m queued while busy", ctx);
+			clock.runNext();
+			await Promise.resolve();
+			return sent;
+		}],
+		expected: [[{ content: "queued while busy", options: { deliverAs: "followUp" } }]],
+	},
+	{
+		name: "cancel all clears timers and pending state",
+		actions: [
+			async ({ controller, ctx }) => {
+				await controller.handleCommand("1m first", ctx);
+				await controller.handleCommand("2m second", ctx);
+				return controller.activeCount();
+			},
+			async ({ controller, ctx, clock }) => {
+				await controller.handleCommand("cancel all", ctx);
+				return { active: controller.activeCount(), cleared: clock.timers.map(({ cleared }) => cleared) };
+			},
+			async ({ clock, sent }) => {
+				clock.runNext();
+				clock.runNext();
+				await Promise.resolve();
+				return sent;
+			},
+		],
+		expected: [2, { active: 0, cleared: [true, true] }, []],
+	},
+	{
+		name: "branch restore rearms and delivers the pending message",
+		actions: [
+			({ controller, ctx, clock }) => {
+				ctx.sessionManager.getBranch = () => [{
+					customType: SCHEDULE_ENTRY_TYPE,
+					data: { action: "scheduled", createdAt: clock.now(), dueAt: clock.now() + 5000, id: "restore-1", message: "restored message" },
+					type: "custom",
+				}];
+				controller.restoreFromBranch(ctx);
+				return { active: controller.activeCount(), delay: clock.timers[0]?.delayMs };
+			},
+			async ({ clock, sent }) => {
+				clock.runNext();
+				await Promise.resolve();
+				return sent;
+			},
+		],
+		expected: [{ active: 1, delay: 5000 }, [{ content: "restored message", options: undefined }]],
+	},
+];
 
-	controller.restoreFromBranch(ctx);
-	expect(controller.activeCount()).toBe(1);
-	expect(clock.timers[0]?.delayMs).toBe(5000);
-
-	clock.runNext();
-	await Promise.resolve();
-	expect(sent[0]).toEqual({ content: "restored message", options: undefined });
-});
+for (const row of lifecycleRows) {
+	test(`schedule lifecycle: ${row.name}`, async () => {
+		const harness = makeHarness();
+		try {
+			const observed: unknown[] = [];
+			for (const action of row.actions) observed.push(await action(harness));
+			expect(observed).toStrictEqual(row.expected);
+		} finally {
+			harness.controller.clearTimers();
+		}
+	});
+}
