@@ -204,6 +204,7 @@ launch() {
   # but pointless.
   cleanup_launch() {
     if [[ -n "$LAUNCH_WORKER_PID" ]] && ! stop_process_group "$LAUNCH_WORKER_PID" 30; then
+      printf 'launch-cleanup-failed: runtime=%s\n' "$LAUNCH_RUNTIME_DIR" >&2
       echo "second-opinion-runtime: launch cleanup failed; runtime state preserved: $LAUNCH_RUNTIME_DIR" >&2
       return 1
     fi
@@ -327,6 +328,7 @@ wait_for_run() {
     now=$(date +%s)
     if [[ $now -ge $deadline ]]; then
       if ! stop_process_group "$worker_pid" 30; then
+        printf 'deadline-cleanup-failed: runtime=%s\n' "$runtime_dir" >&2
         echo "second-opinion: deadline cleanup failed; runtime state preserved: $runtime_dir" >&2
         exit 75
       fi
