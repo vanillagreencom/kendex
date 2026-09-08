@@ -86,6 +86,7 @@ if [ "$MODE_ASSERTIONS" -eq 0 ]; then
   exit 1
 fi
 
+INVENTORY_ASSERTIONS=0
 while IFS='|' read -r name mode operation expected; do
   case "$operation" in
     inventory-worktree-empty) printf '[]\n' >"$R/.kendex-generated.json" ;;
@@ -118,6 +119,7 @@ while IFS='|' read -r name mode operation expected; do
   esac
   run_mode "$mode"
   expect "$expected" "$name: $mode"
+  INVENTORY_ASSERTIONS=$((INVENTORY_ASSERTIONS + 1))
 done <<'INVENTORY_CASES'
 inventory-worktree-empty|worktree|inventory-worktree-empty|1
 inventory-unstaged-empty|staged|unchanged|0
@@ -130,6 +132,10 @@ inventory-invalid|staged|unchanged|2
 render-carved-back|worktree|carve-back|1
 render-carved-back|staged|unchanged|1
 INVENTORY_CASES
+if [ "$INVENTORY_ASSERTIONS" -eq 0 ]; then
+  printf 'FAIL: INVENTORY_CASES executed no assertions\n' >&2
+  exit 1
+fi
 
 git -C "$R" rm -qf tools/doc-limits-excludes
 private_command generated-exclusion

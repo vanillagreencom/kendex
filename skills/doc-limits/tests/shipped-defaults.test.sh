@@ -50,6 +50,7 @@ private_command() { # NAME: copy the command and set MUTANT
 }
 
 # Representative paths exercise each shipped document class at both edges.
+CLASS_ASSERTIONS=0
 while IFS=' ' read -r path limit; do
   bytes "$path" "$limit"
   git -C "$R" add -- "$path"
@@ -64,6 +65,7 @@ while IFS=' ' read -r path limit; do
     *) FAIL=$((FAIL + 1)); printf '  FAIL: wrong document or limit: %s\n' "$OUT" ;;
   esac
   git -C "$R" rm -qf -- "$path"
+  CLASS_ASSERTIONS=$((CLASS_ASSERTIONS + 1))
 done <<'CLASSES'
 AGENTS.md 16384
 CLAUDE.md 24576
@@ -78,6 +80,10 @@ pkg/README.md 12288
 skills/demo/references/contract.md 65536
 CHANGELOG.md 65536
 CLASSES
+if [ "$CLASS_ASSERTIONS" -eq 0 ]; then
+  printf 'FAIL: CLASSES executed no assertions\n' >&2
+  exit 1
+fi
 
 bytes src/large.rs 100000
 git -C "$R" add src/large.rs

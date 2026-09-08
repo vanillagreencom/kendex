@@ -55,6 +55,7 @@ printf '# exclusions\n' >"$R/tools/doc-limits-excludes"
 git -C "$R" add -A
 git -C "$R" commit -qm fixture
 
+DOCUMENT_ASSERTIONS=0
 while IFS='|' read -r name operation mode expected; do
   case "$operation" in
     worktree-grow) bytes AGENTS.md 1025 ;;
@@ -66,12 +67,17 @@ while IFS='|' read -r name operation mode expected; do
     staged) run --staged ;;
   esac
   expect "$expected" "$name"
+  DOCUMENT_ASSERTIONS=$((DOCUMENT_ASSERTIONS + 1))
 done <<'DOCUMENT_CASES'
 document-worktree-growth|worktree-grow|worktree|1
 document-unstaged-growth|unchanged|staged|0
 document-staged-growth|stage-growth|staged|1
 document-worktree-shrink|unchanged|worktree|0
 DOCUMENT_CASES
+if [ "$DOCUMENT_ASSERTIONS" -eq 0 ]; then
+  printf 'FAIL: DOCUMENT_CASES executed no assertions\n' >&2
+  exit 1
+fi
 
 private_command document-measurement
 [ ! -L "$MUTANT" ]
@@ -86,6 +92,7 @@ run
 must_fail 0 1 'document table control: disabled worktree measurement fails document-worktree-shrink'
 SR="$SOURCE_COMMAND"
 
+EXCLUSION_ASSERTIONS=0
 while IFS='|' read -r name operation expected; do
   case "$operation" in
     worktree-only)
@@ -106,12 +113,17 @@ while IFS='|' read -r name operation expected; do
   esac
   run --staged
   expect "$expected" "$name"
+  EXCLUSION_ASSERTIONS=$((EXCLUSION_ASSERTIONS + 1))
 done <<'EXCLUSION_CASES'
 exclusion-worktree-only|worktree-only|1
 exclusion-staged|stage-exclusion|0
 exclusion-deleted-from-index|delete-exclusion|1
 document-deleted-from-index|delete-document|0
 EXCLUSION_CASES
+if [ "$EXCLUSION_ASSERTIONS" -eq 0 ]; then
+  printf 'FAIL: EXCLUSION_CASES executed no assertions\n' >&2
+  exit 1
+fi
 
 git -C "$R" add AGENTS.md tools/doc-limits-excludes
 git -C "$R" commit -qm 'control fixture'
@@ -135,6 +147,7 @@ bytes AGENTS.md 1025
 git -C "$R" add AGENTS.md
 unset DOC_LIMITS_CLASSES
 
+SETTINGS_ASSERTIONS=0
 while IFS='|' read -r name operation mode expected; do
   case "$operation" in
     split-settings)
@@ -155,12 +168,17 @@ while IFS='|' read -r name operation mode expected; do
     staged) run --staged ;;
   esac
   expect "$expected" "$name"
+  SETTINGS_ASSERTIONS=$((SETTINGS_ASSERTIONS + 1))
 done <<'SETTINGS_CASES'
 settings-staged-strict|split-settings|staged|1
 settings-worktree-relaxed|unchanged|worktree|0
 settings-relaxed-staged|stage-relaxed|staged|0
 settings-deleted-from-index|delete-settings|staged|0
 SETTINGS_CASES
+if [ "$SETTINGS_ASSERTIONS" -eq 0 ]; then
+  printf 'FAIL: SETTINGS_CASES executed no assertions\n' >&2
+  exit 1
+fi
 
 git -C "$R" add kendex.settings.toml
 git -C "$R" commit -qm 'strict settings control'

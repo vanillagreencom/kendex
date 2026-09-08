@@ -52,6 +52,7 @@ private_command() { # NAME: copy the command and set MUTANT
 bytes AGENTS.md 2049
 git -C "$R" add AGENTS.md
 
+PRECEDENCE_ASSERTIONS=0
 while IFS='|' read -r name operation expected; do
   case "$operation" in
     plain-env)
@@ -79,6 +80,7 @@ while IFS='|' read -r name operation expected; do
   esac
   run
   expect "$expected" "$name"
+  PRECEDENCE_ASSERTIONS=$((PRECEDENCE_ASSERTIONS + 1))
 done <<'PRECEDENCE_CASES'
 plain-env-ignored|plain-env|0
 project-setting|project-setting|1
@@ -89,6 +91,10 @@ environment-explicit-empty|environment-explicit-empty|0
 settings-disabled|settings-disabled|0
 environment-with-settings-disabled|environment-with-settings-disabled|1
 PRECEDENCE_CASES
+if [ "$PRECEDENCE_ASSERTIONS" -eq 0 ]; then
+  printf 'FAIL: PRECEDENCE_CASES executed no assertions\n' >&2
+  exit 1
+fi
 
 unset DOC_LIMITS_SETTINGS_FILE DOC_LIMITS_CLASSES
 printf '[env]\nDOC_LIMITS_CLASSES = "*.md=1k"\n' >"$R/kendex.settings.toml"
