@@ -20,6 +20,8 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/messages.sh
+source "$TEST_DIR/lib/messages.sh"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -260,7 +262,7 @@ alias_text() {
   for word in $OIDS; do
     sed_args+=(-e "s|${word#*=}|<${word%%=*}>|g")
   done
-  sed -e "s|$ROOT|<root>|g" -e "s|$PHANTOM|<phantom>|g" ${sed_args[@]+"${sed_args[@]}"} -e 's/;/\\;/g' |
+  message_records | sed -e "s|$ROOT|<root>|g" -e "s|$PHANTOM|<phantom>|g" ${sed_args[@]+"${sed_args[@]}"} -e 's/;/\\;/g' |
     paste -s -d ';' -
 }
 
@@ -307,13 +309,12 @@ run() {
 err_text() {
   case "$1" in
     -) printf '' ;;
-    diverged) printf '%s' "Error: Local branch 'fork-pr-7' has commits that are not in the head of fork PR #7\; delete or rename that branch before inspecting the PR again." ;;
-    phantom) printf '%s' "Error: refs/pull/9/head on origin did not deliver commit <phantom>, the head gh reports for PR #9" ;;
-    no-ref) printf '%s' "Error: Could not fetch refs/pull/10/head from origin for fork PR #10;  fatal: couldn't find remote ref refs/pull/10/head" ;;
-    deleted:*) printf '%s' "Deleted branch 'fork-pr-${1#deleted:}' — squash-merged in pull request #${1#deleted:}." ;;
-    remove-open) printf '%s' "Error: Removed worktree but could not delete local branch 'fork-pr-7'.;  Remaining branch: fork-pr-7;  Worktree path removed/pruned: <root>/trees/issue-7;  Not merged into origin/main, and fork pull request #7 is OPEN, not merged;  After verifying it is safe, delete manually with: git -C \"<root>/main\" branch -D \"fork-pr-7\"" ;;
-    open-kept) printf '%s' "Skipped (branch 'fork-pr-13' is not merged — not an ancestor of origin/main, and fork pull request #13 is OPEN, not merged): <root>/trees/issue-13" ;;
-    moved-kept) printf '%s' "Skipped (branch 'fork-pr-13' is not merged — not an ancestor of origin/main, and carries work past its merged pull request (#13 merged head <fork>, not this tip <open>)): <root>/trees/issue-13" ;;
+    diverged) printf 'worktree-fork-branch-diverged: fork-pr-7' ;;
+    phantom) printf 'worktree-fork-head-mismatch: pr=9 head=<phantom>' ;;
+    no-ref) printf 'worktree-fork-fetch-failed: 10' ;;
+    deleted:*) printf 'worktree-branch-deleted: fork-pr-%s' "${1#deleted:}" ;;
+    remove-open) printf 'worktree-branch-delete-failed: fork-pr-7' ;;
+    open-kept|moved-kept) printf 'worktree-cleanup-unmerged: <root>/trees/issue-13' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -322,8 +323,8 @@ out_text() {
   case "$1" in
     -) printf '' ;;
     wt:*) printf '<root>/trees/issue-%s' "${1#wt:}" ;;
-    removed:*) printf 'Removed: <root>/trees/issue-%s' "${1#removed:}" ;;
-    cleaned:*) printf 'Cleaned: <root>/trees/issue-%s' "${1#cleaned:}" ;;
+    removed:*) printf 'worktree-removed: <root>/trees/issue-%s' "${1#removed:}" ;;
+    cleaned:*) printf 'worktree-cleaned: <root>/trees/issue-%s' "${1#cleaned:}" ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }

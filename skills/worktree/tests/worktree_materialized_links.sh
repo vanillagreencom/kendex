@@ -20,6 +20,8 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/messages.sh
+source "$TEST_DIR/lib/messages.sh"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -42,6 +44,8 @@ assert_eq() {
 # script with no lib/ beside it, the shape a materialized harness leaves.
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/broken/scripts/lib"
 cp "$WORKTREE_SCRIPT" "$TMP_ROOT/broken/scripts/worktree"
+mkdir -p "$TMP_ROOT/broken/scripts/lib"
+cp "${WORKTREE_SCRIPT%/*}/lib/messages.sh" "$TMP_ROOT/broken/scripts/lib/messages.sh"
 chmod +x "$TMP_ROOT/broken/scripts/worktree"
 BROKEN="$TMP_ROOT/broken/scripts/worktree"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP_ROOT/bin/gh"
@@ -128,6 +132,7 @@ build() {
 # --- rendering ------------------------------------------------------------------
 
 alias_text() {
+  message_records |
   sed -e "s|$WT|<wt>|g" -e "s|$MAIN|<main>|g" -e "s|$TMP_ROOT/broken|<broken>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" |
     paste -s -d ';' -
 }
@@ -162,9 +167,8 @@ err_text() {
   case "$1" in
     -) printf '' ;;
     *+*) err_text "${1%%+*}"; printf ';'; err_text "${1#*+}" ;;
-    pushed:*) printf 'To <root>/origin.git; * [new branch]      HEAD -> %s' "${1#pushed:}" ;;
-    materialized:*) printf '%s' "Warning: harness paths in this worktree are real directories, not symlinks:;  - ${1#materialized:};  A rebase materialized them, so kendex-installed files under those paths are gone.;  git status will look clean — it tracks only the files that survived.;  Restore them by running fix-links FROM THE MAIN CHECKOUT, because this;  worktree's own copy of the script may be among the missing files:;    cd '<main>' && .agents/skills/worktree/scripts/worktree fix-links '<wt>'" ;;
-    no-lib) printf '%s' "Error: worktree support library is missing: <broken>/scripts/lib/kendex-env.sh;  This is the signature of a materialized harness directory: a rebase replaced;  the symlink with a real directory containing only the tracked files, dropping;  everything installed by kendex.;  Recover by running fix-links FROM THE MAIN CHECKOUT (this copy is incomplete):;    cd <main checkout> && .agents/skills/worktree/scripts/worktree fix-links '<main>'" ;;
+    materialized:*) printf 'worktree-links-materialized: <wt>' ;;
+    no-lib) printf 'worktree-env-library-missing: <broken>/scripts/lib/kendex-env.sh' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -172,17 +176,16 @@ err_text() {
 out_text() {
   case "$1" in
     -) printf '' ;;
-    restored) printf 'Restored symlinks in <wt>' ;;
-    tracking:*) printf "branch '%s' set up to track 'origin/%s'." "${1#tracking:}" "${1#tracking:}" ;;
+    restored) printf 'worktree-links-restored: <wt>' ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }
 
 # --- the rows ---------------------------------------------------------------------
 # label|fixture|command|rc|out|err|state
-ROWS='a healthy worktree pushes with no warning: the tracked-content entry is a real directory with per-child links by design|repo harness create:mat-check|push mat-check --no-rebase|0|tracking:mat-check|pushed:mat-check|wt=.env.local,.gitignore,base.txt,harness/skills-><main>/harness/skills,harness/tracked.md,runtime-><main>/runtime wt-status=-
-push names a materialized parent link and sends the operator to the main checkout|repo harness create:mat-check materialized:runtime|push mat-check --no-rebase|0|tracking:mat-check|materialized:runtime+pushed:mat-check|wt=.env.local,.gitignore,base.txt,harness/skills-><main>/harness/skills,harness/tracked.md,runtime/ wt-status=-
-push names a materialized per-child link under the tracked-content entry|repo harness create:mat-check materialized:harness/skills|push mat-check --no-rebase|0|tracking:mat-check|materialized:harness/skills+pushed:mat-check|wt=.env.local,.gitignore,base.txt,harness/skills/,harness/tracked.md,runtime-><main>/runtime wt-status=-
+ROWS='a healthy worktree pushes with no warning: the tracked-content entry is a real directory with per-child links by design|repo harness create:mat-check|push mat-check --no-rebase|0|-|-|wt=.env.local,.gitignore,base.txt,harness/skills-><main>/harness/skills,harness/tracked.md,runtime-><main>/runtime wt-status=-
+push names a materialized parent link and sends the operator to the main checkout|repo harness create:mat-check materialized:runtime|push mat-check --no-rebase|0|-|materialized:runtime|wt=.env.local,.gitignore,base.txt,harness/skills-><main>/harness/skills,harness/tracked.md,runtime/ wt-status=-
+push names a materialized per-child link under the tracked-content entry|repo harness create:mat-check materialized:harness/skills|push mat-check --no-rebase|0|-|materialized:harness/skills|wt=.env.local,.gitignore,base.txt,harness/skills/,harness/tracked.md,runtime-><main>/runtime wt-status=-
 fix-links from the main checkout restores the materialized parent link|repo harness create:mat-check materialized:runtime|fix-links <wt>|0|restored|-|wt=.env.local,.gitignore,base.txt,harness/skills-><main>/harness/skills,harness/tracked.md,runtime-><main>/runtime wt-status=-
 a script whose lib/ vanished refuses with the same account instead of a bare 127|repo harness create:mat-check|<broken> list|1|-|no-lib|wt=.env.local,.gitignore,base.txt,harness/skills-><main>/harness/skills,harness/tracked.md,runtime-><main>/runtime wt-status=-
 '

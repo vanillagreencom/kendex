@@ -7,6 +7,8 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/messages.sh
+source "$TEST_DIR/lib/messages.sh"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -272,6 +274,7 @@ state() {
 # Paths by their names; stdout is cut at its first Usage line, which pins
 # which usage text printed without pinning the help body.
 alias_text() {
+  message_records |
   { if [[ "${1:-}" == usage ]]; then sed '/^Usage: /q'; else cat; fi; } |
     sed -e "s|$WT|<topic>|g" -e "s|$TREES_DIR/other|<other>|g" -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" \
       -e 's/;/\\;/g' | paste -s -d ';' -
@@ -290,7 +293,7 @@ out_text() {
     -) printf '' ;;
     topic) printf '<topic>' ;;
     other) printf '<other>' ;;
-    usage) printf 'Usage: worktree create <ID> [BRANCH] [options]' ;;
+    usage) printf 'worktree-help: create' ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }
@@ -298,56 +301,28 @@ out_text() {
 # The implicit-reuse refusal of the topic worktree for an issue, with the
 # lines its state adds: `clean|dirty`, `up` (a tracking upstream) or `noup`,
 # `pr` (the open PR), `lock`.
-implicit_reuse() {
-  local issue="$1" tree="$2" upstream="$3" pr="${4:-}" lock="${5:-}"
-  printf "Active work already exists for '%s'\\; refusing implicit reuse.;  Worktree: <topic>;  Branch: topic;  Working tree: %s" "$issue" "$tree"
-  case "$upstream" in
-    up) printf ';  Upstream: origin/topic (ahead 0, behind 0)' ;;
-    noup) printf ';  Upstream: none (branch is unpublished or not tracking a remote)' ;;
-  esac
-  [[ "$pr" == pr ]] && printf ';  Open PR: #42 https://example.test/pull/42'
-  [[ "$lock" == lock ]] && printf ';  Worktree lock: owner session is active'
-  printf ';No local branch was rebased or modified.;Inspect or monitor the existing work instead of spawning another implementer.;If this session owns the worktree, opt in explicitly:;  <worktree> create %s --reuse;Use --restack instead only when intentionally resolving a rebase conflict.' "$issue"
-}
 
 # The duplicate-branch refusal for a branch with a signal: `pr`, `local`, or
 # `remote`.
-duplicate() {
-  local branch="$1" signal="$2"
-  printf "Active work already exists for 'topic'\\; refusing to create a duplicate worktree.;  Branch: %s;  Signal: " "$branch"
-  case "$signal" in
-    pr) printf 'open pull request (#42)' ;;
-    local) printf 'existing local branch' ;;
-    remote) printf 'existing remote branch (origin/%s)' "$branch" ;;
-    second) printf 'existing remote branch (second/%s)' "$branch" ;;
-  esac
-  printf ';No worktree was created and no local branch was rebased or modified.;Inspect or monitor the existing work instead of spawning another implementer.;'
-  if [[ "$signal" == pr ]]; then
-    printf 'To inspect that PR in a worktree intentionally, pass --pr <number>.'
-  else
-    printf 'To check out that branch intentionally, pass --base %s.' "$branch"
-  fi
-}
 
 err_text() {
-  local spec a b c d
+  local spec branch signal
   case "$1" in
     -) printf '' ;;
-    # implicit:<issue>:<tree>,<upstream>[,pr][,lock]
-    implicit:*) spec="${1#implicit:}"; IFS=, read -r a b c d <<<"${spec#*:}"; implicit_reuse "${spec%%:*}" "$a" "$b" "${c:-}" "${d:-}" ;;
-    dup:*) spec="${1#dup:}"; duplicate "${spec%:*}" "${spec##*:}" ;;
-    main-checkout) printf "Active work already exists for 'topic'\\; refusing to create a duplicate worktree.;  Branch: topic;  Signal: checked out in the main checkout (<main>);No worktree was created and no local branch was rebased or modified.;The main checkout is never issue work and the branch cannot be checked out twice.;Move that work off the main checkout (or pick another issue id), then retry." ;;
-    incomplete) printf "Active or incomplete worktree path already exists for 'topic': <topic>;The exact path is not a registered worktree of <main>.;Refusing to delete, replace, or reuse it automatically. Inspect it, then remove it explicitly if abandoned." ;;
-    gh-fail) printf "Error: Could not query open pull requests for branch 'topic'\\; refusing to assume it is unowned.;  simulated gh failure" ;;
-    fetch-fail) printf "Error: Could not refresh remote 'origin' for authoritative worktree ownership discovery.;  simulated fetch failure" ;;
-    # `+` composes two specs: discovery runs before and after the claim lock, so
-    # its warning prints once per pass.
+    implicit:*) printf 'worktree-worktree-owned: <topic>' ;;
+    dup:*) spec="${1#dup:}"; branch="${spec%:*}"; signal="${spec##*:}"
+      case "$signal" in pr) signal=pr ;; local) signal=local ;; remote|second) signal=remote ;; esac
+      printf 'worktree-branch-owned: branch=%s source=%s' "$branch" "$signal" ;;
+    main-checkout) printf 'worktree-branch-main-owned: topic' ;;
+    incomplete) printf 'worktree-path-incomplete: <topic>' ;;
+    gh-fail) printf 'worktree-pr-query-failed: topic' ;;
+    fetch-fail) printf 'worktree-ownership-fetch-failed: origin' ;;
     *+*) err_text "${1%%+*}"; printf ';'; err_text "${1#*+}" ;;
-    skipped-remote:*) printf "warning: skipping unreachable remote '%s' for ownership discovery" "${1#skipped-remote:}" ;;
-    no-origin) printf "Error: Remote 'origin' is required for authoritative worktree ownership discovery." ;;
-    remote-fail) printf "Error: Could not query remote 'origin' for authoritative worktree ownership discovery.;  fatal: '<root>/missing-origin.git' does not appear to be a git repository;  fatal: Could not read from remote repository.;  ;  Please make sure you have the correct access rights;  and the repository exists." ;;
-    unknown-option) printf "Error: unknown option '--bogus' for create;Run: <worktree> create --help" ;;
-    default-branch) printf "Error: 'main' is the default branch and cannot be claimed as an issue work branch.;To base new work on it, run: <worktree> create topic --base main" ;;
+    skipped-remote:*) printf 'worktree-remote-unreachable: %s' "${1#skipped-remote:}" ;;
+    no-origin) printf 'worktree-origin-required: origin' ;;
+    remote-fail) printf 'worktree-ownership-query-failed: origin' ;;
+    unknown-option) printf 'worktree-create-option-unknown: --bogus' ;;
+    default-branch) printf 'worktree-branch-default: main' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }

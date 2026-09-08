@@ -19,6 +19,8 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/messages.sh
+source "$TEST_DIR/lib/messages.sh"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -113,6 +115,7 @@ build() {
 # --- rendering ------------------------------------------------------------------
 
 alias_text() {
+  message_records |
   sed -e "s|$WT|<wt>|g" -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" |
     paste -s -d ';' -
 }
@@ -157,7 +160,7 @@ run() {
 err_text() {
   case "$1" in
     -) printf '' ;;
-    main-checkout) printf 'Error: <main> is the main checkout for <main>; refusing to configure it.' ;;
+    main-checkout) printf 'worktree-path-main: <main>' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -165,11 +168,11 @@ err_text() {
 out_text() {
   case "$1" in
     -) printf '' ;;
-    codex-configured) printf 'Configured Codex worktree: <wt>' ;;
-    claude-configured) printf 'Configured Claude worktree: <wt>' ;;
-    codex-cleaned) printf 'Codex cleanup hook complete; app owns worktree deletion: <wt>' ;;
-    claude-cleaned) printf 'Claude cleanup hook complete; app owns worktree deletion: <wt>' ;;
-    branch-ready:*) printf 'Codex worktree branch ready: %s (<wt>)' "${1#branch-ready:}" ;;
+    codex-configured) printf 'worktree-codex-configured: <wt>' ;;
+    claude-configured) printf 'worktree-claude-configured: <wt>' ;;
+    codex-cleaned) printf 'worktree-codex-cleanup: <wt>' ;;
+    claude-cleaned) printf 'worktree-claude-cleanup: <wt>' ;;
+    branch-ready:*) printf 'worktree-codex-branch-ready: %s' "${1#branch-ready:}" ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }

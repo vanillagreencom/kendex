@@ -15,6 +15,8 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/messages.sh
+source "$TEST_DIR/lib/messages.sh"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -121,6 +123,7 @@ build() {
 # --- rendering ------------------------------------------------------------------
 
 alias_text() {
+  message_records |
   sed -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" |
     paste -s -d ';' -
 }
@@ -165,22 +168,19 @@ err_text() {
   local spec="$1" rest="" a="" b=""
   case "$spec" in
     -) printf '' ;;
-    relocated+*) printf 'Relocated cwd to <main>;%s' "$(err_text "${spec#relocated+}")" ;;
+    relocated+*) printf 'worktree-cwd-relocated: <main>;%s' "$(err_text "${spec#relocated+}")" ;;
     *+*) printf '%s;%s' "$(err_text "${spec%%+*}")" "$(err_text "${spec#*+}")" ;;
-    invalid-id:*) printf "Error: invalid issue ID '%s'. Use letters, numbers, '.', '_', or '-' only; start with a letter/number and do not include '..'." "${spec#invalid-id:}" ;;
-    invalid-mkdirs:*) printf "Error: invalid WORKTREE_MKDIRS entry '%s'. Use a worktree-relative path without '.', '..', absolute, backslash, or glob metacharacter components." "${spec#invalid-mkdirs:}" ;;
-    inside-symlink) printf "Error: configured worktree path 'config/local.txt' is inside symlink path 'config'; refusing setup to avoid following the symlink target." ;;
-    both) printf "Error: configured worktree path 'config/local.txt' is both a symlink target (WORKTREE_SYMLINKS) and a WORKTREE_COPIES entry; refusing setup to avoid following the symlink target." ;;
-    through-symlink:*) rest="${spec#through-symlink:}"; a="${rest%%:*}"; b="${rest#*:}"
-      printf "Error: refusing to write 'config/local.txt' in %s because '%s/%s' is a symlink." "$a" "$a" "$b" ;;
+    invalid-id:*) printf 'worktree-issue-invalid: %s' "${spec#invalid-id:}" ;;
+    invalid-mkdirs:*) printf 'worktree-config-path-invalid: WORKTREE_MKDIRS=%s' "${spec#invalid-mkdirs:}" ;;
+    inside-symlink) printf 'worktree-config-path-nested: config/local.txt' ;;
+    both) printf 'worktree-config-path-overlap: config/local.txt' ;;
+    through-symlink:*) printf 'worktree-path-symlink-parent: config/local.txt' ;;
     non-file:*) rest="${spec#non-file:}"; a="${rest%%:*}"; b="${rest#*:}"
-      printf "Error: refusing to replace non-file worktree path '%s' with a %s symlink." "$a" "$b" ;;
-    not-restored:*) printf "Error: fix-links did not restore every configured path in %s.;  Any warning above names why. A path holding data git does not track is;  left in place deliberately: move it into '<main>' (or delete it),;  then re-run this command." "${spec#not-restored:}" ;;
-    unhealthy:*) rest="${spec#unhealthy:}"; a="${rest%%:*}"; b="${rest#*:}"
-      printf "Error: fix-links did not restore every configured path in %s.;  Still unhealthy:;    - %s (still a real path, not a link);  Any warning above names why. A path holding data git does not track is;  left in place deliberately: move it into '<main>' (or delete it),;  then re-run this command." "$a" "$b" ;;
-    unregistered:*) rest="${spec#unregistered:}"; a="${rest%%:*}"; b="${rest#*:}"
-      printf 'Error: %s is not a registered worktree of <main>; refusing to %s.' "$a" "$b" ;;
-    main-checkout:*) printf 'Error: <main> is the main checkout for <main>; refusing to %s.' "${spec#main-checkout:}" ;;
+      printf 'worktree-%s-link-nonfile: %s/%s' "$b" "$WT" "$a" | sed -e "s|$ROOT|<root>|g" ;;
+    not-restored:*) printf 'worktree-links-unrestored: %s' "${spec#not-restored:}" ;;
+    unhealthy:*) rest="${spec#unhealthy:}"; printf 'worktree-links-unrestored: %s' "${rest%%:*}" ;;
+    unregistered:*) rest="${spec#unregistered:}"; printf 'worktree-path-unregistered: %s' "${rest%%:*}" ;;
+    main-checkout:*) printf 'worktree-path-main: <main>' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$spec" ;;
   esac
 }
@@ -188,7 +188,7 @@ err_text() {
 out_text() {
   case "$1" in
     -) printf '' ;;
-    restored:*) printf 'Restored symlinks in %s' "${1#restored:}" ;;
+    restored:*) printf 'worktree-links-restored: %s' "${1#restored:}" ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }
