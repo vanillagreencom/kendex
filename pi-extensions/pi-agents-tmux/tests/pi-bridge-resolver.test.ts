@@ -41,6 +41,7 @@ test("cached pi-bridge resolver logs startup throw once and caches missing", asy
 	assert.equal(await resolve(), undefined);
 	assert.equal(calls, 1);
 	assert.equal(warnings.length, 1);
+	assert.equal(warnings[0]!.split("\n", 1)[0], "pi_bridge_resolver=failed");
 	assert.match(warnings[0]!, /code=ENOENT/);
 	assert.match(warnings[0]!, /errno=-2/);
 	assert.match(warnings[0]!, /syscall=spawn/);
@@ -60,5 +61,6 @@ test("cached pi-bridge resolver logs returned undefined once and caches missing"
 	assert.equal(await resolve(), undefined);
 	assert.equal(await resolve(), undefined);
 	assert.equal(calls, 1);
-	assert.deepEqual(warnings, ["pi-bridge resolver failed: returned undefined"]);
+	assert.equal(warnings.length, 1);
+	assert.equal(warnings[0]!.split("\n", 1)[0], "pi_bridge_resolver=missing");
 });
