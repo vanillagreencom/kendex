@@ -41,11 +41,30 @@ bi_world() {
 bi_table "the status, and what the first line names" "\
 a clean repo checks with exit 0|rendered|check|0|clean|-
 a drift finding exits 1|rendered stale-copilot|check|1|drift|-
-git unable to answer exits 2, naming the command that could not|rendered no-git|check|2|git ls-files -z|-
-a spec copy with no doctrine source exits 2, naming the file|rendered spec:no-doctrine|check|2|SKILL.md|-
-flag misuse exits 2 before any read, naming the flag|rendered|render --staged|2|-|--staged
-an unknown verb exits 2 from the parser|rendered|bogus|2|usage|-
+git unable to answer exits 2 under the source key|rendered no-git|check|2|source|-
+a spec copy with no doctrine source exits 2 under the spec key|rendered spec:no-doctrine|check|2|spec|-
+flag misuse exits 2 before any read, under the usage key|rendered|render --staged|2|usage|--staged
+an unknown verb exits 2 from the parser|rendered|bogus|2|-|-
 "
+
+# A row renders the key, so the value beside it is asserted here, on a world
+# whose paths this case knows. One record, one line, key and value.
+repo="$(bi_rendered_repo exit-record)" || exit 1
+rm -rf -- "${repo:?}/.git"
+record="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main check --repo "$repo" ) 2>&1 >/dev/null || : )"
+first="$(printf '%s\n' "$record" | sed -n '1p')"
+if [ "$first" = "bot-instructions: source=$repo" ]; then
+  ok 'the refusal record names the key and the repository it was about'
+else
+  bad 'the refusal record names the key and the repository it was about' "first line: $first"
+fi
+count="$(printf '%s\n' "$record" | grep -c '^bot-instructions: ' || :)"
+if [ "$count" = 1 ]; then
+  ok 'one condition prints one record'
+else
+  bad 'one condition prints one record' "printed $count"
+fi
 
 # A crash is 2 as well: the tool failed, nothing in the tree is wrong, and
 # Python's own exit for an uncaught exception is 1. A dispatched dependency

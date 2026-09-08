@@ -10,15 +10,27 @@ identity, which § Controls requires a control to assert on.
 
 
 class BotInstructionsError(Exception):
-    """Base for every failure this package raises."""
+    """Base for every failure this package raises.
+
+    `key` is the first word of the refusal record the command line prints,
+    and it is what a caller matches on. It belongs to the family rather than
+    to a call site: the family is what decides whether a run could not read
+    its inputs, could not use the spec, or found the tree wanting.
+    """
+
+    key = "error"
 
 
 class SpecError(BotInstructionsError):
     """The spec copy is unusable: no version, no doctrine, a broken table."""
 
+    key = "spec"
+
 
 class InputError(BotInstructionsError):
     """A read input is missing, unparseable, or refused."""
+
+    key = "input"
 
 
 class SourceUnavailable(InputError):
@@ -30,6 +42,8 @@ class SourceUnavailable(InputError):
     checked. Names the failing command and what it said.
     """
 
+    key = "source"
+
     def __init__(self, what, detail):
         super().__init__(f"{what}: {detail}")
 
@@ -39,9 +53,13 @@ class ManifestError(InputError):
     install. Its own type, so the run can attribute it to
     `exclusion-consistency` rather than matching on the message text."""
 
+    key = "manifest"
+
 
 class RenderError(BotInstructionsError):
     """A render could not produce bytes, or a write phase failed."""
+
+    key = "render"
 
 
 class Finding(BotInstructionsError):

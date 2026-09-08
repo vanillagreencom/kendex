@@ -1,11 +1,23 @@
-"""The command line: `render`, `check`, `adopt`."""
+"""The command line: `render`, `check`, `adopt`.
+
+Output protocol, which the commit-guards pre-commit lane and this package's
+suites read:
+
+    refusal   bot-instructions: key=value   first line, on stderr, exit 2
+    findings  bot-instructions: findings=N  first line, on stderr, exit 1
+              then one line per finding
+
+The key is the error family and the value is the tree the run was about; the
+English that follows either record is for a person and carries no contract.
+Exit codes: 0 clean, 1 findings, 2 could not complete.
+"""
 
 import argparse
 import os
 import sys
 import traceback
 
-from .errors import BotInstructionsError, ValidationFailed
+from .errors import BotInstructionsError, SpecError, ValidationFailed
 from . import run, tree, verbs
 
 SPEC_FILES = ("SKILL.md", "schemas/renders.md")
@@ -63,12 +75,14 @@ def _spec_source(repo, spec_root, work, staged):
 def main(argv=None):
     args = parser().parse_args(argv)
     if args.staged and args.verb != "check":
+        print("bot-instructions: usage=--staged", file=sys.stderr)
         print("--staged is a check mode; render and adopt write the working tree",
               file=sys.stderr)
         return 2
     if args.dry_run and args.verb != "render":
         # `adopt` is the one-time verb that writes, so a flag it accepted and
         # ignored would take the files over on a run meant to preview.
+        print("bot-instructions: usage=--dry-run", file=sys.stderr)
         print(f"--dry-run is a render mode; {args.verb} does not write a set to preview",
               file=sys.stderr)
         return 2
@@ -93,9 +107,9 @@ def main(argv=None):
         else:
             lines = verbs.adopt_verb(ctx, repo)
     except ValidationFailed as exc:
+        print(f"bot-instructions: findings={len(exc.findings)}", file=sys.stderr)
         for finding in exc.findings:
             print(finding, file=sys.stderr)
-        print(f"{len(exc.findings)} finding(s)", file=sys.stderr)
         return 1
     except BotInstructionsError as exc:
         # Could not complete, which is 2 in the exit convention the
@@ -105,9 +119,14 @@ def main(argv=None):
         # reaches here (`run._as_finding`), so what arrives as a bare error is
         # a source git could not answer for, an unusable spec copy, or a
         # write that failed — none of them a violation in the tree.
+        # A spec failure is about the spec copy; everything else is about the
+        # repository the run was pointed at.
+        subject = spec_root if isinstance(exc, SpecError) else repo
+        print(f"bot-instructions: {exc.key}={subject}", file=sys.stderr)
         print(str(exc), file=sys.stderr)
         return 2
     except Exception:  # a crash is not a finding either
+        print(f"bot-instructions: crashed={repo}", file=sys.stderr)
         traceback.print_exc()
         return 2
     for line in lines:

@@ -226,17 +226,23 @@ expect_clause() {
 
 # The validator names in `$bi_out`, sorted, space-separated, one trailing
 # space: the set `expect_red` and a table row compare against.
+# The tool's own record line leads with the same shape a validator finding
+# does, so it is dropped before the set is read: `bot-instructions` is not a
+# validator, and counting it would put it in every findings row.
 bi_fired() {
-  printf '%s\n' "$bi_out" | sed -n 's/^\([a-z][a-z-]*\):.*/\1/p' | sort -u | tr '\n' ' '
+  printf '%s\n' "$bi_out" |
+    grep -v '^bot-instructions: ' |
+    sed -n 's/^\([a-z][a-z-]*\):.*/\1/p' | sort -u | tr '\n' ' '
 }
 
 # The run rendered as `rc=<status> out=<data>`, by status class. 0 renders
 # the kind of the verb's first line (`clean`, `wrote`, `would-write`,
 # `nothing`, `adopted`, `points-at`; any other line verbatim). 1 renders the
-# fired validator set. 2 renders the source the first line names, the text
-# before its first `: ` (`git ls-files -z`, `SKILL.md`, `usage`), or `-`
-# when the line names none; a value such a line carries is the row's `says`
-# column. A message's wording is never rendered; the value it names is.
+# fired validator set. 2 renders the refusal KEY the first line carries
+# (`source`, `spec`, `manifest`, `input`, `usage`, `crashed`), or `-` when
+# the line carries no record. The value beside the key is a path the run
+# resolved, which a row cannot spell; the case below the table asserts a
+# whole record, value included. A message's wording is never rendered.
 bi_render() {
   local out line
   line="${bi_out%%
@@ -256,7 +262,10 @@ bi_render() {
     1) out="$(bi_fired)"; out="${out% }" ;;
     *)
       case "$line" in
-        *": "*) out="${line%%: *}" ;;
+        "bot-instructions: "*"="*)
+          out="${line#bot-instructions: }"
+          out="${out%%=*}"
+          ;;
         *) out="-" ;;
       esac
       ;;
