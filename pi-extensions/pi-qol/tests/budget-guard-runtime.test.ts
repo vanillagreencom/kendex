@@ -510,7 +510,7 @@ for (const { name, expected, run } of lifecycleRows) {
 		expect.hasAssertions();
 		const driver = new BudgetGuardDriver();
 		try {
-			expect(await run(driver)).toEqual(expected);
+			expect(await run(driver)).toStrictEqual(expected);
 		} finally {
 			driver.reset();
 		}
