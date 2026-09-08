@@ -8,6 +8,7 @@ import { atomicWriteFile } from "./file-lock.js";
 import type { AgentConfig } from "./agents.js";
 import { delay, paneSessionModeToRecordMode } from "./format.js";
 import { safeFileName, shellQuote } from "./names.js";
+import { livePaneRefusal, messageRecord, piBridgeResolverNotice, unknownAgentRefusal } from "./messages.js";
 import {
 	archivedPaneSessionDir,
 	archivedPaneSessions,
@@ -148,7 +149,8 @@ function formatPaneCwdStaleMessage(details: PaneCwdStaleDetails): string {
 					? "pane process pid could not be resolved"
 					: "pane process cwd could not be inspected";
 	return [
-		`pane-cwd-stale: refusing to queue task for ${details.agent}; ${reason}.`,
+		messageRecord("pane_cwd_stale", details.expectedCwd),
+		`Cannot queue a task for ${details.agent} because ${reason}.`,
 		`Pane: ${details.paneId}${details.pid ? ` pid=${details.pid}` : ""}`,
 		`Actual cwd: ${actual}`,
 		`Requested cwd: ${details.expectedCwd}`,
@@ -415,23 +417,23 @@ export function createCachedPiBridgeResolver(
 	// Resolve once for the extension lifetime; if the initial lookup fails,
 	// emit one structured diagnostic before caching the missing result so later
 	// probes can short-circuit without spamming terminal warnings.
-	const report = (reason: string) => {
-		try { logDiagnostic?.(`pi-bridge resolver failed: ${reason}`); } catch { /* diagnostics are best-effort */ }
+	const report = (status: "failed" | "missing", reason: string) => {
+		try { logDiagnostic?.(piBridgeResolverNotice(status, reason)); } catch { /* diagnostics are best-effort */ }
 	};
 	let cached: Promise<string | undefined>;
 	try {
 		cached = Promise.resolve(resolve()).then(
 			(bin) => {
-				if (!bin) report("returned undefined");
+				if (!bin) report("missing", "returned undefined");
 				return bin;
 			},
 			(error) => {
-				report(formatResolverFailure(error));
+				report("failed", formatResolverFailure(error));
 				return undefined;
 			},
 		);
 	} catch (error) {
-		report(formatResolverFailure(error));
+		report("failed", formatResolverFailure(error));
 		cached = Promise.resolve(undefined);
 	}
 	return () => cached;
@@ -1069,7 +1071,6 @@ export async function runPersistentPaneAgent(
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 	if (!agent) {
-		const available = agents.map((a) => `"${a.name}"`).join(", ") || "none";
 		return {
 			agent: agentName,
 			agentSource: "unknown",
@@ -1078,7 +1079,7 @@ export async function runPersistentPaneAgent(
 			refused: true,
 			exitCode: 1,
 			messages: [],
-			stderr: `Unknown agent: "${agentName}". Available agents: ${available}.`,
+			stderr: unknownAgentRefusal(agentName, agents),
 			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
 			step,
 		};
@@ -1113,12 +1114,7 @@ export async function runPersistentPaneAgent(
 		const registry = await readPaneRegistry(runtimeRoot);
 		const existing = registry[agent.name];
 		if (existing && (await paneExists(existing.paneId))) {
-			const stderr = [
-				`Cannot forceSpawn ${agent.name}: a live pane already exists for this agent.`,
-				"kendex does not support multiple live panes for the same agent. Either:",
-				`  - Drop forceSpawn and the call will reuse the existing pane (queue this task into ${existing.windowName}), or`,
-				`  - Use stop_subagent or /agents stop ${agent.name} first, then retry with forceSpawn for a fresh session.`,
-			].join("\n");
+			const stderr = livePaneRefusal(agent.name, existing.windowName);
 			return {
 				agent: agent.name,
 				agentSource: agent.source,

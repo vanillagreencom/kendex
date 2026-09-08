@@ -15,6 +15,7 @@ import type { AgentConfig } from "./agents.js";
 import { sanitizeCwdSnapshotText, setGitExecFileForTests as setSnapshotGitExecFileForTests, snapshotCwdGitState } from "./cwd-snapshot.js";
 import { getFinalOutput, stringifyError } from "./format.js";
 import { safeFileName } from "./names.js";
+import { unknownAgentRefusal } from "./messages.js";
 import {
 	getPiInvocation,
 	PI_SUBAGENT_CHILD_PANE_ENV,
@@ -449,7 +450,6 @@ export async function runSingleAgent(
 	const agent = agents.find((a) => a.name === agentName);
 
 	if (!agent) {
-		const available = agents.map((a) => `"${a.name}"`).join(", ") || "none";
 		return {
 			agent: agentName,
 			agentSource: "unknown",
@@ -458,7 +458,7 @@ export async function runSingleAgent(
 			refused: true,
 			exitCode: 1,
 			messages: [],
-			stderr: `Unknown agent: "${agentName}". Available agents: ${available}.`,
+			stderr: unknownAgentRefusal(agentName, agents),
 			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
 			step,
 		};

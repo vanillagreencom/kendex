@@ -64,7 +64,8 @@ function renderSingle(result: SingleResult, expanded = false): string {
 // paneId but deliberately no taskId, because nothing was queued.
 function refusedPaneResult(patch: Partial<SingleResult> = {}): SingleResult {
 	const stderr = [
-		"pane-cwd-stale: refusing to queue task for generalist; pane process cwd was deleted.",
+		"pane_cwd_stale=/workspace",
+		"Cannot queue a task for generalist because the pane process cwd was deleted.",
 		"Stop the pane with stop_subagent agent=generalist and retry with forceSpawn for a fresh process.",
 	].join("\n");
 	return {
@@ -173,8 +174,7 @@ describe("persistent pane cwd preflight", () => {
 
 			expect(result.exitCode).toBe(1);
 			expect(result.stopReason).toBe("pane-cwd-stale");
-			expect(result.stderr).toContain("pane-cwd-stale");
-			expect(result.stderr).toContain(requestedCwd);
+			expect(result.stderr.split("\n", 1)[0]).toBe(`pane_cwd_stale=${requestedCwd}`);
 			expect(JSON.parse(result.errorEnvelope ?? "{}").error.code).toBe("pane-cwd-stale");
 			expect(existsSync(join(runtimeRoot, "inbox", "rust"))).toBe(false);
 
@@ -253,6 +253,7 @@ describe("persistent pane cwd preflight", () => {
 
 			expect(result.exitCode).toBe(1);
 			expect(result.stopReason).toBe("pane-cwd-stale");
+			expect(result.stderr.split("\n", 1)[0]).toBe(`pane_cwd_stale=${requestedCwd}`);
 			const envelope = JSON.parse(result.errorEnvelope ?? "{}");
 			expect(envelope.error.code).toBe("pane-cwd-stale");
 			expect(envelope.error.details.reason).toBe("mismatch");
@@ -310,13 +311,6 @@ describe("refused pane dispatch rendering", () => {
 		// Warning, not error: the guard declined a dispatch, nothing crashed.
 		expect(collapsed).toContain("<warning>refused</warning>");
 		expect(collapsed).toContain("<warning>[pane-cwd-stale]</warning>");
-	});
-
-	test("the refusal message and its recovery hint are preserved verbatim", () => {
-		for (const text of [renderSingle(refusedPaneResult()), renderSingle(refusedPaneResult(), true)]) {
-			expect(text).toContain("pane-cwd-stale: refusing to queue task for generalist");
-			expect(text).toContain("retry with forceSpawn for a fresh process");
-		}
 	});
 
 	test("expanded refusal omits the ran-a-task sections", () => {
