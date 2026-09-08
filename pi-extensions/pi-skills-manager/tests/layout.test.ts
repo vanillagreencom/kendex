@@ -1,156 +1,83 @@
-import { describe, expect, test } from "bun:test";
-import { DEFAULT_POPUP_MAX_HEIGHT } from "../extensions/skills-manager/constants.ts";
+import { expect, test } from "bun:test";
 import {
-	BROWSE_NON_LIST_ROWS,
-	browseWindow,
-	normalizeListRows,
-	pageBrowseSelection,
-	resolveOverlayRows,
-	responsiveBrowseListRows,
-	responsiveBrowsePageSelection,
-	responsiveBrowseWindow,
+	browseWindow, normalizeListRows, pageBrowseSelection, resolveOverlayRows,
+	responsiveBrowseListRows, responsiveBrowsePageSelection, responsiveBrowseWindow,
 	sanitizePopupMaxHeight,
 } from "../extensions/skills-manager/layout.ts";
 
-describe("normalizeListRows", () => {
-	test("floors configured rows and allows one-row lists", () => {
-		expect(normalizeListRows(7.9)).toBe(7);
-		expect(normalizeListRows(1)).toBe(1);
-		expect(normalizeListRows(0)).toBe(14);
-		expect(normalizeListRows(-4)).toBe(14);
-	});
+for (const [name, value, expected] of [
+	["fraction floors", 7.9, 7], ["one row", 1, 1], ["zero falls back", 0, 14],
+	["negative falls back", -4, 14], ["missing falls back", undefined, 14],
+	["NaN falls back", Number.NaN, 14], ["infinity falls back", Number.POSITIVE_INFINITY, 14],
+] as const) {
+	test(`normalizeListRows: ${name}`, () => expect(normalizeListRows(value, 14)).toBe(expected));
+}
 
-	test("falls back for missing or non-finite values", () => {
-		expect(normalizeListRows(undefined, 14)).toBe(14);
-		expect(normalizeListRows(Number.NaN, 14)).toBe(14);
-		expect(normalizeListRows(Number.POSITIVE_INFINITY, 14)).toBe(14);
+for (const [name, value, expected] of [
+	["fraction floors", 12.9, 12], ["row string", "12", 12], ["percent", "25%", "25%"],
+	["text", "abc", "86%"], ["negative string", "-5", "86%"], ["zero string", "0", "86%"],
+	["zero percent", "0%", "86%"], ["zero", 0, "86%"], ["negative", -5, "86%"],
+	["NaN", Number.NaN, "86%"], ["infinity", Number.POSITIVE_INFINITY, "86%"],
+] as const) {
+	test(`sanitizePopupMaxHeight: ${name}`, () => expect(sanitizePopupMaxHeight(value)).toBe(expected));
+}
+
+for (const [name, terminal, maxHeight, expected] of [
+	["missing terminal", undefined, undefined, 20], ["NaN terminal", Number.NaN, undefined, 20],
+	["infinite terminal", Number.POSITIVE_INFINITY, undefined, 20], ["percent", 40, "50%", 20],
+	["clamp to terminal", 20, 80, 20], ["clamp to configured rows", 80, 20, 20],
+	["text height", 80, "abc", 68], ["negative string height", 80, "-5", 68],
+	["zero string height", 80, "0", 68], ["zero percent height", 80, "0%", 68],
+	["zero height", 80, 0, 68], ["negative height", 80, -5, 68],
+	["NaN height", 80, Number.NaN, 68], ["infinite height", 80, Number.POSITIVE_INFINITY, 68],
+] as const) {
+	test(`resolveOverlayRows: ${name}`, () => expect(resolveOverlayRows(terminal, maxHeight)).toBe(expected));
+}
+
+for (const [name, configured, terminal, maxHeight, expected] of [
+	["missing terminal", 14, undefined, undefined, 14], ["NaN terminal", 14, Number.NaN, undefined, 14],
+	["infinite terminal", 14, Number.POSITIVE_INFINITY, undefined, 14],
+	["configured default", 14, 80, undefined, 14], ["configured larger", 22, 80, undefined, 22],
+	["short terminal", 14, 20, undefined, 11], ["tiny terminal", 14, 4, undefined, 1],
+	["six chrome rows remain", 14, 80, 12, 6], ["percent height", 14, 80, "25%", 14],
+] as const) {
+	test(`responsiveBrowseListRows: ${name}`, () => {
+		const rows = responsiveBrowseListRows(configured, terminal, maxHeight);
+		expect(rows).toBe(expected);
+		expect(Number.isInteger(rows)).toBe(true);
+		expect(Number.isFinite(rows)).toBe(true);
 	});
+}
+
+test("browseWindow centers the selected item", () => {
+	expect(browseWindow(30, 20, 11)).toEqual({ listRows: 11, startIndex: 15, endIndex: 26 });
 });
 
-describe("popup max height normalization", () => {
-	test("keeps valid row and percent values", () => {
-		expect(sanitizePopupMaxHeight(12.9)).toBe(12);
-		expect(sanitizePopupMaxHeight("12")).toBe(12);
-		expect(sanitizePopupMaxHeight("25%")).toBe("25%");
+for (const [name, configured, terminal, count, selected, expected] of [
+	["tiny terminal", 14, 4, 10, 6, { listRows: 1, startIndex: 6, endIndex: 7 }],
+	["short terminal", 14, 20, 30, 20, { listRows: 11, startIndex: 15, endIndex: 26 }],
+	["default rows", 14, 80, 40, 20, { listRows: 14, startIndex: 13, endIndex: 27 }],
+	["larger rows", 22, 80, 40, 20, { listRows: 22, startIndex: 9, endIndex: 31 }],
+	["near end", 14, 20, 30, 29, { listRows: 11, startIndex: 19, endIndex: 30 }],
+] as const) {
+	test(`responsiveBrowseWindow: ${name}`, () => {
+		const window = responsiveBrowseWindow(configured, terminal, count, selected);
+		expect(window).toEqual(expected);
+		expect(selected).toBeGreaterThanOrEqual(window.startIndex);
+		expect(selected).toBeLessThan(window.endIndex);
 	});
+}
 
-	test("falls back for malformed, non-positive, and non-finite values", () => {
-		for (const value of ["abc", "-5", "0", "0%", 0, -5, Number.NaN, Number.POSITIVE_INFINITY] as const) {
-			expect(sanitizePopupMaxHeight(value)).toBe(DEFAULT_POPUP_MAX_HEIGHT);
-			expect(resolveOverlayRows(80, value)).toBe(68);
-		}
-	});
-});
+for (const [name, selected, direction, expected] of [
+	["lower bound", 5, -1, 0], ["upper bound", 25, 1, 30],
+] as const) {
+	test(`pageBrowseSelection: ${name}`, () => expect(pageBrowseSelection(selected, 30, direction, 11)).toBe(expected));
+}
 
-describe("resolveOverlayRows", () => {
-	test("guards missing or non-finite terminal rows with finite fallback", () => {
-		expect(resolveOverlayRows(undefined)).toBe(20);
-		expect(resolveOverlayRows(Number.NaN)).toBe(20);
-		expect(resolveOverlayRows(Number.POSITIVE_INFINITY)).toBe(20);
-	});
-
-	test("resolves percent max height against terminal rows", () => {
-		expect(resolveOverlayRows(40, "50%")).toBe(20);
-	});
-
-	test("clamps numeric max height to terminal rows", () => {
-		expect(resolveOverlayRows(20, 80)).toBe(20);
-		expect(resolveOverlayRows(80, 20)).toBe(20);
-	});
-});
-
-describe("responsiveBrowseListRows", () => {
-	test("documents browse chrome rows", () => {
-		expect(BROWSE_NON_LIST_ROWS).toBe(6);
-	});
-
-	test("always returns finite integer >= 1 for bad terminal rows", () => {
-		for (const terminalRows of [undefined, Number.NaN, Number.POSITIVE_INFINITY] as const) {
-			const rows = responsiveBrowseListRows(14, terminalRows);
-			expect(Number.isInteger(rows)).toBe(true);
-			expect(Number.isFinite(rows)).toBe(true);
-			expect(rows).toBe(14);
-		}
-	});
-
-	test("keeps configured rows as upper bound on large terminals", () => {
-		expect(responsiveBrowseListRows(14, 80)).toBe(14);
-		expect(responsiveBrowseListRows(22, 80)).toBe(22);
-	});
-
-	test("shrinks rows on short terminals to leave popup chrome visible", () => {
-		expect(responsiveBrowseListRows(14, 20)).toBe(11);
-	});
-
-	test("collapses to one row on tiny terminals", () => {
-		expect(responsiveBrowseListRows(14, 4)).toBe(1);
-	});
-
-	test("respects explicit popup max height", () => {
-		expect(responsiveBrowseListRows(14, 80, 12)).toBe(6);
-		expect(responsiveBrowseListRows(14, 80, "25%")).toBe(14);
-	});
-});
-
-describe("browse window", () => {
-	function expectSelectedVisible(window: { startIndex: number; endIndex: number }, selectedDisplayIndex: number): void {
-		expect(selectedDisplayIndex).toBeGreaterThanOrEqual(window.startIndex);
-		expect(selectedDisplayIndex).toBeLessThan(window.endIndex);
-	}
-
-	test("centers selected item with exact representative rows", () => {
-		expect(browseWindow(30, 20, 11)).toEqual({ listRows: 11, startIndex: 15, endIndex: 26 });
-	});
-
-	test("tiny terminals render one selected row", () => {
-		const window = responsiveBrowseWindow(14, 4, 10, 6);
-		expect(window).toEqual({ listRows: 1, startIndex: 6, endIndex: 7 });
-		expectSelectedVisible(window, 6);
-	});
-
-	test("short terminals use responsive rows and keep selected item visible", () => {
-		const window = responsiveBrowseWindow(14, 20, 30, 20);
-		expect(window).toEqual({ listRows: 11, startIndex: 15, endIndex: 26 });
-		expectSelectedVisible(window, 20);
-	});
-
-	test("large terminals preserve configured default row count", () => {
-		const window = responsiveBrowseWindow(14, 80, 40, 20);
-		expect(window).toEqual({ listRows: 14, startIndex: 13, endIndex: 27 });
-		expectSelectedVisible(window, 20);
-	});
-
-	test("configured listRows remains upper bound on large terminals", () => {
-		const window = responsiveBrowseWindow(22, 80, 40, 20);
-		expect(window).toEqual({ listRows: 22, startIndex: 9, endIndex: 31 });
-		expectSelectedVisible(window, 20);
-	});
-
-	test("selected item near end remains visible", () => {
-		const window = responsiveBrowseWindow(14, 20, 30, 29);
-		expect(window).toEqual({ listRows: 11, startIndex: 19, endIndex: 30 });
-		expectSelectedVisible(window, 29);
-	});
-});
-
-describe("page movement", () => {
-	test("plain page movement clamps to selectable range", () => {
-		expect(pageBrowseSelection(5, 30, -1, 11)).toBe(0);
-		expect(pageBrowseSelection(25, 30, 1, 11)).toBe(30);
-	});
-
-	test("tiny terminal page step uses one responsive row", () => {
-		expect(responsiveBrowsePageSelection(14, 4, 5, 30, 1)).toBe(6);
-		expect(responsiveBrowsePageSelection(14, 4, 5, 30, -1)).toBe(4);
-	});
-
-	test("short terminal page step uses shortened responsive rows", () => {
-		expect(responsiveBrowsePageSelection(14, 20, 10, 30, 1)).toBe(21);
-		expect(responsiveBrowsePageSelection(14, 20, 10, 30, -1)).toBe(0);
-	});
-
-	test("large terminal page step uses configured upper-bound rows", () => {
-		expect(responsiveBrowsePageSelection(22, 80, 3, 30, 1)).toBe(25);
-		expect(responsiveBrowsePageSelection(22, 80, 20, 30, 1)).toBe(30);
-	});
-});
+for (const [name, configured, terminal, selected, direction, expected] of [
+	["tiny forward", 14, 4, 5, 1, 6], ["tiny backward", 14, 4, 5, -1, 4],
+	["short forward", 14, 20, 10, 1, 21], ["short backward", 14, 20, 10, -1, 0],
+	["large step", 22, 80, 3, 1, 25], ["large clamp", 22, 80, 20, 1, 30],
+] as const) {
+	test(`responsiveBrowsePageSelection: ${name}`, () => expect(responsiveBrowsePageSelection(configured, terminal, selected, 30, direction)).toBe(expected));
+}
