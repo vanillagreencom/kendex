@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import { mkdirSync } from "node:fs";
 import { join, sep } from "node:path";
 import { removeAppendSystemBlockForUninstall, syncAppendSystemForPackage } from "./append-system.js";
-import { stringifyError } from "./format.js";
+import { managerFailure, managerNotice, stringifyError } from "./format.js";
 import { host } from "./host.js";
 import { normalizePackageEntry } from "./inventory.js";
 import { runCommand } from "./process.js";
@@ -16,6 +16,17 @@ import {
 	type UninstallPlan,
 	type UpdatePlan,
 } from "./types.js";
+
+function launchFailure(key: string, command: string, error: unknown): string {
+	return managerNotice(key, command, `Could not start the command: ${stringifyError(error)}`);
+}
+
+function exitFailure(key: string, result: ReturnType<typeof runCommand>): string {
+	const value = result.status ?? result.signal ?? "unknown";
+	const detail = (result.stderr ?? "").trim() || (result.stdout ?? "").trim()
+		|| (result.signal ? `signal ${result.signal}` : result.status !== null ? `exit ${result.status}` : "unknown termination");
+	return managerNotice(key, value, detail);
+}
 
 function npmRootFromPackageDir(packageDir: string | undefined): string | undefined {
 	if (!packageDir) return undefined;
@@ -44,16 +55,16 @@ function npmCommandForScope(files: SettingsFile[], scope: InventoryItem["scope"]
 		const argv = raw.filter((value): value is string => typeof value === "string" && value.length > 0);
 		if (argv.length > 0) return { command: argv[0], argsPrefix: argv.slice(1), display: shellJoin(argv) };
 	}
-	if (raw !== undefined) return { command: "npm", argsPrefix: [], display: "npm", warning: `Warning: ${scope} settings.json has invalid npmCommand; falling back to npm.` };
+	if (raw !== undefined) return { command: "npm", argsPrefix: [], display: "npm", warning: managerNotice("npm-command-invalid", scope, "The npmCommand setting is invalid. Falling back to npm.") };
 	return { command: "npm", argsPrefix: [], display: "npm" };
 }
 
-function ensureWorkingDir(cwd: string): { ok: true } | { ok: false; message: string } {
+function ensureWorkingDir(key: string, cwd: string): { ok: true } | { ok: false; message: string } {
 	try {
 		mkdirSync(cwd, { recursive: true });
 		return { ok: true };
 	} catch (error) {
-		return { ok: false, message: `Failed to prepare npm working directory ${cwd}: ${stringifyError(error)}` };
+		return { ok: false, message: managerNotice(key, cwd, `Could not prepare the npm working directory: ${stringifyError(error)}`) };
 	}
 }
 
@@ -78,7 +89,7 @@ export function planUninstall(item: InventoryItem, inventory: Inventory, ctx: Ex
 			item,
 			method: { kind: "npm", npmName, scope: item.scope, cwd, command: npm.command, argsPrefix: npm.argsPrefix },
 			command: `(cd ${shellQuote(cwd)} && ${npm.display} uninstall ${npmName})`,
-			description: `${npm.warning ? `${npm.warning} ` : ""}Installed via npm — runs npm uninstall in Pi's scope-local npm directory, then strips the npm: entry from Pi settings.json.`,
+			description: `${npm.warning ? `${npm.warning}\n` : ""}Installed via npm — runs npm uninstall in Pi's scope-local npm directory, then strips the npm: entry from Pi settings.json.`,
 		};
 	}
 	return {
@@ -113,43 +124,41 @@ function packageEntryMatches(item: InventoryItem, normalized: { source: string; 
 }
 
 export function runUninstall(plan: UninstallPlan, inventory: Inventory): { ok: boolean; message: string } {
-	if (!host.packageActions) return { ok: false, message: "Package uninstall is unsupported on this host; use its native plugin manager." };
+	if (!host.packageActions) return { ok: false, message: managerNotice("uninstall-unsupported", plan.item.id, "Package uninstall is unsupported on this host; use its native plugin manager.") };
 	if (plan.method.kind === "kendex") {
 		const args = ["remove", plan.method.packageName];
 		if (plan.method.scope === "user") args.push("--global");
 		const result = runCommand("kendex", args);
-		if (result.error) return { ok: false, message: `Failed to launch kendex: ${stringifyError(result.error)}` };
+		if (result.error) return { ok: false, message: launchFailure("kendex-uninstall-launch", "kendex", result.error) };
 		if ((result.status ?? 1) !== 0) {
-			const stderr = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit ${result.status}`;
-			return { ok: false, message: `kendex remove failed: ${stderr}` };
+			return { ok: false, message: exitFailure("kendex-uninstall-exit", result) };
 		}
 		// `kendex remove` already handled APPEND_SYSTEM.md, so no extra cleanup here.
-		return { ok: true, message: `Removed via kendex: ${plan.item.displayName}.` };
+		return { ok: true, message: managerNotice("kendex-uninstalled", plan.item.packageName!, `Removed ${plan.item.displayName} via kendex.`) };
 	}
 	if (plan.method.kind === "npm") {
 		const args = ["uninstall", plan.method.npmName];
-		const prepared = ensureWorkingDir(plan.method.cwd);
+		const prepared = ensureWorkingDir("npm-uninstall-cwd", plan.method.cwd);
 		if (!prepared.ok) return prepared;
 		// Before npm deletes the package tree: npm 7+ does not reliably run a
 		// removed package's own `preuninstall`, and the script that owns the
 		// APPEND_SYSTEM.md block goes with the tree.
 		removeAppendSystemBlockForUninstall(plan.item);
 		const result = runCommand(plan.method.command, [...plan.method.argsPrefix, ...args], { cwd: plan.method.cwd });
-		if (result.error) return { ok: false, message: `Failed to launch ${plan.method.command}: ${stringifyError(result.error)}` };
+		if (result.error) return { ok: false, message: launchFailure("npm-uninstall-launch", plan.method.command, result.error) };
 		if ((result.status ?? 1) !== 0) {
-			const stderr = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit ${result.status}`;
-			return { ok: false, message: `npm uninstall failed: ${stderr}` };
+			return { ok: false, message: exitFailure("npm-uninstall-exit", result) };
 		}
 		const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
-		return { ok: true, message: `npm uninstall ${plan.method.npmName} succeeded${stripped ? "; removed Pi settings entry." : " (no settings entry to remove)."}` };
+		return { ok: true, message: managerNotice("npm-uninstalled", plan.method.npmName, `Uninstall succeeded${stripped ? "; removed Pi settings entry." : " (no settings entry to remove)."}`) };
 	}
 	const stripped = removePackageEntryFromSettings(plan.item, inventory.settingsFiles);
 	// Orphan branch: the settings.json strip is the only other cleanup, so
 	// remove this package's APPEND_SYSTEM.md block too.
 	removeAppendSystemBlockForUninstall(plan.item);
 	return stripped
-		? { ok: true, message: `Removed ${plan.item.sourceName} from ${plan.item.scope} settings.json.` }
-		: { ok: false, message: `Could not find a matching entry for ${plan.item.sourceName} in ${plan.item.scope} settings.json.` };
+		? { ok: true, message: managerNotice("settings-entry-removed", plan.item.sourceName, `Removed the entry from ${plan.item.scope} settings.json.`) }
+		: { ok: false, message: managerNotice("settings-entry-missing", plan.item.sourceName, `No matching entry exists in ${plan.item.scope} settings.json.`) };
 }
 
 export function planUpdate(item: InventoryItem, inventory: Inventory, ctx: ExtensionCommandContext | ExtensionContext): UpdatePlan | undefined {
@@ -171,36 +180,34 @@ export function planUpdate(item: InventoryItem, inventory: Inventory, ctx: Exten
 			item,
 			method: { kind: "npm", npmName: item.npmName, scope: item.scope, cwd, command: npm.command, argsPrefix: npm.argsPrefix },
 			command: `(cd ${shellQuote(cwd)} && ${npm.display} install ${item.npmName}@latest)`,
-			description: `${npm.warning ? `${npm.warning} ` : ""}Installed via npm — installs the latest published package version in Pi's scope-local npm directory, then Pi can load it after /reload or restart.`,
+			description: `${npm.warning ? `${npm.warning}\n` : ""}Installed via npm — installs the latest published package version in Pi's scope-local npm directory, then Pi can load it after /reload or restart.`,
 		};
 	}
 	return undefined;
 }
 
 export function runUpdate(plan: UpdatePlan): { ok: boolean; message: string } {
-	if (!host.packageActions) return { ok: false, message: "Package update is unsupported on this host; use its native plugin manager." };
+	if (!host.packageActions) return { ok: false, message: managerNotice("update-unsupported", plan.item.id, "Package update is unsupported on this host; use its native plugin manager.") };
 	if (plan.method.kind === "kendex") {
 		const args = ["add", plan.method.sourceRepo];
 		if (plan.method.scope === "user") args.push("--global");
 		args.push("--pi-extension", plan.method.packageName, "--harness", "pi", "-y");
 		const result = runCommand("kendex", args);
-		if (result.error) return { ok: false, message: `Failed to launch kendex: ${stringifyError(result.error)}` };
+		if (result.error) return { ok: false, message: launchFailure("kendex-update-launch", "kendex", result.error) };
 		if ((result.status ?? 1) !== 0) {
-			const stderr = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit ${result.status}`;
-			return { ok: false, message: `kendex update failed: ${stderr}` };
+			return { ok: false, message: exitFailure("kendex-update-exit", result) };
 		}
-		return { ok: true, message: `Updated via kendex: ${plan.item.displayName}.` };
+		return { ok: true, message: managerNotice("kendex-updated", plan.item.packageName!, `Updated ${plan.item.displayName} via kendex.`) };
 	}
 	const args = ["install", `${plan.method.npmName}@latest`];
-	const prepared = ensureWorkingDir(plan.method.cwd);
+	const prepared = ensureWorkingDir("npm-update-cwd", plan.method.cwd);
 	if (!prepared.ok) return prepared;
 	const result = runCommand(plan.method.command, [...plan.method.argsPrefix, ...args], { cwd: plan.method.cwd });
-	if (result.error) return { ok: false, message: `Failed to launch ${plan.method.command}: ${stringifyError(result.error)}` };
+	if (result.error) return { ok: false, message: launchFailure("npm-update-launch", plan.method.command, result.error) };
 	if ((result.status ?? 1) !== 0) {
-		const stderr = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit ${result.status}`;
-		return { ok: false, message: `npm update failed: ${stderr}` };
+		return { ok: false, message: exitFailure("npm-update-exit", result) };
 	}
-	return { ok: true, message: `Updated via npm: ${plan.method.npmName}.` };
+	return { ok: true, message: managerNotice("npm-updated", plan.method.npmName, "Package updated via npm.") };
 }
 
 function setPackageFiltered(item: InventoryItem, files: SettingsFile[], disabled: boolean): boolean {
@@ -263,16 +270,16 @@ function setPackageExtensionFiltered(item: InventoryItem, files: SettingsFile[],
 
 export function toggleItem(_pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext, inventory: Inventory, item: InventoryItem): void {
 	if ((item.id === `package:${MANAGER_ID}` || item.packageName === MANAGER_ID) && item.state !== "disabled") {
-		ctx.ui.notify("Refusing to disable pi-extension-manager from inside itself. Use the host's controls outside this manager if needed.", "warning");
+		ctx.ui.notify(managerNotice("self-disable", MANAGER_ID, "The manager cannot disable itself. Use the host controls outside this manager."), "warning");
 		return;
 	}
 	try {
 		if (host.toggle(item)) {
-			ctx.ui.notify("Native plugin state updated. Restart the host to apply all plugin contributions.", "warning");
+			ctx.ui.notify(managerNotice("native-state-updated", item.id, "Native plugin state updated. Restart the host to apply all plugin contributions."), "warning");
 			return;
 		}
 	} catch (error) {
-		ctx.ui.notify(stringifyError(error), "error");
+		ctx.ui.notify(managerFailure("toggle-failed", item.id, error), "error");
 		return;
 	}
 	const scope = defaultWriteScope(item, inventory.settingsFiles, inventory.managerState);
@@ -289,15 +296,15 @@ export function toggleItem(_pi: ExtensionAPI, ctx: ExtensionCommandContext | Ext
 	if (item.kind === "package" && item.packageName) {
 		const changed = setPackageFiltered(item, inventory.settingsFiles, willDisable);
 		syncAppendSystemForPackage(item, willDisable);
-		ctx.ui.notify(changed ? "Package setting updated. Run /reload or restart Pi to apply module loading changes." : "Item toggle saved. Reload may be required.", "warning");
+		ctx.ui.notify(managerNotice("package-toggle-saved", item.id, changed ? "Package setting updated. Run /reload or restart Pi to apply module loading changes." : "Item toggle saved. Reload may be required."), "warning");
 		return;
 	}
 
 	if (item.kind === "extension module" && item.packageName && item.entrypoint) {
 		const changed = setPackageExtensionFiltered(item, inventory.settingsFiles, willDisable);
-		ctx.ui.notify(changed ? "Extension module filter updated. Run /reload or restart Pi to apply." : "Module toggle saved. Reload may be required.", "warning");
+		ctx.ui.notify(managerNotice("module-toggle-saved", item.id, changed ? "Extension module filter updated. Run /reload or restart Pi to apply." : "Module toggle saved. Reload may be required."), "warning");
 		return;
 	}
 
-	ctx.ui.notify("Item toggle saved. Pi cannot unload this resource type live; /reload or restart may be required.", "warning");
+	ctx.ui.notify(managerNotice("item-toggle-saved", item.id, "Item toggle saved. Pi cannot unload this resource type live; /reload or restart may be required."), "warning");
 }

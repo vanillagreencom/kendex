@@ -5,14 +5,27 @@ const ANSI_GREEN_FG = "\x1b[32m";
 const ANSI_YELLOW_FG = "\x1b[33m";
 const ANSI_RED_FG = "\x1b[31m";
 const ANSI_FG_RESET = "\x1b[39m";
+const MANAGER_NOTICE_PREFIX = "pi-extension-manager: ";
 
 export function ansiGreen(text: string): string { return `${ANSI_GREEN_FG}${text}${ANSI_FG_RESET}`; }
 export function ansiYellow(text: string): string { return `${ANSI_YELLOW_FG}${text}${ANSI_FG_RESET}`; }
 export function ansiRed(text: string): string { return `${ANSI_RED_FG}${text}${ANSI_FG_RESET}`; }
 
+/** Stable notification header; explanation remains free to change. */
+export function managerNotice(key: string, value: string | number, explanation: string): string {
+	const shown = String(value).replace(/[\u0000-\u001f\u007f]/g, "?");
+	return `${MANAGER_NOTICE_PREFIX}${key}=${shown}\n${explanation}`;
+}
+
 export function stringifyError(error: unknown): string {
 	if (error instanceof Error) return `${error.name}: ${error.message}`;
 	return String(error);
+}
+
+/** Preserve a specific manager refusal when a UI boundary catches it. */
+export function managerFailure(key: string, value: string | number, error: unknown): string {
+	if (error instanceof Error && error.message.startsWith(MANAGER_NOTICE_PREFIX)) return error.message;
+	return managerNotice(key, value, stringifyError(error));
 }
 
 export function isPlainSearchInput(data: string): boolean {
@@ -41,17 +54,17 @@ export function parseSettingInput(schema: SettingsSchema, input: string): unknow
 			const lower = input.trim().toLowerCase();
 			if (["true", "yes", "on", "1", "enabled"].includes(lower)) return true;
 			if (["false", "no", "off", "0", "disabled"].includes(lower)) return false;
-			throw new Error("Expected boolean: true/false, on/off, yes/no");
+			throw new Error(managerNotice("setting-boolean", schema.key, "Expected boolean: true/false, on/off, yes/no"));
 		}
 		case "number": {
 			const parsed = Number(input.trim());
-			if (!Number.isFinite(parsed)) throw new Error("Expected a number");
+			if (!Number.isFinite(parsed)) throw new Error(managerNotice("setting-number", schema.key, "Expected a number"));
 			return parsed;
 		}
 		case "enum": {
 			const value = input.trim();
 			if (schema.enumValues?.length && !schema.enumValues.includes(value)) {
-				throw new Error(`Expected one of: ${schema.enumValues.join(", ")}`);
+				throw new Error(managerNotice("setting-enum", schema.key, `Expected one of: ${schema.enumValues.join(", ")}`));
 			}
 			return value;
 		}
@@ -95,12 +108,12 @@ export function hasDeferredApply(schemas: SettingsSchema[]): boolean {
 
 export function applyMessage(schema: SettingsSchema): string {
 	const apply = applyOf(schema);
-	if (apply === "live") return "Setting saved and available to extensions immediately.";
-	if (apply === "reload") return "Setting saved. Run /reload for extensions that read it at load time.";
-	if (apply === "session") return "Setting saved. Start/resume a session to fully apply it.";
-	return "Setting saved. Restart Pi to fully apply it.";
+	if (apply === "live") return managerNotice("setting-saved", `${schema.key}:${apply}`, "Setting saved and available to extensions immediately.");
+	if (apply === "reload") return managerNotice("setting-saved", `${schema.key}:${apply}`, "Setting saved. Run /reload for extensions that read it at load time.");
+	if (apply === "session") return managerNotice("setting-saved", `${schema.key}:${apply}`, "Setting saved. Start/resume a session to fully apply it.");
+	return managerNotice("setting-saved", `${schema.key}:${apply}`, "Setting saved. Restart Pi to fully apply it.");
 }
 
 export function notifyReset(ctx: ExtensionCommandContext | ExtensionContext, label: string, schemas: SettingsSchema[]): void {
-	ctx.ui.notify(`${label} reset to default${schemas.length === 1 ? "" : "s"}.${hasDeferredApply(schemas) ? " Reload/restart may be required for deferred settings." : ""}`, hasDeferredApply(schemas) ? "warning" : "info");
+	ctx.ui.notify(managerNotice("settings-reset", schemas.map((schema) => schema.key).join(","), `${label} reset to default${schemas.length === 1 ? "" : "s"}.${hasDeferredApply(schemas) ? " Reload/restart may be required for deferred settings." : ""}`), hasDeferredApply(schemas) ? "warning" : "info");
 }

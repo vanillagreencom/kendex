@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { managerNotice } from "./format.js";
 import { runCommand } from "./process.js";
 import type { InventoryItem } from "./types.js";
 
@@ -25,7 +26,7 @@ function runAppendSystemScript(packageDir: string | undefined, action: "install"
 	const result = runCommand("node", [script, action], { cwd: packageDir, killSignal: "SIGKILL", timeout: APPEND_SYSTEM_TIMEOUT_MS });
 	// Best-effort, like the script itself: never block a toggle or uninstall
 	// on an APPEND_SYSTEM.md write.
-	if (result.error) console.warn(`pi-extension-manager: append-system ${action} failed to launch: ${String(result.error)}`);
+	if (result.error) console.warn(managerNotice("append-system-launch", `${action}:${script}`, String(result.error)));
 }
 
 export function syncAppendSystemForPackage(item: InventoryItem, willDisable: boolean): void {

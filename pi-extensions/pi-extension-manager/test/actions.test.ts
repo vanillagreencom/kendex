@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { spawnSync as realSpawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -100,36 +100,40 @@ test("npm update and uninstall execution use configured npmCommand and scope-loc
 
 	const update = planUpdate(item, inv, { cwd: project } as never)!;
 	expect(update.command).toContain("'mise' 'exec' 'node@22.19' '--' 'npm' install @scope/pkg@latest");
-	expect(runUpdate(update).ok).toBe(true);
+	const updated = runUpdate(update);
+	expect([updated.ok, updated.message.split("\n")[0]]).toEqual([true, "pi-extension-manager: npm-updated=@scope/pkg"]);
 	expect(spawnSyncMock).toHaveBeenLastCalledWith("mise", ["exec", "node@22.19", "--", "npm", "install", "@scope/pkg@latest"], expect.objectContaining({ cwd: npmDir }));
 
 	const uninstall = planUninstall(item, inv, { cwd: project } as never)!;
 	expect(uninstall.command).toContain("'mise' 'exec' 'node@22.19' '--' 'npm' uninstall @scope/pkg");
-	expect(runUninstall(uninstall, inv).ok).toBe(true);
+	const removed = runUninstall(uninstall, inv);
+	expect([removed.ok, removed.message.split("\n")[0]]).toEqual([true, "pi-extension-manager: npm-uninstalled=@scope/pkg"]);
 	expect(spawnSyncMock).toHaveBeenLastCalledWith("mise", ["exec", "node@22.19", "--", "npm", "uninstall", "@scope/pkg"], expect.objectContaining({ cwd: npmDir }));
 });
 
-test("npm update reports cwd preparation failures", async () => {
+test("npm actions report cwd preparation failures", async () => {
 	await useSpawnMock();
-	const { runUpdate } = await import("../extensions/manager/actions.ts");
+	const { runUninstall, runUpdate } = await import("../extensions/manager/actions.ts");
 	const badCwd = join(rootTmp, "not-a-directory");
 	writeFileSync(badCwd, "file blocks mkdir");
 	spawnSyncMock.mockClear();
-	const result = runUpdate({
-		item: { id: "package:@scope/pkg", displayName: "Pkg", kind: "package", state: "active", stateReason: "", description: "", provider: "npm", scope: "user", sourcePath: "", sourceName: "npm:@scope/pkg", packageName: "@scope/pkg" },
-		method: { kind: "npm", npmName: "@scope/pkg", scope: "user", cwd: badCwd, command: "npm", argsPrefix: [] },
-		command: "npm install @scope/pkg@latest",
-		description: "",
-	});
-	expect(result.ok).toBe(false);
-	expect(result.message).toContain("Failed to prepare npm working directory");
+	const item = { id: "package:@scope/pkg", displayName: "Pkg", kind: "package", state: "active", stateReason: "", description: "", provider: "npm", scope: "user", sourcePath: "", sourceName: "npm:@scope/pkg", packageName: "@scope/pkg" };
+	const method = { kind: "npm", npmName: "@scope/pkg", scope: "user", cwd: badCwd, command: "npm", argsPrefix: [] };
+	const rows = [
+		{ run: () => runUpdate({ item, method } as never), firstLine: `pi-extension-manager: npm-update-cwd=${badCwd}` },
+		{ run: () => runUninstall({ item, method } as never, { settingsFiles: [] } as never), firstLine: `pi-extension-manager: npm-uninstall-cwd=${badCwd}` },
+	];
+	for (const row of rows) {
+		const result = row.run();
+		expect([result.ok, result.message.split("\n")[0]]).toEqual([false, row.firstLine]);
+	}
 	expect(spawnSyncMock).not.toHaveBeenCalled();
 });
 
 test("invalid npmCommand is surfaced in npm action plans", async () => {
 	await useSpawnMock();
 	const { buildInventory } = await import("../extensions/manager/inventory.ts");
-	const { planUpdate } = await import("../extensions/manager/actions.ts");
+	const { planUninstall, planUpdate } = await import("../extensions/manager/actions.ts");
 	const project = join(rootTmp, "project");
 	const userPi = process.env.PI_CODING_AGENT_DIR!;
 	const packageDir = join(userPi, "npm", "node_modules", "@scope", "bad-command");
@@ -141,8 +145,11 @@ test("invalid npmCommand is surfaced in npm action plans", async () => {
 	item.updateAvailable = true;
 	item.updateSource = "npm";
 	item.npmName = "@scope/bad-command";
-	const plan = planUpdate(item, inv, { cwd: project } as never)!;
-	expect(plan.description).toContain("invalid npmCommand");
+	const plans = [planUpdate(item, inv, { cwd: project } as never)!, planUninstall(item, inv, { cwd: project } as never)!];
+	for (const plan of plans) {
+		expect(plan.description.split("\n")[0]).toBe("pi-extension-manager: npm-command-invalid=user");
+		expect(plan.description.split("\n")).toHaveLength(3);
+	}
 });
 
 // The strip has to precede `npm uninstall`: npm 7+ does not reliably run a
@@ -209,4 +216,50 @@ test("toggling a package under the kendex packages/ layout writes and removes it
 	const on = buildInventory({} as never, ctx);
 	toggleItem({} as never, ctx, on, on.packages.find((pkg) => pkg.packageName === "@scope/clonepkg")!);
 	expect(readFileSync(target, "utf8")).toContain("Append pkg instructions");
+});
+
+test("append-system launch failures expose the action and script path", async () => {
+	const packageDir = join(rootTmp, "append-launch");
+	mkdirSync(join(packageDir, "scripts"), { recursive: true });
+	writeFileSync(join(packageDir, "scripts", "append-system.mjs"), "");
+	spawnSyncMock.mockImplementation(() => ({ status: null, stdout: "", stderr: "", error: new Error("node unavailable"), signal: null, output: [], pid: 0 }));
+	await useSpawnMock();
+	const warning = spyOn(console, "warn").mockImplementation(() => {});
+	try {
+		const { syncAppendSystemForPackage } = await import("../extensions/manager/append-system.ts");
+		syncAppendSystemForPackage({ kind: "package", packageName: "@scope/append", packageDir } as never, false);
+		expect(warning).toHaveBeenCalledTimes(1);
+		expect(String(warning.mock.calls[0]![0]).split("\n")[0]).toBe(`pi-extension-manager: append-system-launch=install:${join(packageDir, "scripts", "append-system.mjs")}`);
+	} finally {
+		warning.mockRestore();
+	}
+});
+
+test("npm action exits expose an exit code or signal", async () => {
+	await useSpawnMock();
+	const { runUninstall, runUpdate } = await import("../extensions/manager/actions.ts");
+	const item = { id: "package:@scope/pkg", displayName: "Pkg", kind: "package", state: "active", stateReason: "", description: "", provider: "npm", scope: "user", sourcePath: "", sourceName: "npm:@scope/pkg", packageName: "@scope/pkg" };
+	const method = { kind: "npm", npmName: "@scope/pkg", scope: "user", cwd: rootTmp, command: "npm", argsPrefix: [] };
+	const rows = [
+		{ result: { status: 7, signal: null }, run: () => runUpdate({ item, method } as never), firstLine: "pi-extension-manager: npm-update-exit=7" },
+		{ result: { status: null, signal: "SIGTERM" }, run: () => runUninstall({ item, method } as never, { settingsFiles: [] } as never), firstLine: "pi-extension-manager: npm-uninstall-exit=SIGTERM" },
+	] as const;
+	for (const row of rows) {
+		spawnSyncMock.mockImplementation(() => ({ ...row.result, stdout: "", stderr: "", error: undefined, output: [], pid: 0 } as never));
+		const outcome = row.run();
+		expect([outcome.ok, outcome.message.split("\n")[0]]).toEqual([false, row.firstLine]);
+	}
+});
+
+test("npm action launch failures identify the action", async () => {
+	await useSpawnMock();
+	const { runUninstall, runUpdate } = await import("../extensions/manager/actions.ts");
+	const item = { id: "package:@scope/pkg", displayName: "Pkg", kind: "package", state: "active", stateReason: "", description: "", provider: "npm", scope: "user", sourcePath: "", sourceName: "npm:@scope/pkg", packageName: "@scope/pkg" };
+	const method = { kind: "npm", npmName: "@scope/pkg", scope: "user", cwd: rootTmp, command: "npm", argsPrefix: [] };
+	spawnSyncMock.mockImplementation(() => ({ status: null, signal: null, stdout: "", stderr: "", error: new Error("missing"), output: [], pid: 0 } as never));
+	const rows = [
+		{ outcome: runUpdate({ item, method } as never), firstLine: "pi-extension-manager: npm-update-launch=npm" },
+		{ outcome: runUninstall({ item, method } as never, { settingsFiles: [] } as never), firstLine: "pi-extension-manager: npm-uninstall-launch=npm" },
+	];
+	for (const row of rows) expect([row.outcome.ok, row.outcome.message.split("\n")[0]]).toEqual([false, row.firstLine]);
 });

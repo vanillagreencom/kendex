@@ -42,6 +42,10 @@ function write(path: string, content: string): void {
 	writeFileSync(path, content);
 }
 function json(path: string, value: unknown): void { write(path, JSON.stringify(value)); }
+function thrownFirstLine(fn: () => unknown): string {
+	try { fn(); } catch (error) { return (error instanceof Error ? error.message : String(error)).split("\n")[0]!; }
+	throw new Error("Expected the function to throw");
+}
 function nativePackage(rootDir = plugins, packageName = name, enabled = true, entrypoint = "./extensions/index.ts"): void {
 	json(join(rootDir, "package.json"), { private: true, dependencies: { [packageName]: "^1.2.3" } });
 	json(join(rootDir, "omp-plugins.lock.json"), { plugins: { [packageName]: { version: "1.2.3", enabled, enabledFeatures: null, custom: "keep" } }, settings: { [packageName]: { color: "blue" } }, unknown: 17 });
@@ -100,7 +104,8 @@ test("runtime capabilities select the host with coexisting directories and use i
 	expect(host.agentDir()).toBe(piAgent);
 	expect(host.commands.manager).toBe("extensions");
 	expect(host.settings(ctx)[0]?.path).toBe(join(piAgent, "settings.json"));
-	await expect(selectHost({ getAgentDir: () => piAgent }, async () => runtime)).rejects.toThrow();
+	await expect(selectHost({ getAgentDir: () => piAgent }, async () => runtime)).rejects.toThrow("pi-extension-manager: host-api-missing=settings");
+	await expect(selectHost({}, async () => runtime)).rejects.toThrow("pi-extension-manager: host-api-missing=getAgentDir");
 });
 
 test("config.yaml manager edits preserve nested and unknown data and feed glyph settings", () => {
@@ -120,22 +125,22 @@ test("config.yaml manager edits preserve nested and unknown data and feed glyph 
 test("malformed YAML, JSON and native records refuse without overwriting", () => {
 	nativePackage();
 	const cases = [
-		{ path: join(agent, "config.yml"), text: "compaction: [broken" },
-		{ path: join(agent, "config.yml"), text: "- not-a-mapping" },
-		{ path: join(agent, "config.yml"), text: "kendex:\n  extensionManager:\n    config: invalid" },
-		{ path: lockPath, text: "{" },
-		{ path: lockPath, text: '{"plugins":{"@example/native":{"enabled":"false"}}}' },
+		{ path: join(agent, "config.yml"), text: "compaction: [broken", firstLine: `pi-extension-manager: config-parse=${join(agent, "config.yml")}` },
+		{ path: join(agent, "config.yml"), text: "- not-a-mapping", firstLine: `pi-extension-manager: object-required=${join(agent, "config.yml")}` },
+		{ path: join(agent, "config.yml"), text: "kendex:\n  extensionManager:\n    config: invalid", firstLine: `pi-extension-manager: object-required=${join(agent, "config.yml")}: manager config` },
+		{ path: lockPath, text: "{", firstLine: `pi-extension-manager: config-parse=${lockPath}` },
+		{ path: lockPath, text: '{"plugins":{"@example/native":{"enabled":"false"}}}', firstLine: `pi-extension-manager: boolean-required=${lockPath}: @example/native.enabled` },
 	];
-	for (const { path, text } of cases) {
+	for (const { path, text, firstLine } of cases) {
 		const original = existsSync(path) ? readFileSync(path, "utf8") : undefined;
 		write(path, text);
-		expect(() => inventory()).toThrow();
+		expect(thrownFirstLine(() => inventory())).toBe(firstLine);
 		expect(readFileSync(path, "utf8")).toBe(text);
 		if (original === undefined) rmSync(path); else write(path, original);
 	}
 	const file = host.settings(ctx)[0]!;
 	write(file.path, "kendex: [broken");
-	expect(() => updateManagerState(file, (state) => { state.config[MANAGER_ID] = { enabled: true }; })).toThrow();
+	expect(thrownFirstLine(() => updateManagerState(file, (state) => { state.config[MANAGER_ID] = { enabled: true }; }))).toBe(`pi-extension-manager: config-parse=${file.path}`);
 	expect(readFileSync(file.path, "utf8")).toBe("kendex: [broken");
 });
 
@@ -145,14 +150,17 @@ test("native capabilities refuse Pi update, uninstall, module toggles and other-
 	const item = inv.packages[0]!;
 	expect(planUninstall(item, inv, ctx as never)).toBeUndefined();
 	expect(planUpdate({ ...item, updateAvailable: true, updateSource: "npm", npmName: name }, inv, ctx as never)).toBeUndefined();
-	expect(runUpdate({ item } as never).ok).toBe(false);
-	expect(runUninstall({ item } as never, inv).ok).toBe(false);
+	const update = runUpdate({ item } as never);
+	const uninstall = runUninstall({ item } as never, inv);
+	expect([update.ok, update.message.split("\n")[0]]).toEqual([false, `pi-extension-manager: update-unsupported=${item.id}`]);
+	expect([uninstall.ok, uninstall.message.split("\n")[0]]).toEqual([false, `pi-extension-manager: uninstall-unsupported=${item.id}`]);
 	expect(npmCandidatesFromInventory(inv)).toEqual([]);
 	expect(item.settingsSchema).toEqual([]);
 	const before = readFileSync(lockPath, "utf8");
-	expect(() => host.toggle(inv.items.find((i) => i.kind === "extension module")!)).toThrow();
-	expect(() => setConfigValue(inv, item, { key: "enabled" } as never, true)).toThrow();
-	expect(() => resetConfigKeys(inv, name, ["enabled"])).toThrow();
+	const module = inv.items.find((i) => i.kind === "extension module")!;
+	expect(thrownFirstLine(() => host.toggle(module))).toBe(`pi-extension-manager: toggle-unsupported=${module.id}`);
+	expect(thrownFirstLine(() => setConfigValue(inv, item, { key: "enabled" } as never, true))).toBe(`pi-extension-manager: settings-unsupported=${name}`);
+	expect(thrownFirstLine(() => resetConfigKeys(inv, name, ["enabled"]))).toBe(`pi-extension-manager: settings-unsupported=${name}`);
 	expect(readFileSync(lockPath, "utf8")).toBe(before);
 	expect(existsSync(join(agent, "settings.json"))).toBe(false);
 });
@@ -246,6 +254,36 @@ async function popup(open: typeof openManager, search = ""): Promise<string> {
 	return output;
 }
 
+test("manager and quick-settings notices expose stable keys and values", async () => {
+	const emptyNotices: string[] = [];
+	await openQuickSettings({} as never, { ...ctx, ui: {
+		notify: (message: string) => emptyNotices.push(message.split("\n")[0]!),
+	} } as never);
+	expect(emptyNotices).toEqual(["pi-extension-manager: settings-packages=0"]);
+
+	nativePackage(plugins, MANAGER_ID);
+	const item = inventory().packages[0]!;
+	for (const row of [
+		{ action: { type: "update-package", itemId: item.id }, firstLine: `pi-extension-manager: update-unsupported=${item.id}` },
+		{ action: { type: "uninstall-package", itemId: item.id }, firstLine: `pi-extension-manager: self-uninstall=${MANAGER_ID}` },
+	] as const) {
+		const notices: string[] = [];
+		let first = true;
+		await openManager({} as never, { ...ctx, ui: {
+			custom: async () => first ? (first = false, row.action) : { type: "close" },
+			notify: (message: string) => notices.push(message.split("\n")[0]!),
+		} } as never);
+		expect(notices).toEqual([row.firstLine]);
+	}
+
+	const notices: string[] = [];
+	await openQuickSettings({} as never, { ...ctx, ui: {
+		custom: async () => ({ type: "close" }),
+		notify: (message: string) => notices.push(message.split("\n")[0]!),
+	} } as never, "missing-tab");
+	expect(notices).toEqual(["pi-extension-manager: settings-tab-missing=missing-tab"]);
+});
+
 for (const row of installations) {
 	test(`native installation grouping user=${row.user} project=${row.project}`, async () => {
 		nativePackage(plugins, MANAGER_ID, row.user, "./useronly.ts");
@@ -313,7 +351,7 @@ test("native module suppression shows basename collisions without offering packa
 	expect(modules).toHaveLength(2);
 	for (const item of modules) {
 		expect(item.state).toBe("disabled");
-		expect(() => host.toggle(item)).toThrow();
+		expect(thrownFirstLine(() => host.toggle(item))).toBe(`pi-extension-manager: toggle-unsupported=${item.id}`);
 	}
 });
 
@@ -342,6 +380,6 @@ test("native project suppression is visible and refuses a misleading global enab
 	const item = inventory().packages[0]!;
 	expect(item.state).toBe("disabled");
 	const before = readFileSync(path, "utf8");
-	expect(() => host.toggle(item)).toThrow();
+	expect(thrownFirstLine(() => host.toggle(item))).toBe(`pi-extension-manager: plugin-override=${path}`);
 	expect(readFileSync(path, "utf8")).toBe(before);
 });

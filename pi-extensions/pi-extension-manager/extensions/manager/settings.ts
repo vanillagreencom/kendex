@@ -1,4 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { managerNotice } from "./format.js";
 import { host } from "./host.js";
 import {
 	EXTERNAL_CONFIG_RESOLVER_SYMBOL,
@@ -31,7 +32,7 @@ export function asRecord(value: unknown): Record<string, unknown> | undefined {
 export function getOrCreateRecord(parent: Record<string, unknown>, key: string): Record<string, unknown> {
 	const current = asRecord(parent[key]);
 	if (current) return current;
-	if (parent[key] !== undefined) throw new Error(`${key} must be an object`);
+	if (parent[key] !== undefined) throw new Error(managerNotice("object-required", key, "Expected an object."));
 	const created: Record<string, unknown> = {};
 	parent[key] = created;
 	return created;

@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme } f
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { planUninstall, planUpdate, runUninstall, runUpdate, toggleItem } from "./actions.js";
 import { filteredItems, packageExtensions } from "./filters.js";
-import { ansiGreen, ansiRed, ansiYellow, isPlainSearchInput, kindLabel, scopeFilterLabel } from "./format.js";
+import { ansiGreen, ansiRed, ansiYellow, isPlainSearchInput, kindLabel, managerNotice, scopeFilterLabel } from "./format.js";
 import { applyUpdateMetadata, buildInventory, npmCandidatesFromInventory } from "./inventory.js";
 import { compactPath } from "./paths.js";
 import { glyphs } from "./glyphs.js";
@@ -418,7 +418,7 @@ export async function openManager(pi: ExtensionAPI, ctx: ExtensionCommandContext
 				if (!item) continue;
 				const plan = planUpdate(item, inventory, ctx);
 				if (!plan) {
-					ctx.ui.notify(host.packageActions ? `${item.displayName} does not have an available update.` : "Package updates are unsupported here; use the host's native plugin manager.", "info");
+					ctx.ui.notify(managerNotice(host.packageActions ? "update-unavailable" : "update-unsupported", item.id, host.packageActions ? `${item.displayName} does not have an available update.` : "Package updates are unsupported here; use the host native plugin manager."), "info");
 					continue;
 				}
 				const body = [
@@ -442,12 +442,12 @@ export async function openManager(pi: ExtensionAPI, ctx: ExtensionCommandContext
 				const item = inventory.items.find((candidate) => candidate.id === action.itemId);
 				if (!item) continue;
 				if (item.packageName === MANAGER_ID) {
-					ctx.ui.notify("Refusing to uninstall pi-extension-manager from inside itself.", "warning");
+					ctx.ui.notify(managerNotice("self-uninstall", MANAGER_ID, "The extension manager cannot uninstall itself."), "warning");
 					continue;
 				}
 				const plan = planUninstall(item, inventory, ctx);
 				if (!plan) {
-					ctx.ui.notify(host.packageActions ? `${item.displayName} is not an uninstallable package.` : "Package uninstall is unsupported here; use the host's native plugin manager.", "warning");
+					ctx.ui.notify(managerNotice(host.packageActions ? "uninstall-unavailable" : "uninstall-unsupported", item.id, host.packageActions ? `${item.displayName} is not an uninstallable package.` : "Package uninstall is unsupported here; use the host native plugin manager."), "warning");
 					continue;
 				}
 				const body = [
