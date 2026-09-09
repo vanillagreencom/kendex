@@ -204,6 +204,7 @@ export function PackagesTable({
   const browsedRepo =
     browsing?.catalog.by === "repo" ? browsing.catalog.repo : "";
   const rows = useMarketplacesStore((s) => s.rows);
+  const summaries = useMarketplacesStore((s) => s.summaries);
   const read = useMarketplacesStore((s) => s.read);
   const summary = useMarketplacesStore(
     (s) => s.summaries[catalogKey({ by: "repo", repo: browsedRepo })] ?? null,
@@ -249,10 +250,10 @@ export function PackagesTable({
     for (const entry of entries) {
       const key = catalogKey(entry.catalog);
       if (!displays.has(key))
-        displays.set(key, catalogDisplay(rows, entry.catalog));
+        displays.set(key, catalogDisplay(rows, summaries, entry.catalog));
     }
     return displays;
-  }, [entries, rows]);
+  }, [entries, rows, summaries]);
 
   return (
     <div ref={roomRef}>

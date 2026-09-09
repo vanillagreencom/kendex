@@ -1,4 +1,9 @@
-import type { Catalog, MarketplaceMeta, MarketplaceRow } from "@/bindings";
+import type {
+  Catalog,
+  CatalogSummary,
+  MarketplaceMeta,
+  MarketplaceRow,
+} from "@/bindings";
 import {
   LOCAL_FOLDER_LABEL,
   UNNAMED_MARKETPLACE,
@@ -116,26 +121,87 @@ export const rowForCatalog = (
   return rows.find((row) => marketKey(row.scope, row.name) === key);
 };
 
-/** One catalog's display identity, for a surface holding a [Catalog] rather
- *  than a row: the subscription's own, or — for a catalog no place in the
- *  list declares — what the address itself says. A repository nobody
- *  subscribes to is its own name and its own location and is not local;
- *  there is no declaration on this machine to read a folder off.
+/** What one page knows about the catalog it is showing, from whichever
+ *  reads have landed. */
+export interface CatalogFacts {
+  catalog: Catalog;
+  /** The subscription declaring it, where a place does. */
+  row?: MarketplaceRow | null;
+  /** The catalog's own account of itself, once it has been fetched. */
+  summary?: CatalogSummary | null;
+  /** What a directory listed a bare repository under, where the page was
+   *  opened from one. It leads for a repository, being what the reader
+   *  clicked, and nothing declares such a page on this machine. */
+  listedName?: string | null;
+}
+
+/** One catalog's display identity, for the marketplace page's own header,
+ *  the breadcrumb above it, the cross-marketplace table's column and the
+ *  available package's From block — which all name the same marketplace and
+ *  must not name it four ways.
  *
- *  Every surface naming a marketplace goes through this, so a list showing
- *  several at once can tell two of one name apart the way the cards do. */
+ *  Everything the page knows is folded in, in the order it is worth
+ *  believing: the subscription's own declaration, then what the catalog
+ *  said when it was fetched, then the directory's listing. The address is
+ *  the last resort and goes through [displayName] like every other
+ *  candidate — an alias reaching a title unfiltered is what put a bare `.`
+ *  on the page this module exists to fix, and a page draws its breadcrumb
+ *  before the overview read lands and after one fails. */
+export const displayFor = ({
+  catalog,
+  row,
+  summary,
+  listedName,
+}: CatalogFacts): MarketplaceDisplay => {
+  // A row's own declaration answers where it can. A summary is the same
+  // catalog read fresh, so it fills in for a page whose subscription rows
+  // have not arrived, and adds nothing where they have.
+  const meta = row?.meta ?? summary?.meta ?? null;
+  const repo =
+    row?.repo ??
+    (catalog.by === "repo" ? catalog.repo : summary?.provenance) ??
+    null;
+  const alias = catalog.by === "repo" ? catalog.repo : catalog.source;
+  const listed = listedName?.trim();
+  const local = row ? row.repo === null && row.repoIdentity === null : false;
+  return {
+    name:
+      listed !== undefined && listed !== ""
+        ? listed
+        : displayName({
+            meta,
+            resolvedPath: row?.resolvedPath ?? null,
+            repo,
+            alias,
+          }),
+    local,
+    where: (local ? row?.resolvedPath : repo) ?? row?.resolvedPath ?? "",
+    alias,
+  };
+};
+
+/** The same answer for a surface holding only a catalog and the store's own
+ *  slices — it finds the declaring row and the fetched summary itself. A
+ *  page already holding either passes them to [displayFor] instead: its
+ *  props are fresher than a lookup, and a header re-deriving what it was
+ *  handed is how a header and its breadcrumb drift apart. */
 export const catalogDisplay = (
   rows: MarketplaceRow[],
+  summaries: Record<string, CatalogSummary>,
   catalog: Catalog,
-): MarketplaceDisplay => {
-  const row = rowForCatalog(rows, catalog);
-  if (row) return marketplaceDisplay(row);
-  const name = catalog.by === "repo" ? catalog.repo : catalog.source;
-  return { name, local: false, where: name, alias: name };
-};
+  listedName?: string | null,
+): MarketplaceDisplay =>
+  displayFor({
+    catalog,
+    row: rowForCatalog(rows, catalog),
+    summary: summaries[catalogKey(catalog)] ?? null,
+    listedName,
+  });
 
 /** What a catalog is called in a title or breadcrumb. */
 export const catalogTitle = (
   rows: MarketplaceRow[],
+  summaries: Record<string, CatalogSummary>,
   catalog: Catalog | undefined,
-): string | null => (catalog ? catalogDisplay(rows, catalog).name : null);
+): string | null =>
+  catalog ? catalogDisplay(rows, summaries, catalog).name : null;

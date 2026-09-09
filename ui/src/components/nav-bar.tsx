@@ -29,6 +29,10 @@ export function NavBar() {
   // and its own header do rather than by the alias its manifest keys it
   // under.
   const rows = useMarketplacesStore((s) => s.rows);
+  // The catalog's own account of itself, for a page whose subscription rows
+  // have not arrived yet — a crumb drawn from the address alone would spell
+  // a folder subscription's alias.
+  const summaries = useMarketplacesStore((s) => s.summaries);
 
   if (!hasHistory) return null;
 
@@ -66,6 +70,7 @@ export function NavBar() {
                 : null,
             marketplaceName: catalogTitle(
               rows,
+              summaries,
               marketplaceRef ?? bundleRef?.catalog ?? availableRef?.catalog,
             ),
             bundleName: bundleRef?.bundle ?? null,

@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { MarketplaceRow, Scope } from "@/bindings";
+import type { CatalogSummary, MarketplaceRow, Scope } from "@/bindings";
 import {
   LOCAL_FOLDER_LABEL,
   UNNAMED_MARKETPLACE,
 } from "@/lib/copy-marketplaces";
 import {
+  catalogDisplay,
   catalogTitle,
   marketplaceDisplay,
   rowForCatalog,
   sourceLine,
 } from "@/lib/marketplace-display";
-import { subscription } from "@/stores/marketplaces-shared";
+import { catalogKey, subscription } from "@/stores/marketplaces-shared";
 
 const project = (root: string): Scope => ({ scope: "project", root });
 
@@ -130,44 +131,104 @@ describe("what a marketplace is called", () => {
 });
 
 // One catalog addresses one subscription. A page opened from a card names
-// the same marketplace the card did, and an alias declared in two places
-// must not answer for the other place's subscription.
+// the same marketplace the card did, and it draws its breadcrumb before the
+// overview read lands — so the address alone must never reach a title, which
+// is the state a folder subscription keyed `.` would spell out.
 describe("naming the catalog a page is showing", () => {
   const local = folder({ scope: project("/home/me/dev/kendex"), name: "." });
   const remote = row({ meta: { name: "kendex" } });
   const rows = [local, remote];
+  const summary = (over: Partial<CatalogSummary> = {}): CatalogSummary => ({
+    provenance: "acme/kit",
+    repoKey: "acme/kit",
+    repoIdentity: "github.com/acme/kit",
+    commit: null,
+    meta: null,
+    mode: null as unknown as CatalogSummary["mode"],
+    counts: {},
+    warning: null,
+    subscription: null,
+    ...over,
+  });
 
-  it("resolves a subscription, a foreign alias and a bare repository", () => {
+  it("resolves a subscription, an unread page and a bare repository", () => {
+    const unread = subscription(project("/w/other"), ".");
     const cases = [
       {
         name: "the local checkout the card opened",
         catalog: subscription(project("/home/me/dev/kendex"), "."),
+        summaries: {},
         title: "kendex",
-        row: local,
       },
       {
         name: "the remote catalogue subscribed personally",
         catalog: subscription({ scope: "global" }, "kit"),
+        summaries: {},
         title: "kendex",
-        row: remote,
       },
       {
-        name: "an alias no place in this list declares",
+        // Before the overview read lands, and after one fails, no row
+        // declares the page. The alias is a relative path and names
+        // nothing, so the address never stands as the title.
+        name: "a folder page whose subscription rows have not arrived",
+        catalog: unread,
+        summaries: {},
+        title: UNNAMED_MARKETPLACE,
+      },
+      {
+        // The catalog's own account of itself arrives by another read, and
+        // answers for the page until the rows do.
+        name: "the same page once the catalog has been read",
+        catalog: unread,
+        summaries: {
+          [catalogKey(unread)]: summary({ meta: { name: "kendex" } }),
+        },
+        title: "kendex",
+      },
+      {
+        name: "a repository nobody subscribes to",
+        catalog: { by: "repo" as const, repo: "acme/kit" },
+        summaries: {},
+        title: "kit",
+      },
+    ];
+    expect(cases).toHaveLength(5);
+    for (const each of cases) {
+      const title = catalogTitle(rows, each.summaries, each.catalog);
+      expect(title, each.name).toBe(each.title);
+      expect([".", ".."], each.name).not.toContain(title);
+    }
+  });
+
+  // What a directory listed a repository under is what the reader clicked,
+  // and the page header has always led with it; the crumb over that header
+  // reads the same function, so the two cannot drift.
+  it("leads with the name a directory listed a repository under", () => {
+    const repo = { by: "repo" as const, repo: "acme/kit" };
+    expect(catalogDisplay(rows, {}, repo, "Kit").name).toBe("Kit");
+    expect(catalogDisplay(rows, {}, repo, "  ").name).toBe("kit");
+  });
+
+  it("addresses the row a subscription names, and no other place's", () => {
+    const cases = [
+      {
+        name: "the place that declares it",
+        catalog: subscription(project("/home/me/dev/kendex"), "."),
+        row: local,
+      },
+      {
+        name: "another place declaring the same alias",
         catalog: subscription(project("/w/other"), "."),
-        title: ".",
         row: undefined,
       },
       {
         name: "a repository nobody subscribes to",
         catalog: { by: "repo" as const, repo: "acme/kit" },
-        title: "acme/kit",
         row: undefined,
       },
     ];
-    expect(cases).toHaveLength(4);
-    for (const each of cases) {
-      expect(catalogTitle(rows, each.catalog), each.name).toBe(each.title);
+    expect(cases).toHaveLength(3);
+    for (const each of cases)
       expect(rowForCatalog(rows, each.catalog), each.name).toBe(each.row);
-    }
   });
 });

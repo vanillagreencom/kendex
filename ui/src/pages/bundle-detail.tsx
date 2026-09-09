@@ -48,6 +48,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
     ready,
   } = useCatalog(bundleRef.catalog);
   const rows = useMarketplacesStore((s) => s.rows);
+  const summaries = useMarketplacesStore((s) => s.summaries);
   const bundles = useMarketplacesStore((s) => s.bundles);
   const readErrors = useMarketplacesStore((s) => s.readErrors);
   const loadBundle = useMarketplacesStore((s) => s.loadBundle);
@@ -144,7 +145,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
               <p className="mt-1 text-xs">
                 {[
                   detail.version ? `v${detail.version}` : null,
-                  catalogTitle(rows, catalog),
+                  catalogTitle(rows, summaries, catalog),
                 ]
                   .filter(Boolean)
                   .join(" · ")}

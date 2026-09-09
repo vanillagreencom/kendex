@@ -53,6 +53,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   } = useCatalog(availableRef.catalog);
   const goToPackage = useNavStore((s) => s.goToPackage);
   const rows = useMarketplacesStore((s) => s.rows);
+  const summaries = useMarketplacesStore((s) => s.summaries);
   const install = useMarketplacesStore((s) => s.install);
   const busy = useMarketplacesStore((s) => s.busy);
   const [destination, setDestination] = useState<Scope | null>(null);
@@ -104,7 +105,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   // same way the breadcrumb above this page and the marketplace's own header
   // resolve them. Never the declaration's own `path`: `.` is what the person
   // typed, and it reads as the app's own folder wherever it is shown.
-  const marketplace = catalogTitle(rows, catalog) ?? "";
+  const marketplace = catalogTitle(rows, summaries, catalog) ?? "";
   const repo = row
     ? sourceLine(marketplaceDisplay(row))
     : (summary?.provenance ?? null);

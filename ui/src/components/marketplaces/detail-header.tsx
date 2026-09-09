@@ -22,7 +22,11 @@ import {
 import { SWITCHED_OFF_HERE } from "@/lib/copy-model";
 import { shortRevision } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
-import { marketplaceDisplay, sourceLine } from "@/lib/marketplace-display";
+import {
+  displayFor,
+  marketplaceDisplay,
+  sourceLine,
+} from "@/lib/marketplace-display";
 import { cn } from "@/lib/utils";
 import { useCommunityStore } from "@/stores/community";
 import { useMarketplacesStore } from "@/stores/marketplaces";
@@ -67,10 +71,15 @@ export function DetailHeader({
   // key one place's manifest files the source under, and a hand-written one
   // can be `.`, which names nothing on screen.
   const source = row ? marketplaceDisplay(row) : null;
-  const title =
-    catalog.by === "subscription"
-      ? (source?.name ?? meta?.name ?? catalog.source)
-      : (listing?.name ?? meta?.name ?? catalog.repo.split("/").at(-1));
+  // The same answer the breadcrumb above this header and the card that
+  // opened it give, from the same function: a title that disagrees with the
+  // crumb over it names one marketplace twice.
+  const title = displayFor({
+    catalog,
+    row,
+    summary,
+    listedName: listing?.name ?? null,
+  }).name;
   const description = meta?.description ?? listing?.description ?? null;
   const commit = row?.commit ?? summary?.commit ?? null;
   // What the catalog came from, as text. A folder source says so beside its
