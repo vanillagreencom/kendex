@@ -1,8 +1,14 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
+import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Scope } from "@/bindings";
-import { FORKED_BADGE_LABEL } from "@/lib/copy";
+import {
+  bundledWithLabel,
+  FORKED_BADGE_HELP,
+  FORKED_BADGE_LABEL,
+  vendorHelp,
+} from "@/lib/copy";
 import { groupItems } from "@/lib/derive";
 import { mount as mountTree } from "@/test/dom";
 import { InstalledRow } from "./installed-row";
@@ -108,6 +114,54 @@ describe("opening a package from its Library row", () => {
       if (entry.args !== undefined)
         expect(onOpen, entry.name).toHaveBeenCalledWith(...entry.args);
     }
+  });
+});
+
+// A word the app made up — Forked, Bundled with Anthropic — says nothing to
+// the person reading the row. Each one carries what it costs them, and it
+// arrives on focus, not only under a pointer.
+describe("the words a Library row's badges stand for", () => {
+  // The nothing-before-focus half of every case here: a helper that read a
+  // flyout already on screen would pass over a badge that explains itself
+  // only under a pointer, which is the state this change is fixing.
+  const openOn = (badge: HTMLElement): string | undefined => {
+    expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull();
+    act(() => badge.focus());
+    return (
+      document.querySelector('[data-slot="tooltip-content"]')?.textContent ??
+      undefined
+    );
+  };
+
+  it("opens the fork's meaning on focus", () => {
+    const { host } = mount([VG]);
+    const badge = [...host.querySelectorAll<HTMLElement>("button")].find((b) =>
+      b.textContent?.startsWith(FORKED_BADGE_LABEL),
+    );
+    if (!badge) throw new Error("no fork badge");
+    expect(openOn(badge)).toBe(FORKED_BADGE_HELP);
+  });
+
+  it("opens what a bundled package is on focus", () => {
+    const bundled = groupItems([
+      { ...item(VG), vendor: "Anthropic" },
+    ] as never)[0];
+    const host = mountTree(
+      <tbody>
+        <InstalledRow
+          group={bundled}
+          origin={null}
+          forkedIn={[]}
+          onOpen={() => {}}
+        />
+      </tbody>,
+      { host: "table" },
+    );
+    const badge = [
+      ...host.querySelectorAll<HTMLElement>('[data-slot="tooltip-trigger"]'),
+    ].find((b) => b.textContent?.startsWith(bundledWithLabel("claude")));
+    if (!badge) throw new Error("no bundled badge");
+    expect(openOn(badge)).toBe(vendorHelp("Anthropic"));
   });
 });
 

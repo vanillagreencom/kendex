@@ -75,6 +75,37 @@ export interface ItemGroup {
   modifiedAt: number | null;
 }
 
+/** One path several harnesses read, and which ones read it. */
+export interface SharedFile {
+  /** Where the bytes are. */
+  path: string;
+  /** The harness ids reading that path, in the order they were observed. */
+  harnesses: string[];
+}
+
+/** The paths more than one harness reads, out of one item's installations.
+ *
+ * Where the bytes actually are, not where the harness looks for them: two
+ * harnesses linking to one shared folder are sharing a file, even though each
+ * has a path of its own pointing at it. The badge that says a package is
+ * shared and the flyout that says which files reads this one answer, so the
+ * badge can never stand over a list that disagrees with it. */
+export function sharedFiles(installations: ObservedItem[]): SharedFile[] {
+  const byPath = new Map<string, string[]>();
+  for (const install of installations) {
+    const real =
+      install.fileState.state === "symlink" && !install.fileState.broken
+        ? install.fileState.target
+        : install.path;
+    const harnesses = byPath.get(real) ?? [];
+    if (!harnesses.includes(install.harness)) harnesses.push(install.harness);
+    byPath.set(real, harnesses);
+  }
+  return [...byPath.entries()]
+    .filter(([, harnesses]) => harnesses.length > 1)
+    .map(([path, harnesses]) => ({ path, harnesses }));
+}
+
 export function groupItems(items: ObservedItem[]): ItemGroup[] {
   const groups = new Map<string, ItemGroup>();
   for (const item of items) {
@@ -103,20 +134,7 @@ export function groupItems(items: ObservedItem[]): ItemGroup[] {
     }
   }
   for (const group of groups.values()) {
-    // Where the bytes actually are, not where the harness looks for them: two
-    // harnesses linking to one shared folder are sharing a file, even though
-    // each has a path of its own pointing at it.
-    const byPath = new Map<string, Set<string>>();
-    for (const install of group.installations) {
-      const real =
-        install.fileState.state === "symlink" && !install.fileState.broken
-          ? install.fileState.target
-          : install.path;
-      const set = byPath.get(real) ?? new Set();
-      set.add(install.harness);
-      byPath.set(real, set);
-    }
-    group.shared = [...byPath.values()].some((harnesses) => harnesses.size > 1);
+    group.shared = sharedFiles(group.installations).length > 0;
     const times = group.installations
       .map((i) => i.modifiedAt)
       .filter((t): t is number => t != null);

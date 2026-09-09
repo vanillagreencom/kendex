@@ -1,6 +1,7 @@
 import type { HarnessId, Origin, Scope } from "@/bindings";
 import { Ago } from "@/components/ago";
 import { HarnessBadge } from "@/components/harness-badge";
+import { SharedFilesBadge } from "@/components/shared-files-badge";
 import { StatusDot } from "@/components/status-dot";
 import { TagBadges } from "@/components/tag-badge";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +12,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { clickAsksToOpen } from "@/lib/click-asks-to-open";
-import { bundledWithLabel, FORKED_BADGE_LABEL, vendorHelp } from "@/lib/copy";
+import {
+  bundledWithLabel,
+  FORKED_BADGE_HELP,
+  FORKED_BADGE_LABEL,
+  vendorHelp,
+} from "@/lib/copy";
 import { STATUS_LABELS } from "@/lib/copy-customize";
 import {
   type GroupStatus,
@@ -19,6 +25,7 @@ import {
   groupStatus,
   groupVendor,
   type ItemGroup,
+  sharedFiles,
 } from "@/lib/derive";
 import { kindIcon } from "@/lib/kind-icon";
 import {
@@ -55,6 +62,7 @@ export function InstalledRow({
   const displayName =
     group.kind === "hook" ? hookDisplayName(group.name) : group.name;
   const vendor = groupVendor(group);
+  const shared = sharedFiles(group.installations);
   const scopes = groupScopes(group);
   const status = groupStatus(group);
   const whereLabel =
@@ -100,21 +108,45 @@ export function InstalledRow({
                   the reader it happened and not where, and leaves nothing
                   to open — a fork belongs to the place it was made in. */}
               {forkedIn.map((where) => (
-                <Badge
-                  key={scopeKey(where)}
-                  variant="outline"
-                  className="cursor-pointer"
-                  render={
-                    <button type="button" onClick={() => onOpen(where)}>
-                      {`${FORKED_BADGE_LABEL} in ${placeName(where, scopes)}`}
-                    </button>
-                  }
-                />
+                // "Forked" is the app's word, not the reader's: what it
+                // costs them is the paused updates, and that arrives on
+                // hover, on focus and through the button's own name.
+                <Tooltip key={scopeKey(where)}>
+                  <TooltipTrigger
+                    render={
+                      <Badge
+                        variant="outline"
+                        className="cursor-pointer"
+                        render={
+                          <button type="button" onClick={() => onOpen(where)}>
+                            {`${FORKED_BADGE_LABEL} in ${placeName(where, scopes)}`}
+                            <span className="sr-only">{FORKED_BADGE_HELP}</span>
+                          </button>
+                        }
+                      />
+                    }
+                  />
+                  <TooltipContent className="max-w-80">
+                    {FORKED_BADGE_HELP}
+                  </TooltipContent>
+                </Tooltip>
               ))}
               {vendor ? (
-                <Badge variant="outline" title={vendorHelp(vendor)}>
-                  {bundledWithLabel(group.installations[0].harness)}
-                </Badge>
+                // A title alone answers a pointer and nothing else; the
+                // same words reach the keyboard and a screen reader here.
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Badge variant="outline" tabIndex={0}>
+                        {bundledWithLabel(group.installations[0].harness)}
+                        <span className="sr-only">{vendorHelp(vendor)}</span>
+                      </Badge>
+                    }
+                  />
+                  <TooltipContent className="max-w-80">
+                    {vendorHelp(vendor)}
+                  </TooltipContent>
+                </Tooltip>
               ) : null}
             </span>
             {group.description ? (
@@ -141,9 +173,7 @@ export function InstalledRow({
           {group.harnesses.map((h) => (
             <HarnessBadge key={h} harness={h as HarnessId} compact />
           ))}
-          {group.shared ? (
-            <Badge variant="secondary">Shared files</Badge>
-          ) : null}
+          <SharedFilesBadge files={shared} />
         </span>
       </TableCell>
       <TableCell title={whereTitle} className="text-muted-foreground">

@@ -7,11 +7,11 @@ import type {
 import { Ago } from "@/components/ago";
 import { HarnessBadge } from "@/components/harness-badge";
 import { SectionHeading } from "@/components/section";
+import { SharedFilesBadge } from "@/components/shared-files-badge";
 import { StatusLine } from "@/components/status-note";
 import { TagBadges } from "@/components/tag-badge";
-import { Badge } from "@/components/ui/badge";
 import { TAGS_ROW_LABEL } from "@/lib/copy";
-import { groupScopes, type ItemGroup } from "@/lib/derive";
+import { groupScopes, type ItemGroup, sharedFiles } from "@/lib/derive";
 import { kindLabel, scopeName } from "@/lib/labels";
 import { versionLabel } from "@/lib/versions";
 import { subscription } from "@/stores/marketplaces";
@@ -73,9 +73,7 @@ export function PackageMetaBlock({
             {group.harnesses.map((h) => (
               <HarnessBadge key={h} harness={h as HarnessId} />
             ))}
-            {group.shared ? (
-              <Badge variant="secondary">Shared files</Badge>
-            ) : null}
+            <SharedFilesBadge files={sharedFiles(group.installations)} />
           </span>
         </Row>
         <Row label="Scope">{scopeName(primary.scope)}</Row>

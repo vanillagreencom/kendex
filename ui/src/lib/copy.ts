@@ -41,6 +41,40 @@ export const bundledWithLabel = (harness: HarnessId): string =>
   `Bundled with ${harnessName(harness)}`;
 export const vendorHelp = (vendor: string): string =>
   `${vendor} ships and updates this with the harness. kendex lists it, but doesn't manage or check it.`;
+// The badges on a harness row and on a Library row, and what each one means
+// said in the words of the thing itself. A badge that only a person who
+// already knows the app can read is a badge that says nothing.
+export const SHARED_FILES_BADGE_LABEL = "Shared files";
+/** Which harnesses read one path, written out. Every shared path has at
+ *  least two readers, so this is always a list. */
+export const sharedFileReaders = (harnesses: string[]): string => {
+  const names = harnesses.map((h) => harnessName(h as HarnessId));
+  return names.length < 2
+    ? names.join("")
+    : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+};
+export const sharedFileLine = (harnesses: string[], path: string): string =>
+  `${sharedFileReaders(harnesses)} read ${path}`;
+export const SHARED_FILES_CONSEQUENCE =
+  "There is one copy, so a change to it is a change for all of them.";
+/** The whole explanation as one sentence run, for a screen reader. */
+export const sharedFilesHelp = (
+  files: { path: string; harnesses: string[] }[],
+): string =>
+  [
+    ...files.map((file) => `${sharedFileLine(file.harnesses, file.path)}.`),
+    SHARED_FILES_CONSEQUENCE,
+  ].join(" ");
+/** What the path under a harness's name is. */
+export const harnessRootHelp = (harness: string): string =>
+  `Where ${harness} keeps its files`;
+export const HARNESS_VERSION_HELP = "The installed version";
+/** What a count badge on a harness row opens. */
+export const showKindLabel = (
+  count: number,
+  kind: string,
+  harness: string,
+): string => `Show the ${count} ${kind} in ${harness}`;
 export const BROWSE_LABEL = "Choose a folder…";
 export const HARNESS_FOLDER_HELP = "Change where this harness keeps its files";
 export const harnessFolderTitle = (harness: string): string =>
@@ -154,6 +188,8 @@ export const updatedToastLabel = (name: string): string => `Updated ${name}`;
 
 // Fork: what happens when the app finds files you edited by hand.
 export const FORKED_BADGE_LABEL = "Forked";
+export const FORKED_BADGE_HELP =
+  "You changed this package's files here. kendex keeps your copy and pauses its updates until you decide what to do with it.";
 /** A fork whose files you have since changed. One state, not a question:
  *  the edit is the fork's content and nothing is held back for it. */
 export const FORKED_EDITED_BADGE_LABEL = "Forked · edited";

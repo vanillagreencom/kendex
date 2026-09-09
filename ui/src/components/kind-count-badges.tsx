@@ -7,11 +7,16 @@ import { kindLabel } from "@/lib/labels";
 export function KindCountBadges({
   counts,
   onKindClick,
+  describe,
   emptyLabel = "Nothing yet",
   emptyClassName = "text-xs text-muted-foreground",
 }: {
   counts: [ItemKind, number][];
   onKindClick?: (kind: ItemKind) => void;
+  /** What pressing one of these badges does, in words. "3 skills" says what
+   *  the badge counts and nothing about where the press lands; a caller that
+   *  can name the place says it here and the pill announces it. */
+  describe?: (kind: ItemKind, count: number) => string;
   emptyLabel?: string;
   emptyClassName?: string;
 }) {
@@ -27,7 +32,11 @@ export function KindCountBadges({
             variant="outline"
             className="cursor-pointer hover:bg-accent"
             render={
-              <button type="button" onClick={() => onKindClick(kind)}>
+              <button
+                type="button"
+                aria-label={describe?.(kind, count)}
+                onClick={() => onKindClick(kind)}
+              >
                 {count} {kindLabel(kind, count)}
               </button>
             }

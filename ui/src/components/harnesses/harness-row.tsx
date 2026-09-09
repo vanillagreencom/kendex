@@ -6,9 +6,15 @@ import { HarnessFolderDialog } from "@/components/harnesses/harness-folder-dialo
 import { ShowEverythingButton } from "@/components/harnesses/show-everything-button";
 import { KindCountBadges } from "@/components/kind-count-badges";
 import { Button } from "@/components/ui/button";
-import { HARNESS_FOLDER_HELP, NOT_INSTALLED_LABEL } from "@/lib/copy";
+import {
+  HARNESS_FOLDER_HELP,
+  HARNESS_VERSION_HELP,
+  harnessRootHelp,
+  NOT_INSTALLED_LABEL,
+  showKindLabel,
+} from "@/lib/copy";
 import type { ItemPlace } from "@/lib/derive";
-import { harnessName } from "@/lib/labels";
+import { harnessName, kindLabel } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { useNavStore } from "@/stores/nav";
 
@@ -59,18 +65,27 @@ export function HarnessRow({
               {name}
             </span>
           )}
+          {/* A bare number beside a tool name could be anything it ships;
+              the one word that says which is on hover. */}
           {version ? (
-            <span className="font-mono text-xs text-muted-foreground">
+            <span
+              className="font-mono text-xs text-muted-foreground"
+              title={HARNESS_VERSION_HELP}
+            >
               {version}
             </span>
           ) : null}
         </span>
         <span className="flex min-w-0 items-center gap-1 pl-7">
+          {/* A path on its own line says nothing about whose it is or what
+              it is for; the pencil beside it already answers that, and the
+              line now answers it too. */}
           <span
             className={cn(
               "truncate text-[13px] text-muted-foreground",
               detectedRoot && "font-mono",
             )}
+            title={detectedRoot ? harnessRootHelp(name) : undefined}
           >
             {detectedRoot ?? NOT_INSTALLED_LABEL}
           </span>
@@ -101,6 +116,9 @@ export function HarnessRow({
         <div className="flex shrink-0 flex-wrap justify-end gap-1.5 pt-0.5">
           <KindCountBadges
             counts={counts}
+            describe={(kind, count) =>
+              showKindLabel(count, kindLabel(kind, count), name)
+            }
             onKindClick={(kind) => goToLibrary({ ...place, kind })}
           />
         </div>
