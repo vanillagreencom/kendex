@@ -28,8 +28,9 @@ import {
   installedCountByKind,
   selectionOf,
 } from "@/lib/derive";
+import { scopeNames } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
-import { sameScope } from "@/lib/scope";
+import { everyPlace, sameScope } from "@/lib/scope";
 import { sessionNoteState } from "@/lib/session-note";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount, useAuditStore } from "@/stores/audit";
@@ -84,16 +85,13 @@ function badgeFor(
 function PlaceActions({
   scope,
   place,
-  label,
   onStopTracking,
 }: {
   scope: Scope;
-  /** What this place is called on screen and in the dialogs it opens. */
+  /** What this place is called among the places drawn beside it, from
+   *  [scopeNames] — the dialogs this menu opens name the place whose files
+   *  they rewrite, and two projects can end in the same folder. */
   place: string;
-  /** What names this place apart from the others for a screen reader: its
-   *  folder, where it has one — two projects can end in the same folder
-   *  name, and the menu is a control in a list. */
-  label?: string;
   onStopTracking?: () => void;
 }) {
   const [marketplacesOpen, setMarketplacesOpen] = useState(false);
@@ -105,7 +103,7 @@ function PlaceActions({
             <Button
               size="icon-sm"
               variant="ghost"
-              aria-label={`More actions for ${label ?? place}`}
+              aria-label={`More actions for ${place}`}
             >
               <MoreHorizontal className="size-4" />
             </Button>
@@ -181,6 +179,15 @@ export function ProjectList() {
   const flagged = useCommitOfferStore((s) => s.flagged);
   const items = result?.items ?? [];
   const projects = settings?.projects ?? [];
+  // What a place is called where it is named ALONE, away from its card: a
+  // card's menu opens dialogs that say which place's files an action
+  // rewrites, and two roots ending in the same folder would name neither.
+  // The card itself keeps its folder name, with the path right beneath it.
+  // Personal leads, as [everyPlace] orders it, so a project's name sits at
+  // its index plus one.
+  const placeNames = scopeNames(everyPlace(projects));
+  const namedAlone = (root: string): string =>
+    placeNames[projects.indexOf(root) + 1] ?? root;
   // A card counts one place and links to that place. Both read the same
   // object, so the badge cannot name a narrowing its click does not make.
   const personal: ItemPlace = { scope: "global" };
@@ -240,8 +247,7 @@ export function ProjectList() {
                 action={
                   <PlaceActions
                     scope={scope}
-                    place={name}
-                    label={root}
+                    place={namedAlone(root)}
                     onStopTracking={() => setRemoveTarget(root)}
                   />
                 }
@@ -267,7 +273,7 @@ export function ProjectList() {
           onOpenChange={(open) => {
             if (!open) setRemoveTarget(null);
           }}
-          title={`Stop tracking ${removeTarget?.split("/").pop() ?? ""}?`}
+          title={`Stop tracking ${removeTarget ? namedAlone(removeTarget) : ""}?`}
           description="kendex will stop managing this project. Nothing in the folder is deleted."
           confirmLabel="Stop tracking"
           destructive

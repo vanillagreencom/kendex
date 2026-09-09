@@ -290,6 +290,73 @@ describe("a place card's actions", () => {
     await openActions(host, "Personal");
     expect(menuItems()).toEqual([PLACE_MARKETPLACES_LABEL]);
   });
+
+  // Stopping tracking moved off its own button and into this menu, and a
+  // menu item is the shape whose click the card used to answer. Rendering
+  // the item proves nothing about the path behind it: the removal has to
+  // reach the settings store with this card's own root, and the card must
+  // not navigate out from under the confirm.
+  it("stops tracking the project the card names, without leaving the page", async () => {
+    vi.mocked(commands.unregisterProject).mockResolvedValue({
+      status: "ok",
+      data: { settings: { projects: [] }, base: null } as never,
+    });
+    const host = mount(<ProjectList />);
+    await settle();
+
+    await openActions(host, "acme");
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (el) => el.textContent === "Stop tracking acme…",
+    );
+    if (!(item instanceof HTMLElement))
+      throw new Error("no stop-tracking item");
+    await userEvent.click(item);
+    await settle();
+    expect(useNavStore.getState().page).toBe("projects");
+
+    const confirm = [...document.querySelectorAll("button")].find(
+      (one) => one.textContent === "Stop tracking",
+    );
+    if (!confirm) throw new Error("no confirm");
+    await userEvent.click(confirm);
+    await settle();
+
+    expect(commands.unregisterProject).toHaveBeenCalledWith("/work/acme");
+    expect(useNavStore.getState().page).toBe("projects");
+  });
+
+  // Two roots ending in the same folder name the same card, and the menu
+  // opens dialogs that say whose files an action rewrites. The names come
+  // from the one collision-aware rule, so each card's menu and each dialog
+  // it opens names one project.
+  it("names two projects whose folders share a name apart", async () => {
+    useSettingsStore.setState({
+      settings: { projects: ["/work/client", "/personal/client"] } as never,
+    });
+    const host = mount(<ProjectList />);
+    await settle();
+
+    // Both cards head as "client" — their paths are right beneath them —
+    // so the first one is /work/client, the order settings names them in.
+    await openActions(host, "client");
+    expect(menuItems()).toEqual([
+      PLACE_MARKETPLACES_LABEL,
+      "Stop tracking /work/client…",
+    ]);
+
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (el) => el.textContent === PLACE_MARKETPLACES_LABEL,
+    );
+    if (!(item instanceof HTMLElement)) throw new Error("no marketplaces item");
+    await userEvent.click(item);
+    await settle();
+    expect(document.body.textContent).toContain(
+      placeMarketplacesTitle("/work/client"),
+    );
+    expect(document.body.textContent).not.toContain(
+      placeMarketplacesTitle("client"),
+    );
+  });
 });
 
 const installed = (overrides: Partial<ObservedItem>): ObservedItem => ({

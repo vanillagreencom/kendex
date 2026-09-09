@@ -2,7 +2,7 @@
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { MarketplaceRow, Scope } from "@/bindings";
+import { commands, type MarketplaceRow, type Scope } from "@/bindings";
 import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
   placeMarketplacesEmpty,
@@ -10,6 +10,7 @@ import {
   placeMarketplacesUnchecked,
   placeMarketplacesUnconfirmed,
   SWITCHED_OFF_HERE,
+  stopUsingLabel,
   TURN_OFF_CONFIRM,
   turnOffBody,
   turnOffLabel,
@@ -19,6 +20,16 @@ import { READ_LANDED, READ_PENDING, readFailed } from "@/lib/read-state";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { mount, settle } from "@/test/dom";
 import { PlaceMarketplacesDialog } from "./place-marketplaces-dialog";
+
+vi.mock("@/bindings", () => ({
+  commands: {
+    marketplacesOverview: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
+    marketplaceUnsubscribePreview: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: { removable: [], edited: [], bundles: [] },
+    }),
+  },
+}));
 
 const beta: Scope = { scope: "project", root: "/w/beta" };
 
@@ -169,6 +180,27 @@ describe("a place's marketplaces", () => {
     if (!retry) throw new Error("no retry");
     await userEvent.click(retry);
     expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  // Dropping a marketplace from a place is the other half of what this
+  // dialog exists for, and it is the row's own subscription that has to
+  // reach the confirm: the dialog lists one place, but each row carries its
+  // own scope and name, and a wrong one would drop somebody else's.
+  it("hands the chosen row's own subscription to the unsubscribe confirm", async () => {
+    useMarketplacesStore.setState({
+      rows: [row(), row({ name: "other-kit" })],
+    });
+    await open();
+
+    await choose(stopUsingLabel("kit"));
+    await settle();
+
+    expect(commands.marketplaceUnsubscribePreview).toHaveBeenCalledTimes(1);
+    expect(commands.marketplaceUnsubscribePreview).toHaveBeenCalledWith(
+      beta,
+      "kit",
+    );
+    expect(document.body.textContent).toContain("Unsubscribe from kit?");
   });
 
   // Rows kept from before a failed read are drawn — they are the only answer
