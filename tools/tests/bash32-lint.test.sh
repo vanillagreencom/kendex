@@ -185,7 +185,7 @@ else
 fi
 
 # --- 4. the lint's fail-closed paths, each proven red -------------------
-# A row is `label|world|cwd|argv|exit`:
+# A row is `label|world|cwd|argv|exit|first`:
 #   world  words for build, each staged fresh under the row's own directory
 #          W: `empty` a directory holding nothing; `nonshell` one holding
 #          only a JSON file; `populated` one holding a clean shell file;
@@ -206,6 +206,12 @@ fi
 #          `ROOT/NO_SCAN` the same directory spelled absolute, any other
 #          word itself; `-` for none
 #   exit   the exit status
+#   first  LINE 1 of the stream the run answered on, as `<key>=<value>` with
+#          the `bash32-lint: ` prefix off — empty, and so a red row, when
+#          anything reached that stream ahead of it. The value written
+#          as an argv token above or as `#` where the value is a count this
+#          row cannot pin to one number. Every row here exits 2 but one, so
+#          the key is what tells one refusal from another.
 #
 # The exception entries are repository-relative, so a relative DIR from a
 # subdirectory proves they are read from the toplevel and not beneath the
@@ -214,8 +220,8 @@ fi
 # row: with nothing to resolve the toplevel from, the exceptions cannot be
 # judged and the run ends. A directory holding only non-shell files beside
 # a populated one is the per-directory guard, which the roster-wide "nothing
-# was read" guard would otherwise carry; an empty directory ends the run
-# before either, on the empty listing it cannot classify. A failed grep is
+# was read" guard would otherwise carry, and an empty directory reaches the
+# same per-directory guard. A failed grep is
 # proven by a stub that refuses the scan rather than by an unreadable file,
 # which root would read; the two discovery halves have no such stub and
 # skip under root instead.
@@ -347,8 +353,9 @@ build() { # build WORD... — a fresh directory W, then each word staged in it
   done
 }
 
-arg_of() { # arg_of TOKEN — a row's argv token as the argument it names
+arg_of() { # arg_of TOKEN — a row's argv or value token as what it names
   case "$1" in
+  W) printf '%s' "$W" ;;
   W/*) printf '%s/%s' "$W" "${1#W/}" ;;
   NO_SCAN) printf '%s' "$NOSCAN" ;;
   ROOT/NO_SCAN) printf '%s/%s' "$ROOT" "$NOSCAN" ;;
@@ -356,8 +363,8 @@ arg_of() { # arg_of TOKEN — a row's argv token as the argument it names
   esac
 }
 
-run() { # run CWD ARGV — `rc=<status>`, or `rc=skipped-as-root`
-  local rc=0 dir="" a=""
+run() { # run CWD ARGV — `rc=<status> first=<key>=<value>`, or `rc=skipped-as-root`
+  local rc=0 dir="" a="" said=""
   local -a argv=()
   if [ "$W_SKIP" = yes ] && [ "$(id -u)" -eq 0 ]; then
     printf 'rc=skipped-as-root'
@@ -376,16 +383,27 @@ run() { # run CWD ARGV — `rc=<status>`, or `rc=skipped-as-root`
   (cd "$dir" && PATH="$W_PATH" "$W_LINT" ${argv[@]+"${argv[@]}"} >"$W/stdout" 2>"$W/stderr") || rc=$?
   # The modes an unreadable world set come off, so the EXIT trap can remove it.
   chmod -R u+rwX "$W"
-  printf 'rc=%s' "$rc"
+  # LINE 1 of the stream that carried the answer, not the first line matching
+  # the prefix: a refusal writes to stderr and a verdict to stdout, and the
+  # keyed line has to be the first line of whichever it used. A dependency's
+  # words reaching the stream ahead of it is the defect this reads for.
+  if [ -s "$W/stderr" ]; then
+    said="$(sed -n '1s/^bash32-lint: //p' "$W/stderr")"
+  else
+    said="$(sed -n '1s/^bash32-lint: //p' "$W/stdout")"
+  fi
+  printf 'rc=%s first=%s' "$rc" "${said:--}"
 }
 
 run_table() { # run_table TITLE ROWS
-  local title="$1" rows="$2" label world cwd argv want got row field before=$((PASS + FAIL))
+  local title="$1" rows="$2" label world cwd argv want first got row field
+  local got_rc="" got_key="" got_val="" want_key="" want_val="" matched=no
+  local before=$((PASS + FAIL))
   printf '=== %s ===\n' "$title"
   while IFS= read -r row; do
     [ -n "$row" ] || continue
-    IFS='|' read -r label world cwd argv want <<<"$row"
-    for field in "$label" "$world" "$cwd" "$argv" "$want"; do
+    IFS='|' read -r label world cwd argv want first <<<"$row"
+    for field in "$label" "$world" "$cwd" "$argv" "$want" "$first"; do
       [ -n "$field" ] || {
         printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2
         exit 1
@@ -404,10 +422,29 @@ run_table() { # run_table TITLE ROWS
     fi
     if [ "$got" = "rc=skipped-as-root" ]; then
       printf '  skip  %s (%s)\n' "$label" "$got"
-    elif [ "$got" = "rc=$want" ]; then
+      continue
+    fi
+    got_rc="${got%% *}"
+    got_rc="${got_rc#rc=}"
+    got_key="${got#* first=}"
+    got_val="${got_key#*=}"
+    got_key="${got_key%%=*}"
+    want_key="${first%%=*}"
+    want_val="${first#*=}"
+    matched=no
+    if [ "$got_rc" = "$want" ] && [ "$got_key" = "$want_key" ]; then
+      # `#` is a count this row cannot pin to one number; the digits are the
+      # assertion, and every other row pins the value itself.
+      if [ "$want_val" = '#' ]; then
+        case "$got_val" in '' | *[!0-9]*) ;; *) matched=yes ;; esac
+      elif [ "$got_val" = "$(arg_of "$want_val")" ]; then
+        matched=yes
+      fi
+    fi
+    if [ "$matched" = yes ]; then
       ok "$label"
     else
-      bad "$label (want rc=$want, got $got)" "$(tr '\n' ';' <"$W/stderr")"
+      bad "$label (want rc=$want first=$want_key=$(arg_of "$want_val"), got $got)" "$(tr '\n' ';' <"$W/stderr")"
     fi
   done <<EOF
 $rows
@@ -418,22 +455,35 @@ EOF
   }
 }
 
+echo "=== a dependency's own words are replayed under the keyed line ==="
+cause_probe="$TMP/cause"
+mkdir -p "$cause_probe"
+cause_out="$( (cd "$cause_probe" && "$LINT" 2>&1) )" || true
+cause_first="$(sed -n 1p <<<"$cause_out")"
+if [ "$cause_first" = "bash32-lint: not-in-repo=$cause_probe" ] &&
+  grep -q '^fatal: ' <<<"$cause_out"; then
+  ok "git's own diagnostic follows the keyed line instead of preceding it"
+else
+  bad "git's own diagnostic follows the keyed line instead of preceding it" \
+    "$(printf '%s' "$cause_out" | tr '\n' ';')"
+fi
+
 run_table "the fail-closed paths" "\
-a directory holding no shell file ends the run|empty|root|W/empty|2
-a directory holding only non-shell files reads nothing either|nonshell|root|W/nonshell|2
-a relative DIR argument from a subdirectory scans clean|-|skills/orch|scripts|0
-the NO_SCAN exception holds when its directory is named relative to the toplevel|-|root|NO_SCAN|2
-the NO_SCAN exception holds when its directory is named absolute|-|root|ROOT/NO_SCAN|2
-a run with no repository around it ends rather than scanning|populated|world|populated|2
-an empty directory beside a populated one still ends the run|populated empty|root|W/populated W/empty|2
-a directory holding only non-shell files beside a populated one still ends the run|populated nonshell|root|W/populated W/nonshell|2
-a shell file that does not parse reds the lint|syntax|root|W/syntax|1
-a scan that could not run is not read as a clean tree|populated grep-stub|root|W/populated|2
-a file list that could not be built is not read as a clean tree|unreadable-dir unless-root|root|W/unreadable-dir|2
-a file that could not be classified ends the run rather than being dropped|unreadable-file unless-root|root|W/unreadable-file|2
-a path that is not a directory ends the run|-|root|W/no-such-directory|2
-an exception naming a directory that is gone ends the run|lint:stale|root|-|2
-a NO_SHELL directory that grew a shell file ends the run|lint:grew|root|W/noshell|2"
+a directory holding no shell file ends the run|empty|root|W/empty|2|no-shell=W/empty
+a directory holding only non-shell files reads nothing either|nonshell|root|W/nonshell|2|no-shell=W/nonshell
+a relative DIR argument from a subdirectory scans clean|-|skills/orch|scripts|0|clean=#
+the NO_SCAN exception holds when its directory is named relative to the toplevel|-|root|NO_SCAN|2|roster=empty
+the NO_SCAN exception holds when its directory is named absolute|-|root|ROOT/NO_SCAN|2|roster=empty
+a run with no repository around it ends rather than scanning|populated|world|populated|2|not-in-repo=W
+an empty directory beside a populated one still ends the run|populated empty|root|W/populated W/empty|2|no-shell=W/empty
+a directory holding only non-shell files beside a populated one still ends the run|populated nonshell|root|W/populated W/nonshell|2|no-shell=W/nonshell
+a shell file that does not parse reds the lint|syntax|root|W/syntax|1|syntax=1
+a scan that could not run is not read as a clean tree|populated grep-stub|root|W/populated|2|scan=W/populated/real.sh
+a file list that could not be built is not read as a clean tree|unreadable-dir unless-root|root|W/unreadable-dir|2|listing=W/unreadable-dir
+a file that could not be classified ends the run rather than being dropped|unreadable-file unless-root|root|W/unreadable-file|2|unclassified=W/unreadable-file/entrypoint
+a path that is not a directory ends the run|-|root|W/no-such-directory|2|not-a-directory=W/no-such-directory
+an exception naming a directory that is gone ends the run|lint:stale|root|-|2|stale-exception=skills/gone/scripts
+a NO_SHELL directory that grew a shell file ends the run|lint:grew|root|W/noshell|2|stale-no-shell=W/noshell"
 
 # --- 5. the pattern set, as the lint itself reports it -------------------
 # Asked of the program, not lifted out of its text: `--pattern` prints the

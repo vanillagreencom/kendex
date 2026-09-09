@@ -18,6 +18,23 @@ use crate::channel::{REFUSED_VERSIONS, channel_step_env, core_can_read};
 use crate::test_util::rooted;
 use crate::{job, job_declaring, step, workflow};
 
+/// The repository the fixture poses as, named once because the guard prints
+/// it back in the refusal a read that could not run leaves.
+#[cfg(unix)]
+pub(crate) const REPOSITORY: &str = "vanillagreencom/kendex";
+
+/// What the stubbed `gh` says on a call the row made fail. A stub that failed
+/// in silence would leave the guard's capture nothing to carry, and every
+/// assertion below would hold with that capture deleted.
+#[cfg(unix)]
+pub(crate) const GH_SENTINEL: &str = "GH-STUB-REFUSED";
+
+/// What the stubbed `gh` says on a call that WORKED. The real `gh` reports on
+/// its way through, and a report printed where it falls takes the first line
+/// of whatever refuses after it — the case a silent stub cannot reach.
+#[cfg(unix)]
+pub(crate) const GH_WORKED: &str = "GH-STUB-DOWNLOADED";
+
 /// The binary the guard runs `version-compare` on, named by reading the
 /// guard rather than by writing the name down twice: renamed on one side
 /// only, every run here would stage a file the guard never looks at and
@@ -156,8 +173,12 @@ impl Fixture {
                    shift\n\
                  done\n\
                fi\n\
+               printf '%s\\n' \"$GH_SENTINEL $*\" >&2\n\
                exit 1\n\
              fi\n\
+             case \"$1 $2\" in\n\
+               \"release download\") printf '%s\\n' \"$GH_WORKED $*\" ;;\n\
+             esac\n\
              case \"$1 $2\" in\n\
                \"release create\") mkdir -p \"$GH_CHANNEL\"; exit 0 ;;\n\
                \"release upload\")\n\
@@ -240,6 +261,11 @@ impl Fixture {
         fs::write(&log, "").unwrap();
         fs::write(&failing, fail.join("\n")).unwrap();
         fs::remove_dir_all(self.root.join("manifest")).ok();
+        // One file for both streams, opened before the run: the order the two
+        // were written in is the contract under test, and two buffers read
+        // back separately cannot show it.
+        let said_path = self.root.join("said.log");
+        let said = fs::File::create(&said_path).unwrap();
         // What the release job stages is the manifest of the tag it built.
         let staged_manifest = self.root.join("dist/latest.json");
         if staged_manifest.is_file() {
@@ -262,13 +288,17 @@ impl Fixture {
             )
             .env("GH_LOG", &log)
             .env("GH_FAIL", &failing)
+            .env("GH_SENTINEL", GH_SENTINEL)
+            .env("GH_WORKED", GH_WORKED)
             .env("GH_LANDED", landed.join(" "))
             .env("GH_CHANNEL", &self.published)
-            .env("GITHUB_REPOSITORY", "vanillagreencom/kendex")
+            .env("GITHUB_REPOSITORY", REPOSITORY)
             .env("CHANNEL", channel_step_env("CHANNEL"))
             .env("NEW_VERSION", new_version)
             .env("GH_TOKEN", "token")
-            .output()
+            .stdout(std::process::Stdio::from(said.try_clone().unwrap()))
+            .stderr(std::process::Stdio::from(said.try_clone().unwrap()))
+            .status()
             .unwrap();
         let calls = fs::read_to_string(&log)
             .unwrap_or_default()
@@ -284,13 +314,9 @@ impl Fixture {
             names
         });
         Pointed {
-            code: run.status.code().unwrap_or(-1),
+            code: run.code().unwrap_or(-1),
             calls,
-            output: format!(
-                "{}{}",
-                String::from_utf8_lossy(&run.stdout),
-                String::from_utf8_lossy(&run.stderr)
-            ),
+            output: fs::read_to_string(&said_path).unwrap_or_default(),
             after,
         }
     }
@@ -328,21 +354,22 @@ fn point_channel_staging(
 #[cfg(unix)]
 #[test]
 fn a_read_it_could_not_make_stops_the_write() {
+    let channel = channel_step_env("CHANNEL");
     for (state, failing, said) in [
         (
             Channel::Carrying("2.0.0-rc1"),
             "/releases --paginate",
-            "releases could not be listed",
+            format!("release-channel-point: releases={REPOSITORY}"),
         ),
         (
             Channel::Carrying("2.0.0-rc1"),
             "/releases/tags/",
-            "its assets could not be read",
+            format!("release-channel-point: assets={channel}"),
         ),
         (
             Channel::Carrying("2.0.0-rc1"),
             "release download",
-            "manifest could not be downloaded",
+            format!("release-channel-point: manifest-download={channel}"),
         ),
     ] {
         let run = point_channel(state, "1.0.0-rc1", &[failing]);
@@ -352,18 +379,42 @@ fn a_read_it_could_not_make_stops_the_write() {
             "{failing} still uploaded: {:?}",
             run.calls
         );
+        // Line 1 is the keyed line, and what `gh` said is under it: asserting
+        // only that the key appears somewhere would hold with the capture
+        // deleted, since the diagnostic would simply land first instead.
+        assert_eq!(
+            run.output.lines().next().unwrap_or_default(),
+            said,
+            "{failing}: the keyed line is not the first line: {}",
+            run.output
+        );
         assert!(
-            run.output.contains(said),
-            "{failing} was reported as something else: {}",
+            run.output.lines().skip(1).any(|l| l.contains(GH_SENTINEL)),
+            "{failing}: what gh said was not replayed under the keyed line: {}",
             run.output
         );
     }
 
     // A manifest that names no version is the same answer: nothing here
-    // can tell whether this tag is ahead of what is published.
+    // can tell whether this tag is ahead of what is published. It is also the
+    // case where a call that WORKED has already reported — the download says
+    // so on its way through — and that report must not take the first line
+    // from the refusal that follows it.
     let run = point_channel(Channel::Unreadable, "1.0.0-rc1", &[]);
     assert_ne!(run.code, 0, "an unreadable manifest was survivable");
     assert!(run.ran("release upload").is_none(), "{:?}", run.calls);
+    let channel = channel_step_env("CHANNEL");
+    assert_eq!(
+        run.output.lines().next().unwrap_or_default(),
+        format!("release-channel-point: manifest-version={channel}"),
+        "a successful download reported over the refusal: {}",
+        run.output
+    );
+    assert!(
+        run.output.lines().skip(1).any(|l| l.contains(GH_WORKED)),
+        "what the successful download said was not replayed: {}",
+        run.output
+    );
 }
 
 /// The ordering runs the release's own binary, so a `dist` without it is a
@@ -391,8 +442,10 @@ fn a_release_that_staged_no_binary_stops_the_write() {
         run.calls
     );
     assert!(
-        run.output
-            .contains("the release's own binary is not in dist"),
+        run.output.contains(&format!(
+            "release-channel-point: compare-binary=dist/{}",
+            compare_binary()
+        )),
         "the stop was reported as something else: {}",
         run.output
     );
@@ -435,6 +488,28 @@ fn a_channel_version_that_is_not_a_version_stops_the_write() {
             "{carried} still uploaded: {:?}",
             run.calls
         );
+        // Two keyed refusals answer this set. A version the manifest carries
+        // but nothing can order reaches the ordering probe, where the binary
+        // says why on its own stderr; a manifest naming no version at all is
+        // refused a step earlier, before any ordering is attempted. Either
+        // way the keyed line is the first line, and the ordering one carries
+        // the binary's reason under it rather than ahead of it.
+        let first = run.output.lines().next().unwrap_or_default().to_owned();
+        let channel = channel_step_env("CHANNEL");
+        if first == format!("release-channel-point: manifest-version={channel}") {
+            assert!(carried.trim().is_empty(), "{carried}: {}", run.output);
+        } else {
+            assert_eq!(
+                first, "release-channel-point: unordered=1.0.0-rc2",
+                "{carried}: the keyed line is not the first line: {}",
+                run.output
+            );
+            assert!(
+                run.output.contains("is not SemVer"),
+                "{carried}: the binary's own reason was not replayed: {}",
+                run.output
+            );
+        }
     }
 }
 
@@ -511,10 +586,11 @@ fn a_run_handed_no_manifests_writes_nothing() {
         "an empty dist still uploaded: {:?}",
         run.calls
     );
-    // Both names, as a sentence: pasted together they read as a typo in a
-    // CI log, which is the one place this message is ever read.
+    // Both names in the one value: pasted together they read as a typo in a
+    // CI log, which is the one place this line is ever read.
     assert!(
-        run.output.contains("handed no latest.json or feed.json"),
+        run.output
+            .contains("release-channel-point: missing-manifest=latest.json or feed.json"),
         "{}",
         run.output
     );
@@ -546,7 +622,9 @@ fn a_run_handed_half_the_manifests_writes_nothing() {
             run.calls
         );
         assert!(
-            run.output.contains(&format!("was handed no {missing}")),
+            run.output.contains(&format!(
+                "release-channel-point: missing-manifest={missing}"
+            )),
             "the run did not say which half it was missing: {}",
             run.output
         );
@@ -579,7 +657,7 @@ fn a_channel_this_guard_wrote_holds_against_an_older_tag() {
     assert!(
         older
             .output
-            .contains("carries 1.0.0-rc9, ahead of 1.0.0-rc2"),
+            .contains("release-channel-point: hold=1.0.0-rc9"),
         "{}",
         older.output
     );
@@ -632,10 +710,11 @@ fn a_channel_a_write_did_not_finish_on_stops_the_run() {
         "a half-written channel was written over: {:?}",
         run.calls
     );
-    // Named, because the one thing that clears this state is somebody
-    // looking at the channel.
+    // The leftovers are the value, because the one thing that clears this
+    // state is somebody taking them off the channel.
     assert!(
-        run.output.contains("no latest.json"),
+        run.output
+            .contains("release-channel-point: no-manifest=feed.json"),
         "the run did not say what it found: {}",
         run.output
     );

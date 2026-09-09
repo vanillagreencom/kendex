@@ -13,7 +13,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo "=== a skill source lands its render in the same change ==="
 printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
 run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"a render source changed without its tracked render"* ]] \
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: missing-render=1"* ]] \
   && [[ "$OUT" == *"skills/demo/scripts/demo.sh -> .agents/skills/demo/scripts/demo.sh"* ]] \
   && ok "a source-only skill edit reds, naming the render left behind" \
   || bad "a source-only skill edit reds, naming the render left behind" "rc=$RC out=$OUT"

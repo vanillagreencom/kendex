@@ -839,7 +839,9 @@ jobs:
       matrix:
         crate: [kendex-core, kendex-cli, kendex-app]
     runs-on: macos-latest
-    timeout-minutes: 40
+    # The CLI needs both the catalog-render and commit-hook integration runs.
+    # Reserve 20 minutes each for compile and test, plus 5 for setup/cleanup.
+    timeout-minutes: ${{ matrix.crate == 'kendex-cli' && 45 || 40 }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -869,17 +871,14 @@ jobs:
       - name: compile
         timeout-minutes: 20
         run: cargo test -p ${{ matrix.crate }} --locked --no-run
-      # Tests alone on a warm cache, last ten runs: kendex-cli ~470s, of
-      # which catalog_check's render_lint case is 293s (it installs the whole
-      # catalog into every harness and runs the prose and comments lanes over
-      # it) and guard_hooks 95s; kendex-core ~40s, kendex-app ~30s. The cli
-      # shard is over the five-minute mark on that one case, not on its
-      # shape; the tests audit owns the case.
+      # The CLI installs the catalog into every harness and checks its prose,
+      # then exercises the installed commit hooks. Its shell-process workload
+      # needs a separate macOS execution limit with room for both sections.
       # --no-fail-fast: one run reports every platform-specific failure
       # instead of one per queue attempt.
       - name: test
         if: github.event_name != 'push'
-        timeout-minutes: 12
+        timeout-minutes: ${{ matrix.crate == 'kendex-cli' && 20 || 12 }}
         run: cargo test -p ${{ matrix.crate }} --locked --no-fail-fast
       # Nothing platform-gated is skipped in silence: the files whose
       # whole-body cfg gate excludes this platform are listed, with a warning

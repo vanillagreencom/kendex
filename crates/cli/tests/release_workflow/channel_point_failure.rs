@@ -12,7 +12,7 @@
 #[cfg(unix)]
 use crate::channel::channel_step_env;
 #[cfg(unix)]
-use crate::channel_point::{Channel, Fixture, STAGED};
+use crate::channel_point::{Channel, Fixture, GH_SENTINEL, STAGED};
 
 /// The upload is the one call that changes the channel, and the branch that
 /// catches it failing has to fail the job. A guard that printed its error and
@@ -46,13 +46,18 @@ fn a_failed_upload_fails_the_job_and_defers_to_the_next_run() {
     );
     // Named off the workflow, like every other channel-named claim here.
     let channel = channel_step_env("CHANNEL");
-    for said in [
-        format!("Uploading to the {channel} channel failed"),
-        "which this run does not read back".to_owned(),
-        "Re-run the tag: that run reads the channel".to_owned(),
-    ] {
-        assert!(run.output.contains(&said), "{said} missing: {}", run.output);
-    }
+    let said = format!("release-channel-point: upload={channel}");
+    assert_eq!(
+        run.output.lines().next().unwrap_or_default(),
+        said,
+        "the keyed line is not the first line: {}",
+        run.output
+    );
+    assert!(
+        run.output.lines().skip(1).any(|l| l.contains(GH_SENTINEL)),
+        "what gh said was not replayed under the keyed line: {}",
+        run.output
+    );
 }
 
 /// One state that branch can leave: the channel kept its latest.json, so the
@@ -122,11 +127,20 @@ fn a_failed_upload_that_lost_latest_json_refuses_every_later_run() {
         "the fixture did not lose latest.json, so this proves nothing: {:?}",
         failed.calls
     );
+    let channel_name = channel_step_env("CHANNEL");
+    assert_eq!(
+        failed.output.lines().next().unwrap_or_default(),
+        format!("release-channel-point: upload={channel_name}"),
+        "{}",
+        failed.output
+    );
     assert!(
         failed
             .output
-            .contains("either writes it or refuses, saying what it found"),
-        "{}",
+            .lines()
+            .skip(1)
+            .any(|l| l.contains(GH_SENTINEL)),
+        "what gh said was not replayed under the keyed line: {}",
         failed.output
     );
 
@@ -142,22 +156,13 @@ fn a_failed_upload_that_lost_latest_json_refuses_every_later_run() {
         "the re-run published over the leftovers: {:?}",
         again.calls
     );
-    // The claim kept, as every refusal has to keep it.
-    assert!(
-        again.output.contains("Nothing was written to the")
-            && again.output.contains("no latest.json"),
-        "the refusal did not say what it found: {}",
-        again.output
-    );
-    // And what this branch can give beyond it, because the read above it
-    // already held the names. Asserted apart from the claim, so a later
-    // change here cannot be read as the failure promising it.
+    // The refusal names the leftovers as its value, which is both the claim
+    // that nothing was written and what a person has to take off the channel.
     assert!(
         again
             .output
-            .contains("carries feed.json and no latest.json")
-            && again.output.contains("have to come off"),
-        "the branch that can name the leftovers did not: {}",
+            .contains("release-channel-point: no-manifest=feed.json"),
+        "the refusal did not say what it found: {}",
         again.output
     );
     assert_eq!(
@@ -196,12 +201,21 @@ fn a_failed_upload_that_landed_nothing_leaves_a_channel_the_next_run_takes() {
         failed.calls
     );
     // The one thing about the channel this run does know, because it is what
-    // this run did rather than what the failure left.
+    // this run did rather than what the failure left: its own key.
+    let channel_name = channel_step_env("CHANNEL");
+    assert_eq!(
+        failed.output.lines().next().unwrap_or_default(),
+        format!("release-channel-point: upload-created={channel_name}"),
+        "{}",
+        failed.output
+    );
     assert!(
         failed
             .output
-            .contains("This run is what published that channel"),
-        "{}",
+            .lines()
+            .skip(1)
+            .any(|l| l.contains(GH_SENTINEL)),
+        "what gh said was not replayed under the keyed line: {}",
         failed.output
     );
 

@@ -24,7 +24,7 @@ temp_case() { # pass|refuse LABEL SOURCE-LINE...
   run_guard
   if [ "$expected" = pass ] && [ "$RC" -eq 0 ]; then
     ok "$label"
-  elif [ "$expected" = refuse ] && [ "$RC" -ne 0 ] && [[ "$OUT" == *"temporary fixture bypasses rooted()"* ]]; then
+  elif [ "$expected" = refuse ] && [ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: unrooted-fixture=1"* ]]; then
     ok "$label"
   else
     bad "$label" "rc=$RC out=$OUT"
@@ -90,11 +90,11 @@ exec "$REAL_AWK" "$@"
 SH
 chmod +x "$R/fake-bin/git" "$R/fake-bin/awk"
 run_guard PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_AWK="$REAL_AWK" FAIL_TEMP_DIFF=1
-[ "$RC" -ne 0 ] && case "$OUT" in *"test fixture changes could not be read"*) true ;; *) false ;; esac \
+[ "$RC" -ne 0 ] && case "$OUT" in *"guard: fixture-diff=unreadable"*) true ;; *) false ;; esac \
   && ok "a failed fixture diff blocks guard" \
   || bad "a failed fixture diff blocks guard" "rc=$RC out=$OUT"
 run_guard PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_AWK="$REAL_AWK" FAIL_TEMP_AWK=1
-[ "$RC" -ne 0 ] && case "$OUT" in *"temporary fixture declarations could not be checked"*) true ;; *) false ;; esac \
+[ "$RC" -ne 0 ] && case "$OUT" in *"guard: fixture-scan=unreadable"*) true ;; *) false ;; esac \
   && ok "a failed fixture parser blocks guard" \
   || bad "a failed fixture parser blocks guard" "rc=$RC out=$OUT"
 rm -f "$R/fake-bin/git" "$R/fake-bin/awk"
@@ -144,12 +144,12 @@ BASH4_LINE='mapfile -t demo_lines <"$0"'
 printf '%s\n' "$BASH4_LINE" >>"$R/skills/demo/tests/demo.test.sh"
 printf '%s\n' "$BASH4_LINE" >>"$R/.agents/skills/demo/tests/demo.test.sh"
 run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"tools/bash32-lint refused the tree"* ]] \
-  && [[ "$OUT" == *"Bash 4+ constructs in shell that must run under Bash 3.2"* ]] \
-  && [[ "$OUT" != *"without its tracked render"* ]] \
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: bash32-lint=1"* ]] \
+  && [[ "$OUT" == *"bash32-lint: constructs=1"* ]] \
+  && [[ "$OUT" != *"guard: missing-render="* ]] \
   && ok "a Bash 4 construct in a skill test reds the guard through the lint lane" \
   || bad "a Bash 4 construct in a skill test reds the guard through the lint lane" "rc=$RC out=$OUT"
-if mutant_guard '/bash32-lint/d'; then
+if mutant_guard '/TOOLS_DIR\/bash32-lint/d'; then
   run_mutant
   [ "$RC" -eq 0 ] \
     && ok "control: with the bash32-lint lane deleted the construct passes" \
@@ -164,11 +164,11 @@ mkdir -p "$R/skills/github/scripts/commands"
 printf '#!/usr/bin/env bash\necho "def bucket: ."\n' >"$R/skills/github/scripts/commands/demo.sh"
 git -C "$R" add skills/github/scripts/commands/demo.sh
 run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"a caller carries its own scope_current_run or def bucket/def runid"* ]] \
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: ci-correlation-copy=1"* ]] \
   && [[ "$OUT" == *"skills/github/scripts/commands/demo.sh:2:"* ]] \
   && ok "a def bucket copy in a GitHub command reds the guard, naming the line" \
   || bad "a def bucket copy in a GitHub command reds the guard, naming the line" "rc=$RC out=$OUT"
-if mutant_guard '/scope_current_run/d'; then
+if mutant_guard '/def (bucket|runid)/d'; then
   run_mutant
   [ "$RC" -eq 0 ] \
     && ok "control: with the correlation lane deleted the copy passes" \
@@ -182,12 +182,105 @@ mkdir -p "$R/skills/orch/scripts"
 printf '#!/usr/bin/env bash\nscope_current_run() { :; }\n' >"$R/skills/orch/scripts/ci-wait"
 git -C "$R" add skills/orch/scripts/ci-wait
 run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"a caller carries its own scope_current_run or def bucket/def runid"* ]] \
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: ci-correlation-copy=1"* ]] \
   && [[ "$OUT" == *"skills/orch/scripts/ci-wait:2:"* ]] \
   && ok "a scope_current_run copy in orch ci-wait reds the guard, naming the line" \
   || bad "a scope_current_run copy in orch ci-wait reds the guard, naming the line" "rc=$RC out=$OUT"
 git -C "$R" rm -q --cached skills/orch/scripts/ci-wait
 rm -rf -- "$R/skills/orch"
+
+echo "=== the shipped command-safety policies keep refusing what they document ==="
+policy_line='COMMAND_SAFETY_DENY_PATTERN = "^never-matches-anything$"'
+cp "$R/kendex.settings.toml" "$TMP/settings.orig"
+awk -v repl="$policy_line" '/^COMMAND_SAFETY_DENY_PATTERN = / { print repl; next } { print }' \
+  "$TMP/settings.orig" >"$R/kendex.settings.toml"
+git -C "$R" add kendex.settings.toml
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-missed=kendex.settings.toml"* ]] \
+  && [[ "$OUT" == *"  systemd-run --user --scope -p MemoryMax=64M cargo test -p kendex-core"* ]] \
+  && ok "a settings policy that stopped refusing a capped scope reds, naming the command" \
+  || bad "a settings policy that stopped refusing a capped scope reds, naming the command" "rc=$RC out=$OUT"
+if mutant_guard '/^command_safety_policy kendex.settings.toml/,+5d'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the settings policy rows deleted the weakened pattern passes" \
+    || bad "control: with the settings policy rows deleted the weakened pattern passes" "rc=$RC out=$OUT"
+else
+  bad "control: the settings policy rows could not be deleted from a guard copy"
+fi
+cp "$TMP/settings.orig" "$R/kendex.settings.toml"
+
+cp "$R/docs/authoring/command-safety.md" "$TMP/doc.orig"
+awk -v repl="$policy_line" '/^COMMAND_SAFETY_DENY_PATTERN = / { print repl; next } { print }' \
+  "$TMP/doc.orig" >"$R/docs/authoring/command-safety.md"
+git -C "$R" add docs/authoring/command-safety.md
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-missed=docs/authoring/command-safety.md"* ]] \
+  && [[ "$OUT" == *"  qs -c vshell"* ]] \
+  && ok "a doc example that stopped refusing its own call reds, naming the command" \
+  || bad "a doc example that stopped refusing its own call reds, naming the command" "rc=$RC out=$OUT"
+cp "$TMP/doc.orig" "$R/docs/authoring/command-safety.md"
+
+awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print "COMMAND_SAFETY_DENY_PATTERN = \"[\"" ; next } { print }' \
+  "$TMP/settings.orig" >"$R/kendex.settings.toml"
+run_guard
+# The lane's own tools speak here: grep refuses the pattern. Guard forwards
+# the streams of everything it runs, so the claim is not that the keyed line
+# is line 1 of the run — it is that the keyed line comes before the
+# diagnostic that explains it, rather than after it.
+keyed_at="$(awk '/guard: command-safety-not-an-ere=kendex.settings.toml/ { print NR; exit }' <<<"$OUT")"
+grep_at="$(awk '/^grep: / { print NR; exit }' <<<"$OUT")"
+[ "$RC" -ne 0 ] && [ -n "$keyed_at" ] && [ -n "$grep_at" ] && [ "$keyed_at" -lt "$grep_at" ] \
+  && ok "a policy that is not a valid ERE reds with its own clause, above what grep said" \
+  || bad "a policy that is not a valid ERE reds with its own clause, above what grep said" \
+    "rc=$RC keyed=${keyed_at:--} grep=${grep_at:--} out=$OUT"
+cp "$TMP/settings.orig" "$R/kendex.settings.toml"
+
+# The assignment moved out of [env] with its text intact: the settings loader
+# follows table headers, so this is no longer a policy the hook would apply
+# and the lane must not read the line as one. A line-matching reader would
+# find the same text and pass.
+awk '/^COMMAND_SAFETY_DENY_PATTERN = / { held = $0; next } { print }
+  END { print "[other]"; print held }' \
+  "$TMP/settings.orig" >"$R/kendex.settings.toml"
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-empty=kendex.settings.toml"* ]] \
+  && ok "an assignment outside [env] is not read as a policy" \
+  || bad "an assignment outside [env] is not read as a policy" "rc=$RC out=$OUT"
+cp "$TMP/settings.orig" "$R/kendex.settings.toml"
+
+# A pattern broad enough to catch what the source documents as allowed is the
+# other direction of the same rule, and the only one no row drove: `cargo
+# test` under an uncapped scope is a command the settings comment names as
+# left alone.
+awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print "COMMAND_SAFETY_DENY_PATTERN = \"systemd-run\""; next } { print }' \
+  "$TMP/settings.orig" >"$R/kendex.settings.toml"
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-over=kendex.settings.toml"* ]] \
+  && [[ "$OUT" == *"  systemd-run --user --scope --slice=agents.slice cargo test -p kendex-core"* ]] \
+  && ok "a policy broadened over a documented-allowed command reds, naming the command" \
+  || bad "a policy broadened over a documented-allowed command reds, naming the command" "rc=$RC out=$OUT"
+cp "$TMP/settings.orig" "$R/kendex.settings.toml"
+
+# The loader answers from the process environment before the file it is given.
+# The source is weakened and the environment carries the real policy: reading
+# the environment would report a policy the file does not carry, which is the
+# fail-open this lane exists to refuse.
+awk -v repl="$policy_line" '/^COMMAND_SAFETY_DENY_PATTERN = / { print repl; next } { print }' \
+  "$TMP/settings.orig" >"$R/kendex.settings.toml"
+real_policy="$(sed -n 's/^COMMAND_SAFETY_DENY_PATTERN = "\(.*\)"$/\1/p' "$TMP/settings.orig")"
+[ -n "$real_policy" ] || bad "precondition: the settings policy could not be read for the override row"
+run_guard COMMAND_SAFETY_DENY_PATTERN="$real_policy"
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-missed=kendex.settings.toml"* ]] \
+  && ok "an ambient COMMAND_SAFETY_DENY_PATTERN does not answer for a weakened source" \
+  || bad "an ambient COMMAND_SAFETY_DENY_PATTERN does not answer for a weakened source" "rc=$RC out=$OUT"
+cp "$TMP/settings.orig" "$R/kendex.settings.toml"
+
+git -C "$R" add kendex.settings.toml docs/authoring/command-safety.md
+run_guard
+[ "$RC" -eq 0 ] \
+  && ok "the shipped policies pass the lane unchanged" \
+  || bad "the shipped policies pass the lane unchanged" "rc=$RC out=$OUT"
 
 echo "=== commit compile scheduling follows product changes ==="
 mkdir -p "$R/crates/core/src" "$R/crates/cli/src" "$R/ui" "$R/fake-bin"
@@ -197,7 +290,6 @@ printf '[lints]\nworkspace = true\n' >"$R/crates/cli/Cargo.toml"
 printf 'fn first() {}\n' >"$R/crates/core/src/lib.rs"
 printf 'fn first() {}\n' >"$R/crates/cli/src/lib.rs"
 printf '{}\n' >"$R/ui/package.json"
-printf '[env]\nCOMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = "crates/* ui/*"\n' >"$R/kendex.settings.toml"
 cat >"$R/fake-bin/cargo" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -230,8 +322,9 @@ run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
   && ! grep -Eq 'crates/cli|cargo (test|doc)|npm|--workspace|--target ' "$COMPILE_LOG" \
   && ok "Rust checks select the touched crate and omit full suites" \
   || bad "Rust scoped checks" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
-# A failing compiler call blocks with guard's own clause for that call. The
-# table counts its own rows: an emptied row list is a red, never a green.
+# A failing compiler call blocks with guard's own first line for that call:
+# `guard: <key>=<value>`, the value naming what was checked. The table counts
+# its own rows: an emptied row list is a red, never a green.
 before=$((PASS + FAIL))
 while IFS='|' read -r command clause; do
   run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" FAIL_COMPILE="$command"
@@ -239,8 +332,8 @@ while IFS='|' read -r command clause; do
     && ok "the $command failure blocks, naming it" \
     || bad "the $command failure blocks, naming it" "rc=$RC out=$OUT"
 done <<'ROWS'
-check --manifest-path crates/core/Cargo.toml --all-targets|crates/core/Cargo.toml failed to compile
-clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet -- -D warnings|crates/core/Cargo.toml clippy failed
+check --manifest-path crates/core/Cargo.toml --all-targets|cargo-check=crates/core/Cargo.toml
+clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet -- -D warnings|clippy=crates/core/Cargo.toml
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the compiler failures" >&2; exit 2; }
 git -C "$R" reset -q HEAD -- crates/core/src/lib.rs
@@ -261,8 +354,8 @@ while IFS='|' read -r command clause; do
     && ok "the $command failure blocks, naming it" \
     || bad "the $command failure blocks, naming it" "rc=$RC out=$OUT"
 done <<'ROWS'
-run --prefix ui check:types|tsc failed
-run --prefix ui check:lint|biome failed
+run --prefix ui check:types|ui-check=check:types
+run --prefix ui check:lint|ui-check=check:lint
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the UI failures" >&2; exit 2; }
 git -C "$R" reset -q HEAD -- ui/test.ts

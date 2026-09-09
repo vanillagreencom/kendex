@@ -54,6 +54,17 @@
 # that died on the render never reads as a clean run. Model turns: three on
 # claude, two on antigravity, one each on codex, pi, gemini and copilot, one
 # on cursor when logged in.
+#
+# The report is the row table: one aligned line per row as it is decided, then
+# the same rows as a markdown table under `| harness | row | result |
+# evidence |`, which is what a reader pastes. Every other line this script
+# says for itself opens with `harness-smoke: <key>=<value>` — the key names
+# the condition, the value is the path, the count or the short enum the reader
+# acts on — and explains itself on the lines under it. message_text is the
+# only place a key's English lives. Where a failing command has words of its
+# own they are captured and replayed under the keyed line, so the keyed line
+# is the first line; each harness's own output goes to its log under LOGS,
+# which a row's evidence names.
 set -euo pipefail
 
 usage() {
@@ -63,6 +74,58 @@ usage() {
     '  --dir     parent of the scratch directory this run makes (default: tmp/ in this checkout)'
 }
 
+message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
+  case "$1" in
+    argument)
+      echo "that argument is not one this script takes."
+      usage ;;
+    unknown-harness)
+      echo "that is not a harness this script installs into." ;;
+    missing-tool)
+      echo "that command is required and is not on PATH." ;;
+    not-in-repo)
+      echo "no git repository around that directory, so the scratch parent could not be placed." ;;
+    scratch)
+      echo "the scratch directory for this run could not be made under that parent." ;;
+    kept)
+      echo "the scratch project and logs were left in place by --keep." ;;
+    add)
+      printf 'kendex add did not install the fixture for %s; %s says why.\n' "$2" "$3" ;;
+    update-pi)
+      printf 'kendex update-pi did not install the Pi extension for %s; %s says why.\n' "$2" "$3" ;;
+    verify)
+      printf 'kendex verify refused the fixture install for %s; %s says why.\n' "$2" "$3" ;;
+    verified)
+      printf 'kendex verify reads the fixture install for %s in %s as clean.\n' "$2" "$3" ;;
+    failed)
+      echo "rows where a harness did not load a kendex-installed package." ;;
+    unanswerable)
+      echo "rows this machine could not answer, with no row failing; each row's evidence gives its reason." ;;
+    *)
+      echo "no explanation is defined for this key: tools/harness-smoke is broken." ;;
+  esac
+}
+note() { # KEY VALUE [EXTRA] — a verdict this run reached, on stdout
+  printf 'harness-smoke: %s=%s\n' "$1" "$2"
+  message_text "$@"
+}
+say() { # KEY VALUE [EXTRA] — a refusal, on stderr
+  printf 'harness-smoke: %s=%s\n' "$1" "$2" >&2
+  message_text "$@" >&2
+}
+refuse() { # KEY VALUE [EXTRA] — nothing was measured
+  say "$@"
+  exit 2
+}
+refuse_cause() { # KEY VALUE CAUSE — CAUSE is the failing command's own words
+  # Captured and replayed under the keyed line rather than left to reach the
+  # stream first: the refusal's first line has to be the keyed one, and the
+  # command's own words are still what name the cause.
+  say "$1" "$2"
+  [ -z "$3" ] || printf '%s\n' "$3" >&2
+  exit 2
+}
+
 HARNESSES="claude codex opencode cursor pi gemini copilot antigravity"
 ONLY="$HARNESSES"
 KEEP=0
@@ -70,40 +133,41 @@ DIR=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --only)
-      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      [ "$#" -ge 2 ] || refuse argument --only
       ONLY=$(printf '%s' "$2" | tr ',' ' ')
       for h in $ONLY; do
-        case " $HARNESSES " in *" $h "*) ;; *)
-          printf 'harness-smoke: unknown harness: %s\n' "$h" >&2; exit 2 ;;
-        esac
+        case " $HARNESSES " in *" $h "*) ;; *) refuse unknown-harness "$h" ;; esac
       done
       shift 2 ;;
     --keep) KEEP=1; shift ;;
     --dir)
-      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      [ "$#" -ge 2 ] || refuse argument --dir
       DIR=$2; shift 2 ;;
     -h | --help) usage; exit 0 ;;
-    *) usage >&2; exit 2 ;;
+    *) refuse argument "$1" ;;
   esac
 done
 
 for tool in kendex git jq node; do
-  command -v "$tool" >/dev/null 2>&1 || {
-    printf 'harness-smoke: %s is required\n' "$tool" >&2
-    exit 2
-  }
+  command -v "$tool" >/dev/null 2>&1 || refuse missing-tool "$tool"
 done
 
-ROOT=$(git rev-parse --show-toplevel) || exit 2
+# git's own diagnostic is asked for only once this has failed, so the happy
+# path runs it once and the refusal path replays what it said.
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) ||
+  refuse_cause not-in-repo "$PWD" "$(git rev-parse --show-toplevel 2>&1 >/dev/null)"
 # The run owns a fresh subtree under the parent it was given, and the
 # cleanup below removes that subtree alone: --dir tmp must not empty tmp/.
 PARENT=${DIR:-$ROOT/tmp}
-mkdir -p "$PARENT" || exit 2
-DIR=$(mktemp -d "$PARENT/harness-smoke.XXXXXX") || exit 2
-DIR=$(cd "$DIR" && pwd -P) || exit 2
+scratch_err=""
+scratch_err=$(mkdir -p "$PARENT" 2>&1) || refuse_cause scratch "$PARENT" "$scratch_err"
+DIR=$(mktemp -d "$PARENT/harness-smoke.XXXXXX" 2>/dev/null) ||
+  refuse_cause scratch "$PARENT" "$(mktemp -d "$PARENT/harness-smoke.XXXXXX" 2>&1 >/dev/null)"
+DIR=$(cd "$DIR" 2>/dev/null && pwd -P) ||
+  refuse_cause scratch "$PARENT" "$(cd "$DIR" 2>&1 >/dev/null || true)"
 cleanup() {
   if [ "$KEEP" -eq 1 ]; then
-    printf 'harness-smoke: scratch kept at %s\n' "$DIR"
+    note kept "$DIR"
   else
     rm -rf -- "${DIR:?}"
   fi
@@ -291,10 +355,9 @@ add_flags() { # HARNESS — the kendex add flags for the kinds it installs
       printf ' %s' '--mcp-server smoke-mcp' ;;
   esac
 }
-refused() { # HARNESS VERB LOG — the fixture install did not finish
-  printf 'harness-smoke: %s for %s; %s says why\n' "$2" "$1" "$3" >&2
+refused() { # KEY HARNESS LOG — the fixture install did not finish
   KEEP=1
-  exit 2
+  refuse "$@"
 }
 install_for() { # HARNESS — sets PROJECT and MARKER, exits 2 when kendex cannot install or verify
   PROJECT="$DIR/$1/project"
@@ -308,7 +371,7 @@ install_for() { # HARNESS — sets PROJECT and MARKER, exits 2 when kendex canno
   # shellcheck disable=SC2046 # add_flags emits whole flags to be split.
   if ! (cd "$PROJECT" && kendex add "$CATALOG" $(add_flags "$1") --harness "$1" -y) \
     >"$LOGS/$1-kendex-add.log" 2>&1; then
-    refused "$1" 'the fixture did not install' "$LOGS/$1-kendex-add.log"
+    refused add "$1" "$LOGS/$1-kendex-add.log"
   fi
   if [ "$1" = pi ]; then
     # `kendex add --pi-extension` refuses by design: a Pi extension is
@@ -319,13 +382,13 @@ install_for() { # HARNESS — sets PROJECT and MARKER, exits 2 when kendex canno
     printf '\n[pi-extensions.smoke-ext]\nsource = "catalog"\nharnesses = ["pi"]\n' \
       >>"$PROJECT/kendex.toml"
     if ! (cd "$PROJECT" && kendex update-pi) >"$LOGS/$1-kendex-update-pi.log" 2>&1; then
-      refused "$1" 'the Pi extension did not install' "$LOGS/$1-kendex-update-pi.log"
+      refused update-pi "$1" "$LOGS/$1-kendex-update-pi.log"
     fi
   fi
   if ! (cd "$PROJECT" && kendex verify --scope project) >"$LOGS/$1-kendex-verify.log" 2>&1; then
-    refused "$1" 'kendex verify refused the fixture install' "$LOGS/$1-kendex-verify.log"
+    refused verify "$1" "$LOGS/$1-kendex-verify.log"
   fi
-  printf 'kendex verify: clean for %s (%s)\n' "$1" "$PROJECT"
+  note verified "$1" "$PROJECT"
 }
 
 # ---- rows ------------------------------------------------------------------
@@ -333,7 +396,10 @@ FAILED=0
 UNANSWERED=0
 ROWS=""
 row() { # HARNESS QUESTION RESULT EVIDENCE
-  case "$3" in fail) FAILED=1 ;; unanswerable) UNANSWERED=1 ;; esac
+  case "$3" in
+    fail) FAILED=$((FAILED + 1)) ;;
+    unanswerable) UNANSWERED=$((UNANSWERED + 1)) ;;
+  esac
   ROWS="$ROWS$(printf '| %s | %s | %s | %s |' "$1" "$2" "$3" "$4")
 "
   printf '%-11s %-8s %-12s %s\n' "$1" "$2" "$3" "$4"
@@ -755,12 +821,12 @@ done
 
 printf '\n| harness | row | result | evidence |\n|---|---|---|---|\n%s' "$ROWS"
 printf '\nlogs: %s\n' "$LOGS"
-if [ "$FAILED" -eq 1 ]; then
-  printf 'harness-smoke: a harness did not load a kendex-installed package\n' >&2
+if [ "$FAILED" -gt 0 ]; then
+  say failed "$FAILED"
   KEEP=1
   exit 1
 fi
-if [ "$UNANSWERED" -eq 1 ]; then
-  printf 'harness-smoke: no row failed, and a row could not be answered; read its reason\n' >&2
+if [ "$UNANSWERED" -gt 0 ]; then
+  say unanswerable "$UNANSWERED"
   exit 3
 fi

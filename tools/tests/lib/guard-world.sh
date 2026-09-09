@@ -87,6 +87,11 @@ printf '#!/usr/bin/env bash\necho hooked\n' >"$R/hooks/tests/demo.test.sh"
 cp "$R/hooks/demo.sh" "$R/.claude/hooks/demo.sh"
 cp "$R/hooks/demo.sh" "$R/.codex/hooks/demo.sh"
 printf '#!/usr/bin/env bash\necho other\n' >"$R/.pi/kendex/hooks/other.sh"
+# The command-safety policy lane reads the repository's own two policy
+# sources; the world carries the real ones so every guard run has them.
+mkdir -p "$R/docs/authoring"
+cp "$REPO/kendex.settings.toml" "$R/kendex.settings.toml"
+cp "$REPO/docs/authoring/command-safety.md" "$R/docs/authoring/command-safety.md"
 git -C "$R" add -A
 git -C "$R" commit -q -m fixture
 SEED="$(git -C "$R" rev-parse HEAD)"
