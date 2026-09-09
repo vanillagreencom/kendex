@@ -5,10 +5,11 @@ import { Table, TableBody } from "@/components/ui/table";
 import {
   EDITED_CANT_UPDATE_NOTE,
   EDITED_TAG_HELP,
-  FOLLOW_SOURCE_HELP,
   INSTALL_AS_NEW_LABEL,
   OPEN_PACKAGE_LABEL,
   UPDATE_NEEDS_CHECK_NOTE,
+  UPDATE_PACKAGE_EVERYWHERE_LABEL,
+  UPDATE_REVIEW_LABEL,
 } from "@/lib/copy-updates";
 import { READ_LANDED, type ReadState, readFailed } from "@/lib/read-state";
 import { groupUpdates } from "@/lib/update-groups";
@@ -16,7 +17,12 @@ import { PackageRows, UpdatesTable } from "./updates-table";
 import { updateRow as row } from "./updates-test-rows";
 
 const render = (rows: UpdateRow[]) =>
-  renderToStaticMarkup(<UpdatesTable rows={rows} onIgnore={() => {}} />);
+  renderToStaticMarkup(
+    <UpdatesTable rows={rows} onIgnore={() => {}} onUpdate={() => {}} />,
+  );
+
+const UPDATE = `>${UPDATE_REVIEW_LABEL}<`;
+const UPDATE_EVERYWHERE = `>${UPDATE_PACKAGE_EVERYWHERE_LABEL}<`;
 
 // Static markup escapes apostrophes, so copy with one is looked for the
 // same way.
@@ -78,16 +84,20 @@ beforeEach(() => {
 });
 
 describe("UpdatesTable", () => {
-  it("names the follow-source column once in the header, and explains it there", () => {
-    const html = render([row("one", null), row("two", null)]);
-    expect(html.match(/Follow source/g)).toHaveLength(1);
-    expect(html).not.toContain("automatically");
-    expect(html.match(/role="switch"/g)).toHaveLength(2);
-    // One sentence, on the header, reachable without a pointer.
-    expect(triggers(html).some((t) => t.includes(FOLLOW_SOURCE_HELP))).toBe(
-      true,
-    );
-    expect(html.match(new RegExp(FOLLOW_SOURCE_HELP, "g"))).toHaveLength(1);
+  // Following a source is not a thing a reader of this page decides. The
+  // hold itself still exists and is still moved — on the package page's
+  // version picker, where somebody who wants one goes looking.
+  it("carries no follow-source column and no per-row switch", () => {
+    const html = render([
+      row("one", null),
+      row("two", null, { pinned: true, holdOwner: { kind: "package" } }),
+    ]);
+    expect(html).not.toContain("Follow source");
+    expect(html).not.toContain('role="switch"');
+    expect(html).not.toContain(">Held<");
+    expect(html).not.toContain("Held in");
+    // What replaced it: one action per place, and it opens the review.
+    expect(html.match(new RegExp(UPDATE, "g"))).toHaveLength(2);
   });
 
   // Commit ids mean little to most people: the column is off until asked
@@ -96,14 +106,14 @@ describe("UpdatesTable", () => {
     const html = render([row("one", null)]);
     expect(html).not.toContain(">Version<");
     expect(html).not.toContain("→");
-    expect(html.match(/<th\b/g)).toHaveLength(5);
+    expect(html.match(/<th\b/g)).toHaveLength(4);
     expect(html).not.toContain('aria-label="Table options"');
 
     stub.showVersion = true;
     const shown = render([row("one", null)]);
     expect(shown).toContain(">Version<");
     expect(shown).toContain("1111111 → v2");
-    expect(shown.match(/<th\b/g)).toHaveLength(6);
+    expect(shown.match(/<th\b/g)).toHaveLength(5);
   });
 
   it("offers the table options only where the page puts them", () => {
@@ -111,6 +121,7 @@ describe("UpdatesTable", () => {
       <UpdatesTable
         rows={[row("one", null)]}
         onIgnore={() => {}}
+        onUpdate={() => {}}
         onShowVersion={() => {}}
       />,
     );
@@ -129,8 +140,8 @@ describe("UpdatesTable", () => {
     ]);
     expect(html).toContain(esc(EDITED_CANT_UPDATE_NOTE));
     expect(html).toContain(`>${INSTALL_AS_NEW_LABEL}<`);
-    expect(html).toContain(">Preview changes<");
-    expect(html).not.toContain(">Update<");
+    expect(html).toContain(`>${OPEN_PACKAGE_LABEL}<`);
+    expect(html).not.toContain(UPDATE);
     expect(html).not.toContain("Customized here");
     expect(html).not.toContain("Use new version");
     expect(html).not.toContain("Keep as my own");
@@ -156,9 +167,7 @@ describe("UpdatesTable", () => {
     ]);
     expect(gone).toContain(esc(EDITED_CANT_UPDATE_NOTE));
     expect(gone).not.toContain(`>${INSTALL_AS_NEW_LABEL}<`);
-    expect(gone).not.toContain(">Update<");
-    // Nothing to compare either: the package page is the route.
-    expect(gone).not.toContain(">Preview changes<");
+    expect(gone).not.toContain(UPDATE);
     expect(gone).toContain(`>${OPEN_PACKAGE_LABEL}<`);
 
     const current = render([
@@ -166,8 +175,8 @@ describe("UpdatesTable", () => {
     ]);
     expect(current).toContain(esc(EDITED_CANT_UPDATE_NOTE));
     expect(current).not.toContain(`>${INSTALL_AS_NEW_LABEL}<`);
-    expect(current).not.toContain(">Update<");
-    expect(current).toContain(">Preview changes<");
+    expect(current).not.toContain(UPDATE);
+    expect(current).toContain(`>${OPEN_PACKAGE_LABEL}<`);
   });
 
   it("holds Install as new package while the store is busy", () => {
@@ -201,8 +210,8 @@ describe("UpdatesTable", () => {
       ]);
       expect(html).toContain(esc(EDITED_CANT_UPDATE_NOTE));
       expect(html).not.toContain(`>${INSTALL_AS_NEW_LABEL}<`);
-      expect(html).not.toContain(">Update<");
-      expect(html).toContain(">Preview changes<");
+      expect(html).not.toContain(UPDATE);
+      expect(html).toContain(`>${OPEN_PACKAGE_LABEL}<`);
     }
   });
 
@@ -237,19 +246,20 @@ describe("UpdatesTable", () => {
     );
   });
 
-  it("names the place on a single-place row and labels its switch", () => {
-    const html = render([
-      row("one", null, { pinned: true }),
-      row("two", "/home/x/acme"),
-    ]);
+  // Every name on this table opens what it names: the package, and the
+  // place the copy lives in.
+  it("names the place and the package, each as a way into it", () => {
+    const html = render([row("one", null), row("two", "/home/x/acme")]);
     expect(html).toContain(">User level<");
     expect(html).toContain('title="/home/x/acme"');
-    expect(html).toMatch(
-      /aria-checked="false"[^>]*aria-label="Follow the source for one in User level"/,
-    );
-    expect(html).toMatch(
-      /aria-checked="true"[^>]*aria-label="Follow the source for two in acme"/,
-    );
+    expect(html).toContain('aria-label="Open User level"');
+    expect(html).toContain('aria-label="Open acme"');
+    const names = ["one", "two"];
+    expect(names).toHaveLength(2);
+    for (const name of names)
+      expect(html).toMatch(
+        new RegExp(`<button[^>]*hover:underline[^>]*>${name}<`),
+      );
   });
 
   it("folds a package's places into one collapsed row with Update all", () => {
@@ -261,25 +271,24 @@ describe("UpdatesTable", () => {
     expect(html.match(/<tr/g)).toHaveLength(2);
     expect(html).toContain(">3 places<");
     expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain(">Update all<");
+    expect(html).toContain(UPDATE_EVERYWHERE);
     expect(html).not.toContain('role="switch"');
-    expect(html).not.toContain(">Preview changes<");
     // The collapsed row's cells line up under the header's columns, the
     // Version spacer included only when the column is drawn.
-    expect(html.match(/<td\b/g)).toHaveLength(5);
+    expect(html.match(/<td\b/g)).toHaveLength(4);
     stub.showVersion = true;
     const shown = render([
       row("gh", null),
       row("gh", "/home/x/acme"),
       row("gh", "/home/x/shop"),
     ]);
-    expect(shown.match(/<td\b/g)).toHaveLength(6);
-    expect(shown.match(/<th\b/g)).toHaveLength(6);
+    expect(shown.match(/<td\b/g)).toHaveLength(5);
+    expect(shown.match(/<th\b/g)).toHaveLength(5);
   });
 
   it("expands a package into one row per place, each with its own controls", () => {
     const rows = [
-      row("gh", null, { pinned: true }),
+      row("gh", null),
       row("gh", "/home/x/acme"),
       row("gh", "/home/x/shop"),
     ];
@@ -289,6 +298,7 @@ describe("UpdatesTable", () => {
           <PackageRows
             group={groupUpdates(rows)[0]}
             onIgnore={() => {}}
+            onUpdate={() => {}}
             defaultOpen
           />
         </TableBody>
@@ -297,19 +307,15 @@ describe("UpdatesTable", () => {
     expect(html.match(/<tr/g)).toHaveLength(4);
     expect(html).toContain('aria-expanded="true"');
     expect(html).toMatch(/aria-controls="([^"]+)"[\s\S]*<tr[^>]*id="\1"/);
-    expect(html).toContain(">Update all<");
-    expect(html).toContain(">Held in 1 of 3<");
+    expect(html).toContain(UPDATE_EVERYWHERE);
     const places = ["User level", "acme", "shop"];
     expect(places).toHaveLength(3);
     for (const place of places) {
       expect(html).toContain(`>${place}<`);
-      expect(html).toContain(
-        `aria-label="Follow the source for gh in ${place}"`,
-      );
+      expect(html).toContain(`aria-label="Open ${place}"`);
     }
-    expect(html.match(/role="switch"/g)).toHaveLength(3);
-    expect(html.match(/>Preview changes</g)).toHaveLength(3);
-    expect(html.match(/>Update</g)).toHaveLength(3);
+    expect(html).not.toContain('role="switch"');
+    expect(html.match(new RegExp(UPDATE, "g"))).toHaveLength(3);
   });
 
   it("tells same-named project folders apart by their parent", () => {
@@ -345,29 +351,33 @@ describe("UpdatesTable", () => {
         forkableHarness: "claude",
       }),
     ]);
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Update all</);
+    expect(html).toMatch(
+      new RegExp(
+        `<button[^>]*disabled=""[^>]*>${UPDATE_PACKAGE_EVERYWHERE_LABEL}<`,
+      ),
+    );
   });
 
-  it("disables Update and the switch on a place its owner holds", () => {
+  // A hold a bundle or a requiring package owns is not this row's to move,
+  // and the button says so rather than being quietly absent.
+  it("disables Update on a place its owner holds, with the reason", () => {
     const html = render([row("gh", null, { derived: true, pinned: true })]);
     expect(html).toMatch(
-      /<button[^>]*disabled=""[^>]*title="Held by the bundle or package it came with[^"]*"[^>]*>Update</,
+      new RegExp(
+        `<button[^>]*disabled=""[^>]*title="Held by the bundle or package it came with[^"]*"[^>]*>${UPDATE_REVIEW_LABEL}<`,
+      ),
     );
-    expect(html).toMatch(/<span[^>]*data-disabled=""[^>]*role="switch"/);
   });
 
-  it("locks the switch on a place its source holds, and says where to release it", () => {
+  // A hold this declaration DOES own is no reason to withhold anything:
+  // the update moves the hold forward, which is what the reader asked for.
+  it("offers Update on a place held at its own declaration", () => {
     const html = render([
-      row("gh", null, {
-        pinned: true,
-        holdOwner: { kind: "source", name: "cat" },
-      }),
+      row("gh", null, { pinned: true, holdOwner: { kind: "package" } }),
     ]);
-    expect(html).toMatch(/<span[^>]*data-disabled=""[^>]*role="switch"/);
-    expect(html).toContain(
-      "Held by the source &quot;cat&quot; as a whole — release it where that source is declared",
+    expect(html).toMatch(
+      new RegExp(`<button(?![^>]*disabled="")[^>]*>${UPDATE_REVIEW_LABEL}<`),
     );
-    expect(html).toMatch(/<button[^>]*>Update</);
   });
 
   // Rows kept from before a failed check name a `latest` nobody confirmed
@@ -383,21 +393,25 @@ describe("UpdatesTable", () => {
               groupUpdates([row("gh", null), row("gh", "/home/x/acme")])[0]
             }
             onIgnore={() => {}}
+            onUpdate={() => {}}
             defaultOpen
           />
         </TableBody>
       </Table>,
     );
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Update all</);
-    expect(html.match(/<button[^>]*disabled=""[^>]*>Update</g)).toHaveLength(2);
-    // The Follow switch holds at row.current's commit when switched off —
-    // a stale row would pin an old version — so it waits too.
+    expect(html).toMatch(
+      new RegExp(
+        `<button[^>]*disabled=""[^>]*>${UPDATE_PACKAGE_EVERYWHERE_LABEL}<`,
+      ),
+    );
     expect(
-      html.match(/<span[^>]*data-disabled=""[^>]*role="switch"/g),
+      html.match(
+        new RegExp(`<button[^>]*disabled=""[^>]*>${UPDATE_REVIEW_LABEL}<`, "g"),
+      ),
     ).toHaveLength(2);
     expect(
       html.match(new RegExp(`title="${UPDATE_NEEDS_CHECK_NOTE}"`, "g")),
-    ).toHaveLength(5);
+    ).toHaveLength(3);
   });
 
   it("offers no package-wide Update all in the muted table", () => {
@@ -410,14 +424,14 @@ describe("UpdatesTable", () => {
       />,
     );
     expect(html).toContain(">2 places<");
-    expect(html).not.toContain(">Update all<");
+    expect(html).not.toContain(UPDATE_EVERYWHERE);
+    expect(html).not.toContain(UPDATE);
   });
 
   it("shows the kind as a column and the actions in every row", () => {
     const html = render([row("one", null, { kind: "agent" })]);
     expect(html).toContain(">Agent<");
-    expect(html).toContain(">Preview changes<");
-    expect(html).toContain(">Update<");
+    expect(html).toContain(UPDATE);
     expect(html).toContain('aria-label="More actions"');
   });
 
@@ -427,7 +441,7 @@ describe("UpdatesTable", () => {
     expect(html).toContain(">Notify again<");
   });
 
-  // The mute is the one action `rowUnsettled` does not bar, so its
+  // The mute is the one action `readUnsettled` does not bar, so its
   // surfaces carry the pair the store refuses on instead. Without them the
   // button invites a click the store answers with an error. The `…` menu's
   // Ignore item takes the same pair; it renders only once opened, so it is

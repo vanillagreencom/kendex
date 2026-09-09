@@ -5,12 +5,20 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { UpdateRow } from "@/bindings";
+import type { Scope, UpdateRow } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { UpdateReviewDialog } from "@/components/updates/update-review-dialog";
 import { updatesBeforeList } from "@/components/updates-before-list";
 import { UpdatesTable } from "@/components/updates-table";
 import { UnreadablePlacesNote } from "@/components/updates-unreadable-note";
@@ -27,20 +35,28 @@ import {
 } from "@/lib/copy";
 import {
   lastCheckedLabel,
+  UPDATE_MENU_LABEL,
   UPDATE_NEEDS_CHECK_NOTE,
+  UPDATE_ONE_PLACE_HEADING,
   UPDATES_ONE_AT_A_TIME_NOTE,
   UPDATES_UNCONFIRMED_TITLE,
+  updateEverythingItem,
+  updatePlaceItem,
   updatesSubtitle,
 } from "@/lib/copy-updates";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { exactTime } from "@/lib/relative-time";
+import { scopeKey } from "@/lib/scope";
 import {
   hiddenUpdates,
   packageCount,
+  placeKey,
+  placeName,
+  placesWithUpdates,
   updatablePlaces,
   visibleUpdates,
 } from "@/lib/update-groups";
-import { rowUnsettled } from "@/lib/updates-read-state";
+import { readUnsettled } from "@/lib/updates-read-state";
 import { useNowTick } from "@/lib/use-now-tick";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount } from "@/stores/audit";
@@ -54,13 +70,10 @@ export function UpdatesPage() {
     useUpdatesStore();
   const read = useUpdatesStore((s) => s.read);
   const unreadable = useUpdatesStore((s) => s.unreadable);
-  // Update all holds on exactly what it would act on, so the button and
-  // updateRows answer to one predicate: any visible row about to be
-  // replaced, by an overview-producing read or by a flip settling in its
-  // scope.
-  const unconfirmed = useUpdatesStore((s) =>
-    visibleUpdates(s.rows).some((row) => rowUnsettled(s, row)),
-  );
+  // The page's update control holds on exactly what the store refuses on,
+  // so the button and `updateRows` answer to one predicate: rows an
+  // overview-producing read is about to replace.
+  const unconfirmed = useUpdatesStore(readUnsettled);
   const load = useUpdatesStore((s) => s.reload);
   const lastFetched = useUpdatesStore((s) => s.lastFetched);
   // One choice for every table on the page; the `…` menu lives on the
@@ -68,6 +81,21 @@ export function UpdatesPage() {
   const setShowVersion = useUpdatesView((s) => s.setShowVersion);
   const [showHidden, setShowHidden] = useState(false);
   const [confirmIgnore, setConfirmIgnore] = useState<UpdateRow | null>(null);
+  // WHICH places an update was asked for, never the rows themselves, and
+  // what the place is called where the ask named one. Held here rather than
+  // per row so one dialog stands behind every Update on the page, whatever
+  // its scope.
+  //
+  // Keys, because a read landing under an open dialog replaces every row:
+  // a captured array would leave the diff on screen and the commit behind
+  // the button answering to a standing the app has already moved past. The
+  // rows are looked up again on every render, the way a place's card does
+  // it, so the dialog reads what the store has now.
+  const [review, setReview] = useState<{
+    places: string[];
+    among: Scope[];
+    place: string | null;
+  } | null>(null);
 
   useEffect(() => {
     void load();
@@ -78,6 +106,10 @@ export function UpdatesPage() {
 
   const visible = visibleUpdates(rows);
   const hidden = hiddenUpdates(rows);
+  const wanted = new Set(review?.places ?? []);
+  const reviewRows = review
+    ? rows.filter((row) => wanted.has(placeKey(row)))
+    : [];
   const HiddenChevron = showHidden ? ChevronDown : ChevronRight;
   const empty =
     visible.length === 0 &&
@@ -138,16 +170,21 @@ export function UpdatesPage() {
               </Button>
             ) : null}
             {packageCount(visible) > 1 ? (
-              <Button
-                size="sm"
-                disabled={
-                  busy || unconfirmed || updatablePlaces(visible).length === 0
+              <UpdateAction
+                visible={visible}
+                held={busy || unconfirmed}
+                heldNote={unconfirmed ? UPDATE_NEEDS_CHECK_NOTE : undefined}
+                onReview={(picked, place) =>
+                  setReview({
+                    places: picked.map(placeKey),
+                    // Every place on the page, so two projects ending in
+                    // one folder name read apart in the confirm that
+                    // writes their files.
+                    among: visible.map((row) => row.scope),
+                    place,
+                  })
                 }
-                title={unconfirmed ? UPDATE_NEEDS_CHECK_NOTE : undefined}
-                onClick={() => void updateRows(visible)}
-              >
-                {UPDATE_ALL_LABEL}
-              </Button>
+              />
             ) : null}
           </div>
         }
@@ -181,6 +218,13 @@ export function UpdatesPage() {
               rows={visible}
               onIgnore={setConfirmIgnore}
               onShowVersion={setShowVersion}
+              onUpdate={(picked, place, among) =>
+                setReview({
+                  places: picked.map(placeKey),
+                  among,
+                  place,
+                })
+              }
             />
           )}
           {warnings.length > 0 ? (
@@ -223,6 +267,21 @@ export function UpdatesPage() {
           ) : null}
         </div>
       </div>
+      <UpdateReviewDialog
+        rows={reviewRows}
+        among={review?.among ?? []}
+        place={review?.place ?? null}
+        open={review !== null}
+        onOpenChange={(open) => {
+          if (!open) setReview(null);
+        }}
+        busy={busy}
+        held={unconfirmed}
+        onConfirm={(picked) => {
+          setReview(null);
+          void updateRows(picked);
+        }}
+      />
       <ConfirmDialog
         open={confirmIgnore != null}
         onOpenChange={(open) => {
@@ -243,5 +302,73 @@ export function UpdatesPage() {
         }}
       />
     </div>
+  );
+}
+
+/** The page's own way into the update flow. Where one place holds every
+ *  update on screen there is one thing to ask for and it is a button;
+ *  where several do, the page offers each place's worth beside everything,
+ *  because "update this project's packages" is a decision a person makes
+ *  and the table's rows are grouped by package, not by place.
+ *
+ *  Both routes open the same review, so the three scopes — one package,
+ *  one place, everything — are one flow and not three. */
+function UpdateAction({
+  visible,
+  held,
+  heldNote,
+  onReview,
+}: {
+  visible: UpdateRow[];
+  /** Nothing on this page may be acted on right now. */
+  held: boolean;
+  heldNote?: string;
+  onReview: (rows: UpdateRow[], place: string | null) => void;
+}) {
+  const places = placesWithUpdates(visible);
+  const nothing = updatablePlaces(visible).length === 0;
+  if (places.length < 2) {
+    return (
+      <Button
+        size="sm"
+        disabled={held || nothing}
+        title={heldNote}
+        onClick={() => onReview(visible, null)}
+      >
+        {UPDATE_ALL_LABEL}
+      </Button>
+    );
+  }
+  const scopes = places.map((place) => place.scope);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button size="sm" disabled={held || nothing} title={heldNote}>
+            {UPDATE_MENU_LABEL}
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => onReview(visible, null)}>
+          {updateEverythingItem(packageCount(updatablePlaces(visible)))}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <p className="px-2 py-1.5 text-xs text-muted-foreground">
+          {UPDATE_ONE_PLACE_HEADING}
+        </p>
+        {places.map((place) => {
+          const name = placeName(place.scope, scopes);
+          return (
+            <DropdownMenuItem
+              key={scopeKey(place.scope)}
+              onClick={() => onReview(place.rows, name)}
+            >
+              {updatePlaceItem(name, packageCount(updatablePlaces(place.rows)))}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

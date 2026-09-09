@@ -33,13 +33,12 @@ export function usePackagePlaces(
   scopes: Scope[],
 ): { places: PackagePlace[]; loading: boolean; removalHeld: boolean } {
   const rows = useUpdatesStore((s) => s.rows);
-  // Read field by field rather than through one selector: `rowUnsettled`
+  // Read field by field rather than through one selector: `readUnsettled`
   // takes the state, and a selector returning a fresh object or closure
   // each render is a different value on every store touch.
   const updatesRead = useUpdatesStore((s) => s.read);
   const checking = useUpdatesStore((s) => s.checking);
   const reading = useUpdatesStore((s) => s.reading);
-  const pendingFollows = useUpdatesStore((s) => s.pendingFollows);
   // Who owns each copy. Read beside the records rather than trusted from
   // the last visit: a rescan refreshes the join behind every write, but a
   // refresh that failed leaves the previous rows standing, and a stale
@@ -118,7 +117,7 @@ export function usePackagePlaces(
       name,
       rows,
       metas ?? {},
-      { read: updatesRead, checking, reading, pendingFollows },
+      { read: updatesRead, checking, reading },
       // The rows as they stand decide which cards carry a Remove at all:
       // a read merely running does not withhold a control that exists,
       // which is the rule `lib/updates-read-state.ts` states for its own

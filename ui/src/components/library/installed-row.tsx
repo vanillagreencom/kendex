@@ -19,6 +19,7 @@ import {
   vendorHelp,
 } from "@/lib/copy";
 import { STATUS_LABELS } from "@/lib/copy-customize";
+import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
 import {
   type GroupStatus,
   groupScopes,
@@ -49,6 +50,7 @@ export function InstalledRow({
   group,
   origin,
   forkedIn,
+  outOfDate,
   onOpen,
 }: {
   group: ItemGroup;
@@ -56,6 +58,11 @@ export function InstalledRow({
   /** The places whose copy is the reader's own fork. A fork belongs to the
    *  place it was made in, like every other per-place fact. */
   forkedIn: Scope[];
+  /** The source has moved on from what is installed, in at least one of
+   *  this package's places. A mark and not a control: the update itself is
+   *  the same one flow wherever it is taken, and this row's own click
+   *  already opens the package. */
+  outOfDate: boolean;
   onOpen: (scope?: Scope) => void;
 }) {
   const Icon = kindIcon(group.kind);
@@ -131,6 +138,9 @@ export function InstalledRow({
                   </TooltipContent>
                 </Tooltip>
               ))}
+              {outOfDate ? (
+                <Badge variant="secondary">{UPDATE_AVAILABLE_BADGE}</Badge>
+              ) : null}
               {vendor ? (
                 // A title alone answers a pointer and nothing else; the
                 // same words reach the keyboard and a screen reader here.

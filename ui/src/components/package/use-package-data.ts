@@ -5,7 +5,6 @@ import {
   type PackageDiff,
   type PackageFile,
   type PackageMeta_Serialize,
-  type Scope,
   type VersionRow,
 } from "@/bindings";
 import { installedCommits, landedWrites } from "@/lib/package-places";
@@ -16,7 +15,6 @@ import {
   readOf,
   readOrder,
 } from "@/lib/read-state";
-import { sameScope } from "@/lib/scope";
 import { settled } from "@/lib/settled";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
@@ -198,33 +196,28 @@ export function usePackageDiff(
 
 /** One gate for every control that rewrites this package's manifest: the
  *  audit store's apply, a version switch in flight, the updates store's
- *  fork or discard, a Follow source flip settling, and the editor's save
- *  all touch the same file. The controls here command the engine directly
- *  rather than through the updates store's chain, and two commands that
- *  both read a manifest before either applies leave the second saving its
- *  stale copy over the first — so this gate, not ordering, is what keeps
- *  them apart.
+ *  fork or discard, and the editor's save all touch the same file. The
+ *  controls here command the engine directly rather than through the
+ *  updates store's chain, and two commands that both read a manifest
+ *  before either applies leave the second saving its stale copy over the
+ *  first — so this gate, not ordering, is what keeps them apart.
  *
- *  `scopes` is every scope the page's controls can write, not only the one
- *  it was opened at: Delete, the Projects tab's per-place removal, and the
- *  enable/disable toggle each run over places the page does not name. */
-export function useManifestBusy(switching: boolean, scopes: Scope[]): boolean {
+ *  Page-wide, because the updates store's write hold is: every scope the
+ *  page's controls can write — Delete, the Projects tab's per-place
+ *  removal, the enable/disable toggle — is held by the same flag. */
+export function useManifestBusy(switching: boolean): boolean {
   const auditBusy = useAuditStore((s) => s.busy);
   const updatesBusy = useUpdatesStore((s) => s.busy);
-  const settling = useUpdatesStore((s) =>
-    s.pendingFollows.some((one) =>
-      scopes.some((scope) => sameScope(one.scope, scope)),
-    ),
-  );
   const saving = useEditorStore((s) => s.saving);
-  return auditBusy || switching || updatesBusy || settling || saving;
+  return auditBusy || switching || updatesBusy || saving;
 }
 
 /** The gate for the three version-changing controls this page keeps on
- *  screen through a check — Update, switch version, and Follow source.
+ *  screen through a check — Update, switch version, and Follow the source
+ *  again.
  *  They commit through `holdingBusy`, so a check must not run beside them.
  *  The Projects tab's Update and Update all commit the same way and need
- *  no gate here: `place.updatable` reads `rowUnsettled`, which carries
+ *  no gate here: `place.updatable` reads `readUnsettled`, which carries
  *  `checking`, so neither is rendered while a check is out. Save, Delete
  *  and the enable/disable toggle write through the audit or editor store
  *  and take no part — gating them on a mirror fetch would cost a save. */

@@ -7,6 +7,7 @@ import {
 } from "@/lib/customized-places";
 import type { ItemGroup } from "@/lib/derive";
 import { groupScopes } from "@/lib/derive";
+import { availableUpdates } from "@/lib/update-groups";
 import { rowsKnown } from "@/lib/updates-read-state";
 import { useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
@@ -24,11 +25,19 @@ export function useLibraryStandings(groups: ItemGroup[]): {
    *  Null until the updates read has landed: nothing has been counted
    *  yet, which is not the same as nothing edited. */
   editedAnywhere: ((group: ItemGroup) => boolean) | null;
+  /** Whether this package has an update in any place it is installed —
+   *  the set Home counts and a place's card counts, so the mark and those
+   *  numbers cannot come apart. A package its source dropped is not one:
+   *  it has no version to move to, and the badge's words promise one.
+   *  Null until a read lands: a badge is a definite claim, and rows kept
+   *  from a failed check have not confirmed one. */
+  outOfDateAnywhere: ((group: ItemGroup) => boolean) | null;
 } {
   const saved = useEditorStore((s) => s.saved);
   const savedSettings = useEditorStore((s) => s.savedSettings);
   const updateRows = useUpdatesStore((s) => s.rows);
   const updatesLoaded = useUpdatesStore(rowsKnown);
+  const updatesLanded = useUpdatesStore((s) => s.read.status === "landed");
   const places = useMemo(
     () => placesSource(saved, updateRows, updatesLoaded, savedSettings),
     [saved, updateRows, updatesLoaded, savedSettings],
@@ -54,8 +63,26 @@ export function useLibraryStandings(groups: ItemGroup[]): {
         : null,
     [places, updatesLoaded],
   );
+  // Keyed by kind and name, the Library's own unit: a row stands for the
+  // package wherever it is installed, so an update in any one of its places
+  // is an update on that row.
+  const outOfDate = useMemo(
+    () =>
+      new Set(
+        availableUpdates(updateRows).map((row) => `${row.kind}:${row.name}`),
+      ),
+    [updateRows],
+  );
+  const outOfDateAnywhere = useMemo(
+    () =>
+      updatesLanded
+        ? (group: ItemGroup) => outOfDate.has(`${group.kind}:${group.name}`)
+        : null,
+    [outOfDate, updatesLanded],
+  );
   return {
     standingsFor: (group: ItemGroup) => byKey.get(group.key) ?? [],
     editedAnywhere,
+    outOfDateAnywhere,
   };
 }

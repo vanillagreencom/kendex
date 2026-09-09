@@ -11,57 +11,49 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Switch } from "@/components/ui/switch";
 import { TableCell } from "@/components/ui/table";
-import {
-  IGNORE_UPDATES_LABEL,
-  NOTIFY_AGAIN_LABEL,
-  PREVIEW_CHANGES_LABEL,
-  UPDATE_LABEL,
-} from "@/lib/copy";
+import { IGNORE_UPDATES_LABEL, NOTIFY_AGAIN_LABEL } from "@/lib/copy";
 import {
   EDITED_CANT_UPDATE_NOTE,
-  followSourceLabel,
-  HELD_BY_OWNER_NOTE,
-  heldByParentNote,
-  heldBySourceNote,
   OPEN_PACKAGE_LABEL,
+  openPlaceLabel,
   UPDATE_NEEDS_CHECK_NOTE,
+  UPDATE_REVIEW_LABEL,
   UPDATES_ONE_AT_A_TIME_NOTE,
 } from "@/lib/copy-updates";
-import { packageDisplayName } from "@/lib/labels";
-import {
-  canUpdatePlace,
-  placeName,
-  switchLockedBy,
-  updateWithheld,
-} from "@/lib/update-groups";
-import { rowUnsettled } from "@/lib/updates-read-state";
+import { selectionOf } from "@/lib/derive";
+import { canUpdatePlace, placeName, updateWithheld } from "@/lib/update-groups";
+import { readUnsettled } from "@/lib/updates-read-state";
 import { versionLabel } from "@/lib/versions";
 import { useNavStore } from "@/stores/nav";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
 
 /** The cells that belong to one place: where it is, its versions when the
- *  table shows them, whether it follows its source, and what can be done
- *  about it here. A package installed in one place shows these on its own
- *  row; one installed in several shows them once per place under the
- *  package. */
+ *  table shows them, and what can be done about it here. A package out of
+ *  date in one place shows these on its own row; one out of date in several
+ *  shows them once per place under the package.
+ *
+ *  Where the place is named it opens that place, on the rule the app follows
+ *  everywhere: a row, card or chip naming a thing opens it. */
 export function PlaceCells({
   row,
   among,
   onIgnore,
+  onUpdate,
 }: {
   row: UpdateRow;
   /** The package's other places, so two same-named folders read apart. */
   among: Scope[];
   onIgnore?: (row: UpdateRow) => void;
+  /** Open the one update flow on this place. Absent for muted rows, whose
+   *  only action is "notify again". */
+  onUpdate?: (row: UpdateRow) => void;
 }) {
-  const { busy, updateOne, setAutoUpdate, setIgnored } = useUpdatesStore();
-  // Anything about to replace this place's row — an overview-producing
-  // read, a follow switch settling in its scope — holds its controls; the
+  const { busy, setIgnored } = useUpdatesStore();
+  // A read about to replace these rows holds this row's controls; the
   // store refuses regardless, and they say so rather than invite a click.
-  const held = useUpdatesStore((s) => rowUnsettled(s, row));
+  const held = useUpdatesStore(readUnsettled);
   // The mute sends no value read off the row, so `held` is not its bar.
   // What bars it is the exact pair the store refuses on: a check out whose
   // report predates this commit, or another write already running.
@@ -69,22 +61,12 @@ export function PlaceCells({
   const oneAtATime = busy || checking;
   const showVersion = useUpdatesView((s) => s.showVersion);
   const goToPackage = useNavStore((s) => s.goToPackage);
-  const name = packageDisplayName(row);
+  const goToLibrary = useNavStore((s) => s.goToLibrary);
   const place = placeName(row.scope, among);
-  const locked = switchLockedBy(row);
-  // What stands in the way of this row's Update, if anything — one
-  // reading, the same "Update all" acts on, ordered where it is defined.
+  // What stands in the way of this row's update, if anything — one
+  // reading, the same the dialog's own offer acts on.
   const withheld = updateWithheld(row);
   const ref = { kind: row.kind, name: row.name, scope: row.scope };
-
-  const preview = () => {
-    if (!row.current || !row.latest) return;
-    goToPackage(ref, {
-      mode: "diff",
-      from: row.current.commit,
-      to: row.latest.commit,
-    });
-  };
 
   return (
     <>
@@ -92,7 +74,14 @@ export function PlaceCells({
         className="text-muted-foreground"
         title={row.scope.scope === "project" ? row.scope.root : undefined}
       >
-        {place}
+        <button
+          type="button"
+          className="hover:text-foreground hover:underline"
+          aria-label={openPlaceLabel(place)}
+          onClick={() => goToLibrary({ scope: selectionOf(row.scope) })}
+        >
+          {place}
+        </button>
       </TableCell>
       {showVersion ? (
         <TableCell className="font-mono text-xs text-muted-foreground">
@@ -101,7 +90,7 @@ export function PlaceCells({
         </TableCell>
       ) : null}
       {row.ignored ? (
-        <TableCell colSpan={2} className="text-right">
+        <TableCell className="text-right">
           <Button
             size="sm"
             variant="outline"
@@ -113,52 +102,21 @@ export function PlaceCells({
           </Button>
         </TableCell>
       ) : (
-        <>
-          <TableCell className="text-center">
-            {/* Switching follow OFF holds the package at row.current's
-                commit — from a stale row that pins it to an old version,
-                so the switch waits for a check the same as Update. */}
-            <Switch
-              aria-label={followSourceLabel(name, place)}
-              checked={!row.pinned}
-              disabled={busy || held || locked !== null}
-              title={
-                locked?.kind === "source"
-                  ? heldBySourceNote(locked.name)
-                  : locked?.name
-                    ? heldByParentNote(locked.name)
-                    : locked
-                      ? HELD_BY_OWNER_NOTE
-                      : held
-                        ? UPDATE_NEEDS_CHECK_NOTE
-                        : undefined
-              }
-              onCheckedChange={(follow) => void setAutoUpdate(row, follow)}
-            />
-          </TableCell>
-          <TableCell>
-            {/* The edited note sits above the controls: beside them, the
-                row would not fit the app's default window. */}
-            <div className="flex flex-col items-end gap-1">
+        <TableCell>
+          {/* The edited note sits above the controls: beside them, the row
+              would not fit the app's default window. */}
+          <div className="flex flex-col items-end gap-1">
+            {row.blockedByLocalEdit ? (
+              <span className="text-xs text-muted-foreground">
+                {EDITED_CANT_UPDATE_NOTE}
+              </span>
+            ) : null}
+            <div className="flex items-center justify-end gap-1.5">
               {row.blockedByLocalEdit ? (
-                <span className="text-xs text-muted-foreground">
-                  {EDITED_CANT_UPDATE_NOTE}
-                </span>
-              ) : null}
-              <div className="flex items-center justify-end gap-1.5">
-                {row.current && row.latest ? (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-muted-foreground"
-                    onClick={preview}
-                  >
-                    {PREVIEW_CHANGES_LABEL}
-                  </Button>
-                ) : row.blockedByLocalEdit ? (
-                  // No versions to compare, nothing to install beside: the
-                  // fork-or-discard choice on the package page is what is
-                  // left, and this is the way there.
+                <>
+                  {/* No update to review and nothing to install beside: the
+                      fork-or-discard choice on the package page is what is
+                      left, and this is the way there. */}
                   <Button
                     size="sm"
                     variant="ghost"
@@ -167,55 +125,53 @@ export function PlaceCells({
                   >
                     {OPEN_PACKAGE_LABEL}
                   </Button>
-                ) : null}
-                {row.blockedByLocalEdit ? (
-                  installableBeside(row) ? (
+                  {installableBeside(row) ? (
                     <InstallAsNew row={row} busy={busy} held={held} />
-                  ) : null
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={busy || held || !canUpdatePlace(row)}
-                    // The row's own reasons come from `updateWithheld`,
-                    // the reading every surface shares; `held` is this
-                    // surface's alone, because only its actions send a
-                    // value read off the row.
-                    title={
-                      withheld ?? (held ? UPDATE_NEEDS_CHECK_NOTE : undefined)
-                    }
-                    onClick={() => void updateOne(row)}
-                  >
-                    {UPDATE_LABEL}
-                  </Button>
-                )}
-                {onIgnore ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger
-                      render={
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          aria-label="More actions"
-                        >
-                          <MoreHorizontal className="size-4" />
-                        </Button>
-                      }
-                    />
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        disabled={oneAtATime}
-                        onClick={() => onIgnore(row)}
+                  ) : null}
+                </>
+              ) : onUpdate ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy || held || !canUpdatePlace(row)}
+                  // The row's own reasons come from `updateWithheld`, the
+                  // reading every surface shares; `held` is this surface's
+                  // alone, because only its actions send a value read off
+                  // the row.
+                  title={
+                    withheld ?? (held ? UPDATE_NEEDS_CHECK_NOTE : undefined)
+                  }
+                  onClick={() => onUpdate(row)}
+                >
+                  {UPDATE_REVIEW_LABEL}
+                </Button>
+              ) : null}
+              {onIgnore ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        aria-label="More actions"
                       >
-                        {IGNORE_UPDATES_LABEL}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                ) : null}
-              </div>
+                        <MoreHorizontal className="size-4" />
+                      </Button>
+                    }
+                  />
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      disabled={oneAtATime}
+                      onClick={() => onIgnore(row)}
+                    >
+                      {IGNORE_UPDATES_LABEL}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
             </div>
-          </TableCell>
-        </>
+          </div>
+        </TableCell>
       )}
     </>
   );

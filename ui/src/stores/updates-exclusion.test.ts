@@ -75,7 +75,6 @@ const fromPackagePage = () =>
  *  in this list is a hole in the window below. */
 const WRITES = [
   [commands.updateSetIgnored, () => store().setIgnored(row(), true)],
-  [commands.packageSetRev, () => store().setAutoUpdate(row(), false)],
   [commands.packageFork, () => keepAsOwn(EDITED)],
   [commands.applyDiscardEdits, () => takeNewVersion(row())],
   [commands.packageForkBeside, () => installAsNew(EDITED, "claude", "mine")],
@@ -91,7 +90,6 @@ describe("the check and the writes exclude each other", () => {
       busy: false,
       checking: false,
       reading: false,
-      pendingFollows: [],
       read: READ_LANDED,
       lastFetched: null,
     });

@@ -1,0 +1,1 @@
+- An update review left open while kendex re-reads now follows what it reads, and waits for the changes to be on screen before it writes.

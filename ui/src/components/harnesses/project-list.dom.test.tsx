@@ -11,6 +11,7 @@ import type {
 } from "@/bindings";
 import { commands } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
+import { updateRow } from "@/components/updates-test-rows";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { unmanagedHereLabel } from "@/lib/copy";
 import {
@@ -22,8 +23,14 @@ import {
   SESSION_NOTE_ON,
   SESSION_NOTE_WAITING,
 } from "@/lib/copy-session-note";
+import {
+  outOfDateHereLabel,
+  UPDATE_NEEDS_CHECK_NOTE,
+  UPDATE_REVIEW_CONFIRM,
+  updateReviewManyTitle,
+} from "@/lib/copy-updates";
 import { kindLabel } from "@/lib/labels";
-import { READ_LANDED } from "@/lib/read-state";
+import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
 import { useLibraryViewStore } from "@/stores/library-view";
@@ -48,6 +55,15 @@ vi.mock("@/bindings", () => ({
     capabilityTable: vi.fn(),
     updateSettings: vi.fn(),
     installDriftHook: vi.fn(),
+    packageDiff: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: {
+        files: [],
+        totalAdditions: 0,
+        totalDeletions: 0,
+        truncated: false,
+      },
+    }),
   },
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
@@ -457,5 +473,138 @@ describe("a place card's kind badge", () => {
       kind: "skill",
     });
     expect(badge).toBe(destinationRows());
+  });
+});
+
+// A place says when its packages are out of date, and the click is the
+// same flow the Updates page runs — the changes first, then the write.
+// Distinct from the card's uncommitted-files badge: what a source has
+// moved on to is not what kendex wrote here and has not committed.
+describe("out-of-date packages on a place's card", () => {
+  const card = (host: HTMLElement, name: string) => {
+    const found = [
+      ...host.querySelectorAll<HTMLElement>('[data-slot="card"]'),
+    ].find((el) => el.textContent?.startsWith(name));
+    if (!found) throw new Error(`no ${name} card`);
+    return found;
+  };
+
+  beforeEach(() => {
+    useSettingsStore.setState({
+      settings: { projects: ["/work/acme"] } as never,
+    });
+  });
+
+  it("counts each place's own packages and opens their review", async () => {
+    useUpdatesStore.setState({
+      rows: [
+        updateRow("gh", "/work/acme"),
+        updateRow("dev", "/work/acme"),
+        updateRow("orch", null),
+      ],
+      read: READ_LANDED,
+      unreadable: [],
+    });
+    const host = mount(<ProjectList />);
+    await settle();
+
+    expect(card(host, "acme").textContent).toContain(outOfDateHereLabel(2));
+    expect(card(host, "Personal").textContent).toContain(outOfDateHereLabel(1));
+
+    const line = [...card(host, "acme").querySelectorAll("button")].find(
+      (b) => b.textContent === outOfDateHereLabel(2),
+    );
+    if (!line) throw new Error("no out-of-date line");
+    await userEvent.click(line);
+    expect(document.body.textContent).toContain(
+      updateReviewManyTitle(2, "acme"),
+    );
+    expect(document.body.textContent).toContain(UPDATE_REVIEW_CONFIRM);
+  });
+
+  it("says nothing where it has not been told, and nothing where there is nothing", async () => {
+    const cases = [
+      {
+        name: "nothing out of date",
+        rows: [],
+        read: READ_LANDED,
+        unreadable: [],
+      },
+      {
+        // A read still on its way has counted nothing, and a card saying
+        // so would be the claim it cannot make.
+        name: "no read has landed",
+        rows: [updateRow("gh", "/work/acme")],
+        read: READ_PENDING,
+        unreadable: [],
+      },
+      {
+        // This place has no standing at all: whatever rows an earlier read
+        // left for it answer for a state kendex can no longer see, so a
+        // count over them would be a claim about a place it cannot read.
+        name: "the place could not be read",
+        rows: [updateRow("gh", "/work/acme")],
+        read: READ_LANDED,
+        unreadable: [{ scope: ACME, message: "newer schema" }],
+      },
+    ];
+    expect(cases).toHaveLength(3);
+    for (const one of cases) {
+      useUpdatesStore.setState({
+        rows: one.rows,
+        read: one.read,
+        unreadable: one.unreadable as never,
+      });
+      const host = mount(<ProjectList />);
+      await settle();
+      expect(card(host, "acme").textContent, one.name).not.toContain(
+        "out of date",
+      );
+    }
+  });
+
+  // A package its source dropped has no version to move to. Counting it
+  // would draw a line whose review has nothing in it — a dead end where
+  // the card promised work.
+  it("counts no package whose news is not an update", async () => {
+    useUpdatesStore.setState({
+      rows: [
+        updateRow("gone", "/work/acme", {
+          updateAvailable: false,
+          removedUpstream: true,
+        }),
+      ],
+      read: READ_LANDED,
+      unreadable: [],
+    });
+    const host = mount(<ProjectList />);
+    await settle();
+    expect(card(host, "acme").textContent).not.toContain("out of date");
+  });
+
+  // The store refuses a write read off rows a landing is about to replace.
+  // The card says so on the button rather than letting the click answer
+  // with an error dialog.
+  it("holds its update while a read that will replace the rows is out", async () => {
+    useUpdatesStore.setState({
+      rows: [updateRow("gh", "/work/acme")],
+      read: READ_LANDED,
+      unreadable: [],
+      reading: true,
+    });
+    const host = mount(<ProjectList />);
+    await settle();
+
+    const line = [...card(host, "acme").querySelectorAll("button")].find(
+      (b) => b.textContent === outOfDateHereLabel(1),
+    );
+    if (!line) throw new Error("no out-of-date line");
+    await userEvent.click(line);
+
+    const update = [...document.querySelectorAll("button")].find(
+      (b) => b.textContent === UPDATE_REVIEW_CONFIRM,
+    );
+    expect(update?.disabled).toBe(true);
+    expect(update?.getAttribute("title")).toBe(UPDATE_NEEDS_CHECK_NOTE);
   });
 });

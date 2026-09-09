@@ -5,12 +5,17 @@ import {
   HELD_BY_OWNER_NOTE,
 } from "@/lib/copy-updates";
 import {
+  availableUpdateCount,
+  availableUpdatesIn,
   groupUpdates,
+  outOfDateIn,
   packageCount,
   placeName,
+  placesWithUpdates,
   skippedPlaces,
   updatablePlaces,
   updateWithheld,
+  visibleUpdates,
 } from "./update-groups";
 
 const row = (
@@ -239,5 +244,111 @@ describe("updateWithheld", () => {
         }),
       ),
     ).toBe(refusal);
+  });
+});
+
+// "Update this project's packages" is a choice beside "update all", and
+// the places it offers are the ones a run could actually write in.
+describe("the places an update can be offered for", () => {
+  const edited = {
+    blockedByLocalEdit: true,
+    editedHarnesses: ["claude" as const],
+  };
+
+  it("keeps every row of a place it offers, not only the takeable ones", () => {
+    const places = placesWithUpdates([
+      row("gh", "/a"),
+      row("dev", "/a", edited),
+      row("orch", "/b"),
+    ]);
+    expect(places).toHaveLength(2);
+    expect(places[0].scope).toEqual({ scope: "project", root: "/a" });
+    // Both of /a's rows travel, so the dialog for that place can say what
+    // it leaves alone there.
+    expect(places[0].rows.map((r) => r.name)).toEqual(["gh", "dev"]);
+    expect(places[1].rows.map((r) => r.name)).toEqual(["orch"]);
+  });
+
+  it("offers no place where nothing could be written", () => {
+    expect(
+      placesWithUpdates([row("dev", "/a", edited), row("gh", "/a", edited)]),
+    ).toHaveLength(0);
+    expect(placesWithUpdates([])).toHaveLength(0);
+  });
+});
+
+// One predicate for every count of a place's updates, so a card and Home
+// can never disagree about one machine.
+describe("what a place counts as out of date", () => {
+  it("counts its own packages once, and no other place's", () => {
+    const rows = [
+      row("gh", "/a"),
+      row("gh", "/b"),
+      row("dev", "/a"),
+      row("muted", "/a", { ignored: true }),
+      row("current", "/a", { updateAvailable: false }),
+    ];
+    expect(outOfDateIn(rows, { scope: "project", root: "/a" })).toBe(2);
+    expect(outOfDateIn(rows, { scope: "project", root: "/b" })).toBe(1);
+    expect(outOfDateIn(rows, { scope: "global" })).toBe(0);
+  });
+
+  // News that is not a newer version belongs on the Updates page, which
+  // lists it and tags it, and NOT in a count whose words promise an update:
+  // core builds such a row with no `latest` and no update to take, so a
+  // card counting it would draw a line whose review has nothing in it.
+  it("counts no package that has no update to take", () => {
+    const news = [
+      {
+        name: "gone from its source",
+        extra: { updateAvailable: false, removedUpstream: true },
+      },
+      {
+        name: "installs disagreeing on a version",
+        extra: { updateAvailable: false, mixed: true },
+      },
+      { name: "muted", extra: { ignored: true } },
+    ];
+    expect(news).toHaveLength(3);
+    for (const one of news) {
+      const rows = [row("gh", "/a", one.extra)];
+      expect(
+        outOfDateIn(rows, { scope: "project", root: "/a" }),
+        one.name,
+      ).toBe(0);
+      expect(
+        availableUpdatesIn(rows, { scope: "project", root: "/a" }),
+        one.name,
+      ).toHaveLength(0);
+      // Still the Updates page's business, so its own list keeps it.
+      expect(visibleUpdates(rows).length, one.name).toBe(
+        one.extra.ignored ? 0 : 1,
+      );
+    }
+  });
+
+  // The control: a row with a version to move to is counted, and is what
+  // the review acts on.
+  it("counts a package with a newer version, and hands it to the review", () => {
+    const rows = [row("gh", "/a")];
+    expect(outOfDateIn(rows, { scope: "project", root: "/a" })).toBe(1);
+    expect(
+      availableUpdatesIn(rows, { scope: "project", root: "/a" }).map(
+        (r) => r.name,
+      ),
+    ).toEqual(["gh"]);
+  });
+
+  // Home's number and a card's number are the same rule, one machine-wide
+  // and one narrowed, so they cannot come apart.
+  it("counts machine-wide by the same rule", () => {
+    const rows = [
+      row("gh", "/a"),
+      row("gh", "/b"),
+      row("dev", "/a"),
+      row("gone", "/a", { updateAvailable: false, removedUpstream: true }),
+    ];
+    expect(availableUpdateCount(rows)).toBe(2);
+    expect(outOfDateIn(rows, { scope: "project", root: "/a" })).toBe(2);
   });
 });

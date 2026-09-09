@@ -3,8 +3,9 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
-import { EDITED_ATTENTION_ACTION } from "@/lib/copy";
-import { READ_LANDED } from "@/lib/read-state";
+import { EDITED_ATTENTION_ACTION, UPDATES_ATTENTION_TITLE } from "@/lib/copy";
+import { updatesWaitingTitle } from "@/lib/copy-updates";
+import { READ_LANDED, readFailed } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
@@ -24,6 +25,29 @@ vi.mock("@/bindings", () => ({
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 const HYPR = { scope: "project", root: "/work/hyprtrade" } as const;
+
+const removedUpstream = (name: string): UpdateRow =>
+  ({
+    kind: "skill",
+    name,
+    scope: HYPR,
+    updateAvailable: false,
+    removedUpstream: true,
+    blockedByLocalEdit: false,
+    editedHarnesses: [],
+    repoIdentity: "vanillagreencom/kendex",
+  }) as unknown as UpdateRow;
+
+const outOfDate = (name: string): UpdateRow =>
+  ({
+    kind: "skill",
+    name,
+    scope: HYPR,
+    updateAvailable: true,
+    blockedByLocalEdit: false,
+    editedHarnesses: [],
+    repoIdentity: "vanillagreencom/kendex",
+  }) as unknown as UpdateRow;
 
 const edited = (name: string): UpdateRow =>
   ({
@@ -78,5 +102,63 @@ describe("Home's edited row", () => {
     const nav = useNavStore.getState();
     expect(nav.page).toBe("library");
     expect(nav.libraryFilter).toEqual({ edited: true });
+  });
+});
+
+// Home says how many packages have updates and takes the reader to them.
+// Only a landed read may put a number here: rows kept from a failed check
+// are last-known, and the failed-check row is what stands over them.
+describe("Home's updates row", () => {
+  it("counts the packages with updates and goes to them", async () => {
+    useUpdatesStore.setState({
+      rows: [outOfDate("gh"), outOfDate("dev")],
+      read: READ_LANDED,
+    });
+    const host = mount(<OverviewPage />);
+    const button = [...host.querySelectorAll("button")].find((el) =>
+      el.textContent?.includes(updatesWaitingTitle(2)),
+    );
+    expect(button).toBeDefined();
+    await act(async () => {
+      button?.click();
+    });
+    expect(useNavStore.getState().page).toBe("updates");
+  });
+
+  it("counts nothing off rows a failed check left behind", () => {
+    useUpdatesStore.setState({
+      rows: [outOfDate("gh"), outOfDate("dev")],
+      read: readFailed("no network"),
+    });
+    const host = mount(<OverviewPage />);
+    expect(host.textContent).not.toContain(updatesWaitingTitle(2));
+    expect(host.textContent).not.toContain("packages have updates");
+    // What the reader gets instead: the check that could not answer.
+    expect(host.textContent).toContain(UPDATES_ATTENTION_TITLE);
+  });
+});
+
+// A package its source dropped has no version to move to, and this row's
+// words promise one. It stays on the Updates page, tagged, and out of this
+// count.
+describe("what Home's updates row counts", () => {
+  it("counts only packages with an update to take", () => {
+    useUpdatesStore.setState({
+      rows: [outOfDate("gh"), removedUpstream("gone")],
+      read: READ_LANDED,
+    });
+    const host = mount(<OverviewPage />);
+    expect(host.textContent).toContain(updatesWaitingTitle(1));
+    expect(host.textContent).not.toContain(updatesWaitingTitle(2));
+  });
+
+  it("says nothing at all where the only news is not an update", () => {
+    useUpdatesStore.setState({
+      rows: [removedUpstream("gone")],
+      read: READ_LANDED,
+    });
+    const host = mount(<OverviewPage />);
+    expect(host.textContent).not.toContain("packages have updates");
+    expect(host.textContent).not.toContain("package has an update");
   });
 });

@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useId, useState } from "react";
-import type { UpdateRow } from "@/bindings";
+import type { Scope, UpdateRow } from "@/bindings";
 import {
   InstalledScore,
   useInstalledReading,
@@ -16,14 +16,9 @@ import {
 } from "@/components/ui/tooltip";
 import { PlaceCells } from "@/components/update-place-cells";
 import { UpdatesTableHeader } from "@/components/updates-table-header";
-import {
-  EDITED_UPDATE_TAG,
-  PINNED_UPDATE_TAG,
-  REMOVED_UPSTREAM_TAG,
-} from "@/lib/copy";
+import { EDITED_UPDATE_TAG, REMOVED_UPSTREAM_TAG } from "@/lib/copy";
 import {
   EDITED_TAG_HELP,
-  heldInLabel,
   placesLabel,
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATE_PACKAGE_EVERYWHERE_LABEL,
@@ -37,7 +32,8 @@ import {
   type UpdateGroup,
   updatablePlaces,
 } from "@/lib/update-groups";
-import { rowUnsettled } from "@/lib/updates-read-state";
+import { readUnsettled } from "@/lib/updates-read-state";
+import { useNavStore } from "@/stores/nav";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
 
@@ -50,6 +46,7 @@ export function UpdatesTable({
   rows,
   onIgnore,
   onShowVersion,
+  onUpdate,
 }: {
   rows: UpdateRow[];
   /** Absent for muted rows: their only extra action is "notify again". */
@@ -57,6 +54,10 @@ export function UpdatesTable({
   /** Present on the table that carries the `…` menu showing the Version
    *  column; the column itself follows the page-wide choice. */
   onShowVersion?: (show: boolean) => void;
+  /** Open the one update flow over these rows, with the places they are
+   *  named against — a package's own places, so the confirm that writes
+   *  files tells two same-named folders apart the way its row does. */
+  onUpdate?: (rows: UpdateRow[], place: string | null, among: Scope[]) => void;
 }) {
   return (
     <Table>
@@ -67,6 +68,7 @@ export function UpdatesTable({
             key={groupKey(group)}
             group={group}
             onIgnore={onIgnore}
+            onUpdate={onUpdate}
           />
         ))}
       </TableBody>
@@ -78,10 +80,12 @@ export function UpdatesTable({
 export function PackageRows({
   group,
   onIgnore,
+  onUpdate,
   defaultOpen = false,
 }: {
   group: UpdateGroup;
   onIgnore?: (row: UpdateRow) => void;
+  onUpdate?: (rows: UpdateRow[], place: string | null, among: Scope[]) => void;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -89,15 +93,12 @@ export function PackageRows({
   const placesId = useId();
   const safetyId = useId();
   const busy = useUpdatesStore((s) => s.busy);
+  const goToPackage = useNavStore((s) => s.goToPackage);
   const places = group.places;
-  // Not loaded, mid-check, mid-load, and a follow switch settling in any of
-  // these places' scopes hold Update alike: either way these are not the
-  // rows an update would act on.
-  const unconfirmed = useUpdatesStore((s) =>
-    places.some((place) => rowUnsettled(s, place)),
-  );
+  // Not loaded, mid-check and mid-load hold the package's own update
+  // alike: either way these are not the rows an update would act on.
+  const unconfirmed = useUpdatesStore(readUnsettled);
   const showVersion = useUpdatesView((s) => s.showVersion);
-  const updateRows = useUpdatesStore((s) => s.updateRows);
   const Icon = kindIcon(group.kind);
   const name = packageDisplayName(group);
   const scopes = places.map((place) => place.scope);
@@ -112,16 +113,13 @@ export function PackageRows({
   const hasSafetyDetail =
     (reading.result?.findings.length ?? 0) > 0 || reading.failure !== null;
   const Chevron = open ? ChevronDown : ChevronRight;
-  const held = places.filter((p) => p.pinned).length;
   const tags = [
-    held === places.length
-      ? PINNED_UPDATE_TAG
-      : held > 0
-        ? heldInLabel(held, places.length)
-        : null,
     places.some((p) => p.blockedByLocalEdit) ? EDITED_UPDATE_TAG : null,
     places.some((p) => p.removedUpstream) ? REMOVED_UPSTREAM_TAG : null,
   ].filter((tag) => tag !== null);
+  // One package can be installed in several places, and the package page
+  // shows one of them. The row's first place is the one its name opens.
+  const first = places[0];
 
   return (
     <>
@@ -143,7 +141,22 @@ export function PackageRows({
                   : undefined
               }
             />
-            <span className="truncate font-medium">{name}</span>
+            {/* The name opens the package, on the rule the app follows
+                everywhere: a row, card or chip naming a thing opens it. */}
+            <button
+              type="button"
+              className="min-w-0 truncate text-left font-medium hover:underline"
+              onClick={() =>
+                first &&
+                goToPackage({
+                  kind: group.kind,
+                  name: group.name,
+                  scope: first.scope,
+                })
+              }
+            >
+              {name}
+            </button>
             {tags.map((tag) =>
               tag === EDITED_UPDATE_TAG ? (
                 // What editing means for updates, where a keyboard and a
@@ -173,7 +186,14 @@ export function PackageRows({
           {kindLabel(group.kind)}
         </TableCell>
         {only ? (
-          <PlaceCells row={only} among={scopes} onIgnore={onIgnore} />
+          <PlaceCells
+            row={only}
+            among={scopes}
+            onIgnore={onIgnore}
+            onUpdate={
+              onUpdate ? (one) => onUpdate([one], null, scopes) : undefined
+            }
+          />
         ) : (
           <>
             <TableCell>
@@ -190,11 +210,10 @@ export function PackageRows({
               </Button>
             </TableCell>
             {showVersion ? <TableCell /> : null}
-            <TableCell />
             <TableCell className="text-right">
               {/* Muted places only offer "notify again", so there is
-                  nothing for a package-wide Update to do. */}
-              {onIgnore ? (
+                  nothing for a package-wide update to do. */}
+              {onUpdate ? (
                 <Button
                   size="sm"
                   variant="outline"
@@ -202,7 +221,7 @@ export function PackageRows({
                     busy || unconfirmed || updatablePlaces(places).length === 0
                   }
                   title={unconfirmed ? UPDATE_NEEDS_CHECK_NOTE : undefined}
-                  onClick={() => void updateRows(places)}
+                  onClick={() => onUpdate(places, null, scopes)}
                 >
                   {UPDATE_PACKAGE_EVERYWHERE_LABEL}
                 </Button>
@@ -215,7 +234,7 @@ export function PackageRows({
           per package until somebody asks for more. */}
       {showSafety && hasSafetyDetail ? (
         <TableRow id={safetyId} className="bg-muted/20">
-          <TableCell colSpan={showVersion ? 6 : 5} className="py-4">
+          <TableCell colSpan={showVersion ? 5 : 4} className="py-4">
             {reading.result ? (
               <SafetyPanel
                 result={reading.result}
@@ -240,7 +259,14 @@ export function PackageRows({
               className="bg-muted/20"
             >
               <TableCell colSpan={2} />
-              <PlaceCells row={row} among={scopes} onIgnore={onIgnore} />
+              <PlaceCells
+                row={row}
+                among={scopes}
+                onIgnore={onIgnore}
+                onUpdate={
+                  onUpdate ? (one) => onUpdate([one], null, scopes) : undefined
+                }
+              />
             </TableRow>
           ))
         : null}

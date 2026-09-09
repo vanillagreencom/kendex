@@ -20,7 +20,9 @@ import { SEE_PROBLEMS_LABEL } from "@/lib/copy-marketplaces";
 import { unreadableFileDetail, unreadableFileTitle } from "@/lib/copy-scan";
 import {
   UPDATES_UNREADABLE_TITLE,
+  UPDATES_WAITING_DETAIL,
   unreadablePlacesLabel,
+  updatesWaitingTitle,
 } from "@/lib/copy-updates";
 import { scopeNames } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
@@ -35,6 +37,11 @@ export interface AttentionSource {
    *  to show, not a silence: with nothing said, a list without an "edited
    *  packages" row would read as kendex having looked and found nothing. */
   updatesError: string | null;
+  /** How many packages have updates, or null where no read has landed to
+   *  say. Only a landed read puts a number on this page: a check that
+   *  failed keeps its rows, but a definite count off them would be the
+   *  claim the failed-check row exists to withhold. */
+  updates: number | null;
   /** Why the last audit failed, or null — the counts above came from an
    *  audit that could not finish, so what needs attention may be missing
    *  from this very list. */
@@ -147,6 +154,19 @@ export function attentionRows(source: AttentionSource): AttentionRow[] {
   // path and remedy, and Problems carries the same file with the buttons.
   for (const warning of result?.warnings ?? []) {
     rows.push(unreadableFileRow(warning, source.onProblems));
+  }
+  // Last, and the only row here that is not a fault: taking an update is
+  // routine work, and putting it above a folder kendex cannot find would
+  // rank an errand over a broken machine. Counted the way the sidebar's
+  // badge counts, so one machine never carries two numbers.
+  if (source.updates !== null && source.updates > 0) {
+    rows.push({
+      key: "updates",
+      tone: "info",
+      title: updatesWaitingTitle(source.updates),
+      detail: UPDATES_WAITING_DETAIL,
+      action: { label: "Updates", onClick: source.onUpdates },
+    });
   }
   return rows;
 }

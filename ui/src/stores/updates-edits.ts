@@ -11,7 +11,7 @@ import { packageDisplayName } from "@/lib/labels";
 import { offerToCommit, rescanEverything, trackedProjects } from "@/lib/rescan";
 import { caught } from "@/lib/settled";
 import { saying } from "@/lib/undone";
-import { rowUnsettled, workOut } from "@/lib/updates-read-state";
+import { readUnsettled, workOut } from "@/lib/updates-read-state";
 import { useProblemsStore } from "./problems";
 import { holdingBusy, useUpdatesStore } from "./updates";
 
@@ -46,12 +46,10 @@ const report = (outcome: Outcome<unknown>) => {
       .showError({ title: FORK_ERROR_TITLE, message: outcome.error });
 };
 
-/** Rows kept from a failed check, about to be replaced by a running one,
- *  or waiting on a follow switch settling in their scope name a `latest`
- *  nobody confirmed — an action that may move a hold to it stops here,
- *  whatever the trigger looked like. */
-const stale = (row: UpdateRow): boolean =>
-  rowUnsettled(useUpdatesStore.getState(), row);
+/** Rows kept from a failed check, or about to be replaced by a running
+ *  one, name a `latest` nobody confirmed — an action that may move a hold
+ *  to it stops here, whatever the trigger looked like. */
+const stale = (): boolean => readUnsettled(useUpdatesStore.getState());
 
 /** Whether a check or another write is already out — what bars a commit
  *  when nothing is wrong with the row itself. */
@@ -90,7 +88,7 @@ export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
     report({ error: UPDATES_ONE_AT_A_TIME_NOTE });
     return;
   }
-  if (stale(row)) {
+  if (stale()) {
     report({ error: UPDATE_NEEDS_CHECK_NOTE });
     return;
   }
@@ -130,7 +128,7 @@ export const installAsNew = async (
   own: string,
 ): Promise<string | null> => {
   if (running()) return UPDATES_ONE_AT_A_TIME_NOTE;
-  if (stale(row)) return UPDATE_NEEDS_CHECK_NOTE;
+  if (stale()) return UPDATE_NEEDS_CHECK_NOTE;
   const name = packageDisplayName(row);
   const outcome = await run<string | null>(async () => {
     const response = saying(

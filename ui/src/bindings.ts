@@ -1678,11 +1678,11 @@ export type GitReadiness = {
 export type HarnessId = "claude" | "codex" | "opencode" | "cursor" | "pi" | "gemini" | "copilot" | "antigravity";
 
 /**
- *  Whose hold keeps a place at its revision — what the Follow source
- *  switch may release, and what it may not.
+ *  Whose hold keeps a place at its revision — which hold this
+ *  declaration can release, and which it cannot.
  */
 export type HoldOwner = 
-/**  This declaration's own `rev`: the switch releases it. */
+/**  This declaration's own `rev`: it is released here. */
 { kind: "package" } | 
 /**  The source is pinned as a whole; released where the source is declared. */
 { kind: "source"; name: string } | 

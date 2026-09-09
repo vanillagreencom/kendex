@@ -17,7 +17,7 @@ import {
   skippedPlaces,
   updatablePlaces,
 } from "@/lib/update-groups";
-import { rowUnsettled } from "@/lib/updates-read-state";
+import { readUnsettled } from "@/lib/updates-read-state";
 import { useProblemsStore } from "./problems";
 import {
   applyRow,
@@ -26,7 +26,6 @@ import {
   noRun,
   sayApply,
 } from "./updates-apply";
-import { followSwitch, type PendingFollow } from "./updates-follow";
 import { type Standing, standingReads } from "./updates-standing";
 
 interface UpdatesState extends Standing {
@@ -47,28 +46,27 @@ interface UpdatesState extends Standing {
    *  it have changed all the same. Counted per place, so a write to another
    *  package refetches nothing here. */
   writes: Record<string, number>;
-  /** Follow switches already moved on screen whose write has not answered.
-   *  A flip's scope is what decides which rows the landing behind it may
-   *  not be acted on from. */
-  pendingFollows: PendingFollow[];
   /** Read the standing again and land whatever it answers. Every operation
    *  that commits a change calls it once its own work is done, so the rows
    *  on screen are what actually committed. */
   reload: () => Promise<void>;
   check: () => Promise<void>;
+  /** Bring one place current — the package page's Projects tab, which acts
+   *  on one copy at a time. Not the Updates page's: every confirm its
+   *  review takes goes through [`updateRows`], one place included, so that
+   *  page has one applier at every scope it offers. */
   updateOne: (row: UpdateRow) => Promise<void>;
-  /** Bring every updatable place among `rows` current — the page-level
-   *  button passes every visible row, a package's button its own places. */
+  /** Bring every updatable place among `rows` current — every scope the
+   *  Updates page's review offers, from one place to all of them, and a
+   *  place's card. */
   updateRows: (rows: UpdateRow[]) => Promise<void>;
-  setAutoUpdate: (row: UpdateRow, auto: boolean) => Promise<void>;
   setIgnored: (row: UpdateRow, ignored: boolean) => Promise<void>;
 }
 
 /** Hold the store's `busy` for as long as `work` runs — every write the
  *  exclusion covers, wherever it lives. Paths outside this module reach it
- *  by import; `followSwitch` takes it as `holding`, since this module
- *  imports that one. A flag rather than a count: every caller refuses while
- *  it is already up, so this `finally` drops it under nobody. */
+ *  by import. A flag rather than a count: every caller refuses while it is
+ *  already up, so this `finally` drops it under nobody. */
 export const holdingBusy = async <T>(work: () => Promise<T>): Promise<T> => {
   useUpdatesStore.setState({ busy: true });
   try {
@@ -84,7 +82,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
 
   const reportUpdate = (error: string) => showError(UPDATE_ERROR_TITLE, error);
 
-  const { landOwn, reload } = standingReads(set, get);
+  const { landOwn, reload } = standingReads(set);
 
   const wrote = (rows: UpdateRow[]) =>
     set({ writes: countingWrites(get().writes, rows) });
@@ -107,7 +105,6 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     busy: false,
     checking: false,
     reading: false,
-    pendingFollows: [],
     read: READ_PENDING,
     writes: {},
 
@@ -136,7 +133,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       // One write at a time, page-wide: the second committing after the
       // first released `busy` is a check opening over a commit it cannot see.
       if (get().busy) return oneAtATime();
-      if (rowUnsettled(get(), row)) return needsCheck();
+      if (readUnsettled(get())) return needsCheck();
       await holdingBusy(async () => {
         const answer = await caught(applyRow(row, reportUpdate));
         if (answer.status === "error") {
@@ -167,7 +164,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
     updateRows: async (wanted) => {
       const state = get();
       if (state.busy) return oneAtATime();
-      if (wanted.some((row) => rowUnsettled(state, row))) return needsCheck();
+      if (readUnsettled(state)) return needsCheck();
       await holdingBusy(async () => {
         // Edited packages are held by the engine and cannot be updated
         // this way — their row says so and offers the install beside — so
@@ -217,15 +214,8 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       });
     },
 
-    setAutoUpdate: followSwitch({
-      set,
-      get,
-      holding: holdingBusy,
-      report: (error) => showError(UPDATE_ERROR_TITLE, error),
-    }),
-
     setIgnored: async (row, ignored) => {
-      // The mute captures nothing off the row, so `rowUnsettled` is not
+      // The mute captures nothing off the row, so `readUnsettled` is not
       // what bars it. What bars it is the work already out: a report built
       // before this commit must not land after it.
       if (get().checking || get().busy) return oneAtATime();

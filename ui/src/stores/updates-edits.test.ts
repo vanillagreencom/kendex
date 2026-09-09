@@ -50,7 +50,6 @@ describe("updates store: edited places", () => {
       rows: [],
       busy: false,
       read: READ_LANDED,
-      pendingFollows: [],
     });
     vi.clearAllMocks();
   });
@@ -228,7 +227,6 @@ describe("updates store: installing beside an edited place", () => {
       rows: [],
       busy: false,
       read: READ_LANDED,
-      pendingFollows: [],
     });
     useProblemsStore.setState({
       dialog: { open: false, title: "", steps: [], actions: [] },
@@ -375,53 +373,10 @@ describe("updates store: installing beside an edited place", () => {
     expect(commands.packageForkBeside).not.toHaveBeenCalled();
   });
 
-  // Both of these send row.latest.commit off a row.pinned the settling flip
-  // may have painted, and stale(row) is their only guard: the scope the
-  // flip is applying holds, and every other scope carries on.
-  it("holds a discard and an install-beside while a flip settles in that scope", async () => {
-    useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
-    });
-    useUpdatesStore.setState({
-      pendingFollows: [
-        {
-          id: 1,
-          scope: { scope: "global" },
-          kind: "skill",
-          name: "other",
-          pinned: true,
-        },
-      ],
-    });
-    const edited = row({
-      blockedByLocalEdit: true,
-      editedHarnesses: ["claude"],
-      forkableHarness: "claude",
-    });
-
-    await takeNewVersion(edited);
-    expect(commands.applyDiscardEdits).not.toHaveBeenCalled();
-    expect(useProblemsStore.getState().dialog.message).toBe(
-      UPDATE_NEEDS_CHECK_NOTE,
-    );
-    expect(await installAsNew(edited, "claude", "gh-mine")).toBe(
-      UPDATE_NEEDS_CHECK_NOTE,
-    );
-    expect(commands.packageForkBeside).not.toHaveBeenCalled();
-  });
-
-  it("lets a discard through while the flip settles in another scope", async () => {
-    useUpdatesStore.setState({
-      pendingFollows: [
-        {
-          id: 1,
-          scope: { scope: "project", root: "/home/me/app" },
-          kind: "skill",
-          name: "gh",
-          pinned: true,
-        },
-      ],
-    });
+  // The positive half of the refusal above: both of these send
+  // `row.latest.commit`, and a read that landed is what makes that value
+  // one a write may carry.
+  it("lets a discard through once the read has landed", async () => {
     vi.mocked(commands.applyDiscardEdits).mockResolvedValue({
       status: "ok",
       data: {

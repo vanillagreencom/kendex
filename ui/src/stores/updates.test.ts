@@ -54,7 +54,6 @@ describe("updates store", () => {
       unreadable: [],
       busy: false,
       checking: false,
-      pendingFollows: [],
       read: READ_LANDED,
       lastFetched: null,
     });
@@ -360,7 +359,7 @@ describe("updates store", () => {
 
   // A transport failure rejects instead of returning an error result —
   // only the applier sees it, and dropping its return would leave updateOne
-  // silent and setAutoUpdate mute about a switch that never happened.
+  // silent about a write that never happened.
   it("surfaces an update whose transport failed instead of staying silent", async () => {
     useProblemsStore.setState({
       dialog: { open: false, title: "", steps: [], actions: [] },
@@ -382,22 +381,6 @@ describe("updates store", () => {
     // reads, which is all this pins — that they were asked.
     expect(commands.scanMachine).toHaveBeenCalled();
     expect(commands.auditAll).toHaveBeenCalled();
-  });
-
-  it("surfaces a follow switch whose transport failed", async () => {
-    useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
-    });
-    vi.mocked(commands.packageSetRev).mockRejectedValue(new Error("ipc down"));
-    vi.mocked(commands.updatesOverview).mockResolvedValue({
-      status: "ok",
-      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
-    });
-
-    await useUpdatesStore.getState().setAutoUpdate(row({}), false);
-
-    expect(useProblemsStore.getState().dialog.open).toBe(true);
-    expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
   });
 
   // A check in flight is about to replace the rows: an update accepted

@@ -8,12 +8,12 @@ import type {
 } from "@/bindings";
 import { sameScope, scopeKey } from "@/lib/scope";
 import { placeName, updatablePlaces } from "@/lib/update-groups";
-import { rowUnsettled } from "@/lib/updates-read-state";
+import { readUnsettled } from "@/lib/updates-read-state";
 
-/** How the update read stands, as `rowUnsettled` asks it. The store keeps
+/** How the update read stands, as `readUnsettled` asks it. The store keeps
  *  last-known rows through a failed or running read, so the rows alone
  *  never say whether they may be acted on. */
-export type UpdatesStanding = Parameters<typeof rowUnsettled>[0];
+export type UpdatesStanding = Parameters<typeof readUnsettled>[0];
 
 /** One place a package is installed in, as its card reads it. */
 export interface PackagePlace {
@@ -162,13 +162,12 @@ export function packagePlaces(
       installedAt: metas[scopeKey(scope)]?.installedAt ?? null,
       row,
       // A row the store is holding — a read that failed, a check or a
-      // load running, a follow switch settling here — names a `latest`
-      // nobody confirmed. `updateOne` refuses those and says so, so the
+      // load running — names a `latest` nobody confirmed. `updateOne` refuses those and says so, so the
       // card offers nothing rather than a button that only raises an
       // error.
       updatable:
         row !== null &&
-        !rowUnsettled(standing, row) &&
+        !readUnsettled(standing) &&
         updatablePlaces([row]).length === 1,
       removable: removableIn(
         provenance,

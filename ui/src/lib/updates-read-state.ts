@@ -19,22 +19,21 @@ interface PageState {
   reading: boolean;
 }
 
-/** Whether the rows on screen are not to be acted on, page-wide: the first
- *  read has not answered, the last one failed, or one that will replace
- *  every row is on its way. A landed read is not enough on its own — a
- *  mount or a return to the window starts a reload over rows that landed
- *  perfectly well, and the answer it brings back is what the captured
- *  values would be committed against. A settling follow flip is not here:
- *  it replaces every row too, but which rows it leaves unconfirmed is its
- *  own scope's, so ask `rowUnsettled` about a given row. The page-wide
- *  hold a flip's write takes is the store's `busy`, which this predicate
- *  does not read — [`workOut`] below is the one that does. */
-const unsettled = (state: PageState): boolean =>
+/** Whether the rows on screen are not to be acted on: the first read has
+ *  not answered, the last one failed, or one that will replace every row is
+ *  on its way. A landed read is not enough on its own — a mount or a return
+ *  to the window starts a reload over rows that landed perfectly well, and
+ *  the answer it brings back is what the captured values would be committed
+ *  against.
+ *
+ *  Page-wide, because every read of the standing replaces every row. The
+ *  write hold is a separate question and a separate flag: [`workOut`] below
+ *  is what reads the store's `busy`, and this never does.
+ *
+ *  `grep -rn readUnsettled ui/src` is the list of surfaces that ask. */
+export const readUnsettled = (state: PageState): boolean =>
   state.read.status !== "landed" || state.checking || state.reading;
 
-/** Whether work the writes exclude is already out: a check building its
- *  report, or a write about to commit under it. One write at a time is what
- *  lets the store's `busy` be a flag rather than a count of who is in. */
 /** Whether the update rows can be read as last-known facts: a read that
  *  landed, or a failed re-check that kept the rows it had. One rule for
  *  every reader of the per-place facts — the Library, the package header
@@ -48,35 +47,11 @@ export const rowsKnown = (state: {
   state.read.status === "landed" ||
   (state.read.status === "failed" && state.rows.length > 0);
 
+/** Whether work the writes exclude is already out: a check building its
+ *  report, or a write about to commit under it. One write at a time is what
+ *  lets the store's `busy` be a flag rather than a count of who is in. */
 export const workOut = (state: { busy: boolean; checking: boolean }): boolean =>
   state.busy || state.checking;
-
-/** Whether a Follow source flip is settling in this row's own place. The
- *  apply behind it moves what is installed in that scope and nowhere else,
- *  so those are the rows it leaves unconfirmed while it runs. Barring a
- *  second write is not this predicate's job — the page-wide write hold
- *  refuses one before any row is asked about — but which rows a settling
- *  flip holds on screen is still scoped, and that is what its readers ask
- *  it for: `grep -rn rowUnsettled ui/src` is the list of them.
- *
- *  Scoped and not page-wide, because the page's Update carries no argument
- *  read off the row: a read in flight cannot stale it, and a flip in the
- *  same place is what still speaks against it. */
-const settlingIn = (
-  state: { pendingFollows: { scope: Scope }[] },
-  row: { scope: Scope },
-): boolean =>
-  state.pendingFollows.some((one) => sameScope(one.scope, row.scope));
-
-/** Whether one row's facts are not to be acted on: everything `unsettled`
- *  answers for the page, and a follow switch still settling in that row's
- *  scope. For the surface whose actions capture values off the row — the
- *  Updates table sends `row.latest.commit` — so rows about to be replaced
- *  are rows whose values must not be committed. */
-export const rowUnsettled = (
-  state: PageState & { pendingFollows: { scope: Scope }[] },
-  row: { scope: Scope },
-): boolean => unsettled(state) || settlingIn(state, row);
 
 /** The package and place the page names. */
 type Place = { kind: ItemKind; name: string; scope: Scope };
@@ -122,7 +97,7 @@ const covers = (
  *  about it.
  *
  *  Only a settled read may say the check never covered this place, which is
- *  [`unsettled`] and not the read status alone: a landed read with a focus
+ *  [`readUnsettled`] and not the read status alone: a landed read with a focus
  *  reload or a Check in flight is a read about to speak, and calling its
  *  silence a fact is the blur `read-state.ts` forbids. */
 export const packageUpdateNote = (
@@ -133,7 +108,7 @@ export const packageUpdateNote = (
   if (row?.noPerPackageUpdate != null) return row.noPerPackageUpdate;
   if (state.read.status !== "landed") return null;
   if (row) return updateWithheld(row);
-  return unsettled(state) ? null : NO_UPDATE_STANDING_NOTE;
+  return readUnsettled(state) ? null : NO_UPDATE_STANDING_NOTE;
 };
 
 /** How the update read itself is standing, when that is all there is to say
@@ -159,7 +134,7 @@ export const updatesReadNote = (
   if (covers(state, place)) return null;
   if (state.read.status === "pending") return UPDATES_CHECKING;
   if (state.read.status === "failed") return UPDATE_NEEDS_CHECK_HERE;
-  return unsettled(state) ? UPDATES_CHECKING : null;
+  return readUnsettled(state) ? UPDATES_CHECKING : null;
 };
 
 /** Every installed package that requires the one this place names, when

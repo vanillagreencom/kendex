@@ -84,12 +84,7 @@ export function PackagePage() {
     return groupItems(matching)[0] ?? null;
   }, [ref, result]);
 
-  // Every manifest this page's controls can write: the place it was opened
-  // at, and each place Delete and the enable/disable toggle reach.
-  const mutating = useManifestBusy(switching, [
-    ...(ref ? [ref.scope] : []),
-    ...(group ? groupScopes(group) : []),
-  ]);
+  const mutating = useManifestBusy(switching);
   const { meta, files, versions, reads, load: reload } = usePackageData(ref);
   const diff = usePackageDiff(
     ref,

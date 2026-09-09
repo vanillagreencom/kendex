@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { ScanWarning, UpdateRow } from "@/bindings";
 import { EDITED_ATTENTION_ACTION, UPDATES_ATTENTION_DETAIL } from "@/lib/copy";
 import { SEE_PROBLEMS_LABEL } from "@/lib/copy-marketplaces";
-import { unreadablePlacesLabel } from "@/lib/copy-updates";
+import {
+  UPDATES_WAITING_DETAIL,
+  unreadablePlacesLabel,
+  updatesWaitingTitle,
+} from "@/lib/copy-updates";
 import { type AttentionSource, attentionRows } from "./attention-rows";
 
 const HYPR = { scope: "project", root: "/work/hyprtrade" } as const;
@@ -28,6 +32,7 @@ const source = (over: Partial<AttentionSource>): AttentionSource => ({
   editedPackages: [],
   result: { harnesses: [], items: [], missingProjects: [], warnings: [] },
   updatesError: null,
+  updates: null,
   auditError: null,
   unreadable: [],
   onProjects: vi.fn(),
@@ -220,5 +225,57 @@ describe("the other rows say what to do", () => {
       "can't read the install record for hyprtrade",
     );
     expect(found.action?.label).toBe(SEE_PROBLEMS_LABEL);
+  });
+});
+
+// Home's answer to "is anything waiting": the count, and the way to it.
+describe("the updates row", () => {
+  it("counts the packages with updates and lands on Updates", () => {
+    const onUpdates = vi.fn();
+    const found = row(
+      attentionRows(source({ updates: 18, onUpdates })),
+      "updates",
+    );
+    expect(found.title).toBe(updatesWaitingTitle(18));
+    expect(found.title).toContain("18");
+    expect(found.detail).toBe(UPDATES_WAITING_DETAIL);
+    expect(found.action?.label).toBe("Updates");
+    found.action?.onClick();
+    expect(onUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it("says nothing where there is nothing to say, and nothing it cannot", () => {
+    const cases = [
+      { name: "nothing out of date", updates: 0 },
+      // A read that has not landed has not counted; a definite zero over
+      // that is the claim this page must never make.
+      { name: "no read has landed", updates: null },
+    ];
+    expect(cases).toHaveLength(2);
+    for (const one of cases)
+      expect(
+        attentionRows(source({ updates: one.updates })).some(
+          (r) => r.key === "updates",
+        ),
+        one.name,
+      ).toBe(false);
+  });
+
+  // Worst first: an errand never sits above a fault.
+  it("comes after every fault on the list", () => {
+    const rows = attentionRows(
+      source({
+        updates: 3,
+        updatesError: "no network",
+        result: {
+          harnesses: [],
+          items: [],
+          missingProjects: ["/work/gone"],
+          warnings: [warning({ kind: "empty-file" })],
+        },
+      }),
+    );
+    expect(rows.at(-1)?.key).toBe("updates");
+    expect(rows.length).toBeGreaterThan(1);
   });
 });

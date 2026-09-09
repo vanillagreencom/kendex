@@ -25,7 +25,6 @@ beforeEach(() => {
     busy: false,
     read: READ_LANDED,
     checking: false,
-    pendingFollows: [],
     reload: async () => {},
   });
 });

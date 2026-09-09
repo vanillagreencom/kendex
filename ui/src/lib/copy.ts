@@ -170,7 +170,7 @@ export const UPDATES_EMPTY_BODY =
   "Every package you installed is on its latest version.";
 export const UPDATES_UNCHECKED_TITLE = "Couldn't be checked";
 export const REMOVED_UPSTREAM_TAG = "No longer in its source";
-export const UPDATE_ALL_LABEL = "Update all";
+export const UPDATE_ALL_LABEL = "Update all…";
 export const CHECK_FOR_UPDATES_LABEL = "Check for updates";
 export const IGNORE_UPDATES_LABEL = "Stop notifying…";
 export const ignoreConfirmTitle = (name: string): string =>
@@ -181,7 +181,6 @@ export const IGNORE_CONFIRM_LABEL = "Stop notifying";
 export const NOTIFY_AGAIN_LABEL = "Notify again";
 export const hiddenUpdatesLabel = (count: number): string =>
   count === 1 ? "1 hidden update" : `${count} hidden updates`;
-export const PINNED_UPDATE_TAG = "Held";
 export const EDITED_UPDATE_TAG = "Edited by you";
 export const UPDATE_ERROR_TITLE = "Couldn't update";
 export const updatedToastLabel = (name: string): string => `Updated ${name}`;

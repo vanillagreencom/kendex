@@ -14,6 +14,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { UpdateReviewDialog } from "@/components/updates/update-review-dialog";
 import { unmanagedCount } from "@/lib/audit-counts";
 import {
   NOT_CHECKED_BADGE,
@@ -32,12 +33,15 @@ import { scopeNames } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { everyPlace, sameScope } from "@/lib/scope";
 import { sessionNoteState } from "@/lib/session-note";
+import { availableUpdatesIn, outOfDateIn } from "@/lib/update-groups";
+import { readUnsettled } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount, useAuditStore } from "@/stores/audit";
 import { useCommitOfferStore } from "@/stores/commit-offer";
 import { useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
+import { useUpdatesStore } from "@/stores/updates";
 
 const GLOBAL: Scope = { scope: "global" };
 
@@ -169,6 +173,31 @@ export function ProjectList() {
   };
   const { settings, registerProject, unregisterProject, discoverProjects } =
     useSettingsStore();
+  // What each place's own packages are standing on. Only a landed read puts
+  // a number on a card, and a place the read could not cover at all has no
+  // number to put: its rows are missing from these, and saying "0 out of
+  // date" over that is the one thing a card must not do. Both are drawn as
+  // nothing here, because Home and Problems carry the reason.
+  const updateRows = useUpdatesStore((s) => s.rows);
+  const updatesLanded = useUpdatesStore((s) => s.read.status === "landed");
+  const unreadable = useUpdatesStore((s) => s.unreadable);
+  const updatesBusy = useUpdatesStore((s) => s.busy);
+  // A count is a fact worth drawing while a read runs; a write read off
+  // those rows is not, and the store refuses one. The card's review holds
+  // in the same words the Updates page uses rather than letting the click
+  // answer with an error.
+  const updatesHeld = useUpdatesStore(readUnsettled);
+  const outOfDate = (scope: Scope): number | null =>
+    updatesLanded && !unreadable.some((place) => sameScope(place.scope, scope))
+      ? outOfDateIn(updateRows, scope)
+      : null;
+  // The place whose updates are being reviewed, with what it is called: one
+  // dialog for every card, so the flow behind a card's line is the flow
+  // behind the Updates page's own buttons.
+  const [reviewing, setReviewing] = useState<{
+    scope: Scope;
+    name: string;
+  } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -214,6 +243,8 @@ export function ProjectList() {
           onKindClick={(kind) => goToLibrary({ ...personal, kind })}
           unmanaged={notManaged(GLOBAL)}
           onUnmanaged={() => goToUnmanaged(GLOBAL)}
+          outOfDate={outOfDate(GLOBAL)}
+          onOutOfDate={() => setReviewing({ scope: GLOBAL, name: "Personal" })}
           action={<PlaceActions scope={GLOBAL} place="Personal" />}
         />
 
@@ -239,6 +270,10 @@ export function ProjectList() {
                 onKindClick={(kind) => goToLibrary({ ...place, kind })}
                 unmanaged={notManaged(scope)}
                 onUnmanaged={() => goToUnmanaged(scope)}
+                outOfDate={outOfDate(scope)}
+                onOutOfDate={() =>
+                  setReviewing({ scope, name: namedAlone(root) })
+                }
                 // Not drawn until the scan and the audit have answered for
                 // this place: a card saying the note is off before either
                 // was read would be claiming a state the app has not
@@ -256,6 +291,25 @@ export function ProjectList() {
           })
         )}
 
+        <UpdateReviewDialog
+          rows={
+            reviewing ? availableUpdatesIn(updateRows, reviewing.scope) : []
+          }
+          // Every tracked place, so a review names this one the way the
+          // card's own menu does when two roots end in the same folder.
+          among={everyPlace(projects)}
+          place={reviewing?.name ?? null}
+          open={reviewing !== null}
+          onOpenChange={(open) => {
+            if (!open) setReviewing(null);
+          }}
+          busy={updatesBusy}
+          held={updatesHeld}
+          onConfirm={(rows) => {
+            setReviewing(null);
+            void useUpdatesStore.getState().updateRows(rows);
+          }}
+        />
         <AddProjectDialog
           open={adding}
           onOpenChange={setAdding}

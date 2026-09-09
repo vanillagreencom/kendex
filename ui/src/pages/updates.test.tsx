@@ -11,6 +11,7 @@ import {
 } from "@/lib/copy";
 import {
   NEVER_CHECKED,
+  UPDATE_MENU_LABEL,
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_CHECKING,
   UPDATES_UNCONFIRMED_TITLE,
@@ -54,7 +55,6 @@ vi.mock("@/stores/updates", async (importOriginal) => {
       busy: stub.busy,
       checking: false,
       read: stub.read,
-      pendingFollows: [],
       lastFetched: stub.lastFetched,
       unreadable: stub.unreadable,
       reload: async () => {},
@@ -249,5 +249,59 @@ describe("how fresh the page says its answer is", () => {
         row.name,
       ).toEqual({ present: row.present, absent: [] });
     }
+  });
+});
+
+/** The page's own update control, when it is a menu — told from the rows'
+ *  buttons by being the one that opens a choice. */
+const updateMenu = (html: string) => {
+  const page = document.createElement("div");
+  page.innerHTML = html;
+  return [
+    ...page.querySelectorAll<HTMLElement>(
+      '[data-slot="dropdown-menu-trigger"]',
+    ),
+  ].find((el) => el.textContent?.trim() === UPDATE_MENU_LABEL);
+};
+
+// One package, one place's worth, everything: three scopes of one flow.
+// Which control the page draws follows how many places have news — a menu
+// offering one place beside "everything" is the same choice twice.
+describe("what the page offers to update", () => {
+  it("asks straight out where one place holds every update", () => {
+    stub.rows = [
+      updateRow("one", "/work/acme"),
+      updateRow("two", "/work/acme"),
+    ];
+    const html = renderToStaticMarkup(<UpdatesPage />);
+    expect(renderedButton(html, UPDATE_ALL_LABEL)?.disabled).toBe(false);
+    expect(updateMenu(html)).toBeUndefined();
+  });
+
+  it("offers each place beside everything where several have news", () => {
+    stub.rows = [
+      updateRow("one", "/work/acme"),
+      updateRow("two", "/work/acme"),
+      updateRow("three", null),
+    ];
+    const html = renderToStaticMarkup(<UpdatesPage />);
+    expect(updateMenu(html)).toBeDefined();
+    expect(renderedButton(html, UPDATE_ALL_LABEL)).toBeUndefined();
+  });
+
+  // A place whose every row is edited can take nothing, so it is not one
+  // of the places the menu offers.
+  it("counts only places something could be written in", () => {
+    stub.rows = [
+      updateRow("one", "/work/acme"),
+      updateRow("two", "/work/acme"),
+      updateRow("three", null, {
+        blockedByLocalEdit: true,
+        editedHarnesses: ["claude"],
+      }),
+    ];
+    const html = renderToStaticMarkup(<UpdatesPage />);
+    expect(renderedButton(html, UPDATE_ALL_LABEL)?.disabled).toBe(false);
+    expect(updateMenu(html)).toBeUndefined();
   });
 });

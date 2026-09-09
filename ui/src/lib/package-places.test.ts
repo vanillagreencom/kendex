@@ -70,7 +70,6 @@ const SETTLED: UpdatesStanding = {
   read: READ_LANDED,
   checking: false,
   reading: false,
-  pendingFollows: [],
 };
 
 const OURS: Origin = { origin: "marketplace", source: "cat", repo: "o/r" };
@@ -219,16 +218,6 @@ describe("which places can take an update", () => {
   it("offers none while a check is running", () => {
     const held = { ...SETTLED, checking: true };
     expect(places([VG], [row(VG)], {}, "skill", held)[0].updatable).toBe(false);
-  });
-
-  // A follow switch reaches its own scope alone, so it holds that place
-  // and leaves the package's other places live.
-  it("holds only the place a follow switch is settling in", () => {
-    const held = { ...SETTLED, pendingFollows: [{ scope: VG }] };
-    const built = places([VG, HYPR], [row(VG), row(HYPR)], {}, "skill", held);
-
-    expect(built[0].updatable).toBe(false);
-    expect(built[1].updatable).toBe(true);
   });
 
   it("hands Update all only the places that can take one", () => {

@@ -50,7 +50,6 @@ describe("what a bulk run says it did", () => {
       rows: [],
       busy: false,
       checking: false,
-      pendingFollows: [],
       read: READ_LANDED,
       lastFetched: null,
     });
