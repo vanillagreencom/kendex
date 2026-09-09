@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PackageDiff, Scope, UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
 import { updateRow as row } from "@/components/updates-test-rows";
+import { comparing } from "@/lib/copy-files";
 import {
   UPDATE_DIFF_NO_VERSIONS,
   UPDATE_NEEDS_CHECK_NOTE,
@@ -71,6 +72,9 @@ const open = (
 
 // The dialog is portalled, so what a reader sees is the whole document.
 const shown = () => document.body.textContent ?? "";
+/** A file tree row by the path it names. */
+const treeRow = (path: string) =>
+  [...document.querySelectorAll("button")].find((one) => one.title === path);
 const button = (label: string): HTMLButtonElement => {
   const found = [...document.querySelectorAll("button")].find(
     (b) => b.textContent === label,
@@ -100,8 +104,14 @@ describe("the update review", () => {
       { at: "commit", commit: "2222222222" },
       null,
     );
-    expect(shown()).toContain("SKILL.md");
+    // Drawn in the app's one file-view pattern: the changed files as a
+    // tree, the chosen file's diff beside them. The tree row names its
+    // whole path, which is what tells this apart from a list of diffs.
+    expect(treeRow("SKILL.md")).toBeDefined();
     expect(shown()).toContain("a new line");
+    // The two versions are named above the viewer, which has no bar of its
+    // own inside this dialog.
+    expect(shown()).toContain(comparing("1111111", "v2"));
     expect(shown()).toContain(UPDATE_REVIEW_BODY);
     expect(shown()).toContain(updateReviewOneTitle("gh", "User level"));
     // Nothing has been asked of the engine but the comparison.

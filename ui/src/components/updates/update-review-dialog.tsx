@@ -7,7 +7,8 @@ import {
   type UpdateRow,
 } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { DiffView } from "@/components/diff/diff-view";
+import { ChangesViewer } from "@/components/files/changes-viewer";
+import { comparing } from "@/lib/copy-files";
 import {
   UPDATE_DIFF_NO_VERSIONS,
   UPDATE_DIFF_READING,
@@ -272,7 +273,13 @@ function UpdateTarget({
  *
  *  The app's one file-view pattern is drawn here and in no other part of
  *  this flow, so the whole update preview follows that pattern by changing
- *  this function. */
+ *  this function. That pattern is the changed files as a tree with the
+ *  chosen file's diff beside them — the same reading as a package's Files
+ *  tab and as the commit dialog.
+ *
+ *  The two versions are named above it rather than inside it: the panel
+ *  that carries this viewer elsewhere names its own two sides on its bar,
+ *  and this dialog has no such bar. */
 function TargetChanges({
   fromLabel,
   toLabel,
@@ -299,5 +306,12 @@ function TargetChanges({
         {updateDiffFailed(read.reason)}
       </p>
     );
-  return <DiffView diff={read.diff} fromLabel={fromLabel} toLabel={toLabel} />;
+  return (
+    <div className="space-y-3">
+      <p className="text-[13px] text-muted-foreground">
+        {comparing(fromLabel, toLabel)}
+      </p>
+      <ChangesViewer diff={read.diff} />
+    </div>
+  );
 }
