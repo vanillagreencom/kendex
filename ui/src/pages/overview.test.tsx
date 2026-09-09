@@ -44,7 +44,11 @@ const { stub, wrap } = vi.hoisted(() => {
       auditedAt: null as number | null,
       read: { status: "landed", error: null } as ReadState,
     },
-    provenance: { rows: [] as unknown[], loaded: true },
+    provenance: {
+      rows: [] as unknown[],
+      loaded: true,
+      answeredFor: 0 as number | null,
+    },
   };
   const wrap = <M extends object>(
     mod: M,
@@ -130,7 +134,7 @@ const installed = (overrides: Partial<ObservedItem>): ObservedItem => ({
 beforeEach(() => {
   // The join has answered and recorded nothing: these fixtures group as
   // the scan saw them, and the tile may count.
-  stub.provenance = { rows: [], loaded: true };
+  stub.provenance = { rows: [], loaded: true, answeredFor: 0 };
   stub.scan = { result: null, error: null, scanning: false };
   stub.updates = { read: READ_LANDED, unreadable: [] };
   stub.market = { read: READ_LANDED };
@@ -368,7 +372,7 @@ describe("the Installed tile", () => {
   // before it answers, the tile would report the installations it can see
   // under a label that says packages — and land on a shorter table.
   it("waits for the read that says which installations are one package", () => {
-    stub.provenance = { rows: [], loaded: false };
+    stub.provenance = { rows: [], loaded: false, answeredFor: null };
     stub.scan = {
       result: {
         ...scanned,

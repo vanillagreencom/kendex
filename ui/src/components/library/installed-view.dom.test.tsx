@@ -63,6 +63,14 @@ describe("a customized package in the Library list", () => {
   beforeEach(() => {
     vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
     vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    // The join has answered and found nothing recorded: these packages
+    // are grouped as the scan saw them, which is what the fixture means.
+    useProvenanceStore.setState({
+      rows: [],
+      loaded: true,
+      answeredFor: 0,
+      read: READ_LANDED,
+    });
     useEditorStore.setState({
       saved: { "/work/vg": mine as never, "/work/hyprtrade": mine as never },
     });
@@ -130,6 +138,14 @@ describe("the Library narrowed to packages edited on disk", () => {
   beforeEach(() => {
     vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
     vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    // The join has answered and found nothing recorded: these packages
+    // are grouped as the scan saw them, which is what the fixture means.
+    useProvenanceStore.setState({
+      rows: [],
+      loaded: true,
+      answeredFor: 0,
+      read: READ_LANDED,
+    });
     useEditorStore.setState({ saved: {} });
     useUpdatesStore.setState({ rows: rows as never, read: READ_LANDED });
     useScanStore.setState({
@@ -574,6 +590,7 @@ describe("one package several tools store differently", () => {
         },
       ] as never,
       loaded: true,
+      answeredFor: 0,
       read: READ_LANDED,
     });
     useScanStore.setState({
@@ -656,6 +673,10 @@ describe("the Library while the identity read has not answered", () => {
   const arrange = (provenance: {
     rows: never[];
     loaded: boolean;
+    /** Which scan the rows answer about, null where none has been
+     *  answered for. The fixtures set the scan store directly, which
+     *  leaves its generation at 0. */
+    answeredFor: number | null;
     read: ReadState;
     reload?: () => Promise<void>;
   }) => {
@@ -687,7 +708,12 @@ describe("the Library while the identity read has not answered", () => {
   // every row is an installation wearing a package's clothes, which is the
   // duplication this page exists to stop.
   it("draws no rows at all while the first read is on its way", () => {
-    const host = arrange({ rows: [], loaded: false, read: READ_PENDING });
+    const host = arrange({
+      rows: [],
+      loaded: false,
+      answeredFor: null,
+      read: READ_PENDING,
+    });
     expect(skeleton(host)).toBe(true);
     expect(rows(host)).toBe(0);
     expect(host.textContent).not.toContain(PACKAGES_CHECK_FAILED_TITLE);
@@ -700,6 +726,7 @@ describe("the Library while the identity read has not answered", () => {
     const host = arrange({
       rows: [],
       loaded: false,
+      answeredFor: null,
       read: readFailed("no lock"),
       reload,
     });
@@ -722,6 +749,7 @@ describe("the Library while the identity read has not answered", () => {
     const host = arrange({
       rows: [],
       loaded: true,
+      answeredFor: 0,
       read: readFailed("no lock"),
     });
     expect(rows(host)).toBe(1);

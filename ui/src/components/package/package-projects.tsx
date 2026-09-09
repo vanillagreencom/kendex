@@ -53,7 +53,8 @@ export function PackageProjects({
   /** This package's installations, as the Library grouped them. */
   installations: ObservedItem[];
   busy: boolean;
-  onDelete: () => void;
+  /** Absent where this page addresses no declaration. */
+  onDelete?: () => void;
 }) {
   const { places, loading, removalHeld } = usePackagePlaces(
     kind,
@@ -88,7 +89,7 @@ export function PackageProjects({
             {/* Held to the same judge as the cards: with nothing here
                 kendex owns, there is no removal for this link to ask
                 for. */}
-            {removable.length > 0 ? (
+            {removable.length > 0 && onDelete ? (
               <Button
                 variant="link"
                 size="sm"

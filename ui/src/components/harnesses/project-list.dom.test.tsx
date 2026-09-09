@@ -42,6 +42,7 @@ import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
+import { joinAnswered } from "@/test/identity-join";
 import { ProjectList } from "./project-list";
 
 vi.mock("@/bindings", () => ({
@@ -447,6 +448,9 @@ const destinationRows = (): number =>
 describe("a place card's kind badge", () => {
   beforeEach(() => {
     vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
+    // The join has answered about the scan these fixtures set, and
+    // recorded nothing: they group as the scan saw them.
+    joinAnswered();
     vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
     useUpdatesStore.setState({ rows: [], read: READ_LANDED });
     useScanStore.setState({ scanning: false, result: machine, error: null });

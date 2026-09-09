@@ -56,7 +56,8 @@ export function PackageTabs({
   /** Opens the dialog that deletes every copy — the Projects tab offers
    *  the whole-package deletion beside its per-place removals, and one
    *  dialog confirms it wherever it was asked for. */
-  onDelete: () => void;
+  /** Absent where this page addresses no declaration. */
+  onDelete?: () => void;
   body: ReactNode;
 }) {
   // Read once here rather than in each of the two places it shows: the tab

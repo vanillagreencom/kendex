@@ -41,6 +41,7 @@ import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
 import { useLibraryStandings } from "@/lib/library-standings";
 import {
   usePackageIndex,
+  usePackagesEverKnown,
   usePackagesKnown,
   usePackagesRead,
   useReloadPackages,
@@ -93,6 +94,9 @@ export function InstalledView() {
   // Which observations are one package, from the one join that says so.
   const packageOf = usePackageIndex();
   const packagesKnown = usePackagesKnown();
+  // Whether any answer was ever kept, which is what tells a failure with
+  // rows behind it from one with nothing.
+  const packagesEverKnown = usePackagesEverKnown();
   // The read's own outcome, so a first read still on its way and one that
   // failed are not both drawn as waiting.
   const packagesRead = usePackagesRead();
@@ -102,7 +106,9 @@ export function InstalledView() {
   // read again. A failure after one landed keeps its rows, headed below as
   // last-known.
   const packagesUnreadable =
-    !packagesKnown && packagesRead.status === "failed" ? packagesRead : null;
+    !packagesEverKnown && packagesRead.status === "failed"
+      ? packagesRead
+      : null;
   // Kept in nav rather than here so leaving for a package page and coming
   // back lands on the same narrowed table.
   const search = useNavStore((s) => s.search);

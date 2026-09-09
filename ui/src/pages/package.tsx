@@ -22,7 +22,11 @@ import {
   installationAt,
 } from "@/lib/derive";
 import { packageDisplayName } from "@/lib/labels";
-import { usePackageIndex, usePackagesKnown } from "@/lib/package-identity";
+import {
+  addressesDeclaration,
+  usePackageIndex,
+  usePackagesKnown,
+} from "@/lib/package-identity";
 import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
 import {
@@ -151,6 +155,15 @@ export function PackagePage() {
   // another.
   const primary = installationAt(group, ref.scope);
   if (!primary) return null;
+  // Whether this page has a declaration behind it. Asked once, and the
+  // controls that write one are simply not handed a handler: an
+  // installation nothing recorded shares its scope, kind and name with
+  // whatever package may be recorded under them, and every one of those
+  // writes would land on that package instead. What stays is the
+  // installation itself — its files, its places, its details — and taking
+  // it off the machine remains the Not-managed path's, which addresses the
+  // file rather than a declaration.
+  const declares = addressesDeclaration(ref);
 
   const displayName = packageDisplayName(ref);
   const installed = installedRow(versions);
@@ -209,10 +222,13 @@ export function PackagePage() {
       diff={diff}
       busy={mutating}
       reading={reads.reading}
-      onToggle={(enable) =>
-        void inEveryScope((scope) =>
-          toggle(scope, group.kind, group.name, enable),
-        )
+      onToggle={
+        declares
+          ? (enable) =>
+              void inEveryScope((scope) =>
+                toggle(scope, group.kind, group.name, enable),
+              )
+          : undefined
       }
       onSwitchVersion={switchTo}
       onCompare={compare}
@@ -243,9 +259,11 @@ export function PackagePage() {
             onRetryRead={offer.retry ? reload : undefined}
             retryRunning={reads.reading}
             busy={mutating}
-            onUpdate={() => latest && updateToLatest(latest)}
-            onPreview={() => latest && compare(latest)}
-            onDelete={() => setConfirmDelete(true)}
+            onUpdate={
+              declares ? () => latest && updateToLatest(latest) : undefined
+            }
+            onPreview={declares ? () => latest && compare(latest) : undefined}
+            onDelete={declares ? () => setConfirmDelete(true) : undefined}
           />
         }
       />
@@ -259,7 +277,7 @@ export function PackagePage() {
         harnesses={group.harnesses as HarnessId[]}
         busy={mutating}
         openOn={openOn}
-        onDelete={() => setConfirmDelete(true)}
+        onDelete={declares ? () => setConfirmDelete(true) : undefined}
         body={body}
       />
       {dirty ? (

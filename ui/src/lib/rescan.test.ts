@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
+import { identityCurrent } from "@/lib/package-identity";
 import { READ_LANDED } from "@/lib/read-state";
 import { rescanEverything } from "@/lib/rescan";
 import { useAuditStore } from "@/stores/audit";
@@ -34,7 +35,7 @@ beforeEach(() => {
     status: "ok",
     data: [],
   });
-  useProvenanceStore.setState({ rows: [], loaded: false });
+  useProvenanceStore.setState({ rows: [], loaded: false, answeredFor: null });
   useScanStore.setState({
     scanning: false,
     result: null,
@@ -124,5 +125,46 @@ describe("Scan again", () => {
     await rescanEverything();
 
     expect(toast.error).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The scan and the identity join answer separately, and a rescan publishes
+// the scan first. Read as "a join once landed", readiness would let every
+// count and the package page's missing-package effect group a new scan
+// against the previous answer — and that navigation is not undone by the
+// later render. So readiness asks which scan the rows answer about.
+describe("identity readiness across a rescan", () => {
+  // Asked of the production rule, not a second copy of it here: a
+  // readiness test that spelled the comparison itself would go on passing
+  // whatever the app does.
+  const known = () =>
+    identityCurrent(
+      useProvenanceStore.getState().answeredFor,
+      useScanStore.getState().generation,
+    );
+
+  it("is not known for a scan the join has not answered about", async () => {
+    await rescanEverything();
+    expect(known()).toBe(true);
+
+    // A scan lands on its own — a focus rescan's, or the read-back behind a
+    // write — with no join behind it yet.
+    await useScanStore.getState().refresh();
+    expect(useScanStore.getState().result).not.toBeNull();
+    expect(known()).toBe(false);
+
+    // And is known again once the join has answered about that scan.
+    await useProvenanceStore.getState().reload();
+    expect(known()).toBe(true);
+  });
+
+  // The join answers about the machine as it was when the read began. One
+  // that began before a scan landed says nothing about it.
+  it("does not count a join that began before the scan it would answer for", async () => {
+    await rescanEverything();
+    const settle = useProvenanceStore.getState().reload();
+    await useScanStore.getState().refresh();
+    await settle;
+    expect(known()).toBe(false);
   });
 });

@@ -75,14 +75,21 @@ export async function rescanEverything(opts?: {
   announce?: boolean;
 }): Promise<void> {
   await Promise.all([
-    useScanStore.getState().refresh({ announce: opts?.announce === true }),
+    // The join answers ABOUT a scan — which observations are one package —
+    // so it is asked once the scan it answers for has landed, never
+    // alongside it. Started together, it would answer about the scan
+    // before this one and every count would read as unknown until
+    // something else asked again.
+    useScanStore
+      .getState()
+      .refresh({ announce: opts?.announce === true })
+      // Answers nothing to act on: a join that could not be read is the
+      // previous rows staying put, which its store publishes as its read
+      // state for every reader that gates on the answer.
+      .then(() => useProvenanceStore.getState().reload()),
     // Forced: a write moved the very bytes a score answers for, and the
     // audit's freshness window would otherwise answer from before it.
     useAuditStore.getState().refresh({ force: true }),
-    // Answers nothing to act on: a join that could not be read is the
-    // previous rows staying put, which its store publishes as its read
-    // state for every reader that gates on the answer.
-    useProvenanceStore.getState().reload(),
   ]);
 }
 

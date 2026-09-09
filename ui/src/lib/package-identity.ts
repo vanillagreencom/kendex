@@ -8,9 +8,11 @@ import type {
   Scope,
 } from "@/bindings";
 import { PLACE_COUNTING_LABEL, PLACE_UNCHECKED_LABEL } from "@/lib/copy";
+import type { PackageIdentity } from "@/lib/derive";
 import type { ReadState } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 import { useProvenanceStore } from "@/stores/provenance";
+import { useScanStore } from "@/stores/scan";
 
 /** Which package one observed installation is, or null where nothing
  *  establishes that.
@@ -62,15 +64,40 @@ export function usePackageIndex(): PackageOf {
   return useMemo(() => packageIndex(rows), [rows]);
 }
 
-/** Whether the join has ever answered. Until it has, nothing knows which
- *  observations are one package, so a count taken now would be a count of
- *  installations wearing a package's clothes. A read that failed after one
- *  landed leaves this true and the answer last-known: countable, and said
- *  to be unconfirmed by whoever draws it.
+/** Whether the identity of the scan ON SCREEN is known.
+ *
+ *  Not merely that a read once landed: the scan and the join answer
+ *  separately, and a focus rescan or an in-app write publishes the new scan
+ *  before its join has been asked for. Grouped against the previous
+ *  answer, a package whose observed spelling just changed reads as one that
+ *  is not installed — and the package page acts on that by leaving. So the
+ *  question is whether the rows on hand answer about the scan on hand, and
+ *  the two stores carry the one number that settles it.
+ *
+ *  A read that failed after one landed leaves this false, with the failure
+ *  in {@link usePackagesRead} — the rows are last-known rather than an
+ *  answer about now, which is exactly what a reader must be told.
  *
  *  Every surface counting in the package unit asks this one, so no two of
- *  them can draw a number the other would not. */
+ *  them can draw a number the other would not. {@link identityCurrent} is
+ *  the comparison itself, for anything holding the two numbers rather than
+ *  subscribing to them. */
+export const identityCurrent = (
+  answeredFor: number | null,
+  generation: number,
+): boolean => answeredFor !== null && answeredFor === generation;
+
 export const usePackagesKnown = (): boolean =>
+  identityCurrent(
+    useProvenanceStore((s) => s.answeredFor),
+    useScanStore((s) => s.generation),
+  );
+
+/** Whether the join has ever answered at all, whatever it answered about.
+ *  What tells a first read still on its way from one that failed over rows
+ *  it had — the rows are last-known either way, and only this says there
+ *  are any. */
+export const usePackagesEverKnown = (): boolean =>
   useProvenanceStore((s) => s.loaded);
 
 /** How the last read of the join went, for the surfaces that must tell a
@@ -99,3 +126,22 @@ export function packagesUncounted(
     ? PLACE_UNCHECKED_LABEL
     : PLACE_COUNTING_LABEL;
 }
+
+/** Whether a page opened on this reference may address a declaration.
+ *
+ *  The one place that question is answered. A recorded package has a
+ *  declaration behind it: its record, its versions, its Update, its
+ *  enable switch and its Delete all speak to that declaration by scope,
+ *  kind and name. An installation nothing recorded has none — and the very
+ *  same scope, kind and name may belong to a package that does, so every
+ *  one of those reads and writes would land on a different thing than the
+ *  page describes. What such a page can still do is show the installation
+ *  itself; taking it off the machine is the Not-managed path's, which
+ *  addresses the file rather than a declaration.
+ *
+ *  Asked once, here, rather than as a flag beside each control: identity
+ *  lost after a join is the class this whole issue is about, and a second
+ *  copy of the rule is where it comes back. */
+export const addressesDeclaration = (ref: {
+  identity: PackageIdentity;
+}): boolean => ref.identity === "recorded";

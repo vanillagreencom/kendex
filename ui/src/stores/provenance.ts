@@ -9,6 +9,7 @@ import type { PackageIdentityRef } from "@/lib/derive";
 import { READ_PENDING, type ReadState, readOf } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 import { settled } from "@/lib/settled";
+import { useScanStore } from "@/stores/scan";
 
 interface ProvenanceState {
   rows: ProvenanceRow[];
@@ -18,6 +19,12 @@ interface ProvenanceState {
    * which is the right answer for a column and the wrong one for a decision.
    */
   loaded: boolean;
+  /** The scan `rows` answer about: the generation standing when this read
+   *  began. A read that began before a scan landed describes the machine
+   *  before it, so its rows are not an answer about what is on screen now
+   *  — which `loaded` alone can never say, because it only means a read
+   *  once landed. Null until one has. */
+  answeredFor: number | null;
   /** How the last read went. A failure keeps the rows it had and says why:
    * the delete dialog's note and the places tab's Remove gate on it, and
    * acting on rows nothing confirmed is the fail-open they close. */
@@ -58,6 +65,10 @@ export const useProvenanceStore = create<ProvenanceState>((set, get) => {
   let queued: Promise<void> | null = null;
 
   const land = async (): Promise<void> => {
+    // Taken as the read begins, not as it lands: what these rows describe
+    // is the machine at the moment they were asked for, and a scan landing
+    // while the read is out is a scan they know nothing about.
+    const asked = useScanStore.getState().generation;
     // The wrapper folds a rejected command into an error status, so
     // `settled` is the last guard rather than the first: it names a refusal
     // that carries no reason, and a read that never answered at all is
@@ -66,7 +77,12 @@ export const useProvenanceStore = create<ProvenanceState>((set, get) => {
     const response = await settled(commands.libraryProvenance());
     set(
       response.status === "ok"
-        ? { rows: response.data, loaded: true, read: readOf(response) }
+        ? {
+            rows: response.data,
+            loaded: true,
+            answeredFor: asked,
+            read: readOf(response),
+          }
         : { read: readOf(response) },
     );
   };
@@ -86,6 +102,7 @@ export const useProvenanceStore = create<ProvenanceState>((set, get) => {
   return {
     rows: [],
     loaded: false,
+    answeredFor: null,
     read: READ_PENDING,
     reading: false,
     load: async () => {

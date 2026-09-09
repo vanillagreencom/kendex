@@ -464,6 +464,7 @@ describe("removing a package from one place", () => {
     useProvenanceStore.setState({
       rows: ownedBy([VG, OURS], [HYPR, OURS]),
       loaded: true,
+      answeredFor: 0,
     });
     vi.mocked(commands.libraryProvenance).mockResolvedValue({
       status: "error",

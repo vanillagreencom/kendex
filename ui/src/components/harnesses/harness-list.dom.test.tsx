@@ -94,7 +94,12 @@ beforeEach(() => {
   vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
   // The join has answered and recorded nothing: these packages group as
   // the scan saw them, which is what the fixture means.
-  useProvenanceStore.setState({ rows: [], loaded: true, read: READ_LANDED });
+  useProvenanceStore.setState({
+    rows: [],
+    loaded: true,
+    answeredFor: 0,
+    read: READ_LANDED,
+  });
   useUpdatesStore.setState({ rows: [], read: READ_LANDED });
   useScanStore.setState({ scanning: false, result: scanned, error: null });
   useSettingsStore.setState({ settings: { projects: [] } as never });
@@ -140,13 +145,23 @@ describe("a harness row's badges before the identity read answers", () => {
   const rows = [
     {
       name: "still on its way",
-      provenance: { rows: [], loaded: false, read: READ_PENDING },
+      provenance: {
+        rows: [],
+        loaded: false,
+        answeredFor: null,
+        read: READ_PENDING,
+      },
       said: PLACE_COUNTING_LABEL,
       absent: PLACE_UNCHECKED_LABEL,
     },
     {
       name: "failed with nothing kept",
-      provenance: { rows: [], loaded: false, read: readFailed("no lock") },
+      provenance: {
+        rows: [],
+        loaded: false,
+        answeredFor: null,
+        read: readFailed("no lock"),
+      },
       said: PLACE_UNCHECKED_LABEL,
       absent: PLACE_COUNTING_LABEL,
     },

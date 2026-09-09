@@ -25,6 +25,7 @@ import {
   TRY_AGAIN_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
+import { DELETE_LABEL } from "@/lib/copy-projects";
 import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
 import {
   EDITED_CANT_UPDATE_NOTE,
@@ -52,6 +53,7 @@ import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
+import { joinAnswered } from "@/test/identity-join";
 import { PackagePage } from "./package";
 
 // The page is mounted against the real stores; only the backend is
@@ -153,6 +155,7 @@ const openPage = async (
       package: { kind, name: "gh" },
     })),
     loaded: true,
+    answeredFor: 0,
   });
   useNavStore.setState({
     page: "package",
@@ -853,6 +856,7 @@ describe("the package page's safety tab", () => {
         },
       ],
       loaded: true,
+      answeredFor: 0,
     });
     useNavStore.setState({
       page: "package",
@@ -1072,5 +1076,101 @@ describe("the package page's delete action", () => {
     expect(said).toContain("Delete gh?");
     expect(said).toContain("/work/vg");
     expect(said).toContain("/work/hyprtrade");
+  });
+});
+
+// Two things can wear one scope, kind and name: a package the records
+// account for and a file nothing recorded. Every read and every write on
+// this page addresses a declaration by those three, so a page opened on the
+// second must issue none of them — it would be reading and changing the
+// first while describing the second.
+describe("a package page opened on an installation nothing recorded", () => {
+  const stray = (): ObservedItem => ({
+    ...installedAt(VG),
+    harness: "cursor",
+    path: `${VG.root}/.cursor/skills/gh`,
+  });
+
+  const openObserved = async () => {
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [installedAt(VG), stray()],
+        missingProjects: [],
+        warnings: [],
+      },
+    });
+    // The claude copy is the recorded package; the cursor one is nobody's.
+    joinAnswered([
+      {
+        scope: VG,
+        kind: "skill",
+        name: "gh",
+        harness: "claude",
+        origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+        package: { kind: "skill", name: "gh" },
+      },
+      {
+        scope: VG,
+        kind: "skill",
+        name: "gh",
+        harness: "cursor",
+        origin: { origin: "unmanaged" },
+        package: null,
+      },
+    ]);
+    useNavStore.setState({
+      page: "package",
+      packageRef: {
+        kind: "skill",
+        name: "gh",
+        scope: VG,
+        identity: "observed",
+      },
+      packageView: null,
+    });
+    const host = mount(<PackagePage />);
+    await settle();
+    return host;
+  };
+
+  it("reads no declaration and offers no write that would land on one", async () => {
+    const back = vi.fn();
+    useNavStore.setState({ back });
+    const host = await openObserved();
+
+    // The page stays: this installation is on the machine and is what the
+    // link named.
+    expect(back).not.toHaveBeenCalled();
+    // None of the three declaration reads was issued for it.
+    for (const read of [
+      commands.packageMeta,
+      commands.packageVersions,
+      commands.packageFiles,
+    ]) {
+      expect(vi.mocked(read)).not.toHaveBeenCalled();
+    }
+    // And no control that writes one is drawn.
+    const labels = Array.from(host.querySelectorAll("button")).map(
+      (one) => one.textContent,
+    );
+    expect(labels).not.toContain(DELETE_LABEL);
+    expect(host.querySelector("#package-enabled")).toBeNull();
+  });
+
+  // The row it IS about stays inspectable: what the tool holds, where, and
+  // how to open it. Taking it off the machine is the Not-managed path's.
+  it("still shows the installation itself", async () => {
+    const host = await openObserved();
+    expect(host.textContent).toContain("gh");
+    expect(
+      Array.from(host.querySelectorAll("button")).map((one) => one.textContent),
+    ).toContain(OPEN_IN_LABEL);
+  });
+
+  // The same page opened on the recorded package keeps everything.
+  it("keeps the recorded package's own reads and controls", async () => {
+    await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+    expect(vi.mocked(commands.packageMeta)).toHaveBeenCalled();
   });
 });

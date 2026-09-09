@@ -55,7 +55,9 @@ export function PackageBody({
   busy: boolean;
   /** Whether the page's own reads are out. */
   reading: boolean;
-  onToggle: (enable: boolean) => void;
+  /** Absent where this page addresses no declaration — the switch writes
+   *  one, and there is none behind an installation nothing recorded. */
+  onToggle?: (enable: boolean) => void;
   onSwitchVersion: (row: VersionRow) => void;
   onCompare: (row: VersionRow) => void;
   onFollow: () => void;
@@ -110,7 +112,7 @@ export function PackageBody({
               selectedFile={view.file}
               busy={busy}
               retryRunning={reading}
-              onToggle={(_, enable) => onToggle(enable)}
+              onToggle={onToggle && ((_, enable) => onToggle(enable))}
               onSwitchVersion={onSwitchVersion}
               onCompare={onCompare}
               onFollow={onFollow}

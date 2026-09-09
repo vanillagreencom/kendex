@@ -32,6 +32,7 @@ beforeEach(() => {
   useProvenanceStore.setState({
     rows: [],
     loaded: true,
+    answeredFor: 0,
     read: READ_PENDING,
     reading: false,
   });
@@ -77,7 +78,7 @@ const rowsFor = (origins: [Scope, Origin][]): ProvenanceRow[] =>
  *  ordinary cases. */
 const from = (...origins: [Scope, Origin][]) => {
   const rows = rowsFor(origins);
-  useProvenanceStore.setState({ rows, loaded: true });
+  useProvenanceStore.setState({ rows, loaded: true, answeredFor: 0 });
   vi.mocked(commands.libraryProvenance).mockResolvedValue({
     status: "ok",
     data: rows,
@@ -192,7 +193,11 @@ describe("the Delete dialog", () => {
 // had before they installed anything.
 describe("the read behind the note", () => {
   it("takes its own read rather than trusting a loaded snapshot", async () => {
-    useProvenanceStore.setState({ rows: rowsFor([[VG, OWN]]), loaded: true });
+    useProvenanceStore.setState({
+      rows: rowsFor([[VG, OWN]]),
+      loaded: true,
+      answeredFor: 0,
+    });
     vi.mocked(commands.libraryProvenance).mockResolvedValue({
       status: "ok",
       data: rowsFor([[VG, MARKET("acme")]]),
@@ -225,6 +230,7 @@ describe("the read behind the note", () => {
     useProvenanceStore.setState({
       rows: rowsFor([[VG, MARKET("acme")]]),
       loaded: true,
+      answeredFor: 0,
     });
     vi.mocked(commands.libraryProvenance).mockResolvedValue({
       status: "error",
@@ -242,7 +248,11 @@ describe("the read behind the note", () => {
   // read — a dialog latching its own call's verdict would go the whole open
   // with nothing under the confirm step.
   it("names the marketplace the read that overtook this open's landed", async () => {
-    useProvenanceStore.setState({ rows: rowsFor([[VG, OWN]]), loaded: true });
+    useProvenanceStore.setState({
+      rows: rowsFor([[VG, OWN]]),
+      loaded: true,
+      answeredFor: 0,
+    });
     const mine = park();
     const rescan = park();
     vi.mocked(commands.libraryProvenance)
@@ -265,7 +275,11 @@ describe("the read behind the note", () => {
   });
 
   it("names nothing off rows a rejected read left standing", async () => {
-    useProvenanceStore.setState({ rows: rowsFor([[VG, OWN]]), loaded: true });
+    useProvenanceStore.setState({
+      rows: rowsFor([[VG, OWN]]),
+      loaded: true,
+      answeredFor: 0,
+    });
     vi.mocked(commands.libraryProvenance).mockRejectedValue(
       new Error("the channel is gone"),
     );
