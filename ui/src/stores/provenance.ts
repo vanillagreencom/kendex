@@ -133,17 +133,41 @@ export function originsFor(
     .map((row) => row.origin);
 }
 
-/** The origin one library group shows: the first provenance row matching its
+/** The provenance record one library group shows: the first row matching its
  * kind, name, and any of its scopes. Groups collapse installations that all
  * come from one place, so any match speaks for the group. Anything acting on
- * the places one at a time wants `originsFor` instead. */
+ * the places one at a time wants `originsFor` instead.
+ *
+ * The whole row rather than its origin, because the two halves only mean
+ * something together: a marketplace source is an alias declared at one
+ * place, so a caller that reads the alias here and the scope from somewhere
+ * else — a group's first installation, say — can address a subscription that
+ * exists at neither. `originFor` is this row's origin, for the callers that
+ * only draw it. */
+export function provenanceFor(
+  rows: ProvenanceRow[],
+  kind: ItemKind,
+  name: string,
+  scopes: Scope[],
+): ProvenanceRow | null {
+  const keys = new Set(scopes.map(scopeKey));
+  return (
+    rows.find(
+      (row) =>
+        row.kind === kind && row.name === name && keys.has(scopeKey(row.scope)),
+    ) ?? null
+  );
+}
+
+/** The origin one library group shows — [provenanceFor]'s row, read for the
+ * one thing a column needs. */
 export function originFor(
   rows: ProvenanceRow[],
   kind: ItemKind,
   name: string,
   scopes: Scope[],
 ): Origin | null {
-  return originsFor(rows, kind, name, scopes)[0] ?? null;
+  return provenanceFor(rows, kind, name, scopes)?.origin ?? null;
 }
 
 /** How an origin reads in the From column and its filter. */

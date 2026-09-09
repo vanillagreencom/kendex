@@ -1,4 +1,3 @@
-import { ChevronRight } from "lucide-react";
 import type { ItemKind, Scope } from "@/bindings";
 import { DotSpinner } from "@/components/loading";
 import { Button } from "@/components/ui/button";
@@ -14,8 +13,10 @@ import { isCustomized } from "@/lib/customization";
 import type { CustomizedHere } from "@/lib/customized-places";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel } from "@/lib/labels";
+import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
 import type { ReadStatus } from "@/lib/read-state";
 import { sameScope } from "@/lib/scope";
+import { cn } from "@/lib/utils";
 import { useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
 
@@ -79,26 +80,39 @@ export function CustomizedIndex({
             item.name === name &&
             sameScope(item.scope, scope),
         );
+        const open = () => goToPackage({ kind, name, scope });
         return (
-          <div key={`${kind}:${name}`} className="flex items-center gap-3 py-3">
+          // The row is the way into the package, so it carries no Open
+          // button. A row for something not installed here has no page to
+          // open, so it stays a statement and must not light up as if a
+          // click would do something.
+          <div
+            key={`${kind}:${name}`}
+            {...(here ? opensOnActivate(open, opensLabel(name)) : {})}
+            className={cn(
+              "flex items-center gap-3 py-3",
+              here && "cursor-pointer",
+            )}
+          >
             <Icon className="size-4 shrink-0 text-customized" />
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{name}</p>
+              {here ? (
+                <button
+                  type="button"
+                  onClick={open}
+                  className="block max-w-full truncate text-left text-sm font-medium hover:underline"
+                >
+                  {name}
+                </button>
+              ) : (
+                <p className="truncate text-sm font-medium">{name}</p>
+              )}
               <p className="truncate text-[13px] text-muted-foreground">
                 {kindLabel(kind)} ·{" "}
                 {customizedLine({ edited, forked, values }, customization)}
               </p>
             </div>
-            {here ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => goToPackage({ kind, name, scope })}
-              >
-                Open
-                <ChevronRight className="size-4" />
-              </Button>
-            ) : (
+            {here ? null : (
               <>
                 <span className="text-[13px] text-muted-foreground">
                   {NOT_INSTALLED_HERE}

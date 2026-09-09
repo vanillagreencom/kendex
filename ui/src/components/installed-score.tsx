@@ -1,4 +1,4 @@
-import type { AuditResult, ItemKind, Scope } from "@/bindings";
+import type { ItemKind, Scope } from "@/bindings";
 import { ScoreCircle } from "@/components/score-circle";
 import { ScoreTooltip } from "@/components/score-tooltip";
 import {
@@ -7,21 +7,16 @@ import {
   SAFETY_DOT_UNCHECKED,
   severityTone,
 } from "@/lib/copy-safety";
-import { installedSafety } from "@/lib/installed-safety";
-import { sameScope } from "@/lib/scope";
+import { type SafetyStanding, safetyStanding } from "@/lib/installed-safety";
 import { useAuditStore } from "@/stores/audit";
 
-/** What the audit says about one installed package right now, and how much
- *  that is worth. A reading kept from before a failed check is not the same
- *  claim as one the check just made, so the two never arrive as one field. */
+/** What the audit says about one installed package right now, ready to
+ *  draw: the standing — see [SafetyStanding] — plus what only a store can
+ *  answer. The standing is one value on purpose: the words a score shows
+ *  and the place they are true of are decided together, so no surface can
+ *  pair them wrongly. */
 export interface InstalledReading {
-  result: AuditResult | null;
-  /** Why the last audit failed, or null. A result beside this is the check
-   *  before the one that failed. */
-  failure: string | null;
-  /** No audit has answered and none has failed: the reading is still on its
-   *  way, which is a wait rather than an outcome. */
-  waiting: boolean;
+  standing: SafetyStanding;
   /** When the audit behind this reading answered, or null where none has.
    *  Only the stale wording spends it: a current reading is current, and
    *  dating it would invite the reader to work out whether to believe it. */
@@ -44,23 +39,19 @@ export function useInstalledReading(
   const auditFailure = useAuditStore((s) => s.read.error);
   const auditedAt = useAuditStore((s) => s.auditedAt);
   const refresh = useAuditStore((s) => s.refresh);
-  // Merged out of the store's rows on every render rather than inside a
-  // selector: the merge builds a fresh object each call, and a selector
-  // returning one of those would re-render the page against itself forever.
-  const result = installedSafety(views, kind, name, scopes);
-  // A place the audit could not read has failed for this row even when the
-  // audit as a whole came back: what is on screen for it is whatever it
-  // last said, and nothing has confirmed it since.
-  const unreadable =
-    views.find(
-      (view) =>
-        view.error && scopes.some((scope) => sameScope(view.scope, scope)),
-    )?.error ?? null;
-  const failure = auditFailure ?? unreadable?.message ?? null;
+  // Worked out on every render rather than inside a selector: the standing
+  // is a fresh object each call, and a selector returning one of those
+  // would re-render the page against itself forever.
+  const standing = safetyStanding(
+    views,
+    auditFailure,
+    auditedAt !== null,
+    kind,
+    name,
+    scopes,
+  );
   return {
-    result,
-    failure,
-    waiting: auditedAt === null && failure === null,
+    standing,
     checkedAt: auditedAt,
     retry: () => void refresh({ force: true }),
   };
@@ -75,33 +66,35 @@ export function useInstalledReading(
  *  shows a dash with the words saying so; a cell that simply vanished would
  *  read as a package nothing was found in.
  *
- *  Given `onToggle` the disc is also the way to what is behind the number.
- *  Without it the score would be the whole reading a row ever offers, which
- *  is a severity and a count with no finding under either. */
+ *  Given `onOpen` the disc is also the way to what is behind the number:
+ *  the package page's Safety tab, where the findings are. Without it the
+ *  score would be a severity and a count with no finding under either. */
 export function InstalledScore({
   reading,
-  expanded = false,
-  controls,
-  onToggle,
+  onOpen,
 }: {
   reading: InstalledReading;
-  expanded?: boolean;
-  /** The id of the row this opens. Named only while it is open: a control
-   *  pointing at an element that is not in the document is a broken
-   *  reference to anything reading the page. */
-  controls?: string;
-  onToggle?: () => void;
+  /** Open the reading this score summarizes. A score names a thing — how
+   *  safe this copy is — so it opens that thing rather than growing a
+   *  second findings panel of its own. */
+  onOpen?: () => void;
 }) {
-  const { result, failure } = reading;
-  const words = result
+  const { standing } = reading;
+  // Read off the one standing, so the words and the place `onOpen` lands on
+  // are the same answer.
+  const scored =
+    standing.state === "read" || standing.state === "stale"
+      ? standing.result
+      : null;
+  const words = scored
     ? installedScoreWords(
-        result.safety.score,
-        result.skipped.length,
-        result.findings,
-        failure !== null,
+        scored.safety.score,
+        scored.skipped.length,
+        scored.findings,
+        standing.state === "stale",
         reading.checkedAt,
       )
-    : failure !== null
+    : standing.state === "failed" || standing.state === "unavailable"
       ? SAFETY_CHECK_FAILED
       : SAFETY_DOT_UNCHECKED;
   return (
@@ -111,14 +104,18 @@ export function InstalledScore({
       // Never disabled, with or without something to open: the trigger is
       // the only place a keyboard reaches the words, and a disabled button
       // is out of the tab order.
-      aria-expanded={onToggle ? expanded : undefined}
-      aria-controls={onToggle && expanded ? controls : undefined}
-      onClick={onToggle}
+      onClick={onOpen}
     >
+      {/* A kept reading stops being drawn as a current severity: the
+          number stays, the hue goes. */}
       <ScoreCircle
         size="sm"
-        score={result?.safety.score ?? null}
-        tone={result ? severityTone(result.findings) : "muted"}
+        score={scored?.safety.score ?? null}
+        tone={
+          standing.state === "read"
+            ? severityTone(scored?.findings ?? [])
+            : "muted"
+        }
       />
     </ScoreTooltip>
   );

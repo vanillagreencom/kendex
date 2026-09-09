@@ -1,4 +1,4 @@
-import { type ComponentProps, type MouseEvent, useEffect } from "react";
+import { type ComponentProps, useEffect } from "react";
 import type { AvailablePackage, Catalog, Scope } from "@/bindings";
 import { Ago } from "@/components/ago";
 import { InstalledIn } from "@/components/marketplaces/installed-in";
@@ -7,7 +7,6 @@ import { StatusDot } from "@/components/status-dot";
 import { TagBadges } from "@/components/tag-badge";
 import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
-import { clickAsksToOpen } from "@/lib/click-asks-to-open";
 import {
   LOCAL_FOLDER_LABEL,
   PACKAGE_STATE_UNKNOWN,
@@ -22,6 +21,7 @@ import { offersInstall } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName, shortRevision } from "@/lib/labels";
 import { type MarketplaceDisplay, sourceLine } from "@/lib/marketplace-display";
+import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import { safetyKey, usePreinstallSafety } from "@/stores/preinstall-safety";
@@ -90,6 +90,7 @@ export function PackageRow({
 }) {
   const { catalog, row, recordsUnreadable } = entry;
   const goToAvailablePackage = useNavStore((s) => s.goToAvailablePackage);
+  const goToMarketplace = useNavStore((s) => s.goToMarketplace);
   const install = useMarketplacesStore((s) => s.install);
   const subscribeAndInstall = useMarketplacesStore(
     (s) => s.subscribeAndInstall,
@@ -105,14 +106,18 @@ export function PackageRow({
     want(catalog, row.kind, row.name);
   }, [want, catalog, row.kind, row.name]);
 
-  const open = (event: MouseEvent<HTMLTableRowElement>) => {
-    if (!clickAsksToOpen(event)) return;
+  const openPackage = () =>
     goToAvailablePackage({ catalog, kind: row.kind, name: row.name });
-  };
+  // The whole row opens the package, for the pointer and the keyboard
+  // alike; Install stays a control of its own inside it.
+  const open = opensOnActivate(
+    openPackage,
+    opensLabel(packageDisplayName(row)),
+  );
 
   const updated = row.updatedAt ? Date.parse(row.updatedAt) : Number.NaN;
   return (
-    <TableRow className="cursor-pointer" onClick={open}>
+    <TableRow className="cursor-pointer" {...open}>
       {/* The one column with no width of its own, so without a ceiling a
           long summary sets the whole table's, pushes every other column
           past the right edge, and leaves the reader a name and nothing
@@ -121,9 +126,16 @@ export function PackageRow({
         <div className="flex min-w-0 items-center gap-2.5">
           <Icon className="size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
-            <div className="truncate font-medium">
+            {/* What a screen reader is told opens the package. The row
+                opens too, but a row announces its cells rather than an
+                action, so the name stays a real control. */}
+            <button
+              type="button"
+              onClick={openPackage}
+              className="block max-w-full truncate text-left font-medium hover:underline"
+            >
               {packageDisplayName(row)}
-            </div>
+            </button>
             {row.summary ? (
               <div className="truncate text-xs text-muted-foreground">
                 {row.summary}
@@ -150,7 +162,15 @@ export function PackageRow({
           className="max-w-40 text-muted-foreground"
           title={marketplace ? sourceLine(marketplace) : undefined}
         >
-          <div className="truncate">{marketplace?.name}</div>
+          {/* The name it resolved to opens the marketplace it names, the
+              same as its own card on the Subscribed tab. */}
+          <button
+            type="button"
+            className="block max-w-full truncate hover:underline"
+            onClick={() => goToMarketplace(catalog)}
+          >
+            {marketplace?.name}
+          </button>
           {marketplace?.local ? (
             <div className="truncate text-xs">{LOCAL_FOLDER_LABEL}</div>
           ) : null}

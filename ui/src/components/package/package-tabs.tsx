@@ -28,6 +28,7 @@ export function PackageTabs({
   harnesses,
   vendor,
   busy,
+  openOn,
   onDelete,
   body,
 }: {
@@ -44,6 +45,10 @@ export function PackageTabs({
    *  about, the same copy the score would have answered for. */
   vendor: string | null;
   busy: boolean;
+  /** Which tab the page opens on. A safety score anywhere in the app is
+   *  the way to the findings under it, and they live on the Safety tab, so
+   *  the link that opened this page says which tab it meant. */
+  openOn: "overview" | "safety";
   /** Opens the dialog that deletes every copy — the Projects tab offers
    *  the whole-package deletion beside its per-place removals, and one
    *  dialog confirms it wherever it was asked for. */
@@ -57,7 +62,7 @@ export function PackageTabs({
   return (
     <div className={cn("min-h-0 flex-1 overflow-y-auto", PAGE_GUTTER)}>
       <div className={cn("pb-8", WIDE_CONTENT_WIDTH)}>
-        <Tabs defaultValue="overview">
+        <Tabs defaultValue={openOn}>
           <TabsList>
             <TabsTrigger value="overview">{OVERVIEW_TAB}</TabsTrigger>
             <TabsTrigger value="projects">{PROJECTS_TAB}</TabsTrigger>

@@ -73,11 +73,25 @@ describe("CustomizedIndex", () => {
     });
   });
 
+  // The row is the way into the package, so it opens — the name is a
+  // button and the row itself takes focus — and carries no Open button.
   it("says how a hand-edited package was customized and opens it", () => {
     const html = render([row()]);
     expect(html).toContain("Skill · Edited by you");
-    expect(html).toContain("Open");
+    expect(html).toContain('tabindex="0"');
+    expect(html).toContain(">gh</button>");
+    expect(html).not.toContain(">Open");
     expect(html).not.toContain(NOT_INSTALLED_HERE);
+  });
+
+  // The control: a package that is not installed here has no page to
+  // open, so its row is a statement rather than a way in.
+  it("leaves a row with nothing to open unopenable", () => {
+    useScanStore.setState({ result: null });
+    const html = render([row()]);
+    expect(html).toContain(NOT_INSTALLED_HERE);
+    expect(html).not.toContain('tabindex="0"');
+    expect(html).not.toContain(">gh</button>");
   });
 
   // Remove clears the settings overlay and nothing else, so a row with no

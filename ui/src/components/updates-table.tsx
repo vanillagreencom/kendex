@@ -5,7 +5,6 @@ import {
   InstalledScore,
   useInstalledReading,
 } from "@/components/installed-score";
-import { SafetyPanel, SafetyUnavailable } from "@/components/safety-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
@@ -23,17 +22,22 @@ import {
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATE_PACKAGE_EVERYWHERE_LABEL,
 } from "@/lib/copy-updates";
+import { selectionOf } from "@/lib/derive";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
+import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
+import { sameScope } from "@/lib/scope";
 import {
   groupKey,
   groupUpdates,
   placeKey,
+  placeName,
   type UpdateGroup,
   updatablePlaces,
 } from "@/lib/update-groups";
 import { readUnsettled } from "@/lib/updates-read-state";
 import { useNavStore } from "@/stores/nav";
+import type { PackageView } from "@/stores/nav-types";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
 
@@ -89,11 +93,10 @@ export function PackageRows({
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const [showSafety, setShowSafety] = useState(false);
   const placesId = useId();
-  const safetyId = useId();
   const busy = useUpdatesStore((s) => s.busy);
   const goToPackage = useNavStore((s) => s.goToPackage);
+  const goToLibrary = useNavStore((s) => s.goToLibrary);
   const places = group.places;
   // Not loaded, mid-check and mid-load hold the package's own update
   // alike: either way these are not the rows an update would act on.
@@ -107,11 +110,6 @@ export function PackageRows({
   // the name on the machine, which would score a package the row is not
   // about.
   const reading = useInstalledReading(group.kind, group.name, scopes);
-  // A number with a severity and a count behind it and no way to the
-  // findings is a claim the row cannot back up. Opening is offered whenever
-  // there is more to read: the findings, or why there is no reading at all.
-  const hasSafetyDetail =
-    (reading.result?.findings.length ?? 0) > 0 || reading.failure !== null;
   const Chevron = open ? ChevronDown : ChevronRight;
   const tags = [
     places.some((p) => p.blockedByLocalEdit) ? EDITED_UPDATE_TAG : null,
@@ -120,40 +118,52 @@ export function PackageRows({
   // One package can be installed in several places, and the package page
   // shows one of them. The row's first place is the one its name opens.
   const first = places[0];
+  // Which place the score is showing the state of, which is where it opens.
+  // The standing decides both together, so they cannot disagree: the copy
+  // that earned the number, the place whose read failed, or no place at all
+  // for a failure that names none — an audit that failed as a whole, or a
+  // check still on its way. Those leave the row's first place, which is
+  // what its name opens.
+  const at = reading.standing.at;
+  const scored =
+    (at && places.find((place) => sameScope(place.scope, at))) ?? first;
+  /** This package's page, at one of the places this row is about. */
+  const openPackage = (place: UpdateRow | undefined, view?: PackageView) => {
+    if (!place) return;
+    goToPackage(
+      { kind: group.kind, name: group.name, scope: place.scope },
+      view,
+    );
+  };
 
   return (
     <>
-      <TableRow>
+      {/* The package's own row opens the package, for the pointer and the
+          keyboard alike. Its place rows below name places rather than this
+          package, and open those instead. */}
+      <TableRow
+        {...opensOnActivate(() => openPackage(first), opensLabel(name))}
+        className="cursor-pointer"
+      >
         <TableCell>
           <div className="flex min-w-0 items-center gap-2.5">
             <Icon className="size-4 shrink-0 text-muted-foreground" />
             {/* What the copy on disk scored. It reads as part of the
                 package's identity rather than a column of its own: a
                 column would be one more thing to size on a table that
-                already has to fit the default window. */}
+                already has to fit the default window. A score names a
+                reading, so it opens that reading — the package page's
+                Safety tab, where the findings already live. */}
             <InstalledScore
               reading={reading}
-              expanded={showSafety}
-              controls={safetyId}
-              onToggle={
-                hasSafetyDetail
-                  ? () => setShowSafety((value) => !value)
-                  : undefined
-              }
+              onOpen={() => openPackage(scored, { mode: "safety" })}
             />
             {/* The name opens the package, on the rule the app follows
                 everywhere: a row, card or chip naming a thing opens it. */}
             <button
               type="button"
               className="min-w-0 truncate text-left font-medium hover:underline"
-              onClick={() =>
-                first &&
-                goToPackage({
-                  kind: group.kind,
-                  name: group.name,
-                  scope: first.scope,
-                })
-              }
+              onClick={() => openPackage(first)}
             >
               {name}
             </button>
@@ -230,33 +240,19 @@ export function PackageRows({
           </>
         )}
       </TableRow>
-      {/* The findings sit in a row of their own so the table keeps one line
-          per package until somebody asks for more. */}
-      {showSafety && hasSafetyDetail ? (
-        <TableRow id={safetyId} className="bg-muted/20">
-          <TableCell colSpan={showVersion ? 5 : 4} className="py-4">
-            {reading.result ? (
-              <SafetyPanel
-                result={reading.result}
-                stale={reading.failure !== null}
-                checkedAt={reading.checkedAt}
-                onRetry={reading.retry}
-              />
-            ) : (
-              <SafetyUnavailable
-                message={reading.failure}
-                onRetry={reading.retry}
-              />
-            )}
-          </TableCell>
-        </TableRow>
-      ) : null}
+      {/* A place row names a place, so the whole of it opens that place —
+          the same narrowing its Where cell opens, on the pointer and on
+          Enter. The package is the row above's to open. */}
       {open && !only
         ? places.map((row, index) => (
             <TableRow
               key={placeKey(row)}
               id={index === 0 ? placesId : undefined}
-              className="bg-muted/20"
+              {...opensOnActivate(
+                () => goToLibrary({ scope: selectionOf(row.scope) }),
+                opensLabel(placeName(row.scope, scopes)),
+              )}
+              className="cursor-pointer bg-muted/20"
             >
               <TableCell colSpan={2} />
               <PlaceCells

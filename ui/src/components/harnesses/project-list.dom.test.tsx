@@ -474,6 +474,20 @@ describe("a place card's kind badge", () => {
     });
     expect(badge).toBe(destinationRows());
   });
+
+  // The card reads as one target, so the keyboard opens it too — asking
+  // for everything at that place, which is what the card's name is for.
+  it("opens the whole place from the card on Enter", async () => {
+    const host = mount(<ProjectList />);
+    const card = host.querySelectorAll<HTMLElement>('[data-slot="card"]')[1];
+    if (!card) throw new Error("no project card rendered");
+    expect(card.getAttribute("tabindex")).toBe("0");
+    act(() => card.focus());
+    await userEvent.keyboard("{Enter}");
+    expect(useNavStore.getState().libraryFilter).toEqual({
+      scope: { project: "/work/acme" },
+    });
+  });
 });
 
 // A place says when its packages are out of date, and the click is the

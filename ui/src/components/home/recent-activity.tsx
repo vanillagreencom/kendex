@@ -10,7 +10,7 @@ import { useNavStore } from "@/stores/nav";
  *  timestamp, so what it can honestly report is that the file changed, and
  *  when — not what happened to it. */
 export function RecentActivity({ groups }: { groups: RecentGroup[] }) {
-  const goToLibrary = useNavStore((s) => s.goToLibrary);
+  const goToPackage = useNavStore((s) => s.goToPackage);
 
   if (groups.length === 0) {
     return (
@@ -27,12 +27,25 @@ export function RecentActivity({ groups }: { groups: RecentGroup[] }) {
         const tools = group.harnesses
           .map((h) => harnessName(h as HarnessId))
           .join(", ");
+        // The row names one package, so it opens that package — at the
+        // place whose copy the time beside it is the time of. The group's
+        // stamp is the newest of its installations, so opening the first
+        // one would show a reader files that did not change when the row
+        // says they did.
+        const changed =
+          group.installations.find(
+            (one) => one.modifiedAt === group.modifiedAt,
+          ) ?? group.installations[0];
+        const where = changed?.scope;
         return (
           <button
             key={group.key}
             type="button"
             className="-mx-2 flex w-full items-center gap-3 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent"
-            onClick={() => goToLibrary({ kind: group.kind })}
+            onClick={() =>
+              where &&
+              goToPackage({ kind: group.kind, name: group.name, scope: where })
+            }
           >
             <Icon className="size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1 truncate font-medium">{name}</span>

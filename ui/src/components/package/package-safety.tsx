@@ -55,27 +55,31 @@ export function SafetyScoreLabel({
   reading: InstalledReading;
   vendor: string | null;
 }) {
-  const { result, failure } = reading;
+  const { standing } = reading;
   // A tool's own content carries no disc at all. The dash reads as a figure
   // still on its way, and for this one nothing is on its way.
   if (vendor) return <>{SAFETY_TAB}</>;
-  const current = result !== null && failure === null;
+  const scored =
+    standing.state === "read" || standing.state === "stale"
+      ? standing.result
+      : null;
+  const current = standing.state === "read";
   // A check that failed is marked whether or not it left a reading behind.
   // A dash alone is what a pending check and an unscored answer both show,
   // so a failure drawn that way is a failure nobody is told about.
   const mark =
-    failure === null
-      ? null
-      : result !== null
-        ? SAFETY_TAB_STALE
-        : SAFETY_TAB_FAILED;
+    standing.state === "stale"
+      ? SAFETY_TAB_STALE
+      : standing.state === "failed" || standing.state === "unavailable"
+        ? SAFETY_TAB_FAILED
+        : null;
   return (
     <>
       {SAFETY_TAB}
       <ScoreCircle
         size="sm"
-        score={result?.safety.score ?? null}
-        tone={current ? severityTone(result.findings) : "muted"}
+        score={scored?.safety.score ?? null}
+        tone={current ? severityTone(scored?.findings ?? []) : "muted"}
       />
       {mark ? (
         <>
@@ -121,17 +125,18 @@ export function PackageSafety({
       </div>
     );
   }
-  if (reading.result) {
+  const { standing } = reading;
+  if (standing.state === "read" || standing.state === "stale") {
     return (
       <SafetyPanel
-        result={reading.result}
-        stale={reading.failure !== null}
+        result={standing.result}
+        stale={standing.state === "stale"}
         checkedAt={reading.checkedAt}
         onRetry={reading.retry}
       />
     );
   }
-  if (reading.failure !== null) {
+  if (standing.state === "failed" || standing.state === "unavailable") {
     return (
       <div className="flex justify-center">
         <EmptyState
@@ -139,12 +144,12 @@ export function PackageSafety({
           title={SAFETY_CHECK_FAILED}
           action={retry}
         >
-          {reading.failure}
+          {standing.why}
         </EmptyState>
       </div>
     );
   }
-  if (reading.waiting) {
+  if (standing.state === "waiting") {
     return (
       <p className="flex items-center justify-center gap-2 py-20 text-sm text-muted-foreground">
         <DotSpinner />

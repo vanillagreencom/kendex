@@ -59,6 +59,14 @@ describe("opening a package from its Library row", () => {
         args: [],
       },
       {
+        name: "row Enter",
+        target: "row",
+        keyboard: true,
+        selected: false,
+        calls: 1,
+        args: [],
+      },
+      {
         name: "selected name Enter",
         target: "name",
         keyboard: true,
@@ -88,7 +96,7 @@ describe("opening a package from its Library row", () => {
         args: [VG],
       },
     ];
-    expect(rows).toHaveLength(7);
+    expect(rows).toHaveLength(8);
     for (const entry of rows) {
       vi.restoreAllMocks();
       const { host, onOpen } = mount(entry.target === "fork" ? [VG] : []);
@@ -99,16 +107,18 @@ describe("opening a package from its Library row", () => {
       const target =
         entry.target === "name"
           ? nameButton(host)
-          : entry.target === "cell"
-            ? host.querySelectorAll("td")[1]
-            : [...host.querySelectorAll("button")].find((button) =>
-                button.textContent?.startsWith(FORKED_BADGE_LABEL),
-              );
+          : entry.target === "row"
+            ? host.querySelector("tr")
+            : entry.target === "cell"
+              ? host.querySelectorAll("td")[1]
+              : [...host.querySelectorAll("button")].find((button) =>
+                  button.textContent?.startsWith(FORKED_BADGE_LABEL),
+                );
       if (!target) throw new Error(`no ${entry.target} target`);
       if (entry.target === "fork")
         expect(target.textContent).toContain("in vg");
       if (entry.keyboard) {
-        target.focus();
+        (target as HTMLElement).focus();
         await userEvent.keyboard("{Enter}");
       } else await userEvent.click(target);
       expect(onOpen, entry.name).toHaveBeenCalledTimes(entry.calls);
@@ -155,6 +165,8 @@ describe("the words a Library row's badges stand for", () => {
           forkedIn={[]}
           outOfDate={false}
           onOpen={() => {}}
+          onOpenHarness={() => {}}
+          onOpenPlace={() => {}}
         />
       </tbody>,
       { host: "table" },
@@ -186,6 +198,73 @@ describe("the update mark", () => {
   });
 });
 
+// Every other thing a row names opens too: the harness chip opens the
+// harness, the place opens the place, the marketplace opens the
+// marketplace. Each is a different target from the row's own, so a row
+// that opened the package from all of them would still pass the test above.
+describe("the other things a Library row names", () => {
+  it("opens each from the chip, the place and the marketplace", async () => {
+    const opened: string[] = [];
+    // One place, so the Where cell names a place rather than counting
+    // several.
+    const host = mountTree(
+      <tbody>
+        <InstalledRow
+          group={groupItems([item(VG)] as never)[0]}
+          origin={{
+            origin: "marketplace",
+            source: "kendex",
+            repo: "vg/kendex",
+          }}
+          forkedIn={[]}
+          outOfDate={false}
+          onOpen={() => opened.push("package")}
+          onOpenHarness={(harness) => opened.push(`harness:${harness}`)}
+          onOpenPlace={(scope) => opened.push(`place:${scope.scope}`)}
+          onOpenFrom={() => opened.push("marketplace")}
+        />
+      </tbody>,
+      { host: "table" },
+    );
+    const named = (text: string) => {
+      const found = [...host.querySelectorAll("button")].find(
+        (button) =>
+          button.textContent === text ||
+          button.getAttribute("aria-label") === text,
+      );
+      if (!found) throw new Error(`no button for ${text}`);
+      return found;
+    };
+
+    await userEvent.click(named("Claude Code"));
+    await userEvent.click(named("vg"));
+    await userEvent.click(named("kendex"));
+    expect(opened).toEqual(["harness:claude", "place:project", "marketplace"]);
+  });
+
+  // The control: a place cell counting several places names none of them,
+  // so it opens nothing — the package's own page lists them instead.
+  it("leaves a row in several places with no place to open", () => {
+    const host = mountTree(
+      <tbody>
+        <InstalledRow
+          group={group}
+          origin={null}
+          forkedIn={[]}
+          outOfDate={false}
+          onOpen={() => {}}
+          onOpenHarness={() => {}}
+          onOpenPlace={() => {}}
+        />
+      </tbody>,
+      { host: "table" },
+    );
+    const where = host.querySelectorAll("td")[4];
+    expect(where?.textContent).toBe("2 locations");
+    expect(where?.querySelector("button")).toBeNull();
+  });
+});
+
 // Whether a click reaches the row, and what a keypress lands on, are
 // questions about a live DOM that static markup cannot answer.
 afterEach(() => {
@@ -204,6 +283,8 @@ const mount = (forkedIn: Scope[] = [], outOfDate = false) => {
         forkedIn={forkedIn}
         outOfDate={outOfDate}
         onOpen={onOpen}
+        onOpenHarness={() => {}}
+        onOpenPlace={() => {}}
       />
     </tbody>,
     { host: "table" },

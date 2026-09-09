@@ -12,6 +12,8 @@ export function AvailableAside({
   view,
   selectedFile,
   onSelectFile,
+  onOpenMarketplace,
+  onOpenBundle,
 }: {
   /** What the marketplace this package comes from is called —
    * `lib/marketplace-display.ts`, the same answer the breadcrumb above and
@@ -23,6 +25,10 @@ export function AvailableAside({
   /** The file open in the main column; null shows the README. */
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
+  /** Open the marketplace this package comes from. */
+  onOpenMarketplace: () => void;
+  /** Open one of the curated sets that carry it. */
+  onOpenBundle: (bundle: string) => void;
 }) {
   return (
     <aside className="space-y-6 text-sm">
@@ -31,7 +37,15 @@ export function AvailableAside({
           From
         </h3>
         <p>
-          {marketplace}
+          {/* The name is what `lib/marketplace-display.ts` resolved, and
+              it opens the marketplace it names. */}
+          <button
+            type="button"
+            className="text-left hover:underline"
+            onClick={onOpenMarketplace}
+          >
+            {marketplace}
+          </button>
           {repo && repo !== marketplace ? (
             <span className="block truncate font-mono text-xs text-muted-foreground">
               {repo}
@@ -44,7 +58,21 @@ export function AvailableAside({
           <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">
             Comes with
           </h3>
-          <p>{view.preview.bundles.join(", ")}</p>
+          {/* Each set's name opens that set. */}
+          <p className="flex flex-wrap gap-x-1">
+            {view.preview.bundles.map((bundle, index) => (
+              <span key={bundle}>
+                <button
+                  type="button"
+                  className="text-left hover:underline"
+                  onClick={() => onOpenBundle(bundle)}
+                >
+                  {bundle}
+                </button>
+                {index < view.preview.bundles.length - 1 ? "," : ""}
+              </span>
+            ))}
+          </p>
         </section>
       ) : null}
       {view ? (

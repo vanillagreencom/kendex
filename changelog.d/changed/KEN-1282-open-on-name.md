@@ -1,0 +1,1 @@
+- A row, card or chip that names a thing now opens it, by click or by Enter, everywhere in the app; a safety score opens the package's Safety tab. Open buttons that repeated the container are gone.

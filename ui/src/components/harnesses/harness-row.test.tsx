@@ -128,3 +128,37 @@ describe("what a harness row's line and badges say they are", () => {
     expect(line.title).toBe("");
   });
 });
+
+// The row reads as one target, so the whole of it opens the harness — the
+// same view its name opens.
+describe("the harness row itself", () => {
+  it("opens the harness by pointer and by Enter", async () => {
+    const methods = ["pointer", "keyboard"] as const;
+    expect(methods).toHaveLength(2);
+    for (const method of methods) {
+      const host = mount("/home/u/.claude");
+      const row = host.firstElementChild;
+      if (!(row instanceof HTMLElement)) throw new Error("no row");
+      expect(row.getAttribute("tabindex")).toBe("0");
+      if (method === "pointer") await userEvent.click(row);
+      else {
+        row.focus();
+        await userEvent.keyboard("{Enter}");
+      }
+      const nav = useNavStore.getState();
+      expect(nav.page, method).toBe("library");
+      expect(nav.libraryFilter?.harness, method).toBe("claude");
+    }
+  });
+
+  // The control: a harness that is not installed has nothing to show, so
+  // its row is a statement and stays out of the tab order.
+  it("leaves a row for a harness that is not installed closed", async () => {
+    const host = mount(null);
+    const row = host.firstElementChild;
+    if (!(row instanceof HTMLElement)) throw new Error("no row");
+    expect(row.getAttribute("tabindex")).toBeNull();
+    await userEvent.click(row);
+    expect(useNavStore.getState().page).toBe("home");
+  });
+});

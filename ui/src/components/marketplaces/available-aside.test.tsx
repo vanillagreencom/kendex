@@ -39,6 +39,8 @@ const render = (view: PackageView | null) =>
       view={view}
       selectedFile={null}
       onSelectFile={() => {}}
+      onOpenMarketplace={() => {}}
+      onOpenBundle={() => {}}
     />,
   );
 

@@ -7,7 +7,6 @@ import type { AuditView } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { IGNORE_CONFIRM_LABEL, IGNORE_UPDATES_LABEL } from "@/lib/copy";
-import { SAFETY_CAVEAT } from "@/lib/copy-safety";
 import {
   EDITED_TAG_HELP,
   INSTALL_AS_NEW_LABEL,
@@ -21,12 +20,14 @@ import {
   updateReviewOneTitle,
 } from "@/lib/copy-updates";
 import { READ_LANDED } from "@/lib/read-state";
+import { groupUpdates } from "@/lib/update-groups";
 import { UpdatesPage } from "@/pages/updates";
 import { useAuditStore } from "@/stores/audit";
+import { useNavStore } from "@/stores/nav";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
 import { mount, settle } from "@/test/dom";
-import { UpdatesTable } from "./updates-table";
+import { PackageRows, UpdatesTable } from "./updates-table";
 import { updateRow as row } from "./updates-test-rows";
 
 vi.mock("@/bindings", async (importOriginal) => ({
@@ -356,10 +357,11 @@ describe("a page with only muted updates", () => {
   });
 });
 
-// A number with a severity and a count behind it and no way to the findings
-// is a claim the row cannot back up: the tooltip carries the score and the
-// caveat, never a file or a line.
-describe("the findings behind a row's score", () => {
+// A score names a reading, and the reading lives on the package page's
+// Safety tab: the score is the way there, and the row shows no findings of
+// its own. The tooltip carries the score and the caveat, never a file or a
+// line.
+describe("the reading behind a row's score", () => {
   const scoredGh = (): AuditView => ({
     scope: { scope: "global" },
     drift: [],
@@ -393,15 +395,22 @@ describe("the findings behind a row's score", () => {
     ],
   });
 
-  const score = (): HTMLElement => {
-    const found = document.querySelector<HTMLElement>(
-      '[data-slot="tooltip-trigger"][aria-expanded]',
+  // The score is the row's own trigger; anything the header carries is
+  // outside the body.
+  const score = (host: HTMLElement): HTMLElement => {
+    const found = host.querySelector<HTMLElement>(
+      'tbody [data-slot="tooltip-trigger"]',
     );
-    if (!found) throw new Error("expected the score to open something");
+    if (!found) throw new Error("expected a score on the row");
     return found;
   };
 
-  it("opens them from the score, and keeps them out of the row until asked", async () => {
+  beforeEach(() => {
+    useNavStore.setState({
+      page: "updates",
+      packageRef: null,
+      packageView: null,
+    });
     act(() => {
       useAuditStore.setState({
         views: [scoredGh()],
@@ -409,34 +418,232 @@ describe("the findings behind a row's score", () => {
         read: READ_LANDED,
       });
     });
+  });
+
+  it("opens the package page on its Safety tab, and shows no findings in the row", async () => {
     const host = mount(<UpdatesTable rows={[row("gh", null)]} />);
 
     expect(host.textContent).not.toContain("SKILL.md:20");
-    expect(score().getAttribute("aria-expanded")).toBe("false");
+    await userEvent.click(score(host));
 
-    await userEvent.click(score());
-
-    expect(host.textContent).toContain("SKILL.md:20");
-    expect(host.textContent).toContain("58/100");
-    expect(host.textContent).toContain(SAFETY_CAVEAT);
-    expect(score().getAttribute("aria-expanded")).toBe("true");
+    const nav = useNavStore.getState();
+    expect(nav.page).toBe("package");
+    expect(nav.packageRef).toEqual({
+      kind: "skill",
+      name: "gh",
+      scope: { scope: "global" },
+    });
+    expect(nav.packageView).toEqual({ mode: "safety" });
+    // The findings never came into the row: the page carries them.
+    expect(host.textContent).not.toContain("SKILL.md:20");
   });
 
-  // Nothing behind the number is nothing to open: a control that expands
-  // onto an empty row is a promise the row cannot keep.
-  it("offers no way in for a clean reading", () => {
+  // A grouped row's disc is the worst of its places' readings, so it opens
+  // the place that earned it. Opening the row's first place would send a
+  // reader who clicked a warning to a different copy, scoring higher and
+  // carrying none of the findings the number stood for.
+  it("opens the place whose copy earned the reading, not the row's first", async () => {
+    const worst = scoredGh();
     act(() => {
       useAuditStore.setState({
-        views: [{ ...scoredGh(), safety: [] }],
+        views: [
+          // Personal is listed first and reads clean; the project's copy is
+          // the one the disc is showing.
+          {
+            ...worst,
+            safety: [
+              {
+                ...worst.safety[0],
+                findings: [],
+                safety: { score: 96, deductions: [] },
+              },
+            ],
+          },
+          {
+            ...worst,
+            scope: { scope: "project", root: "/work/vg" },
+            safety: [
+              {
+                ...worst.safety[0],
+                scope: { scope: "project", root: "/work/vg" },
+              },
+            ],
+          },
+        ],
         auditedAt: Date.now(),
         read: READ_LANDED,
       });
     });
-    mount(<UpdatesTable rows={[row("gh", null)]} />);
+    const host = mount(
+      <UpdatesTable rows={[row("gh", null), row("gh", "/work/vg")]} />,
+    );
+    // One grouped row, so the disc is the merged reading rather than either
+    // place's own row.
+    expect(host.querySelectorAll("tbody tr")).toHaveLength(1);
+    await userEvent.click(score(host));
 
-    expect(
-      document.querySelector('[data-slot="tooltip-trigger"][aria-expanded]'),
-    ).toBeNull();
+    const nav = useNavStore.getState();
+    expect(nav.packageRef).toEqual({
+      kind: "skill",
+      name: "gh",
+      scope: { scope: "project", root: "/work/vg" },
+    });
+    expect(nav.packageView).toEqual({ mode: "safety" });
+  });
+
+  // A grouped row can hold one place the audit read and one it could not.
+  // The disc then shows the failure, and the only place that failure can be
+  // read is the place it happened at.
+  it("opens the place whose read failed when that is what the score shows", async () => {
+    const worst = scoredGh();
+    act(() => {
+      useAuditStore.setState({
+        views: [
+          // Personal read cleanly; the project's read failed, so the disc
+          // is showing that failure rather than a number.
+          { ...worst, safety: [] },
+          {
+            ...worst,
+            scope: { scope: "project", root: "/work/vg" },
+            safety: [],
+            error: { message: "could not read /work/vg" },
+          },
+        ] as never,
+        auditedAt: Date.now(),
+        read: READ_LANDED,
+      });
+    });
+    const host = mount(
+      <UpdatesTable rows={[row("gh", null), row("gh", "/work/vg")]} />,
+    );
+    await userEvent.click(score(host));
+
+    expect(useNavStore.getState().packageRef).toEqual({
+      kind: "skill",
+      name: "gh",
+      scope: { scope: "project", root: "/work/vg" },
+    });
+    expect(useNavStore.getState().packageView).toEqual({ mode: "safety" });
+  });
+
+  // Both at once: one place scored, another place's read failed. The disc
+  // shows the number, which is current — the failed place says its piece on
+  // its own row — so the score neither reads as stale nor opens the place
+  // its number never came from.
+  it("keeps a scored row current when another place's read failed", async () => {
+    const worst = scoredGh();
+    act(() => {
+      useAuditStore.setState({
+        views: [
+          // Personal scored 58 and read fine.
+          worst,
+          // The project could not be read at all.
+          {
+            ...worst,
+            scope: { scope: "project", root: "/work/vg" },
+            safety: [],
+            error: { message: "could not read /work/vg" },
+          },
+        ] as never,
+        auditedAt: Date.now(),
+        read: READ_LANDED,
+      });
+    });
+    const host = mount(
+      <UpdatesTable rows={[row("gh", null), row("gh", "/work/vg")]} />,
+    );
+    // The words are the current reading's, not the stale lead another
+    // place's failure would put in front of them.
+    expect(score(host).textContent).toContain("The copy installed now:");
+    await userEvent.click(score(host));
+
+    expect(useNavStore.getState().packageRef).toEqual({
+      kind: "skill",
+      name: "gh",
+      scope: { scope: "global" },
+    });
+  });
+
+  // The control: the same row's name opens the same page, on no tab in
+  // particular. Without it "opens the Safety tab" could be nothing more
+  // than "opens the package".
+  it("opens the package on no particular tab from the name", async () => {
+    const host = mount(<UpdatesTable rows={[row("gh", null)]} />);
+    const name = [...host.querySelectorAll("button")].find(
+      (each) => each.textContent === "gh",
+    );
+    if (!name) throw new Error("the package name is not a button");
+    await userEvent.click(name);
+
+    const nav = useNavStore.getState();
+    expect(nav.page).toBe("package");
+    expect(nav.packageView).toBeNull();
+  });
+});
+
+// The Where column names a place, so it opens that place — everything
+// installed there, which is a different destination from the package the
+// rest of the row opens.
+describe("the place on an updates row", () => {
+  it("opens that place, not the package", async () => {
+    useNavStore.setState({
+      page: "updates",
+      libraryFilter: null,
+      packageRef: null,
+    });
+    const host = mount(<UpdatesTable rows={[row("gh", null)]} />);
+    const where = [...host.querySelectorAll("button")].find(
+      (each) => each.textContent === "User level",
+    );
+    if (!where) throw new Error("the place is not a button");
+    await userEvent.click(where);
+
+    const nav = useNavStore.getState();
+    expect(nav.page).toBe("library");
+    expect(nav.libraryFilter).toEqual({ scope: "global" });
+    expect(nav.packageRef).toBeNull();
+  });
+});
+
+// A grouped package expands into a row per place. Each names a place, so
+// each opens that place — not only its Where cell.
+describe("an expanded place row on the updates table", () => {
+  it("opens that place from the row, by pointer and by Enter", async () => {
+    const methods = ["pointer", "keyboard"] as const;
+    expect(methods).toHaveLength(2);
+    for (const method of methods) {
+      useNavStore.setState({
+        page: "updates",
+        libraryFilter: null,
+        packageRef: null,
+      });
+      const host = mount(
+        <tbody>
+          <PackageRows
+            group={groupUpdates([row("gh", null), row("gh", "/work/vg")])[0]}
+            defaultOpen
+          />
+        </tbody>,
+        { host: "table" },
+      );
+      // The package's own row, then one row per place: personal, then the
+      // project.
+      const placeRow = host.querySelectorAll("tr")[2];
+      if (!(placeRow instanceof HTMLElement)) throw new Error("no place row");
+      expect(placeRow.getAttribute("tabindex")).toBe("0");
+      if (method === "pointer") await userEvent.click(placeRow);
+      else {
+        act(() => placeRow.focus());
+        await userEvent.keyboard("{Enter}");
+      }
+      const nav = useNavStore.getState();
+      expect(nav.page, method).toBe("library");
+      expect(nav.libraryFilter, method).toEqual({
+        scope: { project: "/work/vg" },
+      });
+      // The place, not the package: those are different destinations.
+      expect(nav.packageRef, method).toBeNull();
+    }
   });
 });
 

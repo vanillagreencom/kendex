@@ -48,6 +48,8 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
     ready,
   } = useCatalog(availableRef.catalog);
   const goToPackage = useNavStore((s) => s.goToPackage);
+  const goToMarketplace = useNavStore((s) => s.goToMarketplace);
+  const goToBundle = useNavStore((s) => s.goToBundle);
   const install = useMarketplacesStore((s) => s.install);
   const busy = useMarketplacesStore((s) => s.busy);
   const [destination, setDestination] = useState<Scope | null>(null);
@@ -233,6 +235,8 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
               view={view}
               selectedFile={selectedFile}
               onSelectFile={selectFile}
+              onOpenMarketplace={() => goToMarketplace(catalog)}
+              onOpenBundle={(bundle) => goToBundle({ catalog, bundle })}
             />{" "}
           </div>
         </div>

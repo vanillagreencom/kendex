@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
+import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BundleDetail, Catalog, Scope } from "@/bindings";
 import { installedInLabel } from "@/lib/copy-marketplaces";
@@ -192,5 +193,53 @@ describe("the Bundles tab", () => {
       />,
     );
     expect(text(host)).not.toContain("Installed in");
+  });
+});
+
+// The card is the way into the set it names, so it carries no Open button
+// of its own — and the keyboard takes the same way in.
+describe("opening a curated set", () => {
+  const cards = () =>
+    mount(
+      <BundleCards
+        catalog={catalog}
+        bundles={[set("starter", 3, 0)]}
+        error={undefined}
+        places={new Map()}
+      />,
+    );
+
+  it("opens from the card by pointer and by Enter, with no Open button", async () => {
+    const methods = ["pointer", "keyboard"] as const;
+    expect(methods).toHaveLength(2);
+    for (const method of methods) {
+      goToBundle.mockReset();
+      const host = cards();
+      expect(host.textContent).not.toContain("Open");
+      const card = host.querySelector<HTMLElement>('[data-slot="card"]');
+      if (!card) throw new Error("no card rendered");
+      expect(card.getAttribute("tabindex")).toBe("0");
+      if (method === "pointer") await userEvent.click(card);
+      else {
+        act(() => card.focus());
+        await userEvent.keyboard("{Enter}");
+      }
+      expect(goToBundle, method).toHaveBeenCalledWith({
+        catalog,
+        bundle: "starter",
+      });
+    }
+  });
+
+  // The control: the name is a real control of its own, so a screen reader
+  // is told what opens rather than being handed a card only a click acts on.
+  it("names the set on a control, not only in the card's text", async () => {
+    const host = cards();
+    const name = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "starter",
+    );
+    if (!name) throw new Error("the set's name is not a button");
+    await userEvent.click(name);
+    expect(goToBundle).toHaveBeenCalledWith({ catalog, bundle: "starter" });
   });
 });

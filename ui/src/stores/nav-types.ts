@@ -69,13 +69,14 @@ export interface AvailableRef {
 }
 
 /** What the package page should open showing, when not its files — e.g.
- * "Preview" on the Updates page lands straight on the diff. Consumed once
- * by the page on mount, then cleared. */
-export interface PackageView {
-  mode: "diff";
-  from: string;
-  to: string;
-}
+ * "Preview" on the Updates page lands straight on the diff, and a safety
+ * score anywhere lands on the reading behind it. Consumed once by the page
+ * on mount, then cleared. */
+export type PackageView =
+  | { mode: "diff"; from: string; to: string }
+  /** Open on the Safety tab. Every safety score in the app is a way to the
+   *  findings under it, and they live on that tab. */
+  | { mode: "safety" };
 
 /** Where the back button returns to: a page plus its state at push time. */
 export interface HistoryEntry {

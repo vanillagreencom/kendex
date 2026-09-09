@@ -6,6 +6,7 @@ import type {
 } from "@/bindings";
 import { Ago } from "@/components/ago";
 import { HarnessBadge } from "@/components/harness-badge";
+import { openLibraryAt } from "@/components/library/use-filter-handoff";
 import { SectionHeading } from "@/components/section";
 import { SharedFilesBadge } from "@/components/shared-files-badge";
 import { StatusLine } from "@/components/status-note";
@@ -70,8 +71,14 @@ export function PackageMetaBlock({
         ) : null}
         <Row label="Harnesses">
           <span className="flex flex-wrap gap-1">
+            {/* A chip names a harness, so it opens that harness's own
+                view of what is installed for it. */}
             {group.harnesses.map((h) => (
-              <HarnessBadge key={h} harness={h as HarnessId} />
+              <HarnessBadge
+                key={h}
+                harness={h as HarnessId}
+                onOpen={() => openLibraryAt({ harness: h as HarnessId })}
+              />
             ))}
             <SharedFilesBadge files={sharedFiles(group.installations)} />
           </span>

@@ -39,38 +39,56 @@ export function HarnessBadge({
   harness,
   compact,
   className,
+  onOpen,
 }: {
   harness: HarnessId;
   compact?: boolean;
   className?: string;
+  /** Open this harness. Given one, the chip is the way in — a chip that
+   *  names a thing opens that thing. Without one it is a label, and stays
+   *  out of the tab order. */
+  onOpen?: () => void;
 }) {
-  if (compact) {
-    return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Badge
-              aria-label={harnessName(harness)}
-              className={cn(
-                "border-transparent px-1.5",
-                HARNESS_CHIP[harness],
-                className,
-              )}
-            >
-              <HarnessIcon harness={harness} className="size-3.5" />
-            </Badge>
-          }
-        />
-        <TooltipContent>{harnessName(harness)}</TooltipContent>
-      </Tooltip>
-    );
-  }
-  return (
-    <Badge
-      className={cn("border-transparent", HARNESS_CHIP[harness], className)}
-    >
+  const label = harnessName(harness);
+  // A chip stays a quiet fill whether or not it opens something: what makes
+  // it actionable is that it is a button, not a border, which this app
+  // keeps for buttons and inputs.
+  const chipClass = cn(
+    "border-transparent",
+    compact && "px-1.5",
+    onOpen && "cursor-pointer",
+    HARNESS_CHIP[harness],
+    className,
+  );
+  const face = compact ? (
+    <HarnessIcon harness={harness} className="size-3.5" />
+  ) : (
+    <>
       <HarnessIcon harness={harness} className="size-3" />
-      {harnessName(harness)}
+      {label}
+    </>
+  );
+  const badge = onOpen ? (
+    <Badge
+      className={chipClass}
+      render={
+        <button type="button" aria-label={label} onClick={onOpen}>
+          {face}
+        </button>
+      }
+    />
+  ) : (
+    <Badge aria-label={compact ? label : undefined} className={chipClass}>
+      {face}
     </Badge>
+  );
+  // Compact drops the name, so the name arrives on hover and on focus.
+  // Written out, the chip already says it.
+  if (!compact) return badge;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={badge} />
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }
