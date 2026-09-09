@@ -203,10 +203,10 @@ while IFS='|' read -r label from to check_local; do
   fi
   rc=0
   re2 "$variant" >/dev/null 2>"$work/lb.re2.err" || rc=$?
-  if [ "$rc" = 1 ]; then
+  if [ "$rc" = 1 ] && grep -q 'invalid regular expression' "$work/lb.re2.err"; then
     ok "control: RE2 rejects $label lookbehind"
   else
-    bad "control: RE2 rejects $label lookbehind" "exit $rc"
+    bad "control: RE2 rejects $label lookbehind" "exit $rc: $(head -1 "$work/lb.re2.err")"
   fi
 done <<'CASES'
 reason|gsub("(?<w>[\\p{L}\\p{N}]+|gsub("(?<![\\p{L}\\p{N}])(?<w>[\\p{L}\\p{N}]+|yes

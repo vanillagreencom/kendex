@@ -271,7 +271,7 @@ run_watch() {
 #   error_payload    complete error TSV record when attention precedes it
 #   diagnostic       exact global refusal record, spaces as +
 observe() {
-  local got="" token name value
+  local got="" token name value field_sep='~'
   for token in $1; do
     name="${token%%=*}"
     case "$name" in
@@ -285,7 +285,7 @@ observe() {
       dispatches) value="$(wc -l <"$RUN/dispatch.log" | tr -d ' ')" ;;
       predicate_calls) value="$(wc -l <"$RUN/predicate-calls" | tr -d ' ')" ;;
       protocol)
-        value="${OUT//$'\t'/'~'}"
+        value="${OUT//$'\t'/$field_sep}"
         value="${value//$'\n'/;}"
         value="${value// /+}" ;;
       diagnostic)
@@ -293,7 +293,7 @@ observe() {
         value="${value// /+}" ;;
       error_payload)
         value="$(awk -F'\t' '$3 == "error" {print}' <<<"$OUT")"
-        value="${value//$'\t'/'~'}"
+        value="${value//$'\t'/$field_sep}"
         value="${value// /+}" ;;
       size)
         # The disarmed line's size annotation reduced to the fields the
