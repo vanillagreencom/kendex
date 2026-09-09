@@ -217,10 +217,11 @@ signer_case() { # LABEL STUB-BODY WANT-KEY WANT-SENTINEL
   chmod +x "$SIGNER_ROOT/ui/node_modules/.bin/tauri"
   stage kendex-x86_64-unknown-linux-gnu "kendex_${VERSION}_amd64.AppImage"
   out="$("$SIGNER_ROOT/tools/release-digests" x86_64-unknown-linux-gnu "$VERSION" "$DIST" 2>&1)" || rc=$?
-  first="$(printf '%s\n' "$out" | sed -n 1p)"
+  first="$(sed -n 1p <<<"$out")"
+  local rest
+  rest="$(sed -n '2,$p' <<<"$out")"
   if [[ "$rc" -eq 1 && "$first" == "release-digests: $want_key" ]] &&
-    { [[ "$want_sentinel" == "-" ]] ||
-      printf '%s\n' "$out" | sed -n '2,$p' | grep -qF "$want_sentinel"; }; then
+    { [[ "$want_sentinel" == "-" ]] || grep -qF "$want_sentinel" <<<"$rest"; }; then
     PASS=$((PASS + 1))
     printf '  ok    %s\n' "$label"
   else

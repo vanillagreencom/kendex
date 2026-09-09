@@ -105,7 +105,7 @@ for hook in pre-commit commit-msg; do
 done
 RC=0
 OUT="$(cd "$R" && ./tools/setup 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && [ "$(printf '%s\n' "$OUT" | sed -n 1p)" = "setup: not-armed=install" ] \
+[ "$RC" -ne 0 ] && [ "$(sed -n 1p <<<"$OUT")" = "setup: not-armed=install" ] \
   && case "$OUT" in *"install-git-hooks:"*) true ;; *) false ;; esac \
   && ok "setup stops with its remedy instead of reporting the clone armed" \
   || bad "setup stops with its remedy instead of reporting the clone armed" "rc=$RC out=$OUT"
@@ -184,7 +184,7 @@ OUT="$(cd "$E" && ./tools/setup 2>&1)" || RC=$?
 # into the refusal. So a successful command's report is what stands between
 # the run and its keyed line: line 1 is asserted, and the report it held is
 # asserted beneath.
-[ "$RC" -ne 0 ] && [ "$(printf '%s\n' "$OUT" | sed -n 1p)" = "setup: not-armed=check" ] \
+[ "$RC" -ne 0 ] && [ "$(sed -n 1p <<<"$OUT")" = "setup: not-armed=check" ] \
   && case "$OUT" in *"install-git-hooks:"*) true ;; *) false ;; esac \
   && ok "a configured hooks path stops setup instead of wiring a hook git ignores" \
   || bad "a configured hooks path stops setup instead of wiring a hook git ignores" "rc=$RC out=$OUT"
@@ -200,7 +200,7 @@ NOREPO="$TMP/no-repo"
 mkdir -p "$NOREPO"
 RC=0
 OUT="$(cd "$NOREPO" && "$R/tools/setup" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && [ "$(printf '%s\n' "$OUT" | sed -n 1p)" = "setup: worktree=none" ] &&
+[ "$RC" -ne 0 ] && [ "$(sed -n 1p <<<"$OUT")" = "setup: worktree=none" ] &&
   case "$OUT" in *"not a git repository"*) true ;; *) false ;; esac \
   && ok "setup run outside a work tree names that, not the installer" \
   || bad "setup run outside a work tree names that, not the installer" "rc=$RC out=$OUT"

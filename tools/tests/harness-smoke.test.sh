@@ -180,8 +180,9 @@ rows_case "a harness that cannot run leaves every row unanswerable" 3 unanswerab
 # has to survive under it.
 echo "=== a dependency's own words are replayed under the keyed line ==="
 cause_out="$( (cd "$SCRATCH" && PATH="$TMP/stub-bin" "$BASH" "$SMOKE" 2>&1) )" || true
-if [ "$(printf '%s\n' "$cause_out" | sed -n 1p)" = "harness-smoke: not-in-repo=$SCRATCH" ] &&
-  printf '%s\n' "$cause_out" | sed -n '2,$p' | grep -qF "$GIT_SENTINEL"; then
+cause_rest="$(sed -n '2,$p' <<<"$cause_out")"
+if [ "$(sed -n 1p <<<"$cause_out")" = "harness-smoke: not-in-repo=$SCRATCH" ] &&
+  grep -qF "$GIT_SENTINEL" <<<"$cause_rest"; then
   ok "git's refusal is replayed under the keyed line, not ahead of it"
 else
   bad "git's refusal is replayed under the keyed line, not ahead of it" \
@@ -200,8 +201,9 @@ else
   scratch_out="$( (cd "$ROWS_REPO" && PATH="$ROWS_BIN:$PATH" \
     "$BASH" "$SMOKE" --dir "$SEALED/below" 2>&1) )" || true
   chmod 755 "$SEALED"
-  if [ "$(printf '%s\n' "$scratch_out" | sed -n 1p)" = "harness-smoke: scratch=$SEALED/below" ] &&
-    printf '%s\n' "$scratch_out" | sed -n '2,$p' | grep -qi 'permission denied'; then
+  scratch_rest="$(sed -n '2,$p' <<<"$scratch_out")"
+  if [ "$(sed -n 1p <<<"$scratch_out")" = "harness-smoke: scratch=$SEALED/below" ] &&
+    grep -qi 'permission denied' <<<"$scratch_rest"; then
     ok "a parent the run cannot write is refused, with what mkdir said beneath it"
   else
     bad "a parent the run cannot write is refused, with what mkdir said beneath it" \

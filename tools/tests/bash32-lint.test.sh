@@ -459,9 +459,9 @@ echo "=== a dependency's own words are replayed under the keyed line ==="
 cause_probe="$TMP/cause"
 mkdir -p "$cause_probe"
 cause_out="$( (cd "$cause_probe" && "$LINT" 2>&1) )" || true
-cause_first="$(printf '%s\n' "$cause_out" | sed -n 1p)"
+cause_first="$(sed -n 1p <<<"$cause_out")"
 if [ "$cause_first" = "bash32-lint: not-in-repo=$cause_probe" ] &&
-  printf '%s\n' "$cause_out" | grep -q 'not a git repository'; then
+  grep -q 'not a git repository' <<<"$cause_out"; then
   ok "git's own diagnostic follows the keyed line instead of preceding it"
 else
   bad "git's own diagnostic follows the keyed line instead of preceding it" \
