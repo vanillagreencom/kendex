@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use kendex_core::commit_offer::{self, Branch, Committed, Failed, Offer, Probe, Step, Unavailable};
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
+use kendex_core::package::diff::PackageDiff;
 use serde::Serialize;
 use specta::Type;
 
@@ -158,6 +159,21 @@ pub enum CommitStep {
         #[serde(rename = "stillStaged")]
         still_staged: Option<u32>,
     },
+}
+
+/// What the window has to show for one file the offer covers.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum FileChanges {
+    /// The comparison between what the last commit holds and what the file
+    /// holds now.
+    Shown { diff: PackageDiff },
+    /// The offer no longer covers this path: the file has changed back, or
+    /// a sweep has taken it, since the offer was read. Nothing to show, and
+    /// nothing wrong.
+    Nothing,
+    /// A read the comparison is built from would not run.
+    Refused { refused: Refused },
 }
 
 /// What one of the other steps did.
@@ -313,6 +329,40 @@ pub fn commit_offer_scan(roots: Vec<String>) -> Result<CommitOfferScan, String> 
         }
     }
     Ok(found)
+}
+
+/// What changed in one file the offer covers, for the viewer the window
+/// opens on it.
+///
+/// The project is read again rather than trusting the path the window
+/// sends: the scan is what decides which files kendex may show, and a
+/// window that has been open a while is answering about a project that has
+/// moved on. A path the fresh scan does not cover is `Nothing`, whatever
+/// it names.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn commit_offer_file_changes(root: String, path: String) -> Result<FileChanges, String> {
+    let env = env()?;
+    let root = PathBuf::from(root);
+    let scope = Scope::Project { root: root.clone() };
+    let scan = match commit_offer::scan(&scope, &generated(&env, &scope)?) {
+        Ok(Some(scan)) => scan,
+        // Nothing kendex owns changed here any more, so no path in this
+        // project has a change this viewer may show.
+        Ok(None) => return Ok(FileChanges::Nothing),
+        Err(failed) => {
+            return Ok(FileChanges::Refused {
+                refused: Refused::from(&failed),
+            });
+        }
+    };
+    Ok(match commit_offer::file_changes(&scan, &path) {
+        Ok(Some(diff)) => FileChanges::Shown { diff },
+        Ok(None) => FileChanges::Nothing,
+        Err(failed) => FileChanges::Refused {
+            refused: Refused::from(&failed),
+        },
+    })
 }
 
 #[tauri::command(async)]

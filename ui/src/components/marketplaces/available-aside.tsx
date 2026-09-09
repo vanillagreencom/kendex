@@ -1,17 +1,16 @@
 import type { PackageView } from "@/bindings";
 import { DependencyFacts } from "@/components/marketplaces/package-dependencies";
-import { FileList } from "@/components/package/file-list";
 
 /** The available-package page's facts column: where it comes from, the sets
- * that carry it, what it needs, its files, and a name clash. The safety reading is not
+ * that carry it, what it needs, and a name clash. The safety reading is not
  * here — score and findings are one block, and it sits in the main column
- * where there is room for the findings under the number. */
+ * where there is room for the findings under the number. Neither are the
+ * files: they read as a tree beside the file they open, which is the app's
+ * one way to show files and needs the main column's width. */
 export function AvailableAside({
   marketplace,
   repo,
   view,
-  selectedFile,
-  onSelectFile,
   onOpenMarketplace,
   onOpenBundle,
 }: {
@@ -22,9 +21,6 @@ export function AvailableAside({
   /** The repository or path behind the catalog, when known. */
   repo: string | null;
   view: PackageView | null;
-  /** The file open in the main column; null shows the README. */
-  selectedFile: string | null;
-  onSelectFile: (path: string) => void;
   /** Open the marketplace this package comes from. */
   onOpenMarketplace: () => void;
   /** Open one of the curated sets that carry it. */
@@ -77,18 +73,6 @@ export function AvailableAside({
       ) : null}
       {view ? (
         <DependencyFacts dependencies={view.preview.dependencies} />
-      ) : null}
-      {view && view.preview.files.length > 0 ? (
-        <section>
-          <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">
-            Files
-          </h3>
-          <FileList
-            files={view.preview.files}
-            selected={selectedFile}
-            onSelect={onSelectFile}
-          />
-        </section>
       ) : null}
       {view?.preview.collision ? (
         <p className="text-xs text-warning">

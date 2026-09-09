@@ -102,10 +102,14 @@ pub fn package_diff(
     Ok(diff_trees(&from_files, &to_files))
 }
 
-pub(super) type Tree = BTreeMap<String, Vec<u8>>;
+/// Two of these are what a comparison is: a path to its bytes on each
+/// side. Public because a caller that reads its own bytes — the working
+/// tree of a project, against what its `HEAD` holds — shapes them into a
+/// diff through the same renderer the package pages use.
+pub type Tree = BTreeMap<String, Vec<u8>>;
 
 mod render;
-use render::diff_trees;
+pub use render::diff_trees;
 
 fn side(
     env: &Env,

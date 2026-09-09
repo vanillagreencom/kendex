@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { diffHarness, type PackageView } from "./use-package-data";
+import { type Comparison, diffHarness } from "./use-package-data";
 
 describe("diffHarness", () => {
   it("reads the comparison's rendering or the primary one", () => {
-    const edited: PackageView = {
-      mode: "diff",
+    const edited: Comparison = {
       from: "a",
       to: "installed",
       fromLabel: "v1",
@@ -13,37 +12,37 @@ describe("diffHarness", () => {
     };
     const rows: {
       name: string;
-      view: PackageView;
+      comparison: Comparison | null;
       primary: "claude" | null;
       expected: "opencode" | "claude" | null;
     }[] = [
       {
-        name: "explicit diff rendering",
-        view: edited,
+        name: "explicit comparison rendering",
+        comparison: edited,
         primary: "claude",
         expected: "opencode",
       },
       {
-        name: "diff fallback",
-        view: { ...edited, harness: undefined },
+        name: "comparison fallback",
+        comparison: { ...edited, harness: undefined },
         primary: "claude",
         expected: "claude",
       },
       {
-        name: "files view",
-        view: { mode: "files", file: null },
+        name: "no comparison open",
+        comparison: null,
         primary: "claude",
         expected: "claude",
       },
       {
-        name: "files without a primary",
-        view: { mode: "files", file: null },
+        name: "no comparison and no primary",
+        comparison: null,
         primary: null,
         expected: null,
       },
     ];
     expect(rows).toHaveLength(4);
-    for (const { name, view, primary, expected } of rows)
-      expect(diffHarness(view, primary), name).toBe(expected);
+    for (const { name, comparison, primary, expected } of rows)
+      expect(diffHarness(comparison, primary), name).toBe(expected);
   });
 });

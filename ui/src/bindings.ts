@@ -328,6 +328,17 @@ export const commands = {
 	 *  there is an offer to make, a state to flag on its card, or nothing.
 	 */
 	commitOfferScan: (roots: string[]) => typedError<CommitOfferScan, string>(__TAURI_INVOKE("commit_offer_scan", { roots })),
+	/**
+	 *  What changed in one file the offer covers, for the viewer the window
+	 *  opens on it.
+	 * 
+	 *  The project is read again rather than trusting the path the window
+	 *  sends: the scan is what decides which files kendex may show, and a
+	 *  window that has been open a while is answering about a project that has
+	 *  moved on. A path the fresh scan does not cover is `Nothing`, whatever
+	 *  it names.
+	 */
+	commitOfferFileChanges: (root: string, path: string) => typedError<FileChanges, string>(__TAURI_INVOKE("commit_offer_file_changes", { root, path })),
 	commitOfferCommit: (root: string, message: string) => typedError<CommitStep, string>(__TAURI_INVOKE("commit_offer_commit", { root, message })),
 	commitOfferPush: (root: string, remote: string, branch: string, tracked: boolean) => typedError<StepResult, string>(__TAURI_INVOKE("commit_offer_push", { root, remote, branch, tracked })),
 	/**
@@ -1497,6 +1508,22 @@ export type Enforcement =
  *  declares no hook surface for.
  */
 "not-applicable";
+
+/**  What the window has to show for one file the offer covers. */
+export type FileChanges = 
+/**
+ *  The comparison between what the last commit holds and what the file
+ *  holds now.
+ */
+{ kind: "shown"; diff: PackageDiff } | 
+/**
+ *  The offer no longer covers this path: the file has changed back, or
+ *  a sweep has taken it, since the offer was read. Nothing to show, and
+ *  nothing wrong.
+ */
+{ kind: "nothing" } | 
+/**  A read the comparison is built from would not run. */
+{ kind: "refused"; refused: Refused };
 
 export type FileDiff = {
 	/**  Forward-slash relative path, whatever the platform. */

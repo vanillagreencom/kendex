@@ -22,6 +22,7 @@ import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { UPDATE_LABEL } from "@/lib/copy";
 import { OVERVIEW_TAB } from "@/lib/copy-customize";
+import { FILES_TAB } from "@/lib/copy-files";
 import { PROJECTS_TAB, updateInLabel } from "@/lib/copy-projects";
 import { UPDATES_CHECKING } from "@/lib/copy-updates";
 import { READ_LANDED } from "@/lib/read-state";
@@ -324,6 +325,18 @@ const pressUpdate = async (host: HTMLElement) => {
   await openTab(host, OVERVIEW_TAB);
 };
 
+/** What the page says across the two tabs these reads feed: the version on
+ *  the Overview, the files on Files. One string, so a row names what
+ *  changed without having to name which tab said it. Leaves the page back
+ *  on the Overview, where it opened. */
+const readsOn = async (host: HTMLElement) => {
+  const overview = host.textContent ?? "";
+  await openTab(host, FILES_TAB);
+  const files = host.textContent ?? "";
+  await openTab(host, OVERVIEW_TAB);
+  return `${overview}\n${files}`;
+};
+
 describe("the package page after an update started from its Projects tab", () => {
   const outcomes = [
     {
@@ -386,10 +399,10 @@ describe("the package page after an update started from its Projects tab", () =>
       );
     }
     const host = await openPage();
-    const before = host.textContent ?? "";
+    const before = await readsOn(host);
     const updateBefore = header(host)?.includes(UPDATE_LABEL);
     await pressUpdate(host);
-    const after = host.textContent ?? "";
+    const after = await readsOn(host);
     expect(
       {
         before: row.before.filter((value) => before.includes(value)),

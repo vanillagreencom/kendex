@@ -1,6 +1,7 @@
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ProjectOffer, Refused } from "@/bindings";
+import { CommitOfferFiles } from "@/components/commit-offer-files";
 import { ExternalLink } from "@/components/external-link";
 import { Button } from "@/components/ui/button";
 import {
@@ -197,16 +198,13 @@ function Section({
   );
 }
 
-/** Paths are printed whole: an abbreviation guesses at a directory and
- *  names a different file from the one being committed. */
-function Paths({ paths, muted }: { paths: string[]; muted?: boolean }) {
+/** Paths kendex names but does not offer to open: the shared files it
+ *  writes one key in, which it leaves to the person. Printed whole — an
+ *  abbreviation guesses at a directory and names a different file from the
+ *  one being committed. */
+function Paths({ paths }: { paths: string[] }) {
   return (
-    <ul
-      className={cn(
-        "max-h-40 overflow-y-auto font-mono text-xs",
-        muted && "text-muted-foreground",
-      )}
-    >
+    <ul className="max-h-40 overflow-y-auto font-mono text-xs text-muted-foreground">
       {paths.map((path) => (
         <li key={path} className="break-all">
           {path}
@@ -272,11 +270,11 @@ function OfferState({
       </DialogHeader>
       <div className="space-y-4 text-sm">
         <Section title={FILES_LABEL}>
-          <Paths paths={offer.files} />
+          <CommitOfferFiles root={offer.root} paths={offer.files} />
         </Section>
         {offer.shared.length > 0 ? (
           <Section title={SHARED_LABEL}>
-            <Paths paths={offer.shared} muted />
+            <Paths paths={offer.shared} />
             <p className="text-muted-foreground">{SHARED_NOTE}</p>
           </Section>
         ) : null}
@@ -439,7 +437,7 @@ function CommitRefusedState({
         {/* The files the commit covers stay on screen, so the person can
             still see what they are answering about. */}
         <Section title={FILES_LABEL}>
-          <Paths paths={offer.files} />
+          <CommitOfferFiles root={offer.root} paths={offer.files} />
         </Section>
         {offer.others > 0 ? (
           <Section title={OTHER_LABEL}>

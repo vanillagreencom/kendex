@@ -74,6 +74,12 @@ export function unavailableReason(why: Why): string {
   }
 }
 
+/** The two sides of what a file the offer covers is compared against, in
+ *  the changes panel's own bar. */
+export const LAST_COMMIT_SIDE = "the last commit";
+export const WORKING_TREE_SIDE = "this project now";
+export const CHANGES_READ_FAILED_TITLE = "Couldn't show what changed";
+
 export const GIT_SAID_LABEL = "What git said";
 export const GH_SAID_LABEL = "What gh said";
 

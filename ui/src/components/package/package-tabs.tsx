@@ -9,14 +9,21 @@ import {
 } from "@/components/package/package-safety";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CUSTOMIZE_TAB, OVERVIEW_TAB } from "@/lib/copy-customize";
+import { FILES_TAB } from "@/lib/copy-files";
 import { PROJECTS_TAB } from "@/lib/copy-projects";
 import { canCustomize } from "@/lib/customization";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 
-/** The package page's scrolling content: what the package is, the places it
- *  is installed in, what the safety check made of it, and — for a kind whose
- *  rendering the person can shape — what they have changed about it.
+/** The package page's scrolling content: what the package is, the files it
+ *  is made of, the places it is installed in, what the safety check made of
+ *  it, and — for a kind whose rendering the person can shape — what they
+ *  have changed about it.
+ *
+ *  Files sits beside Overview because the two are one reading: what the
+ *  package is, and what it is made of. It reads a package by scope, kind
+ *  and name, so it is one of the tabs a page with no declaration behind it
+ *  does not have.
  *
  *  Customize is last because it is the only tab a package kind can lack,
  *  so every other tab keeps its position whatever the package is. */
@@ -32,7 +39,8 @@ export function PackageTabs({
   busy,
   openOn,
   onDelete,
-  body,
+  overview,
+  files,
 }: {
   kind: ItemKind;
   name: string;
@@ -59,10 +67,12 @@ export function PackageTabs({
   openOn: "overview" | "safety";
   /** Opens the dialog that deletes every copy — the Projects tab offers
    *  the whole-package deletion beside its per-place removals, and one
-   *  dialog confirms it wherever it was asked for. */
-  /** Absent where this page addresses no declaration. */
+   *  dialog confirms it wherever it was asked for. Absent where this page
+   *  addresses no declaration. */
   onDelete?: () => void;
-  body: ReactNode;
+  overview: ReactNode;
+  /** The tree and preview, which take the whole width of the page. */
+  files: ReactNode;
 }) {
   // Read once here rather than in each of the two places it shows: the tab
   // and its panel are one claim, and two readings could disagree.
@@ -82,7 +92,10 @@ export function PackageTabs({
           <TabsList>
             <TabsTrigger value="overview">{OVERVIEW_TAB}</TabsTrigger>
             {declares ? (
-              <TabsTrigger value="projects">{PROJECTS_TAB}</TabsTrigger>
+              <>
+                <TabsTrigger value="files">{FILES_TAB}</TabsTrigger>
+                <TabsTrigger value="projects">{PROJECTS_TAB}</TabsTrigger>
+              </>
             ) : null}
             <TabsTrigger value="safety">
               <SafetyScoreLabel reading={safety} vendor={vendor} />
@@ -92,8 +105,13 @@ export function PackageTabs({
             ) : null}
           </TabsList>
           <TabsContent value="overview" className="pt-6">
-            {body}
+            {overview}
           </TabsContent>
+          {declares ? (
+            <TabsContent value="files" className="pt-6">
+              {files}
+            </TabsContent>
+          ) : null}
           {declares ? (
             <TabsContent value="projects" className="pt-6">
               <PackageProjects

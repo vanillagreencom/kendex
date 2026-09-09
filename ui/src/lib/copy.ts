@@ -142,8 +142,9 @@ export const AUDIT_ATTENTION_DETAIL =
   "Problems and pending changes may be missing here.";
 export const TRY_AGAIN_LABEL = "Try again";
 
-// Package page: files, versions, and the diff between them.
-export const PACKAGE_FILES_TITLE = "Files";
+// Package page: files, versions, and the diff between them. The Files
+// tab's own words live in `copy-files.ts`, beside the tree and preview
+// every surface shares.
 // The file list is the page's third read and the one no Update turns on. A
 // package that ships no files and one whose files could not be read leave
 // the same empty column, so a read that did not land says so where the list
@@ -163,7 +164,6 @@ export const INSTALLED_VERSION_TAG = "installed";
 export const HELD_VERSION_TAG = "held here";
 export const NO_VERSIONS_NOTE =
   "No version history yet — check for updates to fetch it.";
-export const BACK_TO_FILES_LABEL = "Back to files";
 export const DIFF_TRUNCATED_NOTE =
   "This comparison is long; only the first part is shown.";
 export const VERSION_ERROR_TITLE = "Couldn't switch versions";
@@ -203,6 +203,10 @@ export const KEEP_AS_FORK_LABEL = "Keep as my own";
 export const VIEW_CHANGES_LABEL = "View changes";
 export const viewChangesInLabel = (tool: string): string =>
   `View changes in ${tool}`;
+/** The edited side of a comparison, named in the panel's own bar. */
+export const YOUR_EDITS_SIDE = "your edits";
+export const yourEditsInSide = (tool: string): string =>
+  `your edits in ${tool}`;
 export const DISCARD_EDITS_LABEL = "Discard edits…";
 export const DISCARD_ALL_EDITS_LABEL = "Discard all edits…";
 export const editedInToolsLabel = (tools: string[]): string =>

@@ -33,6 +33,7 @@ use crate::env::Env;
 use crate::model::Scope;
 use crate::process::{DEFAULT_TIMEOUT, INTERACTIVE_TIMEOUT};
 
+mod changes;
 mod gh;
 mod git;
 mod message;
@@ -40,6 +41,7 @@ mod paths;
 mod pathspec;
 mod run;
 
+pub use changes::file_changes;
 pub use gh::{OpenPullRequest, probe};
 pub use git::previous_head;
 pub use message::default_message;

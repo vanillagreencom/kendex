@@ -14,7 +14,8 @@ const MAX_FILES: usize = 400;
 const MAX_TOTAL_LINES: usize = 20_000;
 const CONTEXT_LINES: usize = 3;
 
-pub(super) fn diff_trees(from: &Tree, to: &Tree) -> PackageDiff {
+/// Shape two loaded trees into a display diff.
+pub fn diff_trees(from: &Tree, to: &Tree) -> PackageDiff {
     let mut files = Vec::new();
     let mut total_additions = 0;
     let mut total_deletions = 0;

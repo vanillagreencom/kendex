@@ -24,27 +24,28 @@ import type { PackageRef } from "@/stores/nav";
 import { useProblemsStore } from "@/stores/problems";
 import { useUpdatesStore } from "@/stores/updates";
 
-export type PackageView =
-  | { mode: "files"; file: string | null }
-  | {
-      mode: "diff";
-      from: string;
-      to: string;
-      fromLabel: string;
-      toLabel: string;
-      /** The rendering to read the installed side from, when the
-       *  comparison is about one tool's edited copy rather than the
-       *  package's primary installation. */
-      harness?: HarnessId;
-    };
+/** What the package page's changes panel is comparing. Null everywhere it
+ *  is closed, so "is a comparison open" and "what is it of" are one
+ *  answer rather than two that can disagree. */
+export interface Comparison {
+  from: string;
+  to: string;
+  /** The two sides as the panel's bar names them: a version, "installed",
+   *  the tool whose copy was edited. */
+  fromLabel: string;
+  toLabel: string;
+  /** The rendering to read the installed side from, when the comparison is
+   *  about one tool's edited copy rather than the package's primary
+   *  installation. */
+  harness?: HarnessId;
+}
 
-/** Which rendering a diff reads: the one the view names, else the
+/** Which rendering a diff reads: the one the comparison names, else the
  *  package's primary installation. */
 export const diffHarness = (
-  view: PackageView,
+  comparison: Comparison | null,
   primary: HarnessId | null,
-): HarnessId | null =>
-  view.mode === "diff" && view.harness ? view.harness : primary;
+): HarnessId | null => comparison?.harness ?? primary;
 
 /** The package page's reads, refetchable as one unit after a mutation.
  *
@@ -171,18 +172,18 @@ export function usePackageData(ref: PackageRef | null): {
   };
 }
 
-/** The diff behind a diff view, fetched when the view asks for one. The
+/** The diff behind the changes panel, fetched when a comparison opens. The
  *  special id "installed" compares against what is on disk. */
 export function usePackageDiff(
   ref: PackageRef | null,
-  view: PackageView,
+  comparison: Comparison | null,
   harness: HarnessId | null,
 ) {
   const showError = useProblemsStore((s) => s.showError);
   const [diff, setDiff] = useState<PackageDiff | null>(null);
 
   useEffect(() => {
-    if (!ref || view.mode !== "diff" || !addressesDeclaration(ref)) {
+    if (!ref || !comparison || !addressesDeclaration(ref)) {
       setDiff(null);
       return;
     }
@@ -197,8 +198,8 @@ export function usePackageDiff(
         ref.scope,
         ref.kind,
         ref.name,
-        sel(view.from),
-        sel(view.to),
+        sel(comparison.from),
+        sel(comparison.to),
         harness,
       )
       .then((response) => {
@@ -209,7 +210,7 @@ export function usePackageDiff(
     return () => {
       cancelled = true;
     };
-  }, [ref, view, harness, showError]);
+  }, [ref, comparison, harness, showError]);
 
   return diff;
 }

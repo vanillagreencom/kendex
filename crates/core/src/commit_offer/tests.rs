@@ -742,3 +742,79 @@ fn the_previous_head_is_none_before_the_first_commit() {
     );
     assert!(git::committed_inventory(root).unwrap().is_empty());
 }
+
+// ---------------------------------------------------------------------
+// What one file the offer covers changed.
+
+/// The viewer reads only what the scan covers. Every other path in the
+/// repository is the person's own — work in progress, an ignored file
+/// holding a secret — and a window that could name one could show it.
+#[test]
+fn only_a_path_the_scan_covers_has_changes_to_show() {
+    let repo = Repo::new(&[
+        (OWNED[0], "one\n"),
+        (".claude/settings.json", "{}\n"),
+        ("mine.md", "mine\n"),
+    ]);
+    let generated = repo.generated(OWNED, &[".claude/settings.json"]);
+    repo.write(OWNED[0], "two\n");
+    repo.write(".claude/settings.json", "{\"permissions\":{}}\n");
+    repo.write("mine.md", "a secret\n");
+    let found = repo.scan(&generated).unwrap();
+
+    let owned = file_changes(&found, OWNED[0]).unwrap().unwrap();
+    assert_eq!(owned.files.len(), 1, "one file named, one file compared");
+    assert_eq!(owned.files[0].path, OWNED[0]);
+    assert_eq!((owned.total_additions, owned.total_deletions), (1, 1));
+
+    assert!(
+        file_changes(&found, ".claude/settings.json")
+            .unwrap()
+            .is_some(),
+        "a shared file kendex writes a key in had no changes to show"
+    );
+
+    for outside in [
+        // The person's own changed file, which the scan counts and never
+        // covers.
+        "mine.md",
+        // A path that was never changed at all.
+        ".claude/skills/dev/other.md",
+        // A path reaching out of the project, which no scan can name.
+        "../mine.md",
+        // The same, spelled absolutely.
+        "/etc/passwd",
+    ] {
+        assert!(
+            file_changes(&found, outside).unwrap().is_none(),
+            "{outside} was shown"
+        );
+    }
+}
+
+/// A file this change adds has nothing at `HEAD` to compare against, and a
+/// file it deletes has nothing in the working tree; both are a change to
+/// show rather than a read that failed.
+#[test]
+fn a_file_added_or_deleted_by_the_change_still_shows_what_it_is() {
+    const ADDED: &str = ".claude/skills/dev/NEW.md";
+    let repo = Repo::new(&[(OWNED[0], "one\n"), (OWNED[1], "two\n")]);
+    repo.write(ADDED, "brand new\n");
+    fs::remove_file(repo.root.join(OWNED[1])).unwrap();
+    let generated = repo.generated(&[OWNED[0], OWNED[1], ADDED], &[]);
+    let found = repo.scan(&generated).unwrap();
+
+    let added = file_changes(&found, ADDED).unwrap().unwrap();
+    assert_eq!(
+        added.files[0].status,
+        crate::package::diff::FileStatus::Added
+    );
+    assert_eq!(added.total_deletions, 0);
+
+    let removed = file_changes(&found, OWNED[1]).unwrap().unwrap();
+    assert_eq!(
+        removed.files[0].status,
+        crate::package::diff::FileStatus::Removed
+    );
+    assert_eq!(removed.total_additions, 0);
+}

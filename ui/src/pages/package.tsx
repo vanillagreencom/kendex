@@ -1,20 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
 import type { HarnessId, Scope, VersionRow } from "@/bindings";
 import { SaveBar } from "@/components/customize/save-bar";
+import { ChangesPanel } from "@/components/files/changes-panel";
+import { ChangesViewer } from "@/components/files/changes-viewer";
 import { DeleteDialog } from "@/components/package/delete-dialog";
 import { PackageActions } from "@/components/package/package-actions";
-import { PackageBody } from "@/components/package/package-body";
+import { PackageFiles } from "@/components/package/package-files";
 import { PackageHeader } from "@/components/package/package-header";
+import { PackageOverview } from "@/components/package/package-overview";
 import { PackageTabs } from "@/components/package/package-tabs";
 import { packageVersionActions } from "@/components/package/package-version-actions";
 import {
+  type Comparison,
   diffHarness,
-  type PackageView,
   useManifestBusy,
   usePackageData,
   usePackageDiff,
 } from "@/components/package/use-package-data";
 import { PackagesNote } from "@/components/packages-note";
+import { YOUR_EDITS_SIDE, yourEditsInSide } from "@/lib/copy";
 import {
   groupFor,
   groupItems,
@@ -22,7 +26,7 @@ import {
   groupScopes,
   installationAt,
 } from "@/lib/derive";
-import { packageDisplayName } from "@/lib/labels";
+import { harnessName, packageDisplayName } from "@/lib/labels";
 import { PAGE_GUTTER } from "@/lib/layout";
 import {
   addressesDeclaration,
@@ -67,16 +71,18 @@ export function PackagePage() {
   const toggle = useAuditStore((s) => s.toggle);
   const { dirty, saving, openScope, load, save } = useEditorStore();
 
-  const [view, setView] = useState<PackageView>(() =>
+  // What the slide-in panel is comparing, or null with nothing open. The
+  // page opens on it when Updates sent the reader here to preview a
+  // change; every other way in leaves the tabs on screen.
+  const [comparison, setComparison] = useState<Comparison | null>(() =>
     initialView?.mode === "diff"
       ? {
-          mode: "diff",
           from: initialView.from,
           to: initialView.to,
           fromLabel: initialView.from.slice(0, 7),
           toLabel: initialView.to.slice(0, 7),
         }
-      : { mode: "files", file: null },
+      : null,
   );
   // Which tab the link that opened this page asked for, read once on mount:
   // the store's copy is cleared straight after, and re-reading it would
@@ -122,8 +128,8 @@ export function PackagePage() {
   const { meta, files, versions, reads, load: reload } = usePackageData(ref);
   const diff = usePackageDiff(
     ref,
-    view,
-    diffHarness(view, installationAt(group, ref?.scope)?.harness ?? null),
+    comparison,
+    diffHarness(comparison, installationAt(group, ref?.scope)?.harness ?? null),
   );
   // Why this place has no Update, or null when nothing withholds one. A
   // string, so this selector answers the same value on every render that
@@ -230,29 +236,34 @@ export function PackagePage() {
 
   const compare = (row: VersionRow) =>
     installed &&
-    setView({
-      mode: "diff",
+    setComparison({
       from: installed.id,
       to: row.id,
       fromLabel: versionRowLabel(installed),
       toLabel: versionRowLabel(row),
     });
 
-  const body = (
-    <PackageBody
+  const compareEdits = (harness?: HarnessId) => {
+    if (!installed) return;
+    setComparison({
+      from: installed.id,
+      to: "installed",
+      fromLabel: versionRowLabel(installed),
+      toLabel: harness
+        ? yourEditsInSide(harnessName(harness))
+        : YOUR_EDITS_SIDE,
+      harness,
+    });
+  };
+
+  const overview = (
+    <PackageOverview
       reference={ref}
       group={group}
       primary={primary}
       meta={meta}
       versions={versions}
-      files={files}
-      filesNote={packageFilesNote(reads)}
-      installed={installed}
-      view={view}
-      setView={setView}
-      diff={diff}
       busy={mutating}
-      reading={reads.reading}
       declares={declares}
       onToggle={
         declares
@@ -264,6 +275,7 @@ export function PackagePage() {
       }
       onSwitchVersion={switchTo}
       onCompare={compare}
+      onCompareEdits={compareEdits}
       onFollow={follow}
       onReload={reload}
     />
@@ -311,8 +323,27 @@ export function PackagePage() {
         busy={mutating}
         openOn={openOn}
         onDelete={declares ? () => setConfirmDelete(true) : undefined}
-        body={body}
+        overview={overview}
+        files={
+          <PackageFiles
+            scope={ref.scope}
+            kind={group.kind}
+            name={group.name}
+            files={files}
+            note={packageFilesNote(reads)}
+            retryRunning={reads.reading}
+            onRetry={reload}
+          />
+        }
       />
+      <ChangesPanel
+        open={comparison !== null}
+        onClose={() => setComparison(null)}
+        fromLabel={comparison?.fromLabel ?? ""}
+        toLabel={comparison?.toLabel ?? ""}
+      >
+        <ChangesViewer diff={diff} />
+      </ChangesPanel>
       {/* The editor's dirty state belongs to the last manifest it opened,
           and an observed page opens none — so a bar here would offer to
           save another package's settings from a page that is not about

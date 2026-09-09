@@ -24,6 +24,7 @@ import { AvailablePackagePage } from "./available-package";
 vi.mock("@/bindings", () => ({
   commands: {
     marketplacePackagePreview: vi.fn(),
+    marketplacePackageFile: vi.fn(),
     installTargets: vi.fn(),
   },
 }));
@@ -208,5 +209,53 @@ describe("where the available package says it comes from", () => {
     expect(
       [...(from?.querySelectorAll("span") ?? [])].map((el) => el.textContent),
     ).not.toContain(".");
+  });
+});
+
+// The files of a package nobody has installed yet read the way an
+// installed package's do: the app's one tree, and the file it opens beside
+// it. The aside carries the facts about the package and no longer a list
+// of its files.
+describe("the available package's files", () => {
+  it("draws them as a tree and opens the one picked", async () => {
+    answer({
+      ...view.preview,
+      files: [
+        { path: "SKILL.md", size: 10, isReadme: true },
+        { path: "references/deep.md", size: 20, isReadme: false },
+      ],
+    });
+    vi.mocked(commands.marketplacePackageFile).mockResolvedValue({
+      status: "ok",
+      data: {
+        path: "references/deep.md",
+        content: "A-LINE-FROM-THE-CATALOG",
+        truncated: false,
+      },
+    });
+    const host = mount(<AvailablePackagePage />);
+    await settle();
+
+    // Nothing is picked yet, so the pane asks rather than guessing which
+    // file the reader came for.
+    expect(host.textContent).toContain(PICK_A_FILE_NOTE);
+    const folder = [...host.querySelectorAll("button")].find(
+      (one) => one.title === "references",
+    );
+    expect(folder).toBeDefined();
+
+    const row = [...host.querySelectorAll("button")].find(
+      (one) => one.title === "references/deep.md",
+    );
+    if (!row) throw new Error("no row for references/deep.md");
+    await userEvent.click(row);
+    await settle();
+    expect(commands.marketplacePackageFile).toHaveBeenCalledWith(
+      catalog,
+      "skill",
+      "gh",
+      "references/deep.md",
+    );
+    expect(host.textContent).toContain("A-LINE-FROM-THE-CATALOG");
   });
 });

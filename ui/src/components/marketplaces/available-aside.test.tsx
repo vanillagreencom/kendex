@@ -37,8 +37,6 @@ const render = (view: PackageView | null) =>
       marketplace="kendex"
       repo={null}
       view={view}
-      selectedFile={null}
-      onSelectFile={() => {}}
       onOpenMarketplace={() => {}}
       onOpenBundle={() => {}}
     />,

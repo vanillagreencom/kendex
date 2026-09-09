@@ -4,14 +4,16 @@ import {
   type ItemKind,
   type ItemSource,
 } from "@/bindings";
-import { FileContent } from "@/components/package/file-preview";
+import { FilePane } from "@/components/files/file-pane";
 import { StatusNote } from "@/components/status-note";
 import { Skeleton } from "@/components/ui/skeleton";
+import { FILE_READ_FAILED_TITLE } from "@/lib/copy-files";
 import { useOrderedRead } from "@/lib/use-ordered-read";
 import { catalogKey } from "@/stores/marketplaces";
 
-/** One offered file of a package nobody has installed yet, rendered the
- * way the installed package page renders its files. */
+/** One offered file of a package nobody has installed yet, read and then
+ * drawn in the app's one file pane — the same pane the installed package's
+ * Files tab draws. */
 export function CatalogFilePreview({
   catalog,
   kind,
@@ -39,10 +41,10 @@ export function CatalogFilePreview({
   }
   if (state.status === "error") {
     return (
-      <StatusNote tone="critical" title="This file couldn't be shown">
+      <StatusNote tone="critical" title={FILE_READ_FAILED_TITLE}>
         {state.error}
       </StatusNote>
     );
   }
-  return <FileContent {...state.data} />;
+  return <FilePane {...state.data} />;
 }

@@ -1,0 +1,1 @@
+- Every screen that lists files draws one tree with folders you can open and close, and the file or its diff beside it: the package page's new Files tab, the marketplace page, and the commit dialog.
