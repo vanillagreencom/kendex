@@ -207,6 +207,11 @@ CHILD
   fi
 
   CHILD_ROOT="$(cat "$ROOT_FILE" 2>/dev/null || true)"
+  # Empty means the child died before the probe, which leaves every check
+  # below with nothing to read: `<unset>` never matches it and `test -e ""` is
+  # false, so the row would go green without reaching its own line.
+  assert_ne "$name: the child reached the probe and recorded its root" \
+    "$CHILD_ROOT" ""
   assert_ne "$name: the child was redirected without asking for it" \
     "$CHILD_ROOT" "<unset>"
   if [[ "$root_gone" == yes ]]; then
