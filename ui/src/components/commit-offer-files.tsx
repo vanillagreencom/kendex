@@ -10,6 +10,7 @@ import {
   CHANGES_READ_FAILED_TITLE,
   didNotFinish,
   LAST_COMMIT_SIDE,
+  SAME_CONTENT_NOTE,
   WORKING_TREE_SIDE,
 } from "@/lib/copy-commit-offer";
 import {
@@ -23,6 +24,7 @@ import {
 type Read =
   | { at: "reading" }
   | { at: "shown"; diff: PackageDiff }
+  | { at: "sameContent" }
   | { at: "nothing" }
   | { at: "refused"; said: string[] };
 
@@ -86,6 +88,8 @@ export function CommitOfferFiles({
               {read.said.join("\n")}
             </pre>
           </StatusNote>
+        ) : read.at === "sameContent" ? (
+          <p className="text-sm text-muted-foreground">{SAME_CONTENT_NOTE}</p>
         ) : read.at === "nothing" ? (
           <p className="text-sm text-muted-foreground">{UNCHANGED_FILE_NOTE}</p>
         ) : (
@@ -110,6 +114,8 @@ function answerOf(
   switch (response.data.kind) {
     case "shown":
       return { at: "shown", diff: response.data.diff };
+    case "sameContent":
+      return { at: "sameContent" };
     case "nothing":
       return { at: "nothing" };
     case "refused":

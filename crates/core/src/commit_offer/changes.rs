@@ -14,8 +14,22 @@ use crate::package::diff::{PackageDiff, Tree, diff_trees};
 
 use super::{Failed, Scan, git};
 
-/// The change in one file the offer covers, or `None` for a path it does
-/// not.
+/// What the offer has to show for one of the files it covers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Changes {
+    /// What the last commit holds against what the file holds now.
+    Shown(PackageDiff),
+    /// The offer covers this path and git reports it changed, and both
+    /// sides hold the same bytes. What the commit carries for it is a
+    /// change git records beside the contents — the file's mode, which is
+    /// what restoring a registration script's execute bit changes and
+    /// nothing else about the file.
+    SameContent,
+    /// The offer does not cover this path.
+    NotOffered,
+}
+
+/// The change in one file the offer covers.
 ///
 /// The scan is the whole of what may be read. A path outside it is not a
 /// file kendex wrote or shares a key in, so it is one of the person's own —
@@ -23,11 +37,11 @@ use super::{Failed, Scan, git};
 /// the window has no business showing it. The check is exact equality
 /// against paths git itself reported, so nothing outside the project can
 /// be named either.
-pub fn file_changes(scan: &Scan, path: &str) -> Result<Option<PackageDiff>, Failed> {
+pub fn file_changes(scan: &Scan, path: &str) -> Result<Changes, Failed> {
     let covered = scan.owned.iter().any(|owned| owned.path == path)
         || scan.shared.iter().any(|shared| shared == path);
     if !covered {
-        return Ok(None);
+        return Ok(Changes::NotOffered);
     }
     let mut before = Tree::new();
     if let Some(bytes) = committed(&scan.root, path)? {
@@ -37,7 +51,14 @@ pub fn file_changes(scan: &Scan, path: &str) -> Result<Option<PackageDiff>, Fail
     if let Some(bytes) = working(&scan.root, path) {
         after.insert(path.to_owned(), bytes);
     }
-    Ok(Some(diff_trees(&before, &after)))
+    let diff = diff_trees(&before, &after);
+    // git put this path in the scan, so something about it changed. With
+    // both sides holding the same bytes that something is not the
+    // contents, and a comparison drawn as empty would say the opposite.
+    Ok(match diff.files.is_empty() {
+        true => Changes::SameContent,
+        false => Changes::Shown(diff),
+    })
 }
 
 /// What `HEAD` holds at this path, or `None` where it holds nothing —
@@ -51,13 +72,18 @@ fn committed(root: &Path, path: &str) -> Result<Option<Vec<u8>>, Failed> {
 /// What the working tree holds at this path, or `None` where it holds
 /// nothing — a file this change deletes.
 ///
-/// A symlink is `None` too: reading through one would show bytes from
-/// wherever it points, which is not the file the offer named and need not
-/// be inside the project at all.
+/// A symlink is read as the link, never through it. Following one would
+/// show bytes from wherever it points, which is not the file the offer
+/// named and need not be inside the project at all; the link's own target
+/// text is the whole of what git stores for it, and is what `HEAD:./<path>`
+/// answers with on the other side. kendex writes these links itself — the
+/// tree plan emits one per project skill — so a link it rewrites has to
+/// read as a rewrite rather than as a deletion.
 fn working(root: &Path, path: &str) -> Option<Vec<u8>> {
     let whole = root.join(path);
     if whole.is_symlink() {
-        return None;
+        let target = std::fs::read_link(&whole).ok()?;
+        return Some(crate::paths::slashed(&target).into_bytes());
     }
     std::fs::read(&whole).ok()
 }

@@ -79,6 +79,11 @@ export function unavailableReason(why: Why): string {
 export const LAST_COMMIT_SIDE = "the last commit";
 export const WORKING_TREE_SIDE = "this project now";
 export const CHANGES_READ_FAILED_TITLE = "Couldn't show what changed";
+/** git records a file's permissions beside its contents, and a commit
+ *  carries that record. A comparison drawn as empty would tell the person
+ *  nothing changed in a file the commit does change. */
+export const SAME_CONTENT_NOTE =
+  "Nothing inside this file changed. The commit carries a change git keeps beside the contents — the file's permissions, such as whether it can be run.";
 
 export const GIT_SAID_LABEL = "What git said";
 export const GH_SAID_LABEL = "What gh said";

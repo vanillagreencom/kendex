@@ -5,7 +5,7 @@ import type { FileEntry } from "@/components/files/file-tree-model";
 import { FilePreview } from "@/components/package/file-preview";
 import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
-import { TRY_AGAIN_LABEL } from "@/lib/copy";
+import { README_TAG, TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
   FILE_TREE_LABEL,
   fileSizeLabel,
@@ -64,9 +64,18 @@ export function PackageFiles({
   if (files.length === 0) {
     return <p className="text-sm text-muted-foreground">{NO_FILES_NOTE}</p>;
   }
+  // The tab opens on the readme, so the row that holds it says so: a pane
+  // showing a file no row is marked as leaves the reader hunting for where
+  // it came from.
   const entries: FileEntry[] = files.map((file) => ({
     path: file.path,
-    meta: fileSizeLabel(file.size),
+    meta: file.isReadme ? (
+      <>
+        {README_TAG} {fileSizeLabel(file.size)}
+      </>
+    ) : (
+      fileSizeLabel(file.size)
+    ),
   }));
   return (
     <FileBrowser

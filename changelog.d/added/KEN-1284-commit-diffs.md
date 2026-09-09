@@ -1,1 +1,1 @@
-- The commit dialog opens each file kendex wrote, so you can read the change before deciding what to do with it.
+- The commit dialog opens each file kendex wrote, a project's skill links included, so you can read the change before deciding what to do with it.

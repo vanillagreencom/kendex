@@ -6,6 +6,7 @@ import { commands } from "@/bindings";
 import {
   CHANGES_READ_FAILED_TITLE,
   didNotFinish,
+  SAME_CONTENT_NOTE,
 } from "@/lib/copy-commit-offer";
 import { UNCHANGED_FILE_NOTE } from "@/lib/copy-files";
 import { mount, settle } from "@/test/dom";
@@ -95,6 +96,17 @@ describe("the files a commit would carry", () => {
     render();
     await open(".claude/CLAUDE.md");
     expect(panel()).toContain(UNCHANGED_FILE_NOTE);
+  });
+
+  // git carries changes the contents do not show — a registration script
+  // regaining its execute bit is one kendex itself makes. Drawing that as
+  // an empty comparison would tell the person nothing changed in a file
+  // the commit does change.
+  it("says what a change the contents do not show is", async () => {
+    answers({ kind: "sameContent" });
+    render();
+    await open(".claude/CLAUDE.md");
+    expect(panel()).toContain(SAME_CONTENT_NOTE);
   });
 
   // The must-not-happen half: a read that failed is never drawn as a diff

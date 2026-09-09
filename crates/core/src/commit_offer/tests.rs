@@ -746,6 +746,14 @@ fn the_previous_head_is_none_before_the_first_commit() {
 // ---------------------------------------------------------------------
 // What one file the offer covers changed.
 
+/// The comparison this path has to show, or the test fails naming it.
+fn shown(scan: &Scan, path: &str) -> crate::package::diff::PackageDiff {
+    match file_changes(scan, path).unwrap() {
+        Changes::Shown(diff) => diff,
+        other => panic!("{path} answered {other:?} rather than a comparison"),
+    }
+}
+
 /// The viewer reads only what the scan covers. Every other path in the
 /// repository is the person's own — work in progress, an ignored file
 /// holding a secret — and a window that could name one could show it.
@@ -762,15 +770,18 @@ fn only_a_path_the_scan_covers_has_changes_to_show() {
     repo.write("mine.md", "a secret\n");
     let found = repo.scan(&generated).unwrap();
 
-    let owned = file_changes(&found, OWNED[0]).unwrap().unwrap();
+    let Changes::Shown(owned) = file_changes(&found, OWNED[0]).unwrap() else {
+        panic!("an owned file kendex changed had no comparison to show");
+    };
     assert_eq!(owned.files.len(), 1, "one file named, one file compared");
     assert_eq!(owned.files[0].path, OWNED[0]);
     assert_eq!((owned.total_additions, owned.total_deletions), (1, 1));
 
     assert!(
-        file_changes(&found, ".claude/settings.json")
-            .unwrap()
-            .is_some(),
+        matches!(
+            file_changes(&found, ".claude/settings.json").unwrap(),
+            Changes::Shown(_)
+        ),
         "a shared file kendex writes a key in had no changes to show"
     );
 
@@ -785,8 +796,9 @@ fn only_a_path_the_scan_covers_has_changes_to_show() {
         // The same, spelled absolutely.
         "/etc/passwd",
     ] {
-        assert!(
-            file_changes(&found, outside).unwrap().is_none(),
+        assert_eq!(
+            file_changes(&found, outside).unwrap(),
+            Changes::NotOffered,
             "{outside} was shown"
         );
     }
@@ -804,17 +816,97 @@ fn a_file_added_or_deleted_by_the_change_still_shows_what_it_is() {
     let generated = repo.generated(&[OWNED[0], OWNED[1], ADDED], &[]);
     let found = repo.scan(&generated).unwrap();
 
-    let added = file_changes(&found, ADDED).unwrap().unwrap();
+    let added = shown(&found, ADDED);
     assert_eq!(
         added.files[0].status,
         crate::package::diff::FileStatus::Added
     );
     assert_eq!(added.total_deletions, 0);
 
-    let removed = file_changes(&found, OWNED[1]).unwrap().unwrap();
+    let removed = shown(&found, OWNED[1]);
     assert_eq!(
         removed.files[0].status,
         crate::package::diff::FileStatus::Removed
     );
     assert_eq!(removed.total_additions, 0);
+}
+
+/// A harness-native link is a path kendex writes and commits: what git
+/// stores for it is the link's own target text, so the viewer reads the
+/// link rather than following it. Reading through it, or refusing it, would
+/// tell a person the commit deletes a link it rewrites.
+#[cfg(unix)]
+#[test]
+fn a_link_kendex_owns_reads_as_its_target_text() {
+    const LINK: &str = ".claude/skills/dev";
+    let repo = Repo::new(&[(".agents/skills/dev/SKILL.md", "body\n")]);
+    fs::create_dir_all(repo.root.join(".claude/skills")).unwrap();
+    let at = repo.root.join(LINK);
+    std::os::unix::fs::symlink("../../.agents/skills/dev", &at).unwrap();
+    let generated = repo.generated(&[LINK], &[]);
+
+    // Untracked: the commit adds the link, and the row says so.
+    let added = shown(&repo.scan(&generated).unwrap(), LINK);
+    assert_eq!(
+        added.files[0].status,
+        crate::package::diff::FileStatus::Added
+    );
+    assert_eq!(hunk_text(&added), ["+../../.agents/skills/dev"]);
+
+    // Committed, then respelled the way one apply converges an absolute
+    // link to a relative one: one line replaced by another, never a
+    // deletion.
+    repo.git(&["add", "-A"]);
+    repo.git(&["commit", "--quiet", "-m", "link"]);
+    fs::remove_file(&at).unwrap();
+    std::os::unix::fs::symlink("../../../.agents/skills/dev", &at).unwrap();
+    let respelled = shown(&repo.scan(&generated).unwrap(), LINK);
+    assert_eq!(
+        respelled.files[0].status,
+        crate::package::diff::FileStatus::Modified
+    );
+    assert_eq!(
+        hunk_text(&respelled),
+        ["-../../.agents/skills/dev", "+../../../.agents/skills/dev"]
+    );
+    assert_eq!(
+        (respelled.total_additions, respelled.total_deletions),
+        (1, 1)
+    );
+}
+
+/// git carries changes the contents do not show — a registration script
+/// regaining its execute bit is one kendex itself makes. The offer covers
+/// the path, so the viewer says what the commit carries rather than
+/// drawing an empty comparison, which reads as nothing having changed.
+#[cfg(unix)]
+#[test]
+fn a_change_the_contents_do_not_show_is_not_an_empty_comparison() {
+    use std::os::unix::fs::PermissionsExt;
+    const SCRIPT: &str = ".claude/hooks/check.sh";
+    let repo = Repo::new(&[(SCRIPT, "#!/bin/sh\n")]);
+    let generated = repo.generated(&[SCRIPT], &[]);
+    let at = repo.root.join(SCRIPT);
+    fs::set_permissions(&at, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let found = repo.scan(&generated).unwrap();
+    assert_eq!(found.count(), 1, "the mode change left the offer's set");
+    assert_eq!(file_changes(&found, SCRIPT).unwrap(), Changes::SameContent);
+}
+
+/// Every line one comparison's hunks hold, with the sign the viewer draws.
+fn hunk_text(diff: &crate::package::diff::PackageDiff) -> Vec<String> {
+    diff.files
+        .iter()
+        .flat_map(|file| &file.hunks)
+        .flat_map(|hunk| &hunk.lines)
+        .map(|line| {
+            let sign = match line.kind {
+                crate::package::diff::LineKind::Add => "+",
+                crate::package::diff::LineKind::Remove => "-",
+                crate::package::diff::LineKind::Context => " ",
+            };
+            format!("{sign}{}", line.text)
+        })
+        .collect()
 }

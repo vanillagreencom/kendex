@@ -27,6 +27,7 @@ import {
   PACKAGE_FILES_TITLE,
   PACKAGES_CHECK_FAILED_TITLE,
   PLACE_COUNTING_LABEL,
+  README_TAG,
   TRY_AGAIN_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
@@ -636,6 +637,11 @@ describe("the package page's Files tab", () => {
         button.closest("header") === null,
     );
 
+  /** A tree row by the path it names; its text also carries what the row
+   *  says about the file. */
+  const rowFor = (host: HTMLElement, path: string) =>
+    [...host.querySelectorAll("button")].find((one) => one.title === path);
+
   /** A refusal core sent. Pass-through is the property, so the wording is
    *  one core never uses. */
   const REFUSED = "REFUSED-BY-CORE: the install directory is gone";
@@ -655,14 +661,22 @@ describe("the package page's Files tab", () => {
     expect(header(host)).toContain(UPDATE_LABEL);
     expect(header(host)).not.toContain(REFUSED);
 
-    // The read again lands, and the list takes the note's place.
+    // The read again lands, and the tree takes the note's place. The tab
+    // opens on the readme, so the row holding it carries the marker that
+    // says which file the pane is showing.
     vi.mocked(commands.packageFiles).mockResolvedValue({
       status: "ok",
-      data: [{ path: "SKILL.md", size: 10, isReadme: false }],
+      data: [
+        { path: "SKILL.md", size: 10, isReadme: true },
+        { path: "references/deep.md", size: 20, isReadme: false },
+      ],
     });
     await userEvent.click(filesRetry(host)[0] as HTMLElement);
     await settle();
-    expect(host.textContent).toContain("SKILL.md");
+    expect(rowFor(host, "SKILL.md")?.textContent).toContain(README_TAG);
+    expect(rowFor(host, "references/deep.md")?.textContent).not.toContain(
+      README_TAG,
+    );
     expect(host.textContent).not.toContain(PACKAGE_FILES_READ_FAILED);
     expect(filesRetry(host)).toHaveLength(0);
   });

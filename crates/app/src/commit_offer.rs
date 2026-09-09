@@ -14,7 +14,9 @@
 
 use std::path::{Path, PathBuf};
 
-use kendex_core::commit_offer::{self, Branch, Committed, Failed, Offer, Probe, Step, Unavailable};
+use kendex_core::commit_offer::{
+    self, Branch, Changes, Committed, Failed, Offer, Probe, Step, Unavailable,
+};
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
 use kendex_core::package::diff::PackageDiff;
@@ -168,6 +170,10 @@ pub enum FileChanges {
     /// The comparison between what the last commit holds and what the file
     /// holds now.
     Shown { diff: PackageDiff },
+    /// The offer covers this path and both sides hold the same bytes, so
+    /// what the commit carries for it is a change git records beside the
+    /// contents rather than a change to the file's text.
+    SameContent,
     /// The offer no longer covers this path: the file has changed back, or
     /// a sweep has taken it, since the offer was read. Nothing to show, and
     /// nothing wrong.
@@ -357,8 +363,9 @@ pub fn commit_offer_file_changes(root: String, path: String) -> Result<FileChang
         }
     };
     Ok(match commit_offer::file_changes(&scan, &path) {
-        Ok(Some(diff)) => FileChanges::Shown { diff },
-        Ok(None) => FileChanges::Nothing,
+        Ok(Changes::Shown(diff)) => FileChanges::Shown { diff },
+        Ok(Changes::SameContent) => FileChanges::SameContent,
+        Ok(Changes::NotOffered) => FileChanges::Nothing,
         Err(failed) => FileChanges::Refused {
             refused: Refused::from(&failed),
         },

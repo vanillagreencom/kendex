@@ -1517,6 +1517,12 @@ export type FileChanges =
  */
 { kind: "shown"; diff: PackageDiff } | 
 /**
+ *  The offer covers this path and both sides hold the same bytes, so
+ *  what the commit carries for it is a change git records beside the
+ *  contents rather than a change to the file's text.
+ */
+{ kind: "sameContent" } | 
+/**
  *  The offer no longer covers this path: the file has changed back, or
  *  a sweep has taken it, since the offer was read. Nothing to show, and
  *  nothing wrong.
