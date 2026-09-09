@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ObservedItem, Scope } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
 import { openLibraryAt } from "@/components/library/use-filter-handoff";
+import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
 import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
 import {
   READ_LANDED,
@@ -16,6 +17,7 @@ import { NO_FILTERS, useLibraryViewStore } from "@/stores/library-view";
 import { useNavStore } from "@/stores/nav";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
+import { useSettingsStore } from "@/stores/settings";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
 
@@ -431,5 +433,65 @@ describe("the marketplace a Library row came from", () => {
     );
     expect(from).toBeUndefined();
     expect(host.textContent).toContain("Your own");
+  });
+});
+
+// A project with nothing in it is not a table hiding rows behind a
+// filter: the way out is to install something there, and the place is
+// already named by the narrowing the reader set.
+describe("the Library narrowed to a place that has nothing", () => {
+  beforeEach(() => {
+    vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED });
+    useSettingsStore.setState({
+      settings: { projects: [VG.root, HYPR.root] } as never,
+    });
+    useLibraryViewStore.setState(NO_FILTERS);
+    useScanStore.setState({
+      scanning: false,
+      error: null,
+      result: {
+        items: [installed(HYPR)],
+        harnesses: [],
+        warnings: [],
+        missingProjects: [],
+      },
+    });
+  });
+
+  it("offers to install here, carrying the place into the browse", async () => {
+    useNavStore.setState({
+      libraryScope: { project: VG.root },
+      search: "",
+      libraryFilter: null,
+      installInto: null,
+    });
+    const host = mount(<InstalledView />);
+
+    expect(host.textContent).toContain(nothingInstalledIn("vg"));
+    const add = [...host.querySelectorAll("button")].find(
+      (one) => one.textContent === addPackagesTo("vg"),
+    );
+    if (!add) throw new Error("no add-packages button in the empty table");
+    await userEvent.click(add);
+
+    expect(useNavStore.getState().page).toBe("marketplaces");
+    expect(useNavStore.getState().installInto).toEqual(VG);
+  });
+
+  // With a filter on top, an empty table is what that filter is hiding.
+  // Offering to install would name a place that may already hold plenty.
+  it("offers to clear the filter instead when one is narrowing the table", () => {
+    useNavStore.setState({
+      libraryScope: { project: HYPR.root },
+      search: "nothing-matches-this",
+      libraryFilter: null,
+    });
+    const host = mount(<InstalledView />);
+
+    expect(host.textContent).not.toContain(nothingInstalledIn("hyprtrade"));
+    expect(host.textContent).toContain("Clear filters");
   });
 });

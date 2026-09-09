@@ -95,9 +95,61 @@ describe("what an install leaves waiting", () => {
     );
     await install(PROJECT);
     expect(useMarketplacesStore.getState().pendingEffects).toEqual({
-      scope: PROJECT,
-      queue: [disclosure("guards")],
+      queue: [{ scope: PROJECT, disclosure: disclosure("guards") }],
     });
+  });
+
+  // The guided install writes into each place the reader picked in turn,
+  // reporting one place at a time. A later report replacing the line would
+  // drop every question the places before it raised — including all of
+  // them, when the last place's packages declare nothing.
+  it("adds a later install's effects to the line rather than replacing it", async () => {
+    vi.mocked(commands.marketplaceInstall).mockResolvedValue(
+      installed([disclosure("guards")]),
+    );
+    await install(PROJECT);
+    vi.mocked(commands.marketplaceInstall).mockResolvedValue(installed([]));
+    await install();
+
+    expect(useMarketplacesStore.getState().pendingEffects).toEqual({
+      queue: [{ scope: PROJECT, disclosure: disclosure("guards") }],
+    });
+  });
+
+  // Each entry carries its own place, so an effect raised in one project is
+  // answered against that project rather than against whichever place
+  // reported last.
+  it("answers each effect against the place it came from", async () => {
+    vi.mocked(commands.marketplaceInstall).mockResolvedValue(
+      installed([disclosure("guards")]),
+    );
+    await install(PROJECT);
+    vi.mocked(commands.repoEffectsApply).mockResolvedValue({
+      status: "ok",
+      data: { stdout: ["armed"], stderr: [] },
+    });
+
+    await useMarketplacesStore.getState().applyRepoEffect();
+
+    expect(commands.repoEffectsApply).toHaveBeenCalledWith(
+      PROJECT,
+      disclosure("guards").declared,
+    );
+  });
+
+  // A caller with a surface of its own to report on says nothing here: the
+  // guided flow names every place it wrote to once, and a toast per place
+  // would say the same thing three times and never say where.
+  it("says nothing on the way out for a caller that reports itself", async () => {
+    const { toast } = await import("sonner");
+    vi.mocked(commands.marketplaceInstall).mockResolvedValue(installed([]));
+    await useMarketplacesStore.getState().install({
+      scope: { scope: "global" },
+      source: "kit",
+      items: [{ kind: "skill", name: "deploy" }],
+      quiet: true,
+    });
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("asks nothing for a package that declares nothing", async () => {
@@ -189,8 +241,10 @@ describe("answering", () => {
     useProblemsStore.getState().closeError();
     useMarketplacesStore.setState({
       pendingEffects: {
-        scope: PROJECT,
-        queue: [disclosure("guards"), disclosure("linter")],
+        queue: [
+          { scope: PROJECT, disclosure: disclosure("guards") },
+          { scope: PROJECT, disclosure: disclosure("linter") },
+        ],
       },
     });
   });
@@ -223,8 +277,10 @@ describe("answering", () => {
       vi.clearAllMocks();
       useMarketplacesStore.setState({
         pendingEffects: {
-          scope: PROJECT,
-          queue: [disclosure("guards"), disclosure("linter")],
+          queue: [
+            { scope: PROJECT, disclosure: disclosure("guards") },
+            { scope: PROJECT, disclosure: disclosure("linter") },
+          ],
         },
       });
       vi.mocked(commands.repoEffectsApply).mockResolvedValue({
@@ -243,7 +299,7 @@ describe("answering", () => {
       expect(
         useMarketplacesStore.getState().pendingEffects?.queue,
         row.name,
-      ).toEqual([disclosure("linter")]);
+      ).toEqual([{ scope: PROJECT, disclosure: disclosure("linter") }]);
     }
   });
 
@@ -275,8 +331,10 @@ describe("answering", () => {
       useProblemsStore.getState().closeError();
       useMarketplacesStore.setState({
         pendingEffects: {
-          scope: PROJECT,
-          queue: [disclosure("guards"), disclosure("linter")],
+          queue: [
+            { scope: PROJECT, disclosure: disclosure("guards") },
+            { scope: PROJECT, disclosure: disclosure("linter") },
+          ],
         },
       });
       vi.mocked(commands.repoEffectsApply).mockResolvedValue({
@@ -300,7 +358,7 @@ describe("answering", () => {
     expect(commands.repoEffectsApply).not.toHaveBeenCalled();
     expect(toast.info).toHaveBeenCalledWith(repoEffectsDeclinedToast("guards"));
     expect(useMarketplacesStore.getState().pendingEffects?.queue).toEqual([
-      disclosure("linter"),
+      { scope: PROJECT, disclosure: disclosure("linter") },
     ]);
   });
 
@@ -325,7 +383,7 @@ describe("answering", () => {
     expect(dialog.title).toBe(repoEffectsFailedTitle("guards"));
     expect(dialog.message).toBe(account);
     expect(useMarketplacesStore.getState().pendingEffects?.queue).toEqual([
-      disclosure("linter"),
+      { scope: PROJECT, disclosure: disclosure("linter") },
     ]);
   });
 });

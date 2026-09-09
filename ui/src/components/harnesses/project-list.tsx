@@ -3,9 +3,9 @@ import { useState } from "react";
 import type { ProjectFlag, Scope } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AddProjectDialog } from "@/components/harnesses/add-project-dialog";
+import { FindProjectsDialog } from "@/components/harnesses/find-projects-dialog";
 import { PlaceMarketplacesDialog } from "@/components/harnesses/place-marketplaces-dialog";
 import { ProjectCard } from "@/components/harnesses/project-card";
-import { ScanFolderDialog } from "@/components/harnesses/scan-folder-dialog";
 import { SessionNoteRow } from "@/components/harnesses/session-note-row";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,7 +23,12 @@ import {
   uncommittedInProgress,
   uncommittedNoBranch,
 } from "@/lib/copy-commit-offer";
+import { ADD_PACKAGES_LABEL, addPackagesTo } from "@/lib/copy-install";
 import { PLACE_MARKETPLACES_LABEL } from "@/lib/copy-model";
+import {
+  ADD_PROJECT_TITLE,
+  FIND_PROJECTS_TITLE,
+} from "@/lib/copy-project-setup";
 import {
   type ItemPlace,
   installedCountByKind,
@@ -39,6 +44,7 @@ import { cn } from "@/lib/utils";
 import { useAuditOnMount, useAuditStore } from "@/stores/audit";
 import { useCommitOfferStore } from "@/stores/commit-offer";
 import { useNavStore } from "@/stores/nav";
+import { useProjectSetupStore } from "@/stores/project-setup";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { useUpdatesStore } from "@/stores/updates";
@@ -89,6 +95,7 @@ function badgeFor(
 function PlaceActions({
   scope,
   place,
+  onAddPackages,
   onStopTracking,
 }: {
   scope: Scope;
@@ -96,6 +103,10 @@ function PlaceActions({
    *  [scopeNames] — the dialogs this menu opens name the place whose files
    *  they rewrite, and two projects can end in the same folder. */
   place: string;
+  /** Browse packages on this place's behalf. On the menu as well as in the
+   *  empty state, because a place that already has packages is where more
+   *  are usually wanted. */
+  onAddPackages: () => void;
   onStopTracking?: () => void;
 }) {
   const [marketplacesOpen, setMarketplacesOpen] = useState(false);
@@ -114,6 +125,9 @@ function PlaceActions({
           }
         />
         <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={onAddPackages}>
+            {ADD_PACKAGES_LABEL}
+          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setMarketplacesOpen(true)}>
             {PLACE_MARKETPLACES_LABEL}
           </DropdownMenuItem>
@@ -147,6 +161,17 @@ export function ProjectList() {
   const auditFailure = useAuditStore((s) => s.read.error);
   const goToLibrary = useNavStore((s) => s.goToLibrary);
   const goToUnmanaged = useNavStore((s) => s.goToUnmanaged);
+  const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
+  // Which places are still being read after being added, and which of
+  // those reads failed. Registration and this are separate answers — see
+  // `stores/project-setup.ts`.
+  const checking = useProjectSetupStore((s) => s.checking);
+  const unchecked = useProjectSetupStore((s) => s.unchecked);
+  const check = useProjectSetupStore((s) => s.check);
+  // Browsing on a place's behalf: the Packages tab, told which place asked.
+  // That is what makes "add a project, then add packages to it" one path —
+  // the guided install opens on the project the reader came from.
+  const addPackages = (scope: Scope) => goToMarketplaces("packages", scope);
   // What kendex is not looking after at one place. This is the only surface
   // in the app that mentions it: a count on the card for the place it is
   // at, and the flow that offers to take it on behind the click.
@@ -228,9 +253,9 @@ export function ProjectList() {
             — a form pinned under the cards would take more of the page than
             the projects themselves. */}
         <div className="flex justify-end gap-2">
-          <Button onClick={() => setAdding(true)}>Add a project</Button>
+          <Button onClick={() => setAdding(true)}>{ADD_PROJECT_TITLE}</Button>
           <Button variant="outline" onClick={() => setScanning(true)}>
-            Scan a folder
+            {FIND_PROJECTS_TITLE}
           </Button>
         </div>
 
@@ -245,7 +270,15 @@ export function ProjectList() {
           onUnmanaged={() => goToUnmanaged(GLOBAL)}
           outOfDate={outOfDate(GLOBAL)}
           onOutOfDate={() => setReviewing({ scope: GLOBAL, name: "Personal" })}
-          action={<PlaceActions scope={GLOBAL} place="Personal" />}
+          onAddPackages={() => addPackages(GLOBAL)}
+          addPackagesLabel={addPackagesTo("Personal")}
+          action={
+            <PlaceActions
+              scope={GLOBAL}
+              place="Personal"
+              onAddPackages={() => addPackages(GLOBAL)}
+            />
+          }
         />
 
         {projects.length === 0 ? (
@@ -274,6 +307,11 @@ export function ProjectList() {
                 onOutOfDate={() =>
                   setReviewing({ scope, name: namedAlone(root) })
                 }
+                checking={checking.includes(root)}
+                checkFailed={unchecked.includes(root)}
+                onRecheck={() => void check(root)}
+                onAddPackages={() => addPackages(scope)}
+                addPackagesLabel={addPackagesTo(namedAlone(root))}
                 // Not drawn until the scan and the audit have answered for
                 // this place: a card saying the note is off before either
                 // was read would be claiming a state the app has not
@@ -283,6 +321,7 @@ export function ProjectList() {
                   <PlaceActions
                     scope={scope}
                     place={namedAlone(root)}
+                    onAddPackages={() => addPackages(scope)}
                     onStopTracking={() => setRemoveTarget(root)}
                   />
                 }
@@ -315,7 +354,7 @@ export function ProjectList() {
           onOpenChange={setAdding}
           registerProject={registerProject}
         />
-        <ScanFolderDialog
+        <FindProjectsDialog
           open={scanning}
           onOpenChange={setScanning}
           projects={projects}

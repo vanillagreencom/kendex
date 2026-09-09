@@ -1,10 +1,17 @@
 import type { ReactNode } from "react";
 import type { ItemKind } from "@/bindings";
+import { Activity } from "@/components/activity";
 import { ShowEverythingButton } from "@/components/harnesses/show-everything-button";
 import { KindCountBadges } from "@/components/kind-count-badges";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { PLACE_UNCHECKED_LABEL, unmanagedHereLabel } from "@/lib/copy";
+import {
+  PLACE_UNCHECKED_LABEL,
+  TRY_AGAIN_LABEL,
+  unmanagedHereLabel,
+} from "@/lib/copy";
+import { CHECK_FAILED, CHECKING_PACKAGES } from "@/lib/copy-project-setup";
 import { outOfDateHereLabel } from "@/lib/copy-updates";
 import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
 
@@ -29,6 +36,11 @@ export function ProjectCard({
   onUnmanaged,
   outOfDate,
   onOutOfDate,
+  checking,
+  checkFailed,
+  onRecheck,
+  onAddPackages,
+  addPackagesLabel,
   note,
 }: {
   name: string;
@@ -65,6 +77,23 @@ export function ProjectCard({
   outOfDate?: number | null;
   /** Review those updates and take them. */
   onOutOfDate?: () => void;
+  /** The read of what is installed here has not answered yet — a project
+   *  added a moment ago. Its counts would be empty, which is not the same
+   *  as nothing being here, so the card says which state it is in instead
+   *  of showing a number it has not got. */
+  checking?: boolean;
+  /** That read failed. The place is registered either way, so the card
+   *  says so and offers the read again rather than drawing an empty
+   *  project. */
+  checkFailed?: boolean;
+  onRecheck?: () => void;
+  /** Browse packages to install here. The next step from a place with
+   *  nothing in it, offered on the card that says so rather than left for
+   *  the reader to find on another page. */
+  onAddPackages?: () => void;
+  /** What that button says — it names this place, because it is a promise
+   *  about where the install lands. */
+  addPackagesLabel?: string;
   /** A line about this place that is neither a count nor a fault: the
    *  start-of-session note's standing, with its one button. Under the
    *  counts because it is about the place, not about what is installed. */
@@ -96,42 +125,74 @@ export function ProjectCard({
         {action ? <div className="shrink-0">{action}</div> : null}
       </div>
       <div className="flex flex-wrap items-center gap-1.5 px-4">
-        <KindCountBadges
-          counts={counts}
-          onKindClick={onKindClick}
-          emptyLabel={emptyLabel}
-          emptyClassName="text-[13px] text-muted-foreground"
-        />
-        {/* Sits with the counts because it is one: how much of what is at
-            this place kendex is not looking after. The words say what the
-            click opens, so the pill is not a number nobody can act on. A
-            place that could not be read says so in the same slot, as plain
-            text — there is no number, and nothing to open. */}
-        {unmanaged === null ? (
-          <span className="text-[13px] text-muted-foreground">
-            {PLACE_UNCHECKED_LABEL}
-          </span>
-        ) : unmanaged && onUnmanaged ? (
-          <button
-            type="button"
-            onClick={onUnmanaged}
-            className="text-[13px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
-          >
-            {unmanagedHereLabel(unmanaged)}
-          </button>
-        ) : null}
-        {/* In the same slot and for the same reason: how much of what is at
-            this place has moved on at its source. The words say what the
-            click opens — the changes, before anything is written. */}
-        {outOfDate && onOutOfDate ? (
-          <button
-            type="button"
-            onClick={onOutOfDate}
-            className="text-[13px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
-          >
-            {outOfDateHereLabel(outOfDate)}
-          </button>
-        ) : null}
+        {/* One line at a time, because the three are answers to the same
+            question: the read is out, the read failed, or here is what is
+            installed. Counts drawn under the first two would be a figure
+            for a place nothing has looked at yet, and so would a count of
+            what has moved on at its source. */}
+        {checking ? (
+          <Activity label={CHECKING_PACKAGES} />
+        ) : checkFailed ? (
+          <>
+            <span className="text-[13px] text-muted-foreground">
+              {CHECK_FAILED}
+            </span>
+            {onRecheck ? (
+              <Button size="sm" variant="outline" onClick={onRecheck}>
+                {TRY_AGAIN_LABEL}
+              </Button>
+            ) : null}
+          </>
+        ) : (
+          <>
+            {/* With nothing installed, the way to install something is the
+                empty state rather than a sentence with no way out of it. */}
+            {counts.length === 0 && onAddPackages && addPackagesLabel ? (
+              <Button size="sm" variant="outline" onClick={onAddPackages}>
+                {addPackagesLabel}
+              </Button>
+            ) : (
+              <KindCountBadges
+                counts={counts}
+                onKindClick={onKindClick}
+                emptyLabel={emptyLabel}
+                emptyClassName="text-[13px] text-muted-foreground"
+              />
+            )}
+            {/* Sits with the counts because it is one: how much of what is
+                at this place kendex is not looking after. The words say
+                what the click opens, so the pill is not a number nobody
+                can act on. A place that could not be read says so in the
+                same slot, as plain text — there is no number, and nothing
+                to open. */}
+            {unmanaged === null ? (
+              <span className="text-[13px] text-muted-foreground">
+                {PLACE_UNCHECKED_LABEL}
+              </span>
+            ) : unmanaged && onUnmanaged ? (
+              <button
+                type="button"
+                onClick={onUnmanaged}
+                className="text-[13px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              >
+                {unmanagedHereLabel(unmanaged)}
+              </button>
+            ) : null}
+            {/* In the same slot and for the same reason: how much of what
+                is at this place has moved on at its source. The words say
+                what the click opens — the changes, before anything is
+                written. */}
+            {outOfDate && onOutOfDate ? (
+              <button
+                type="button"
+                onClick={onOutOfDate}
+                className="text-[13px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              >
+                {outOfDateHereLabel(outOfDate)}
+              </button>
+            ) : null}
+          </>
+        )}
       </div>
       {note}
     </Card>

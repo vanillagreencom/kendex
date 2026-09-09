@@ -43,7 +43,7 @@ export function RepoEffectsDialog() {
   const apply = useMarketplacesStore((s) => s.applyRepoEffect);
   const decline = useMarketplacesStore((s) => s.declineRepoEffect);
   if (!pending) return null;
-  const disclosure = pending.queue[0];
+  const disclosure = pending.queue[0].disclosure;
   const runnable = disclosure.declared.installer !== null;
   return (
     <Dialog

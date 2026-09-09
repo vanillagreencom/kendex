@@ -65,7 +65,9 @@ const guards: Disclosure = {
 
 const show = (queue: Disclosure[], busy = false) => {
   useMarketplacesStore.setState({
-    pendingEffects: { scope: PROJECT, queue },
+    pendingEffects: {
+      queue: queue.map((disclosure) => ({ scope: PROJECT, disclosure })),
+    },
     busy,
   });
   mount(<RepoEffectsDialog />);
@@ -177,7 +179,7 @@ describe("the answer", () => {
     for (const row of rows) {
       vi.mocked(commands.repoEffectsApply).mockClear();
       useMarketplacesStore.setState({
-        pendingEffects: { scope: PROJECT, queue: [guards] },
+        pendingEffects: { queue: [{ scope: PROJECT, disclosure: guards }] },
       });
       await settle();
       if (row === "button") {
@@ -206,7 +208,7 @@ describe("the answer", () => {
     await userEvent.keyboard("{Escape}");
     await settle();
     expect(useMarketplacesStore.getState().pendingEffects?.queue).toEqual([
-      guards,
+      { scope: PROJECT, disclosure: guards },
     ]);
     expect(commands.repoEffectsApply).not.toHaveBeenCalled();
   });

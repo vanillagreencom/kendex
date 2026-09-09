@@ -6,7 +6,9 @@ import { ScoreTooltip } from "@/components/score-tooltip";
 import { StatusDot } from "@/components/status-dot";
 import { TagBadges } from "@/components/tag-badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { TableCell, TableRow } from "@/components/ui/table";
+import { INSTALL_ACTION } from "@/lib/copy-install";
 import {
   LOCAL_FOLDER_LABEL,
   PACKAGE_STATE_UNKNOWN,
@@ -67,6 +69,10 @@ export function PackageRow({
   marketplace,
   places,
   offerSubscribe,
+  selectable,
+  selected,
+  onToggle,
+  onInstall,
 }: {
   entry: PackageEntry;
   /** Which of the optional columns this row draws. The table settles it
@@ -87,11 +93,19 @@ export function PackageRow({
   /** Whether a bare repository's row may subscribe and install — decided
    * once for the table, never per row. */
   offerSubscribe: boolean;
+  /** Whether this row can join a selection. A row with nothing to install
+   *  carries the cell without a box, so every row keeps the same columns
+   *  and the table does not shift as states change. */
+  selectable: boolean;
+  selected: boolean;
+  onToggle: () => void;
+  /** Install this row alone. The one-package case of the same guided flow
+   *  a selection opens, never a second install path. */
+  onInstall: () => void;
 }) {
   const { catalog, row, recordsUnreadable } = entry;
   const goToAvailablePackage = useNavStore((s) => s.goToAvailablePackage);
   const goToMarketplace = useNavStore((s) => s.goToMarketplace);
-  const install = useMarketplacesStore((s) => s.install);
   const subscribeAndInstall = useMarketplacesStore(
     (s) => s.subscribeAndInstall,
   );
@@ -118,6 +132,18 @@ export function PackageRow({
   const updated = row.updatedAt ? Date.parse(row.updatedAt) : Number.NaN;
   return (
     <TableRow className="cursor-pointer" {...open}>
+      {/* Ticking a row is not opening it. The box draws as a button, and
+          `opensOnActivate` reads a control inside the surface as having
+          answered the click, so the row stays put under a tick. */}
+      <TableCell className="w-8">
+        {selectable ? (
+          <Checkbox
+            checked={selected}
+            aria-label={`Select ${packageDisplayName(row)}`}
+            onCheckedChange={onToggle}
+          />
+        ) : null}
+      </TableCell>
       {/* The one column with no width of its own, so without a ceiling a
           long summary sets the whole table's, pushes every other column
           past the right edge, and leaves the reader a name and nothing
@@ -266,15 +292,9 @@ export function PackageRow({
             size="sm"
             variant="outline"
             disabled={busy}
-            onClick={() => {
-              void install({
-                scope: catalog.scope,
-                source: catalog.source,
-                items: [{ kind: row.kind, name: row.name }],
-              });
-            }}
+            onClick={onInstall}
           >
-            Install
+            {INSTALL_ACTION}
           </Button>
         ) : null}
       </TableCell>

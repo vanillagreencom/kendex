@@ -1,14 +1,9 @@
 import { useCallback, useState } from "react";
-import type { ItemKind, Scope } from "@/bindings";
-import { BundleInstallBar } from "@/components/marketplaces/bundle-install-bar";
+import type { InstallItem, InstallState, ItemKind } from "@/bindings";
 import {
   BundleMemberLine,
   memberKey,
 } from "@/components/marketplaces/bundle-member-row";
-import {
-  type Choice,
-  isInstallable,
-} from "@/components/marketplaces/harness-select";
 import { RecordsUnreadableNote } from "@/components/marketplaces/packages-trouble";
 import { RepoAction } from "@/components/marketplaces/repo-action";
 import {
@@ -17,9 +12,18 @@ import {
 } from "@/components/marketplaces/use-catalog";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import {
+  INSTALL_ACTION,
+  justThisLabel,
+  packageCount,
+  selectedLabel,
+  wholeSetLabel,
+  wholeSetWhat,
+} from "@/lib/copy-install";
+import { offersInstall } from "@/lib/install-state";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
-import { sameScope } from "@/lib/scope";
 import { cn } from "@/lib/utils";
+import { type InstallSubject, useInstallFlow } from "@/stores/install-flow";
 import { bundleKey, useMarketplacesStore } from "@/stores/marketplaces";
 import { type BundleRef, useNavStore } from "@/stores/nav";
 
@@ -28,10 +32,6 @@ import { type BundleRef, useNavStore } from "@/stores/nav";
  * the normal preview, safety score in view and never a gate. From a
  * repository nobody subscribes to yet, the members are listed and
  * Subscribe is the one action. */
-/** Nothing answered yet. A destination decides which tools can take the
- *  install and which extras it brings, so both reset with it. */
-const NO_CHOICE: Choice = { harnesses: null, method: null, optional: [] };
-
 export function BundleDetailPage() {
   const bundleRef = useNavStore((s) => s.bundleRef);
   if (!bundleRef) return null;
@@ -50,34 +50,38 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   const bundles = useMarketplacesStore((s) => s.bundles);
   const readErrors = useMarketplacesStore((s) => s.readErrors);
   const loadBundle = useMarketplacesStore((s) => s.loadBundle);
-  const install = useMarketplacesStore((s) => s.install);
   const busy = useMarketplacesStore((s) => s.busy);
+  const openInstall = useInstallFlow((s) => s.open);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [destination, setDestination] = useState<Scope | null>(null);
-  const [choice, setChoice] = useState<Choice>(NO_CHOICE);
 
   const subscribed = catalog.by === "subscription" ? catalog : null;
   const scope = subscribed?.scope ?? null;
-  const target = destination ?? scope;
-  // "The same place" has one answer, and it is not object identity: the
-  // picker hands back a freshly built Scope, so picking the place already
-  // being browsed would otherwise read as a redirect and ask again under a
-  // second cache key.
-  const redirected =
-    target && scope && !sameScope(target, scope) ? target : null;
 
-  // The destination is part of the read, not a filter over it: every
-  // member's state and the set's own record standing are facts about the
-  // scope the install lands in, so each place has a slot of its own and
-  // choosing one already read is served from it.
-  const key = bundleKey(catalog, bundle, redirected);
+  // Read for the place this set is offered in. Where an install lands is
+  // the guided flow's own question, asked after this page has said what
+  // the set holds — so the member states here answer for the marketplace's
+  // own place rather than for a destination nobody has picked yet.
+  const key = bundleKey(catalog, bundle, null);
   const detail = bundles[key];
   const readError = reachError ?? readErrors[key];
   const readBundle = useCallback(
-    () => loadBundle(catalog, bundle, redirected),
-    [loadBundle, catalog, bundle, redirected],
+    () => loadBundle(catalog, bundle, null),
+    [loadBundle, catalog, bundle],
   );
   useCachedRead(detail !== undefined, !!readErrors[key], ready, readBundle);
+
+  // A tick is an answer about a member that could be installed. A landed
+  // install drops every set cache and the read comes back with that member
+  // marked installed, so the tick is read against what the member is NOW
+  // rather than stored and left standing: kept, it would leave a disabled
+  // box checked and offer an already-installed member to the next Install.
+  const isTicked = (member: {
+    kind: ItemKind;
+    name: string;
+    state: InstallState;
+  }) =>
+    selected.has(memberKey(member.kind, member.name)) &&
+    offersInstall(member.state);
 
   const toggleMember = (kind: string, name: string) => {
     setSelected((prev) => {
@@ -92,45 +96,74 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   // Nothing re-reads the member list by hand: a successful install drops
   // every set cache, which empties this slot, and the read above watches
   // presence — so a row flips to Installed the moment it is, asked once.
-  const installItems = (items: { kind: ItemKind; name: string }[]) => {
-    if (!subscribed) return;
-    void install({
-      scope: subscribed.scope,
-      source: subscribed.source,
-      items: items.map((m) => ({ kind: m.kind, name: m.name })),
-      bundle: items.length === 0 ? bundle : null,
-      destination: redirected,
-      delivery: choice,
-    }).then((ok) => {
-      if (ok) setSelected(new Set());
-    });
+  const group = (items: InstallItem[], asSet: boolean) => ({
+    source: subscribed?.source ?? "",
+    browsing: scope ?? { scope: "global" as const },
+    items,
+    bundle: asSet ? bundle : null,
+  });
+  /** The set as a whole, and the members ticked — the two answers this
+   *  page has to the what question, offered together so the reader picks
+   *  between them inside the one flow rather than between two buttons of
+   *  equal weight in two different corners of the page. */
+  const subjects = (): InstallSubject[] => {
+    if (!detail) return [];
+    const ticked = detail.members.filter(isTicked);
+    const whole: InstallSubject = {
+      id: "whole",
+      label: wholeSetLabel(bundle),
+      what: wholeSetWhat(bundle),
+      count: detail.members.length,
+      groups: [group([], true)],
+      // A set install declares every kind whatever the set happens to
+      // hold, which is the answer naming no kind gets.
+      kinds: [],
+    };
+    if (ticked.length === 0) return [whole];
+    return [
+      whole,
+      {
+        id: "ticked",
+        label: selectedLabel(ticked.length),
+        what: packageCount(ticked.length),
+        count: ticked.length,
+        groups: [
+          group(
+            ticked.map((m) => ({ kind: m.kind, name: m.name })),
+            false,
+          ),
+        ],
+        kinds: [...new Set(ticked.map((m) => m.kind))],
+      },
+    ];
   };
-  const installSelected = () => {
-    if (!detail) return;
-    const items = detail.members.filter((m) =>
-      selected.has(memberKey(m.kind, m.name)),
-    );
-    if (items.length > 0) installItems(items);
+  const startInstall = (only?: { kind: ItemKind; name: string }) => {
+    if (!subscribed || !detail) return;
+    if (only) {
+      openInstall({
+        subjects: [
+          {
+            id: `${only.kind}:${only.name}`,
+            label: justThisLabel(only.name),
+            what: only.name,
+            count: 1,
+            groups: [group([{ kind: only.kind, name: only.name }], false)],
+            kinds: [only.kind],
+          },
+        ],
+      });
+      return;
+    }
+    const answers = subjects();
+    if (answers.length > 0) openInstall({ subjects: answers });
   };
-  // The lock of the place this install would land in could not be read, so
-  // no member's standing is known and every per-member box is already off.
-  // "Install all" asks about the set rather than a member, so it reads that
+  // The lock of the place this set is offered in could not be read, so no
+  // member's standing is known and every per-member box is already off.
+  // Install asks about the set rather than a member, so it reads that
   // place's own answer off the payload: a member the catalog does not offer
   // has the same state with or without a lock, so no scan of the rows
-  // could tell. Landing place, not browsed one — the engine mutates where
-  // the install goes.
+  // could tell.
   const recordsUnknown = detail?.recordsUnreadable ?? false;
-  // Which tools the picker may offer follows what is actually ticked. With
-  // nothing ticked it names no kind, and no kind is read as every kind —
-  // the same answer Install all is refused by, since a bundle install
-  // declares every kind whatever the set happens to hold.
-  const selectedKinds = [
-    ...new Set(
-      (detail?.members ?? [])
-        .filter((m) => selected.has(memberKey(m.kind, m.name)))
-        .map((m) => m.kind),
-    ),
-  ];
 
   return (
     <div className="flex h-full flex-col">
@@ -150,20 +183,14 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
         }
         action={
           subscribed ? (
-            // This installs with whatever the bar's tool picker last
-            // answered, so a picker emptied by hand holds it back the same
-            // way it holds back the bar's own button: an install to no tool
-            // reports success over a plan that wrote nothing. Emptied by a
-            // tick counts too — ticking a member narrows which tools are
-            // offered, and the picker drops a chosen tool the narrowed
-            // answer no longer holds.
+            // One button, whatever is ticked: the whole set and the ticked
+            // members are two answers to the flow's own what question, not
+            // two buttons in two corners of the page.
             <Button
-              disabled={
-                busy || !detail || recordsUnknown || !isInstallable(choice)
-              }
-              onClick={() => installItems([])}
+              disabled={busy || !detail || recordsUnknown}
+              onClick={() => startInstall()}
             >
-              Install all
+              {INSTALL_ACTION}
             </Button>
           ) : catalog.by === "repo" ? (
             <RepoAction
@@ -177,29 +204,6 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className={cn(PAGE_BODY, "pt-0")}>
           <div className={CONTENT_WIDTH}>
-            {subscribed && scope && target ? (
-              <BundleInstallBar
-                browsing={scope}
-                target={target}
-                kinds={selectedKinds}
-                choice={choice}
-                picked={selected.size}
-                busy={busy}
-                onPlace={(next) => {
-                  // Which tools can take this is a fact about the
-                  // destination, so a choice made against another one is not
-                  // an answer here. Nor is a ticked member: the box was
-                  // ticked against the state the place before it answered,
-                  // and the place chosen may already hold that member or
-                  // refuse to say.
-                  setChoice(NO_CHOICE);
-                  setSelected(new Set());
-                  setDestination(next);
-                }}
-                onChoice={setChoice}
-                onInstall={installSelected}
-              />
-            ) : null}
             {!detail && readError ? (
               <p
                 className="py-16 text-center text-sm text-critical"
@@ -213,9 +217,9 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
               </p>
             ) : (
               <>
-                {recordsUnknown && target ? (
+                {recordsUnknown && scope ? (
                   <div className="mb-3">
-                    <RecordsUnreadableNote scope={target} />
+                    <RecordsUnreadableNote scope={scope} />
                   </div>
                 ) : null}
                 <div className="divide-y rounded-lg border">
@@ -224,12 +228,12 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
                       key={memberKey(member.kind, member.name)}
                       member={member}
                       selectable={subscribed !== null}
-                      selected={selected.has(
-                        memberKey(member.kind, member.name),
-                      )}
+                      selected={isTicked(member)}
                       busy={busy}
                       onToggle={() => toggleMember(member.kind, member.name)}
-                      onRestore={() => installItems([member])}
+                      onRestore={() =>
+                        startInstall({ kind: member.kind, name: member.name })
+                      }
                     />
                   ))}
                 </div>

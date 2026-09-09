@@ -1,0 +1,1 @@
+- A new project card says "Checking installed packages…" while its contents are read, and "Project added; package check failed" with a Try again if that read fails. Zero is never shown unchecked.

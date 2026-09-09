@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { commands, type DriftRow } from "@/bindings";
+import { Activity } from "@/components/activity";
 import { PathField } from "@/components/harnesses/path-field";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,10 +10,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ADD_PROJECT_HELP } from "@/lib/copy";
-import { harnessName, kindLabel } from "@/lib/labels";
+import {
+  ADD_PROJECT_ACTION,
+  ADD_PROJECT_BROWSE,
+  ADD_PROJECT_HELP,
+  ADD_PROJECT_PLACEHOLDER,
+  ADD_PROJECT_TITLE,
+  ADDING_PROJECT,
+} from "@/lib/copy-project-setup";
 
-/** Point kendex at one folder. */
+/** Point kendex at one folder.
+ *
+ *  The dialog answers the registry write and closes on it. What the
+ *  project already holds is read behind that, on the project's own card —
+ *  a whole-machine read is seconds of work, and waiting for it here is
+ *  what left this dialog on screen with a dead button, looking frozen.
+ *  Nothing kendex found in the folder is reported here either: the card
+ *  says how much is not managed, with the offer behind it. */
 export function AddProjectDialog({
   open,
   onOpenChange,
@@ -21,17 +34,18 @@ export function AddProjectDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** True when the registry holds the project. Its own errors are reported
+   *  where the store reports them; here a false only keeps the dialog. */
   registerProject: (path: string) => Promise<boolean>;
 }) {
   const [path, setPath] = useState("");
   const [adding, setAdding] = useState(false);
-  // What the project already holds that nothing manages. Registering runs
-  // the scan and says so here, rather than leaving it to be found on a
-  // later visit to the Library.
-  const [found, setFound] = useState<DriftRow[] | null>(null);
 
   const submit = () => {
     const trimmed = path.trim();
+    // The second press of a button whose first press is still out would
+    // register the same folder twice; the guard is here rather than only
+    // on the button because Enter in the field reaches the same submit.
     if (!trimmed || adding) return;
     setAdding(true);
     void registerProject(trimmed).then((ok) => {
@@ -40,63 +54,25 @@ export function AddProjectDialog({
       // it — the error surfaces behind, and retyping a long path is worse
       // than reading it again.
       if (!ok) return;
-      void commands.projectOffers(trimmed).then((r) => {
-        const rows = r.status === "ok" ? r.data : [];
-        setPath("");
-        // Nothing to manage is nothing to say: the dialog closes on the
-        // registration it was opened for.
-        if (rows.length === 0) onOpenChange(false);
-        else setFound(rows);
-      });
+      setPath("");
+      onOpenChange(false);
     });
   };
 
-  const close = () => {
-    setFound(null);
-    onOpenChange(false);
-  };
-
-  if (found) {
-    return (
-      <Dialog open={open} onOpenChange={close}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {found.length} item{found.length === 1 ? "" : "s"} here are not
-              managed yet
-            </DialogTitle>
-            <DialogDescription>
-              kendex leaves them exactly where they are. Manage one from Library
-              › Installed to move it into the shared <code>.agents</code> home,
-              with the path its tool reads left working.
-            </DialogDescription>
-          </DialogHeader>
-          <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto text-sm">
-            {found.map((row) => (
-              <li
-                key={`${row.kind}:${row.name}:${row.harness}`}
-                className="flex items-baseline gap-2"
-              >
-                <span>{row.name}</span>
-                <span className="text-xs text-muted-foreground">
-                  {kindLabel(row.kind)} · {harnessName(row.harness)}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <DialogFooter>
-            <Button onClick={close}>Done</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    );
-  }
-
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      // Not dismissible while the write is out: the dialog is what holds
+      // the path the write is for, and closing it mid-write would leave a
+      // registration nobody can see the result of.
+      onOpenChange={(next) => {
+        if (!next && adding) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add a project</DialogTitle>
+          <DialogTitle>{ADD_PROJECT_TITLE}</DialogTitle>
           <DialogDescription>{ADD_PROJECT_HELP}</DialogDescription>
         </DialogHeader>
         <form
@@ -108,22 +84,28 @@ export function AddProjectDialog({
         >
           <PathField
             id="project-folder"
-            placeholder="/path/to/project"
+            placeholder={ADD_PROJECT_PLACEHOLDER}
             value={path}
             onChange={setPath}
             disabled={adding}
-            browseLabel="Browse for a project folder"
+            browseLabel={ADD_PROJECT_BROWSE}
           />
           <DialogFooter>
+            {/* Said where the press landed, so the wait has an account on
+                screen rather than a button that stopped responding. */}
+            {adding ? (
+              <Activity className="mr-auto" label={ADDING_PROJECT} />
+            ) : null}
             <Button
               type="button"
               variant="outline"
+              disabled={adding}
               onClick={() => onOpenChange(false)}
             >
               Cancel
             </Button>
             <Button type="submit" disabled={adding || !path.trim()}>
-              Add project
+              {ADD_PROJECT_ACTION}
             </Button>
           </DialogFooter>
         </form>

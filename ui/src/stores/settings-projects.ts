@@ -4,15 +4,24 @@ import { toast } from "sonner";
 import { type AppSettings, commands, type SettingsRead } from "@/bindings";
 import { rescanEverything } from "@/lib/rescan";
 import { useProblemsStore } from "./problems";
+import { useProjectSetupStore } from "./project-setup";
 
 interface ProjectFields {
   settings: AppSettings | null;
 }
 
+/** What a search of a folder came back with. A failure is its own answer,
+ *  never an empty list: "no projects in there" is a claim about the folder,
+ *  and a folder kendex could not read supports no claim at all — the
+ *  dialog has to be able to tell the two apart to say which happened. */
+export type Discovered =
+  | { status: "found"; paths: string[] }
+  | { status: "failed"; reason: string };
+
 export interface ProjectsSlice {
   registerProject: (path: string) => Promise<boolean>;
   unregisterProject: (path: string) => Promise<void>;
-  discoverProjects: (root: string) => Promise<string[]>;
+  discoverProjects: (root: string) => Promise<Discovered>;
 }
 
 /** The project registry's actions. Registration and removal are targeted
@@ -26,13 +35,18 @@ export function projectActions(ordered: {
   hold: (read: SettingsRead, at: number) => void;
 }): ProjectsSlice {
   return {
+    // Answers the registry write and nothing else. Reading what the
+    // project holds is started here and deliberately not waited for: it is
+    // a whole-machine read, and holding the caller behind it is what left
+    // the add dialog on screen looking frozen. `project-setup.ts` carries
+    // the two states that read has, and the card draws them.
     registerProject: async (path) => {
       const at = ordered.ticket();
       const response = await commands.registerProject(path);
       if (response.status === "ok") {
         ordered.hold(response.data, at);
         toast.success(`Added ${path.split("/").pop()}`);
-        await rescanEverything();
+        void useProjectSetupStore.getState().check(path);
         return true;
       }
       useProblemsStore.getState().showError({
@@ -61,18 +75,15 @@ export function projectActions(ordered: {
       }
     },
 
+    // The refusal is handed back rather than only shown behind the dialog
+    // that asked: the search has a result panel of its own, and a failure
+    // belongs in it beside the path that was searched and the button that
+    // tries again.
     discoverProjects: async (root) => {
       const response = await commands.discoverProjects(root);
-      if (response.status === "ok") return response.data;
-      useProblemsStore.getState().showError({
-        title: "Couldn't search that folder",
-        message: response.error,
-        steps: [
-          "Check the folder path is correct",
-          "Make sure kendex can read it",
-        ],
-      });
-      return [];
+      if (response.status === "ok")
+        return { status: "found", paths: response.data };
+      return { status: "failed", reason: response.error };
     },
   };
 }

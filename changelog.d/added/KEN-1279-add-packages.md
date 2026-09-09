@@ -1,0 +1,1 @@
+- A place card on Projects, and My Library narrowed to an empty place, offer "Add packages to <place>". Browsing from there remembers the place, so the install opens on it.

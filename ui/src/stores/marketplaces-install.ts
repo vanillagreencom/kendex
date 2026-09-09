@@ -42,15 +42,29 @@ interface InstallRequest {
   bundle?: string | null;
   destination?: Scope | null;
   delivery?: Choice;
+  /** Say nothing on the way out. The guided flow installs into each place
+   *  the reader picked in turn and reports the whole run once, naming
+   *  every place; a toast per place would say the same thing three times
+   *  and never say where. A caller that has no surface of its own to
+   *  report on leaves this off and gets the toast. */
+  quiet?: boolean;
 }
 
-/** The repository effects an install brought, waiting on their own yes:
- * the scope they would change, and the packages still to be asked about,
- * first in line first. Each one is asked on its own and answered on its
- * own, and the answer is spent there — nothing stores it. */
-interface PendingEffects {
+/** One package's repository effect, waiting on its own yes, with the
+ * place it would change. The scope travels per entry rather than per
+ * queue: one guided install can write into several places, and an effect
+ * answered against the wrong one would run a repository's script in a
+ * project that never asked for it. */
+export interface PendingEffect {
   scope: Scope;
-  queue: Disclosure[];
+  disclosure: Disclosure;
+}
+
+/** The repository effects waiting on their own yes, first in line first.
+ * Each one is asked on its own and answered on its own, and the answer is
+ * spent there — nothing stores it. */
+interface PendingEffects {
+  queue: PendingEffect[];
 }
 
 /** What this action writes back into the store. */
@@ -77,6 +91,17 @@ type Get = () => { pendingEffects: PendingEffects | null };
 const spoken = (lines: string[]) =>
   lines.filter((line) => line.trim() !== "").at(-1);
 
+/** The line of questions after an install added its own, or null where
+ *  nobody is waiting. Null rather than an empty queue, because that is the
+ *  state the dialog reads as closed. */
+const queued = (
+  standing: PendingEffects | null,
+  added: PendingEffect[],
+): PendingEffects | null => {
+  const queue = [...(standing?.queue ?? []), ...added];
+  return queue.length > 0 ? { queue } : null;
+};
+
 export function installActions(set: Set, get: Get): InstallActions {
   /** Take the package at the head of the line off it, closing the dialog
    *  when nobody is left. */
@@ -99,6 +124,7 @@ export function installActions(set: Set, get: Get): InstallActions {
       bundle = null,
       destination,
       delivery,
+      quiet = false,
     }: InstallRequest) =>
       writingRepo(async () => {
         set({ busy: true });
@@ -136,16 +162,24 @@ export function installActions(set: Set, get: Get): InstallActions {
           ...droppedSetCaches(),
           error: null,
           // The files are in; what a package does to the repository is a
-          // second question, asked once the install is reported.
-          pendingEffects:
-            shown.length > 0 ? { scope: target, queue: shown } : null,
+          // second question, asked once the install is reported. Added to
+          // whatever is already in line rather than replacing it: an
+          // install into several places reports each place separately, and
+          // the last one answering with no effect would otherwise drop
+          // every question the places before it raised.
+          pendingEffects: queued(
+            state.pendingEffects,
+            shown.map((disclosure) => ({ scope: target, disclosure })),
+          ),
         }));
-        const what = bundle
-          ? `the ${bundle} bundle`
-          : items.length === 1
-            ? items[0].name
-            : `${items.length} packages`;
-        toast.success(`Installed ${what}`);
+        if (!quiet) {
+          const what = bundle
+            ? `the ${bundle} bundle`
+            : items.length === 1
+              ? items[0].name
+              : `${items.length} packages`;
+          toast.success(`Installed ${what}`);
+        }
         // Whatever an install's plan took away, and what its uninstaller
         // ran on the way out. Said, never asked about: the second question
         // this dialog exists for is about arming, and this already happened.
@@ -175,15 +209,15 @@ export function installActions(set: Set, get: Get): InstallActions {
         let response: Awaited<ReturnType<typeof commands.repoEffectsApply>>;
         try {
           response = await commands.repoEffectsApply(
-            pending.scope,
-            head.declared,
+            head.scope,
+            head.disclosure.declared,
           );
         } finally {
           set({ busy: false });
         }
         if (response.status === "error") {
           useProblemsStore.getState().showError({
-            title: repoEffectsFailedTitle(head.name),
+            title: repoEffectsFailedTitle(head.disclosure.name),
             message: response.error,
           });
           advance();
@@ -194,14 +228,14 @@ export function installActions(set: Set, get: Get): InstallActions {
         // The last line it printed, not the last element: relay keeps the
         // installer's trailing blank lines, and an empty toast says nothing.
         const summary = spoken(stdout) ?? spoken(stderr);
-        toast.success(summary ?? repoEffectsAppliedToast(head.name));
+        toast.success(summary ?? repoEffectsAppliedToast(head.disclosure.name));
         // An installer can exit clean and still have skipped its work — the
         // reason, and what to do about it, go to stderr while the summary
         // goes to stdout. A toast is one line, so the account a person has
         // to act on gets the dialog the app opens for exactly that.
         if (spoken(stderr) !== undefined) {
           useProblemsStore.getState().showError({
-            title: repoEffectsSaidTitle(head.name),
+            title: repoEffectsSaidTitle(head.disclosure.name),
             message: [...stderr, ...stdout].join("\n"),
           });
         }
@@ -214,7 +248,7 @@ export function installActions(set: Set, get: Get): InstallActions {
     declineRepoEffect: () => {
       const pending = get().pendingEffects;
       if (!pending) return;
-      toast.info(repoEffectsDeclinedToast(pending.queue[0].name));
+      toast.info(repoEffectsDeclinedToast(pending.queue[0].disclosure.name));
       advance();
     },
   };

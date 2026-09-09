@@ -13,6 +13,8 @@ import {
   PackageRow,
 } from "@/components/marketplaces/package-row";
 import { useBrowsedRepo } from "@/components/marketplaces/repo-action";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table,
   TableBody,
@@ -21,9 +23,24 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  EVERYTHING_HERE_LABEL,
+  installSelectedLabel,
+  justThisLabel,
+  packageCount,
+  SELECT_EVERY_ROW,
+  selectedLabel,
+} from "@/lib/copy-install";
+import {
   INSTALLED_IN_HEADING,
   SUBSCRIBE_TO_INSTALL_MEANS,
 } from "@/lib/copy-marketplaces";
+import {
+  countIn,
+  groupsFor,
+  installableRow,
+  kindsIn,
+  rowKey,
+} from "@/lib/install-ask";
 import { placesKey } from "@/lib/installed-places";
 import type { MarketplaceDisplay } from "@/lib/marketplace-display";
 import { catalogDisplay } from "@/lib/marketplace-display";
@@ -34,6 +51,7 @@ import {
   type SortKey,
 } from "@/lib/package-order";
 import { cn } from "@/lib/utils";
+import { type InstallSubject, useInstallFlow } from "@/stores/install-flow";
 import {
   catalogKey,
   repoAction,
@@ -58,7 +76,8 @@ import {
 // the table has room to spare, the name takes it, so the ceiling shows
 // only at a rung's own width.
 const NAME_ROOM = 288; // `max-w-72` on the name cell
-const KEPT_ROOM = NAME_ROOM + 112 + 80 + 128; // Name, Kind, Safety, Status
+const SELECT_ROOM = 32; // `w-8` on the tick cell, at every width
+const KEPT_ROOM = SELECT_ROOM + NAME_ROOM + 112 + 80 + 128; // tick, Name, Kind, Safety, Status
 const OPTIONAL_ROOM: Record<keyof PackageColumns, number> = {
   marketplace: 160,
   places: 160,
@@ -217,6 +236,11 @@ export function PackagesTable({
   const offerSubscribe = browsedRepo !== "" && kind === "subscribe";
 
   const [sort, setSort] = useState<PackageSort>(BY_NAME);
+  const openInstall = useInstallFlow((s) => s.open);
+  // What is ticked, by row rather than by index: the table re-sorts and
+  // re-filters under a selection, and a set of indexes would follow the
+  // rows that happened to be in those positions afterwards.
+  const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
   const showPlaces = places !== undefined;
 
   // The room the table has is the room the page gives it, which no column
@@ -255,6 +279,74 @@ export function PackagesTable({
     return displays;
   }, [entries, rows, summaries]);
 
+  // Every row a reader could ask to install, in the order they are drawn:
+  // a row from a bare repository subscribes first and a place with no
+  // readable lock has no state to install against, so neither joins a
+  // selection. The header's box and "Everything here" both answer from
+  // this one list.
+  const offerable = useMemo(() => ordered.filter(installableRow), [ordered]);
+  const chosen = useMemo(
+    () => offerable.filter((entry) => ticked.has(rowKey(entry))),
+    [offerable, ticked],
+  );
+  const allTicked = offerable.length > 0 && chosen.length === offerable.length;
+  const toggleRow = (entry: PackageEntry) =>
+    setTicked((held) => {
+      const next = new Set(held);
+      const key = rowKey(entry);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  /** One package, or the ticked ones, plus everything the table offers —
+   *  the same three answers wherever the flow is opened from. "Everything
+   *  here" is only offered on a marketplace's own page: the
+   *  cross-marketplace list is every subscription at once, and "here" has
+   *  no boundary there for it to mean. */
+  const askFor = (only?: PackageEntry) => {
+    const subjects: InstallSubject[] = [];
+    if (only) {
+      const groups = groupsFor([only]);
+      if (groups.length === 0) return;
+      subjects.push({
+        id: "one",
+        label: justThisLabel(only.row.name),
+        what: only.row.name,
+        count: 1,
+        groups,
+        kinds: kindsIn(groups),
+      });
+    } else if (chosen.length > 0) {
+      const groups = groupsFor(chosen);
+      subjects.push({
+        id: "ticked",
+        label: selectedLabel(chosen.length),
+        what: packageCount(chosen.length),
+        count: chosen.length,
+        groups,
+        kinds: kindsIn(groups),
+      });
+    }
+    if (showPlaces && offerable.length > 0) {
+      const groups = groupsFor(offerable);
+      const count = countIn(groups);
+      // Never as a second copy of the answer above it: a selection of
+      // every row already installs everything, and two options that do the
+      // same thing is a choice the reader cannot make.
+      if (count > 0 && !(subjects[0]?.count === count))
+        subjects.push({
+          id: "everything",
+          label: EVERYTHING_HERE_LABEL,
+          what: packageCount(count),
+          count,
+          groups,
+          kinds: kindsIn(groups),
+        });
+    }
+    if (subjects.length > 0) openInstall({ subjects });
+  };
+
   return (
     <div ref={roomRef}>
       {offerSubscribe ? (
@@ -262,9 +354,32 @@ export function PackagesTable({
           {SUBSCRIBE_TO_INSTALL_MEANS}
         </p>
       ) : null}
+      {/* The selection's one action. It appears with the selection rather
+          than sitting disabled above an untouched table, and the count is
+          on the button because that is what pressing it installs. */}
+      {chosen.length > 0 ? (
+        <div className="mb-3 flex items-center justify-end">
+          <Button size="sm" onClick={() => askFor()}>
+            {installSelectedLabel(chosen.length)}
+          </Button>
+        </div>
+      ) : null}
       <Table>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-8">
+              {offerable.length > 0 ? (
+                <Checkbox
+                  checked={allTicked}
+                  aria-label={SELECT_EVERY_ROW}
+                  onCheckedChange={() =>
+                    setTicked(
+                      allTicked ? new Set() : new Set(offerable.map(rowKey)),
+                    )
+                  }
+                />
+              ) : null}
+            </TableHead>
             <SortHead column="name" sort={order} onSort={setSort}>
               Name
             </SortHead>
@@ -300,7 +415,7 @@ export function PackagesTable({
         <TableBody>
           {ordered.map((entry) => (
             <PackageRow
-              key={`${catalogKey(entry.catalog)}:${entry.row.kind}:${entry.row.name}`}
+              key={rowKey(entry)}
               entry={entry}
               columns={columns}
               marketplace={named.get(catalogKey(entry.catalog))}
@@ -308,6 +423,10 @@ export function PackagesTable({
                 places?.get(placesKey(entry.row.kind, entry.row.name)) ?? []
               }
               offerSubscribe={offerSubscribe}
+              selectable={installableRow(entry)}
+              selected={ticked.has(rowKey(entry))}
+              onToggle={() => toggleRow(entry)}
+              onInstall={() => askFor(entry)}
             />
           ))}
         </TableBody>

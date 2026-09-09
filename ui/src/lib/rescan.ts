@@ -48,10 +48,15 @@
 // none of them reaches `repo_effects`. The Scan again buttons ask because
 // nothing else knows what a person changed outside the app;
 // `settings.ts`'s [`setHarnessRoot`] and `settings-projects.ts`'s project
-// register and unregister because moving a tool's folder or changing which
-// projects are tracked changes which files the scan finds and which scopes
-// the audit reads. Those three write the settings file and nothing else, so
-// gating them on the answer is correct.
+// unregister because moving a tool's folder or changing which projects are
+// tracked changes which files the scan finds and which scopes the audit
+// reads. Those write the settings file and nothing else, so gating them on
+// the answer is correct.
+//
+// Registering a project asks through `project-setup.ts` instead, which
+// starts this read and records how it went without the registration
+// waiting on it: a project is a place the moment the registry says so, and
+// what it holds is a second answer with two states of its own.
 //
 // A scope with no view of its own counts zero unmanaged items, which is how
 // a project card ends up hiding the only way to the ones it holds — the

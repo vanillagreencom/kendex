@@ -52,6 +52,13 @@ interface NavState {
   /** Which place the unmanaged page is listing. Every way in names one —
    *  the page is a project card's own list, not a machine-wide inbox. */
   unmanagedScope: Scope | null;
+  /** The place a browse arrived from, carried until the reader leaves the
+   *  browsing surfaces. "Add a project, then add packages to it" is one
+   *  path, so the Marketplaces pages a project's Add packages opens
+   *  remember which project asked, and the guided install opens on it.
+   *  Null wherever a reader arrived at Marketplaces on their own — nothing
+   *  guesses a place they did not name. */
+  installInto: Scope | null;
   /** Consumed once by the package page on mount, then cleared. */
   packageView: PackageView | null;
   history: HistoryEntry[];
@@ -69,7 +76,10 @@ interface NavState {
    * breadcrumb work, without needing per-tab state of its own. */
   goTo: (page: Page) => void;
   goToPackage: (ref: PackageRef, view?: PackageView) => void;
-  goToMarketplaces: (tab?: MarketplacesTab) => void;
+  /** `into` is the place the reader is browsing on behalf of. It is
+   *  stated by the caller rather than inferred, and clears on any other
+   *  navigation, so a stale project can never redirect an install. */
+  goToMarketplaces: (tab?: MarketplacesTab, into?: Scope) => void;
   /** Leave a marketplace page that has stopped existing, without recording
    * the departure. Every other `goTo*` pushes the page it leaves, which is
    * right for a page a reader chose to leave and wrong for one deleted
@@ -99,6 +109,7 @@ export const useNavStore = create<NavState>((set) => ({
   bundleRef: null,
   availableRef: null,
   unmanagedScope: null,
+  installInto: null,
   packageView: null,
   history: [],
   future: [],
@@ -116,6 +127,7 @@ export const useNavStore = create<NavState>((set) => ({
       bundleRef: null,
       availableRef: null,
       unmanagedScope: null,
+      installInto: null,
     }),
   setLibraryScope: (libraryScope) => set({ libraryScope }),
   setSearch: (search) => set({ search }),
@@ -142,12 +154,14 @@ export const useNavStore = create<NavState>((set) => ({
     set((state) => ({
       page: "library",
       libraryFilter: { ...filter },
+      installInto: null,
       history: pushHistory(state, "library"),
       future: [],
     })),
   goTo: (page) =>
     set((state) => ({
       page,
+      installInto: null,
       history: pushHistory(state, page),
       future: [],
     })),
@@ -156,13 +170,17 @@ export const useNavStore = create<NavState>((set) => ({
       page: "package",
       packageRef: ref,
       packageView: view ?? null,
+      installInto: null,
       history: pushHistory(state, "package"),
       future: [],
     })),
-  goToMarketplaces: (tab) =>
+  goToMarketplaces: (tab, into) =>
     set((state) => ({
       page: "marketplaces",
       ...(tab ? { marketplacesTab: tab } : {}),
+      // Stated every time, so a browse begun for one place and a browse
+      // begun for nobody cannot be told apart only by what came before.
+      installInto: into ?? null,
       history: pushHistory(state, "marketplaces"),
       future: [],
     })),

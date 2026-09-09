@@ -14,6 +14,7 @@ export function PathField({
   placeholder,
   value,
   onChange,
+  onPick,
   disabled,
   browseLabel,
 }: {
@@ -21,6 +22,12 @@ export function PathField({
   placeholder: string;
   value: string;
   onChange: (value: string) => void;
+  /** What choosing a folder in the picker asks for, beyond filling the
+   *  field in. Given only where picking a folder is the whole request —
+   *  the project search reads the folder chosen, and a second press to say
+   *  "yes, that one" is a step with nothing in it. Where the path is one
+   *  answer among several, this is left off and the field only fills. */
+  onPick?: (picked: string) => void;
   disabled?: boolean;
   browseLabel: string;
 }) {
@@ -44,7 +51,9 @@ export function PathField({
         disabled={disabled}
         onClick={() => {
           void pickFolder().then((picked) => {
-            if (picked) onChange(picked);
+            if (!picked) return;
+            onChange(picked);
+            onPick?.(picked);
           });
         }}
       >

@@ -393,7 +393,11 @@ describe("settings store", () => {
     }
   });
 
-  it("shows the error modal and returns an empty list when discovering projects fails", async () => {
+  // A folder kendex could not read is not a folder with no projects in
+  // it, and the search's own panel is where the reason belongs — beside
+  // the path searched and the button that tries again. An empty list would
+  // have the dialog claim the folder holds nothing.
+  it("hands back the refusal rather than an empty result when a search fails", async () => {
     vi.mocked(commands.discoverProjects).mockResolvedValue({
       status: "error",
       error: "/nope is not a directory",
@@ -401,11 +405,22 @@ describe("settings store", () => {
 
     const found = await useSettingsStore.getState().discoverProjects("/nope");
 
-    expect(found).toEqual([]);
-    const dialog = useProblemsStore.getState().dialog;
-    expect(dialog.open).toBe(true);
-    expect(dialog.title).toBe("Couldn't search that folder");
-    expect(dialog.message).toBe("/nope is not a directory");
+    expect(found).toEqual({
+      status: "failed",
+      reason: "/nope is not a directory",
+    });
+    expect(useProblemsStore.getState().dialog.open).toBe(false);
+  });
+
+  it("hands back what a search found", async () => {
+    vi.mocked(commands.discoverProjects).mockResolvedValue({
+      status: "ok",
+      data: ["/work/acme"],
+    });
+
+    expect(await useSettingsStore.getState().discoverProjects("/work")).toEqual(
+      { status: "found", paths: ["/work/acme"] },
+    );
   });
 });
 

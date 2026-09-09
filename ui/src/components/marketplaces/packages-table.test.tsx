@@ -14,6 +14,13 @@ import type {
 } from "@/bindings";
 import type { PackageEntry } from "@/components/marketplaces/package-row";
 import {
+  EVERYTHING_HERE_LABEL,
+  INSTALL_ACTION,
+  installSelectedLabel,
+  justThisLabel,
+  selectedLabel,
+} from "@/lib/copy-install";
+import {
   INSTALLED_IN_HEADING,
   PACKAGE_STATE_UNKNOWN,
   SUBSCRIBE_TO_INSTALL_LABEL,
@@ -26,6 +33,7 @@ import {
 import { placesKey } from "@/lib/installed-places";
 import { READ_LANDED } from "@/lib/read-state";
 import { useCommunityStore } from "@/stores/community";
+import { useInstallFlow } from "@/stores/install-flow";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
@@ -379,6 +387,7 @@ describe("the row action on a repository nobody subscribes to", () => {
     useCommunityStore.setState({
       directory: { rows: [listed], fetchedAt: "2026-09-02", stale: false },
     });
+    useInstallFlow.setState({ ask: null, outcome: null, running: false });
     useMarketplacesStore.setState({
       rows,
       read: READ_LANDED,
@@ -541,10 +550,13 @@ describe("re-sorting a marketplace's packages", () => {
 // right edge behind an overflow nothing drew, leaving the reader a Name and
 // no way to know a Safety or a Status was ever there.
 describe("the columns a narrow table keeps", () => {
+  /** The columns with a word in them. The first header is the box that
+   *  ticks every row, which is a control over the table rather than a
+   *  column of it, and it is on screen at every width. */
   const heads = (host: HTMLElement): string[] =>
-    [...host.querySelectorAll("thead th")].map(
-      (cell) => cell.textContent?.trim() ?? "",
-    );
+    [...host.querySelectorAll("thead th")]
+      .map((cell) => cell.textContent?.trim() ?? "")
+      .filter((word) => word !== "");
 
   const entry: PackageEntry = {
     catalog,
@@ -604,5 +616,115 @@ describe("the columns a narrow table keeps", () => {
       const wideHost = mountTree(table);
       expect(heads(wideHost), page).toEqual(wide);
     }
+  });
+});
+
+// Several rows chosen and one action over them, opening the same guided
+// flow a single row's Install opens. The table is the only surface that
+// can say what "everything here" means, so it is the one that offers it.
+describe("installing from the table", () => {
+  const offered = (name: string): PackageEntry => ({
+    catalog,
+    recordsUnreadable: false,
+    row: { ...row, name },
+  });
+  const installed = (name: string): PackageEntry => ({
+    catalog,
+    recordsUnreadable: false,
+    row: { ...row, name, state: "installed" },
+  });
+
+  const draw = (entries: PackageEntry[]) => {
+    stub.scores = {};
+    useProvenanceStore.setState({ loaded: true, rows: [] });
+    useInstallFlow.setState({ ask: null, outcome: null, running: false });
+    roomIs(1400);
+    return mountTree(
+      <PackagesTable
+        entries={entries}
+        showMarketplace={false}
+        places={new Map()}
+      />,
+    );
+  };
+
+  /** The box in a row whose name cell reads `name`. */
+  const rowBox = (host: HTMLElement, name: string): HTMLElement => {
+    const found = host.querySelector(`[aria-label="Select ${name}"]`);
+    if (!(found instanceof HTMLElement)) throw new Error(`no box for ${name}`);
+    return found;
+  };
+
+  it("offers the ticked rows and everything here as one question", async () => {
+    const host = draw([offered("gh"), offered("lint"), offered("deploy")]);
+
+    await userEvent.click(rowBox(host, "gh"));
+    await userEvent.click(rowBox(host, "lint"));
+    await act(async () => {});
+
+    const action = [...host.querySelectorAll("button")].find(
+      (one) => one.textContent === installSelectedLabel(2),
+    );
+    if (!action) throw new Error("no selection action rendered");
+    await userEvent.click(action);
+    await act(async () => {});
+
+    const ask = useInstallFlow.getState().ask;
+    expect(ask?.subjects.map((one) => one.label)).toEqual([
+      selectedLabel(2),
+      EVERYTHING_HERE_LABEL,
+    ]);
+    expect(ask?.subjects[0].groups[0].items).toEqual([
+      { kind: "skill", name: "gh" },
+      { kind: "skill", name: "lint" },
+    ]);
+    expect(ask?.subjects[1].count).toBe(3);
+  });
+
+  // A row already installed has nothing for this table to install, and a
+  // row whose place cannot be read has no state to install against — so
+  // neither joins a selection, and "everything here" does not count them.
+  it("ticks only the rows it can actually install", async () => {
+    const host = draw([offered("gh"), installed("lint")]);
+
+    expect(host.querySelector('[aria-label="Select lint"]')).toBeNull();
+    await userEvent.click(rowBox(host, "gh"));
+    await act(async () => {});
+    const action = [...host.querySelectorAll("button")].find(
+      (one) => one.textContent === installSelectedLabel(1),
+    );
+    if (!action) throw new Error("no selection action rendered");
+    await userEvent.click(action);
+    await act(async () => {});
+
+    // One row to install and one row ticked is the same answer twice, so
+    // "everything here" is not offered beside it.
+    expect(
+      useInstallFlow.getState().ask?.subjects.map((one) => one.label),
+    ).toEqual([selectedLabel(1)]);
+  });
+
+  // A row's own Install is the one-package case of the same flow, never a
+  // second install path.
+  it("opens the flow on one row from that row's own action", async () => {
+    const host = draw([offered("gh"), offered("lint")]);
+
+    const install = [...host.querySelectorAll("button")].find(
+      (one) => one.textContent === INSTALL_ACTION,
+    );
+    if (!install) throw new Error("no row action rendered");
+    await userEvent.click(install);
+    await act(async () => {});
+
+    const ask = useInstallFlow.getState().ask;
+    // The whole list, not just its head: a row's action promises one
+    // package, so "Everything here" beside it would answer a question the
+    // press did not ask and put the whole marketplace one mis-click away.
+    expect(ask?.subjects.map((one) => one.label)).toEqual([
+      justThisLabel("gh"),
+    ]);
+    expect(ask?.subjects[0].groups[0].items).toEqual([
+      { kind: "skill", name: "gh" },
+    ]);
   });
 });

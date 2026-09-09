@@ -1,14 +1,8 @@
 import { useState } from "react";
-import { commands, type PackageView, type Scope } from "@/bindings";
+import { commands, type PackageView } from "@/bindings";
 import { MarkdownView } from "@/components/markdown-view";
 import { AvailableAside } from "@/components/marketplaces/available-aside";
 import { CatalogFilePreview } from "@/components/marketplaces/catalog-file-preview";
-import { DestinationSelect } from "@/components/marketplaces/destination-select";
-import {
-  type Choice,
-  HarnessSelect,
-  isInstallable,
-} from "@/components/marketplaces/harness-select";
 import { RecordsUnreadableNote } from "@/components/marketplaces/packages-trouble";
 import { RepoAction } from "@/components/marketplaces/repo-action";
 import { useCatalog } from "@/components/marketplaces/use-catalog";
@@ -16,15 +10,15 @@ import { PageHeader } from "@/components/page-header";
 import { SafetyPanel } from "@/components/safety-panel";
 import { TagBadges } from "@/components/tag-badge";
 import { Button } from "@/components/ui/button";
-import { scopeLabel } from "@/lib/derive";
+import { INSTALL_ACTION, justThisLabel } from "@/lib/copy-install";
 import { recordsUnreadable } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { sourceLine } from "@/lib/marketplace-display";
-import { sameScope } from "@/lib/scope";
 import { useOrderedRead } from "@/lib/use-ordered-read";
 import { cn } from "@/lib/utils";
+import { useInstallFlow } from "@/stores/install-flow";
 import { catalogKey, useMarketplacesStore } from "@/stores/marketplaces";
 import { type AvailableRef, useNavStore } from "@/stores/nav";
 
@@ -47,36 +41,23 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
     error: reachError,
     ready,
   } = useCatalog(availableRef.catalog);
-  const goToPackage = useNavStore((s) => s.goToPackage);
+  // KEN-1282's navigation off this page stays; the page no longer sends an
+  // install of its own, so `goToPackage` and the store's `install` go with
+  // it — the guided flow owns both, and it says where the packages went.
   const goToMarketplace = useNavStore((s) => s.goToMarketplace);
   const goToBundle = useNavStore((s) => s.goToBundle);
-  const install = useMarketplacesStore((s) => s.install);
   const busy = useMarketplacesStore((s) => s.busy);
-  const [destination, setDestination] = useState<Scope | null>(null);
-  const [choice, setChoice] = useState<Choice>({
-    harnesses: null,
-    method: null,
-    optional: [],
-  });
+  const openInstall = useInstallFlow((s) => s.open);
 
   const scope = catalog.by === "subscription" ? catalog.scope : null;
-  // One redirect judgment, feeding the address, the read and the install
-  // alike. Not object identity: the picker builds a fresh Scope from
-  // everyPlace, so coming back to the place already being browsed would
-  // read as a redirect into it and re-address the page for nothing.
-  const redirected =
-    destination && scope && !sameScope(destination, scope) ? destination : null;
 
   // Null until the catalog is ready: a repository's first fetch holds the
-  // store's lock, and a read racing it would be refused. The redirect is
-  // part of the address: a dependency's state — already installed there,
-  // or kept removed there — is a fact about the scope the install lands
-  // in, so choosing another place is a different read.
-  const address = ready
-    ? `${catalogKey(catalog)}::${kind}::${name}::${redirected ? scopeLabel(redirected) : ""}`
-    : null;
+  // store's lock, and a read racing it would be refused. The read is of
+  // the place this package is offered in; where it lands is the guided
+  // flow's question, asked after this page has said what the package is.
+  const address = ready ? `${catalogKey(catalog)}::${kind}::${name}` : null;
   const read = useOrderedRead<PackageView>(address, () =>
-    commands.marketplacePackagePreview(catalog, kind, name, redirected),
+    commands.marketplacePackagePreview(catalog, kind, name, null),
   );
   const view = read.status === "ok" ? read.data : null;
   const error = read.status === "error" ? read.error : null;
@@ -92,8 +73,6 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
     setChosen(address === null ? null : { at: address, file });
 
   const Icon = kindIcon(kind);
-  // The place named on screen.
-  const target = destination ?? scope;
   // What the marketplace calls itself and where it comes from, from the one
   // resolution `useCatalog` makes: it holds the summary that discovered this
   // subscription, which is cached under the repository this page was opened
@@ -105,25 +84,33 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   const shownError = reachError ?? error;
   // Every Packages row opens this page, "Not known" ones included. The
   // engine answered unknown because it could not read the lock of the place
-  // this install would land in — the destination when one is picked, which
-  // is the scope the engine mutates — and the install would meet that same
-  // record, so the page says why in place of the button rather than letting
-  // a raw engine error stand in for the reason.
+  // this package is offered in, and an install starting from here would
+  // meet that same record — so the page says why in place of the button
+  // rather than letting a raw engine error stand in for the reason.
   const recordsUnknown = view !== null && recordsUnreadable(view.preview.state);
 
   const doInstall = () => {
-    if (catalog.by !== "subscription" || !target) return;
-    const { scope, source } = catalog;
-    void install({
-      scope,
-      source,
-      items: [{ kind, name }],
-      destination: redirected,
-      delivery: choice,
-    }).then((ok) => {
-      // Installed, the same page carries on in its installed mode — the
-      // address gains the scope it landed in.
-      if (ok) goToPackage({ kind, name, scope: target });
+    if (catalog.by !== "subscription") return;
+    const shown = packageDisplayName({ kind, name });
+    openInstall({
+      subjects: [
+        {
+          id: `${kind}:${name}`,
+          label: justThisLabel(shown),
+          what: shown,
+          count: 1,
+          groups: [
+            {
+              source: catalog.source,
+              browsing: catalog.scope,
+              items: [{ kind, name }],
+              bundle: null,
+            },
+          ],
+          kinds: [kind],
+          dependencies: view?.preview.dependencies,
+        },
+      ],
     });
   };
 
@@ -155,35 +142,16 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
               summary={summary}
               subscribeLabel="Subscribe to install"
             />
-          ) : scope && target ? (
-            <>
-              <DestinationSelect
-                browsing={scope}
-                value={target}
-                onChange={(next) => {
-                  // Which tools can take this is a fact about the
-                  // destination, so a choice made against another one is
-                  // not an answer here.
-                  setChoice({ harnesses: null, method: null, optional: [] });
-                  setDestination(next);
-                }}
-              />
-              <HarnessSelect
-                scope={target}
-                kinds={[kind]}
-                dependencies={view?.preview.dependencies}
-                value={choice}
-                onChange={setChoice}
-              />
-              <Button
-                disabled={
-                  busy || !view || !isInstallable(choice) || recordsUnknown
-                }
-                onClick={doInstall}
-              >
-                {busy ? "Installing…" : "Install"}
-              </Button>
-            </>
+          ) : scope ? (
+            // One button, because there is one action. What goes where is
+            // the guided flow's two questions, asked in one place behind
+            // it rather than as three controls beside it.
+            <Button
+              disabled={busy || !view || recordsUnknown}
+              onClick={doInstall}
+            >
+              {INSTALL_ACTION}
+            </Button>
           ) : null
         }
       />
@@ -201,8 +169,8 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
                   {shownError}
                 </p>
               ) : null}
-              {recordsUnknown && target ? (
-                <RecordsUnreadableNote scope={target} />
+              {recordsUnknown && scope ? (
+                <RecordsUnreadableNote scope={scope} />
               ) : null}
               {/* The reading comes before the package's own words about
                   itself: the header already says what this is, and this is

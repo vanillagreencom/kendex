@@ -1,18 +1,19 @@
 // @vitest-environment jsdom
-// The page's wiring: which place it reads for, which place its refusal
-// names, and what it sends an install. Its tree reads the store through the
-// destination picker, and a store read that answers with a fresh value each
-// time re-renders the tree until React throws — so the first case mounts
-// with the settings read unlanded, the state the app first draws it in.
+// The page's wiring: which place it reads for, when it withholds the one
+// action it has, and what that action hands the guided install. Where the
+// package lands is no longer this page's question — the flow asks it — so
+// what is proved here is that the page states the package and opens the
+// flow on it.
 import userEvent from "@testing-library/user-event";
-import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppSettings, Scope } from "@/bindings";
 import { commands, type PackageView } from "@/bindings";
+import { INSTALL_ACTION, justThisLabel } from "@/lib/copy-install";
 import {
   LOCAL_FOLDER_LABEL,
   unreadableRecordsLine,
 } from "@/lib/copy-marketplaces";
+import { useInstallFlow } from "@/stores/install-flow";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
@@ -35,23 +36,6 @@ const ACME: Extract<Scope, { scope: "project" }> = {
   scope: "project",
   root: "/work/acme",
 };
-
-/** Pick a place in the destination select. A pointer click does not open a
- *  base-ui trigger under jsdom, so the keyboard path opens it. */
-async function chooseDestination(host: HTMLElement, label: string) {
-  const trigger = [...host.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("Install to"),
-  );
-  if (!trigger) throw new Error("no destination select rendered");
-  act(() => trigger.focus());
-  await userEvent.keyboard("{Enter}");
-  const option = [...document.querySelectorAll('[role="option"]')].find(
-    (el) => el.textContent === label,
-  );
-  if (!(option instanceof HTMLElement)) throw new Error(`no ${label} option`);
-  await userEvent.click(option);
-  await settle();
-}
 
 const view: PackageView = {
   preview: {
@@ -80,9 +64,6 @@ const view: PackageView = {
   },
 };
 
-/** The store action the Install button lands on. */
-const installed = vi.fn(async () => true);
-
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(commands.marketplacePackagePreview).mockResolvedValue({
@@ -99,14 +80,15 @@ beforeEach(() => {
     summaries: {},
     readErrors: {},
     busy: false,
-    install: installed,
   });
   useSettingsStore.setState({
     settings: { projects: [ACME.root] } as AppSettings,
   });
   useNavStore.setState({
     availableRef: { kind: "skill", name: "gh", catalog },
+    installInto: null,
   });
+  useInstallFlow.setState({ ask: null, outcome: null, running: false });
 });
 
 /** What the preview read answers with. */
@@ -117,18 +99,16 @@ function answer(preview: PackageView["preview"]) {
   });
 }
 
-/** The header's Install, whatever it currently reads. */
+/** The header's Install. */
 function installButton(host: HTMLElement): HTMLButtonElement | undefined {
   return [...host.querySelectorAll("button")].find(
-    (button) => button.textContent === "Install",
+    (button) => button.textContent === INSTALL_ACTION,
   );
 }
 
 describe("the available package page", () => {
   it("settles on mount before the settings read has landed", async () => {
-    // The state the app first draws this page in: no place registry yet, so
-    // the picker has only the personal scope to offer. Every other case
-    // here needs a project to pick, which is why the fixture lands one.
+    // The state the app first draws this page in: no place registry yet.
     useSettingsStore.setState({ settings: null });
     const host = mount(<AvailablePackagePage />);
     await settle();
@@ -139,54 +119,46 @@ describe("the available package page", () => {
       "gh",
       null,
     );
-    // The destination picker is on screen, so the snapshot whose caching
-    // this proves was really read.
-    expect(host.textContent).toContain("Install to");
     expect(host.textContent).toContain("works a pull request");
   });
 
-  // Everything the destination decides on this page, in one pass. The read
-  // is asked again for the project; the record standing is that project's,
-  // so Install withholds on it and the reason names it; and coming back to
-  // the place being browsed is not a redirect, so neither the read nor the
-  // install carries one.
-  it("reads, gates and says why for the place the install would land in", async () => {
+  // One button, and behind it the flow's own question. The page reads for
+  // the place this package is offered in, and never asks for a
+  // destination: nothing here knows one yet.
+  it("opens the guided install on this package alone", async () => {
     const host = mount(<AvailablePackagePage />);
     await settle();
-    // The control: a readable record leaves the button alone, so what
-    // follows is the state doing the withholding and not the page.
-    expect(installButton(host)?.disabled).toBe(false);
-
-    answer({ ...view.preview, state: "unknown" });
-    await chooseDestination(host, "acme");
-
-    expect(commands.marketplacePackagePreview).toHaveBeenLastCalledWith(
-      catalog,
-      "skill",
-      "gh",
-      ACME,
-    );
-    expect(installButton(host)?.disabled).toBe(true);
-    expect(host.textContent).toContain(unreadableRecordsLine("acme"));
-    expect(host.textContent).not.toContain(unreadableRecordsLine("Personal"));
-    expect(host.textContent).toContain("See Problems");
-
-    answer(view.preview);
-    await chooseDestination(host, "Personal");
-    expect(commands.marketplacePackagePreview).toHaveBeenLastCalledWith(
-      catalog,
-      "skill",
-      "gh",
-      null,
-    );
 
     const install = installButton(host);
     if (!install) throw new Error("no Install button rendered");
+    expect(install.disabled).toBe(false);
     await userEvent.click(install);
     await settle();
-    expect(installed).toHaveBeenCalledWith(
-      expect.objectContaining({ destination: null }),
-    );
+
+    const ask = useInstallFlow.getState().ask;
+    expect(ask?.subjects).toHaveLength(1);
+    expect(ask?.subjects[0].label).toBe(justThisLabel("gh"));
+    expect(ask?.subjects[0].groups).toEqual([
+      {
+        source: "kit",
+        browsing: { scope: "global" },
+        items: [{ kind: "skill", name: "gh" }],
+        bundle: null,
+      },
+    ]);
+  });
+
+  // A place whose lock could not be read has no state to install against,
+  // so the page says why in place of the action rather than opening a flow
+  // that would be refused.
+  it("withholds the action and names the place whose records could not be read", async () => {
+    answer({ ...view.preview, state: "unknown" });
+    const host = mount(<AvailablePackagePage />);
+    await settle();
+
+    expect(installButton(host)?.disabled).toBe(true);
+    expect(host.textContent).toContain(unreadableRecordsLine("Personal"));
+    expect(host.textContent).toContain("See Problems");
   });
 });
 

@@ -232,7 +232,7 @@ describe("a write that reaches repo_effects and is refused", () => {
       error: "the installer exited 1",
     });
     useMarketplacesStore.setState({
-      pendingEffects: { scope, queue: [disclosure] },
+      pendingEffects: { queue: [{ scope, disclosure }] },
     });
 
     const landed = await useMarketplacesStore.getState().applyRepoEffect();
