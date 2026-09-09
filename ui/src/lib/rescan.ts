@@ -147,6 +147,16 @@ export function trackedProjects(): string[] {
 /** Run a write that reaches `repo_effects` and read the machine again
  *  behind it.
  *
+ *  One reader action can run this many times. The guided install writes
+ *  once per place the reader picked and once per marketplace inside each,
+ *  so everything behind this call runs repeatedly for what the reader
+ *  thinks of as a single install — and each of those mechanisms was
+ *  written when a write meant one write. Anything hung here has to be
+ *  safe to run again: append rather than replace (the repository-effects
+ *  line), refresh rather than keep the first answer (the commit offer's
+ *  line), and report once for the run rather than once per call (the
+ *  install toasts, which the caller silences with `quiet`).
+ *
  *  `body` is the caller's whole action unchanged — the command, its own busy
  *  flag, the toast, the state update, its own re-reads — on the refusal arm
  *  as much as the landing one, and its value is this call's value.

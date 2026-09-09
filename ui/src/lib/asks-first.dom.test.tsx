@@ -128,6 +128,30 @@ describe("the questions a write leaves behind", () => {
     expect(host.ownerDocument.body.textContent).toContain("acme");
   });
 
+  // A run that wrote more than once can leave both an offer and a scan
+  // failure. Saying the failure and drawing the offer together is the pair
+  // of modals this order exists to stop, so the offer waits for the
+  // problems dialog to be dismissed as well.
+  it("holds a queued offer behind a scan failure and its dialog", async () => {
+    vi.mocked(commands.commitOfferScan).mockResolvedValue({
+      status: "error",
+      error: "git is not on the path",
+    });
+    useCommitOfferStore.setState({ queue: [offer] });
+    const host = mount(<CommitOfferDialog />);
+
+    await useCommitOfferStore.getState().enqueue(["/work/acme"]);
+    await settle();
+
+    // The failure is said; the offer it arrived beside stays off screen.
+    expect(useProblemsStore.getState().dialog.open).toBe(true);
+    expect(host.ownerDocument.body.textContent).not.toContain("acme");
+
+    useProblemsStore.getState().closeError();
+    await settle();
+    expect(host.ownerDocument.body.textContent).toContain("acme");
+  });
+
   // The scan runs inside the write's own `finally`, so it can fail while
   // the install is still on screen. Its failure is this question's, and
   // waits with it rather than opening the problems dialog over the install

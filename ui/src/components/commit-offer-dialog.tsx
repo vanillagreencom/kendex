@@ -89,23 +89,28 @@ export function CommitOfferDialog() {
   const stage = useCommitOfferStore((s) => s.stage);
   const leave = useCommitOfferStore((s) => s.leave);
   // Last of the three questions a write leaves behind — `lib/asks-first.ts`
-  // holds the order. The line keeps what it is given, so waiting for the
-  // install and the repository effects to be answered loses nothing.
+  // holds the whole order, this question's own scan failure and the dialog
+  // that says it included. The line keeps what it is given, so waiting
+  // loses nothing.
   const mayAsk = useMayAsk("commitOffer");
+  // The failure is its own question, ordered just before the offer: it is
+  // said once the install and the repository effects are done with, and
+  // the offer then waits for it to be dismissed.
+  const maySayFailure = useMayAsk("commitOfferFailure");
   const scanFailure = useCommitOfferStore((s) => s.scanFailure);
   const scanFailureSaid = useCommitOfferStore((s) => s.scanFailureSaid);
   // The scan that would have found an offer failed instead. It is this
   // question's own failure, so it waits its turn rather than opening the
   // problems dialog over the install that started it.
   useEffect(() => {
-    if (!mayAsk || scanFailure === null) return;
+    if (!maySayFailure || scanFailure === null) return;
     useProblemsStore.getState().showError({
       title: SCAN_FAILED_TITLE,
       message: scanFailure,
       steps: SCAN_FAILED_STEPS,
     });
     scanFailureSaid();
-  }, [mayAsk, scanFailure, scanFailureSaid]);
+  }, [maySayFailure, scanFailure, scanFailureSaid]);
   if (!offer || !mayAsk) return null;
   const busy = stage.at === "busy";
   return (

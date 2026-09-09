@@ -202,15 +202,34 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
         return;
       }
       const found: CommitOfferScan = response.data;
-      const { queue } = get();
-      // A project already in the line keeps its place and its answer in
-      // progress: kendex asks at most once per project.
-      const waiting = new Set(queue.map((offer) => offer.root));
+      const { queue, stage } = get();
+      // A project already in the line keeps its PLACE, and takes the fresh
+      // reading of what it holds.
+      //
+      // Keeping the older reading is what lets a commit take files the
+      // dialog never listed: two writes can reach one project in quick
+      // succession — the guided install writes per place and per
+      // marketplace, each through its own `writingRepo` — and the commit
+      // re-derives the generated paths when it runs, so it takes what is
+      // there then, not what was listed when the first scan answered.
+      //
+      // The head is left alone while it is being answered: that answer is
+      // in flight against the offer on screen, and swapping it underneath
+      // would change what the running step is about. Its own next scan
+      // corrects it.
+      const fresh = new Map(found.offers.map((offer) => [offer.root, offer]));
+      const answering = stage.at !== "offer";
+      const kept = queue.map((offer, at) =>
+        at === 0 && answering ? offer : (fresh.get(offer.root) ?? offer),
+      );
+      const waiting = new Set(kept.map((offer) => offer.root));
       const added = found.offers.filter((offer) => !waiting.has(offer.root));
-      const next = [...queue, ...added];
+      const next = [...kept, ...added];
       set({
         queue: next,
         flagged: found.flagged,
+        // The reader's own typing is theirs: a fresh reading of the files
+        // says nothing about the message they are part-way through.
         message: queue.length > 0 ? get().message : (next[0]?.message ?? ""),
       });
     },
