@@ -127,11 +127,18 @@ export function PackageRows({
   const at = reading.standing.at;
   const scored =
     (at && places.find((place) => sameScope(place.scope, at))) ?? first;
-  /** This package's page, at one of the places this row is about. */
+  /** This package's page, at one of the places this row is about. An
+   * update row is built from the install records, so it names a package
+   * they account for. */
   const openPackage = (place: UpdateRow | undefined, view?: PackageView) => {
     if (!place) return;
     goToPackage(
-      { kind: group.kind, name: group.name, scope: place.scope },
+      {
+        kind: group.kind,
+        name: group.name,
+        scope: place.scope,
+        identity: "recorded",
+      },
       view,
     );
   };

@@ -5,12 +5,12 @@ import type { ObservedItem, Scope } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
 import { openLibraryAt } from "@/components/library/use-filter-handoff";
 import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
-import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
 import {
   PACKAGES_CHECK_FAILED_TITLE,
   PACKAGES_UNCONFIRMED_TITLE,
   TRY_AGAIN_LABEL,
 } from "@/lib/copy";
+import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
 import {
   READ_LANDED,
   READ_PENDING,
