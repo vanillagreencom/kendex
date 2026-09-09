@@ -1,0 +1,1 @@
+- The commit dialog reads the file you opened, not another whose name its own name would match as a pattern.

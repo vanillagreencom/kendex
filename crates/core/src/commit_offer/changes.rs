@@ -25,7 +25,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::package::diff::{PackageDiff, Tree, diff_trees};
 
-use super::{Failed, Refusal, Scan, Step, git};
+use super::{Failed, Refusal, Scan, Step, git, pathspec::Spec};
 
 /// The file's mode on each side, in git's own spelling: `100644` an
 /// ordinary file, `100755` one that can be run, `120000` a symbolic link.
@@ -104,7 +104,7 @@ pub fn file_changes(scan: &Scan, path: &str) -> Result<Changes, Failed> {
 /// git lists no entry for — one this change adds, which `HEAD` has no side
 /// of — has no mode change to report.
 fn mode_change(root: &Path, path: &str) -> Result<Option<ModeChange>, Failed> {
-    let listed = git::read_required(root, &["diff", "--raw", "HEAD", "--", path])?;
+    let listed = git::read_required(root, &[Spec::LITERAL, "diff", "--raw", "HEAD", "--", path])?;
     let text = String::from_utf8_lossy(&listed);
     let Some(entry) = text.lines().next() else {
         return Ok(None);
@@ -143,11 +143,19 @@ fn mode_change(root: &Path, path: &str) -> Result<Option<ModeChange>, Failed> {
 /// directory listing, not a file, and rendering one as the before side
 /// would put git's own inventory of a folder on screen as though the
 /// commit were rewriting it.
+///
+/// The path sits in a pathspec position, so it carries [`Spec::LITERAL`]
+/// the way every other pathspec this module hands git does. `ls-tree` was
+/// measured not to glob `[`, `*` or `?` against tree paths, so the option
+/// is not what makes this read exact today; it is what keeps it exact, and
+/// it is the whole of the answer for a path opening with the `:` a
+/// pathspec magic prefix starts with. The `HEAD:./<path>` read below is a
+/// revision spec rather than a pathspec and names its object exactly.
 fn committed(root: &Path, path: &str, born: bool) -> Result<Option<Vec<u8>>, Failed> {
     if !born {
         return Ok(None);
     }
-    let listed = git::read_required(root, &["ls-tree", "HEAD", "--", path])?;
+    let listed = git::read_required(root, &[Spec::LITERAL, "ls-tree", "HEAD", "--", path])?;
     let text = String::from_utf8_lossy(&listed);
     let Some(kind) = text.lines().next().and_then(entry_kind) else {
         return Ok(None);

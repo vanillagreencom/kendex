@@ -1094,3 +1094,58 @@ fn a_file_replaced_by_a_folder_of_the_same_name_shows_both_halves() {
     );
     assert_eq!(hunk_text(&arrived.diff), ["+the skill's body"]);
 }
+
+/// Both reads that name a covered path hand it to git in a pathspec
+/// position, so both carry `--literal-pathspecs`. A path opening with the
+/// `:` a pathspec magic prefix starts with is read as magic without it and
+/// matches nothing at all: `ls-tree` then reports no before side and the
+/// file draws as one this change adds, when it is one the change rewrites.
+#[cfg(unix)]
+#[test]
+fn a_path_git_would_read_as_pathspec_magic_is_taken_as_the_path_it_is() {
+    const OURS: &str = ":note.md";
+    let repo = Repo::new(&[(OURS, "ours\n")]);
+    repo.write(OURS, "ours changed\n");
+    let generated = repo.generated(&[OURS], &[]);
+    let found = repo.scan(&generated).unwrap();
+    assert_eq!(found.count(), 1, "the path left the offer's set");
+
+    let opened = shown(&found, OURS);
+    assert_eq!(
+        opened.diff.files[0].status,
+        crate::package::diff::FileStatus::Modified,
+        "the before side was lost, so a rewrite drew as an addition"
+    );
+    assert_eq!(hunk_text(&opened.diff), ["-ours", "+ours changed"]);
+}
+
+/// A rendered path can also hold `[`, `*` or `?`, and `git diff` globs a
+/// pathspec. Without the literal option the mode read gets a row per file
+/// the path's shape names, and it reads the first — so a changed file of
+/// the person's own that sorts ahead of the one they opened hands over its
+/// mode as though it were theirs.
+#[cfg(unix)]
+#[test]
+fn a_glob_shaped_path_reads_its_own_mode_and_not_a_neighbours() {
+    use std::os::unix::fs::PermissionsExt;
+    const OURS: &str = "docs/a[0].md";
+    // What `docs/a[0].md` globs to. It sorts ahead of the path itself,
+    // since `0` precedes `[`, so a globbing read lists it first.
+    const DECOY: &str = "docs/a0.md";
+    let repo = Repo::new(&[(OURS, "ours\n"), (DECOY, "theirs\n")]);
+    repo.write(OURS, "ours changed\n");
+    fs::set_permissions(repo.root.join(DECOY), fs::Permissions::from_mode(0o755)).unwrap();
+    let generated = repo.generated(&[OURS], &[]);
+    let found = repo.scan(&generated).unwrap();
+    assert_eq!(
+        found.others, 1,
+        "the decoy is the person's own changed file"
+    );
+
+    let opened = shown(&found, OURS);
+    assert_eq!(hunk_text(&opened.diff), ["-ours", "+ours changed"]);
+    assert_eq!(
+        opened.mode, None,
+        "the decoy's mode was reported as this file's"
+    );
+}
