@@ -1,4 +1,5 @@
 import type { ScopeSettings, SecretEdit, SettingsEdit } from "@/bindings";
+import { choosesFile } from "@/lib/secret-rows";
 
 /** One file a save writes to, and what lands in it. */
 export interface SaveGroup {
@@ -26,6 +27,7 @@ export function saveGroups({
   manifestFile,
   settingsEdits,
   secretEdits,
+  pickedFile,
   settings,
 }: {
   manifestDirty: boolean;
@@ -33,24 +35,54 @@ export function saveGroups({
   manifestFile: string | null;
   settingsEdits: SettingsEdit[];
   secretEdits: SecretEdit[];
+  /** The private file the person picked on this page, null while they
+   *  have not. Naming one the project does not already name is a write
+   *  into the settings file, so it is a line in this summary. */
+  pickedFile: string | null;
   settings: ScopeSettings | null;
 }): SaveGroup[] {
   const groups: SaveGroup[] = [];
   if (manifestDirty && manifestFile) {
-    groups.push({ file: manifestFile, labels: ["Your customizations"] });
+    add(groups, manifestFile, [CUSTOMIZATIONS_LABEL]);
   }
-  if (settingsEdits.length > 0 && settings) {
-    groups.push({
-      file: settings.file,
-      labels: settingsEdits.map((edit) => edit.key),
-    });
+  if (settings) {
+    add(
+      groups,
+      settings.file,
+      settingsEdits.map((edit) => edit.key),
+    );
+    // The chosen file is recorded in the settings file, under the key
+    // both package loaders read, so it belongs to that group rather than
+    // to a line of its own.
+    if (choosesFile(settings, pickedFile))
+      add(groups, settings.file, [ENV_FILE_KEY]);
   }
   const destination = settings?.secrets?.destination;
-  if (secretEdits.length > 0 && destination) {
-    groups.push({
-      file: destination.file,
-      labels: secretEdits.map((edit) => edit.key),
-    });
+  if (destination) {
+    add(
+      groups,
+      destination.file,
+      secretEdits.map((edit) => edit.key),
+    );
   }
   return groups;
+}
+
+/** The label kendex writes for the manifest half, which is a set of edits
+ *  rather than one named key. */
+const CUSTOMIZATIONS_LABEL = "Your customizations";
+
+/** The settings key that records this project's private file. Spelled
+ *  here because the summary names it before the save writes it; core owns
+ *  the write. */
+const ENV_FILE_KEY = "KENDEX_ENV_FILE";
+
+/** Add labels under their file, folding into the group already there.
+ *  Two changes to one file are one line in this summary, and a change
+ *  with no labels is not a change. */
+function add(groups: SaveGroup[], file: string, labels: string[]): void {
+  if (labels.length === 0) return;
+  const held = groups.find((group) => group.file === file);
+  if (held) held.labels.push(...labels);
+  else groups.push({ file, labels: [...labels] });
 }

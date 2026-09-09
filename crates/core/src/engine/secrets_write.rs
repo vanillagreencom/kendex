@@ -29,7 +29,7 @@ use crate::apply::{Op, PlannedOp, Pre};
 use crate::error::Result;
 use crate::model::Scope;
 use crate::settings_secret::{
-    Destination, DestinationState, SecretRefusal, SecretsDraft, destination,
+    Destination, DestinationState, SecretEdit, SecretRefusal, SecretsDraft, destination,
 };
 
 use super::desired::DesiredState;
@@ -96,7 +96,11 @@ pub(super) fn target(
     let Scope::Project { root } = scope else {
         return Ok(None);
     };
-    if draft.edits.is_empty() {
+    // A save that names a file resolves one even with no key to store:
+    // recording a destination is a decision about where credentials go,
+    // and it is checked before it is written down rather than at the
+    // first save that fills it.
+    if draft.edits.is_empty() && !draft.choose {
         return Ok(None);
     }
     let settings = crate::fs::read_if_exists(&crate::settings_seed::settings_file_path(root))?;
@@ -112,10 +116,21 @@ pub(super) fn target(
     Ok(Some(target))
 }
 
-/// The `.gitignore` line a plan owes the private file it is about to
-/// create, where it owes one. A file already there, or one git already
-/// ignores, owes none.
-pub(super) fn owed_ignore(target: Option<&Destination>) -> Option<&str> {
+/// The `.gitignore` line a plan owes the private file it is committing
+/// this project to, where it owes one. A file already there, or one git
+/// already ignores, owes none.
+///
+/// A save owes it when it stores a value there or names the file as this
+/// project's — both are the project taking the file on. A save that only
+/// clears a key owes nothing: it puts nothing in a file it is emptying.
+pub(super) fn owed_ignore<'a>(
+    options: &crate::engine::PlanOptions,
+    target: Option<&'a Destination>,
+) -> Option<&'a str> {
+    let draft = options.secrets_draft.as_ref()?;
+    if !draft.choose && !draft.edits.iter().any(SecretEdit::stores) {
+        return None;
+    }
     match &target?.state {
         DestinationState::Missing { ignore } => ignore.as_deref(),
         _ => None,

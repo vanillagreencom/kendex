@@ -21,6 +21,7 @@ export function CustomizeSaveBar({ busy = false }: { busy?: boolean }) {
     manifestFile,
     settingsEdits,
     secretEdits,
+    secretFile,
     settings,
     confirming,
     requestSave,
@@ -46,6 +47,7 @@ export function CustomizeSaveBar({ busy = false }: { busy?: boolean }) {
           manifestFile,
           settingsEdits,
           secretEdits,
+          pickedFile: secretFile,
           settings,
         })}
         onOpenChange={(open) => {

@@ -286,17 +286,36 @@ fn declarations(
 /// naming a private file records the choice in the settings write, so
 /// that write has to be planned first.
 ///
-/// The third answer is the `.gitignore` line a private file this plan
-/// creates is owed. [`super::posture`] owns that file and writes it once,
-/// so the line travels out of here rather than being written here.
-pub(super) fn plan_settings(
+/// Everything a pass writes into the project's own files, in the order it
+/// has to write them.
+///
+/// The git posture goes first. The one line it may add for this pass is
+/// the `.gitignore` entry that keeps git off the private env file the
+/// credential below is about to go into, and a plan runs in order: a line
+/// planned after that write is a line planned after the window it exists
+/// to close. Rolling both back on a refusal is not the same promise as
+/// never having written an unprotected credential at all.
+///
+/// Then the tracked settings file, then the private file beside it.
+/// Naming a private file records the choice in the settings write, so
+/// that write is planned before the private one — and the destination is
+/// resolved once, at the top, because all three steps read it.
+pub(super) fn plan_project_files(
     scope: &Scope,
     state: &DesiredState,
     options: &crate::engine::PlanOptions,
     ops: &mut Vec<PlannedOp>,
-) -> Result<(Vec<String>, Vec<DriftRow>, Option<String>)> {
+) -> Result<(Vec<String>, Vec<DriftRow>)> {
     let target = super::secrets_write::target(scope, options)?;
-    let (mut notes, drift) = plan_settings_seed(scope, state, options, ops)?;
+    let mut notes = Vec::new();
+    super::posture::plan_posture(
+        scope,
+        super::secrets_write::owed_ignore(options, target.as_ref()),
+        ops,
+        &mut notes,
+    )?;
+    let (settings_notes, drift) = plan_settings_seed(scope, state, options, ops)?;
+    notes.extend(settings_notes);
     notes.extend(super::secrets_write::plan_secrets(
         scope,
         state,
@@ -304,8 +323,7 @@ pub(super) fn plan_settings(
         target.as_ref(),
         ops,
     )?);
-    let owed = super::secrets_write::owed_ignore(target.as_ref()).map(str::to_owned);
-    Ok((notes, drift, owed))
+    Ok((notes, drift))
 }
 
 /// The private file a save is recording as this project's, where it is

@@ -45,13 +45,27 @@ export function withoutSecretEdit(
   return edits.filter((edit) => !(edit.skill === skill && edit.key === key));
 }
 
+/** Whether picking this file is a change the project does not already
+ *  hold. Picking the file a project already names is no change at all, and
+ *  neither is picking nothing. */
+export function choosesFile(
+  read: ScopeSettings | null,
+  picked: string | null,
+): boolean {
+  return picked !== null && read?.secrets?.destination.chosen === false;
+}
+
 /** The secret half of a save, or null where this draft has none.
  *
+ *  Two things put one here, and either alone is enough. A value typed into
+ *  a field is one. Naming a private file the project does not already name
+ *  is the other: the choice is written into `kendex.settings.toml` as the
+ *  key both package loaders read, so it is a save of its own and not
+ *  something a person has to type a credential to make stick. A pick that
+ *  changes nothing sends nothing.
+ *
  *  The base is the one the fields on screen were read with, so a private
- *  file that moved since is refused rather than written over. `choose` is
- *  the person having named a file this project does not already name,
- *  which the same save records so the packages read it too — a project
- *  saving into the default it always had records nothing. */
+ *  file that moved since is refused rather than written over. */
 export function secretsDraft(
   edits: SecretEdit[],
   read: ScopeSettings | null,
@@ -64,11 +78,13 @@ export function secretsDraft(
   base: string | null;
 } | null {
   const secrets = read?.secrets;
-  if (edits.length === 0 || !secrets) return null;
+  if (!secrets) return null;
+  const choose = choosesFile(read, picked);
+  if (edits.length === 0 && !choose) return null;
   return {
     edits,
     file: secrets.destination.file,
-    choose: picked !== null && !secrets.destination.chosen,
+    choose,
     base: secrets.base,
   };
 }

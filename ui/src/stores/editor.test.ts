@@ -97,6 +97,14 @@ describe("editor store", () => {
       inventories: {},
       settings: null,
       settingsEdits: [],
+      // Every field a case can leave behind. The store is one module-level
+      // value, so a field missing from this reset carries into the next
+      // case: a picked private file left here put a secret half on the
+      // settings-only save below.
+      secretEdits: [],
+      secretFile: null,
+      confirming: false,
+      manifestFile: null,
       savedSettings: {},
       dirty: false,
       manifestDirty: false,
@@ -218,6 +226,75 @@ describe("editor store", () => {
       null,
       null,
       { edits: [secretEdit], file: ".env.local", choose: false, base: "p1" },
+    );
+  });
+
+  /// Naming a private file is a save of its own. The choice is written
+  /// into the settings file as the key both package loaders read, so it
+  /// must not wait for somebody to also type a credential — the page has
+  /// already promised that saving records it.
+  it("saves a chosen private file with no credential typed", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "ok",
+      data: {} as AuditView_Serialize,
+    });
+    await useEditorStore.getState().load();
+    await useEditorStore.getState().pickSecretFile(".env.secrets");
+    expect(useEditorStore.getState().dirty).toBe(true);
+
+    await useEditorStore.getState().save();
+    expect(commands.saveCustomize).toHaveBeenCalledWith(
+      { scope: "global" },
+      null,
+      null,
+      { edits: [], file: ".env.local", choose: true, base: "p1" },
+    );
+  });
+
+  /// The inverse: picking the file the project already names changes
+  /// nothing, so the save carries no secret half at all rather than
+  /// re-writing a key that is already there.
+  it("sends no secret half for a pick the project already holds", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    const held = settings();
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...held,
+        secrets: {
+          destination: {
+            file: ".env.secrets",
+            chosen: true,
+            state: { state: "ready" },
+          },
+          candidates: [],
+          base: "p1",
+        },
+      },
+    });
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "ok",
+      data: {} as AuditView_Serialize,
+    });
+    await useEditorStore.getState().load();
+    await useEditorStore.getState().pickSecretFile(".env.secrets");
+    useEditorStore
+      .getState()
+      .edit((draft) => setInstruction(draft, "skill-instructions", "gh", "x"));
+
+    await useEditorStore.getState().save();
+    expect(commands.saveCustomize).toHaveBeenCalledWith(
+      { scope: "global" },
+      expect.anything(),
+      null,
+      null,
     );
   });
 

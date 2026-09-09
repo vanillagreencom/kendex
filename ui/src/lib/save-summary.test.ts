@@ -34,6 +34,7 @@ describe("saveGroups", () => {
         manifestFile: "kendex-local.toml",
         settingsEdits: [setting("GH_MODE")],
         secretEdits: [secret("LINEAR_API_KEY", "k")],
+        pickedFile: null,
         settings: settings(),
       }).map((group) => [group.file, group.labels]),
     ).toEqual([
@@ -52,6 +53,7 @@ describe("saveGroups", () => {
         manifestFile: "kendex.toml",
         settingsEdits: [],
         secretEdits: [secret("LINEAR_API_KEY", "k")],
+        pickedFile: null,
         settings: settings(),
       }).map((group) => group.file),
     ).toEqual([".env.local"]);
@@ -66,6 +68,7 @@ describe("saveGroups", () => {
         manifestFile: "kendex.toml",
         settingsEdits: [setting("GH_MODE")],
         secretEdits: [secret("LINEAR_API_KEY", "sk-live-secret")],
+        pickedFile: null,
         settings: settings(),
       }),
     );
@@ -81,6 +84,7 @@ describe("saveGroups", () => {
       manifestFile: "kendex.toml",
       settingsEdits: [],
       secretEdits: [secret("LINEAR_API_KEY", "k")],
+      pickedFile: null,
       settings: settings({
         secrets: {
           destination: {
@@ -94,5 +98,59 @@ describe("saveGroups", () => {
       }),
     });
     expect(groups.map((group) => group.file)).toEqual([".env.secrets"]);
+  });
+
+  /// Naming a private file the project does not already name is a write
+  /// into the settings file, under the key both package loaders read. It
+  /// is one line of the same group the public settings go in, because it
+  /// lands in the same file.
+  it("names a chosen private file as a settings write", () => {
+    const groups = saveGroups({
+      manifestDirty: false,
+      manifestFile: "kendex.toml",
+      settingsEdits: [setting("GH_MODE")],
+      secretEdits: [],
+      pickedFile: ".env.secrets",
+      settings: settings({
+        secrets: {
+          destination: {
+            file: ".env.secrets",
+            chosen: false,
+            state: { state: "ready" },
+          },
+          candidates: [],
+          base: "p1",
+        },
+      }),
+    });
+    expect(groups.map((group) => [group.file, group.labels])).toEqual([
+      ["kendex.settings.toml", ["GH_MODE", "KENDEX_ENV_FILE"]],
+    ]);
+  });
+
+  /// A pick that changes nothing is not a change: the project already
+  /// names that file, so the save writes no key and the summary claims
+  /// none.
+  it("claims no settings write for a file the project already names", () => {
+    expect(
+      saveGroups({
+        manifestDirty: false,
+        manifestFile: "kendex.toml",
+        settingsEdits: [],
+        secretEdits: [],
+        pickedFile: ".env.secrets",
+        settings: settings({
+          secrets: {
+            destination: {
+              file: ".env.secrets",
+              chosen: true,
+              state: { state: "ready" },
+            },
+            candidates: [],
+            base: "p1",
+          },
+        }),
+      }),
+    ).toEqual([]);
   });
 });

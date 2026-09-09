@@ -108,9 +108,19 @@ export const settingAmbiguous = (
 // that key is kept, and what saving one is about to do.
 export const SECRETS_SECTION = "Keys and tokens";
 /** Never "keys": a person reading this is about to type one, and the
- *  sentence has to say where it goes before they do. */
+ *  sentence has to say where it goes before they do.
+ *
+ *  It says where a value goes and nothing about what wins. Which source a
+ *  package prefers is that package's own policy and the packages differ:
+ *  Linear gives a project key precedence over an inherited one, so that
+ *  the key for one repository's workspace cannot be overridden by a
+ *  machine-wide export, while Deep Research keeps the process value. One
+ *  sentence here cannot be true of both, and the one that was here told a
+ *  Linear user the wrong account's key would be used. Each package states
+ *  its own rule in the comment block it ships beside the key, which is
+ *  what the field's explainer shows. */
 export const secretsHelp = (file: string): string =>
-  `Saved in ${file}, which git does not carry. Anything already set in your shell wins over what you save here.`;
+  `Saved in ${file}, which git does not carry and which the packages installed here read.`;
 export const SECRET_NOT_SET = "Not set";
 export const SECRET_SET = "Set";
 export const SECRET_UNKNOWN = "Can't check";

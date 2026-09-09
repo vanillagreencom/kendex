@@ -349,6 +349,106 @@ fn saving_into_the_default_records_no_choice() {
     );
 }
 
+/// Naming a private file is a save of its own. A person who picks one and
+/// types no credential has still made a decision the packages have to
+/// read, so the choice is recorded without waiting for a value.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_named_file_is_recorded_with_no_credential_typed() {
+    let f = fixture(true);
+    let manifest = kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(
+        &f.env, &f.scope,
+    ))
+    .unwrap()
+    .unwrap();
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
+    let options = PlanOptions {
+        secrets_draft: Some(SecretsDraft {
+            edits: Vec::new(),
+            file: ".env.secrets".to_owned(),
+            choose: true,
+            base: Base::absent(),
+        }),
+        ..PlanOptions::default()
+    };
+    let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+
+    let settings = fs::read_to_string(f.project.join("kendex.settings.toml")).unwrap();
+    assert!(
+        settings.contains("KENDEX_ENV_FILE = \".env.secrets\""),
+        "{settings}"
+    );
+    // Nothing was stored, so nothing was made: the file the choice names
+    // is the person's to fill.
+    assert!(!f.project.join(".env.secrets").exists());
+}
+
+/// A choice is checked before it is written down. Recording a file git
+/// already tracks would be this project promising to put credentials in a
+/// committed file, and the promise is refused at the moment it is made
+/// rather than at the first save that fills it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_named_file_git_tracks_is_refused_before_the_choice_is_recorded() {
+    let f = fixture(true);
+    fs::write(f.project.join(".env.secrets"), "OTHER='kept'\n").unwrap();
+    git(&f.project, &["add", "-f", ".env.secrets"]);
+
+    let manifest = kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(
+        &f.env, &f.scope,
+    ))
+    .unwrap()
+    .unwrap();
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
+    let options = PlanOptions {
+        secrets_draft: Some(SecretsDraft {
+            edits: Vec::new(),
+            file: ".env.secrets".to_owned(),
+            choose: true,
+            base: Base::absent(),
+        }),
+        ..PlanOptions::default()
+    };
+    let refused = plan_scope(&f.env, &f.scope, &manifest, &lock, &options);
+    let Err(error) = refused else {
+        panic!("naming a tracked file must be refused");
+    };
+    assert!(error.to_string().contains("git already tracks"), "{error}");
+    let settings = fs::read_to_string(f.project.join("kendex.settings.toml")).unwrap_or_default();
+    assert!(!settings.contains("KENDEX_ENV_FILE"), "{settings}");
+}
+
+/// The inverse: a save carrying neither a value nor a choice writes
+/// nothing here at all, so an unchanged selection cannot rewrite a key
+/// that is already right.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_save_that_neither_stores_nor_names_writes_nothing() {
+    let f = fixture(true);
+    let manifest = kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(
+        &f.env, &f.scope,
+    ))
+    .unwrap()
+    .unwrap();
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
+    let options = PlanOptions {
+        secrets_draft: Some(SecretsDraft {
+            edits: Vec::new(),
+            file: ".env.local".to_owned(),
+            choose: false,
+            base: Base::absent(),
+        }),
+        ..PlanOptions::default()
+    };
+    let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+
+    assert!(!f.project.join(".env.local").exists());
+    let settings = fs::read_to_string(f.project.join("kendex.settings.toml")).unwrap_or_default();
+    assert!(!settings.contains("KENDEX_ENV_FILE"), "{settings}");
+}
+
 /// A save the person confirmed for one file must not land in another. The
 /// project being pointed elsewhere between the read and the save is
 /// refused, and the page reads again.

@@ -149,6 +149,34 @@ fn base_of(path: &Path) -> Base {
     }
 }
 
+/// Plan the scope with a secrets draft without applying it: what a case
+/// needs to read the ORDER the ops are in, which a finished apply cannot
+/// show — both files exist at the end whichever was written first.
+#[allow(clippy::unwrap_used)]
+fn planned(f: &Fixture, draft: SecretsDraft) -> Result<Vec<PathBuf>, CoreError> {
+    let manifest = kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(
+        &f.env, &f.scope,
+    ))
+    .unwrap()
+    .unwrap();
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
+    let options = PlanOptions {
+        secrets_draft: Some(draft),
+        ..PlanOptions::default()
+    };
+    let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options)?;
+    Ok(report
+        .plan
+        .ops
+        .iter()
+        .filter_map(|planned| match &planned.op {
+            kendex_core::apply::Op::WriteFile { path, .. } => Some(path.clone()),
+            kendex_core::apply::Op::WritePrivateFile { path, .. } => Some(path.clone()),
+            _ => None,
+        })
+        .collect())
+}
+
 /// Plan the scope with a secrets draft and apply it, the way the editor's
 /// save does. Returns what the plan said it would do, so a case can read
 /// the descriptions a person is shown.
@@ -231,6 +259,40 @@ fn a_first_save_makes_the_private_file_git_ignores_and_stores_the_value() {
     let ignored = fs::read_to_string(f.project.join(".gitignore")).unwrap();
     assert!(ignored.contains("/.env.local"), "{ignored}");
     assert_eq!(state_of(&f, "LINEAR_API_KEY"), SecretState::Set);
+}
+
+/// The entry that keeps git off the private file is written BEFORE the
+/// credential goes into it, not merely in the same transaction.
+///
+/// The finished state cannot show this: both files are there either way.
+/// So the plan's own order is what is read. A rollback undoing both is a
+/// different promise from never having written an unprotected credential,
+/// and it is the second one this project requires.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_ignore_entry_is_planned_before_the_credential_it_protects() {
+    let f = fixture(TEMPLATE);
+    let written = planned(
+        &f,
+        SecretsDraft {
+            edits: vec![set("LINEAR_API_KEY", DUMMY)],
+            file: ".env.local".to_owned(),
+            choose: false,
+            base: Base::absent(),
+        },
+    )
+    .unwrap();
+
+    let at = |name: &str| {
+        written
+            .iter()
+            .position(|path| path == &f.project.join(name))
+            .unwrap_or_else(|| panic!("{name} is not written by this plan: {written:?}"))
+    };
+    assert!(
+        at(".gitignore") < at(".env.local"),
+        "the credential is planned first: {written:?}"
+    );
 }
 
 /// A file kendex makes to hold a credential is readable by its owner and
