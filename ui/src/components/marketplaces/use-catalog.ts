@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 import type { Catalog, CatalogSummary } from "@/bindings";
 import {
+  discoveredCatalog,
   displayFor,
   listedNameOf,
   type MarketplaceDisplay,
@@ -10,7 +11,6 @@ import { useCommunityStore } from "@/stores/community";
 import {
   catalogKey,
   readErrorKey,
-  subscription,
   useMarketplacesStore,
 } from "@/stores/marketplaces";
 
@@ -52,25 +52,25 @@ export function useCatalog(requested: Catalog): {
   }, [requested, summary, error, loadSummary]);
 
   const catalog = useMemo(
-    () =>
-      requested.by === "repo" && summary?.subscription
-        ? subscription(summary.subscription.scope, summary.subscription.source)
-        : requested,
+    () => discoveredCatalog(requested, summary),
     [requested, summary],
   );
 
   // The declaring row where one has landed, the summary that fetched the
-  // catalog otherwise — and the directory's label under both, keyed on
-  // what was opened, since a converted subscription is no directory row.
+  // catalog otherwise — and the directory's label under both, keyed on what
+  // the page has BECOME: a subscription is never a directory row, and a
+  // label surviving the conversion would title this page by a stranger's
+  // name for the repository while its card read what the subscription
+  // resolves to.
   const display = useMemo(
     () =>
       displayFor({
         catalog,
         row: rowForCatalog(rows, catalog),
         summary,
-        listedName: listedNameOf(directory, requested),
+        listedName: listedNameOf(directory, catalog),
       }),
-    [catalog, rows, summary, directory, requested],
+    [catalog, rows, summary, directory],
   );
 
   return {

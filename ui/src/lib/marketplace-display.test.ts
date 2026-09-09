@@ -248,6 +248,55 @@ describe("naming the catalog a page is showing", () => {
     ).toBe("acme/kit");
   });
 
+  // The card, the page and the crumb over it must name one marketplace.
+  // A directory's label is a stranger's name for the repository: a card is
+  // always a subscription row and never sees one, so a label that outlived
+  // the conversion would leave the page and its crumb reading "Kit by Acme"
+  // over a card reading what the subscription resolves to.
+  it("drops a directory's label once the repository turns out to be subscribed", () => {
+    const listed: DirectoryRow[] = [
+      {
+        repo: "acme/kit",
+        repoKey: "acme/kit",
+        repoIdentity: "github.com/acme/kit",
+        name: "Kit by Acme",
+        description: null,
+        tags: [],
+        featured: false,
+        packageCount: 0,
+        bundleCount: 0,
+        subscribed: true,
+        packages: [],
+        bundles: [],
+      },
+    ];
+    // A catalogue declaring no name of its own: what the label would
+    // otherwise win against.
+    const unnamed = row({ name: "kit", meta: null });
+    const browsed = { by: "repo" as const, repo: "acme/kit" };
+    const read = {
+      [catalogKey(browsed)]: summary({
+        meta: null,
+        subscription: { scope: { scope: "global" as const }, source: "kit" },
+      }),
+    };
+
+    // What the card says, from the row alone.
+    const card = marketplaceDisplay(unnamed).name;
+    // What the page and its crumb say, from the address it was opened by.
+    const page = catalogDisplay([unnamed], read, browsed, listed).name;
+
+    expect(page).toBe(card);
+    expect(page).toBe("Kit");
+    expect(page).not.toBe("Kit by Acme");
+
+    // A repository nobody declares is still named by its listing: nothing
+    // else on this machine has anything to say about it.
+    expect(catalogDisplay([unnamed], {}, browsed, listed).name).toBe(
+      "Kit by Acme",
+    );
+  });
+
   it("addresses the row a subscription names, and no other place's", () => {
     const cases = [
       {

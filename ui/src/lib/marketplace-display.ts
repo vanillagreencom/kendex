@@ -9,7 +9,11 @@ import {
   LOCAL_FOLDER_LABEL,
   UNNAMED_MARKETPLACE,
 } from "@/lib/copy-marketplaces";
-import { catalogKey, marketKey } from "@/stores/marketplaces-shared";
+import {
+  catalogKey,
+  marketKey,
+  subscription,
+} from "@/stores/marketplaces-shared";
 
 /** What one marketplace is called and where it comes from, on every surface
  *  that names one: the card, the breadcrumb, the page header, the packages
@@ -186,6 +190,24 @@ export const displayFor = ({
   };
 };
 
+/** What a browsed repository has turned out to be: the subscription its
+ *  fetched summary names, where this machine already declares it. Spelled
+ *  once, because two readers derive it — the page, which carries on as that
+ *  subscription, and any surface resolving a name from the address the page
+ *  was opened by. A repository nobody declares stays itself.
+ *
+ *  It is what makes a directory's label stop applying: a subscription is
+ *  never a directory row, and a label that outlived the conversion would
+ *  title the page and its crumb by a stranger's name for the repository
+ *  while the card beside them read what the subscription resolves to. */
+export const discoveredCatalog = (
+  catalog: Catalog,
+  summary: CatalogSummary | null,
+): Catalog =>
+  catalog.by === "repo" && summary?.subscription
+    ? subscription(summary.subscription.scope, summary.subscription.source)
+    : catalog;
+
 /** What a directory lists a repository under, for the page showing it and
  *  the breadcrumb over that page. Spelled once, so a title and the crumb
  *  above it cannot be resolved from different inputs: a subscription is
@@ -209,13 +231,20 @@ export const catalogDisplay = (
   summaries: Record<string, CatalogSummary>,
   catalog: Catalog,
   directory?: DirectoryRow[],
-): MarketplaceDisplay =>
-  displayFor({
-    catalog,
-    row: rowForCatalog(rows, catalog),
-    summary: summaries[catalogKey(catalog)] ?? null,
-    listedName: listedNameOf(directory, catalog),
+): MarketplaceDisplay => {
+  // The summary stays under the key the page was opened by; the catalog it
+  // discovered is what the page has become. Both halves, here, so a crumb
+  // resolving from the address alone reaches the same marketplace the page
+  // and the card do.
+  const summary = summaries[catalogKey(catalog)] ?? null;
+  const declared = discoveredCatalog(catalog, summary);
+  return displayFor({
+    catalog: declared,
+    row: rowForCatalog(rows, declared),
+    summary,
+    listedName: listedNameOf(directory, declared),
   });
+};
 
 /** What a catalog is called in a title or breadcrumb. */
 export const catalogTitle = (
