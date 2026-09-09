@@ -7,6 +7,12 @@
 //! for a server in it. Asking is what this module reads — through the
 //! records and declarations `crate::ownership` already reads for every
 //! other ownership question, never a second lookup of its own.
+//!
+//! Which scope is asked is the scope that *writes* the container, which
+//! `crate::engine::mcp_registry` already names, and not every scope that
+//! reads it. Claude's `~/.claude.json` is read again for each project,
+//! and a project's record says nothing about a server the global scope
+//! had written there.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -77,16 +83,27 @@ impl Containers {
 }
 
 /// Take the actionable standing off every empty MCP container this machine
-/// expects no managed server in. Only positive evidence does that: a
-/// readable record and a readable manifest for every scope reading the
-/// file, and neither one asking for a server on the harness that reads it.
+/// expects no managed server in. Only positive evidence does that: the
+/// scopes that write the file are all in this pass, their records and
+/// manifests all read, and none asks for a server on the harness that
+/// writes it there.
 pub(super) fn classify(env: &Env, containers: &Containers, warnings: &mut [ScanWarning]) {
     let mut evidence = Evidence::default();
     for warning in warnings {
         let Some(readers) = unused_container_readers(warning, containers) else {
             continue;
         };
-        let expected = readers
+        let writers = writers_in_pass(env, &super::resolved(&warning.path), readers);
+        // A pass that read the container without the scope that writes it
+        // has no record that could say whether a server belongs in it —
+        // `kendex list --scope project` reads `~/.claude.json` for the
+        // project's own entries and never opens the global record that
+        // owns the file. Answering from the reading scope would call a
+        // missing global server an unused container.
+        if writers.is_empty() {
+            continue;
+        }
+        let expected = writers
             .iter()
             .any(|(harness, scope)| evidence.expects_server(env, scope, *harness));
         if !expected {
@@ -95,11 +112,31 @@ pub(super) fn classify(env: &Env, containers: &Containers, warnings: &mut [ScanW
     }
 }
 
+/// The surfaces in this pass whose scope is the one an apply would write
+/// this container through, read off the engine's own registry mapping. A
+/// scope that reads the file and writes its servers somewhere else — a
+/// project reading `~/.claude.json`, whose own servers go to `.mcp.json`
+/// — is not one of them.
+fn writers_in_pass<'a>(
+    env: &Env,
+    file: &std::path::Path,
+    readers: &'a [(HarnessId, Scope)],
+) -> Vec<&'a (HarnessId, Scope)> {
+    readers
+        .iter()
+        .filter(|(harness, scope)| {
+            crate::engine::mcp_registry(env, scope, *harness)
+                .is_some_and(|registry| super::resolved(&registry) == file)
+        })
+        .collect()
+}
+
 /// The surfaces that read this warning's file as an MCP container and
 /// nothing else, or `None` where the warning is about something else: a
 /// file that is not empty, a file some other kind is read out of, or a file
 /// no structured surface recorded, which the scan cannot say is a container
-/// at all.
+/// at all. Reading it is not writing it — [`writers_in_pass`] settles that
+/// separately.
 fn unused_container_readers<'a>(
     warning: &ScanWarning,
     containers: &'a Containers,

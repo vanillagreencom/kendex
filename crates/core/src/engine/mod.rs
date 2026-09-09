@@ -77,7 +77,7 @@ pub use scoring::{ItemSafety, SafetyTarget};
 
 /// The conservative "cannot prove these bytes are our render" hold.
 pub use removal::edit_holds;
-pub(crate) use targets::hook_target;
+pub(crate) use targets::{hook_target, mcp_registry};
 
 /// Every file path one lock entry put on this machine — what a cheap
 /// existence check can stat without reading any source.
