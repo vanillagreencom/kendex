@@ -119,11 +119,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     base: null,
     capabilities: [],
     ...zoomActions(set, get),
-    ...projectActions({
-      ticket,
-      hold,
-      projects: () => get().settings?.projects ?? [],
-    }),
+    ...projectActions({ ticket, hold }),
 
     load: async () => {
       // The size comes from the window, not from the file: the file holds

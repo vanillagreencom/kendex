@@ -5,6 +5,7 @@
 // has to "what" — the whole set, and the members ticked. A prop-driven
 // test of the member rows cannot see any of it.
 import userEvent from "@testing-library/user-event";
+import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppSettings, BundleDetail, Scope } from "@/bindings";
 import { commands } from "@/bindings";
@@ -16,7 +17,7 @@ import {
 } from "@/lib/copy-install";
 import { unreadableRecordsLine } from "@/lib/copy-marketplaces";
 import { useInstallFlow } from "@/stores/install-flow";
-import { useMarketplacesStore } from "@/stores/marketplaces";
+import { bundleKey, useMarketplacesStore } from "@/stores/marketplaces";
 import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
 import { useSettingsStore } from "@/stores/settings";
@@ -138,6 +139,52 @@ describe("the curated set page", () => {
       items: [{ kind: "skill", name: "gh" }],
       bundle: null,
     });
+  });
+
+  // A landed install drops every set cache and the read comes back with
+  // that member installed. A tick stored from before would leave a
+  // disabled box checked and offer an already-installed member to the
+  // next Install, so the tick is read against what the member is now.
+  it("drops a tick on a member that came back installed", async () => {
+    const host = mount(<BundleDetailPage />);
+    await settle();
+
+    const box = host.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    if (!box) throw new Error("no member checkbox rendered");
+    await userEvent.click(box);
+    await settle();
+    await userEvent.click(installButton(host) as HTMLButtonElement);
+    await settle();
+    expect(
+      useInstallFlow.getState().ask?.subjects.map((one) => one.label),
+    ).toContain(selectedLabel(1));
+    useInstallFlow.getState().close();
+
+    // The install landed, so the set cache dropped and the read came back
+    // with that member installed — into the SAME mounted page, which is
+    // where a tick stored from before would still be standing.
+    act(() => {
+      useMarketplacesStore.setState({
+        bundles: {
+          [bundleKey(catalog, "starter", null)]: {
+            ...starter,
+            members: [
+              { kind: "skill", name: "gh", state: "installed" },
+              { kind: "skill", name: "lint", state: "available" },
+            ],
+          },
+        },
+      });
+    });
+    await settle();
+
+    const box2 = host.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    expect(box2?.checked).toBe(false);
+    await userEvent.click(installButton(host) as HTMLButtonElement);
+    await settle();
+    expect(
+      useInstallFlow.getState().ask?.subjects.map((one) => one.label),
+    ).toEqual([wholeSetLabel("starter")]);
   });
 
   // A member's own action is the one-package case of the same flow, never

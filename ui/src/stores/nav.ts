@@ -178,9 +178,15 @@ export const useNavStore = create<NavState>((set) => ({
     set((state) => ({
       page: "marketplaces",
       ...(tab ? { marketplacesTab: tab } : {}),
-      // Stated every time, so a browse begun for one place and a browse
-      // begun for nobody cannot be told apart only by what came before.
-      installInto: into ?? null,
+      // Stated by whoever navigates here, so a browse begun for one place
+      // and a browse begun for nobody cannot be told apart only by what
+      // came before. Switching tabs is not navigating: the page calls this
+      // to change its own tab, and `pushHistory` already treats staying
+      // put as no move — so a reader who arrived from a project's Add
+      // packages and then looked at Bundles is still browsing for that
+      // project.
+      installInto:
+        into ?? (state.page === "marketplaces" ? state.installInto : null),
       history: pushHistory(state, "marketplaces"),
       future: [],
     })),

@@ -54,7 +54,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(commands.registerProject).mockResolvedValue({
     status: "ok",
-    data: { settings: { projects: ["/work/acme"] }, base: null } as never,
+    data: {
+      read: { settings: { projects: ["/work/acme"] }, base: null },
+      root: "/work/acme",
+    } as never,
   });
   vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
   vi.mocked(commands.libraryProvenance).mockResolvedValue({
@@ -92,13 +95,18 @@ describe("adding a project", () => {
   // not the string the reader typed — and the card matches its setup state
   // against settings' own roots. Keyed on the typed string, the checking
   // and check-failed states never appear for that project and the card
-  // draws it as empty instead.
+  // draws it as empty instead. The write says which root it made; the
+  // answer's project list is deliberately unhelpful here, because a set
+  // difference is what this replaces.
   it("keys the check on the root the registry recorded, not the typed path", async () => {
     vi.mocked(commands.registerProject).mockResolvedValue({
       status: "ok",
       data: {
-        settings: { projects: ["/home/u/dev/acme"] },
-        base: null,
+        read: {
+          settings: { projects: ["/home/u/dev/acme", "/home/u/dev/beta"] },
+          base: null,
+        },
+        root: "/home/u/dev/acme",
       } as never,
     });
     const land = heldScan();
@@ -134,5 +142,21 @@ describe("adding a project", () => {
     await useProjectSetupStore.getState().check("/work/acme");
     expect(useProjectSetupStore.getState().unchecked).toEqual([]);
     expect(useProjectSetupStore.getState().checking).toEqual([]);
+  });
+
+  // Every check reads the whole machine, so a read that answered answers
+  // for every root a previous read failed on too. Clearing only its own
+  // would leave another project marked "package check failed" over a
+  // reading that has since refreshed it, with a Try again that does
+  // nothing new.
+  it("clears every failed root when a read answers", async () => {
+    useProjectSetupStore.setState({
+      checking: [],
+      unchecked: ["/work/beta", "/work/gamma"],
+    });
+
+    await useProjectSetupStore.getState().check("/work/acme");
+
+    expect(useProjectSetupStore.getState().unchecked).toEqual([]);
   });
 });

@@ -17,10 +17,12 @@ import {
   INSTALL_NO_PLACE,
   INSTALLING_LABEL,
   installedIn,
+  installedPartlyIn,
   installFailedIn,
   installsWhereItLives,
   justThisLabel,
   openPlaceLabel,
+  refusalLine,
   TOOLS_PER_PLACE,
 } from "@/lib/copy-install";
 import { harnessName } from "@/lib/labels";
@@ -30,6 +32,7 @@ import {
   useInstallFlow,
 } from "@/stores/install-flow";
 import { useMarketplacesStore } from "@/stores/marketplaces";
+import type { InstallResult } from "@/stores/marketplaces-install";
 import { useNavStore } from "@/stores/nav";
 import { useSettingsStore } from "@/stores/settings";
 import { mount, settle } from "@/test/dom";
@@ -74,7 +77,7 @@ type Install = (request: {
   destination?: Scope | null;
   delivery?: unknown;
   quiet?: boolean;
-}) => Promise<boolean>;
+}) => Promise<InstallResult>;
 let install: Mock<Install>;
 
 beforeEach(() => {
@@ -86,7 +89,7 @@ beforeEach(() => {
       { harness: "codex", detected: true, sharesTheUniversalTree: true },
     ],
   });
-  install = vi.fn<Install>(async () => true);
+  install = vi.fn<Install>(async () => ({ ok: true }));
   useMarketplacesStore.setState({ busy: false, install });
   useSettingsStore.setState({
     settings: { projects: [ACME.root, BETA.root] } as AppSettings,
@@ -158,10 +161,10 @@ describe("the guided install", () => {
   // The indicator is read while the install is still out. Asserted after
   // it lands, it would pass against a dialog that never drew one.
   it("says it is installing while the install is still out", async () => {
-    let land: (ok: boolean) => void = () => {};
+    let land: (result: InstallResult) => void = () => {};
     install.mockImplementation(
       () =>
-        new Promise<boolean>((resolve) => {
+        new Promise<InstallResult>((resolve) => {
           land = resolve;
         }),
     );
@@ -172,7 +175,7 @@ describe("the guided install", () => {
     expect(document.body.textContent).toContain(INSTALLING_LABEL);
     expect(button(INSTALLING_LABEL).disabled).toBe(true);
 
-    await act(async () => land(true));
+    await act(async () => land({ ok: true }));
     await settle();
     expect(document.body.textContent).toContain(
       installedIn("gh", ["Personal"]),
@@ -202,7 +205,11 @@ describe("the guided install", () => {
   // failure. Both halves are said, so the reader knows which place has the
   // files.
   it("names the places that refused beside the ones that landed", async () => {
-    install.mockImplementation(async (request) => request.destination === null);
+    install.mockImplementation(async (request) =>
+      request.destination === null
+        ? { ok: true }
+        : { ok: false, reason: "no lock there" },
+    );
     await open();
 
     await userEvent.click(box("acme"));
@@ -216,6 +223,54 @@ describe("the guided install", () => {
     expect(document.body.textContent).toContain(
       installFailedIn("gh", ["acme"]),
     );
+    // The engine's own reason, beside the place that gave it — the toast
+    // that used to carry it is suppressed for a caller that reports for
+    // itself.
+    expect(document.body.textContent).toContain(
+      refusalLine("acme", "no lock there"),
+    );
+  });
+
+  // A place two marketplaces reach can take one package and refuse the
+  // other. Reporting only the refusal denies the files that are in;
+  // reporting only the landing claims the ones that are not.
+  it("says a place took only some of it", async () => {
+    install.mockImplementation(async (request) =>
+      request.source === "kit"
+        ? { ok: true }
+        : { ok: false, reason: "no lock there" },
+    );
+    await open(
+      askFor({
+        ...gh,
+        what: "2 packages",
+        count: 2,
+        groups: [
+          gh.groups[0],
+          {
+            source: "other",
+            browsing: HOME,
+            items: [{ kind: "skill", name: "lint" }],
+            bundle: null,
+          },
+        ],
+      }),
+    );
+
+    await userEvent.click(button(INSTALL_ACTION));
+    await settle();
+
+    expect(document.body.textContent).toContain(
+      installedPartlyIn("2 packages", ["Personal"]),
+    );
+    expect(document.body.textContent).not.toContain(
+      installedIn("2 packages", ["Personal"]),
+    );
+    expect(document.body.textContent).not.toContain(
+      installFailedIn("2 packages", ["Personal"]),
+    );
+    // A place holding some of it is still a place worth opening.
+    expect(button(openPlaceLabel("Personal"))).toBeTruthy();
   });
 
   // The reader already said which project they were browsing for. Asking

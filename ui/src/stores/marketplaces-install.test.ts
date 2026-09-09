@@ -143,13 +143,53 @@ describe("what an install leaves waiting", () => {
   it("says nothing on the way out for a caller that reports itself", async () => {
     const { toast } = await import("sonner");
     vi.mocked(commands.marketplaceInstall).mockResolvedValue(installed([]));
+    expect(
+      await useMarketplacesStore.getState().install({
+        scope: { scope: "global" },
+        source: "kit",
+        items: [{ kind: "skill", name: "deploy" }],
+        quiet: true,
+      }),
+    ).toEqual({ ok: true });
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  // A refusal is the other half of saying nothing: a run into three places
+  // would otherwise stack three error toasts over the dialog that is about
+  // to report the same thing. The reason comes back instead, so the dialog
+  // can put it beside the place that gave it.
+  it("hands a refusal back rather than toasting it for such a caller", async () => {
+    const { toast } = await import("sonner");
+    vi.mocked(commands.marketplaceInstall).mockResolvedValue({
+      status: "error",
+      error: "the scope is busy",
+    });
+
+    expect(
+      await useMarketplacesStore.getState().install({
+        scope: { scope: "global" },
+        source: "kit",
+        items: [{ kind: "skill", name: "deploy" }],
+        quiet: true,
+      }),
+    ).toEqual({ ok: false, reason: "the scope is busy" });
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  // A caller with no surface of its own still gets both toasts.
+  it("toasts a refusal for a caller that does not report itself", async () => {
+    const { toast } = await import("sonner");
+    vi.mocked(commands.marketplaceInstall).mockResolvedValue({
+      status: "error",
+      error: "the scope is busy",
+    });
+
     await useMarketplacesStore.getState().install({
       scope: { scope: "global" },
       source: "kit",
       items: [{ kind: "skill", name: "deploy" }],
-      quiet: true,
     });
-    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith("the scope is busy");
   });
 
   it("asks nothing for a package that declares nothing", async () => {

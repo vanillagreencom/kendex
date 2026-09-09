@@ -253,7 +253,10 @@ describe("settings store", () => {
     const registered = { ...settings, projects: ["/home/x/acme-web"] };
     vi.mocked(commands.registerProject).mockResolvedValue({
       status: "ok",
-      data: { settings: registered, base: "b2" },
+      data: {
+        read: { settings: registered, base: "b2" },
+        root: "/home/x/acme-web",
+      },
     });
 
     const older = useSettingsStore.getState().setAppearance("dark");
@@ -272,8 +275,11 @@ describe("settings store", () => {
     vi.mocked(commands.registerProject).mockResolvedValue({
       status: "ok",
       data: {
-        settings: { ...settings, projects: ["/home/x/acme-web"] },
-        base: "b1",
+        read: {
+          settings: { ...settings, projects: ["/home/x/acme-web"] },
+          base: "b1",
+        },
+        root: "/home/x/acme-web",
       },
     });
 

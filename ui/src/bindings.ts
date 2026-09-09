@@ -149,7 +149,7 @@ export const commands = {
 	 *  file over whatever else has been saved since.
 	 */
 	acceptTerms: () => typedError<TermsState, string>(__TAURI_INVOKE("accept_terms")),
-	registerProject: (path: string) => typedError<SettingsRead, string>(__TAURI_INVOKE("register_project", { path })),
+	registerProject: (path: string) => typedError<RegisteredProject, string>(__TAURI_INVOKE("register_project", { path })),
 	unregisterProject: (path: string) => typedError<SettingsRead, string>(__TAURI_INVOKE("unregister_project", { path })),
 	/**
 	 *  What a project already holds that nothing manages, for the offer the
@@ -2864,6 +2864,22 @@ export type Refused = {
 	seconds: number,
 	/**  Whether the words are `gh`'s rather than git's. */
 	gh: boolean,
+};
+
+/**
+ *  A registration's answer: the settings it wrote, and the root it
+ *  recorded for this request.
+ * 
+ *  The caller asked under whatever spelling the reader typed. The registry
+ *  stores the canonical path, and every surface that keys off the project
+ *  afterwards — the card's setup state included — matches that one, so the
+ *  write says which root it made rather than leaving the caller to pick it
+ *  out of the list. Two registrations in flight together each see both new
+ *  entries, so a set difference cannot tell them apart.
+ */
+export type RegisteredProject = {
+	read: SettingsRead,
+	root: string,
 };
 
 /**  A package's declared effects on the repository it installs into. */

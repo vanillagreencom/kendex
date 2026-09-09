@@ -18,6 +18,7 @@ import {
   REPO_EFFECTS_SHARED_NOTE,
   repoEffectsTitle,
 } from "@/lib/copy-repo-effects";
+import { useInstallFlow } from "@/stores/install-flow";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { mount, settle } from "@/test/dom";
 import { RepoEffectsDialog } from "./repo-effects-dialog";
@@ -61,6 +62,24 @@ const guards: Disclosure = {
   ],
   notes: ["core.hooksPath is never set."],
   undo: "run `'.agents/skills/commit-guards/scripts/install-git-hooks' '--uninstall'` from the repository root",
+};
+
+/** Not while the guided install is on screen: it writes into each place
+ *  the reader picked in turn, and the first place's disclosures would put
+ *  a second modal over a run that has not said what happened yet. The line
+ *  keeps what it is given, so nothing is lost by waiting. */
+const showsNothingDuringAnInstall = () => {
+  useInstallFlow.setState({
+    ask: { subjects: [] },
+    outcome: null,
+    running: true,
+  });
+  useMarketplacesStore.setState({
+    pendingEffects: { queue: [{ scope: PROJECT, disclosure: guards }] },
+    busy: false,
+  });
+  mount(<RepoEffectsDialog />);
+  return document.body;
 };
 
 const show = (queue: Disclosure[], busy = false) => {
@@ -223,5 +242,18 @@ describe("the answer", () => {
     expect(labels).not.toContain(REPO_EFFECTS_APPLY_LABEL);
     expect(labels).toContain(REPO_EFFECTS_DONE_LABEL);
     expect(body.textContent).toContain(REPO_EFFECTS_NOTHING_TO_RUN);
+  });
+});
+
+describe("while the guided install is on screen", () => {
+  it("waits rather than putting a second modal over the run", async () => {
+    const body = showsNothingDuringAnInstall();
+    await settle();
+    expect(body.textContent).not.toContain(repoEffectsTitle(guards.name));
+
+    // Closed, the question is asked — the line kept it.
+    useInstallFlow.getState().close();
+    await settle();
+    expect(body.textContent).toContain(repoEffectsTitle(guards.name));
   });
 });

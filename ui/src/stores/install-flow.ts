@@ -67,12 +67,25 @@ export interface InstallAsk {
   subjects: InstallSubject[];
 }
 
-/** What the run did, per place. Kept apart from the ask so the dialog can
- *  report on a run whose ask has already been answered. */
+/** What the run did at one place. A place can be reached by more than one
+ *  marketplace, so landing and refusing are not opposites there: both are
+ *  recorded, and the dialog says both. */
+export interface PlaceOutcome {
+  scope: Scope;
+  /** Whether anything was written here. */
+  wrote: boolean;
+  /** Why a marketplace refused here, or null where none did. The first
+   *  reason, because it is the one the reader can act on and a list of
+   *  them is not a sentence. */
+  refused: string | null;
+}
+
+/** What the run did, per place, in the order the places were picked. Kept
+ *  apart from the ask so the dialog can report on a run whose ask has
+ *  already been answered. */
 export interface InstallOutcome {
   what: string;
-  landed: Scope[];
-  failed: Scope[];
+  places: PlaceOutcome[];
 }
 
 /** Nothing answered about the tools yet, which is what leaves each place's
@@ -146,8 +159,7 @@ export const useInstallFlow = create<InstallFlowState>((set, get) => ({
       ask.subjects.find((one) => one.id === subjectId) ?? ask.subjects[0];
     if (!subject) return;
     set({ running: true, outcome: null });
-    const landed: Scope[] = [];
-    const failed: Scope[] = [];
+    const outcomes: PlaceOutcome[] = [];
     // Whether the reader was offered the where question at all. It decides
     // which places a group may reach, so it is read once for the run
     // rather than per pair: the dialog draws its picker from the same
@@ -160,11 +172,11 @@ export const useInstallFlow = create<InstallFlowState>((set, get) => ({
       // it down with it — each is reported on its own below.
       for (const place of places) {
         let wrote = false;
-        let refused = false;
+        let refused: string | null = null;
         for (const group of subject.groups) {
           const destination = destinationFor(group, place, freeChoice);
           if (destination === undefined) continue;
-          const ok = await useMarketplacesStore.getState().install({
+          const result = await useMarketplacesStore.getState().install({
             scope: group.browsing,
             source: group.source,
             items: group.items,
@@ -176,19 +188,18 @@ export const useInstallFlow = create<InstallFlowState>((set, get) => ({
             delivery: places.length === 1 ? choice : undefined,
             quiet: true,
           });
-          if (ok) wrote = true;
-          else refused = true;
+          if (result.ok) wrote = true;
+          else refused ??= result.reason;
         }
-        // A place where every marketplace landed is a place that has the
-        // packages; one where any refused is named as a failure, because
-        // what the reader asked for is not all there.
-        if (refused || !wrote) failed.push(place);
-        else landed.push(place);
+        // Both halves, because both can be true: a place several
+        // marketplaces reach can take one package and refuse another, and
+        // reporting only the refusal would deny the files that are in.
+        outcomes.push({ scope: place, wrote, refused });
       }
     } finally {
       set({
         running: false,
-        outcome: { what: subject.what, landed, failed },
+        outcome: { what: subject.what, places: outcomes },
       });
     }
   },

@@ -42,11 +42,13 @@ interface InstallRequest {
   bundle?: string | null;
   destination?: Scope | null;
   delivery?: Choice;
-  /** Say nothing on the way out. The guided flow installs into each place
-   *  the reader picked in turn and reports the whole run once, naming
-   *  every place; a toast per place would say the same thing three times
-   *  and never say where. A caller that has no surface of its own to
-   *  report on leaves this off and gets the toast. */
+  /** Say nothing on the way out, landing or refusing. The guided flow
+   *  installs into each place the reader picked in turn and reports the
+   *  whole run once, naming every place; a toast per place would say the
+   *  same thing three times and never say where, and a refusal's reason
+   *  belongs beside the place it refused rather than in a stack of toasts
+   *  over the dialog. A caller with no surface of its own leaves this off
+   *  and gets both toasts. */
   quiet?: boolean;
 }
 
@@ -73,10 +75,15 @@ interface Installed {
   pendingEffects: PendingEffects | null;
 }
 
+/** What one install answered: it wrote, or it refused and said why. The
+ * reason travels with the answer rather than only through a toast, so a
+ * caller reporting for itself can put it beside the place that refused. */
+export type InstallResult = { ok: true } | { ok: false; reason: string };
+
 /** The install half of the marketplaces store: the write, and the second
  * question it can leave behind. */
 export interface InstallActions {
-  install: (request: InstallRequest) => Promise<boolean>;
+  install: (request: InstallRequest) => Promise<InstallResult>;
   /** The repository effects the last install left waiting on a yes, or
    * null — what the effects dialog reads. */
   pendingEffects: PendingEffects | null;
@@ -147,8 +154,8 @@ export function installActions(set: Set, get: Get): InstallActions {
           set({ busy: false });
         }
         if (response.status === "error") {
-          toast.error(response.error);
-          return false;
+          if (!quiet) toast.error(response.error);
+          return { ok: false, reason: response.error };
         }
         const target = destination ?? scope;
         // The command answers with the refreshed package list for this
@@ -187,7 +194,7 @@ export function installActions(set: Set, get: Get): InstallActions {
         for (const held of withheld) {
           toast.info(repoEffectsWithheldToast(held.name, held.reason));
         }
-        return true;
+        return { ok: true };
       }),
 
     /** Run the installer of the package at the head of the line, here and

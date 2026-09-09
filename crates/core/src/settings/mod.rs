@@ -229,26 +229,35 @@ pub fn replace(env: &Env, settings: &AppSettings, held: &Base) -> Result<Base> {
     Ok(Base::of(&save(env, settings)?))
 }
 
-/// Canonicalizes, rejects non-directories and duplicates, persists.
+/// Canonicalizes, rejects non-directories and duplicates, persists, and
+/// answers with the root it recorded.
 ///
 /// Through `crate::paths::canonical`, the rule discovery answers with. A
 /// registry entry is what `project list` prints and what the app renders
 /// on a project card, so registering a path in one spelling while
 /// `project discover` reports it in another leaves two commands disagreeing
 /// about one project.
-pub fn register_project(env: &Env, path: &Path) -> Result<(AppSettings, Base)> {
+///
+/// The recorded root comes back with the settings because the caller asked
+/// under a spelling of its own — a tilde, a trailing separator, a path
+/// through a symlink — and everything that keys off the project afterwards
+/// uses this one. Working it out from the returned list is a guess: two
+/// registrations in flight together each see both new entries.
+pub fn register_project(env: &Env, path: &Path) -> Result<(AppSettings, Base, PathBuf)> {
     let canonical = crate::paths::canonical(path).map_err(|e| CoreError::io(path, e))?;
     if !canonical.is_dir() {
         return Err(CoreError::NotADirectory { path: canonical });
     }
-    mutate(env, |settings| {
+    let recorded = canonical.clone();
+    let (settings, base) = mutate(env, |settings| {
         if settings.projects.contains(&canonical) {
             return Err(CoreError::ProjectAlreadyRegistered { path: canonical });
         }
         settings.projects.push(canonical);
         settings.projects.sort();
         Ok(())
-    })
+    })?;
+    Ok((settings, base, recorded))
 }
 
 /// Removes by canonical path when resolvable, else by the recorded path —
@@ -361,8 +370,12 @@ pub(crate) mod tests {
         let project = tmp.path().join("proj");
         std::fs::create_dir(&project).unwrap();
 
-        let (settings, base) = register_project(&env, &project).unwrap();
+        let (settings, base, recorded) = register_project(&env, &project).unwrap();
         assert_eq!(settings.projects.len(), 1);
+        // The root it says it recorded is the entry it stored, so a caller
+        // asking under another spelling does not have to guess which of
+        // the entries is its own.
+        assert_eq!(settings.projects, [recorded]);
         // The pair handed back is current: presenting it to the
         // whole-file path writes without a re-read in between.
         replace(&env, &settings, &base).unwrap();

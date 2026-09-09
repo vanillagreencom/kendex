@@ -29,12 +29,14 @@ import {
   INSTALL_WHERE_LABEL,
   INSTALLING_LABEL,
   installedIn,
+  installedPartlyIn,
   installFailedIn,
   installsWhereItLives,
   NO_PROJECTS_TO_PICK,
   openPlaceLabel,
   PERSONAL_PLACE_HELP,
   packageCount,
+  refusalLine,
   TOOLS_PER_PLACE,
 } from "@/lib/copy-install";
 import { selectionOf } from "@/lib/derive";
@@ -94,42 +96,72 @@ function InstallFlow({ ask }: { ask: InstallAsk }) {
   const onePlace = places.length === 1 ? places[0] : null;
 
   if (outcome) {
+    // Three answers a place can give, and every place gives exactly one:
+    // everything landed, some of it did, or none did. A place reached by
+    // two marketplaces can take one package and refuse the other, so the
+    // middle one is not a rounding of the other two.
+    const whole = outcome.places.filter((one) => one.wrote && !one.refused);
+    const partly = outcome.places.filter((one) => one.wrote && one.refused);
+    const none = outcome.places.filter((one) => !one.wrote);
+    const named = (of: typeof outcome.places) =>
+      of.map((one) => nameOf(one.scope));
+    // Where to offer the way on: the first place that has any of it.
+    const holding = [...whole, ...partly][0];
     return (
       <Dialog open onOpenChange={close}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{INSTALL_TITLE}</DialogTitle>
             <DialogDescription>
-              {outcome.landed.length > 0
-                ? installedIn(outcome.what, outcome.landed.map(nameOf))
-                : installFailedIn(outcome.what, outcome.failed.map(nameOf))}
+              {whole.length > 0
+                ? installedIn(outcome.what, named(whole))
+                : partly.length > 0
+                  ? installedPartlyIn(outcome.what, named(partly))
+                  : installFailedIn(outcome.what, named(none))}
             </DialogDescription>
           </DialogHeader>
-          {/* Both halves are said when both happened: a run into three
-              places that lands in two is neither a success nor a failure,
-              and naming only one of them would leave the reader to guess
-              which places actually have the files. */}
-          {outcome.landed.length > 0 && outcome.failed.length > 0 ? (
-            <p className="text-sm text-critical" role="alert">
-              {installFailedIn(outcome.what, outcome.failed.map(nameOf))}
+          {/* Every half that happened is said. A run into three places
+              that lands in one, half-lands in another and is refused by
+              the third is none of those three sentences on its own, and
+              naming one would leave the reader to guess about the rest.
+              Each refusal carries the engine's own reason, beside the
+              place that gave it. */}
+          {whole.length > 0 && partly.length > 0 ? (
+            <p className="text-sm">
+              {installedPartlyIn(outcome.what, named(partly))}
             </p>
+          ) : null}
+          {none.length > 0 && whole.length + partly.length > 0 ? (
+            <p className="text-sm text-critical" role="alert">
+              {installFailedIn(outcome.what, named(none))}
+            </p>
+          ) : null}
+          {outcome.places.some((one) => one.refused) ? (
+            <ul className="space-y-1 text-[13px] text-muted-foreground">
+              {outcome.places
+                .filter((one) => one.refused)
+                .map((one) => (
+                  <li key={scopeKey(one.scope)}>
+                    {refusalLine(nameOf(one.scope), one.refused ?? "")}
+                  </li>
+                ))}
+            </ul>
           ) : null}
           <DialogFooter>
             <Button variant="outline" onClick={close}>
               {INSTALL_DONE}
             </Button>
-            {/* The way to the place that now has the package. The first
-                place that landed, because that is the one the reader
-                started from wherever they picked only one. */}
-            {outcome.landed[0] ? (
+            {/* The way to a place that now has some of it. The first,
+                because that is the one the reader started from wherever
+                they picked only one. */}
+            {holding ? (
               <Button
                 onClick={() => {
-                  const where = outcome.landed[0];
                   close();
-                  goToLibrary({ scope: selectionOf(where) });
+                  goToLibrary({ scope: selectionOf(holding.scope) });
                 }}
               >
-                {openPlaceLabel(nameOf(outcome.landed[0]))}
+                {openPlaceLabel(nameOf(holding.scope))}
               </Button>
             ) : null}
           </DialogFooter>

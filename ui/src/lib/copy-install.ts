@@ -75,6 +75,15 @@ export const installedIn = (what: string, places: string[]): string =>
   `Installed ${what} in ${andList(places)}.`;
 export const installFailedIn = (what: string, places: string[]): string =>
   `Couldn't install ${what} in ${andList(places)}.`;
+/** A place several marketplaces reach can take one package and refuse
+ *  another. Neither of the two sentences above is true of it: one denies
+ *  the files that are in, the other claims the ones that are not. */
+export const installedPartlyIn = (what: string, places: string[]): string =>
+  `Only some of ${what} went into ${andList(places)}.`;
+/** Why a place refused, said beside the place. The engine's own words —
+ *  they are what the reader can act on. */
+export const refusalLine = (place: string, reason: string): string =>
+  `${place} — ${reason}`;
 /** The way to the place that now has the package, named so the click is
  *  predictable from the words alone. */
 export const openPlaceLabel = (place: string): string => `Open ${place}`;

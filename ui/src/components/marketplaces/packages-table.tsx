@@ -320,6 +320,11 @@ export function PackagesTable({
         count: 1,
         groups,
         kinds: kindsIn(groups),
+        // The row already carries what the package declares it needs, and
+        // the tools picker is the only place a reader ticks an optional
+        // one. Left out, installing from the table quietly offers less
+        // than installing the same package from its own page.
+        dependencies: only.row.dependencies,
       });
     } else if (chosen.length > 0) {
       const groups = groupsFor(chosen);
@@ -330,6 +335,10 @@ export function PackagesTable({
         count: chosen.length,
         groups,
         kinds: kindsIn(groups),
+        // Only where the answer is one package. A set of them carries
+        // several declarations, and the picker names none of them — the
+        // same rule the set page follows.
+        dependencies: chosen.length === 1 ? chosen[0].row.dependencies : null,
       });
     }
     if (showPlaces && offerable.length > 0) {

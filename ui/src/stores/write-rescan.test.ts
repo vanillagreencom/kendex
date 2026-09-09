@@ -173,7 +173,9 @@ describe("a write that reaches repo_effects and is refused", () => {
     });
     await rescansSettled();
 
-    expect(landed).toBe(false);
+    // The refusal comes back with the engine's own reason, so a caller
+    // reporting for itself can put it beside the place that gave it.
+    expect(landed).toEqual({ ok: false, reason: "the scope is busy" });
     readAgain();
   });
 

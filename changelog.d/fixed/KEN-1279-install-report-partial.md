@@ -1,0 +1,1 @@
+- An install into several places says which places took everything, which took only some of it, and which refused — with the reason each refusal gave, beside the place that gave it.

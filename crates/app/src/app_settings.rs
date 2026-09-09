@@ -37,6 +37,22 @@ impl From<(AppSettings, Base)> for SettingsRead {
     }
 }
 
+/// A registration's answer: the settings it wrote, and the root it
+/// recorded for this request.
+///
+/// The caller asked under whatever spelling the reader typed. The registry
+/// stores the canonical path, and every surface that keys off the project
+/// afterwards — the card's setup state included — matches that one, so the
+/// write says which root it made rather than leaving the caller to pick it
+/// out of the list. Two registrations in flight together each see both new
+/// entries, so a set difference cannot tell them apart.
+#[derive(Debug, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisteredProject {
+    pub read: SettingsRead,
+    pub root: String,
+}
+
 #[tauri::command(async)]
 #[specta::specta]
 pub fn get_settings() -> Result<SettingsRead, String> {
@@ -99,16 +115,19 @@ pub fn save_zoom(percent: u16) -> Result<u16, String> {
     save_zoom_at(&env()?, percent)
 }
 
-fn register_project_at(env: &Env, path: &str) -> Result<SettingsRead, String> {
+fn register_project_at(env: &Env, path: &str) -> Result<RegisteredProject, String> {
     let expanded = kendex_core::paths::expand_tilde(env.real_home(), path);
-    settings::register_project(env, &expanded)
-        .map(SettingsRead::from)
-        .map_err(|e| e.to_string())
+    let (settings, base, root) =
+        settings::register_project(env, &expanded).map_err(|e| e.to_string())?;
+    Ok(RegisteredProject {
+        read: SettingsRead::from((settings, base)),
+        root: root.display().to_string(),
+    })
 }
 
 #[tauri::command(async)]
 #[specta::specta]
-pub fn register_project(path: String) -> Result<SettingsRead, String> {
+pub fn register_project(path: String) -> Result<RegisteredProject, String> {
     register_project_at(&env()?, &path)
 }
 
@@ -174,13 +193,16 @@ mod tests {
         let env = env_in(tmp.path());
         std::fs::create_dir_all(tmp.path().join("dev/hyprtrade")).unwrap();
 
-        let settings = register_project_at(&env, "~/dev/hyprtrade")
-            .unwrap()
-            .settings;
+        let registered = register_project_at(&env, "~/dev/hyprtrade").unwrap();
+        let recorded = kendex_core::paths::canonical(&tmp.path().join("dev/hyprtrade")).unwrap();
         assert_eq!(
-            settings.projects,
-            [kendex_core::paths::canonical(&tmp.path().join("dev/hyprtrade")).unwrap()]
+            registered.read.settings.projects,
+            std::slice::from_ref(&recorded)
         );
+        // The root the write says it recorded is the entry it stored, not
+        // the spelling the caller asked under: the app keys a project's
+        // setup state on this.
+        assert_eq!(registered.root, recorded.display().to_string());
     }
 
     /// A `~` is where the person lives, and a sandbox does not move that.
@@ -192,11 +214,9 @@ mod tests {
         let env = sandboxed_env_in(tmp.path());
         std::fs::create_dir_all(tmp.path().join("dev/hyprtrade")).unwrap();
 
-        let settings = register_project_at(&env, "~/dev/hyprtrade")
-            .unwrap()
-            .settings;
+        let registered = register_project_at(&env, "~/dev/hyprtrade").unwrap();
         assert_eq!(
-            settings.projects,
+            registered.read.settings.projects,
             [kendex_core::paths::canonical(&tmp.path().join("dev/hyprtrade")).unwrap()]
         );
     }

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { Scope } from "@/bindings";
 import { type LibraryFilter, useNavStore } from "./nav";
 
 describe("nav store", () => {
@@ -245,5 +246,39 @@ describe("nav store", () => {
     }
 
     expect(useNavStore.getState().history).toHaveLength(20);
+  });
+});
+
+// The place a browse was begun for. Switching tabs is not navigating: the
+// Marketplaces page calls goToMarketplaces to change its own tab, so a
+// reader who arrived from a project's Add packages and then looked at
+// Bundles is still browsing for that project. Arriving from anywhere else
+// states its own answer, and every other destination clears it.
+describe("the place a browse is begun for", () => {
+  it("survives a tab switch and clears on a real navigation", () => {
+    const acme: Scope = { scope: "project", root: "/work/acme" };
+    useNavStore.setState({
+      page: "projects",
+      marketplacesTab: "subscribed",
+      installInto: null,
+    });
+
+    useNavStore.getState().goToMarketplaces("packages", acme);
+    expect(useNavStore.getState().installInto).toEqual(acme);
+
+    // The page changing its own tab.
+    useNavStore.getState().goToMarketplaces("subscribed");
+    expect(useNavStore.getState().marketplacesTab).toBe("subscribed");
+    expect(useNavStore.getState().installInto).toEqual(acme);
+
+    // Leaving for a package clears it: nothing there was begun for acme.
+    useNavStore
+      .getState()
+      .goToPackage({ kind: "skill", name: "gh", scope: acme });
+    expect(useNavStore.getState().installInto).toBeNull();
+
+    // Arriving at Marketplaces from elsewhere with nobody named.
+    useNavStore.getState().goToMarketplaces("packages");
+    expect(useNavStore.getState().installInto).toBeNull();
   });
 });

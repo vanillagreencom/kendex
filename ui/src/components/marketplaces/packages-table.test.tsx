@@ -718,6 +718,34 @@ describe("installing from the table", () => {
     ).toEqual([selectedLabel(1)]);
   });
 
+  // The tools picker is the only place an optional dependency is ticked,
+  // and it draws them from the subject alone. Left out, installing a
+  // package from the table quietly offers less than installing the same
+  // package from its own page.
+  it("carries the row's declared dependencies into the ask", async () => {
+    const needs = {
+      required: [],
+      optional: [{ kind: "skill" as const, name: "gh-extras" }],
+    };
+    const withNeeds: PackageEntry = {
+      catalog,
+      recordsUnreadable: false,
+      row: { ...row, name: "gh", dependencies: needs as never },
+    };
+    const host = draw([withNeeds]);
+
+    const install = [...host.querySelectorAll("button")].find(
+      (one) => one.textContent === INSTALL_ACTION,
+    );
+    if (!install) throw new Error("no row action rendered");
+    await userEvent.click(install);
+    await act(async () => {});
+
+    expect(useInstallFlow.getState().ask?.subjects[0].dependencies).toEqual(
+      needs,
+    );
+  });
+
   // A row's own Install is the one-package case of the same flow, never a
   // second install path.
   it("opens the flow on one row from that row's own action", async () => {

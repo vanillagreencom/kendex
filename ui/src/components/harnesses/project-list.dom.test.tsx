@@ -124,7 +124,10 @@ describe("a project added while the list is on screen", () => {
   it("counts what it holds, without a revisit", async () => {
     vi.mocked(commands.registerProject).mockResolvedValue({
       status: "ok",
-      data: { settings: { projects: ["/work/acme"] }, base: null } as never,
+      data: {
+        read: { settings: { projects: ["/work/acme"] }, base: null },
+        root: "/work/acme",
+      } as never,
     });
     // The audit the registration forces is the one that first sees the
     // project at all.

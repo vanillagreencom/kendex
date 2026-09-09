@@ -1,0 +1,1 @@
+- Installing a package from a marketplace table offers its optional extras, the same as installing it from its own page.

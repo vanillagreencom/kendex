@@ -61,9 +61,12 @@ export const useProjectSetupStore = create<ProjectSetupState>((set) => ({
       const failed = readFailed();
       set((state) => ({
         checking: without(state.checking, root),
-        unchecked: failed
-          ? with_(state.unchecked, root)
-          : without(state.unchecked, root),
+        // A read that answered read the whole machine, not this root — so
+        // it answers for every root a previous read failed on too. Clearing
+        // only its own would leave a project marked "package check failed"
+        // over a reading that has since refreshed it, with a Try again that
+        // does nothing new.
+        unchecked: failed ? with_(state.unchecked, root) : [],
       }));
     }
   },

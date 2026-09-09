@@ -24,13 +24,15 @@ import {
   REPO_EFFECTS_WRITES_LABEL,
   repoEffectsTitle,
 } from "@/lib/copy-repo-effects";
+import { useInstallFlow } from "@/stores/install-flow";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 
 /** The second question an install can ask, rendered once in App.tsx: what
  *  a package does to the repository beyond the files kendex manages, and
  *  whether to let it. One package at a time, each with its own yes, in the
- *  order the install reported them. The package's files are already in;
- *  closing this leaves them in and the repository as it was.
+ *  order the install reported them, and never while the guided install is
+ *  still on screen. The package's files are already in; closing this
+ *  leaves them in and the repository as it was.
  *
  *  Every word of the package's on screen is core's display text, already
  *  escaped once there: a direction-flipping character in a declared path
@@ -42,7 +44,14 @@ export function RepoEffectsDialog() {
   const busy = useMarketplacesStore((s) => s.busy);
   const apply = useMarketplacesStore((s) => s.applyRepoEffect);
   const decline = useMarketplacesStore((s) => s.declineRepoEffect);
-  if (!pending) return null;
+  // The guided install writes into each place the reader picked in turn
+  // and reports the whole run once. Its first place's disclosures would
+  // otherwise open this dialog on top of a run still going, interrupting
+  // it with a second modal before it has said what happened. The line
+  // keeps what it is given — `marketplaces-install.ts` appends — so
+  // nothing is lost by waiting for the install to be done with.
+  const installing = useInstallFlow((s) => s.ask !== null);
+  if (!pending || installing) return null;
   const disclosure = pending.queue[0].disclosure;
   const runnable = disclosure.declared.installer !== null;
   return (

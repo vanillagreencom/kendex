@@ -33,10 +33,6 @@ export interface ProjectsSlice {
 export function projectActions(ordered: {
   ticket: () => number;
   hold: (read: SettingsRead, at: number) => void;
-  /** The projects the store holds right now. A registry write answers with
-   *  the whole list, and the root it added is the entry this one does not
-   *  have — see [registeredRoot]. */
-  projects: () => string[];
 }): ProjectsSlice {
   return {
     // Answers the registry write and nothing else. Reading what the
@@ -46,16 +42,17 @@ export function projectActions(ordered: {
     // the two states that read has, and the card draws them.
     registerProject: async (path) => {
       const at = ordered.ticket();
-      // Read before the await, so the comparison below is against what
-      // was tracked when this write was asked for.
-      const before = ordered.projects();
       const response = await commands.registerProject(path);
       if (response.status === "ok") {
-        ordered.hold(response.data, at);
+        ordered.hold(response.data.read, at);
         toast.success(`Added ${path.split("/").pop()}`);
-        void useProjectSetupStore
-          .getState()
-          .check(registeredRoot(before, response.data, path));
+        // The root the registry recorded, from the write itself. Never the
+        // string the reader typed and never a difference against the list
+        // before it: `register_project` expands a tilde and stores the
+        // canonical path, and two rows added together from Find existing
+        // projects each see both new entries, so no set difference can say
+        // which one is its own.
+        void useProjectSetupStore.getState().check(response.data.root);
         return true;
       }
       useProblemsStore.getState().showError({
@@ -95,29 +92,6 @@ export function projectActions(ordered: {
       return { status: "failed", reason: response.error };
     },
   };
-}
-
-/** The root the registry actually recorded for this request: the entry the
- *  fresh read holds that the previous one did not.
- *
- *  Never the string the reader typed. `register_project` expands a tilde
- *  and `settings::register_project` stores the canonical path, so `~/dev/acme`,
- *  a path with a trailing separator and a path through a symlink all land
- *  under a spelling the caller never saw — and the project's card matches
- *  its setup state against settings' own roots. Keyed on the typed string,
- *  the checking and check-failed states simply never appear for that
- *  project, and the card falls back to drawing it as empty.
- *
- *  Falls back to the request where the read names no new entry, which is
- *  what a reply that lost its ticket race leaves: the read behind it still
- *  runs, and the card shows the states it would have shown before. */
-export function registeredRoot(
-  before: string[],
-  read: SettingsRead,
-  asked: string,
-): string {
-  const had = new Set(before);
-  return (read.settings.projects ?? []).find((root) => !had.has(root)) ?? asked;
 }
 
 // The answer before the settings read lands, shared rather than spelled at
