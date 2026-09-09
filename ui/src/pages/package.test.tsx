@@ -134,10 +134,26 @@ const openPage = async (
       warnings: [],
     },
   });
-  // The join has answered: nothing in these fixtures is recorded, so
-  // every observation is the package the scan named it, which is the
-  // identity the nav ref below carries.
-  useProvenanceStore.setState({ rows: [], loaded: true });
+  // The join has answered and these installations are the declared
+  // package, which is the identity the nav ref below carries. A page about
+  // a marketplace skill with a manifest, versions and a fork is not an
+  // installation nothing recorded, and a fixture saying so would be
+  // describing a different thing.
+  useProvenanceStore.setState({
+    rows: installed.map((scope) => ({
+      scope,
+      kind,
+      name: "gh",
+      harness: "claude" as const,
+      origin: {
+        origin: "marketplace" as const,
+        source: "cat",
+        repo: "o/r",
+      },
+      package: { kind, name: "gh" },
+    })),
+    loaded: true,
+  });
   useNavStore.setState({
     page: "package",
     packageRef: { kind, name: "gh", scope: here, identity: "recorded" },
@@ -821,6 +837,22 @@ describe("the package page's safety tab", () => {
         missingProjects: [],
         warnings: [],
       },
+    });
+    // The join answers for the copy kendex installed. Vendor content
+    // carries no row by design, so the bundled copy is absent from it and
+    // the package is still the one the codex row records.
+    useProvenanceStore.setState({
+      rows: [
+        {
+          scope: VG,
+          kind: "skill",
+          name: "gh",
+          harness: "codex",
+          origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+          package: { kind: "skill", name: "gh" },
+        },
+      ],
+      loaded: true,
     });
     useNavStore.setState({
       page: "package",

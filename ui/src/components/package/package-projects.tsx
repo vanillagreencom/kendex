@@ -1,4 +1,4 @@
-import type { ItemKind, Scope } from "@/bindings";
+import type { ItemKind, ObservedItem, Scope } from "@/bindings";
 import { ProjectCard } from "@/components/package/project-card";
 import { usePackagePlaces } from "@/components/package/use-package-places";
 import { Section } from "@/components/section";
@@ -43,16 +43,24 @@ export function PackageProjects({
   kind,
   name,
   scopes,
+  installations,
   busy,
   onDelete,
 }: {
   kind: ItemKind;
   name: string;
   scopes: Scope[];
+  /** This package's installations, as the Library grouped them. */
+  installations: ObservedItem[];
   busy: boolean;
   onDelete: () => void;
 }) {
-  const { places, loading, removalHeld } = usePackagePlaces(kind, name, scopes);
+  const { places, loading, removalHeld } = usePackagePlaces(
+    kind,
+    name,
+    scopes,
+    installations,
+  );
   const updateOne = useUpdatesStore((s) => s.updateOne);
   const updateRows = useUpdatesStore((s) => s.updateRows);
   const removeItem = useAuditStore((s) => s.removeItem);

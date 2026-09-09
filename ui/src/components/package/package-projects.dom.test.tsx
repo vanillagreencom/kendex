@@ -204,12 +204,16 @@ afterEach(() => {
 });
 
 /** The tab about `gh`, installed in `scopes`, with its places read. */
-const openTab = async (scopes: Scope[]) => {
+const openTab = async (
+  scopes: Scope[],
+  installations: ObservedItem[] = scopes.map((scope) => install(scope)),
+) => {
   const host = mount(
     <PackageProjects
       kind="skill"
       name="gh"
       scopes={scopes}
+      installations={installations}
       busy={false}
       onDelete={onDelete}
     />,
@@ -253,6 +257,7 @@ describe("the Projects tab", () => {
         kind="skill"
         name="gh"
         scopes={[VG]}
+        installations={[install(VG)]}
         busy={false}
         onDelete={onDelete}
       />,
@@ -541,5 +546,36 @@ describe("what a card's buttons are called", () => {
         new RegExp(`^${one.textContent} `),
       );
     }
+  });
+});
+
+// A tool that keeps a package in a shape of its own has an installation
+// under a name of its own — a Cursor hook is an advisory rule the rules
+// surface reads as an agent. Asked for by the declared name, that copy is
+// not found, the place reads as one kendex does not own, and its Remove
+// goes: kendex's own file, offered as a stranger's.
+describe("a place whose copy the tool stores as another kind", () => {
+  const RULE: ObservedItem = {
+    ...install(VG, "cursor"),
+    kind: "agent",
+    name: "safety-gh",
+    path: "/p/.cursor/rules/safety-gh.mdc",
+  };
+
+  it("still offers Remove for the copy kendex wrote", async () => {
+    // The join answers under what the scan saw, which is how it keys every
+    // row; the package it belongs to is what the row records.
+    joinSays([
+      {
+        scope: VG,
+        kind: "agent",
+        name: "safety-gh",
+        harness: "cursor",
+        origin: OURS,
+        package: { kind: "hook", name: "gh" },
+      },
+    ]);
+    const host = await openTab([VG], [RULE]);
+    expect(removals(host).length).toBeGreaterThan(0);
   });
 });

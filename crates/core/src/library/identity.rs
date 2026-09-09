@@ -67,6 +67,18 @@ pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
             name: entry.name.clone(),
         };
         for path in crate::engine::owned::installed(env, scope, entry).files {
+            // Both spellings, because a switched-off artifact is observed
+            // under the name the rename gave it while the record still
+            // names the position the install wrote. Indexed under the one
+            // helper removal reads it back through, so what is credited
+            // here and what would be taken away cannot diverge.
+            by_artifact.insert(
+                (
+                    entry.harness,
+                    resolved(&crate::engine::disabled_name(&path)),
+                ),
+                package.clone(),
+            );
             by_artifact.insert((entry.harness, resolved(&path)), package.clone());
         }
         if entry.kind == ItemKind::Hook

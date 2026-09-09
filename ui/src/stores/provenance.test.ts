@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { commands, type ProvenanceRow } from "@/bindings";
+import { commands, type ItemKind, type ProvenanceRow } from "@/bindings";
 import { READ_PENDING } from "@/lib/read-state";
 import { NO_REASON_GIVEN } from "@/lib/settled";
 import {
@@ -23,7 +23,7 @@ const ROWS: ProvenanceRow[] = [
     name: "gh",
     harness: "claude",
     origin: { origin: "marketplace", source: "kendex", repo: "acme/kendex" },
-    package: null,
+    package: { kind: "skill", name: "gh" },
   },
   {
     scope: { scope: "project", root: "/work/app" },
@@ -31,7 +31,7 @@ const ROWS: ProvenanceRow[] = [
     name: "gh",
     harness: "claude",
     origin: { origin: "own", forkedFrom: "kendex", source: "local" },
-    package: null,
+    package: { kind: "skill", name: "gh" },
   },
   {
     scope: { scope: "global" },
@@ -42,6 +42,9 @@ const ROWS: ProvenanceRow[] = [
     package: null,
   },
 ];
+
+const recorded = (kind: ItemKind) =>
+  ({ kind, name: "gh", identity: "recorded" }) as const;
 
 describe("the From column's join", () => {
   it("matches the origin by kind, name and scope", () => {
@@ -71,9 +74,45 @@ describe("the From column's join", () => {
     ];
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows)
-      expect(originFor(ROWS, row.kind, "gh", row.scopes), row.name).toEqual(
+      expect(originFor(ROWS, recorded(row.kind), row.scopes), row.name).toEqual(
         row.expected,
       );
+  });
+
+  // Two things can wear one kind, name and place: a package the records
+  // account for and a file nothing recorded. Matched on the name alone the
+  // unmanaged one reads as the marketplace package, and the package reads
+  // as Not managed.
+  it("keeps a package and a same-named file nobody installed apart", () => {
+    const here = { scope: "project" as const, root: "/p" };
+    const both: ProvenanceRow[] = [
+      {
+        scope: here,
+        kind: "skill",
+        name: "gh",
+        harness: "claude",
+        origin: { origin: "marketplace", source: "kendex", repo: "a/k" },
+        package: { kind: "skill", name: "gh" },
+      },
+      {
+        scope: here,
+        kind: "skill",
+        name: "gh",
+        harness: "cursor",
+        origin: { origin: "unmanaged" },
+        package: null,
+      },
+    ];
+    expect(originFor(both, recorded("skill"), [here])).toEqual({
+      origin: "marketplace",
+      source: "kendex",
+      repo: "a/k",
+    });
+    expect(
+      originFor(both, { kind: "skill", name: "gh", identity: "observed" }, [
+        here,
+      ]),
+    ).toEqual({ origin: "unmanaged" });
   });
 
   it("carries the source, category and hover detail for each origin", () => {

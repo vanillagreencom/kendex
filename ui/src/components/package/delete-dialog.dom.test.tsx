@@ -50,8 +50,7 @@ const openDialog = async (scopes: Scope[]) => {
     <DeleteDialog
       open
       onOpenChange={() => {}}
-      kind="skill"
-      name="gh"
+      reference={{ kind: "skill", name: "gh", identity: "recorded" }}
       scopes={scopes}
     />,
   );

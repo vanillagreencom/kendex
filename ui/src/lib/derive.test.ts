@@ -305,15 +305,19 @@ describe("groupFor", () => {
     for (const row of rows) {
       const groups = groupItems([...row.items], recordedOnly);
       expect(
-        groupFor(groups, { ...gh, identity: "recorded" })?.installations.map(
-          (one) => one.harness,
-        ),
+        groupFor(
+          groups,
+          { ...gh, identity: "recorded" },
+          true,
+        )?.installations.map((one) => one.harness),
         row.name,
       ).toEqual(["claude"]);
       expect(
-        groupFor(groups, { ...gh, identity: "observed" })?.installations.map(
-          (one) => one.harness,
-        ),
+        groupFor(
+          groups,
+          { ...gh, identity: "observed" },
+          true,
+        )?.installations.map((one) => one.harness),
         row.name,
       ).toEqual(["cursor"]);
     }
@@ -321,19 +325,33 @@ describe("groupFor", () => {
 
   it("opens the only thing wearing that name whichever it is", () => {
     const only = groupItems([mine], recordedOnly);
-    expect(groupFor(only, { ...gh, identity: "recorded" })).toBe(only[0]);
+    expect(groupFor(only, { ...gh, identity: "recorded" }, false)).toBe(
+      only[0],
+    );
     const one = groupItems([managed], recordedOnly);
-    expect(groupFor(one, { ...gh, identity: "observed" })).toBe(one[0]);
+    expect(groupFor(one, { ...gh, identity: "observed" }, false)).toBe(one[0]);
+  });
+
+  // A link the reader kept after its package was removed, with only a
+  // same-named unrecorded file left. Opening that file would show one
+  // thing under the other's name and suppress the page's own way out.
+  it("opens nothing for a stale link once the read has answered", () => {
+    const left = groupItems([mine], recordedOnly);
+    expect(groupFor(left, { ...gh, identity: "recorded" }, true)).toBeNull();
   });
 
   it("opens nothing it was not asked for", () => {
     const groups = groupItems([managed, mine], recordedOnly);
     expect(
-      groupFor(groups, { kind: "agent", name: "gh", identity: "recorded" }),
+      groupFor(
+        groups,
+        { kind: "agent", name: "gh", identity: "recorded" },
+        true,
+      ),
     ).toBeNull();
-    expect(groupFor(groups, { ...gh, identity: "recorded" })?.package).toEqual(
-      gh,
-    );
+    expect(
+      groupFor(groups, { ...gh, identity: "recorded" }, true)?.package,
+    ).toEqual(gh);
   });
 });
 

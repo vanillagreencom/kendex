@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ItemKind, Scope } from "@/bindings";
+import type { Scope } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   DELETE_BODY,
@@ -9,6 +9,7 @@ import {
   REINSTALL_OWN,
   reinstallFrom,
 } from "@/lib/copy-projects";
+import type { PackageIdentityRef } from "@/lib/derive";
 import { scopePath } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
 import { placeName } from "@/lib/update-groups";
@@ -34,8 +35,7 @@ import {
  *  held for it either way: the note is where to get the package again, not
  *  what the deletion does, and the engine answers for the removal. */
 function useReinstallNote(
-  kind: ItemKind,
-  name: string,
+  ref: PackageIdentityRef,
   scopes: Scope[],
   open: boolean,
 ): string | null {
@@ -58,7 +58,7 @@ function useReinstallNote(
     };
   }, [open, reload]);
   if (!asked || !current) return null;
-  const origins = originsFor(rows, kind, name, scopes);
+  const origins = originsFor(rows, ref, scopes);
   // Every marketplace among them, sorted so the note reads the same on
   // every open: this deletion reaches each place, and each place records
   // the source it was installed from, which need not be its neighbour's.
@@ -86,18 +86,19 @@ function useReinstallNote(
 export function DeleteDialog({
   open,
   onOpenChange,
-  kind,
-  name,
+  reference,
   scopes,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  kind: ItemKind;
-  name: string;
+  /** The package being deleted, and which of the two things wearing its
+   *  kind and name it is — the note names where THIS one came from. */
+  reference: PackageIdentityRef;
   scopes: Scope[];
 }) {
+  const { kind, name } = reference;
   const { busy, removeItem } = useAuditStore();
-  const note = useReinstallNote(kind, name, scopes, open);
+  const note = useReinstallNote(reference, scopes, open);
   return (
     <ConfirmDialog
       open={open}

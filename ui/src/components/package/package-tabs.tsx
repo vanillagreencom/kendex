@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { HarnessId, ItemKind, Scope } from "@/bindings";
+import type { HarnessId, ItemKind, ObservedItem, Scope } from "@/bindings";
 import { ItemCustomize } from "@/components/customize/item-customize";
 import { PackageProjects } from "@/components/package/package-projects";
 import {
@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 export function PackageTabs({
   kind,
   name,
+  installations,
   scope,
   scopes,
   harnesses,
@@ -38,6 +39,9 @@ export function PackageTabs({
    *  installed there, which is the copy the rest of the page describes. */
   scope: Scope;
   scopes: Scope[];
+  /** This package's installations, as the Library grouped them — what each
+   *  tool stores it as is an installation detail, not a second identity. */
+  installations: ObservedItem[];
   harnesses: HarnessId[];
   /** Who ships the copy at `scope`, when a tool ships it itself. The audit
    *  never reads such a package, so its tab says so instead of offering a
@@ -81,6 +85,7 @@ export function PackageTabs({
               kind={kind}
               name={name}
               scopes={scopes}
+              installations={installations}
               busy={busy}
               onDelete={onDelete}
             />

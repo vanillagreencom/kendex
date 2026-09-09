@@ -678,11 +678,18 @@ describe("the Library while the identity read has not answered", () => {
 
   const skeleton = (host: HTMLElement) =>
     host.querySelector('[data-slot="skeleton"]') !== null;
-  const rows = (host: HTMLElement) => host.querySelectorAll("tbody tr").length;
+  /** Package rows, not the skeleton's placeholder rows: only a real row
+   *  carries the button that opens its package. */
+  const rows = (host: HTMLElement) =>
+    host.querySelectorAll("tbody tr td:first-child button").length;
 
-  it("waits while the first read is on its way", () => {
+  // Not merely a skeleton alongside the rows: grouped with an empty index
+  // every row is an installation wearing a package's clothes, which is the
+  // duplication this page exists to stop.
+  it("draws no rows at all while the first read is on its way", () => {
     const host = arrange({ rows: [], loaded: false, read: READ_PENDING });
     expect(skeleton(host)).toBe(true);
+    expect(rows(host)).toBe(0);
     expect(host.textContent).not.toContain(PACKAGES_CHECK_FAILED_TITLE);
   });
 

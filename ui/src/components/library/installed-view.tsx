@@ -27,6 +27,7 @@ import {
 import {
   filterItems,
   groupItems,
+  groupRef,
   groupScopes,
   groupsOfKind,
   identityOf,
@@ -147,10 +148,12 @@ export function InstalledView() {
   const { standingsFor, editedAnywhere, outOfDateAnywhere } =
     useLibraryStandings(everywhere);
   const groups = useMemo(() => {
-    // No identity evidence and none retained: every row would be an
-    // installation drawn as a package, and the note above stands in its
-    // place.
-    if (!result || packagesUnreadable) return [];
+    // Nothing may be drawn until the read that says which observations are
+    // one package has answered: grouped with an empty index every row is an
+    // installation wearing a package's clothes, which is the duplication
+    // this page exists to stop. With the read failed and nothing retained
+    // the note above stands in their place instead.
+    if (!result || !packagesKnown || packagesUnreadable) return [];
     const filtered = filterItems(result.items, {
       scope,
       harness: harness === "any" ? undefined : harness,
@@ -166,7 +169,7 @@ export function InstalledView() {
       grouped = grouped.filter(
         (group) =>
           originLabel(
-            originFor(provenance, group.kind, group.name, groupScopes(group)),
+            originFor(provenance, groupRef(group), groupScopes(group)),
           ) === from,
       );
     }
@@ -189,6 +192,7 @@ export function InstalledView() {
     search,
     provenance,
     packageOf,
+    packagesKnown,
     packagesUnreadable,
     editedAnywhere,
   ]);
@@ -326,8 +330,7 @@ export function InstalledView() {
                   // scope can address a subscription that exists at neither.
                   const record = provenanceFor(
                     provenance,
-                    group.kind,
-                    group.name,
+                    groupRef(group),
                     groupScopes(group),
                   );
                   const origin = record?.origin ?? null;

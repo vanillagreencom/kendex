@@ -300,6 +300,30 @@ fn a_generated_artifact_is_not_offered_as_unmanaged() {
     );
 }
 
+/// A package switched off keeps its identity. The rename that switches it
+/// off is what a tool sees, and the record still names the position the
+/// install wrote, so a resolver reading one spelling would call kendex's
+/// own switched-off artifact somebody else's file.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_switched_off_artifact_is_still_the_package_that_wrote_it() {
+    let f = fixture("[hooks.block-worktree-refresh]\nsource = \"cat\"\nenabled = false\n");
+    apply_now(&f);
+    let rows = observed(&rows(&f), &f);
+    let hook = PackageRef {
+        kind: ItemKind::Hook,
+        name: "block-worktree-refresh".to_owned(),
+    };
+    let cursor = row_for(&rows, HarnessId::Cursor, &hook);
+    assert_eq!(cursor.kind, ItemKind::Agent);
+    assert!(
+        cursor.name.starts_with("safety-block-worktree-refresh"),
+        "cursor row name: {}",
+        cursor.name
+    );
+    assert_eq!(cursor.origin, marketplace(&f.home.join("catalog")));
+}
+
 /// The reported move: the project folder is renamed after the install. The
 /// record states its positions against the root that wrote it, so a
 /// resolver that never re-read them would lose every identity at once.

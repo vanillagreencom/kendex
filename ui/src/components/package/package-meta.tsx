@@ -12,7 +12,12 @@ import { SharedFilesBadge } from "@/components/shared-files-badge";
 import { StatusLine } from "@/components/status-note";
 import { TagBadges } from "@/components/tag-badge";
 import { TAGS_ROW_LABEL } from "@/lib/copy";
-import { groupScopes, type ItemGroup, sharedFiles } from "@/lib/derive";
+import {
+  groupRef,
+  groupScopes,
+  type ItemGroup,
+  sharedFiles,
+} from "@/lib/derive";
 import { kindLabel, scopeName } from "@/lib/labels";
 import { versionLabel } from "@/lib/versions";
 import { subscription } from "@/stores/marketplaces";
@@ -53,12 +58,7 @@ export function PackageMetaBlock({
   useEffect(() => {
     if (!loadedProvenance) void loadProvenance();
   }, [loadedProvenance, loadProvenance]);
-  const origin = originFor(
-    provenance,
-    group.kind,
-    group.name,
-    groupScopes(group),
-  );
+  const origin = originFor(provenance, groupRef(group), groupScopes(group));
   return (
     <div className="space-y-2.5">
       <SectionHeading>Details</SectionHeading>

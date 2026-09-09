@@ -51,16 +51,19 @@ export interface PackagePlace {
 const removableIn = (
   provenance: ProvenanceRow[],
   installs: ObservedItem[],
-  kind: ItemKind,
-  name: string,
   scope: Scope,
 ): boolean =>
   installs.length > 0 &&
   installs.every((install) => {
+    // Matched on what the scan saw, which is how the join keys its rows.
+    // The declared name is not it: a tool that keeps a hook as a rule or a
+    // command as a skill has an installation under a name of its own, and
+    // looking for the declared one would find no row and read kendex's own
+    // copy as a stranger's.
     const row = provenance.find(
       (one) =>
-        one.kind === kind &&
-        one.name === name &&
+        one.kind === install.kind &&
+        one.name === install.name &&
         one.harness === install.harness &&
         sameScope(one.scope, scope),
     );
@@ -152,6 +155,8 @@ export function packagePlaces(
   metas: Record<string, PackageMeta_Serialize | null>,
   standing: UpdatesStanding,
   provenance: ProvenanceRow[],
+  /** This package's own installations, every place at once — the group's,
+   *  not the whole scan's. */
   installed: ObservedItem[],
 ): PackagePlace[] {
   return scopes.map((scope) => {
@@ -169,16 +174,12 @@ export function packagePlaces(
         row !== null &&
         !readUnsettled(standing) &&
         updatablePlaces([row]).length === 1,
+      // The group's own installations, narrowed to this place. Re-selecting
+      // them by the declared kind and name would be a second identity rule,
+      // and would drop every copy a tool stores under another one.
       removable: removableIn(
         provenance,
-        installed.filter(
-          (one) =>
-            one.kind === kind &&
-            one.name === name &&
-            sameScope(one.scope, scope),
-        ),
-        kind,
-        name,
+        installed.filter((one) => sameScope(one.scope, scope)),
         scope,
       ),
     };

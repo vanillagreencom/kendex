@@ -196,26 +196,46 @@ export type PackageIdentity = "recorded" | "observed";
 export const identityOf = (group: ItemGroup): PackageIdentity =>
   group.package ? "recorded" : "observed";
 
+/** What a package is called and which of the two things wearing that kind
+ *  and name it is — the shape every join, link and page selection takes,
+ *  so none of them can key on half of it. */
+export interface PackageIdentityRef {
+  kind: ItemKind;
+  name: string;
+  identity: PackageIdentity;
+}
+
+/** How a group names itself to every join and every link. */
+export const groupRef = (group: ItemGroup): PackageIdentityRef => ({
+  kind: group.kind,
+  name: group.name,
+  identity: identityOf(group),
+});
+
 /** The row a link opens, out of the rows on this machine.
  *
- *  What the link stated is what opens. Where only one thing wears this kind
- *  and name there is nothing to tell apart, so it opens whichever it is —
- *  which also keeps a link made before the identity read answered landing
- *  on the package it named instead of bouncing back. Where two do, neither
- *  may stand in for the other: their files, tools and comparison come from
- *  one and their versions, update note and Delete from the other, so
- *  nothing opens without the link's own answer. */
+ *  What the link stated is what opens, and once the identity read has
+ *  answered nothing else may: their files, tools and comparison come from
+ *  one row and their versions, update note and Delete from the other, so a
+ *  row that merely shares a kind and a name is a different thing, not a
+ *  near miss. A package the link named that is no longer installed is
+ *  nothing here, which is what sends the page back.
+ *
+ *  `known` is whether that read has answered. Before it has, every row
+ *  reads as unrecorded whatever it is, so a recorded link would match
+ *  nothing; the only row wearing this kind and name opens instead, and the
+ *  page draws rather than bouncing off a state that is about to change. */
 export function groupFor(
   groups: ItemGroup[],
-  ref: { kind: ItemKind; name: string; identity: PackageIdentity },
+  ref: PackageIdentityRef,
+  known: boolean,
 ): ItemGroup | null {
   const named = groups.filter(
     (group) => group.kind === ref.kind && group.name === ref.name,
   );
-  return (
-    named.find((group) => identityOf(group) === ref.identity) ??
-    (named.length === 1 ? named[0] : null)
-  );
+  const exact = named.find((group) => identityOf(group) === ref.identity);
+  if (exact || known) return exact ?? null;
+  return named.length === 1 ? named[0] : null;
 }
 
 /** How many packages a grouped scan holds — one per kind+name group, the

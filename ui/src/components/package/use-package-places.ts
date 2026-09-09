@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   commands,
   type ItemKind,
+  type ObservedItem,
   type PackageMeta_Serialize,
   type Scope,
 } from "@/bindings";
@@ -12,7 +13,6 @@ import {
 } from "@/lib/package-places";
 import { scopeKey } from "@/lib/scope";
 import { joinCurrent, useProvenanceStore } from "@/stores/provenance";
-import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 
 type Metas = Record<string, PackageMeta_Serialize | null>;
@@ -31,6 +31,10 @@ export function usePackagePlaces(
   kind: ItemKind,
   name: string,
   scopes: Scope[],
+  /** This package's installations, as the Library grouped them — what a
+   *  tool stores it as is an installation detail, and re-selecting them
+   *  here by the declared name would be a second identity rule. */
+  installations: ObservedItem[],
 ): { places: PackagePlace[]; loading: boolean; removalHeld: boolean } {
   const rows = useUpdatesStore((s) => s.rows);
   // Read field by field rather than through one selector: `readUnsettled`
@@ -51,10 +55,6 @@ export function usePackagePlaces(
   // hold the first verdict until the package or its copies changed.
   const joined = useProvenanceStore(joinCurrent);
   const reloadProvenance = useProvenanceStore((s) => s.reload);
-  // What is actually installed in each place, harness by harness. The join
-  // answers per harness too, so this is what says whether every one of a
-  // place's copies is accounted for.
-  const installed = useScanStore((s) => s.result?.items);
   const [metas, setMetas] = useState<Metas | null>(null);
   // The scan rebuilds the group on every read, so what is watched is which
   // places those are, not the array they arrived in.
@@ -123,7 +123,7 @@ export function usePackagePlaces(
       // which is the rule `lib/updates-read-state.ts` states for its own
       // surfaces. Whether that control may be PRESSED is `removalHeld`.
       provenance,
-      installed ?? [],
+      installations,
     ),
     loading: metas === null,
   };

@@ -17,6 +17,7 @@ import {
 import {
   groupFor,
   groupItems,
+  groupRef,
   groupScopes,
   installationAt,
 } from "@/lib/derive";
@@ -98,8 +99,10 @@ export function PackagePage() {
   // target from one of them, its meta, versions and Delete from the other.
   const group = useMemo(
     () =>
-      ref && result ? groupFor(groupItems(result.items, packageOf), ref) : null,
-    [ref, result, packageOf],
+      ref && result
+        ? groupFor(groupItems(result.items, packageOf), ref, packagesKnown)
+        : null,
+    [ref, result, packageOf, packagesKnown],
   );
 
   const mutating = useManifestBusy(switching);
@@ -251,6 +254,7 @@ export function PackagePage() {
         name={group.name}
         scope={ref.scope}
         scopes={groupScopes(group)}
+        installations={group.installations}
         vendor={vendorAt(group.installations, ref.scope)}
         harnesses={group.harnesses as HarnessId[]}
         busy={mutating}
@@ -269,8 +273,7 @@ export function PackagePage() {
       <DeleteDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
-        kind={group.kind}
-        name={group.name}
+        reference={groupRef(group)}
         scopes={groupScopes(group)}
       />
     </div>

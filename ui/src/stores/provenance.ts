@@ -1,11 +1,11 @@
 import { create } from "zustand";
 import {
   commands,
-  type ItemKind,
   type Origin,
   type ProvenanceRow,
   type Scope,
 } from "@/bindings";
+import type { PackageIdentityRef } from "@/lib/derive";
 import { READ_PENDING, type ReadState, readOf } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 import { settled } from "@/lib/settled";
@@ -114,12 +114,18 @@ export const useProvenanceStore = create<ProvenanceState>((set, get) => {
   };
 });
 
-/** Which package a row is about: the one the records establish, or what
- * the scan saw where they establish none. The same ranking the Library
- * groups its rows by, so a row and the group it belongs to cannot be
- * matched on two different identities. */
-const rowPackage = (row: ProvenanceRow): { kind: ItemKind; name: string } =>
-  row.package ?? { kind: row.kind, name: row.name };
+/** Whether one row is the identity asked for.
+ *
+ * A recorded group asks about a package the records name, and only a row
+ * naming that package answers — a row for something nothing recorded is a
+ * different thing that happens to share a label. An unrecorded group asks
+ * about what the scan saw, and only a row that recorded nothing answers.
+ * Blurring the two lets an unmanaged file read as the marketplace package
+ * beside it, or the package read as Not managed. */
+const rowIs = (row: ProvenanceRow, ref: PackageIdentityRef): boolean =>
+  ref.identity === "recorded"
+    ? row.package?.kind === ref.kind && row.package.name === ref.name
+    : row.package === null && row.kind === ref.kind && row.name === ref.name;
 
 /** Every origin recorded across these scopes, in row order. Each place
  * records its own source, so one package installed in several places can
@@ -127,18 +133,12 @@ const rowPackage = (row: ProvenanceRow): { kind: ItemKind; name: string } =>
  * see all of them. */
 export function originsFor(
   rows: ProvenanceRow[],
-  kind: ItemKind,
-  name: string,
+  ref: PackageIdentityRef,
   scopes: Scope[],
 ): Origin[] {
   const keys = new Set(scopes.map(scopeKey));
   return rows
-    .filter((row) => {
-      const of = rowPackage(row);
-      return (
-        of.kind === kind && of.name === name && keys.has(scopeKey(row.scope))
-      );
-    })
+    .filter((row) => rowIs(row, ref) && keys.has(scopeKey(row.scope)))
     .map((row) => row.origin);
 }
 
@@ -155,16 +155,12 @@ export function originsFor(
  * only draw it. */
 export function provenanceFor(
   rows: ProvenanceRow[],
-  kind: ItemKind,
-  name: string,
+  ref: PackageIdentityRef,
   scopes: Scope[],
 ): ProvenanceRow | null {
   const keys = new Set(scopes.map(scopeKey));
   return (
-    rows.find(
-      (row) =>
-        row.kind === kind && row.name === name && keys.has(scopeKey(row.scope)),
-    ) ?? null
+    rows.find((row) => rowIs(row, ref) && keys.has(scopeKey(row.scope))) ?? null
   );
 }
 
@@ -172,11 +168,10 @@ export function provenanceFor(
  * one thing a column needs. */
 export function originFor(
   rows: ProvenanceRow[],
-  kind: ItemKind,
-  name: string,
+  ref: PackageIdentityRef,
   scopes: Scope[],
 ): Origin | null {
-  return provenanceFor(rows, kind, name, scopes)?.origin ?? null;
+  return provenanceFor(rows, ref, scopes)?.origin ?? null;
 }
 
 /** How an origin reads in the From column and its filter. */
