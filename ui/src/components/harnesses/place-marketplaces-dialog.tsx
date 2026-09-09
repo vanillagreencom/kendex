@@ -18,10 +18,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
   placeMarketplacesEmpty,
   placeMarketplacesHelp,
+  placeMarketplacesReading,
   placeMarketplacesTitle,
+  placeMarketplacesUnchecked,
+  placeMarketplacesUnconfirmed,
   SWITCHED_OFF_HERE,
   stopUsingLabel,
   TURN_OFF_CONFIRM,
@@ -53,6 +57,9 @@ export function PlaceMarketplacesDialog({
   place: string;
 }) {
   const rows = useMarketplacesStore((s) => s.rows);
+  // The read's own outcome, not the store's shared `error`: actions write
+  // that field too, and a failed toggle is not a failed overview read.
+  const read = useMarketplacesStore((s) => s.read);
   const load = useMarketplacesStore((s) => s.load);
   // Projects does not read marketplaces for its cards, so the list this
   // dialog judges from is fetched when it opens rather than assumed.
@@ -64,17 +71,42 @@ export function PlaceMarketplacesDialog({
     .filter((row) => sameScope(row.scope, scope))
     .sort((a, b) => a.name.localeCompare(b.name));
 
+  // Only a read that landed may say a place installs from nothing. Nothing
+  // else in the app reads marketplaces before this dialog asks, so a session
+  // that opens Projects first has no rows at all — and the empty sentence
+  // over a pending or failed read would deny this place its marketplaces on
+  // the one surface that switches one off.
+  const said =
+    here.length > 0
+      ? read.status === "failed"
+        ? placeMarketplacesUnconfirmed(place)
+        : placeMarketplacesHelp(place)
+      : read.status === "pending"
+        ? placeMarketplacesReading(place)
+        : read.status === "failed"
+          ? placeMarketplacesUnchecked(place)
+          : placeMarketplacesEmpty(place);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{placeMarketplacesTitle(place)}</DialogTitle>
-          <DialogDescription>
-            {here.length === 0
-              ? placeMarketplacesEmpty(place)
-              : placeMarketplacesHelp(place)}
-          </DialogDescription>
+          <DialogDescription>{said}</DialogDescription>
         </DialogHeader>
+        {/* Rows kept from before a failed read stay, headed as what they
+            are; with nothing kept, the failure is all there is to show.
+            Either way the way out is the same button. */}
+        {read.status === "failed" ? (
+          <div className="space-y-2">
+            <p className="text-sm text-critical" role="alert">
+              {read.error}
+            </p>
+            <Button size="sm" variant="outline" onClick={() => void load()}>
+              {TRY_AGAIN_LABEL}
+            </Button>
+          </div>
+        ) : null}
         {here.length === 0 ? null : (
           <div className="divide-y rounded-lg border">
             {here.map((row) => (

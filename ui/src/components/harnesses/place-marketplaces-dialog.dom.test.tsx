@@ -3,14 +3,19 @@ import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MarketplaceRow, Scope } from "@/bindings";
+import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
   placeMarketplacesEmpty,
+  placeMarketplacesReading,
+  placeMarketplacesUnchecked,
+  placeMarketplacesUnconfirmed,
   SWITCHED_OFF_HERE,
   TURN_OFF_CONFIRM,
   turnOffBody,
   turnOffLabel,
   turnOnLabel,
 } from "@/lib/copy-model";
+import { READ_LANDED, READ_PENDING, readFailed } from "@/lib/read-state";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { mount, settle } from "@/test/dom";
 import { PlaceMarketplacesDialog } from "./place-marketplaces-dialog";
@@ -42,7 +47,7 @@ const load = vi.fn(async () => {});
 beforeEach(() => {
   toggle.mockReset();
   load.mockClear();
-  useMarketplacesStore.setState({ rows: [], toggle, load });
+  useMarketplacesStore.setState({ rows: [], toggle, load, read: READ_LANDED });
 });
 
 /** Open the row's menu — a base-ui trigger needs focus and Enter under
@@ -127,5 +132,56 @@ describe("a place's marketplaces", () => {
     await open();
     expect(load).toHaveBeenCalledTimes(1);
     expect(document.body.textContent).toContain(placeMarketplacesEmpty("beta"));
+  });
+
+  // Nothing else in the app reads marketplaces first, so a session that opens
+  // Projects before a marketplace page reaches this dialog with no rows and
+  // no answer. Saying the place installs from nothing there denies it every
+  // marketplace it has, on the one surface that switches one off.
+  it("says nothing definite before the read has answered", async () => {
+    useMarketplacesStore.setState({ read: READ_PENDING });
+    await open();
+    expect(document.body.textContent).toContain(
+      placeMarketplacesReading("beta"),
+    );
+    expect(document.body.textContent).not.toContain(
+      placeMarketplacesEmpty("beta"),
+    );
+  });
+
+  it("shows a failed read with its reason and a way to retry", async () => {
+    useMarketplacesStore.setState({
+      read: readFailed("engine is not running"),
+    });
+    await open();
+    expect(document.body.textContent).toContain(
+      placeMarketplacesUnchecked("beta"),
+    );
+    expect(document.body.textContent).not.toContain(
+      placeMarketplacesEmpty("beta"),
+    );
+    expect(document.body.textContent).toContain("engine is not running");
+
+    load.mockClear();
+    const retry = [...document.querySelectorAll("button")].find(
+      (one) => one.textContent === TRY_AGAIN_LABEL,
+    );
+    if (!retry) throw new Error("no retry");
+    await userEvent.click(retry);
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  // Rows kept from before a failed read are drawn — they are the only answer
+  // there is — but headed as last-known rather than as what stands now.
+  it("heads rows kept from before a failed read as unconfirmed", async () => {
+    useMarketplacesStore.setState({
+      rows: [row()],
+      read: readFailed("engine is not running"),
+    });
+    await open();
+    expect(document.body.textContent).toContain(
+      placeMarketplacesUnconfirmed("beta"),
+    );
+    expect(document.body.textContent).toContain("kit");
   });
 });

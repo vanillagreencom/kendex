@@ -16,7 +16,7 @@ export const PLACES_SUBTITLE =
  *  opens a place and carries no control over one, because what a place does
  *  with a marketplace is settled in that place. */
 export const MARKETPLACE_PLACES_HELP =
-  "These places install packages from this marketplace. Open one to see what it has and to change what it uses.";
+  "These places install packages from this marketplace. Open one to see what it has; what a place does with this marketplace is on its card on Projects.";
 
 /** A marketplace switched off in one place: nothing installed there from it
  *  runs, and nothing was deleted. Said wherever a place and a marketplace
@@ -32,6 +32,15 @@ export const placeMarketplacesHelp = (place: string): string =>
   `${place} installs packages from these marketplaces.`;
 export const placeMarketplacesEmpty = (place: string): string =>
   `${place} installs from no marketplaces yet. Subscribe to one on the Marketplaces page.`;
+/** Nothing reads a place's marketplaces until this dialog asks, so the two
+ *  states before an answer have to be told apart from an empty one: only a
+ *  read that landed may say a place installs from nothing. */
+export const placeMarketplacesReading = (place: string): string =>
+  `Reading ${place}'s marketplaces…`;
+export const placeMarketplacesUnchecked = (place: string): string =>
+  `kendex couldn't check which marketplaces ${place} installs from.`;
+export const placeMarketplacesUnconfirmed = (place: string): string =>
+  `These are the last marketplaces kendex could check for ${place}.`;
 
 export const turnOffLabel = (source: string): string =>
   `Turn off ${source} here…`;

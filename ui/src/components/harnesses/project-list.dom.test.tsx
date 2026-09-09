@@ -255,8 +255,14 @@ describe("a place card's actions", () => {
       settings: { projects: ["/work/acme"] } as never,
     });
     useMarketplacesStore.setState({ rows: [], load: vi.fn(async () => {}) });
+    useNavStore.setState({ page: "projects" });
   });
 
+  // The menu sits in the card's action slot, and the card is a whole-surface
+  // shortcut into the Library. A menu popup is a portal, so its clicks come
+  // back up the React tree through the card — a click that opened the dialog
+  // and left the page would leave the reader in the Library with the dialog
+  // unmounted, which is every item on this menu.
   it("opens that place's marketplaces from the card that names it", async () => {
     const host = mount(<ProjectList />);
     await settle();
@@ -274,6 +280,7 @@ describe("a place card's actions", () => {
     await userEvent.click(item);
     await settle();
     expect(document.body.textContent).toContain(placeMarketplacesTitle("acme"));
+    expect(useNavStore.getState().page).toBe("projects");
   });
 
   it("offers Personal its marketplaces and no tracking to stop", async () => {
