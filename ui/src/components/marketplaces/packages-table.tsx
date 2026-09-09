@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { Scope } from "@/bindings";
+import type { Catalog, Scope } from "@/bindings";
 import {
   type PackageColumns,
   type PackageEntry,

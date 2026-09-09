@@ -349,8 +349,11 @@ describe("two marketplaces of one name in the marketplace column", () => {
       readErrors: {},
     });
     const host = mount(<PackagesTab />);
+    // The Marketplace cell. The first cell is the tick a selection is made
+    // in, so every column sits one along — the same offset `nameCell` and
+    // `marketplaceCells` above account for.
     const cells = [...host.querySelectorAll("tbody tr")].map(
-      (row) => row.querySelectorAll("td")[3],
+      (row) => row.querySelectorAll("td")[4],
     );
 
     // One name, as the catalogue declares it, on both rows.
