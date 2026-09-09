@@ -94,14 +94,20 @@ cd "$ROOT" || refuse unenterable "$ROOT"
 # refusal has to open with its keyed line, and the report is what the remedy
 # points at. A run that arms prints the same report, unchanged.
 report=""
-if report="$("$INSTALLER" 2>&1)"; then
-  printf '%s\n' "$report"
-else
+check_report=""
+if ! report="$("$INSTALLER" 2>&1)"; then
   refuse_cause not-armed install "$report"
 fi
-if report="$("$INSTALLER" --check 2>&1)"; then
-  printf '%s\n' "$report"
-else
-  refuse_cause not-armed check "$report"
+# The install report is held rather than printed here: --check runs next and
+# can refuse — an installer that skipped a hook returns 0 and says so, and the
+# check is what turns that into a refusal — and a report already on the stream
+# would stand where that refusal's keyed line belongs.
+if ! check_report="$("$INSTALLER" --check 2>&1)"; then
+  cause="$check_report"
+  [ -z "$report" ] || cause="$report
+$check_report"
+  refuse_cause not-armed check "$cause"
 fi
 note armed "$ROOT"
+[ -z "$report" ] || printf '%s\n' "$report"
+[ -z "$check_report" ] || printf '%s\n' "$check_report"

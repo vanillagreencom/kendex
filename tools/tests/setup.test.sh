@@ -180,7 +180,12 @@ git -C "$E" init -q
 git -C "$E" config core.hooksPath "$E/other-hooks"
 RC=0
 OUT="$(cd "$E" && ./tools/setup 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"setup: armed="*) false ;; *"setup: not-armed="*) true ;; *) false ;; esac \
+# The installer returns 0 here and says it skipped, and --check turns that
+# into the refusal. So a successful command's report is what stands between
+# the run and its keyed line: line 1 is asserted, and the report it held is
+# asserted beneath.
+[ "$RC" -ne 0 ] && [ "$(printf '%s\n' "$OUT" | sed -n 1p)" = "setup: not-armed=check" ] \
+  && case "$OUT" in *"install-git-hooks:"*) true ;; *) false ;; esac \
   && ok "a configured hooks path stops setup instead of wiring a hook git ignores" \
   || bad "a configured hooks path stops setup instead of wiring a hook git ignores" "rc=$RC out=$OUT"
 [ ! -e "$E/.git/hooks/pre-commit" ] && [ ! -e "$E/.git/hooks/commit-msg" ] \

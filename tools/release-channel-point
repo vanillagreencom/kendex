@@ -74,13 +74,20 @@ message_text() { # KEY VALUE [EXTRA] — the English for one key, one line
 note() { # KEY VALUE [EXTRA] — the channel was left as it was, on purpose
   printf 'release-channel-point: %s=%s\n' "$1" "$2"
   printf '::notice::%s\n' "$(message_text "$@")"
+  [ -z "$held" ] || printf '%s\n' "$held"
 }
+# What the run's own tools said on their way through, held until a verdict
+# has been printed: every one of them runs before a step that can still
+# refuse, and output already on the stream would take that refusal's first
+# line. Released under the verdict, whichever it is.
+held=""
 fail() { # KEY VALUE EXTRA CAUSE — this run stops, and says what it did
   # CAUSE is the failing command's own words, captured at the call and
   # replayed under the keyed line and its annotation rather than left to
   # reach the log first: a stop's first line has to be the keyed one.
   printf 'release-channel-point: %s=%s\n' "$1" "$2"
   printf '::error::%s\n' "$(message_text "$1" "$2" "${3:-}")"
+  [ -z "$held" ] || printf '%s\n' "$held"
   [ -z "${4:-}" ] || printf '%s\n' "$4"
   exit 1
 }
@@ -148,7 +155,7 @@ elif ! download_out=$(gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY"
   why_arg="$CHANNEL"
   why_cause="$download_out"
 else
-  [ -z "$download_out" ] || printf '%s\n' "$download_out"
+  [ -z "$download_out" ] || held="$download_out"
   current=$(jq -r '.version // empty' manifest/latest.json 2>&1) || {
     why_cause="$current"
     current=""
@@ -251,8 +258,8 @@ if [ -n "$absent" ]; then
   if create_out=$(gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" --prerelease \
        --title "Pre-release channel" \
        --notes "The update manifests of the newest kendex pre-release. Nothing here is a download; each manifest names assets on the release it came from." 2>&1); then
-    : # held: nothing is replayed until the upload's outcome is known, or a
-      # failing upload would put this release URL on line 1.
+    : # held with the rest: nothing is replayed until the upload's outcome is
+      # known, or a failing upload would put this release URL on line 1.
   else
     fail create "$CHANNEL" "" "$create_out"
   fi
@@ -260,6 +267,7 @@ fi
 upload_out=""
 if upload_out=$(gh release upload "$CHANNEL" "${publishing[@]}" \
      --repo "$GITHUB_REPOSITORY" --clobber 2>&1); then
+  [ -z "$held" ] || printf '%s\n' "$held"
   [ -z "$create_out" ] || printf '%s\n' "$create_out"
   [ -z "$upload_out" ] || printf '%s\n' "$upload_out"
 else

@@ -238,6 +238,13 @@ signer_case "a signer that refuses is named, with what it said beneath it" \
 signer_case "a signer that leaves no signature is named on line 1" \
   "exit 0" \
   "signature=$DIST/kendex-x86_64-unknown-linux-gnu" "-"
+# The shipped signer prints a success report every time. Held, that report
+# belongs under whichever refusal comes after it; printed where it falls it
+# takes the refusal's first line, which is the shape this row exists for.
+SIGNER_WORKED='TAURI-STUB-SIGNED-IT'
+signer_case "a signer that worked and reported does not speak over the next refusal" \
+  "printf '%s\\n' '$SIGNER_WORKED'; exit 0" \
+  "signature=$DIST/kendex-x86_64-unknown-linux-gnu" "$SIGNER_WORKED"
 
 [[ "${TOOLS_TABLE_PROBE:-}" != 1 ]] || { echo "a probe run renders rows instead of asserting them" >&2; exit 2; }
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"

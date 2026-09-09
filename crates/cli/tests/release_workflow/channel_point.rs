@@ -29,6 +29,12 @@ pub(crate) const REPOSITORY: &str = "vanillagreencom/kendex";
 #[cfg(unix)]
 pub(crate) const GH_SENTINEL: &str = "GH-STUB-REFUSED";
 
+/// What the stubbed `gh` says on a call that WORKED. The real `gh` reports on
+/// its way through, and a report printed where it falls takes the first line
+/// of whatever refuses after it — the case a silent stub cannot reach.
+#[cfg(unix)]
+pub(crate) const GH_WORKED: &str = "GH-STUB-DOWNLOADED";
+
 /// The binary the guard runs `version-compare` on, named by reading the
 /// guard rather than by writing the name down twice: renamed on one side
 /// only, every run here would stage a file the guard never looks at and
@@ -171,6 +177,9 @@ impl Fixture {
                exit 1\n\
              fi\n\
              case \"$1 $2\" in\n\
+               \"release download\") printf '%s\\n' \"$GH_WORKED $*\" ;;\n\
+             esac\n\
+             case \"$1 $2\" in\n\
                \"release create\") mkdir -p \"$GH_CHANNEL\"; exit 0 ;;\n\
                \"release upload\")\n\
                  shift 3\n\
@@ -280,6 +289,7 @@ impl Fixture {
             .env("GH_LOG", &log)
             .env("GH_FAIL", &failing)
             .env("GH_SENTINEL", GH_SENTINEL)
+            .env("GH_WORKED", GH_WORKED)
             .env("GH_LANDED", landed.join(" "))
             .env("GH_CHANNEL", &self.published)
             .env("GITHUB_REPOSITORY", REPOSITORY)
@@ -386,10 +396,25 @@ fn a_read_it_could_not_make_stops_the_write() {
     }
 
     // A manifest that names no version is the same answer: nothing here
-    // can tell whether this tag is ahead of what is published.
+    // can tell whether this tag is ahead of what is published. It is also the
+    // case where a call that WORKED has already reported — the download says
+    // so on its way through — and that report must not take the first line
+    // from the refusal that follows it.
     let run = point_channel(Channel::Unreadable, "1.0.0-rc1", &[]);
     assert_ne!(run.code, 0, "an unreadable manifest was survivable");
     assert!(run.ran("release upload").is_none(), "{:?}", run.calls);
+    let channel = channel_step_env("CHANNEL");
+    assert_eq!(
+        run.output.lines().next().unwrap_or_default(),
+        format!("release-channel-point: manifest-version={channel}"),
+        "a successful download reported over the refusal: {}",
+        run.output
+    );
+    assert!(
+        run.output.lines().skip(1).any(|l| l.contains(GH_WORKED)),
+        "what the successful download said was not replayed: {}",
+        run.output
+    );
 }
 
 /// The ordering runs the release's own binary, so a `dist` without it is a
