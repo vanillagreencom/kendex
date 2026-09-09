@@ -30,6 +30,7 @@ export function HarnessRow({
   detectedRoot,
   version,
   counts,
+  uncounted,
   folder,
   onFolderChange,
 }: {
@@ -40,6 +41,10 @@ export function HarnessRow({
   detectedRoot: string | null;
   version: string | null;
   counts: [ItemKind, number][];
+  /** Why the counts cannot be shown, or null when they can — the badges
+   *  count packages, and the read that says which installations are one
+   *  package answers separately from the scan. */
+  uncounted?: string | null;
   /** The folder this harness was pointed at by hand, when it was. */
   folder: string;
   onFolderChange: (root: string) => void;
@@ -128,6 +133,7 @@ export function HarnessRow({
             describe={(kind, count) =>
               showKindLabel(count, kindLabel(kind, count), name)
             }
+            uncounted={uncounted}
             onKindClick={(kind) => goToLibrary({ ...place, kind })}
           />
         </div>

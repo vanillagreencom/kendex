@@ -29,6 +29,16 @@ export const unmanagedHereLabel = (count: number): string =>
 // counts beside it come from the scan and still hold, so this names the one
 // thing that failed rather than the whole card.
 export const PLACE_UNCHECKED_LABEL = "Couldn't check what's here";
+// A place's badges count packages, and until kendex knows which
+// installations are one package there is no number to show. Still checking
+// is not "nothing here" and not "couldn't check".
+export const PLACE_COUNTING_LABEL = "Still counting";
+// The Library and Home count packages, and the read that says which
+// installations are one package can fail on its own. Nothing may then be
+// counted, and rows kept from an earlier answer are last-known, not facts.
+export const PACKAGES_CHECK_FAILED_TITLE = "Couldn't check what is installed";
+export const PACKAGES_UNCONFIRMED_TITLE = "Last kendex could check";
+export const PACKAGES_UNCHECKED_DETAIL = "couldn't be checked";
 export const PLACE_UNCHECKED_TITLE = "Couldn't check this place";
 export const ALL_MANAGED_TITLE = "Everything is managed";
 export const ALL_MANAGED_BODY =

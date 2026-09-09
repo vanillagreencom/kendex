@@ -184,7 +184,7 @@ const openPage = async () => {
   });
   useNavStore.setState({
     page: "package",
-    packageRef: { kind: "skill", name: "gh", scope: VG },
+    packageRef: { kind: "skill", name: "gh", scope: VG, identity: "recorded" },
     packageView: null,
   });
   const host = mount(<PackagePage />);

@@ -3,7 +3,12 @@ import { HarnessRow } from "@/components/harnesses/harness-row";
 import { Button } from "@/components/ui/button";
 import { installedCountByKind } from "@/lib/derive";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
-import { usePackageIndex } from "@/lib/package-identity";
+import {
+  packagesUncounted,
+  usePackageIndex,
+  usePackagesKnown,
+  usePackagesRead,
+} from "@/lib/package-identity";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 
@@ -25,6 +30,10 @@ export function HarnessList() {
   const settings = useSettingsStore((s) => s.settings);
   const setHarnessRoot = useSettingsStore((s) => s.setHarnessRoot);
   const packageOf = usePackageIndex();
+  // The badges count packages and their clicks open the Library on the same
+  // narrowing, so both wait on the one read that says which installations
+  // are one package.
+  const uncounted = packagesUncounted(usePackagesKnown(), usePackagesRead());
 
   const anyDetected = ALL_HARNESSES.some((id) =>
     result?.harnesses.some((h) => h.harness === id),
@@ -74,6 +83,7 @@ export function HarnessList() {
               <HarnessRow
                 key={id}
                 place={place}
+                uncounted={uncounted}
                 detectedRoot={info?.root ?? null}
                 version={info?.version ?? null}
                 counts={[...counts.entries()]}

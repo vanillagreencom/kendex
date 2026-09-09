@@ -14,7 +14,12 @@ import {
   usePackageData,
   usePackageDiff,
 } from "@/components/package/use-package-data";
-import { groupItems, groupScopes, installationAt } from "@/lib/derive";
+import {
+  groupFor,
+  groupItems,
+  groupScopes,
+  installationAt,
+} from "@/lib/derive";
 import { packageDisplayName } from "@/lib/labels";
 import { usePackageIndex, usePackagesKnown } from "@/lib/package-identity";
 import { usePackageMark } from "@/lib/package-mark";
@@ -85,19 +90,17 @@ export function PackagePage() {
 
   const packageOf = usePackageIndex();
   const packagesKnown = usePackagesKnown();
-  // Found by the identity the link carried, not by what each tool stores
-  // this package as: the page's Files, actions and comparison all read one
-  // place's copy, and a tool that keeps a hook as a rule or a command as a
-  // skill would otherwise leave the page with nothing to show.
-  const group = useMemo(() => {
-    if (!ref || !result) return null;
-    return (
-      groupItems(result.items, packageOf).find(
-        (candidate) =>
-          candidate.kind === ref.kind && candidate.name === ref.name,
-      ) ?? null
-    );
-  }, [ref, result, packageOf]);
+  // Found by the whole identity the link carried, not by what each tool
+  // stores this package as: a tool that keeps a hook as a rule or a command
+  // as a skill would otherwise leave the page with nothing to show, and a
+  // package and an installation nothing recorded can wear one kind and name
+  // and would otherwise open each other's page — its files, chips and diff
+  // target from one of them, its meta, versions and Delete from the other.
+  const group = useMemo(
+    () =>
+      ref && result ? groupFor(groupItems(result.items, packageOf), ref) : null,
+    [ref, result, packageOf],
+  );
 
   const mutating = useManifestBusy(switching);
   const { meta, files, versions, reads, load: reload } = usePackageData(ref);

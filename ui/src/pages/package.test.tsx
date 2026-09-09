@@ -140,7 +140,7 @@ const openPage = async (
   useProvenanceStore.setState({ rows: [], loaded: true });
   useNavStore.setState({
     page: "package",
-    packageRef: { kind, name: "gh", scope: here },
+    packageRef: { kind, name: "gh", scope: here, identity: "recorded" },
     packageView,
   });
   const host = mount(<PackagePage />);
@@ -824,7 +824,12 @@ describe("the package page's safety tab", () => {
     });
     useNavStore.setState({
       page: "package",
-      packageRef: { kind: "skill", name: "gh", scope: VG },
+      packageRef: {
+        kind: "skill",
+        name: "gh",
+        scope: VG,
+        identity: "recorded",
+      },
       packageView: null,
     });
     const host = mount(<PackagePage />);

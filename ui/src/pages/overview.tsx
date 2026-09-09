@@ -13,6 +13,7 @@ import { StatTile } from "@/components/stat-tile";
 import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
 import {
+  PACKAGES_UNCHECKED_DETAIL,
   SCAN_AGAIN_LABEL,
   SCAN_FAILED_TITLE,
   SCAN_STALE_TITLE,
@@ -21,7 +22,11 @@ import { MARKETPLACES_UNCHECKED_DETAIL } from "@/lib/copy-marketplaces";
 import { groupItems, installedCount, recentItems } from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
-import { usePackageIndex, usePackagesKnown } from "@/lib/package-identity";
+import {
+  usePackageIndex,
+  usePackagesKnown,
+  usePackagesRead,
+} from "@/lib/package-identity";
 import { rescanEverything } from "@/lib/rescan";
 import { availableUpdateCount } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
@@ -87,6 +92,7 @@ export function OverviewPage() {
   // read these, and the page re-renders on six stores' writes.
   const packageOf = usePackageIndex();
   const packagesKnown = usePackagesKnown();
+  const packagesRead = usePackagesRead();
   const groups = useMemo(
     () => (result ? groupItems(result.items, packageOf) : []),
     [result, packageOf],
@@ -137,7 +143,14 @@ export function OverviewPage() {
     onUpdates: () => setPage("updates"),
     onEditedPackages: () => goToLibrary({ edited: true }),
     onPackage: (row) =>
-      goToPackage({ kind: row.kind, name: row.name, scope: row.scope }),
+      // An attention row is built from the update read, which speaks
+      // declared packages.
+      goToPackage({
+        kind: row.kind,
+        name: row.name,
+        scope: row.scope,
+        identity: "recorded",
+      }),
     onAuditRetry: () => void auditRefresh({ force: true }),
   });
 
@@ -196,13 +209,19 @@ export function OverviewPage() {
                 />
                 {/* Counted in the Library's unit — packages, not
                     installations — so the number matches the table the
-                    click lands on. */}
-                {/* Only once the join has said which observations are one
-                    package: counted before that, this would be a count of
-                    installations under a label that says packages. */}
+                    click lands on, and only once the read that says which
+                    installations are one package has answered. A number
+                    taken before it would count installations under a label
+                    that says packages; one kept from an earlier answer is
+                    last-known, and says so rather than passing as current. */}
                 <StatTile
                   label="Installed"
                   value={packagesKnown ? installedCount(groups) : null}
+                  detail={
+                    packagesRead.status === "failed"
+                      ? PACKAGES_UNCHECKED_DETAIL
+                      : undefined
+                  }
                   onClick={() => goToLibrary()}
                 />
                 <StatTile

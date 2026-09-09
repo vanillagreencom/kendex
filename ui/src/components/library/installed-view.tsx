@@ -9,6 +9,8 @@ import {
   openLibraryAt,
   useFilterHandoff,
 } from "@/components/library/use-filter-handoff";
+import { StatusNote } from "@/components/status-note";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -16,12 +18,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { TAGS_ROW_LABEL } from "@/lib/copy";
+import {
+  PACKAGES_CHECK_FAILED_TITLE,
+  PACKAGES_UNCONFIRMED_TITLE,
+  TAGS_ROW_LABEL,
+  TRY_AGAIN_LABEL,
+} from "@/lib/copy";
 import {
   filterItems,
   groupItems,
   groupScopes,
   groupsOfKind,
+  identityOf,
   installedCount,
   scopeChoices,
   selectionOf,
@@ -30,7 +38,12 @@ import { scopeNames } from "@/lib/labels";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
 import { useLibraryStandings } from "@/lib/library-standings";
-import { usePackageIndex, usePackagesKnown } from "@/lib/package-identity";
+import {
+  usePackageIndex,
+  usePackagesKnown,
+  usePackagesRead,
+  useReloadPackages,
+} from "@/lib/package-identity";
 import { everyPlace, scopeKey } from "@/lib/scope";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
@@ -79,6 +92,16 @@ export function InstalledView() {
   // Which observations are one package, from the one join that says so.
   const packageOf = usePackageIndex();
   const packagesKnown = usePackagesKnown();
+  // The read's own outcome, so a first read still on its way and one that
+  // failed are not both drawn as waiting.
+  const packagesRead = usePackagesRead();
+  const reloadPackages = useReloadPackages();
+  // The join failed and left nothing behind: there is no row to draw and no
+  // wait to draw either, so the table says what happened and offers the
+  // read again. A failure after one landed keeps its rows, headed below as
+  // last-known.
+  const packagesUnreadable =
+    !packagesKnown && packagesRead.status === "failed" ? packagesRead : null;
   // Kept in nav rather than here so leaving for a package page and coming
   // back lands on the same narrowed table.
   const search = useNavStore((s) => s.search);
@@ -124,7 +147,10 @@ export function InstalledView() {
   const { standingsFor, editedAnywhere, outOfDateAnywhere } =
     useLibraryStandings(everywhere);
   const groups = useMemo(() => {
-    if (!result) return [];
+    // No identity evidence and none retained: every row would be an
+    // installation drawn as a package, and the note above stands in its
+    // place.
+    if (!result || packagesUnreadable) return [];
     const filtered = filterItems(result.items, {
       scope,
       harness: harness === "any" ? undefined : harness,
@@ -163,28 +189,34 @@ export function InstalledView() {
     search,
     provenance,
     packageOf,
+    packagesUnreadable,
     editedAnywhere,
   ]);
 
   // The count the filtered total is measured against: every row the table
   // could show, not the ones left after the current narrowing. Shared with
   // Home's Installed tile so the two can never disagree.
-  const total = useMemo(() => installedCount(everywhere), [everywhere]);
+  const total = useMemo(
+    () => (packagesUnreadable ? null : installedCount(everywhere)),
+    [everywhere, packagesUnreadable],
+  );
   // The filter's vocabulary is what the join actually says, so a value
   // is never offered that no row carries.
   const fromOptions = useMemo(
     () => [...new Set(provenance.map((row) => originLabel(row.origin)))].sort(),
     [provenance],
   );
-  // Nothing has been counted yet — distinct from "counted, found nothing".
-  // The join is waited on with the scan: until it lands nothing knows
-  // which observations are one package, and a total taken then would count
-  // installations. Narrowed to edited packages, the count also waits on
-  // the updates read that says which are edited.
+  // Nothing has been counted yet — distinct from "counted, found nothing"
+  // and from "counting failed". The join is waited on with the scan: until
+  // it answers nothing knows which observations are one package, and a
+  // total taken then would count installations. Narrowed to edited
+  // packages, the count also waits on the updates read that says which are
+  // edited.
   const scanning =
-    result === null ||
-    !packagesKnown ||
-    (edited === "edited" && editedAnywhere === null);
+    packagesUnreadable === null &&
+    (result === null ||
+      !packagesKnown ||
+      (edited === "edited" && editedAnywhere === null));
   const hasAnyItems = (result?.items.length ?? 0) > 0;
   const filters: FilterSelection = { kind, harness, tag, from, edited };
   const filtered = isNarrowed({ filters, search, scope });
@@ -237,6 +269,36 @@ export function InstalledView() {
         onClear={clearFilters}
       />
       <div className={cn("flex min-h-0 flex-1 flex-col pt-6", PAGE_GUTTER)}>
+        {/* The read that says which installations are one package failed.
+            With nothing kept from an earlier answer there is no table to
+            draw, so the page says so and offers the read again rather than
+            holding a skeleton nothing will ever replace. With rows kept,
+            they stay — headed as the last answer that landed, not as
+            confirmed ones. Neither reading turns unavailable evidence into
+            a claim that a package is managed or that it is not. */}
+        {packagesRead.status === "failed" ? (
+          <div className={cn("pb-4", WIDE_CONTENT_WIDTH)}>
+            <StatusNote
+              tone={packagesUnreadable ? "critical" : "warning"}
+              title={
+                packagesUnreadable
+                  ? PACKAGES_CHECK_FAILED_TITLE
+                  : PACKAGES_UNCONFIRMED_TITLE
+              }
+              action={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void reloadPackages()}
+                >
+                  {TRY_AGAIN_LABEL}
+                </Button>
+              }
+            >
+              {packagesRead.error}
+            </StatusNote>
+          </div>
+        ) : null}
         <div className={cn("flex min-h-0 flex-1", WIDE_CONTENT_WIDTH)}>
           <div
             ref={scroller}
@@ -291,6 +353,7 @@ export function InstalledView() {
                           kind: group.kind,
                           name: group.name,
                           scope: where,
+                          identity: identityOf(group),
                         });
                       }}
                       onOpenHarness={(harness) => narrowTo({ harness })}
@@ -314,7 +377,7 @@ export function InstalledView() {
                   );
                 })}
                 {scanning ? <InstalledSkeleton /> : null}
-                {!scanning && groups.length === 0 ? (
+                {!scanning && !packagesUnreadable && groups.length === 0 ? (
                   <TableEmptyRow
                     hasAnyItems={hasAnyItems}
                     place={placeName}

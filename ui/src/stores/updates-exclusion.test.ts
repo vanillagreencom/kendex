@@ -57,7 +57,12 @@ const park = () => {
  *  a component, under a spinner of its own the store cannot see. */
 const fromPackagePage = () =>
   packageVersionActions(
-    { scope: { scope: "global" }, kind: "skill", name: "gh" },
+    {
+      scope: { scope: "global" },
+      kind: "skill",
+      name: "gh",
+      identity: "recorded",
+    },
     "gh",
     false,
     () => {},

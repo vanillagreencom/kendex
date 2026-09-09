@@ -36,7 +36,12 @@ import {
 } from "@/lib/derive";
 import { scopeNames } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
-import { usePackageIndex } from "@/lib/package-identity";
+import {
+  packagesUncounted,
+  usePackageIndex,
+  usePackagesKnown,
+  usePackagesRead,
+} from "@/lib/package-identity";
 import { everyPlace, sameScope } from "@/lib/scope";
 import { sessionNoteState } from "@/lib/session-note";
 import { availableUpdatesIn, outOfDateIn } from "@/lib/update-groups";
@@ -234,6 +239,10 @@ export function ProjectList() {
   const flagged = useCommitOfferStore((s) => s.flagged);
   const items = result?.items ?? [];
   const packageOf = usePackageIndex();
+  // The badges count packages and their clicks open the Library on the same
+  // narrowing, so both wait on the one read that says which installations
+  // are one package.
+  const uncounted = packagesUncounted(usePackagesKnown(), usePackagesRead());
   const projects = settings?.projects ?? [];
   // What a place is called where it is named ALONE, away from its card: a
   // card's menu opens dialogs that say which place's files an action
@@ -267,6 +276,7 @@ export function ProjectList() {
           counts={[
             ...installedCountByKind(items, personal, packageOf).entries(),
           ]}
+          uncounted={uncounted}
           emptyLabel="Nothing from kendex yet."
           onOpen={() => goToLibrary(personal)}
           onKindClick={(kind) => goToLibrary({ ...personal, kind })}
@@ -303,6 +313,7 @@ export function ProjectList() {
                 counts={[
                   ...installedCountByKind(items, place, packageOf).entries(),
                 ]}
+                uncounted={uncounted}
                 emptyLabel="Nothing from kendex yet."
                 badge={badgeFor(root, result?.missingProjects ?? [], flagged)}
                 onOpen={() => goToLibrary(place)}

@@ -7,6 +7,11 @@ import { openLibraryAt } from "@/components/library/use-filter-handoff";
 import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
 import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
 import {
+  PACKAGES_CHECK_FAILED_TITLE,
+  PACKAGES_UNCONFIRMED_TITLE,
+  TRY_AGAIN_LABEL,
+} from "@/lib/copy";
+import {
   READ_LANDED,
   READ_PENDING,
   type ReadState,
@@ -625,8 +630,95 @@ describe("one package several tools store differently", () => {
     expect(host.textContent).toContain("2 items");
     const names = [...host.querySelectorAll("tbody tr td:first-child button")];
     (names[1] as HTMLButtonElement).click();
+    // ...and the row nothing recorded opens as itself.
+    (names[0] as HTMLButtonElement).click();
+    // The link states which of the two things wearing this kind and name
+    // it meant, so the page cannot open the other one.
     expect(opened).toEqual([
-      { kind: "hook", name: "block-bare-cd", scope: VG },
+      { kind: "hook", name: "block-bare-cd", scope: VG, identity: "recorded" },
+      {
+        kind: "agent",
+        name: "safety-block-argv-kill",
+        scope: VG,
+        identity: "observed",
+      },
     ]);
+  });
+});
+
+// The read that says which installations are one package answers on its own.
+// A first read still on its way, a read that failed with nothing kept, and a
+// read that failed over rows it had are three answers, and only the last has
+// anything to draw.
+describe("the Library while the identity read has not answered", () => {
+  const items = [installed(VG)];
+
+  const arrange = (provenance: {
+    rows: never[];
+    loaded: boolean;
+    read: ReadState;
+    reload?: () => Promise<void>;
+  }) => {
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED });
+    useProvenanceStore.setState(provenance as never);
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items,
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    useLibraryViewStore.setState({ ...NO_FILTERS });
+    useNavStore.setState({ libraryScope: "all", search: "" });
+    return mount(<InstalledView />);
+  };
+
+  const skeleton = (host: HTMLElement) =>
+    host.querySelector('[data-slot="skeleton"]') !== null;
+  const rows = (host: HTMLElement) => host.querySelectorAll("tbody tr").length;
+
+  it("waits while the first read is on its way", () => {
+    const host = arrange({ rows: [], loaded: false, read: READ_PENDING });
+    expect(skeleton(host)).toBe(true);
+    expect(host.textContent).not.toContain(PACKAGES_CHECK_FAILED_TITLE);
+  });
+
+  // A skeleton here would say "still checking" for the rest of the session:
+  // nothing re-triggers the read but another scan.
+  it("says the read failed, offers it again, and counts nothing", () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    const host = arrange({
+      rows: [],
+      loaded: false,
+      read: readFailed("no lock"),
+      reload,
+    });
+    expect(skeleton(host)).toBe(false);
+    expect(host.textContent).toContain(PACKAGES_CHECK_FAILED_TITLE);
+    expect(host.textContent).toContain("no lock");
+    // Not one row: every row drawn now would be an installation under a
+    // heading that says package.
+    expect(rows(host)).toBe(0);
+    expect(host.textContent).toContain("—");
+    const retry = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === TRY_AGAIN_LABEL,
+    );
+    if (!retry) throw new Error("no Try again button");
+    retry.click();
+    expect(reload).toHaveBeenCalled();
+  });
+
+  it("keeps the last answer it had, headed as unconfirmed", () => {
+    const host = arrange({
+      rows: [],
+      loaded: true,
+      read: readFailed("no lock"),
+    });
+    expect(rows(host)).toBe(1);
+    expect(host.textContent).toContain(PACKAGES_UNCONFIRMED_TITLE);
+    expect(host.textContent).not.toContain(PACKAGES_CHECK_FAILED_TITLE);
   });
 });

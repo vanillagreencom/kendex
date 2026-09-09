@@ -4,6 +4,7 @@ import { KINDS } from "@/lib/labels";
 import type { PackageOf } from "@/lib/package-identity";
 import {
   filterItems,
+  groupFor,
   groupItems,
   groupScopes,
   groupsOfKind,
@@ -120,6 +121,34 @@ describe("filterItems by where it lives", () => {
   });
 });
 
+// The table applies no sort of its own, so the order groupItems hands back
+// is the order on screen: its type column, then its name. Whether a row is a
+// package the records account for is identity, not an order a reader can
+// see.
+describe("groupItems order", () => {
+  it("orders by the columns shown, not by the identity behind them", () => {
+    const rows = groupItems(
+      [
+        item({ kind: "skill", name: "alpha" }),
+        item({ kind: "agent", name: "bravo" }),
+        item({ kind: "agent", name: "alpha" }),
+      ],
+      // The one row the records account for sorts FIRST by the columns on
+      // screen and LAST under a key-ordered sort, so the two orders cannot
+      // both pass.
+      (one) =>
+        one.kind === "agent" && one.name === "alpha"
+          ? { kind: "agent", name: "alpha" }
+          : null,
+    );
+    expect(rows.map((row) => `${row.kind}:${row.name}`)).toEqual([
+      "agent:alpha",
+      "agent:bravo",
+      "skill:alpha",
+    ]);
+  });
+});
+
 // Which kind a package is belongs to the package, not to the file a tool
 // happens to keep it in — so the narrowing is taken of the grouped row.
 describe("groupsOfKind", () => {
@@ -233,6 +262,78 @@ describe("groupItems by package identity", () => {
         "hook",
       ),
     ).toBe(1);
+  });
+});
+
+// Two things can wear one kind and name: a package the records account for,
+// and an installation nothing recorded. Their files, tools and comparison
+// come from one and their versions, update note and Delete from the other,
+// so a link that opened the wrong one would describe one and act on the
+// other.
+describe("groupFor", () => {
+  const managed = item({
+    kind: "skill",
+    name: "gh",
+    harness: "claude",
+    path: "/p/.claude/skills/gh",
+    scope: { scope: "project", root: "/p" },
+  });
+  const mine = item({
+    kind: "skill",
+    name: "gh",
+    harness: "cursor",
+    path: "/p/.cursor/skills/gh",
+    scope: { scope: "project", root: "/p" },
+  });
+  const elsewhere = item({
+    kind: "skill",
+    name: "gh",
+    harness: "cursor",
+    path: "/other/.cursor/skills/gh",
+    scope: { scope: "project", root: "/other" },
+  });
+  const recordedOnly: PackageOf = (one) =>
+    one.harness === "claude" ? { kind: "skill", name: "gh" } : null;
+  const gh = { kind: "skill" as const, name: "gh" };
+
+  it("opens the one the link named, in the same place and in another", () => {
+    const rows = [
+      { name: "same place", items: [managed, mine] },
+      { name: "different places", items: [managed, elsewhere] },
+    ] as const;
+    expect(rows.length, "same-name identity table is empty").toBeGreaterThan(0);
+    for (const row of rows) {
+      const groups = groupItems([...row.items], recordedOnly);
+      expect(
+        groupFor(groups, { ...gh, identity: "recorded" })?.installations.map(
+          (one) => one.harness,
+        ),
+        row.name,
+      ).toEqual(["claude"]);
+      expect(
+        groupFor(groups, { ...gh, identity: "observed" })?.installations.map(
+          (one) => one.harness,
+        ),
+        row.name,
+      ).toEqual(["cursor"]);
+    }
+  });
+
+  it("opens the only thing wearing that name whichever it is", () => {
+    const only = groupItems([mine], recordedOnly);
+    expect(groupFor(only, { ...gh, identity: "recorded" })).toBe(only[0]);
+    const one = groupItems([managed], recordedOnly);
+    expect(groupFor(one, { ...gh, identity: "observed" })).toBe(one[0]);
+  });
+
+  it("opens nothing it was not asked for", () => {
+    const groups = groupItems([managed, mine], recordedOnly);
+    expect(
+      groupFor(groups, { kind: "agent", name: "gh", identity: "recorded" }),
+    ).toBeNull();
+    expect(groupFor(groups, { ...gh, identity: "recorded" })?.package).toEqual(
+      gh,
+    );
   });
 });
 

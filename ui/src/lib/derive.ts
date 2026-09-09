@@ -175,7 +175,47 @@ export function groupItems(
       .filter((t): t is number => t != null);
     group.modifiedAt = times.length > 0 ? Math.max(...times) : null;
   }
-  return [...groups.values()].sort((a, b) => a.key.localeCompare(b.key));
+  // Ordered by what the table shows — its type column, then its name — so
+  // rows of one type stay adjacent. Whether a row is a package the records
+  // account for is identity, not an order a reader can see, so the key only
+  // settles two rows the displayed columns cannot.
+  return [...groups.values()].sort(
+    (a, b) =>
+      a.kind.localeCompare(b.kind) ||
+      a.name.localeCompare(b.name) ||
+      a.key.localeCompare(b.key),
+  );
+}
+
+/** Which of the two things a row can be. A package the records account for
+ *  and an installation nothing recorded can wear the same kind and name and
+ *  are not the same thing, so every link to a row states which it meant
+ *  rather than leaving the page to pick. */
+export type PackageIdentity = "recorded" | "observed";
+
+export const identityOf = (group: ItemGroup): PackageIdentity =>
+  group.package ? "recorded" : "observed";
+
+/** The row a link opens, out of the rows on this machine.
+ *
+ *  What the link stated is what opens. Where only one thing wears this kind
+ *  and name there is nothing to tell apart, so it opens whichever it is —
+ *  which also keeps a link made before the identity read answered landing
+ *  on the package it named instead of bouncing back. Where two do, neither
+ *  may stand in for the other: their files, tools and comparison come from
+ *  one and their versions, update note and Delete from the other, so
+ *  nothing opens without the link's own answer. */
+export function groupFor(
+  groups: ItemGroup[],
+  ref: { kind: ItemKind; name: string; identity: PackageIdentity },
+): ItemGroup | null {
+  const named = groups.filter(
+    (group) => group.kind === ref.kind && group.name === ref.name,
+  );
+  return (
+    named.find((group) => identityOf(group) === ref.identity) ??
+    (named.length === 1 ? named[0] : null)
+  );
 }
 
 /** How many packages a grouped scan holds — one per kind+name group, the
@@ -220,8 +260,8 @@ export function installedCountByKind(
   }
   // Handed back in the app's kind order, not the grouping's: the badges sit
   // beside the Library's own kind filter, and a reader must meet one order.
-  // `groupItems` sorts on the group key, which puts kinds in the wire order
-  // {@link KINDS} exists to keep off screen.
+  // `groupItems` orders by kind, which is the wire order {@link KINDS}
+  // exists to keep off screen.
   const counts = new Map<ItemKind, number>();
   for (const kind of KINDS) {
     const count = tally.get(kind);

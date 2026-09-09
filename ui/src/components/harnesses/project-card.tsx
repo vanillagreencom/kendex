@@ -27,6 +27,7 @@ export function ProjectCard({
   subtitle,
   path,
   counts,
+  uncounted,
   onOpen,
   onKindClick,
   emptyLabel,
@@ -50,6 +51,10 @@ export function ProjectCard({
    * label says to name one card apart from another. */
   path?: string;
   counts: [ItemKind, number][];
+  /** Why the counts cannot be shown, or null when they can — the badges
+   * count packages, and the read that says which installations are one
+   * package answers separately from the scan. */
+  uncounted?: string | null;
   /** Show everything installed here — what the project's name is a button
    * for. A count badge narrows to one kind, and nothing else on the card
    * asks for everything without picking a kind first. */
@@ -154,6 +159,7 @@ export function ProjectCard({
             ) : (
               <KindCountBadges
                 counts={counts}
+                uncounted={uncounted}
                 onKindClick={onKindClick}
                 emptyLabel={emptyLabel}
                 emptyClassName="text-[13px] text-muted-foreground"

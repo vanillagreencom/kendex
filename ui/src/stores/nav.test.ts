@@ -25,6 +25,7 @@ describe("nav store", () => {
     kind: "skill" as const,
     name: "gh",
     scope: { scope: "global" as const },
+    identity: "recorded" as const,
   };
 
   it("opens a package, remembers it through back, and clears on a direct pick", () => {

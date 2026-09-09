@@ -3,8 +3,9 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ObservedItem, ScanResult, Scope } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
+import { PLACE_COUNTING_LABEL, PLACE_UNCHECKED_LABEL } from "@/lib/copy";
 import { kindLabel } from "@/lib/labels";
-import { READ_LANDED } from "@/lib/read-state";
+import { READ_LANDED, READ_PENDING, readFailed } from "@/lib/read-state";
 import { useEditorStore } from "@/stores/editor";
 import { useLibraryViewStore } from "@/stores/library-view";
 import { useNavStore } from "@/stores/nav";
@@ -57,15 +58,27 @@ const SKILL_BADGE = new RegExp(
   `^(\\d+) (${kindLabel("skill", 1)}|${kindLabel("skill", 2)})$`,
 );
 
-/** The skills badge on the row for one harness. */
-function skillBadge(host: HTMLElement, harness: string): HTMLButtonElement {
+/** The skills badge on the row for one harness, or null where the row draws
+ *  none. One place finds it, so what a test says is missing is what another
+ *  says is there. */
+function findSkillBadge(
+  host: HTMLElement,
+  harness: string,
+): HTMLButtonElement | null {
   const row = [...host.querySelectorAll<HTMLElement>("div.group")].find((el) =>
     el.textContent?.startsWith(harness),
   );
   if (!row) throw new Error(`no row for ${harness}`);
-  const badge = [...row.querySelectorAll<HTMLButtonElement>("button")].find(
-    (b) => SKILL_BADGE.test(b.textContent ?? ""),
+  return (
+    [...row.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      SKILL_BADGE.test(b.textContent ?? ""),
+    ) ?? null
   );
+}
+
+/** The skills badge on the row for one harness. */
+function skillBadge(host: HTMLElement, harness: string): HTMLButtonElement {
+  const badge = findSkillBadge(host, harness);
   if (!badge) throw new Error(`no skills badge on the ${harness} row`);
   return badge;
 }
@@ -115,5 +128,40 @@ describe("a harness row's kind badge", () => {
       kind: "skill",
     });
     expect(badge).toBe(destinationRows());
+  });
+});
+
+// A badge counts packages and its click opens the Library on the same
+// narrowing. Until the read that says which installations are one package
+// answers, there is no number: counted anyway, a hook installed for several
+// tools reads as several entries under whichever kinds its files happen to
+// be, and the click lands on a shorter, differently-kinded list.
+describe("a harness row's badges before the identity read answers", () => {
+  const rows = [
+    {
+      name: "still on its way",
+      provenance: { rows: [], loaded: false, read: READ_PENDING },
+      said: PLACE_COUNTING_LABEL,
+      absent: PLACE_UNCHECKED_LABEL,
+    },
+    {
+      name: "failed with nothing kept",
+      provenance: { rows: [], loaded: false, read: readFailed("no lock") },
+      said: PLACE_UNCHECKED_LABEL,
+      absent: PLACE_COUNTING_LABEL,
+    },
+  ];
+
+  it("says why there is no count, and which of the two it is", () => {
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      useProvenanceStore.setState(row.provenance);
+      const host = mount(<HarnessList />);
+      expect(host.textContent, row.name).toContain(row.said);
+      expect(host.textContent, row.name).not.toContain(row.absent);
+      // No badge at all where a package count would be: not a count of
+      // installations under a package's label, and not a zero either.
+      expect(findSkillBadge(host, "Claude Code"), row.name).toBeNull();
+    }
   });
 });
