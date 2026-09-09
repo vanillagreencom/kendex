@@ -258,7 +258,8 @@ run_writer() {
   case "$mode" in
     single) ids=(PR_NUMBER=7 HEAD_SHA=headsha PR_AUTHOR=pr-author) ;;
     nohead) unset=(-u HEAD_SHA); ids=(PR_NUMBER=7) ;;
-    norepo) unset=(-u PR_NUMBER -u HEAD_SHA -u PR_AUTHOR -u GH_REPO); repo=() ;;
+    norepo) unset=(-u PR_NUMBER -u HEAD_SHA -u PR_AUTHOR -u GH_REPO)
+            ids=(EVENT_NAME=pull_request_target); repo=() ;;
     all:*)  unset=(-u PR_NUMBER -u HEAD_SHA -u PR_AUTHOR); ids=("EVENT_NAME=${mode#all:}")
             # A converge-all pass forks the writer once per PR; the bound is
             # what turns a hang there into a red rather than a stuck shard.
