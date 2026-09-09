@@ -1,1 +1,1 @@
-- The commit dialog says when it could not read a file, instead of drawing it as one the commit deletes, and it never reads a file through a folder that has been replaced by a link.
+- The commit dialog says when it could not read a file rather than drawing it as one the commit deletes, and it opens a file in a project with no commit yet.

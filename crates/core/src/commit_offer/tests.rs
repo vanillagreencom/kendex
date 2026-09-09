@@ -154,6 +154,21 @@ impl Repo {
         repo
     }
 
+    /// A repository with no commit in it — the state a first kendex write
+    /// in a fresh `git init` meets, where `HEAD` names nothing.
+    fn empty() -> Repo {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("site");
+        fs::create_dir_all(&root).unwrap();
+        let repo = Repo { _tmp: tmp, root };
+        repo.git(&["init", "--quiet", "-b", "main"]);
+        repo.git(&["config", "user.email", "t@t"]);
+        repo.git(&["config", "user.name", "t"]);
+        repo.git(&["config", "commit.gpgsign", "false"]);
+        repo.git(&["config", "core.hooksPath", ".git/hooks"]);
+        repo
+    }
+
     fn git(&self, args: &[&str]) -> String {
         let output = Hardened::git(args, Some(&self.root)).run().unwrap();
         assert!(
@@ -1026,4 +1041,56 @@ fn a_link_above_the_file_takes_the_read_out_of_the_project_and_is_refused() {
         !said.contains("SECRET-FROM-OUTSIDE"),
         "bytes from outside the project reached the window"
     );
+}
+
+/// A first kendex write in a fresh `git init` is a state the offer
+/// supports: `HEAD` names nothing, so every covered path is one this
+/// change adds. Every call that names `HEAD` asks whether there is one
+/// first, or opening a file there would answer with git's refusal instead
+/// of the file.
+#[test]
+fn the_first_commit_in_a_fresh_repository_reads_as_files_being_added() {
+    let repo = Repo::empty();
+    repo.write(OWNED[0], "one\n");
+    let generated = repo.generated(&[OWNED[0]], &[]);
+    let found = repo.scan(&generated).unwrap();
+    assert_eq!(found.count(), 1, "the write left the offer's set");
+
+    let added = shown(&found, OWNED[0]);
+    assert_eq!(
+        added.diff.files[0].status,
+        crate::package::diff::FileStatus::Added
+    );
+    assert_eq!(hunk_text(&added.diff), ["+one"]);
+    assert_eq!(added.mode, None, "a file arriving is not a mode change");
+}
+
+/// A package update can replace the file `foo` with the folder `foo/bar`,
+/// and the scan offers both. Neither side may read a directory as a file:
+/// `foo` is the removal it is, and `foo/bar` the addition it is, so both
+/// halves of the replacement can be opened.
+#[test]
+fn a_file_replaced_by_a_folder_of_the_same_name_shows_both_halves() {
+    const WAS_FILE: &str = ".claude/skills/dev";
+    const NOW_INSIDE: &str = ".claude/skills/dev/SKILL.md";
+    let repo = Repo::new(&[(WAS_FILE, "the whole skill\n")]);
+    fs::remove_file(repo.root.join(WAS_FILE)).unwrap();
+    repo.write(NOW_INSIDE, "the skill's body\n");
+    let generated = repo.generated(&[WAS_FILE, NOW_INSIDE], &[]);
+    let found = repo.scan(&generated).unwrap();
+
+    let gone = shown(&found, WAS_FILE);
+    assert_eq!(
+        gone.diff.files[0].status,
+        crate::package::diff::FileStatus::Removed,
+        "the folder standing where the file was read as something else"
+    );
+    assert_eq!(hunk_text(&gone.diff), ["-the whole skill"]);
+
+    let arrived = shown(&found, NOW_INSIDE);
+    assert_eq!(
+        arrived.diff.files[0].status,
+        crate::package::diff::FileStatus::Added
+    );
+    assert_eq!(hunk_text(&arrived.diff), ["+the skill's body"]);
 }

@@ -70,8 +70,15 @@ pub fn file_changes(scan: &Scan, path: &str) -> Result<Changes, Failed> {
     if !scan.owned.iter().any(|owned| owned.path == path) {
         return Ok(Changes::NotOffered);
     }
+    // Read once, and every call that names `HEAD` asks it first: in a
+    // repository whose first commit this would be, `HEAD` names nothing
+    // and `git diff HEAD` and `git ls-tree HEAD` each refuse. That is the
+    // state a first kendex write in a fresh `git init` reaches, and the
+    // offer supports it, so it must read as a file being added rather than
+    // as a step that failed.
+    let born = git::previous_head(&scan.root)?.is_some();
     let mut before = Tree::new();
-    if let Some(bytes) = committed(&scan.root, path)? {
+    if let Some(bytes) = committed(&scan.root, path, born)? {
         before.insert(path.to_owned(), bytes);
     }
     let mut after = Tree::new();
@@ -80,7 +87,10 @@ pub fn file_changes(scan: &Scan, path: &str) -> Result<Changes, Failed> {
     }
     Ok(Changes::Shown(Changed {
         diff: diff_trees(&before, &after),
-        mode: mode_change(&scan.root, path)?,
+        mode: match born {
+            true => mode_change(&scan.root, path)?,
+            false => None,
+        },
     }))
 }
 
@@ -117,8 +127,9 @@ fn mode_change(root: &Path, path: &str) -> Result<Option<ModeChange>, Failed> {
     }))
 }
 
-/// What `HEAD` holds at this path, or `None` where it holds nothing — a
-/// file this change adds, or a repository with no commit yet.
+/// What `HEAD` holds as a file at this path, or `None` where it holds no
+/// file there — one this change adds, one it replaced with a directory, or
+/// a repository with no commit yet.
 ///
 /// Whether `HEAD` holds the path is asked before it is read, because the
 /// read cannot answer it: `git show HEAD:./<missing>` and a `git show` over
@@ -127,19 +138,32 @@ fn mode_change(root: &Path, path: &str) -> Result<Option<ModeChange>, Failed> {
 /// being added. `ls-tree` answers the question it was asked — it exits 0
 /// and prints nothing for a path `HEAD` does not hold — so a non-zero exit
 /// from either call is git failing, and travels as the failure it is.
-fn committed(root: &Path, path: &str) -> Result<Option<Vec<u8>>, Failed> {
-    // Nothing is committed yet, so `HEAD` names no tree to ask about and
-    // every covered path is one this change adds.
-    if git::previous_head(root)?.is_none() {
+///
+/// It answers what kind of thing is there, too. `HEAD:./<dir>` is a
+/// directory listing, not a file, and rendering one as the before side
+/// would put git's own inventory of a folder on screen as though the
+/// commit were rewriting it.
+fn committed(root: &Path, path: &str, born: bool) -> Result<Option<Vec<u8>>, Failed> {
+    if !born {
         return Ok(None);
     }
-    let listed = git::read_required(root, &["ls-tree", "--name-only", "HEAD", "--", path])?;
-    if listed.is_empty() {
+    let listed = git::read_required(root, &["ls-tree", "HEAD", "--", path])?;
+    let text = String::from_utf8_lossy(&listed);
+    let Some(kind) = text.lines().next().and_then(entry_kind) else {
+        return Ok(None);
+    };
+    if kind != "blob" {
         return Ok(None);
     }
     // The revision spec always opens with `HEAD:`, so a path that starts
     // with a hyphen cannot reach git as an option.
     git::read_required(root, &["show", &format!("HEAD:./{path}")]).map(Some)
+}
+
+/// The kind field of one `ls-tree` entry — `blob`, `tree`, `commit` — from
+/// its `<mode> <kind> <oid>\t<path>` shape.
+fn entry_kind(entry: &str) -> Option<&str> {
+    entry.split_whitespace().nth(1)
 }
 
 /// What the working tree holds at this path, or `None` where it holds
@@ -159,6 +183,11 @@ fn committed(root: &Path, path: &str) -> Result<Option<Vec<u8>>, Failed> {
 /// the leaf refuses the read outright: the path the offer named no longer
 /// names a file inside this project, and no bytes from outside it may
 /// reach the window.
+///
+/// A directory at the leaf is no file, so this side holds nothing: an
+/// update that replaces the file `foo` with the folder `foo/bar` puts both
+/// in the scan, and `foo` has to read as the removal it is rather than as
+/// a read that failed.
 fn working(root: &Path, path: &str) -> Result<Option<Vec<u8>>, Failed> {
     let whole = root.join(path);
     if let Some(link) = ancestor_link(root, path)? {
@@ -173,6 +202,9 @@ fn working(root: &Path, path: &str) -> Result<Option<Vec<u8>>, Failed> {
     if kind.is_symlink() {
         let target = std::fs::read_link(&whole).map_err(|error| io_refused(&whole, &error))?;
         return Ok(Some(crate::paths::slashed(&target).into_bytes()));
+    }
+    if kind.is_dir() {
+        return Ok(None);
     }
     absent_or(std::fs::read(&whole), &whole)
 }
