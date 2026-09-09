@@ -40,6 +40,7 @@ import type { LibraryFilter } from "@/stores/nav-types";
 import {
   originFor,
   originLabel,
+  provenanceFor,
   useProvenanceStore,
 } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
@@ -229,12 +230,23 @@ export function InstalledView() {
               <TableBody>
                 {groups.map((group) => {
                   const primary = group.installations[0];
-                  const origin = originFor(
+                  // The origin and the place that recorded it, read as one
+                  // row: a marketplace source is an alias declared at a
+                  // place, so pairing this row's alias with another place's
+                  // scope can address a subscription that exists at neither.
+                  const record = provenanceFor(
                     provenance,
                     group.kind,
                     group.name,
                     groupScopes(group),
                   );
+                  const origin = record?.origin ?? null;
+                  // The pair a marketplace is addressed by, taken from the
+                  // one row: the alias, and the place that declared it.
+                  const from =
+                    record && record.origin.origin === "marketplace"
+                      ? { scope: record.scope, source: record.origin.source }
+                      : null;
                   return (
                     <InstalledRow
                       key={group.key}
@@ -257,16 +269,16 @@ export function InstalledView() {
                       onOpenPlace={(where) =>
                         narrowTo({ scope: selectionOf(where) })
                       }
-                      // Only a marketplace has a page to open. A package
+                      // Only a marketplace has a page to open: a package
                       // the reader wrote, and one nothing manages, name
-                      // no marketplace — and a subscription is addressed
-                      // by the place that declares it, so a row with no
-                      // installation has nothing to address it with.
+                      // none. The subscription is addressed with the same
+                      // row's own scope, which is the place that declared
+                      // the alias.
                       onOpenFrom={
-                        origin?.origin === "marketplace" && primary
+                        from
                           ? () =>
                               goToMarketplace(
-                                subscription(primary.scope, origin.source),
+                                subscription(from.scope, from.source),
                               )
                           : undefined
                       }

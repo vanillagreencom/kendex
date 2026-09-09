@@ -20,13 +20,14 @@ import {
   updateReviewOneTitle,
 } from "@/lib/copy-updates";
 import { READ_LANDED } from "@/lib/read-state";
+import { groupUpdates } from "@/lib/update-groups";
 import { UpdatesPage } from "@/pages/updates";
 import { useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
 import { mount, settle } from "@/test/dom";
-import { UpdatesTable } from "./updates-table";
+import { PackageRows, UpdatesTable } from "./updates-table";
 import { updateRow as row } from "./updates-test-rows";
 
 vi.mock("@/bindings", async (importOriginal) => ({
@@ -528,6 +529,48 @@ describe("the place on an updates row", () => {
     expect(nav.page).toBe("library");
     expect(nav.libraryFilter).toEqual({ scope: "global" });
     expect(nav.packageRef).toBeNull();
+  });
+});
+
+// A grouped package expands into a row per place. Each names a place, so
+// each opens that place — not only its Where cell.
+describe("an expanded place row on the updates table", () => {
+  it("opens that place from the row, by pointer and by Enter", async () => {
+    const methods = ["pointer", "keyboard"] as const;
+    expect(methods).toHaveLength(2);
+    for (const method of methods) {
+      useNavStore.setState({
+        page: "updates",
+        libraryFilter: null,
+        packageRef: null,
+      });
+      const host = mount(
+        <tbody>
+          <PackageRows
+            group={groupUpdates([row("gh", null), row("gh", "/work/vg")])[0]}
+            defaultOpen
+          />
+        </tbody>,
+        { host: "table" },
+      );
+      // The package's own row, then one row per place: personal, then the
+      // project.
+      const placeRow = host.querySelectorAll("tr")[2];
+      if (!(placeRow instanceof HTMLElement)) throw new Error("no place row");
+      expect(placeRow.getAttribute("tabindex")).toBe("0");
+      if (method === "pointer") await userEvent.click(placeRow);
+      else {
+        act(() => placeRow.focus());
+        await userEvent.keyboard("{Enter}");
+      }
+      const nav = useNavStore.getState();
+      expect(nav.page, method).toBe("library");
+      expect(nav.libraryFilter, method).toEqual({
+        scope: { project: "/work/vg" },
+      });
+      // The place, not the package: those are different destinations.
+      expect(nav.packageRef, method).toBeNull();
+    }
   });
 });
 

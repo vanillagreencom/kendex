@@ -106,11 +106,11 @@ export function PackageRow({
     want(catalog, row.kind, row.name);
   }, [want, catalog, row.kind, row.name]);
 
+  const openPackage = () =>
+    goToAvailablePackage({ catalog, kind: row.kind, name: row.name });
   // The whole row opens the package, for the pointer and the keyboard
   // alike; Install stays a control of its own inside it.
-  const open = opensOnActivate(() =>
-    goToAvailablePackage({ catalog, kind: row.kind, name: row.name }),
-  );
+  const open = opensOnActivate(openPackage);
 
   const updated = row.updatedAt ? Date.parse(row.updatedAt) : Number.NaN;
   return (
@@ -123,9 +123,16 @@ export function PackageRow({
         <div className="flex min-w-0 items-center gap-2.5">
           <Icon className="size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
-            <div className="truncate font-medium">
+            {/* What a screen reader is told opens the package. The row
+                opens too, but a row announces its cells rather than an
+                action, so the name stays a real control. */}
+            <button
+              type="button"
+              onClick={openPackage}
+              className="block max-w-full truncate text-left font-medium hover:underline"
+            >
               {packageDisplayName(row)}
-            </div>
+            </button>
             {row.summary ? (
               <div className="truncate text-xs text-muted-foreground">
                 {row.summary}

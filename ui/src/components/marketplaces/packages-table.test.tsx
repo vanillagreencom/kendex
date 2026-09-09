@@ -276,6 +276,22 @@ describe("reading the safety dot", () => {
     });
   });
 
+  // A row announces its cells rather than an action, so the name is a real
+  // control of its own — what a screen reader is told opens the package.
+  it("opens the package page from the name itself", async () => {
+    const { host, goToAvailablePackage } = mount(scored(60, [FINDING]));
+    const name = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "gh",
+    );
+    if (!name) throw new Error("the package name is not a control");
+    await userEvent.click(name);
+    expect(goToAvailablePackage).toHaveBeenCalledWith({
+      catalog,
+      kind: "skill",
+      name: "gh",
+    });
+  });
+
   // The keyboard takes the same way in: the row takes focus and Enter
   // opens it.
   it("opens the package page from the row on Enter", async () => {
