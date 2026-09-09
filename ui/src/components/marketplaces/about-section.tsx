@@ -1,7 +1,8 @@
 import { type ReactNode, useCallback } from "react";
-import type { Catalog, MarketplaceMeta } from "@/bindings";
+import type { Catalog, MarketplaceMeta, MarketplaceRow } from "@/bindings";
 import { Ago } from "@/components/ago";
 import { ExternalLink } from "@/components/external-link";
+import { MarketplacePlaces } from "@/components/marketplaces/marketplace-places";
 import { useCachedRead } from "@/components/marketplaces/use-catalog";
 import {
   ABOUT_AUTHOR_LABEL,
@@ -12,8 +13,11 @@ import {
   ABOUT_NOTHING_SAID,
   ABOUT_UPDATED_LABEL,
   catalogContents,
+  SOURCE_ALIAS_LABEL,
+  SOURCE_LOCATION_LABEL,
 } from "@/lib/copy-marketplaces";
 import { KINDS, kindLabel } from "@/lib/labels";
+import { marketplaceDisplay, sourceLine } from "@/lib/marketplace-display";
 import {
   catalogKey,
   readErrorKey,
@@ -47,16 +51,44 @@ function updatedLine(updatedAt: string | null): ReactNode {
   return <Ago at={at} exact={updatedAt} />;
 }
 
-/** The marketplace's profile: what the catalog says about itself, when its
- * content last moved, what it holds, and anything wrong with its own
- * configuration. Nothing here describes how kendex read it — the header
- * carries the name, the links and the tags, and this tab carries the rest. */
+/** A block of labelled facts, one grid for the source's own details and one
+ * for what the catalog says about itself. */
+function Facts({ rows }: { rows: { label: string; value: ReactNode }[] }) {
+  return (
+    <dl className="grid grid-cols-[8rem_1fr] gap-x-4 gap-y-2 text-sm">
+      {rows.map((row) => (
+        <div key={row.label} className="contents">
+          <dt className="text-muted-foreground">{row.label}</dt>
+          <dd className="min-w-0 break-words">{row.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** The marketplace's profile and how this machine holds it: what the catalog
+ * says about itself, when its content last moved, what it holds, anything
+ * wrong with its own configuration — and, for a subscription, where its
+ * bytes come from, the alias each place keys it under, and which projects
+ * use it. Those last three are what a person reads before deciding whether
+ * to unsubscribe, so they are on the page that offers it rather than behind
+ * a tab of their own. */
 export function AboutSection({
   catalog,
+  row,
+  identity,
   meta,
   counts,
 }: {
   catalog: Catalog;
+  /** The subscription row this page was opened as, where it has one — a
+   * repository browsed before subscribing has none, and so has no alias, no
+   * resolved folder and no places. */
+  row: MarketplaceRow | null;
+  /** What every place declaring this same marketplace is keyed by, from
+   * `subscribed-grouping.ts::marketplaceIdentity`. Null for a repository
+   * nobody subscribes to. */
+  identity: string | null;
   meta: MarketplaceMeta | null;
   /** Packages offered by kind, as the engine counted them. Absent for a
    * catalog nothing has read yet, which leaves the Contains row out rather
@@ -72,18 +104,44 @@ export function AboutSection({
   const readAbout = useCallback(() => loadAbout(catalog), [loadAbout, catalog]);
   useCachedRead(about !== undefined, !!readError, true, readAbout);
 
+  // What this machine declares, which no read of the catalog can answer or
+  // withhold: a source whose bytes cannot be read is exactly the one a
+  // person is deciding whether to unsubscribe from, so its location, its
+  // alias and the projects using it are drawn before the catalog's own
+  // account and stand whatever that read did.
+  const source = row ? marketplaceDisplay(row) : null;
+  const details = (
+    <>
+      {source ? (
+        <Facts
+          rows={[
+            { label: SOURCE_LOCATION_LABEL, value: sourceLine(source) },
+            { label: SOURCE_ALIAS_LABEL, value: source.alias },
+          ]}
+        />
+      ) : null}
+      {identity ? <MarketplacePlaces identity={identity} /> : null}
+    </>
+  );
+
   if (!about && readError) {
     return (
-      <p className="py-16 text-center text-sm text-critical" role="alert">
-        This catalog can't be read right now — {readError}
-      </p>
+      <div className="max-w-3xl space-y-6">
+        {details}
+        <p className="py-16 text-center text-sm text-critical" role="alert">
+          This catalog can't be read right now — {readError}
+        </p>
+      </div>
     );
   }
   if (!about) {
     return (
-      <p className="py-16 text-center text-sm text-muted-foreground">
-        Reading the catalog…
-      </p>
+      <div className="max-w-3xl space-y-6">
+        {details}
+        <p className="py-16 text-center text-sm text-muted-foreground">
+          Reading the catalog…
+        </p>
+      </div>
     );
   }
 
@@ -106,6 +164,8 @@ export function AboutSection({
 
   return (
     <div className="max-w-3xl space-y-6">
+      {details}
+
       {empty ? (
         <p className="text-sm text-muted-foreground">{ABOUT_NOTHING_SAID}</p>
       ) : null}
@@ -114,16 +174,7 @@ export function AboutSection({
         <p className="text-sm leading-relaxed">{meta.description}</p>
       ) : null}
 
-      {rows.length > 0 ? (
-        <dl className="grid grid-cols-[8rem_1fr] gap-x-4 gap-y-2 text-sm">
-          {rows.map((row) => (
-            <div key={row.label} className="contents">
-              <dt className="text-muted-foreground">{row.label}</dt>
-              <dd className="min-w-0 break-words">{row.value}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : null}
+      {rows.length > 0 ? <Facts rows={rows} /> : null}
 
       {about.findings.length > 0 ? (
         <section>

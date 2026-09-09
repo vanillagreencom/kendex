@@ -1,13 +1,12 @@
 import { ArrowDown, ArrowUp } from "lucide-react";
 import {
   type RefObject,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import type { Catalog, ProvenanceRow } from "@/bindings";
+import type { Scope } from "@/bindings";
 import {
   type PackageColumns,
   type PackageEntry,
@@ -21,8 +20,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { SUBSCRIBE_TO_INSTALL_MEANS } from "@/lib/copy-marketplaces";
-import { installedPlaces, placesKey } from "@/lib/installed-places";
+import {
+  INSTALLED_IN_HEADING,
+  SUBSCRIBE_TO_INSTALL_MEANS,
+} from "@/lib/copy-marketplaces";
+import { placesKey } from "@/lib/installed-places";
+import type { MarketplaceDisplay } from "@/lib/marketplace-display";
+import { catalogDisplay } from "@/lib/marketplace-display";
 import {
   BY_NAME,
   orderPackages,
@@ -35,11 +39,6 @@ import {
   repoAction,
   useMarketplacesStore,
 } from "@/stores/marketplaces";
-import { useProvenanceStore } from "@/stores/provenance";
-
-/** A stable empty list, so a table that never reads the provenance join
- *  does not take a fresh array identity on every store read. */
-const EMPTY: ProvenanceRow[] = [];
 
 // What each column costs the table: the width its own header declares,
 // which is the whole of it — these widths are border-box, so the cell's
@@ -180,17 +179,17 @@ function SortHead({
 export function PackagesTable({
   entries,
   showMarketplace,
-  subscription,
+  places,
 }: {
   entries: PackageEntry[];
   /** The cross-marketplace tab names each row's source; a single
    * marketplace's own page already says it once at the top. */
   showMarketplace: boolean;
-  /** The one subscription this table is a page for, when it is a page for
-   * one. Its presence is what draws the Installed in column, and it
-   * carries the whole identity that column joins on — the cross-marketplace
-   * list has no single subscription and so has no column. */
-  subscription?: { catalog: Catalog; repo: string | null };
+  /** Where this marketplace's packages are installed, by kind and name —
+   * `lib/installed-places.ts`, built once by the page. Its presence is what
+   * draws the Installed in column: the cross-marketplace list is a page for
+   * no single subscription, so it has no join to draw and no column. */
+  places?: Map<string, Scope[]>;
 }) {
   // A bare repository's table is one catalog's; the cross-marketplace tab
   // only ever carries subscriptions. So what the repository offers is
@@ -205,6 +204,7 @@ export function PackagesTable({
   const browsedRepo =
     browsing?.catalog.by === "repo" ? browsing.catalog.repo : "";
   const rows = useMarketplacesStore((s) => s.rows);
+  const summaries = useMarketplacesStore((s) => s.summaries);
   const read = useMarketplacesStore((s) => s.read);
   const summary = useMarketplacesStore(
     (s) => s.summaries[catalogKey({ by: "repo", repo: browsedRepo })] ?? null,
@@ -217,20 +217,7 @@ export function PackagesTable({
   const offerSubscribe = browsedRepo !== "" && kind === "subscribe";
 
   const [sort, setSort] = useState<PackageSort>(BY_NAME);
-  const showPlaces = subscription !== undefined;
-  // Only the page that shows the column reads the join, so the
-  // cross-marketplace tab neither loads it nor re-renders on it.
-  const provenance = useProvenanceStore((s) => (showPlaces ? s.rows : EMPTY));
-  // One read, when the column appears. Keeping it current afterwards is not
-  // this table's job, and `entries` is no proxy for it: it stands for
-  // "something installed" only while the install lands in this page's own
-  // scope — a redirected one writes its rows under the destination's key
-  // and never touches these. `lib/rescan.ts` refreshes the join behind
-  // every write, and the rows arrive here as a store read like any other.
-  const reloadProvenance = useProvenanceStore((s) => s.reload);
-  useEffect(() => {
-    if (showPlaces) void reloadProvenance();
-  }, [showPlaces, reloadProvenance]);
+  const showPlaces = places !== undefined;
 
   // The room the table has is the room the page gives it, which no column
   // it draws can change: the wrapper fills the page's content column
@@ -255,15 +242,18 @@ export function PackagesTable({
     () => orderPackages(entries, order),
     [entries, order],
   );
-  // One pass over the join for the whole table, rather than a full scan of
-  // every installation on the machine per row, once per render.
-  const places = useMemo(
-    () =>
-      subscription
-        ? installedPlaces(provenance, subscription.catalog, subscription.repo)
-        : new Map<string, string>(),
-    [provenance, subscription],
-  );
+  // One resolution per marketplace for the whole table. Asking per row
+  // would scan the subscription rows once per package, and the answer is
+  // the same for every row of one catalog.
+  const named = useMemo(() => {
+    const displays = new Map<string, MarketplaceDisplay>();
+    for (const entry of entries) {
+      const key = catalogKey(entry.catalog);
+      if (!displays.has(key))
+        displays.set(key, catalogDisplay(rows, summaries, entry.catalog));
+    }
+    return displays;
+  }, [entries, rows, summaries]);
 
   return (
     <div ref={roomRef}>
@@ -302,7 +292,7 @@ export function PackagesTable({
             ) : null}
             <TableHead className="w-20">Safety</TableHead>
             {columns.places ? (
-              <TableHead className="w-40">Installed in</TableHead>
+              <TableHead className="w-40">{INSTALLED_IN_HEADING}</TableHead>
             ) : null}
             <TableHead className="w-32 text-right">Status</TableHead>
           </TableRow>
@@ -313,8 +303,9 @@ export function PackagesTable({
               key={`${catalogKey(entry.catalog)}:${entry.row.kind}:${entry.row.name}`}
               entry={entry}
               columns={columns}
+              marketplace={named.get(catalogKey(entry.catalog))}
               places={
-                places.get(placesKey(entry.row.kind, entry.row.name)) ?? ""
+                places?.get(placesKey(entry.row.kind, entry.row.name)) ?? []
               }
               offerSubscribe={offerSubscribe}
             />

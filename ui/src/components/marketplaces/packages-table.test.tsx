@@ -10,9 +10,11 @@ import type {
   Finding,
   MarketplaceRow,
   PackageSafety,
+  Scope,
 } from "@/bindings";
 import type { PackageEntry } from "@/components/marketplaces/package-row";
 import {
+  INSTALLED_IN_HEADING,
   PACKAGE_STATE_UNKNOWN,
   SUBSCRIBE_TO_INSTALL_LABEL,
 } from "@/lib/copy-marketplaces";
@@ -21,6 +23,7 @@ import {
   SAFETY_DOT_UNCHECKED,
   safetyDotWords,
 } from "@/lib/copy-safety";
+import { placesKey } from "@/lib/installed-places";
 import { READ_LANDED } from "@/lib/read-state";
 import { useCommunityStore } from "@/stores/community";
 import { useMarketplacesStore } from "@/stores/marketplaces";
@@ -403,7 +406,7 @@ describe("a marketplace's own packages table", () => {
       <PackagesTable
         entries={[dated("review", null), dated("apply", null)]}
         showMarketplace={false}
-        subscription={{ catalog, repo: null }}
+        places={new Map()}
       />,
     );
     expect(html).toContain(">apply<");
@@ -426,94 +429,43 @@ describe("a marketplace's own packages table", () => {
     expect(html).toContain("—");
   });
 
-  // A subscription is a (scope, source, repository), not a name: the same
-  // alias can be declared in the personal manifest and in a project's,
-  // pointing at different repositories.
-  it("names the places holding it, and only from this marketplace", () => {
+  // The column is the one control on a marketplace page that names the
+  // places holding what it offers. The join behind it is
+  // `lib/installed-places.ts` and the wording is `lib/place-word.ts`, both
+  // tested there; what this settles is that the column draws the count as a
+  // control and says nothing for a package installed nowhere.
+  it("counts the places holding a package, and says nothing for none", () => {
     stub.scores = {};
-    useProvenanceStore.setState({
-      loaded: true,
-      rows: [
-        {
-          scope: { scope: "project", root: "/home/me/hyprtrade" },
-          kind: "skill",
-          name: "gh",
-          harness: "claude",
-          origin: { origin: "marketplace", source: "kendex", repo: "a/b" },
-        },
-        // The same package, the same place, a second harness. One place.
-        {
-          scope: { scope: "project", root: "/home/me/hyprtrade" },
-          kind: "skill",
-          name: "gh",
-          harness: "codex",
-          origin: { origin: "marketplace", source: "kendex", repo: "a/b" },
-        },
-        // The alias this page carries, pointing somewhere else: another
-        // subscription's installation, not this marketplace's.
-        {
-          scope: { scope: "global" },
-          kind: "skill",
-          name: "gh",
-          harness: "claude",
-          origin: { origin: "marketplace", source: "kendex", repo: "z/other" },
-        },
-        // A different source entirely — a collision, which Status says.
-        {
-          scope: { scope: "project", root: "/home/me/vg" },
-          kind: "skill",
-          name: "gh",
-          harness: "claude",
-          origin: { origin: "marketplace", source: "other", repo: "c/d" },
-        },
-      ],
-    });
-    // Store state set by a test reaches the component only through a
-    // mounted tree: a static render serves the store's initial snapshot.
     const host = mountTree(
       <PackagesTable
-        entries={[dated("gh", null)]}
+        entries={[dated("gh", null), dated("zz", null)]}
         showMarketplace={false}
-        subscription={{ catalog, repo: "a/b" }}
+        places={
+          new Map([
+            [
+              placesKey("skill", "gh"),
+              [
+                { scope: "global" } as Scope,
+                { scope: "project", root: "/home/me/hyprtrade" } as Scope,
+              ],
+            ],
+          ])
+        }
       />,
     );
-    const text = host.textContent ?? "";
-    expect(text).toContain("hyprtrade");
-    expect(text).not.toContain("User level");
-    expect(text).not.toContain("vg");
-    expect(text.match(/hyprtrade/g)).toHaveLength(1);
-  });
-
-  // A path-backed subscription has no repository at all, so a join keyed on
-  // the declaration's own `repo` would leave this column empty for every
-  // row of one. Both sides carry what the subscription resolved to — a
-  // canonical path here — which is what the lock recorded.
-  it("names places for a subscription backed by a path", () => {
-    stub.scores = {};
-    useProvenanceStore.setState({
-      loaded: true,
-      rows: [
-        {
-          scope: { scope: "project", root: "/home/me/hyprtrade" },
-          kind: "skill",
-          name: "gh",
-          harness: "claude",
-          origin: {
-            origin: "marketplace",
-            source: "kendex",
-            repo: "/home/me/catalogs/kit",
-          },
-        },
-      ],
-    });
-    const host = mountTree(
-      <PackagesTable
-        entries={[dated("gh", null)]}
-        showMarketplace={false}
-        subscription={{ catalog, repo: "/home/me/catalogs/kit" }}
-      />,
+    // The column's own index, so a column added beside it cannot make this
+    // assert about the wrong cell.
+    const column = [...host.querySelectorAll("thead th")].findIndex(
+      (head) => head.textContent?.trim() === INSTALLED_IN_HEADING,
     );
-    expect(host.textContent ?? "").toContain("hyprtrade");
+    const cells = [...host.querySelectorAll("tbody tr")].map(
+      (each) => each.children[column]?.textContent ?? "",
+    );
+    // The personal setup and a project: two places, and not two projects.
+    expect(cells).toEqual(["2 places", "—"]);
+    expect(
+      host.querySelector('button[aria-label="Installed in 2 places"]'),
+    ).not.toBeNull();
   });
 });
 
@@ -532,7 +484,7 @@ describe("re-sorting a marketplace's packages", () => {
           },
         ]}
         showMarketplace={false}
-        subscription={{ catalog, repo: null }}
+        places={new Map()}
       />,
     );
     const names = () =>
@@ -591,7 +543,7 @@ describe("the columns a narrow table keeps", () => {
         <PackagesTable
           entries={[entry]}
           showMarketplace={false}
-          subscription={{ catalog, repo: "a/b" }}
+          places={new Map()}
         />
       ),
       wide: [

@@ -8,8 +8,10 @@ import {
   PAGE_GUTTER,
   WIDE_CONTENT_WIDTH,
 } from "@/lib/layout";
+import { catalogTitle } from "@/lib/marketplace-display";
 import { cn } from "@/lib/utils";
-import { catalogLabel } from "@/stores/marketplaces";
+import { useCommunityStore } from "@/stores/community";
+import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 
 // A quiet strip above the page content — only worth showing at all once a
@@ -24,6 +26,17 @@ export function NavBar() {
   const availableRef = useNavStore((s) => s.availableRef);
   const hasHistory = useNavStore((s) => s.history.length > 0);
   const back = useNavStore((s) => s.back);
+  // The subscription rows, so the crumb names a marketplace the way its card
+  // and its own header do rather than by the alias its manifest keys it
+  // under.
+  const rows = useMarketplacesStore((s) => s.rows);
+  // The catalog's own account of itself, for a page whose subscription rows
+  // have not arrived yet — a crumb drawn from the address alone would spell
+  // a folder subscription's alias.
+  const summaries = useMarketplacesStore((s) => s.summaries);
+  // The same directory rows the page's own header reads, so a repository
+  // opened from Community is named alike above and below the crumb.
+  const directory = useCommunityStore((s) => s.directory?.rows);
 
   if (!hasHistory) return null;
 
@@ -59,8 +72,11 @@ export function NavBar() {
               : availableRef
                 ? packageDisplayName(availableRef)
                 : null,
-            marketplaceName: catalogLabel(
+            marketplaceName: catalogTitle(
+              rows,
+              summaries,
               marketplaceRef ?? bundleRef?.catalog ?? availableRef?.catalog,
+              directory,
             ),
             bundleName: bundleRef?.bundle ?? null,
           })}

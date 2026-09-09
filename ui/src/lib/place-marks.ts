@@ -1,6 +1,7 @@
 import type { Scope } from "@/bindings";
 import type { PlaceStanding, Why } from "@/lib/customized-places";
 import { listed } from "@/lib/listed";
+import { placeWord } from "@/lib/place-word";
 import { placeName } from "@/lib/update-groups";
 
 /** What a mark says, and where it leads if anywhere. */
@@ -17,12 +18,6 @@ export interface PlaceMark {
 }
 
 const customized = (s: PlaceStanding) => s.standing === "customized";
-
-/** What a counted set of places is called. Projects among themselves are
- *  projects; the personal scope makes the set a mixed one, and "places" is
- *  the word the rest of the app already uses for that. */
-const placeWord = (scopes: Scope[]): string =>
-  scopes.every((s) => s.scope === "project") ? "projects" : "places";
 
 /** The mark for one package: which places hold changes, out of how many.
  *

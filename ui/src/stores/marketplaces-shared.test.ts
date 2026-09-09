@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   bundleKey,
   catalogKey,
-  catalogLabel,
   marketKey,
   readErrorKey,
   subscription,
@@ -35,25 +34,6 @@ describe("catalog addressing", () => {
       expect(repo, row.name).not.toBe(catalogKey(row.catalog));
       expect(repo, row.name).toBe(catalogKey({ by: "repo", repo: row.repo }));
     }
-  });
-
-  it("labels a catalog by its alias or its repository", () => {
-    const rows = [
-      {
-        name: "alias",
-        catalog: subscription({ scope: "global" }, "kendex"),
-        expected: "kendex",
-      },
-      {
-        name: "repository",
-        catalog: { by: "repo" as const, repo: "wshobson/agents" },
-        expected: "wshobson/agents",
-      },
-      { name: "no catalog", catalog: undefined, expected: null },
-    ];
-    expect(rows.length).toBeGreaterThan(0);
-    for (const row of rows)
-      expect(catalogLabel(row.catalog), row.name).toBe(row.expected);
   });
 
   it("keeps a set named like a read off that read's key", () => {

@@ -2,10 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { PackageView } from "@/bindings";
 import { SAFETY_CAVEAT } from "@/lib/copy-safety";
-import { subscription } from "@/stores/marketplaces-shared";
 import { AvailableAside } from "./available-aside";
-
-const catalog = subscription({ scope: "global" }, "kendex");
 
 const checked: PackageView = {
   preview: {
@@ -37,7 +34,7 @@ const checked: PackageView = {
 const render = (view: PackageView | null) =>
   renderToStaticMarkup(
     <AvailableAside
-      catalog={catalog}
+      marketplace="kendex"
       repo={null}
       view={view}
       selectedFile={null}

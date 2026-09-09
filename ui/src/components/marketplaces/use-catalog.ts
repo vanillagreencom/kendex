@@ -1,9 +1,17 @@
 import { useEffect, useMemo } from "react";
 import type { Catalog, CatalogSummary } from "@/bindings";
 import {
+  discoveredCatalog,
+  displayFor,
+  listedNameOf,
+  type MarketplaceDisplay,
+  rowForCatalog,
+  summaryFor,
+} from "@/lib/marketplace-display";
+import { useCommunityStore } from "@/stores/community";
+import {
   catalogKey,
   readErrorKey,
-  subscription,
   useMarketplacesStore,
 } from "@/stores/marketplaces";
 
@@ -16,12 +24,28 @@ import {
 export function useCatalog(requested: Catalog): {
   catalog: Catalog;
   summary: CatalogSummary | null;
+  /** What to call this marketplace, and where it comes from. Resolved here
+   * because this is the one place holding both halves of the conversion:
+   * the summary is cached under the REQUESTED repository's key, while
+   * `catalog` is the subscription that summary discovered, so a surface
+   * looking the summary up by the catalog it was handed finds nothing and
+   * falls back to the alias while the breadcrumb beside it reads the
+   * declared name. Every page naming a marketplace reads this rather than
+   * resolving its own. */
+  display: MarketplaceDisplay;
   error: string | null;
   ready: boolean;
   retry: () => void;
 } {
   const key = catalogKey(requested);
-  const summary = useMarketplacesStore((s) => s.summaries[key] ?? null);
+  // Not the key alone: a page reached from a converted Community page holds
+  // the subscription that page became, while the summary that discovered it
+  // is cached under the repository. [summaryFor] recovers it.
+  const summary = useMarketplacesStore((s) =>
+    summaryFor(s.summaries, requested),
+  );
+  const rows = useMarketplacesStore((s) => s.rows);
+  const directory = useCommunityStore((s) => s.directory?.rows);
   const error = useMarketplacesStore(
     (s) => s.readErrors[readErrorKey(key, "summary")] ?? null,
   );
@@ -34,16 +58,31 @@ export function useCatalog(requested: Catalog): {
   }, [requested, summary, error, loadSummary]);
 
   const catalog = useMemo(
-    () =>
-      requested.by === "repo" && summary?.subscription
-        ? subscription(summary.subscription.scope, summary.subscription.source)
-        : requested,
+    () => discoveredCatalog(requested, summary),
     [requested, summary],
+  );
+
+  // The declaring row where one has landed, the summary that fetched the
+  // catalog otherwise — and the directory's label under both, keyed on what
+  // the page has BECOME: a subscription is never a directory row, and a
+  // label surviving the conversion would title this page by a stranger's
+  // name for the repository while its card read what the subscription
+  // resolves to.
+  const display = useMemo(
+    () =>
+      displayFor({
+        catalog,
+        row: rowForCatalog(rows, catalog),
+        summary,
+        listedName: listedNameOf(directory, catalog),
+      }),
+    [catalog, rows, summary, directory],
   );
 
   return {
     catalog,
     summary,
+    display,
     error,
     ready: requested.by === "subscription" || summary !== null,
     retry: () => void loadSummary(requested),

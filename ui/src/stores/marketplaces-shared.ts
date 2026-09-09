@@ -114,14 +114,6 @@ export const subscription = (scope: Scope, source: string): Catalog => ({
   source,
 });
 
-/** What a catalog is called in a title or breadcrumb. */
-export const catalogLabel = (catalog: Catalog | undefined): string | null =>
-  !catalog
-    ? null
-    : catalog.by === "subscription"
-      ? catalog.source
-      : catalog.repo;
-
 export function without<T>(
   map: Record<string, T>,
   key: string,

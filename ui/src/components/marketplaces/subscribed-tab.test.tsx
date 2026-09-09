@@ -109,7 +109,10 @@ describe("SubscribedTab read outcomes", () => {
           MARKETPLACES_UNCONFIRMED_TITLE,
           "offline",
           TRY_AGAIN_LABEL,
-          "kit",
+          // The catalogue's own name where it has one, else the repository
+          // it resolves to — `lib/marketplace-display.ts`. Never the alias
+          // `kit`, which is one place's manifest key.
+          "Kit",
         ],
         absent: [],
       },
@@ -145,7 +148,7 @@ describe("SubscribedTab with one marketplace held in several places", () => {
       { ...kept, scope: { scope: "project", root: "/w/beta" } },
     ];
     const html = renderToStaticMarkup(<SubscribedTab onSubscribe={() => {}} />);
-    expect(html.match(/kit/g)).toHaveLength(1);
+    expect(html.match(/data-slot="card"/g)).toHaveLength(1);
     expect(html).toContain(placeCountLabel(3));
     expect(html).toContain("Personal, alpha, beta");
   });

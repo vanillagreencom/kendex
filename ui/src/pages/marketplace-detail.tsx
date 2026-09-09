@@ -4,22 +4,21 @@ import { AboutSection } from "@/components/marketplaces/about-section";
 import { BundleCards } from "@/components/marketplaces/bundle-cards";
 import { DetailHeader } from "@/components/marketplaces/detail-header";
 import { useFollowUnsubscribed } from "@/components/marketplaces/follow-unsubscribed";
-import { MarketplacePlaces } from "@/components/marketplaces/marketplace-places";
 import { PackagesTable } from "@/components/marketplaces/packages-table";
 import { marketplaceIdentity } from "@/components/marketplaces/subscribed-grouping";
 import {
   useCachedRead,
   useCatalog,
 } from "@/components/marketplaces/use-catalog";
+import { useInstalledPlaces } from "@/components/marketplaces/use-installed-places";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MARKETPLACE_PLACES_TITLE } from "@/lib/copy-marketplaces";
 import { PAGE_BODY, PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
+import { rowForCatalog } from "@/lib/marketplace-display";
 import { cn } from "@/lib/utils";
 import {
   catalogBundlesErrorKey,
   catalogKey,
-  marketKey,
   readErrorKey,
   useMarketplacesStore,
 } from "@/stores/marketplaces";
@@ -39,23 +38,18 @@ export function MarketplaceDetailPage() {
 const NONE: AvailablePackage[] = [];
 
 function MarketplaceDetail({ requested }: { requested: Catalog }) {
-  const { catalog, summary, error, ready, retry } = useCatalog(requested);
+  const { catalog, summary, display, error, ready, retry } =
+    useCatalog(requested);
   const rows = useMarketplacesStore((s) => s.rows);
   const packages = useMarketplacesStore((s) => s.packages);
   const load = useMarketplacesStore((s) => s.load);
   const loadPackages = useMarketplacesStore((s) => s.loadPackages);
   const loadCatalogBundles = useMarketplacesStore((s) => s.loadCatalogBundles);
 
-  const row =
-    catalog.by === "subscription"
-      ? rows.find(
-          (r) =>
-            r.name === catalog.source &&
-            marketKey(r.scope, r.name) === catalogKey(catalog),
-        )
-      : undefined;
+  const row = rowForCatalog(rows, catalog);
   // What every place declaring this same marketplace is keyed by — the
-  // Projects section lists them all, not just the one this page opened as.
+  // About tab's source details list them all, not just the one this page
+  // opened as.
   const identity = row ? marketplaceIdentity(row) : null;
   const cached = packages[catalogKey(catalog)];
   // A shared empty rather than a fresh one: `entries` memoizes on this.
@@ -86,11 +80,7 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
 
   useFollowUnsubscribed(catalog, row, identity);
 
-  // The tab is controlled so a section that stops existing cannot leave the
-  // page with nothing selected: Projects is gone the moment the opened
-  // place is, and an uncontrolled Tabs would keep pointing at it.
   const [tab, setTab] = useState("bundles");
-  const shownTab = tab === "places" && !identity ? "bundles" : tab;
 
   // Stable identities: the table memoizes its ordering and its places join
   // on these, and this page re-renders as its packages, bundles, about and
@@ -113,7 +103,10 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
   // or `path`: a path source has no repo at all, and a manifest path may be
   // relative where the record is canonical.
   const repo = row?.provenance ?? summary?.provenance ?? null;
-  const pageSubscription = useMemo(() => ({ catalog, repo }), [catalog, repo]);
+  // One join for the page. The Bundles tab and the Packages tab both name
+  // the projects this marketplace's packages landed in, and a second read
+  // per tab would scan every installation on the machine twice.
+  const places = useInstalledPlaces(catalog, repo);
 
   return (
     <div className="flex h-full flex-col">
@@ -122,6 +115,7 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
         catalog={catalog}
         row={row}
         summary={summary}
+        display={display}
       />
       {error ? (
         <div className={cn(PAGE_BODY, "pt-0")}>
@@ -145,7 +139,7 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
         </p>
       ) : (
         <Tabs
-          value={shownTab}
+          value={tab}
           onValueChange={(value) => setTab(value as string)}
           className="flex min-h-0 flex-1 flex-col gap-0"
         >
@@ -154,11 +148,6 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
               <TabsList>
                 <TabsTrigger value="bundles">Bundles</TabsTrigger>
                 <TabsTrigger value="packages">Packages</TabsTrigger>
-                {identity ? (
-                  <TabsTrigger value="places">
-                    {MARKETPLACE_PLACES_TITLE}
-                  </TabsTrigger>
-                ) : null}
                 <TabsTrigger value="about">About</TabsTrigger>
               </TabsList>
             </div>
@@ -176,6 +165,7 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
                     catalog={catalog}
                     bundles={bundles}
                     error={bundlesError}
+                    places={places}
                   />
                 </TabsContent>
                 <TabsContent value="packages">
@@ -195,18 +185,15 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
                     <PackagesTable
                       entries={entries}
                       showMarketplace={false}
-                      subscription={pageSubscription}
+                      places={places}
                     />
                   )}
                 </TabsContent>
-                {identity ? (
-                  <TabsContent value="places">
-                    <MarketplacePlaces identity={identity} />
-                  </TabsContent>
-                ) : null}
                 <TabsContent value="about">
                   <AboutSection
                     catalog={catalog}
+                    row={row ?? null}
+                    identity={identity}
                     meta={row?.meta ?? summary?.meta ?? null}
                     counts={row?.counts ?? summary?.counts ?? null}
                   />

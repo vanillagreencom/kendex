@@ -5,14 +5,18 @@
 import type { MarketplaceRow } from "@/bindings";
 import { scopeLabel } from "@/lib/derive";
 import { scopeNames } from "@/lib/labels";
+import {
+  type MarketplaceDisplay,
+  marketplaceDisplay,
+} from "@/lib/marketplace-display";
 
 export interface SubscribedMarketplace {
   /** What [marketplaceIdentity] returned for every place in this group. */
   key: string;
-  /** What to call it — the alias the place a card opens uses. */
-  name: string;
-  /** The repository or folder behind it, for the card's second line. */
-  where: string;
+  /** What to call it and where it comes from, from the place a card opens —
+   * `lib/marketplace-display.ts`, the one answer the breadcrumb and the
+   * marketplace's own header read too. */
+  display: MarketplaceDisplay;
   /** Every place that declares it, personal first. */
   places: MarketplaceRow[];
   /** The subscription a card opens: an enabled place before a switched-off
@@ -100,8 +104,7 @@ export function groupByMarketplace(
       const open = openPlace(places) as MarketplaceRow;
       return {
         key,
-        name: open.name,
-        where: open.repo ?? open.path ?? "",
+        display: marketplaceDisplay(open),
         places,
         open,
         // From `open`, like every other field on the card. Taking the
@@ -119,7 +122,7 @@ export function groupByMarketplace(
         packages: offered(open),
       };
     })
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => a.display.name.localeCompare(b.display.name));
 }
 
 /** The places a marketplace is subscribed in, named — and told apart. Two

@@ -1,0 +1,1 @@
+- Curated-set cards open from anywhere on the card. The name, the description and the counts read as three steps, and the Open button beside the name is gone.

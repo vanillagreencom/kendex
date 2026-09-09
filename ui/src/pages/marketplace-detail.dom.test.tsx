@@ -5,6 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BundleDetail } from "@/bindings";
 import { commands } from "@/bindings";
+import { MARKETPLACE_PLACES_TITLE } from "@/lib/copy-marketplaces";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
@@ -16,6 +17,9 @@ vi.mock("@/bindings", () => ({
     marketplacesOverview: vi.fn(),
     marketplacePackages: vi.fn(),
     marketplaceBundles: vi.fn(),
+    // The page reads the provenance join once, to say which projects hold
+    // each package and each set.
+    libraryProvenance: vi.fn(),
   },
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
@@ -47,6 +51,10 @@ beforeEach(() => {
   vi.mocked(commands.marketplaceBundles).mockResolvedValue({
     status: "ok",
     data: [starter],
+  });
+  vi.mocked(commands.libraryProvenance).mockResolvedValue({
+    status: "ok",
+    data: [],
   });
   useMarketplacesStore.setState({
     rows: [],
@@ -94,5 +102,43 @@ describe("opening a marketplace", () => {
       shown: row.shown.map(() => true),
       empty: false,
     });
+  });
+});
+
+// A marketplace page is about the marketplace. A tab of projects on it
+// invited the reader to manage a place from a page that manages none, and
+// which projects hold what it offers is now said on the packages and the
+// sets themselves, with the source's own details on About.
+describe("the marketplace page's tabs", () => {
+  it("offers its sets, its packages and its details, and no projects tab", async () => {
+    useMarketplacesStore.setState({
+      rows: [
+        {
+          scope: { scope: "global" },
+          name: "kit",
+          repo: "Acme/Kit",
+          repoKey: "acme/kit",
+          repoIdentity: "github.com/acme/kit",
+          provenance: "Acme/Kit",
+          path: null,
+          resolvedPath: null,
+          rev: null,
+          commit: null,
+          enabled: true,
+          counts: null,
+          meta: null,
+          mode: null,
+          recordsUnreadable: false,
+        },
+      ],
+    });
+    const host = mount(<MarketplaceDetailPage />);
+    await settle();
+
+    const tabs = [...host.querySelectorAll('[role="tab"]')].map(
+      (tab) => tab.textContent ?? "",
+    );
+    expect(tabs).toEqual(["Bundles", "Packages", "About"]);
+    expect(tabs).not.toContain(MARKETPLACE_PLACES_TITLE);
   });
 });

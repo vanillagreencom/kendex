@@ -22,6 +22,11 @@ import {
 import { SWITCHED_OFF_HERE } from "@/lib/copy-model";
 import { shortRevision } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
+import {
+  type MarketplaceDisplay,
+  marketplaceDisplay,
+  sourceLine,
+} from "@/lib/marketplace-display";
 import { cn } from "@/lib/utils";
 import { useCommunityStore } from "@/stores/community";
 import { useMarketplacesStore } from "@/stores/marketplaces";
@@ -37,12 +42,19 @@ export function DetailHeader({
   catalog,
   row,
   summary,
+  display,
 }: {
   /** What was opened — a repository keeps its listing's name and tags. */
   requested: Catalog;
   catalog: Catalog;
   row: MarketplaceRow | undefined;
   summary: CatalogSummary | null;
+  /** What this marketplace is called and where it comes from, resolved once
+   * by the page through `useCatalog` — which is the only place holding both
+   * the summary that discovered a subscription and the subscription it
+   * discovered. A header resolving its own would lose that summary and
+   * disagree with the crumb above it. */
+  display: MarketplaceDisplay;
 }) {
   const checkForUpdates = useMarketplacesStore((s) => s.checkForUpdates);
   const busy = useMarketplacesStore((s) => s.busy);
@@ -60,15 +72,24 @@ export function DetailHeader({
   const [unsubscribeOpen, setUnsubscribeOpen] = useState(false);
 
   const meta = row?.meta ?? summary?.meta ?? null;
-  const title =
-    catalog.by === "subscription"
-      ? catalog.source
-      : (listing?.name ?? meta?.name ?? catalog.repo.split("/").at(-1));
+  // A subscription is titled by what its catalog calls itself, resolved
+  // once in `lib/marketplace-display.ts` so this header, the card that
+  // opened it and the breadcrumb above it agree. Never the alias: it is the
+  // key one place's manifest files the source under, and a hand-written one
+  // can be `.`, which names nothing on screen.
+  const source = row ? marketplaceDisplay(row) : null;
+  // The same answer the breadcrumb above this header and the card that
+  // opened it give: a title that disagrees with the crumb over it names one
+  // marketplace twice.
+  const title = display.name;
   const description = meta?.description ?? listing?.description ?? null;
   const commit = row?.commit ?? summary?.commit ?? null;
-  // What the catalog came from, as text. A path source has a folder here.
-  const provenance =
-    row?.repo ?? row?.path ?? summary?.provenance ?? listing?.repo ?? null;
+  // What the catalog came from, as text. A folder source says so beside its
+  // resolved path, never the relative spelling the declaration carries: `.`
+  // reads as the app's own folder wherever it is shown.
+  const provenance = source
+    ? sourceLine(source)
+    : (summary?.provenance ?? listing?.repo ?? null);
   // The canonical `owner/repo` a GitHub reference folds to, which is the
   // only thing a github.com URL may be built from. Every branch is a folded
   // key — never the raw `listing.repo`, which is whatever the community

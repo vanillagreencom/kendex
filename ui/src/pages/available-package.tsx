@@ -21,6 +21,7 @@ import { recordsUnreadable } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
+import { sourceLine } from "@/lib/marketplace-display";
 import { sameScope } from "@/lib/scope";
 import { useOrderedRead } from "@/lib/use-ordered-read";
 import { cn } from "@/lib/utils";
@@ -42,11 +43,11 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   const {
     catalog,
     summary,
+    display,
     error: reachError,
     ready,
   } = useCatalog(availableRef.catalog);
   const goToPackage = useNavStore((s) => s.goToPackage);
-  const rows = useMarketplacesStore((s) => s.rows);
   const install = useMarketplacesStore((s) => s.install);
   const busy = useMarketplacesStore((s) => s.busy);
   const [destination, setDestination] = useState<Scope | null>(null);
@@ -91,21 +92,14 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   const Icon = kindIcon(kind);
   // The place named on screen.
   const target = destination ?? scope;
-  // Matched by scope and name both — two scopes can subscribe the same
-  // alias to different repositories.
-  const row =
-    catalog.by === "subscription"
-      ? rows.find(
-          (r) =>
-            r.name === catalog.source &&
-            catalogKey({
-              by: "subscription",
-              scope: r.scope,
-              source: r.name,
-            }) === catalogKey(catalog),
-        )
-      : undefined;
-  const repo = row?.repo ?? row?.path ?? summary?.provenance ?? null;
+  // What the marketplace calls itself and where it comes from, from the one
+  // resolution `useCatalog` makes: it holds the summary that discovered this
+  // subscription, which is cached under the repository this page was opened
+  // by and so is lost to anything looking it up by the catalog it was
+  // handed. Never the declaration's own `path` either — `.` is what the
+  // person typed, and it reads as the app's own folder wherever it shows.
+  const marketplace = display.name;
+  const repo = sourceLine(display) || null;
   const shownError = reachError ?? error;
   // Every Packages row opens this page, "Not known" ones included. The
   // engine answered unknown because it could not read the lock of the place
@@ -234,7 +228,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
               ) : null}
             </div>
             <AvailableAside
-              catalog={catalog}
+              marketplace={marketplace}
               repo={repo}
               view={view}
               selectedFile={selectedFile}

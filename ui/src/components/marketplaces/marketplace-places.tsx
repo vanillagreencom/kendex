@@ -6,6 +6,7 @@ import {
   placeKey,
 } from "@/components/marketplaces/subscribed-grouping";
 import { Badge } from "@/components/ui/badge";
+import { MARKETPLACE_PLACES_TITLE } from "@/lib/copy-marketplaces";
 import { MARKETPLACE_PLACES_HELP, SWITCHED_OFF_HERE } from "@/lib/copy-model";
 import { selectionOf } from "@/lib/derive";
 import { scopeNames, scopePath } from "@/lib/labels";
@@ -17,10 +18,10 @@ import { useNavStore } from "@/stores/nav";
  * marketplace's packages is that place's own setting, reached from its card
  * on Projects, where the reader manages what that place has.
  *
- * Mounted as a tab panel, so it carries no heading of its own: the tab
- * spells [MARKETPLACE_PLACES_TITLE] already, and repeating it as an h2
- * would name the section twice on one screen. The sibling About panel
- * opens the same way. */
+ * One section of the About tab's source details, beside the alias and the
+ * resolved location, so a person deciding whether to unsubscribe can see
+ * who uses the source first. It heads itself, being one section of a panel
+ * rather than a panel of its own. */
 export function MarketplacePlaces({ identity }: { identity: string }) {
   const rows = useMarketplacesStore((s) => s.rows);
   const places = rows
@@ -36,6 +37,9 @@ export function MarketplacePlaces({ identity }: { identity: string }) {
 
   return (
     <section>
+      <h3 className="mb-2 text-[15px] font-semibold">
+        {MARKETPLACE_PLACES_TITLE}
+      </h3>
       <p className="max-w-prose text-sm text-muted-foreground">
         {MARKETPLACE_PLACES_HELP}
       </p>
