@@ -201,7 +201,7 @@ mkdir -p "$NOREPO"
 RC=0
 OUT="$(cd "$NOREPO" && "$R/tools/setup" 2>&1)" || RC=$?
 [ "$RC" -ne 0 ] && [ "$(sed -n 1p <<<"$OUT")" = "setup: worktree=none" ] &&
-  case "$OUT" in *"not a git repository"*) true ;; *) false ;; esac \
+  case "$OUT" in *"fatal: "*) true ;; *) false ;; esac \
   && ok "setup run outside a work tree names that, not the installer" \
   || bad "setup run outside a work tree names that, not the installer" "rc=$RC out=$OUT"
 

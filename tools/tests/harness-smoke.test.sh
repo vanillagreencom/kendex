@@ -203,7 +203,7 @@ else
   chmod 755 "$SEALED"
   scratch_rest="$(sed -n '2,$p' <<<"$scratch_out")"
   if [ "$(sed -n 1p <<<"$scratch_out")" = "harness-smoke: scratch=$SEALED/below" ] &&
-    grep -qi 'permission denied' <<<"$scratch_rest"; then
+    grep -q '^mkdir: ' <<<"$scratch_rest"; then
     ok "a parent the run cannot write is refused, with what mkdir said beneath it"
   else
     bad "a parent the run cannot write is refused, with what mkdir said beneath it" \

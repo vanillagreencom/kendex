@@ -229,7 +229,7 @@ run_guard
 # is line 1 of the run — it is that the keyed line comes before the
 # diagnostic that explains it, rather than after it.
 keyed_at="$(awk '/guard: command-safety-not-an-ere=kendex.settings.toml/ { print NR; exit }' <<<"$OUT")"
-grep_at="$(awk 'tolower($0) ~ /invalid|unmatched|unterminated/ { print NR; exit }' <<<"$OUT")"
+grep_at="$(awk '/^grep: / { print NR; exit }' <<<"$OUT")"
 [ "$RC" -ne 0 ] && [ -n "$keyed_at" ] && [ -n "$grep_at" ] && [ "$keyed_at" -lt "$grep_at" ] \
   && ok "a policy that is not a valid ERE reds with its own clause, above what grep said" \
   || bad "a policy that is not a valid ERE reds with its own clause, above what grep said" \

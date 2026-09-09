@@ -461,7 +461,7 @@ mkdir -p "$cause_probe"
 cause_out="$( (cd "$cause_probe" && "$LINT" 2>&1) )" || true
 cause_first="$(sed -n 1p <<<"$cause_out")"
 if [ "$cause_first" = "bash32-lint: not-in-repo=$cause_probe" ] &&
-  grep -q 'not a git repository' <<<"$cause_out"; then
+  grep -q '^fatal: ' <<<"$cause_out"; then
   ok "git's own diagnostic follows the keyed line instead of preceding it"
 else
   bad "git's own diagnostic follows the keyed line instead of preceding it" \
