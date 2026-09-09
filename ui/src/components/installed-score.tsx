@@ -7,33 +7,16 @@ import {
   SAFETY_DOT_UNCHECKED,
   severityTone,
 } from "@/lib/copy-safety";
-import { type InstalledSafety, installedSafety } from "@/lib/installed-safety";
-import { sameScope } from "@/lib/scope";
+import { type SafetyStanding, safetyStanding } from "@/lib/installed-safety";
 import { useAuditStore } from "@/stores/audit";
 
-/** What the audit says about one installed package right now, and how much
- *  that is worth. A reading kept from before a failed check is not the same
- *  claim as one the check just made, so the two never arrive as one field. */
+/** What the audit says about one installed package right now, ready to
+ *  draw: the standing — see [SafetyStanding] — plus what only a store can
+ *  answer. The standing is one value on purpose: the words a score shows
+ *  and the place they are true of are decided together, so no surface can
+ *  pair them wrongly. */
 export interface InstalledReading {
-  /** The reading, and the place it answers for. Over several places it is
-   *  the worst-scoring one's, so anything offering a way to what is behind
-   *  the number sends the reader to that place. */
-  result: InstalledSafety | null;
-  /** Why the last audit failed, or null. A result beside this is the check
-   *  before the one that failed — so the failure is only ever this
-   *  reading's own place's, or the whole audit's. Another place failing
-   *  says nothing about the copy this reading is of, and would make the
-   *  score read as stale over a number that is current. */
-  failure: string | null;
-  /** The place the failure above belongs to, where it belongs to one. Null
-   *  for a failure that belongs to the audit as a whole, which names no
-   *  place. It travels with the reading for the same reason the result's
-   *  scope does: a surface offering a way to what is behind the words has
-   *  to land where those words are true. */
-  failedAt: Scope | null;
-  /** No audit has answered and none has failed: the reading is still on its
-   *  way, which is a wait rather than an outcome. */
-  waiting: boolean;
+  standing: SafetyStanding;
   /** When the audit behind this reading answered, or null where none has.
    *  Only the stale wording spends it: a current reading is current, and
    *  dating it would invite the reader to work out whether to believe it. */
@@ -56,35 +39,19 @@ export function useInstalledReading(
   const auditFailure = useAuditStore((s) => s.read.error);
   const auditedAt = useAuditStore((s) => s.auditedAt);
   const refresh = useAuditStore((s) => s.refresh);
-  // Merged out of the store's rows on every render rather than inside a
-  // selector: the merge builds a fresh object each call, and a selector
-  // returning one of those would re-render the page against itself forever.
-  const result = installedSafety(views, kind, name, scopes);
-  // A place the audit could not read has failed for this row even when the
-  // audit as a whole came back: what is on screen for it is whatever it
-  // last said, and nothing has confirmed it since. The view is kept whole
-  // rather than reduced to its message, because the place it failed at is
-  // where that failure can be read.
-  const unreadable =
-    views.find(
-      (view) =>
-        view.error && scopes.some((scope) => sameScope(view.scope, scope)),
-    ) ?? null;
-  // Only a failure about the copy this reading is of qualifies it. Over
-  // several places the result is one place's, so another place's failed
-  // read leaves this number current and says its piece on its own row;
-  // reported here it would date a reading nothing has invalidated, and
-  // send anyone following it to a place the number never came from.
-  const failed =
-    unreadable && (result === null || sameScope(unreadable.scope, result.scope))
-      ? unreadable
-      : null;
-  const failure = auditFailure ?? failed?.error?.message ?? null;
+  // Worked out on every render rather than inside a selector: the standing
+  // is a fresh object each call, and a selector returning one of those
+  // would re-render the page against itself forever.
+  const standing = safetyStanding(
+    views,
+    auditFailure,
+    auditedAt !== null,
+    kind,
+    name,
+    scopes,
+  );
   return {
-    result,
-    failure,
-    failedAt: failed?.scope ?? null,
-    waiting: auditedAt === null && failure === null,
+    standing,
     checkedAt: auditedAt,
     retry: () => void refresh({ force: true }),
   };
@@ -112,16 +79,22 @@ export function InstalledScore({
    *  second findings panel of its own. */
   onOpen?: () => void;
 }) {
-  const { result, failure } = reading;
-  const words = result
+  const { standing } = reading;
+  // Read off the one standing, so the words and the place `onOpen` lands on
+  // are the same answer.
+  const scored =
+    standing.state === "read" || standing.state === "stale"
+      ? standing.result
+      : null;
+  const words = scored
     ? installedScoreWords(
-        result.safety.score,
-        result.skipped.length,
-        result.findings,
-        failure !== null,
+        scored.safety.score,
+        scored.skipped.length,
+        scored.findings,
+        standing.state === "stale",
         reading.checkedAt,
       )
-    : failure !== null
+    : standing.state === "failed" || standing.state === "unavailable"
       ? SAFETY_CHECK_FAILED
       : SAFETY_DOT_UNCHECKED;
   return (
@@ -133,10 +106,16 @@ export function InstalledScore({
       // is out of the tab order.
       onClick={onOpen}
     >
+      {/* A kept reading stops being drawn as a current severity: the
+          number stays, the hue goes. */}
       <ScoreCircle
         size="sm"
-        score={result?.safety.score ?? null}
-        tone={result ? severityTone(result.findings) : "muted"}
+        score={scored?.safety.score ?? null}
+        tone={
+          standing.state === "read"
+            ? severityTone(scored?.findings ?? [])
+            : "muted"
+        }
       />
     </ScoreTooltip>
   );

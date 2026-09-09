@@ -119,19 +119,12 @@ export function PackageRows({
   // shows one of them. The row's first place is the one its name opens.
   const first = places[0];
   // Which place the score is showing the state of, which is where it opens.
-  // The two cannot disagree: the reading reports a failure only where it is
-  // about the copy the reading is of, so a result and a failure name one
-  // place between them. With a reading, that is the copy that earned it —
-  // over several places the disc shows the worst of them, so opening the
-  // row's first place would send a reader who clicked a warning to a copy
-  // carrying none of the findings the number stood for. With no reading,
-  // it is the place whose read failed, the only one where that failure can
-  // be read. An audit that failed as a whole names no place, and leaves the
-  // row's first.
-  // The two can never name different places — the reading reports a failure
-  // only for the copy it is of — so the order here settles nothing and no
-  // test can tell one from the other.
-  const at = reading.result?.scope ?? reading.failedAt;
+  // The standing decides both together, so they cannot disagree: the copy
+  // that earned the number, the place whose read failed, or no place at all
+  // for a failure that names none — an audit that failed as a whole, or a
+  // check still on its way. Those leave the row's first place, which is
+  // what its name opens.
+  const at = reading.standing.at;
   const scored =
     (at && places.find((place) => sameScope(place.scope, at))) ?? first;
   /** This package's page, at one of the places this row is about. */
