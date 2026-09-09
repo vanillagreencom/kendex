@@ -57,7 +57,7 @@ Execute workflow sections in order; a "**Skip if**" condition is the workflow's 
 **The completion artifact is the round.** `dev-return-write` writes it after the commit; never hand-author the JSON (schema: orch [`schemas/dev-return.md`](../orch/schemas/dev-return.md)).
 
 - `--issue` is the delegation's `Artifact Key:` line, the normalized workflow-state key (`issue-N` for GitHub, `PROJ-123` for Linear), never the tracker-native `OWNER/REPO#N` or a bare number. `--round-id` is its `Round ID:` line.
-- `--kind` always matches what was delegated. `--validate` matches your commit message and return; a pass that needed a re-run is still `pass`, with the caveat in `--validate-note`. Flag constraints and value shapes: `dev-return-write --help`.
+- `--kind` always matches what was delegated. `--validate` matches your commit message and return. `--validate-note` carries the test-only validation-ceiling report when that route applies. Flag constraints and value shapes: `dev-return-write --help`.
 
 **Acceptance is that artifact plus git state, never your message.** Write the artifact, then return exactly once over the harness's agent-to-agent channel; a disk write is not a return. Send the `**Return exactly**` body once and go idle.
 
@@ -67,7 +67,7 @@ Execute workflow sections in order; a "**Skip if**" condition is the workflow's 
 
 ## Validation
 
-Deterministic gate findings are fixed here, never carried into review. Fix what is simple and related and re-run; when a failure is complex or unrelated, commit anyway and report it; after the same failure three times, stop looping. Every unresolved failure is reported three times over: in the commit message, in `--validate`, and in your return.
+The validation gate and role ownership are complete in [dev-implement.md § 5. Validate](workflows/dev-implement.md#5-validate). Run no proof, rerun, receipt, isolation step, or approval step that section does not name. That section also owns the one proposed-rule route and the per-rule control for production gate and guard changes.
 
 ### Long-Running Validation
 

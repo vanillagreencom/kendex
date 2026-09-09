@@ -35,7 +35,7 @@ git -C "[WORKTREE_PATH]" status --porcelain
 git -C "[WORKTREE_PATH]" diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD --stat
 ```
 
-Stop before pushing when the branch is empty (detached HEAD), equals the base branch, the working tree is dirty, or the committed diff against the base is empty. Then run `.agents/skills/preflight/scripts/preflight --base "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]" --repo [WORKTREE_PATH]` when installed. Reuse a successful full-validation result for the current commit from an accepted dev completion artifact or this submit session. Otherwise run the project's `DEV_VALIDATE_CMD`, resolved as in [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate). A changed commit needs a new result. Either check failing blocks the push. In managed lifecycle, return the failed preflight to the caller so the dev agent can normalize the branch and clean the worktree. Never create a PR from dirty or detached state.
+Stop before pushing when the branch is empty (detached HEAD), equals the base branch, the working tree is dirty, or the committed diff against the base is empty. Then run `.agents/skills/preflight/scripts/preflight --base "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]" --repo [WORKTREE_PATH]` when installed. Reuse a successful full-validation result for the current commit from an accepted dev completion artifact or this submit session. A failing dev validation artifact blocks submission and is reported without another validation run. When no dev result exists, run the project's `DEV_VALIDATE_CMD`, resolved as in [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate). A changed commit needs a new result. Either check failing blocks the push. In managed lifecycle, return the failed preflight to the caller so the dev agent can normalize the branch and clean the worktree. Never create a PR from dirty or detached state.
 
 ### 1.2 Size Check
 
@@ -123,11 +123,14 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
    ## Size
    [The § 1.2 counts, only when the issue states no allowance.]
 
+   ## Proposed rules
+   [Each string in workflow state `pr_comment_review.proposed_rules`.]
+
    ## Test Plan
    [validation steps]
    ```
 
-   Omit empty sections. Decision paths come only from `decisions search --issue [ISSUE_ID]`, each verified with `test -f [DECISION_FILE_PATH]` (one command per path) and omitted on failure. Every published SHA must be post-reconciliation.
+   Omit empty sections. Include each proposed rule once and do not perform it. Decision paths come only from `decisions search --issue [ISSUE_ID]`, each verified with `test -f [DECISION_FILE_PATH]` (one command per path) and omitted on failure. Every published SHA must be post-reconciliation.
 
 4. **Create or update the PR.** Never defer, queue, or gate CI behind bot review activity.
 
@@ -343,7 +346,7 @@ Re-run the gate-3 command once. If threads remain and the external-round cap is 
 
 **Skip if** the repository is `vanillagreencom/kendex`, where these files are the product, or `MERGE_READY = true`, where the gates already cleared the merge.
 
-When the diff touches no product code, only harness renders, settings, or prose, an unmet gate has nothing left to judge. Whether to merge past it anyway is a question orch poses and never answers. Under `auto-recommended` orch takes the recommended `Continue through the gates` and moves on; under `ask` a person or the overseer answers.
+When the diff touches no product code, only harness renders, settings, or prose, an unmet gate has nothing left to judge. Whether to merge past it anyway is a question orch poses and never answers. Under `auto-recommended` orch takes the recommended `Continue through the gates` and moves on; under `ask` the user answers. An overseer relays the question to the user and never answers it, as `oversee.md` § Held merges requires.
 
 Ask once, naming what the diff touches and which gate is unmet: `Admin-merge past the unmet gate` | `Continue through the gates`, with `Continue through the gates` recommended. Both the reason and the answer go in the PR body under `## Merge decision`. An admin answer invokes `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7` with `merge_mode: admin`. Anything else continues to § 6.3.
 

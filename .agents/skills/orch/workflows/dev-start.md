@@ -161,13 +161,41 @@ git -C "[WORKTREE_PATH]" status --porcelain
 
 | A (verdict) | B (git/tracker) | Action |
 |---|---|---|
-| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. → Store QA state. |
+| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. → Store Proposed Rules, then Store QA state. |
 | `accept` | fail | Re-read ONCE after a brief pause; if still failing, re-delegate only the specific missing step: commit the work, or commit/revert leftover files, or post the summary. Do not proceed. |
 | `wait` | pass | Do NOT re-run the implementation. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status, QA labels, and summary; do NOT re-run the implementation."* Accept only when a valid artifact for THIS round appears. |
 | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). |
-| `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. A failing `validate` re-delegates fixing the validation; an identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
+| `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. For a structurally valid artifact with a failing `validate`, run Store Proposed Rules, then end the workflow and report without another validation round. An identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
 
 Do not import the reviewer's re-delegate-on-invalid rule ([references/artifact-checks.md](../references/artifact-checks.md)).
+
+### Store Proposed Rules
+
+Read the structurally valid artifact passed by the caller, including a failing-validation artifact, and get its `summary`. For each bullet under `### Proposed Rules`, use the harness file tool to write the rule as one JSON string in `tmp/proposed-rule-[ISSUE_ID].json`. Append each rule to workflow state through this deduplicating update. Skip this step when the summary has no such bullet.
+
+```bash
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile rule tmp/proposed-rule-[ISSUE_ID].json '.pr_comment_review.proposed_rules = (((.pr_comment_review.proposed_rules // []) + [$rule[0]]) | unique)'
+```
+
+After all rules are stored, resolve the PR from the worktree:
+
+```bash
+.agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,body
+```
+
+`status: no_pr` ends this step. Normal PR creation reads the stored list. When a PR exists, read the complete stored list from workflow state:
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.proposed_rules // []'
+```
+
+Write the remote `body` value to `[WORKTREE_PATH]/tmp/pr-body-proposed-rules-[ISSUE_ID].md` with the harness file tool. Replace only its `## Proposed rules` section with the stored list, or add that section when absent. Preserve every other line from the remote body. Post that file:
+
+```bash
+.agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-edit-body [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/pr-body-proposed-rules-[ISSUE_ID].md
+```
+
+Do not rebuild the body from the local worktree or push a commit from this step. This is the sole publication owner for proposed rules.
 
 **Store QA state** on accept:
 

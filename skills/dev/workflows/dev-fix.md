@@ -42,6 +42,10 @@ Before a fix returns, grep for every other reader of the field, caller of the he
 
 Note anything a fix revealed about deeper problems, and cite the decision ID or rule behind every skip.
 
+### 2.1 Reflect
+
+Follow [dev SKILL.md § Reflect](../SKILL.md#reflect). Complete every repository edit from reflection before validation.
+
 ---
 
 ## 3. Validate And Commit
@@ -70,7 +74,7 @@ Append `[validate: FAILING_CHECK]` when validation failures remain.
 
 ## 4. Reflect
 
-Follow [dev SKILL.md § Reflect](../SKILL.md#reflect).
+Reflection is complete in § 2.1. Make no repository edit here.
 
 ---
 
@@ -78,8 +82,10 @@ Follow [dev SKILL.md § Reflect](../SKILL.md#reflect).
 
 Write the artifact first, per [dev SKILL.md § Round Contract](../SKILL.md#round-contract):
 
+If the validation list misses a rule, write `tmp/proposed-rule-[ISSUE_ID].md` with a `### Proposed Rules` heading and the proposal as one bullet. Append `--summary-file tmp/proposed-rule-[ISSUE_ID].md` to the command below. Omit the file and flag when there is no proposal.
+
 ```bash
-.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind fix --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] --item [N] [DECISION] [REASONING] [--item ...]
+.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind fix --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] --no-summary [--summary-file tmp/proposed-rule-[ISSUE_ID].md] --item [N] [DECISION] [REASONING] [--item ...]
 ```
 
 One `--item N DECISION REASONING` per **delegated** item — Applied, Skipped, and Blocked alike; the artifact must cover exactly the delegated set, `N` being the item's `#[N]` number (value shapes: `dev-return-write --help`; keep `REASONING` free of backticks). `--commit` is HEAD after the commit, or the prior HEAD when no commit was needed.
@@ -95,4 +101,5 @@ One `--item N DECISION REASONING` per **delegated** item — Applied, Skipped, a
 
 Commits: [SHAS or "none"]
 Validate: [pass or "FAILING: check1, check2"]
+Proposed rule: [proposal or "none"]
 </output_format>
