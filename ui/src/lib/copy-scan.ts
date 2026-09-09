@@ -55,5 +55,22 @@ export const unreadableFileRemedy = (warning: ScanWarning): string => {
 export const unreadableFileDetail = (warning: ScanWarning): string =>
   `${warning.path} — ${unreadableFileRemedy(warning)}`;
 
+/** Whether the reader has anything to do about this file. Core decides it
+ *  once, from this machine's own records and declarations, and every
+ *  surface that lists or counts a warning reads that decision — the
+ *  problem shape and the words below never stand in for it. */
+export const isActionable = (warning: ScanWarning): boolean =>
+  warning.standing === "actionable";
+
+/** An optional MCP container another program left empty where kendex
+ *  manages no server in it. The file is another program's, so the note
+ *  says what is true of it and asks for nothing: an empty container holds
+ *  no servers, and kendex was expecting none. */
+export const scanNoteTitle = (warning: ScanWarning): string =>
+  `${fileOf(warning)} is empty`;
+
+export const scanNoteDetail = (warning: ScanWarning): string =>
+  `kendex manages no ${kindNoun(warning)} for ${harnessName(warning.harness)}, so nothing is missing here. kendex did not write this file and does not change it.`;
+
 export const SHOW_IN_FILE_BROWSER_LABEL = "Show in file browser";
 export const RESCAN_LABEL = "Rescan";

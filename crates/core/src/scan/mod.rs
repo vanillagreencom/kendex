@@ -8,6 +8,8 @@ use crate::harness::{HarnessAdapter, Surface, all_adapters};
 use crate::model::{DetectedHarness, FileState, HarnessId, ItemKind, ObservedItem, Scope};
 use crate::settings::AppSettings;
 
+pub use standing::WarningStanding;
+
 pub(crate) mod antigravity;
 pub(crate) mod copilot;
 mod files;
@@ -18,8 +20,9 @@ mod pi_packages;
 mod plugins;
 mod provenance;
 mod readers;
+mod standing;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanResult {
     pub harnesses: Vec<DetectedHarness>,
@@ -41,6 +44,11 @@ pub struct ScanWarning {
     pub kind: ItemKind,
     pub path: PathBuf,
     pub problem: ScanProblem,
+    /// Whether the reader has to do anything about it. Every warning
+    /// leaves the surface that raised it actionable; only
+    /// [`standing::classify`], with the whole machine read, takes that
+    /// away, and only on evidence that nothing is missing.
+    pub standing: WarningStanding,
 }
 
 /// What kept a surface from being read, by shape rather than by parser
@@ -107,9 +115,6 @@ impl std::fmt::Display for ScanWarning {
 /// link and its target count once; a path that cannot be resolved is
 /// compared as spelled.
 pub(crate) fn push_warning(warnings: &mut Vec<ScanWarning>, warning: ScanWarning) {
-    let resolved = |path: &std::path::Path| {
-        crate::paths::canonical(path).unwrap_or_else(|_| path.to_path_buf())
-    };
     let file = resolved(&warning.path);
     let said = warnings
         .iter()
@@ -117,6 +122,12 @@ pub(crate) fn push_warning(warnings: &mut Vec<ScanWarning>, warning: ScanWarning
     if !said {
         warnings.push(warning);
     }
+}
+
+/// One spelling for one file: a link and its target are the same file, and
+/// a path nothing can resolve is compared as spelled (invariant 17).
+fn resolved(path: &std::path::Path) -> PathBuf {
+    crate::paths::canonical(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// The tool and kind a surface is scanned for, stamped on every warning
@@ -134,6 +145,7 @@ impl SurfaceOwner {
             kind: self.kind,
             path,
             problem,
+            standing: WarningStanding::Actionable,
         }
     }
 }
@@ -158,12 +170,7 @@ pub fn scan_scopes(
     harness_roots: &std::collections::BTreeMap<String, PathBuf>,
     scopes: &[Scope],
 ) -> ScanResult {
-    let mut result = ScanResult {
-        harnesses: Vec::new(),
-        items: Vec::new(),
-        missing_projects: Vec::new(),
-        warnings: Vec::new(),
-    };
+    let mut pass = Pass::default();
     let mut provenance = provenance::OriginCache::default();
 
     for scope in scopes {
@@ -173,11 +180,21 @@ pub fn scan_scopes(
             scope,
             &ItemKind::ALL,
             &mut provenance,
-            &mut result,
+            &mut pass,
         );
     }
 
-    result
+    standing::classify(env, &pass.containers, &mut pass.result.warnings);
+    pass.result
+}
+
+/// What one scan accumulates. The result is what leaves; the containers are
+/// what deciding a warning's standing needs and no reader of the result
+/// does — which surfaces read one file, and at which scopes.
+#[derive(Default)]
+struct Pass {
+    result: ScanResult,
+    containers: standing::Containers,
 }
 
 /// The installation behind one scope + kind + name, found by walking only
@@ -192,12 +209,7 @@ pub fn find_installed(
     kind: ItemKind,
     name: &str,
 ) -> Option<ObservedItem> {
-    let mut result = ScanResult {
-        harnesses: Vec::new(),
-        items: Vec::new(),
-        missing_projects: Vec::new(),
-        warnings: Vec::new(),
-    };
+    let mut pass = Pass::default();
     let mut provenance = provenance::OriginCache::default();
     scan_scope(
         env,
@@ -205,9 +217,11 @@ pub fn find_installed(
         scope,
         &[kind],
         &mut provenance,
-        &mut result,
+        &mut pass,
     );
-    result.items.into_iter().find(|item| item.name == name)
+    // No standing pass: this answers about one installation and drops the
+    // warnings, so nothing here reads a standing.
+    pass.result.items.into_iter().find(|item| item.name == name)
 }
 
 fn scan_scope(
@@ -216,7 +230,7 @@ fn scan_scope(
     scope: &Scope,
     kinds: &[ItemKind],
     provenance: &mut provenance::OriginCache,
-    result: &mut ScanResult,
+    pass: &mut Pass,
 ) {
     match scope {
         Scope::Global => {
@@ -226,7 +240,7 @@ fn scan_scope(
                     .cloned()
                     .unwrap_or_else(|| adapter.default_global_root(env));
                 if let Some(found) = adapter.detect(env, &root) {
-                    result.harnesses.push(found);
+                    pass.result.harnesses.push(found);
                 }
                 for kind in kinds.iter().copied() {
                     for surface in adapter.global_surfaces(kind, &root, env) {
@@ -237,7 +251,7 @@ fn scan_scope(
                             &surface,
                             env,
                             provenance,
-                            result,
+                            pass,
                         );
                     }
                 }
@@ -245,7 +259,7 @@ fn scan_scope(
         }
         Scope::Project { root: project } => {
             if !project.is_dir() {
-                result.missing_projects.push(project.clone());
+                pass.result.missing_projects.push(project.clone());
                 return;
             }
             for adapter in all_adapters() {
@@ -258,7 +272,7 @@ fn scan_scope(
                             &surface,
                             env,
                             provenance,
-                            result,
+                            pass,
                         );
                     }
                 }
@@ -274,7 +288,7 @@ fn scan_surface(
     surface: &Surface,
     env: &Env,
     provenance: &mut provenance::OriginCache,
-    result: &mut ScanResult,
+    pass: &mut Pass,
 ) {
     let owner = SurfaceOwner {
         harness: adapter.id(),
@@ -286,9 +300,10 @@ fn scan_surface(
             exts,
             prefixes,
         } => {
-            for found in files::scan_file_dir(dir, exts, prefixes, owner, &mut result.warnings) {
-                warn_unknown_tags(&found, owner, result);
-                result.items.push(ObservedItem {
+            for found in files::scan_file_dir(dir, exts, prefixes, owner, &mut pass.result.warnings)
+            {
+                warn_unknown_tags(&found, owner, &mut pass.result.warnings);
+                pass.result.items.push(ObservedItem {
                     kind,
                     name: found.name,
                     harness: adapter.id(),
@@ -305,9 +320,9 @@ fn scan_surface(
             }
         }
         Surface::SubdirPerItem { dir, marker } => {
-            for found in files::scan_subdirs(dir, marker, owner, &mut result.warnings) {
-                warn_unknown_tags(&found, owner, result);
-                result.items.push(ObservedItem {
+            for found in files::scan_subdirs(dir, marker, owner, &mut pass.result.warnings) {
+                warn_unknown_tags(&found, owner, &mut pass.result.warnings);
+                pass.result.items.push(ObservedItem {
                     kind,
                     name: found.name,
                     harness: adapter.id(),
@@ -325,12 +340,12 @@ fn scan_surface(
         }
         Surface::Structured { path, reader } => {
             if path.exists() {
-                scan_structured_file(adapter, owner, &scope, path, reader, env, result);
+                scan_structured_file(adapter, owner, &scope, path, reader, env, pass);
             }
         }
         Surface::StructuredDir { dir, ext, reader } => {
-            for path in files::scan_documents(dir, ext, owner, &mut result.warnings) {
-                scan_structured_file(adapter, owner, &scope, &path, reader, env, result);
+            for path in files::scan_documents(dir, ext, owner, &mut pass.result.warnings) {
+                scan_structured_file(adapter, owner, &scope, &path, reader, env, pass);
             }
         }
     }
@@ -341,12 +356,16 @@ fn scan_surface(
 // thinking the item is tagged when it is not, so the scan says so and names
 // the vocabulary.
 
-fn warn_unknown_tags(found: &files::FoundFile, owner: SurfaceOwner, result: &mut ScanResult) {
+fn warn_unknown_tags(
+    found: &files::FoundFile,
+    owner: SurfaceOwner,
+    warnings: &mut Vec<ScanWarning>,
+) {
     let Some(message) = found.meta.unknown_warning() else {
         return;
     };
     push_warning(
-        &mut result.warnings,
+        warnings,
         owner.warning(found.path.clone(), ScanProblem::UnknownTag { message }),
     );
 }
@@ -358,9 +377,11 @@ fn scan_structured_file(
     path: &std::path::Path,
     reader: &crate::harness::Reader,
     env: &Env,
-    result: &mut ScanResult,
+    pass: &mut Pass,
 ) {
     let kind = owner.kind;
+    pass.containers
+        .read(resolved(path), owner.harness, kind, scope);
     match readers::read_structured(path, reader, env) {
         Ok(entries) => {
             for entry in entries {
@@ -371,7 +392,7 @@ fn scan_structured_file(
                 let modified_at = entry.source_path.as_deref().and_then(files::mtime_unix);
                 let vendor =
                     crate::vendor::vendor_of(kind, &entry.name, adapter.id()).map(str::to_owned);
-                result.items.push(ObservedItem {
+                pass.result.items.push(ObservedItem {
                     kind,
                     name: entry.name,
                     harness: adapter.id(),
@@ -394,7 +415,7 @@ fn scan_structured_file(
             }
         }
         Err(problem) => push_warning(
-            &mut result.warnings,
+            &mut pass.result.warnings,
             owner.warning(path.to_path_buf(), problem),
         ),
     }

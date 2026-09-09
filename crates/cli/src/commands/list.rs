@@ -1,8 +1,9 @@
 use kendex_core::env::Env;
 use kendex_core::model::{HarnessId, Scope};
+use kendex_core::scan::WarningStanding;
 use kendex_core::{scan, settings};
 
-use super::{CliResult, resolve_scopes, say};
+use super::{CliResult, note, resolve_scopes, say};
 use crate::scope::ScopeFilter;
 
 pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult {
@@ -54,7 +55,13 @@ pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult
         }
     }
     for warning in &result.warnings {
-        say(&format!("warning: {warning}"));
+        match warning.standing {
+            WarningStanding::Actionable => say(&format!("warning: {warning}")),
+            // The reading stands; the word asking for a repair does not.
+            // Nothing here is missing, so the line is a diagnostic and the
+            // reader is not sent to edit another program's file.
+            WarningStanding::UnusedEmptyContainer => note(&warning.to_string()),
+        }
     }
     Ok(())
 }

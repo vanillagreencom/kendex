@@ -3025,6 +3025,13 @@ export type ScanWarning = {
 	kind: ItemKind,
 	path: string,
 	problem: ScanProblem,
+	/**
+	 *  Whether the reader has to do anything about it. Every warning
+	 *  leaves the surface that raised it actionable; only
+	 *  [`standing::classify`], with the whole machine read, takes that
+	 *  away, and only on evidence that nothing is missing.
+	 */
+	standing: WarningStanding,
 };
 
 export type Scope = { scope: "global" } | { scope: "project"; root: string };
@@ -3681,6 +3688,23 @@ export type VersionSel =
 { at: "commit"; commit: string } | 
 /**  What is installed on disk right now. */
 { at: "installed" };
+
+/**  Whether a scan warning names something the reader has to repair. */
+export type WarningStanding = 
+/**
+ *  A setup this machine cannot finish, or a file kendex has to read and
+ *  cannot. Listed with its remedy and counted wherever problems are
+ *  counted. The standing every warning starts at: neutral is a claim
+ *  about what is not missing, and only evidence makes it.
+ */
+"actionable" | 
+/**
+ *  An MCP container another program left empty, where no scope reading
+ *  it declares or records a managed server. Nothing is missing and
+ *  nothing has to be edited, so it is shown as information and counted
+ *  nowhere.
+ */
+"unused-empty-container";
 
 /**
  *  Why a choice is not on offer, for the labelled row the window draws

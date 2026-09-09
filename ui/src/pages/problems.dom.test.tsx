@@ -20,7 +20,7 @@ import {
   REPLACE_FILES_CONFIRM_LABEL,
   REPLACE_FILES_LABEL,
 } from "@/lib/copy-in-the-way";
-import { PROBLEMS_EMPTY } from "@/lib/error-copy";
+import { PROBLEMS_EMPTY, PROBLEMS_NOTES_TITLE } from "@/lib/error-copy";
 import { READ_LANDED, readFailed } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { useScanStore } from "@/stores/scan";
@@ -448,6 +448,7 @@ describe("a file the scan could not read", () => {
         kind: "mcp-server",
         path: "/h/.gemini/config/mcp_config.json",
         problem: { kind: "empty-file" },
+        standing: "actionable",
       },
     ]);
     const host = mount(<ProblemsPage />);
@@ -459,6 +460,37 @@ describe("a file the scan could not read", () => {
     expect(host.textContent).toContain("Delete it, or put {} in it");
     expect(button(host, COPY_PATH_LABEL)).toBeDefined();
     expect(host.textContent).not.toContain(PROBLEMS_EMPTY);
+    expect(host.textContent).not.toContain(PROBLEMS_NOTES_TITLE);
+  });
+
+  // The same file, in the same shape, with core's answer that nothing on
+  // this machine asked for a server in it: said once under its own
+  // heading, with no remedy and no button, and the page above it still
+  // reports the machine clean.
+  it("says an unused empty container is nothing to fix and asks for no repair", () => {
+    stage([]);
+    stageScan([
+      {
+        harness: "antigravity",
+        kind: "mcp-server",
+        path: "/h/.gemini/config/mcp_config.json",
+        problem: { kind: "empty-file" },
+        standing: "unused-empty-container",
+      },
+    ]);
+    const host = mount(<ProblemsPage />);
+    expect(host.textContent).toContain(PROBLEMS_NOTES_TITLE);
+    expect(host.textContent).toContain(
+      "Antigravity's MCP servers file is empty",
+    );
+    expect(host.textContent).toContain("/h/.gemini/config/mcp_config.json");
+    expect(host.textContent).toContain(
+      "kendex manages no MCP servers for Antigravity, so nothing is missing here.",
+    );
+    expect(host.textContent).toContain("does not change it");
+    expect(host.textContent).not.toContain("Delete it, or put {} in it");
+    expect(button(host, COPY_PATH_LABEL)).toBeUndefined();
+    expect(host.textContent).toContain(PROBLEMS_EMPTY);
   });
 
   it("draws no card and reports no problems once the scan reads clean", () => {

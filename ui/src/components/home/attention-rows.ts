@@ -17,7 +17,11 @@ import {
   UPDATES_ATTENTION_TITLE,
 } from "@/lib/copy";
 import { SEE_PROBLEMS_LABEL } from "@/lib/copy-marketplaces";
-import { unreadableFileDetail, unreadableFileTitle } from "@/lib/copy-scan";
+import {
+  isActionable,
+  unreadableFileDetail,
+  unreadableFileTitle,
+} from "@/lib/copy-scan";
 import {
   UPDATES_UNREADABLE_TITLE,
   unreadablePlacesLabel,
@@ -145,7 +149,9 @@ export function attentionRows(source: AttentionSource): AttentionRow[] {
   }
   // One row per file, not one row for the count: each names its own tool,
   // path and remedy, and Problems carries the same file with the buttons.
-  for (const warning of result?.warnings ?? []) {
+  // Home is where the reader is told what needs doing, so a warning core
+  // marked as information gets no row here and Problems says it instead.
+  for (const warning of (result?.warnings ?? []).filter(isActionable)) {
     rows.push(unreadableFileRow(warning, source.onProblems));
   }
   return rows;

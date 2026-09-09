@@ -17,11 +17,15 @@ const edited = (name: string, scope: UpdateRow["scope"]): UpdateRow =>
     editedHarnesses: ["claude"],
   }) as unknown as UpdateRow;
 
-const warning = (problem: ScanWarning["problem"]): ScanWarning => ({
+const warning = (
+  problem: ScanWarning["problem"],
+  standing: ScanWarning["standing"] = "actionable",
+): ScanWarning => ({
   harness: "antigravity",
   kind: "mcp-server",
   path: "/h/.gemini/config/mcp_config.json",
   problem,
+  standing,
 });
 
 const source = (over: Partial<AttentionSource>): AttentionSource => ({
@@ -173,6 +177,22 @@ describe("the unreadable file rows", () => {
       found.action?.onClick();
       expect(onProblems).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it("leaves a file core marked as information off Home entirely", () => {
+    const rows = attentionRows(
+      source({
+        result: {
+          harnesses: [],
+          items: [],
+          missingProjects: [],
+          warnings: [warning({ kind: "empty-file" }, "unused-empty-container")],
+        },
+      }),
+    );
+    expect(rows.filter((r) => r.key.startsWith("unreadable-file:"))).toEqual(
+      [],
+    );
   });
 
   it("gives every file its own row rather than one row with a count", () => {
