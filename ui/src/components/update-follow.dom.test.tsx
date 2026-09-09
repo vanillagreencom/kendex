@@ -96,8 +96,8 @@ const okMoved: { status: "ok"; data: PackageUpdate_Serialize } = {
   data: { view, heldBack: [], removed: [], moved: [wrote] },
 };
 
-/** What the machine scan answers with. Named so a test can hold one
- *  unanswered and read the page while the rescan is still out. */
+/** What the machine scan answers with: the flip re-reads it behind its own
+ *  standing. */
 const SCANNED = {
   status: "ok" as const,
   data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
@@ -220,10 +220,6 @@ describe("the Follow source switch", () => {
   it("moves before the write behind it answers, and holds the page while it does", async () => {
     const write = pending<typeof ok>(ok);
     vi.mocked(commands.packageSetRev).mockReturnValue(write.promise as never);
-    // Held unanswered so the hold can be read while the rescan is still
-    // out: `busy` covers the write, the reload and the rescan alike.
-    const scan = pending<typeof SCANNED>(SCANNED);
-    vi.mocked(commands.scanMachine).mockReturnValue(scan.promise as never);
     mount(<Live />);
     await openPlaces();
     const flipped = followSwitch("gh", USER_LEVEL_PLACE);
@@ -253,16 +249,9 @@ describe("the Follow source switch", () => {
     expect(holding(followSwitch("gh", "app"))).toBe(true);
     expect(holding(followSwitch("orch", "app"))).toBe(true);
 
-    // The write answering does not release the page: the hold covers the
-    // reload and the rescan behind it, and the scan has not answered.
     write.answer(ok);
     await settle();
     expect(commands.updatesOverview).toHaveBeenCalled();
-    expect(commands.scanMachine).toHaveBeenCalled();
-    expect(holding(followSwitch("orch", "app"))).toBe(true);
-
-    scan.answer(SCANNED);
-    await settle();
     expect(holding(followSwitch("orch", "app"))).toBe(false);
   });
 

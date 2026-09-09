@@ -45,10 +45,11 @@ export const manageConfirmTitle = (name: string): string =>
 // tree and the tool's path becomes a link to it, while everything else is
 // copied into kendex's store with the original trashed — and which arm a
 // row is on is core's rule, not one the page re-derives in TS to reword a
-// dialog. So the words claim only what is true either way: the files move,
-// the path each tool reads goes on working, and nothing is deleted.
+// dialog. So the words claim only what is true either way: the files move
+// and the path each tool reads goes on working. A move is not a deletion,
+// which is what the sentence says and what the button's variant carries.
 export const MANAGE_CONFIRM_BODY =
-  "kendex moves these files to where it manages them from and leaves each tool reading them at the same path. Nothing is deleted.";
+  "kendex moves these files to where it manages them from and leaves each tool reading them at the same path.";
 // The opener and the title carry the action, and the body says what
 // happens, so the confirm only has to offer it.
 export const PROCEED_LABEL = "Proceed";

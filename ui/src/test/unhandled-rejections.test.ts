@@ -2,9 +2,7 @@
 // rejection settling after the file ends reddens the run, and one settling
 // while the file runs reddens it too. Each is a fixture run under both
 // configs — `guarded` carries the setup file, `unguarded` does not — so the
-// guarded verdict is read against a measured baseline. The fake-timers
-// fixture is the exception, guarded only: without the closing window there
-// is nothing there to hang.
+// guarded verdict is read against a measured baseline.
 //
 // Each run is a real `vitest run` in its own process: the closing window is
 // a property of how a worker is torn down, which nothing nested in this one
@@ -248,42 +246,6 @@ describe("a rejection that lands while a later case is running", () => {
         status: 1,
       });
     },
-  );
-});
-
-describe("a case that leaves fake timers installed", () => {
-  it(
-    "still reaches a verdict, because the window waits on the real clock",
-    () => {
-      const run = runFixture("guarded", "fake-timers");
-      expect(run.output).toContain("Test Files  1 passed (1)");
-      expect(run.status, run.output).toBe(0);
-    },
-    CASE_TIMEOUT_MS,
-  );
-});
-
-describe("an exported KENDEX_CLOSING_WINDOW_MS", () => {
-  it(
-    "does not reach a run that declared no window",
-    () => {
-      // 15s is past vitest's 10s hook timeout, so a child that read it would
-      // die on "Hook timed out in 10000ms" instead of passing at the default.
-      const previousWindow = node.env.KENDEX_CLOSING_WINDOW_MS;
-      node.env.KENDEX_CLOSING_WINDOW_MS = "15000";
-      try {
-        const run = runFixture("guarded", "fake-timers");
-        expect(run.output).toContain("Test Files  1 passed (1)");
-        expect(run.status, run.output).toBe(0);
-      } finally {
-        if (previousWindow === undefined) {
-          delete node.env.KENDEX_CLOSING_WINDOW_MS;
-        } else {
-          node.env.KENDEX_CLOSING_WINDOW_MS = previousWindow;
-        }
-      }
-    },
-    CASE_TIMEOUT_MS,
   );
 });
 

@@ -173,64 +173,60 @@ assert "the one shared comment lock lives above the per-issue files" \
 
 # --- E. the assert lib redirects every suite, and refuses one that leaves ---
 
-# Three child suites, each a suite in its own right. One does nothing but
-# assert and must land in scratch it did not have to ask for; one throws the
-# redirect away and one aims it at a root it does not own, and both must fail
-# the verdict.
-write_child() { # write_child <path> <body>
-  cat >"$1" <<CHILD
+# Four child suites, each a suite in its own right, as one table: what the
+# child does with the redirect after it has been handed one, whether its own
+# run may pass, whether the root it was handed has to be gone afterwards, and
+# what the exit verdict says. Cleanup is not something only a passing suite
+# gets, which is why one row fails an assertion on purpose.
+#
+# Every child asserts something, records the root it was given and drops a file
+# in it before its row's own line runs, so the row can check afterwards that
+# the root was scratch it never had to ask for and that it went away — the lock
+# files a cache write leaves behind go with it. A row that throws the redirect
+# away or repoints it does so after that, which is why those two still prove
+# they were redirected in the first place.
+child_rows=0
+while IFS="$(printf '\t')" read -r name body passes root_gone verdict; do
+  ROOT_FILE="$TMP_ROOT/$name-root"
+  rm -f "$ROOT_FILE"
+  cat >"$TMP_ROOT/$name.test.sh" <<CHILD
 #!/usr/bin/env bash
 set -euo pipefail
 source "$SCRIPT_DIR/lib/assert.sh"
-$2
+assert_eq "the child asserts something" 1 1
+printf '%s\\n' "\${LINEAR_CACHE_ROOT:-<unset>}" >"$ROOT_FILE"
+: >"\${LINEAR_CACHE_ROOT:-.}/.cache/linear/comments/.probe.lock"
+$body
 CHILD
-}
 
-# Each child records the root it was given and drops a file in it, so the
-# parent can check afterwards that the root was scratch and that it went away —
-# the lock files a cache write leaves behind go with it.
-child_body='printf "%s\n" "${LINEAR_CACHE_ROOT:-<unset>}" >"CHILD_ROOT_FILE"
-: >"${LINEAR_CACHE_ROOT:-.}/.cache/linear/comments/.probe.lock"'
+  run_output OUT rc bash "$TMP_ROOT/$name.test.sh" 2>"$ERR_FILE"
+  if [[ "$passes" == yes ]]; then
+    assert_eq "$name: the child's own run passes" "$rc" 0
+  else
+    assert_ne "$name: the child's own run fails" "$rc" 0
+  fi
 
-write_child "$TMP_ROOT/child-default.test.sh" \
-  "assert_eq \"the child asserts something\" 1 1
-${child_body//CHILD_ROOT_FILE/$TMP_ROOT/child-root}"
-
-run_status rc bash "$TMP_ROOT/child-default.test.sh" >/dev/null 2>&1
-CHILD_ROOT="$(cat "$TMP_ROOT/child-root" 2>/dev/null || true)"
-
-assert_eq "a suite that asks for nothing still passes" "$rc" 0
-assert_ne "a suite that asks for nothing is redirected somewhere" "$CHILD_ROOT" "<unset>"
-assert_not "the redirected root, and the lock file left in it, are gone at exit" \
-  test -e "$CHILD_ROOT"
-
-# Same again, but the child fails an assertion: cleanup must not be something
-# only a passing suite gets.
-write_child "$TMP_ROOT/child-failing.test.sh" \
-  "assert_eq \"the child fails on purpose\" 1 2
-${child_body//CHILD_ROOT_FILE/$TMP_ROOT/failing-root}"
-
-run_status rc bash "$TMP_ROOT/child-failing.test.sh" >/dev/null 2>&1
-FAILING_ROOT="$(cat "$TMP_ROOT/failing-root" 2>/dev/null || true)"
-
-assert_ne "the failing child fails" "$rc" 0
-assert_ne "the failing child recorded the root it was given" "$FAILING_ROOT" ""
-assert_not "a failing suite's cache root is removed too" test -e "$FAILING_ROOT"
-
-write_child "$TMP_ROOT/child-escaped.test.sh" \
-  'assert_eq "the child asserts something" 1 1
-unset LINEAR_CACHE_ROOT'
-
-run_output OUT rc bash "$TMP_ROOT/child-escaped.test.sh" 2>"$ERR_FILE"
-assert_ne "a suite that ends with the redirect thrown away fails its verdict" "$rc" 0
-assert_file_contains "the verdict says the redirect was unset" \
-  "$ERR_FILE" "LINEAR_CACHE_ROOT was unset by the suite"
-
-write_child "$TMP_ROOT/child-outside.test.sh" \
-  'assert_eq "the child asserts something" 1 1
-export LINEAR_CACHE_ROOT="'"$PROJ"'"'
-
-run_output OUT rc bash "$TMP_ROOT/child-outside.test.sh" 2>"$ERR_FILE"
-assert_ne "a suite aiming the redirect outside its own scratch fails its verdict" "$rc" 0
-assert_file_contains "the verdict names the root that escaped" \
-  "$ERR_FILE" "points outside every scratch directory this suite registered: $PROJ"
+  CHILD_ROOT="$(cat "$ROOT_FILE" 2>/dev/null || true)"
+  # Empty means the child died before the probe, which leaves every check
+  # below with nothing to read: `<unset>` never matches it and `test -e ""` is
+  # false, so the row would go green without reaching its own line.
+  assert_ne "$name: the child reached the probe and recorded its root" \
+    "$CHILD_ROOT" ""
+  assert_ne "$name: the child was redirected without asking for it" \
+    "$CHILD_ROOT" "<unset>"
+  if [[ "$root_gone" == yes ]]; then
+    assert_not "$name: the redirected root, and the lock file left in it, are gone at exit" \
+      test -e "$CHILD_ROOT"
+  fi
+  if [[ -n "$verdict" ]]; then
+    assert_file_contains "$name: the exit verdict names why it refused" \
+      "$ERR_FILE" "$verdict"
+  fi
+  child_rows=$((child_rows + 1))
+done <<ROWS
+default	:	yes	yes	
+failing	assert_eq "the child fails on purpose" 1 2	no	yes	
+escaped	unset LINEAR_CACHE_ROOT	no	no	LINEAR_CACHE_ROOT was unset by the suite
+outside	export LINEAR_CACHE_ROOT="$PROJ"	no	no	points outside every scratch directory this suite registered: $PROJ
+ROWS
+assert_eq "every child-suite row ran" "$child_rows" 4

@@ -20,7 +20,7 @@ control_replace scripts/lib/cache.sh 1 \
 
 # 2. Every suite is isolated. Disable the assert lib's exit verdict on the
 #    redirect, so a suite that ends with it thrown away passes.
-control_expect "a suite that ends with the redirect thrown away fails its verdict"
+control_expect "escaped: the exit verdict names why it refused"
 control_replace tests/lib/assert.sh 1 \
     '	if [[ -n "$cache_escape" ]]; then' \
     '	if false; then'
