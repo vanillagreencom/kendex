@@ -56,6 +56,10 @@ export interface PackageRef {
    * other's page. A link built from a record is `recorded` by
    * construction. */
   identity: PackageIdentity;
+  /** Which file, where the link names a row nothing recorded — its kind
+   * and name are not its identity, and another file can wear both. Absent
+   * on a recorded link, whose declaration is its identity. */
+  at?: string;
 }
 
 /** One catalog, addressed the way every marketplace query is: a

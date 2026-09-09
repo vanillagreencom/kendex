@@ -1126,6 +1126,8 @@ describe("a package page opened on an installation nothing recorded", () => {
         name: "gh",
         scope: VG,
         identity: "observed",
+        // A row nothing recorded is named by the file it reads.
+        at: stray().path,
       },
       packageView: null,
     });

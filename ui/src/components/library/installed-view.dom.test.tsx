@@ -63,10 +63,18 @@ describe("a customized package in the Library list", () => {
   beforeEach(() => {
     vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
     vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
-    // The join has answered and found nothing recorded: these packages
-    // are grouped as the scan saw them, which is what the fixture means.
+    // One package customized in two places, which is what the fixture is
+    // about — so the join says it is one, since two copies wearing a name
+    // establish nothing on their own.
     useProvenanceStore.setState({
-      rows: [],
+      rows: [VG, HYPR].map((scope) => ({
+        scope,
+        kind: "skill" as const,
+        name: "gh",
+        harness: "claude" as const,
+        origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
+        package: { kind: "skill" as const, name: "gh" },
+      })),
       loaded: true,
       answeredFor: 0,
       read: READ_LANDED,
@@ -658,6 +666,9 @@ describe("one package several tools store differently", () => {
         name: "safety-block-argv-kill",
         scope: VG,
         identity: "observed",
+        // A row nothing recorded is named by the file it reads: its kind
+        // and name are not its identity.
+        at: "/work/vg/.cursor/rules/safety-block-argv-kill.mdc",
       },
     ]);
   });

@@ -6,6 +6,7 @@ import {
   filterItems,
   groupFor,
   groupItems,
+  groupRef,
   groupScopes,
   groupsOfKind,
   groupVendor,
@@ -270,6 +271,88 @@ describe("groupItems by package identity", () => {
 // come from one and their versions, update note and Delete from the other,
 // so a link that opened the wrong one would describe one and act on the
 // other.
+// Where nothing records who wrote a file, the file is all there is to go on.
+// Two hand-written files wearing one kind and name are two things; several
+// tools reading one file are one. A name is not evidence either way.
+describe("groupItems where nothing is recorded", () => {
+  const at = (path: string, over: Partial<ObservedItem> = {}) =>
+    item({ kind: "skill", name: "deploy", path, ...over });
+
+  it("keeps two files that only share a name apart, here and elsewhere", () => {
+    const rows = [
+      {
+        name: "one place, two tools' own directories",
+        items: [
+          at("/p/.claude/skills/deploy", { harness: "claude" }),
+          at("/p/.cursor/skills/deploy", { harness: "cursor" }),
+        ],
+      },
+      {
+        name: "two places",
+        items: [
+          at("/p/.claude/skills/deploy", {
+            scope: { scope: "project", root: "/p" },
+          }),
+          at("/other/.claude/skills/deploy", {
+            scope: { scope: "project", root: "/other" },
+          }),
+        ],
+      },
+    ];
+    expect(rows.length, "unrecorded-identity table is empty").toBeGreaterThan(
+      0,
+    );
+    for (const row of rows) {
+      const groups = groupItems(row.items, unrecorded);
+      expect(groups.length, row.name).toBe(2);
+      expect(
+        groups.map((group) => group.installations.length),
+        row.name,
+      ).toEqual([1, 1]);
+    }
+  });
+
+  // The inverse, and the one the shared tree depends on: one file several
+  // tools read is one row, whether each reads it directly or through a link
+  // of its own.
+  it("keeps one file several tools read on one row", () => {
+    const shared = "/p/.agents/skills/deploy";
+    const groups = groupItems(
+      [
+        at(shared, { harness: "codex" }),
+        at(shared, { harness: "pi" }),
+        at("/p/.claude/skills/deploy", {
+          harness: "claude",
+          fileState: { state: "symlink", target: shared, broken: false },
+        }),
+      ],
+      unrecorded,
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].harnesses).toEqual(["codex", "pi", "claude"]);
+    expect(groups[0].shared).toBe(true);
+  });
+
+  // A row nothing recorded is named by the file it reads, so a link to one
+  // of two same-named rows opens that one and not its neighbour.
+  it("opens the row whose file the link named", () => {
+    const here = at("/p/.claude/skills/deploy", { harness: "claude" });
+    const there = at("/p/.cursor/skills/deploy", { harness: "cursor" });
+    const groups = groupItems([here, there], unrecorded);
+    for (const one of [here, there]) {
+      const ref = groupRef(
+        groups.find((group) => group.installations[0].path === one.path) ??
+          groups[0],
+      );
+      expect(ref.at, one.path).toBe(one.path);
+      expect(
+        groupFor(groups, ref, true)?.installations.map((i) => i.harness),
+        one.path,
+      ).toEqual([one.harness]);
+    }
+  });
+});
+
 describe("groupFor", () => {
   const managed = item({
     kind: "skill",
@@ -298,8 +381,12 @@ describe("groupFor", () => {
 
   it("opens the one the link named, in the same place and in another", () => {
     const rows = [
-      { name: "same place", items: [managed, mine] },
-      { name: "different places", items: [managed, elsewhere] },
+      { name: "same place", items: [managed, mine], at: mine.path },
+      {
+        name: "different places",
+        items: [managed, elsewhere],
+        at: elsewhere.path,
+      },
     ] as const;
     expect(rows.length, "same-name identity table is empty").toBeGreaterThan(0);
     for (const row of rows) {
@@ -315,7 +402,7 @@ describe("groupFor", () => {
       expect(
         groupFor(
           groups,
-          { ...gh, identity: "observed" },
+          { ...gh, identity: "observed", at: row.at },
           true,
         )?.installations.map((one) => one.harness),
         row.name,
@@ -329,7 +416,9 @@ describe("groupFor", () => {
       only[0],
     );
     const one = groupItems([managed], recordedOnly);
-    expect(groupFor(one, { ...gh, identity: "observed" }, false)).toBe(one[0]);
+    expect(
+      groupFor(one, { ...gh, identity: "observed", at: managed.path }, false),
+    ).toBe(one[0]);
   });
 
   // A link the reader kept after its package was removed, with only a

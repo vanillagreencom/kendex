@@ -94,8 +94,19 @@ beforeEach(() => {
   vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
   // The join has answered and recorded nothing: these packages group as
   // the scan saw them, which is what the fixture means.
+  // What the fixture means by "two skills over three installations": each
+  // is one recorded package, whichever place or tool holds a copy. Said to
+  // the join, because that is what establishes it — two files wearing one
+  // name establish nothing on their own.
   useProvenanceStore.setState({
-    rows: [],
+    rows: scanned.items.map((item) => ({
+      scope: item.scope,
+      kind: item.kind,
+      name: item.name,
+      harness: item.harness,
+      origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
+      package: { kind: item.kind, name: item.name },
+    })),
     loaded: true,
     answeredFor: 0,
     read: READ_LANDED,

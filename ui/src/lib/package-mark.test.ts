@@ -21,7 +21,13 @@ const item = (scope: Scope): ObservedItem => ({
   vendor: null,
 });
 
-const group = groupItems([item(VG), item(HYPR)], () => null)[0];
+// One recorded package in two places, which is what a mark counting
+// places is about. Two copies wearing a name establish nothing on their
+// own, so the fixture says what the records say.
+const group = groupItems([item(VG), item(HYPR)], () => ({
+  kind: "skill",
+  name: "gh",
+}))[0];
 
 // Both places have been read for hand edits and forks, so a count over
 // them is a count over places somebody looked at.

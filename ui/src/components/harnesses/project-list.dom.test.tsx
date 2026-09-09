@@ -448,12 +448,23 @@ const destinationRows = (): number =>
 describe("a place card's kind badge", () => {
   beforeEach(() => {
     vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
-    // The join has answered about the scan these fixtures set, and
-    // recorded nothing: they group as the scan saw them.
-    joinAnswered();
     vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
     useUpdatesStore.setState({ rows: [], read: READ_LANDED });
     useScanStore.setState({ scanning: false, result: machine, error: null });
+    // What the fixture means by a package held in two places: each name is
+    // one recorded package, whichever place or tool holds a copy. Said to
+    // the join, because that is what establishes it — two files wearing
+    // one name establish nothing on their own.
+    joinAnswered(
+      (useScanStore.getState().result?.items ?? []).map((item) => ({
+        scope: item.scope,
+        kind: item.kind,
+        name: item.name,
+        harness: item.harness,
+        origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
+        package: { kind: item.kind, name: item.name },
+      })),
+    );
     useSettingsStore.setState({
       settings: { projects: ["/work/acme"] } as never,
     });

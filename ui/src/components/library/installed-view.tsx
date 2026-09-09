@@ -30,7 +30,6 @@ import {
   groupRef,
   groupScopes,
   groupsOfKind,
-  identityOf,
   installedCount,
   scopeChoices,
   selectionOf,
@@ -359,10 +358,8 @@ export function InstalledView() {
                         const where = scope ?? primary?.scope;
                         if (!where) return;
                         goToPackage({
-                          kind: group.kind,
-                          name: group.name,
+                          ...groupRef(group),
                           scope: where,
-                          identity: identityOf(group),
                         });
                       }}
                       onOpenHarness={(harness) => narrowTo({ harness })}

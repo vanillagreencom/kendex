@@ -101,20 +101,31 @@ export interface SharedFile {
   harnesses: string[];
 }
 
+/** Where one installation's bytes actually are, rather than where its tool
+ *  looks for them: two tools linking to one shared folder read one file,
+ *  though each has a path of its own pointing at it. A broken link has
+ *  nothing to resolve and keeps the text it was given, which is what names
+ *  the problem.
+ *
+ *  The one answer to "is this the same file": the Shared files chip reads
+ *  it, and so does the row an installation nothing recorded belongs to, so
+ *  a chip can never say two tools share a file that the table has already
+ *  put on separate rows. */
+export function bytesAt(install: ObservedItem): string {
+  return install.fileState.state === "symlink" && !install.fileState.broken
+    ? install.fileState.target
+    : install.path;
+}
+
 /** The paths more than one harness reads, out of one item's installations.
  *
- * Where the bytes actually are, not where the harness looks for them: two
- * harnesses linking to one shared folder are sharing a file, even though each
- * has a path of its own pointing at it. The badge that says a package is
- * shared and the flyout that says which files reads this one answer, so the
- * badge can never stand over a list that disagrees with it. */
+ * The badge that says a package is shared and the flyout that says which
+ * files reads this one answer, so the badge can never stand over a list
+ * that disagrees with it. */
 export function sharedFiles(installations: ObservedItem[]): SharedFile[] {
   const byPath = new Map<string, string[]>();
   for (const install of installations) {
-    const real =
-      install.fileState.state === "symlink" && !install.fileState.broken
-        ? install.fileState.target
-        : install.path;
+    const real = bytesAt(install);
     const harnesses = byPath.get(real) ?? [];
     if (!harnesses.includes(install.harness)) harnesses.push(install.harness);
     byPath.set(real, harnesses);
@@ -128,9 +139,14 @@ export function sharedFiles(installations: ObservedItem[]): SharedFile[] {
  *
  *  A tool storing a package as another kind, or under a name of its own,
  *  is an installation detail: the row is the package, and the tools it is
- *  installed on sit on that row. Where nothing establishes which package
- *  an installation is, it keeps the identity the scan gave it, so two
- *  unrelated files that merely read alike stay two rows. */
+ *  installed on sit on that row.
+ *
+ *  Where nothing establishes which package an installation is, the file it
+ *  reads is all there is to go on, so that is what gathers it. Several
+ *  tools reading one file are one row — the shared tree, and the links
+ *  into it — while two files that merely happen to share a kind and a name
+ *  are two, because nothing says they are the same thing and a name is not
+ *  evidence. */
 export function groupItems(
   items: ObservedItem[],
   packageOf: PackageOf,
@@ -143,7 +159,7 @@ export function groupItems(
     // file happens to be called must not join that file's row.
     const key = identity
       ? `package:${identity.kind}:${identity.name}`
-      : `observed:${item.kind}:${item.name}`;
+      : `observed:${item.kind}:${item.name}:${bytesAt(item)}`;
     let group = groups.get(key);
     if (!group) {
       group = {
@@ -203,14 +219,26 @@ export interface PackageIdentityRef {
   kind: ItemKind;
   name: string;
   identity: PackageIdentity;
+  /** Which file, for a row nothing recorded. Its kind and name are not its
+   *  identity — another file can wear both — so the file it reads is what
+   *  tells one such row from another, and a link without it would open
+   *  whichever came first. Absent on a recorded row, whose declaration is
+   *  its identity wherever its copies sit. */
+  at?: string;
 }
 
 /** How a group names itself to every join and every link. */
-export const groupRef = (group: ItemGroup): PackageIdentityRef => ({
-  kind: group.kind,
-  name: group.name,
-  identity: identityOf(group),
-});
+export const groupRef = (group: ItemGroup): PackageIdentityRef =>
+  group.package
+    ? { kind: group.kind, name: group.name, identity: "recorded" }
+    : {
+        kind: group.kind,
+        name: group.name,
+        identity: "observed",
+        // Every installation on an unrecorded row reads one file — that is
+        // what gathered them — so the first speaks for the row.
+        at: group.installations[0] && bytesAt(group.installations[0]),
+      };
 
 /** The row a link opens, out of the rows on this machine.
  *
@@ -233,7 +261,14 @@ export function groupFor(
   const named = groups.filter(
     (group) => group.kind === ref.kind && group.name === ref.name,
   );
-  const exact = named.find((group) => identityOf(group) === ref.identity);
+  // A recorded link is answered by the identity alone; an unrecorded one
+  // also has to name the file, because two rows can wear one kind and name
+  // and neither is the other's stand-in.
+  const exact = named.find(
+    (group) =>
+      identityOf(group) === ref.identity &&
+      (ref.identity === "recorded" || groupRef(group).at === ref.at),
+  );
   if (exact || known) return exact ?? null;
   return named.length === 1 ? named[0] : null;
 }
