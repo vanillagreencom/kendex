@@ -189,35 +189,66 @@ fn an_expected_server_keeps_the_empty_container_actionable() {
     }
 }
 
-/// Whether a scope asks for a server is a question the manifest and the
-/// record answer. A file that will not read answers nothing, and an
-/// unanswered question is never the answer that nothing is expected: the
-/// warning keeps its remedy until the record can be read.
+/// What the fixture puts out of reach, so the row says which read fails
+/// rather than leaving it to be inferred from a blob of TOML.
+enum Broken {
+    /// The record file itself, holding this text.
+    Record(&'static str),
+    /// The manifest's schema. The scope has no record at all, which reads
+    /// fine and records nothing, so the manifest is the only read that can
+    /// fail here.
+    Manifest,
+    /// A catalog a readable manifest's declaration derives from. No record
+    /// and a manifest that parses, so both of those reads succeed and the
+    /// derivation is the only thing left to fail: a set whose members will
+    /// not read is a declaration set the plan could not finish.
+    Catalog,
+}
+
+/// Whether a scope asks for a server is a question the manifest, the
+/// record and the catalogs they name answer between them. Any one of them
+/// failing to read answers nothing, and an unanswered question is never
+/// the answer that nothing is expected: the warning keeps its remedy.
 #[test]
 fn ownership_evidence_that_cannot_be_read_keeps_the_warning_actionable() {
-    let rows: [(&str, &str, &str); 3] = [
-        ("a damaged record", "{\"version\": 10, \"entries\": ", ""),
+    let rows: [(&str, Broken); 4] = [
+        (
+            "a damaged record",
+            Broken::Record("{\"version\": 10, \"entries\": "),
+        ),
         (
             "a record from a newer kendex",
-            "{\"version\": 4000, \"entries\": {}}",
-            "",
+            Broken::Record("{\"version\": 4000, \"entries\": {}}"),
         ),
-        (
-            "a manifest under a retired schema",
-            "{\"version\": 0}",
-            "schema = 1\n",
-        ),
+        ("a manifest under a retired schema", Broken::Manifest),
+        ("a catalog a declared set derives from", Broken::Catalog),
     ];
-    for (case, lock, manifest) in rows {
+    for (case, broken) in rows {
         let tmp = tempfile::tempdir().unwrap();
         let home = crate::test_util::rooted(&tmp);
         let env = Env::fake(&home, FakeOs::Linux);
         let path = container(&home, "");
-        global_lock(&env, lock);
-        if manifest.is_empty() {
-            let _ = fs::remove_file(crate::manifest::manifest_path(&env, &Scope::Global));
-        } else {
-            global_manifest(&env, manifest);
+        match broken {
+            // A record this build refuses, and no manifest: the record is
+            // the only read that fails.
+            Broken::Record(text) => global_lock(&env, text),
+            Broken::Manifest => global_manifest(&env, "schema = 1\n"),
+            Broken::Catalog => {
+                let catalog = home.join("shelf");
+                fs::create_dir_all(&catalog).unwrap();
+                // Its own control file is not TOML, so the set's members
+                // cannot be derived and the plan says so rather than
+                // reading the silence as a catalog offering nothing.
+                fs::write(catalog.join(crate::manifest::MANIFEST_FILE), "[catalog\n").unwrap();
+                global_manifest(
+                    &env,
+                    &format!(
+                        "schema = {}\n[sources.shelf]\n{}\n[bundles.dev]\nsource = \"shelf\"\n",
+                        crate::manifest::MANIFEST_SCHEMA,
+                        crate::test_util::source_path(&catalog),
+                    ),
+                );
+            }
         }
 
         let warnings = scan_global(&env);
