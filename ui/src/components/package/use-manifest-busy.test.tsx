@@ -1,6 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Scope } from "@/bindings";
 import { useManifestBusy, useVersionsBusy } from "./use-package-data";
 
 // Static rendering reads each store's initial snapshot, so both store hooks
@@ -10,7 +9,6 @@ const stub = vi.hoisted(() => ({
   updates: false,
   checking: false,
   saving: false,
-  settling: [] as { scope: { scope: string; root?: string } }[],
 }));
 vi.mock("@/stores/updates", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/stores/updates")>();
@@ -19,7 +17,6 @@ vi.mock("@/stores/updates", async (importOriginal) => {
       ...mod.useUpdatesStore.getState(),
       busy: stub.updates,
       checking: stub.checking,
-      pendingFollows: stub.settling,
     };
     return selector ? selector(state) : state;
   };
@@ -43,19 +40,16 @@ vi.mock("@/stores/editor", async (importOriginal) => {
   return { ...mod, useEditorStore: Object.assign(hook, mod.useEditorStore) };
 });
 
-const GLOBAL: Scope = { scope: "global" };
-const PROJECT: Scope = { scope: "project", root: "/home/me/app" };
-
-function Probe({ switching, scopes }: { switching: boolean; scopes: Scope[] }) {
-  return <span>{useManifestBusy(switching, scopes) ? "busy" : "idle"}</span>;
+function Probe({ switching }: { switching: boolean }) {
+  return <span>{useManifestBusy(switching) ? "busy" : "idle"}</span>;
 }
 
 function VersionsProbe() {
   return <span>{useVersionsBusy(false) ? "busy" : "idle"}</span>;
 }
 
-const render = (switching: boolean, scopes: Scope[] = [GLOBAL]) =>
-  renderToStaticMarkup(<Probe switching={switching} scopes={scopes} />);
+const render = (switching: boolean) =>
+  renderToStaticMarkup(<Probe switching={switching} />);
 
 // A check builds its report once, so a commit the version controls make
 // while it is out would be missing from it and the landing would put the
@@ -70,7 +64,6 @@ beforeEach(() => {
     updates: false,
     checking: false,
     saving: false,
-    settling: [],
   });
 });
 
@@ -136,54 +129,6 @@ describe("useManifestBusy", () => {
         saving: entry.saving,
       });
       expect(render(entry.switching), entry.name).toBe(
-        `<span>${entry.expected}</span>`,
-      );
-    }
-  });
-
-  it("holds only while a flip settles in any scope the controls write", () => {
-    const rows = [
-      {
-        name: "same scope",
-        settling: [GLOBAL],
-        scopes: [GLOBAL],
-        expected: "busy",
-      },
-      {
-        name: "other scope",
-        settling: [GLOBAL],
-        scopes: [PROJECT],
-        expected: "idle",
-      },
-      {
-        name: "global flip cleared",
-        settling: [],
-        scopes: [GLOBAL],
-        expected: "idle",
-      },
-      {
-        name: "project flip outside write scopes",
-        settling: [PROJECT],
-        scopes: [GLOBAL],
-        expected: "idle",
-      },
-      {
-        name: "project among write scopes",
-        settling: [PROJECT],
-        scopes: [GLOBAL, PROJECT],
-        expected: "busy",
-      },
-      {
-        name: "project flip cleared",
-        settling: [],
-        scopes: [GLOBAL, PROJECT],
-        expected: "idle",
-      },
-    ];
-    expect(rows).toHaveLength(6);
-    for (const entry of rows) {
-      stub.settling = entry.settling.map((scope) => ({ scope }));
-      expect(render(false, entry.scopes), entry.name).toBe(
         `<span>${entry.expected}</span>`,
       );
     }

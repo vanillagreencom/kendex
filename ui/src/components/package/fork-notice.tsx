@@ -26,7 +26,7 @@ import {
 } from "@/lib/copy-updates";
 import { harnessName } from "@/lib/labels";
 import { sameScope } from "@/lib/scope";
-import { rowUnsettled } from "@/lib/updates-read-state";
+import { readUnsettled } from "@/lib/updates-read-state";
 import { useUpdatesStore } from "@/stores/updates";
 import { keepAsOwn, takeNewVersion } from "@/stores/updates-edits";
 
@@ -51,7 +51,7 @@ export function ForkNotice({
   // held — from rows a failed check left behind, or rows a running check
   // is about to replace, that pins an old version — so the discard waits
   // for a check.
-  const held = useUpdatesStore((s) => rowUnsettled(s, row));
+  const held = useUpdatesStore(readUnsettled);
   // The fork copies what is on disk and reads nothing off the row, so a
   // failed check does not bar it. It commits, so the work already running
   // does: the same pair the store refuses it on.

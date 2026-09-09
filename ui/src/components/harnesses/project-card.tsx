@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { clickAsksToOpen } from "@/lib/click-asks-to-open";
 import { PLACE_UNCHECKED_LABEL, unmanagedHereLabel } from "@/lib/copy";
+import { outOfDateHereLabel } from "@/lib/copy-updates";
 
 /**
  * One place a setup applies — Personal, or a project folder. Personal and a
@@ -26,6 +27,8 @@ export function ProjectCard({
   action,
   unmanaged,
   onUnmanaged,
+  outOfDate,
+  onOutOfDate,
   note,
 }: {
   name: string;
@@ -54,6 +57,14 @@ export function ProjectCard({
    *  the place, which is not zero and must not read as it. */
   unmanaged?: number | null;
   onUnmanaged?: () => void;
+  /** How many packages installed here have updates. Zero says nothing and
+   *  is not drawn; null is a read that has not landed for this place, which
+   *  is not zero either. This is what a package's source has moved on to —
+   *  never what kendex wrote here and has not committed, which the badge
+   *  above says in its own words. */
+  outOfDate?: number | null;
+  /** Review those updates and take them. */
+  onOutOfDate?: () => void;
   /** A line about this place that is neither a count nor a fault: the
    *  start-of-session note's standing, with its one button. Under the
    *  counts because it is about the place, not about what is installed. */
@@ -108,6 +119,18 @@ export function ProjectCard({
             className="text-[13px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
           >
             {unmanagedHereLabel(unmanaged)}
+          </button>
+        ) : null}
+        {/* In the same slot and for the same reason: how much of what is at
+            this place has moved on at its source. The words say what the
+            click opens — the changes, before anything is written. */}
+        {outOfDate && onOutOfDate ? (
+          <button
+            type="button"
+            onClick={onOutOfDate}
+            className="text-[13px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            {outOfDateHereLabel(outOfDate)}
           </button>
         ) : null}
       </div>

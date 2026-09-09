@@ -22,6 +22,7 @@ import { groupItems, installedCount, recentItems } from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { rescanEverything } from "@/lib/rescan";
+import { visibleUpdateCount } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount, useAuditStore } from "@/stores/audit";
 import { useMarketplacesStore } from "@/stores/marketplaces";
@@ -53,6 +54,12 @@ export function OverviewPage() {
   // never has to stand in for "couldn't check".
   const editedPackages = updateRows.filter((row) => row.blockedByLocalEdit);
   const updatesError = useUpdatesStore((s) => s.read.error);
+  // Only a landed read may put a number on the page. `rows` survives a
+  // failed re-check as last-known facts, which is enough for the edited
+  // row above and not enough for a count.
+  const updates = useUpdatesStore((s) =>
+    s.read.status === "landed" ? visibleUpdateCount(s.rows) : null,
+  );
   const unreadable = useUpdatesStore((s) => s.unreadable);
   const goTo = useNavStore((s) => s.goTo);
   const goToLibrary = useNavStore((s) => s.goToLibrary);
@@ -117,6 +124,7 @@ export function OverviewPage() {
     editedPackages,
     result,
     updatesError,
+    updates,
     unreadable,
     auditError,
     onProjects: () => goTo("projects"),

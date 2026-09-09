@@ -10,7 +10,6 @@ import {
 } from "@/bindings";
 import { type ReadState, readOf, readOrder } from "@/lib/read-state";
 import { settled } from "@/lib/settled";
-import { type PendingFollow, withPending } from "./updates-follow";
 
 /** What a read of the standing owns: the slice a landing writes, and the
  *  two flags saying how the last one went. The store spreads these into
@@ -50,19 +49,14 @@ type Answer =
  *  Reads of the standing overlap on every ordinary path: startup against
  *  the page's own mount, the focus rescan against both, every mutation
  *  re-reading behind them. */
-export function standingReads(
-  set: (partial: Partial<Standing>) => void,
-  get: () => { pendingFollows: PendingFollow[] },
-) {
+export function standingReads(set: (partial: Partial<Standing>) => void) {
   const order = readOrder();
 
   // The one place a read of the standing lands, however it went. A failure
   // — a returned refusal and a rejected call alike, via `settled` — keeps
   // the rows it had along with the age they had: a check that could not
   // run fetched nothing, so the last fetch is still when these rows were
-  // last true, and `read` says they are not confirmed. The rows wear every
-  // flip whose write has not answered, so a landing cannot bounce a switch
-  // back under the hand that moved it.
+  // last true, and `read` says they are not confirmed.
   //
   // `ticket` ranks this answer against the other reads out: an older one
   // landing last writes nothing at all, rows and read state alike.
@@ -70,7 +64,7 @@ export function standingReads(
     if (!order.lands(ticket)) return;
     if (response.status === "ok") {
       set({
-        rows: withPending(response.data.rows, get().pendingFollows),
+        rows: response.data.rows,
         warnings: response.data.warnings,
         unreadable: response.data.unreadable,
         lastFetched: response.data.lastFetched,

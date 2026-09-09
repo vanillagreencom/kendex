@@ -6,8 +6,10 @@ import {
 } from "@/lib/copy-updates";
 import {
   groupUpdates,
+  outOfDateIn,
   packageCount,
   placeName,
+  placesWithUpdates,
   skippedPlaces,
   updatablePlaces,
   updateWithheld,
@@ -239,5 +241,63 @@ describe("updateWithheld", () => {
         }),
       ),
     ).toBe(refusal);
+  });
+});
+
+// "Update this project's packages" is a choice beside "update all", and
+// the places it offers are the ones a run could actually write in.
+describe("the places an update can be offered for", () => {
+  const edited = {
+    blockedByLocalEdit: true,
+    editedHarnesses: ["claude" as const],
+  };
+
+  it("keeps every row of a place it offers, not only the takeable ones", () => {
+    const places = placesWithUpdates([
+      row("gh", "/a"),
+      row("dev", "/a", edited),
+      row("orch", "/b"),
+    ]);
+    expect(places).toHaveLength(2);
+    expect(places[0].scope).toEqual({ scope: "project", root: "/a" });
+    // Both of /a's rows travel, so the dialog for that place can say what
+    // it leaves alone there.
+    expect(places[0].rows.map((r) => r.name)).toEqual(["gh", "dev"]);
+    expect(places[1].rows.map((r) => r.name)).toEqual(["orch"]);
+  });
+
+  it("offers no place where nothing could be written", () => {
+    expect(
+      placesWithUpdates([row("dev", "/a", edited), row("gh", "/a", edited)]),
+    ).toHaveLength(0);
+    expect(placesWithUpdates([])).toHaveLength(0);
+  });
+});
+
+// One predicate for every count of a place's updates, so a card and Home
+// can never disagree about one machine.
+describe("what a place counts as out of date", () => {
+  it("counts its own packages once, and no other place's", () => {
+    const rows = [
+      row("gh", "/a"),
+      row("gh", "/b"),
+      row("dev", "/a"),
+      row("muted", "/a", { ignored: true }),
+      row("current", "/a", { updateAvailable: false }),
+    ];
+    expect(outOfDateIn(rows, { scope: "project", root: "/a" })).toBe(2);
+    expect(outOfDateIn(rows, { scope: "project", root: "/b" })).toBe(1);
+    expect(outOfDateIn(rows, { scope: "global" })).toBe(0);
+  });
+
+  // News that is not a newer version still belongs on the Updates page and
+  // still belongs in this count: the sidebar badge counts it too.
+  it("counts a package gone from its source", () => {
+    expect(
+      outOfDateIn(
+        [row("gh", "/a", { updateAvailable: false, removedUpstream: true })],
+        { scope: "project", root: "/a" },
+      ),
+    ).toBe(1);
   });
 });

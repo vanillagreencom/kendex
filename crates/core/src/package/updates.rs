@@ -24,12 +24,12 @@ pub struct VersionRef {
     pub date: Option<String>,
 }
 
-/// Whose hold keeps a place at its revision — what the Follow source
-/// switch may release, and what it may not.
+/// Whose hold keeps a place at its revision — which hold this
+/// declaration can release, and which it cannot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum HoldOwner {
-    /// This declaration's own `rev`: the switch releases it.
+    /// This declaration's own `rev`: it is released here.
     Package,
     /// The source is pinned as a whole; released where the source is declared.
     Source { name: String },

@@ -5,7 +5,7 @@ import {
   heldByParentNote,
   USER_LEVEL_PLACE,
 } from "@/lib/copy-updates";
-import { scopeKey } from "@/lib/scope";
+import { sameScope, scopeKey } from "@/lib/scope";
 
 /** One package with every place it is out of date in. The same skill
  *  installed in three projects is one decision with three places, not
@@ -51,8 +51,8 @@ export const packageCount = (rows: UpdateRow[]): number =>
   new Set(rows.map(groupKey)).size;
 
 /** Why this place's Update is withheld, or null when nothing withholds it.
- *  Every surface that offers Update reads this one function — "Update
- *  all", the row's own button, and the package page through
+ *  Every surface that offers Update reads this one function — the update
+ *  review dialog, the row's own button, and the package page through
  *  `updates-read-state.ts` [`packageUpdateNote`], which takes the kind's
  *  refusal off the row before the update read's own state and delegates
  *  everything after that here. So an offer and the refusal beside it
@@ -76,8 +76,9 @@ export const updateWithheld = (row: UpdateRow): string | null => {
   // An edited place is never updated over; its row offers the install
   // beside it instead.
   if (row.blockedByLocalEdit) return EDITED_CANT_UPDATE_NOTE;
-  // The same hold the Follow switch reports, said the same way: named
-  // where a requirement propagated it, unnamed where a bundle did.
+  // A hold this declaration does not own: named where a requirement
+  // propagated it, unnamed where a bundle did. It is released where it was
+  // set, which is the package page and never this table.
   if (heldByOwner(row))
     return row.holdOwner?.kind === "parent" && row.holdOwner.name
       ? heldByParentNote(row.holdOwner.name)
@@ -99,26 +100,29 @@ export const updatablePlaces = (rows: UpdateRow[]): UpdateRow[] =>
  *  is the owner's to move, so nothing here can update or release it. */
 const heldByOwner = (row: UpdateRow): boolean => row.pinned && row.derived;
 
-/** Why the Follow source switch is not this row's to flip, if it is not:
- *  a derived package has no declaration of its own to set a hold on, and a
- *  hold that belongs to the source or to a parent is released there. The
- *  parent is named only where the hold itself came from a package
- *  requiring this one — a bundle-propagated hold is released at the
- *  bundle, and naming a requiring skill would send the reader to a
- *  declaration that does not hold the row. */
-export const switchLockedBy = (
-  row: UpdateRow,
-):
-  | { kind: "source"; name: string }
-  | { kind: "parent"; name: string | null }
-  | null => {
-  if (row.holdOwner?.kind === "source")
-    return { kind: "source", name: row.holdOwner.name };
-  if (row.holdOwner?.kind === "parent")
-    return { kind: "parent", name: row.holdOwner.name };
-  if (row.derived) return { kind: "parent", name: null };
-  return null;
-};
+/** One place and every row of this list that is in it. */
+export interface PlaceRows {
+  scope: Scope;
+  rows: UpdateRow[];
+}
+
+/** The places holding something an update can actually take, each with all
+ *  of that place's rows — not only the takeable ones, so a run offered for
+ *  one place can still say what it leaves alone there. First-seen order,
+ *  like [`groupUpdates`]. This is what lets "update a project's" be a
+ *  choice beside "update all" without narrowing the page by location. */
+export function placesWithUpdates(rows: UpdateRow[]): PlaceRows[] {
+  const places = new Map<string, PlaceRows>();
+  for (const row of rows) {
+    const key = scopeKey(row.scope);
+    const place = places.get(key);
+    if (place) place.rows.push(row);
+    else places.set(key, { scope: row.scope, rows: [row] });
+  }
+  return [...places.values()].filter(
+    (place) => updatablePlaces(place.rows).length > 0,
+  );
+}
 
 /** Places with news that a bulk update has to leave alone — edited ones,
  *  which no update may overwrite, held derived ones waiting on their
@@ -176,6 +180,15 @@ export const visibleUpdateCount = (rows: UpdateRow[]): number =>
  *  muted. */
 export const visibleUpdates = (rows: UpdateRow[]): UpdateRow[] =>
   rows.filter((row) => noteworthy(row) && !row.ignored);
+
+/** The packages out of date in one place — the same set the Updates page
+ *  lists and the sidebar counts, narrowed to one scope. One predicate for
+ *  the whole app: a place's card and Home saying different numbers about
+ *  one machine is the second model this wave exists to remove. */
+export const outOfDateIn = (rows: UpdateRow[], scope: Scope): number =>
+  packageCount(
+    visibleUpdates(rows).filter((row) => sameScope(row.scope, scope)),
+  );
 
 /** The collapsed "hidden updates" section: muted packages whose news is
  *  still real — with the way back out. */

@@ -1,0 +1,1 @@
+- Every Update on the Updates page shows what would change before it writes — one package, one place's worth, or everything.

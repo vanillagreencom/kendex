@@ -1,0 +1,1 @@
+- Out-of-date packages show wherever the package or its place is: Home counts them, a place's card counts its own, and a My Library row is marked "Update available".

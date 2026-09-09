@@ -20,13 +20,6 @@ export const lastCheckedLabel = (
     ? NEVER_CHECKED
     : `Last checked ${relativeTime(fetchedAt * 1000, nowMs)}`;
 
-export const FOLLOW_SOURCE_COLUMN = "Follow source";
-export const FOLLOW_SOURCE_HELP =
-  "On, this package takes the newest version when you press Update, and moves with everything else here when this place is updated; off, it stays on this version until you choose one.";
-export const heldInLabel = (held: number, total: number): string =>
-  `Held in ${held} of ${total}`;
-export const followSourceLabel = (name: string, place: string): string =>
-  `Follow the source for ${name} in ${place}`;
 export const UPDATES_NAME_COLUMN = "Package";
 export const UPDATES_TYPE_COLUMN = "Type";
 export const UPDATES_PLACE_COLUMN = "Where";
@@ -38,9 +31,7 @@ export const placesLabel = (count: number): string =>
   count === 1 ? "1 place" : `${count} places`;
 export const updatesSubtitle = (packages: number, places: number): string =>
   `${packages === 1 ? "1 update" : `${packages} updates`} across ${placesLabel(places)}`;
-export const UPDATE_PACKAGE_EVERYWHERE_LABEL = "Update all";
-export const heldBySourceNote = (source: string): string =>
-  `Held by the source "${source}" as a whole — release it where that source is declared`;
+export const UPDATE_PACKAGE_EVERYWHERE_LABEL = "Update everywhere…";
 export const HELD_BY_OWNER_NOTE =
   "Held by the bundle or package it came with — update or release it from there";
 /** The same hold with its owner named, wherever the Library knows which
@@ -176,3 +167,73 @@ export const unreadablePlacesLabel = (names: string[]): string =>
  * read itself came back with. */
 export const unreadablePlaceLine = (place: string, reason: string): string =>
   `${place} — ${reason}`;
+
+// An installed package that is out of date is a plain fact about it, said
+// wherever the package or its place is drawn: Home counts them across the
+// machine, a place's card counts its own, and the Library marks the package.
+// None of these is a pending local change — files kendex wrote and has not
+// committed are the commit offer's to speak for, in its own words.
+export const updatesWaitingTitle = (packages: number): string =>
+  packages === 1
+    ? "1 package has an update"
+    : `${packages} packages have updates`;
+export const UPDATES_WAITING_DETAIL =
+  "See what changed and take the update on the Updates page.";
+export const outOfDateHereLabel = (packages: number): string =>
+  packages === 1 ? "1 package out of date" : `${packages} packages out of date`;
+export const UPDATE_AVAILABLE_BADGE = "Update available";
+
+// The one update flow. Every Update in this table opens it — one package in
+// one place, one package everywhere, one place's worth, or everything with
+// news — so the changes are on screen before anything is written. What
+// happens to those changed files afterwards is the commit offer's question,
+// which is why this says the write commits nothing.
+export const UPDATE_REVIEW_LABEL = "Update…";
+/** The Updates table names a place, and a name opens the thing it names —
+ *  the place's own list of what is installed there. Read out, because the
+ *  folder name alone does not say what the click does. */
+export const openPlaceLabel = (place: string): string => `Open ${place}`;
+export const updateReviewOneTitle = (name: string, place: string): string =>
+  `Update ${name} in ${place}?`;
+export const updateReviewManyTitle = (
+  packages: number,
+  place: string | null,
+): string =>
+  place === null
+    ? `Update ${packages} packages?`
+    : `Update ${packages} packages in ${place}?`;
+export const UPDATE_REVIEW_BODY =
+  "kendex replaces the installed files with the newest version from the source. Nothing is committed — you choose what to do with the changed files when the update finishes.";
+export const UPDATE_REVIEW_CONFIRM = "Update";
+/** Packages this run leaves exactly as they are: edited copies, holds a
+ *  bundle or a parent owns, kinds with no per-package update. Each already
+ *  carries its own reason on its own row, so this counts them and points
+ *  there rather than repeating four reasons in a dialog. */
+export const updateReviewSkipped = (packages: number): string =>
+  packages === 1
+    ? "1 package here can't be updated — its own row says why."
+    : `${packages} packages here can't be updated — each row says why.`;
+/** Every place the run offered has moved on under an open dialog — read
+ *  again behind another window's write, or already current. */
+export const UPDATE_REVIEW_NOTHING_LEFT =
+  "Nothing here is out of date any more.";
+export const UPDATE_DIFF_READING = "Reading the changes…";
+export const updateDiffFailed = (reason: string): string =>
+  `Couldn't read the changes — ${reason}`;
+/** A place whose installed or newest revision the standing does not carry.
+ *  The update is still real and still takeable; only the comparison is
+ *  missing, which is what this says rather than withholding the button. */
+export const UPDATE_DIFF_NO_VERSIONS =
+  "kendex doesn't know both versions here, so it can't show what changed.";
+export const updateTargetLabel = (name: string, place: string): string =>
+  `${name} in ${place}`;
+export const updateEverythingItem = (packages: number): string =>
+  packages === 1
+    ? "Everything (1 package)"
+    : `Everything (${packages} packages)`;
+export const UPDATE_ONE_PLACE_HEADING = "One place at a time";
+/** The page's control where more than one place has news: what it opens is
+ *  a choice of how much to update, not one update. */
+export const UPDATE_MENU_LABEL = "Update…";
+export const updatePlaceItem = (place: string, packages: number): string =>
+  packages === 1 ? `${place} (1 package)` : `${place} (${packages} packages)`;

@@ -227,7 +227,6 @@ beforeEach(() => {
     rows: [],
     read: READ_LANDED,
     checking: false,
-    pendingFollows: [],
   });
   useAuditStore.setState({
     views: [],

@@ -8,7 +8,6 @@ import { EditedNotice } from "./fork-notice";
 // hook is wrapped to let each test seed the rows it needs.
 const stub = vi.hoisted(() => ({
   rows: [] as unknown[],
-  settling: [] as { scope: { scope: string; root?: string } }[],
   busy: false,
   checking: false,
 }));
@@ -20,7 +19,6 @@ vi.mock("@/stores/updates", async (importOriginal) => {
     const state = {
       ...mod.useUpdatesStore.getState(),
       rows: stub.rows,
-      pendingFollows: stub.settling,
       read: { status: "landed", error: null },
       busy: stub.busy,
       checking: stub.checking,
@@ -32,11 +30,9 @@ vi.mock("@/stores/updates", async (importOriginal) => {
 
 const render = (
   rows: UpdateRow[],
-  settling: { scope: { scope: string; root?: string } }[] = [],
   running: { busy?: boolean; checking?: boolean } = {},
 ) => {
   stub.rows = rows;
-  stub.settling = settling;
   stub.busy = running.busy ?? false;
   stub.checking = running.checking ?? false;
   return renderToStaticMarkup(
@@ -144,35 +140,21 @@ describe("package page edited notice", () => {
       return tag.includes('disabled=""');
     };
     const states = [
-      { name: "idle", settling: [], running: {}, expected: false },
-      {
-        name: "write running",
-        settling: [],
-        running: { busy: true },
-        expected: true,
-      },
-      {
-        name: "check running",
-        settling: [],
-        running: { checking: true },
-        expected: true,
-      },
-      {
-        name: "same-scope flip",
-        settling: [{ scope: { scope: "global" } }],
-        running: {},
-        expected: false,
-      },
+      { name: "idle", running: {}, expected: false },
+      { name: "write running", running: { busy: true }, expected: true },
+      { name: "check running", running: { checking: true }, expected: true },
     ];
-    expect(states).toHaveLength(4);
+    expect(states).toHaveLength(3);
     for (const state of states)
-      expect(
-        forkHeld(render(rows, state.settling, state.running)),
-        state.name,
-      ).toBe(state.expected);
+      expect(forkHeld(render(rows, state.running)), state.name).toBe(
+        state.expected,
+      );
   });
 
-  it("holds Discard edits while a flip settles in this scope", () => {
+  // Discard applies the row's own latest commit where the place is held, so
+  // it waits for a read that confirms the row — which the fork, copying
+  // what is on disk, does not.
+  it("holds Discard edits while a check is out", () => {
     const rows = [
       edited({ editedHarnesses: ["claude"], forkableHarness: "claude" }),
     ];
@@ -182,31 +164,14 @@ describe("package page edited notice", () => {
       return tag.includes('disabled=""');
     };
     const states = [
-      { name: "idle", settling: [], running: {}, expected: false },
-      {
-        name: "same-scope flip",
-        settling: [{ scope: { scope: "global" } }],
-        running: {},
-        expected: true,
-      },
-      {
-        name: "other-scope flip",
-        settling: [{ scope: { scope: "project", root: "/home/me/app" } }],
-        running: {},
-        expected: false,
-      },
-      {
-        name: "check running",
-        settling: [],
-        running: { checking: true },
-        expected: true,
-      },
+      { name: "idle", running: {}, expected: false },
+      { name: "check running", running: { checking: true }, expected: true },
+      { name: "write running", running: { busy: true }, expected: true },
     ];
-    expect(states).toHaveLength(4);
+    expect(states).toHaveLength(3);
     for (const state of states)
-      expect(
-        discardHeld(render(rows, state.settling, state.running)),
-        state.name,
-      ).toBe(state.expected);
+      expect(discardHeld(render(rows, state.running)), state.name).toBe(
+        state.expected,
+      );
   });
 });

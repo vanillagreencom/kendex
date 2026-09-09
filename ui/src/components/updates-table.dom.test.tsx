@@ -6,19 +6,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditView } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
-import {
-  IGNORE_CONFIRM_LABEL,
-  IGNORE_UPDATES_LABEL,
-  UPDATE_LABEL,
-} from "@/lib/copy";
+import { IGNORE_CONFIRM_LABEL, IGNORE_UPDATES_LABEL } from "@/lib/copy";
 import { SAFETY_CAVEAT } from "@/lib/copy-safety";
 import {
   EDITED_TAG_HELP,
-  FOLLOW_SOURCE_HELP,
   INSTALL_AS_NEW_LABEL,
   OWN_COPY_NAME_LABEL,
   SHOW_VERSION_LABEL,
   TABLE_OPTIONS_LABEL,
+  UPDATE_REVIEW_LABEL,
   UPDATES_ONE_AT_A_TIME_NOTE,
 } from "@/lib/copy-updates";
 import { READ_LANDED } from "@/lib/read-state";
@@ -221,7 +217,7 @@ describe("the table's own menu", () => {
     await settle();
     await userEvent.click(button("1 hidden update"));
     expect(host.textContent).not.toContain("Version");
-    expect(host.querySelectorAll("th")).toHaveLength(10);
+    expect(host.querySelectorAll("th")).toHaveLength(8);
     expect(host.querySelectorAll('[aria-label="Table options"]')).toHaveLength(
       1,
     );
@@ -239,7 +235,7 @@ describe("the table's own menu", () => {
     await userEvent.click(item);
 
     expect(useUpdatesView.getState().showVersion).toBe(true);
-    expect(host.querySelectorAll("th")).toHaveLength(12);
+    expect(host.querySelectorAll("th")).toHaveLength(10);
     expect(host.textContent).toContain("1111111 → v2");
   });
 });
@@ -431,23 +427,17 @@ describe("the findings behind a row's score", () => {
   });
 });
 
-describe("the explanations on the header and the tag", () => {
-  it("open their words on focus, not only on hover", () => {
+describe("the explanation on the Edited tag", () => {
+  it("opens its words on focus, not only on hover", () => {
     mount(<UpdatesTable rows={[edited]} onIgnore={() => {}} />);
-    // Three triggers in document order: the header's Follow source note,
-    // then the row's score and its Edited tag.
-    const [help, , tag] = [
+    // Two triggers in document order: the row's score, then its Edited tag.
+    const [, tag] = [
       ...document.querySelectorAll<HTMLElement>(
         '[data-slot="tooltip-trigger"]',
       ),
     ];
-    if (!help || !tag) throw new Error("expected three tooltip triggers");
+    if (!tag) throw new Error("expected two tooltip triggers");
     expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull();
-
-    act(() => help.focus());
-    expect(
-      document.querySelector('[data-slot="tooltip-content"]')?.textContent,
-    ).toBe(FOLLOW_SOURCE_HELP);
 
     act(() => tag.focus());
     expect(
@@ -488,7 +478,7 @@ describe("a row of a kind core refuses", () => {
     await settle();
 
     const updates = [...document.querySelectorAll("button")].filter(
-      (b) => b.textContent === UPDATE_LABEL,
+      (b) => b.textContent === UPDATE_REVIEW_LABEL,
     );
     expect(updates).toHaveLength(2);
     const [pi, skill] = updates;

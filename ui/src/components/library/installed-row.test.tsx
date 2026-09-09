@@ -9,6 +9,7 @@ import {
   FORKED_BADGE_LABEL,
   vendorHelp,
 } from "@/lib/copy";
+import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
 import { groupItems } from "@/lib/derive";
 import { mount as mountTree } from "@/test/dom";
 import { InstalledRow } from "./installed-row";
@@ -152,6 +153,7 @@ describe("the words a Library row's badges stand for", () => {
           group={bundled}
           origin={null}
           forkedIn={[]}
+          outOfDate={false}
           onOpen={() => {}}
         />
       </tbody>,
@@ -165,13 +167,32 @@ describe("the words a Library row's badges stand for", () => {
   });
 });
 
+// The source has moved on from what is installed. A mark and not a
+// control: the row's own click already opens the package, and the update
+// itself is one flow wherever it is taken.
+describe("the update mark", () => {
+  it("marks a package the source has moved on from, and nothing else", () => {
+    const cases = [
+      { name: "out of date", outOfDate: true, marked: true },
+      { name: "current", outOfDate: false, marked: false },
+    ];
+    expect(cases).toHaveLength(2);
+    for (const one of cases) {
+      const { host } = mount([], one.outOfDate);
+      expect(host.textContent?.includes(UPDATE_AVAILABLE_BADGE), one.name).toBe(
+        one.marked,
+      );
+    }
+  });
+});
+
 // Whether a click reaches the row, and what a keypress lands on, are
 // questions about a live DOM that static markup cannot answer.
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const mount = (forkedIn: Scope[] = []) => {
+const mount = (forkedIn: Scope[] = [], outOfDate = false) => {
   const onOpen = vi.fn();
   // A table host, so the row is mounted inside the structure it renders
   // for rather than under a div.
@@ -181,6 +202,7 @@ const mount = (forkedIn: Scope[] = []) => {
         group={group}
         origin={null}
         forkedIn={forkedIn}
+        outOfDate={outOfDate}
         onOpen={onOpen}
       />
     </tbody>,

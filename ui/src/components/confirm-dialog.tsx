@@ -18,6 +18,7 @@ export function ConfirmDialog({
   description,
   confirmLabel,
   destructive,
+  wide,
   busy,
   confirmDisabled,
   confirmDisabledNote,
@@ -30,6 +31,9 @@ export function ConfirmDialog({
   description?: string;
   confirmLabel: string;
   destructive?: boolean;
+  /** For a dialog whose children are a preview rather than a sentence: the
+   *  reading measure of the default box cuts a file diff into ribbons. */
+  wide?: boolean;
   busy?: boolean;
   /** Holds the confirm button alone — Cancel stays live, so a dialog whose
    *  premise went stale underneath it can still be closed. */
@@ -41,7 +45,7 @@ export function ConfirmDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className={wide ? "sm:max-w-3xl" : undefined}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {description ? (
