@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs";
+// Diagnostic protocol: command refusals write one JSON object to stderr with
+// {ok:false,key,value,error}. Validate keeps errors/warnings and adds problems
+// with {level,key,value}; English remains display text, not a test contract.
+import { existsSync, writeSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -32,7 +35,22 @@ const defaultOutputSchema = {
 };
 
 function jsonOut(stream, value) { stream.write(`${JSON.stringify(value)}\n`); }
-function fail(message, extra = {}) { jsonOut(process.stderr, { ok: false, error: message, ...extra }); process.exit(1); }
+function fail(key, value, message, extra = {}) {
+  const body = Buffer.from(`${JSON.stringify({ ok: false, key, value: value ?? null, error: message, ...extra })}\n`);
+  let offset = 0;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  while (offset < body.length) {
+    try {
+      const written = writeSync(process.stderr.fd, body, offset, body.length - offset);
+      if (written > 0) offset += written;
+      else Atomics.wait(pause, 0, 0, 1);
+    } catch (error) {
+      if (error?.code !== "EAGAIN") throw error;
+      Atomics.wait(pause, 0, 0, 1);
+    }
+  }
+  process.exit(1);
+}
 
 function helpPayload() {
   return {
@@ -95,7 +113,7 @@ function resolveSecretRef(value, name) {
   if (!value || !value.startsWith("op://")) return value;
   const result = spawnSync("op", ["read", value], { encoding: "utf8" });
   if (result.status === 0 && result.stdout.trim()) return result.stdout.trim();
-  fail(`${name} is a 1Password reference but could not be resolved. Install/sign in to the op CLI and run: op read '${value}'`);
+  fail("secret-reference-unresolved", name, `${name} is a 1Password reference but could not be resolved. Install/sign in to the op CLI and run: op read '${value}'`);
 }
 
 function parseArgs(argv) {
@@ -103,7 +121,7 @@ function parseArgs(argv) {
   const options = { command, positional: [], context: [], additionalQuery: [], includeDomain: [], excludeDomain: [], format: "findings", mode: "standard", explicit: new Set(), rawOutputDefault: true };
   while (argv.length) {
     const arg = argv.shift();
-    const value = () => argv.shift() ?? fail(`Missing value for ${arg}`);
+    const value = () => argv.shift() ?? fail("argument-value-missing", arg, `Missing value for ${arg}`);
     if (arg === "--output") options.output = value();
     else if (arg === "--query-file") options.queryFile = value();
     else if (arg === "--context") options.context.push(value());
@@ -114,16 +132,16 @@ function parseArgs(argv) {
     else if (arg === "--exclude-domain") options.excludeDomain.push(value());
     else if (arg === "--start-date") options.startDate = value();
     else if (arg === "--end-date") options.endDate = value();
-    else if (arg === "--num-results") { options.numResults = Number(value()); options.explicit.add("numResults"); }
-    else if (arg === "--text-max-characters") { options.textMaxCharacters = Number(value()); options.explicit.add("textMaxCharacters"); }
+    else if (arg === "--num-results") { options.numResultsInput = value(); options.numResults = Number(options.numResultsInput); options.explicit.add("numResults"); }
+    else if (arg === "--text-max-characters") { options.textMaxCharactersInput = value(); options.textMaxCharacters = Number(options.textMaxCharactersInput); options.explicit.add("textMaxCharacters"); }
     else if (arg === "--format") options.format = value();
     else if (arg === "--raw-output") options.rawOutput = value();
     else if (arg === "--no-raw-output") options.rawOutputDefault = false;
-    else if (arg === "--timeout") { options.timeout = Number(value()); options.explicit.add("timeout"); }
+    else if (arg === "--timeout") { options.timeoutInput = value(); options.timeout = Number(options.timeoutInput); options.explicit.add("timeout"); }
     else if (arg === "--type") { options.type = value(); options.explicit.add("type"); }
     else if (arg === "--mode" || arg === "--research-mode") options.mode = value();
     else if (arg === "--help" || arg === "-h") options.help = true;
-    else if (arg?.startsWith("--")) fail(`Unknown flag: ${arg}`);
+    else if (arg?.startsWith("--")) fail("argument-unknown", arg, `Unknown flag: ${arg}`);
     else options.positional.push(arg);
   }
   return options;
@@ -149,35 +167,35 @@ async function expandSimpleGlob(rawGlob, limit = MAX_CONTEXT_FILES) {
   const slash = normalized.lastIndexOf("/");
   const dirPart = slash >= 0 ? normalized.slice(0, slash) : ".";
   const basePattern = slash >= 0 ? normalized.slice(slash + 1) : normalized;
-  if (basePattern.split("*").length > 2) fail(`--context-glob supports one '*' wildcard in the file name: ${rawGlob}`);
+  if (basePattern.split("*").length > 2) fail("context-glob-invalid", rawGlob, `--context-glob supports one '*' wildcard in the file name: ${rawGlob}`);
   const [prefix, suffix] = basePattern.split("*");
   const dir = resolve(dirPart);
   const entries = await readdir(dir, { withFileTypes: true });
   const matches = entries.filter((entry) => entry.isFile() && entry.name.startsWith(prefix) && entry.name.endsWith(suffix)).map((entry) => join(dir, entry.name)).sort();
-  if (matches.length > limit) fail(`--context-glob matched ${matches.length} files; limit is ${limit}: ${rawGlob}`);
+  if (matches.length > limit) fail("context-glob-limit", matches.length, `--context-glob matched ${matches.length} files; limit is ${limit}: ${rawGlob}`, { limit });
   return matches;
 }
 
 function applyMode(options) {
-  if (!researchModes.has(options.mode)) fail(`Invalid --mode ${options.mode}. Expected one of: ${Array.from(researchModes).join(", ")}.`);
+  if (!researchModes.has(options.mode)) fail("mode-invalid", options.mode, `Invalid --mode ${options.mode}. Expected one of: ${Array.from(researchModes).join(", ")}.`);
   const defaults = modeDefaults[options.mode];
   options.type = options.explicit.has("type") ? options.type : defaults.type;
   options.numResults = options.explicit.has("numResults") ? options.numResults : defaults.numResults;
   options.textMaxCharacters = options.explicit.has("textMaxCharacters") ? options.textMaxCharacters : defaults.textMaxCharacters;
   options.timeout = options.explicit.has("timeout") ? options.timeout : defaults.timeout;
-  if (!deepTypes.has(options.type)) fail(`Invalid --type ${options.type}`);
-  if (!formats.has(options.format)) fail(`Invalid --format ${options.format}`);
-  if (!Number.isInteger(options.numResults) || options.numResults < 1 || options.numResults > EXA_MAX_NUM_RESULTS) fail(`Invalid --num-results ${options.numResults}. Exa /search accepts 1-${EXA_MAX_NUM_RESULTS} (INVALID_NUM_RESULTS).`);
-  if (!Number.isInteger(options.textMaxCharacters) || options.textMaxCharacters < 1 || options.textMaxCharacters > EXA_MAX_TEXT_CHARACTERS) fail(`Invalid --text-max-characters ${options.textMaxCharacters}. Exa text.maxCharacters accepts 1-${EXA_MAX_TEXT_CHARACTERS}.`);
-  if (!Number.isInteger(options.timeout) || options.timeout < 1) fail(`Invalid --timeout ${options.timeout}. Expected a positive whole number of seconds.`);
-  if (options.additionalQuery.length > EXA_MAX_ADDITIONAL_QUERIES) fail(`Too many --additional-query values (${options.additionalQuery.length}). Exa additionalQueries accepts at most ${EXA_MAX_ADDITIONAL_QUERIES}.`);
+  if (!deepTypes.has(options.type)) fail("type-invalid", options.type, `Invalid --type ${options.type}`);
+  if (!formats.has(options.format)) fail("format-invalid", options.format, `Invalid --format ${options.format}`);
+  if (!Number.isInteger(options.numResults) || options.numResults < 1 || options.numResults > EXA_MAX_NUM_RESULTS) fail("num-results-invalid", options.numResultsInput, `Invalid --num-results ${options.numResultsInput}. Exa /search accepts 1-${EXA_MAX_NUM_RESULTS} (INVALID_NUM_RESULTS).`, { min: 1, max: EXA_MAX_NUM_RESULTS });
+  if (!Number.isInteger(options.textMaxCharacters) || options.textMaxCharacters < 1 || options.textMaxCharacters > EXA_MAX_TEXT_CHARACTERS) fail("text-max-characters-invalid", options.textMaxCharactersInput, `Invalid --text-max-characters ${options.textMaxCharactersInput}. Exa text.maxCharacters accepts 1-${EXA_MAX_TEXT_CHARACTERS}.`, { min: 1, max: EXA_MAX_TEXT_CHARACTERS });
+  if (!Number.isInteger(options.timeout) || options.timeout < 1) fail("timeout-invalid", options.timeoutInput, `Invalid --timeout ${options.timeoutInput}. Expected a positive whole number of seconds.`);
+  if (options.additionalQuery.length > EXA_MAX_ADDITIONAL_QUERIES) fail("additional-query-limit", options.additionalQuery.length, `Too many --additional-query values (${options.additionalQuery.length}). Exa additionalQueries accepts at most ${EXA_MAX_ADDITIONAL_QUERIES}.`, { limit: EXA_MAX_ADDITIONAL_QUERIES });
   return options;
 }
 
 async function resolveQuery(options) {
   let query = options.positional.join(" ").trim();
   if (options.queryFile) query = (await readFile(resolvePath(options.queryFile), "utf8")).trim();
-  if (!query) fail("A query or --query-file is required.");
+  if (!query) fail("query-missing", "query-or-file", "A query or --query-file is required.");
   return query;
 }
 
@@ -371,11 +389,11 @@ async function callExaBody(body, options, controller) {
     if (Array.isArray(mock)) return mock[Math.min(options.mockIndex++, mock.length - 1)];
     return mock;
   }
-  if (typeof fetch !== "function") fail("This Node runtime does not provide fetch. Use Node 18+.");
+  if (typeof fetch !== "function") fail("runtime-fetch-missing", process.version, "This Node runtime does not provide fetch. Use Node 18+.");
   const key = resolveSecretRef(process.env.EXA_API_KEY, "EXA_API_KEY");
-  if (!key) fail("EXA_API_KEY is required for Exa deep research. Set EXA_API_KEY or add it to .env.local.");
+  if (!key) fail("credential-missing", "EXA_API_KEY", "EXA_API_KEY is required for Exa deep research. Set EXA_API_KEY or add it to .env.local.");
   const response = await fetch("https://api.exa.ai/search", { method: "POST", headers: { "content-type": "application/json", "x-api-key": key }, body: JSON.stringify(body), signal: controller.signal });
-  if (!response.ok) fail(`Exa request failed (${response.status}): ${await response.text().catch(() => response.statusText)}`);
+  if (!response.ok) fail("exa-request-failed", response.status, `Exa request failed (${response.status}): ${await response.text().catch(() => response.statusText)}`);
   return response.json();
 }
 
@@ -435,69 +453,78 @@ function normalizedProse(text) {
 
 async function validateCommand(options) {
   const [reportArg, rawArg] = options.positional;
-  if (!reportArg || !rawArg) fail("Usage: deep-research validate <findings.md> <findings.raw.json>");
+  if (!reportArg || !rawArg) fail("argument-missing", "report+raw", "Usage: deep-research validate <findings.md> <findings.raw.json>");
   const reportPath = resolvePath(reportArg);
   const rawPath = resolvePath(rawArg);
   const errors = [];
   const warnings = [];
+  const problems = [];
+  const recordError = (key, value, message, extra = {}) => {
+    errors.push(message);
+    problems.push({ level: "error", key, value: value ?? null, ...extra });
+  };
+  const recordWarning = (key, value, message, extra = {}) => {
+    warnings.push(message);
+    problems.push({ level: "warning", key, value: value ?? null, ...extra });
+  };
 
   let report = "";
-  if (!existsSync(reportPath)) errors.push(`Report not found: ${reportPath}`);
+  if (!existsSync(reportPath)) recordError("report-not-found", reportPath, `Report not found: ${reportPath}`);
   else {
     report = await readFile(reportPath, "utf8");
-    if (!report.trim()) errors.push(`Report is empty: ${reportPath}`);
+    if (!report.trim()) recordError("report-empty", reportPath, `Report is empty: ${reportPath}`);
   }
 
   let sidecar;
-  if (!existsSync(rawPath)) errors.push(`Raw sidecar not found: ${rawPath}`);
+  if (!existsSync(rawPath)) recordError("raw-sidecar-not-found", rawPath, `Raw sidecar not found: ${rawPath}`);
   else {
     try { sidecar = JSON.parse(await readFile(rawPath, "utf8")); }
-    catch (parseError) { errors.push(`Raw sidecar is not valid JSON: ${parseError.message}`); }
+    catch (parseError) { recordError("raw-sidecar-invalid-json", rawPath, `Raw sidecar is not valid JSON: ${parseError.message}`); }
   }
 
   const metadata = sidecar && typeof sidecar.metadata === "object" && sidecar.metadata ? sidecar.metadata : undefined;
   const payload = sidecar && typeof sidecar.raw === "object" && sidecar.raw ? sidecar.raw : undefined;
-  if (sidecar && !metadata) errors.push("Raw sidecar has no metadata object.");
-  if (sidecar && !payload) errors.push("Raw sidecar has no raw provider payload.");
+  if (sidecar && !metadata) recordError("raw-sidecar-metadata-missing", rawPath, "Raw sidecar has no metadata object.");
+  if (sidecar && !payload) recordError("raw-sidecar-payload-missing", rawPath, "Raw sidecar has no raw provider payload.");
 
   const sections = report ? reportSections(report) : {};
   for (const section of requiredReportSections) {
-    if (report && !(section in sections)) errors.push(`Report is missing required section: ## ${section}`);
+    if (report && !(section in sections)) recordError("report-section-missing", section, `Report is missing required section: ## ${section}`);
   }
 
   if (metadata) {
     if (Array.isArray(metadata.additionalQueries)) {
       const expected = 1 + metadata.additionalQueries.length;
-      if (metadata.queryCount !== expected) errors.push(`metadata.queryCount is ${metadata.queryCount} but 1 primary + ${metadata.additionalQueries.length} additional queries were recorded (expected ${expected}).`);
-      if (!additionalQueriesAppliedValues.has(metadata.additionalQueriesApplied)) errors.push(`metadata.additionalQueriesApplied is ${JSON.stringify(metadata.additionalQueriesApplied)}; expected one of: ${Array.from(additionalQueriesAppliedValues).join(", ")}.`);
-      else if ((metadata.additionalQueriesApplied === "none") !== (metadata.additionalQueries.length === 0)) errors.push("metadata.additionalQueriesApplied contradicts metadata.additionalQueries.");
-    } else warnings.push("Sidecar does not record how additional queries were applied (metadata.additionalQueries missing — sidecar predates this check or was produced by another tool). Re-run with the current script to verify query expansion.");
+      if (metadata.queryCount !== expected) recordError("query-count-mismatch", metadata.queryCount, `metadata.queryCount is ${metadata.queryCount} but 1 primary + ${metadata.additionalQueries.length} additional queries were recorded (expected ${expected}).`, { expected });
+      if (!additionalQueriesAppliedValues.has(metadata.additionalQueriesApplied)) recordError("additional-queries-applied-invalid", metadata.additionalQueriesApplied, `metadata.additionalQueriesApplied is ${JSON.stringify(metadata.additionalQueriesApplied)}; expected one of: ${Array.from(additionalQueriesAppliedValues).join(", ")}.`);
+      else if ((metadata.additionalQueriesApplied === "none") !== (metadata.additionalQueries.length === 0)) recordError("additional-queries-applied-conflict", metadata.additionalQueriesApplied, "metadata.additionalQueriesApplied contradicts metadata.additionalQueries.");
+    } else recordWarning("additional-queries-metadata-missing", rawPath, "Sidecar does not record how additional queries were applied (metadata.additionalQueries missing — sidecar predates this check or was produced by another tool). Re-run with the current script to verify query expansion.");
   }
 
   const synthesis = payload ? hasSynthesis(payload) : false;
-  if (metadata && typeof metadata.synthesis === "boolean" && metadata.synthesis !== synthesis) warnings.push(`metadata.synthesis is ${metadata.synthesis} but the raw payload ${synthesis ? "contains" : "lacks"} a synthesized answer.`);
+  if (metadata && typeof metadata.synthesis === "boolean" && metadata.synthesis !== synthesis) recordWarning("synthesis-metadata-mismatch", metadata.synthesis, `metadata.synthesis is ${metadata.synthesis} but the raw payload ${synthesis ? "contains" : "lacks"} a synthesized answer.`, { actual: synthesis });
   if (payload && !synthesis) {
     const mode = metadata?.researchMode;
-    if (mode === "standard" || mode === "full") errors.push(`Mode ${mode} requests server-side synthesis (outputSchema) but the raw payload has no synthesized answer. Re-run, or treat the report as an evidence brief only.`);
-    else warnings.push("No synthesized answer in the raw payload — this is an evidence brief. Do not use it as a decision recommendation; re-run with --mode standard or --mode full if the deliverable is a recommendation.");
+    if (mode === "standard" || mode === "full") recordError("synthesis-missing", mode, `Mode ${mode} requests server-side synthesis (outputSchema) but the raw payload has no synthesized answer. Re-run, or treat the report as an evidence brief only.`);
+    else recordWarning("synthesis-missing", mode, "No synthesized answer in the raw payload — this is an evidence brief. Do not use it as a decision recommendation; re-run with --mode standard or --mode full if the deliverable is a recommendation.");
   }
-  if (payload && !normalizeResults(payload).length) warnings.push("Raw payload contains zero sources. Re-run with broader terms or fewer filters.");
+  if (payload && !normalizeResults(payload).length) recordWarning("sources-empty", 0, "Raw payload contains zero sources. Re-run with broader terms or fewer filters.");
 
   const summarySection = normalizedProse(sections["Executive Summary"]);
   const findingsSection = normalizedProse(sections["Key Findings"]);
   if (summarySection && findingsSection) {
     const [shorter, longer] = summarySection.length <= findingsSection.length ? [summarySection, findingsSection] : [findingsSection, summarySection];
-    if (summarySection === findingsSection || (shorter.length > 200 && longer.includes(shorter))) warnings.push("Key Findings duplicates the Executive Summary text. Regenerate, or rewrite Key Findings as distinct claims.");
+    if (summarySection === findingsSection || (shorter.length > 200 && longer.includes(shorter))) recordWarning("report-sections-duplicate", "Executive Summary+Key Findings", "Key Findings duplicates the Executive Summary text. Regenerate, or rewrite Key Findings as distinct claims.");
   }
 
   const sidecarRef = report.match(/Raw metadata sidecar:\s*(\S+)/);
   if (sidecarRef) {
     const referenced = stripMarkdownPathDelimiters(sidecarRef[1]);
-    if (resolve(referenced) !== rawPath) warnings.push(`Report references sidecar ${referenced} but ${rawPath} was validated.`);
+    if (resolve(referenced) !== rawPath) recordWarning("sidecar-reference-mismatch", referenced, `Report references sidecar ${referenced} but ${rawPath} was validated.`, { validated: rawPath });
   }
 
   const ok = errors.length === 0;
-  jsonOut(process.stdout, { ok, report: reportPath, raw: rawPath, mode: metadata?.researchMode, synthesis, queryCount: metadata?.queryCount, errors, warnings });
+  jsonOut(process.stdout, { ok, report: reportPath, raw: rawPath, mode: metadata?.researchMode, synthesis, queryCount: metadata?.queryCount, errors, warnings, problems });
   process.exit(ok ? 0 : 1);
 }
 
@@ -513,7 +540,7 @@ async function main() {
     return;
   }
   if (options.command === "validate") { await validateCommand(options); return; }
-  if (options.command !== "report" && options.command !== "json") fail(`Unknown command: ${options.command}`);
+  if (options.command !== "report" && options.command !== "json") fail("command-unknown", options.command, `Unknown command: ${options.command}`);
   const query = await resolveQuery(options);
   const { raw, metadata } = await callExa(query, options);
   const format = options.command === "json" ? "json" : options.format;
@@ -526,4 +553,4 @@ async function main() {
   jsonOut(process.stdout, { ok: true, output, rawOutput: rawOutput ? resolve(rawOutput) : undefined, mode: metadata.researchMode, queryCount: metadata.queryCount, sources: normalizeResults(raw).length, uniqueSources: metadata.uniqueSourceCount });
 }
 
-main().catch((error) => fail(error?.message || String(error)));
+main().catch((error) => fail("unexpected-error", error?.name || "Error", error?.message || String(error)));
