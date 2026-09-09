@@ -15,7 +15,7 @@ import {
 } from "@/lib/copy";
 import type { ItemPlace } from "@/lib/derive";
 import { harnessName, kindLabel } from "@/lib/labels";
-import { opensOnActivate } from "@/lib/opens-on-activate";
+import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
 import { cn } from "@/lib/utils";
 import { useNavStore } from "@/stores/nav";
 
@@ -56,7 +56,7 @@ export function HarnessRow({
     // detected row opens. The pencil and the count badges answer their own
     // clicks; everything else on the row opens the harness.
     <div
-      {...(detectedRoot ? opensOnActivate(open) : {})}
+      {...(detectedRoot ? opensOnActivate(open, opensLabel(name)) : {})}
       className={cn(
         "group flex items-start justify-between gap-6 py-3.5",
         detectedRoot && "cursor-pointer",

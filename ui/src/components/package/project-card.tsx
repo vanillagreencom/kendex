@@ -8,7 +8,7 @@ import {
   updateInLabel,
 } from "@/lib/copy-projects";
 import { scopePath } from "@/lib/labels";
-import { opensOnActivate } from "@/lib/opens-on-activate";
+import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
 import type { PackagePlace } from "@/lib/package-places";
 import { exactTime } from "@/lib/relative-time";
 import { useNowTick } from "@/lib/use-now-tick";
@@ -49,7 +49,7 @@ export function ProjectCard({
 
   return (
     <Card
-      {...opensOnActivate(onOpen)}
+      {...opensOnActivate(onOpen, opensLabel(place.name))}
       className="flex-row cursor-pointer items-center justify-between gap-4 px-5 py-4 hover:bg-accent/40"
     >
       <div className="min-w-0">

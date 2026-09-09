@@ -13,7 +13,7 @@ import { isCustomized } from "@/lib/customization";
 import type { CustomizedHere } from "@/lib/customized-places";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel } from "@/lib/labels";
-import { opensOnActivate } from "@/lib/opens-on-activate";
+import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
 import type { ReadStatus } from "@/lib/read-state";
 import { sameScope } from "@/lib/scope";
 import { cn } from "@/lib/utils";
@@ -88,7 +88,7 @@ export function CustomizedIndex({
           // click would do something.
           <div
             key={`${kind}:${name}`}
-            {...(here ? opensOnActivate(open) : {})}
+            {...(here ? opensOnActivate(open, opensLabel(name)) : {})}
             className={cn(
               "flex items-center gap-3 py-3",
               here && "cursor-pointer",

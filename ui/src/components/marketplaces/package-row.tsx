@@ -21,7 +21,7 @@ import { offersInstall } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName, shortRevision } from "@/lib/labels";
 import { type MarketplaceDisplay, sourceLine } from "@/lib/marketplace-display";
-import { opensOnActivate } from "@/lib/opens-on-activate";
+import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import { safetyKey, usePreinstallSafety } from "@/stores/preinstall-safety";
@@ -110,7 +110,10 @@ export function PackageRow({
     goToAvailablePackage({ catalog, kind: row.kind, name: row.name });
   // The whole row opens the package, for the pointer and the keyboard
   // alike; Install stays a control of its own inside it.
-  const open = opensOnActivate(openPackage);
+  const open = opensOnActivate(
+    openPackage,
+    opensLabel(packageDisplayName(row)),
+  );
 
   const updated = row.updatedAt ? Date.parse(row.updatedAt) : Number.NaN;
   return (

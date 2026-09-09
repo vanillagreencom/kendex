@@ -17,7 +17,7 @@ describe("a surface that opens what it names", () => {
     const onOpen = vi.fn();
     const inside = vi.fn();
     const host = mount(
-      <div {...opensOnActivate(onOpen)} data-testid="surface">
+      <div {...opensOnActivate(onOpen, "Open gh")} data-testid="surface">
         <span data-testid="text">gh</span>
         <button type="button" onClick={inside}>
           Update
@@ -54,6 +54,15 @@ describe("a surface that opens what it names", () => {
     for (const entry of cases) {
       const { onOpen, inside, at, control } = mountSurface();
       expect(at("surface").getAttribute("tabindex"), entry.name).toBe("0");
+      // The extra focus stop says what it is and what opens it: a stop
+      // that announced only the cells it holds would tell a reader
+      // nothing about where Enter goes.
+      expect(at("surface").getAttribute("aria-label"), entry.name).toBe(
+        "Open gh",
+      );
+      expect(at("surface").getAttribute("aria-keyshortcuts"), entry.name).toBe(
+        "Enter",
+      );
       if (entry.act === "drag-text")
         vi.spyOn(window, "getSelection").mockReturnValue({
           isCollapsed: false,
@@ -89,6 +98,7 @@ describe("a surface that opens what it names", () => {
     const text = host.querySelector<HTMLElement>('[data-testid="plain-text"]');
     if (!surface || !text) throw new Error("no plain surface");
     expect(surface.getAttribute("tabindex")).toBeNull();
+    expect(surface.getAttribute("aria-label")).toBeNull();
     act(() => surface.focus());
     await userEvent.keyboard("{Enter}");
     await userEvent.click(text);

@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { PLACE_UNCHECKED_LABEL, unmanagedHereLabel } from "@/lib/copy";
 import { outOfDateHereLabel } from "@/lib/copy-updates";
-import { opensOnActivate } from "@/lib/opens-on-activate";
+import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
 
 /**
  * One place a setup applies — Personal, or a project folder. Personal and a
@@ -76,7 +76,7 @@ export function ProjectCard({
       // name's own button: the card reads as one target, so clicking its
       // empty space — or pressing Enter on the card — does what the card
       // is for.
-      {...opensOnActivate(onOpen)}
+      {...opensOnActivate(onOpen, opensLabel(name))}
       className="cursor-pointer gap-3 py-4 hover:bg-accent/40"
     >
       <div className="flex items-start justify-between gap-3 px-4">

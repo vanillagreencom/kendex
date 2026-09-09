@@ -34,7 +34,7 @@ import {
   kindLabel,
   scopeName,
 } from "@/lib/labels";
-import { opensOnActivate } from "@/lib/opens-on-activate";
+import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
 import { scopeKey } from "@/lib/scope";
 import { placeName } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
@@ -95,7 +95,7 @@ export function InstalledRow({
       // A shortcut for the pointer and the keyboard alike, on top of the
       // name's own button: the row reads as one target, so clicking any of
       // its cells — or pressing Enter on the row — opens the package.
-      {...opensOnActivate(() => onOpen())}
+      {...opensOnActivate(() => onOpen(), opensLabel(displayName))}
       className="cursor-pointer"
     >
       {/* Cells are nowrap by default; the description is the one column that

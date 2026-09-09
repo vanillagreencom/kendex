@@ -28,9 +28,15 @@ export function RecentActivity({ groups }: { groups: RecentGroup[] }) {
           .map((h) => harnessName(h as HarnessId))
           .join(", ");
         // The row names one package, so it opens that package — at the
-        // place its first installation sits in, the same place the
-        // Library's own row opens.
-        const where = group.installations[0]?.scope;
+        // place whose copy the time beside it is the time of. The group's
+        // stamp is the newest of its installations, so opening the first
+        // one would show a reader files that did not change when the row
+        // says they did.
+        const changed =
+          group.installations.find(
+            (one) => one.modifiedAt === group.modifiedAt,
+          ) ?? group.installations[0];
+        const where = changed?.scope;
         return (
           <button
             key={group.key}

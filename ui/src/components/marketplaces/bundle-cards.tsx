@@ -4,7 +4,7 @@ import { InstalledIn } from "@/components/marketplaces/installed-in";
 import { Card, CardContent } from "@/components/ui/card";
 import { bundlePlaces } from "@/lib/installed-places";
 import { kindLabel } from "@/lib/labels";
-import { opensOnActivate } from "@/lib/opens-on-activate";
+import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
 import { useNavStore } from "@/stores/nav";
 
 /** The curated sets one marketplace offers, as cards: what each carries and
@@ -69,7 +69,7 @@ export function BundleCards({
           // the pointer and on Enter alike.
           <Card
             key={detail.name}
-            {...opensOnActivate(open)}
+            {...opensOnActivate(open, opensLabel(detail.name))}
             className="cursor-pointer gap-0 py-0 transition-colors hover:bg-accent/40 hover:border-input"
           >
             <CardContent className="flex h-full flex-col gap-1.5 p-4">

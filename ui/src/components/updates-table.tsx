@@ -25,12 +25,13 @@ import {
 import { selectionOf } from "@/lib/derive";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
-import { opensOnActivate } from "@/lib/opens-on-activate";
+import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
 import { sameScope } from "@/lib/scope";
 import {
   groupKey,
   groupUpdates,
   placeKey,
+  placeName,
   type UpdateGroup,
   updatablePlaces,
 } from "@/lib/update-groups";
@@ -141,7 +142,7 @@ export function PackageRows({
           keyboard alike. Its place rows below name places rather than this
           package, and open those instead. */}
       <TableRow
-        {...opensOnActivate(() => openPackage(first))}
+        {...opensOnActivate(() => openPackage(first), opensLabel(name))}
         className="cursor-pointer"
       >
         <TableCell>
@@ -247,8 +248,9 @@ export function PackageRows({
             <TableRow
               key={placeKey(row)}
               id={index === 0 ? placesId : undefined}
-              {...opensOnActivate(() =>
-                goToLibrary({ scope: selectionOf(row.scope) }),
+              {...opensOnActivate(
+                () => goToLibrary({ scope: selectionOf(row.scope) }),
+                opensLabel(placeName(row.scope, scopes)),
               )}
               className="cursor-pointer bg-muted/20"
             >

@@ -9,6 +9,21 @@ import { RecentActivity } from "./recent-activity";
 const AT = Date.UTC(2024, 0, 2, 3, 4, 5) / 1000;
 const SCOPE = { scope: "project" as const, root: "/work/vg" };
 
+const at = (scope: typeof SCOPE | { scope: "global" }, modifiedAt: number) =>
+  ({
+    kind: "skill",
+    name: "gh",
+    scope,
+    harness: "claude",
+    path: "/gh",
+    fileState: "file",
+    enabled: true,
+    origin: null,
+    description: null,
+    tags: [],
+    modifiedAt,
+  }) as never;
+
 const group = (installed: boolean): RecentGroup => ({
   key: "skill:gh",
   kind: "skill",
@@ -62,5 +77,35 @@ describe("a row on Home's recent list", () => {
     if (!row) throw new Error("no row rendered");
     await userEvent.click(row);
     expect(useNavStore.getState().page).toBe("home");
+  });
+});
+
+// The time beside a row is the newest of the package's copies, so the row
+// has to open the copy that time belongs to. Opening the first installation
+// would show files that did not change when the row says they did.
+describe("a package whose copies changed at different times", () => {
+  it("opens the copy the time beside it belongs to", async () => {
+    const OTHER = { scope: "global" as const };
+    const host = mount(
+      <RecentActivity
+        groups={[
+          {
+            ...group(true),
+            // The scan lists the older copy first; the group's stamp is
+            // the newer one's.
+            installations: [at(OTHER, AT - 500), at(SCOPE, AT)],
+            modifiedAt: AT,
+          },
+        ]}
+      />,
+    );
+    const row = host.querySelector("button");
+    if (!row) throw new Error("no row rendered");
+    await userEvent.click(row);
+    expect(useNavStore.getState().packageRef).toEqual({
+      kind: "skill",
+      name: "gh",
+      scope: SCOPE,
+    });
   });
 });
