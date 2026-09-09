@@ -168,3 +168,13 @@ export const GIT_PROJECTS_SECTION = "Git projects";
 export const COMMIT_OFFER_SETTING_LABEL = "Offer to commit kendex's changes";
 export const COMMIT_OFFER_SETTING_DESCRIPTION =
   "In a git project, ask what to do with the files kendex wrote.";
+
+/** The scan behind a write could not say what a project holds. The same
+ *  words the store's other transport failures use, said where this one is
+ *  reported — after the questions ahead of it, so it never lands over an
+ *  install still saying what it did. */
+export const SCAN_FAILED_TITLE = "Couldn't reach kendex";
+export const SCAN_FAILED_STEPS = [
+  "Try again",
+  "If it keeps happening, restart kendex",
+];

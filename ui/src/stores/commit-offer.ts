@@ -78,7 +78,16 @@ interface CommitOfferState {
   stage: Stage;
   route: Route;
   message: string;
+  /** Why the scan behind a write could not say what this project holds, or
+   *  null. Held rather than shown: the scan runs inside the write's own
+   *  `finally`, so it can fail while the guided install is still reporting
+   *  where the packages went, and a problems dialog over that install is
+   *  the second unordered modal `lib/asks-first.ts` exists to stop. The
+   *  dialog says it when this question's turn comes. */
+  scanFailure: string | null;
   enqueue: (roots: string[]) => Promise<void>;
+  /** The held scan failure has been reported; drop it. */
+  scanFailureSaid: () => void;
   pick: (route: Route) => void;
   setMessage: (message: string) => void;
   run: () => Promise<void>;
@@ -178,14 +187,18 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
     stage: { at: "offer" },
     route: "commit",
     message: "",
+    scanFailure: null,
 
     enqueue: async (roots) => {
       if (roots.length === 0) return;
       const response = await commands.commitOfferScan(roots);
       if (response.status === "error") {
         // The write itself landed and was reported by its own caller; a
-        // read behind it that failed is said here and nowhere else.
-        transport(response.error);
+        // read behind it that failed is said here and nowhere else — held
+        // until this question's turn, because this scan runs inside a
+        // write's `finally` and the install that started it may still be
+        // on screen saying what it did.
+        set({ scanFailure: response.error });
         return;
       }
       const found: CommitOfferScan = response.data;
@@ -201,6 +214,8 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
         message: queue.length > 0 ? get().message : (next[0]?.message ?? ""),
       });
     },
+
+    scanFailureSaid: () => set({ scanFailure: null }),
 
     pick: (route) => set({ route }),
     setMessage: (message) => set({ message }),

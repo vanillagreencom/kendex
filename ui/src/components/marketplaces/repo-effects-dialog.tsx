@@ -8,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useMayAsk } from "@/lib/asks-first";
 import {
   COMPANION_INSTALLED,
   COMPANION_NOT_INSTALLED,
@@ -24,7 +25,6 @@ import {
   REPO_EFFECTS_WRITES_LABEL,
   repoEffectsTitle,
 } from "@/lib/copy-repo-effects";
-import { useInstallFlow } from "@/stores/install-flow";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 
 /** The second question an install can ask, rendered once in App.tsx: what
@@ -44,14 +44,12 @@ export function RepoEffectsDialog() {
   const busy = useMarketplacesStore((s) => s.busy);
   const apply = useMarketplacesStore((s) => s.applyRepoEffect);
   const decline = useMarketplacesStore((s) => s.declineRepoEffect);
-  // The guided install writes into each place the reader picked in turn
-  // and reports the whole run once. Its first place's disclosures would
-  // otherwise open this dialog on top of a run still going, interrupting
-  // it with a second modal before it has said what happened. The line
-  // keeps what it is given — `marketplaces-install.ts` appends — so
-  // nothing is lost by waiting for the install to be done with.
-  const installing = useInstallFlow((s) => s.ask !== null);
-  if (!pending || installing) return null;
+  // Second of the three questions a write leaves behind: the guided
+  // install says what happened first. `lib/asks-first.ts` holds the order.
+  // The line keeps what it is given — `marketplaces-install.ts` appends —
+  // so nothing is lost by waiting.
+  const mayAsk = useMayAsk("repoEffects");
+  if (!pending || !mayAsk) return null;
   const disclosure = pending.queue[0].disclosure;
   const runnable = disclosure.declared.installer !== null;
   return (
