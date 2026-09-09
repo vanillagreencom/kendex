@@ -33,6 +33,7 @@ import {
 import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 import { useAuditStore } from "@/stores/audit";
+import { useNavStore } from "@/stores/nav";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
@@ -277,6 +278,28 @@ describe("the Projects tab", () => {
     expect(host.textContent).toContain("hyprtrade");
     // "Installed in" is the section's own heading; no card dates itself.
     expect(host.textContent).not.toMatch(/Installed \d/);
+  });
+
+  // A card names a place, so it opens that place: everything installed
+  // there, not this package again.
+  it("opens the place a card names, by pointer and by Enter", async () => {
+    const methods = ["pointer", "keyboard"] as const;
+    expect(methods).toHaveLength(2);
+    for (const method of methods) {
+      useNavStore.setState({ page: "package", libraryFilter: null });
+      const host = await openTab([VG]);
+      const card = host.querySelector<HTMLElement>('[data-slot="card"]');
+      if (!card) throw new Error("no place card rendered");
+      expect(card.getAttribute("tabindex")).toBe("0");
+      if (method === "pointer") await userEvent.click(card);
+      else {
+        act(() => card.focus());
+        await userEvent.keyboard("{Enter}");
+      }
+      const nav = useNavStore.getState();
+      expect(nav.page, method).toBe("library");
+      expect(nav.libraryFilter?.scope, method).toEqual({ project: VG.root });
+    }
   });
 });
 

@@ -22,6 +22,7 @@ import {
   groupScopes,
   installedCount,
   scopeChoices,
+  selectionOf,
 } from "@/lib/derive";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
@@ -32,6 +33,7 @@ import {
   type FilterSelection,
   useLibraryViewStore,
 } from "@/stores/library-view";
+import { subscription } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import {
   originFor,
@@ -48,6 +50,8 @@ export function InstalledView() {
   const scope = useNavStore((s) => s.libraryScope);
   const setScope = useNavStore((s) => s.setLibraryScope);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
+  const goToMarketplace = useNavStore((s) => s.goToMarketplace);
+  const goToLibrary = useNavStore((s) => s.goToLibrary);
   const goToPackage = useNavStore((s) => s.goToPackage);
   const {
     kind,
@@ -214,16 +218,17 @@ export function InstalledView() {
               <TableBody>
                 {groups.map((group) => {
                   const primary = group.installations[0];
+                  const origin = originFor(
+                    provenance,
+                    group.kind,
+                    group.name,
+                    groupScopes(group),
+                  );
                   return (
                     <InstalledRow
                       key={group.key}
                       group={group}
-                      origin={originFor(
-                        provenance,
-                        group.kind,
-                        group.name,
-                        groupScopes(group),
-                      )}
+                      origin={origin}
                       forkedIn={standingsFor(group)
                         .filter((s) => s.why === "forked")
                         .map((s) => s.scope)}
@@ -237,6 +242,23 @@ export function InstalledView() {
                           scope: where,
                         });
                       }}
+                      onOpenHarness={(harness) => goToLibrary({ harness })}
+                      onOpenPlace={(where) =>
+                        goToLibrary({ scope: selectionOf(where) })
+                      }
+                      // Only a marketplace has a page to open. A package
+                      // the reader wrote, and one nothing manages, name
+                      // no marketplace — and a subscription is addressed
+                      // by the place that declares it, so a row with no
+                      // installation has nothing to address it with.
+                      onOpenFrom={
+                        origin?.origin === "marketplace" && primary
+                          ? () =>
+                              goToMarketplace(
+                                subscription(primary.scope, origin.source),
+                              )
+                          : undefined
+                      }
                     />
                   );
                 })}

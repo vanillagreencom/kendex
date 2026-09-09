@@ -11,9 +11,11 @@ import {
   REMOVE_ALL_LABEL,
   UPDATE_ALL_LABEL,
 } from "@/lib/copy-projects";
+import { selectionOf } from "@/lib/derive";
 import { removablePlaces, updatableRows } from "@/lib/package-places";
 import { scopeKey } from "@/lib/scope";
 import { useAuditStore } from "@/stores/audit";
+import { useNavStore } from "@/stores/nav";
 import { useUpdatesStore } from "@/stores/updates";
 
 /** One card per place, while the places are still being read. Two, because
@@ -54,6 +56,7 @@ export function PackageProjects({
   const updateOne = useUpdatesStore((s) => s.updateOne);
   const updateRows = useUpdatesStore((s) => s.updateRows);
   const removeItem = useAuditStore((s) => s.removeItem);
+  const goToLibrary = useNavStore((s) => s.goToLibrary);
   const waiting = updatableRows(places);
   const removable = removablePlaces(places);
 
@@ -104,6 +107,7 @@ export function PackageProjects({
               place={place}
               busy={busy}
               removalHeld={removalHeld}
+              onOpen={() => goToLibrary({ scope: selectionOf(place.scope) })}
               onUpdate={() => place.row && void updateOne(place.row)}
               onRemove={() => void removeItem(place.scope, kind, name)}
             />

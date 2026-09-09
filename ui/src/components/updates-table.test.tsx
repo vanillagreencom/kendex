@@ -149,7 +149,7 @@ describe("UpdatesTable", () => {
 
   // With nothing newer the source still carries, there is nothing to put
   // beside the edits: the fork-or-discard choice on the package page is
-  // what is left, and the row says where.
+  // what is left, and the row's name is the way there.
   it("offers no install beside where there is nothing to install", () => {
     const edited = {
       blockedByLocalEdit: true,
@@ -168,7 +168,12 @@ describe("UpdatesTable", () => {
     expect(gone).toContain(esc(EDITED_CANT_UPDATE_NOTE));
     expect(gone).not.toContain(`>${INSTALL_AS_NEW_LABEL}<`);
     expect(gone).not.toContain(UPDATE);
+    // With no update to review and nothing to install beside, the package
+    // page is what is left, and this row keeps the button that names it.
     expect(gone).toContain(`>${OPEN_PACKAGE_LABEL}<`);
+    // The name is a control of its own either way: a row announces its
+    // cells rather than an action.
+    expect(gone).toContain(">gh</button>");
 
     const current = render([
       row("gh", null, { ...edited, updateAvailable: false }),

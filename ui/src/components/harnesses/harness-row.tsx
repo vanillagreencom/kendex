@@ -15,6 +15,7 @@ import {
 } from "@/lib/copy";
 import type { ItemPlace } from "@/lib/derive";
 import { harnessName, kindLabel } from "@/lib/labels";
+import { opensOnActivate } from "@/lib/opens-on-activate";
 import { cn } from "@/lib/utils";
 import { useNavStore } from "@/stores/nav";
 
@@ -48,18 +49,26 @@ export function HarnessRow({
   const id = place.harness;
   const name = harnessName(id);
 
+  const open = () => goToLibrary(place);
+
   return (
-    <div className="group flex items-start justify-between gap-6 py-3.5">
+    // A harness that is not installed has nothing to show, so only a
+    // detected row opens. The pencil and the count badges answer their own
+    // clicks; everything else on the row opens the harness.
+    <div
+      {...(detectedRoot ? opensOnActivate(open) : {})}
+      className={cn(
+        "group flex items-start justify-between gap-6 py-3.5",
+        detectedRoot && "cursor-pointer",
+      )}
+    >
       <div className="flex min-w-0 flex-col gap-1">
         <span className="flex items-center gap-2">
           <HarnessIcon harness={id} muted={!detectedRoot} className="size-5" />
           {/* A harness that isn't installed has nothing to show, so only a
               detected one gets the button. */}
           {detectedRoot ? (
-            <ShowEverythingButton
-              name={name}
-              onOpen={() => goToLibrary(place)}
-            />
+            <ShowEverythingButton name={name} onOpen={open} />
           ) : (
             <span className="text-sm font-medium text-muted-foreground">
               {name}

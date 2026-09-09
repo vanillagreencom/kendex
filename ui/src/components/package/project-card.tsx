@@ -8,6 +8,7 @@ import {
   updateInLabel,
 } from "@/lib/copy-projects";
 import { scopePath } from "@/lib/labels";
+import { opensOnActivate } from "@/lib/opens-on-activate";
 import type { PackagePlace } from "@/lib/package-places";
 import { exactTime } from "@/lib/relative-time";
 import { useNowTick } from "@/lib/use-now-tick";
@@ -20,11 +21,15 @@ export function ProjectCard({
   place,
   busy,
   removalHeld,
+  onOpen,
   onUpdate,
   onRemove,
 }: {
   place: PackagePlace;
   busy: boolean;
+  /** Open this place — everything installed there, not only this
+   *  package. The card names a place, so the card opens it. */
+  onOpen: () => void;
   /** The ownership answer under Remove is not current. The button stays
    *  where it is and goes dead, rather than leaving the row as the read
    *  behind a write comes and goes under a reader's cursor. */
@@ -43,9 +48,20 @@ export function ProjectCard({
     .join(" · ");
 
   return (
-    <Card className="flex-row items-center justify-between gap-4 px-5 py-4">
+    <Card
+      {...opensOnActivate(onOpen)}
+      className="flex-row cursor-pointer items-center justify-between gap-4 px-5 py-4 hover:bg-accent/40"
+    >
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium">{place.name}</p>
+        {/* What a screen reader is told opens the place: a card announces
+            its content rather than an action. */}
+        <button
+          type="button"
+          onClick={onOpen}
+          className="block max-w-full truncate text-left text-sm font-medium hover:underline"
+        >
+          {place.name}
+        </button>
         {detail ? (
           <p
             className="mt-0.5 truncate text-[13px] text-muted-foreground"

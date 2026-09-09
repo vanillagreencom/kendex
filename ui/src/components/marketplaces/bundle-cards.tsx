@@ -2,9 +2,9 @@ import { Package } from "lucide-react";
 import type { BundleDetail, Catalog, ItemKind, Scope } from "@/bindings";
 import { InstalledIn } from "@/components/marketplaces/installed-in";
 import { Card, CardContent } from "@/components/ui/card";
-import { clickAsksToOpen } from "@/lib/click-asks-to-open";
 import { bundlePlaces } from "@/lib/installed-places";
 import { kindLabel } from "@/lib/labels";
+import { opensOnActivate } from "@/lib/opens-on-activate";
 import { useNavStore } from "@/stores/nav";
 
 /** The curated sets one marketplace offers, as cards: what each carries and
@@ -64,20 +64,19 @@ export function BundleCards({
               : null;
         const open = () => goToBundle({ catalog, bundle: detail.name });
         return (
+          // The card is the way in — a card that names a set opens that
+          // set, so it carries no Open button of its own, and it opens on
+          // the pointer and on Enter alike.
           <Card
             key={detail.name}
-            // The card is the open action, so its empty space opens it too.
-            // The name keeps a button of its own: a div with a handler is
-            // reachable by mouse alone, and the set has to be openable from
-            // the keyboard.
-            onClick={(event) => {
-              if (clickAsksToOpen(event)) open();
-            }}
+            {...opensOnActivate(open)}
             className="cursor-pointer gap-0 py-0 transition-colors hover:bg-accent/40 hover:border-input"
           >
             <CardContent className="flex h-full flex-col gap-1.5 p-4">
               <div className="flex items-center gap-2">
                 <Package className="size-4 shrink-0 text-muted-foreground" />
+                {/* What a screen reader is told opens the set: a card
+                    announces its content rather than an action. */}
                 <button
                   type="button"
                   onClick={open}

@@ -681,6 +681,43 @@ describe("the package page's safety tab", () => {
     expect(host.textContent).toContain("SKILL.md:20");
   });
 
+  // A safety score anywhere in the app is the way to the reading behind
+  // it, so the link that opened this page says which tab it meant and the
+  // page opens there with nothing else pressed.
+  it("opens on this tab when the link that opened the page asked for it", async () => {
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [scoredView],
+    });
+    useAuditStore.setState({ auditedAt: 1, views: [scoredView] });
+
+    const host = await openPage(
+      VG,
+      [VG],
+      { [scopeKey(VG)]: PLAIN },
+      {
+        mode: "safety",
+      },
+    );
+
+    expect(host.textContent).toContain("58/100");
+    expect(host.textContent).toContain("SKILL.md:20");
+  });
+
+  // The control: a page opened with no tab asked for opens on Overview,
+  // so the case above is about the request rather than about the default.
+  it("opens on Overview when nothing asked for a tab", async () => {
+    vi.mocked(commands.auditAll).mockResolvedValue({
+      status: "ok",
+      data: [scoredView],
+    });
+    useAuditStore.setState({ auditedAt: 1, views: [scoredView] });
+
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+
+    expect(host.textContent).not.toContain("58/100");
+  });
+
   // A Preview from an Updates row opens this page straight into a diff. The
   // score answers for the whole package, not for whichever two versions are
   // side by side, so a comparison on the Overview tab cannot be what keeps

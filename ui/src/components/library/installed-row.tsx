@@ -11,7 +11,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { clickAsksToOpen } from "@/lib/click-asks-to-open";
 import {
   bundledWithLabel,
   FORKED_BADGE_HELP,
@@ -35,6 +34,7 @@ import {
   kindLabel,
   scopeName,
 } from "@/lib/labels";
+import { opensOnActivate } from "@/lib/opens-on-activate";
 import { scopeKey } from "@/lib/scope";
 import { placeName } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
@@ -52,6 +52,9 @@ export function InstalledRow({
   forkedIn,
   outOfDate,
   onOpen,
+  onOpenHarness,
+  onOpenPlace,
+  onOpenFrom,
 }: {
   group: ItemGroup;
   origin: Origin | null;
@@ -64,6 +67,15 @@ export function InstalledRow({
    *  already opens the package. */
   outOfDate: boolean;
   onOpen: (scope?: Scope) => void;
+  /** Open one of the tools this package is installed for. */
+  onOpenHarness: (harness: HarnessId) => void;
+  /** Open the one place this package is installed in. A package in
+   *  several has no single place to open, so the cell counts them
+   *  instead and the reader picks one on the package's own page. */
+  onOpenPlace: (scope: Scope) => void;
+  /** Open the marketplace this copy came from, where it came from one —
+   *  absent for a package the reader wrote or one nothing manages. */
+  onOpenFrom?: () => void;
 }) {
   const Icon = kindIcon(group.kind);
   const displayName =
@@ -80,12 +92,10 @@ export function InstalledRow({
 
   return (
     <TableRow
-      // A shortcut for the mouse, on top of the name's own button: the row
-      // reads as one target, so clicking any of its cells should open the
-      // package.
-      onClick={(event) => {
-        if (clickAsksToOpen(event)) onOpen();
-      }}
+      // A shortcut for the pointer and the keyboard alike, on top of the
+      // name's own button: the row reads as one target, so clicking any of
+      // its cells — or pressing Enter on the row — opens the package.
+      {...opensOnActivate(() => onOpen())}
       className="cursor-pointer"
     >
       {/* Cells are nowrap by default; the description is the one column that
@@ -99,11 +109,12 @@ export function InstalledRow({
           </span>
           <span className="min-w-0">
             <span className="flex items-center gap-1.5">
-              {/* The keyboard's one way into the row: a row is not
-                  focusable, so without a real control here the row's
-                  default open — and any package without a fork badge — is mouse-only. No selection guard here: a
-                  completed click on a button is always intent, and the
-                  row's own guard declines the drags. */}
+              {/* What a screen reader is told opens the package. The row
+                  itself opens too, but a row announces its cells rather
+                  than an action, so the name stays a real button. No
+                  selection guard here: a completed click on a button is
+                  always intent, and the row's own guard declines the
+                  drags. */}
               <button
                 type="button"
                 onClick={() => onOpen()}
@@ -180,17 +191,50 @@ export function InstalledRow({
       </TableCell>
       <TableCell>
         <span className="flex flex-wrap gap-1">
+          {/* A chip names a harness, so it opens that harness's own view
+              of what is installed for it. */}
           {group.harnesses.map((h) => (
-            <HarnessBadge key={h} harness={h as HarnessId} compact />
+            <HarnessBadge
+              key={h}
+              harness={h as HarnessId}
+              compact
+              onOpen={() => onOpenHarness(h as HarnessId)}
+            />
           ))}
           <SharedFilesBadge files={shared} />
         </span>
       </TableCell>
+      {/* A place names a thing, so it opens it — but only where the cell
+          names one place. "3 locations" is a count, and the places behind
+          it are listed on the package's own page. */}
       <TableCell title={whereTitle} className="text-muted-foreground">
-        {whereLabel}
+        {scopes.length === 1 ? (
+          <button
+            type="button"
+            className="hover:underline"
+            onClick={() => onOpenPlace(scopes[0])}
+          >
+            {whereLabel}
+          </button>
+        ) : (
+          whereLabel
+        )}
       </TableCell>
+      {/* Same rule for where the copy came from: a marketplace's name
+          opens the marketplace. "Your own" and "Not managed" name no
+          marketplace, so they stay text. */}
       <TableCell title={originTitle(origin)} className="text-muted-foreground">
-        {originLabel(origin) || "—"}
+        {onOpenFrom && originLabel(origin) ? (
+          <button
+            type="button"
+            className="hover:underline"
+            onClick={onOpenFrom}
+          >
+            {originLabel(origin)}
+          </button>
+        ) : (
+          originLabel(origin) || "—"
+        )}
       </TableCell>
       <TableCell className="text-right text-xs text-muted-foreground">
         {group.modifiedAt != null ? <Ago at={group.modifiedAt * 1000} /> : "—"}

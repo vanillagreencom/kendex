@@ -23,6 +23,7 @@ describe("a place whose install date cannot be read", () => {
         place={place}
         busy={false}
         removalHeld={false}
+        onOpen={() => {}}
         onUpdate={() => {}}
         onRemove={() => {}}
       />,

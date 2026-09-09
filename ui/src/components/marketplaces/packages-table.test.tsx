@@ -275,6 +275,22 @@ describe("reading the safety dot", () => {
       name: "gh",
     });
   });
+
+  // The keyboard takes the same way in: the row takes focus and Enter
+  // opens it.
+  it("opens the package page from the row on Enter", async () => {
+    const { host, goToAvailablePackage } = mount(scored(60, [FINDING]));
+    const row = host.querySelector("tbody tr");
+    if (!(row instanceof HTMLElement)) throw new Error("no row rendered");
+    expect(row.getAttribute("tabindex")).toBe("0");
+    act(() => row.focus());
+    await userEvent.keyboard("{Enter}");
+    expect(goToAvailablePackage).toHaveBeenCalledWith({
+      catalog,
+      kind: "skill",
+      name: "gh",
+    });
+  });
 });
 
 // The row's own state is cached per package and only refreshed when the

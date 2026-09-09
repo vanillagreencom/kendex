@@ -75,22 +75,18 @@ export function useInstalledReading(
  *  shows a dash with the words saying so; a cell that simply vanished would
  *  read as a package nothing was found in.
  *
- *  Given `onToggle` the disc is also the way to what is behind the number.
- *  Without it the score would be the whole reading a row ever offers, which
- *  is a severity and a count with no finding under either. */
+ *  Given `onOpen` the disc is also the way to what is behind the number:
+ *  the package page's Safety tab, where the findings are. Without it the
+ *  score would be a severity and a count with no finding under either. */
 export function InstalledScore({
   reading,
-  expanded = false,
-  controls,
-  onToggle,
+  onOpen,
 }: {
   reading: InstalledReading;
-  expanded?: boolean;
-  /** The id of the row this opens. Named only while it is open: a control
-   *  pointing at an element that is not in the document is a broken
-   *  reference to anything reading the page. */
-  controls?: string;
-  onToggle?: () => void;
+  /** Open the reading this score summarizes. A score names a thing — how
+   *  safe this copy is — so it opens that thing rather than growing a
+   *  second findings panel of its own. */
+  onOpen?: () => void;
 }) {
   const { result, failure } = reading;
   const words = result
@@ -111,9 +107,7 @@ export function InstalledScore({
       // Never disabled, with or without something to open: the trigger is
       // the only place a keyboard reaches the words, and a disabled button
       // is out of the tab order.
-      aria-expanded={onToggle ? expanded : undefined}
-      aria-controls={onToggle && expanded ? controls : undefined}
-      onClick={onToggle}
+      onClick={onOpen}
     >
       <ScoreCircle
         size="sm"

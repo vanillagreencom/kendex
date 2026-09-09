@@ -54,7 +54,7 @@ export function PackagePage() {
   const { dirty, saving, openScope, load, save } = useEditorStore();
 
   const [view, setView] = useState<PackageView>(() =>
-    initialView
+    initialView?.mode === "diff"
       ? {
           mode: "diff",
           from: initialView.from,
@@ -63,6 +63,12 @@ export function PackagePage() {
           toLabel: initialView.to.slice(0, 7),
         }
       : { mode: "files", file: null },
+  );
+  // Which tab the link that opened this page asked for, read once on mount:
+  // the store's copy is cleared straight after, and re-reading it would
+  // send the page back to that tab whenever the reader picked another.
+  const [openOn] = useState<"overview" | "safety">(
+    initialView?.mode === "safety" ? "safety" : "overview",
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [switching, setSwitching] = useState(false);
@@ -233,6 +239,7 @@ export function PackagePage() {
         vendor={vendorAt(group.installations, ref.scope)}
         harnesses={group.harnesses as HarnessId[]}
         busy={mutating}
+        openOn={openOn}
         onDelete={() => setConfirmDelete(true)}
         body={body}
       />

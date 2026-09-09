@@ -85,7 +85,6 @@ export const installedBesideUnfinishedToast = (
   why: string,
 ): string =>
   `Your edited copy is now ${own}, but ${name} didn't install: ${why}.`;
-export const OPEN_PACKAGE_LABEL = "Open package";
 
 export const updatedCountToastLabel = (updated: number): string =>
   `Updated ${updated === 1 ? "1 package" : `${updated} packages`}`;
@@ -192,6 +191,7 @@ export const UPDATE_REVIEW_LABEL = "Update…";
 /** The Updates table names a place, and a name opens the thing it names —
  *  the place's own list of what is installed there. Read out, because the
  *  folder name alone does not say what the click does. */
+export const OPEN_PACKAGE_LABEL = "Open package";
 export const openPlaceLabel = (place: string): string => `Open ${place}`;
 export const updateReviewOneTitle = (name: string, place: string): string =>
   `Update ${name} in ${place}?`;

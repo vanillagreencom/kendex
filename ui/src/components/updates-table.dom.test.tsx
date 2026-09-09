@@ -7,7 +7,6 @@ import type { AuditView } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { IGNORE_CONFIRM_LABEL, IGNORE_UPDATES_LABEL } from "@/lib/copy";
-import { SAFETY_CAVEAT } from "@/lib/copy-safety";
 import {
   EDITED_TAG_HELP,
   INSTALL_AS_NEW_LABEL,
@@ -23,6 +22,7 @@ import {
 import { READ_LANDED } from "@/lib/read-state";
 import { UpdatesPage } from "@/pages/updates";
 import { useAuditStore } from "@/stores/audit";
+import { useNavStore } from "@/stores/nav";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
 import { mount, settle } from "@/test/dom";
@@ -356,10 +356,11 @@ describe("a page with only muted updates", () => {
   });
 });
 
-// A number with a severity and a count behind it and no way to the findings
-// is a claim the row cannot back up: the tooltip carries the score and the
-// caveat, never a file or a line.
-describe("the findings behind a row's score", () => {
+// A score names a reading, and the reading lives on the package page's
+// Safety tab: the score is the way there, and the row shows no findings of
+// its own. The tooltip carries the score and the caveat, never a file or a
+// line.
+describe("the reading behind a row's score", () => {
   const scoredGh = (): AuditView => ({
     scope: { scope: "global" },
     drift: [],
@@ -393,15 +394,22 @@ describe("the findings behind a row's score", () => {
     ],
   });
 
-  const score = (): HTMLElement => {
-    const found = document.querySelector<HTMLElement>(
-      '[data-slot="tooltip-trigger"][aria-expanded]',
+  // The score is the row's own trigger; anything the header carries is
+  // outside the body.
+  const score = (host: HTMLElement): HTMLElement => {
+    const found = host.querySelector<HTMLElement>(
+      'tbody [data-slot="tooltip-trigger"]',
     );
-    if (!found) throw new Error("expected the score to open something");
+    if (!found) throw new Error("expected a score on the row");
     return found;
   };
 
-  it("opens them from the score, and keeps them out of the row until asked", async () => {
+  beforeEach(() => {
+    useNavStore.setState({
+      page: "updates",
+      packageRef: null,
+      packageView: null,
+    });
     act(() => {
       useAuditStore.setState({
         views: [scoredGh()],
@@ -409,34 +417,64 @@ describe("the findings behind a row's score", () => {
         read: READ_LANDED,
       });
     });
+  });
+
+  it("opens the package page on its Safety tab, and shows no findings in the row", async () => {
     const host = mount(<UpdatesTable rows={[row("gh", null)]} />);
 
     expect(host.textContent).not.toContain("SKILL.md:20");
-    expect(score().getAttribute("aria-expanded")).toBe("false");
+    await userEvent.click(score(host));
 
-    await userEvent.click(score());
-
-    expect(host.textContent).toContain("SKILL.md:20");
-    expect(host.textContent).toContain("58/100");
-    expect(host.textContent).toContain(SAFETY_CAVEAT);
-    expect(score().getAttribute("aria-expanded")).toBe("true");
+    const nav = useNavStore.getState();
+    expect(nav.page).toBe("package");
+    expect(nav.packageRef).toEqual({
+      kind: "skill",
+      name: "gh",
+      scope: { scope: "global" },
+    });
+    expect(nav.packageView).toEqual({ mode: "safety" });
+    // The findings never came into the row: the page carries them.
+    expect(host.textContent).not.toContain("SKILL.md:20");
   });
 
-  // Nothing behind the number is nothing to open: a control that expands
-  // onto an empty row is a promise the row cannot keep.
-  it("offers no way in for a clean reading", () => {
-    act(() => {
-      useAuditStore.setState({
-        views: [{ ...scoredGh(), safety: [] }],
-        auditedAt: Date.now(),
-        read: READ_LANDED,
-      });
-    });
-    mount(<UpdatesTable rows={[row("gh", null)]} />);
+  // The control: the same row's name opens the same page, on no tab in
+  // particular. Without it "opens the Safety tab" could be nothing more
+  // than "opens the package".
+  it("opens the package on no particular tab from the name", async () => {
+    const host = mount(<UpdatesTable rows={[row("gh", null)]} />);
+    const name = [...host.querySelectorAll("button")].find(
+      (each) => each.textContent === "gh",
+    );
+    if (!name) throw new Error("the package name is not a button");
+    await userEvent.click(name);
 
-    expect(
-      document.querySelector('[data-slot="tooltip-trigger"][aria-expanded]'),
-    ).toBeNull();
+    const nav = useNavStore.getState();
+    expect(nav.page).toBe("package");
+    expect(nav.packageView).toBeNull();
+  });
+});
+
+// The Where column names a place, so it opens that place — everything
+// installed there, which is a different destination from the package the
+// rest of the row opens.
+describe("the place on an updates row", () => {
+  it("opens that place, not the package", async () => {
+    useNavStore.setState({
+      page: "updates",
+      libraryFilter: null,
+      packageRef: null,
+    });
+    const host = mount(<UpdatesTable rows={[row("gh", null)]} />);
+    const where = [...host.querySelectorAll("button")].find(
+      (each) => each.textContent === "User level",
+    );
+    if (!where) throw new Error("the place is not a button");
+    await userEvent.click(where);
+
+    const nav = useNavStore.getState();
+    expect(nav.page).toBe("library");
+    expect(nav.libraryFilter).toEqual({ scope: "global" });
+    expect(nav.packageRef).toBeNull();
   });
 });
 
