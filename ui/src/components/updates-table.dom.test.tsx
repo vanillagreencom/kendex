@@ -526,6 +526,44 @@ describe("the reading behind a row's score", () => {
     expect(useNavStore.getState().packageView).toEqual({ mode: "safety" });
   });
 
+  // Both at once: one place scored, another place's read failed. The disc
+  // shows the number, which is current — the failed place says its piece on
+  // its own row — so the score neither reads as stale nor opens the place
+  // its number never came from.
+  it("keeps a scored row current when another place's read failed", async () => {
+    const worst = scoredGh();
+    act(() => {
+      useAuditStore.setState({
+        views: [
+          // Personal scored 58 and read fine.
+          worst,
+          // The project could not be read at all.
+          {
+            ...worst,
+            scope: { scope: "project", root: "/work/vg" },
+            safety: [],
+            error: { message: "could not read /work/vg" },
+          },
+        ] as never,
+        auditedAt: Date.now(),
+        read: READ_LANDED,
+      });
+    });
+    const host = mount(
+      <UpdatesTable rows={[row("gh", null), row("gh", "/work/vg")]} />,
+    );
+    // The words are the current reading's, not the stale lead another
+    // place's failure would put in front of them.
+    expect(score(host).textContent).toContain("The copy installed now:");
+    await userEvent.click(score(host));
+
+    expect(useNavStore.getState().packageRef).toEqual({
+      kind: "skill",
+      name: "gh",
+      scope: { scope: "global" },
+    });
+  });
+
   // The control: the same row's name opens the same page, on no tab in
   // particular. Without it "opens the Safety tab" could be nothing more
   // than "opens the package".
