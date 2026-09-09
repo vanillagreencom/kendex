@@ -11,6 +11,8 @@ SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 EXAMPLE="$SKILL_DIR/kendex.settings.toml.example"
 
 fail=0
+count=0
+bad() { printf 'test-failure=%s value=%q\n' "$1" "$2" >&2; fail=1; }
 
 # Shared by the forbidden-assignment guard below and its failing-direction
 # self-check, so the self-check exercises the real matcher, not a copy.
@@ -20,12 +22,13 @@ forbidden_assignment_matches() { # key, file
 
 vars="$(grep -rhoE 'REVIEW_GATE_[A-Z_]+' \
   "$SKILL_DIR/scripts" "$SKILL_DIR/templates" | sort -u)"
-[ -n "$vars" ] || { echo "FAIL: no REVIEW_GATE_* variables found in scripts/"; exit 1; }
+[ -n "$vars" ] || { bad variable-extractor empty; exit 1; }
 
 for v in $vars; do
+  count=$((count + 1))
+  observed=""
   if ! grep -q "$v" "$SKILL_DIR/SKILL.md" "$SKILL_DIR/references/adoption.md" "$SKILL_DIR/references/settings.md"; then
-    echo "FAIL: $v is read by the engine but documented in none of SKILL.md, references/adoption.md, references/settings.md"
-    fail=1
+    observed="undocumented"
   fi
   # Env-only per-invocation seams, not settings keys — they must not appear
   # as settings assignments (REVIEW_GATE_SETTINGS_FILE overrides the file
@@ -38,37 +41,37 @@ for v in $vars; do
       # Whitespace/quote-tolerant: any TOML spelling of an assignment for
       # this name must fail, not just the canonical `KEY = ` shape.
       if forbidden_assignment_matches "$v" "$EXAMPLE"; then
-        echo "FAIL: $v is an env-only per-invocation seam but is assigned in $EXAMPLE"
-        fail=1
+        observed="$observed forbidden-assignment"
       fi
-      continue ;;
+      ;;
     # A GitHub REPOSITORY VARIABLE, read by a workflow expression before any
     # checkout exists — so the settings file cannot supply it and an
     # assignment there would advertise a knob that resolves to nothing.
     # Documented with the check_run opt-in it belongs to.
     REVIEW_GATE_CHECK_RUN_NAME)
       if ! grep -q "$v" "$SKILL_DIR/references/adoption.md"; then
-        echo "FAIL: $v (repository variable) must stay documented in references/adoption.md"
-        fail=1
+        observed="$observed adoption-missing"
       fi
       if forbidden_assignment_matches "$v" "$EXAMPLE"; then
-        echo "FAIL: $v is a repository variable, not a settings key, but is assigned in $EXAMPLE"
-        fail=1
+        observed="$observed forbidden-assignment"
       fi
-      continue ;;
+      ;;
+    *)
+      if ! grep -q "^$v = " "$EXAMPLE"; then
+        observed="$observed example-missing"
+      fi ;;
   esac
-  if ! grep -q "^$v = " "$EXAMPLE"; then
-    echo "FAIL: $v missing from the skill's kendex.settings.toml.example"
-    fail=1
-  fi
+  [ -z "$observed" ] || bad variable-contract "$v:$observed"
 done
 
 # Reverse direction: every key the example documents must be real — either
 # read by the scripts or an explicitly wiring-level key named in SKILL.md.
-for key in $(sed -n 's/^\(REVIEW_GATE_[A-Z_]*\) = .*/\1/p' "$EXAMPLE"); do
-  if ! printf '%s\n' "$vars" | grep -qx "$key" && ! grep -q "$key" "$SKILL_DIR/SKILL.md" "$SKILL_DIR/references/settings.md"; then
-    echo "FAIL: $key is documented in the example but neither read by scripts nor described in SKILL.md/references/settings.md"
-    fail=1
+example_keys="$(sed -n 's/^\(REVIEW_GATE_[A-Z_]*\) = .*/\1/p' "$EXAMPLE")"
+[ -n "$example_keys" ] || { bad example-extractor empty; exit 1; }
+for key in $example_keys; do
+  count=$((count + 1))
+  if ! grep -qx "$key" <<<"$vars" && ! grep -q "$key" "$SKILL_DIR/SKILL.md" "$SKILL_DIR/references/settings.md"; then
+    bad example-key "$key"
   fi
 done
 
@@ -76,38 +79,26 @@ done
 # ever runs against examples where the keys are absent, so it would stay
 # green even if the matcher stopped recognizing assignments. Prove each
 # TOML spelling actually trips the matcher.
-matcher_fixture="$(mktemp)"
-while IFS= read -r spelling; do
+matcher_fixture="$(mktemp)" || { bad matcher-fixture mktemp; exit 1; }
+trap 'rm -f -- "${matcher_fixture:?}"' EXIT
+while IFS='|' read -r want spelling; do
+  count=$((count + 1))
   printf '%s\n' "$spelling" >"$matcher_fixture"
-  if ! forbidden_assignment_matches "REVIEW_GATE_SETTINGS_FILE" "$matcher_fixture"; then
-    echo "FAIL: forbidden-assignment matcher misses spelling: $spelling"
-    fail=1
-  fi
+  got=absent
+  if forbidden_assignment_matches "REVIEW_GATE_SETTINGS_FILE" "$matcher_fixture"; then got=assigned; fi
+  [ "$got" = "$want" ] || bad assignment-matcher "$spelling"
 done <<'SPELLINGS'
-REVIEW_GATE_SETTINGS_FILE = "x"
-REVIEW_GATE_SETTINGS_FILE="x"
-"REVIEW_GATE_SETTINGS_FILE" = "x"
-'REVIEW_GATE_SETTINGS_FILE' = "x"
-   REVIEW_GATE_SETTINGS_FILE = "x"
+assigned|REVIEW_GATE_SETTINGS_FILE = "x"
+assigned|REVIEW_GATE_SETTINGS_FILE="x"
+assigned|"REVIEW_GATE_SETTINGS_FILE" = "x"
+assigned|'REVIEW_GATE_SETTINGS_FILE' = "x"
+assigned|   REVIEW_GATE_SETTINGS_FILE = "x"
+absent|# REVIEW_GATE_SETTINGS_FILE = "x"
+absent|REVIEW_GATE_SETTINGS_FILE_EXTRA = "x"
+absent|REVIEW_GATE_SETTINGS_FILE overrides the file path in tests
 SPELLINGS
 
-# And the reverse direction: spellings that are NOT assignments of the key
-# must NOT match — an over-broad matcher would flag innocent example text
-while IFS= read -r spelling; do
-  printf '%s\n' "$spelling" >"$matcher_fixture"
-  if forbidden_assignment_matches "REVIEW_GATE_SETTINGS_FILE" "$matcher_fixture"; then
-    echo "FAIL: forbidden-assignment matcher falsely matched: $spelling"
-    fail=1
-  fi
-done <<'NON_MATCHING'
-# REVIEW_GATE_SETTINGS_FILE = "x"
-REVIEW_GATE_SETTINGS_FILE_EXTRA = "x"
-REVIEW_GATE_SETTINGS_FILE overrides the file path in tests
-NON_MATCHING
-rm -f "$matcher_fixture"
-
 if [ "$fail" -ne 0 ]; then
-  echo "settings-vars-documented: FAIL"
   exit 1
 fi
-echo "pass: settings-vars-documented"
+printf 'test-pass=settings-vars-documented value=%s\n' "$count"

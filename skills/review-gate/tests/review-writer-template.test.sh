@@ -196,9 +196,14 @@ _relay_once() { # shell-flags, step-path, read_only, ref, codes, event, headers,
   # dropped: relay_run asserts, per shell, that it equals the sum the step
   # announced and that the jitter stayed inside its declared bound.
   RELAY_WAIT=""; RELAY_JITTER=""
-  if [[ "$RELAY_OUT" =~ retrying\ once\ in\ ([0-9]+)s\ \+\ ([0-9]+)s\ jitter ]]; then
-    RELAY_WAIT="${BASH_REMATCH[1]}"; RELAY_JITTER="${BASH_REMATCH[2]}"
-  fi
+  RELAY_CAUSE=""
+  local record retry_pattern='^review-gate-notice=relay-retry value=rc:([0-9]+)\\,http:([0-9]+|none)\\,wait:([0-9]+)\\,jitter:([0-9]+)$'
+  while IFS= read -r record; do
+    if [[ "$record" =~ $retry_pattern ]]; then
+      RELAY_CAUSE="${BASH_REMATCH[1]}:${BASH_REMATCH[2]}"
+      RELAY_WAIT="${BASH_REMATCH[3]}"; RELAY_JITTER="${BASH_REMATCH[4]}"
+    fi
+  done <<<"$RELAY_OUT"
 }
 
 relay_run() { # step-path, read_only, workflow_ref, gh_codes, event_name, headers, check_name
@@ -349,8 +354,8 @@ ref_of() { # NAME -> the github.workflow_ref the step derives its file from
 #            by an exit of 124
 #   note     the annotation level(s) the step emitted: warning, error,
 #            warning+error, or none
-#   says~<t> whether the output carries <t>, `+` read as a space: the one
-#            phrase that tells two shapes with the same wait and calls apart
+#   record~<code>@<value>: whether the exact diagnostic record exists
+#   retry_cause: gh exit and HTTP status from the complete retry record
 relay_observe() {
   local got="" token name value line
   for token in $1; do
@@ -377,9 +382,11 @@ relay_observe() {
         grep -qF '::warning::' <<<"$RELAY_OUT" && value="warning"
         grep -qF '::error::' <<<"$RELAY_OUT" && value="${value:+$value+}error"
         value="${value:-none}" ;;
-      says~*)
-        line="${name#says~}"; line="${line//+/ }"
-        value="$(grep -qF -- "$line" <<<"$RELAY_OUT" && echo true || echo false)" ;;
+      record~*)
+        line="${name#record~}"
+        line="review-gate-notice=${line%@*} value=${line##*@}"
+        value="$(grep -qxF -- "$line" <<<"$RELAY_OUT" && echo true || echo false)" ;;
+      retry_cause) value="${RELAY_CAUSE:-none}" ;;
       *) value=UNKNOWN_FIELD ;;
     esac
     got="$got $name=$value"
@@ -435,11 +442,11 @@ relay_battery() { # step script, label
     "an ordinary PR-attached leg dispatches THIS workflow's file on the default branch, exactly once, under the per-attempt bound|0|main|0||none|||rc=0 calls=dispatch:review-gate-writer.yml bound=60 sleeps=0 note=none" \
     "a RENAMED consumer copy dispatches its own file|0|renamed|0||none|||rc=0 calls=dispatch:gate.yml sleeps=0 note=none" \
     "a read-only token (fork pull_request_review) is a green no-op that dispatches nothing|1|main|0||none|||rc=0 calls=none sleeps=0 note=none" \
-    "an underivable workflow_ref dispatches NOTHING and warns, never a garbage path|0|empty|0||none|||rc=0 calls=none sleeps=0 note=warning says~could+not+derive+this+workflow's+file+name=true" \
+    "an underivable workflow_ref dispatches NOTHING and warns, never a garbage path|0|empty|0||none|||rc=0 calls=none sleeps=0 note=warning record~relay-workflow-missing@''=true" \
     "a transient dispatch failure is retried once and succeeds: exactly two attempts|0|main|1 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 note=warning" \
-    "two failed dispatches stop after two attempts and exit GREEN with a warning, never an error|0|main|1 1||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 note=warning says~after+two+attempts=true" \
-    "the workflow_dispatch leg is refused by the step's own loop breaker, and says so|0|main|0|workflow_dispatch|none|||rc=0 calls=none sleeps=0 note=warning says~CONVERGE+leg=true" \
-    "the schedule leg is refused by the same guard|0|main|0|schedule|none|||rc=0 calls=none sleeps=0 note=warning says~CONVERGE+leg=true"
+    "two failed dispatches stop after two attempts and exit GREEN with a warning, never an error|0|main|1 1||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 note=warning record~relay-dispatch-exhausted@1=true" \
+    "the workflow_dispatch leg is refused by the step's own loop breaker, and says so|0|main|0|workflow_dispatch|none|||rc=0 calls=none sleeps=0 note=warning record~relay-converge-leg@workflow_dispatch=true" \
+    "the schedule leg is refused by the same guard|0|main|0|schedule|none|||rc=0 calls=none sleeps=0 note=warning record~relay-converge-leg@schedule=true"
   do relay_row "$row"; done
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "relay_battery: no row was asserted" >&2; exit 2; }
 
@@ -458,12 +465,12 @@ relay_battery() { # step script, label
   # arithmetic.
   before=$((PASS + FAIL))
   for row in \
-    "a failure with NO response retries in 5s and names the cause|0|main|1 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 says~no+HTTP+response,+gh+exit+1=true" \
-    "a dispatch killed by its own per-attempt bound retries in 5s and is reported as a timeout|0|main|124 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml bound=60,60 wait=5 sleeps=1 says~did+not+respond+within=true" \
-    "retry-after is honored (secondary limit) and the warning names the status|0|main|1 0||403-retry-77|||rc=0 wait=77 sleeps=1 says~HTTP+403,+gh+exit+1=true" \
-    "a window beyond the job's budget is NOT slept and the second attempt is skipped|0|main|1 0||403-retry-4000|||rc=0 calls=dispatch:review-gate-writer.yml wait=none sleeps=0 note=warning says~beyond+this+job's+budget=true" \
+    "a failure with NO response retries in 5s and names the cause|0|main|1 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 retry_cause=1:none" \
+    "a dispatch killed by its own per-attempt bound retries in 5s and is reported as a timeout|0|main|124 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml bound=60,60 wait=5 sleeps=1 retry_cause=124:none" \
+    "retry-after is honored (secondary limit) and the warning names the status|0|main|1 0||403-retry-77|||rc=0 wait=77 sleeps=1 retry_cause=1:403" \
+    "a window beyond the job's budget is NOT slept and the second attempt is skipped|0|main|1 0||403-retry-4000|||rc=0 calls=dispatch:review-gate-writer.yml wait=none sleeps=0 note=warning record~relay-window-budget@4000=true" \
     "an EXHAUSTED window honors its reset epoch|0|main|1 0||403-spent-reset+90|||rc=0 wait=90 sleeps=1" \
-    "a healthy window's reset epoch is not a wait instruction: a 5xx takes the quick retry|0|main|1 0||502|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 says~HTTP+502,+gh+exit+1=true" \
+    "a healthy window's reset epoch is not a wait instruction: a 5xx takes the quick retry|0|main|1 0||502|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 retry_cause=1:502" \
     "a reset epoch in the PAST falls to the floor, never a negative sleep|0|main|1 0||403-spent-reset-past|||rc=0 wait=60 sleeps=1" \
     "an exhausted window with NO reset header takes the floor|0|main|1 0||403-spent-no-reset|||rc=0 wait=60 sleeps=1" \
     "a NON-NUMERIC reset is discarded before the arithmetic|0|main|1 0||403-spent-reset-soon|||rc=0 wait=60 sleeps=1" \
@@ -471,9 +478,9 @@ relay_battery() { # step script, label
     "a sub-minute retry-after is raised to the 60s floor|0|main|1 0||403-retry-3|||rc=0 wait=60 sleeps=1" \
     "a secondary-limit 403 with no retry-after is recognized from its body and takes the floor|0|main|1 0||403-secondary-body|||rc=0 wait=60 sleeps=1" \
     "an HTTP 429 with a healthy window and no retry-after is a rate limit and takes the floor|0|main|1 0||429|||rc=0 wait=60 sleeps=1" \
-    "a 404 is a settled answer: no sleep, one attempt, the permanent status named|0|main|1 0||404|||rc=0 calls=dispatch:review-gate-writer.yml wait=none sleeps=0 note=warning says~refused+permanently+(HTTP+404)=true" \
+    "a 404 is a settled answer: no sleep, one attempt, the permanent status named|0|main|1 0||404|||rc=0 calls=dispatch:review-gate-writer.yml wait=none sleeps=0 note=warning record~relay-dispatch-permanent@404=true" \
     "a 422 (bad ref) is not slept on either|0|main|1 0||422|||rc=0 calls=dispatch:review-gate-writer.yml wait=none sleeps=0 note=warning" \
-    "a PERMISSIONS 403 is permanent: no wait, one attempt, the likely cause named|0|main|1 0||403-permissions-body|||rc=0 calls=dispatch:review-gate-writer.yml wait=none sleeps=0 note=warning says~actions:write=true" \
+    "a PERMISSIONS 403 is permanent: no wait, one attempt, the likely cause named|0|main|1 0||403-permissions-body|||rc=0 calls=dispatch:review-gate-writer.yml wait=none sleeps=0 note=warning record~relay-dispatch-permanent@403=true" \
     "a non-numeric retry-after is discarded, not passed to sleep|0|main|1 0||502-retry-soon|||rc=0 wait=5 sleeps=1" \
     "a non-numeric retry-after is discarded but an EXHAUSTED window still governs|0|main|1 0||403-retry-soon-spent-reset+70|||rc=0 wait=70 sleeps=1" \
     "an out-of-range retry-after is discarded before it can overflow the arithmetic|0|main|1 0||502-retry-huge|||rc=0 wait=5 sleeps=1"
@@ -505,13 +512,13 @@ relay_battery() { # step script, label
   # nothing was dispatched, nothing was waited on, and the binding is named.
   before=$((PASS + FAIL))
   for row in \
-    "an unbound EVENT_NAME warns that the loop breaker cannot verify the leg, and the dispatch still happens|0|main|0||none||EVENT_NAME|rc=0 calls=dispatch:review-gate-writer.yml sleeps=0 note=warning says~EVENT_NAME+is+unbound=true" \
+    "an unbound EVENT_NAME warns that the loop breaker cannot verify the leg, and the dispatch still happens|0|main|0||none||EVENT_NAME|rc=0 calls=dispatch:review-gate-writer.yml sleeps=0 note=warning record~relay-event-missing@EVENT_NAME=true" \
     "an unbound EVENT_NAME on the retry path still retries|0|main|1 0||502||EVENT_NAME|rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 note=warning" \
     "an unbound WRITER_READ_ONLY reads as not read-only|0|main|1 0||502||WRITER_READ_ONLY|rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 note=warning" \
     "an unbound CHECK_NAME is no check_run of our own|0|main|1 0||502||CHECK_NAME|rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 note=warning" \
-    "an unbound WORKFLOW_REF dispatches nothing, waits for nothing, and is named|0|main|1 0||none||WORKFLOW_REF|rc=0 calls=none wait=none sleeps=0 note=warning says~could+not+derive+this+workflow's+file+name=true" \
-    "an unbound GH_REPO dispatches nothing, waits for nothing, and is named|0|main|1 0||none||GH_REPO|rc=0 calls=none wait=none sleeps=0 note=warning says~env:+block+is+missing+GH_REPO=true" \
-    "an unbound DISPATCH_REF dispatches nothing, waits for nothing, and is named|0|main|1 0||none||DISPATCH_REF|rc=0 calls=none wait=none sleeps=0 note=warning says~env:+block+is+missing+DISPATCH_REF=true"
+    "an unbound WORKFLOW_REF dispatches nothing, waits for nothing, and is named|0|main|1 0||none||WORKFLOW_REF|rc=0 calls=none wait=none sleeps=0 note=warning record~relay-workflow-missing@''=true" \
+    "an unbound GH_REPO dispatches nothing, waits for nothing, and is named|0|main|1 0||none||GH_REPO|rc=0 calls=none wait=none sleeps=0 note=warning record~relay-binding-missing@GH_REPO=true" \
+    "an unbound DISPATCH_REF dispatches nothing, waits for nothing, and is named|0|main|1 0||none||DISPATCH_REF|rc=0 calls=none wait=none sleeps=0 note=warning record~relay-binding-missing@DISPATCH_REF=true"
   do relay_row "$row"; done
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "relay_battery: no row was asserted" >&2; exit 2; }
 }

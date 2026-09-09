@@ -4,6 +4,8 @@
 # consumers at .agents/skills/review-gate/scripts/. The authoritative caller
 # contract — evidence forms, trust model, settings keys, the carry-forward
 # engine, env seams, output, exit codes — is print_usage below: run --help.
+# review-writer.sh and pr-watch.sh consume the complete stdout verdict/detail
+# line. Keep that whole-text protocol unchanged; diagnostics go to stderr.
 set -u
 # A merge gate must never let an inherited BASHOPTS decide which paths match.
 shopt -u nocasematch nocaseglob extglob 2>/dev/null || true
@@ -34,8 +36,8 @@ Exit codes:
      reached. Callers must treat this as "take no action", never as awaiting:
      acting on a transient API failure could flip a healthy PR's merge state.
 
---check-config resolves and validates every setting below, prints one line,
-and exits WITHOUT reading any evidence or requiring GH_REPO / PR_NUMBER /
+--check-config resolves and validates every setting below, prints a keyed
+notice followed by its explanation, and exits WITHOUT reading any evidence or requiring GH_REPO / PR_NUMBER /
 HEAD_SHA: 0 = every value is legal, 2 = a value is not (the ::error names
 it). It is the settings half of validate.sh, which adds the repository-tree
 and workflow-wiring checks around it. Gate mode is validated, never applied
@@ -303,16 +305,18 @@ if [ "$#" -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
   print_usage
   exit 0
 fi
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 2
+. "$script_dir/lib/diagnostics.sh" || exit 2
+
 if [ "$#" -eq 1 ] && [ "$1" = "--check-config" ]; then
   CHECK_CONFIG_ONLY=1
   shift
 fi
 if [ "$#" -gt 0 ]; then
-  echo "review-predicate.sh: unknown argument list ($# argument(s), first: '${1}') — env-driven, no positional arguments (run --help)" >&2
+  rg_message error predicate-arguments "$#" "review-predicate.sh: unknown argument list ($# argument(s), first: '${1}') — env-driven, no positional arguments (run --help)" >&2
   exit 2
 fi
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/lib/settings.sh"
 
 # `|| exit 2`: rg_setting fails on a present-but-unparseable assignment, and
@@ -349,7 +353,7 @@ rg_pack() { # RAW SEPARATORS -> one trimmed, non-empty entry per line
 # Called OUTSIDE the substitutions below: an `exit` inside `$( )` would leave
 # the subshell and the predicate would carry on with the empty value.
 rg_pack_failed() { # KEY
-  echo "::error::review-predicate: could not normalize $1 (broken pipeline) — no verdict" >&2
+  rg_message error predicate-normalize "$1" "::error::review-predicate: could not normalize $1 (broken pipeline) — no verdict" >&2
   exit 2
 }
 TRUSTED_LOGINS_N="$(rg_pack "$TRUSTED_LOGINS" ';,')" || rg_pack_failed REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS
@@ -368,44 +372,44 @@ GATE_MODE="$(rg_setting REVIEW_GATE_MODE "enforce")" || exit 2
 # the gate.
 case "$SHA_FLOOR" in
   ''|*[!0-9]*)
-    echo "::error::review-predicate: REVIEW_GATE_SHA_PREFIX_FLOOR must be an integer, got '$SHA_FLOOR'" >&2
+    rg_message error predicate-sha-floor-integer "$SHA_FLOOR" "::error::review-predicate: REVIEW_GATE_SHA_PREFIX_FLOOR must be an integer, got '$SHA_FLOOR'" >&2
     exit 2
     ;;
 esac
 if [ "$SHA_FLOOR" -lt 4 ] || [ "$SHA_FLOOR" -gt 40 ]; then
-  echo "::error::review-predicate: REVIEW_GATE_SHA_PREFIX_FLOOR must be 4..40, got '$SHA_FLOOR'" >&2
+  rg_message error predicate-sha-floor-range "$SHA_FLOOR" "::error::review-predicate: REVIEW_GATE_SHA_PREFIX_FLOOR must be 4..40, got '$SHA_FLOOR'" >&2
   exit 2
 fi
 case "$GATE_MODE" in
   enforce|off) ;;
   *)
-    echo "::error::review-predicate: REVIEW_GATE_MODE must be 'enforce' or 'off', got '$GATE_MODE'" >&2
+    rg_message error predicate-mode "$GATE_MODE" "::error::review-predicate: REVIEW_GATE_MODE must be 'enforce' or 'off', got '$GATE_MODE'" >&2
     exit 2
     ;;
 esac
 case "$MIN_STATE" in
   any|approved) ;;
   *)
-    echo "::error::review-predicate: REVIEW_GATE_REVIEW_OBJECT_MIN_STATE must be 'any' or 'approved', got '$MIN_STATE'" >&2
+    rg_message error predicate-min-state "$MIN_STATE" "::error::review-predicate: REVIEW_GATE_REVIEW_OBJECT_MIN_STATE must be 'any' or 'approved', got '$MIN_STATE'" >&2
     exit 2
     ;;
 esac
 case "$THREADS_MODE" in
   enforce|off) ;;
   *)
-    echo "::error::review-predicate: REVIEW_GATE_THREADS must be 'enforce' or 'off', got '$THREADS_MODE'" >&2
+    rg_message error predicate-threads-mode "$THREADS_MODE" "::error::review-predicate: REVIEW_GATE_THREADS must be 'enforce' or 'off', got '$THREADS_MODE'" >&2
     exit 2
     ;;
 esac
 case "$API_ATTEMPTS" in
   ''|*[!0-9]*|0)
-    echo "::error::review-predicate: REVIEW_GATE_API_ATTEMPTS must be an integer >= 1, got '$API_ATTEMPTS'" >&2
+    rg_message error predicate-api-attempts "$API_ATTEMPTS" "::error::review-predicate: REVIEW_GATE_API_ATTEMPTS must be an integer >= 1, got '$API_ATTEMPTS'" >&2
     exit 2
     ;;
 esac
 case "$API_RETRY_DELAY" in
   ''|*[!0-9]*)
-    echo "::error::review-predicate: REVIEW_GATE_API_RETRY_DELAY_SECONDS must be a non-negative integer, got '$API_RETRY_DELAY'" >&2
+    rg_message error predicate-api-delay "$API_RETRY_DELAY" "::error::review-predicate: REVIEW_GATE_API_RETRY_DELAY_SECONDS must be a non-negative integer, got '$API_RETRY_DELAY'" >&2
     exit 2
     ;;
 esac
@@ -421,7 +425,7 @@ while IFS= read -r cls; do
   case "$cls" in
     docs|comments|vendored) ;;
     *)
-      echo "::error::review-predicate: REVIEW_GATE_CARRY_FORWARD class must be 'docs', 'comments' or 'vendored', got '$cls'" >&2
+      rg_message error predicate-carry-class "$cls" "::error::review-predicate: REVIEW_GATE_CARRY_FORWARD class must be 'docs', 'comments' or 'vendored', got '$cls'" >&2
       exit 2
       ;;
   esac
@@ -435,21 +439,36 @@ EOF_CARRY_CFG
 # next pass. The default (1 attempt) is exactly today's single try, and a read
 # that fails through every attempt still returns nonzero — callers keep the
 # fail-loud exit-2 contract unchanged.
-gh_read() {
+gh_read() (
+  # The stderr file belongs to this read's subshell. A failed gh invocation
+  # must not put its English diagnostic before the predicate's stable key.
+  read_error_file="$(mktemp)" || {
+    rg_message error predicate-api-stderr-create "$1" "Could not create API diagnostic storage." >&2
+    return 1
+  }
+  trap 'rm -f -- "${read_error_file:?}"' EXIT
   gh_read_attempt=1
   while :; do
-    if gh_read_out="$(gh api "$@")"; then
+    if gh_read_out="$(gh api "$@" 2>"$read_error_file")"; then
+      if [ -s "$read_error_file" ]; then
+        rg_message notice predicate-api-diagnostic "$1" "GitHub API read wrote diagnostics." >&2
+        cat -- "$read_error_file" >&2 || return 1
+      fi
       printf '%s' "$gh_read_out"
       return 0
+    else
+      gh_read_rc=$?
     fi
+    rg_message error predicate-api-read "$gh_read_rc:$1" "GitHub API read failed." >&2
+    cat -- "$read_error_file" >&2 || return 1
     if [ "$gh_read_attempt" -ge "$API_ATTEMPTS" ]; then
       return 1
     fi
     gh_read_attempt=$((gh_read_attempt + 1))
-    echo "::warning::review-predicate: read failed; retry $gh_read_attempt/$API_ATTEMPTS after ${API_RETRY_DELAY}s" >&2
+    rg_message notice predicate-api-retry "$gh_read_attempt/$API_ATTEMPTS" "::warning::review-predicate: read failed; retry $gh_read_attempt/$API_ATTEMPTS after ${API_RETRY_DELAY}s" >&2
     sleep "$API_RETRY_DELAY"
   done
-}
+)
 
 # The gate's own posted status must never be review evidence: with
 # REVIEW_GATE_CONTEXT listed as a trusted status context (or naming the
@@ -461,17 +480,17 @@ GATE_CONTEXT_SELF="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 2
 # form: it names the required status the CI wiring posts, so "" would make
 # that post malformed and leave the gate absent. Same refusal as the refire.
 if [ -z "$GATE_CONTEXT_SELF" ]; then
-  echo "::error::review-predicate: REVIEW_GATE_CONTEXT must not be empty" >&2
+  rg_message error predicate-context-empty "$GATE_CONTEXT_SELF" "::error::review-predicate: REVIEW_GATE_CONTEXT must not be empty" >&2
   exit 2
 fi
 if [ "$OUTAGE_CONTEXT" = "$GATE_CONTEXT_SELF" ]; then
-  echo "::error::review-predicate: REVIEW_GATE_OVERRIDE_CONTEXT equals REVIEW_GATE_CONTEXT ('$GATE_CONTEXT_SELF') — the gate's own status cannot attest a reviewer outage to itself" >&2
+  rg_message error predicate-context-override "$GATE_CONTEXT_SELF" "::error::review-predicate: REVIEW_GATE_OVERRIDE_CONTEXT equals REVIEW_GATE_CONTEXT ('$GATE_CONTEXT_SELF') — the gate's own status cannot attest a reviewer outage to itself" >&2
   exit 2
 fi
 while IFS= read -r ctx; do
   [ -z "$ctx" ] && continue
   if [ "$ctx" = "$GATE_CONTEXT_SELF" ]; then
-    echo "::error::review-predicate: REVIEW_GATE_TRUSTED_STATUS_CONTEXTS includes REVIEW_GATE_CONTEXT ('$GATE_CONTEXT_SELF') — the gate's own status cannot be its own review evidence" >&2
+    rg_message error predicate-context-evidence "$GATE_CONTEXT_SELF" "::error::review-predicate: REVIEW_GATE_TRUSTED_STATUS_CONTEXTS includes REVIEW_GATE_CONTEXT ('$GATE_CONTEXT_SELF') — the gate's own status cannot be its own review evidence" >&2
     exit 2
   fi
 done <<EOF_GATE_CTX
@@ -523,7 +542,7 @@ rg_check_patterns() { # KEY PACKED — exit 2 on the first refused pattern
     pat="$(printf '%s' "$pat" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     [ -z "$pat" ] && continue
     why="$(rg_unsupported_pattern "$pat")" || continue
-    echo "::error::review-predicate: $1 pattern '$pat' is not supported — the grammar is path characters plus '*' matched against repository-relative names, and this carries $why" >&2
+    rg_message error predicate-pattern "$1:$pat" "::error::review-predicate: $1 pattern '$pat' is not supported — the grammar is path characters plus '*' matched against repository-relative names, and this carries $why" >&2
     exit 2
   done <<EOF_PATTERNS
 $(printf '%s' "$2" | tr ';' '\n')
@@ -547,7 +566,7 @@ rg_check_named_paths() { # KEY PACKED_N — exit 2 on an entry naming no path te
     case "$vp" in
       *[[:alnum:]]*) ;;
       *)
-        echo "::error::review-predicate: $1 entry '$vp' names no literal path text — '*' crosses '/', so it would match nearly every file; name the render tree" >&2
+        rg_message error predicate-path-literal "$1:$vp" "::error::review-predicate: $1 entry '$vp' names no literal path text — '*' crosses '/', so it would match nearly every file; name the render tree" >&2
         exit 2
         ;;
     esac
@@ -576,7 +595,7 @@ EOF_PATH_SET
 rg_check_patterns REVIEW_GATE_VENDORED_PATHS "$VENDORED_PATHS"
 VENDORED_PATHS_N="$(rg_pack "$VENDORED_PATHS" ';')" || rg_pack_failed REVIEW_GATE_VENDORED_PATHS
 if rg_class_enabled vendored && [ -z "$VENDORED_PATHS_N" ]; then
-  echo "::error::review-predicate: REVIEW_GATE_CARRY_FORWARD enables 'vendored' but REVIEW_GATE_VENDORED_PATHS names no path — the class carries only what the committed path set names" >&2
+  rg_message error predicate-vendored-empty "$VENDORED_PATHS_N" "::error::review-predicate: REVIEW_GATE_CARRY_FORWARD enables 'vendored' but REVIEW_GATE_VENDORED_PATHS names no path — the class carries only what the committed path set names" >&2
   exit 2
 fi
 rg_check_named_paths REVIEW_GATE_VENDORED_PATHS "$VENDORED_PATHS_N"
@@ -596,7 +615,7 @@ while IFS= read -r cfg_pair; do
   cfg_login="${cfg_pair%%:*}"
   cfg_pattern="${cfg_pair#*:}"
   if [ -z "$cfg_login" ] || [ -z "$cfg_pattern" ] || [ "$cfg_login" = "$cfg_pair" ]; then
-    echo "::error::review-predicate: malformed REVIEW_GATE_COMMENT_REVIEWERS entry '$cfg_pair' (need 'login:binding-pattern')" >&2
+    rg_message error predicate-comment-pair "$cfg_pair" "::error::review-predicate: malformed REVIEW_GATE_COMMENT_REVIEWERS entry '$cfg_pair' (need 'login:binding-pattern')" >&2
     exit 2
   fi
 done <<EOF_COMMENT_CFG
@@ -607,13 +626,13 @@ EOF_COMMENT_CFG
 # the last point before the predicate needs a PR. A rule moved below this
 # statement is a visible edit, not a silent hole in what the flag covers.
 if [ "$CHECK_CONFIG_ONLY" = "1" ]; then
-  echo "review-predicate: configuration is valid"
+  rg_message notice predicate-config "valid" "review-predicate: configuration is valid"
   exit 0
 fi
 
 for required in GH_REPO PR_NUMBER HEAD_SHA; do
   if [ -z "$(eval "echo \${$required:-}")" ]; then
-    echo "::error::review-predicate: $required is required" >&2
+    rg_message error predicate-required-env "$required" "::error::review-predicate: $required is required" >&2
     exit 2
   fi
 done
@@ -632,11 +651,11 @@ fi
 
 if [ -z "${PR_AUTHOR:-}" ]; then
   PR_AUTHOR="$(gh_read "repos/$GH_REPO/pulls/$PR_NUMBER" --jq .user.login)" || {
-    echo "::error::could not resolve PR #$PR_NUMBER author" >&2
+    rg_message error predicate-author-read "$PR_NUMBER" "::error::could not resolve PR #$PR_NUMBER author" >&2
     exit 2
   }
   if [ -z "$PR_AUTHOR" ]; then
-    echo "::error::PR #$PR_NUMBER author resolved to an empty login" >&2
+    rg_message error predicate-author-empty "$PR_NUMBER" "::error::PR #$PR_NUMBER author resolved to an empty login" >&2
     exit 2
   fi
 fi
@@ -656,17 +675,17 @@ fi
 # and an error-object page would collapse through `add` — both erase a
 # standing CHANGES_REQUESTED. A broken read is exit 2, never empty evidence.
 raw_reviews="$(gh_read "repos/$GH_REPO/pulls/$PR_NUMBER/reviews?per_page=100" --paginate)" || {
-  echo "::error::could not read reviews for PR #$PR_NUMBER" >&2
+  rg_message error predicate-reviews-read "$PR_NUMBER" "::error::could not read reviews for PR #$PR_NUMBER" >&2
   exit 2
 }
 if [ -z "$raw_reviews" ]; then
-  echo "::error::reviews read for PR #$PR_NUMBER produced zero bytes (broken read, not an empty page set)" >&2
+  rg_message error predicate-reviews-empty "$PR_NUMBER" "::error::reviews read for PR #$PR_NUMBER produced zero bytes (broken read, not an empty page set)" >&2
   exit 2
 fi
 reviews="$(jq -s 'if (length > 0) and all(type == "array")
                   then add
                   else error("review pages are not arrays") end' <<<"$raw_reviews" 2>/dev/null)" || {
-  echo "::error::reviews read for PR #$PR_NUMBER returned non-array pages or a vacuous body (broken read)" >&2
+  rg_message error predicate-reviews-pages "$PR_NUMBER" "::error::reviews read for PR #$PR_NUMBER returned non-array pages or a vacuous body (broken read)" >&2
   exit 2
 }
 # Changes-requested reduces each reviewer over their DECISIVE states only
@@ -684,7 +703,7 @@ reviews="$(jq -s 'if (length > 0) and all(type == "array")
 # excluded EVERYWHERE: a draft is not a review event — it must neither clear
 # a standing CR here nor count as evidence below.
 cr="$(jq '[.[] | select(.state != "DISMISSED" and .state != "PENDING") | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | group_by(.user.login) | map(sort_by(.submitted_at // "") | .[-1]) | map(select(.state == "CHANGES_REQUESTED")) | length' <<<"$reviews")" || {
-  echo "::error::could not evaluate changes-requested reviews for PR #$PR_NUMBER" >&2
+  rg_message error predicate-changes-requested "$PR_NUMBER" "::error::could not evaluate changes-requested reviews for PR #$PR_NUMBER" >&2
   exit 2
 }
 # An ERRORED bot review is a normal review ROW: the reviews API has no
@@ -750,7 +769,7 @@ got="$(jq --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
     else
       length
     end' <<<"$reviews")" || {
-  echo "::error::could not evaluate review-object evidence for PR #$PR_NUMBER" >&2
+  rg_message error predicate-review-evidence "$PR_NUMBER" "::error::could not evaluate review-object evidence for PR #$PR_NUMBER" >&2
   exit 2
 }
 
@@ -816,7 +835,7 @@ if [ -n "${REVIEW_GATE_STATUS_SNAPSHOT_FILE:-}" ]; then
                      then {statuses: .[0].statuses}
                      else error("not a single list-endpoint status snapshot for this head") end' \
                     "$REVIEW_GATE_STATUS_SNAPSHOT_FILE" 2>/dev/null)" || {
-    echo "::error::REVIEW_GATE_STATUS_SNAPSHOT_FILE '$REVIEW_GATE_STATUS_SNAPSHOT_FILE' is not a readable list-endpoint status snapshot bound to $HEAD_SHA (exactly one JSON object with a statuses array and top-level sha == HEAD_SHA; with REVIEW_GATE_STATUS_PUBLISHER_REJECT configured every row must carry a creator login — combined-endpoint snapshots null App creators and are not a valid source)" >&2
+    rg_message error predicate-status-snapshot "$REVIEW_GATE_STATUS_SNAPSHOT_FILE" "::error::REVIEW_GATE_STATUS_SNAPSHOT_FILE '$REVIEW_GATE_STATUS_SNAPSHOT_FILE' is not a readable list-endpoint status snapshot bound to $HEAD_SHA (exactly one JSON object with a statuses array and top-level sha == HEAD_SHA; with REVIEW_GATE_STATUS_PUBLISHER_REJECT configured every row must carry a creator login — combined-endpoint snapshots null App creators and are not a valid source)" >&2
     exit 2
   }
 else
@@ -830,11 +849,11 @@ else
   # (/commits/<sha>/statuses) reports the real creator login, so the
   # reject-list works as documented. Caught live by sandbox scenario 6.
   status_pages="$(gh_read "repos/$GH_REPO/commits/$HEAD_SHA/statuses?per_page=100" --paginate)" || {
-    echo "::error::could not read commit statuses for $HEAD_SHA" >&2
+    rg_message error predicate-statuses-read "$HEAD_SHA" "::error::could not read commit statuses for $HEAD_SHA" >&2
     exit 2
   }
   if [ -z "$status_pages" ]; then
-    echo "::error::commit-statuses read for $HEAD_SHA produced zero bytes (broken read)" >&2
+    rg_message error predicate-statuses-empty "$HEAD_SHA" "::error::commit-statuses read for $HEAD_SHA produced zero bytes (broken read)" >&2
     exit 2
   fi
   # Validate every page BEFORE merging: a nonempty non-array page (an error
@@ -848,7 +867,7 @@ else
                         then {statuses: (add // [])}
                         else error("not a statuses page") end' \
                     <<<"$status_pages" 2>/dev/null)" || {
-    echo "::error::could not merge the commit-status pages for $HEAD_SHA (each page must be a JSON array)" >&2
+    rg_message error predicate-statuses-pages "$HEAD_SHA" "::error::could not merge the commit-status pages for $HEAD_SHA (each page must be a JSON array)" >&2
     exit 2
   }
 fi
@@ -862,11 +881,11 @@ while IFS= read -r ctx; do
   # Fetch and merge are SEPARATE steps: a pipe would replace gh's exit status
   # with jq's and turn a read failure into an empty-success (fail-open).
   checkruns_pages="$(gh_read "repos/$GH_REPO/commits/$HEAD_SHA/check-runs?check_name=$ctx_uri&per_page=100" --paginate)" || {
-    echo "::error::could not read '$ctx' check-runs" >&2
+    rg_message error predicate-checkruns-read "$ctx" "::error::could not read '$ctx' check-runs" >&2
     exit 2
   }
   if [ -z "$checkruns_pages" ]; then
-    echo "::error::'$ctx' check-runs read produced zero bytes (broken read)" >&2
+    rg_message error predicate-checkruns-empty "$ctx" "::error::'$ctx' check-runs read produced zero bytes (broken read)" >&2
     exit 2
   fi
   # Page-shape validation, same reasoning as the reviews read: a
@@ -876,7 +895,7 @@ while IFS= read -r ctx; do
   checkruns_resp="$(jq -s 'if (length > 0) and all((type == "object") and ((.check_runs | type) == "array"))
                            then {check_runs: (map(.check_runs) | add)}
                            else error("check-run pages are malformed") end' <<<"$checkruns_pages" 2>/dev/null)" || {
-    echo "::error::'$ctx' check-run pages are malformed or vacuous (broken read)" >&2
+    rg_message error predicate-checkruns-pages "$ctx" "::error::'$ctx' check-run pages are malformed or vacuous (broken read)" >&2
     exit 2
   }
   # Bind each skip pattern to a variable BEFORE testing containment: inside
@@ -947,7 +966,7 @@ while IFS= read -r ctx; do
              and ((((.output.title // "") + " " + (.output.summary // "")) | ascii_downcase) as $text
                   | ([ $sk[] | . as $p | select($text | contains($p)) ] | length) == 0)
         then 1 else 0 end' <<<"$checkruns_resp")" || {
-    echo "::error::could not evaluate '$ctx' check-runs" >&2
+    rg_message error predicate-checkruns-evidence "$ctx" "::error::could not evaluate '$ctx' check-runs" >&2
     exit 2
   }
   # Commit statuses carry no app slug to reject on, but the LIST endpoint
@@ -1015,7 +1034,7 @@ while IFS= read -r ctx; do
              and ((((.description // "") | ascii_downcase) as $text
                    | [ $sk[] | . as $p | select($text | contains($p)) ] | length) == 0)
         then 1 else 0 end' <<<"$status_resp")" || {
-    echo "::error::could not evaluate '$ctx' commit status" >&2
+    rg_message error predicate-status-evidence "$ctx" "::error::could not evaluate '$ctx' commit status" >&2
     exit 2
   }
   check=$((check + check_runs + check_status))
@@ -1040,11 +1059,11 @@ if [ -n "$COMMENT_REVIEWERS_N" ]; then
   # Two steps, not a pipe — same pagination/fail-loud/zero-byte reasons as
   # the reviews read above.
   raw_comments="$(gh_read "repos/$GH_REPO/issues/$PR_NUMBER/comments?per_page=100" --paginate)" || {
-    echo "::error::could not read issue comments for PR #$PR_NUMBER" >&2
+    rg_message error predicate-comments-read "$PR_NUMBER" "::error::could not read issue comments for PR #$PR_NUMBER" >&2
     exit 2
   }
   if [ -z "$raw_comments" ]; then
-    echo "::error::issue-comments read for PR #$PR_NUMBER produced zero bytes (broken read, not an empty page set)" >&2
+    rg_message error predicate-comments-empty "$PR_NUMBER" "::error::issue-comments read for PR #$PR_NUMBER produced zero bytes (broken read, not an empty page set)" >&2
     exit 2
   fi
   # Same page-shape validation as the reviews read: whitespace slurps to
@@ -1054,7 +1073,7 @@ if [ -n "$COMMENT_REVIEWERS_N" ]; then
   comments="$(jq -s 'if (length > 0) and all(type == "array")
                      then add
                      else error("comment pages are not arrays") end' <<<"$raw_comments" 2>/dev/null)" || {
-    echo "::error::issue-comments read for PR #$PR_NUMBER returned non-array pages or a vacuous body (broken read)" >&2
+    rg_message error predicate-comments-pages "$PR_NUMBER" "::error::issue-comments read for PR #$PR_NUMBER returned non-array pages or a vacuous body (broken read)" >&2
     exit 2
   }
   while IFS= read -r pair; do
@@ -1082,7 +1101,7 @@ if [ -n "$COMMENT_REVIEWERS_N" ]; then
           | (.[0] | ascii_downcase) as $claimed
           | select(($sha | ascii_downcase) | startswith($claimed))
         ] | length' <<<"$comments")" || {
-      echo "::error::could not evaluate '$login' review comments for PR #$PR_NUMBER" >&2
+      rg_message error predicate-comment-evidence "$login" "::error::could not evaluate '$login' review comments for PR #$PR_NUMBER" >&2
       exit 2
     }
     comment_hits=$((comment_hits + hits))
@@ -1144,7 +1163,7 @@ if [ -n "$OUTAGE_CONTEXT" ]; then
            and (((.description // "") | gsub("^\\s+|\\s+$"; "") | length) > 0)
       then "1\t\((.description // "") | gsub("[\n\r\t]"; " "))"
       else "0\t" end' <<<"$status_resp")" || {
-    echo "::error::could not evaluate the operator-override status" >&2
+    rg_message error predicate-override-evidence "$OUTAGE_CONTEXT" "::error::could not evaluate the operator-override status" >&2
     exit 2
   }
   outageok_out="$(head -n 1 <<<"$outageok_out")"
@@ -1199,7 +1218,7 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
     | sort_by(.submitted_at // "") | reverse | map(.commit_id)
     | reduce .[] as $c ([]; if (index($c) != null) then . else . + [$c] end)
     | .[0:10] | .[]' <<<"$reviews")" || {
-    echo "::error::could not derive carry-forward candidates for PR #$PR_NUMBER" >&2
+    rg_message error predicate-carry-candidates "$PR_NUMBER" "::error::could not derive carry-forward candidates for PR #$PR_NUMBER" >&2
     exit 2
   }
   while IFS= read -r base; do
@@ -1211,11 +1230,11 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
     # deciding carry from a truncated file list is the fail-open this
     # predicate exists to prevent.
     cmp_pages="$(gh_read "repos/$GH_REPO/compare/$base...$HEAD_SHA?per_page=100" --paginate)" || {
-      echo "::error::could not read the comparison $base...$HEAD_SHA" >&2
+      rg_message error predicate-carry-read "$base...$HEAD_SHA" "::error::could not read the comparison $base...$HEAD_SHA" >&2
       exit 2
     }
     if [ -z "$cmp_pages" ]; then
-      echo "::error::comparison $base...$HEAD_SHA produced zero bytes (broken read)" >&2
+      rg_message error predicate-carry-empty "$base...$HEAD_SHA" "::error::comparison $base...$HEAD_SHA produced zero bytes (broken read)" >&2
       exit 2
     fi
     # THE FILES LIST RIDES PAGE ONE ONLY: compare pagination paginates the
@@ -1232,7 +1251,7 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
                   then {status: (.[0].status // ""), files: .[0].files}
                   else error("malformed compare page") end' \
               <<<"$cmp_pages" 2>/dev/null)" || {
-      echo "::error::could not merge the comparison pages for $base...$HEAD_SHA (non-object page, or page one without a files array)" >&2
+      rg_message error predicate-carry-pages "$base...$HEAD_SHA" "::error::could not merge the comparison pages for $base...$HEAD_SHA (non-object page, or page one without a files array)" >&2
       exit 2
     }
     cmp_status="$(jq -r .status <<<"$cmp")"
@@ -1257,7 +1276,7 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
     # healthy, so this refuses the carry (fresh review required) rather
     # than exit 2; older candidates' deltas are supersets, so stop walking.
     if [ "$cmp_file_count" -ge 300 ]; then
-      echo "::warning::compare $base...$HEAD_SHA returned $cmp_file_count files (the API caps the list at 300): the delta cannot be proven complete; refusing carry-forward" >&2
+      rg_message notice predicate-carry-cap "$cmp_file_count" "::warning::compare $base...$HEAD_SHA returned $cmp_file_count files (the API caps the list at 300): the delta cannot be proven complete; refusing carry-forward" >&2
       break
     fi
     # Path exclusions: a delta that classifies carry-safe can
@@ -1285,15 +1304,15 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
       # wherever exclusions are configured. The selftest's surgical
       # non-match case pins the false-positive direction.
       ctrl_hit="$(jq '[.files[] | ((.filename // ""), (.previous_filename // "")) | test("\\p{Cc}")] | any' <<<"$cmp")" || {
-        echo "::error::could not scan the $base...$HEAD_SHA delta filenames for control characters" >&2
+        rg_message error predicate-carry-scan "$base...$HEAD_SHA" "::error::could not scan the $base...$HEAD_SHA delta filenames for control characters" >&2
         exit 2
       }
       if [ "$ctrl_hit" = "true" ]; then
-        echo "::warning::compare $base...$HEAD_SHA contains a filename with control characters: exclusion matching cannot be proven; refusing carry-forward" >&2
+        rg_message notice predicate-carry-control-name "$base...$HEAD_SHA" "::warning::compare $base...$HEAD_SHA contains a filename with control characters: exclusion matching cannot be proven; refusing carry-forward" >&2
         break
       fi
       delta_files="$(jq -r '.files[] | (.filename // ""), (.previous_filename // "")' <<<"$cmp")" || {
-        echo "::error::could not list the $base...$HEAD_SHA delta files for exclusion matching" >&2
+        rg_message error predicate-carry-files "$base...$HEAD_SHA" "::error::could not list the $base...$HEAD_SHA delta files for exclusion matching" >&2
         exit 2
       }
     fi
@@ -1315,7 +1334,7 @@ EOF_EXCL_PATS
 $delta_files
 EOF_EXCL_FILES
       if [ -n "$excluded" ]; then
-        echo "::warning::compare $base...$HEAD_SHA touches '$excluded', matched by REVIEW_GATE_CARRY_FORWARD_EXCLUDE; refusing carry-forward (fresh evidence required)" >&2
+        rg_message notice predicate-carry-excluded "$excluded" "::warning::compare $base...$HEAD_SHA touches '$excluded', matched by REVIEW_GATE_CARRY_FORWARD_EXCLUDE; refusing carry-forward (fresh evidence required)" >&2
         break
       fi
     fi
@@ -1372,7 +1391,7 @@ EOF_VENDORED_FILES
                    then "comments" else "refuse" end )
           else "refuse" end
       ] | all(. != "refuse")' <<<"$cmp")" || {
-      echo "::error::could not classify the $base...$HEAD_SHA delta" >&2
+      rg_message error predicate-carry-classify "$base...$HEAD_SHA" "::error::could not classify the $base...$HEAD_SHA delta" >&2
       exit 2
     }
     if [ "$carry_ok" = "true" ]; then
@@ -1417,8 +1436,8 @@ fi
 # judgment cannot widen it.
 render_only=0
 render_files=0
-render_refuse() { # REASON — the lane stands down; the normal path decides
-  echo "::warning::render-only lane: $1; taking the normal gate path" >&2
+render_refuse() { # CODE VALUE REASON: the normal gate path decides
+  rg_message notice "$1" "$2" "::warning::render-only lane: $3; taking the normal gate path" >&2
 }
 if [ -n "$RENDER_PATHS_N" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
    && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ]; then
@@ -1433,26 +1452,26 @@ if [ -n "$RENDER_PATHS_N" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
   # renamed file yet carries a source name is judged by it too, the
   # vendored class's rule.
   if ! render_base="$(gh_read "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '.base.sha // ""')"; then
-    render_refuse "could not read PR #$PR_NUMBER for its base sha"
+    render_refuse render-base-read "$PR_NUMBER" "could not read PR #$PR_NUMBER for its base sha"
   elif ! printf '%s' "$render_base" | grep -qxE '[0-9a-f]{40}'; then
-    render_refuse "PR #$PR_NUMBER carries no full base sha ('$render_base')"
+    render_refuse render-base-sha "$render_base" "PR #$PR_NUMBER carries no full base sha ('$render_base')"
   elif ! render_pages="$(gh_read "repos/$GH_REPO/compare/$render_base...$HEAD_SHA?per_page=100" --paginate)"; then
-    render_refuse "could not read the comparison $render_base...$HEAD_SHA"
+    render_refuse render-compare-read "$render_base...$HEAD_SHA" "could not read the comparison $render_base...$HEAD_SHA"
   elif [ -z "$render_pages" ]; then
-    render_refuse "the comparison $render_base...$HEAD_SHA produced zero bytes (broken read)"
+    render_refuse render-compare-empty "$render_base...$HEAD_SHA" "the comparison $render_base...$HEAD_SHA produced zero bytes (broken read)"
   elif ! render_out="$(jq -rs '
-      if (length == 0) or (any(.[]; type != "object")) or ((.[0].files | type) != "array") then "refuse malformed compare pages"
+      if (length == 0) or (any(.[]; type != "object")) or ((.[0].files | type) != "array") then "refuse render-compare-pages malformed compare pages"
       else .[0].files as $files
-        | if ($files | length) == 0 then "refuse an empty diff (zero files)"
-          elif ($files | length) >= 300 then "refuse a file list at the compare API cap of 300 entries (completeness unprovable)"
-          elif any($files[]; ((.filename // "") | type) != "string" or ((.previous_filename // "") | type) != "string") then "refuse a row whose name is not a string"
-          elif any($files[]; (.filename // "") == "") then "refuse a file without a name"
-          elif any($files[]; .status == "renamed" and (.previous_filename // "") == "") then "refuse a rename without a source name"
-          elif any($files[]; ((.filename // "") | test("\\p{Cc}")) or ((.previous_filename // "") | test("\\p{Cc}"))) then "refuse a filename with control characters (line-based matching cannot be proven)"
+        | if ($files | length) == 0 then "refuse render-empty-diff an empty diff (zero files)"
+          elif ($files | length) >= 300 then "refuse render-file-cap a file list at the compare API cap of 300 entries (completeness unprovable)"
+          elif any($files[]; ((.filename // "") | type) != "string" or ((.previous_filename // "") | type) != "string") then "refuse render-name-type a row whose name is not a string"
+          elif any($files[]; (.filename // "") == "") then "refuse render-name-empty a file without a name"
+          elif any($files[]; .status == "renamed" and (.previous_filename // "") == "") then "refuse render-rename-source a rename without a source name"
+          elif any($files[]; ((.filename // "") | test("\\p{Cc}")) or ((.previous_filename // "") | test("\\p{Cc}"))) then "refuse render-control-name a filename with control characters (line-based matching cannot be proven)"
           else "ok \($files | length)", ($files[] | (.filename // ""), (.previous_filename // ""))
           end
       end' <<<"$render_pages" 2>/dev/null)"; then
-    render_refuse "the comparison $render_base...$HEAD_SHA could not be parsed (malformed pages)"
+    render_refuse render-compare-parse "$render_base...$HEAD_SHA" "the comparison $render_base...$HEAD_SHA could not be parsed (malformed pages)"
   else
     render_verdict="$(head -n 1 <<<"$render_out")"
     case "$render_verdict" in
@@ -1462,7 +1481,7 @@ if [ -n "$RENDER_PATHS_N" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
         while IFS= read -r fn; do
           [ -z "$fn" ] && continue
           if ! rg_path_in_set "$fn" "$RENDER_PATHS_N"; then
-            render_refuse "'$fn' is outside REVIEW_GATE_RENDER_PATHS"
+            render_refuse render-outside-path "$fn" "'$fn' is outside REVIEW_GATE_RENDER_PATHS"
             render_only=0
             break
           fi
@@ -1470,8 +1489,12 @@ if [ -n "$RENDER_PATHS_N" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
 $(tail -n +2 <<<"$render_out")
 EOF_RENDER_NAMES
         ;;
-      "refuse "*) render_refuse "${render_verdict#refuse }" ;;
-      *) render_refuse "the comparison $render_base...$HEAD_SHA could not be classified" ;;
+      "refuse "*)
+        render_reason="${render_verdict#refuse }"
+        render_code="${render_reason%% *}"
+        render_refuse "$render_code" "$render_base...$HEAD_SHA" "${render_reason#* }"
+        ;;
+      *) render_refuse render-classify "$render_base...$HEAD_SHA" "the comparison $render_base...$HEAD_SHA could not be classified" ;;
     esac
   fi
 fi
@@ -1630,7 +1653,7 @@ while :; do
       -f query='query($owner:String!,$repo:String!,$number:Int!,$after:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:50){pageInfo{hasNextPage} nodes{body author{__typename}}}}}}}}' \
       -F owner="${GH_REPO%/*}" -F repo="${GH_REPO#*/}" -F number="$PR_NUMBER" -f after="$t_cursor" \
       --jq "$t_threads_page_jq")" || {
-      echo "::error::could not read review threads" >&2
+      rg_message error predicate-thread-read "$PR_NUMBER" "::error::could not read review threads" >&2
       exit 2
     }
   else
@@ -1638,7 +1661,7 @@ while :; do
       -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:50){pageInfo{hasNextPage} nodes{body author{__typename}}}}}}}}' \
       -F owner="${GH_REPO%/*}" -F repo="${GH_REPO#*/}" -F number="$PR_NUMBER" \
       --jq "$t_threads_page_jq")" || {
-      echo "::error::could not read review threads" >&2
+      rg_message error predicate-thread-read "$PR_NUMBER" "::error::could not read review threads" >&2
       exit 2
     }
   fi
@@ -1646,7 +1669,7 @@ while :; do
     # A successful call that produced zero bytes is a broken read, not a
     # verdict input — same read-failure contract as a failed gh call
     # (pr-watch parity), never an authoritative threads-open.
-    echo "::error::review thread read produced zero bytes (broken read)" >&2
+    rg_message error predicate-thread-empty "$PR_NUMBER" "::error::review thread read produced zero bytes (broken read)" >&2
     exit 2
   fi
   if [ "$t_page" = "malformed" ]; then
@@ -1682,7 +1705,7 @@ while :; do
 done
 fi
 
-echo "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok carried=$carried render-only=$render_only changes-requested=$cr unresolved-threads=$unresolved untracked-claims=$untracked unreasoned-declines=$unreasoned (threads=$THREADS_MODE)" >&2
+rg_message notice predicate-evaluated "$HEAD_SHA" "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok carried=$carried render-only=$render_only changes-requested=$cr unresolved-threads=$unresolved untracked-claims=$untracked unreasoned-declines=$unreasoned (threads=$THREADS_MODE)" >&2
 
 if [ "$cr" != "0" ]; then
   echo "verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"

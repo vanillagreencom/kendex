@@ -88,7 +88,7 @@ assert_eq() {
 # predicate.
 mkdir -p "$TMP_ROOT/scripts/lib" "$TMP_ROOT/bin"
 cp "$SKILL_ROOT/scripts/review-writer.sh" "$TMP_ROOT/scripts/"
-cp "$SKILL_ROOT/scripts/lib/settings.sh" "$TMP_ROOT/scripts/lib/"
+cp "$SKILL_ROOT/scripts/lib/settings.sh" "$SKILL_ROOT/scripts/lib/diagnostics.sh" "$TMP_ROOT/scripts/lib/"
 cat > "$TMP_ROOT/scripts/review-predicate.sh" <<'EOF'
 #!/usr/bin/env bash
 # Predicate stub: STUB_PREDICATE_RC != 0 simulates an evidence-read failure
@@ -276,8 +276,7 @@ run_writer() {
 #   posts      every status POST in order as `<state>@<sha>`, or none
 #   context    the distinct gate contexts posted, `+` for a space
 #   desc       the last post's description, `+` for a space
-#   desc~<t>   whether the last post's description carries <t>
-#   says~<t>   whether the output carries <t>, `+` read as a space
+#   notice~<code>@<value>, error~<code>@<value>: exact diagnostic record
 #   override   the REVIEW_GATE_OVERRIDE_CONTEXT the predicate saw: unset, its
 #              value, or none when the predicate never ran
 #   author     the PR_AUTHOR values the predicate saw, `-` for an empty one
@@ -302,13 +301,10 @@ observe() {
       desc)
         value="$(sed -n '$s/.* -f description=\(.*\) -f target_url=.*/\1/p; $s/.* -f description=\(.*\)$/\1/p' "$RUN/post.log" | tr ' ' '+')"
         value="${value:-none}" ;;
-      desc~*)
-        needle="${name#desc~}"; needle="${needle//+/ }"
-        line="$(sed -n '$p' "$RUN/post.log")"
-        value="$(grep -qF -- "-f description=${needle}" <<<"$line" || grep -qF -- "$needle" <<<"${line#* -f description=}" && echo true || echo false)" ;;
-      says~*)
-        needle="${name#says~}"; needle="${needle//+/ }"
-        value="$(grep -qF -- "$needle" <<<"$OUT" && echo true || echo false)" ;;
+      notice~*|error~*)
+        needle="${name#*~}"
+        line="review-gate-${name%%~*}=${needle%@*} value=${needle##*@}"
+        value="$(grep -qxF -- "$line" <<<"$OUT" && echo true || echo false)" ;;
       override)
         value="$(sed -n 's/^OVERRIDE=//p' "$RUN/predicate-env.log" | sort -u | paste -sd, -)"
         value="${value//</}"; value="${value//>/}"; value="${value:-none}" ;;
@@ -342,20 +338,20 @@ echo "=== downward transitions are direct posts, idempotent, never deferred ==="
 # unmapped verdict exits 1 on "unknown verdict" instead of posting.
 table \
   "w1: awaiting with no gate status posts pending under the default gate context|single|STUB_VERDICT_LINE=$AWAITING;STUB_GATE_HISTORY=[]|rc=0 posts=pending@headsha context=Review+gate" \
-  "w2: a second evaluation of an unchanged state posts nothing and reports the no-op|single|STUB_VERDICT_LINE=$AWAITING;STUB_GATE_HISTORY=$H_PENDING_OLD|rc=0 posts=none says~nothing+to+do=true" \
+  "w2: a second evaluation of an unchanged state posts nothing and reports the no-op|single|STUB_VERDICT_LINE=$AWAITING;STUB_GATE_HISTORY=$H_PENDING_OLD|rc=0 posts=none notice~writer-unchanged@7=true" \
   "w2b: the same state under a different description is re-posted|single|STUB_VERDICT_LINE=$AWAITING;STUB_GATE_HISTORY=$H_PENDING_OLD_X|rc=0 posts=pending@headsha desc=no+review+evidence+at+headsha+yet" \
-  "w3: changes-requested posts failure over a newer success without deferring|single|STUB_VERDICT_LINE=$CR;STUB_GATE_HISTORY=$H_SUCCESS_FUTURE|rc=0 posts=failure@headsha says~deferring=false" \
+  "w3: changes-requested posts failure over a newer success without deferring|single|STUB_VERDICT_LINE=$CR;STUB_GATE_HISTORY=$H_SUCCESS_FUTURE|rc=0 posts=failure@headsha notice~writer-success-deferred@headsha=false" \
   "w4: threads-open posts pending|single|STUB_VERDICT_LINE=$THREADS;STUB_GATE_HISTORY=[]|rc=0 posts=pending@headsha" \
   "w8: unreasoned-decline posts failure with the remedy in the description|single|STUB_VERDICT_LINE=$UNREASONED;STUB_GATE_HISTORY=[]|rc=0 posts=failure@headsha desc=1+decline+names+no+mechanism" \
-  "w8b: unreasoned-decline over a newer success posts failure without deferring|single|STUB_VERDICT_LINE=$UNREASONED;STUB_GATE_HISTORY=$H_SUCCESS_FUTURE|rc=0 posts=failure@headsha says~deferring=false" \
+  "w8b: unreasoned-decline over a newer success posts failure without deferring|single|STUB_VERDICT_LINE=$UNREASONED;STUB_GATE_HISTORY=$H_SUCCESS_FUTURE|rc=0 posts=failure@headsha notice~writer-success-deferred@headsha=false" \
   "w9: untracked-claim posts failure with the remedy in the description|single|STUB_VERDICT_LINE=$UNTRACKED;STUB_GATE_HISTORY=[]|rc=0 posts=failure@headsha desc=1+tracking+claim+names+no+issue" \
   "w9c: a detail past the API's 140 characters is posted truncated there|single|STUB_VERDICT_LINE=$LONG_UNREASONED;STUB_GATE_HISTORY=[]|rc=0 posts=failure@headsha desc=${LONG_DETAIL_140// /+}" \
-  "w9d: the no-op check compares the truncated form, so a long detail already posted is not re-posted|single|STUB_VERDICT_LINE=$LONG_UNREASONED;STUB_GATE_HISTORY=$H_FAILURE_LONG_OLD|rc=0 posts=none says~nothing+to+do=true" \
-  "w9b: untracked-claim over a newer success posts failure without deferring|single|STUB_VERDICT_LINE=$UNTRACKED;STUB_GATE_HISTORY=$H_SUCCESS_FUTURE|rc=0 posts=failure@headsha says~deferring=false"
+  "w9d: the no-op check compares the truncated form, so a long detail already posted is not re-posted|single|STUB_VERDICT_LINE=$LONG_UNREASONED;STUB_GATE_HISTORY=$H_FAILURE_LONG_OLD|rc=0 posts=none notice~writer-unchanged@7=true" \
+  "w9b: untracked-claim over a newer success posts failure without deferring|single|STUB_VERDICT_LINE=$UNTRACKED;STUB_GATE_HISTORY=$H_SUCCESS_FUTURE|rc=0 posts=failure@headsha notice~writer-success-deferred@headsha=false"
 
 echo "=== approved converges to success ==="
 table \
-  "w5: approved with the same success entry posts nothing|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_SUCCESS_OLD|rc=0 posts=none says~nothing+to+do=true" \
+  "w5: approved with the same success entry posts nothing|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_SUCCESS_OLD|rc=0 posts=none notice~writer-unchanged@7=true" \
   "w5b: the same description under a different state is re-posted|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_REVIEWED_OLD|rc=0 posts=success@headsha" \
   "w6: a reviewed head over pending opens the gate|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD|rc=0 posts=success@headsha" \
   "w7: a dismissed objection reopens the gate|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_FAILURE_OLD|rc=0 posts=success@headsha"
@@ -371,13 +367,13 @@ echo "=== the ordering guard (success posts only) ==="
 # the stale success the guard exists to block. Downward posts never consult
 # it.
 table \
-  "w10: a newer non-success entry defers the success post|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_GUARD_HISTORY=$G_PENDING_FUTURE|rc=0 posts=none says~deferring+the+success+post=true" \
-  "w10b: a same-second non-success write still defers|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_DATE_FIXED=$SAME;STUB_GUARD_HISTORY=$G_PENDING_SAME|rc=0 posts=none says~deferring+the+success+post=true" \
-  "w10c: a newer SUCCESS entry also defers|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_GUARD_HISTORY=$G_SUCCESS_FUTURE|rc=0 posts=none says~deferring+the+success+post=true" \
-  "w11: a failed guard re-read defers|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_GUARD_HISTORY=fail|rc=0 posts=none says~deferring+the+success+post=true" \
-  "w11b: a whitespace-only guard re-read defers|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_GUARD_HISTORY=whitespace|rc=0 posts=none says~deferring+the+success+post=true" \
-  "w11c: an empty-object guard re-read defers|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_GUARD_HISTORY={}|rc=0 posts=none says~deferring+the+success+post=true" \
-  "w12: a downward post never consults the guard and never defers|single|STUB_VERDICT_LINE=$CR;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_GUARD_HISTORY=$G_PENDING_FUTURE|rc=0 posts=failure@headsha says~deferring=false"
+  "w10: a newer non-success entry defers the success post|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_GUARD_HISTORY=$G_PENDING_FUTURE|rc=0 posts=none notice~writer-success-deferred@headsha=true" \
+  "w10b: a same-second non-success write still defers|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_DATE_FIXED=$SAME;STUB_GUARD_HISTORY=$G_PENDING_SAME|rc=0 posts=none notice~writer-success-deferred@headsha=true" \
+  "w10c: a newer SUCCESS entry also defers|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_GUARD_HISTORY=$G_SUCCESS_FUTURE|rc=0 posts=none notice~writer-success-deferred@headsha=true" \
+  "w11: a failed guard re-read defers|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_GUARD_HISTORY=fail|rc=0 posts=none notice~writer-success-deferred@headsha=true" \
+  "w11b: a whitespace-only guard re-read defers|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_GUARD_HISTORY=whitespace|rc=0 posts=none notice~writer-success-deferred@headsha=true" \
+  "w11c: an empty-object guard re-read defers|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_GUARD_HISTORY={}|rc=0 posts=none notice~writer-success-deferred@headsha=true" \
+  "w12: a downward post never consults the guard and never defers|single|STUB_VERDICT_LINE=$CR;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_GUARD_HISTORY=$G_PENDING_FUTURE|rc=0 posts=failure@headsha notice~writer-success-deferred@headsha=false"
 
 echo "=== fail loud, act never ==="
 # A read the writer cannot trust is exit 1 and no POST: a failed predicate, a
@@ -388,12 +384,12 @@ echo "=== fail loud, act never ==="
 # writer is not meant to touch with exit 1, so a rerun or run read would
 # surface here as a red too.
 table \
-  "w21: a predicate failure exits 1 and posts nothing|single|STUB_PREDICATE_RC=2;STUB_GATE_HISTORY=[]|rc=1 posts=none" \
-  "w22: a failed status-history read exits 1 and posts nothing|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=fail|rc=1 posts=none" \
-  "w22b: a zero-byte status-history read exits 1 and posts nothing|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=emptybytes|rc=1 posts=none says~zero+bytes=true" \
-  "w22f: an error-object status page exits 1 naming the shape violation|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$ERROR_PAGE|rc=1 posts=none says~not+arrays=true" \
-  "w22g: a whitespace-only status-history read exits 1 naming the shape violation|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=whitespace|rc=1 posts=none says~not+arrays=true" \
-  "w23: PR_NUMBER without HEAD_SHA exits 1 (recursive contract)|nohead|STUB_VERDICT_LINE=$AWAITING|rc=1 posts=none"
+  "w21: a predicate failure exits 1 and posts nothing|single|STUB_PREDICATE_RC=2;STUB_GATE_HISTORY=[]|rc=1 posts=none error~writer-predicate-failed@7=true" \
+  "w22: a failed status-history read exits 1 and posts nothing|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=fail|rc=1 posts=none error~writer-status-read-failed@headsha=true" \
+  "w22b: a zero-byte status-history read exits 1 and posts nothing|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=emptybytes|rc=1 posts=none error~writer-status-empty@headsha=true" \
+  "w22f: an error-object status page exits 1 naming the shape violation|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$ERROR_PAGE|rc=1 posts=none error~writer-status-malformed@headsha=true" \
+  "w22g: a whitespace-only status-history read exits 1 naming the shape violation|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=whitespace|rc=1 posts=none error~writer-status-malformed@headsha=true" \
+  "w23: PR_NUMBER without HEAD_SHA exits 1 (recursive contract)|nohead|STUB_VERDICT_LINE=$AWAITING|rc=1 posts=none error~writer-head-missing@7=true"
 
 echo "=== leg routing: converge-all on every leg ==="
 # A broken predicate (exit 2) proves the read-only and merge-group legs never
@@ -405,23 +401,23 @@ echo "=== leg routing: converge-all on every leg ==="
 # `[]` (truly no open PRs) that must fail loud rather than strand every gate
 # green; a ghost-authored PR enumerates with an empty author.
 table \
-  "w24: a read-only token (fork pull_request_review) is a no-op that posts nothing and never consults the predicate|single|STUB_PREDICATE_RC=2;WRITER_READ_ONLY=1|rc=0 posts=none says~no-op=true" \
-  "w25: the merge_group leg posts an unconditional success saying why, never consulting the predicate|single|STUB_PREDICATE_RC=2;EVENT_NAME=merge_group|rc=0 posts=success@headsha desc~merge-queue+entry=true" \
-  "w26: a schedule pass over two open PRs converges both heads, each under its own author|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha7,pending@sha8 author=alice,bob says~converging+2+open+PR(s)=true" \
+  "w24: a read-only token (fork pull_request_review) is a no-op that posts nothing and never consults the predicate|single|STUB_PREDICATE_RC=2;WRITER_READ_ONLY=1|rc=0 posts=none notice~writer-read-only@1=true" \
+  "w25: the merge_group leg posts an unconditional success saying why, never consulting the predicate|single|STUB_PREDICATE_RC=2;EVENT_NAME=merge_group|rc=0 posts=success@headsha desc=merge-queue+entry:+post-approval+by+construction" \
+  "w26: a schedule pass over two open PRs converges both heads, each under its own author|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha7,pending@sha8 author=alice,bob notice~writer-converging@2=true" \
   "w27b: an approved schedule pass opens both heads|all:schedule|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[]|rc=0 posts=success@sha7,success@sha8" \
-  "w27: one failing PR fails the pass, is named, and the other PR still converges|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[];STUB_PREDICATE_FAIL_PR=7|rc=1 posts=pending@sha8 says~convergence+failed+for+PR+#7=true" \
-  "w28: an event leg converges ALL open PRs, not the payload head|all:workflow_run|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha7,pending@sha8 says~converging+2+open+PR(s)=true" \
-  "w29: zero open PRs is a named empty pass that posts nothing|all:workflow_run|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=[]|rc=0 posts=none says~converging+0+open+PR(s)=true" \
-  "w22c: a zero-byte open-PR listing exits 1 naming the broken read|all:workflow_run|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=emptybytes|rc=1 posts=none says~zero+bytes=true" \
-  "w22d: a whitespace-only open-PR listing exits 1 naming the shape violation|all:workflow_run|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=whitespace|rc=1 posts=none says~not+arrays=true" \
-  "w22e: an error-object open-PR page exits 1 naming the shape violation|all:workflow_run|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=$ERROR_PAGE|rc=1 posts=none says~not+arrays=true" \
+  "w27: one failing PR fails the pass, is named, and the other PR still converges|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[];STUB_PREDICATE_FAIL_PR=7|rc=1 posts=pending@sha8 error~writer-convergence-failed@7=true" \
+  "w28: an event leg converges ALL open PRs, not the payload head|all:workflow_run|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha7,pending@sha8 notice~writer-converging@2=true" \
+  "w29: zero open PRs is a named empty pass that posts nothing|all:workflow_run|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=[]|rc=0 posts=none notice~writer-converging@0=true" \
+  "w22c: a zero-byte open-PR listing exits 1 naming the broken read|all:workflow_run|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=emptybytes|rc=1 posts=none error~writer-list-empty@acme/widgets=true" \
+  "w22d: a whitespace-only open-PR listing exits 1 naming the shape violation|all:workflow_run|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=whitespace|rc=1 posts=none error~writer-list-malformed@acme/widgets=true" \
+  "w22e: an error-object open-PR page exits 1 naming the shape violation|all:workflow_run|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=$ERROR_PAGE|rc=1 posts=none error~writer-list-malformed@acme/widgets=true" \
   "w26c: a ghost-authored PR still converges, with an empty PR_AUTHOR handed down|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN_GHOST;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha9 author=-"
 
 echo "=== pagination merges (one array per page; page limits strand state) ==="
 table \
-  "wp1: a PR beyond page one is enumerated and converged|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN7;STUB_OPEN_PRS_PAGE2=$OPEN8;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha7,pending@sha8 says~converging+2+open+PR(s)=true" \
-  "wp2: the projection merges every page before deciding: a success on page two alone is already converged|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=[];STUB_GATE_HISTORY_PAGE2=$H_SUCCESS_OLD|rc=0 posts=none says~nothing+to+do=true" \
-  "wp3: a newer non-success entry on the guard's page two still defers|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_GUARD_HISTORY=[];STUB_GUARD_HISTORY_PAGE2=$G_FAILURE_FUTURE|rc=0 posts=none says~deferring+the+success+post=true"
+  "wp1: a PR beyond page one is enumerated and converged|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN7;STUB_OPEN_PRS_PAGE2=$OPEN8;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha7,pending@sha8 notice~writer-converging@2=true" \
+  "wp2: the projection merges every page before deciding: a success on page two alone is already converged|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=[];STUB_GATE_HISTORY_PAGE2=$H_SUCCESS_OLD|rc=0 posts=none notice~writer-unchanged@7=true" \
+  "wp3: a newer non-success entry on the guard's page two still defers|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=$H_PENDING_OLD;STUB_GUARD_HISTORY=[];STUB_GUARD_HISTORY_PAGE2=$G_FAILURE_FUTURE|rc=0 posts=none notice~writer-success-deferred@headsha=true"
 
 echo "=== settings: the writer never rewrites the override context ==="
 # REVIEW_GATE_OVERRIDE_CONTEXT is resolved in review-predicate.sh, so every

@@ -75,19 +75,25 @@
 #                 Every trust and evidence knob belongs to the predicate;
 #                 see references/settings.md.
 #
+# The predicate detail is copied to the GitHub status description, truncated
+# to the API limit. This payload is a whole-text protocol for status readers.
+# Diagnostic records precede their explanation and use lib/diagnostics.sh.
+#
 # Read errors fail LOUDLY (exit 1) without acting: treating a transient API
 # failure as absent evidence could flip a healthy PR's state.
 set -u
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$script_dir/lib/diagnostics.sh"
 
 # The fork read-only no-op precedes everything, including settings
 # resolution: such a run must exit green even under a broken settings file
 # it could not have acted on anyway.
 if [ "${WRITER_READ_ONLY:-0}" = "1" ]; then
-  echo "read-only token (fork pull_request_review); no-op — the scheduled writer pass converges this head"
+  rg_message notice writer-read-only "${WRITER_READ_ONLY}" "read-only token (fork pull_request_review); no-op — the scheduled writer pass converges this head"
   exit 0
 fi
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/lib/settings.sh"
 
 EVENT_NAME="${EVENT_NAME:-}"
@@ -96,12 +102,12 @@ EVENT_NAME="${EVENT_NAME:-}"
 # that is a configuration error to surface, never an empty value to act on.
 GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 1
 if [ -z "$GATE_CONTEXT" ]; then
-  echo "::error::review-writer: REVIEW_GATE_CONTEXT must not be empty"
+  rg_message error writer-context-empty "$GATE_CONTEXT" "::error::review-writer: REVIEW_GATE_CONTEXT must not be empty"
   exit 1
 fi
 
 if [ -z "${GH_REPO:-}" ]; then
-  echo "::error::review-writer: GH_REPO is required"
+  rg_message error writer-repo-missing "${GH_REPO:-}" "::error::review-writer: GH_REPO is required"
   exit 1
 fi
 
@@ -112,16 +118,16 @@ fi
 # guard — nothing else ever writes on a merge-group sha.
 if [ "$EVENT_NAME" = "merge_group" ]; then
   if [ -z "${HEAD_SHA:-}" ]; then
-    echo "::error::review-writer: HEAD_SHA is required on the merge_group leg"
+    rg_message error writer-queue-head-missing "${HEAD_SHA:-}" "::error::review-writer: HEAD_SHA is required on the merge_group leg"
     exit 1
   fi
   gh api -X POST "repos/$GH_REPO/statuses/$HEAD_SHA" \
     -f state=success -f context="$GATE_CONTEXT" \
     -f description="merge-queue entry: post-approval by construction" >/dev/null || {
-    echo "::error::could not post $GATE_CONTEXT on merge-group sha $HEAD_SHA"
+    rg_message error writer-queue-post-failed "$HEAD_SHA" "::error::could not post $GATE_CONTEXT on merge-group sha $HEAD_SHA"
     exit 1
   }
-  echo "posted $GATE_CONTEXT=success on merge-group sha $HEAD_SHA"
+  rg_message notice writer-queue-posted "$HEAD_SHA" "posted $GATE_CONTEXT=success on merge-group sha $HEAD_SHA"
   exit 0
 fi
 
@@ -132,7 +138,7 @@ if [ -z "${PR_NUMBER:-}" ]; then
   # Full pagination (one array per page, slurped flat) — a fixed page limit
   # would silently leave PRs beyond it unconverged forever.
   raw_prs="$(gh api "repos/$GH_REPO/pulls?state=open&per_page=100" --paginate)" || {
-    echo "::error::could not list open PRs"
+    rg_message error writer-list-failed "$GH_REPO" "::error::could not list open PRs"
     exit 1
   }
   # A SUCCESSFUL call that produced zero bytes is a broken read, not an
@@ -140,7 +146,7 @@ if [ -z "${PR_NUMBER:-}" ]; then
   # nothing to [] would report "converging 0 open PR(s)" and exit green,
   # silently stranding every gate until the next pass.
   if [ -z "$raw_prs" ]; then
-    echo "::error::open-PR listing produced zero bytes (broken read); taking no action"
+    rg_message error writer-list-empty "$GH_REPO" "::error::open-PR listing produced zero bytes (broken read); taking no action"
     exit 1
   fi
   # Page-shape validation, not just parse success: a whitespace-only body
@@ -150,17 +156,17 @@ if [ -z "${PR_NUMBER:-}" ]; then
   prs="$(jq -s 'if (length > 0) and all(type == "array")
                 then [add | .[] | {number, headRefOid: .head.sha, author: {login: (.user.login // "")}}]
                 else error("not an array page") end' <<<"$raw_prs" 2>/dev/null)" || {
-    echo "::error::open-PR listing pages are not arrays (broken read); taking no action"
+    rg_message error writer-list-malformed "$GH_REPO" "::error::open-PR listing pages are not arrays (broken read); taking no action"
     exit 1
   }
   count="$(jq length <<<"$prs")"
-  echo "converging $count open PR(s)"
+  rg_message notice writer-converging "$count" "converging $count open PR(s)"
   failed=0
   while read -r number head author; do
     [ -z "$number" ] && continue
     if ! EVENT_NAME="$EVENT_NAME" PR_NUMBER="$number" \
         HEAD_SHA="$head" PR_AUTHOR="$author" bash "$self" </dev/null; then
-      echo "::error::convergence failed for PR #$number (see log above)"
+      rg_message error writer-convergence-failed "$number" "::error::convergence failed for PR #$number (see log above)"
       failed=1
     fi
   done < <(jq -r '.[] | "\(.number) \(.headRefOid) \(.author.login // "")"' <<<"$prs")
@@ -169,7 +175,7 @@ fi
 
 # --- single-head evaluation (the enumeration's recursive contract) -------
 if [ -z "${HEAD_SHA:-}" ]; then
-  echo "::error::review-writer: HEAD_SHA is required alongside PR_NUMBER"
+  rg_message error writer-head-missing "$PR_NUMBER" "::error::review-writer: HEAD_SHA is required alongside PR_NUMBER"
   exit 1
 fi
 
@@ -179,16 +185,16 @@ fi
 evaluated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 verdict_line="$("$script_dir/review-predicate.sh")" || {
-  echo "::error::review predicate evaluation failed for PR #$PR_NUMBER; taking no action - the next writer pass retries"
+  rg_message error writer-predicate-failed "$PR_NUMBER" "::error::review predicate evaluation failed for PR #$PR_NUMBER; taking no action - the next writer pass retries"
   exit 1
 }
 verdict="$(sed -n 's/^verdict=\([a-z-]*\) .*/\1/p' <<<"$verdict_line")"
 detail="$(sed -n 's/^verdict=[a-z-]* detail=//p' <<<"$verdict_line")"
 if [ -z "$verdict" ]; then
-  echo "::error::could not parse predicate output: $verdict_line"
+  rg_message error writer-predicate-malformed "$verdict_line" "::error::could not parse predicate output: $verdict_line"
   exit 1
 fi
-echo "PR #$PR_NUMBER: verdict=$verdict ($detail)"
+rg_message notice writer-verdict "$verdict" "PR #$PR_NUMBER: verdict=$verdict ($detail)"
 
 case "$verdict" in
   approved)              desired="success" ;;
@@ -197,26 +203,26 @@ case "$verdict" in
   untracked-claim)       desired="failure" ;;
   unreasoned-decline)    desired="failure" ;;
   *)
-    echo "::error::unknown verdict '$verdict'"
+    rg_message error writer-verdict-unknown "$verdict" "::error::unknown verdict '$verdict'"
     exit 1
     ;;
 esac
 
 raw_statuses="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/statuses" --paginate)" || {
-  echo "::error::could not read commit statuses for $HEAD_SHA; taking no action"
+  rg_message error writer-status-read-failed "$HEAD_SHA" "::error::could not read commit statuses for $HEAD_SHA; taking no action"
   exit 1
 }
 # Zero bytes from a successful read is broken, not "no statuses" (that is
 # `[]`): slurped to an empty list it would read as gate-absent and trigger
 # a redundant post at best, a misread current state at worst.
 if [ -z "$raw_statuses" ]; then
-  echo "::error::commit-statuses read for $HEAD_SHA produced zero bytes (broken read); taking no action"
+  rg_message error writer-status-empty "$HEAD_SHA" "::error::commit-statuses read for $HEAD_SHA produced zero bytes (broken read); taking no action"
   exit 1
 fi
 gate_statuses="$(jq -s --arg ctx "$GATE_CONTEXT" 'if (length > 0) and all(type == "array")
                   then [add | .[] | select(.context == $ctx)]
                   else error("not an array page") end' <<<"$raw_statuses" 2>/dev/null)" || {
-  echo "::error::commit-status pages for $HEAD_SHA are not arrays (broken read); taking no action"
+  rg_message error writer-status-malformed "$HEAD_SHA" "::error::commit-status pages for $HEAD_SHA are not arrays (broken read); taking no action"
   exit 1
 }
 current_state="$(jq -r '.[0].state // "absent"' <<<"$gate_statuses")"
@@ -228,15 +234,15 @@ post_status() {
     -f state="$1" -f context="$GATE_CONTEXT" \
     -f description="${2:0:140}" \
     -f target_url="https://github.com/$GH_REPO/pull/$PR_NUMBER" >/dev/null || {
-    echo "::error::could not post $GATE_CONTEXT=$1 on $HEAD_SHA"
+    rg_message error writer-status-post-failed "$HEAD_SHA" "::error::could not post $GATE_CONTEXT=$1 on $HEAD_SHA"
     exit 1
   }
-  echo "posted $GATE_CONTEXT=$1 on $HEAD_SHA ($2)"
+  rg_message notice writer-status-posted "$HEAD_SHA" "posted $GATE_CONTEXT=$1 on $HEAD_SHA ($2)"
 }
 
 # Idempotent no-op: idle passes append nothing.
 if [ "$current_state" = "$desired" ] && [ "$current_desc" = "${detail:0:140}" ]; then
-  echo "PR #$PR_NUMBER: $GATE_CONTEXT already $desired; nothing to do"
+  rg_message notice writer-unchanged "$PR_NUMBER" "PR #$PR_NUMBER: $GATE_CONTEXT already $desired; nothing to do"
   exit 0
 fi
 
@@ -281,7 +287,7 @@ if guard_pages="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/statuses?per_page=100
       <<<"$guard_pages" 2>/dev/null)" || guard_newer=""
 fi
 if [ "$guard_newer" != "0" ]; then
-  echo "::warning::deferring the success post: $GATE_CONTEXT was re-written (or unreadable) after this run's evaluation at $evaluated_at — a newer writer run's verdict stands; the next pass converges"
+  rg_message notice writer-success-deferred "$HEAD_SHA" "::warning::deferring the success post: $GATE_CONTEXT was re-written (or unreadable) after this run's evaluation at $evaluated_at — a newer writer run's verdict stands; the next pass converges"
   exit 0
 fi
 post_status success "$detail"

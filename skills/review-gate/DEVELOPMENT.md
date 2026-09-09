@@ -13,10 +13,17 @@ Paths as installed in a consuming repo, under `.agents/skills/review-gate/`.
 | `scripts/validate.sh` | The consumer-facing tool: is this repo's install sound? Runtime, settings, carry-forward exclusions, then the workflow half below, whose verdicts it relays and counts. |
 | `scripts/validate-workflow.sh` | Is the adopted copy still the shipped template? Equality, not re-derivation: see § Equality, not re-derivation. |
 | `scripts/pr-watch.sh` | The agent-side reducer: does any open PR need attention right now? Silence on stdout plus exit 0 means nothing needs you; `--heal` also dispatches the writer once on a stale gate. |
+| `scripts/lib/diagnostics.sh` | Formats stable diagnostic records and validator reports. Standalone settings consumers copy it with `scripts/lib/settings.sh`. |
 | `scripts/review-predicate-selftest.sh` | Offline proof of the decision table. An engine proof: it runs here, in the catalog repo, on every change. |
 | `tests/lib/gh-shim.sh` | The fake `gh` every offline proof puts on PATH: fixtures by endpoint, real jq for `--jq`, fail switches. |
 | `tests/lib/selftest-fixtures.sh` | The fixture writers, one per endpoint shape, sourced by the selftest. |
 | `tests/predicate-re2-engine.test.sh` | The predicate's thread jq, run through the engine that actually ships it: the real `gh --jq` (Go's RE2), pointed at a local HTTP stub. Every other proof reads that program through the local jq, whose Oniguruma accepts lookaround RE2 will not compile. Needs `gh`, `python3` and `jq`, and refuses rather than skipping without them. |
+
+## Diagnostic records
+
+Refusals and notices begin with `review-gate-error=CODE value=VALUE` or `review-gate-notice=CODE value=VALUE`. Values use Bash `printf %q` escaping. English explanation follows the record. Validators use `ok`, `FAIL`, or `note` records with `check=CODE value=VALUE` and indent all explanation lines. Their final record reports `review-gate-failed=COUNT passed=COUNT`.
+
+The predicate's verdict and detail lines and the watcher's tab-separated attention records are complete text protocols. Their script headers define those contracts. Diagnostic changes preserve those stdout protocols.
 
 ## Where each proof runs
 
@@ -29,7 +36,7 @@ One judge per rule, and the judge is whoever owns the mechanism. The exclusion m
 
 ## How the selftest pins the decision table
 
-`review-predicate-selftest.sh` pins the decision table offline: a `gh` shim answers from fixtures and applies `--jq` through real jq, so the real predicate runs unmodified. Every case ending `approved` is paired with a near-miss that must not. Two layers: a mechanism layer with forced configurations, and a configured layer that re-derives the battery from the invoking repo's own resolved settings.
+`review-predicate-selftest.sh` pins the decision table offline: a `gh` shim answers from fixtures and applies `--jq` through real jq, so the real predicate runs unmodified. Every case ending `approved` is paired with a near-miss that must not. The runner sources private test tables under `tests/predicate-selftest/` at the configuration, evidence, API-read and carry-forward boundaries. A configured layer derives its cases from the invoking repo's resolved settings.
 
 ## Equality, not re-derivation
 

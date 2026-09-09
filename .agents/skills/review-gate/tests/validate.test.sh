@@ -1,432 +1,204 @@
 #!/usr/bin/env bash
-# Suite for scripts/validate.sh — the consumer-side installation check.
-#
-# Every case runs the REAL script against a real throwaway git repository
-# carrying a real copy of this skill, because that is the only shape the
-# script has to work in: a vendored tree under .agents/, a committed
-# settings file, and an adopted workflow under .github/workflows/.
-#
-# Each FAIL verdict gets a MUST-FAIL control. A checker whose failing
-# direction is never exercised reports a clean sheet either way, and this
-# script's whole job is telling a consumer that something is wrong.
+# Installation checks use complete verdict records, not human explanations.
 set -euo pipefail
-
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
-
-# The sandbox and every assertion helper are shared with the workflow
-# suite beside this one; one copy, sourced.
-# shellcheck source=lib/sandbox.sh
+trap 'rm -rf -- "${TMP:?}"' EXIT
 . "$TEST_DIR/lib/sandbox.sh"
 
-# ------------------------------------------------------------- the battery ---
-
-echo "=== a sound installation ==="
-
 sandbox
-dir="$DIR"
-expect_clean "a freshly adopted repo passes every check" "$dir"
-
-run_validate "$dir"
-for line in \
-  "one adopted writer workflow" \
-  "the adopted workflow is the shipped template, line for line" \
-  "every REVIEW_GATE_* key assigned in" \
-  "every REVIEW_GATE_* assignment sits inside the [env] table" \
-  "every REVIEW_GATE_* assignment uses the bare key name the loader reads" \
-  "every committed setting resolves to a legal value"; do
-  printf '%s' "$OUT" | grep -qF -- "$line" &&
-    ok "reports: $line" ||
-    bad "does not report: $line" "$OUT"
-done
-
-echo "=== arguments and preconditions ==="
-
-if (cd "$dir" && "./$VALIDATE_REL" --help >/dev/null 2>&1); then
-  ok "--help exits 0"
-else
-  bad "--help exits 0"
-fi
-
-argrc=0
-(cd "$dir" && "./$VALIDATE_REL" --settings x >/dev/null 2>&1) || argrc=$?
-[ "$argrc" -eq 2 ] && ok "an unknown argument list is exit 2, never a pass" ||
-  bad "an unknown argument list is exit 2, never a pass" "rc=$argrc"
-
-outside="$TMP/not-a-repo"
-mkdir -p "$outside"
-if git -C "$outside" rev-parse --show-toplevel >/dev/null 2>&1; then
-  printf '  note  %s\n' "the scratch directory is inside a repository; the not-a-git-repo case cannot be staged here"
-else
-  outrc=0
-  (cd "$outside" && "$SKILL_DIR/scripts/validate.sh" >/dev/null 2>&1) || outrc=$?
-  [ "$outrc" -eq 2 ] && ok "outside a git repository is exit 2 (could not run), never exit 0" ||
-    bad "outside a git repository is exit 2 (could not run), never exit 0" "rc=$outrc"
-fi
-
-echo "=== settings ==="
-
-setting_fails "a misspelled REVIEW_GATE_* key is named, not ignored" REVIEW_GATE_CONTXET "Review gate" "REVIEW_GATE_CONTXET"
-
-setting_fails "a per-invocation env seam assigned as a repo setting fails" REVIEW_GATE_SETTINGS_FILE "other.toml" "per-invocation env seam"
-
-setting_fails "an illegal value fails with the engine's own diagnosis" REVIEW_GATE_MODE "bogus" "a committed setting is not legal"
-printf '%s' "$OUT" | grep -qF "REVIEW_GATE_MODE must be 'enforce' or 'off'" &&
-  ok "the engine's own ::error rides out in the verdict" ||
-  bad "the engine's own ::error rides out in the verdict" "$OUT"
-
-setting_fails "an out-of-range numeric setting fails" REVIEW_GATE_SHA_PREFIX_FLOOR "2" "a committed setting is not legal"
-
-sandbox
-dir="$DIR"
-printf 'REVIEW_GATE_MODE = "off"\nREVIEW_GATE_MODE = "enforce"\n' >>"$dir/kendex.settings.toml"
-expect_fail "a key assigned twice fails (the loader's ambiguity guard)" "$dir" "a committed setting is not legal"
-
-# An exported legal value must not launder an illegal committed one, or CI
-# would pass what the gate then chokes on.
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_MODE "bogus"
-envrc=0
-envout="$(cd "$dir" && REVIEW_GATE_MODE=enforce "./$VALIDATE_REL" 2>&1)" || envrc=$?
-[ "$envrc" -eq 1 ] && ok "an exported value does not launder an illegal committed one" ||
-  bad "an exported value does not launder an illegal committed one" "rc=$envrc
-$envout"
-
-# PRESENT is not COMMITTED. CI checks out tracked files only, so an untracked
-# settings file is validated here and absent there, and the gate runs on the
-# built-in defaults instead of the values this check just approved.
-sandbox
-dir="$DIR"
-(cd "$dir" && git rm -q --cached kendex.settings.toml && git commit -q -m "untrack the settings file")
-expect_fail "an UNTRACKED settings file is a finding, not a pass" "$dir" "present but UNTRACKED"
-
-# The resolver treats a committed .kendex/settings.toml as the authoritative
-# default TOML source, so its typo'd trust key must be a finding — not a
-# clean pass while the engine ignores the typo and the gate widens.
-repo_fails "a typo'd key in a COMMITTED .kendex/settings.toml is a finding" "never reads" \
-  'mkdir -p .kendex && printf "[env]\nREVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGIN = \"x\"\n" > .kendex/settings.toml'
-printf '%s' "$OUT" | grep -F "never reads" | grep -qF ".kendex/settings.toml" &&
-  ok "the nested-file finding names .kendex/settings.toml" ||
-  bad "the nested-file finding names .kendex/settings.toml" "$OUT"
-
-# REVIEW_GATE_MODE resolves from env and the committed root only, so a
-# nested assignment is read by nothing and must be its own finding — while
-# the same assignment in the root file stays clean.
-repo_fails "a nested REVIEW_GATE_MODE assignment is a never-reads finding" "never reads from this file" \
-  'mkdir -p .kendex && printf "[env]\nREVIEW_GATE_MODE = \"off\"\n" > .kendex/settings.toml'
-setting_clean "a root REVIEW_GATE_MODE assignment stays clean" REVIEW_GATE_MODE "off"
-
-# ...and the explicit caller handle is exempt, since it names a path that was
-# never required to live in the repository.
-sandbox
-dir="$DIR"
-(cd "$dir" && git rm -q --cached kendex.settings.toml && git commit -q -m "untrack the settings file")
-envrc=0
-envout="$(cd "$dir" && REVIEW_GATE_SETTINGS_FILE=kendex.settings.toml "./$VALIDATE_REL" 2>&1)" || envrc=$?
-if [ "$envrc" -eq 0 ] && printf '%s' "$envout" | grep -qF "not required to be tracked"; then
-  ok "an explicitly named settings file is exempt from the tracked requirement"
-else
-  bad "an explicitly named settings file is exempt from the tracked requirement (rc=$envrc)" "$envout"
-fi
-
-# A QUOTED key is valid TOML and invisible to the loader, whose presence
-# probe matches the bare name only. Reporting it as a healthy setting is the
-# silent-default class this whole group exists to catch.
-sandbox
-dir="$DIR"
-printf '"REVIEW_GATE_THREADS" = "off"\n' >>"$dir/kendex.settings.toml"
-expect_fail "a QUOTED key name is read by nothing and is named" "$dir" "a shape the loader does not read"
-
-sandbox
-dir="$DIR"
-printf "'REVIEW_GATE_THREADS' = \"off\"\n" >>"$dir/kendex.settings.toml"
-expect_fail "a single-quoted key name is caught the same way" "$dir" "a shape the loader does not read"
-
-# The bare form is what the loader reads, so it must NOT trip the quoted
-# check — an over-broad matcher would fail every sound repo.
-setting_clean "the bare key form the loader reads still passes" REVIEW_GATE_THREADS "off"
-
-# A DOTTED key is the third spelling TOML allows and the loader ignores.
-sandbox
-dir="$DIR"
-printf 'REVIEW_GATE_MODE.typo = "off"\n' >>"$dir/kendex.settings.toml"
-expect_fail "a DOTTED key is read by nothing and is named" "$dir" "a shape the loader does not read"
-
-sandbox
-dir="$DIR"
-printf 'REVIEW_GATE_MODE . typo = "off"\n' >>"$dir/kendex.settings.toml"
-expect_fail "a dotted key with whitespace around the dot is caught too" "$dir" "a shape the loader does not read"
-
-# The model is INVERTED, so the spellings below need no rule of their own:
-# each is simply not the one shape the loader reads.
-sandbox
-dir="$DIR"
-printf '"REVIEW_GATE_MODE".typo = "off"\n' >>"$dir/kendex.settings.toml"
-expect_fail "a quoted-then-dotted key is read by nothing" "$dir" "a shape the loader does not read"
-
-sandbox
-dir="$DIR"
-printf 'REVIEW_GATE_THREADS."x" = "off"\n' >>"$dir/kendex.settings.toml"
-expect_fail "a dotted-then-quoted key is read by nothing" "$dir" "a shape the loader does not read"
-
-sandbox
-dir="$DIR"
-printf '[env]\nREVIEW_GATE_THREADS = "off"\n' >>"$dir/kendex.settings.toml"
-expect_clean "a plain assignment under a table header is read normally" "$dir"
-
-# The loader reads the [env] table only, so a bare assignment anywhere else
-# is silently ignored at gate time — its own finding, distinct from the
-# unreadable-shape one, since the spelling is right and only the location is
-# wrong. Both hiding places are pinned: above the first header, and under an
-# unrelated table.
-sandbox
-dir="$DIR"
-printf 'REVIEW_GATE_THREADS = "off"\n[env]\nREVIEW_GATE_CONTEXT = "Review gate"\n' >"$dir/kendex.settings.toml"
-expect_fail "a bare assignment ABOVE the [env] header is a finding" "$dir" "outside the [env] table"
-
-sandbox
-dir="$DIR"
-printf '\n[notes]\nREVIEW_GATE_THREADS = "off"\n' >>"$dir/kendex.settings.toml"
-expect_fail "a bare assignment under an UNRELATED table is a finding" "$dir" "outside the [env] table"
-
-# A header the loader cannot parse corrupts every classification after it
-# ([env] with a trailing comment hides the whole table), so it is its own
-# finding rather than an ignored line.
-sandbox
-dir="$DIR"
-printf '\n[env] # comment\nREVIEW_GATE_THREADS = "off"\n' >>"$dir/kendex.settings.toml"
-expect_fail "a header the loader cannot parse is its own finding" "$dir" "table header(s) the loader cannot parse"
-
-# An override naming something other than a regular file would read as
-# ABSENT here, so the scan reported "every key resolves to its built-in
-# default" about a policy file it never opened. Present-but-unusable is a
-# finding naming the path, and the ABSENT control below keeps that branch
-# from swallowing the install shape it is for.
-override_validate() { # NAME DIR OVERRIDE SUBSTRING
-  local out rc=0
-  out="$(cd "$2" && REVIEW_GATE_SETTINGS_FILE="$3" "./$VALIDATE_REL" 2>&1)" || rc=$?
-  if [ "$rc" -ne 1 ]; then
-    bad "$1 — expected exit 1, got $rc" "$out"
-  elif printf '%s' "$out" | grep -F -- "$4" | grep -q '^FAIL'; then
-    ok "$1"
+expect_clean 'sound installation' "$DIR"
+# Under pipefail the shell writer requires a reader that consumes all output.
+rows=0; before=$((PASS + FAIL))
+while IFS='|' read -r check value; do
+  rows=$((rows + 1))
+  printf -v expected 'ok check=%s value=%q' "$check" "$value"
+  if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -Fx -- "$expected" >/dev/null; then
+    ok "reports $check"
   else
-    bad "$1 — no FAIL line carrying: $4" "$out"
+    bad "reports $check (rc=$RC, expected $expected)" "$OUT"
   fi
-}
+done <<'ROWS'
+workflow-adopted|.github/workflows/review-gate-writer.yml
+workflow-equality|.github/workflows/review-gate-writer.yml
+settings-known|kendex.settings.toml
+settings-env-table|kendex.settings.toml
+settings-key-shapes|kendex.settings.toml
+settings-values|0
+ROWS
+[ "$rows" -gt 0 ] && [ "$((PASS + FAIL - before))" -eq "$rows" ] || { printf 'fixture-error=report-table value=%q\n' "$rows" >&2; exit 2; }
 
-sandbox
-dir="$DIR"
-mkdir -p "$dir/nonregular.dir"
-override_validate "a DIRECTORY override is a finding, not an absent source" \
-  "$dir" "nonregular.dir" "is not a file the loader can read"
-
-sandbox
-dir="$DIR"
-ln -s missing.toml "$dir/dangling.settings.toml"
-override_validate "a DANGLING symlink override is a finding, not an absent source" \
-  "$dir" "dangling.settings.toml" "is not a file the loader can read"
-
-# The same classification covers the NESTED default source, which had kept
-# the bare -f the dispatch above replaced, and the readable half: an
-# unreadable regular file reached the scan and surfaced as bash's own
-# line-numbered read error rather than a finding naming the path.
-sandbox
-dir="$DIR"
-mkdir -p "$dir/.kendex/settings.toml"
-expect_fail "a DIRECTORY at .kendex/settings.toml is its own finding" "$dir" \
-  ".kendex/settings.toml exists but is not a file the loader can read"
-
-if [ "$(id -u)" -eq 0 ]; then
-  echo "  skip  unreadable-source pin needs a non-root reader (chmod 000 cannot deny root)"
-else
+rows=0; before=$((PASS + FAIL))
+while IFS='|' read -r shape want_rc code value; do
   sandbox
-  dir="$DIR"
-  printf '[env]\nREVIEW_GATE_CONTEXT = "Review gate"\n' >"$dir/unreadable.settings.toml"
-  chmod 000 "$dir/unreadable.settings.toml"
-  override_validate "an UNREADABLE regular override is a finding naming the path" \
-    "$dir" "unreadable.settings.toml" "exists but cannot be READ"
-  chmod 644 "$dir/unreadable.settings.toml"
-fi
+  args=(); entry="$DIR/$VALIDATE_REL"; cwd="$DIR"
+  case "$shape" in
+    help) args=(--help) ;;
+    extra) args=(--settings x) ;;
+    outside)
+      cwd="$TMP/not-a-repo"; mkdir "$cwd"
+      if git -C "$cwd" rev-parse --show-toplevel >/dev/null 2>&1; then
+        printf '  skip  outside-repository fixture is inside a Git worktree\n'
+        continue
+      fi
+      entry="$SKILL_DIR/scripts/validate.sh"; value="$cwd" ;;
+  esac
+  rows=$((rows + 1))
+  RC=0
+  OUT="$(cd "$cwd" && "$entry" ${args[@]+"${args[@]}"} 2>&1)" || RC=$?
+  expected=''
+  [ -z "$code" ] || printf -v expected 'review-gate-error=%s value=%q' "$code" "$value"
+  if [ "$RC" -eq "$want_rc" ] && { [ -z "$expected" ] || grep -qxF -- "$expected" <<<"$OUT"; }; then
+    ok "$shape"
+  else
+    bad "$shape (rc=$RC, expected $expected)" "$OUT"
+  fi
+done <<'ROWS'
+help|0||
+extra|2|unknown-arguments|2
+outside|2|repository|
+ROWS
+[ "$rows" -gt 0 ] && [ "$((PASS + FAIL - before))" -eq "$rows" ] || { printf 'fixture-error=arguments-table value=%q\n' "$rows" >&2; exit 2; }
 
-# Control: a genuinely absent override is a valid install and still passes.
-sandbox
-dir="$DIR"
-absent_out=""
-absent_rc=0
-absent_out="$(cd "$dir" && REVIEW_GATE_SETTINGS_FILE="absent.settings.toml" "./$VALIDATE_REL" 2>&1)" || absent_rc=$?
-if [ "$absent_rc" -eq 0 ] && printf '%s' "$absent_out" | grep -q "absent.settings.toml is absent"; then
-  ok "an ABSENT override still reads as absent and passes (control)"
-else
-  bad "an ABSENT override still reads as absent and passes (control) (rc=$absent_rc)" "$absent_out"
-fi
+# Each row changes one source shape. Optional records preserve the original
+# predicate/loader and note comparisons. The forbidden note rejects a false
+# empty-list report after a loader failure.
+rows=0; before=$((PASS + FAIL))
+while IFS='~' read -r label action data want check value error_code error_value note_check note_value forbidden; do
+  [ "$label" != '' ] || continue
+  if [ "$action" = unreadable ] && [ "$(id -u)" -eq 0 ]; then
+    printf '  skip  unreadable source requires a non-root reader\n'
+    continue
+  fi
+  rows=$((rows + 1))
+  sandbox
+  override=''; exported=''
+  case "$action" in
+    append) printf '%b\n' "$data" >>"$DIR/kendex.settings.toml" ;;
+    replace) printf '%b\n' "$data" >"$DIR/kendex.settings.toml" ;;
+    nested)
+      mkdir -p "$DIR/.kendex"
+      printf '%b\n' "$data" >"$DIR/.kendex/settings.toml"
+      commit "$DIR" ;;
+    exported) settings "$DIR" REVIEW_GATE_MODE bogus; exported=enforce ;;
+    untracked|explicit)
+      (cd "$DIR" && git rm -q --cached kendex.settings.toml && git commit -q -m "untrack settings")
+      [ "$action" != explicit ] || override=kendex.settings.toml ;;
+    directory) mkdir "$DIR/nonregular.dir"; override=nonregular.dir ;;
+    dangling) ln -s missing.toml "$DIR/dangling.settings.toml"; override=dangling.settings.toml ;;
+    nested-directory) mkdir -p "$DIR/.kendex/settings.toml" ;;
+    unreadable)
+      printf '[env]\nREVIEW_GATE_CONTEXT = "Review gate"\n' >"$DIR/unreadable.settings.toml"
+      chmod 000 "$DIR/unreadable.settings.toml"; override=unreadable.settings.toml ;;
+    absent) override=absent.settings.toml ;;
+    settings-symlink)
+      mv "$DIR/kendex.settings.toml" "$DIR/real-settings.toml"
+      ln -s real-settings.toml "$DIR/kendex.settings.toml"
+      commit "$DIR" ;;
+    *) printf 'fixture-error=unknown-action value=%q\n' "$action" >&2; exit 2 ;;
+  esac
+  if [ "$override" != '' ]; then
+    REVIEW_GATE_SETTINGS_FILE="$override" run_validate "$DIR"
+  elif [ "$exported" != '' ]; then
+    REVIEW_GATE_MODE="$exported" run_validate "$DIR"
+  else
+    run_validate "$DIR"
+  fi
+  case "$value" in @/*) value="$DIR/${value#@/}" ;; esac
+  case "$note_value" in @/*) note_value="$DIR/${note_value#@/}" ;; esac
+  expected=''; diagnostic=''; note=''
+  [ -z "$check" ] || printf -v expected '%s check=%s value=%q' "$want" "$check" "$value"
+  [ -z "$error_code" ] || printf -v diagnostic '        review-gate-error=%s value=%q' "$error_code" "$error_value"
+  [ -z "$note_check" ] || printf -v note 'note check=%s value=%q' "$note_check" "$note_value"
+  want_rc=1
+  [ "$want" != clean ] || want_rc=0
+  if [ "$RC" -eq "$want_rc" ] &&
+      { [ -z "$expected" ] || grep -qxF -- "$expected" <<<"$OUT"; } &&
+      { [ -z "$diagnostic" ] || grep -qxF -- "$diagnostic" <<<"$OUT"; } &&
+      { [ -z "$note" ] || grep -qxF -- "$note" <<<"$OUT"; } &&
+      { [ -z "$forbidden" ] || ! grep -q "^note check=$forbidden value=" <<<"$OUT"; } &&
+      { [ "$want" != clean ] || { grep -qE '^ok check=[a-z-]+ value=' <<<"$OUT" && ! grep -q '^FAIL check=' <<<"$OUT"; }; }; then
+    ok "$label"
+  else
+    bad "$label (rc=$RC, expected $expected $diagnostic $note)" "$OUT"
+  fi
+done <<'ROWS'
+unknown key~append~REVIEW_GATE_CONTXET = "Review gate"~FAIL~settings-unknown~kendex.settings.toml:REVIEW_GATE_CONTXET~~~~~
+caller handle in settings~append~REVIEW_GATE_SETTINGS_FILE = "other.toml"~FAIL~settings-seam~REVIEW_GATE_SETTINGS_FILE~~~~~
+illegal mode with predicate diagnostic~append~REVIEW_GATE_MODE = "bogus"~FAIL~settings-values~2~predicate-mode~bogus~~~
+numeric bound~append~REVIEW_GATE_SHA_PREFIX_FLOOR = "2"~FAIL~settings-values~2~~~~~
+duplicate key~append~REVIEW_GATE_MODE = "off"\nREVIEW_GATE_MODE = "enforce"~FAIL~settings-values~2~~~~~
+exported legal mode cannot hide committed error~exported~~FAIL~settings-values~2~~~~~
+untracked settings~untracked~~FAIL~settings-untracked~kendex.settings.toml~~~~~
+nested unknown key names its source~nested~[env]\nREVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGIN = "x"~FAIL~settings-unknown~.kendex/settings.toml:REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGIN~~~~~
+nested mode is unread~nested~[env]\nREVIEW_GATE_MODE = "off"~FAIL~settings-mode-source~.kendex/settings.toml~~~~~
+root mode is read~append~REVIEW_GATE_MODE = "off"~clean~~~~~~~
+explicit untracked source~explicit~~clean~~~~~settings-explicit~@/kendex.settings.toml~
+double-quoted key~append~"REVIEW_GATE_THREADS" = "off"~FAIL~settings-key-shape~kendex.settings.toml:"REVIEW_GATE_THREADS" = "off"~~~~~
+single-quoted key~append~'REVIEW_GATE_THREADS' = "off"~FAIL~settings-key-shape~kendex.settings.toml:'REVIEW_GATE_THREADS' = "off"~~~~~
+bare key~append~REVIEW_GATE_THREADS = "off"~clean~~~~~~~
+dotted key~append~REVIEW_GATE_MODE.typo = "off"~FAIL~settings-key-shape~kendex.settings.toml:REVIEW_GATE_MODE.typo = "off"~~~~~
+spaced dotted key~append~REVIEW_GATE_MODE . typo = "off"~FAIL~settings-key-shape~kendex.settings.toml:REVIEW_GATE_MODE . typo = "off"~~~~~
+quoted then dotted key~append~"REVIEW_GATE_MODE".typo = "off"~FAIL~settings-key-shape~kendex.settings.toml:"REVIEW_GATE_MODE".typo = "off"~~~~~
+dotted then quoted key~append~REVIEW_GATE_THREADS."x" = "off"~FAIL~settings-key-shape~kendex.settings.toml:REVIEW_GATE_THREADS."x" = "off"~~~~~
+plain env table~append~[env]\nREVIEW_GATE_THREADS = "off"~clean~~~~~~~
+assignment above env table~replace~REVIEW_GATE_THREADS = "off"\n[env]\nREVIEW_GATE_CONTEXT = "Review gate"~FAIL~settings-outside-env~REVIEW_GATE_THREADS~~~~~
+assignment under another table~append~\n[notes]\nREVIEW_GATE_THREADS = "off"~FAIL~settings-outside-env~REVIEW_GATE_THREADS~~~~~
+header with comment~append~\n[env] # comment\nREVIEW_GATE_THREADS = "off"~FAIL~settings-header~kendex.settings.toml~~~~~
+directory override~directory~~FAIL~settings-file-type~@/nonregular.dir~~~~~
+dangling override~dangling~~FAIL~settings-file-type~@/dangling.settings.toml~~~~~
+nested directory~nested-directory~~FAIL~settings-file-type~.kendex/settings.toml~~~~~
+unreadable override~unreadable~~FAIL~settings-unreadable~@/unreadable.settings.toml~~~~~
+absent override~absent~~clean~~~~~settings-absent~@/absent.settings.toml~
+inline table key~append~container = { REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "trusted[bot]" }~FAIL~settings-key-shape~kendex.settings.toml:container = { REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "trusted[bot]" }~~~~~
+key mentioned in value~append~PR_REVIEW_CHECK = "ask about REVIEW_GATE_MODE"~FAIL~settings-key-shape~kendex.settings.toml:PR_REVIEW_CHECK = "ask about REVIEW_GATE_MODE"~~~~~
+key without assignment~append~notes = [\n  "REVIEW_GATE_MODE",\n]~FAIL~settings-key-shape~kendex.settings.toml:"REVIEW_GATE_MODE",~~~~~
+symlinked settings~settings-symlink~~FAIL~settings-symlink~kendex.settings.toml~~~~~
+repository variable as setting~append~REVIEW_GATE_CHECK_RUN_NAME = "CodeRabbit"~FAIL~settings-repository-variable~REVIEW_GATE_CHECK_RUN_NAME~~~~~
+lowercase suffix~append~REVIEW_GATE_MODEe = "off"~FAIL~settings-unknown~kendex.settings.toml:REVIEW_GATE_MODEe~~~~~
+dashed key returns exact unread line~append~REVIEW_GATE_MODE-x = "off"~FAIL~settings-key-shape~kendex.settings.toml:REVIEW_GATE_MODE-x = "off"~~~~~
+malformed comment pair~append~REVIEW_GATE_COMMENT_REVIEWERS = "missing-colon"~FAIL~settings-values~2~predicate-comment-pair~missing-colon~~~
+valid comment pair~append~REVIEW_GATE_COMMENT_REVIEWERS = "bot[bot]:Reviewed commit:"~clean~~~~~~~
+refused loader value never becomes an empty list~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ["a", "b"]~FAIL~carry-load~REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC~settings-syntax~REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC~carry-skipped~1~carry-exclusions-empty
+live exclusions~append~REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "AGENTS.md;docs/*"~clean~~~~~~~
+unmatched exclusion~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "no-such-directory/*.md"~FAIL~carry-unmatched~no-such-directory/*.md~~~~~
+rejected glob retains predicate diagnostic~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "/AGENTS.md"~FAIL~settings-values~2~predicate-pattern~REVIEW_GATE_CARRY_FORWARD_EXCLUDE:/AGENTS.md~~~
+prophylactic declaration cannot rescue rejected glob~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "../future/*"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "../future/*"~FAIL~settings-values~2~~~~~
+dot in filename~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "docs/*.md"~clean~~~~~~~
+universal exclusion~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*"~FAIL~carry-universal~*~~~~~
+declared unmatched exclusion is reported~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "no-such-directory/*.md"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "no-such-directory/*.md"~clean~~~~~carry-prophylactic~no-such-directory/*.md~
+orphan declaration~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "AGENTS.md"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "docs/*"~FAIL~carry-declaration-missing~docs/*~~~~~
+declaration now matches~append~REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "docs/*"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "docs/*"~FAIL~carry-declaration-matched~docs/*~~~~~
+ROWS
+[ "$rows" -gt 0 ] && [ "$((PASS + FAIL - before))" -eq "$rows" ] || { printf 'fixture-error=settings-table value=%q\n' "$rows" >&2; exit 2; }
 
-# An inline table puts the setting AFTER the line's first `=`, which is why
-# the rule judges the line rather than a position inside it.
-sandbox
-dir="$DIR"
-printf 'container = { REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "trusted[bot]" }\n' >>"$dir/kendex.settings.toml"
-expect_fail "a key nested in an inline table is read by nothing" "$dir" "a shape the loader does not read"
-
-# The cost of judging the line: a name mentioned in a VALUE is flagged too.
-# That is the safe direction, and the verdict says to reword it.
-setting_fails "a name mentioned in a value is flagged, and the verdict says to reword" PR_REVIEW_CHECK "ask about REVIEW_GATE_MODE" "a shape the loader does not read"
-printf '%s' "$OUT" | grep -qF "reword a mention" &&
-  ok "the over-flag names its own remedy" ||
-  bad "the over-flag names its own remedy" "$OUT"
-
-# No classification at all: the token on a line that is not the accepted
-# shape is a finding, `=` or no `=`.
-sandbox
-dir="$DIR"
-printf 'notes = [\n  "REVIEW_GATE_MODE",\n]\n' >>"$dir/kendex.settings.toml"
-expect_fail "the token on a line carrying no assignment at all is a finding" "$dir" "a shape the loader does not read"
-
-sandbox
-dir="$DIR"
-(cd "$dir" && rm kendex.settings.toml && printf '[env]\nREVIEW_GATE_CONTEXT = "Review gate"\n' >real-settings.toml && ln -s real-settings.toml kendex.settings.toml && git add -A && git commit -q -m "symlink the settings file")
-expect_fail "a SYMLINKED settings file is a finding" "$dir" "is a SYMLINK"
-
-# A repository VARIABLE assigned as a setting gets its own diagnosis: the
-# name is real, so "you misspelled it" would send its reader hunting a typo
-# that is not there.
-setting_fails "a GitHub repository variable assigned as a setting is named as one" REVIEW_GATE_CHECK_RUN_NAME "CodeRabbit" "REPOSITORY VARIABLE"
-
-# The scan must use the TOML bare-key charset, not the ledger's shape: an
-# uppercase-only scan reads REVIEW_GATE_MODEe as REVIEW_GATE_MODE, finds it
-# known, and passes the one spelling the engine silently ignores.
-sandbox
-dir="$DIR"
-printf 'REVIEW_GATE_MODEe = "off"\n' >>"$dir/kendex.settings.toml"
-expect_fail "a lowercase-suffixed typo is scanned and named" "$dir" "REVIEW_GATE_MODEe"
-
-sandbox
-dir="$DIR"
-printf 'REVIEW_GATE_MODE-x = "off"\n' >>"$dir/kendex.settings.toml"
-expect_fail "a dashed TOML key the engine cannot read is named" "$dir" "a shape the loader does not read"
-printf '%s' "$OUT" | grep -qF 'REVIEW_GATE_MODE-x = "off"' &&
-  ok "the unread line is quoted back, so the fix is on the page" ||
-  bad "the unread line is quoted back, so the fix is on the page" "$OUT"
-
-# --check-config's contract is that it validates EVERY setting. A grammar
-# rule below its stop point would report a legal configuration that the next
-# live run exits 2 on.
-setting_fails "a malformed comment-reviewer pair is caught without a PR" REVIEW_GATE_COMMENT_REVIEWERS "missing-colon" "a committed setting is not legal"
-printf '%s' "$OUT" | grep -qF "malformed REVIEW_GATE_COMMENT_REVIEWERS" &&
-  ok "the grammar rule's own error rides out, so the fix is named" ||
-  bad "the grammar rule's own error rides out, so the fix is named" "$OUT"
-
-setting_clean "a well-formed comment-reviewer pair still passes" REVIEW_GATE_COMMENT_REVIEWERS "bot[bot]:Reviewed commit:"
-
-# A refused load must be a FINDING: collapsing it into an empty value makes
-# every exclusion check below report a clean sheet against a list the engine
-# would have refused.
-sandbox
-dir="$DIR"
-printf 'REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ["a", "b"]\n' >>"$dir/kendex.settings.toml"
-expect_fail "unsupported syntax on a validator-only key is a finding, not an empty value" "$dir" "could not be read"
-printf '%s' "$OUT" | grep -qF "unsupported syntax" &&
-  ok "the loader's own diagnostic is preserved" ||
-  bad "the loader's own diagnostic is preserved" "$OUT"
-printf '%s' "$OUT" | grep -qF "no exclusion globs to check" &&
-  bad "the skipped checks do not claim an empty list" "$OUT" ||
-  ok "the skipped checks do not claim an empty list"
-
-echo "=== carry-forward exclusions ==="
-
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD "docs"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "AGENTS.md;docs/*"
-expect_clean "live exclusion globs pass" "$dir"
-
-setting_fails "a glob matching no tracked path is dead config" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "no-such-directory/*.md" "matches no tracked path"
-
-# Pattern SPELLING is the engine's call, and this tool has no copy of the
-# grammar to test: it makes ONE `--check-config` call and relays whatever
-# comes back. So the spellings are enumerated where the matcher lives —
-# predicate-unknown-arg.test.sh, `--check-config` direct and ~11x cheaper per
-# case — and what is proven HERE is the relay itself: the refusal becomes a
-# finding, and the engine's own reason survives into the verdict.
-setting_fails "a refused spelling is relayed as a finding" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "/AGENTS.md" "a committed setting is not legal"
-printf '%s' "$OUT" | grep -qF "is not supported" &&
-  ok "the engine's own reason rides out in the verdict" ||
-  bad "the engine's own reason rides out in the verdict" "$OUT"
-
-# A PROPHYLACTIC declaration cannot rescue a refused spelling: the relay above
-# runs before the declaration loop and is unconditional, so an unreachable
-# pattern is a finding whether or not it is declared. One case pins that
-# ordering; the spellings themselves are the engine's business, above.
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "../future/*"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "../future/*"
-expect_fail "declaring an unreachable pattern prophylactic does not rescue it" "$dir" "a committed setting is not legal"
-
-# ...and an ordinary glob with a dot in a NAME is reachable and stays so.
-setting_clean "a dot inside a filename is not a dot component" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/*.md"
-
-setting_fails "an all-wildcard exclusion fails" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "*" "matches EVERY tracked path"
-
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "no-such-directory/*.md"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "no-such-directory/*.md"
-expect_clean "a dead glob DECLARED prophylactic is accepted" "$dir"
-printf '%s' "$OUT" | grep -qF "DECLARED prophylactic" &&
-  ok "the accepted prophylactic is reported, not silent" ||
-  bad "the accepted prophylactic is reported, not silent" "$OUT"
-
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "AGENTS.md"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "docs/*"
-expect_fail "a declaration naming no active exclusion is an orphan" "$dir" "is not an entry in REVIEW_GATE_CARRY_FORWARD_EXCLUDE"
-
-sandbox
-dir="$DIR"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE "docs/*"
-settings "$dir" REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "docs/*"
-expect_fail "a declaration whose glob now matches no longer holds" "$dir" "no longer holds"
-
-echo "=== the installed engine ==="
-
-sandbox
-dir="$DIR"
-chmod -x "$dir/.agents/skills/review-gate/scripts/review-writer.sh"
-expect_fail "a lost executable bit is named" "$dir" "is not executable"
-
-sandbox
-dir="$DIR"
-rm "$dir/.agents/skills/review-gate/scripts/pr-watch.sh"
-expect_fail "a missing engine script is named" "$dir" "is missing from the installed skill"
-
-# PRESENT is not COMMITTED here either: an uncommitted engine passes every
-# local check and does not exist in the checkout Actions makes.
-sandbox
-dir="$DIR"
-(cd "$dir" && git rm -q --cached .agents/skills/review-gate/scripts/pr-watch.sh && git commit -q -m "untrack the engine")
-expect_fail "an UNTRACKED engine script is a finding, not a pass" "$dir" "present but UNTRACKED"
-
-# A tracked SYMLINK answers every check against its local target, while a
-# fresh checkout holds the link and resolves whatever is at the other end.
-repo_fails "a SYMLINKED runtime entry is a finding, not a pass" "is a SYMLINK" 'cd .agents/skills/review-gate/scripts && mv pr-watch.sh real-pr-watch.sh && ln -s real-pr-watch.sh pr-watch.sh'
-
-# ...and so is the path the adopted workflow NAMES, which is what Actions runs.
-sandbox
-dir="$DIR"
-(cd "$dir" && git rm -q --cached .agents/skills/review-gate/scripts/review-writer.sh && git commit -q -m "untrack the writer")
-expect_fail "an UNTRACKED exec target is named by the workflow check" "$dir" "which is NOT tracked"
-
-repo_fails "a SYMLINKED exec target is a finding too" "which is a SYMLINK" 'cd .agents/skills/review-gate/scripts && mv review-writer.sh real-writer.sh && ln -s real-writer.sh review-writer.sh'
-
-sandbox
-dir="$DIR"
-printf 'if [ then\n' >>"$dir/.agents/skills/review-gate/scripts/review-writer.sh"
-expect_fail "an engine script that no longer parses is named" "$dir" "does not parse"
-
-echo
+rows=0; before=$((PASS + FAIL))
+while IFS='|' read -r shape target check value; do
+  rows=$((rows + 1))
+  sandbox
+  path="$DIR/.agents/skills/review-gate/$target"
+  case "$shape" in
+    mode) chmod -x "$path" ;;
+    missing) rm "$path" ;;
+    untracked|untracked-target)
+      (cd "$DIR" && git rm -q --cached ".agents/skills/review-gate/$target" && git commit -q -m "untrack runtime") ;;
+    symlink|symlink-target)
+      mv "$path" "$path.real"
+      ln -s "${path##*/}.real" "$path"
+      commit "$DIR" ;;
+    syntax) printf 'if [ then\n' >>"$path" ;;
+  esac
+  expect_fail "$shape" "$DIR" "$check" "$value"
+done <<'ROWS'
+mode|scripts/review-writer.sh|runtime-mode|scripts/review-writer.sh
+missing|scripts/pr-watch.sh|runtime-missing|scripts/pr-watch.sh
+untracked|scripts/pr-watch.sh|runtime-untracked|scripts/pr-watch.sh
+symlink|scripts/pr-watch.sh|runtime-symlink|scripts/pr-watch.sh
+untracked-target|scripts/review-writer.sh|workflow-target-untracked|.agents/skills/review-gate/scripts/review-writer.sh
+symlink-target|scripts/review-writer.sh|workflow-target-symlink|.agents/skills/review-gate/scripts/review-writer.sh
+syntax|scripts/review-writer.sh|runtime-syntax|scripts/review-writer.sh
+ROWS
+[ "$rows" -gt 0 ] && [ "$((PASS + FAIL - before))" -eq "$rows" ] || { printf 'fixture-error=runtime-table value=%q\n' "$rows" >&2; exit 2; }
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
