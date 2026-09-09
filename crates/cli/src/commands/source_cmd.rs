@@ -8,7 +8,7 @@ use crate::scope::ScopeFilter;
 
 #[derive(Subcommand)]
 pub enum SourceCommand {
-    /// List declared sources for the scope
+    /// List the sources the scope installs from, and which are switched off
     List,
     /// Declare a source: `owner/repo[@rev]`, a git URL, or a local path
     Add {
@@ -25,14 +25,16 @@ pub enum SourceCommand {
         #[command(flatten)]
         _commit: crate::commands::commit_offer::CommitFlags,
     },
-    /// Re-enable a source and restore its installations
+    /// Turn a source back on here and restore the packages installed
+    /// from it
     Enable {
         name: String,
         /// The commit offer's answer, without asking
         #[command(flatten)]
         _commit: crate::commands::commit_offer::CommitFlags,
     },
-    /// Disable a source; its installations deactivate but stay declared
+    /// Turn a source off here: the packages installed from it switch off,
+    /// nothing is deleted, and turning it back on puts them back
     Disable {
         name: String,
         /// The commit offer's answer, without asking

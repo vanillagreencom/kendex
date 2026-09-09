@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -13,6 +14,10 @@ import { InstalledView } from "@/components/library/installed-view";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { unmanagedHereLabel } from "@/lib/copy";
 import {
+  PLACE_MARKETPLACES_LABEL,
+  placeMarketplacesTitle,
+} from "@/lib/copy-model";
+import {
   SESSION_NOTE_LABEL,
   SESSION_NOTE_ON,
   SESSION_NOTE_WAITING,
@@ -22,6 +27,7 @@ import { READ_LANDED } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
 import { useLibraryViewStore } from "@/stores/library-view";
+import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
@@ -216,6 +222,66 @@ describe("the start-of-session note on a project's card", () => {
     await settle();
     expect(host.textContent).toContain("acme");
     expect(host.textContent).not.toContain(SESSION_NOTE_LABEL);
+  });
+});
+
+/** Open the actions menu on the card whose name starts with `name`. A
+ *  base-ui trigger does not open on a click under jsdom. */
+async function openActions(host: HTMLElement, name: string): Promise<void> {
+  const card = [...host.querySelectorAll<HTMLElement>('[data-slot="card"]')]
+    .filter((el) => el.textContent?.startsWith(name))
+    .at(0);
+  if (!card) throw new Error(`no card for ${name}`);
+  const trigger = [...card.querySelectorAll<HTMLButtonElement>("button")].find(
+    (one) => one.getAttribute("aria-label")?.startsWith("More actions"),
+  );
+  if (!trigger) throw new Error(`no actions trigger on the ${name} card`);
+  act(() => trigger.focus());
+  await userEvent.keyboard("{Enter}");
+}
+
+const menuItems = (): string[] =>
+  [...document.querySelectorAll('[role="menuitem"]')].map(
+    (el) => el.textContent ?? "",
+  );
+
+// Every setting that decides what a place installs is reached from that
+// place's card — the marketplaces it installs from included, since the
+// marketplace's own page changes none of them. Personal is a place like any
+// other and has no tracking to stop.
+describe("a place card's actions", () => {
+  beforeEach(() => {
+    useSettingsStore.setState({
+      settings: { projects: ["/work/acme"] } as never,
+    });
+    useMarketplacesStore.setState({ rows: [], load: vi.fn(async () => {}) });
+  });
+
+  it("opens that place's marketplaces from the card that names it", async () => {
+    const host = mount(<ProjectList />);
+    await settle();
+
+    await openActions(host, "acme");
+    expect(menuItems()).toEqual([
+      PLACE_MARKETPLACES_LABEL,
+      "Stop tracking acme…",
+    ]);
+
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (el) => el.textContent === PLACE_MARKETPLACES_LABEL,
+    );
+    if (!(item instanceof HTMLElement)) throw new Error("no marketplaces item");
+    await userEvent.click(item);
+    await settle();
+    expect(document.body.textContent).toContain(placeMarketplacesTitle("acme"));
+  });
+
+  it("offers Personal its marketplaces and no tracking to stop", async () => {
+    const host = mount(<ProjectList />);
+    await settle();
+
+    await openActions(host, "Personal");
+    expect(menuItems()).toEqual([PLACE_MARKETPLACES_LABEL]);
   });
 });
 

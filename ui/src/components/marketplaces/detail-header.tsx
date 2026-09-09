@@ -19,6 +19,7 @@ import {
   FEATURED_MARKER,
   MARKETPLACES_UNCONFIRMED_TITLE,
 } from "@/lib/copy-marketplaces";
+import { SWITCHED_OFF_HERE } from "@/lib/copy-model";
 import { shortRevision } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
@@ -29,8 +30,8 @@ import { useMarketplacesStore } from "@/stores/marketplaces";
  * subscription's refresh and unsubscribe, or a repository's one Subscribe
  * button. The words come from the catalog itself where it has been read,
  * and from the directory's listing until then. Whether a place offers this
- * marketplace's packages is the Projects section's answer, not a switch
- * up here with no place named beside it. */
+ * marketplace's packages is that place's own setting, reached from its card
+ * on Projects, not a switch up here with no place named beside it. */
 export function DetailHeader({
   requested,
   catalog,
@@ -177,11 +178,12 @@ export function DetailHeader({
                 <Star className="size-3" /> {FEATURED_MARKER}
               </Badge>
             ) : null}
-            {/* The switch lives in Projects, so the page has to say by
-                itself that the place it opened as is not offering these
-                packages — otherwise the list reads as installable. */}
+            {/* Said here because the page has to state by itself that the
+                place it opened as is not offering these packages —
+                otherwise the list reads as installable. Changing it is the
+                place's own setting, on its card on Projects. */}
             {row && !row.enabled ? (
-              <Badge variant="outline">Switched off here</Badge>
+              <Badge variant="outline">{SWITCHED_OFF_HERE}</Badge>
             ) : null}
           </span>
         }

@@ -11,6 +11,12 @@ import { sameScope } from "@/lib/scope";
 
 export type ScopeSelection = "all" | "global" | { project: string };
 
+/** One place as the narrowing that shows only that place. Every link from a
+ *  place to what is installed there states the same narrowing, so the page
+ *  it opens cannot show a different set than the row that opened it. */
+export const selectionOf = (scope: Scope): ScopeSelection =>
+  scope.scope === "global" ? "global" : { project: scope.root };
+
 export function scopeLabel(scope: Scope): string {
   return scope.scope === "global" ? "global" : scope.root;
 }

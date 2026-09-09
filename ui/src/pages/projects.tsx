@@ -1,14 +1,13 @@
 import { ProjectList } from "@/components/harnesses/project-list";
 import { PageHeader } from "@/components/page-header";
+import { PLACES_SUBTITLE } from "@/lib/copy-model";
 
-/** The repositories kendex keeps in sync, and the way to add or drop one. */
+/** Every place kendex installs packages into, and the way to register or
+ *  drop one. The subtitle states the model the rest of the app follows. */
 export function ProjectsPage() {
   return (
     <div>
-      <PageHeader
-        title="Projects"
-        subtitle="Repositories kendex keeps in sync, alongside your personal setup"
-      />
+      <PageHeader title="Projects" subtitle={PLACES_SUBTITLE} />
       <ProjectList />
     </div>
   );

@@ -1,0 +1,1 @@
+- A marketplace's Projects tab now lists the places that install from it and opens one. Switching a marketplace off in a place, and dropping it from a place, moved to that place's card on Projects.

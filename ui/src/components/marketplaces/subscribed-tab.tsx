@@ -17,7 +17,7 @@ import { useMarketplacesStore } from "@/stores/marketplaces";
 /** One card per marketplace, whatever number of places subscribe to it —
  * a catalog held personally and by three projects is one catalog, not four
  * rows of the same names. The card opens the marketplace; which places hold
- * it, and whether each offers its packages, is answered there. */
+ * it, and whether each offers its packages, is read there. */
 export function SubscribedTab({ onSubscribe }: { onSubscribe: () => void }) {
   const rows = useMarketplacesStore((s) => s.rows);
   // The read's own outcome, not the store's shared `error`: actions write
