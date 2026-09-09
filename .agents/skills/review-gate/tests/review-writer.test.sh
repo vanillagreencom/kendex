@@ -417,7 +417,7 @@ echo "=== leg routing: converge-all on every leg ==="
 # green; a ghost-authored PR enumerates with an empty author.
 table \
   "w24: a read-only token (fork pull_request_review) is a no-op that posts nothing and never consults the predicate|single|STUB_PREDICATE_RC=2;WRITER_READ_ONLY=1|rc=0 posts=none notice~writer-read-only@1=true" \
-  "w25: the merge_group leg posts an unconditional success saying why, never consulting the predicate|single|STUB_PREDICATE_RC=2;EVENT_NAME=merge_group|rc=0 posts=success@headsha desc=merge-queue+entry:+post-approval+by+construction" \
+  "w25: the merge_group leg posts an unconditional success saying why, never consulting the predicate|single|STUB_PREDICATE_RC=2;EVENT_NAME=merge_group|rc=0 posts=success@headsha desc=merge-queue+entry:+post-approval+by+construction notice~writer-queue-posted@headsha=true" \
   "w26: a schedule pass over two open PRs converges both heads, each under its own author|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha7,pending@sha8 author=alice,bob notice~writer-converging@2=true" \
   "w27b: an approved schedule pass opens both heads|all:schedule|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[]|rc=0 posts=success@sha7,success@sha8" \
   "w27: one failing PR fails the pass, is named, and the other PR still converges|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[];STUB_PREDICATE_FAIL_PR=7|rc=1 posts=pending@sha8 error~writer-convergence-failed@7=true" \
