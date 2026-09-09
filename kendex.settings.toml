@@ -57,10 +57,13 @@ PR_REVIEW_ON_TIMEOUT = "proceed"
 
 # Command text the command-safety hook refuses before the shell runs, where
 # the command-safety bundle is installed: a systemd-run invocation capped by
-# MemoryMax= or MemoryHigh= with a K- or M-suffixed value. A memory-starved
-# cgroup fails a kernel allocation inside a btrfs transaction and the host's
-# root volume goes read-only. Remedy: run the reproduction as a plain process
-# with its temp dir under the worktree's tmp/.
+# MemoryMax= or MemoryHigh= with a K- or M-suffixed value. The danger is a cap
+# measured in kilobytes or megabytes on a build: on 2026-09-06 such a starved
+# cgroup failed a kernel allocation inside a btrfs transaction and the host's
+# root volume went read-only. The workstation's agents.slice (112G) is not
+# that cap: every lane runs inside it and must stay inside it. Remedy: run
+# the reproduction as a plain process with its temp dir under the worktree's
+# tmp/, still inside the slice.
 COMMAND_SAFETY_DENY_PATTERN = "(^|[^[:alnum:]_-])systemd-run[[:space:]][^;|&]*Memory(Max|High)=[0-9]+[KkMm]([^[:alnum:]]|$)"
 
 # Seconds ci-wait keeps polling before failing when no CI checks registered
