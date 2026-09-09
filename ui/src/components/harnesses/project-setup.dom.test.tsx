@@ -5,7 +5,7 @@
 // and every case here holds one of them unresolved: an indicator asserted
 // after the work has landed passes against a dialog that never drew one.
 import userEvent from "@testing-library/user-event";
-import { act } from "react";
+import { act, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditView, ScanResult, Scope } from "@/bindings";
 import { commands } from "@/bindings";
@@ -193,6 +193,31 @@ describe("adding a project", () => {
   });
 });
 
+/** The dialog as `project-list.tsx` holds it: mounted throughout, opened
+ *  and closed by a control outside it, so its own state survives a close. */
+const REOPEN = "Reopen";
+function ReopenableFind({
+  discoverProjects,
+}: {
+  discoverProjects: (root: string) => Promise<Discovered>;
+}) {
+  const [open, setOpen] = useState(true);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        {REOPEN}
+      </button>
+      <FindProjectsDialog
+        open={open}
+        onOpenChange={setOpen}
+        projects={[]}
+        registerProject={async () => true}
+        discoverProjects={discoverProjects}
+      />
+    </>
+  );
+}
+
 describe("finding existing projects", () => {
   const mountFind = (
     discoverProjects: Parameters<
@@ -324,6 +349,90 @@ describe("finding existing projects", () => {
     expect(button(ALREADY_ADDED)).toBeTruthy();
 
     await act(async () => land(true));
+  });
+
+  // A dismissed search's answer is not this dialog's state. `discoverProjects`
+  // cannot be called off, so an abandoned answer landing on the panel would
+  // reopen the dialog showing the result of a search the reader closed.
+  it("drops the answer to a search that was dismissed", async () => {
+    let land: (found: Discovered) => void = () => {};
+    const discoverProjects = vi.fn(
+      () =>
+        new Promise<Discovered>((resolve) => {
+          land = resolve;
+        }),
+    );
+    let open = true;
+    const host = mount(
+      <FindProjectsDialog
+        open
+        onOpenChange={(next) => {
+          open = next;
+        }}
+        projects={[]}
+        registerProject={vi.fn(async () => true)}
+        discoverProjects={discoverProjects}
+      />,
+    );
+    await userEvent.type(field(), "/work");
+    await userEvent.click(button(FIND_PROJECTS_ACTION));
+    await settle();
+    expect(document.body.textContent).toContain(searchingIn("/work"));
+
+    await userEvent.click(button("Done"));
+    await settle();
+    expect(open).toBe(false);
+
+    await act(async () => land({ status: "found", paths: ["/work/acme"] }));
+    await settle();
+    expect(host.ownerDocument.body.textContent).not.toContain(foundProjects(1));
+  });
+
+  // The same rule across a dismissal: the reader closes one search, opens
+  // the dialog again and starts another, and the first answer arrives
+  // last. Only the newest may land, or the abandoned search's result
+  // replaces the one on screen. The dialog holds its own state across a
+  // close — `project-list.tsx` keeps it mounted — so the answer really can
+  // outlive the panel it was started on. It is not reachable inside one
+  // open dialog: the field and both actions are disabled while a search is
+  // out.
+  it("drops the answer to a search a later one superseded", async () => {
+    const answers: ((found: Discovered) => void)[] = [];
+    const discoverProjects = vi.fn(
+      () =>
+        new Promise<Discovered>((resolve) => {
+          answers.push(resolve);
+        }),
+    );
+    mount(<ReopenableFind discoverProjects={discoverProjects} />);
+
+    await userEvent.type(field(), "/first");
+    await userEvent.click(button(FIND_PROJECTS_ACTION));
+    await settle();
+    await userEvent.click(button("Done"));
+    await settle();
+
+    await userEvent.click(button(REOPEN));
+    await settle();
+    // The path the dismissed search used is still in the field, which is
+    // the point of keeping it — the second search names its own folder.
+    await userEvent.clear(field());
+    await userEvent.type(field(), "/second");
+    await userEvent.click(button(FIND_PROJECTS_ACTION));
+    await settle();
+    expect(document.body.textContent).toContain(searchingIn("/second"));
+
+    // The abandoned search answers last, and says nothing.
+    await act(async () =>
+      answers[1]({ status: "found", paths: ["/second/acme"] }),
+    );
+    await act(async () =>
+      answers[0]({ status: "found", paths: ["/a", "/b", "/c"] }),
+    );
+    await settle();
+
+    expect(document.body.textContent).toContain(foundProjects(1));
+    expect(document.body.textContent).not.toContain(foundProjects(3));
   });
 });
 

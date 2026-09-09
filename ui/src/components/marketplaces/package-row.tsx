@@ -100,14 +100,17 @@ export function PackageRow({
   selected: boolean;
   onToggle: () => void;
   /** Install this row alone. The one-package case of the same guided flow
-   *  a selection opens, never a second install path. */
-  onInstall: () => void;
+   *  a selection opens, never a second install path. `as` is the catalog
+   *  to ask against where it is not the one the row was drawn from: a bare
+   *  repository's row subscribes first, and the subscription it gains is
+   *  what the flow installs from. */
+  onInstall: (as?: Catalog) => void;
 }) {
   const { catalog, row, recordsUnreadable } = entry;
   const goToAvailablePackage = useNavStore((s) => s.goToAvailablePackage);
   const goToMarketplace = useNavStore((s) => s.goToMarketplace);
-  const subscribeAndInstall = useMarketplacesStore(
-    (s) => s.subscribeAndInstall,
+  const subscribeForInstall = useMarketplacesStore(
+    (s) => s.subscribeForInstall,
   );
   const busy = useMarketplacesStore((s) => s.busy);
   const want = usePreinstallSafety((s) => s.want);
@@ -261,20 +264,21 @@ export function PackageRow({
           </span>
         ) : catalog.by === "repo" ? (
           // Installing needs a subscription, so this click makes one —
-          // personally — and then installs. The line above the table says
-          // that once. Where a subscription already declares the
-          // repository the offer is not this table's to make: the header
-          // carries the one action, and the row goes back to saying the
-          // package is here.
+          // personally — and then asks the same two questions every other
+          // install asks, against the subscription it just gained. The
+          // line above the table says the subscribing part once. Where a
+          // subscription already declares the repository the offer is not
+          // this table's to make: the header carries the one action, and
+          // the row goes back to saying the package is here.
           offerSubscribe ? (
             <Button
               size="sm"
               variant="outline"
               disabled={busy}
               onClick={() => {
-                void subscribeAndInstall(catalog.repo, [
-                  { kind: row.kind, name: row.name },
-                ]);
+                void subscribeForInstall(catalog.repo).then((made) => {
+                  if (made) onInstall(made);
+                });
               }}
             >
               {SUBSCRIBE_TO_INSTALL_LABEL}
@@ -292,7 +296,7 @@ export function PackageRow({
             size="sm"
             variant="outline"
             disabled={busy}
-            onClick={onInstall}
+            onClick={() => onInstall()}
           >
             {INSTALL_ACTION}
           </Button>

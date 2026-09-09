@@ -304,10 +304,14 @@ export function PackagesTable({
    *  here" is only offered on a marketplace's own page: the
    *  cross-marketplace list is every subscription at once, and "here" has
    *  no boundary there for it to mean. */
-  const askFor = (only?: PackageEntry) => {
+  const askFor = (only?: PackageEntry, as?: Catalog) => {
     const subjects: InstallSubject[] = [];
     if (only) {
-      const groups = groupsFor([only]);
+      // A bare repository's row has just been subscribed to, so the ask is
+      // built against the subscription it gained rather than the
+      // repository catalog the row was drawn from — nothing installs from
+      // a repository.
+      const groups = groupsFor([as ? { ...only, catalog: as } : only]);
       if (groups.length === 0) return;
       subjects.push({
         id: "one",
@@ -426,7 +430,7 @@ export function PackagesTable({
               selectable={installableRow(entry)}
               selected={ticked.has(rowKey(entry))}
               onToggle={() => toggleRow(entry)}
-              onInstall={() => askFor(entry)}
+              onInstall={(as) => askFor(entry, as)}
             />
           ))}
         </TableBody>

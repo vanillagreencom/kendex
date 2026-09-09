@@ -383,7 +383,9 @@ describe("the row action on a repository nobody subscribes to", () => {
 
   const draw = (rows: MarketplaceRow[]) => {
     stub.scores = {};
-    const subscribeAndInstall = vi.fn(async () => true);
+    const subscribeForInstall = vi.fn(async () =>
+      subscription({ scope: "global" }, "kit"),
+    );
     useCommunityStore.setState({
       directory: { rows: [listed], fetchedAt: "2026-09-02", stale: false },
     });
@@ -392,7 +394,7 @@ describe("the row action on a repository nobody subscribes to", () => {
       rows,
       read: READ_LANDED,
       summaries: {},
-      subscribeAndInstall,
+      subscribeForInstall,
     });
     const host = mountTree(
       <PackagesTable
@@ -400,7 +402,7 @@ describe("the row action on a repository nobody subscribes to", () => {
         showMarketplace={false}
       />,
     );
-    return { host, subscribeAndInstall };
+    return { host, subscribeForInstall };
   };
 
   const action = (host: HTMLElement) =>
@@ -408,15 +410,27 @@ describe("the row action on a repository nobody subscribes to", () => {
       (button) => button.textContent === SUBSCRIBE_TO_INSTALL_LABEL,
     );
 
-  it("hands the store this repository and this row's package", async () => {
-    const { host, subscribeAndInstall } = draw([]);
+  // The subscription is what makes the packages installable, so the click
+  // makes one — and then asks the same two questions every other install
+  // asks, against the subscription it gained. Nothing installs from the
+  // repository catalog the row was drawn from.
+  it("subscribes, then opens the guided install on the subscription it got", async () => {
+    const { host, subscribeForInstall } = draw([]);
     const button = action(host);
     if (!button) throw new Error("no subscribe-and-install button rendered");
 
     await userEvent.click(button);
+    await act(async () => {});
 
-    expect(subscribeAndInstall).toHaveBeenCalledWith(repo, [
-      { kind: "skill", name: "gh" },
+    expect(subscribeForInstall).toHaveBeenCalledWith(repo);
+    const ask = useInstallFlow.getState().ask;
+    expect(ask?.subjects[0].groups).toEqual([
+      {
+        source: "kit",
+        browsing: { scope: "global" },
+        items: [{ kind: "skill", name: "gh" }],
+        bundle: null,
+      },
     ]);
   });
 

@@ -148,6 +148,11 @@ export const useInstallFlow = create<InstallFlowState>((set, get) => ({
     set({ running: true, outcome: null });
     const landed: Scope[] = [];
     const failed: Scope[] = [];
+    // Whether the reader was offered the where question at all. It decides
+    // which places a group may reach, so it is read once for the run
+    // rather than per pair: the dialog draws its picker from the same
+    // answer, and the two must not disagree about what was chosen.
+    const freeChoice = placeIsAChoice(subject);
     try {
       // One place at a time, and one marketplace at a time inside it: the
       // command writes into exactly one scope from exactly one
@@ -157,7 +162,7 @@ export const useInstallFlow = create<InstallFlowState>((set, get) => ({
         let wrote = false;
         let refused = false;
         for (const group of subject.groups) {
-          const destination = destinationFor(group, place);
+          const destination = destinationFor(group, place, freeChoice);
           if (destination === undefined) continue;
           const ok = await useMarketplacesStore.getState().install({
             scope: group.browsing,
@@ -190,14 +195,24 @@ export const useInstallFlow = create<InstallFlowState>((set, get) => ({
 }));
 
 /** How this group reaches this place: `null` to install where the
- *  subscription lives, a scope to redirect into, or `undefined` where the
- *  engine refuses the pair — only a personal subscription may be
- *  redirected, and only into a project. */
+ *  subscription lives, a scope to redirect into, or `undefined` where this
+ *  group does not reach this place at all.
+ *
+ *  A redirect is a place the reader chose, so it is offered only where the
+ *  where question was a choice — every group personal, and every place on
+ *  the picker one `marketplace_install` accepts. Where the answer was not a
+ *  choice, the places are the browsed scopes themselves and each group
+ *  installs where it lives: a selection spanning a personal marketplace and
+ *  a project's own would otherwise sweep the personal packages into that
+ *  project, which nothing on screen asked for and the dialog's own sentence
+ *  denies. */
 function destinationFor(
   group: InstallGroup,
   place: Scope,
+  freeChoice: boolean,
 ): Scope | null | undefined {
   if (sameScope(group.browsing, place)) return null;
+  if (!freeChoice) return undefined;
   if (group.browsing.scope !== "global" || place.scope !== "project")
     return undefined;
   return place;

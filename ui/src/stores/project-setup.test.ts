@@ -88,6 +88,33 @@ describe("adding a project", () => {
     expect(useProjectSetupStore.getState().unchecked).toEqual([]);
   });
 
+  // The registry expands a tilde and canonicalises, so what it records is
+  // not the string the reader typed — and the card matches its setup state
+  // against settings' own roots. Keyed on the typed string, the checking
+  // and check-failed states never appear for that project and the card
+  // draws it as empty instead.
+  it("keys the check on the root the registry recorded, not the typed path", async () => {
+    vi.mocked(commands.registerProject).mockResolvedValue({
+      status: "ok",
+      data: {
+        settings: { projects: ["/home/u/dev/acme"] },
+        base: null,
+      } as never,
+    });
+    const land = heldScan();
+
+    await useSettingsStore.getState().registerProject("~/dev/acme");
+
+    expect(useProjectSetupStore.getState().checking).toEqual([
+      "/home/u/dev/acme",
+    ]);
+
+    land();
+    await vi.waitFor(() =>
+      expect(useProjectSetupStore.getState().checking).toEqual([]),
+    );
+  });
+
   // The project is registered either way. A read that failed is its own
   // state, so the card can say so and offer the read again rather than
   // drawing a place with nothing in it.

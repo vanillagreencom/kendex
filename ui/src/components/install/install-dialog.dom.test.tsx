@@ -291,6 +291,49 @@ describe("the guided install", () => {
     expect(button(INSTALL_ACTION).disabled).toBe(true);
   });
 
+  // A selection can span marketplaces, and the Packages tab lists a
+  // project's own subscriptions beside personal ones. With the where
+  // question settled by the marketplaces rather than by the reader, each
+  // group installs where it lives — sweeping the personal packages into
+  // the project would write files into a checkout nobody chose, and the
+  // dialog's own sentence says they install where their marketplace does.
+  it("keeps a mixed selection in each marketplace's own place", async () => {
+    await open(
+      askFor({
+        ...gh,
+        what: "2 packages",
+        count: 2,
+        groups: [
+          gh.groups[0],
+          {
+            source: "acme-kit",
+            browsing: ACME,
+            items: [{ kind: "skill", name: "lint" }],
+            bundle: null,
+          },
+        ],
+      }),
+    );
+
+    expect(document.body.textContent).toContain(
+      installsWhereItLives(["Personal", "acme"]),
+    );
+
+    await userEvent.click(button(INSTALL_ACTION));
+    await settle();
+
+    expect(install).toHaveBeenCalledTimes(2);
+    expect(
+      install.mock.calls.map((call) => [call[0].scope, call[0].destination]),
+    ).toEqual([
+      [HOME, null],
+      [ACME, null],
+    ]);
+    expect(document.body.textContent).toContain(
+      installedIn("2 packages", ["Personal", "acme"]),
+    );
+  });
+
   // Only a personal subscription may be redirected into a project, so a
   // marketplace a project owns has no choice of place — and says so rather
   // than drawing a picker with nothing to pick.

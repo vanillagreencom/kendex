@@ -3,7 +3,6 @@ import { create } from "zustand";
 import {
   type Catalog,
   commands,
-  type InstallItem,
   type MarketplaceRow,
   type Scope,
 } from "@/bindings";
@@ -22,6 +21,7 @@ import {
   type CatalogCaches,
   dropCatalogCaches,
   openLead,
+  subscription,
 } from "./marketplaces-shared";
 import { sourceActions } from "./marketplaces-sources";
 
@@ -86,11 +86,15 @@ interface MarketplacesState extends InstallActions, CatalogCaches {
     reference: string,
     name: string | null,
   ) => Promise<SubscribeOutcome>;
-  /** Install from a marketplace nobody subscribes to yet: the subscription
-   * is what makes the packages installable, so the one click makes it
-   * first, personally, and then installs. Announced before the click by
-   * [SUBSCRIBE_TO_INSTALL_MEANS] — the row never subscribes in silence. */
-  subscribeAndInstall: (repo: string, items: InstallItem[]) => Promise<boolean>;
+  /** Subscribe personally to a marketplace nobody subscribes to yet, so
+   * its packages become installable, and answer with the subscription that
+   * was made — or null where it was refused. Announced before the click by
+   * [SUBSCRIBE_TO_INSTALL_MEANS]; the row never subscribes in silence.
+   *
+   * It does not install. The guided install owns every install request in
+   * the app, and it needs a subscription to ask about — so this makes one
+   * and hands it over, and the reader still answers where the packages go. */
+  subscribeForInstall: (repo: string) => Promise<Catalog | null>;
   unsubscribe: (
     scope: Scope,
     source: string,
@@ -170,26 +174,28 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
       return { name: response.data.name };
     }),
 
-  subscribeAndInstall: async (repo, items) => {
-    // Personal, deliberately: the row that offered this install was not
-    // showing a place to install into, so the one place every install can
-    // fall back to is the person's own. The line above the table says so
-    // before the click. A project subscription is still the dialog's job,
-    // where the place is asked for.
+  subscribeForInstall: async (repo) => {
+    // Personal, deliberately: a repository nobody subscribes to is not a
+    // place's marketplace yet, and the personal setup is the one scope a
+    // subscription can always be made in. Where the packages then go is
+    // the guided install's question, and a personal subscription is the
+    // one it can send into any project.
     const scope: Scope = { scope: "global" };
     const outcome = await get().subscribe(scope, repo, null);
     if ("error" in outcome) {
       // Said from the outcome, never read back out of the shared slot: a
       // concurrent overview read clears that slot, and a click that
-      // installed nothing would then report nothing either.
+      // subscribed to nothing would then report nothing either.
       toast.error(outcome.error);
       // There is no input here to show the refusal beside, so the slot it
       // was left in is emptied — otherwise the next Subscribe dialog opens
       // already complaining about a repository nobody typed.
       set({ error: null });
-      return false;
+      return null;
     }
-    return get().install({ scope, source: outcome.name, items });
+    // The alias the engine picked, not the repository spelling the click
+    // carried: that is what every later read and the install itself name.
+    return subscription(scope, outcome.name);
   },
 
   unsubscribe: (scope, source, keep, discardEdits) =>

@@ -1,5 +1,5 @@
 import { FolderSearch } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Activity } from "@/components/activity";
 import { PathField } from "@/components/harnesses/path-field";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,7 @@ import {
   searchFailed,
   searchingIn,
 } from "@/lib/copy-project-setup";
+import { readOrder } from "@/lib/read-state";
 import type { Discovered } from "@/stores/settings-projects";
 
 /** What the search has to say right now. The four states are told apart
@@ -64,6 +65,12 @@ export function FindProjectsDialog({
 }) {
   const [root, setRoot] = useState("");
   const [search, setSearch] = useState<Search>({ at: "idle" });
+  // Which search this panel is showing. `discoverProjects` cannot be called
+  // off, so its answer is dropped by the ticket it began under: a reader who
+  // dismisses the dialog, or starts a second search over the first, must not
+  // have the abandoned answer land on the panel afterwards. The same
+  // ordering every read in the app lands under.
+  const order = useRef(readOrder());
   // Which results have a registration out. Per row rather than one flag:
   // a reader adds several from one result, and one shared flag would put
   // every other row's button into a state its own press did not cause.
@@ -72,8 +79,10 @@ export function FindProjectsDialog({
   const find = (path: string) => {
     const trimmed = path.trim();
     if (!trimmed) return;
+    const ticket = order.current.begin();
     setSearch({ at: "searching", root: trimmed });
     void discoverProjects(trimmed).then((result) => {
+      if (!order.current.lands(ticket)) return;
       setSearch(
         result.status === "found"
           ? { at: "found", root: trimmed, paths: result.paths }
@@ -94,7 +103,13 @@ export function FindProjectsDialog({
   };
 
   const close = (next: boolean) => {
-    if (!next) setSearch({ at: "idle" });
+    if (!next) {
+      // A ticket nothing will land abandons whatever is still out, so
+      // reopening shows the idle panel this close intended rather than the
+      // result of the search the reader dismissed.
+      order.current.begin();
+      setSearch({ at: "idle" });
+    }
     onOpenChange(next);
   };
 

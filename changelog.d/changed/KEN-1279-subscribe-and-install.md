@@ -1,0 +1,1 @@
+- "Subscribe and install" on a marketplace row now subscribes you personally and then asks the same what-and-where questions every other install asks, so those packages can go into a project.

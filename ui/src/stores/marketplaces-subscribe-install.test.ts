@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
 import { useMarketplacesStore } from "./marketplaces";
+import { subscription } from "./marketplaces-shared";
 
 vi.mock("@/bindings", () => ({
   commands: {
@@ -20,12 +21,11 @@ vi.mock("./scan", () => ({
   useScanStore: { getState: () => ({ refresh: vi.fn() }) },
 }));
 
-const item = [{ kind: "skill" as const, name: "preflight" }];
-
 // Installing from a marketplace nobody subscribes to has to subscribe
 // first — that is what makes its packages installable, and it is the whole
-// of what this action promises. The row's half, which arguments it hands
-// over, is packages-table.test.tsx.
+// of what this action promises. It installs nothing itself: the guided
+// install owns every install request, and this hands it a subscription to
+// ask about. The row's half is packages-table.test.tsx.
 describe("installing from a marketplace nobody subscribes to", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -36,11 +36,9 @@ describe("installing from a marketplace nobody subscribes to", () => {
     });
   });
 
-  it("subscribes personally first, then installs under the alias it got back", async () => {
+  it("subscribes personally and answers with the alias it got back", async () => {
     vi.mocked(commands.marketplaceSubscribe).mockResolvedValue({
       status: "ok",
-      // The engine picks the alias; the install has to use that one, not
-      // the repository spelling the click carried.
       data: {
         name: "kit",
         reference: "Acme/Kit",
@@ -50,29 +48,34 @@ describe("installing from a marketplace nobody subscribes to", () => {
         undone: [],
       },
     });
-    vi.mocked(commands.marketplaceInstall).mockResolvedValue({
-      status: "ok",
-      data: {
-        packages: [],
-        repoEffects: { shown: [], withheld: [] },
-        undone: [],
-      },
-    });
-
-    const ok = await useMarketplacesStore
+    const made = await useMarketplacesStore
       .getState()
-      .subscribeAndInstall("Acme/Kit", item);
+      .subscribeForInstall("Acme/Kit");
 
-    expect(ok).toBe(true);
     expect(commands.marketplaceSubscribe).toHaveBeenCalledWith(
       { scope: "global" },
       "Acme/Kit",
       null,
     );
-    const [scope, source, items] = vi.mocked(commands.marketplaceInstall).mock
-      .calls[0];
-    expect(scope).toEqual({ scope: "global" });
-    expect(source).toBe("kit");
-    expect(items).toEqual(item);
+    // The engine picks the alias; everything downstream names that one,
+    // not the repository spelling the click carried.
+    expect(made).toEqual(subscription({ scope: "global" }, "kit"));
+    // Nothing is written here. Where the packages go is a question the
+    // reader has not been asked yet.
+    expect(commands.marketplaceInstall).not.toHaveBeenCalled();
+  });
+
+  // A refused subscription has no subscription to install from, so the
+  // caller is told plainly rather than being handed one to ask about.
+  it("answers with nothing when the subscription is refused", async () => {
+    vi.mocked(commands.marketplaceSubscribe).mockResolvedValue({
+      status: "error",
+      error: "already declared here",
+    });
+
+    expect(
+      await useMarketplacesStore.getState().subscribeForInstall("Acme/Kit"),
+    ).toBeNull();
+    expect(commands.marketplaceInstall).not.toHaveBeenCalled();
   });
 });
