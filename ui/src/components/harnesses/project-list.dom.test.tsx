@@ -25,6 +25,7 @@ import {
 } from "@/lib/copy-session-note";
 import {
   outOfDateHereLabel,
+  UPDATE_NEEDS_CHECK_NOTE,
   UPDATE_REVIEW_CONFIRM,
   updateReviewManyTitle,
 } from "@/lib/copy-updates";
@@ -54,6 +55,15 @@ vi.mock("@/bindings", () => ({
     capabilityTable: vi.fn(),
     updateSettings: vi.fn(),
     installDriftHook: vi.fn(),
+    packageDiff: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: {
+        files: [],
+        totalAdditions: 0,
+        totalDeletions: 0,
+        truncated: false,
+      },
+    }),
   },
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
@@ -551,5 +561,50 @@ describe("out-of-date packages on a place's card", () => {
         "out of date",
       );
     }
+  });
+
+  // A package its source dropped has no version to move to. Counting it
+  // would draw a line whose review has nothing in it — a dead end where
+  // the card promised work.
+  it("counts no package whose news is not an update", async () => {
+    useUpdatesStore.setState({
+      rows: [
+        updateRow("gone", "/work/acme", {
+          updateAvailable: false,
+          removedUpstream: true,
+        }),
+      ],
+      read: READ_LANDED,
+      unreadable: [],
+    });
+    const host = mount(<ProjectList />);
+    await settle();
+    expect(card(host, "acme").textContent).not.toContain("out of date");
+  });
+
+  // The store refuses a write read off rows a landing is about to replace.
+  // The card says so on the button rather than letting the click answer
+  // with an error dialog.
+  it("holds its update while a read that will replace the rows is out", async () => {
+    useUpdatesStore.setState({
+      rows: [updateRow("gh", "/work/acme")],
+      read: READ_LANDED,
+      unreadable: [],
+      reading: true,
+    });
+    const host = mount(<ProjectList />);
+    await settle();
+
+    const line = [...card(host, "acme").querySelectorAll("button")].find(
+      (b) => b.textContent === outOfDateHereLabel(1),
+    );
+    if (!line) throw new Error("no out-of-date line");
+    await userEvent.click(line);
+
+    const update = [...document.querySelectorAll("button")].find(
+      (b) => b.textContent === UPDATE_REVIEW_CONFIRM,
+    );
+    expect(update?.disabled).toBe(true);
+    expect(update?.getAttribute("title")).toBe(UPDATE_NEEDS_CHECK_NOTE);
   });
 });

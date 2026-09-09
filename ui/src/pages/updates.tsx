@@ -5,7 +5,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { UpdateRow } from "@/bindings";
+import type { Scope, UpdateRow } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -50,6 +50,7 @@ import { scopeKey } from "@/lib/scope";
 import {
   hiddenUpdates,
   packageCount,
+  placeKey,
   placeName,
   placesWithUpdates,
   updatablePlaces,
@@ -80,11 +81,19 @@ export function UpdatesPage() {
   const setShowVersion = useUpdatesView((s) => s.setShowVersion);
   const [showHidden, setShowHidden] = useState(false);
   const [confirmIgnore, setConfirmIgnore] = useState<UpdateRow | null>(null);
-  // The rows an update was asked for, and what the place is called where
-  // the ask named one. Held here rather than per row so one dialog stands
-  // behind every Update on the page, whatever its scope.
+  // WHICH places an update was asked for, never the rows themselves, and
+  // what the place is called where the ask named one. Held here rather than
+  // per row so one dialog stands behind every Update on the page, whatever
+  // its scope.
+  //
+  // Keys, because a read landing under an open dialog replaces every row:
+  // a captured array would leave the diff on screen and the commit behind
+  // the button answering to a standing the app has already moved past. The
+  // rows are looked up again on every render, the way a place's card does
+  // it, so the dialog reads what the store has now.
   const [review, setReview] = useState<{
-    rows: UpdateRow[];
+    places: string[];
+    among: Scope[];
     place: string | null;
   } | null>(null);
 
@@ -97,6 +106,10 @@ export function UpdatesPage() {
 
   const visible = visibleUpdates(rows);
   const hidden = hiddenUpdates(rows);
+  const wanted = new Set(review?.places ?? []);
+  const reviewRows = review
+    ? rows.filter((row) => wanted.has(placeKey(row)))
+    : [];
   const HiddenChevron = showHidden ? ChevronDown : ChevronRight;
   const empty =
     visible.length === 0 &&
@@ -161,7 +174,16 @@ export function UpdatesPage() {
                 visible={visible}
                 held={busy || unconfirmed}
                 heldNote={unconfirmed ? UPDATE_NEEDS_CHECK_NOTE : undefined}
-                onReview={(rows, place) => setReview({ rows, place })}
+                onReview={(picked, place) =>
+                  setReview({
+                    places: picked.map(placeKey),
+                    // Every place on the page, so two projects ending in
+                    // one folder name read apart in the confirm that
+                    // writes their files.
+                    among: visible.map((row) => row.scope),
+                    place,
+                  })
+                }
               />
             ) : null}
           </div>
@@ -196,7 +218,13 @@ export function UpdatesPage() {
               rows={visible}
               onIgnore={setConfirmIgnore}
               onShowVersion={setShowVersion}
-              onUpdate={(rows, place) => setReview({ rows, place })}
+              onUpdate={(picked, place, among) =>
+                setReview({
+                  places: picked.map(placeKey),
+                  among,
+                  place,
+                })
+              }
             />
           )}
           {warnings.length > 0 ? (
@@ -240,16 +268,18 @@ export function UpdatesPage() {
         </div>
       </div>
       <UpdateReviewDialog
-        rows={review?.rows ?? []}
+        rows={reviewRows}
+        among={review?.among ?? []}
         place={review?.place ?? null}
         open={review !== null}
         onOpenChange={(open) => {
           if (!open) setReview(null);
         }}
         busy={busy}
-        onConfirm={(rows) => {
+        held={unconfirmed}
+        onConfirm={(picked) => {
           setReview(null);
-          void updateRows(rows);
+          void updateRows(picked);
         }}
       />
       <ConfirmDialog

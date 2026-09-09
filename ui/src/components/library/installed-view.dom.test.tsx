@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ObservedItem, Scope } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
+import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
 import {
   READ_LANDED,
   READ_PENDING,
@@ -169,5 +170,83 @@ describe("the Library narrowed to packages edited on disk", () => {
   it("shows every package when the facet is off", () => {
     useLibraryViewStore.setState({ ...NO_FILTERS });
     expect(names(mount(<InstalledView />))).toEqual(["gh", "orch"]);
+  });
+});
+
+// The mark says an update is available, so it asks the one selection whose
+// words that is: a package the source dropped has no version to move to,
+// and a read that has not landed has not counted anything.
+describe("the update mark on a Library row", () => {
+  const row = (name: string, extra: Record<string, unknown>) => ({
+    kind: "skill",
+    name,
+    scope: VG,
+    updateAvailable: false,
+    removedUpstream: false,
+    mixed: false,
+    ignored: false,
+    blockedByLocalEdit: false,
+    editedHarnesses: [],
+    ...extra,
+  });
+
+  beforeEach(() => {
+    vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [installed(VG)],
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    useNavStore.setState({ libraryScope: "all", search: "" });
+    useLibraryViewStore.setState({ ...NO_FILTERS });
+  });
+
+  it("marks a package with an update and nothing else", () => {
+    const cases: [string, ReadState, unknown[], boolean][] = [
+      [
+        "an update to take",
+        READ_LANDED,
+        [row("gh", { updateAvailable: true })],
+        true,
+      ],
+      [
+        "gone from its source",
+        READ_LANDED,
+        [row("gh", { removedUpstream: true })],
+        false,
+      ],
+      [
+        "installs disagreeing",
+        READ_LANDED,
+        [row("gh", { mixed: true })],
+        false,
+      ],
+      [
+        "muted",
+        READ_LANDED,
+        [row("gh", { updateAvailable: true, ignored: true })],
+        false,
+      ],
+      [
+        "no read has landed",
+        READ_PENDING,
+        [row("gh", { updateAvailable: true })],
+        false,
+      ],
+    ];
+    expect(cases).toHaveLength(5);
+    for (const [name, read, rows, marked] of cases) {
+      useUpdatesStore.setState({ rows: rows as never, read });
+      const host = mount(<InstalledView />);
+      expect(
+        (host.textContent ?? "").includes(UPDATE_AVAILABLE_BADGE),
+        name,
+      ).toBe(marked);
+    }
   });
 });

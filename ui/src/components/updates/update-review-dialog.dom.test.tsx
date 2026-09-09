@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
+import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { PackageDiff, UpdateRow } from "@/bindings";
+import type { PackageDiff, Scope, UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
 import { updateRow as row } from "@/components/updates-test-rows";
 import {
   UPDATE_DIFF_NO_VERSIONS,
+  UPDATE_NEEDS_CHECK_NOTE,
   UPDATE_REVIEW_BODY,
   UPDATE_REVIEW_CONFIRM,
+  UPDATE_REVIEW_READING_NOTE,
   updateReviewOneTitle,
   updateReviewSkipped,
 } from "@/lib/copy-updates";
@@ -46,14 +49,20 @@ const edited = (name: string, root: string | null): UpdateRow =>
     editedHarnesses: ["claude"],
   });
 
-const open = (rows: UpdateRow[], onConfirm = vi.fn()) => {
+const open = (
+  rows: UpdateRow[],
+  onConfirm = vi.fn(),
+  extra: { held?: boolean; among?: Scope[] } = {},
+) => {
   const host = mount(
     <UpdateReviewDialog
       rows={rows}
+      among={extra.among}
       place={null}
       open
       onOpenChange={() => {}}
       busy={false}
+      held={extra.held ?? false}
       onConfirm={onConfirm}
     />,
   );
@@ -159,5 +168,55 @@ describe("the update review", () => {
 
     expect(shown()).toContain("the mirror is gone");
     expect(button(UPDATE_REVIEW_CONFIRM).disabled).toBe(false);
+  });
+
+  // The button and the diff answer to one set of rows: nothing is written
+  // while a comparison for a place this run would touch is still being
+  // read, and nothing is written at all while the store refuses.
+  it("holds the update until the changes it would make are on screen", async () => {
+    let answer!: (
+      value: Awaited<ReturnType<typeof commands.packageDiff>>,
+    ) => void;
+    vi.mocked(commands.packageDiff).mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    open([row("gh", null)]);
+    await settle();
+
+    const update = button(UPDATE_REVIEW_CONFIRM);
+    expect(update.disabled).toBe(true);
+    expect(update.getAttribute("title")).toBe(UPDATE_REVIEW_READING_NOTE);
+
+    await act(async () => {
+      answer({ status: "ok", data: DIFF });
+    });
+    await settle();
+    expect(button(UPDATE_REVIEW_CONFIRM).disabled).toBe(false);
+  });
+
+  it("refuses in the store's own words while nothing has confirmed the rows", async () => {
+    open([row("gh", null)], vi.fn(), { held: true });
+    await settle();
+
+    const update = button(UPDATE_REVIEW_CONFIRM);
+    expect(update.disabled).toBe(true);
+    expect(update.getAttribute("title")).toBe(UPDATE_NEEDS_CHECK_NOTE);
+  });
+
+  // The confirm writes files, so it is the one place a folder name must
+  // not be ambiguous: the caller hands the sibling places its own list
+  // tells apart.
+  it("names a place against its siblings, not against itself", async () => {
+    const siblings: Scope[] = [
+      { scope: "project", root: "/home/x/work/app" },
+      { scope: "project", root: "/home/x/clients/app" },
+    ];
+    open([row("gh", "/home/x/work/app")], vi.fn(), { among: siblings });
+    await settle();
+
+    expect(shown()).toContain(updateReviewOneTitle("gh", "work/app"));
+    expect(shown()).toContain("gh in work/app");
   });
 });

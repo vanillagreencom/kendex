@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import {
   commands,
   type PackageDiff,
@@ -11,9 +11,11 @@ import { DiffView } from "@/components/diff/diff-view";
 import {
   UPDATE_DIFF_NO_VERSIONS,
   UPDATE_DIFF_READING,
+  UPDATE_NEEDS_CHECK_NOTE,
   UPDATE_REVIEW_BODY,
   UPDATE_REVIEW_CONFIRM,
   UPDATE_REVIEW_NOTHING_LEFT,
+  UPDATE_REVIEW_READING_NOTE,
   updateDiffFailed,
   updateReviewManyTitle,
   updateReviewOneTitle,
@@ -53,40 +55,83 @@ type DiffRead =
  * the rest. Narrowing in the caller would leave a dialog that cannot say
  * what it left out. What becomes of the changed files afterwards is not
  * asked here — the commit offer behind the write owns that question.
+ *
+ * Callers hand rows they read from the store on every render, never a
+ * snapshot taken at click time: a read landing under an open dialog moves
+ * `latest`, and the confirm sends a commit read off these rows. So the diff
+ * on screen and the write behind the button answer to one set of rows, and
+ * a comparison the change invalidated holds the button until it is read
+ * again.
  */
 export function UpdateReviewDialog({
   rows,
+  among,
   place,
   open,
   onOpenChange,
   busy,
+  held,
   onConfirm,
 }: {
-  /** Every row the action covers, updatable or not. */
+  /** Every row the action covers, updatable or not, as the store has them
+   *  now. */
   rows: UpdateRow[];
+  /** The places these rows are named against, so two folders with one name
+   *  read apart in the title and every label. Defaults to the rows' own
+   *  places, which is right only when the caller has no siblings to offer. */
+  among?: Scope[];
   /** What the place is called where the action names one — a place's own
    *  card, or a place picked off the page's menu. Null where the rows span
    *  places. */
   place: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** A write is running; the whole dialog waits for it. */
   busy: boolean;
+  /** Nothing read off these rows may be committed: no read has landed, the
+   *  last failed, or one that will replace them is on its way. The store
+   *  refuses on the same reading, so the button says so instead of
+   *  answering a click with an error. */
+  held: boolean;
   /** Takes the places this dialog actually offered, never the rows handed
    *  in: the skipped ones were never part of the offer. */
   onConfirm: (rows: UpdateRow[]) => void;
 }) {
+  // Comparisons still being read, by place. A target whose revisions moved
+  // under the dialog re-reads, and the confirm waits: the write must not
+  // outrun the diff that was shown for it.
+  const [reading, setReading] = useState<string[]>([]);
+  const onReading = useCallback((key: string, out: boolean) => {
+    setReading((keys) =>
+      out
+        ? keys.includes(key)
+          ? keys
+          : [...keys, key]
+        : keys.filter((one) => one !== key),
+    );
+  }, []);
+
   const targets = updatablePlaces(rows);
   const skipped = packageCount(skippedPlaces(rows));
   const packages = packageCount(targets);
-  const scopes = rows.map((row) => row.scope);
-  const only = targets.length === 1 ? targets[0] : null;
-  const title =
-    only !== undefined && only !== null
-      ? updateReviewOneTitle(
-          packageDisplayName(only),
-          placeName(only.scope, scopes),
-        )
-      : updateReviewManyTitle(packages, place);
+  const scopes = among ?? rows.map((row) => row.scope);
+  const only = targets.length === 1 ? targets[0] : undefined;
+  const title = only
+    ? updateReviewOneTitle(
+        packageDisplayName(only),
+        placeName(only.scope, scopes),
+      )
+    : updateReviewManyTitle(packages, place);
+  // Ranked as the reader would ask: is there anything to do, may it be done
+  // now, and is what it would do on screen yet.
+  const withheld =
+    targets.length === 0
+      ? UPDATE_REVIEW_NOTHING_LEFT
+      : held
+        ? UPDATE_NEEDS_CHECK_NOTE
+        : reading.length > 0
+          ? UPDATE_REVIEW_READING_NOTE
+          : null;
 
   return (
     <ConfirmDialog
@@ -97,10 +142,8 @@ export function UpdateReviewDialog({
       description={UPDATE_REVIEW_BODY}
       confirmLabel={UPDATE_REVIEW_CONFIRM}
       busy={busy}
-      // The rows are read again behind every write, so a dialog left open
-      // can outlive the news it was opened on.
-      confirmDisabled={targets.length === 0}
-      confirmDisabledNote={UPDATE_REVIEW_NOTHING_LEFT}
+      confirmDisabled={withheld !== null}
+      confirmDisabledNote={withheld ?? undefined}
       onConfirm={() => onConfirm(targets)}
     >
       <div className="max-h-[55vh] space-y-2 overflow-y-auto">
@@ -112,6 +155,7 @@ export function UpdateReviewDialog({
             // One package's changes are what the reader came for; several
             // are a list to pick from first.
             defaultOpen={targets.length === 1}
+            onReading={onReading}
           />
         ))}
       </div>
@@ -130,11 +174,16 @@ function UpdateTarget({
   row,
   among,
   defaultOpen,
+  onReading,
 }: {
   row: UpdateRow;
   /** The other places on this dialog, so two same-named folders read apart. */
   among: Scope[];
   defaultOpen: boolean;
+  /** Whether this target's comparison is out. The dialog holds its confirm
+   *  while any is, so nothing is written against a diff that is no longer
+   *  the one on screen. */
+  onReading: (key: string, out: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState(defaultOpen);
   const [read, setRead] = useState<DiffRead | null>(null);
@@ -147,11 +196,16 @@ function UpdateTarget({
   const fromCommit = from?.commit ?? null;
   const toCommit = to?.commit ?? null;
   const { scope, kind, name } = row;
+  const key = placeKey(row);
 
   useEffect(() => {
     if (!wanted || fromCommit === null || toCommit === null) return;
     let cancelled = false;
     setRead({ at: "reading" });
+    onReading(key, true);
+    const done = () => {
+      if (!cancelled) onReading(key, false);
+    };
     void settled(
       commands.packageDiff(
         scope,
@@ -170,11 +224,15 @@ function UpdateTarget({
           ? { at: "landed", diff: response.data }
           : { at: "failed", reason: response.error },
       );
+      done();
     });
     return () => {
       cancelled = true;
+      // Whether the read answered or this target was folded away, nothing
+      // of it is outstanding once it is gone.
+      onReading(key, false);
     };
-  }, [wanted, fromCommit, toCommit, scope, kind, name]);
+  }, [wanted, fromCommit, toCommit, scope, kind, name, key, onReading]);
 
   const Chevron = expanded ? ChevronDown : ChevronRight;
   return (

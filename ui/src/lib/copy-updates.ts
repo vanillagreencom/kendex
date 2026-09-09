@@ -218,6 +218,12 @@ export const updateReviewSkipped = (packages: number): string =>
 export const UPDATE_REVIEW_NOTHING_LEFT =
   "Nothing here is out of date any more.";
 export const UPDATE_DIFF_READING = "Reading the changes…";
+/** A comparison is being read for a place this run would write — because
+ *  the reader opened it, or because the standing moved under the dialog
+ *  and it is being read again. The write waits for it: what is written
+ *  must be what was shown. */
+export const UPDATE_REVIEW_READING_NOTE =
+  "Reading the changes — the update waits until they are on screen";
 export const updateDiffFailed = (reason: string): string =>
   `Couldn't read the changes — ${reason}`;
 /** A place whose installed or newest revision the standing does not carry.

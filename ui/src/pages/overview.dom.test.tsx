@@ -26,6 +26,18 @@ vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 const HYPR = { scope: "project", root: "/work/hyprtrade" } as const;
 
+const removedUpstream = (name: string): UpdateRow =>
+  ({
+    kind: "skill",
+    name,
+    scope: HYPR,
+    updateAvailable: false,
+    removedUpstream: true,
+    blockedByLocalEdit: false,
+    editedHarnesses: [],
+    repoIdentity: "vanillagreencom/kendex",
+  }) as unknown as UpdateRow;
+
 const outOfDate = (name: string): UpdateRow =>
   ({
     kind: "skill",
@@ -123,5 +135,30 @@ describe("Home's updates row", () => {
     expect(host.textContent).not.toContain("packages have updates");
     // What the reader gets instead: the check that could not answer.
     expect(host.textContent).toContain(UPDATES_ATTENTION_TITLE);
+  });
+});
+
+// A package its source dropped has no version to move to, and this row's
+// words promise one. It stays on the Updates page, tagged, and out of this
+// count.
+describe("what Home's updates row counts", () => {
+  it("counts only packages with an update to take", () => {
+    useUpdatesStore.setState({
+      rows: [outOfDate("gh"), removedUpstream("gone")],
+      read: READ_LANDED,
+    });
+    const host = mount(<OverviewPage />);
+    expect(host.textContent).toContain(updatesWaitingTitle(1));
+    expect(host.textContent).not.toContain(updatesWaitingTitle(2));
+  });
+
+  it("says nothing at all where the only news is not an update", () => {
+    useUpdatesStore.setState({
+      rows: [removedUpstream("gone")],
+      read: READ_LANDED,
+    });
+    const host = mount(<OverviewPage />);
+    expect(host.textContent).not.toContain("packages have updates");
+    expect(host.textContent).not.toContain("package has an update");
   });
 });

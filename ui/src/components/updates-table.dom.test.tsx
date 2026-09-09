@@ -14,8 +14,11 @@ import {
   OWN_COPY_NAME_LABEL,
   SHOW_VERSION_LABEL,
   TABLE_OPTIONS_LABEL,
+  UPDATE_REVIEW_CONFIRM,
   UPDATE_REVIEW_LABEL,
+  UPDATE_REVIEW_NOTHING_LEFT,
   UPDATES_ONE_AT_A_TIME_NOTE,
+  updateReviewOneTitle,
 } from "@/lib/copy-updates";
 import { READ_LANDED } from "@/lib/read-state";
 import { UpdatesPage } from "@/pages/updates";
@@ -34,6 +37,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
     libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     updatesOverview: vi.fn(),
     packageForkBeside: vi.fn(),
+    packageDiff: vi.fn(),
     scanMachine: vi.fn(),
     auditAll: vi.fn(),
   },
@@ -77,6 +81,15 @@ beforeEach(() => {
     data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
   });
   vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+  vi.mocked(commands.packageDiff).mockResolvedValue({
+    status: "ok",
+    data: {
+      files: [],
+      totalAdditions: 0,
+      totalDeletions: 0,
+      truncated: false,
+    },
+  });
 });
 
 // Whether a click lands where the store expects is a question about a
@@ -486,5 +499,113 @@ describe("a row of a kind core refuses", () => {
     expect(pi?.getAttribute("title")).toBe(refusal);
     // The control: a row core sends no refusal for is still offered.
     expect(skill?.disabled).toBe(false);
+  });
+});
+
+// The review the page opens is a set of PLACES, looked up in the store on
+// every render — not the rows the click happened to see. A read landing
+// under an open dialog moves `latest`, and the confirm sends a commit read
+// off these rows, so a captured array would write against a standing the
+// app has already replaced.
+describe("a review left open while the standing moves", () => {
+  const overview = (rows: unknown[]) => ({
+    status: "ok" as const,
+    data: { rows, warnings: [], unreadable: [], lastFetched: null },
+  });
+
+  it("follows the store rather than the rows the click saw", async () => {
+    vi.mocked(commands.updatesOverview).mockResolvedValue(
+      overview([row("gh", null)]) as never,
+    );
+    mount(<UpdatesPage />);
+    await settle();
+
+    await userEvent.click(button(UPDATE_REVIEW_LABEL));
+    await settle();
+    expect(document.body.textContent).toContain("1111111 → v2");
+
+    // A read lands with a newer version for the same place.
+    await act(async () => {
+      useUpdatesStore.setState({
+        rows: [
+          row("gh", null, {
+            latest: { commit: "3333333333", label: "v3", date: null },
+          }),
+        ],
+      });
+    });
+    await settle();
+
+    expect(document.body.textContent).toContain("1111111 → v3");
+    expect(document.body.textContent).not.toContain("1111111 → v2");
+  });
+
+  // The same lookup is what lets the dialog's own guard fire at all: a
+  // frozen array could never lose its targets. Here another window takes
+  // the update the dialog was opened on, and the read lands under it.
+  it("says so when the news it was opened on is gone", async () => {
+    vi.mocked(commands.updatesOverview).mockResolvedValue(
+      overview([row("gh", null), row("dev", null)]) as never,
+    );
+    mount(<UpdatesPage />);
+    await settle();
+
+    const updates = [...document.querySelectorAll("button")].filter(
+      (b) => b.textContent === UPDATE_REVIEW_LABEL,
+    );
+    expect(updates).toHaveLength(2);
+    await userEvent.click(updates[0] as HTMLButtonElement);
+    await settle();
+    expect(button(UPDATE_REVIEW_CONFIRM).disabled).toBe(false);
+
+    await act(async () => {
+      useUpdatesStore.setState({
+        rows: [
+          row("gh", null, { updateAvailable: false, mixed: true }),
+          row("dev", null),
+        ],
+      });
+    });
+    await settle();
+
+    const update = button(UPDATE_REVIEW_CONFIRM);
+    expect(update.disabled).toBe(true);
+    expect(update.getAttribute("title")).toBe(UPDATE_REVIEW_NOTHING_LEFT);
+  });
+});
+
+// The confirm that writes files is the one place a folder name must not be
+// ambiguous. The table already tells a package's places apart; the review
+// it opens is handed the same siblings and names the place the same way.
+describe("the place a review names", () => {
+  it("tells same-named folders apart in the confirm, as the row does", async () => {
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: {
+        rows: [row("gh", "/home/x/work/app"), row("gh", "/home/x/clients/app")],
+        warnings: [],
+        unreadable: [],
+        lastFetched: null,
+      },
+    } as never);
+    const host = mount(<UpdatesPage />);
+    await settle();
+
+    // The package folds into one row; open it to reach the place rows.
+    await userEvent.click(button("2 places"));
+    expect(host.textContent).toContain("work/app");
+    expect(host.textContent).toContain("clients/app");
+
+    const updates = [...document.querySelectorAll("button")].filter(
+      (b) => b.textContent === UPDATE_REVIEW_LABEL,
+    );
+    expect(updates).toHaveLength(2);
+    await userEvent.click(updates[0] as HTMLButtonElement);
+    await settle();
+
+    expect(document.body.textContent).toContain(
+      updateReviewOneTitle("gh", "work/app"),
+    );
+    expect(document.body.textContent).not.toContain("Update gh in app?");
   });
 });

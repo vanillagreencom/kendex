@@ -5,6 +5,8 @@ import {
   HELD_BY_OWNER_NOTE,
 } from "@/lib/copy-updates";
 import {
+  availableUpdateCount,
+  availableUpdatesIn,
   groupUpdates,
   outOfDateIn,
   packageCount,
@@ -13,6 +15,7 @@ import {
   skippedPlaces,
   updatablePlaces,
   updateWithheld,
+  visibleUpdates,
 } from "./update-groups";
 
 const row = (
@@ -290,14 +293,62 @@ describe("what a place counts as out of date", () => {
     expect(outOfDateIn(rows, { scope: "global" })).toBe(0);
   });
 
-  // News that is not a newer version still belongs on the Updates page and
-  // still belongs in this count: the sidebar badge counts it too.
-  it("counts a package gone from its source", () => {
+  // News that is not a newer version belongs on the Updates page, which
+  // lists it and tags it, and NOT in a count whose words promise an update:
+  // core builds such a row with no `latest` and no update to take, so a
+  // card counting it would draw a line whose review has nothing in it.
+  it("counts no package that has no update to take", () => {
+    const news = [
+      {
+        name: "gone from its source",
+        extra: { updateAvailable: false, removedUpstream: true },
+      },
+      {
+        name: "installs disagreeing on a version",
+        extra: { updateAvailable: false, mixed: true },
+      },
+      { name: "muted", extra: { ignored: true } },
+    ];
+    expect(news).toHaveLength(3);
+    for (const one of news) {
+      const rows = [row("gh", "/a", one.extra)];
+      expect(
+        outOfDateIn(rows, { scope: "project", root: "/a" }),
+        one.name,
+      ).toBe(0);
+      expect(
+        availableUpdatesIn(rows, { scope: "project", root: "/a" }),
+        one.name,
+      ).toHaveLength(0);
+      // Still the Updates page's business, so its own list keeps it.
+      expect(visibleUpdates(rows).length, one.name).toBe(
+        one.extra.ignored ? 0 : 1,
+      );
+    }
+  });
+
+  // The control: a row with a version to move to is counted, and is what
+  // the review acts on.
+  it("counts a package with a newer version, and hands it to the review", () => {
+    const rows = [row("gh", "/a")];
+    expect(outOfDateIn(rows, { scope: "project", root: "/a" })).toBe(1);
     expect(
-      outOfDateIn(
-        [row("gh", "/a", { updateAvailable: false, removedUpstream: true })],
-        { scope: "project", root: "/a" },
+      availableUpdatesIn(rows, { scope: "project", root: "/a" }).map(
+        (r) => r.name,
       ),
-    ).toBe(1);
+    ).toEqual(["gh"]);
+  });
+
+  // Home's number and a card's number are the same rule, one machine-wide
+  // and one narrowed, so they cannot come apart.
+  it("counts machine-wide by the same rule", () => {
+    const rows = [
+      row("gh", "/a"),
+      row("gh", "/b"),
+      row("dev", "/a"),
+      row("gone", "/a", { updateAvailable: false, removedUpstream: true }),
+    ];
+    expect(availableUpdateCount(rows)).toBe(2);
+    expect(outOfDateIn(rows, { scope: "project", root: "/a" })).toBe(2);
   });
 });

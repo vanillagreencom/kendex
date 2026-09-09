@@ -181,14 +181,34 @@ export const visibleUpdateCount = (rows: UpdateRow[]): number =>
 export const visibleUpdates = (rows: UpdateRow[]): UpdateRow[] =>
   rows.filter((row) => noteworthy(row) && !row.ignored);
 
-/** The packages out of date in one place — the same set the Updates page
- *  lists and the sidebar counts, narrowed to one scope. One predicate for
- *  the whole app: a place's card and Home saying different numbers about
- *  one machine is the second model this wave exists to remove. */
+/** The packages with a newer version to move to, muted ones aside.
+ *
+ *  Narrower than [`visibleUpdates`] on purpose, and this is the difference:
+ *  a package its source no longer carries, and installs disagreeing on a
+ *  version, are news the Updates page lists and tags — they are not
+ *  updates, they carry no `latest` and no Update, and core builds them with
+ *  `updateAvailable` false. So a surface whose words claim an update is
+ *  available — Home's count, a place's card, the Library's mark — asks
+ *  this, and a surface that lists the page's news asks `visibleUpdates`.
+ *  Every one of the three asks it here rather than spelling the rule again,
+ *  so they cannot come apart. */
+export const availableUpdates = (rows: UpdateRow[]): UpdateRow[] =>
+  rows.filter((row) => row.updateAvailable && !row.ignored);
+
+/** How many packages have an update, machine-wide — Home's number. */
+export const availableUpdateCount = (rows: UpdateRow[]): number =>
+  packageCount(availableUpdates(rows));
+
+/** The packages with an update in one place — a place card's number, and
+ *  the rows its review acts on. */
+export const availableUpdatesIn = (
+  rows: UpdateRow[],
+  scope: Scope,
+): UpdateRow[] =>
+  availableUpdates(rows).filter((row) => sameScope(row.scope, scope));
+
 export const outOfDateIn = (rows: UpdateRow[], scope: Scope): number =>
-  packageCount(
-    visibleUpdates(rows).filter((row) => sameScope(row.scope, scope)),
-  );
+  packageCount(availableUpdatesIn(rows, scope));
 
 /** The collapsed "hidden updates" section: muted packages whose news is
  *  still real — with the way back out. */

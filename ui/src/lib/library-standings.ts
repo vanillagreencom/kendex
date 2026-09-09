@@ -7,7 +7,7 @@ import {
 } from "@/lib/customized-places";
 import type { ItemGroup } from "@/lib/derive";
 import { groupScopes } from "@/lib/derive";
-import { visibleUpdates } from "@/lib/update-groups";
+import { availableUpdates } from "@/lib/update-groups";
 import { rowsKnown } from "@/lib/updates-read-state";
 import { useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
@@ -26,10 +26,11 @@ export function useLibraryStandings(groups: ItemGroup[]): {
    *  yet, which is not the same as nothing edited. */
   editedAnywhere: ((group: ItemGroup) => boolean) | null;
   /** Whether this package has an update in any place it is installed —
-   *  the same set the Updates page lists and Home counts, so a row cannot
-   *  say a package is current while the Updates page lists it. Null until
-   *  a read lands: a badge is a definite claim, and rows kept from a
-   *  failed check have not confirmed one. */
+   *  the set Home counts and a place's card counts, so the mark and those
+   *  numbers cannot come apart. A package its source dropped is not one:
+   *  it has no version to move to, and the badge's words promise one.
+   *  Null until a read lands: a badge is a definite claim, and rows kept
+   *  from a failed check have not confirmed one. */
   outOfDateAnywhere: ((group: ItemGroup) => boolean) | null;
 } {
   const saved = useEditorStore((s) => s.saved);
@@ -68,7 +69,7 @@ export function useLibraryStandings(groups: ItemGroup[]): {
   const outOfDate = useMemo(
     () =>
       new Set(
-        visibleUpdates(updateRows).map((row) => `${row.kind}:${row.name}`),
+        availableUpdates(updateRows).map((row) => `${row.kind}:${row.name}`),
       ),
     [updateRows],
   );

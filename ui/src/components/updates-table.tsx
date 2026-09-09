@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useId, useState } from "react";
-import type { UpdateRow } from "@/bindings";
+import type { Scope, UpdateRow } from "@/bindings";
 import {
   InstalledScore,
   useInstalledReading,
@@ -54,8 +54,10 @@ export function UpdatesTable({
   /** Present on the table that carries the `…` menu showing the Version
    *  column; the column itself follows the page-wide choice. */
   onShowVersion?: (show: boolean) => void;
-  /** Open the one update flow over these rows. Absent for muted rows.  */
-  onUpdate?: (rows: UpdateRow[], place: string | null) => void;
+  /** Open the one update flow over these rows, with the places they are
+   *  named against — a package's own places, so the confirm that writes
+   *  files tells two same-named folders apart the way its row does. */
+  onUpdate?: (rows: UpdateRow[], place: string | null, among: Scope[]) => void;
 }) {
   return (
     <Table>
@@ -83,7 +85,7 @@ export function PackageRows({
 }: {
   group: UpdateGroup;
   onIgnore?: (row: UpdateRow) => void;
-  onUpdate?: (rows: UpdateRow[], place: string | null) => void;
+  onUpdate?: (rows: UpdateRow[], place: string | null, among: Scope[]) => void;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -188,7 +190,9 @@ export function PackageRows({
             row={only}
             among={scopes}
             onIgnore={onIgnore}
-            onUpdate={onUpdate ? (row) => onUpdate([row], null) : undefined}
+            onUpdate={
+              onUpdate ? (one) => onUpdate([one], null, scopes) : undefined
+            }
           />
         ) : (
           <>
@@ -217,7 +221,7 @@ export function PackageRows({
                     busy || unconfirmed || updatablePlaces(places).length === 0
                   }
                   title={unconfirmed ? UPDATE_NEEDS_CHECK_NOTE : undefined}
-                  onClick={() => onUpdate(places, null)}
+                  onClick={() => onUpdate(places, null, scopes)}
                 >
                   {UPDATE_PACKAGE_EVERYWHERE_LABEL}
                 </Button>
@@ -259,7 +263,9 @@ export function PackageRows({
                 row={row}
                 among={scopes}
                 onIgnore={onIgnore}
-                onUpdate={onUpdate ? (one) => onUpdate([one], null) : undefined}
+                onUpdate={
+                  onUpdate ? (one) => onUpdate([one], null, scopes) : undefined
+                }
               />
             </TableRow>
           ))

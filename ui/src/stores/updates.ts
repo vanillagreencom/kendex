@@ -60,9 +60,8 @@ interface UpdatesState extends Standing {
 
 /** Hold the store's `busy` for as long as `work` runs — every write the
  *  exclusion covers, wherever it lives. Paths outside this module reach it
- *  by import; `followSwitch` takes it as `holding`, since this module
- *  imports that one. A flag rather than a count: every caller refuses while
- *  it is already up, so this `finally` drops it under nobody. */
+ *  by import. A flag rather than a count: every caller refuses while it is
+ *  already up, so this `finally` drops it under nobody. */
 export const holdingBusy = async <T>(work: () => Promise<T>): Promise<T> => {
   useUpdatesStore.setState({ busy: true });
   try {

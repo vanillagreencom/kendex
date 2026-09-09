@@ -33,7 +33,8 @@ import { scopeNames } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { everyPlace, sameScope } from "@/lib/scope";
 import { sessionNoteState } from "@/lib/session-note";
-import { outOfDateIn, visibleUpdates } from "@/lib/update-groups";
+import { availableUpdatesIn, outOfDateIn } from "@/lib/update-groups";
+import { readUnsettled } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount, useAuditStore } from "@/stores/audit";
 import { useCommitOfferStore } from "@/stores/commit-offer";
@@ -181,8 +182,11 @@ export function ProjectList() {
   const updatesLanded = useUpdatesStore((s) => s.read.status === "landed");
   const unreadable = useUpdatesStore((s) => s.unreadable);
   const updatesBusy = useUpdatesStore((s) => s.busy);
-  const updateRowsIn = (scope: Scope) =>
-    visibleUpdates(updateRows).filter((row) => sameScope(row.scope, scope));
+  // A count is a fact worth drawing while a read runs; a write read off
+  // those rows is not, and the store refuses one. The card's review holds
+  // in the same words the Updates page uses rather than letting the click
+  // answer with an error.
+  const updatesHeld = useUpdatesStore(readUnsettled);
   const outOfDate = (scope: Scope): number | null =>
     updatesLanded && !unreadable.some((place) => sameScope(place.scope, scope))
       ? outOfDateIn(updateRows, scope)
@@ -288,13 +292,19 @@ export function ProjectList() {
         )}
 
         <UpdateReviewDialog
-          rows={reviewing ? updateRowsIn(reviewing.scope) : []}
+          rows={
+            reviewing ? availableUpdatesIn(updateRows, reviewing.scope) : []
+          }
+          // Every tracked place, so a review names this one the way the
+          // card's own menu does when two roots end in the same folder.
+          among={everyPlace(projects)}
           place={reviewing?.name ?? null}
           open={reviewing !== null}
           onOpenChange={(open) => {
             if (!open) setReviewing(null);
           }}
           busy={updatesBusy}
+          held={updatesHeld}
           onConfirm={(rows) => {
             setReviewing(null);
             void useUpdatesStore.getState().updateRows(rows);
