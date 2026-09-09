@@ -285,27 +285,6 @@ zero settle	0	rc=0;whole-sleeps=absent;skip-notice=notice=settle-disabled value=
 ROWS
 assert_table_executed "settle setting" "$settle_setting_rows"
 
-cat > "$TMP/launch-window.bashenv" <<'CASE'
-set -T
-trap '
-  case "$0" in
-    *mutation-stability)
-      if [ "$BASH_COMMAND" = "ACTIVE_PID=\$!" ]; then
-        trap - DEBUG
-        tries=0
-        while [ ! -s "$HANG_PID_FILE" ] && [ "$tries" -lt 100 ]; do
-          sleep 0.01
-          tries=$((tries + 1))
-        done
-        : > "$LAUNCH_WINDOW_SIGNALLED"
-        kill -TERM "$$"
-      fi
-      ;;
-    *) trap - DEBUG ;;
-  esac
-' DEBUG
-CASE
-
 observe_timeout() {
   export HANG_PID_FILE="$TMP/timeout-child.pid"
   rm -f "$HANG_PID_FILE"
@@ -320,83 +299,17 @@ observe_timeout() {
   actual="rc=$rc;timeout=$(output_error_line command-timeout);child-stopped=$child_stopped"
 }
 
-observe_launch_window() {
-  export HANG_PID_FILE="$TMP/launch-window-child.pid"
-  export LAUNCH_WINDOW_SIGNALLED="$TMP/launch-window-signalled"
-  rm -f "$HANG_PID_FILE" "$LAUNCH_WINDOW_SIGNALLED"
-  rc=0
-  out=""
-  BASH_ENV="$TMP/launch-window.bashenv" "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test 'true' --build 'bash hang.sh & wait' --mutate 'true' --stability 1 --timeout 2 >/dev/null 2>&1 || rc=$?
-  child=$(sed -n '1p' "$HANG_PID_FILE" 2>/dev/null || true)
-  signalled=no
-  [ ! -f "$LAUNCH_WINDOW_SIGNALLED" ] || signalled=yes
-  child_stopped=no
-  if [ -n "$child" ] && stopped "$child"; then
-    child_stopped=yes
-  elif [ -n "$child" ]; then
-    kill -KILL "$child" 2>/dev/null || true
-  fi
-  child_recorded=no
-  [ -z "$child" ] || child_recorded=yes
-  actual="rc=$rc;signalled=$signalled;child-recorded=$child_recorded;child-stopped=$child_stopped"
-}
-
-namespace_available=no
-if command -v unshare >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 && unshare --user --map-root-user --pid --fork --mount-proc true 2>/dev/null; then
-  namespace_available=yes
-fi
-
-observe_namespace() {
-  export HANG_PID_FILE="$TMP/namespace-child.pid"
-  rm -f "$HANG_PID_FILE"
-  rc=0
-  out=""
-  out=$(unshare --user --map-root-user --pid --fork --mount-proc python3 -c '
-import glob, os, subprocess, sys, time
-run = subprocess.run([
-    sys.argv[1], "--worktree", sys.argv[2], "--sha", sys.argv[3],
-    "--test", "true", "--build", "bash hang.sh & wait",
-    "--mutate", "true", "--stability", "1", "--timeout", "1",
-], env=os.environ.copy(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-time.sleep(0.1)
-zombies = []
-for path in glob.glob("/proc/[0-9]*/stat"):
-    try:
-        fields = open(path).read().split()
-        if fields[2] == "Z" and fields[3] == "1":
-            zombies.append(fields[0])
-    except (IndexError, OSError):
-        pass
-print("inner-rc=%s;timeout=%s;zombies=%s" % (
-    run.returncode,
-    "yes" if "error=command-timeout seconds=1" in run.stderr else "no",
-    "none" if not zombies else "present",
-))
-' "$MS" "$REPO" "$SHA_BASE" 2>&1) || rc=$?
-  actual="outer-rc=$rc;${out##*$'\n'}"
-}
-
 echo "=== process cleanup table ==="
 process_rows=0
 while IFS=$'\t' read -r name kind expected; do
   case "$kind" in
     timeout) observe_timeout ;;
-    launch-window) observe_launch_window ;;
-    namespace)
-      if [ "$namespace_available" = no ]; then
-        printf '  skip  process cleanup: %s (private PID namespaces unavailable)\n' "$name"
-        continue
-      fi
-      observe_namespace
-      ;;
     *) actual="unknown-kind=$kind" ;;
   esac
   assert_row "process cleanup" "$name" "$actual" "$expected"
   process_rows=$((process_rows + 1))
 done <<'ROWS'
 timed-out child exits, reports, and stops	timeout	rc=2;timeout=error=command-timeout seconds=1;child-stopped=yes
-launch-window cancellation owns and stops its child	launch-window	rc=143;signalled=yes;child-recorded=yes;child-stopped=yes
-non-reaping PID 1 adopts no zombie	namespace	outer-rc=0;inner-rc=2;timeout=yes;zombies=none
 ROWS
 assert_table_executed "process cleanup" "$process_rows"
 

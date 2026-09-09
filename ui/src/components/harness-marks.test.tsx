@@ -21,16 +21,6 @@ const NON_RENDERING = new Set(["defs", "mask", "clipPath", "symbol"]);
 
 const DEFAULT_BLACK = "(SVG's default black)";
 
-const SOURCES = import.meta.glob("../assets/tools/*.svg", {
-  query: "?raw",
-  import: "default",
-  eager: true,
-}) as Record<string, string>;
-
-const MARKS = Object.entries(SOURCES)
-  .map(([path, svg]) => [path.split("/").pop() as string, svg] as const)
-  .sort(([a], [b]) => a.localeCompare(b));
-
 const HARNESSES = Object.keys(HARNESS_NAMES) as HarnessId[];
 
 type Painted = { name: string; fill: string };
@@ -50,9 +40,7 @@ function fillReaching(shape: Element): string | null {
   return fill ?? DEFAULT_BLACK;
 }
 
-/** Every drawn shape under `root`, with the fill that reaches it. Works on a
- *  parsed asset and on a mounted icon alike, so both sites resolve paint the
- *  same way. */
+/** Every drawn shape under `root`, with the fill that reaches it. */
 function painted(root: ParentNode): Painted[] {
   const shapes: Painted[] = [];
   for (const shape of root.querySelectorAll(SHAPES)) {
@@ -94,31 +82,12 @@ const ignoringTheToken = (shapes: Painted[], doc: Document): string[] =>
     .filter((shape) => !fromTheCaller(shape, doc))
     .map((s) => `${s.name} → ${s.fill}`);
 
-function parse(file: string, svg: string): Document {
-  const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
-  if (doc.querySelector("parsererror")) {
-    throw new Error(`${file} is not parseable as SVG`);
-  }
-  return doc;
-}
-
+// The mounted icon is the shipped path, so the assertion is made there and
+// not on the assets beside it: whatever svgr does to a file's fills, this is
+// what a page draws. The roster needs no case of its own — `harness-icon.tsx`
+// maps `Record<HarnessId, …>` over static imports, so a harness with no mark
+// file does not compile.
 describe("harness marks", () => {
-  it("has one mark file per harness, and no orphans", () => {
-    expect(MARKS.map(([file]) => file)).toEqual(
-      HARNESSES.map((id) => `${id}.svg`).sort(),
-    );
-  });
-
-  it("paints every raw mark in the caller's colour", () => {
-    expect(MARKS.length).toBeGreaterThan(0);
-    for (const [file, svg] of MARKS) {
-      const doc = parse(file, svg);
-      const shapes = painted(doc);
-      expect(shapes.length, file).toBeGreaterThan(0);
-      expect(ignoringTheToken(shapes, doc), file).toEqual([]);
-    }
-  });
-
   it("keeps every mark's paint through the icon svgr builds", () => {
     expect(HARNESSES.length).toBeGreaterThan(0);
     for (const id of HARNESSES) {

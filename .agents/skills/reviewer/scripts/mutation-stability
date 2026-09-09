@@ -130,48 +130,15 @@ fi
 ROOT="$root_result"
 ACTIVE_PID="" ACTIVE_GROUP=""
 
-group_leaves() {
-  group="$1" leader="$2"
-  ps -eo pid=,ppid=,pgid= 2>/dev/null | awk -v group="$group" -v leader="$leader" '
-    $3 == group && $1 != leader {
-      members[$1] = 1
-      has_child[$2] = 1
-    }
-    END {
-      for (pid in members) if (!has_child[pid]) print pid
-    }
-  '
-}
-
-signal_leaves() {
-  signal="$1" group="$2" leader="$3" leaves="" leaf=""
-  leaves=$(group_leaves "$group" "$leader") || return 1
-  [ -n "$leaves" ] || return 2
-  while IFS= read -r leaf; do
-    [ -z "$leaf" ] || kill -s "$signal" "$leaf" 2>/dev/null || :
-  done <<EOF
-$leaves
-EOF
-}
-
+# The build or test command runs as its own process group, so the signal goes
+# to the group and reaches whatever it started. `signal` first so a build gets
+# to write out what it was doing; KILL after the grace, because a group that
+# ignored the first one is not going to answer a second.
 terminate_group() {
   signal="$1" group="$2" leader="$3" grace=0
   [ -n "$group" ] || return 0
 
-  while [ "$grace" -lt 40 ]; do
-    leaf_status=0
-    signal_leaves KILL "$group" "$leader" || leaf_status=$?
-    [ "$leaf_status" -eq 0 ] || break
-    sleep 0.05
-    grace=$((grace + 1))
-  done
-  if [ "$leaf_status" -eq 1 ]; then
-    kill -s "$signal" "-$group" 2>/dev/null || :
-  else
-    [ -z "$leader" ] || kill -s "$signal" "$leader" 2>/dev/null || :
-  fi
-
-  grace=0
+  kill -s "$signal" "-$group" 2>/dev/null || :
   while [ -n "$leader" ] && kill -0 "$leader" 2>/dev/null && [ "$grace" -lt 20 ]; do
     sleep 0.05
     grace=$((grace + 1))
@@ -184,8 +151,6 @@ cleanup_active() {
   terminate_group TERM "$ACTIVE_GROUP" "$ACTIVE_PID"
   ACTIVE_PID="" ACTIVE_GROUP=""
 }
-
-request_cancel() { CANCEL_RC="$1"; }
 
 cleanup() {
   trap - EXIT HUP INT TERM
@@ -220,12 +185,6 @@ extract() { # extract SHA into $1, stamped past the build before it
 run_command() { # run $2 in $1, capture output in $3, label it $4
   dir="$1" command="$2" log="$3" label="$4"
 
-# A handler cannot stop the child group until the fork's pid is assigned.
-  # Record cancellation across that window, then exit once cleanup owns it.
-  CANCEL_RC=""
-  trap 'request_cancel 129' HUP
-  trap 'request_cancel 130' INT
-  trap 'request_cancel 143' TERM
   set -m
   (
     cd "$dir" || exit 2
@@ -236,10 +195,6 @@ run_command() { # run $2 in $1, capture output in $3, label it $4
   ACTIVE_PID=$!
   ACTIVE_GROUP=$ACTIVE_PID
   set +m
-  trap 'exit 129' HUP
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
-  [ -z "$CANCEL_RC" ] || exit "$CANCEL_RC"
 
   status=0 ticks=0 max_ticks=$((10#$TIMEOUT * 10)) timed_out=0
   while kill -0 "$ACTIVE_PID" 2>/dev/null; do
