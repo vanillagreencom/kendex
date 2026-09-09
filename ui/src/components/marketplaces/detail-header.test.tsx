@@ -7,6 +7,7 @@ import {
   LOCAL_FOLDER_LABEL,
   MARKETPLACES_UNCONFIRMED_TITLE,
 } from "@/lib/copy-marketplaces";
+import { displayFor } from "@/lib/marketplace-display";
 import { useCommunityStore } from "@/stores/community";
 import { mount } from "@/test/dom";
 import { DetailHeader } from "./detail-header";
@@ -69,15 +70,23 @@ const BASE: MarketplaceRow = {
 // A fresh row per render. A test that mutates a shared one and undoes it at
 // the end of its body leaves the mutation behind the moment an assertion
 // fails, and the next test goes red for somebody else's reason.
-const render = (row: Partial<MarketplaceRow> = {}) =>
-  renderToStaticMarkup(
+/** The page resolves this once and hands it down — `useCatalog` owns it,
+ *  because it alone holds the summary that discovered a subscription. */
+const shown = (row: MarketplaceRow, listedName?: string) =>
+  displayFor({ catalog, row, summary: null, listedName });
+
+const render = (row: Partial<MarketplaceRow> = {}) => {
+  const full = { ...BASE, ...row };
+  return renderToStaticMarkup(
     <DetailHeader
       requested={catalog}
       catalog={catalog}
-      row={{ ...BASE, ...row }}
+      row={full}
       summary={null}
+      display={shown(full)}
     />,
   );
+};
 
 beforeEach(() => {
   stub.read = { status: "landed", error: null };
@@ -150,6 +159,10 @@ describe("the header's links out", () => {
         catalog={repoCatalog}
         row={undefined}
         summary={null}
+        display={displayFor({
+          catalog: repoCatalog,
+          listedName: listed.name,
+        })}
       />,
     );
     // The URL itself lives in the click handler, never in the markup, so
@@ -169,12 +182,14 @@ describe("the header's links out", () => {
 // else. One resolution answers the card, this header and the breadcrumb.
 describe("what the header calls the marketplace", () => {
   const drawn = (row: Partial<MarketplaceRow>) => {
+    const full = { ...BASE, ...row };
     const host = mount(
       <DetailHeader
         requested={catalog}
         catalog={catalog}
-        row={{ ...BASE, ...row }}
+        row={full}
         summary={null}
+        display={shown(full)}
       />,
     );
     return {

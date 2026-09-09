@@ -18,7 +18,6 @@ import {
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
-import { catalogTitle } from "@/lib/marketplace-display";
 import { sameScope } from "@/lib/scope";
 import { cn } from "@/lib/utils";
 import { bundleKey, useMarketplacesStore } from "@/stores/marketplaces";
@@ -44,11 +43,10 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   const {
     catalog,
     summary,
+    display,
     error: reachError,
     ready,
   } = useCatalog(bundleRef.catalog);
-  const rows = useMarketplacesStore((s) => s.rows);
-  const summaries = useMarketplacesStore((s) => s.summaries);
   const bundles = useMarketplacesStore((s) => s.bundles);
   const readErrors = useMarketplacesStore((s) => s.readErrors);
   const loadBundle = useMarketplacesStore((s) => s.loadBundle);
@@ -143,10 +141,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
             <>
               {detail.description ? <p>{detail.description}</p> : null}
               <p className="mt-1 text-xs">
-                {[
-                  detail.version ? `v${detail.version}` : null,
-                  catalogTitle(rows, summaries, catalog),
-                ]
+                {[detail.version ? `v${detail.version}` : null, display.name]
                   .filter(Boolean)
                   .join(" · ")}
               </p>

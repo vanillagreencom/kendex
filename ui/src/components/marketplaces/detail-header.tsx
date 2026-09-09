@@ -23,8 +23,7 @@ import { SWITCHED_OFF_HERE } from "@/lib/copy-model";
 import { shortRevision } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import {
-  displayFor,
-  listedNameOf,
+  type MarketplaceDisplay,
   marketplaceDisplay,
   sourceLine,
 } from "@/lib/marketplace-display";
@@ -43,12 +42,19 @@ export function DetailHeader({
   catalog,
   row,
   summary,
+  display,
 }: {
   /** What was opened — a repository keeps its listing's name and tags. */
   requested: Catalog;
   catalog: Catalog;
   row: MarketplaceRow | undefined;
   summary: CatalogSummary | null;
+  /** What this marketplace is called and where it comes from, resolved once
+   * by the page through `useCatalog` — which is the only place holding both
+   * the summary that discovered a subscription and the subscription it
+   * discovered. A header resolving its own would lose that summary and
+   * disagree with the crumb above it. */
+  display: MarketplaceDisplay;
 }) {
   const checkForUpdates = useMarketplacesStore((s) => s.checkForUpdates);
   const busy = useMarketplacesStore((s) => s.busy);
@@ -58,7 +64,6 @@ export function DetailHeader({
   const read = useMarketplacesStore((s) => s.read);
   const load = useMarketplacesStore((s) => s.load);
   const stale = catalog.by === "subscription" && read.status === "failed";
-  const directory = useCommunityStore((s) => s.directory?.rows);
   const listing = useCommunityStore((s) =>
     requested.by === "repo"
       ? s.directory?.rows.find((r) => r.repo === requested.repo)
@@ -74,14 +79,9 @@ export function DetailHeader({
   // can be `.`, which names nothing on screen.
   const source = row ? marketplaceDisplay(row) : null;
   // The same answer the breadcrumb above this header and the card that
-  // opened it give, from the same function: a title that disagrees with the
-  // crumb over it names one marketplace twice.
-  const title = displayFor({
-    catalog,
-    row,
-    summary,
-    listedName: listedNameOf(directory, requested),
-  }).name;
+  // opened it give: a title that disagrees with the crumb over it names one
+  // marketplace twice.
+  const title = display.name;
   const description = meta?.description ?? listing?.description ?? null;
   const commit = row?.commit ?? summary?.commit ?? null;
   // What the catalog came from, as text. A folder source says so beside its

@@ -1,6 +1,13 @@
 import { useEffect, useMemo } from "react";
 import type { Catalog, CatalogSummary } from "@/bindings";
 import {
+  displayFor,
+  listedNameOf,
+  type MarketplaceDisplay,
+  rowForCatalog,
+} from "@/lib/marketplace-display";
+import { useCommunityStore } from "@/stores/community";
+import {
   catalogKey,
   readErrorKey,
   subscription,
@@ -16,12 +23,23 @@ import {
 export function useCatalog(requested: Catalog): {
   catalog: Catalog;
   summary: CatalogSummary | null;
+  /** What to call this marketplace, and where it comes from. Resolved here
+   * because this is the one place holding both halves of the conversion:
+   * the summary is cached under the REQUESTED repository's key, while
+   * `catalog` is the subscription that summary discovered, so a surface
+   * looking the summary up by the catalog it was handed finds nothing and
+   * falls back to the alias while the breadcrumb beside it reads the
+   * declared name. Every page naming a marketplace reads this rather than
+   * resolving its own. */
+  display: MarketplaceDisplay;
   error: string | null;
   ready: boolean;
   retry: () => void;
 } {
   const key = catalogKey(requested);
   const summary = useMarketplacesStore((s) => s.summaries[key] ?? null);
+  const rows = useMarketplacesStore((s) => s.rows);
+  const directory = useCommunityStore((s) => s.directory?.rows);
   const error = useMarketplacesStore(
     (s) => s.readErrors[readErrorKey(key, "summary")] ?? null,
   );
@@ -41,9 +59,24 @@ export function useCatalog(requested: Catalog): {
     [requested, summary],
   );
 
+  // The declaring row where one has landed, the summary that fetched the
+  // catalog otherwise — and the directory's label under both, keyed on
+  // what was opened, since a converted subscription is no directory row.
+  const display = useMemo(
+    () =>
+      displayFor({
+        catalog,
+        row: rowForCatalog(rows, catalog),
+        summary,
+        listedName: listedNameOf(directory, requested),
+      }),
+    [catalog, rows, summary, directory, requested],
+  );
+
   return {
     catalog,
     summary,
+    display,
     error,
     ready: requested.by === "subscription" || summary !== null,
     retry: () => void loadSummary(requested),

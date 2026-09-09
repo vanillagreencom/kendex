@@ -38,7 +38,8 @@ export function MarketplaceDetailPage() {
 const NONE: AvailablePackage[] = [];
 
 function MarketplaceDetail({ requested }: { requested: Catalog }) {
-  const { catalog, summary, error, ready, retry } = useCatalog(requested);
+  const { catalog, summary, display, error, ready, retry } =
+    useCatalog(requested);
   const rows = useMarketplacesStore((s) => s.rows);
   const packages = useMarketplacesStore((s) => s.packages);
   const load = useMarketplacesStore((s) => s.load);
@@ -114,6 +115,7 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
         catalog={catalog}
         row={row}
         summary={summary}
+        display={display}
       />
       {error ? (
         <div className={cn(PAGE_BODY, "pt-0")}>

@@ -1,1 +1,1 @@
-- A marketplace's page, its card and the breadcrumb above it show one name: the one its catalogue declares, with a directory's own label standing in only until that name has been read.
+- A marketplace's page, its curated sets, its packages and the breadcrumb above them show one name: the one its catalogue declares, with a directory's label standing in until that name is read.
