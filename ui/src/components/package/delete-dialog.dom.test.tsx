@@ -70,6 +70,7 @@ const rowsFor = (origins: [Scope, Origin][]): ProvenanceRow[] =>
     name: "gh",
     harness: "claude",
     origin,
+    package: { kind: "skill", name: "gh" },
   }));
 
 /** The join as it stands and as a fresh read answers: the dialog takes its

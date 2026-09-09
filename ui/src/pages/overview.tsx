@@ -21,6 +21,7 @@ import { MARKETPLACES_UNCHECKED_DETAIL } from "@/lib/copy-marketplaces";
 import { groupItems, installedCount, recentItems } from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
+import { usePackageIndex, usePackagesKnown } from "@/lib/package-identity";
 import { rescanEverything } from "@/lib/rescan";
 import { availableUpdateCount } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
@@ -84,9 +85,11 @@ export function OverviewPage() {
   }, [loadMarketplaces]);
   // Grouped once per scan: Recently changed and the Installed tile both
   // read these, and the page re-renders on six stores' writes.
+  const packageOf = usePackageIndex();
+  const packagesKnown = usePackagesKnown();
   const groups = useMemo(
-    () => (result ? groupItems(result.items) : []),
-    [result],
+    () => (result ? groupItems(result.items, packageOf) : []),
+    [result, packageOf],
   );
 
   const scanAgain = (
@@ -194,9 +197,12 @@ export function OverviewPage() {
                 {/* Counted in the Library's unit — packages, not
                     installations — so the number matches the table the
                     click lands on. */}
+                {/* Only once the join has said which observations are one
+                    package: counted before that, this would be a count of
+                    installations under a label that says packages. */}
                 <StatTile
                   label="Installed"
-                  value={installedCount(groups)}
+                  value={packagesKnown ? installedCount(groups) : null}
                   onClick={() => goToLibrary()}
                 />
                 <StatTile

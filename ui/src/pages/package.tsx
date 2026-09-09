@@ -16,6 +16,7 @@ import {
 } from "@/components/package/use-package-data";
 import { groupItems, groupScopes, installationAt } from "@/lib/derive";
 import { packageDisplayName } from "@/lib/labels";
+import { usePackageIndex, usePackagesKnown } from "@/lib/package-identity";
 import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
 import {
@@ -82,13 +83,21 @@ export function PackagePage() {
     if (ref) void openScope(ref.scope);
   }, [ref, openScope]);
 
+  const packageOf = usePackageIndex();
+  const packagesKnown = usePackagesKnown();
+  // Found by the identity the link carried, not by what each tool stores
+  // this package as: the page's Files, actions and comparison all read one
+  // place's copy, and a tool that keeps a hook as a rule or a command as a
+  // skill would otherwise leave the page with nothing to show.
   const group = useMemo(() => {
     if (!ref || !result) return null;
-    const matching = result.items.filter(
-      (item) => item.kind === ref.kind && item.name === ref.name,
+    return (
+      groupItems(result.items, packageOf).find(
+        (candidate) =>
+          candidate.kind === ref.kind && candidate.name === ref.name,
+      ) ?? null
     );
-    return groupItems(matching)[0] ?? null;
-  }, [ref, result]);
+  }, [ref, result, packageOf]);
 
   const mutating = useManifestBusy(switching);
   const { meta, files, versions, reads, load: reload } = usePackageData(ref);
@@ -120,10 +129,13 @@ export function PackagePage() {
   const installedHere = installationAt(group, ref?.scope) !== undefined;
 
   // The scan has lost this package (removed, renamed): leave the way the
-  // user came.
+  // user came. Only once the join has said which observations are this
+  // package — before that a package a tool stores under another identity
+  // is not lost, it is not yet resolved, and leaving would throw the
+  // reader off a page that was about to draw.
   useEffect(() => {
-    if (ref && result && !installedHere) back();
-  }, [ref, result, installedHere, back]);
+    if (ref && result && packagesKnown && !installedHere) back();
+  }, [ref, result, packagesKnown, installedHere, back]);
 
   if (!ref || !group) return null;
   // The installation this page is about. A package can be installed in

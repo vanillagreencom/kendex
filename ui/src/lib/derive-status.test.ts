@@ -20,7 +20,8 @@ function item(overrides: Partial<ObservedItem>): ObservedItem {
   };
 }
 
-const status = (items: ObservedItem[]) => groupStatus(groupItems(items)[0]);
+const status = (items: ObservedItem[]) =>
+  groupStatus(groupItems(items, () => null)[0]);
 
 describe("groupStatus", () => {
   it("reports broken links before disabled copies", () => {

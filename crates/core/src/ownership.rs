@@ -220,7 +220,10 @@ pub(crate) fn locked(
     agreed(candidates).map_or(Recorded::Ambiguous, Recorded::Found)
 }
 
-fn matches_name(kind: ItemKind, actual: &str, requested: &str) -> bool {
+/// Whether a declared `actual` name answers to an observed `requested`
+/// one. A pi extension is declared under its publisher and listed by its
+/// leaf, and nothing else is renamed by the loader that reads it.
+pub(crate) fn matches_name(kind: ItemKind, actual: &str, requested: &str) -> bool {
     actual == requested
         || kind == ItemKind::PiExtension && actual.rsplit('/').next() == Some(requested)
 }

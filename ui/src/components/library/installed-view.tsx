@@ -21,6 +21,7 @@ import {
   filterItems,
   groupItems,
   groupScopes,
+  groupsOfKind,
   installedCount,
   scopeChoices,
   selectionOf,
@@ -29,6 +30,7 @@ import { scopeNames } from "@/lib/labels";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
 import { useLibraryStandings } from "@/lib/library-standings";
+import { usePackageIndex, usePackagesKnown } from "@/lib/package-identity";
 import { everyPlace, scopeKey } from "@/lib/scope";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
@@ -74,7 +76,9 @@ export function InstalledView() {
   } = useLibraryViewStore();
 
   const provenance = useProvenanceStore((s) => s.rows);
-  const loadProvenance = useProvenanceStore((s) => s.load);
+  // Which observations are one package, from the one join that says so.
+  const packageOf = usePackageIndex();
+  const packagesKnown = usePackagesKnown();
   // Kept in nav rather than here so leaving for a package page and coming
   // back lands on the same narrowed table.
   const search = useNavStore((s) => s.search);
@@ -87,14 +91,6 @@ export function InstalledView() {
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
-  // Re-joined whenever a scan lands, so an install or unsubscribe made
-  // elsewhere shows its changed origin without a manual refresh. Before
-  // the first scan there are no rows to label, so there is nothing to join.
-  useEffect(() => {
-    if (!result) return;
-    void loadProvenance();
-  }, [loadProvenance, result]);
-
   const replaced = useFilterHandoff();
 
   // A chip or a place on a row asks for the same view a link from another
@@ -119,8 +115,8 @@ export function InstalledView() {
 
   // Every group the scan holds, before any narrowing.
   const everywhere = useMemo(
-    () => (result ? groupItems(result.items) : []),
-    [result],
+    () => (result ? groupItems(result.items, packageOf) : []),
+    [result, packageOf],
   );
   // Read from those, never from the filtered set: a standing answers for
   // the package, so narrowing the table to one project must not change
@@ -131,12 +127,15 @@ export function InstalledView() {
     if (!result) return [];
     const filtered = filterItems(result.items, {
       scope,
-      kind: kind === "any" ? undefined : (kind as ItemKind),
       harness: harness === "any" ? undefined : harness,
       tag: tag === "any" ? undefined : (tag as Tag),
       search,
     });
-    let grouped = groupItems(filtered);
+    let grouped = groupItems(filtered, packageOf);
+    // Narrowed after grouping: the kind on screen is the package's, and a
+    // tool that stores a hook as a rule would otherwise drop out of its
+    // own filter and turn up under the kind its file happens to be.
+    if (kind !== "any") grouped = groupsOfKind(grouped, kind as ItemKind);
     if (from !== "any") {
       grouped = grouped.filter(
         (group) =>
@@ -163,6 +162,7 @@ export function InstalledView() {
     edited,
     search,
     provenance,
+    packageOf,
     editedAnywhere,
   ]);
 
@@ -177,10 +177,14 @@ export function InstalledView() {
     [provenance],
   );
   // Nothing has been counted yet — distinct from "counted, found nothing".
-  // Narrowed to edited packages, the count also waits on the updates read
-  // that says which are edited.
+  // The join is waited on with the scan: until it lands nothing knows
+  // which observations are one package, and a total taken then would count
+  // installations. Narrowed to edited packages, the count also waits on
+  // the updates read that says which are edited.
   const scanning =
-    result === null || (edited === "edited" && editedAnywhere === null);
+    result === null ||
+    !packagesKnown ||
+    (edited === "edited" && editedAnywhere === null);
   const hasAnyItems = (result?.items.length ?? 0) > 0;
   const filters: FilterSelection = { kind, harness, tag, from, edited };
   const filtered = isNarrowed({ filters, search, scope });

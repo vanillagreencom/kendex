@@ -30,6 +30,7 @@ import { useAccountStore } from "@/stores/account";
 import { useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
 import { useNoticeStore } from "@/stores/notice";
+import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { useUpdatesStore } from "@/stores/updates";
@@ -133,6 +134,18 @@ export function useStartupLoads() {
   const load = useSettingsStore((s) => s.load);
   const noticeLoad = useNoticeStore((s) => s.load);
   const accountLoad = useAccountStore((s) => s.load);
+  const scanResult = useScanStore((s) => s.result);
+  const provenanceLoad = useProvenanceStore((s) => s.load);
+  // Which observations are one package is read here rather than by the
+  // pages that show packages: the Library table, Home's Installed tile and
+  // every place's badges all count in that unit, and a page asking for
+  // itself would have each of them counting from a different answer.
+  // Re-joined whenever a scan lands, so an install or unsubscribe made
+  // elsewhere reaches every one of them without a manual refresh.
+  useEffect(() => {
+    if (!scanResult) return;
+    void provenanceLoad();
+  }, [provenanceLoad, scanResult]);
   useEffect(() => {
     // Independent reads, started together: the audit is the slow one
     // (it scores every installed file), and chaining it behind the scan

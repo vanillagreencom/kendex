@@ -2,11 +2,13 @@ import type {
   HarnessId,
   ItemKind,
   ObservedItem,
+  PackageRef,
   ScanResult,
   Scope,
   Tag,
 } from "@/bindings";
 import { KINDS } from "@/lib/labels";
+import type { PackageOf } from "@/lib/package-identity";
 import { sameScope } from "@/lib/scope";
 
 export type ScopeSelection = "all" | "global" | { project: string };
@@ -34,12 +36,15 @@ export function scopeMatches(
 
 interface ItemFilter {
   scope: ScopeSelection;
-  kind?: ItemKind;
   harness?: string;
   tag?: Tag;
   search?: string;
 }
 
+/** Narrowings that are true of one installation: where it is, which tool
+ *  reads it, what its author said it is for. Which kind of package it is
+ *  is not one of them — a tool stores a package under whatever kind it can
+ *  load, so that question is answered of the group, in {@link groupsOfKind}. */
 export function filterItems(
   items: ObservedItem[],
   filter: ItemFilter,
@@ -47,7 +52,6 @@ export function filterItems(
   const needle = filter.search?.trim().toLowerCase();
   return items.filter((item) => {
     if (!scopeMatches(item, filter.scope)) return false;
-    if (filter.kind && item.kind !== filter.kind) return false;
     if (filter.harness && item.harness !== filter.harness) return false;
     if (filter.tag && !item.tags.includes(filter.tag)) return false;
     if (needle) {
@@ -58,9 +62,23 @@ export function filterItems(
   });
 }
 
-/** One logical item (kind + name) with every installation observed for it. */
+/** The groups of one kind — the package's kind, which is what the filter
+ *  beside it names and what the row shows. */
+export const groupsOfKind = (
+  groups: ItemGroup[],
+  kind: ItemKind,
+): ItemGroup[] => groups.filter((group) => group.kind === kind);
+
+/** One package with every installation observed for it. */
 export interface ItemGroup {
   key: string;
+  /** The package these installations are, where the records establish
+   *  one, and null where they do not. Null is not "unmanaged": it says
+   *  nothing recorded writing this, so it answers only for itself. */
+  package: PackageRef | null;
+  /** The package's kind and name where one was established, and what the
+   *  scan saw where none was — the identity every reader, count, link and
+   *  action of this group speaks. */
   kind: ItemKind;
   name: string;
   description: string | null;
@@ -106,16 +124,33 @@ export function sharedFiles(installations: ObservedItem[]): SharedFile[] {
     .map(([path, harnesses]) => ({ path, harnesses }));
 }
 
-export function groupItems(items: ObservedItem[]): ItemGroup[] {
+/** Every installation on screen, gathered under the package it is.
+ *
+ *  A tool storing a package as another kind, or under a name of its own,
+ *  is an installation detail: the row is the package, and the tools it is
+ *  installed on sit on that row. Where nothing establishes which package
+ *  an installation is, it keeps the identity the scan gave it, so two
+ *  unrelated files that merely read alike stay two rows. */
+export function groupItems(
+  items: ObservedItem[],
+  packageOf: PackageOf,
+): ItemGroup[] {
   const groups = new Map<string, ItemGroup>();
   for (const item of items) {
-    const key = `${item.kind}:${item.name}`;
+    const identity = packageOf(item);
+    // Prefixed apart: a package and an observation are different claims
+    // about what a row is, and a package named for what some unrecorded
+    // file happens to be called must not join that file's row.
+    const key = identity
+      ? `package:${identity.kind}:${identity.name}`
+      : `observed:${item.kind}:${item.name}`;
     let group = groups.get(key);
     if (!group) {
       group = {
         key,
-        kind: item.kind,
-        name: item.name,
+        package: identity,
+        kind: identity?.kind ?? item.kind,
+        name: identity?.name ?? item.name,
         description: item.description,
         installations: [],
         harnesses: [],
@@ -173,13 +208,14 @@ export interface ItemPlace {
 export function installedCountByKind(
   items: ObservedItem[],
   place: ItemPlace,
+  packageOf: PackageOf,
 ): Map<ItemKind, number> {
   const tally = new Map<ItemKind, number>();
   const here = filterItems(items, {
     scope: place.scope ?? "all",
     harness: place.harness,
   });
-  for (const group of groupItems(here)) {
+  for (const group of groupItems(here, packageOf)) {
     tally.set(group.kind, (tally.get(group.kind) ?? 0) + 1);
   }
   // Handed back in the app's kind order, not the grouping's: the badges sit

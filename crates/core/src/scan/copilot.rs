@@ -5,7 +5,6 @@ use serde_json::Value;
 use super::RawEntry;
 use super::hooks::Registration;
 use super::readers::read_json;
-use crate::hook::command_stem;
 
 /// `{version, disableAllHooks, hooks: {<event>: [entry]}}` — a Copilot hook
 /// file, or the `hooks` key of one of its settings files
@@ -38,7 +37,7 @@ pub fn read(path: &Path) -> Result<Vec<RawEntry>, super::ScanProblem> {
             };
             let matcher = crate::configedit::spelled(entry.get("matcher").and_then(Value::as_str));
             entries.push(RawEntry {
-                name: format!("{event}:{matcher}:{}", command_stem(&action)),
+                name: super::hooks::registration_name(event, matcher, &action),
                 enabled: Some(enabled),
                 description: Some(action),
                 source_path: None,

@@ -30,7 +30,7 @@ const item = (scope: Scope) => ({
   tags: [],
 });
 
-const group = groupItems([item(VG), item(HYPR)] as never)[0];
+const group = groupItems([item(VG), item(HYPR)] as never, () => null)[0];
 
 describe("opening a package from its Library row", () => {
   it("opens the intended target once and preserves a selected row drag", async () => {

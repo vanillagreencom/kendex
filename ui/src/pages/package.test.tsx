@@ -48,6 +48,7 @@ import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
 import { useNavStore } from "@/stores/nav";
 import type { PackageView } from "@/stores/nav-types";
+import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
@@ -133,6 +134,10 @@ const openPage = async (
       warnings: [],
     },
   });
+  // The join has answered: nothing in these fixtures is recorded, so
+  // every observation is the package the scan named it, which is the
+  // identity the nav ref below carries.
+  useProvenanceStore.setState({ rows: [], loaded: true });
   useNavStore.setState({
     page: "package",
     packageRef: { kind, name: "gh", scope: here },

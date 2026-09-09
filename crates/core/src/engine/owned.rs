@@ -27,14 +27,14 @@ pub(super) fn paths(env: &Env, scope: &Scope, lock: &Lock) -> BTreeSet<PathBuf> 
         .collect()
 }
 
-pub(super) struct Owned {
-    pub(super) files: Vec<PathBuf>,
+pub(crate) struct Owned {
+    pub(crate) files: Vec<PathBuf>,
     pub(super) edits: Vec<(PathBuf, ConfigEdit)>,
 }
 
 /// What one installation put on this machine: files it wrote, and the
 /// structured edit that takes its registration back out.
-pub(super) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
+pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
     let mut files: Vec<PathBuf> = Vec::new();
     let mut edits: Vec<(PathBuf, ConfigEdit)> = Vec::new();
     match (&entry.emitted, entry.kind) {

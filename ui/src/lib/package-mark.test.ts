@@ -21,7 +21,7 @@ const item = (scope: Scope): ObservedItem => ({
   vendor: null,
 });
 
-const group = groupItems([item(VG), item(HYPR)])[0];
+const group = groupItems([item(VG), item(HYPR)], () => null)[0];
 
 // Both places have been read for hand edits and forks, so a count over
 // them is a count over places somebody looked at.

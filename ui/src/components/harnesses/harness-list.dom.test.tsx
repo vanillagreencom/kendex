@@ -78,8 +78,10 @@ const destinationRows = (): number =>
   mount(<InstalledView />).querySelectorAll("tbody tr").length;
 
 beforeEach(() => {
-  vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
   vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+  // The join has answered and recorded nothing: these packages group as
+  // the scan saw them, which is what the fixture means.
+  useProvenanceStore.setState({ rows: [], loaded: true, read: READ_LANDED });
   useUpdatesStore.setState({ rows: [], read: READ_LANDED });
   useScanStore.setState({ scanning: false, result: scanned, error: null });
   useSettingsStore.setState({ settings: { projects: [] } as never });

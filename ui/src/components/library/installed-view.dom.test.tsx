@@ -493,5 +493,140 @@ describe("the Library narrowed to a place that has nothing", () => {
 
     expect(host.textContent).not.toContain(nothingInstalledIn("hyprtrade"));
     expect(host.textContent).toContain("Clear filters");
+// The reported defect: one hook installed for several tools stood as a
+// row per tool, because each tool stores it under a spelling of its own.
+// The join says which of those are one package, and the table shows that.
+describe("one package several tools store differently", () => {
+  const at = (
+    harness: string,
+    kind: string,
+    name: string,
+    path: string,
+  ): ObservedItem =>
+    ({
+      kind,
+      name,
+      harness,
+      scope: VG,
+      path,
+      fileState: { state: "file" },
+      enabled: true,
+      origin: null,
+      description: null,
+      tags: [],
+      modifiedAt: null,
+      vendor: null,
+    }) as unknown as ObservedItem;
+
+  const items = [
+    at(
+      "claude",
+      "hook",
+      "PreToolUse:Bash:block-bare-cd",
+      "/work/vg/.claude/settings.json",
+    ),
+    at(
+      "cursor",
+      "agent",
+      "safety-block-bare-cd",
+      "/work/vg/.cursor/rules/safety-block-bare-cd.mdc",
+    ),
+    // Nobody's record accounts for this one, and it carries the name a
+    // generated rule takes: it is a row of its own or the table is
+    // claiming an owner it has no evidence for.
+    at(
+      "cursor",
+      "agent",
+      "safety-block-argv-kill",
+      "/work/vg/.cursor/rules/safety-block-argv-kill.mdc",
+    ),
+  ];
+
+  const row = (harness: string, kind: string, name: string) => ({
+    scope: VG,
+    kind,
+    name,
+    harness,
+    origin: { origin: "marketplace", source: "kendex", repo: "vg/kendex" },
+    package: { kind: "hook", name: "block-bare-cd" },
+  });
+
+  beforeEach(() => {
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED });
+    useProvenanceStore.setState({
+      rows: [
+        row("claude", "hook", "PreToolUse:Bash:block-bare-cd"),
+        row("cursor", "agent", "safety-block-bare-cd"),
+        {
+          scope: VG,
+          kind: "agent",
+          name: "safety-block-argv-kill",
+          harness: "cursor",
+          origin: { origin: "unmanaged" },
+          package: null,
+        },
+      ] as never,
+      loaded: true,
+      read: READ_LANDED,
+    });
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items,
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    useLibraryViewStore.setState({ ...NO_FILTERS });
+    useNavStore.setState({ libraryScope: "all", search: "" });
+  });
+
+  const harnessesOf = (host: HTMLElement, row: number) =>
+    [
+      ...(host
+        .querySelectorAll("tbody tr")
+        [row].querySelectorAll("td")[3]
+        ?.querySelectorAll("[aria-label]") ?? []),
+    ].map((mark) => mark.getAttribute("aria-label"));
+
+  const cells = (host: HTMLElement) =>
+    [...host.querySelectorAll("tbody tr")].map((tr) =>
+      [...tr.querySelectorAll("td")].map((td) => td.textContent?.trim() ?? ""),
+    );
+
+  it("shows the package once, under its own name, kind and marketplace", () => {
+    const host = mount(<InstalledView />);
+    const rows = cells(host);
+    expect(rows).toHaveLength(2);
+    // Sorted on the group key, which puts an observation before a package.
+    const [stray, managed] = rows;
+    expect(managed[0]).toContain("block-bare-cd");
+    expect(managed[1]).toBe("Hook");
+    expect(managed[5]).toBe("kendex");
+    // Both tools on the one row, each mark once. A mark is a logo, so the
+    // tool it stands for is read off the label it carries.
+    expect(harnessesOf(host, 1)).toEqual(["Claude Code", "Cursor"]);
+    // The rule nobody recorded keeps its own row and its own answer.
+    expect(stray[0]).toContain("safety-block-argv-kill");
+    expect(stray[1]).toBe("Agent");
+    expect(stray[5]).toBe("Not managed");
+  });
+
+  it("counts the package once and opens it by the identity it shows", () => {
+    const opened: unknown[] = [];
+    useNavStore.setState({
+      libraryScope: "all",
+      search: "",
+      goToPackage: ((ref: unknown) => opened.push(ref)) as never,
+    });
+    const host = mount(<InstalledView />);
+    expect(host.textContent).toContain("2 items");
+    const names = [...host.querySelectorAll("tbody tr td:first-child button")];
+    (names[1] as HTMLButtonElement).click();
+    expect(opened).toEqual([
+      { kind: "hook", name: "block-bare-cd", scope: VG },
+    ]);
   });
 });

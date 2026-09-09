@@ -54,13 +54,16 @@ impl Registration {
     /// How a scan names this entry. One rendering, in one place, from the
     /// parts — so nothing downstream has to take it apart again.
     pub(crate) fn name(&self) -> String {
-        format!(
-            "{}:{}:{}",
-            self.event,
-            self.matcher,
-            command_stem(&self.command)
-        )
+        registration_name(&self.event, &self.matcher, &self.command)
     }
+}
+
+/// How a scan names one registration, from its parts. Every hook reader
+/// spells an observed name here, and anything asking which package wrote a
+/// registration builds the same name from the record: one rendering, so a
+/// name written and a name read back cannot be built two ways.
+pub(crate) fn registration_name(event: &str, matcher: &str, command: &str) -> String {
+    format!("{event}:{matcher}:{}", command_stem(command))
 }
 
 /// `{"hooks": {"<Event>": [{matcher?, hooks: [{command}]} | {command}]}}` —

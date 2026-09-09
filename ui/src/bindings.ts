@@ -2631,7 +2631,11 @@ export type PackagePreview = {
 	collision: string | null,
 };
 
-/**  One package named in an unsubscribe preview. */
+/**
+ *  The package one installation belongs to: the kind and name its
+ *  declaration carries, which is the identity the manifest, the records
+ *  and every mutation speak.
+ */
 export type PackageRef = {
 	kind: ItemKind,
 	name: string,
@@ -2872,13 +2876,25 @@ export type ProjectOffer = {
 	tracked: boolean,
 };
 
-/**  One installation's origin, keyed the way the Library table joins it. */
+/**
+ *  One installation's origin and identity, keyed the way the Library table
+ *  joins it: by what the scan observed, which is what a reader has in hand.
+ */
 export type ProvenanceRow = {
 	scope: Scope,
 	kind: ItemKind,
 	name: string,
 	harness: HarnessId,
 	origin: Origin,
+	/**
+	 *  Which package this installation is, where the records establish
+	 *  one. `None` says they do not: the observation keeps its own
+	 *  identity and stays distinct from every other, because a name two
+	 *  things share is no evidence that either wrote the file. Nothing may
+	 *  read the absence as unmanaged content — that is what [`Origin`]
+	 *  answers.
+	 */
+	package: PackageRef | null,
 };
 
 export type QualityScore = {

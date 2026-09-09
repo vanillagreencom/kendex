@@ -7,7 +7,8 @@ import { RecentActivity } from "./recent-activity";
 const AT = Date.UTC(2024, 0, 2, 3, 4, 5) / 1000;
 
 const group: RecentGroup = {
-  key: "skill:gh",
+  key: "package:skill:gh",
+  package: { kind: "skill", name: "gh" },
   kind: "skill",
   name: "gh",
   description: null,

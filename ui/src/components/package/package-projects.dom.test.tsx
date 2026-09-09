@@ -57,6 +57,7 @@ const ownedBy = (...owned: [Scope, Origin][]): ProvenanceRow[] =>
     name: "gh",
     harness: "claude",
     origin,
+    package: { kind: "skill", name: "gh" },
   }));
 
 /** One installation as the scan found it: a place holds one per harness,

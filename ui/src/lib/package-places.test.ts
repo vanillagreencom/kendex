@@ -100,7 +100,14 @@ const joined = (
   scope: Scope,
   origin: Origin,
   harness: HarnessId = "claude",
-): ProvenanceRow => ({ scope, kind: "skill", name: "gh", harness, origin });
+): ProvenanceRow => ({
+  scope,
+  kind: "skill",
+  name: "gh",
+  harness,
+  origin,
+  package: { kind: "skill", name: "gh" },
+});
 
 /** The join as it reads for places kendex owns. Vendor content carries no
  *  row at all, which is why a place is named here to be removable. */
@@ -111,6 +118,7 @@ const owned = (scopes: Scope[], origin: Origin = OURS): ProvenanceRow[] =>
     name: "gh",
     harness: "claude",
     origin,
+    package: { kind: "skill", name: "gh" },
   }));
 
 const places = (

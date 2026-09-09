@@ -347,9 +347,13 @@ pub fn capabilities(harness: HarnessId, kind: ItemKind) -> KindCaps {
         // global skill installed there for another tool reaches Cursor
         // through the shared tree all the same.
         (Cursor, Skill) => managed(PROJECT),
-        // A cursor hook is a `.mdc` rule with no registration behind it.
+        // A cursor hook is a `.mdc` rule with no registration behind it,
+        // written into the rules directory Cursor reads its agents from —
+        // so what the install writes is observed as an agent, and the
+        // record of what it wrote is what reads it back as the hook it is.
         (Cursor, Hook) => advisory(KindCaps {
             observe: BOTH,
+            installs_as: Some(Agent),
             ..managed(PROJECT)
         }),
         (Cursor, Command) => observe_only(BOTH),

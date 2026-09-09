@@ -517,7 +517,7 @@ describe("loadPlaces after a read stops working", () => {
     description: "about gh",
     tags: [],
   });
-  const group = groupItems([item(VG), item(HYPR)] as never)[0];
+  const group = groupItems([item(VG), item(HYPR)] as never, () => null)[0];
 
   const answer = (ok: boolean) =>
     vi.mocked(commands.getManifest).mockImplementation((scope) =>

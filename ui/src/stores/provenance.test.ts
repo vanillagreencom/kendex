@@ -23,6 +23,7 @@ const ROWS: ProvenanceRow[] = [
     name: "gh",
     harness: "claude",
     origin: { origin: "marketplace", source: "kendex", repo: "acme/kendex" },
+    package: null,
   },
   {
     scope: { scope: "project", root: "/work/app" },
@@ -30,6 +31,7 @@ const ROWS: ProvenanceRow[] = [
     name: "gh",
     harness: "claude",
     origin: { origin: "own", forkedFrom: "kendex", source: "local" },
+    package: null,
   },
   {
     scope: { scope: "global" },
@@ -37,6 +39,7 @@ const ROWS: ProvenanceRow[] = [
     name: "gh",
     harness: "claude",
     origin: { origin: "unmanaged" },
+    package: null,
   },
 ];
 

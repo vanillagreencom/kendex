@@ -70,6 +70,8 @@ describe("groupItems tags", () => {
     ];
     expect(rows.length, "grouped tag table is empty").toBeGreaterThan(0);
     for (const row of rows)
-      expect(groupItems(row.items)[0].tags, row.name).toEqual(row.expected);
+      expect(groupItems(row.items, () => null)[0].tags, row.name).toEqual(
+        row.expected,
+      );
   });
 });

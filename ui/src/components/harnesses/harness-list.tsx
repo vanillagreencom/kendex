@@ -3,6 +3,7 @@ import { HarnessRow } from "@/components/harnesses/harness-row";
 import { Button } from "@/components/ui/button";
 import { installedCountByKind } from "@/lib/derive";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
+import { usePackageIndex } from "@/lib/package-identity";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 
@@ -23,6 +24,7 @@ export function HarnessList() {
   const refreshScan = useScanStore((s) => s.refresh);
   const settings = useSettingsStore((s) => s.settings);
   const setHarnessRoot = useSettingsStore((s) => s.setHarnessRoot);
+  const packageOf = usePackageIndex();
 
   const anyDetected = ALL_HARNESSES.some((id) =>
     result?.harnesses.some((h) => h.harness === id),
@@ -63,7 +65,11 @@ export function HarnessList() {
             // ask the Library for the same place — one object, so neither
             // can be narrowed without the other.
             const place = { harness: id };
-            const counts = installedCountByKind(result?.items ?? [], place);
+            const counts = installedCountByKind(
+              result?.items ?? [],
+              place,
+              packageOf,
+            );
             return (
               <HarnessRow
                 key={id}

@@ -114,6 +114,13 @@ export const useProvenanceStore = create<ProvenanceState>((set, get) => {
   };
 });
 
+/** Which package a row is about: the one the records establish, or what
+ * the scan saw where they establish none. The same ranking the Library
+ * groups its rows by, so a row and the group it belongs to cannot be
+ * matched on two different identities. */
+const rowPackage = (row: ProvenanceRow): { kind: ItemKind; name: string } =>
+  row.package ?? { kind: row.kind, name: row.name };
+
 /** Every origin recorded across these scopes, in row order. Each place
  * records its own source, so one package installed in several places can
  * carry several origins — a reader acting on all of them at once has to
@@ -126,10 +133,12 @@ export function originsFor(
 ): Origin[] {
   const keys = new Set(scopes.map(scopeKey));
   return rows
-    .filter(
-      (row) =>
-        row.kind === kind && row.name === name && keys.has(scopeKey(row.scope)),
-    )
+    .filter((row) => {
+      const of = rowPackage(row);
+      return (
+        of.kind === kind && of.name === name && keys.has(scopeKey(row.scope))
+      );
+    })
     .map((row) => row.origin);
 }
 

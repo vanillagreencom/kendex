@@ -46,7 +46,7 @@ mod observed;
 mod opencode;
 pub mod ops;
 mod origin;
-mod owned;
+pub(crate) mod owned;
 mod plan_pass;
 mod planned;
 pub mod posture;
