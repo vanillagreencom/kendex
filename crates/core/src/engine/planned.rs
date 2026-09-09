@@ -90,6 +90,18 @@ pub fn planned_declarations(
     scope: &Scope,
     manifest: &Manifest,
 ) -> Vec<PlannedDeclaration> {
+    planned_closure(env, scope, manifest).0
+}
+
+/// [`planned_declarations`] with whether the derivation reached every
+/// declaration. A caller acting on the *absence* of a package needs the two
+/// apart: nothing declares it, and a catalog that would not read, are the
+/// same empty list and different answers.
+pub fn planned_closure(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+) -> (Vec<PlannedDeclaration>, super::DeclarationStatus) {
     let scope = scope.canonical();
     let mut state = desired::DesiredState::default();
     let expanded = expansion::expand(env, &scope, manifest, None, &mut state);
@@ -126,5 +138,5 @@ pub fn planned_declarations(
             held_by_requirer: None,
         });
     }
-    out
+    (out, super::DeclarationStatus::of(&state))
 }

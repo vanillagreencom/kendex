@@ -364,7 +364,7 @@ pub(super) fn claude_settings(env: &Env, scope: &Scope) -> PathBuf {
 /// The file `mcpServers` entries are written to. Claude's project servers
 /// belong to the repo's `.mcp.json` and its global ones to the user file;
 /// Gemini keeps both in the settings file for that scope (matrix §1).
-pub(super) fn mcp_registry(env: &Env, scope: &Scope, harness: HarnessId) -> Option<PathBuf> {
+pub(crate) fn mcp_registry(env: &Env, scope: &Scope, harness: HarnessId) -> Option<PathBuf> {
     match harness {
         HarnessId::Claude => Some(match scope {
             Scope::Global => env.home.join(".claude.json"),

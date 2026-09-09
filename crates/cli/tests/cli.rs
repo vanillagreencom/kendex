@@ -64,6 +64,37 @@ fn list_sees_global_and_current_project_scopes() {
     assert!(!table.contains("deploy"));
 }
 
+/// An MCP container is optional, so a program that leaves an empty one
+/// behind has broken nothing on a machine that manages no server in it.
+/// `list` still says what it read — the reading is the point of the
+/// command — and stops calling it a warning, which is what sends a reader
+/// to edit another program's file. A file that does not parse still is.
+#[test]
+fn an_unused_empty_mcp_container_is_listed_without_asking_for_a_repair() {
+    let rows: [(&str, bool); 2] = [("", false), ("{\"mcpServers\": {", true)];
+    for (contents, actionable) in rows {
+        let tmp = fixture_home();
+        let home = tmp.path();
+        let container = home.join(".gemini/config/mcp_config.json");
+        fs::create_dir_all(container.parent().expect("the container has a folder")).unwrap();
+        fs::write(&container, contents).unwrap();
+
+        let output = kendex(home, &home.join("dev/app"), &["list"]);
+        assert!(output.status.success(), "{contents:?}: {output:?}");
+        let said = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            said.contains("mcp_config.json"),
+            "{contents:?}: the reading is missing: {said}"
+        );
+        assert_eq!(
+            said.contains("warning:"),
+            actionable,
+            "{contents:?}: {said}"
+        );
+    }
+}
+
 #[test]
 fn scope_project_outside_a_project_is_an_error() {
     let tmp = fixture_home();

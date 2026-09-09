@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { create } from "zustand";
 import type { AuditView, ScanWarning, Scope, ScopeErrorKind } from "@/bindings";
 import { type BlockedPlace, blockedPlaces } from "@/lib/audit-counts";
+import { isActionable } from "@/lib/copy-scan";
 import { useAuditStore } from "./audit";
 import { useScanStore } from "./scan";
 
@@ -62,8 +63,27 @@ const NO_WARNINGS: ScanWarning[] = [];
 /** Every file the scan could not read as the document its surface
  *  expects. Read straight off the last scan: a file that is fixed is gone
  *  from the next result, and one that is not is still there. */
-export function useUnreadableFiles(): ScanWarning[] {
+function useScanWarnings(): ScanWarning[] {
   return useScanStore((s) => s.result?.warnings ?? NO_WARNINGS);
+}
+
+/** The ones with a repair behind them: listed with their remedy on
+ *  Problems, on Home, and in the footer's count. Split by the standing
+ *  core stamped on each warning, never by re-reading its message here. */
+export function useUnreadableFiles(): ScanWarning[] {
+  const warnings = useScanWarnings();
+  return useMemo(() => warnings.filter(isActionable), [warnings]);
+}
+
+/** The ones that are information rather than work: an optional container
+ *  another program left empty where kendex manages nothing. Said once, on
+ *  Problems, and counted nowhere. */
+export function useScanNotes(): ScanWarning[] {
+  const warnings = useScanWarnings();
+  return useMemo(
+    () => warnings.filter((warning) => !isActionable(warning)),
+    [warnings],
+  );
 }
 
 /** Every place holding a declared item whose files were already on disk,

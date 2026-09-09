@@ -3,6 +3,8 @@ import { BlockedDeclarations } from "@/components/blocked-declarations";
 import { PageHeader } from "@/components/page-header";
 import { PlaceCard } from "@/components/place-card";
 import { ProblemCard } from "@/components/problem-card";
+import { ScanNoteCard } from "@/components/scan-note-card";
+import { Section } from "@/components/section";
 import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
 import { UnreadableFileCard } from "@/components/unreadable-file-card";
@@ -12,7 +14,12 @@ import {
   TRY_AGAIN_LABEL,
 } from "@/lib/copy";
 import { BLOCKED_HEADLINE } from "@/lib/copy-in-the-way";
-import { PROBLEMS_EMPTY, PROBLEMS_SUBTITLE } from "@/lib/error-copy";
+import {
+  PROBLEMS_EMPTY,
+  PROBLEMS_NOTES_DESCRIPTION,
+  PROBLEMS_NOTES_TITLE,
+  PROBLEMS_SUBTITLE,
+} from "@/lib/error-copy";
 import { scopeName, scopePath } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
@@ -20,6 +27,7 @@ import { useAuditOnMount, useAuditStore } from "@/stores/audit";
 import {
   useBlockedPlaces,
   useProblems,
+  useScanNotes,
   useUnreadableFiles,
 } from "@/stores/problems";
 
@@ -33,6 +41,9 @@ export function ProblemsPage() {
   // them from — and the page says so rather than reporting itself clean.
   const blocked = useBlockedPlaces();
   const unreadableFiles = useUnreadableFiles();
+  // Read, understood and needing nothing: kept off the count and out of
+  // the empty state above, so a clean machine still reads as clean.
+  const notes = useScanNotes();
   const busy = useAuditStore((s) => s.busy);
   const refresh = useAuditStore((s) => s.refresh);
   const adopt = useAuditStore((s) => s.adopt);
@@ -101,6 +112,19 @@ export function ProblemsPage() {
             </div>
           ) : null}
         </div>
+        {notes.length > 0 ? (
+          <Section
+            className={cn("mt-8", CONTENT_WIDTH)}
+            title={PROBLEMS_NOTES_TITLE}
+            description={PROBLEMS_NOTES_DESCRIPTION}
+          >
+            <div className="space-y-4">
+              {notes.map((warning) => (
+                <ScanNoteCard key={warning.path} warning={warning} />
+              ))}
+            </div>
+          </Section>
+        ) : null}
       </div>
     </div>
   );
