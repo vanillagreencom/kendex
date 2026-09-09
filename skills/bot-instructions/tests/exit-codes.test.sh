@@ -157,6 +157,35 @@ bi_record "$out"
 exact 'the other flag refusal names its own flag' \
   "bot-instructions: usage=--dry-run" "$bi_first" "$status" 2
 
+# A doctrine block carrying a heading trips a content refusal, which leaves
+# the spec read as an input failure rather than a spec one. The subject is
+# still the spec copy.
+badblock="$BI_TMP/spec-doctrine-heading"
+rm -rf -- "${badblock:?}"
+mkdir -p "$badblock/schemas"
+# A level-1 or level-2 heading would END the Doctrine section rather than sit
+# inside the block, so the refusal never sees it. This one stays in the body.
+printf -- '---\nmetadata:\n  version: "x"\n---\n\n## Doctrine\n\n### one\n\ntext\n\n#### a heading inside the block\n' \
+  > "$badblock/SKILL.md"
+cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" "$badblock/schemas/renders.md"
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main check --repo "$spec_repo" --spec "$badblock" ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'a doctrine content refusal names the spec copy under the input key' \
+  "bot-instructions: input=$(bi_real "$badblock")" "$bi_first" "$status" 2
+
+# A file the repository owns stops the render inside the writer, and that
+# refusal is about the repository, not the spec copy.
+owned_repo="$(bi_rendered_repo exit-owned-region)" || exit 1
+printf 'the repo wrote this itself\n' > "$owned_repo/.github/copilot-instructions.md"
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main render --repo "$owned_repo" ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'a file the repo owns refuses the render under the render key' \
+  "bot-instructions: render=$(bi_real "$owned_repo")" "$bi_first" "$status" 2
+
 # The launcher's two runtime refusals, which no case reached before. Each runs
 # the launcher with a PATH that produces the condition.
 launcher="$BI_ROOT/skills/bot-instructions/scripts/bot-instructions"
