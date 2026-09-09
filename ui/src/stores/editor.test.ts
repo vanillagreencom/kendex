@@ -331,6 +331,130 @@ describe("editor store", () => {
     expect(useEditorStore.getState().secretEdits).toEqual([secretEdit]);
   });
 
+  /// One rule for every read this store sends, in one table.
+  ///
+  /// Each site used to decide for itself whether a landed answer still
+  /// belonged on screen, and each checked one half: the scope but not the
+  /// picked file. A settings read committed into a scope the editor had
+  /// left, and two quick picks resolving out of order left the rows
+  /// describing one file while the draft targeted another. The rule is one
+  /// helper now, so a site cannot hold half of it — these rows drive all
+  /// three sites through the same question.
+  it("refuses every read the page has stopped asking for", async () => {
+    const settle: Record<string, (value: unknown) => void> = {};
+    const readOf = (file: string | null) => ({
+      status: "ok" as const,
+      data: {
+        ...settings(),
+        secrets: {
+          destination: {
+            file: file ?? ".env.local",
+            chosen: false,
+            state: { state: "ready" as const },
+          },
+          candidates: [],
+          base: "p1",
+        },
+      },
+    });
+
+    const rows: {
+      name: string;
+      send: () => Promise<void>;
+      moveOn: () => void;
+      wanted: string;
+    }[] = [
+      {
+        name: "a pick overtaken by a later pick",
+        send: () => useEditorStore.getState().pickSecretFile(".env.a"),
+        moveOn: () => useEditorStore.setState({ secretFile: ".env.b" }),
+        wanted: ".env.b",
+      },
+      {
+        name: "a pick overtaken by a place change",
+        send: () => useEditorStore.getState().pickSecretFile(".env.a"),
+        moveOn: () => useEditorStore.setState({ scope: VG }),
+        wanted: ".env.a",
+      },
+      {
+        name: "a confirmation read overtaken by a pick",
+        send: () => useEditorStore.getState().requestSave(),
+        moveOn: () => useEditorStore.setState({ secretFile: ".env.b" }),
+        wanted: ".env.b",
+      },
+    ];
+
+    for (const row of rows) {
+      useEditorStore.setState({
+        scope: { scope: "global" },
+        settings: null,
+        secretFile: null,
+        confirming: false,
+      });
+      vi.mocked(commands.getScopeSettings).mockImplementation(
+        (_scope, file) =>
+          new Promise((resolve) => {
+            settle[row.name] = () => resolve(readOf(file));
+          }),
+      );
+      const sent = row.send();
+      row.moveOn();
+      settle[row.name]?.(null);
+      await sent;
+      // The answer to a question nobody is asking any more never lands.
+      expect(useEditorStore.getState().settings, row.name).toBeNull();
+      expect(useEditorStore.getState().secretFile, row.name).toBe(
+        row.wanted === ".env.a" ? ".env.a" : row.wanted,
+      );
+      expect(useEditorStore.getState().confirming, row.name).toBe(false);
+    }
+
+    // The control: the same read, with the page still asking, lands.
+    useEditorStore.setState({
+      scope: { scope: "global" },
+      settings: null,
+      secretFile: null,
+    });
+    vi.mocked(commands.getScopeSettings).mockResolvedValue(readOf(".env.a"));
+    await useEditorStore.getState().pickSecretFile(".env.a");
+    expect(useEditorStore.getState().settings).not.toBeNull();
+  });
+
+  /// A destination that changed name moves the place even when neither
+  /// file exists, so neither base moved. Saving then would put a
+  /// credential typed for one file into another.
+  it("treats a changed destination name as a file that moved", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    const absent = (file: string) => ({
+      status: "ok" as const,
+      data: {
+        ...settings(),
+        secrets: {
+          destination: {
+            file,
+            chosen: false,
+            state: { state: "missing" as const, ignore: null },
+          },
+          candidates: [],
+          base: null,
+        },
+      },
+    });
+    vi.mocked(commands.getScopeSettings).mockResolvedValue(absent(".env.one"));
+    await useEditorStore.getState().load();
+    useEditorStore.getState().editSecret(secretEdit);
+
+    // Both bases stay null; only the name moves.
+    vi.mocked(commands.getScopeSettings).mockResolvedValue(absent(".env.two"));
+    await useEditorStore.getState().requestSave();
+    expect(useEditorStore.getState().stale).toBe(true);
+    expect(useEditorStore.getState().confirming).toBe(false);
+    expect(commands.saveCustomize).not.toHaveBeenCalled();
+  });
+
   /// Discard is this same reload, so it must come back to the project's
   /// own destination. A pick left in hand with nothing on screen saying so
   /// would be recorded by a later unrelated edit.

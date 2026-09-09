@@ -120,21 +120,52 @@ interface EditorState {
   save: () => Promise<void>;
 }
 
-/** Whether either file these rows were read from has been written since.
- *  Both bases are compared: a settings change moves the first and a
- *  credential written outside this page moves the second. */
+/** Whether the place these rows were read from is still the place they
+ *  describe.
+ *
+ *  Three things move it, and the third is not a byte in either file. Both
+ *  bases are compared: a settings change moves the first and a credential
+ *  written outside this page moves the second. The destination NAME is
+ *  compared with them, because a project pointed at a different private
+ *  file through `.kendex/settings.toml` moves neither base when both
+ *  files are absent — both stay null — and a save would then put a
+ *  credential typed for one file into another. */
 const moved = (held: ScopeSettings, now: ScopeSettings): boolean =>
   held.base !== now.base ||
-  (held.secrets?.base ?? null) !== (now.secrets?.base ?? null);
+  (held.secrets?.base ?? null) !== (now.secrets?.base ?? null) ||
+  (held.secrets?.destination.file ?? null) !==
+    (now.secrets?.destination.file ?? null);
 
 export const useEditorStore = create<EditorState>((set, get) => {
+  /** What this page is asking, captured before a read is sent.
+   *
+   *  Every read here is answered later, and by then the page may be
+   *  asking something else: another place, or another private file. A
+   *  call site that checked for itself checked for one of those and
+   *  forgot the other, twice — a settings read committed into a scope the
+   *  editor had left, and two quick picks resolving out of order left the
+   *  rows describing one file while the draft targeted another. So no
+   *  call site decides: a read is sent through here and its answer is
+   *  refused unless the page is still asking the same question. */
+  const asked = () => {
+    const { scope, secretFile } = get();
+    return {
+      scope,
+      secretFile,
+      /** Whether the page still wants this answer. */
+      current: () =>
+        sameScope(get().scope, scope) && get().secretFile === secretFile,
+    };
+  };
+
   const load = async () => {
     // Read the destination the PROJECT names, not the one picked here.
     // This is also the Save bar's Discard, and a reload that kept the
     // pick would leave it in hand with nothing on screen saying so — a
     // later unrelated edit would then record a destination the person
     // discarded. `opening` clears the pick with the rest of the draft.
-    const { scope } = get();
+    const ask = asked();
+    const { scope } = ask;
     set({ loading: true });
     let read: Awaited<ReturnType<typeof readPlace>>;
     try {
@@ -152,7 +183,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     // another project's name — and with the two bases matching, which
     // both files being absent is enough for, the next save writes the
     // value on screen into the wrong project's settings file.
-    if (!sameScope(get().scope, scope)) return;
+    if (!ask.current()) return;
     if (manifest.status === "error") {
       set({
         ...opening,
@@ -330,9 +361,9 @@ export const useEditorStore = create<EditorState>((set, get) => {
       // and which credentials are already in it are all answers about
       // that file, and none of them can be guessed from its name.
       set({ secretFile: file });
-      const { scope } = get();
-      const settings = await commands.getScopeSettings(scope, file);
-      if (!sameScope(get().scope, scope)) return;
+      const ask = asked();
+      const settings = await commands.getScopeSettings(ask.scope, file);
+      if (!ask.current()) return;
       if (settings.status === "error") {
         set({ error: settings.error });
         return;
@@ -349,9 +380,13 @@ export const useEditorStore = create<EditorState>((set, get) => {
       // opens: a project pointed at another private file since the
       // fields were filled in would otherwise be confirmed against the
       // file it used to have.
-      const { scope, secretFile, settings: held } = get();
-      const settings = await commands.getScopeSettings(scope, secretFile);
-      if (!sameScope(get().scope, scope)) return;
+      const ask = asked();
+      const held = get().settings;
+      const settings = await commands.getScopeSettings(
+        ask.scope,
+        ask.secretFile,
+      );
+      if (!ask.current()) return;
       if (settings.status === "error") {
         set({ error: settings.error, confirming: false });
         return;
