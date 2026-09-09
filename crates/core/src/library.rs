@@ -142,8 +142,9 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
         let Some(index) = index_by_scope.get(&item.scope) else {
             unreachable!("every observed scope was indexed");
         };
-        let package = index.of(&item);
-        let origin = observed_origin(env, records, &item, package.as_ref());
+        let claimed = index.of(&item);
+        let package = claimed.as_ref().map(|(package, _)| package.clone());
+        let origin = observed_origin(env, records, &item, claimed.as_ref());
         // Keyed by which observation it is as well: a tool reads more than
         // one root and one registry file holds every entry, so two things
         // it finds under one name are two installations rather than one
@@ -252,25 +253,21 @@ fn observed_origin(
     env: &Env,
     records: &mut crate::ownership::Records,
     item: &crate::model::ObservedItem,
-    package: Option<&PackageRef>,
+    claimed: Option<&identity::Claim>,
 ) -> Origin {
-    let recorded = package.and_then(|package| {
-        records
-            .lock
-            .entries
-            .get(&crate::lock::entry_key(
-                package.kind,
-                &package.name,
-                item.harness,
-            ))
-            .map(|entry| {
-                (
-                    entry.kind,
-                    entry.name.clone(),
-                    entry.source.clone(),
-                    entry.source_repo.clone(),
-                )
-            })
+    // The record that CLAIMED this position, not one held for the tool that
+    // observed it. A shared tree is written once and read by several tools,
+    // so most readers have no record of their own — asking for one would
+    // call the writer's own file unmanaged everywhere but at the writer.
+    let recorded = claimed.and_then(|(_, key)| {
+        records.lock.entries.get(key).map(|entry| {
+            (
+                entry.kind,
+                entry.name.clone(),
+                entry.source.clone(),
+                entry.source_repo.clone(),
+            )
+        })
     });
     let empty = Manifest::default();
     if let Some((kind, name, source, repo)) = recorded {

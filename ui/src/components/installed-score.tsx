@@ -31,7 +31,10 @@ export interface InstalledReading {
  *  from an unrelated catalog elsewhere on the machine is a different package.
  */
 export function useInstalledReading(
-  kind: ItemKind,
+  /** Null asks nothing: a caller with no declaration behind it has no
+   *  row to look up, and the address it would use belongs to whatever
+   *  package is recorded under it. */
+  kind: ItemKind | null,
   name: string,
   scopes: Scope[],
 ): InstalledReading {

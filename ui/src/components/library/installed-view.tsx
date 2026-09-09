@@ -108,11 +108,13 @@ export function InstalledView() {
     !packagesEverKnown && packagesRead.status === "failed"
       ? packagesRead
       : null;
-  // A read that failed has settled: it is not coming back on its own, and
-  // the rows it left are the last answer there is. Drawn as pending, the
-  // table would hold a skeleton for ever under a heading saying these are
-  // the last kendex could check.
-  const packagesSettled = packagesKnown || packagesRead.status === "failed";
+  // A read that failed has settled: it is not coming back on its own, so
+  // the table says so rather than holding a skeleton for ever. It does NOT
+  // draw rows from an answer about another scan — grouping the scan on
+  // screen against an older index is the duplication this page exists to
+  // remove, and calling the result "the last kendex could check" would be
+  // describing a state that never existed.
+  const packagesStale = !packagesKnown && packagesRead.status === "failed";
   // Kept in nav rather than here so leaving for a package page and coming
   // back lands on the same narrowed table.
   const search = useNavStore((s) => s.search);
@@ -149,7 +151,7 @@ export function InstalledView() {
 
   // Every group the scan holds, before any narrowing.
   const everywhere = useMemo(
-    () => (result ? groupItems(result.items, packageOf) : []),
+    () => (result && packageOf ? groupItems(result.items, packageOf) : []),
     [result, packageOf],
   );
   // Read from those, never from the filtered set: a standing answers for
@@ -163,7 +165,7 @@ export function InstalledView() {
     // installation wearing a package's clothes, which is the duplication
     // this page exists to stop. With the read failed and nothing retained
     // the note above stands in their place instead.
-    if (!result || !packagesSettled || packagesUnreadable) return [];
+    if (!result || !packageOf || packagesUnreadable) return [];
     const filtered = filterItems(result.items, {
       scope,
       harness: harness === "any" ? undefined : harness,
@@ -202,7 +204,6 @@ export function InstalledView() {
     search,
     provenance,
     packageOf,
-    packagesSettled,
     packagesUnreadable,
     editedAnywhere,
   ]);
@@ -210,9 +211,11 @@ export function InstalledView() {
   // The count the filtered total is measured against: every row the table
   // could show, not the ones left after the current narrowing. Shared with
   // Home's Installed tile so the two can never disagree.
+  // No number where the identity does not answer for this scan: a total
+  // counted from an older answer is not the last-known total.
   const total = useMemo(
-    () => (packagesUnreadable ? null : installedCount(everywhere)),
-    [everywhere, packagesUnreadable],
+    () => (packageOf ? installedCount(everywhere) : null),
+    [everywhere, packageOf],
   );
   // The filter's vocabulary is what the join actually says, so a value
   // is never offered that no row carries.
@@ -228,8 +231,9 @@ export function InstalledView() {
   // edited.
   const scanning =
     packagesUnreadable === null &&
+    !packagesStale &&
     (result === null ||
-      !packagesSettled ||
+      !packageOf ||
       (edited === "edited" && editedAnywhere === null));
   const hasAnyItems = (result?.items.length ?? 0) > 0;
   const filters: FilterSelection = { kind, harness, tag, from, edited };
@@ -290,7 +294,7 @@ export function InstalledView() {
             they stay — headed as the last answer that landed, not as
             confirmed ones. Neither reading turns unavailable evidence into
             a claim that a package is managed or that it is not. */}
-        {packagesRead.status === "failed" ? (
+        {packagesRead.status === "failed" || packagesStale ? (
           <div className={cn("pb-4", WIDE_CONTENT_WIDTH)}>
             <StatusNote
               tone={packagesUnreadable ? "critical" : "warning"}
@@ -388,7 +392,10 @@ export function InstalledView() {
                   );
                 })}
                 {scanning ? <InstalledSkeleton /> : null}
-                {!scanning && !packagesUnreadable && groups.length === 0 ? (
+                {!scanning &&
+                !packagesUnreadable &&
+                !packagesStale &&
+                groups.length === 0 ? (
                   <TableEmptyRow
                     hasAnyItems={hasAnyItems}
                     place={placeName}

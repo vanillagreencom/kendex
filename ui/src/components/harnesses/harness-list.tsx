@@ -74,11 +74,11 @@ export function HarnessList() {
             // ask the Library for the same place — one object, so neither
             // can be narrowed without the other.
             const place = { harness: id };
-            const counts = installedCountByKind(
-              result?.items ?? [],
-              place,
-              packageOf,
-            );
+            // No index means no count, which `uncounted` says in the
+            // badges' place.
+            const counts = packageOf
+              ? installedCountByKind(result?.items ?? [], place, packageOf)
+              : new Map();
             return (
               <HarnessRow
                 key={id}

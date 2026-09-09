@@ -66,7 +66,9 @@ export function PackageTabs({
 }) {
   // Read once here rather than in each of the two places it shows: the tab
   // and its panel are one claim, and two readings could disagree.
-  const safety = usePackageSafety(kind, name, scope);
+  // Keyed by scope, kind and name like the rest: asked for a page with no
+  // declaration behind it, it would report the other package's score.
+  const safety = usePackageSafety(declares ? kind : null, name, scope);
   // Only a page with a declaration behind it has these. Projects reads
   // each place's record and offers that declaration's update and removal;
   // Customize edits its manifest. On a page about an installation nothing

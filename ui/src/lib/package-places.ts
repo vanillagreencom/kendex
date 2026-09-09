@@ -6,6 +6,7 @@ import type {
   Scope,
   UpdateRow,
 } from "@/bindings";
+import { observedAt } from "@/lib/derive";
 import { sameScope, scopeKey } from "@/lib/scope";
 import { placeName, updatablePlaces } from "@/lib/update-groups";
 import { readUnsettled } from "@/lib/updates-read-state";
@@ -60,11 +61,15 @@ const removableIn = (
     // command as a skill has an installation under a name of its own, and
     // looking for the declared one would find no row and read kendex's own
     // copy as a stranger's.
+    // The file as well: one tool reads more than one root, so its kind,
+    // name and place do not tell a recorded copy from somebody's own, and
+    // picking the wrong row costs the package its Remove.
     const row = provenance.find(
       (one) =>
         one.kind === install.kind &&
         one.name === install.name &&
         one.harness === install.harness &&
+        one.at === observedAt(install) &&
         sameScope(one.scope, scope),
     );
     return row !== undefined && row.origin.origin !== "unmanaged";

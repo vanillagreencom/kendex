@@ -256,6 +256,35 @@ fn a_file_at_an_unclaimed_position_stays_nobody_s() {
     );
 }
 
+/// A shared tree is written by one tool's record and read by every tool.
+/// The record that claimed the position answers for where it came from —
+/// asking for a record held for the OBSERVING tool would call the writer's
+/// own file unmanaged everywhere but at the writer.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_claiming_record_answers_for_a_tree_every_tool_reads() {
+    let f = fixture_for("[skills.gh]\nsource = \"cat\"\n", "symlink", "\"cursor\"");
+    apply_now(&f);
+    let rows = observed(&rows(&f), &f);
+    let catalog = f.home.join("catalog");
+    let readers: Vec<_> = rows
+        .iter()
+        .filter(|row| row.package == package(ItemKind::Skill, "gh"))
+        .collect();
+    assert!(
+        readers.len() > 1,
+        "only the writing tool observed the shared tree: {readers:#?}"
+    );
+    for row in readers {
+        assert_eq!(
+            row.origin,
+            marketplace(&catalog),
+            "{} lost the claiming record's origin",
+            row.harness.name()
+        );
+    }
+}
+
 /// A registration is named for its command's stem, and two unrelated
 /// scripts can share one. The record keeps the whole command, so that is
 /// what has to match before a package is credited with an entry.

@@ -66,9 +66,18 @@ export function packageIndex(rows: ProvenanceRow[]): PackageOf {
 /** The same index for a component, rebuilt only when the join changes:
  *  every reader of a package's identity asks this one, so no two surfaces
  *  can key their rows differently. */
-export function usePackageIndex(): PackageOf {
+/** The identity of the scan on screen, or null where nothing can say it.
+ *
+ *  Null rather than an empty or older index, because the class of defect
+ *  this closes is a caller grouping the current scan against an answer
+ *  about a different one. There is no index to misuse: a caller either has
+ *  the one that answers for what it is drawing, or has nothing and must
+ *  say so. */
+export function usePackageIndex(): PackageOf | null {
   const rows = useProvenanceStore((s) => s.rows);
-  return useMemo(() => packageIndex(rows), [rows]);
+  const current = usePackagesKnown();
+  const index = useMemo(() => packageIndex(rows), [rows]);
+  return current ? index : null;
 }
 
 /** Whether the identity of the scan ON SCREEN is known.

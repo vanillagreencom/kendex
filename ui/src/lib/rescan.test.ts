@@ -211,3 +211,38 @@ describe("whether the join may be acted on", () => {
     expect(joinCurrent(useProvenanceStore.getState())).toBe(true);
   });
 });
+
+// Two callers want the join read after a scan lands — the rescan that
+// published it, and the app's effect watching for scans it did not start.
+// Asking twice costs a second whole-machine read whose failure would
+// replace the first read's success, so one coordinator answers both.
+describe("the join behind one landed scan", () => {
+  it("is read once however many callers ask for it", async () => {
+    await rescanEverything();
+    const generation = useScanStore.getState().generation;
+    vi.mocked(commands.libraryProvenance).mockClear();
+
+    // The app's own post-scan effect, on the scan the rescan just read for.
+    await useProvenanceStore.getState().ensureFor(generation);
+    await useProvenanceStore.getState().ensureFor(generation);
+
+    expect(vi.mocked(commands.libraryProvenance)).not.toHaveBeenCalled();
+    expect(
+      identityCurrent(
+        useProvenanceStore.getState().answeredFor,
+        useScanStore.getState().generation,
+      ),
+    ).toBe(true);
+  });
+
+  it("is read for a scan nothing has answered for yet", async () => {
+    await rescanEverything();
+    await useScanStore.getState().refresh();
+    vi.mocked(commands.libraryProvenance).mockClear();
+
+    await useProvenanceStore
+      .getState()
+      .ensureFor(useScanStore.getState().generation);
+    expect(vi.mocked(commands.libraryProvenance)).toHaveBeenCalledTimes(1);
+  });
+});

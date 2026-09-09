@@ -46,17 +46,21 @@ vi.mock("@/bindings", async (importOriginal) => ({
 }));
 
 const OURS: Origin = { origin: "marketplace", source: "cat", repo: "o/r" };
+const UNMANAGED: Origin = { origin: "unmanaged" };
 
 /** The join as the tab reads it: a row per place kendex owns. Vendor
  *  content carries no row at all, so a place left out here is one the
  *  tool ships. */
+// One row per observation, naming the file it was read from — the join
+// answers per file, so a fixture that named none would be about no
+// installation the tab can match.
 const ownedBy = (...owned: [Scope, Origin][]): ProvenanceRow[] =>
   owned.map(([scope, origin]) => ({
     scope,
     kind: "skill",
     name: "gh",
     harness: "claude",
-    at: null,
+    at: install(scope).path,
     origin,
     package: { kind: "skill", name: "gh" },
   }));
@@ -565,15 +569,32 @@ describe("a place whose copy the tool stores as another kind", () => {
   };
 
   it("still offers Remove for the copy kendex wrote", async () => {
-    // The join answers under what the scan saw, which is how it keys every
-    // row; the package it belongs to is what the row records.
+    // One tool, one place, two files under one kind and name: the rule
+    // kendex wrote, and somebody's own beside it. The unmanaged row sorts
+    // first, so a join that did not name the file would pick it and take
+    // the package's Remove away.
+    const mine: ObservedItem = {
+      ...install(VG, "cursor"),
+      kind: "agent",
+      name: "safety-gh",
+      path: "/p/.agents/safety-gh.mdc",
+    };
     joinSays([
       {
         scope: VG,
         kind: "agent",
         name: "safety-gh",
         harness: "cursor",
-        at: null,
+        at: mine.path,
+        origin: UNMANAGED,
+        package: null,
+      },
+      {
+        scope: VG,
+        kind: "agent",
+        name: "safety-gh",
+        harness: "cursor",
+        at: RULE.path,
         origin: OURS,
         package: { kind: "hook", name: "gh" },
       },

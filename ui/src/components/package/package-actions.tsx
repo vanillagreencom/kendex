@@ -165,7 +165,10 @@ export function PackageActions({
           {DELETE_LABEL}
         </Button>
       ) : null}
-      <ReportDialog scope={scope} name={name} kind={kind} />
+      {/* Reporting routes by scope, kind and name to the package's own
+          source; an installation nothing recorded has no source to route
+          to, and the address would reach the other package's. */}
+      {onDelete ? <ReportDialog scope={scope} name={name} kind={kind} /> : null}
     </div>
   );
 }

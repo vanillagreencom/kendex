@@ -105,7 +105,8 @@ const joined = (
   kind: "skill",
   name: "gh",
   harness,
-  at: null,
+  // The file the matching observation reads: the join answers per file.
+  at: install(scope, harness).path,
   origin,
   package: { kind: "skill", name: "gh" },
 });
@@ -118,7 +119,7 @@ const owned = (scopes: Scope[], origin: Origin = OURS): ProvenanceRow[] =>
     kind: "skill",
     name: "gh",
     harness: "claude",
-    at: null,
+    at: install(scope).path,
     origin,
     package: { kind: "skill", name: "gh" },
   }));

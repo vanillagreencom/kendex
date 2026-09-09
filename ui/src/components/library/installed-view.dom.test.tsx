@@ -774,10 +774,11 @@ describe("the Library while the identity read has not answered", () => {
   });
 
   // A read that failed after a scan has settled: it will not answer for
-  // that scan on its own, and its rows are the last answer there is.
-  // Treated as still pending, the table would hold a skeleton for ever
-  // under a heading saying these are the last kendex could check.
-  it("draws the last answer rather than waiting for one that failed", () => {
+  // that scan on its own. Its rows answer about an EARLIER scan, though,
+  // so they are not drawn beside the observations now on screen — grouping
+  // the two would show a state that never existed and call it the last
+  // kendex could check. The failure is said instead, with its retry.
+  it("says so rather than mixing an older answer with this scan", () => {
     const host = arrange({
       rows: [],
       loaded: true,
@@ -786,7 +787,8 @@ describe("the Library while the identity read has not answered", () => {
       read: readFailed("no lock"),
     });
     expect(skeleton(host)).toBe(false);
-    expect(rows(host)).toBe(1);
-    expect(host.textContent).toContain(PACKAGES_UNCONFIRMED_TITLE);
+    expect(rows(host)).toBe(0);
+    expect(host.textContent).toContain("no lock");
+    expect(host.textContent).toContain("—");
   });
 });

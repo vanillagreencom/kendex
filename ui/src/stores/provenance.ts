@@ -42,6 +42,15 @@ interface ProvenanceState {
    * boolean that was true for one instant. [joinCurrent] is the pair read
    * as the one question a gating caller asks. */
   reload: () => Promise<void>;
+  /** Make the join answer for one scan, once.
+   *
+   *  The single entry point for "a scan landed, so read the join behind
+   *  it". Two callers ask — the rescan that published the scan, and the
+   *  app's own effect watching for scans it did not start — and asking
+   *  twice costs a second whole-machine read whose failure would replace
+   *  the first read's success. Already answered for that scan, or already
+   *  reading toward it, is nothing to do. */
+  ensureFor: (generation: number) => Promise<void>;
 }
 
 /** Whether the rows are a landed read's answer with none on its way: true
@@ -111,6 +120,13 @@ export const useProvenanceStore = create<ProvenanceState>((set, get) => {
     read: READ_PENDING,
     reading: false,
     load: async () => {
+      await get().reload();
+    },
+    ensureFor: async (generation) => {
+      const { answeredFor, reading } = get();
+      // Already this scan's answer, or already on its way to one: a read
+      // that began after this scan landed will answer for it.
+      if (answeredFor === generation || reading) return;
       await get().reload();
     },
     // A read already out cannot answer for what has happened since it

@@ -30,6 +30,7 @@ import { useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
+import { joinAnswered } from "@/test/identity-join";
 import { PackagePage } from "./package";
 
 // The page is mounted against the real stores; only the backend is stubbed.
@@ -172,6 +173,23 @@ beforeEach(() => {
   });
 });
 
+/** The join answering about the scan now on screen: this installation is
+ *  the declared package, which is the identity the page's ref carries. In
+ *  the app the post-scan coordinator does this; here the test says it,
+ *  including after a write publishes a new scan. */
+const answerJoin = () =>
+  joinAnswered([
+    {
+      scope: VG,
+      kind: INSTALLED.kind,
+      name: INSTALLED.name,
+      harness: INSTALLED.harness,
+      at: INSTALLED.path,
+      origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+      package: { kind: INSTALLED.kind, name: INSTALLED.name },
+    },
+  ]);
+
 /** The page open on gh in vg, with the scan holding the one installation. */
 const openPage = async () => {
   useScanStore.setState({
@@ -182,6 +200,7 @@ const openPage = async () => {
       warnings: [],
     },
   });
+  answerJoin();
   useNavStore.setState({
     page: "package",
     packageRef: { kind: "skill", name: "gh", scope: VG, identity: "recorded" },
@@ -296,6 +315,11 @@ const pressUpdate = async (host: HTMLElement) => {
     update.click();
   });
   await settle();
+  // The write rescans, so the join answers for that new scan the way the
+  // app's own coordinator does.
+  await act(async () => {
+    answerJoin();
+  });
   await openTab(host, OVERVIEW_TAB);
 };
 

@@ -273,9 +273,11 @@ export function ProjectList() {
         <ProjectCard
           name="Personal"
           subtitle="Works in every project on this computer"
-          counts={[
-            ...installedCountByKind(items, personal, packageOf).entries(),
-          ]}
+          counts={
+            packageOf
+              ? [...installedCountByKind(items, personal, packageOf).entries()]
+              : []
+          }
           uncounted={uncounted}
           emptyLabel="Nothing from kendex yet."
           onOpen={() => goToLibrary(personal)}
@@ -310,9 +312,17 @@ export function ProjectList() {
                 name={name}
                 subtitle={root}
                 path={root}
-                counts={[
-                  ...installedCountByKind(items, place, packageOf).entries(),
-                ]}
+                counts={
+                  packageOf
+                    ? [
+                        ...installedCountByKind(
+                          items,
+                          place,
+                          packageOf,
+                        ).entries(),
+                      ]
+                    : []
+                }
                 uncounted={uncounted}
                 emptyLabel="Nothing from kendex yet."
                 badge={badgeFor(root, result?.missingProjects ?? [], flagged)}

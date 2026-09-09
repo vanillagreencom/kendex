@@ -94,7 +94,7 @@ export function OverviewPage() {
   const packagesKnown = usePackagesKnown();
   const packagesRead = usePackagesRead();
   const groups = useMemo(
-    () => (result ? groupItems(result.items, packageOf) : []),
+    () => (result && packageOf ? groupItems(result.items, packageOf) : []),
     [result, packageOf],
   );
 
@@ -195,7 +195,16 @@ export function OverviewPage() {
           ) : null}
 
           <Section title="Recently changed">
-            {result ? <RecentActivity groups={recent} /> : <RecentSkeleton />}
+            {/* Recently changed is a list of packages, so it waits on the
+                same read the tile waits on: grouped against an answer
+                about another scan it would show the duplicate names and
+                kinds this page exists to be rid of, and its rows would
+                narrow the Library to a kind they do not have. */}
+            {result && packageOf ? (
+              <RecentActivity groups={recent} />
+            ) : (
+              <RecentSkeleton />
+            )}
           </Section>
 
           <Section title="At a glance">

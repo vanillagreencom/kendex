@@ -104,9 +104,12 @@ export function PackagePage() {
   // package and an installation nothing recorded can wear one kind and name
   // and would otherwise open each other's page — its files, chips and diff
   // target from one of them, its meta, versions and Delete from the other.
+  // Nothing to find until the identity answers for the scan on screen:
+  // grouping it against an older answer would open a row that is not the
+  // one the link named.
   const group = useMemo(
     () =>
-      ref && result
+      ref && result && packageOf
         ? groupFor(groupItems(result.items, packageOf), ref, packagesKnown)
         : null,
     [ref, result, packageOf, packagesKnown],
@@ -122,20 +125,28 @@ export function PackagePage() {
   // Why this place has no Update, or null when nothing withholds one. A
   // string, so this selector answers the same value on every render that
   // changes nothing.
-  const withheld = useUpdatesStore((s) => packageUpdateNote(s, ref));
+  // Every value below is read out of the records by scope, kind and name —
+  // the declaration's address, which an installation nothing recorded
+  // shares with whatever package IS recorded under it. So each is asked
+  // only for a page that speaks for a declaration; `declaring` is the one
+  // decision, and a page without one shows none of them rather than the
+  // other package's.
+  const declaring = ref !== null && addressesDeclaration(ref);
+  const asked = declaring ? ref : null;
+  const withheld = useUpdatesStore((s) => packageUpdateNote(s, asked));
   // How the update read itself is standing, which is about the machine rather
   // than about this package, and silent where it has a row for this place. A
   // string, for the same reason.
-  const standing = useUpdatesStore((s) => updatesReadNote(s, ref));
+  const standing = useUpdatesStore((s) => updatesReadNote(s, asked));
   // Why this package is installed when nobody asked for it: the package
   // that requires it, named. A string, so this selector answers the same
   // value on every render that changes nothing.
-  const requiredBy = useUpdatesStore((s) => packageRequiredBy(s, ref));
+  const requiredBy = useUpdatesStore((s) => packageRequiredBy(s, asked));
   // A fork the person has since edited by hand: part of what the package
   // is, said beside the fork badge rather than as something to settle.
-  const forkEdited = useUpdatesStore((s) => packageForkEdited(s, ref));
+  const forkEdited = useUpdatesStore((s) => packageForkEdited(s, asked));
 
-  const mark = usePackageMark(group);
+  const mark = usePackageMark(declaring ? group : null);
   // The package can still be installed elsewhere while this place has no
   // copy of it — a page about a place that does not have it has nothing
   // to show and no actions that would land anywhere.
@@ -166,7 +177,7 @@ export function PackagePage() {
   // installation itself — its files, its places, its details — and taking
   // it off the machine remains the Not-managed path's, which addresses the
   // file rather than a declaration.
-  const declares = addressesDeclaration(ref);
+  const declares = declaring;
 
   const displayName = packageDisplayName(ref);
   const installed = installedRow(versions);

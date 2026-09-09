@@ -20,6 +20,11 @@ use crate::env::Env;
 use crate::lock::Lock;
 use crate::model::{FileState, HarnessId, ItemKind, ObservedItem, Scope};
 
+/// Which record established a package, by the key its lock entry is held
+/// under. The package says WHAT an installation is; this says which record
+/// said so, and a record belongs to one tool.
+pub(super) type Claim = (PackageRef, String);
+
 /// The package one installation belongs to: the kind and name its
 /// declaration carries, which is the identity the manifest, the records
 /// and every mutation speak.
@@ -43,7 +48,7 @@ pub(super) struct Recorded {
     ///
     /// `None` where two records claim one position: the records do not say
     /// which package it is, and neither may speak for it.
-    by_artifact: HashMap<PathBuf, Option<PackageRef>>,
+    by_artifact: HashMap<PathBuf, Option<Claim>>,
     /// The registry entry one hook install recorded writing, named the way
     /// the scan names what it reads back, with the command it recorded.
     /// The name reduces a command to its stem, which two different scripts
@@ -58,25 +63,21 @@ pub(super) struct Recorded {
 /// with, whole.
 #[derive(Clone, PartialEq, Eq)]
 struct Registered {
-    package: PackageRef,
+    claim: Claim,
     command: String,
 }
 
 /// Record one package's claim on a position. Two records claiming one
 /// position leave it unclaimed: the records do not say which package it
 /// is, and crediting either would be a guess.
-fn claim(
-    by_artifact: &mut HashMap<PathBuf, Option<PackageRef>>,
-    at: PathBuf,
-    package: &PackageRef,
-) {
+fn claim(by_artifact: &mut HashMap<PathBuf, Option<Claim>>, at: PathBuf, held: &Claim) {
     match by_artifact.get(&at) {
-        Some(Some(known)) if known == package => {}
+        Some(Some(known)) if known == held => {}
         Some(_) => {
             by_artifact.insert(at, None);
         }
         None => {
-            by_artifact.insert(at, Some(package.clone()));
+            by_artifact.insert(at, Some(held.clone()));
         }
     }
 }
@@ -97,10 +98,13 @@ pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
     let mut by_registration = HashMap::new();
     let mut declared: HashMap<(HarnessId, ItemKind), Vec<String>> = HashMap::new();
     for entry in lock.entries.values() {
-        let package = PackageRef {
-            kind: entry.kind,
-            name: entry.name.clone(),
-        };
+        let held: Claim = (
+            PackageRef {
+                kind: entry.kind,
+                name: entry.name.clone(),
+            },
+            crate::lock::entry_key(entry.kind, &entry.name, entry.harness),
+        );
         for path in crate::engine::owned::installed(env, scope, entry).files {
             // Both spellings, because a switched-off artifact is observed
             // under the name the rename gave it while the record still
@@ -111,7 +115,7 @@ pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
                 resolved(&crate::engine::disabled_name(&path)),
                 resolved(&path),
             ] {
-                claim(&mut by_artifact, position, &package);
+                claim(&mut by_artifact, position, &held);
             }
         }
         if entry.kind == ItemKind::Hook
@@ -131,17 +135,17 @@ pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
                     &registration.command,
                 ),
             );
-            let held = Registered {
-                package: package.clone(),
+            let entry_held = Registered {
+                claim: held.clone(),
                 command: registration.command.clone(),
             };
             match by_registration.get(&key) {
-                Some(Some(known)) if *known == held => {}
+                Some(Some(known)) if *known == entry_held => {}
                 Some(_) => {
                     by_registration.insert(key, None);
                 }
                 None => {
-                    by_registration.insert(key, Some(held));
+                    by_registration.insert(key, Some(entry_held));
                 }
             }
         }
@@ -167,7 +171,7 @@ impl Recorded {
     /// this item under. Nothing below that: an unrecorded observation is
     /// this reader's own and stays its own, because a name two packages
     /// happen to share is not evidence that either wrote the file.
-    pub(super) fn of(&self, item: &ObservedItem) -> Option<PackageRef> {
+    pub(super) fn of(&self, item: &ObservedItem) -> Option<Claim> {
         // An observation with a position of its own is answered by that
         // position and nothing else: a file where no record claims one is
         // somebody else's, whatever it is called.
@@ -191,7 +195,7 @@ impl Recorded {
             return held
                 .as_ref()
                 .filter(|held| item.description.as_deref() == Some(held.command.as_str()))
-                .map(|held| held.package.clone());
+                .map(|held| held.claim.clone());
         }
         self.named(item)
     }
@@ -210,15 +214,20 @@ impl Recorded {
     /// Reached only where there is no position to ask instead. A name is
     /// not evidence about a file, so a path nothing claims never falls
     /// through to here.
-    fn named(&self, item: &ObservedItem) -> Option<PackageRef> {
+    fn named(&self, item: &ObservedItem) -> Option<Claim> {
         let names = self.declared.get(&(item.harness, item.kind))?;
         let mut found = names
             .iter()
             .filter(|declared| crate::ownership::matches_name(item.kind, declared, &item.name));
         let first = found.next()?;
-        found.next().is_none().then(|| PackageRef {
-            kind: item.kind,
-            name: first.clone(),
+        found.next().is_none().then(|| {
+            (
+                PackageRef {
+                    kind: item.kind,
+                    name: first.clone(),
+                },
+                crate::lock::entry_key(item.kind, first, item.harness),
+            )
         })
     }
 }

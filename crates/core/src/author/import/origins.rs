@@ -71,9 +71,13 @@ pub(super) fn origins_of(
     row: &crate::library::ProvenanceRow,
     observed: &BTreeMap<(Scope, ItemKind, String), PathBuf>,
 ) -> Vec<OriginRead> {
+    // Judged as the kind it IS, not as the kind a tool stores it under: a
+    // hook's script read as agent markdown is refused as malformed for a
+    // shape it never claimed.
+    let package = row.package_ref();
     reads(env, row, observed)
         .into_iter()
-        .map(|read| offered(row.kind, read))
+        .map(|read| offered(package.kind, read))
         .collect()
 }
 
@@ -202,7 +206,13 @@ fn marketplace_origins(
         read_from: Some(path.clone()),
     }];
     // The installed copy, when it diverged: read at its observed path.
-    if let Some(installed) = observed.get(&(row.scope.clone(), row.kind, row.name.clone()))
+    //
+    // Only where the tool stores this package as what it is. A rendering —
+    // a hook written as a Cursor rule, a command written as a skill tree —
+    // is not a source form of the package, and offering it as one would
+    // put a `.mdc` into a catalog's hook slot.
+    if package.kind == row.kind
+        && let Some(installed) = observed.get(&(row.scope.clone(), row.kind, row.name.clone()))
         && let Some(edited) = installed
             .parent()
             .and_then(|parent| SealedSource::open(parent).ok())
@@ -236,8 +246,10 @@ fn catalog_bytes(
 ) -> Option<(Bytes, String, PathBuf)> {
     let sealed = SealedSource::open(root).ok()?;
     let config = crate::source::source_config_for(&sealed, provenance).ok()?;
-    let path = crate::source::find_item(&sealed, &config, row.kind, &row.name)?;
-    let bytes = read_bytes(&sealed, row.kind, &path)?;
+    // A catalog holds this under the name it was declared as.
+    let package = row.package_ref();
+    let path = crate::source::find_item(&sealed, &config, package.kind, &package.name)?;
+    let bytes = read_bytes(&sealed, package.kind, &path)?;
     let location = crate::paths::slashed(&root.join(rel_path(&sealed, &path)));
     Some((bytes, location, path))
 }

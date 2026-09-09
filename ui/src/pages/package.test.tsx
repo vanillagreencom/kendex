@@ -1192,6 +1192,35 @@ describe("a package page opened on an installation nothing recorded", () => {
 
   // The row it IS about stays inspectable: what the tool holds, where, and
   // how to open it. Taking it off the machine is the Not-managed path's.
+  // Not only the tabs and the buttons: every value the header and the
+  // strip draw is read out of the records by scope, kind and name, which
+  // the recorded package shares. None of them may be that package's.
+  it("shows no state read out of the other package's records", async () => {
+    // The recorded gh is customized in this very place. Read by scope,
+    // kind and name — the address this observed file shares — that mark
+    // would sit on the header of a page about a file the records know
+    // nothing about.
+    useEditorStore.setState({
+      saved: { [scopeKey(VG)]: CUSTOMIZED as never },
+    });
+    useUpdatesStore.setState({ rows: [updateRow(VG)], read: READ_LANDED });
+    const host = await openObserved();
+    const text = host.textContent ?? "";
+    // None of the recorded package's state belongs to this page.
+    expect(text).not.toContain("Customized");
+    expect(text).not.toContain(UPDATE_LABEL);
+    expect(
+      Array.from(host.querySelectorAll('[role="tab"]')).map(
+        (one) => one.textContent,
+      ),
+    ).toEqual([
+      OVERVIEW_TAB,
+      // The safety tab keeps its place; what it must not carry is the
+      // other package's reading.
+      expect.stringContaining(SAFETY_TAB),
+    ]);
+  });
+
   it("still shows the installation itself", async () => {
     const host = await openObserved();
     expect(host.textContent).toContain("gh");
