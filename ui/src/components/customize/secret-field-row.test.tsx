@@ -128,8 +128,9 @@ describe("SecretFieldRow", () => {
 
   /// The explanation is reachable by pointer, keyboard and screen reader
   /// alike, and it names the destination the read resolved — never the
-  /// value.
-  it("carries the same explanation in the trigger as in the popup", () => {
+  /// value. A static render shows the trigger's own copy; the popup reads
+  /// the same value, so the two cannot say different things.
+  it("carries the explanation in the trigger, naming the resolved file", () => {
     const html = renderToStaticMarkup(
       <SecretFieldRow
         skill="linear"
@@ -142,6 +143,25 @@ describe("SecretFieldRow", () => {
     ).replaceAll("&#x27;", "'");
     expect(html).toContain(secretFieldHelp(".env.secrets"));
     expect(html).toContain(SECRET_REQUIRED);
+  });
+
+  /// The tooltip repeats the section's safety claim, so it has to stop
+  /// making it where the destination refuses — the warning beside it
+  /// often says git carries that very file.
+  it("claims nothing about git where the destination refuses", () => {
+    const html = renderToStaticMarkup(
+      <SecretFieldRow
+        skill="linear"
+        row={row()}
+        file=".env.local"
+        writable={false}
+        onEdit={() => {}}
+        onCancel={() => {}}
+      />,
+    ).replaceAll("&#x27;", "'");
+    expect(html).toContain(secretFieldHelp(".env.local", false));
+    expect(html).not.toContain(secretFieldHelp(".env.local"));
+    expect(html).not.toMatch(/keeps out of git/);
   });
 
   /// Nothing may be written where the destination refuses, so the control

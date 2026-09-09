@@ -19,6 +19,7 @@ import {
   SETTINGS_TEMPLATE_INVALID_NOTE,
   SETTINGS_TEMPLATE_UNREADABLE,
   secretsHelp,
+  secretsHelpRefused,
   templateFindingLine,
 } from "@/lib/copy-customize";
 import { secretEditIn, secretsIn, withoutSecretEdit } from "@/lib/secret-rows";
@@ -143,7 +144,11 @@ export function SkillSettings({
       {secrets.length > 0 && secretsView ? (
         <Section
           title={SECRETS_SECTION}
-          description={secretsHelp(secretsView.destination.file)}
+          description={
+            secretsView.destination.state.state === "refused"
+              ? secretsHelpRefused(secretsView.destination.file)
+              : secretsHelp(secretsView.destination.file)
+          }
         >
           <SecretDestination
             secrets={secretsView}

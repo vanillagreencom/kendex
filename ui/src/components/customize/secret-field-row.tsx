@@ -73,6 +73,11 @@ export function SecretFieldRow({
   // may be one core will not write over — assigned more than once, or in a
   // shape kendex does not write — which is what leaves it unknown.
   const settable = writable && row.current.state !== "unknown";
+  // One value behind both places the explanation appears. The popup and
+  // the trigger's own text have to say the same thing, and only one of
+  // them is on screen at a time — so the way to keep them from drifting
+  // is for there to be one of them.
+  const help = secretFieldHelp(file, writable);
 
   const close = () => {
     setOpen(false);
@@ -93,11 +98,9 @@ export function SecretFieldRow({
               aria-label={`${SECRET_HELP_LABEL}: ${row.key}`}
             >
               <Info className="size-3.5" />
-              <span className="sr-only">{secretFieldHelp(file)}</span>
+              <span className="sr-only">{help}</span>
             </TooltipTrigger>
-            <TooltipContent className="max-w-72">
-              {secretFieldHelp(file)}
-            </TooltipContent>
+            <TooltipContent className="max-w-72">{help}</TooltipContent>
           </Tooltip>
           <State row={row} />
           {row.required ? (

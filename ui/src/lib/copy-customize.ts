@@ -121,6 +121,12 @@ export const SECRETS_SECTION = "Keys and tokens";
  *  what the field's explainer shows. */
 export const secretsHelp = (file: string): string =>
   `Saved in ${file}, which git does not carry and which the packages installed here read.`;
+/** The same line for a destination nothing may be written to. It states
+ *  where a value WOULD go and claims nothing about git, because the
+ *  refusal below it often says git carries that very file — and a section
+ *  that contradicts its own warning teaches a reader to trust neither. */
+export const secretsHelpRefused = (file: string): string =>
+  `This package's keys would go in ${file}. Nothing can be saved there yet.`;
 export const SECRET_NOT_SET = "Not set";
 export const SECRET_SET = "Set";
 export const SECRET_UNKNOWN = "Can't check";
@@ -140,8 +146,10 @@ export const SECRET_HELP_LABEL = "What happens to this key";
 /** The one explanation behind every field's info icon: what a secret is,
  *  where it goes, and what git does with it. Built from the destination
  *  the read resolved, never from a name typed here. */
-export const secretFieldHelp = (file: string): string =>
-  `This is a secret. It is never written into your project's committed configuration — it is saved to ${file}, the private file this project keeps out of git.`;
+export const secretFieldHelp = (file: string, writable = true): string =>
+  writable
+    ? `This is a secret. It is never written into your project's committed configuration — it is saved to ${file}, the private file this project keeps out of git.`
+    : `This is a secret. It is never written into your project's committed configuration. It would go to ${file}, which can't be saved to yet.`;
 
 // Where secrets go, and choosing somewhere else.
 export const SECRET_FILE_LABEL = "Kept in";

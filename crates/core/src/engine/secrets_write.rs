@@ -163,8 +163,9 @@ fn write(
     if current.as_deref() == Some(text.as_str()) || (current.is_none() && text.is_empty()) {
         return Ok(Vec::new());
     }
+    let said = Said::of(&changed, &draft.edits, &target.file);
     ops.push(PlannedOp {
-        description: format!("Store {} in {}", changed.join(", "), target.file).into(),
+        description: said.description.into(),
         op: Op::WritePrivateFile {
             // The copy the rows were read from, so a writer that landed
             // after the person opened the page is refused rather than
@@ -174,9 +175,52 @@ fn write(
             bytes: text.into_bytes(),
         },
     });
-    Ok(vec![format!(
-        "{} is stored in {}, which git does not carry",
-        changed.join(", "),
-        target.file
-    )])
+    Ok(said.notes)
+}
+
+/// What this write is called, in the plan and in the notes.
+///
+/// One save can both store a key and take another one out, and the two
+/// are opposite actions on the same file. A line naming them together
+/// tells a person the wrong one — worst of all in a rollback report,
+/// which is read precisely when nobody is sure what was attempted.
+struct Said {
+    description: String,
+    notes: Vec<String>,
+}
+
+impl Said {
+    fn of(changed: &[String], edits: &[SecretEdit], file: &str) -> Said {
+        let named = |stored: bool| -> Vec<&str> {
+            changed
+                .iter()
+                .filter(|key| {
+                    edits
+                        .iter()
+                        .find(|edit| &&edit.key == key)
+                        .is_some_and(|edit| edit.stores() == stored)
+                })
+                .map(String::as_str)
+                .collect()
+        };
+        let stored = named(true);
+        let cleared = named(false);
+        let mut parts = Vec::new();
+        let mut notes = Vec::new();
+        if !stored.is_empty() {
+            parts.push(format!("store {}", stored.join(", ")));
+            notes.push(format!(
+                "{} is stored in {file}, which git does not carry",
+                stored.join(", ")
+            ));
+        }
+        if !cleared.is_empty() {
+            parts.push(format!("clear {}", cleared.join(", ")));
+            notes.push(format!("{} is taken out of {file}", cleared.join(", ")));
+        }
+        Said {
+            description: format!("Update {file} ({})", parts.join("; ")),
+            notes,
+        }
+    }
 }

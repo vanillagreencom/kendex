@@ -15,6 +15,7 @@ import {
   SETTINGS_TEMPLATE_INVALID_NOTE,
   SETTINGS_TEMPLATE_UNREADABLE,
   secretsHelp,
+  secretsHelpRefused,
   settingDiffers,
 } from "@/lib/copy-customize";
 import { mount } from "@/test/dom";
@@ -328,6 +329,43 @@ describe("SkillSettings", () => {
     expect(html).toContain("GH_TOKEN");
     // And the public section is still its own, with its own help.
     expect(html).toContain(SETTINGS_HELP);
+  });
+
+  /// A section that says git does not carry the file, over a warning
+  /// saying git tracks it, teaches a reader to trust neither. The
+  /// destination's own state decides which sentence is true.
+  it("claims nothing about git where the destination refuses", () => {
+    const read = place({
+      state: "rows",
+      rows: [],
+      secrets: [
+        {
+          key: "GH_TOKEN",
+          explainer: ["What the token lets it do."],
+          required: true,
+          current: { state: "unknown", reason: "git already tracks it" },
+        },
+      ],
+    });
+    const html = render({
+      ...read,
+      secrets: {
+        destination: {
+          file: ".env.local",
+          chosen: false,
+          state: {
+            state: "refused",
+            problem: "git already tracks .env.local",
+            fix: "run git rm --cached -- .env.local",
+          },
+        },
+        candidates: [],
+        base: null,
+      },
+    });
+    expect(html).toContain(secretsHelpRefused(".env.local"));
+    expect(html).not.toContain(secretsHelp(".env.local"));
+    expect(html).not.toMatch(/git does not carry/);
   });
 
   /// A key one package declares a setting and another a credential is

@@ -172,6 +172,36 @@ describe("saveGroups", () => {
     ]);
   });
 
+  /// A destination nothing can be written to is not a choice a save can
+  /// make: core refuses the plan, so promising a KENDEX_ENV_FILE write
+  /// would promise one that never happens.
+  it("claims no settings write for a destination that refuses", () => {
+    expect(
+      saveGroups({
+        manifestDirty: false,
+        manifestFile: "kendex.toml",
+        settingsEdits: [],
+        secretEdits: [],
+        pickedFile: ".env.tracked",
+        settings: settings({
+          secrets: {
+            destination: {
+              file: ".env.tracked",
+              chosen: false,
+              state: {
+                state: "refused",
+                problem: "git already tracks .env.tracked",
+                fix: "run git rm --cached",
+              },
+            },
+            candidates: [],
+            base: null,
+          },
+        }),
+      }),
+    ).toEqual([]);
+  });
+
   /// A pick that changes nothing is not a change: the project already
   /// names that file, so the save writes no key and the summary claims
   /// none.

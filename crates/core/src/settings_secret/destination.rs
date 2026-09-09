@@ -102,16 +102,24 @@ pub fn destination_layered(
     layers: &[Option<String>],
     want: Option<&str>,
 ) -> Destination {
-    // The last layer that answers is the one the loaders honour, so the
-    // walk runs from the top down and stops at the first answer.
+    // The last layer that ASSIGNS the key is the one the loaders honour,
+    // so the walk runs from the top down and stops at the first
+    // assignment — not at the first non-empty one. An empty assignment is
+    // an answer there: the shell reads `${KENDEX_ENV_FILE:-}` off it and
+    // resolves the default, and a walk that read past it would take a
+    // filename from a layer the loaders have already overwritten.
     let answered = layers.iter().enumerate().rev().find_map(|(at, text)| {
         match text.as_deref().map(configured_file) {
-            None | Some(Ok(None)) => None,
+            None | Some(Ok(Assigned::Absent)) => None,
             Some(answer) => Some((at, answer)),
         }
     });
     let (from, named) = match answered {
-        Some((at, Ok(named))) => (at, named),
+        // Empty resolves to the default here exactly as it does in the
+        // shell, and it still stops the walk.
+        Some((at, Ok(Assigned::Empty))) => (at, Some(DEFAULT_ENV_FILE.to_owned())),
+        Some((at, Ok(Assigned::Named(named)))) => (at, Some(named)),
+        Some((_, Ok(Assigned::Absent))) => (0, None),
         Some((_, Err(problem))) => return refused_selector(problem),
         None => (0, None),
     };
@@ -174,18 +182,30 @@ fn refused_selector(problem: String) -> Destination {
     }
 }
 
-/// The file this project names for its secrets: a readable value, no
-/// value, or why nothing can read the one that is there.
+/// What one settings layer says about the key.
+///
+/// Absent and empty are held apart because the loaders hold them apart: a
+/// layer that assigns nothing leaves the layer below it deciding, while
+/// one that assigns the empty string has decided — on the default.
+enum Assigned {
+    Absent,
+    Empty,
+    Named(String),
+}
+
+/// The file this settings layer names for its secrets: nothing, the empty
+/// assignment, a name, or why nothing can read the one that is there.
 ///
 /// Read through the same view of the settings file the settings rows come
 /// from, so kendex and the shipped loaders resolve one key one way.
-fn configured_file(settings: &str) -> std::result::Result<Option<String>, String> {
+fn configured_file(settings: &str) -> std::result::Result<Assigned, String> {
     let sites = crate::settings_file::sites(settings);
     match crate::settings_file::current_of(&sites, super::ENV_FILE_KEY) {
-        crate::settings_file::Current::Absent => Ok(None),
-        crate::settings_file::Current::Value { value, .. } => {
-            Ok(Some(value).filter(|value| !value.trim().is_empty()))
-        }
+        crate::settings_file::Current::Absent => Ok(Assigned::Absent),
+        crate::settings_file::Current::Value { value, .. } => Ok(match value.trim().is_empty() {
+            true => Assigned::Empty,
+            false => Assigned::Named(value),
+        }),
         crate::settings_file::Current::Ambiguous { problem, lines } => Err(format!(
             "kendex.settings.toml assigns {} in a shape no script reads — {problem}: {}",
             super::ENV_FILE_KEY,

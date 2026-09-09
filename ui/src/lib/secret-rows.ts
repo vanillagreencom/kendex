@@ -46,13 +46,20 @@ export function withoutSecretEdit(
 }
 
 /** Whether picking this file is a change the project does not already
- *  hold. Picking the file a project already names is no change at all, and
- *  neither is picking nothing. */
+ *  hold and a save could actually make.
+ *
+ *  Three things have to hold. Somebody picked one; the project does not
+ *  already name it; and the destination is one a value may go to. A
+ *  refused destination is the last of those: core refuses the plan, so
+ *  raising Save and promising to record the choice would promise a write
+ *  that never happens. */
 export function choosesFile(
   read: ScopeSettings | null,
   picked: string | null,
 ): boolean {
-  return picked !== null && read?.secrets?.destination.chosen === false;
+  const destination = read?.secrets?.destination;
+  if (picked === null || !destination || destination.chosen) return false;
+  return destination.state.state !== "refused";
 }
 
 /** The secret half of a save, or null where this draft has none.

@@ -487,6 +487,40 @@ fn the_higher_settings_layer_names_the_private_file() {
     assert!(!read.view.destination.chosen);
 }
 
+/// An empty assignment in the higher layer is an answer, not a silence.
+/// The shell reads `${KENDEX_ENV_FILE:-}` off it and resolves `.env.local`,
+/// so a walk that read past it would take a filename from a layer the
+/// loaders have already overwritten — and Customize would write one file
+/// while every package read another.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_empty_assignment_in_the_higher_layer_resolves_to_the_default() {
+    let f = fixture(true);
+    fs::create_dir_all(f.project.join(".kendex")).unwrap();
+    let root = "[env]\nKENDEX_ENV_FILE = \".env.root\"\n";
+    fs::write(f.project.join("kendex.settings.toml"), root).unwrap();
+    fs::write(
+        f.project.join(".kendex/settings.toml"),
+        "[env]\nKENDEX_ENV_FILE = \"\"\n",
+    )
+    .unwrap();
+
+    let layers = kendex_core::settings_secret::settings_layers(&f.project, Some(root)).unwrap();
+    assert_eq!(
+        destination_layered(&f.project, &layers, None).file,
+        ".env.local"
+    );
+
+    // The control: the same layer assigning nothing at all leaves the
+    // root file deciding.
+    fs::write(f.project.join(".kendex/settings.toml"), "[env]\n").unwrap();
+    let layers = kendex_core::settings_secret::settings_layers(&f.project, Some(root)).unwrap();
+    assert_eq!(
+        destination_layered(&f.project, &layers, None).file,
+        ".env.root"
+    );
+}
+
 /// And a choice that layer would override is refused rather than written
 /// into a file the packages read first.
 #[test]

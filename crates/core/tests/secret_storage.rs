@@ -36,6 +36,10 @@ const DUMMY: &str = "lin_api_dummy_0aF9";
 /// the Linear skill ships.
 const TEMPLATE: &str = "[env]\n# Which team.\nLINEAR_TEAM = \"\" # required\n\n[secrets]\n# The API key every call authenticates with.\nLINEAR_API_KEY = \"\" # required\n";
 
+/// The same package declaring a second credential, for the cases about
+/// one save doing two different things.
+const SHARED_TEMPLATE: &str = "[secrets]\n# The API key.\nLINEAR_API_KEY = \"\" # required\n\n# Another key.\nOTHER_KEY = \"\"\n";
+
 #[allow(clippy::unwrap_used)]
 fn git(dir: &Path, args: &[&str]) {
     // The caller's git environment is dropped: run from a commit hook,
@@ -338,6 +342,35 @@ fn a_project_nested_in_a_repository_still_gets_its_ignore_entry() {
         fs::read_to_string(f.private(".env.local")).unwrap(),
         format!("LINEAR_API_KEY='{DUMMY}'\n")
     );
+}
+
+/// Storing and clearing are opposite actions on one file, and one save can
+/// do both. The line a plan shows, and the note a rollback report carries,
+/// have to name which happened to which key: read at the moment nobody is
+/// sure what was attempted, a line saying a removed key was stored is
+/// worse than none.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_plan_says_which_keys_it_stores_and_which_it_clears() {
+    let f = fixture(SHARED_TEMPLATE);
+    fs::write(f.project.join(".gitignore"), "/.env.local\n").unwrap();
+    store(
+        &f,
+        vec![set("LINEAR_API_KEY", DUMMY), set("OTHER_KEY", "x")],
+    )
+    .unwrap();
+
+    let said = store(&f, vec![clear("LINEAR_API_KEY"), set("OTHER_KEY", "y")]).unwrap();
+    let line = said.join(" | ");
+    assert!(line.contains("store OTHER_KEY"), "{line}");
+    assert!(line.contains("clear LINEAR_API_KEY"), "{line}");
+    // And no line says the cleared key was stored.
+    assert!(!line.contains("store LINEAR_API_KEY"), "{line}");
+
+    // A clear on its own says only that.
+    let alone = store(&f, vec![clear("OTHER_KEY")]).unwrap().join(" | ");
+    assert!(alone.contains("clear OTHER_KEY"), "{alone}");
+    assert!(!alone.contains("store"), "{alone}");
 }
 
 /// A file kendex makes to hold a credential is readable by its owner and

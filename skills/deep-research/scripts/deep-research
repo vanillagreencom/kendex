@@ -120,34 +120,55 @@ async function loadEnvFile(path) {
 // the key has always used.
 const PRIVATE_ENV_DEFAULT = ".env.local";
 
-// One settings file's answer for KENDEX_ENV_FILE, or "" where it assigns
-// none. A key assigned twice, or assigned in a shape outside the settings
-// contract, stops the run: the shell loader fails the whole file over
-// either, so reading past one here would have this package source a
-// different private file from every other package in the project.
+// One settings file, read the way `skills/*/scripts/lib/kendex-env.sh`
+// reads it, for the one key that decides which private file this project
+// uses.
+//
+// The whole file is held to the loader's grammar, not just the row this
+// reader wants. That loader refuses the file outright over a header shape
+// it cannot parse, a duplicate key in [env], or a value outside the
+// contract, and every package in the project then refuses to start. A
+// reader that took its own row out of a file the others reject would have
+// this package running on configuration nothing else accepted.
+//
+// Returns "" where the file assigns nothing, and null where the file has
+// no assignment of the key at all — absent and empty are different
+// answers, because an empty assignment resolves to the default and still
+// stops the search.
 async function namedEnvFile(path) {
-  if (!existsSync(path)) return "";
+  if (!existsSync(path)) return null;
+  const text = await readFile(path, "utf8");
+  if (text.startsWith("\ufeff")) {
+    fail("settings-byte-order-mark", path, `${path} starts with a UTF-8 byte-order mark; the loaders refuse it, so remove it.`);
+  }
   let table = "";
-  let named = "";
-  let seen = false;
-  for (const line of (await readFile(path, "utf8")).split(/\r?\n/)) {
+  let named = null;
+  const seen = new Set();
+  for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
     if (trimmed.startsWith("[")) {
+      // A `[`-leading line is a header or an error, never content: the
+      // loader refuses every other shape rather than reading past it.
       const header = trimmed.match(/^\[([A-Za-z0-9_.-]+)\]$/);
-      table = header ? header[1] : "";
+      if (!header) {
+        fail("settings-table-header", path, `${path}: unsupported table header shape (a header is a lone [name] on its own line): ${trimmed}`);
+      }
+      table = header[1];
       continue;
     }
-    if (table !== "env") continue;
-    if (!/^KENDEX_ENV_FILE[ \t]*=/.test(trimmed)) continue;
-    if (seen) {
-      fail("private-env-duplicate", "KENDEX_ENV_FILE", `KENDEX_ENV_FILE is assigned more than once in ${path}; each key is assigned once in [env].`);
+    if (table !== "env" || !trimmed.includes("=")) continue;
+    const key = trimmed.slice(0, trimmed.indexOf("=")).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    if (seen.has(key)) {
+      fail("settings-duplicate-key", path, `${path}: ${key} is assigned more than once in [env]; each key is assigned once.`);
     }
-    seen = true;
-    const assigned = trimmed.match(/^KENDEX_ENV_FILE[ \t]*=[ \t]*"([^"\\]*)"[ \t]*(?:#.*)?$/);
-    if (!assigned) {
-      fail("private-env-value", "KENDEX_ENV_FILE", `KENDEX_ENV_FILE is not a single-line double-quoted string free of '"' and '\\': ${trimmed}`);
+    seen.add(key);
+    const value = trimmed.slice(trimmed.indexOf("=") + 1).trim();
+    if (!/^"[^"\\]*"[ \t]*(?:#.*)?$/.test(value)) {
+      fail("settings-value-syntax", path, `${path}: unsupported syntax for ${key} (expected a single-line basic string with no '"' and no '\\').`);
     }
-    named = assigned[1];
+    if (key === "KENDEX_ENV_FILE") named = value.slice(1, value.indexOf('"', 1));
   }
   return named;
 }
@@ -157,9 +178,13 @@ async function privateEnvFile(root) {
   // process environment, then .kendex/settings.toml, then
   // kendex.settings.toml. A project that names a file in the higher layer
   // has every package reading that one, and this package has to agree.
-  let named = process.env.KENDEX_ENV_FILE ?? "";
-  if (!named) named = await namedEnvFile(resolve(root, ".kendex/settings.toml"));
-  if (!named) named = await namedEnvFile(resolve(root, "kendex.settings.toml"));
+  // Absent and empty are different answers at every layer: an empty
+  // assignment has decided, on the default, and the search stops there.
+  // Both settings files are read whatever answers, because either one
+  // being outside the grammar refuses the whole project's configuration.
+  const nested = await namedEnvFile(resolve(root, ".kendex/settings.toml"));
+  const rooted = await namedEnvFile(resolve(root, "kendex.settings.toml"));
+  const named = process.env.KENDEX_ENV_FILE ?? nested ?? rooted ?? PRIVATE_ENV_DEFAULT;
   if (!named) return PRIVATE_ENV_DEFAULT;
   // A path that could reach outside the project is refused rather than
   // read: this loader is handed a project's own configuration and must

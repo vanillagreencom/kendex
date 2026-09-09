@@ -591,18 +591,35 @@ test("KENDEX_ENV_FILE keeps the same precedence the shell loader gives it", () =
   assert.match(ran("process", { KENDEX_ENV_FILE: ".env.chosen" }), /FromProcess/);
 });
 
-test("a KENDEX_ENV_FILE assigned twice in one file stops the run", () => {
+test("a settings file the shell loader would refuse stops the run", () => {
   const dir = mkdtempSync(join(tmpdir(), "deep-research-envdup-"));
   const env = { ...process.env };
   delete env.EXA_API_KEY;
   delete env.EXA_MOCK_RESPONSE_FILE;
   delete env.KENDEX_ENV_FILE;
-  writeFileSync(
-    join(dir, "kendex.settings.toml"),
-    '[env]\nKENDEX_ENV_FILE = ".env.a"\nKENDEX_ENV_FILE = ".env.b"\n',
-  );
-  const result = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
-  assert.equal(diagnostic(result).key, "private-env-duplicate");
+  // Every shape the shared shell loader refuses the whole file over. A
+  // reader that took its own row out of a file the other packages reject
+  // would run this package on configuration nothing else accepted.
+  const rows = [
+    ['[env]\nKENDEX_ENV_FILE = ".env.a"\nKENDEX_ENV_FILE = ".env.b"\n', "settings-duplicate-key"],
+    // A duplicate of an UNRELATED key refuses the file just the same.
+    ['[env]\nKENDEX_ENV_FILE = ".env.a"\nOTHER = "1"\nOTHER = "2"\n', "settings-duplicate-key"],
+    ['[env] # the table\nKENDEX_ENV_FILE = ".env.a"\n', "settings-table-header"],
+    ['[[env]]\nKENDEX_ENV_FILE = ".env.a"\n', "settings-table-header"],
+    // An unrelated value outside the contract refuses it too.
+    ['[env]\nKENDEX_ENV_FILE = ".env.a"\nOTHER = 900\n', "settings-value-syntax"],
+    ['\ufeff[env]\nKENDEX_ENV_FILE = ".env.a"\n', "settings-byte-order-mark"],
+  ];
+  for (const [body, key] of rows) {
+    writeFileSync(join(dir, "kendex.settings.toml"), body);
+    const result = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
+    assert.equal(diagnostic(result).key, key, body);
+  }
+  // The control: the same file without the defect is read, and the run
+  // gets as far as the missing credential rather than a settings refusal.
+  writeFileSync(join(dir, "kendex.settings.toml"), '[env]\nKENDEX_ENV_FILE = ".env.a"\nOTHER = "1"\n');
+  const clean = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
+  assert.equal(diagnostic(clean).key, "credential-missing");
 });
 
 test("a KENDEX_ENV_FILE that could reach outside the project stops the run", () => {
@@ -624,7 +641,7 @@ test("a KENDEX_ENV_FILE that could reach outside the project stops the run", () 
   for (const line of ['KENDEX_ENV_FILE = "keys\\local.env"', "KENDEX_ENV_FILE = '.env.secrets'", "KENDEX_ENV_FILE = .env.secrets"]) {
     writeFileSync(join(dir, "kendex.settings.toml"), `[env]\n${line}\n`);
     const result = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
-    assert.equal(diagnostic(result).key, "private-env-value", line);
+    assert.equal(diagnostic(result).key, "settings-value-syntax", line);
   }
 });
 
