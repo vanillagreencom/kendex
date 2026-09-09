@@ -246,12 +246,13 @@ fi
 # Each write's output is captured and replayed: on the way through it is what
 # `gh` would have printed anyway, and on a stop it belongs under the keyed
 # line rather than ahead of it.
+create_out=""
 if [ -n "$absent" ]; then
-  create_out=""
   if create_out=$(gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" --prerelease \
        --title "Pre-release channel" \
        --notes "The update manifests of the newest kendex pre-release. Nothing here is a download; each manifest names assets on the release it came from." 2>&1); then
-    [ -z "$create_out" ] || printf '%s\n' "$create_out"
+    : # held: nothing is replayed until the upload's outcome is known, or a
+      # failing upload would put this release URL on line 1.
   else
     fail create "$CHANNEL" "" "$create_out"
   fi
@@ -259,6 +260,7 @@ fi
 upload_out=""
 if upload_out=$(gh release upload "$CHANNEL" "${publishing[@]}" \
      --repo "$GITHUB_REPOSITORY" --clobber 2>&1); then
+  [ -z "$create_out" ] || printf '%s\n' "$create_out"
   [ -z "$upload_out" ] || printf '%s\n' "$upload_out"
 else
   # `gh` deletes before it uploads and uploads in parallel, so a failure can
@@ -267,8 +269,13 @@ else
   # which: a read after a failed call can fail too, and a message naming a
   # state nobody established is what stops anyone looking. The next run does
   # read it, and its own refusals say what it found.
+  # Both writes' output is the cause, in the order they ran, under the keyed
+  # line rather than ahead of it.
+  write_cause="$upload_out"
+  [ -z "$create_out" ] || write_cause="$create_out
+$upload_out"
   if [ -n "$absent" ]; then
-    fail upload-created "$CHANNEL" "" "$upload_out"
+    fail upload-created "$CHANNEL" "" "$write_cause"
   fi
-  fail upload "$CHANNEL" "" "$upload_out"
+  fail upload "$CHANNEL" "" "$write_cause"
 fi

@@ -23,6 +23,12 @@ use crate::{job, job_declaring, step, workflow};
 #[cfg(unix)]
 pub(crate) const REPOSITORY: &str = "vanillagreencom/kendex";
 
+/// What the stubbed `gh` says on a call the row made fail. A stub that failed
+/// in silence would leave the guard's capture nothing to carry, and every
+/// assertion below would hold with that capture deleted.
+#[cfg(unix)]
+pub(crate) const GH_SENTINEL: &str = "GH-STUB-REFUSED";
+
 /// The binary the guard runs `version-compare` on, named by reading the
 /// guard rather than by writing the name down twice: renamed on one side
 /// only, every run here would stage a file the guard never looks at and
@@ -161,6 +167,7 @@ impl Fixture {
                    shift\n\
                  done\n\
                fi\n\
+               printf '%s\\n' \"$GH_SENTINEL $*\" >&2\n\
                exit 1\n\
              fi\n\
              case \"$1 $2\" in\n\
@@ -245,6 +252,11 @@ impl Fixture {
         fs::write(&log, "").unwrap();
         fs::write(&failing, fail.join("\n")).unwrap();
         fs::remove_dir_all(self.root.join("manifest")).ok();
+        // One file for both streams, opened before the run: the order the two
+        // were written in is the contract under test, and two buffers read
+        // back separately cannot show it.
+        let said_path = self.root.join("said.log");
+        let said = fs::File::create(&said_path).unwrap();
         // What the release job stages is the manifest of the tag it built.
         let staged_manifest = self.root.join("dist/latest.json");
         if staged_manifest.is_file() {
@@ -267,13 +279,16 @@ impl Fixture {
             )
             .env("GH_LOG", &log)
             .env("GH_FAIL", &failing)
+            .env("GH_SENTINEL", GH_SENTINEL)
             .env("GH_LANDED", landed.join(" "))
             .env("GH_CHANNEL", &self.published)
             .env("GITHUB_REPOSITORY", REPOSITORY)
             .env("CHANNEL", channel_step_env("CHANNEL"))
             .env("NEW_VERSION", new_version)
             .env("GH_TOKEN", "token")
-            .output()
+            .stdout(std::process::Stdio::from(said.try_clone().unwrap()))
+            .stderr(std::process::Stdio::from(said.try_clone().unwrap()))
+            .status()
             .unwrap();
         let calls = fs::read_to_string(&log)
             .unwrap_or_default()
@@ -289,13 +304,9 @@ impl Fixture {
             names
         });
         Pointed {
-            code: run.status.code().unwrap_or(-1),
+            code: run.code().unwrap_or(-1),
             calls,
-            output: format!(
-                "{}{}",
-                String::from_utf8_lossy(&run.stdout),
-                String::from_utf8_lossy(&run.stderr)
-            ),
+            output: fs::read_to_string(&said_path).unwrap_or_default(),
             after,
         }
     }
@@ -358,9 +369,18 @@ fn a_read_it_could_not_make_stops_the_write() {
             "{failing} still uploaded: {:?}",
             run.calls
         );
+        // Line 1 is the keyed line, and what `gh` said is under it: asserting
+        // only that the key appears somewhere would hold with the capture
+        // deleted, since the diagnostic would simply land first instead.
+        assert_eq!(
+            run.output.lines().next().unwrap_or_default(),
+            said,
+            "{failing}: the keyed line is not the first line: {}",
+            run.output
+        );
         assert!(
-            run.output.contains(&said),
-            "{failing} was reported as something else: {}",
+            run.output.lines().skip(1).any(|l| l.contains(GH_SENTINEL)),
+            "{failing}: what gh said was not replayed under the keyed line: {}",
             run.output
         );
     }

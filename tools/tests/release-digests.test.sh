@@ -201,6 +201,44 @@ the Windows lane measures the .exe command and the installer|x86_64-pc-windows-m
 the macOS lane measures the archive its updater installs, not the dmg|aarch64-apple-darwin|kendex-aarch64-apple-darwin kendex-aarch64-apple-darwin.app.tar.gz kendex-aarch64-apple-darwin.app.tar.gz.sig kendex_9.9.9_aarch64.dmg|kendex-aarch64-apple-darwin|kendex-aarch64-apple-darwin.app.tar.gz
 "
 
+# --- the signer, which --document-only never reaches ---------------------
+# The two refusals past the document are the only ones whose first line can be
+# preceded by output of the run's own making: the signer speaks, and a silent
+# success still ended in a printf. A copy of the script under a scratch root
+# puts a stub where it looks for the signer, so both are reachable offline.
+SIGNER_ROOT="$TMP/signer-root"
+mkdir -p "$SIGNER_ROOT/tools" "$SIGNER_ROOT/ui/node_modules/.bin"
+cp "$DIGESTS" "$SIGNER_ROOT/tools/release-digests"
+SIGNER_SENTINEL='TAURI-STUB-REFUSED'
+
+signer_case() { # LABEL STUB-BODY WANT-KEY WANT-SENTINEL
+  local label="$1" want_key="$3" want_sentinel="$4" out rc=0 first
+  printf '%s\n' '#!/bin/sh' "$2" >"$SIGNER_ROOT/ui/node_modules/.bin/tauri"
+  chmod +x "$SIGNER_ROOT/ui/node_modules/.bin/tauri"
+  stage kendex-x86_64-unknown-linux-gnu "kendex_${VERSION}_amd64.AppImage"
+  out="$("$SIGNER_ROOT/tools/release-digests" x86_64-unknown-linux-gnu "$VERSION" "$DIST" 2>&1)" || rc=$?
+  first="$(printf '%s\n' "$out" | sed -n 1p)"
+  if [[ "$rc" -eq 1 && "$first" == "release-digests: $want_key" ]] &&
+    { [[ "$want_sentinel" == "-" ]] ||
+      printf '%s\n' "$out" | sed -n '2,$p' | grep -qF "$want_sentinel"; }; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$label"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        rc=%s out=%s\n' "$label" "$rc" "$(printf '%s' "$out" | tr '\n' ';')"
+  fi
+}
+
+echo "=== the signer refusals, each opening with its own line ==="
+signer_case "a signer that refuses is named, with what it said beneath it" \
+  "printf '%s\\n' '$SIGNER_SENTINEL' >&2; exit 1" \
+  "signer=$DIST/kendex-x86_64-unknown-linux-gnu" "$SIGNER_SENTINEL"
+# A signer that says nothing and signs nothing: the refusal has no cause to
+# carry, and the blank line a bare printf used to leave would take line 1.
+signer_case "a signer that leaves no signature is named on line 1" \
+  "exit 0" \
+  "signature=$DIST/kendex-x86_64-unknown-linux-gnu" "-"
+
 [[ "${TOOLS_TABLE_PROBE:-}" != 1 ]] || { echo "a probe run renders rows instead of asserting them" >&2; exit 2; }
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

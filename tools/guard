@@ -220,7 +220,12 @@ hits=$(scan '#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?\b|rgba?\(|hsla?\(' '^ui/src/.*\.ts
 command_safety_policy() { # SOURCE_FILE — refuse|allow rows on stdin
   local source="$1" rows
   rows=$(cat)
-  local verdicts
+  local verdicts errfile said=0
+  # The subshell's stdout is the verdict protocol below, so its stderr needs
+  # somewhere else to go: grep's complaint about an unreadable pattern, and
+  # the settings parser's own ::error::, would otherwise reach the stream
+  # ahead of the keyed line. Held here and replayed under the finding.
+  errfile=$(mktemp) || { say command-safety-unchecked "$source"; return; }
   # Every case pattern below carries a balanced `(`: Bash 3.2's parser cannot
   # close a command substitution whose patterns leave a `)` unbalanced, and
   # dies at parse time before this lane runs at all. Newer bash reads the two
@@ -231,6 +236,7 @@ command_safety_policy() { # SOURCE_FILE — refuse|allow rows on stdin
   # producer that dies takes the lane down with its own clause.
   verdicts=$(
     set -euo pipefail
+    exec 2>"$errfile"
     guards="$TOOLS_DIR/../.agents/skills/commit-guards/scripts"
     source "$guards/lib/common.sh"
     source "$guards/lib/settings.sh"
@@ -290,10 +296,12 @@ command_safety_policy() { # SOURCE_FILE — refuse|allow rows on stdin
     done <<<"$rows"
   ) || {
     say command-safety-unchecked "$source"
+    command_safety_cause "$errfile"
     return
   }
   while IFS='|' read -r verdict command; do
     [ -n "$verdict" ] || continue
+    said=1
     case "$verdict" in
       one-line) say command-safety-lines "$source" ;; # the document branch only
       unreadable) say command-safety-unreadable "$source" ;;
@@ -303,6 +311,15 @@ command_safety_policy() { # SOURCE_FILE — refuse|allow rows on stdin
       over) say command-safety-over "$source"; printf '  %s\n' "$command" ;;
     esac
   done <<<"$verdicts"
+  # Anything the run said for itself with no verdict to explain it is an
+  # anomaly, not noise: it gets a keyed line of its own rather than reaching
+  # the stream unannounced.
+  [ "$said" -eq 1 ] || [ ! -s "$errfile" ] || say command-safety-unchecked "$source"
+  command_safety_cause "$errfile"
+}
+command_safety_cause() { # FILE — what the lane's own tools said, replayed
+  [ ! -s "$1" ] || cat -- "$1"
+  rm -f -- "$1"
 }
 
 # The rows are what each source states about itself: the settings comment names

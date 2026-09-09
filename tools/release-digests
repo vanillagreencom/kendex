@@ -172,6 +172,6 @@ for file in "$command_binary" "$document"; do
   signer_out=""
   signer_out=$("$ROOT/ui/node_modules/.bin/tauri" signer sign "$file" 2>&1) ||
     die_cause signer "$file" "$signer_out"
-  printf '%s\n' "$signer_out"
+  [ -z "$signer_out" ] || printf '%s\n' "$signer_out"
   [ -s "${file}.sig" ] || die signature "$file"
 done

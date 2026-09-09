@@ -51,8 +51,11 @@ for stub in kendex jq node; do
 done
 # A git that refuses is what leaves the toplevel unresolved with every other
 # command answering, so the row reaches the repository branch and not the
-# missing-command one above it.
-printf '#!/bin/sh\nexit 128\n' >"$TMP/stub-bin/git"
+# missing-command one above it. It says something of its own, because a stub
+# that fails in silence would leave the script's capture nothing to replay
+# and the assertion below would hold with that capture deleted.
+GIT_SENTINEL='GIT-STUB-REFUSED-THE-TOPLEVEL'
+printf '#!/bin/sh\nprintf "%s\\n" "%s" >&2\nexit 128\n' "$GIT_SENTINEL" >"$TMP/stub-bin/git"
 chmod +x "$TMP/stub-bin/git"
 
 value_of() { # TOKEN — a row's value token as the string it names
@@ -177,10 +180,33 @@ rows_case "a harness that cannot run leaves every row unanswerable" 3 unanswerab
 # has to survive under it.
 echo "=== a dependency's own words are replayed under the keyed line ==="
 cause_out="$( (cd "$SCRATCH" && PATH="$TMP/stub-bin" "$BASH" "$SMOKE" 2>&1) )" || true
-if [ "$(printf '%s\n' "$cause_out" | sed -n 1p)" = "harness-smoke: not-in-repo=$SCRATCH" ]; then
-  ok "the keyed line is line 1 when git has failed"
+if [ "$(printf '%s\n' "$cause_out" | sed -n 1p)" = "harness-smoke: not-in-repo=$SCRATCH" ] &&
+  printf '%s\n' "$cause_out" | sed -n '2,$p' | grep -qF "$GIT_SENTINEL"; then
+  ok "git's refusal is replayed under the keyed line, not ahead of it"
 else
-  bad "the keyed line is line 1 when git has failed" "$(printf '%s' "$cause_out" | tr '\n' ';')"
+  bad "git's refusal is replayed under the keyed line, not ahead of it" \
+    "$(printf '%s' "$cause_out" | tr '\n' ';')"
+fi
+
+# The scratch refusal has no row otherwise: the pre-install table stops at
+# not-in-repo, so nothing here reached the parent it is handed. A parent it
+# cannot write is the reachable way in, and mkdir says why on its own stderr.
+if [ "$(id -u)" -eq 0 ]; then
+  printf '  skip  a parent the run cannot write is refused (root writes anywhere)\n'
+else
+  SEALED="$TMP/sealed"
+  mkdir -p "$SEALED"
+  chmod 000 "$SEALED"
+  scratch_out="$( (cd "$ROWS_REPO" && PATH="$ROWS_BIN:$PATH" \
+    "$BASH" "$SMOKE" --dir "$SEALED/below" 2>&1) )" || true
+  chmod 755 "$SEALED"
+  if [ "$(printf '%s\n' "$scratch_out" | sed -n 1p)" = "harness-smoke: scratch=$SEALED/below" ] &&
+    printf '%s\n' "$scratch_out" | sed -n '2,$p' | grep -qi 'permission denied'; then
+    ok "a parent the run cannot write is refused, with what mkdir said beneath it"
+  else
+    bad "a parent the run cannot write is refused, with what mkdir said beneath it" \
+      "$(printf '%s' "$scratch_out" | tr '\n' ';')"
+  fi
 fi
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -224,9 +224,16 @@ cp "$TMP/doc.orig" "$R/docs/authoring/command-safety.md"
 awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print "COMMAND_SAFETY_DENY_PATTERN = \"[\"" ; next } { print }' \
   "$TMP/settings.orig" >"$R/kendex.settings.toml"
 run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: command-safety-not-an-ere=kendex.settings.toml"* ]] \
-  && ok "a policy that is not a valid ERE reds with its own clause" \
-  || bad "a policy that is not a valid ERE reds with its own clause" "rc=$RC out=$OUT"
+# The lane's own tools speak here: grep refuses the pattern. Guard forwards
+# the streams of everything it runs, so the claim is not that the keyed line
+# is line 1 of the run — it is that the keyed line comes before the
+# diagnostic that explains it, rather than after it.
+keyed_at="$(printf '%s\n' "$OUT" | grep -n 'guard: command-safety-not-an-ere=kendex.settings.toml' | head -1 | cut -d: -f1)"
+grep_at="$(printf '%s\n' "$OUT" | grep -ni 'invalid\|unmatched\|unterminated' | head -1 | cut -d: -f1)"
+[ "$RC" -ne 0 ] && [ -n "$keyed_at" ] && [ -n "$grep_at" ] && [ "$keyed_at" -lt "$grep_at" ] \
+  && ok "a policy that is not a valid ERE reds with its own clause, above what grep said" \
+  || bad "a policy that is not a valid ERE reds with its own clause, above what grep said" \
+    "rc=$RC keyed=${keyed_at:--} grep=${grep_at:--} out=$OUT"
 cp "$TMP/settings.orig" "$R/kendex.settings.toml"
 
 # The assignment moved out of [env] with its text intact: the settings loader

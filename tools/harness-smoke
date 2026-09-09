@@ -163,7 +163,8 @@ scratch_err=""
 scratch_err=$(mkdir -p "$PARENT" 2>&1) || refuse_cause scratch "$PARENT" "$scratch_err"
 DIR=$(mktemp -d "$PARENT/harness-smoke.XXXXXX" 2>/dev/null) ||
   refuse_cause scratch "$PARENT" "$(mktemp -d "$PARENT/harness-smoke.XXXXXX" 2>&1 >/dev/null)"
-DIR=$(cd "$DIR" && pwd -P) || refuse scratch "$PARENT"
+DIR=$(cd "$DIR" 2>/dev/null && pwd -P) ||
+  refuse_cause scratch "$PARENT" "$(cd "$DIR" 2>&1 >/dev/null || true)"
 cleanup() {
   if [ "$KEEP" -eq 1 ]; then
     note kept "$DIR"

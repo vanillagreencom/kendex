@@ -12,7 +12,7 @@
 #[cfg(unix)]
 use crate::channel::channel_step_env;
 #[cfg(unix)]
-use crate::channel_point::{Channel, Fixture, STAGED};
+use crate::channel_point::{Channel, Fixture, GH_SENTINEL, STAGED};
 
 /// The upload is the one call that changes the channel, and the branch that
 /// catches it failing has to fail the job. A guard that printed its error and
@@ -47,7 +47,17 @@ fn a_failed_upload_fails_the_job_and_defers_to_the_next_run() {
     // Named off the workflow, like every other channel-named claim here.
     let channel = channel_step_env("CHANNEL");
     let said = format!("release-channel-point: upload={channel}");
-    assert!(run.output.contains(&said), "{said} missing: {}", run.output);
+    assert_eq!(
+        run.output.lines().next().unwrap_or_default(),
+        said,
+        "the keyed line is not the first line: {}",
+        run.output
+    );
+    assert!(
+        run.output.lines().skip(1).any(|l| l.contains(GH_SENTINEL)),
+        "what gh said was not replayed under the keyed line: {}",
+        run.output
+    );
 }
 
 /// One state that branch can leave: the channel kept its latest.json, so the
@@ -118,11 +128,19 @@ fn a_failed_upload_that_lost_latest_json_refuses_every_later_run() {
         failed.calls
     );
     let channel_name = channel_step_env("CHANNEL");
+    assert_eq!(
+        failed.output.lines().next().unwrap_or_default(),
+        format!("release-channel-point: upload={channel_name}"),
+        "{}",
+        failed.output
+    );
     assert!(
         failed
             .output
-            .contains(&format!("release-channel-point: upload={channel_name}")),
-        "{}",
+            .lines()
+            .skip(1)
+            .any(|l| l.contains(GH_SENTINEL)),
+        "what gh said was not replayed under the keyed line: {}",
         failed.output
     );
 
@@ -185,11 +203,19 @@ fn a_failed_upload_that_landed_nothing_leaves_a_channel_the_next_run_takes() {
     // The one thing about the channel this run does know, because it is what
     // this run did rather than what the failure left: its own key.
     let channel_name = channel_step_env("CHANNEL");
-    assert!(
-        failed.output.contains(&format!(
-            "release-channel-point: upload-created={channel_name}"
-        )),
+    assert_eq!(
+        failed.output.lines().next().unwrap_or_default(),
+        format!("release-channel-point: upload-created={channel_name}"),
         "{}",
+        failed.output
+    );
+    assert!(
+        failed
+            .output
+            .lines()
+            .skip(1)
+            .any(|l| l.contains(GH_SENTINEL)),
+        "what gh said was not replayed under the keyed line: {}",
         failed.output
     );
 
