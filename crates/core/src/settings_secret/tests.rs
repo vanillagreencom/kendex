@@ -306,7 +306,17 @@ fn no_refusal_carries_a_value() {
             vec![set("linear", "LINEAR_API_KEY", secret)],
             "LINEAR_API_KEY='a'\nLINEAR_API_KEY='b'\n",
         ),
-        (vec![set("linear", "LINEAR_API_KEY", "it's")], ""),
+        // The two the value grammar refuses carry the sentinel inside the
+        // value itself, so a refusal that quoted what it refused would
+        // print it.
+        (
+            vec![set("linear", "LINEAR_API_KEY", &format!("{secret}'"))],
+            "",
+        ),
+        (
+            vec![set("linear", "LINEAR_API_KEY", &format!("{secret}\ntwo"))],
+            "",
+        ),
     ] {
         let words = said(&edits, text);
         assert!(!words.is_empty(), "{edits:?} was not refused");
@@ -324,9 +334,16 @@ fn a_template_the_strict_reader_refuses_declares_nothing() {
             "good".to_owned(),
             TemplateSource::Text("[secrets]\n# The key.\nA = \"\"\n".to_owned()),
         ),
+        // The defect is in the OTHER table, so the scan still decodes this
+        // file's secret row. Nothing but the findings gate here keeps it
+        // out, which is what makes the gate load-bearing rather than a
+        // second telling of a rule the scan already enforces.
         (
             "bad".to_owned(),
-            TemplateSource::Text("[secrets]\nB = \"\"\n".to_owned()),
+            TemplateSource::Text(
+                "[env]\n# Why.\nX = \"1\"\n# Again.\nX = \"2\"\n\n[secrets]\n# The key.\nB = \"\"\n"
+                    .to_owned(),
+            ),
         ),
         ("gone".to_owned(), TemplateSource::Absent),
         (
@@ -345,6 +362,29 @@ fn a_template_the_strict_reader_refuses_declares_nothing() {
 
 /// Two packages agreeing that a key is a credential is not a
 /// disagreement: they share it, and it is offered once under each.
+/// The same gate on the other reading: a template with a defect declares
+/// no sensitivity either, so it cannot contest a key another package is
+/// offering.
+#[test]
+fn a_template_the_strict_reader_refuses_contests_nothing() {
+    let templates = [
+        (
+            "good".to_owned(),
+            TemplateSource::Text("[env]\n# Why.\nSHARED = \"\"\n".to_owned()),
+        ),
+        (
+            "bad".to_owned(),
+            TemplateSource::Text(
+                "[env]\n# Why.\nX = \"1\"\n# Again.\nX = \"2\"\n\n[secrets]\n# The key.\nSHARED = \"\"\n"
+                    .to_owned(),
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(contested(&templates), []);
+}
+
 #[test]
 fn two_packages_declaring_one_secret_do_not_contest_it() {
     let shared = |owner: &str| {

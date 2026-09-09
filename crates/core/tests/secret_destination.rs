@@ -210,7 +210,17 @@ fn a_link_where_the_private_file_belongs_is_refused() {
 fn a_path_that_leaves_the_project_is_refused() {
     let f = fixture(true);
     let named = |file: &str| format!("[env]\nKENDEX_ENV_FILE = \"{file}\"\n");
-    for file in ["/etc/passwd", "../outside.env", "a/../../outside.env"] {
+    // The last row is the one only the spelling rule catches: every
+    // ancestor of it is missing, so the walk that resolves links up to the
+    // deepest existing directory finds the project root and answers that
+    // the path is inside it. The `..` segments are still there at write
+    // time, and the OS follows them.
+    for file in [
+        "/etc/passwd",
+        "../outside.env",
+        "a/../../outside.env",
+        "a/b/../../../outside.env",
+    ] {
         let state = state(&f, Some(&named(file)), None);
         let (problem, _) = refused(&state);
         assert!(!problem.is_empty(), "{file}: {problem}");
@@ -241,6 +251,22 @@ fn a_private_file_key_nothing_can_read_is_refused_rather_than_defaulted() {
     let (problem, fix) = refused(&state);
     assert!(problem.contains("KENDEX_ENV_FILE"), "{problem}");
     assert!(fix.contains("kendex.settings.toml"), "{fix}");
+}
+
+/// Outside a repository there is no git to refuse a pathspec and no
+/// tracked file to protect, so the spelling rule is the only thing left
+/// between a `..` segment and a write outside the project. Its own case,
+/// because in a repository three rules cover this path and any of them
+/// would keep the row green.
+#[test]
+fn a_path_that_spells_its_way_out_is_refused_with_no_repository() {
+    let f = fixture(false);
+    // Every ancestor is missing, so the walk that resolves links finds the
+    // project root and answers that the path is inside it.
+    let settings = "[env]\nKENDEX_ENV_FILE = \"a/b/../../../outside.env\"\n";
+    let state = state(&f, Some(settings), None);
+    let (problem, _) = refused(&state);
+    assert!(problem.contains("climbs out of this project"), "{problem}");
 }
 
 /// A directory on the way that resolves outside the project takes the

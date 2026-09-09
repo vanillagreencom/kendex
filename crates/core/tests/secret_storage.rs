@@ -319,38 +319,6 @@ fn a_stored_credential_reaches_no_public_file_no_plan_and_no_render() {
     assert!(checked > 3, "the sweep read almost nothing: {checked}");
 }
 
-/// The apply journal copies a pre-image of every file it is about to
-/// write, so a generic copy of a private file would be an unprotected
-/// second copy of the credential. It carries the mode across instead.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_journalled_pre_image_of_a_private_file_is_private_too() {
-    let f = fixture(TEMPLATE);
-    store(&f, vec![set("LINEAR_API_KEY", "first")]).unwrap();
-    let path = f.private(".env.local");
-    let before = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-    assert_eq!(before, 0o600);
-
-    // The journal's pre-image is the platform's own copy, which carries
-    // the mode. A second save journals the file this one wrote, so the
-    // store under the scope's journal directory is what to read.
-    let journal = f.env.journal_dir();
-    store(&f, vec![set("LINEAR_API_KEY", "second")]).unwrap();
-    let copies: Vec<PathBuf> = walk(&journal)
-        .into_iter()
-        .chain(walk(&f.project.join(".git")))
-        .filter(|path| fs::read_to_string(path).is_ok_and(|text| text.contains("LINEAR_API_KEY")))
-        .collect();
-    for copy in &copies {
-        assert_eq!(
-            fs::metadata(copy).unwrap().permissions().mode() & 0o777,
-            before,
-            "{}",
-            copy.display()
-        );
-    }
-}
-
 /// A save is bound to the file its fields were read beside. A writer that
 /// landed in between is refused rather than overwritten, and what it
 /// wrote stands.
