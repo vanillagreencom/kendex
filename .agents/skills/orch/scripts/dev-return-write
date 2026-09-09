@@ -119,8 +119,10 @@ An implement receipt carries additions plus deletions against the base branch,
 with a floor of 1. The orchestrator verifies and persists the first accepted one.
 --kind fix OR --bundled requires >=1 --item; DECISION is Applied|Skipped|Blocked;
 REASONING must be non-empty. --validate is "pass" or begins with "FAILING:".
---validate-note carries a qualified result the enumeration cannot express (a lane
-that passed only on re-run, a flake worth recording); it never relaxes --validate.
+--validate-note carries a qualified result the enumeration cannot express (the
+test-only validation-ceiling re-run dev-implement.md section 5 names, a flake
+worth recording); it never relaxes --validate. Outside that named ceiling a
+failing validation ends the round and is never re-run into a pass.
 --summary TEXT embeds the summary inline; --summary-file PATH embeds a file's
 content. They are mutually exclusive (one summary source, no silent precedence).
 Every single-valued flag may be supplied at most once (no silent last-wins);

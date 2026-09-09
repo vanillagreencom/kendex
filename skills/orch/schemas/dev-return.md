@@ -26,10 +26,10 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
   "commit": "abc123f",
   "baseline_lines": 138,
   "validate": "pass",
-  "validate_note": "80/80 on re-run; first run flaked on Rust Tests (release), same git_diff_hash",
+  "validate_note": "Test-only validation ceiling: suite failed at 34m; the failed target passed alone under load",
   "qa_labels": ["needs-review"],
   "summary_posted": true,
-  "summary": null,
+  "summary": "### Proposed Rules\n- Rule the validation list is missing",
   "bundled": false,
   "items": [
     { "n": 1, "decision": "Applied", "reasoning": "Fixed nil deref in empty buffer" }
@@ -50,7 +50,7 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 | `validate_note` | Optional | `--validate-note` | A free-text qualifier the enumeration cannot express, or `null` |
 | `qa_labels` | Optional | `--qa-label` (repeatable) | Applied QA labels; `[]` when none |
 | `summary_posted` | Optional | `--no-summary` sets `false` | `true` only when the summary was posted to a tracker; GitHub and ad-hoc rounds set `false` |
-| `summary` | Optional | `--summary` or `--summary-file` | The summary content, or `null`. Carries the summary for rounds that post nowhere |
+| `summary` | Optional | `--summary` or `--summary-file` | The summary content, or `null`. Every single implement round embeds it, including a Linear round that also sets `summary_posted: true`, so a consumer can read its `### Proposed Rules` |
 | `bundled` | Optional | `--bundled` sets `true` | `true` for a bundled implement |
 | `items` | Conditional | `--item N DECISION REASONING` | Per kind rules below |
 
@@ -66,10 +66,10 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 
 ## `validate` and its note
 
-`validate` is a closed enumeration. `--validate-note` records what the enumeration cannot express — e.g. a lane that failed once and passed on re-run over the identical diff — and it never relaxes `--validate`:
+`validate` is a closed enumeration. `--validate-note` records what the enumeration cannot express — the test-only validation-ceiling re-run that dev [`workflows/dev-implement.md`](../../dev/workflows/dev-implement.md) § 5 names, or a flake worth recording — and it never relaxes `--validate`. Outside that named ceiling a failing validation ends the round; it is never re-run into a pass:
 
 ```bash
---validate pass --validate-note "80/80 on re-run; first run flaked on Rust Tests (release), same git_diff_hash"
+--validate pass --validate-note "Test-only validation ceiling: suite failed at 34m; the failed target passed alone under load"
 ```
 
 `dev-artifact-check` echoes both. An empty or whitespace-only note is rejected.
