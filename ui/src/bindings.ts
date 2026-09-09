@@ -2886,12 +2886,16 @@ export type ProvenanceRow = {
 	name: string,
 	harness: HarnessId,
 	/**
-	 *  Where this observation's bytes are, in the spelling the scan hands
-	 *  out. What tells two observations apart where their scope, kind,
-	 *  name and tool cannot: a tool reads both a shared skill root and one
-	 *  of its own, so a recorded `gh` in the first and somebody's own `gh`
-	 *  in the second are one key without it. `None` on a row a record
-	 *  seeded for an installation the scan did not see.
+	 *  What tells this observation from another the scan saw under the
+	 *  same scope, kind, name and tool — because it does see two: a tool
+	 *  reads both a shared skill root and one of its own, and one registry
+	 *  file holds every hook entry a tool runs.
+	 * 
+	 *  For an artifact of its own that is where it sits. For an entry
+	 *  inside a shared file it is that file and the action the entry runs,
+	 *  since the file is every entry's. Compared, never parsed: it is one
+	 *  opaque spelling of "which observation is this", and `None` on a row
+	 *  a record seeded for an installation the scan did not see.
 	 */
 	at: string | null,
 	origin: Origin,
