@@ -67,21 +67,40 @@ pub fn project_root_from(start: &Path, home: &Path) -> Option<PathBuf> {
 
 /// Walk `root` looking for directories that carry a harness marker.
 /// Results are canonicalized, deduplicated, and sorted.
+///
+/// The chosen folder's own listing is the search, so a failure to read it
+/// is an error rather than an empty answer: "no projects in there" is a
+/// claim about a folder, and a folder nobody could look in supports none.
+/// `is_dir` is not that check — a directory with no read permission is
+/// still a directory, and its listing is what fails.
+///
+/// Failures deeper down stay silent. One unreadable directory among many
+/// is not a failed search of the folder that was chosen, and refusing the
+/// whole answer for it would report nothing over a tree that mostly read.
 pub fn discover_projects(root: &Path) -> Result<Vec<PathBuf>> {
     let root = crate::paths::canonical(root).map_err(|e| CoreError::io(root, e))?;
     if !root.is_dir() {
         return Err(CoreError::NotADirectory { path: root });
     }
     let mut found = BTreeSet::new();
-    walk(&root, 0, &mut found);
+    if is_project(&root) {
+        keep(&root, &mut found);
+        return Ok(found.into_iter().collect());
+    }
+    let entries = fs::read_dir(&root).map_err(|e| CoreError::io(&root, e))?;
+    descend(entries, 0, &mut found);
     Ok(found.into_iter().collect())
+}
+
+fn keep(dir: &Path, found: &mut BTreeSet<PathBuf>) {
+    if let Ok(canonical) = crate::paths::canonical(dir) {
+        found.insert(canonical);
+    }
 }
 
 fn walk(dir: &Path, depth: usize, found: &mut BTreeSet<PathBuf>) {
     if is_project(dir) {
-        if let Ok(canonical) = crate::paths::canonical(dir) {
-            found.insert(canonical);
-        }
+        keep(dir, found);
         return;
     }
     if depth >= MAX_DEPTH {
@@ -90,6 +109,13 @@ fn walk(dir: &Path, depth: usize, found: &mut BTreeSet<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
+    descend(entries, depth, found);
+}
+
+/// The children of a directory already read, walked in turn. Shared so the
+/// root's listing and every deeper one are descended by one rule, and only
+/// how their read failures are answered differs.
+fn descend(entries: fs::ReadDir, depth: usize, found: &mut BTreeSet<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
@@ -120,6 +146,70 @@ mod tests {
             .iter()
             .map(|project| project.strip_prefix(&canonical).unwrap().to_path_buf())
             .collect()
+    }
+
+    /// A folder kendex could not look in is not a folder with no projects
+    /// in it. `is_dir` says yes to a directory with no read permission,
+    /// and its listing is what fails — so the search has to answer with
+    /// that failure, or the dialog above it says "No projects in there"
+    /// about a folder nobody read.
+    ///
+    /// Skipped where the process can read it anyway: running as root,
+    /// permissions do not refuse, and there is no unreadable directory to
+    /// test against. The probe is the same read the code under test makes.
+    /// Unix only — a mode is what makes a directory unreadable here, and
+    /// Windows has no equivalent to set.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_root_is_an_error_and_never_an_empty_result() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let shut = tmp.path().join("shut");
+        fs::create_dir(&shut).unwrap();
+        fs::set_permissions(&shut, fs::Permissions::from_mode(0o000)).unwrap();
+        let readable = fs::read_dir(&shut).is_ok();
+        // Put it back first, so a failure below cannot leave a directory
+        // the harness can no longer clean up.
+        fs::set_permissions(&shut, fs::Permissions::from_mode(0o700)).unwrap();
+        if readable {
+            return;
+        }
+
+        fs::set_permissions(&shut, fs::Permissions::from_mode(0o000)).unwrap();
+        let answer = discover_projects(&shut);
+        fs::set_permissions(&shut, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(
+            matches!(answer, Err(CoreError::Io { .. })),
+            "an unreadable root answered {answer:?}"
+        );
+    }
+
+    /// One unreadable directory among many is not a failed search of the
+    /// folder that was chosen: the answer keeps what did read. Unix only,
+    /// for the reason above.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_child_leaves_the_rest_of_the_answer_standing() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        fs::create_dir_all(root.join("good/.claude")).unwrap();
+        let shut = root.join("shut");
+        fs::create_dir(&shut).unwrap();
+        fs::set_permissions(&shut, fs::Permissions::from_mode(0o000)).unwrap();
+        let readable = fs::read_dir(&shut).is_ok();
+
+        let answer = discover_projects(&root);
+        fs::set_permissions(&shut, fs::Permissions::from_mode(0o700)).unwrap();
+        if readable {
+            return;
+        }
+        assert_eq!(
+            answer.unwrap(),
+            [crate::paths::canonical(&root.join("good")).unwrap()]
+        );
     }
 
     /// One row per tree shape, and the projects a walk from its root

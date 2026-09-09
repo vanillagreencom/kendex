@@ -75,6 +75,15 @@ export function FindProjectsDialog({
   // a reader adds several from one result, and one shared flag would put
   // every other row's button into a state its own press did not cause.
   const [adding, setAdding] = useState<ReadonlySet<string>>(new Set());
+  // What this dialog has added, by the spelling it asked under. The
+  // registry stores the canonical path, so a folder added as `~/work` or
+  // `/work/` is in `projects` under a name this panel never saw — and the
+  // button would go back to offering it, with a second press meeting a
+  // duplicate-registration refusal. The discovered rows are canonical
+  // already and match either way; the folder the reader typed is the one
+  // that needs remembering.
+  const [added, setAdded] = useState<ReadonlySet<string>>(new Set());
+  const isAdded = (path: string) => projects.includes(path) || added.has(path);
 
   const find = (path: string) => {
     const trimmed = path.trim();
@@ -93,13 +102,17 @@ export function FindProjectsDialog({
 
   const add = (path: string) => {
     setAdding((held) => new Set(held).add(path));
-    void registerProject(path).finally(() =>
-      setAdding((held) => {
-        const next = new Set(held);
-        next.delete(path);
-        return next;
-      }),
-    );
+    void registerProject(path)
+      .then((ok) => {
+        if (ok) setAdded((held) => new Set(held).add(path));
+      })
+      .finally(() =>
+        setAdding((held) => {
+          const next = new Set(held);
+          next.delete(path);
+          return next;
+        }),
+      );
   };
 
   const close = (next: boolean) => {
@@ -181,12 +194,10 @@ export function FindProjectsDialog({
             <Button
               size="sm"
               variant="outline"
-              disabled={
-                projects.includes(search.root) || adding.has(search.root)
-              }
+              disabled={isAdded(search.root) || adding.has(search.root)}
               onClick={() => add(search.root)}
             >
-              {projects.includes(search.root)
+              {isAdded(search.root)
                 ? ALREADY_ADDED
                 : adding.has(search.root)
                   ? ADDING_LABEL
@@ -211,10 +222,10 @@ export function FindProjectsDialog({
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={projects.includes(path) || adding.has(path)}
+                    disabled={isAdded(path) || adding.has(path)}
                     onClick={() => add(path)}
                   >
-                    {projects.includes(path)
+                    {isAdded(path)
                       ? ALREADY_ADDED
                       : adding.has(path)
                         ? ADDING_LABEL

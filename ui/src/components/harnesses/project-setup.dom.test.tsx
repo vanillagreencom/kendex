@@ -351,6 +351,49 @@ describe("finding existing projects", () => {
     await act(async () => land(true));
   });
 
+  // The registry stores the canonical path, so a folder added under the
+  // spelling the reader typed is in `projects` under a name this panel
+  // never saw. Compared against that list alone the button goes back to
+  // offering it, and a second press meets a duplicate-registration
+  // refusal.
+  it("keeps a folder added under a spelling the registry rewrote", async () => {
+    const registerProject = vi.fn(async () => true);
+    mountFind(
+      async () => ({ status: "found", paths: [] }),
+      // What the registry holds afterwards: the canonical root, not the
+      // typed one.
+      ["/home/u/work"],
+      registerProject,
+    );
+    await userEvent.type(field(), "~/work");
+    await userEvent.click(button(FIND_PROJECTS_ACTION));
+    await settle();
+
+    await userEvent.click(button(ADD_THIS_FOLDER));
+    await settle();
+
+    expect(registerProject).toHaveBeenCalledWith("~/work");
+    expect(button(ALREADY_ADDED).disabled).toBe(true);
+  });
+
+  // A refused registration is not an addition: the offer stands so the
+  // reader can act on the reason and press again.
+  it("keeps offering a folder whose registration was refused", async () => {
+    mountFind(
+      async () => ({ status: "found", paths: [] }),
+      [],
+      vi.fn(async () => false),
+    );
+    await userEvent.type(field(), "~/work");
+    await userEvent.click(button(FIND_PROJECTS_ACTION));
+    await settle();
+
+    await userEvent.click(button(ADD_THIS_FOLDER));
+    await settle();
+
+    expect(button(ADD_THIS_FOLDER).disabled).toBe(false);
+  });
+
   // A dismissed search's answer is not this dialog's state. `discoverProjects`
   // cannot be called off, so an abandoned answer landing on the panel would
   // reopen the dialog showing the result of a search the reader closed.
