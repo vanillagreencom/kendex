@@ -746,10 +746,10 @@ fn the_previous_head_is_none_before_the_first_commit() {
 // ---------------------------------------------------------------------
 // What one file the offer covers changed.
 
-/// The comparison this path has to show, or the test fails naming it.
-fn shown(scan: &Scan, path: &str) -> crate::package::diff::PackageDiff {
+/// What this path has to show, or the test fails naming what came back.
+fn shown(scan: &Scan, path: &str) -> Changed {
     match file_changes(scan, path).unwrap() {
-        Changes::Shown(diff) => diff,
+        Changes::Shown(changed) => changed,
         other => panic!("{path} answered {other:?} rather than a comparison"),
     }
 }
@@ -770,19 +770,26 @@ fn only_a_path_the_scan_covers_has_changes_to_show() {
     repo.write("mine.md", "a secret\n");
     let found = repo.scan(&generated).unwrap();
 
-    let Changes::Shown(owned) = file_changes(&found, OWNED[0]).unwrap() else {
-        panic!("an owned file kendex changed had no comparison to show");
-    };
-    assert_eq!(owned.files.len(), 1, "one file named, one file compared");
-    assert_eq!(owned.files[0].path, OWNED[0]);
-    assert_eq!((owned.total_additions, owned.total_deletions), (1, 1));
+    let owned = shown(&found, OWNED[0]);
+    assert_eq!(
+        owned.diff.files.len(),
+        1,
+        "one file named, one file compared"
+    );
+    assert_eq!(owned.diff.files[0].path, OWNED[0]);
+    assert_eq!(
+        (owned.diff.total_additions, owned.diff.total_deletions),
+        (1, 1)
+    );
 
-    assert!(
-        matches!(
-            file_changes(&found, ".claude/settings.json").unwrap(),
-            Changes::Shown(_)
-        ),
-        "a shared file kendex writes a key in had no changes to show"
+    // A shared file is the person's own with one key of kendex's in it, so
+    // the rest of it — their environment values, their credentials — is
+    // theirs. The offer names such a file and commits nothing of it, and
+    // nothing here reads one.
+    assert_eq!(
+        file_changes(&found, ".claude/settings.json").unwrap(),
+        Changes::NotOffered,
+        "a shared configuration file was read"
     );
 
     for outside in [
@@ -818,17 +825,19 @@ fn a_file_added_or_deleted_by_the_change_still_shows_what_it_is() {
 
     let added = shown(&found, ADDED);
     assert_eq!(
-        added.files[0].status,
+        added.diff.files[0].status,
         crate::package::diff::FileStatus::Added
     );
-    assert_eq!(added.total_deletions, 0);
+    assert_eq!(added.diff.total_deletions, 0);
+    assert_eq!(added.mode, None, "a file arriving is not a mode change");
 
     let removed = shown(&found, OWNED[1]);
     assert_eq!(
-        removed.files[0].status,
+        removed.diff.files[0].status,
         crate::package::diff::FileStatus::Removed
     );
-    assert_eq!(removed.total_additions, 0);
+    assert_eq!(removed.diff.total_additions, 0);
+    assert_eq!(removed.mode, None, "a file going is not a mode change");
 }
 
 /// A harness-native link is a path kendex writes and commits: what git
@@ -848,10 +857,10 @@ fn a_link_kendex_owns_reads_as_its_target_text() {
     // Untracked: the commit adds the link, and the row says so.
     let added = shown(&repo.scan(&generated).unwrap(), LINK);
     assert_eq!(
-        added.files[0].status,
+        added.diff.files[0].status,
         crate::package::diff::FileStatus::Added
     );
-    assert_eq!(hunk_text(&added), ["+../../.agents/skills/dev"]);
+    assert_eq!(hunk_text(&added.diff), ["+../../.agents/skills/dev"]);
 
     // Committed, then respelled the way one apply converges an absolute
     // link to a relative one: one line replaced by another, never a
@@ -862,17 +871,23 @@ fn a_link_kendex_owns_reads_as_its_target_text() {
     std::os::unix::fs::symlink("../../../.agents/skills/dev", &at).unwrap();
     let respelled = shown(&repo.scan(&generated).unwrap(), LINK);
     assert_eq!(
-        respelled.files[0].status,
+        respelled.diff.files[0].status,
         crate::package::diff::FileStatus::Modified
     );
     assert_eq!(
-        hunk_text(&respelled),
+        hunk_text(&respelled.diff),
         ["-../../.agents/skills/dev", "+../../../.agents/skills/dev"]
     );
     assert_eq!(
-        (respelled.total_additions, respelled.total_deletions),
+        (
+            respelled.diff.total_additions,
+            respelled.diff.total_deletions
+        ),
         (1, 1)
     );
+    // A link is mode 120000 on both sides, so respelling one changes no
+    // mode; the comparison is the whole of the change.
+    assert_eq!(respelled.mode, None);
 }
 
 /// git carries changes the contents do not show — a registration script
@@ -891,7 +906,34 @@ fn a_change_the_contents_do_not_show_is_not_an_empty_comparison() {
 
     let found = repo.scan(&generated).unwrap();
     assert_eq!(found.count(), 1, "the mode change left the offer's set");
-    assert_eq!(file_changes(&found, SCRIPT).unwrap(), Changes::SameContent);
+    let only_mode = shown(&found, SCRIPT);
+    assert!(
+        only_mode.diff.files.is_empty(),
+        "the contents were reported as changed"
+    );
+    assert_eq!(
+        only_mode.mode,
+        Some(ModeChange {
+            before: "100644".to_owned(),
+            after: "100755".to_owned()
+        })
+    );
+
+    // The same commit rewriting the script as well: the mode is read from
+    // git rather than inferred from an empty comparison, so both halves of
+    // a mixed change are reported.
+    repo.write(SCRIPT, "#!/bin/sh\necho hi\n");
+    fs::set_permissions(&at, fs::Permissions::from_mode(0o755)).unwrap();
+    let both = shown(&repo.scan(&generated).unwrap(), SCRIPT);
+    assert_eq!(both.diff.total_additions, 1, "the rewrite went unreported");
+    assert_eq!(
+        both.mode,
+        Some(ModeChange {
+            before: "100644".to_owned(),
+            after: "100755".to_owned()
+        }),
+        "the mode change was hidden by the content change"
+    );
 }
 
 /// Every line one comparison's hunks hold, with the sign the viewer draws.
@@ -945,7 +987,7 @@ fn a_read_the_machine_refuses_is_a_failure_and_never_a_deletion() {
     fs::remove_file(&at).unwrap();
     let gone = shown(&repo.scan(&generated).unwrap(), OWNED[0]);
     assert_eq!(
-        gone.files[0].status,
+        gone.diff.files[0].status,
         crate::package::diff::FileStatus::Removed
     );
 }

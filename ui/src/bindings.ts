@@ -1512,16 +1512,13 @@ export type Enforcement =
 /**  What the window has to show for one file the offer covers. */
 export type FileChanges = 
 /**
- *  The comparison between what the last commit holds and what the file
- *  holds now.
+ *  What the commit carries for this file: the two sides' contents
+ *  compared, and the mode change beside it where there is one. An
+ *  empty comparison with a mode change is a file whose text does not
+ *  move; an empty one with neither is a file that changed back since
+ *  the offer was read.
  */
-{ kind: "shown"; diff: PackageDiff } | 
-/**
- *  The offer covers this path and both sides hold the same bytes, so
- *  what the commit carries for it is a change git records beside the
- *  contents rather than a change to the file's text.
- */
-{ kind: "sameContent" } | 
+{ kind: "shown"; diff: PackageDiff; mode: FileMode | null } | 
 /**
  *  The offer no longer covers this path: the file has changed back, or
  *  a sweep has taken it, since the offer was read. Nothing to show, and
@@ -1540,6 +1537,15 @@ export type FileDiff = {
 	/**  One side was not valid UTF-8 and is shown lossily. */
 	lossy: boolean,
 	hunks: Hunk[],
+};
+
+/**
+ *  The file's mode on each side, in git's own spelling, where the commit
+ *  changes it.
+ */
+export type FileMode = {
+	before: string,
+	after: string,
 };
 
 /**

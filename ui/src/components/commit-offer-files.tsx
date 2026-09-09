@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { FileChanges, PackageDiff, Refused } from "@/bindings";
+import type { FileChanges, FileMode, PackageDiff, Refused } from "@/bindings";
 import { commands } from "@/bindings";
 import { ChangesPanel } from "@/components/files/changes-panel";
 import { ChangesViewer } from "@/components/files/changes-viewer";
@@ -10,6 +10,7 @@ import {
   CHANGES_READ_FAILED_TITLE,
   didNotFinish,
   LAST_COMMIT_SIDE,
+  modeChangeNote,
   SAME_CONTENT_NOTE,
   WORKING_TREE_SIDE,
 } from "@/lib/copy-commit-offer";
@@ -24,8 +25,7 @@ import { readOrder } from "@/lib/read-state";
  *  stopped being changed. */
 type Read =
   | { at: "reading" }
-  | { at: "shown"; diff: PackageDiff }
-  | { at: "sameContent" }
+  | { at: "shown"; diff: PackageDiff; mode: FileMode | null }
   | { at: "nothing" }
   | { at: "refused"; said: string[] };
 
@@ -92,15 +92,38 @@ export function CommitOfferFiles({
               {read.said.join("\n")}
             </pre>
           </StatusNote>
-        ) : read.at === "sameContent" ? (
-          <p className="text-sm text-muted-foreground">{SAME_CONTENT_NOTE}</p>
         ) : read.at === "nothing" ? (
           <p className="text-sm text-muted-foreground">{UNCHANGED_FILE_NOTE}</p>
         ) : (
-          <ChangesViewer diff={read.at === "shown" ? read.diff : null} />
+          <Shown read={read} />
         )}
       </ChangesPanel>
     </>
+  );
+}
+
+/** What the commit carries for the file that is open: the comparison, and
+ *  the mode change beside it where the commit carries one too. A file
+ *  whose text does not move says so above that line rather than leaving
+ *  the empty comparison to speak for it, and one that changed back since
+ *  the offer was read has neither and says that instead. */
+function Shown({ read }: { read: Extract<Read, { at: "reading" | "shown" }> }) {
+  if (read.at === "reading") return <ChangesViewer diff={null} />;
+  const moved = read.diff.files.length > 0;
+  if (!moved && read.mode === null)
+    return (
+      <p className="text-sm text-muted-foreground">{UNCHANGED_FILE_NOTE}</p>
+    );
+  return (
+    <div className="space-y-3">
+      {read.mode !== null ? (
+        <div className="space-y-1 text-sm text-muted-foreground">
+          {moved ? null : <p>{SAME_CONTENT_NOTE}</p>}
+          <p>{modeChangeNote(read.mode.before, read.mode.after)}</p>
+        </div>
+      ) : null}
+      {moved ? <ChangesViewer diff={read.diff} /> : null}
+    </div>
   );
 }
 
@@ -117,9 +140,11 @@ function answerOf(
   }
   switch (response.data.kind) {
     case "shown":
-      return { at: "shown", diff: response.data.diff };
-    case "sameContent":
-      return { at: "sameContent" };
+      return {
+        at: "shown",
+        diff: response.data.diff,
+        mode: response.data.mode,
+      };
     case "nothing":
       return { at: "nothing" };
     case "refused":

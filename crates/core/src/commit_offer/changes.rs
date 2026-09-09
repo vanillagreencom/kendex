@@ -13,6 +13,12 @@
 //! read is a step that failed, and it travels as one. Collapsing the two
 //! would draw a diff nobody can trust in the one window that asks a person
 //! to commit.
+//!
+//! What git carries beside the contents is read beside them, from git. A
+//! commit can change a file's mode and its text at once — restoring a
+//! registration script's execute bit while rewriting it does exactly that —
+//! and a viewer that inferred the mode from an empty comparison would show
+//! the half it could see and hide the half it could not.
 
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -21,33 +27,47 @@ use crate::package::diff::{PackageDiff, Tree, diff_trees};
 
 use super::{Failed, Refusal, Scan, Step, git};
 
+/// The file's mode on each side, in git's own spelling: `100644` an
+/// ordinary file, `100755` one that can be run, `120000` a symbolic link.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModeChange {
+    pub before: String,
+    pub after: String,
+}
+
+/// One covered file's change, as the window draws it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Changed {
+    /// The two sides' contents compared. Empty where the contents did not
+    /// change and git carries the change some other way.
+    pub diff: PackageDiff,
+    /// The mode change the commit carries, or `None` where the mode
+    /// stands. Read from git rather than derived from the comparison, so a
+    /// file whose text and mode both change reports both.
+    pub mode: Option<ModeChange>,
+}
+
 /// What the offer has to show for one of the files it covers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Changes {
-    /// What the last commit holds against what the file holds now.
-    Shown(PackageDiff),
-    /// The offer covers this path and git reports it changed, and both
-    /// sides hold the same bytes. What the commit carries for it is a
-    /// change git records beside the contents — the file's mode, which is
-    /// what restoring a registration script's execute bit changes and
-    /// nothing else about the file.
-    SameContent,
+    Shown(Changed),
     /// The offer does not cover this path.
     NotOffered,
 }
 
 /// The change in one file the offer covers.
 ///
-/// The scan is the whole of what may be read. A path outside it is not a
-/// file kendex wrote or shares a key in, so it is one of the person's own —
-/// their unrelated work in progress, an ignored file holding a secret — and
-/// the window has no business showing it. The check is exact equality
-/// against paths git itself reported, so nothing outside the project can
-/// be named either.
+/// Only the files kendex owns whole. The scan's `shared` set is the other
+/// half of what it reports: whole configuration files of the person's own
+/// that kendex writes one key in — `.mcp.json`, a harness `settings.json` —
+/// and the rest of such a file is theirs, environment values and
+/// credentials included. The offer names those files and commits nothing
+/// of them, and this reads none of one either: a path outside `owned` is
+/// not offered, whoever asks. The check is exact equality against paths
+/// git itself reported, so nothing outside the project can be named at
+/// all.
 pub fn file_changes(scan: &Scan, path: &str) -> Result<Changes, Failed> {
-    let covered = scan.owned.iter().any(|owned| owned.path == path)
-        || scan.shared.iter().any(|shared| shared == path);
-    if !covered {
+    if !scan.owned.iter().any(|owned| owned.path == path) {
         return Ok(Changes::NotOffered);
     }
     let mut before = Tree::new();
@@ -58,14 +78,43 @@ pub fn file_changes(scan: &Scan, path: &str) -> Result<Changes, Failed> {
     if let Some(bytes) = working(&scan.root, path)? {
         after.insert(path.to_owned(), bytes);
     }
-    let diff = diff_trees(&before, &after);
-    // git put this path in the scan, so something about it changed. With
-    // both sides holding the same bytes that something is not the
-    // contents, and a comparison drawn as empty would say the opposite.
-    Ok(match diff.files.is_empty() {
-        true => Changes::SameContent,
-        false => Changes::Shown(diff),
-    })
+    Ok(Changes::Shown(Changed {
+        diff: diff_trees(&before, &after),
+        mode: mode_change(&scan.root, path)?,
+    }))
+}
+
+/// What git records about this path beside its contents, where the commit
+/// changes it.
+///
+/// git decides what a mode is and when it changed; this reads its answer
+/// rather than comparing two readings of its own, which would have to know
+/// that Windows carries no execute bit and that a link is a mode rather
+/// than a kind. `--raw` opens each entry with the two modes, and a path
+/// git lists no entry for — one this change adds, which `HEAD` has no side
+/// of — has no mode change to report.
+fn mode_change(root: &Path, path: &str) -> Result<Option<ModeChange>, Failed> {
+    let listed = git::read_required(root, &["diff", "--raw", "HEAD", "--", path])?;
+    let text = String::from_utf8_lossy(&listed);
+    let Some(entry) = text.lines().next() else {
+        return Ok(None);
+    };
+    let mut fields = entry.trim_start_matches(':').split_whitespace();
+    let (Some(before), Some(after)) = (fields.next(), fields.next()) else {
+        return Ok(None);
+    };
+    // git spells "no mode on this side" as all zeroes, which a deletion
+    // and an addition each carry on one side. Neither is a mode change:
+    // the file arriving or going is the change, and the comparison already
+    // says so.
+    let missing = |mode: &str| mode.chars().all(|one| one == '0');
+    if before == after || missing(before) || missing(after) {
+        return Ok(None);
+    }
+    Ok(Some(ModeChange {
+        before: before.to_owned(),
+        after: after.to_owned(),
+    }))
 }
 
 /// What `HEAD` holds at this path, or `None` where it holds nothing — a

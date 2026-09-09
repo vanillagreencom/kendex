@@ -4,9 +4,9 @@ import type {
   PackageMeta_Serialize,
   VersionRow,
 } from "@/bindings";
-import { FilePreview } from "@/components/package/file-preview";
 import { EditedNotice } from "@/components/package/fork-notice";
 import { PackageDetails } from "@/components/package/package-details";
+import { PackageReadme } from "@/components/package/package-readme";
 import type { ItemGroup } from "@/lib/derive";
 import type { PackageRef } from "@/stores/nav";
 
@@ -77,16 +77,15 @@ export function PackageOverview({
         onCompare={onCompare}
         onFollow={onFollow}
       />
-      {/* The preview reads a package's files by scope, kind and name —
-          the declaration's address. An observed row has no declaration to
-          read, and asking anyway would show the other package's bytes
-          under this one's name. */}
+      {/* The README is read by scope, kind and name — the declaration's
+          address. An observed row has no declaration to read, and asking
+          anyway would put the other package's words under this one's
+          name. */}
       {declares ? (
-        <FilePreview
+        <PackageReadme
           scope={reference.scope}
           kind={reference.kind}
           name={reference.name}
-          path={null}
         />
       ) : null}
     </div>

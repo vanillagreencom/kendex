@@ -163,17 +163,28 @@ pub enum CommitStep {
     },
 }
 
+/// The file's mode on each side, in git's own spelling, where the commit
+/// changes it.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct FileMode {
+    pub before: String,
+    pub after: String,
+}
+
 /// What the window has to show for one file the offer covers.
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum FileChanges {
-    /// The comparison between what the last commit holds and what the file
-    /// holds now.
-    Shown { diff: PackageDiff },
-    /// The offer covers this path and both sides hold the same bytes, so
-    /// what the commit carries for it is a change git records beside the
-    /// contents rather than a change to the file's text.
-    SameContent,
+    /// What the commit carries for this file: the two sides' contents
+    /// compared, and the mode change beside it where there is one. An
+    /// empty comparison with a mode change is a file whose text does not
+    /// move; an empty one with neither is a file that changed back since
+    /// the offer was read.
+    Shown {
+        diff: PackageDiff,
+        mode: Option<FileMode>,
+    },
     /// The offer no longer covers this path: the file has changed back, or
     /// a sweep has taken it, since the offer was read. Nothing to show, and
     /// nothing wrong.
@@ -363,8 +374,13 @@ pub fn commit_offer_file_changes(root: String, path: String) -> Result<FileChang
         }
     };
     Ok(match commit_offer::file_changes(&scan, &path) {
-        Ok(Changes::Shown(diff)) => FileChanges::Shown { diff },
-        Ok(Changes::SameContent) => FileChanges::SameContent,
+        Ok(Changes::Shown(changed)) => FileChanges::Shown {
+            diff: changed.diff,
+            mode: changed.mode.map(|mode| FileMode {
+                before: mode.before,
+                after: mode.after,
+            }),
+        },
         Ok(Changes::NotOffered) => FileChanges::Nothing,
         Err(failed) => FileChanges::Refused {
             refused: Refused::from(&failed),

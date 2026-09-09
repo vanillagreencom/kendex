@@ -37,6 +37,7 @@ import {
   FILE_READ_FAILED_TITLE,
   FILES_TAB,
   NO_FILES_NOTE,
+  NO_README_NOTE,
 } from "@/lib/copy-files";
 import { DELETE_LABEL, PROJECTS_TAB } from "@/lib/copy-projects";
 import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
@@ -78,6 +79,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
   commands: {
     packageMeta: vi.fn(),
     packageFiles: vi.fn(),
+    packageFile: vi.fn(),
     packageVersions: vi.fn(),
     packageReadme: vi.fn(),
     getManifest: vi.fn(),
@@ -235,6 +237,7 @@ beforeEach(() => {
   vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
   vi.mocked(commands.packageMeta).mockResolvedValue(nothing);
   vi.mocked(commands.packageFiles).mockResolvedValue(nothing);
+  vi.mocked(commands.packageFile).mockResolvedValue(nothing);
   vi.mocked(commands.packageVersions).mockResolvedValue(nothing);
   vi.mocked(commands.packageReadme).mockResolvedValue(nothing);
   vi.mocked(commands.editorInventory).mockResolvedValue(nothing);
@@ -1367,6 +1370,27 @@ describe("the package page's Overview", () => {
     expect(text.indexOf(ENABLED_LABEL)).toBeLessThan(
       text.indexOf("THE-PACKAGE-README-LINE"),
     );
+  });
+
+  // The Overview is the README, so a package that carries none says so.
+  // Falling back to whichever file happens to be first would put an
+  // arbitrary source file under the details, where a reader would take it
+  // for the package describing itself.
+  it("says a package carries no readme, and shows no file in its place", async () => {
+    vi.mocked(commands.packageReadme).mockResolvedValue({
+      status: "ok",
+      data: null,
+    });
+    vi.mocked(commands.packageFiles).mockResolvedValue({
+      status: "ok",
+      data: [{ path: "SKILL.md", size: 10, isReadme: false }],
+    });
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+
+    expect(host.textContent).toContain(NO_README_NOTE);
+    // The one read the Overview makes is the readme's. It never falls
+    // through to the package's files, which are the other tab's.
+    expect(commands.packageFile).not.toHaveBeenCalled();
   });
 
   // The control: the Overview reads one file and one only. A package whose

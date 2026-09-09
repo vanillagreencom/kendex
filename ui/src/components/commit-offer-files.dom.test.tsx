@@ -2,11 +2,12 @@
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { FileChanges } from "@/bindings";
+import type { FileChanges, FileMode } from "@/bindings";
 import { commands } from "@/bindings";
 import {
   CHANGES_READ_FAILED_TITLE,
   didNotFinish,
+  modeChangeNote,
   SAME_CONTENT_NOTE,
 } from "@/lib/copy-commit-offer";
 import { CLOSE_CHANGES_LABEL, UNCHANGED_FILE_NOTE } from "@/lib/copy-files";
@@ -20,25 +21,42 @@ vi.mock("@/bindings", () => ({
 const ROOT = "/home/method/dev/site";
 const paths = [".claude/skills/gh/SKILL.md", ".claude/CLAUDE.md"];
 
-const shown = (text: string): FileChanges => ({
+type Mode = FileMode | null;
+
+const shown = (text: string, mode: Mode = null): FileChanges =>
+  ({
+    kind: "shown",
+    mode,
+    diff: {
+      files: [
+        {
+          path: ".claude/CLAUDE.md",
+          status: "modified",
+          additions: 1,
+          deletions: 0,
+          lossy: false,
+          hunks: [
+            {
+              header: "@@ -1 +1 @@",
+              lines: [{ kind: "add", text, oldNo: null, newNo: 1 }],
+            },
+          ],
+        },
+      ],
+      totalAdditions: 1,
+      totalDeletions: 0,
+      truncated: false,
+    },
+  }) as FileChanges;
+
+/** A comparison with nothing in it, for the states where the contents do
+ *  not move. */
+const noContentChange = (mode: Mode): FileChanges => ({
   kind: "shown",
+  mode,
   diff: {
-    files: [
-      {
-        path: ".claude/CLAUDE.md",
-        status: "modified",
-        additions: 1,
-        deletions: 0,
-        lossy: false,
-        hunks: [
-          {
-            header: "@@ -1 +1 @@",
-            lines: [{ kind: "add", text, oldNo: null, newNo: 1 }],
-          },
-        ],
-      },
-    ],
-    totalAdditions: 1,
+    files: [],
+    totalAdditions: 0,
     totalDeletions: 0,
     truncated: false,
   },
@@ -123,10 +141,36 @@ describe("the files a commit would carry", () => {
   // an empty comparison would tell the person nothing changed in a file
   // the commit does change.
   it("says what a change the contents do not show is", async () => {
-    answers({ kind: "sameContent" });
+    answers(noContentChange({ before: "100644", after: "100755" }));
     render();
     await open(".claude/CLAUDE.md");
     expect(panel()).toContain(SAME_CONTENT_NOTE);
+    expect(panel()).toContain(modeChangeNote("100644", "100755"));
+  });
+
+  // A commit can rewrite a script and restore its execute bit at once.
+  // Reading the mode off the comparison would show the text change and
+  // hide the other half; both are on screen.
+  it("says the mode change beside a content change, not instead of it", async () => {
+    answers(
+      shown("A-LINE-KENDEX-WROTE", { before: "100644", after: "100755" }),
+    );
+    render();
+    await open(".claude/CLAUDE.md");
+    expect(panel()).toContain("A-LINE-KENDEX-WROTE");
+    expect(panel()).toContain(modeChangeNote("100644", "100755"));
+    // The contents did move, so the note about them not moving is wrong
+    // here and is not drawn.
+    expect(panel()).not.toContain(SAME_CONTENT_NOTE);
+  });
+
+  // Neither half changed: the file went back to what the last commit holds
+  // between the offer being read and the row being opened.
+  it("says nothing is left when neither the contents nor the mode moved", async () => {
+    answers(noContentChange(null));
+    render();
+    await open(".claude/CLAUDE.md");
+    expect(panel()).toContain(UNCHANGED_FILE_NOTE);
   });
 
   // Two reads about the same file can be out at once — a person moving
