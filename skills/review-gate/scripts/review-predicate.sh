@@ -306,7 +306,14 @@ if [ "$#" -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
   exit 0
 fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 2
-. "$script_dir/lib/diagnostics.sh" || exit 2
+if [ ! -r "$script_dir/lib/diagnostics.sh" ]; then
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$script_dir/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 2
+fi
+. "$script_dir/lib/diagnostics.sh" 2>/dev/null || {
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$script_dir/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 2
+}
 
 if [ "$#" -eq 1 ] && [ "$1" = "--check-config" ]; then
   CHECK_CONFIG_ONLY=1

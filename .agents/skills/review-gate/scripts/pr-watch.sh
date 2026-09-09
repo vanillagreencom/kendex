@@ -16,7 +16,14 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/settings.sh
-. "$script_dir/lib/diagnostics.sh"
+if [ ! -r "$script_dir/lib/diagnostics.sh" ]; then
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$script_dir/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 2
+fi
+. "$script_dir/lib/diagnostics.sh" 2>/dev/null || {
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$script_dir/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 2
+}
 . "$script_dir/lib/settings.sh"
 
 print_usage() {

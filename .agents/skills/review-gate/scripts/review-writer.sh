@@ -84,7 +84,14 @@
 set -u
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-. "$script_dir/lib/diagnostics.sh"
+if [ ! -r "$script_dir/lib/diagnostics.sh" ]; then
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$script_dir/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 1
+fi
+. "$script_dir/lib/diagnostics.sh" 2>/dev/null || {
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$script_dir/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 1
+}
 
 # The fork read-only no-op precedes everything, including settings
 # resolution: such a run must exit green even under a broken settings file
