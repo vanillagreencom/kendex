@@ -17,6 +17,7 @@ import {
   CHANGED_FILES_TREE_LABEL,
   UNCHANGED_FILE_NOTE,
 } from "@/lib/copy-files";
+import { readOrder } from "@/lib/read-state";
 
 /** What one read of a file the offer covers came back with: still out, the
  *  diff, the words of a read that would not run, or the file having
@@ -46,24 +47,27 @@ export function CommitOfferFiles({
 }) {
   const [open, setOpen] = useState<string | null>(null);
   const [read, setRead] = useState<Read>({ at: "reading" });
-  // The file the newest read was asked about. A person clicking down a
-  // list has several reads out at once, and only the one they are still
-  // looking at may write — an older answer landing last would put one
-  // file's diff under another file's name.
-  const asked = useRef<string | null>(null);
+  // One ticket per read, and only the newest may write. The path cannot
+  // stand in for the ticket: a person moving A → B → A, or closing A and
+  // opening it again, has two reads out about the same file, and the older
+  // one landing last would put a scan the project has moved past under the
+  // newer one's name.
+  const order = useRef(readOrder());
 
   const show = (path: string) => {
-    asked.current = path;
+    const ticket = order.current.begin();
     setOpen(path);
     setRead({ at: "reading" });
     void commands.commitOfferFileChanges(root, path).then((response) => {
-      if (asked.current !== path) return;
+      if (!order.current.lands(ticket)) return;
       setRead(answerOf(response));
     });
   };
 
+  // Closing takes a ticket of its own, so a read still out when the panel
+  // shuts can no longer write: it is not the newest any more.
   const close = () => {
-    asked.current = null;
+    order.current.begin();
     setOpen(null);
   };
 

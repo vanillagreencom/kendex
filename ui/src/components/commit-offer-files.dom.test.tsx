@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
+import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileChanges } from "@/bindings";
 import { commands } from "@/bindings";
@@ -8,7 +9,7 @@ import {
   didNotFinish,
   SAME_CONTENT_NOTE,
 } from "@/lib/copy-commit-offer";
-import { UNCHANGED_FILE_NOTE } from "@/lib/copy-files";
+import { CLOSE_CHANGES_LABEL, UNCHANGED_FILE_NOTE } from "@/lib/copy-files";
 import { mount, settle } from "@/test/dom";
 import { CommitOfferFiles } from "./commit-offer-files";
 
@@ -48,6 +49,19 @@ const answers = (data: FileChanges) =>
     .mocked(commands.commitOfferFileChanges)
     .mockResolvedValue({ status: "ok", data });
 
+/** One read per call, each resolved by hand, so a test decides which of
+ *  several reads out at once lands first. */
+const answersInTurn = () => {
+  const waiting: ((data: FileChanges) => void)[] = [];
+  vi.mocked(commands.commitOfferFileChanges).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        waiting.push((data) => resolve({ status: "ok", data }));
+      }),
+  );
+  return waiting;
+};
+
 const render = () => mount(<CommitOfferFiles root={ROOT} paths={paths} />);
 
 /** A tree row by the path it names, read off the document: the panel this
@@ -59,6 +73,12 @@ const rowFor = (path: string) =>
 
 /** The panel is portalled out of the tree the component mounted into. */
 const panel = () => document.body.textContent ?? "";
+
+/** The panel's own close control. */
+const closeButton = () =>
+  [...document.body.querySelectorAll("button")].find(
+    (one) => one.getAttribute("aria-label") === CLOSE_CHANGES_LABEL,
+  ) as HTMLElement;
 
 const open = async (path: string) => {
   await userEvent.click(rowFor(path));
@@ -107,6 +127,47 @@ describe("the files a commit would carry", () => {
     render();
     await open(".claude/CLAUDE.md");
     expect(panel()).toContain(SAME_CONTENT_NOTE);
+  });
+
+  // Two reads about the same file can be out at once — a person moving
+  // A → B → A, or closing the panel and opening it again. The path cannot
+  // tell them apart, so the older answer must not land on top of the
+  // newer: the project has moved on between the two scans.
+  it("lets only the newest read write, even when its file repeats", async () => {
+    const waiting = answersInTurn();
+    render();
+    await open(".claude/CLAUDE.md");
+    await open(".claude/skills/gh/SKILL.md");
+    await open(".claude/CLAUDE.md");
+    expect(waiting).toHaveLength(3);
+
+    // The first read of that file lands last, carrying the older scan.
+    await act(async () => waiting[2]?.(shown("THE-NEWEST-ANSWER")));
+    await act(async () => waiting[0]?.(shown("AN-OLDER-ANSWER")));
+    expect(panel()).toContain("THE-NEWEST-ANSWER");
+    expect(panel()).not.toContain("AN-OLDER-ANSWER");
+  });
+
+  // Closing and opening the same file again is the same trap wearing a
+  // different shape: two reads about one path, and the one from before the
+  // panel closed must not land in the panel that replaced it.
+  it("lets no read from before a close write into the panel after it", async () => {
+    const waiting = answersInTurn();
+    render();
+    await open(".claude/CLAUDE.md");
+    await userEvent.click(closeButton());
+    await settle();
+    await open(".claude/CLAUDE.md");
+    expect(waiting).toHaveLength(2);
+
+    await act(async () =>
+      waiting[1]?.(shown("THE-ANSWER-THIS-PANEL-ASKED-FOR")),
+    );
+    await act(async () =>
+      waiting[0]?.(shown("AN-ANSWER-FROM-BEFORE-THE-CLOSE")),
+    );
+    expect(panel()).toContain("THE-ANSWER-THIS-PANEL-ASKED-FOR");
+    expect(panel()).not.toContain("AN-ANSWER-FROM-BEFORE-THE-CLOSE");
   });
 
   // The must-not-happen half: a read that failed is never drawn as a diff

@@ -910,3 +910,78 @@ fn hunk_text(diff: &crate::package::diff::PackageDiff) -> Vec<String> {
         })
         .collect()
 }
+
+/// Absent and unreadable are different answers. A file this change deletes
+/// is absent; a read the machine refused is a step that failed, and the
+/// window is told so rather than shown a deletion nobody made.
+#[cfg(unix)]
+#[test]
+fn a_read_the_machine_refuses_is_a_failure_and_never_a_deletion() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new(&[(OWNED[0], "one\n")]);
+    let generated = repo.generated(&[OWNED[0]], &[]);
+    repo.write(OWNED[0], "two\n");
+    let found = repo.scan(&generated).unwrap();
+    let at = repo.root.join(OWNED[0]);
+
+    fs::set_permissions(&at, fs::Permissions::from_mode(0o000)).unwrap();
+    let refused = file_changes(&found, OWNED[0]);
+    // Running as root reads a mode-0 file anyway, so the property this
+    // asserts is not reachable there and the case says so instead of
+    // passing on a read that was never refused.
+    if fs::read(&at).is_ok() {
+        fs::set_permissions(&at, fs::Permissions::from_mode(0o644)).unwrap();
+        return;
+    }
+    let failed = refused.expect_err("an unreadable file read as a deletion");
+    assert!(
+        failed.said().iter().any(|line| line.contains(OWNED[0])),
+        "the failure did not name the file: {:?}",
+        failed.said()
+    );
+    fs::set_permissions(&at, fs::Permissions::from_mode(0o644)).unwrap();
+
+    // The control: the same path, gone, is the deletion it looks like.
+    fs::remove_file(&at).unwrap();
+    let gone = shown(&repo.scan(&generated).unwrap(), OWNED[0]);
+    assert_eq!(
+        gone.files[0].status,
+        crate::package::diff::FileStatus::Removed
+    );
+}
+
+/// The leaf is not the only component that can be a link. An ancestor
+/// replaced by one carries an ordinary read out of the project, so the
+/// read is refused: the path the offer named no longer names a file inside
+/// this project, and the window shows no bytes from outside it.
+#[cfg(unix)]
+#[test]
+fn a_link_above_the_file_takes_the_read_out_of_the_project_and_is_refused() {
+    const INSIDE: &str = ".claude/skills/dev/SKILL.md";
+    let repo = Repo::new(&[(INSIDE, "ours\n")]);
+    let generated = repo.generated(&[INSIDE], &[]);
+    // Somewhere this project must never read from, holding a name the
+    // covered path would reach through a swapped ancestor.
+    let outside = repo.root.parent().unwrap().join("elsewhere");
+    fs::create_dir_all(outside.join("dev")).unwrap();
+    fs::write(outside.join("dev/SKILL.md"), "SECRET-FROM-OUTSIDE\n").unwrap();
+
+    fs::remove_dir_all(repo.root.join(".claude/skills")).unwrap();
+    std::os::unix::fs::symlink(&outside, repo.root.join(".claude/skills")).unwrap();
+
+    let found = repo.scan(&generated).unwrap();
+    assert!(
+        found.owned.iter().any(|owned| owned.path == INSIDE),
+        "the swapped ancestor left the covered path out of the scan, so this case proves nothing"
+    );
+    let failed = file_changes(&found, INSIDE).expect_err("the read followed the swapped ancestor");
+    let said = failed.said().join("\n");
+    assert!(
+        said.contains(".claude/skills"),
+        "the refusal did not name the link: {said}"
+    );
+    assert!(
+        !said.contains("SECRET-FROM-OUTSIDE"),
+        "bytes from outside the project reached the window"
+    );
+}

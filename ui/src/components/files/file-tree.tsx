@@ -38,18 +38,20 @@ export function FileTree({
   const nodes = useMemo(() => buildFileTree(entries), [entries]);
   // Closed rather than open, so a tree that gains a folder opens it: the
   // set a reader has closed is the smaller and the more deliberate half.
+  // Keyed by the folder's own key rather than its path, which one name can
+  // share with a file beside it.
   const [closed, setClosed] = useState<ReadonlySet<string>>(new Set());
-  const toggle = (path: string) =>
+  const toggle = (key: string) =>
     setClosed((was) => {
       const next = new Set(was);
-      if (!next.delete(path)) next.add(path);
+      if (!next.delete(key)) next.add(key);
       return next;
     });
   return (
     <ul aria-label={label} className={cn("min-w-0", className)}>
       {nodes.map((node) => (
         <Row
-          key={node.path}
+          key={node.key}
           node={node}
           closed={closed}
           selected={selected}
@@ -75,7 +77,7 @@ function Row({
   closed: ReadonlySet<string>;
   selected: string | null;
   onSelect: (path: string) => void;
-  onToggle: (path: string) => void;
+  onToggle: (key: string) => void;
 }) {
   if (node.kind === "file") {
     const chosen = selected === node.path;
@@ -102,7 +104,7 @@ function Row({
       </li>
     );
   }
-  const open = !closed.has(node.path);
+  const open = !closed.has(node.key);
   const Chevron = open ? ChevronDown : ChevronRight;
   return (
     <li>
@@ -111,7 +113,7 @@ function Row({
         aria-expanded={open}
         title={node.path}
         className={ROW}
-        onClick={() => onToggle(node.path)}
+        onClick={() => onToggle(node.key)}
       >
         <Chevron className="size-3.5 shrink-0 text-muted-foreground" />
         <Folder className="size-3.5 shrink-0 text-muted-foreground" />
@@ -123,7 +125,7 @@ function Row({
         <ul className="ml-[0.95rem] border-l border-border/60 pl-1">
           {node.children.map((child) => (
             <Row
-              key={child.path}
+              key={child.key}
               node={child}
               closed={closed}
               selected={selected}

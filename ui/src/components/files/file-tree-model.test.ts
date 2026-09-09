@@ -58,6 +58,30 @@ describe("buildFileTree", () => {
     ]);
   });
 
+  // A comparison that replaces a file with a directory of the same name
+  // holds both, and dropping either would leave a change the person cannot
+  // open at all — in the commit dialog, cannot even see.
+  it("keeps a name that is a file and a folder at once, both ways round", () => {
+    expect(lines(tree(["foo", "foo/bar"]))).toEqual([
+      "folder foo",
+      "  file foo/bar",
+      "file foo",
+    ]);
+    expect(lines(tree(["foo/bar", "foo"]))).toEqual([
+      "folder foo",
+      "  file foo/bar",
+      "file foo",
+    ]);
+  });
+
+  it("gives the file row and the folder row of one name different keys", () => {
+    const keys = buildFileTree([{ path: "foo" }, { path: "foo/bar" }]).map(
+      (node) => node.key,
+    );
+    expect(keys).toEqual(["folder:foo", "file:foo"]);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
   it("keeps each file's own entry so a row can draw what came with it", () => {
     const [node] = buildFileTree([{ path: "a/b.md", meta: "10 B" }]);
     expect(node?.kind === "folder" && node.children[0]).toMatchObject({
