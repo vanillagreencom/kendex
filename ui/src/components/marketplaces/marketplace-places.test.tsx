@@ -2,8 +2,9 @@
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MarketplaceRow, Scope } from "@/bindings";
-import { SOURCE_ENABLED_LABEL } from "@/lib/copy-marketplaces";
+import { SWITCHED_OFF_HERE } from "@/lib/copy-model";
 import { useMarketplacesStore } from "@/stores/marketplaces";
+import { useNavStore } from "@/stores/nav";
 import { mount } from "@/test/dom";
 import { MarketplacePlaces } from "./marketplace-places";
 
@@ -28,47 +29,68 @@ const row = (over: Partial<MarketplaceRow> = {}): MarketplaceRow => ({
   ...over,
 });
 
+const goToLibrary = vi.fn();
 const toggle = vi.fn();
 
 beforeEach(() => {
+  goToLibrary.mockReset();
   toggle.mockReset();
   useMarketplacesStore.setState({ rows: [], toggle });
+  useNavStore.setState({ goToLibrary });
 });
 
-// The per-place switch and what it does: the place is the row, the label
-// says what the switch does, and the click has to reach that row's own
-// subscription. Static markup never reaches the handler, so this mounts.
+// The tab is a list of places to open, not a set of switches: what a place
+// does with a marketplace is that place's own setting. Static markup never
+// reaches the handler, so this mounts.
 describe("a marketplace's Projects section", () => {
-  it("names what the switch does and switches the place it sits beside", async () => {
+  it("opens the place a row names and offers no control over it", async () => {
     useMarketplacesStore.setState({
       rows: [row(), row({ scope: project("/w/beta"), name: "beta-kit" })],
     });
     const host = mount(<MarketplacePlaces identity="github.com/acme/kit" />);
 
-    // Each switch names its own place, so a reader moving control to
-    // control is not offered three identical names over three different
-    // subscriptions. The path, not the basename: two projects can end in
-    // the same folder name.
-    const named = [...host.querySelectorAll("label")].map(
-      (label) => label.textContent ?? "",
+    // No switch, and nothing else that would change a place from here:
+    // the only controls are the two rows themselves.
+    expect(host.querySelectorAll('[role="switch"]').length).toBe(0);
+    const rows = [...host.querySelectorAll("button")] as HTMLElement[];
+    expect(rows.length).toBe(2);
+
+    await userEvent.click(rows[1]);
+    expect(toggle).not.toHaveBeenCalled();
+    expect(goToLibrary).toHaveBeenCalledTimes(1);
+    expect(goToLibrary).toHaveBeenCalledWith({ scope: { project: "/w/beta" } });
+  });
+
+  it("opens Personal as the personal narrowing", async () => {
+    useMarketplacesStore.setState({ rows: [row()] });
+    const host = mount(<MarketplacePlaces identity="github.com/acme/kit" />);
+
+    await userEvent.click(host.querySelector("button") as HTMLElement);
+    expect(goToLibrary).toHaveBeenCalledWith({ scope: "global" });
+  });
+
+  // A place offering none of this marketplace's packages otherwise reads as
+  // a place with nothing installed. The state is said; changing it is the
+  // place's own setting.
+  it("says which places have it switched off", () => {
+    useMarketplacesStore.setState({
+      rows: [
+        row(),
+        row({ scope: project("/w/beta"), name: "beta-kit", enabled: false }),
+      ],
+    });
+    const host = mount(<MarketplacePlaces identity="github.com/acme/kit" />);
+
+    const said = [...host.querySelectorAll("button")].map((each) =>
+      each.textContent?.includes(SWITCHED_OFF_HERE),
     );
-    expect(named[0]).toBe(`${SOURCE_ENABLED_LABEL} in Personal`);
-    expect(named[1]).toBe(`${SOURCE_ENABLED_LABEL} in /w/beta`);
-
-    const switches = [
-      ...host.querySelectorAll('[role="switch"]'),
-    ] as HTMLElement[];
-    await userEvent.click(switches[1]);
-
-    expect(toggle).toHaveBeenCalledTimes(1);
-    expect(toggle).toHaveBeenCalledWith(project("/w/beta"), "beta-kit", false);
+    expect(said).toEqual([false, true]);
   });
 
   // Two registered projects can end in the same folder. A row labelled
-  // "kendex" beside another labelled "kendex" names neither, over a switch
-  // that deactivates every install this marketplace put in one of them —
-  // the rule that a list never carries a control whose target it does not
-  // name, failing on the name itself.
+  // "kendex" beside another labelled "kendex" names neither, over a link
+  // that opens one of them — the rule that a list never carries a control
+  // whose target it does not name, failing on the name itself.
   it("tells apart two projects whose folders share a name", () => {
     useMarketplacesStore.setState({
       rows: [

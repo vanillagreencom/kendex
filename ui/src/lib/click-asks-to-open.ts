@@ -1,12 +1,17 @@
 import type { MouseEvent } from "react";
 
 /** What answers a click before the surface may: any real control, plus a
- *  tooltip popup or a dialog and its backdrop, which count wherever the
- *  browser draws them because React sends a portal's clicks back through
- *  the surface that owns it. A dialog opened from a card is read, not a
- *  request to leave the page; its backdrop is pressed to close it. */
+ *  tooltip popup, a dropdown menu, or a dialog and its backdrop, which count
+ *  wherever the browser draws them because React sends a portal's clicks back
+ *  through the surface that owns it. A dialog opened from a card is read, not
+ *  a request to leave the page; its backdrop is pressed to close it.
+ *
+ *  The menu is matched by the prefix its parts share rather than by their
+ *  roles: a menu item renders as a plain div, so no element selector reaches
+ *  it, and the popup's own padding lies between the items. One selector
+ *  covers every part the wrapper draws, including any it grows. */
 const CONTROLS =
-  'a, button, input, select, textarea, [role="button"], [data-slot="tooltip-content"], [data-slot="dialog-content"], [data-slot="dialog-overlay"]';
+  'a, button, input, select, textarea, [role="button"], [data-slot="tooltip-content"], [data-slot="dialog-content"], [data-slot="dialog-overlay"], [data-slot^="dropdown-menu-"]';
 
 /**
  * Whether a click on a whole-surface shortcut — a project card, a Library

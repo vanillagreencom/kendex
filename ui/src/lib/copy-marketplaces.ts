@@ -80,18 +80,10 @@ export const SUBSCRIBE_TO_INSTALL_MEANS =
   "Installing from here subscribes you personally to this marketplace first — that is what makes its packages installable.";
 export const SUBSCRIBE_TO_INSTALL_LABEL = "Subscribe and install";
 
-// The marketplace page's Projects section: every place that declares this
-// marketplace, and the switch that decides whether it offers packages
-// there. The help says what switching it off costs, because the engine
-// deactivates that place's installs rather than leaving them running.
-// The title names the section once, on the tab that opens it — the panel
-// does not repeat it.
+// The marketplace page's Projects tab: the places that install from this
+// marketplace. The title names the tab once — the panel does not repeat it,
+// and what the panel says about the model is in copy-model.ts.
 export const MARKETPLACE_PLACES_TITLE = "Projects";
-export const MARKETPLACE_PLACES_HELP =
-  "Where this marketplace is subscribed. Personal covers what you install for yourself; every project keeps its own list.";
-export const SOURCE_ENABLED_LABEL = "Offer packages here";
-export const SOURCE_ENABLED_HELP =
-  "Switch it off and this place stops offering the marketplace's packages. Anything already installed from it is switched off in place — nothing is deleted, and switching this back on restores it.";
 
 /** How many places a marketplace is subscribed in, for its card. */
 export const placeCountLabel = (count: number): string =>

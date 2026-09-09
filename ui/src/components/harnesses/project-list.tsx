@@ -1,12 +1,19 @@
-import { Trash2 } from "lucide-react";
+import { MoreHorizontal } from "lucide-react";
 import { useState } from "react";
 import type { ProjectFlag, Scope } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AddProjectDialog } from "@/components/harnesses/add-project-dialog";
+import { PlaceMarketplacesDialog } from "@/components/harnesses/place-marketplaces-dialog";
 import { ProjectCard } from "@/components/harnesses/project-card";
 import { ScanFolderDialog } from "@/components/harnesses/scan-folder-dialog";
 import { SessionNoteRow } from "@/components/harnesses/session-note-row";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { unmanagedCount } from "@/lib/audit-counts";
 import {
   NOT_CHECKED_BADGE,
@@ -15,9 +22,15 @@ import {
   uncommittedInProgress,
   uncommittedNoBranch,
 } from "@/lib/copy-commit-offer";
-import { type ItemPlace, installedCountByKind } from "@/lib/derive";
+import { PLACE_MARKETPLACES_LABEL } from "@/lib/copy-model";
+import {
+  type ItemPlace,
+  installedCountByKind,
+  selectionOf,
+} from "@/lib/derive";
+import { scopeNames } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
-import { sameScope } from "@/lib/scope";
+import { everyPlace, sameScope } from "@/lib/scope";
 import { sessionNoteState } from "@/lib/session-note";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount, useAuditStore } from "@/stores/audit";
@@ -63,6 +76,61 @@ function badgeFor(
         title: notChecked(flag.reason.said),
       };
   }
+}
+
+/** One place's own actions, on its card. Every setting that decides what
+ *  this place installs is reached here — the marketplaces it installs from
+ *  included — because that is what the reader came to this card to manage.
+ *  Personal has no tracking to stop, so it gets the menu without it. */
+function PlaceActions({
+  scope,
+  place,
+  onStopTracking,
+}: {
+  scope: Scope;
+  /** What this place is called among the places drawn beside it, from
+   *  [scopeNames] — the dialogs this menu opens name the place whose files
+   *  they rewrite, and two projects can end in the same folder. */
+  place: string;
+  onStopTracking?: () => void;
+}) {
+  const [marketplacesOpen, setMarketplacesOpen] = useState(false);
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label={`More actions for ${place}`}
+            >
+              <MoreHorizontal className="size-4" />
+            </Button>
+          }
+        />
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={() => setMarketplacesOpen(true)}>
+            {PLACE_MARKETPLACES_LABEL}
+          </DropdownMenuItem>
+          {onStopTracking ? (
+            <DropdownMenuItem
+              className="text-critical"
+              onClick={onStopTracking}
+            >
+              Stop tracking {place}…
+            </DropdownMenuItem>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <PlaceMarketplacesDialog
+        open={marketplacesOpen}
+        onOpenChange={setMarketplacesOpen}
+        scope={scope}
+        place={place}
+      />
+    </>
+  );
 }
 
 /** "Projects": personal plus every registered project, one card each. */
@@ -111,6 +179,15 @@ export function ProjectList() {
   const flagged = useCommitOfferStore((s) => s.flagged);
   const items = result?.items ?? [];
   const projects = settings?.projects ?? [];
+  // What a place is called where it is named ALONE, away from its card: a
+  // card's menu opens dialogs that say which place's files an action
+  // rewrites, and two roots ending in the same folder would name neither.
+  // The card itself keeps its folder name, with the path right beneath it.
+  // Personal leads, as [everyPlace] orders it, so a project's name sits at
+  // its index plus one.
+  const placeNames = scopeNames(everyPlace(projects));
+  const namedAlone = (root: string): string =>
+    placeNames[projects.indexOf(root) + 1] ?? root;
   // A card counts one place and links to that place. Both read the same
   // object, so the badge cannot name a narrowing its click does not make.
   const personal: ItemPlace = { scope: "global" };
@@ -137,6 +214,7 @@ export function ProjectList() {
           onKindClick={(kind) => goToLibrary({ ...personal, kind })}
           unmanaged={notManaged(GLOBAL)}
           onUnmanaged={() => goToUnmanaged(GLOBAL)}
+          action={<PlaceActions scope={GLOBAL} place="Personal" />}
         />
 
         {projects.length === 0 ? (
@@ -147,7 +225,7 @@ export function ProjectList() {
           projects.map((root) => {
             const name = root.split("/").pop() ?? root;
             const scope: Scope = { scope: "project", root };
-            const place: ItemPlace = { scope: { project: root } };
+            const place: ItemPlace = { scope: selectionOf(scope) };
             return (
               <ProjectCard
                 key={root}
@@ -167,15 +245,11 @@ export function ProjectList() {
                 // checked.
                 note={noteRow(root, name)}
                 action={
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={`Stop tracking ${name}`}
-                    title={`Stop tracking ${name}`}
-                    onClick={() => setRemoveTarget(root)}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
+                  <PlaceActions
+                    scope={scope}
+                    place={namedAlone(root)}
+                    onStopTracking={() => setRemoveTarget(root)}
+                  />
                 }
               />
             );
@@ -199,7 +273,7 @@ export function ProjectList() {
           onOpenChange={(open) => {
             if (!open) setRemoveTarget(null);
           }}
-          title={`Stop tracking ${removeTarget?.split("/").pop() ?? ""}?`}
+          title={`Stop tracking ${removeTarget ? namedAlone(removeTarget) : ""}?`}
           description="kendex will stop managing this project. Nothing in the folder is deleted."
           confirmLabel="Stop tracking"
           destructive

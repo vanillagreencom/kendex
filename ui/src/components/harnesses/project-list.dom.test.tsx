@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -13,6 +14,10 @@ import { InstalledView } from "@/components/library/installed-view";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { unmanagedHereLabel } from "@/lib/copy";
 import {
+  PLACE_MARKETPLACES_LABEL,
+  placeMarketplacesTitle,
+} from "@/lib/copy-model";
+import {
   SESSION_NOTE_LABEL,
   SESSION_NOTE_ON,
   SESSION_NOTE_WAITING,
@@ -22,6 +27,7 @@ import { READ_LANDED } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
 import { useLibraryViewStore } from "@/stores/library-view";
+import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
@@ -216,6 +222,140 @@ describe("the start-of-session note on a project's card", () => {
     await settle();
     expect(host.textContent).toContain("acme");
     expect(host.textContent).not.toContain(SESSION_NOTE_LABEL);
+  });
+});
+
+/** Open the actions menu on the card whose name starts with `name`. A
+ *  base-ui trigger does not open on a click under jsdom. */
+async function openActions(host: HTMLElement, name: string): Promise<void> {
+  const card = [...host.querySelectorAll<HTMLElement>('[data-slot="card"]')]
+    .filter((el) => el.textContent?.startsWith(name))
+    .at(0);
+  if (!card) throw new Error(`no card for ${name}`);
+  const trigger = [...card.querySelectorAll<HTMLButtonElement>("button")].find(
+    (one) => one.getAttribute("aria-label")?.startsWith("More actions"),
+  );
+  if (!trigger) throw new Error(`no actions trigger on the ${name} card`);
+  act(() => trigger.focus());
+  await userEvent.keyboard("{Enter}");
+}
+
+const menuItems = (): string[] =>
+  [...document.querySelectorAll('[role="menuitem"]')].map(
+    (el) => el.textContent ?? "",
+  );
+
+// Every setting that decides what a place installs is reached from that
+// place's card — the marketplaces it installs from included, since the
+// marketplace's own page changes none of them. Personal is a place like any
+// other and has no tracking to stop.
+describe("a place card's actions", () => {
+  beforeEach(() => {
+    useSettingsStore.setState({
+      settings: { projects: ["/work/acme"] } as never,
+    });
+    useMarketplacesStore.setState({ rows: [], load: vi.fn(async () => {}) });
+    useNavStore.setState({ page: "projects" });
+  });
+
+  // The menu sits in the card's action slot, and the card is a whole-surface
+  // shortcut into the Library. A menu popup is a portal, so its clicks come
+  // back up the React tree through the card — a click that opened the dialog
+  // and left the page would leave the reader in the Library with the dialog
+  // unmounted, which is every item on this menu.
+  it("opens that place's marketplaces from the card that names it", async () => {
+    const host = mount(<ProjectList />);
+    await settle();
+
+    await openActions(host, "acme");
+    expect(menuItems()).toEqual([
+      PLACE_MARKETPLACES_LABEL,
+      "Stop tracking acme…",
+    ]);
+
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (el) => el.textContent === PLACE_MARKETPLACES_LABEL,
+    );
+    if (!(item instanceof HTMLElement)) throw new Error("no marketplaces item");
+    await userEvent.click(item);
+    await settle();
+    expect(document.body.textContent).toContain(placeMarketplacesTitle("acme"));
+    expect(useNavStore.getState().page).toBe("projects");
+  });
+
+  it("offers Personal its marketplaces and no tracking to stop", async () => {
+    const host = mount(<ProjectList />);
+    await settle();
+
+    await openActions(host, "Personal");
+    expect(menuItems()).toEqual([PLACE_MARKETPLACES_LABEL]);
+  });
+
+  // Stopping tracking moved off its own button and into this menu, and a
+  // menu item is the shape whose click the card used to answer. Rendering
+  // the item proves nothing about the path behind it: the removal has to
+  // reach the settings store with this card's own root, and the card must
+  // not navigate out from under the confirm.
+  it("stops tracking the project the card names, without leaving the page", async () => {
+    vi.mocked(commands.unregisterProject).mockResolvedValue({
+      status: "ok",
+      data: { settings: { projects: [] }, base: null } as never,
+    });
+    const host = mount(<ProjectList />);
+    await settle();
+
+    await openActions(host, "acme");
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (el) => el.textContent === "Stop tracking acme…",
+    );
+    if (!(item instanceof HTMLElement))
+      throw new Error("no stop-tracking item");
+    await userEvent.click(item);
+    await settle();
+    expect(useNavStore.getState().page).toBe("projects");
+
+    const confirm = [...document.querySelectorAll("button")].find(
+      (one) => one.textContent === "Stop tracking",
+    );
+    if (!confirm) throw new Error("no confirm");
+    await userEvent.click(confirm);
+    await settle();
+
+    expect(commands.unregisterProject).toHaveBeenCalledWith("/work/acme");
+    expect(useNavStore.getState().page).toBe("projects");
+  });
+
+  // Two roots ending in the same folder name the same card, and the menu
+  // opens dialogs that say whose files an action rewrites. The names come
+  // from the one collision-aware rule, so each card's menu and each dialog
+  // it opens names one project.
+  it("names two projects whose folders share a name apart", async () => {
+    useSettingsStore.setState({
+      settings: { projects: ["/work/client", "/personal/client"] } as never,
+    });
+    const host = mount(<ProjectList />);
+    await settle();
+
+    // Both cards head as "client" — their paths are right beneath them —
+    // so the first one is /work/client, the order settings names them in.
+    await openActions(host, "client");
+    expect(menuItems()).toEqual([
+      PLACE_MARKETPLACES_LABEL,
+      "Stop tracking /work/client…",
+    ]);
+
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (el) => el.textContent === PLACE_MARKETPLACES_LABEL,
+    );
+    if (!(item instanceof HTMLElement)) throw new Error("no marketplaces item");
+    await userEvent.click(item);
+    await settle();
+    expect(document.body.textContent).toContain(
+      placeMarketplacesTitle("/work/client"),
+    );
+    expect(document.body.textContent).not.toContain(
+      placeMarketplacesTitle("client"),
+    );
   });
 });
 
