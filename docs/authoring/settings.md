@@ -1,8 +1,10 @@
 # Settings a skill declares
 
-A skill ships a `kendex.settings.toml.example` at its root for the keys a consumer sets. The file declares those keys, which is what the app's Settings pane renders and what a save is checked against, and it is what a write into the consumer's `kendex.settings.toml` is made from. Start from [templates/kendex.settings.toml.example](templates/kendex.settings.toml.example); the rule below is the one statement of what reaches a consumer's file and when, and a template's header, a skill's README and its SKILL.md point here rather than restating it.
+A skill ships a `kendex.settings.toml.example` at its root. It declares two kinds of key: the settings a consumer sets, under `[env]`, and the credentials the skill reads, under `[secrets]`. Both are what the app's Customize tab renders and what a save is checked against; only `[env]` is written into the consumer's `kendex.settings.toml`. Start from [templates/kendex.settings.toml.example](templates/kendex.settings.toml.example); the rule below is the one statement of what reaches a consumer's file and when, and a template's header, a skill's README and its SKILL.md point here rather than restating it.
 
 Declare what somebody might reasonably change. The app shows one row per declared key and refuses to save a key no template declares; declaring costs the consumer nothing. A key only a maintainer or a test touches is read the same way and set by hand in `kendex.settings.toml` or any layer above it. Every key belongs in the SKILL.md table either way; that table is the reference and the body a marketplace page shows.
+
+A skill may declare credentials and no settings. A template with a `[secrets]` table and no `[env]` table is complete.
 
 ## What an install writes, and what it leaves
 
@@ -27,12 +29,12 @@ The seeding rules are `crates/core/src/settings_seed.rs`.
 
 The shell loaders decide it (`skills/*/scripts/lib/kendex-env.sh` and `settings.sh` read the keys where they land), so what those refuse is what the check refuses:
 
-- One `[env]` table, its header a lone `[env]` on its own line.
+- One `[env]` table and one `[secrets]` table, at most, each header a lone `[name]` on its own line. A template declares no other table.
 - A key is a shell identifier: letters, digits and underscores, starting with a letter or underscore.
-- A value is one double-quoted string on one line, containing no `"` and no `\`; the only thing that may follow it is `# required`.
+- A value is one double-quoted string on one line, containing no `"` and no `\`; the only thing that may follow it is `# required`. A `[secrets]` value is the empty string.
 - Each key has a comment block immediately above it, ended by a blank line or another assignment; that comment is what the consumer reads beside the key.
 
-`kendex marketplace check` reads a template against that grammar and names each defect with its line, including a template with no `[env]` table, a key with no comment block, an assignment outside `[env]`, a key assigned twice, and a file that is not valid TOML; the check runs strict, so any of them fails it. One run names every defect except that a TOML syntax error stops the parser at its first. Seeding itself stays lenient, so write each key once: a duplicate inside `[env]` fails the consumer's load while the template is read past.
+`kendex marketplace check` reads a template against that grammar and names each defect with its line, including a template declaring neither table, a key with no comment block, an assignment outside both tables, a key assigned twice, a `[secrets]` key carrying a value, and a file that is not valid TOML; the check runs strict, so any of them fails it. One run names every defect except that a TOML syntax error stops the parser at its first. Seeding itself stays lenient, so write each key once: a duplicate inside `[env]` fails the consumer's load while the template is read past.
 
 ## Naming
 
@@ -40,8 +42,24 @@ Prefix keys with the skill name in upper-snake: `REVIEW_GATE_MODE` for a skill n
 
 ## Where a value comes from
 
-Scripts read the `[env]` table, ignoring assignments outside it, with one precedence, highest first: the process environment, `.env.local`, `.kendex/settings.toml`, `kendex.settings.toml`, the built-in default. A key may hold itself to a different policy as long as its own comment says so.
+Scripts read the `[env]` table, ignoring assignments outside it, with one precedence, highest first: the process environment, the project's private env file, `.kendex/settings.toml`, `kendex.settings.toml`, the built-in default. The private env file is `.env.local` unless `[env]` sets `KENDEX_ENV_FILE` to another path inside the project; a path that could reach outside it fails the load. A key may hold itself to a different policy as long as its own comment says so.
 
-## Secrets are not settings
+## Secrets
 
-Ship only values that are safe to commit. A token, a credential or a personal identifier never appears as an assignment in the template; name it in the SKILL.md instead, as "set `X` in `.env.local`", where the marketplace page shows it.
+A credential is declared, never shipped. `[env]` carries values that are safe to commit; a token, a credential or a personal identifier goes under `[secrets]`:
+
+```toml
+[secrets]
+
+# What the key lets this skill do, and where a consumer gets one. The app
+# shows these lines beside the field.
+MY_SKILL_TOKEN = "" # required
+```
+
+A `[secrets]` declaration is a key name, the comment block above it, and `# required` where the skill refuses to run without the key. Its value is the empty string and nothing else: a value there is a check finding, so no template can ship a credential, a placeholder or a default.
+
+The consumer sets one in the app's Customize tab. kendex writes it to the project's private env file — `.env.local`, or the file `KENDEX_ENV_FILE` names in `[env]` — after confirming git neither tracks nor carries it. Nothing under `[secrets]` is ever seeded into `kendex.settings.toml`, and no value reaches a plan, a diff, an error or a commit offer.
+
+Declare a key under one table. A key declared under both, in one template or across two installed skills, has no destination anything can choose: the app offers no field for it and both write routes refuse it.
+
+The precedence a consumer sees is `settings.md`'s own: the process environment first, then the private env file, then the settings files. `skills/*/scripts/lib/kendex-env.sh` reads them in that order, and `KENDEX_ENV_FILE` chooses which private file it reads.

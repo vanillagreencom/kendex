@@ -28,6 +28,37 @@ pub(crate) fn make_executable(_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Write bytes to a file only its owner may read.
+///
+/// The mode is set at creation rather than after the write, because a
+/// chmod that follows leaves a window in which the credentials are on
+/// disk and world-readable. `OpenOptions::mode` applies only when the call
+/// creates the file, so an existing one keeps whatever mode its owner
+/// gave it, which is the other half of the contract.
+#[cfg(unix)]
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|error| CoreError::io(path, error))?;
+    file.write_all(bytes)
+        .map_err(|error| CoreError::io(path, error))
+}
+
+/// Windows has no mode to set at creation: a new file inherits its
+/// parent directory's access-control list, which for a file inside the
+/// user's own project is that project's. The bytes go down the same way,
+/// so the caller's contract holds and only the mechanism differs.
+#[cfg(not(unix))]
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    fs::write(path, bytes).map_err(|error| CoreError::io(path, error))
+}
+
 /// Give a file the execute bit if its bytes open with a shebang. A tree
 /// carries bytes and not modes, so every path that writes one out asks this
 /// same question: a skill's helper that lands 644 fails its own hook the

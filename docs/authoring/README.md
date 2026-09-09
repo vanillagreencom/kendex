@@ -66,7 +66,7 @@ A description is never guessed: an empty one stays empty and is a check finding.
 
 ## Settings
 
-Only a skill seeds settings into a project, through its `kendex.settings.toml.example`: [settings.md](settings.md).
+Only a skill seeds settings into a project, through its `kendex.settings.toml.example`. The same file declares the credentials the skill reads, which kendex keeps out of committed configuration: [settings.md](settings.md).
 
 For project-defined shell command restrictions, configure the [command-safety hook](command-safety.md).
 

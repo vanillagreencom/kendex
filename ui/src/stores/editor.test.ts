@@ -13,6 +13,7 @@ import { groupItems } from "@/lib/derive";
 import { emptyDraft, setInstruction } from "@/lib/editor-draft";
 import { markFor } from "@/lib/package-mark";
 import { scopeKey } from "@/lib/scope";
+import { placeRead } from "@/test/settings-read";
 import { openInventory, useEditorStore } from "./editor";
 
 // The real module comes through, with only the commands stubbed: the
@@ -50,11 +51,13 @@ const inventory = () => ({
 
 const settings = (base: string | null = "s1"): ScopeSettings => ({
   applies: true,
+  ...placeRead,
   skills: [
     {
       skill: "gh",
       template: {
         state: "rows",
+        secrets: [],
         rows: [
           {
             key: "GH_MODE",
@@ -76,6 +79,12 @@ const edit = {
   skill: "gh",
   key: "GH_MODE",
   value: { kind: "set" as const, value: "advise" },
+};
+
+const secretEdit = {
+  skill: "linear",
+  key: "LINEAR_API_KEY",
+  value: { kind: "set" as const, value: "lin_api_dummy" },
 };
 
 describe("editor store", () => {
@@ -110,7 +119,7 @@ describe("editor store", () => {
   it("holds the base it read and presents it with the save", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     await useEditorStore.getState().load();
     expect(useEditorStore.getState().base).toBe("b1");
@@ -129,6 +138,7 @@ describe("editor store", () => {
         manifest: setInstruction(emptyDraft(), "skill-instructions", "gh", "x"),
         base: "b1",
       },
+      null,
       null,
     );
   });
@@ -165,7 +175,7 @@ describe("editor store", () => {
       vi.mocked(toast.message).mockClear();
       vi.mocked(commands.getManifest).mockResolvedValue({
         status: "ok",
-        data: { manifest: null, base: "b1" },
+        data: { manifest: null, base: "b1", file: "kendex.toml" },
       });
       await useEditorStore.getState().load();
       vi.mocked(commands.saveCustomize).mockResolvedValue(
@@ -185,13 +195,83 @@ describe("editor store", () => {
     }
   });
 
+  /// A credential goes to the private file, so it travels as its own
+  /// draft with that file's own base — and it names the destination the
+  /// fields were read against, so a project pointed elsewhere in between
+  /// is refused rather than written.
+  it("carries a credential as its own draft, bound to the private file", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "ok",
+      data: {} as AuditView_Serialize,
+    });
+    await useEditorStore.getState().load();
+    useEditorStore.getState().editSecret(secretEdit);
+    expect(useEditorStore.getState().dirty).toBe(true);
+
+    await useEditorStore.getState().save();
+    expect(commands.saveCustomize).toHaveBeenCalledWith(
+      { scope: "global" },
+      null,
+      null,
+      { edits: [secretEdit], file: ".env.local", choose: false, base: "p1" },
+    );
+  });
+
+  /// Pressing Save writes nothing. The summary is built from a read taken
+  /// as it opens, because a project pointed at another private file since
+  /// the fields were filled in would otherwise be confirmed against the
+  /// file it used to have.
+  it("reads the place again and opens the summary rather than saving", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    await useEditorStore.getState().load();
+    useEditorStore.getState().editSecret(secretEdit);
+    vi.mocked(commands.getScopeSettings).mockClear();
+
+    await useEditorStore.getState().requestSave();
+    expect(useEditorStore.getState().confirming).toBe(true);
+    expect(commands.getScopeSettings).toHaveBeenCalledTimes(1);
+    expect(commands.saveCustomize).not.toHaveBeenCalled();
+
+    // And cancelling writes nothing while the draft stands.
+    useEditorStore.getState().cancelSave();
+    expect(useEditorStore.getState().confirming).toBe(false);
+    expect(useEditorStore.getState().secretEdits).toEqual([secretEdit]);
+    expect(commands.saveCustomize).not.toHaveBeenCalled();
+  });
+
+  /// Picking another private file is a read, never an assumption: whether
+  /// git carries it and which credentials it already holds are answers
+  /// about that file, and neither can be guessed from its name.
+  it("reads the place against a picked private file", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    await useEditorStore.getState().load();
+    vi.mocked(commands.getScopeSettings).mockClear();
+
+    await useEditorStore.getState().pickSecretFile(".env.secrets");
+    expect(commands.getScopeSettings).toHaveBeenCalledWith(
+      { scope: "global" },
+      ".env.secrets",
+    );
+    expect(useEditorStore.getState().secretFile).toBe(".env.secrets");
+  });
+
   /// The manifest is not the settings file: a settings change reconciles
   /// the scope against the manifest on disk, and sending the copy on
   /// screen back would rewrite a kendex.toml nobody touched.
   it("carries no manifest for a save that only changes settings", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     vi.mocked(commands.saveCustomize).mockResolvedValue({
       status: "ok",
@@ -206,6 +286,7 @@ describe("editor store", () => {
       { scope: "global" },
       null,
       { edits: [edit], base: "s1" },
+      null,
     );
   });
 
@@ -215,7 +296,7 @@ describe("editor store", () => {
   it("presents the settings base its rows were read with", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     vi.mocked(commands.getScopeSettings).mockResolvedValue({
       status: "ok",
@@ -231,7 +312,7 @@ describe("editor store", () => {
   it("says so when the settings read fails", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     vi.mocked(commands.getScopeSettings).mockResolvedValue({
       status: "error",
@@ -250,7 +331,7 @@ describe("editor store", () => {
   it("unsays a settings answer whose next read failed", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     await useEditorStore.getState().load();
     expect(useEditorStore.getState().savedSettings.global).toBeDefined();
@@ -277,7 +358,7 @@ describe("editor store", () => {
   it("unsays it too when the manifest read is what failed", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     await useEditorStore.getState().load();
     expect(useEditorStore.getState().savedSettings.global).toBeDefined();
@@ -304,7 +385,11 @@ describe("editor store", () => {
     vi.mocked(commands.getManifest).mockImplementation((scope: Scope) =>
       Promise.resolve({
         status: "ok",
-        data: { manifest: null, base: `manifest-${scopeKey(scope)}` },
+        data: {
+          manifest: null,
+          base: `manifest-${scopeKey(scope)}`,
+          file: "kendex.toml",
+        },
       }),
     );
     vi.mocked(commands.getScopeSettings).mockImplementation(
@@ -345,7 +430,7 @@ describe("editor store", () => {
           })
         : Promise.resolve({
             status: "ok",
-            data: { manifest: null, base: "b1" },
+            data: { manifest: null, base: "b1", file: "kendex.toml" },
           }),
     );
 
@@ -367,7 +452,7 @@ describe("editor store", () => {
   it("drops a place the startup pass could not read", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     await useEditorStore.getState().load();
     expect(useEditorStore.getState().savedSettings.global).toBeDefined();
@@ -386,7 +471,7 @@ describe("editor store", () => {
   it("reopens a place whose settings read failed, and only that", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     vi.mocked(commands.getScopeSettings).mockResolvedValue({
       status: "error",
@@ -416,7 +501,7 @@ describe("editor store", () => {
   it("drops settings edits on a reload", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     await useEditorStore.getState().load();
     useEditorStore.getState().editSetting(edit);
@@ -479,7 +564,7 @@ describe("editor store", () => {
     });
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b2" },
+      data: { manifest: null, base: "b2", file: "kendex.toml" },
     });
 
     await useEditorStore.getState().load();
@@ -530,6 +615,7 @@ describe("loadPlaces after a read stops working", () => {
                   ? CUSTOMIZED
                   : { schema: 1, install: {} }) as never,
                 base: null,
+                file: "kendex.toml",
               },
             }
           : { status: "error" as const, error: "permission denied" },
@@ -582,7 +668,11 @@ describe("a place the editor switches to and cannot read", () => {
       ok
         ? {
             status: "ok",
-            data: { manifest: CUSTOMIZED as never, base: null },
+            data: {
+              manifest: CUSTOMIZED as never,
+              base: null,
+              file: "kendex.toml",
+            },
           }
         : { status: "error", error: "permission denied" },
     );

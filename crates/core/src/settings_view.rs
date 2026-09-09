@@ -28,6 +28,7 @@ use crate::env::Env;
 use crate::error::Result;
 use crate::model::Scope;
 use crate::settings_file::{Current, Site, current_of, sites};
+use crate::settings_secret::{ContestedKey, SecretRow, SecretsRead, SecretsView};
 use crate::settings_template::{TemplateFinding, TemplateSource, read};
 
 /// One skill's settings, in whichever of the four states it is in.
@@ -38,17 +39,18 @@ pub enum SkillTemplate {
     NoTemplate,
     /// Its template is out of reach here — a source that has not arrived,
     /// a skill switched off, a source that does not carry it.
-    Unreadable {
-        reason: String,
-    },
+    Unreadable { reason: String },
     /// The template does not hold to the authoring contract. Seeding is
     /// lenient and may have seeded keys from it regardless, so this says
     /// nothing about what the settings file contains.
-    Invalid {
-        findings: Vec<TemplateFinding>,
-    },
+    Invalid { findings: Vec<TemplateFinding> },
+    /// The template reads. Either list may be empty and both are shown:
+    /// a package declaring only credentials has settings to configure
+    /// here, and a section that appeared only for public keys would hide
+    /// it.
     Rows {
         rows: Vec<SettingsRow>,
+        secrets: Vec<SecretRow>,
     },
 }
 
@@ -83,39 +85,72 @@ pub struct ScopeSettings {
     pub applies: bool,
     /// One entry per skill this place installs, by name.
     pub skills: Vec<SkillSettings>,
+    /// What the settings file is called — the file every public value on
+    /// this page is written to, named once here so a page saying where a
+    /// value goes does not hold a second copy of the name.
+    pub file: String,
     /// The settings file as it was when these rows were read. An edit
     /// written from them carries it back, and a file that moved in
     /// between is refused rather than overwritten.
     pub base: Base,
+    /// Where this place keeps credentials, and what the private file was
+    /// when the secret rows were read. `None` outside a project: a
+    /// private file is a project's, and a global install has none — which
+    /// is a different answer from a project whose file could not be
+    /// written, and never reads as one.
+    pub secrets: Option<SecretsView>,
+    /// Keys the installed packages disagree about, one declaring a
+    /// setting where another declares a credential. Neither route offers
+    /// them and both refuse them, so they are reported here rather than
+    /// shown as a field with no safe destination.
+    pub contested: Vec<ContestedKey>,
 }
 
-/// Read one place's settings: what every installed skill declares, and
-/// what the file currently says about each key.
-pub fn scope_settings(env: &Env, scope: &Scope) -> Result<ScopeSettings> {
+/// Read one place's settings: what every installed skill declares, what
+/// the file currently says about each key, and where each declared
+/// credential stands in this project's private file.
+/// The project's own private file is the destination; `want` reads the
+/// same place against another file instead, which is how a person sees
+/// what choosing one would mean before they save it.
+pub fn scope_settings(env: &Env, scope: &Scope, want: Option<&str>) -> Result<ScopeSettings> {
     let scope = &scope.canonical();
     let Scope::Project { root } = scope else {
         return Ok(ScopeSettings {
             applies: false,
             skills: Vec::new(),
+            file: crate::settings_seed::SETTINGS_FILE.to_owned(),
             base: Base::absent(),
+            secrets: None,
+            contested: Vec::new(),
         });
     };
     let current = crate::fs::read_if_exists(&crate::settings_seed::settings_file_path(root))?;
     let sites = current.as_deref().map(sites).unwrap_or_default();
+    let templates = crate::engine::settings_templates(env, scope)?;
+    let contested = crate::settings_secret::contested(&templates);
+    let private = crate::settings_secret::read(root, current.as_deref(), want)?;
     Ok(ScopeSettings {
         applies: true,
-        skills: crate::engine::settings_templates(env, scope)?
+        skills: templates
             .into_iter()
             .map(|(skill, source)| SkillSettings {
-                template: template_of(&source, &sites),
+                template: template_of(&source, &sites, &private, &contested),
                 skill,
             })
             .collect(),
+        file: crate::settings_seed::SETTINGS_FILE.to_owned(),
         base: current.as_deref().map_or_else(Base::absent, Base::of),
+        secrets: Some(private.view),
+        contested,
     })
 }
 
-fn template_of(source: &TemplateSource, sites: &[Site]) -> SkillTemplate {
+fn template_of(
+    source: &TemplateSource,
+    sites: &[Site],
+    private: &SecretsRead,
+    contested: &[ContestedKey],
+) -> SkillTemplate {
     let text = match source {
         TemplateSource::Absent => return SkillTemplate::NoTemplate,
         TemplateSource::Unreadable(reason) => {
@@ -131,10 +166,17 @@ fn template_of(source: &TemplateSource, sites: &[Site]) -> SkillTemplate {
             findings: template.findings,
         };
     }
+    // A contested key is offered by neither route. Dropped from both
+    // lists rather than shown disabled under each: a field a person
+    // cannot use is worth one line of explanation, which
+    // `ScopeSettings::contested` carries, and two dead controls is worse
+    // than none.
+    let taken = |key: &str| contested.iter().any(|one| one.key == key);
     SkillTemplate::Rows {
         rows: template
             .entries
             .into_iter()
+            .filter(|entry| !taken(&entry.key))
             .map(|entry| SettingsRow {
                 current: current_of(sites, &entry.key),
                 key: entry.key,
@@ -142,6 +184,13 @@ fn template_of(source: &TemplateSource, sites: &[Site]) -> SkillTemplate {
                 default: entry.value,
             })
             .collect(),
+        secrets: private.rows(
+            &template
+                .secrets
+                .into_iter()
+                .filter(|entry| !taken(&entry.key))
+                .collect::<Vec<_>>(),
+        ),
     }
 }
 

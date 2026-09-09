@@ -4,6 +4,7 @@ import {
   type EditorInventory,
   type Scope,
   type ScopeSettings,
+  type SecretEdit,
   type SettingsEdit,
 } from "@/bindings";
 import { type Draft, emptyDraft } from "@/lib/editor-draft";
@@ -11,6 +12,7 @@ import { refusalKind, refusalWords } from "@/lib/refusal";
 
 import { writingRepo } from "@/lib/rescan";
 import { everyPlace, sameScope } from "@/lib/scope";
+import { secretsDraft, withSecretEdit } from "@/lib/secret-rows";
 import { settingsDraft, withEdit } from "@/lib/settings-rows";
 import { saying } from "@/lib/undone";
 import {
@@ -51,6 +53,24 @@ interface EditorState {
   /** Settings values changed here and not yet written: the second draft
    *  the one Save bar carries, alongside the manifest. */
   settingsEdits: SettingsEdit[];
+  /** Credentials typed here and not yet written: the third draft, bound
+   *  to the private file rather than the settings file. Held apart from
+   *  `settingsEdits` all the way down, because the two go to different
+   *  files under different rules and nothing may move a value between
+   *  them. */
+  secretEdits: SecretEdit[];
+  /** The private file the person picked on this page, null while they
+   *  have taken the one the project already uses. Saving records a picked
+   *  file so the packages read it too. */
+  secretFile: string | null;
+  /** The destination summary is open: Save was pressed and nothing has
+   *  been written yet. */
+  confirming: boolean;
+  /** What this place's manifest file is called, per its own read. A
+   *  source catalog keeps its install state in a sibling of the
+   *  definition it publishes, so the name is core's answer and never a
+   *  constant held here. */
+  manifestFile: string | null;
   /** Every scope's settings read, keyed by scope — the settings half of
    *  the same marks `saved` answers the manifest half of. */
   savedSettings: Record<string, ScopeSettings>;
@@ -82,16 +102,31 @@ interface EditorState {
   /** Set or reset one package setting, replacing any earlier answer for
    *  the same key of the same skill. */
   editSetting: (edit: SettingsEdit) => void;
+  /** Set or clear one package credential, replacing any earlier answer
+   *  for the same key of the same skill. */
+  editSecret: (edit: SecretEdit) => void;
+  /** Replace the credential draft outright — how a field's answer is
+   *  taken back. */
+  setSecretEdits: (edits: SecretEdit[]) => void;
+  /** Read this place again against another private file, so what the
+   *  page shows about it is what a save would find. Passing null goes
+   *  back to the file the project itself names. */
+  pickSecretFile: (file: string | null) => Promise<void>;
+  /** Press Save: read the place again, so the summary names the files as
+   *  they stand, and open it. Nothing is written until it is confirmed. */
+  requestSave: () => Promise<void>;
+  /** Close the summary without writing, keeping the draft. */
+  cancelSave: () => void;
   save: () => Promise<void>;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => {
   const load = async () => {
-    const { scope } = get();
+    const { scope, secretFile } = get();
     set({ loading: true });
     let read: Awaited<ReturnType<typeof readPlace>>;
     try {
-      read = await readPlace(scope);
+      read = await readPlace(scope, secretFile);
     } finally {
       set({ loading: false });
     }
@@ -111,6 +146,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         ...opening,
         draft: null,
         base: null,
+        manifestFile: null,
         settings: null,
         error: manifest.error,
       });
@@ -120,6 +156,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       ...opening,
       draft: draft ?? emptyDraft(),
       base: manifest.data.base,
+      manifestFile: manifest.data.file,
       settings: settings.status === "ok" ? settings.data : null,
       error: readError(inventory, settings),
     });
@@ -131,7 +168,15 @@ export const useEditorStore = create<EditorState>((set, get) => {
   };
 
   const write = async (draft: Draft) => {
-    const { scope, base, manifestDirty, settingsEdits, settings } = get();
+    const {
+      scope,
+      base,
+      manifestDirty,
+      settingsEdits,
+      secretEdits,
+      secretFile,
+      settings,
+    } = get();
     // A save reaches `repo_effects`, so the machine is read again whatever
     // it answered — `lib/rescan.ts` holds the rule and the reasons, the
     // provenance join it refreshes included.
@@ -143,6 +188,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
           scope,
           manifestDirty ? { manifest: draft, base } : null,
           settingsDraft(settingsEdits, settings),
+          secretsDraft(secretEdits, settings, secretFile),
         );
       } finally {
         set({ saving: false });
@@ -179,6 +225,10 @@ export const useEditorStore = create<EditorState>((set, get) => {
     inventories: {},
     settings: null,
     settingsEdits: [],
+    secretEdits: [],
+    secretFile: null,
+    confirming: false,
+    manifestFile: null,
     savedSettings: {},
     dirty: false,
     manifestDirty: false,
@@ -193,6 +243,10 @@ export const useEditorStore = create<EditorState>((set, get) => {
         scope,
         draft: null,
         base: null,
+        manifestFile: null,
+        // The private file is one project's answer, so a place change
+        // drops the pick with the rest of the draft.
+        secretFile: null,
         settings: null,
         error: null,
       });
@@ -236,9 +290,59 @@ export const useEditorStore = create<EditorState>((set, get) => {
       }));
     },
 
+    editSecret: (edit) => {
+      set((state) => ({
+        secretEdits: withSecretEdit(state.secretEdits, edit),
+        dirty: true,
+      }));
+    },
+
+    setSecretEdits: (edits) => {
+      set((state) => ({
+        secretEdits: edits,
+        // Taking an answer back leaves the rest of the draft dirty; the
+        // manifest and settings halves have their own answers.
+        dirty: state.dirty,
+      }));
+    },
+
+    pickSecretFile: async (file) => {
+      // Read the place against the picked file rather than assuming what
+      // it holds: whether git carries it, whether saving has to make it,
+      // and which credentials are already in it are all answers about
+      // that file, and none of them can be guessed from its name.
+      set({ secretFile: file });
+      const { scope } = get();
+      const settings = await commands.getScopeSettings(scope, file);
+      if (!sameScope(get().scope, scope)) return;
+      if (settings.status === "error") {
+        set({ error: settings.error });
+        return;
+      }
+      set({ settings: settings.data, error: null, dirty: true });
+    },
+
+    requestSave: async () => {
+      // The summary names files, so it is built from a read taken as it
+      // opens: a project pointed at another private file since the
+      // fields were filled in would otherwise be confirmed against the
+      // file it used to have.
+      const { scope, secretFile } = get();
+      const settings = await commands.getScopeSettings(scope, secretFile);
+      if (!sameScope(get().scope, scope)) return;
+      if (settings.status === "error") {
+        set({ error: settings.error, confirming: false });
+        return;
+      }
+      set({ settings: settings.data, confirming: true });
+    },
+
+    cancelSave: () => set({ confirming: false }),
+
     save: async () => {
       const { draft } = get();
       if (!draft) return;
+      set({ confirming: false });
       await write(draft);
     },
   };

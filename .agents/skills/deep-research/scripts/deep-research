@@ -105,8 +105,59 @@ async function loadEnvFile(path) {
   }
 }
 
+// The one setting this reads out of kendex.settings.toml: which file the
+// project keeps its secrets in. Not a settings loader — no key but this
+// one is read, and nothing is exported — because the choice has to be
+// known before the private file can be opened at all. kendex writes the
+// key when a person names a private file in the app, and the shared shell
+// loader in the kendex skills reads the same key the same way, so one
+// project names one file once.
+//
+// The grammar is the kendex settings contract: a lone [env] header, and a
+// single-line double-quoted value holding no " and no \, with an optional
+// trailing comment. A file that does not say it keeps its secrets
+// somewhere else means .env.local, which is what every project without
+// the key has always used.
+const PRIVATE_ENV_DEFAULT = ".env.local";
+
+async function privateEnvFile(root) {
+  const settings = resolve(root, "kendex.settings.toml");
+  if (!existsSync(settings)) return PRIVATE_ENV_DEFAULT;
+  let table = "";
+  let named = "";
+  for (const line of (await readFile(settings, "utf8")).split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("[")) {
+      const header = trimmed.match(/^\[([A-Za-z0-9_.-]+)\]$/);
+      table = header ? header[1] : "";
+      continue;
+    }
+    if (table !== "env") continue;
+    if (!/^KENDEX_ENV_FILE[ \t]*=/.test(trimmed)) continue;
+    // The value has to be the contract shape. The shell loader fails the
+    // whole file over one that is not, so reading past it here would have
+    // this package answer from .env.local while every other package
+    // refuses to start at all.
+    const assigned = trimmed.match(/^KENDEX_ENV_FILE[ \t]*=[ \t]*"([^"\\]*)"[ \t]*(?:#.*)?$/);
+    if (!assigned) {
+      fail("private-env-value", "KENDEX_ENV_FILE", `KENDEX_ENV_FILE is not a single-line double-quoted string free of '"' and '\\': ${trimmed}`);
+    }
+    named = assigned[1];
+  }
+  if (!named) return PRIVATE_ENV_DEFAULT;
+  // A path that could reach outside the project is refused rather than
+  // read: this loader is handed a project's own configuration and must
+  // not be talked into opening a file somewhere else by it.
+  const parts = named.split("/");
+  if (named.startsWith("/") || named.includes("\\") || named.includes(":") || parts.includes("..")) {
+    fail("private-env-path", "KENDEX_ENV_FILE", `KENDEX_ENV_FILE is ${named}: it must name a file inside the project, written as a relative path with no '..' segment, no backslash and no colon.`);
+  }
+  return named;
+}
+
 async function loadEnv() {
-  await loadEnvFile(resolve(process.cwd(), ".env.local"));
+  const root = process.cwd();
+  await loadEnvFile(resolve(root, await privateEnvFile(root)));
 }
 
 function resolveSecretRef(value, name) {

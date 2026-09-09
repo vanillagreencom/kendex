@@ -66,7 +66,7 @@ The cache is `.cache/linear` under the physical worktree root ([README.md](READM
 
 `LINEAR_TEAM` has no default. With it unset every write refuses before any API call; reads drop the team filter. `--team <name>` overrides per call only on `issues create`, `projects create`, `cycles create`, and `labels create`. Run `auth-check --strict` before the first mutation in a project.
 
-`LINEAR_API_KEY` belongs in `.env.local`; non-secret defaults in committed `kendex.settings.toml` `[env]`. A key from project files beats one inherited from the environment, and `auth-check` warns (fingerprints only) when it shadows a differing inherited key.
+`LINEAR_API_KEY` belongs in the project's private env file, `.env.local` unless `KENDEX_ENV_FILE` names another; non-secret defaults in committed `kendex.settings.toml` `[env]`. The kendex app's Customize tab writes both. A key from project files beats one inherited from the environment, and `auth-check` warns (fingerprints only) when it shadows a differing inherited key.
 
 ## Shared label maintenance
 

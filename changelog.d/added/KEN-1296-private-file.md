@@ -1,0 +1,1 @@
+- Credentials saved in Customize go to the project's private env file, `.env.local` unless `KENDEX_ENV_FILE` names another, and only after checking git neither tracks nor carries it.

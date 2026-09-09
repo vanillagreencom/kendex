@@ -104,6 +104,70 @@ export const settingAmbiguous = (
     lines.length === 1 ? `line ${lines[0]}` : `lines ${lines.join(", ")}`
   }.`;
 
+// A package's credentials: the fields a person types a key into, where
+// that key is kept, and what saving one is about to do.
+export const SECRETS_SECTION = "Keys and tokens";
+/** Never "keys": a person reading this is about to type one, and the
+ *  sentence has to say where it goes before they do. */
+export const secretsHelp = (file: string): string =>
+  `Saved in ${file}, which git does not carry. Anything already set in your shell wins over what you save here.`;
+export const SECRET_NOT_SET = "Not set";
+export const SECRET_SET = "Set";
+export const SECRET_UNKNOWN = "Can't check";
+export const SECRET_REQUIRED = "Needed to run";
+export const SECRET_SET_ACTION = "Set";
+export const SECRET_REPLACE_ACTION = "Replace";
+export const SECRET_CLEAR_ACTION = "Clear";
+export const SECRET_CANCEL_ACTION = "Keep what's there";
+export const SECRET_INPUT_PLACEHOLDER = "Paste the key";
+export const SECRET_CLEARING = "Will be removed when you save.";
+/** A stored value says somebody typed one, and nothing more. Saying
+ *  "connected" here would claim kendex asked the provider, which it never
+ *  does. */
+export const SECRET_SET_NOTE =
+  "A value is stored. kendex hasn't checked it with the provider.";
+export const SECRET_HELP_LABEL = "What happens to this key";
+/** The one explanation behind every field's info icon: what a secret is,
+ *  where it goes, and what git does with it. Built from the destination
+ *  the read resolved, never from a name typed here. */
+export const secretFieldHelp = (file: string): string =>
+  `This is a secret. It is never written into your project's committed configuration — it is saved to ${file}, the private file this project keeps out of git.`;
+
+// Where secrets go, and choosing somewhere else.
+export const SECRET_FILE_LABEL = "Kept in";
+export const SECRET_FILE_CHANGE = "Use another file";
+export const SECRET_FILE_CANCEL = "Keep this one";
+export const SECRET_FILE_DEFAULT_NOTE =
+  "The file every project uses unless it names another.";
+export const SECRET_FILE_RECORDED = (file: string): string =>
+  `Saving records ${file} as this project's private file, so the packages read it too.`;
+export const SECRET_FILE_WILL_CREATE = (file: string): string =>
+  `${file} doesn't exist yet. Saving creates it, readable only by you.`;
+export const SECRET_FILE_WILL_IGNORE = (entry: string, file: string): string =>
+  `Saving also adds ${entry} to .gitignore first, so git never carries ${file}.`;
+export const SECRET_FILE_REFUSED = "Nothing can be saved here yet";
+export const SECRET_NO_CANDIDATES =
+  "No other private env file in this project's folder.";
+/** Project scope is where a private file lives. A package installed for
+ *  everything has no project to keep one in, and a field here would imply
+ *  a key was saved everywhere. */
+export const SECRETS_NEED_A_PROJECT =
+  "Settings and keys are set per project. Open this package in a project to see and set whatever it declares.";
+/** Two packages saying different things about one key. Neither field is
+ *  offered, so the line has to say why rather than leave a gap. */
+export const CONTESTED_KEYS = "Two packages disagree about a key";
+
+// What a save is about to write, before it writes it.
+export const SAVE_CONFIRM_TITLE = "Save these changes";
+export const SAVE_CONFIRM_DESCRIPTION = "Here's every file this writes to.";
+export const SAVE_CONFIRM_ACTION = "Save and apply";
+export const SAVE_CONFIRM_EMPTY = "Nothing to write.";
+/** Secret fields are named and never shown. The dialog exists to say
+ *  which file a value lands in; printing the value would put it on a
+ *  screen a person opened to check where it was going. */
+export const SAVE_CONFIRM_SECRET_NOTE =
+  "Key values aren't shown here and aren't written anywhere else.";
+
 export const SAVE_NOTE =
   "Saving writes these changes into every harness that reads them.";
 export const SAVE_FIRST = "Save your changes before switching location.";

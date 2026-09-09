@@ -54,6 +54,7 @@ mod removal;
 mod scope_skills;
 pub use scope_skills::ScopeSkills;
 mod scope_writes;
+mod secrets_write;
 mod settings_scan;
 mod settings_write;
 pub use settings_scan::settings_templates;
@@ -97,7 +98,7 @@ use scope_writes::{
 };
 pub use set_change::{KeptInstall, SetChange, SetDirection};
 use set_change::{kept_members, set_changes};
-use settings_write::plan_settings_seed;
+use settings_write::plan_settings;
 pub(crate) use unmanaged::declared_over_existing_files;
 use unmanaged::unmanaged_rows;
 
@@ -165,7 +166,7 @@ pub fn plan_scope(
     // Notes about the scope rather than about any one item: what the
     // settings seed found, what the reserved-name move did, what the git
     // posture changed.
-    let (mut scope_notes, settings_drift) = plan_settings_seed(scope, &state, options, &mut ops)?;
+    let (mut scope_notes, settings_drift, owed) = plan_settings(scope, &state, options, &mut ops)?;
     drift.extend(settings_drift);
     // The shims a project owes its instruction files, read off the
     // harness list the manifest declares: committed files, never lock
@@ -222,7 +223,7 @@ pub fn plan_scope(
     let kept = kept_members(lock, &new_lock, &options.uninstalled_bundles);
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
     plan_lock_write(env, scope, declared, disk_lock, new_lock, &mut ops)?;
-    scope_notes.extend(scope_wide(scope, &mut ops)?);
+    scope_notes.extend(scope_wide(scope, owed.as_deref(), &mut ops)?);
     let generated = generated_paths::plan(scope, &state, &instruction_shims, &drift, &mut ops)?;
 
     let mut report = EngineReport {
@@ -254,9 +255,13 @@ pub fn plan_scope(
 /// The writes a pass owes the scope as a whole rather than any one item:
 /// the git posture. It runs after every item is planned, so it sees the
 /// finished op list.
-fn scope_wide(scope: &Scope, ops: &mut Vec<PlannedOp>) -> Result<Vec<String>> {
+fn scope_wide(
+    scope: &Scope,
+    private: Option<&str>,
+    ops: &mut Vec<PlannedOp>,
+) -> Result<Vec<String>> {
     let mut notes = Vec::new();
-    posture::plan_posture(scope, ops, &mut notes)?;
+    posture::plan_posture(scope, private, ops, &mut notes)?;
     Ok(notes)
 }
 

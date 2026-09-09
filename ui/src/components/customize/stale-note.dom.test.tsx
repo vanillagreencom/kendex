@@ -7,6 +7,7 @@ import { READ_PENDING } from "@/lib/read-state";
 import { useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
+import { placeRead } from "@/test/settings-read";
 
 vi.mock("@/bindings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/bindings")>()),
@@ -30,12 +31,14 @@ const VG: Scope = { scope: "project", root: "/work/vg" };
 
 const declares: ScopeSettings = {
   applies: true,
+  ...placeRead,
   base: "s1",
   skills: [
     {
       skill: "gh",
       template: {
         state: "rows",
+        secrets: [],
         rows: [
           {
             key: "GH_MODE",
@@ -54,7 +57,7 @@ beforeEach(() => {
   useUpdatesStore.setState({ rows: [], read: READ_PENDING });
   vi.mocked(commands.getManifest).mockResolvedValue({
     status: "ok",
-    data: { manifest: null, base: "b1" },
+    data: { manifest: null, base: "b1", file: "kendex.toml" },
   });
   vi.mocked(commands.editorInventory).mockResolvedValue({
     status: "ok",
@@ -87,6 +90,7 @@ const refuseSettingsSave = async () => {
     VG,
     null,
     expect.objectContaining({ base: "s1" }),
+    null,
   );
   expect(useEditorStore.getState().stale).toBe(true);
 };

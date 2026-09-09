@@ -70,6 +70,7 @@ import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
 import { joinAnswered } from "@/test/identity-join";
 import { observed } from "@/test/observed";
+import { placeRead } from "@/test/settings-read";
 import { PackagePage } from "./package";
 
 // The page is mounted against the real stores; only the backend is
@@ -140,7 +141,11 @@ const openPage = async (
   vi.mocked(commands.getManifest).mockImplementation((scope) =>
     Promise.resolve({
       status: "ok",
-      data: { manifest: manifests[scopeKey(scope)] ?? null, base: null },
+      data: {
+        manifest: manifests[scopeKey(scope)] ?? null,
+        base: null,
+        file: "kendex.toml",
+      },
     }),
   );
   useScanStore.setState({
@@ -246,7 +251,7 @@ beforeEach(() => {
   // manifest is what decides the header's mark.
   vi.mocked(commands.getScopeSettings).mockResolvedValue({
     status: "ok",
-    data: { applies: true, skills: [], base: null },
+    data: { applies: true, ...placeRead, skills: [], base: null },
   });
   vi.mocked(commands.libraryProvenance).mockResolvedValue(nothing);
   vi.mocked(commands.packageDiff).mockResolvedValue(nothing);

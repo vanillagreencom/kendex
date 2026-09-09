@@ -3,11 +3,17 @@
 //!
 //! A teammate who clones the repository has to get working skills without
 //! running kendex, so the `.agents` trees and the harness links into them
-//! are ordinary tracked content — that is what relative links buy. The lock
-//! is the exception: it records what this machine installed, for the tools
-//! this machine has, at the times it ran. Two people committing it would
-//! trade their ledgers back and forth, so kendex ignores that one file and
-//! nothing else.
+//! are ordinary tracked content — that is what relative links buy. Two
+//! files are the exceptions. The lock records what this machine
+//! installed, for the tools this machine has, at the times it ran, and two
+//! people committing it would trade their ledgers back and forth. The
+//! project's private env file holds credentials a person typed
+//! ([`crate::settings_secret`]), and it is owed a line the moment a save
+//! is about to create it.
+//!
+//! Both lines go in one write, from here, because `.gitignore` is one
+//! file: a second pass adding its own line in the same plan would bind to
+//! the bytes the first one replaced and refuse the whole apply.
 
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::error::Result;
@@ -17,10 +23,34 @@ use crate::model::Scope;
 /// The line kendex owns, anchored to the project root so a same-named file
 /// deeper in the tree is somebody else's business.
 const LOCK_LINE: &str = "/.kendex-lock.json";
-/// What the block says about itself, so a reader who never ran kendex knows
-/// which tool put the line there and why the trees beside it are not in it.
-const HEADING: &str = "# kendex: this machine's install ledger — the .agents trees and the";
-const HEADING_TWO: &str = "# links into them are committed, so a clone works without kendex.";
+
+/// One line kendex adds, with the comment that says why it is there — so
+/// a reader who never ran kendex knows which tool put it there and what it
+/// covers.
+struct Owed {
+    line: String,
+    heading: [&'static str; 2],
+}
+
+fn lock_owed() -> Owed {
+    Owed {
+        line: LOCK_LINE.to_owned(),
+        heading: [
+            "# kendex: this machine's install ledger — the .agents trees and the",
+            "# links into them are committed, so a clone works without kendex.",
+        ],
+    }
+}
+
+fn private_owed(line: &str) -> Owed {
+    Owed {
+        line: line.to_owned(),
+        heading: [
+            "# kendex: this project's private env file — the credentials the",
+            "# packages installed here read. Git must never carry it.",
+        ],
+    }
+}
 
 /// The trees the committed posture depends on. A repository that ignores
 /// one of them still installs fine on this machine and gives a teammate
@@ -33,6 +63,10 @@ const COMMITTED: [&str; 2] = [".agents", ".agents/skills"];
 /// belongs to the repository, and kendex only ever adds the one it needs.
 pub(super) fn plan_posture(
     scope: &Scope,
+    // The private env file a save in this plan is about to create, as the
+    // anchored line that keeps git off it. `None` where the plan creates
+    // none, which is every pass but a first credential save.
+    private: Option<&str>,
     ops: &mut Vec<PlannedOp>,
     notes: &mut Vec<String>,
 ) -> Result<()> {
@@ -74,13 +108,17 @@ pub(super) fn plan_posture(
             "git could not open this repository, so its info/exclude was not checked: {e}"
         )),
     }
-    let Some(updated) = with_lock_ignored(&text) else {
+    let mut owed = vec![lock_owed()];
+    owed.extend(private.map(private_owed));
+    let Some(updated) = with_ignored(&text, &owed) else {
         return Ok(());
     };
     ops.push(PlannedOp {
-        description: "Keep this machine's install ledger out of the repository"
-            .to_owned()
-            .into(),
+        description: match private {
+            None => "Keep this machine's install ledger out of the repository".to_owned(),
+            Some(_) => "Keep this machine's install ledger and this project's private env file out of the repository".to_owned(),
+        }
+        .into(),
         op: Op::WriteFile {
             pre: Pre::observed(&path)?,
             path,
@@ -90,35 +128,39 @@ pub(super) fn plan_posture(
     Ok(())
 }
 
-/// The file with kendex's line in it, or nothing where the rules already
-/// keep the lock out.
-fn with_lock_ignored(text: &str) -> Option<String> {
-    if already_ignored(text) {
-        return None;
-    }
+/// The file with every line kendex owes in it, or nothing where the rules
+/// already cover them all.
+fn with_ignored(text: &str, owed: &[Owed]) -> Option<String> {
     let mut out = String::from(text);
-    if !out.is_empty() && !out.ends_with('\n') {
+    let mut added = false;
+    for one in owed {
+        if already_ignored(&out, &one.line) {
+            continue;
+        }
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        for said in one.heading {
+            out.push_str(said);
+            out.push('\n');
+        }
+        out.push_str(&one.line);
         out.push('\n');
+        added = true;
     }
-    if !out.is_empty() {
-        out.push('\n');
-    }
-    out.push_str(HEADING);
-    out.push('\n');
-    out.push_str(HEADING_TWO);
-    out.push('\n');
-    out.push_str(LOCK_LINE);
-    out.push('\n');
-    Some(out)
+    added.then_some(out)
 }
 
-/// Whether this file's rules leave the lock ignored. git reads them
+/// Whether this file's rules leave this path ignored. git reads them
 /// last-match-wins, so a `!/.kendex-lock.json` further down undoes an
 /// ignore above it — reading the first match, or any match, would call a
-/// file covered that git tracks. Only rules naming the lock exactly are
+/// file covered that git tracks. Only rules naming the path exactly are
 /// read: a rule this cannot evaluate leaves the answer "not ignored", and
 /// the line kendex adds lands last, where it wins.
-fn already_ignored(text: &str) -> bool {
+fn already_ignored(text: &str, owed: &str) -> bool {
     let mut ignored = false;
     for line in text.lines() {
         let line = line.trim();
@@ -129,16 +171,16 @@ fn already_ignored(text: &str) -> bool {
             Some(rest) => (true, rest.trim()),
             None => (false, line),
         };
-        if names_the_lock(rule) {
+        if names(rule, owed) {
             ignored = !negated;
         }
     }
     ignored
 }
 
-/// Whether this rule, negation stripped, names the lock file itself.
-fn names_the_lock(rule: &str) -> bool {
-    rule == LOCK_LINE || rule == LOCK_LINE.trim_start_matches('/')
+/// Whether this rule, negation stripped, names the owed path itself.
+fn names(rule: &str, owed: &str) -> bool {
+    rule == owed || rule == owed.trim_start_matches('/')
 }
 
 /// Which of the committed trees this file's rules ignore. Plain path rules
@@ -165,27 +207,33 @@ fn ignores_committed(text: &str) -> Vec<&'static str> {
 mod tests {
     use super::*;
 
+    /// The lock line alone, which is what every case below but the
+    /// private-file one is about.
+    fn ignored_once(text: &str) -> Option<String> {
+        with_ignored(text, &[lock_owed()])
+    }
+
     #[test]
     fn the_line_is_added_once_and_never_twice() {
-        let first = with_lock_ignored("target/\n").expect("added");
+        let first = ignored_once("target/\n").expect("added");
         assert!(first.contains(LOCK_LINE));
         assert!(first.starts_with("target/\n"));
-        assert_eq!(with_lock_ignored(&first), None);
+        assert_eq!(ignored_once(&first), None);
     }
 
     /// A file that never ended in a newline must not have the block welded
     /// onto its last rule.
     #[test]
     fn a_file_without_a_final_newline_still_reads_as_rules() {
-        let out = with_lock_ignored("target/").expect("added");
+        let out = ignored_once("target/").expect("added");
         assert!(out.contains("target/\n"));
         assert!(out.ends_with(&format!("{LOCK_LINE}\n")));
     }
 
     #[test]
     fn a_hand_written_line_counts_as_covered() {
-        assert_eq!(with_lock_ignored(".kendex-lock.json\n"), None);
-        assert_eq!(with_lock_ignored("  /.kendex-lock.json  \n"), None);
+        assert_eq!(ignored_once(".kendex-lock.json\n"), None);
+        assert_eq!(ignored_once("  /.kendex-lock.json  \n"), None);
     }
 
     /// git reads its rules last-match-wins, so a negation below an ignore
@@ -194,16 +242,16 @@ mod tests {
     #[test]
     fn the_last_matching_rule_is_the_one_that_counts() {
         assert!(
-            with_lock_ignored("/.kendex-lock.json\n!/.kendex-lock.json\n").is_some(),
+            ignored_once("/.kendex-lock.json\n!/.kendex-lock.json\n").is_some(),
             "a negation below the ignore leaves the lock tracked"
         );
         assert_eq!(
-            with_lock_ignored("!.kendex-lock.json\n/.kendex-lock.json\n"),
+            ignored_once("!.kendex-lock.json\n/.kendex-lock.json\n"),
             None,
             "an ignore below the negation covers it again"
         );
         assert!(
-            with_lock_ignored("!.kendex-lock.json\n").is_some(),
+            ignored_once("!.kendex-lock.json\n").is_some(),
             "a negation on its own leaves it tracked"
         );
     }
@@ -232,7 +280,7 @@ mod tests {
             root: root.to_path_buf(),
         };
         let mut notes = Vec::new();
-        plan_posture(&scope, &mut Vec::new(), &mut notes).unwrap();
+        plan_posture(&scope, None, &mut Vec::new(), &mut notes).unwrap();
         notes
     }
 
@@ -266,6 +314,28 @@ mod tests {
             assert!(notes[0].starts_with(&named), "{notes:?}");
             assert!(!notes[0].contains("linked"), "{notes:?}");
         }
+    }
+
+    /// Both lines go in one write. A plan that added them separately would
+    /// bind its second write to the bytes the first one replaced, and the
+    /// whole apply would refuse.
+    #[test]
+    fn the_lock_line_and_the_private_file_go_in_together() {
+        let out = with_ignored("target/\n", &[lock_owed(), private_owed("/.env.local")])
+            .expect("both are owed");
+        assert!(out.contains(LOCK_LINE), "{out}");
+        assert!(out.contains("/.env.local"), "{out}");
+        assert!(out.starts_with("target/\n"), "{out}");
+        // And neither is added twice.
+        assert_eq!(
+            with_ignored(&out, &[lock_owed(), private_owed("/.env.local")]),
+            None
+        );
+        // A file already covering one still gets the other.
+        let only_private = with_ignored(&out, &[private_owed("/.env.secrets")])
+            .expect("the second private file is owed");
+        assert!(only_private.contains("/.env.secrets"), "{only_private}");
+        assert_eq!(only_private.matches(LOCK_LINE).count(), 1, "{only_private}");
     }
 
     #[test]

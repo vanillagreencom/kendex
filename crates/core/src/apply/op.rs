@@ -80,6 +80,26 @@ pub enum Op {
         bytes: Vec<u8>,
         pre: Pre,
     },
+    /// A file holding credentials: created readable by its owner alone,
+    /// and left at whatever mode it already carries.
+    ///
+    /// Apart from `WriteFile` for the mode and nothing else. `fs::write`
+    /// creates at the process umask, which on a default account is
+    /// world-readable, so the first save of a secret would publish it to
+    /// every account on the machine. Creating through `OpenOptions` with
+    /// an explicit mode settles that at creation, where there is no
+    /// window between the file existing and being private — a chmod after
+    /// the write leaves one. An existing file keeps its own mode, which
+    /// is the person's choice about their own file.
+    ///
+    /// The journal's pre-image is `fs::copy`, which carries the mode
+    /// across on both platforms, so a recovery copy of a private file is
+    /// private too.
+    WritePrivateFile {
+        path: PathBuf,
+        bytes: Vec<u8>,
+        pre: Pre,
+    },
     /// Compare-and-swap one key in one git config file. `expected` is the
     /// current value the plan observed (None = unset); a config that moved
     /// since planning aborts, so a user's hand-set value is never
@@ -109,6 +129,7 @@ impl Op {
             Op::WriteLock { path, .. } => vec![path.clone()],
             Op::WriteManifest { path, .. } => vec![path.clone()],
             Op::WriteExecutable { path, .. } => vec![path.clone()],
+            Op::WritePrivateFile { path, .. } => vec![path.clone()],
             Op::GitConfigSwap { file, .. } => vec![file.clone()],
         }
     }
@@ -128,6 +149,7 @@ impl Op {
             Op::WriteLock { path, .. } => vec![path],
             Op::WriteManifest { path, .. } => vec![path],
             Op::WriteExecutable { path, .. } => vec![path],
+            Op::WritePrivateFile { path, .. } => vec![path],
             Op::GitConfigSwap { file, .. } => vec![file],
         }
     }
@@ -213,6 +235,11 @@ impl Op {
                 ensure_parent(path)?;
                 fs::write(path, bytes).map_err(|e| CoreError::io(path, e))?;
                 crate::fs::make_executable(path)
+            }
+            Op::WritePrivateFile { path, bytes, pre } => {
+                pre.check(path)?;
+                ensure_parent(path)?;
+                crate::fs::write_private(path, bytes)
             }
             Op::GitConfigSwap {
                 file,

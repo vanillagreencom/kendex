@@ -174,7 +174,7 @@ fn install(f: &Fixture) {
 #[allow(clippy::unwrap_used)]
 fn rows_of(read: &ScopeSettings, skill: &str) -> Vec<(String, String, Current)> {
     let found = read.skills.iter().find(|s| s.skill == skill).unwrap();
-    let SkillTemplate::Rows { rows } = &found.template else {
+    let SkillTemplate::Rows { rows, .. } = &found.template else {
         panic!("{skill} has no rows: {:?}", found.template);
     };
     rows.iter()
@@ -199,7 +199,7 @@ fn a_corrupt_lock_without_a_manifest_fails_the_settings_view() {
     .unwrap();
 
     assert!(matches!(
-        scope_settings(&env, &scope),
+        scope_settings(&env, &scope, None),
         Err(CoreError::LockCorrupt { .. })
     ));
 }
@@ -218,7 +218,7 @@ fn the_read_model_carries_the_explainer_the_default_and_the_current_value() {
     )
     .unwrap();
 
-    let read = scope_settings(&f.env, &f.scope).unwrap();
+    let read = scope_settings(&f.env, &f.scope, None).unwrap();
     assert!(read.applies);
     assert_eq!(read.base, base_now(&f));
     // Both states a declared key can be in: one the install wrote and the
@@ -349,7 +349,7 @@ fn a_manifest_and_a_settings_edit_land_as_one_transaction() {
     // The manifest write the editor inserts is the caller's; what matters
     // here is that the scope re-planned around the same settings file and
     // still produced one coherent result.
-    let after = scope_settings(&f.env, &f.scope).unwrap();
+    let after = scope_settings(&f.env, &f.scope, None).unwrap();
     assert_eq!(
         rows_of(&after, "review")[0].2,
         Current::Value {
@@ -487,7 +487,7 @@ fn a_reset_writes_the_template_default_back() {
 fn an_invalid_template_still_reports_what_seeding_wrote() {
     let f = fixture("[env]\nREVIEWERS = \"arch\" # required\n");
     install(&f);
-    let read = scope_settings(&f.env, &f.scope).unwrap();
+    let read = scope_settings(&f.env, &f.scope, None).unwrap();
     let review = read.skills.iter().find(|s| s.skill == "review").unwrap();
     assert!(
         matches!(review.template, SkillTemplate::Invalid { .. }),
@@ -512,7 +512,7 @@ fn a_skill_shipping_nothing_a_switched_off_one_and_an_unreachable_one_each_say_s
             .join("../../catalog/skills/review/kendex.settings.toml.example"),
     )
     .unwrap();
-    let read = scope_settings(&f.env, &f.scope).unwrap();
+    let read = scope_settings(&f.env, &f.scope, None).unwrap();
     assert_eq!(
         read.skills
             .iter()
@@ -534,7 +534,7 @@ fn a_skill_shipping_nothing_a_switched_off_one_and_an_unreachable_one_each_say_s
         ),
     )
     .unwrap();
-    let off = scope_settings(&f.env, &f.scope).unwrap();
+    let off = scope_settings(&f.env, &f.scope, None).unwrap();
     let review = off.skills.iter().find(|s| s.skill == "review").unwrap();
     assert!(
         matches!(&review.template, SkillTemplate::Unreadable { reason } if reason.contains("switched off")),
@@ -550,7 +550,7 @@ fn a_skill_shipping_nothing_a_switched_off_one_and_an_unreachable_one_each_say_s
         f.project.join("../../moved"),
     )
     .unwrap();
-    let gone = scope_settings(&f.env, &f.scope).unwrap();
+    let gone = scope_settings(&f.env, &f.scope, None).unwrap();
     let review = gone.skills.iter().find(|s| s.skill == "review").unwrap();
     assert!(
         matches!(&review.template, SkillTemplate::Unreadable { reason } if reason.contains("nothing here could read")),

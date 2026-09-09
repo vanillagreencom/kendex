@@ -3,11 +3,21 @@
 #
 # Sources, lowest to highest precedence among project files:
 #   1. kendex.settings.toml, then .kendex/settings.toml ([env] table only)
-#   2. .env.local
+#   2. the project's private env file, .env.local unless KENDEX_ENV_FILE
+#      names another
 # The caller's own environment outranks every project file —
 # kendex_load_project_env snapshots and re-asserts it. A `.env` file is
 # never read; shared settings belong in kendex.settings.toml, personal and
-# secret overrides in .env.local.
+# secret overrides in the private env file.
+#
+# KENDEX_ENV_FILE is the one setting that decides which file is read
+# rather than what a value is, so it is resolved after the settings load
+# and before the private file. It is a path relative to the project root:
+# an absolute path, a `..` segment, a backslash or a colon fails the load
+# rather than reading a file outside the project. It is the same key the
+# app writes when a person names a private file, so one project names one
+# file once, and the app's own checks — that git does not track or carry
+# the file — are what make writing a credential there safe.
 #
 # The TOML reader accepts the kendex settings contract and nothing else:
 #
@@ -63,6 +73,10 @@ kendex_env_message() {
     duplicate-key)
       printf 'kendex-env: duplicate-key file=%s key=%s\n' "$file" "$key"
       printf '%s\n' "::error::$file: $key is assigned more than once in [env] (each key must be unique in the table)"
+      ;;
+    private-env-path)
+      printf 'kendex-env: private-env-path arg1=%s\n' "$1"
+      printf '%s\n' "::error::KENDEX_ENV_FILE is $1: it must name a file inside the project, written as a relative path with no '..' segment, no backslash and no colon"
       ;;
     value-syntax)
       printf 'kendex-env: value-syntax file=%s key=%s\n' "$file" "$key"
@@ -206,6 +220,29 @@ kendex_load_settings_file() {
   done < "$file"
 }
 
+# Which file this project keeps its secrets in, relative to its root.
+# Read from KENDEX_ENV_FILE, which the settings load above has already
+# exported when the project sets it, and which the caller's environment
+# outranks like every other key.
+#
+# The path is refused rather than resolved when it could reach outside the
+# project: a private env file is sourced, so a path a project did not mean
+# to name runs somebody else's file in this shell.
+kendex_private_env_file() { # OUT_VAR — project-relative private env file, assigned to OUT_VAR
+  local _kendex_named="${KENDEX_ENV_FILE:-}"
+  if [[ -z "$_kendex_named" ]]; then
+    printf -v "$1" '%s' '.env.local'
+    return 0
+  fi
+  case "$_kendex_named" in
+    /* | *:* | *\\* | .. | ../* | */../* | */..)
+      kendex_env_message private-env-path "$_kendex_named" >&2
+      return 1
+      ;;
+  esac
+  printf -v "$1" '%s' "$_kendex_named"
+}
+
 kendex_load_project_env() {
   local project_root="$1"
   [[ -n "$project_root" ]] || return 0
@@ -225,15 +262,17 @@ kendex_load_project_env() {
     _KENDEX_PARENT_ENV_VALUES+=("${!_kendex_name-}")
   done < <(compgen -e)
 
-  # Load order (lowest to highest among project files): settings, then
-  # .env.local. kendex_load_settings_file skips parent keys directly; the
-  # env file is sourced wholesale, so its clobbers are undone below. A
-  # refused load — settings or a BOM-prefixed .env.local — fails the whole
-  # call: resolving on a partial or silently reinterpreted file would be
-  # worse than stopping.
+  # Load order (lowest to highest among project files): settings, then the
+  # private env file. kendex_load_settings_file skips parent keys directly;
+  # the env file is sourced wholesale, so its clobbers are undone below. A
+  # refused load — settings, a private path outside the project, or a
+  # BOM-prefixed env file — fails the whole call: resolving on a partial or
+  # silently reinterpreted file would be worse than stopping.
   kendex_load_settings_file "$project_root/kendex.settings.toml" || return 1
   kendex_load_settings_file "$project_root/.kendex/settings.toml" || return 1
-  kendex_source_env_file "$project_root/.env.local" || return 1
+  local _kendex_private_file
+  kendex_private_env_file _kendex_private_file || return 1
+  kendex_source_env_file "$project_root/$_kendex_private_file" || return 1
 
   # Re-assert parent values so parent env wins over every project file, while
   # the settings < .env.local order is preserved for non-parent keys.

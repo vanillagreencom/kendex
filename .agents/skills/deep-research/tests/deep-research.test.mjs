@@ -511,6 +511,64 @@ test("a key present only in .env is ignored; .env.local and process env keep the
   assert.match(readFileSync(repeatedOut, "utf8"), /FromEnvLocal/);
 });
 
+// KENDEX_ENV_FILE is the one key this loader reads out of
+// kendex.settings.toml, and it decides WHICH private file is read. The app
+// writes that key when a person names a private file, so the two sides
+// meet here: a value the app wrote, single-quoted, has to come back out
+// byte for byte, and a path that could reach outside the project has to
+// stop the run rather than be opened.
+test("KENDEX_ENV_FILE names the private env file, and a quoted value reads back literally", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-envfile-"));
+  const chosenMock = join(dir, "chosen-mock.json");
+  const localMock = join(dir, "local-mock.json");
+  for (const [path, answer] of [[chosenMock, "FromChosen"], [localMock, "FromEnvLocal"]]) {
+    writeFileSync(path, JSON.stringify({ answer, results: [{ title: "Source", url: "https://example.com" }] }));
+  }
+  const env = { ...process.env };
+  delete env.EXA_API_KEY;
+  delete env.EXA_MOCK_RESPONSE_FILE;
+
+  // The default file is still the default: a project naming nothing reads
+  // .env.local exactly as it always has.
+  writeFileSync(join(dir, ".env.local"), `EXA_MOCK_RESPONSE_FILE=${localMock}\nEXA_API_KEY='k'\n`);
+  const local = join(dir, "local.md");
+  const byDefault = spawnSync(process.execPath, [script, "report", "q", "--output", local], { encoding: "utf8", env, cwd: dir });
+  assert.equal(byDefault.status, 0, byDefault.stderr);
+  assert.match(readFileSync(local, "utf8"), /FromEnvLocal/);
+
+  // Named, the chosen file answers instead — and the single-quoted value
+  // the app writes is stripped of exactly its quotes and nothing else.
+  writeFileSync(join(dir, "kendex.settings.toml"), '[env]\nKENDEX_ENV_FILE = ".env.secrets"\n');
+  writeFileSync(join(dir, ".env.secrets"), `EXA_MOCK_RESPONSE_FILE='${chosenMock}'\nEXA_API_KEY='k'\n`);
+  const chosen = join(dir, "chosen.md");
+  const byName = spawnSync(process.execPath, [script, "report", "q", "--output", chosen], { encoding: "utf8", env, cwd: dir });
+  assert.equal(byName.status, 0, byName.stderr);
+  assert.match(readFileSync(chosen, "utf8"), /FromChosen/);
+});
+
+test("a KENDEX_ENV_FILE that could reach outside the project stops the run", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-envpath-"));
+  const env = { ...process.env };
+  delete env.EXA_API_KEY;
+  delete env.EXA_MOCK_RESPONSE_FILE;
+  for (const named of ["/etc/passwd", "../outside.env", "a/../../outside.env", "C:keys.env"]) {
+    writeFileSync(join(dir, "kendex.settings.toml"), `[env]\nKENDEX_ENV_FILE = "${named}"\n`);
+    const result = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
+    const parsed = diagnostic(result);
+    assert.equal(parsed.key, "private-env-path", named);
+    assert.equal(parsed.value, "KENDEX_ENV_FILE", named);
+  }
+  // A value outside the settings contract is refused rather than read
+  // past: the shell loader fails the whole file over one, so reading past
+  // it here would have this package answer from .env.local while every
+  // other package refuses to start.
+  for (const line of ['KENDEX_ENV_FILE = "keys\\local.env"', "KENDEX_ENV_FILE = '.env.secrets'", "KENDEX_ENV_FILE = .env.secrets"]) {
+    writeFileSync(join(dir, "kendex.settings.toml"), `[env]\n${line}\n`);
+    const result = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
+    assert.equal(diagnostic(result).key, "private-env-value", line);
+  }
+});
+
 test("resolves EXA_API_KEY op:// references with op CLI", () => {
   const dir = mkdtempSync(join(tmpdir(), "deep-research-op-"));
   const bin = join(dir, "bin");

@@ -23,6 +23,7 @@ use kendex_core::lock::{load as load_lock, lock_path};
 use kendex_core::manifest::{self, Finding, Manifest};
 use kendex_core::model::Scope;
 use kendex_core::settings_file::{SettingsDraft as CoreSettingsDraft, SettingsEdit};
+use kendex_core::settings_secret::{SecretEdit, SecretsDraft as CoreSecretsDraft};
 use kendex_core::settings_view::ScopeSettings;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -43,15 +44,28 @@ pub struct ManifestRead {
     pub manifest: Option<Manifest>,
     /// The file these bytes came from, read with them and never apart.
     pub base: Base,
+    /// What that file is called here. A source catalog keeps its install
+    /// state in a sibling of the definition it publishes, so the name is
+    /// core's answer rather than a constant the page could hold: a second
+    /// copy of the rule is one that comes to name the wrong file in the
+    /// sentence a person reads before saving.
+    pub file: String,
 }
 
 #[tauri::command(async)]
 #[specta::specta]
 pub fn get_manifest(scope: Scope) -> Result<ManifestRead, String> {
     let env = env()?;
-    let (manifest, base) = manifest::read_for_mutation(&manifest::manifest_path(&env, &scope))
-        .map_err(|e| e.to_string())?;
-    Ok(ManifestRead { manifest, base })
+    let path = manifest::manifest_path(&env, &scope);
+    let (manifest, base) = manifest::read_for_mutation(&path).map_err(|e| e.to_string())?;
+    Ok(ManifestRead {
+        manifest,
+        base,
+        file: path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| manifest::MANIFEST_FILE.to_owned()),
+    })
 }
 
 /// Validate an edited manifest the way a hand-written file is validated, so
@@ -83,12 +97,22 @@ fn on_first_creation(mut manifest: Manifest, seed: Manifest) -> Manifest {
     manifest
 }
 
-/// The Customize tab's settings half: what every installed skill declares
-/// and where this place's file stands on each key.
+/// The Customize tab's settings half: what every installed skill
+/// declares, where this place's file stands on each key, and where each
+/// declared credential stands in this project's private file.
+///
+/// `secretFile` reads the same place against another private file
+/// instead. That is how a person sees what choosing one would mean —
+/// whether git carries it, and which credentials it already holds —
+/// before a save records the choice.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn get_scope_settings(scope: Scope) -> Result<ScopeSettings, String> {
-    kendex_core::settings_view::scope_settings(&env()?, &scope).map_err(|e| e.to_string())
+pub fn get_scope_settings(
+    scope: Scope,
+    secret_file: Option<String>,
+) -> Result<ScopeSettings, String> {
+    kendex_core::settings_view::scope_settings(&env()?, &scope, secret_file.as_deref())
+        .map_err(|e| e.to_string())
 }
 
 /// An edited manifest and what the file it came from was at that moment.
@@ -106,6 +130,23 @@ pub struct ManifestDraft {
 #[serde(rename_all = "camelCase")]
 pub struct SettingsDraft {
     pub edits: Vec<SettingsEdit>,
+    pub base: Option<String>,
+}
+
+/// Credentials a person typed and what the private file was when the
+/// fields they typed into were read.
+///
+/// `file` is the destination those fields named. `choose` is the person
+/// naming a private file this project does not already use, which the
+/// same save records in `kendex.settings.toml` so the packages read it
+/// too; without it the save is bound to the file the project already
+/// uses and is refused if that has moved.
+#[derive(Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretsDraft {
+    pub edits: Vec<SecretEdit>,
+    pub file: String,
+    pub choose: bool,
     pub base: Option<String>,
 }
 
@@ -128,6 +169,7 @@ pub fn save_customize(
     scope: Scope,
     manifest: Option<ManifestDraft>,
     settings: Option<SettingsDraft>,
+    secrets: Option<SecretsDraft>,
 ) -> Result<AuditView, WriteRefused> {
     // The bytes behind each base were read in the editor, so they arrive
     // as claims and are only ever compared, never believed.
@@ -137,6 +179,12 @@ pub fn save_customize(
         manifest.map(|draft| (draft.manifest, Base::claimed(draft.base))),
         settings.map(|draft| CoreSettingsDraft {
             edits: draft.edits,
+            base: Base::claimed(draft.base),
+        }),
+        secrets.map(|draft| CoreSecretsDraft {
+            edits: draft.edits,
+            file: draft.file,
+            choose: draft.choose,
             base: Base::claimed(draft.base),
         }),
     )
@@ -149,6 +197,7 @@ fn write_customize(
     scope: Scope,
     draft: Option<(Manifest, Base)>,
     settings: Option<CoreSettingsDraft>,
+    secrets: Option<CoreSecretsDraft>,
 ) -> Result<AuditView, WriteRefused> {
     let path = manifest::manifest_path(env, &scope);
     // One read answers both questions: whether the file is still the one
@@ -205,6 +254,17 @@ fn write_customize(
             targets.push(file);
         }
         options.settings_draft = Some(settings);
+    }
+    // The private file, bound the same way. Its own path rather than the
+    // settings file's: a save that names a different private file is
+    // about a file the settings read never covered.
+    if let Some(secrets) = secrets {
+        if let Some(root) = settings_root(&scope) {
+            let file = root.join(&secrets.file);
+            secrets.base.verify(&file).map_err(refusal)?;
+            targets.push(file);
+        }
+        options.secrets_draft = Some(secrets);
     }
     let planned = match &edited {
         Some((manifest, _)) => manifest.clone(),

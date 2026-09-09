@@ -8,7 +8,7 @@ A shell CLI for Linear issues, projects and planning data. It includes a local c
 kendex add vanillagreencom/kendex --skill linear
 ```
 
-Requires Bash 4.0 or newer, curl and jq. Put `LINEAR_API_KEY` in `.env.local` and `LINEAR_TEAM` in `kendex.settings.toml` under `[env]`. Run the installed `scripts/linear.sh auth-check --strict`, then `scripts/linear.sh sync --reconcile`.
+Requires Bash 4.0 or newer, curl and jq. Set `LINEAR_API_KEY` and `LINEAR_TEAM` in the kendex app, on this package's Customize tab: the key goes to the project's private env file and the team to `kendex.settings.toml`. Both can be set by hand instead. Run the installed `scripts/linear.sh auth-check --strict`, then `scripts/linear.sh sync --reconcile`.
 
 ## Features
 
@@ -27,7 +27,7 @@ Set non-secret keys in committed `kendex.settings.toml` under `[env]`; the key l
 
 | Variable | Purpose |
 |----------|---------|
-| `LINEAR_API_KEY` | The API key, in `.env.local` |
+| `LINEAR_API_KEY` | The API key, in the project's private env file |
 | `LINEAR_TEAM` | The team every write targets; required |
 | `LINEAR_TEAM_PREFIX` | Issue identifier prefix used in examples |
 | `LINEAR_AGENT_LABELS` | Agent-routing labels an `issues create` must carry one of |
