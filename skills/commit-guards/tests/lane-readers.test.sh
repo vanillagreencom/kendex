@@ -197,6 +197,10 @@ git_shim() { # ARG — a git that exits 128 for any call carrying ARG
 }
 git_shim grep
 git_shim cat-file
+mkdir -p "$ROOT/git-shim-cat-file-order"
+printf '#!/usr/bin/env bash\ncase " $* " in *" cat-file "*) echo "dependency-order-control: blob-read" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' \
+  "$REAL_GIT" >"$ROOT/git-shim-cat-file-order/git"
+chmod +x "$ROOT/git-shim-cat-file-order/git"
 # A wc that fails once, so the first count fails while the second succeeds;
 # a tr that fails every time, breaking only the strip inside the second count.
 mkdir -p "$ROOT/wc-shim" "$ROOT/tr-shim" "$ROOT/count-shim"
@@ -235,7 +239,7 @@ A_HIT="todo-ban: match=work marker:a.rs:1:// $MARKER: stranded work;todo-ban: in
 rows=(
   "control: the staged marker trips with the real git|fx_readers readers-0||todo-ban|rc=1 $A_HIT"
   "a git grep execution failure puts the stable record before git's cause|fx_readers readers-1|$ROOT/git-shim-grep|todo-ban|rc=2 todo-ban: grep-exit=128;dependency-order-control: grep-exit"
-  "a blob read that cannot run is exit 2, never a path skipped|fx_readers readers-2|$ROOT/git-shim-cat-file|todo-ban|rc=2 todo-ban: blob-read=a.rs::0:a.rs"
+  "a blob read failure puts the stable record before git's cause|fx_readers readers-2|$ROOT/git-shim-cat-file-order|todo-ban|rc=2 todo-ban: blob-read=a.rs::0:a.rs;dependency-order-control: blob-read"
   "a vanished staged blob is exit 2 carrying git's own error line|fx_vanished readers-3||todo-ban|rc=2 todo-ban: grep-content=1"
   "a scan matching one file it read and one it could not is exit 2, never a violation|fx_vanished readers-4 second||todo-ban|rc=2 todo-ban: grep-content=0"
   "control: the staged marker fires with the real tools|fx_staged staged-0||todo-ban --staged|rc=1 todo-ban: match=work marker:ok.rs:2:// $MARKER: staged for the pre-filter to find;todo-ban: staged-count=1:0:tools/todo-ban-excludes"

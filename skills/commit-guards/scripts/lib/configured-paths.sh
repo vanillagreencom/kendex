@@ -201,8 +201,7 @@ gg_note_skip() { # PATH CODE EXPLANATION — a matched path this scan cannot mea
 
 gg_read_blob() { # SHA PATH NOUN — the blob's bytes into $GG_TMP/blob
   git cat-file blob "$1" >"$GG_TMP/blob" 2>"$GG_TMP/blob.err" \
-    || { [ ! -s "$GG_TMP/blob.err" ] || cat -- "$GG_TMP/blob.err" >&2
-      gg_fail blob-read "$2:$1" "cannot read blob $1 for $(gg_shown "$2") — refusing to skip an unread $3"; }
+    || gg_fail_cause blob-read "$2:$1" "$GG_TMP/blob.err" "cannot read blob $1 for $(gg_shown "$2") — refusing to skip an unread $3"
 }
 
 gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
