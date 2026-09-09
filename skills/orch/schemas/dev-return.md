@@ -25,8 +25,8 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
   "branch": "user/proj-123",
   "commit": "abc123f",
   "baseline_lines": 138,
-  "validate": "pass",
-  "validate_note": "Test-only validation ceiling: suite failed at 34m; the failed target passed alone under load",
+  "validate": "FAILING: cargo test",
+  "validate_note": "Test-only validation ceiling: the suite failed at 34m; the failed target passed alone under load",
   "qa_labels": ["needs-review"],
   "summary_posted": true,
   "summary": "### Proposed Rules\n- Rule the validation list is missing",
@@ -66,10 +66,10 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 
 ## `validate` and its note
 
-`validate` is a closed enumeration. `--validate-note` records what the enumeration cannot express — the test-only validation-ceiling re-run that dev [`workflows/dev-implement.md`](../../dev/workflows/dev-implement.md) § 5 names, or a flake worth recording — and it never relaxes `--validate`. Outside that named ceiling a failing validation ends the round; it is never re-run into a pass:
+`validate` is a closed enumeration. `--validate-note` records what the enumeration cannot express — the test-only validation-ceiling re-run that the dev skill's `dev-implement.md` § 5 names, or a flake worth recording — and it never relaxes `--validate`. Outside that named ceiling a failing validation ends the round; it is never re-run into a pass:
 
 ```bash
---validate pass --validate-note "Test-only validation ceiling: suite failed at 34m; the failed target passed alone under load"
+--validate "FAILING: cargo test" --validate-note "Test-only validation ceiling: the suite failed at 34m; the failed target passed alone under load"
 ```
 
 `dev-artifact-check` echoes both. An empty or whitespace-only note is rejected.
