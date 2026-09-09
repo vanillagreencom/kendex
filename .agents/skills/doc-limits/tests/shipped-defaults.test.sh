@@ -23,6 +23,24 @@ expect() { # EXPECTED-EXIT LABEL: assert the preceding run's result
     FAIL=$((FAIL + 1)); printf '  FAIL: %s: exit %s\n%s\n' "$2" "$RC" "$OUT"
   fi
 }
+expect_first_line() { # EXPECTED LABEL
+  local first="${OUT%%$'\n'*}"
+  if [ "$first" = "$1" ]; then
+    PASS=$((PASS + 1)); printf '  ok: %s\n' "$2"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL: %s: first line <%s>\n' "$2" "$first"
+  fi
+}
+must_fail_first_line() { # FORMER-LINE LABEL
+  local assertion_rc=0
+  (PASS=0; FAIL=0; expect_first_line "$1" "$2"; [ "$FAIL" -eq 0 ]) >"$TMP/control.log" || assertion_rc=$?
+  if [ "$assertion_rc" -ne 0 ]; then
+    PASS=$((PASS + 1)); printf '  ok: %s\n' "$2"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL: %s: first-line assertion stayed green\n' "$2"
+    cat "$TMP/control.log"
+  fi
+}
 must_fail() { # FORMER-EXIT MUTANT-EXIT LABEL: prove the former assertion turns red
   local assertion_rc=0
   (PASS=0; FAIL=0; expect "$1" "$3"; [ "$FAIL" -eq 0 ]) >"$TMP/control.log" || assertion_rc=$?
@@ -56,13 +74,15 @@ while IFS=' ' read -r path limit; do
   git -C "$R" add -- "$path"
   run --staged
   expect 0 "$path at its class limit passes"
+  expect_first_line 'notice=documents-checked count=1' "$path pass notice"
   bytes "$path" "$((limit + 1))"
   git -C "$R" add -- "$path"
   run --staged
   expect 1 "$path one byte over fails"
+  expect_first_line "notice=document-over-limit path=$path" "$path failure notice"
   case "$OUT" in
-    *"$path: $((limit + 1)) bytes > $limit bytes"*) ;;
-    *) FAIL=$((FAIL + 1)); printf '  FAIL: wrong document or limit: %s\n' "$OUT" ;;
+    *"notice=documents-over-limit count=1"*) PASS=$((PASS + 1)); printf '  ok: %s\n' "$path failure count" ;;
+    *) FAIL=$((FAIL + 1)); printf '  FAIL: %s\n' "$path failure count" ;;
   esac
   git -C "$R" rm -qf -- "$path"
   CLASS_ASSERTIONS=$((CLASS_ASSERTIONS + 1))
@@ -84,6 +104,51 @@ if [ "$CLASS_ASSERTIONS" -eq 0 ]; then
   printf 'FAIL: CLASSES executed no assertions\n' >&2
   exit 1
 fi
+
+bytes README.md 16384
+git -C "$R" add README.md
+private_command notice-protocol
+[ "$(grep -Fxc "  printf 'notice=%s %s=%q\\n' \"\$key\" \"\$field\" \"\$value\"" "$MUTANT")" -eq 1 ]
+sed "s/printf 'notice=%s %s=%q\\\\n'/printf 'renamed=%s %s=%q\\\\n'/" "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --staged
+must_fail_first_line 'notice=documents-checked count=1' 'notice protocol control: changing the formatter fails the pass notice'
+SR="$SOURCE_COMMAND"
+git -C "$R" rm -qf README.md
+
+DOCUMENT_PATH="bad$(printf '\t')path.md"
+bytes "$DOCUMENT_PATH" 1
+git -C "$R" add -- "$DOCUMENT_PATH"
+run --staged
+expect 2 'document-path-tab'
+expect_first_line "error=document-path-invalid path=$(printf '%q' "$DOCUMENT_PATH")" 'document-path-tab diagnostic'
+git -C "$R" rm -qf -- "$DOCUMENT_PATH"
+
+printf 'conflict\n' >"$R/conflict.md"
+git -C "$R" add conflict.md
+CONFLICT_OID="$(git -C "$R" hash-object conflict.md)"
+git -C "$R" rm -q --cached conflict.md
+printf '100644 %s 1\tconflict.md\n100644 %s 2\tconflict.md\n100644 %s 3\tconflict.md\n' "$CONFLICT_OID" "$CONFLICT_OID" "$CONFLICT_OID" | git -C "$R" update-index --index-info
+run --staged
+expect 2 'document-unmerged'
+expect_first_line 'error=document-unmerged path=conflict.md' 'document-unmerged diagnostic'
+private_command document-diagnostic
+[ "$(grep -Fxc '  [ "${entry##* }" = 0 ] || collection_error document-unmerged path "$f" "tracked document is unmerged: $f"' "$MUTANT")" -eq 1 ]
+sed 's/collection_error document-unmerged path/collection_error document-unmerged-renamed path/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --staged
+must_fail_first_line 'error=document-unmerged path=conflict.md' 'document diagnostic control: changing the stable key fails the unmerged row'
+SR="$SOURCE_COMMAND"
+git -C "$R" update-index --force-remove conflict.md
+rm "$R/conflict.md"
 
 bytes src/large.rs 100000
 git -C "$R" add src/large.rs
@@ -109,25 +174,48 @@ git -C "$R" rm -qf src/large.rs
 bytes AGENTS.md 16385
 git -C "$R" add AGENTS.md
 EXCLUSION_ASSERTIONS=0
-while IFS='|' read -r name operation expected; do
+while IFS='|' read -r name operation expected first_line; do
+  rm -f "$R/tools/doc-limits-excludes"
   case "$operation" in
     reasoned) printf 'AGENTS.md\tdeliberate fixture exception\n' >"$R/tools/doc-limits-excludes" ;;
     missing-reason) printf 'AGENTS.md\n' >"$R/tools/doc-limits-excludes" ;;
     removed) : >"$R/tools/doc-limits-excludes" ;;
+    empty-carve) printf '!\tmissing pattern\n' >"$R/tools/doc-limits-excludes" ;;
+    symlink)
+      ln -s ../AGENTS.md "$R/tools/doc-limits-excludes"
+      ;;
   esac
   git -C "$R" add tools/doc-limits-excludes
   run --staged
   expect "$expected" "$name"
+  expect_first_line "$first_line" "$name diagnostic"
   EXCLUSION_ASSERTIONS=$((EXCLUSION_ASSERTIONS + 1))
 done <<'EXCLUSION_CASES'
-reasoned-exclusion|reasoned|0
-exclusion-missing-reason|missing-reason|2
-exclusion-removed|removed|1
+reasoned-exclusion|reasoned|0|notice=documents-checked count=0
+exclusion-missing-reason|missing-reason|2|error=excludes-row-invalid line=1
+exclusion-removed|removed|1|notice=document-over-limit path=AGENTS.md
+exclusion-empty-carve|empty-carve|2|error=excludes-carve-empty line=1
+exclusion-symlink|symlink|2|error=excludes-mode-invalid mode=120000
 EXCLUSION_CASES
 if [ "$EXCLUSION_ASSERTIONS" -eq 0 ]; then
   printf 'FAIL: EXCLUSION_CASES executed no assertions\n' >&2
   exit 1
 fi
+
+rm -f "$R/tools/doc-limits-excludes"
+printf 'AGENTS.md\n' >"$R/tools/doc-limits-excludes"
+git -C "$R" add tools/doc-limits-excludes
+private_command exclusion-diagnostic
+[ "$(grep -Fxc '      config_error excludes-row-invalid line "$lineno" "$EXCLUDES_LABEL:$lineno: expected '\''pattern<TAB>reason'\'' (every exclusion carries its justification)"' "$MUTANT")" -eq 1 ]
+sed 's/config_error excludes-row-invalid line/config_error excludes-row-renamed line/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --staged
+must_fail_first_line 'error=excludes-row-invalid line=1' 'exclusion diagnostic control: changing the stable key fails the malformed row'
+SR="$SOURCE_COMMAND"
 
 printf 'AGENTS.md\tdeliberate fixture exception\n' >"$R/tools/doc-limits-excludes"
 git -C "$R" add tools/doc-limits-excludes

@@ -33,6 +33,24 @@ expect() { # EXPECTED-EXIT LABEL: assert the preceding run's result
     FAIL=$((FAIL + 1)); printf '  FAIL: %s: exit %s\n%s\n' "$2" "$RC" "$OUT"
   fi
 }
+expect_first_line() { # EXPECTED LABEL
+  local first="${OUT%%$'\n'*}"
+  if [ "$first" = "$1" ]; then
+    PASS=$((PASS + 1)); printf '  ok: %s\n' "$2"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL: %s: first line <%s>\n' "$2" "$first"
+  fi
+}
+must_fail_first_line() { # FORMER-LINE LABEL
+  local assertion_rc=0
+  (PASS=0; FAIL=0; expect_first_line "$1" "$2"; [ "$FAIL" -eq 0 ]) >"$TMP/control.log" || assertion_rc=$?
+  if [ "$assertion_rc" -ne 0 ]; then
+    PASS=$((PASS + 1)); printf '  ok: %s\n' "$2"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL: %s: first-line assertion stayed green\n' "$2"
+    cat "$TMP/control.log"
+  fi
+}
 must_fail() { # FORMER-EXIT MUTANT-EXIT LABEL: prove the former assertion turns red
   local assertion_rc=0
   (PASS=0; FAIL=0; expect "$1" "$3"; [ "$FAIL" -eq 0 ]) >"$TMP/control.log" || assertion_rc=$?
@@ -87,7 +105,7 @@ if [ "$MODE_ASSERTIONS" -eq 0 ]; then
 fi
 
 INVENTORY_ASSERTIONS=0
-while IFS='|' read -r name mode operation expected; do
+while IFS='|' read -r name mode operation expected first_line; do
   case "$operation" in
     inventory-worktree-empty) printf '[]\n' >"$R/.kendex-generated.json" ;;
     unchanged) : ;;
@@ -111,6 +129,9 @@ while IFS='|' read -r name mode operation expected; do
       printf '{}\n' >"$R/.kendex-generated.json"
       git -C "$R" add .kendex-generated.json
       ;;
+    inventory-unreadable)
+      chmod 000 "$R/.kendex-generated.json"
+      ;;
     carve-back)
       git -C "$R" checkout HEAD -- .kendex-generated.json
       printf '!.agents/skills/rendered/*\tmeasure this render explicitly\n' >"$R/tools/doc-limits-excludes"
@@ -119,6 +140,7 @@ while IFS='|' read -r name mode operation expected; do
   esac
   run_mode "$mode"
   expect "$expected" "$name: $mode"
+  [ -z "$first_line" ] || expect_first_line "$first_line" "$name diagnostic: $mode"
   INVENTORY_ASSERTIONS=$((INVENTORY_ASSERTIONS + 1))
 done <<'INVENTORY_CASES'
 inventory-worktree-empty|worktree|inventory-worktree-empty|1
@@ -127,15 +149,20 @@ inventory-empty-staged|staged|stage-empty|1
 inventory-deleted-from-index|staged|delete-from-index|1
 inventory-absent-small-document|staged|small-without-inventory|0
 inventory-worktree-missing-index-fallback|worktree|missing-worktree-fallback|0
-inventory-invalid|worktree|invalid-inventory|2
-inventory-invalid|staged|unchanged|2
+inventory-invalid|worktree|invalid-inventory|2|error=inventory-invalid path=.kendex-generated.json
+inventory-invalid|staged|unchanged|2|error=inventory-invalid path=.kendex-generated.json
 render-carved-back|worktree|carve-back|1
 render-carved-back|staged|unchanged|1
+inventory-unreadable-shape|worktree|inventory-unreadable|2|error=inventory-read-failed path=.kendex-generated.json
 INVENTORY_CASES
 if [ "$INVENTORY_ASSERTIONS" -eq 0 ]; then
   printf 'FAIL: INVENTORY_CASES executed no assertions\n' >&2
   exit 1
 fi
+
+chmod 600 "$R/.kendex-generated.json"
+printf '[".agents/skills/rendered/SKILL.md"]\n' >"$R/.kendex-generated.json"
+git -C "$R" add .kendex-generated.json
 
 git -C "$R" rm -qf tools/doc-limits-excludes
 private_command generated-exclusion
@@ -169,10 +196,21 @@ SR="$SOURCE_COMMAND"
 
 printf '{}\n' >"$R/.kendex-generated.json"
 git -C "$R" add .kendex-generated.json
+private_command inventory-diagnostic
+[ "$(grep -Fxc "  || collection_error inventory-invalid path .kendex-generated.json 'cannot read .kendex-generated.json; jq is required; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'" "$MUTANT")" -eq 1 ]
+sed 's/collection_error inventory-invalid path/collection_error inventory-renamed path/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --staged
+must_fail_first_line 'error=inventory-invalid path=.kendex-generated.json' 'inventory diagnostic control: changing the stable key fails inventory-invalid'
+
 private_command inventory-parse
 [ ! -L "$MUTANT" ]
-[ "$(grep -Fxc 'generated_paths_load "$inventory" || exit 2' "$MUTANT")" -eq 1 ]
-sed 's/^generated_paths_load "\$inventory" || exit 2$/generated_paths_load "$inventory" || :/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc "  || collection_error inventory-invalid path .kendex-generated.json 'cannot read .kendex-generated.json; jq is required; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'" "$MUTANT")" -eq 1 ]
+sed "s#^  || collection_error inventory-invalid path .kendex-generated.json 'cannot read .kendex-generated.json; jq is required; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders'\$#  || :#" "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
