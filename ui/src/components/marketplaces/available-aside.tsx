@@ -1,20 +1,22 @@
-import type { Catalog, PackageView } from "@/bindings";
+import type { PackageView } from "@/bindings";
 import { DependencyFacts } from "@/components/marketplaces/package-dependencies";
 import { FileList } from "@/components/package/file-list";
-import { catalogLabel } from "@/stores/marketplaces";
 
 /** The available-package page's facts column: where it comes from, the sets
  * that carry it, what it needs, its files, and a name clash. The safety reading is not
  * here — score and findings are one block, and it sits in the main column
  * where there is room for the findings under the number. */
 export function AvailableAside({
-  catalog,
+  marketplace,
   repo,
   view,
   selectedFile,
   onSelectFile,
 }: {
-  catalog: Catalog;
+  /** What the marketplace this package comes from is called —
+   * `lib/marketplace-display.ts`, the same answer the breadcrumb above and
+   * the marketplace's own page give. */
+  marketplace: string;
   /** The repository or path behind the catalog, when known. */
   repo: string | null;
   view: PackageView | null;
@@ -29,8 +31,8 @@ export function AvailableAside({
           From
         </h3>
         <p>
-          {catalogLabel(catalog)}
-          {repo && repo !== catalogLabel(catalog) ? (
+          {marketplace}
+          {repo && repo !== marketplace ? (
             <span className="block truncate font-mono text-xs text-muted-foreground">
               {repo}
             </span>
@@ -63,7 +65,7 @@ export function AvailableAside({
       {view?.preview.collision ? (
         <p className="text-xs text-warning">
           This name is already installed from {view.preview.collision}—
-          installing from {catalogLabel(catalog)} will be refused.
+          installing from {marketplace} will be refused.
         </p>
       ) : null}
     </aside>

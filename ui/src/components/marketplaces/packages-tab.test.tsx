@@ -271,7 +271,9 @@ describe("the marketplace column's revision line", () => {
         name: "cached commit",
         rev: null,
         commit: COMMIT,
-        shown: ["kit", "@ 0123456"],
+        // The marketplace's resolved title, not the alias `kit` — see
+        // `lib/marketplace-display.ts`.
+        shown: ["Kit", "@ 0123456"],
         absent: [],
       },
       {

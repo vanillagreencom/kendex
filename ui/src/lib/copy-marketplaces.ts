@@ -80,10 +80,39 @@ export const SUBSCRIBE_TO_INSTALL_MEANS =
   "Installing from here subscribes you personally to this marketplace first — that is what makes its packages installable.";
 export const SUBSCRIBE_TO_INSTALL_LABEL = "Subscribe and install";
 
-// The marketplace page's Projects tab: the places that install from this
-// marketplace. The title names the tab once — the panel does not repeat it,
-// and what the panel says about the model is in copy-model.ts.
-export const MARKETPLACE_PLACES_TITLE = "Projects";
+// The About tab's source details: which places subscribe to this
+// marketplace, under which alias, and where its bytes come from. The heading
+// names the section once — the panel does not repeat it, and what the panel
+// says about the model is in copy-model.ts.
+export const MARKETPLACE_PLACES_TITLE = "Projects that use it";
+
+// How a marketplace names itself and where it comes from. A folder on this
+// machine says so beside its path: a working checkout and the remote
+// catalogue it was cloned from declare the same name, and without this the
+// two cards read as one marketplace listed twice.
+export const LOCAL_FOLDER_LABEL = "Local folder";
+/** A declaration naming neither a repository nor a folder, whose alias
+ *  spells no name either. Nothing has been read and nothing was written
+ *  down, so the card says that rather than showing a bare `.`. */
+export const UNNAMED_MARKETPLACE = "Unnamed marketplace";
+export const SOURCE_LOCATION_LABEL = "Comes from";
+/** The alias one place's manifest keys this source under — what
+ *  `kendex marketplace` addresses it by, and what an unsubscribe names. It
+ *  is a per-place key rather than the marketplace's name, so it is stated
+ *  here and never used as a title. */
+export const SOURCE_ALIAS_LABEL = "Source name";
+
+/** How many places a package or curated set is installed in, as the one
+ *  control that opens them. Personal is listed on Projects beside every
+ *  project, so it counts as one of them; the list behind the click names
+ *  each one. */
+export const projectCountLabel = (count: number): string =>
+  count === 1 ? "1 project" : `${count} projects`;
+export const installedInLabel = (count: number): string =>
+  `Installed in ${projectCountLabel(count)}`;
+/** The column head over [projectCountLabel] in the packages table, where the
+ *  head carries the verb and the cell carries the count. */
+export const INSTALLED_IN_HEADING = "Installed in";
 
 /** How many places a marketplace is subscribed in, for its card. */
 export const placeCountLabel = (count: number): string =>
@@ -123,7 +152,9 @@ export const ABOUT_FINDINGS_TITLE = "Things the catalog gets wrong";
 // profile row at all (no author, no license, no homepage, no history to
 // date it by, nothing counted), and nothing wrong with its own
 // configuration — findings get their own section rather than this line.
-// The tab has read it and has nothing to show.
+// The tab has read it and has nothing to show. The source's own details
+// are not part of it: they are this machine's declaration, not a claim the
+// catalog makes.
 export const ABOUT_NOTHING_SAID = "This marketplace says nothing about itself.";
 
 /** What a catalog holds, as one line. The joining is the app's one list

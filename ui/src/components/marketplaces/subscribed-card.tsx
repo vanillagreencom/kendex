@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { morePlacesLabel } from "@/lib/copy";
 import { placeCountLabel } from "@/lib/copy-marketplaces";
 import { shortRevision } from "@/lib/labels";
+import { sourceLine } from "@/lib/marketplace-display";
 import { subscription } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 
@@ -27,6 +28,11 @@ export function SubscribedCard({ group }: { group: SubscribedMarketplace }) {
   // and `commit` is never pinned.
   const revision = group.open.rev ?? group.open.commit;
   const off = group.places.filter((row) => !row.enabled).length;
+  // Where it comes from, resolved. A working checkout says "Local folder"
+  // beside its path: it and the remote catalogue it was cloned from declare
+  // the same name, and two cards titled alike over nothing else would read
+  // as one marketplace listed twice.
+  const where = sourceLine(group.display);
 
   return (
     <Card className="gap-0 overflow-hidden py-0 transition-colors hover:border-input">
@@ -39,7 +45,7 @@ export function SubscribedCard({ group }: { group: SubscribedMarketplace }) {
       >
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex items-baseline gap-2">
-            <span className="truncate font-medium">{group.name}</span>
+            <span className="truncate font-medium">{group.display.name}</span>
             {revision ? (
               <span className="shrink-0 font-mono text-xs text-muted-foreground">
                 @ {shortRevision(revision)}
@@ -51,9 +57,11 @@ export function SubscribedCard({ group }: { group: SubscribedMarketplace }) {
               </Badge>
             ) : null}
           </div>
-          <p className="truncate font-mono text-xs text-muted-foreground">
-            {group.where}
-          </p>
+          {where ? (
+            <p className="truncate font-mono text-xs text-muted-foreground">
+              {where}
+            </p>
+          ) : null}
           <p className="text-xs text-muted-foreground">
             {placeCountLabel(group.places.length)}
             {shown.length > 0 ? ` · ${shown.join(", ")}` : ""}

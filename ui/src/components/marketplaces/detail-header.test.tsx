@@ -3,7 +3,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Catalog, DirectoryRow, MarketplaceRow } from "@/bindings";
 import { TRY_AGAIN_LABEL } from "@/lib/copy";
-import { MARKETPLACES_UNCONFIRMED_TITLE } from "@/lib/copy-marketplaces";
+import {
+  LOCAL_FOLDER_LABEL,
+  MARKETPLACES_UNCONFIRMED_TITLE,
+} from "@/lib/copy-marketplaces";
 import { useCommunityStore } from "@/stores/community";
 import { mount } from "@/test/dom";
 import { DetailHeader } from "./detail-header";
@@ -157,5 +160,59 @@ describe("the header's links out", () => {
     expect(html).not.toMatch(
       /<button[^>]*>https:\/\/gitlab\.example[^<]*<\/button>/,
     );
+  });
+});
+
+// The alias is one place's manifest key. A page titled by it puts `.` over
+// the official catalogue's description for the working checkout kendex
+// itself is developed in, and the card the reader clicked said something
+// else. One resolution answers the card, this header and the breadcrumb.
+describe("what the header calls the marketplace", () => {
+  const drawn = (row: Partial<MarketplaceRow>) => {
+    const host = mount(
+      <DetailHeader
+        requested={catalog}
+        catalog={catalog}
+        row={{ ...BASE, ...row }}
+        summary={null}
+      />,
+    );
+    return {
+      title: host.querySelector("h1")?.textContent ?? "",
+      said: host.textContent ?? "",
+    };
+  };
+
+  it("titles a subscription by its catalogue and locates a folder source", () => {
+    const rows = [
+      {
+        name: "a folder subscribed under a relative alias",
+        row: {
+          name: ".",
+          repo: null,
+          repoKey: null,
+          repoIdentity: null,
+          path: ".",
+          resolvedPath: "/home/me/dev/kendex",
+          meta: { name: "kendex" },
+        },
+        title: "kendex",
+        shown: `${LOCAL_FOLDER_LABEL} · /home/me/dev/kendex`,
+      },
+      {
+        name: "a repository with nothing read from its catalogue",
+        row: {},
+        title: "Kit",
+        shown: "Acme/Kit",
+      },
+    ];
+    expect(rows).toHaveLength(2);
+    for (const each of rows) {
+      const header = drawn(each.row);
+      expect(header.title, each.name).toBe(each.title);
+      expect(header.said, each.name).toContain(each.shown);
+    }
+    // The folder says so; the repository has no folder to say it about.
+    expect(drawn(rows[1].row).said).not.toContain(LOCAL_FOLDER_LABEL);
   });
 });

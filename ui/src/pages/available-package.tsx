@@ -21,6 +21,7 @@ import { recordsUnreadable } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
+import { catalogTitle, rowForCatalog } from "@/lib/marketplace-display";
 import { sameScope } from "@/lib/scope";
 import { useOrderedRead } from "@/lib/use-ordered-read";
 import { cn } from "@/lib/utils";
@@ -93,19 +94,11 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   const target = destination ?? scope;
   // Matched by scope and name both — two scopes can subscribe the same
   // alias to different repositories.
-  const row =
-    catalog.by === "subscription"
-      ? rows.find(
-          (r) =>
-            r.name === catalog.source &&
-            catalogKey({
-              by: "subscription",
-              scope: r.scope,
-              source: r.name,
-            }) === catalogKey(catalog),
-        )
-      : undefined;
+  const row = rowForCatalog(rows, catalog);
   const repo = row?.repo ?? row?.path ?? summary?.provenance ?? null;
+  // What the marketplace calls itself, resolved the same way the breadcrumb
+  // above this page and the marketplace's own header resolve it.
+  const marketplace = catalogTitle(rows, catalog) ?? "";
   const shownError = reachError ?? error;
   // Every Packages row opens this page, "Not known" ones included. The
   // engine answered unknown because it could not read the lock of the place
@@ -234,7 +227,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
               ) : null}
             </div>
             <AvailableAside
-              catalog={catalog}
+              marketplace={marketplace}
               repo={repo}
               view={view}
               selectedFile={selectedFile}

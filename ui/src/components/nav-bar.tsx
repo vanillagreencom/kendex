@@ -8,8 +8,9 @@ import {
   PAGE_GUTTER,
   WIDE_CONTENT_WIDTH,
 } from "@/lib/layout";
+import { catalogTitle } from "@/lib/marketplace-display";
 import { cn } from "@/lib/utils";
-import { catalogLabel } from "@/stores/marketplaces";
+import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 
 // A quiet strip above the page content — only worth showing at all once a
@@ -24,6 +25,10 @@ export function NavBar() {
   const availableRef = useNavStore((s) => s.availableRef);
   const hasHistory = useNavStore((s) => s.history.length > 0);
   const back = useNavStore((s) => s.back);
+  // The subscription rows, so the crumb names a marketplace the way its card
+  // and its own header do rather than by the alias its manifest keys it
+  // under.
+  const rows = useMarketplacesStore((s) => s.rows);
 
   if (!hasHistory) return null;
 
@@ -59,7 +64,8 @@ export function NavBar() {
               : availableRef
                 ? packageDisplayName(availableRef)
                 : null,
-            marketplaceName: catalogLabel(
+            marketplaceName: catalogTitle(
+              rows,
               marketplaceRef ?? bundleRef?.catalog ?? availableRef?.catalog,
             ),
             bundleName: bundleRef?.bundle ?? null,

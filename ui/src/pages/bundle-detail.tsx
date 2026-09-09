@@ -18,13 +18,10 @@ import {
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
+import { catalogTitle } from "@/lib/marketplace-display";
 import { sameScope } from "@/lib/scope";
 import { cn } from "@/lib/utils";
-import {
-  bundleKey,
-  catalogLabel,
-  useMarketplacesStore,
-} from "@/stores/marketplaces";
+import { bundleKey, useMarketplacesStore } from "@/stores/marketplaces";
 import { type BundleRef, useNavStore } from "@/stores/nav";
 
 /** One curated set: install the whole thing as a set that keeps itself
@@ -50,6 +47,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
     error: reachError,
     ready,
   } = useCatalog(bundleRef.catalog);
+  const rows = useMarketplacesStore((s) => s.rows);
   const bundles = useMarketplacesStore((s) => s.bundles);
   const readErrors = useMarketplacesStore((s) => s.readErrors);
   const loadBundle = useMarketplacesStore((s) => s.loadBundle);
@@ -146,7 +144,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
               <p className="mt-1 text-xs">
                 {[
                   detail.version ? `v${detail.version}` : null,
-                  catalogLabel(catalog),
+                  catalogTitle(rows, catalog),
                 ]
                   .filter(Boolean)
                   .join(" · ")}

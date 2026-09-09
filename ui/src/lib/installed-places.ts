@@ -1,7 +1,5 @@
-import type { Catalog, ProvenanceRow } from "@/bindings";
-import { listed } from "@/lib/listed";
+import type { Catalog, ProvenanceRow, Scope } from "@/bindings";
 import { scopeKey } from "@/lib/scope";
-import { placeName } from "@/lib/update-groups";
 
 /** One offered package's identity in the places index.
  *
@@ -13,8 +11,16 @@ import { placeName } from "@/lib/update-groups";
 export const placesKey = (kind: string, name: string): string =>
   `${kind}::${name}`;
 
-/** Where each of a marketplace's packages is installed from, worded, keyed
- *  by kind and name.
+/** Personal leads, then projects by their root. Total, so a sort cannot be
+ *  handed -1 for both (a,b) and (b,a). The same order the marketplace's own
+ *  list of places draws, so a package's places and its marketplace's places
+ *  never read in two orders on one page. */
+const personalFirst = (a: Scope, b: Scope): number =>
+  Number(b.scope === "global") - Number(a.scope === "global") ||
+  scopeKey(a).localeCompare(scopeKey(b));
+
+/** Where each of a marketplace's packages is installed, keyed by kind and
+ *  name — the places themselves, for the caller to name and open.
  *
  *  Built once for a whole table rather than per row: the provenance join is
  *  a flat list of every installation on the machine, and filtering it per
@@ -29,8 +35,8 @@ export const placesKey = (kind: string, name: string): string =>
  *  join asks for both.
  *
  *  Scope is deliberately spanned, not matched: a package installed into a
- *  project from a personal subscription is exactly what this column exists
- *  to name, and joining on scope would drop it.
+ *  project from a personal subscription is exactly what this exists to
+ *  name, and joining on scope would drop it.
  *
  *  A repository nobody subscribes to owns no installation at all, so it
  *  never names a place. `repo` unknown means the page has not read the
@@ -46,12 +52,12 @@ export function installedPlaces(
    *  does not have, nor its `path`, which may be relative where the record
    *  is canonical. */
   repo: string | null,
-): Map<string, string> {
-  const places = new Map<string, string>();
+): Map<string, Scope[]> {
+  const places = new Map<string, Scope[]>();
   if (catalog.by !== "subscription" || !repo) return places;
   // Scope first, so one package installed into several harnesses in one
   // place names that place once rather than once per harness.
-  const scopes = new Map<string, Map<string, ProvenanceRow["scope"]>>();
+  const scopes = new Map<string, Map<string, Scope>>();
   for (const row of rows) {
     if (row.origin.origin !== "marketplace") continue;
     if (row.origin.source !== catalog.source || row.origin.repo !== repo) {
@@ -63,8 +69,24 @@ export function installedPlaces(
     scopes.set(key, here);
   }
   for (const [key, here] of scopes) {
-    const all = [...here.values()];
-    places.set(key, listed(all.map((scope) => placeName(scope, all))));
+    places.set(key, [...here.values()].sort(personalFirst));
   }
   return places;
+}
+
+/** Where a curated set is installed: every place holding any of its members.
+ *  A set is installed in a place the moment part of it is — the card's own
+ *  badge says how much — so a member that landed somewhere else still names
+ *  that place. */
+export function bundlePlaces(
+  places: Map<string, Scope[]>,
+  members: { kind: string; name: string }[],
+): Scope[] {
+  const held = new Map<string, Scope>();
+  for (const member of members) {
+    for (const scope of places.get(placesKey(member.kind, member.name)) ?? []) {
+      held.set(scopeKey(scope), scope);
+    }
+  }
+  return [...held.values()].sort(personalFirst);
 }

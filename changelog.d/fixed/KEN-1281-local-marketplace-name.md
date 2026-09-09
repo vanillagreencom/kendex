@@ -1,0 +1,1 @@
+- A folder marketplace is titled by the name its catalogue declares and shows Local folder with the folder's full path, so a checkout subscribed as `.` no longer reads as a marketplace called `.`.

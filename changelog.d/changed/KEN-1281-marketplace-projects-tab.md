@@ -1,0 +1,1 @@
+- A marketplace page has no Projects tab. Each package and each curated set names the projects it is installed in and opens them; the source's location, its alias and those projects are on About.

@@ -22,6 +22,7 @@ import {
 import { SWITCHED_OFF_HERE } from "@/lib/copy-model";
 import { shortRevision } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
+import { marketplaceDisplay, sourceLine } from "@/lib/marketplace-display";
 import { cn } from "@/lib/utils";
 import { useCommunityStore } from "@/stores/community";
 import { useMarketplacesStore } from "@/stores/marketplaces";
@@ -60,15 +61,24 @@ export function DetailHeader({
   const [unsubscribeOpen, setUnsubscribeOpen] = useState(false);
 
   const meta = row?.meta ?? summary?.meta ?? null;
+  // A subscription is titled by what its catalog calls itself, resolved
+  // once in `lib/marketplace-display.ts` so this header, the card that
+  // opened it and the breadcrumb above it agree. Never the alias: it is the
+  // key one place's manifest files the source under, and a hand-written one
+  // can be `.`, which names nothing on screen.
+  const source = row ? marketplaceDisplay(row) : null;
   const title =
     catalog.by === "subscription"
-      ? catalog.source
+      ? (source?.name ?? meta?.name ?? catalog.source)
       : (listing?.name ?? meta?.name ?? catalog.repo.split("/").at(-1));
   const description = meta?.description ?? listing?.description ?? null;
   const commit = row?.commit ?? summary?.commit ?? null;
-  // What the catalog came from, as text. A path source has a folder here.
-  const provenance =
-    row?.repo ?? row?.path ?? summary?.provenance ?? listing?.repo ?? null;
+  // What the catalog came from, as text. A folder source says so beside its
+  // resolved path, never the relative spelling the declaration carries: `.`
+  // reads as the app's own folder wherever it is shown.
+  const provenance = source
+    ? sourceLine(source)
+    : (summary?.provenance ?? listing?.repo ?? null);
   // The canonical `owner/repo` a GitHub reference folds to, which is the
   // only thing a github.com URL may be built from. Every branch is a folded
   // key — never the raw `listing.repo`, which is whatever the community

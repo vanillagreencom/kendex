@@ -2,6 +2,7 @@
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MarketplaceRow, Scope } from "@/bindings";
+import { LOCAL_FOLDER_LABEL } from "@/lib/copy-marketplaces";
 import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
 import { mount } from "@/test/dom";
@@ -55,5 +56,54 @@ describe("opening a marketplace from its card", () => {
     expect(goToMarketplace).toHaveBeenCalledWith(
       subscription(project("/w/alpha"), "alpha-kit"),
     );
+  });
+});
+
+// The card the reader meets first. Titled by the alias it read `.` for the
+// working checkout kendex is developed in, over the official catalogue's
+// description; two cards for one catalogue and its clone read as the same
+// marketplace listed twice unless the line under the title says which is
+// which.
+describe("what a card calls a marketplace", () => {
+  it("titles both by the catalogue and separates the folder from the remote", () => {
+    const meta = { name: "kendex" };
+    const groups = groupByMarketplace([
+      row({ meta, repo: "vanillagreencom/kendex" }),
+      row({
+        scope: project("/home/me/dev/kendex"),
+        name: ".",
+        repo: null,
+        repoKey: null,
+        repoIdentity: null,
+        provenance: "/home/me/dev/kendex",
+        path: ".",
+        resolvedPath: "/home/me/dev/kendex",
+        meta,
+      }),
+    ]);
+    expect(groups).toHaveLength(2);
+
+    const drawn = groups.map((group) => {
+      const host = mount(<SubscribedCard group={group} />);
+      return {
+        title:
+          host.querySelector("span.truncate.font-medium")?.textContent ?? "",
+        said: host.textContent ?? "",
+      };
+    });
+
+    expect(drawn.map((card) => card.title)).toEqual(["kendex", "kendex"]);
+    expect(
+      drawn
+        .map((card) => card.said.includes("vanillagreencom/kendex"))
+        .filter(Boolean),
+    ).toHaveLength(1);
+    expect(
+      drawn
+        .map((card) =>
+          card.said.includes(`${LOCAL_FOLDER_LABEL} · /home/me/dev/kendex`),
+        )
+        .filter(Boolean),
+    ).toHaveLength(1);
   });
 });

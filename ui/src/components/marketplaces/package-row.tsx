@@ -1,6 +1,7 @@
 import { type ComponentProps, type MouseEvent, useEffect } from "react";
-import type { AvailablePackage, Catalog } from "@/bindings";
+import type { AvailablePackage, Catalog, Scope } from "@/bindings";
 import { Ago } from "@/components/ago";
+import { InstalledIn } from "@/components/marketplaces/installed-in";
 import { ScoreTooltip } from "@/components/score-tooltip";
 import { StatusDot } from "@/components/status-dot";
 import { TagBadges } from "@/components/tag-badge";
@@ -19,7 +20,7 @@ import {
 import { offersInstall } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName, shortRevision } from "@/lib/labels";
-import { catalogLabel, useMarketplacesStore } from "@/stores/marketplaces";
+import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import { safetyKey, usePreinstallSafety } from "@/stores/preinstall-safety";
 
@@ -61,6 +62,7 @@ export interface PackageColumns {
 export function PackageRow({
   entry,
   columns,
+  marketplace,
   places,
   offerSubscribe,
 }: {
@@ -70,11 +72,15 @@ export function PackageRow({
    *  marketplace's own page says where each of its packages landed; the
    *  cross-marketplace list names the marketplace in that room instead. */
   columns: PackageColumns;
-  /** Where this package is installed from this marketplace, already
-   *  worded. The table builds the whole index once — see
-   *  `lib/installed-places.ts` — so a row neither scans the provenance
-   *  join nor subscribes to it. */
-  places: string;
+  /** What this row's marketplace is called — `lib/marketplace-display.ts`,
+   *  resolved once by the table against the live subscription rows, so a
+   *  local checkout declared under the alias `.` reads here as the name its
+   *  catalogue declares. */
+  marketplace: string;
+  /** Where this package is installed from this marketplace. The table
+   *  builds the whole index once — see `lib/installed-places.ts` — so a row
+   *  neither scans the provenance join nor subscribes to it. */
+  places: Scope[];
   /** Whether a bare repository's row may subscribe and install — decided
    * once for the table, never per row. */
   offerSubscribe: boolean;
@@ -133,7 +139,7 @@ export function PackageRow({
       ) : null}
       {columns.marketplace ? (
         <TableCell className="max-w-40 text-muted-foreground">
-          <div className="truncate">{catalogLabel(catalog)}</div>
+          <div className="truncate">{marketplace}</div>
           {entry.revision ? (
             <div className="truncate font-mono text-xs">
               @ {shortRevision(entry.revision)}
@@ -169,7 +175,11 @@ export function PackageRow({
       </TableCell>
       {columns.places ? (
         <TableCell className="max-w-40 truncate text-muted-foreground">
-          {places || <span aria-hidden>—</span>}
+          {places.length > 0 ? (
+            <InstalledIn places={places} />
+          ) : (
+            <span aria-hidden>—</span>
+          )}
         </TableCell>
       ) : null}
       <TableCell className="text-right">
