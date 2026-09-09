@@ -23,6 +23,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || {
   printf 'review-gate-error=script-directory value=%q\n' "${BASH_SOURCE[0]}" >&2
   exit 2
 }
+if [ ! -r "$SCRIPT_DIR/lib/diagnostics.sh" ]; then
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$SCRIPT_DIR/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 2
+fi
 . "$SCRIPT_DIR/lib/diagnostics.sh" 2>/dev/null || {
   printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$SCRIPT_DIR/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
   exit 2

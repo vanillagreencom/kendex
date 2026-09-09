@@ -34,7 +34,14 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 predicate="$here/review-predicate.sh"
-. "$here/lib/diagnostics.sh" || exit 1
+if [ ! -r "$here/lib/diagnostics.sh" ]; then
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$here/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 1
+fi
+. "$here/lib/diagnostics.sh" 2>/dev/null || {
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$here/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 1
+}
 [ -x "$predicate" ] || { rg_message error selftest-predicate-executable "$predicate" "Predicate is not executable." >&2; exit 1; }
 . "$here/lib/settings.sh"
 
