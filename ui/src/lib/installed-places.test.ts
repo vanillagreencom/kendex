@@ -22,7 +22,11 @@ const installed = (
   kind: "skill",
   name,
   harness,
+  // One row per file, and the package the records say it is: this fixture
+  // is about installations a marketplace put there.
+  at: `${scope.scope === "project" ? scope.root : ""}/.${harness}/skills/${name}`,
   origin: { origin: "marketplace", source, repo },
+  package: { kind: "skill", name },
 });
 
 // A subscription is a (scope, source, repository), not a name: the same
