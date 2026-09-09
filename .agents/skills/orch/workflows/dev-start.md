@@ -171,7 +171,7 @@ Do not import the reviewer's re-delegate-on-invalid rule ([references/artifact-c
 
 ### Store Proposed Rules
 
-Read the accepted artifact's `summary`. For each bullet under `### Proposed Rules`, use the harness file tool to write the rule as one JSON string in `tmp/proposed-rule-[ISSUE_ID].json`. Append each rule to workflow state through this deduplicating update. Skip this step when the summary has no such bullet.
+Read the structurally valid artifact passed by the caller, including a failing-validation artifact, and get its `summary`. For each bullet under `### Proposed Rules`, use the harness file tool to write the rule as one JSON string in `tmp/proposed-rule-[ISSUE_ID].json`. Append each rule to workflow state through this deduplicating update. Skip this step when the summary has no such bullet.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile rule tmp/proposed-rule-[ISSUE_ID].json '.pr_comment_review.proposed_rules = (((.pr_comment_review.proposed_rules // []) + [$rule[0]]) | unique)'
