@@ -51,9 +51,14 @@ interface UpdatesState extends Standing {
    *  on screen are what actually committed. */
   reload: () => Promise<void>;
   check: () => Promise<void>;
+  /** Bring one place current — the package page's Projects tab, which acts
+   *  on one copy at a time. Not the Updates page's: every confirm its
+   *  review takes goes through [`updateRows`], one place included, so that
+   *  page has one applier at every scope it offers. */
   updateOne: (row: UpdateRow) => Promise<void>;
-  /** Bring every updatable place among `rows` current — the page-level
-   *  button passes every visible row, a package's button its own places. */
+  /** Bring every updatable place among `rows` current — every scope the
+   *  Updates page's review offers, from one place to all of them, and a
+   *  place's card. */
   updateRows: (rows: UpdateRow[]) => Promise<void>;
   setIgnored: (row: UpdateRow, ignored: boolean) => Promise<void>;
 }

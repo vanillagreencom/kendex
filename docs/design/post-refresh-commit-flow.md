@@ -68,7 +68,7 @@ In the app the offer is enqueued by one exported function in `ui/src/lib/rescan.
 | `ui/src/stores/updates-edits.ts` | `run` |
 | `ui/src/components/package/package-version-actions.ts` | `afterChange` |
 
-That table is the whole set, and `rescan.ts`'s header is where that is established. The Updates page's Update button is the app's most common write and reaches the offer through `updateOne`.
+That table is the whole set, and `rescan.ts`'s header is where that is established. The Updates page's review is the app's most common write and reaches the offer through `updateRows` at every scope it offers — one place, one package everywhere, a project's worth, or all of them. `updateOne` is the package page's Projects tab, which acts on one copy at a time.
 
 ## Preconditions
 

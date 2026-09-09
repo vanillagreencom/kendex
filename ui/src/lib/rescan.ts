@@ -35,9 +35,10 @@
 // its whole body inside it — the marketplace subscribe, install, repository
 // effect, source toggle and unsubscribe, the drift-report install, the
 // editor save, and the audit's item actions — so a ninth cannot skip it.
-// The Updates page spells the call out instead, as the last step inside its
-// own `holdingBusy`: `updates.ts`'s [`updateOne`] and [`updateRows`], and
-// `updates-edits.ts`'s `run`.
+// The update paths spell the call out instead, as the last step inside
+// their own `holdingBusy`: `updates.ts`'s [`updateRows`], which every
+// confirm the Updates page's review takes goes through, [`updateOne`],
+// which is the package page's Projects tab, and `updates-edits.ts`'s `run`.
 // The package page's `package-version-actions.ts` `afterChange` makes the
 // same call inside its busy block without awaiting it, so nothing holds
 // over the read. `grep -rnE "writingRepo\(|rescanEverything\(" ui/src` is
