@@ -346,7 +346,7 @@ Re-run the gate-3 command once. If threads remain and the external-round cap is 
 
 **Skip if** the repository is `vanillagreencom/kendex`, where these files are the product, or `MERGE_READY = true`, where the gates already cleared the merge.
 
-When the diff touches no product code, only harness renders, settings, or prose, an unmet gate has nothing left to judge. Whether to merge past it anyway is a question orch poses and never answers. Under `auto-recommended` orch takes the recommended `Continue through the gates` and moves on; under `ask` a person or the overseer answers.
+When the diff touches no product code, only harness renders, settings, or prose, an unmet gate has nothing left to judge. Whether to merge past it anyway is a question orch poses and never answers. Under `auto-recommended` orch takes the recommended `Continue through the gates` and moves on; under `ask` the user answers. An overseer relays the question to the user and never answers it, as `oversee.md` § Held merges requires.
 
 Ask once, naming what the diff touches and which gate is unmet: `Admin-merge past the unmet gate` | `Continue through the gates`, with `Continue through the gates` recommended. Both the reason and the answer go in the PR body under `## Merge decision`. An admin answer invokes `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7` with `merge_mode: admin`. Anything else continues to § 6.3.
 
