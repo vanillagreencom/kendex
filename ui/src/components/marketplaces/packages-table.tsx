@@ -25,7 +25,8 @@ import {
   SUBSCRIBE_TO_INSTALL_MEANS,
 } from "@/lib/copy-marketplaces";
 import { placesKey } from "@/lib/installed-places";
-import { catalogTitle } from "@/lib/marketplace-display";
+import type { MarketplaceDisplay } from "@/lib/marketplace-display";
+import { catalogDisplay } from "@/lib/marketplace-display";
 import {
   BY_NAME,
   orderPackages,
@@ -243,14 +244,14 @@ export function PackagesTable({
   // One resolution per marketplace for the whole table. Asking per row
   // would scan the subscription rows once per package, and the answer is
   // the same for every row of one catalog.
-  const titles = useMemo(() => {
-    const named = new Map<string, string>();
+  const named = useMemo(() => {
+    const displays = new Map<string, MarketplaceDisplay>();
     for (const entry of entries) {
       const key = catalogKey(entry.catalog);
-      if (!named.has(key))
-        named.set(key, catalogTitle(rows, entry.catalog) ?? "");
+      if (!displays.has(key))
+        displays.set(key, catalogDisplay(rows, entry.catalog));
     }
-    return named;
+    return displays;
   }, [entries, rows]);
 
   return (
@@ -301,7 +302,7 @@ export function PackagesTable({
               key={`${catalogKey(entry.catalog)}:${entry.row.kind}:${entry.row.name}`}
               entry={entry}
               columns={columns}
-              marketplace={titles.get(catalogKey(entry.catalog)) ?? ""}
+              marketplace={named.get(catalogKey(entry.catalog))}
               places={
                 places?.get(placesKey(entry.row.kind, entry.row.name)) ?? []
               }

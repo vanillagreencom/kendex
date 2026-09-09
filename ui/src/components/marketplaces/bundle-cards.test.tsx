@@ -155,7 +155,11 @@ describe("the Bundles tab", () => {
   // Which projects hold a set is a fact about the set, said on the card and
   // opened from it — and the control that opens them must not open the set
   // underneath it.
-  it("names the projects a set is installed in without opening the set", async () => {
+  it("names the places a set is installed in without opening the set", async () => {
+    const members: Scope[] = [
+      { scope: "global" },
+      { scope: "project", root: "/w/alpha" },
+    ];
     const host = mount(
       <BundleCards
         catalog={catalog}
@@ -163,19 +167,16 @@ describe("the Bundles tab", () => {
         error={undefined}
         places={
           new Map([
-            [placesKey("skill", "starter-0"), [{ scope: "global" } as Scope]],
-            [
-              placesKey("skill", "starter-1"),
-              [{ scope: "project", root: "/w/alpha" } as Scope],
-            ],
+            [placesKey("skill", "starter-0"), [members[0]]],
+            [placesKey("skill", "starter-1"), [members[1]]],
           ])
         }
       />,
     );
     const control = host.querySelector(
-      `button[aria-label="${installedInLabel(2)}"]`,
+      `button[aria-label="${installedInLabel(members)}"]`,
     ) as HTMLElement;
-    expect(control.textContent).toBe(installedInLabel(2));
+    expect(control.textContent).toBe(installedInLabel(members));
 
     await userEvent.click(control);
     expect(goToBundle).not.toHaveBeenCalled();

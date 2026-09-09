@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { clickAsksToOpen } from "@/lib/click-asks-to-open";
 import {
+  LOCAL_FOLDER_LABEL,
   PACKAGE_STATE_UNKNOWN,
   SUBSCRIBE_TO_INSTALL_LABEL,
 } from "@/lib/copy-marketplaces";
@@ -20,6 +21,7 @@ import {
 import { offersInstall } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName, shortRevision } from "@/lib/labels";
+import { type MarketplaceDisplay, sourceLine } from "@/lib/marketplace-display";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import { safetyKey, usePreinstallSafety } from "@/stores/preinstall-safety";
@@ -72,11 +74,12 @@ export function PackageRow({
    *  marketplace's own page says where each of its packages landed; the
    *  cross-marketplace list names the marketplace in that room instead. */
   columns: PackageColumns;
-  /** What this row's marketplace is called — `lib/marketplace-display.ts`,
-   *  resolved once by the table against the live subscription rows, so a
-   *  local checkout declared under the alias `.` reads here as the name its
-   *  catalogue declares. */
-  marketplace: string;
+  /** What this row's marketplace is called and where it comes from —
+   *  `lib/marketplace-display.ts`, resolved once by the table against the
+   *  live subscription rows, so a local checkout declared under the alias
+   *  `.` reads here as the name its catalogue declares. Absent where the
+   *  column is not drawn. */
+  marketplace: MarketplaceDisplay | undefined;
   /** Where this package is installed from this marketplace. The table
    *  builds the whole index once — see `lib/installed-places.ts` — so a row
    *  neither scans the provenance join nor subscribes to it. */
@@ -138,8 +141,19 @@ export function PackageRow({
         </TableCell>
       ) : null}
       {columns.marketplace ? (
-        <TableCell className="max-w-40 text-muted-foreground">
-          <div className="truncate">{marketplace}</div>
+        // A catalog declares one name however many places hold it, so a
+        // working checkout and the remote catalogue it came from read alike
+        // here. The folder says so under its name, in the room a remote's
+        // revision uses — a folder source has no revision, so the two never
+        // compete — and the full location is on the cell for a pointer.
+        <TableCell
+          className="max-w-40 text-muted-foreground"
+          title={marketplace ? sourceLine(marketplace) : undefined}
+        >
+          <div className="truncate">{marketplace?.name}</div>
+          {marketplace?.local ? (
+            <div className="truncate text-xs">{LOCAL_FOLDER_LABEL}</div>
+          ) : null}
           {entry.revision ? (
             <div className="truncate font-mono text-xs">
               @ {shortRevision(entry.revision)}

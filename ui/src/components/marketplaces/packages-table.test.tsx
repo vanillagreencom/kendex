@@ -430,11 +430,11 @@ describe("a marketplace's own packages table", () => {
   });
 
   // The column is the one control on a marketplace page that names the
-  // projects holding what it offers. The join behind it is
-  // `lib/installed-places.ts`, tested there; what this settles is that the
-  // column draws the count as a control and says nothing for a package
-  // installed nowhere.
-  it("counts the projects holding a package, and says nothing for none", () => {
+  // places holding what it offers. The join behind it is
+  // `lib/installed-places.ts` and the wording is `lib/place-word.ts`, both
+  // tested there; what this settles is that the column draws the count as a
+  // control and says nothing for a package installed nowhere.
+  it("counts the places holding a package, and says nothing for none", () => {
     stub.scores = {};
     const host = mountTree(
       <PackagesTable
@@ -461,9 +461,10 @@ describe("a marketplace's own packages table", () => {
     const cells = [...host.querySelectorAll("tbody tr")].map(
       (each) => each.children[column]?.textContent ?? "",
     );
-    expect(cells).toEqual(["2 projects", "—"]);
+    // The personal setup and a project: two places, and not two projects.
+    expect(cells).toEqual(["2 places", "—"]);
     expect(
-      host.querySelector('button[aria-label="Installed in 2 projects"]'),
+      host.querySelector('button[aria-label="Installed in 2 places"]'),
     ).not.toBeNull();
   });
 });

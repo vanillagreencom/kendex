@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AvailablePackage, MarketplaceRow } from "@/bindings";
 import {
+  LOCAL_FOLDER_LABEL,
   SEE_PROBLEMS_LABEL,
   unreadableRecordsLine,
 } from "@/lib/copy-marketplaces";
@@ -306,5 +307,61 @@ describe("the marketplace column's revision line", () => {
       for (const text of row.shown) expect(cell, row.name).toContain(text);
       for (const text of row.absent) expect(cell, row.name).not.toContain(text);
     }
+  });
+});
+
+// Two subscriptions can be the same catalogue: the working checkout kendex
+// is developed in, and the repository it was cloned from. Both declare one
+// name in kendex.toml, so the column that names each row's marketplace has
+// to say which of the two a row came from — the cards and the page header
+// tell them apart by where they come from, and a list showing both at once
+// cannot drop that.
+describe("two marketplaces of one name in the marketplace column", () => {
+  const local: MarketplaceRow = {
+    ...kit,
+    scope: { scope: "project", root: "/home/me/dev/kendex" },
+    name: ".",
+    repo: null,
+    repoKey: null,
+    repoIdentity: null,
+    provenance: "/home/me/dev/kendex",
+    path: ".",
+    resolvedPath: "/home/me/dev/kendex",
+    meta: { name: "kendex" },
+  };
+  const remote: MarketplaceRow = {
+    ...kit,
+    repo: "vanillagreencom/kendex",
+    meta: { name: "kendex" },
+  };
+
+  it("tells the folder from the repository under one declared name", () => {
+    useMarketplacesStore.setState({
+      rows: [local, remote],
+      packages: {
+        [marketKey(local.scope, local.name)]: [offered[0]],
+        [marketKey(remote.scope, remote.name)]: [offered[0]],
+      },
+      readErrors: {},
+    });
+    const host = mount(<PackagesTab />);
+    const cells = [...host.querySelectorAll("tbody tr")].map(
+      (row) => row.querySelectorAll("td")[3],
+    );
+
+    // One name, as the catalogue declares it, on both rows.
+    expect(cells.map((cell) => cell?.firstElementChild?.textContent)).toEqual([
+      "kendex",
+      "kendex",
+    ]);
+    // And one of them says which it is, in words and on the cell itself.
+    const said = cells.map((cell) => cell?.textContent ?? "");
+    expect(
+      said.filter((text) => text.includes(LOCAL_FOLDER_LABEL)),
+    ).toHaveLength(1);
+    expect(cells.map((cell) => cell?.getAttribute("title"))).toEqual([
+      `${LOCAL_FOLDER_LABEL} · /home/me/dev/kendex`,
+      "vanillagreencom/kendex",
+    ]);
   });
 });

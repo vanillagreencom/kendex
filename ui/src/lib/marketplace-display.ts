@@ -116,15 +116,26 @@ export const rowForCatalog = (
   return rows.find((row) => marketKey(row.scope, row.name) === key);
 };
 
-/** What a catalog is called in a title or breadcrumb. A subscription is its
- *  row's display name, and a repository nobody subscribes to is the
- *  repository — there is no declaration to read a name off yet. */
+/** One catalog's display identity, for a surface holding a [Catalog] rather
+ *  than a row: the subscription's own, or — for a catalog no place in the
+ *  list declares — what the address itself says. A repository nobody
+ *  subscribes to is its own name and its own location and is not local;
+ *  there is no declaration on this machine to read a folder off.
+ *
+ *  Every surface naming a marketplace goes through this, so a list showing
+ *  several at once can tell two of one name apart the way the cards do. */
+export const catalogDisplay = (
+  rows: MarketplaceRow[],
+  catalog: Catalog,
+): MarketplaceDisplay => {
+  const row = rowForCatalog(rows, catalog);
+  if (row) return marketplaceDisplay(row);
+  const name = catalog.by === "repo" ? catalog.repo : catalog.source;
+  return { name, local: false, where: name, alias: name };
+};
+
+/** What a catalog is called in a title or breadcrumb. */
 export const catalogTitle = (
   rows: MarketplaceRow[],
   catalog: Catalog | undefined,
-): string | null => {
-  if (!catalog) return null;
-  if (catalog.by === "repo") return catalog.repo;
-  const row = rowForCatalog(rows, catalog);
-  return row ? marketplaceDisplay(row).name : catalog.source;
-};
+): string | null => (catalog ? catalogDisplay(rows, catalog).name : null);

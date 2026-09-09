@@ -21,7 +21,12 @@ import { recordsUnreadable } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
-import { catalogTitle, rowForCatalog } from "@/lib/marketplace-display";
+import {
+  catalogTitle,
+  marketplaceDisplay,
+  rowForCatalog,
+  sourceLine,
+} from "@/lib/marketplace-display";
 import { sameScope } from "@/lib/scope";
 import { useOrderedRead } from "@/lib/use-ordered-read";
 import { cn } from "@/lib/utils";
@@ -95,10 +100,14 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   // Matched by scope and name both — two scopes can subscribe the same
   // alias to different repositories.
   const row = rowForCatalog(rows, catalog);
-  const repo = row?.repo ?? row?.path ?? summary?.provenance ?? null;
-  // What the marketplace calls itself, resolved the same way the breadcrumb
-  // above this page and the marketplace's own header resolve it.
+  // What the marketplace calls itself and where it comes from, resolved the
+  // same way the breadcrumb above this page and the marketplace's own header
+  // resolve them. Never the declaration's own `path`: `.` is what the person
+  // typed, and it reads as the app's own folder wherever it is shown.
   const marketplace = catalogTitle(rows, catalog) ?? "";
+  const repo = row
+    ? sourceLine(marketplaceDisplay(row))
+    : (summary?.provenance ?? null);
   const shownError = reachError ?? error;
   // Every Packages row opens this page, "Not known" ones included. The
   // engine answered unknown because it could not read the lock of the place

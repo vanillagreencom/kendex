@@ -9,7 +9,10 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppSettings, Scope } from "@/bindings";
 import { commands, type PackageView } from "@/bindings";
-import { unreadableRecordsLine } from "@/lib/copy-marketplaces";
+import {
+  LOCAL_FOLDER_LABEL,
+  unreadableRecordsLine,
+} from "@/lib/copy-marketplaces";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
@@ -184,5 +187,54 @@ describe("the available package page", () => {
     expect(installed).toHaveBeenCalledWith(
       expect.objectContaining({ destination: null }),
     );
+  });
+});
+
+// The From block names the marketplace the package comes from and where
+// that marketplace is. Reading the declaration's own `path` put a bare `.`
+// under the name for the working checkout kendex is developed in — the
+// state `lib/marketplace-display.ts` exists to remove, and one the page
+// header already reads as a resolved folder.
+describe("where the available package says it comes from", () => {
+  const CHECKOUT: Scope = { scope: "project", root: "/home/me/dev/kendex" };
+  const folder = subscription(CHECKOUT, ".");
+
+  it("resolves a folder subscription's location, never its relative spelling", async () => {
+    useMarketplacesStore.setState({
+      rows: [
+        {
+          scope: CHECKOUT,
+          name: ".",
+          repo: null,
+          repoKey: null,
+          repoIdentity: null,
+          provenance: "/home/me/dev/kendex",
+          path: ".",
+          resolvedPath: "/home/me/dev/kendex",
+          rev: null,
+          commit: null,
+          enabled: true,
+          counts: null,
+          meta: { name: "kendex" },
+          mode: null,
+          recordsUnreadable: false,
+        },
+      ],
+    });
+    useNavStore.setState({
+      availableRef: { kind: "skill", name: "gh", catalog: folder },
+    });
+    const host = mount(<AvailablePackagePage />);
+    await settle();
+
+    const from = [...host.querySelectorAll("aside section")][0];
+    expect(from?.textContent).toContain("kendex");
+    expect(from?.textContent).toContain(
+      `${LOCAL_FOLDER_LABEL} · /home/me/dev/kendex`,
+    );
+    // The relative spelling never reaches the screen on its own.
+    expect(
+      [...(from?.querySelectorAll("span") ?? [])].map((el) => el.textContent),
+    ).not.toContain(".");
   });
 });

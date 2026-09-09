@@ -1,4 +1,6 @@
+import type { Scope } from "@/bindings";
 import { listed } from "@/lib/listed";
+import { placeWord } from "@/lib/place-word";
 // Marketplaces copy: the Subscribed tab's read states and Home's tile
 // detail — kept apart from the rest so the wording is reviewed in one
 // place. A read that failed is said and retried where it failed; rows
@@ -83,8 +85,11 @@ export const SUBSCRIBE_TO_INSTALL_LABEL = "Subscribe and install";
 // The About tab's source details: which places subscribe to this
 // marketplace, under which alias, and where its bytes come from. The heading
 // names the section once — the panel does not repeat it, and what the panel
-// says about the model is in copy-model.ts.
-export const MARKETPLACE_PLACES_TITLE = "Projects that use it";
+// says about the model is in copy-model.ts. Places, not projects: the list
+// holds the personal setup beside every project, and a heading naming a kind
+// of place its own list contradicts is the defect `place-word.ts` exists to
+// stop.
+export const MARKETPLACE_PLACES_TITLE = "Places that use it";
 
 // How a marketplace names itself and where it comes from. A folder on this
 // machine says so beside its path: a working checkout and the remote
@@ -102,15 +107,17 @@ export const SOURCE_LOCATION_LABEL = "Comes from";
  *  here and never used as a title. */
 export const SOURCE_ALIAS_LABEL = "Source name";
 
-/** How many places a package or curated set is installed in, as the one
- *  control that opens them. Personal is listed on Projects beside every
- *  project, so it counts as one of them; the list behind the click names
- *  each one. */
-export const projectCountLabel = (count: number): string =>
-  count === 1 ? "1 project" : `${count} projects`;
-export const installedInLabel = (count: number): string =>
-  `Installed in ${projectCountLabel(count)}`;
-/** The column head over [projectCountLabel] in the packages table, where the
+/** Where a package or curated set is installed, counted, as the one control
+ *  that opens those places. The word comes from the places themselves —
+ *  `place-word.ts`, the rule the package page's customization mark already
+ *  counts by — so a set holding the personal setup is never counted as
+ *  projects. The menu behind the click names each place, Personal included.
+ */
+export const installedInCount = (scopes: Scope[]): string =>
+  `${scopes.length} ${placeWord(scopes)}`;
+export const installedInLabel = (scopes: Scope[]): string =>
+  `Installed in ${installedInCount(scopes)}`;
+/** The column head over [installedInCount] in the packages table, where the
  *  head carries the verb and the cell carries the count. */
 export const INSTALLED_IN_HEADING = "Installed in";
 
