@@ -480,7 +480,7 @@ describe("the reading behind a row's score", () => {
     // One grouped row, so the disc is the merged reading rather than either
     // place's own row.
     expect(host.querySelectorAll("tbody tr")).toHaveLength(1);
-    await userEvent.click(score());
+    await userEvent.click(score(host));
 
     const nav = useNavStore.getState();
     expect(nav.packageRef).toEqual({
