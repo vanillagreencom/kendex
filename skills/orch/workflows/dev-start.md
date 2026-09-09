@@ -177,6 +177,26 @@ Read the structurally valid artifact passed by the caller, including a failing-v
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile rule tmp/proposed-rule-[ISSUE_ID].json '.pr_comment_review.proposed_rules = (((.pr_comment_review.proposed_rules // []) + [$rule[0]]) | unique)'
 ```
 
+After all rules are stored, resolve the PR from the worktree:
+
+```bash
+.agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,body
+```
+
+`status: no_pr` ends this step. Normal PR creation reads the stored list. When a PR exists, read the complete stored list from workflow state:
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.proposed_rules // []'
+```
+
+Write the remote `body` value to `tmp/pr-body-proposed-rules-[ISSUE_ID].md` with the harness file tool. Replace only its `## Proposed rules` section with the stored list, or add that section when absent. Preserve every other line from the remote body. Post that file:
+
+```bash
+.agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-edit-body [PR_NUMBER] --body-file tmp/pr-body-proposed-rules-[ISSUE_ID].md
+```
+
+Do not rebuild the body from the local worktree or push a commit from this step. This is the sole publication owner for proposed rules.
+
 **Store QA state** on accept:
 
 ```bash
