@@ -189,10 +189,10 @@ After all rules are stored, resolve the PR from the worktree:
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.proposed_rules // []'
 ```
 
-Write the remote `body` value to `tmp/pr-body-proposed-rules-[ISSUE_ID].md` with the harness file tool. Replace only its `## Proposed rules` section with the stored list, or add that section when absent. Preserve every other line from the remote body. Post that file:
+Write the remote `body` value to `[WORKTREE_PATH]/tmp/pr-body-proposed-rules-[ISSUE_ID].md` with the harness file tool. Replace only its `## Proposed rules` section with the stored list, or add that section when absent. Preserve every other line from the remote body. Post that file:
 
 ```bash
-.agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-edit-body [PR_NUMBER] --body-file tmp/pr-body-proposed-rules-[ISSUE_ID].md
+.agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-edit-body [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/pr-body-proposed-rules-[ISSUE_ID].md
 ```
 
 Do not rebuild the body from the local worktree or push a commit from this step. This is the sole publication owner for proposed rules.
