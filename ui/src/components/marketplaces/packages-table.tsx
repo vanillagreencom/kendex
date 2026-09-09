@@ -301,9 +301,11 @@ export function PackagesTable({
 
   /** One package, or the ticked ones, plus everything the table offers —
    *  the same three answers wherever the flow is opened from. "Everything
-   *  here" is only offered on a marketplace's own page: the
-   *  cross-marketplace list is every subscription at once, and "here" has
-   *  no boundary there for it to mean. */
+   *  here" is only offered on a marketplace's own page, and never beside a
+   *  single row's own action: that button promises one package, and
+   *  answering it with "or the whole marketplace" is an escalation the
+   *  reader did not ask for. The cross-marketplace list is every
+   *  subscription at once, and "here" has no boundary there to mean. */
   const askFor = (only?: PackageEntry, as?: Catalog) => {
     const subjects: InstallSubject[] = [];
     if (only) {
@@ -341,7 +343,12 @@ export function PackagesTable({
         dependencies: chosen.length === 1 ? chosen[0].row.dependencies : null,
       });
     }
-    if (showPlaces && offerable.length > 0) {
+    // Never beside a single row's own action. That button promises one
+    // package, and answering it with "or the whole marketplace" is an
+    // escalation the reader did not ask for — one mis-click away from
+    // installing everything. "Everything here" belongs to the selection,
+    // which is already a question about more than one row.
+    if (!only && showPlaces && offerable.length > 0) {
       const groups = groupsFor(offerable);
       const count = countIn(groups);
       // Never as a second copy of the answer above it: a selection of
