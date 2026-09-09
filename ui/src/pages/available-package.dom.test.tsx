@@ -8,6 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppSettings, Scope } from "@/bindings";
 import { commands, type PackageView } from "@/bindings";
+import { PICK_A_FILE_NOTE } from "@/lib/copy-files";
 import { INSTALL_ACTION, justThisLabel } from "@/lib/copy-install";
 import {
   LOCAL_FOLDER_LABEL,

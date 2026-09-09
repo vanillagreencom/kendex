@@ -1,23 +1,18 @@
 import { useState } from "react";
 import { commands, type PackageView } from "@/bindings";
-import { MarkdownView } from "@/components/markdown-view";
 import { FileBrowser } from "@/components/files/file-browser";
 import type { FileEntry } from "@/components/files/file-tree-model";
+import { MarkdownView } from "@/components/markdown-view";
 import { AvailableAside } from "@/components/marketplaces/available-aside";
 import { CatalogFilePreview } from "@/components/marketplaces/catalog-file-preview";
 import { RecordsUnreadableNote } from "@/components/marketplaces/packages-trouble";
 import { RepoAction } from "@/components/marketplaces/repo-action";
 import { useCatalog } from "@/components/marketplaces/use-catalog";
 import { PageHeader } from "@/components/page-header";
-import { SectionHeading } from "@/components/section";
 import { SafetyPanel } from "@/components/safety-panel";
+import { SectionHeading } from "@/components/section";
 import { TagBadges } from "@/components/tag-badge";
 import { Button } from "@/components/ui/button";
-import { INSTALL_ACTION, justThisLabel } from "@/lib/copy-install";
-import { recordsUnreadable } from "@/lib/install-state";
-import { kindIcon } from "@/lib/kind-icon";
-import { kindLabel, packageDisplayName } from "@/lib/labels";
-import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import {
   FILE_TREE_LABEL,
   FILES_TAB,
@@ -25,6 +20,12 @@ import {
   NO_README_NOTE,
   PICK_A_FILE_NOTE,
 } from "@/lib/copy-files";
+import { INSTALL_ACTION, justThisLabel } from "@/lib/copy-install";
+import { scopeLabel } from "@/lib/derive";
+import { recordsUnreadable } from "@/lib/install-state";
+import { kindIcon } from "@/lib/kind-icon";
+import { kindLabel, packageDisplayName } from "@/lib/labels";
+import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { sourceLine } from "@/lib/marketplace-display";
 import { useOrderedRead } from "@/lib/use-ordered-read";
 import { cn } from "@/lib/utils";
