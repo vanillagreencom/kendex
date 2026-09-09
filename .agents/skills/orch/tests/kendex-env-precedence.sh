@@ -344,14 +344,15 @@ s10_refuses "C:keys.env" "a DRIVE COLON"
 # A backslash never reaches that check: the settings grammar refuses the
 # value first, and refusing it twice would say the grammar was optional.
 # Pinned here so the two refusals stay told apart.
+set +e
 s10_backslash=$(
-  set +e
   unset -v KENDEX_ENV_FILE
   printf '[env]\nKENDEX_ENV_FILE = "keys\\local.env"\n' > "$PROJ10/kendex.settings.toml"
   # shellcheck source=/dev/null
   source "$LIB"
   kendex_load_project_env "$PROJ10" 2>&1 >/dev/null
 )
+set -e
 case "$s10_backslash" in
   *"kendex-env: value-syntax"*"key=KENDEX_ENV_FILE"*)
     PASS=$((PASS + 1)); printf '  ok    scenario 10: a BACKSLASH fails on the value grammar, before the path check\n' ;;
