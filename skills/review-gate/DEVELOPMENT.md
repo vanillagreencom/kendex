@@ -21,7 +21,7 @@ Paths as installed in a consuming repo, under `.agents/skills/review-gate/`.
 
 ## Diagnostic records
 
-Refusals and notices begin with `review-gate-error=CODE value=VALUE` or `review-gate-notice=CODE value=VALUE`. Values use Bash `printf %q` escaping. English explanation follows the record. Validators use `ok`, `FAIL`, or `note` records with `check=CODE value=VALUE` and indent all explanation lines. Their final record reports `review-gate-failed=COUNT passed=COUNT`.
+Refusals and notices begin with `review-gate-error=CODE value=VALUE` or `review-gate-notice=CODE value=VALUE`. Values use Bash `printf %q` escaping. English explanation follows the record. Validators use `ok`, `FAIL`, or `note` records with `check=CODE value=VALUE` and indent all explanation lines. The consumer validator, `validate.sh`, ends with `review-gate-failed=COUNT passed=COUNT`; the standalone workflow validator exits after its individual records.
 
 The predicate's verdict and detail lines and the watcher's tab-separated attention records are complete text protocols. Their script headers define those contracts. Diagnostic changes preserve those stdout protocols.
 

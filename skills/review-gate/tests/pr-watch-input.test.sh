@@ -25,6 +25,7 @@ echo "=== explicit PR arguments ==="
 # once the schema boundary is passed. Each row compares the complete error
 # record emitted by the boundary under test.
 table \
+  "a failed PR listing names the repository||STUB_OPEN_PRS=fail;STUB_VERDICT_LINE=unused|rc=2 kinds=none diagnostic=review-gate-error=watch-list-failed+value=acme/widgets" \
   "a closed PR is skipped silently|9|STUB_PR_9=$PR9CLOSED;STUB_VERDICT_LINE=unused|rc=0 kinds=none" \
   "a zero-padded argument normalizes|09|STUB_PR_9=$PR9CLOSED;STUB_VERDICT_LINE=unused|rc=0 kinds=none" \
   "a junk response is that PR's error line and the rest still process|5 6|STUB_PR_5=not json at all;STUB_PR_6=$(pr_row 6 closed | jq -c .);STUB_VERDICT_LINE=unused|rc=2 kinds=error protocol=5~--------~error~PR+#5+response+is+not+a+well-formed+PR+object+(broken+read)" \
@@ -68,6 +69,9 @@ table \
 
 echo "=== configuration errors refuse to reduce ==="
 table \
+  "a missing --awaiting-after value is refused|--awaiting-after|STUB_VERDICT_LINE=unused|rc=2 kinds=none diagnostic=review-gate-error=watch-wait-invalid+value=''" \
+  "an unknown flag is refused by exact diagnostic|--unknown|STUB_VERDICT_LINE=unused|rc=2 kinds=none diagnostic=review-gate-error=watch-flag-unknown+value=--unknown" \
+  "a non-numeric PR argument is refused by exact diagnostic|abc|STUB_VERDICT_LINE=unused|rc=2 kinds=none diagnostic=review-gate-error=watch-pr-invalid+value=abc" \
   "a non-numeric PR_REVIEW_WAIT_SECS||PR_REVIEW_WAIT_SECS=90s;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 kinds=none diagnostic=review-gate-error=watch-wait-setting-invalid+value=90s" \
   "a PR_REVIEW_WAIT_SECS past the integer range||PR_REVIEW_WAIT_SECS=99999999999999999999;STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 kinds=none diagnostic=review-gate-error=watch-wait-setting-range+value=99999999999999999999" \
   "an --awaiting-after past the integer range|--awaiting-after 99999999999999999999|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_AWAITING;STUB_HEAD_DATE=$OLD|rc=2 kinds=none diagnostic=review-gate-error=watch-wait-range+value=99999999999999999999" \
@@ -84,6 +88,11 @@ for flag in --help -h; do
   set -e
   assert_eq "$RC" "0" "$flag answers before the repository requirement"
 done
+
+set +e
+OUT=$(cd "$TMP_ROOT" && env -u GH_REPO "$SKILL_ROOT/scripts/pr-watch.sh" 2>&1); RC=$?
+set -e
+assert_eq "$(observe "rc diagnostic")" "rc=2 diagnostic=review-gate-error=watch-repo-missing+value=''" "a missing repository is refused by exact diagnostic"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

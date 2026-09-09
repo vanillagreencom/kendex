@@ -134,6 +134,10 @@ shift
 args="$*"
 case "$args" in
   "-X POST "*"/statuses/"*)
+    if [[ "${STUB_POST_FAIL:-0}" == "1" ]]; then
+      echo "HTTP 500" >&2
+      exit 1
+    fi
     echo "post:$args" >> "${STUB_POST_LOG:?}"
     ;;
   *"/commits/"*"/statuses?per_page=100"*)
@@ -245,7 +249,7 @@ ERROR_PAGE='{"message":"Server Error"}'
 # unless a row overrides REVIEW_GATE_SETTINGS_FILE.
 RUN_SEQ=0
 run_writer() {
-  local mode="$1" env_list="$2" env_args=() unset=() ids=() runner=()
+  local mode="$1" env_list="$2" env_args=() unset=() ids=() runner=() repo=(GH_REPO=acme/widgets)
   [[ -z "$env_list" ]] || IFS=';' read -ra env_args <<<"$env_list"
   RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
   mkdir -p "$RUN"
@@ -254,6 +258,7 @@ run_writer() {
   case "$mode" in
     single) ids=(PR_NUMBER=7 HEAD_SHA=headsha PR_AUTHOR=pr-author) ;;
     nohead) unset=(-u HEAD_SHA); ids=(PR_NUMBER=7) ;;
+    norepo) unset=(-u PR_NUMBER -u HEAD_SHA -u PR_AUTHOR -u GH_REPO); repo=() ;;
     all:*)  unset=(-u PR_NUMBER -u HEAD_SHA -u PR_AUTHOR); ids=("EVENT_NAME=${mode#all:}")
             # A converge-all pass forks the writer once per PR; the bound is
             # what turns a hang there into a red rather than a stuck shard.
@@ -261,7 +266,7 @@ run_writer() {
     *) printf 'run_writer: unknown mode %s\n' "$mode" >&2; exit 1 ;;
   esac
   set +e
-  OUT=$(env ${unset[@]+"${unset[@]}"} PATH="$TMP_ROOT/bin:$PATH" GH_REPO=acme/widgets \
+  OUT=$(env ${unset[@]+"${unset[@]}"} PATH="$TMP_ROOT/bin:$PATH" ${repo[@]+"${repo[@]}"} \
     EVENT_NAME=pull_request_target REVIEW_GATE_SETTINGS_FILE=/dev/null \
     STUB_POST_LOG="$RUN/post.log" STUB_PREDICATE_ENV_LOG="$RUN/predicate-env.log" \
     "${ids[@]}" ${env_args[@]+"${env_args[@]}"} \
@@ -384,6 +389,15 @@ echo "=== fail loud, act never ==="
 # writer is not meant to touch with exit 1, so a rerun or run read would
 # surface here as a red too.
 table \
+  "w20a: an empty context is refused by exact diagnostic|single|REVIEW_GATE_CONTEXT=|rc=1 posts=none error~writer-context-empty@''=true" \
+  "w20b: a missing repository is refused by exact diagnostic|norepo|STUB_VERDICT_LINE=$AWAITING|rc=1 posts=none error~writer-repo-missing@''=true" \
+  "w20c: a merge-group without a head is refused by exact diagnostic|norepo|EVENT_NAME=merge_group;GH_REPO=acme/widgets|rc=1 posts=none error~writer-queue-head-missing@''=true" \
+  "w20d: a failed merge-group post is named by head|single|EVENT_NAME=merge_group;STUB_POST_FAIL=1|rc=1 posts=none error~writer-queue-post-failed@headsha=true" \
+  "w20e: a failed open-PR listing is named by repository|all:schedule|STUB_OPEN_PRS=fail;STUB_VERDICT_LINE=$AWAITING|rc=1 posts=none error~writer-list-failed@acme/widgets=true" \
+  "w20f: malformed predicate output is refused with its line|single|STUB_VERDICT_LINE=garbage|rc=1 posts=none error~writer-predicate-malformed@garbage=true" \
+  "w20g: an unknown verdict is refused by exact diagnostic|single|STUB_VERDICT_LINE=verdict=bogus detail=unknown|rc=1 posts=none error~writer-verdict-unknown@bogus=true" \
+  "w20h: a failed status post is named by head|single|STUB_VERDICT_LINE=$AWAITING;STUB_GATE_HISTORY=[];STUB_POST_FAIL=1|rc=1 posts=none notice~writer-verdict@awaiting=true error~writer-status-post-failed@headsha=true" \
+  "w20i: a status post records its head|single|STUB_VERDICT_LINE=$AWAITING;STUB_GATE_HISTORY=[]|rc=0 posts=pending@headsha notice~writer-verdict@awaiting=true notice~writer-status-posted@headsha=true" \
   "w21: a predicate failure exits 1 and posts nothing|single|STUB_PREDICATE_RC=2;STUB_GATE_HISTORY=[]|rc=1 posts=none error~writer-predicate-failed@7=true" \
   "w22: a failed status-history read exits 1 and posts nothing|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=fail|rc=1 posts=none error~writer-status-read-failed@headsha=true" \
   "w22b: a zero-byte status-history read exits 1 and posts nothing|single|STUB_VERDICT_LINE=$APPROVED;STUB_GATE_HISTORY=emptybytes|rc=1 posts=none error~writer-status-empty@headsha=true" \

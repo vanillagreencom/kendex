@@ -357,7 +357,7 @@ ref_of() { # NAME -> the github.workflow_ref the step derives its file from
 #   record~<code>@<value>: whether the exact diagnostic record exists
 #   retry_cause: gh exit and HTTP status from the complete retry record
 relay_observe() {
-  local got="" token name value line
+  local got="" token name value line record_value
   for token in $1; do
     name="${token%%=*}"
     case "$name" in
@@ -384,7 +384,12 @@ relay_observe() {
         value="${value:-none}" ;;
       record~*)
         line="${name#record~}"
-        line="review-gate-notice=${line%@*} value=${line##*@}"
+        record_value="${line#*@}"
+        if [[ "$record_value" == *%20* ]]; then
+          record_value="${record_value//%20/ }"
+          printf -v record_value '%q' "$record_value"
+        fi
+        line="review-gate-notice=${line%%@*} value=$record_value"
         value="$(grep -qxF -- "$line" <<<"$RELAY_OUT" && echo true || echo false)" ;;
       retry_cause) value="${RELAY_CAUSE:-none}" ;;
       *) value=UNKNOWN_FIELD ;;
@@ -439,11 +444,11 @@ relay_battery() { # step script, label
   # at UNSTABLE, the defect the split removed.
   before=$((PASS + FAIL))
   for row in \
-    "an ordinary PR-attached leg dispatches THIS workflow's file on the default branch, exactly once, under the per-attempt bound|0|main|0||none|||rc=0 calls=dispatch:review-gate-writer.yml bound=60 sleeps=0 note=none" \
+    "an ordinary PR-attached leg dispatches THIS workflow's file on the default branch, exactly once, under the per-attempt bound|0|main|0||none|||rc=0 calls=dispatch:review-gate-writer.yml bound=60 sleeps=0 note=none record~relay-dispatched@review-gate-writer.yml@main=true" \
     "a RENAMED consumer copy dispatches its own file|0|renamed|0||none|||rc=0 calls=dispatch:gate.yml sleeps=0 note=none" \
-    "a read-only token (fork pull_request_review) is a green no-op that dispatches nothing|1|main|0||none|||rc=0 calls=none sleeps=0 note=none" \
+    "a read-only token (fork pull_request_review) is a green no-op that dispatches nothing|1|main|0||none|||rc=0 calls=none sleeps=0 note=none record~relay-read-only@1=true" \
     "an underivable workflow_ref dispatches NOTHING and warns, never a garbage path|0|empty|0||none|||rc=0 calls=none sleeps=0 note=warning record~relay-workflow-missing@''=true" \
-    "a transient dispatch failure is retried once and succeeds: exactly two attempts|0|main|1 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 note=warning" \
+    "a transient dispatch failure is retried once and succeeds: exactly two attempts|0|main|1 0||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 note=warning record~relay-retry-dispatched@review-gate-writer.yml@main=true" \
     "two failed dispatches stop after two attempts and exit GREEN with a warning, never an error|0|main|1 1||none|||rc=0 calls=dispatch:review-gate-writer.yml,dispatch:review-gate-writer.yml wait=5 sleeps=1 note=warning record~relay-dispatch-exhausted@1=true" \
     "the workflow_dispatch leg is refused by the step's own loop breaker, and says so|0|main|0|workflow_dispatch|none|||rc=0 calls=none sleeps=0 note=warning record~relay-converge-leg@workflow_dispatch=true" \
     "the schedule leg is refused by the same guard|0|main|0|schedule|none|||rc=0 calls=none sleeps=0 note=warning record~relay-converge-leg@schedule=true"
@@ -493,8 +498,8 @@ relay_battery() { # step script, label
   # group. Its own jobs are refused by name; a reviewer's check run relays.
   before=$((PASS + FAIL))
   for row in \
-    "a check_run naming the relay's OWN job dispatches nothing, and says so|0|main|0|check_run|none|Request a gate convergence pass||rc=0 calls=none sleeps=0 note=warning" \
-    "the write job's own check run is refused by the same guard|0|main|0|check_run|none|Evaluate and write the review gate||rc=0 calls=none sleeps=0 note=warning" \
+    "a check_run naming the relay's OWN job dispatches nothing, and says so|0|main|0|check_run|none|Request a gate convergence pass||rc=0 calls=none sleeps=0 note=warning record~relay-own-check@Request%20a%20gate%20convergence%20pass=true" \
+    "the write job's own check run is refused by the same guard|0|main|0|check_run|none|Evaluate and write the review gate||rc=0 calls=none sleeps=0 note=warning record~relay-own-check@Evaluate%20and%20write%20the%20review%20gate=true" \
     "a REVIEWER's check run still relays|0|main|0|check_run|none|CodeRabbit||rc=0 calls=dispatch:review-gate-writer.yml sleeps=0 note=none"
   do relay_row "$row"; done
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "relay_battery: no row was asserted" >&2; exit 2; }

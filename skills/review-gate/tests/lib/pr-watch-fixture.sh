@@ -111,6 +111,10 @@ case "$args" in
       '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:$next}, nodes:[range($n) | {isResolved:false}]}}}}}'
     ;;
   *"pulls?state=open"*)
+    if [[ "${STUB_OPEN_PRS:-[]}" == "fail" ]]; then
+      echo "HTTP 500" >&2
+      exit 1
+    fi
     if [[ "${STUB_OPEN_PRS:-[]}" == "emptybytes" ]]; then exit 0; fi
     printf '%s\n' "${STUB_OPEN_PRS:-[]}"
     ;;

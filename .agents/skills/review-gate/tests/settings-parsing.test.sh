@@ -183,6 +183,18 @@ path_table \
   "an ABSENT plain file falls back to the default|$TMP/absent.settings.toml||rc=0 out=dflt" \
   "a dash-prefixed relative path reads its value (no option-injection fallback)|-e||rc=0 out=dashfile" \
   "an =-containing relative path reads its value (no awk-assignment fallback)|policy=on.toml||rc=0 out=eqfile"
+
+printf '\357\273\277[env]\nREVIEW_GATE_TN = "hidden"\n' >"$TMP/bom.settings.toml"
+RC=0
+OUT="$(rg_env_table "$TMP/bom.settings.toml" 2>"$TMP/err")" || RC=$?
+ERR="$(cat "$TMP/err")"
+assert_eq "$(observe "rc error value")" "rc=1 error=settings-bom value=<tmp>/bom.settings.toml" "a UTF-8 byte-order mark has the stable settings diagnostic"
+
+printf '[env]\nREVIEW_GATE_TN = "configured"\n' >"$TMP/awk.settings.toml"
+RC=0
+OUT="$({ awk() { return 7; }; rg_env_table "$TMP/awk.settings.toml"; } 2>"$TMP/err")" || RC=$?
+ERR="$(cat "$TMP/err")"
+assert_eq "$(observe "rc error value")" "rc=2 error=settings-awk value=<tmp>/awk.settings.toml" "an awk failure has the stable settings diagnostic"
 if [ "$(id -u)" -eq 0 ]; then
   printf 'test-notice=permission-skip value=settings\n'
 else
