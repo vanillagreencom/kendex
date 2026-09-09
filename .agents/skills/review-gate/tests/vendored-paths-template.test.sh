@@ -22,15 +22,16 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE="$(cd "$TEST_DIR/.." && pwd)/templates/vendored-paths.instructions.md"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)" || exit 1
+trap 'rm -rf -- "${TMP:?}"' EXIT
 
 PASS=0
 FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
-[ -f "$TEMPLATE" ] || { echo "FATAL: no template at $TEMPLATE" >&2; exit 1; }
+. "$TEST_DIR/../scripts/lib/diagnostics.sh"
+[ -f "$TEMPLATE" ] || { rg_message error template-file "$TEMPLATE" "Template is absent." >&2; exit 1; }
 
 MARKER='RENDER VARIANT — DELETE THIS BLOCK'
 
@@ -81,88 +82,96 @@ anchors() { # BLOCK-FILE
   '
 }
 
-# expect-dark:N asserts the per-edit floor itself: edit N is present in the
-# block and contributes no anchor. Without it a phrasing that empties one edit
-# subtracts silently from the global count and the suite still reports green.
-check_anchors() { # FILE LABEL expect-pass|expect-fail|expect-dark:N
-  local file="$1" label="$2" expect="$3" missing="" dark="" seen="" armed="" n=0 num a want=""
-  case "$expect" in expect-dark:*) want="${expect#expect-dark:}" ;; esac
-  split_template "$file"
+# The recipe's English anchors are a consumer search protocol. The checker
+# returns stable result fields; each row still checks the exact anchor text.
+check_anchors() { # FILE -> stable diagnostic, exit 0 valid / 1 broken / 2 unreadable
+  local file="$1" missing="" dark="" seen="" armed="" n=0 num a records
+  : >"$TMP/body"
+  : >"$TMP/block"
+  split_template "$file" || return 2
+  records="$(anchors "$TMP/block")" || return 2
   while IFS=$'\t' read -r num a; do
+    [ -n "$num" ] || continue
     case " $seen " in *" $num "*) ;; *) seen="$seen $num" ;; esac
     [ -n "$a" ] || continue
     n=$((n + 1))
     case " $armed " in *" $num "*) ;; *) armed="$armed $num" ;; esac
-    grep -qF -- "$a" "$TMP/body" || missing="$missing
-        $a"
-  done < <(anchors "$TMP/block")
+    if ! grep -qF -- "$a" "$TMP/body"; then missing="${missing:+$missing;}$a"; fi
+  done <<<"$records"
   for num in $seen; do
-    case " $armed " in *" $num "*) ;; *) dark="$dark $num" ;; esac
+    case " $armed " in *" $num "*) ;; *) dark="${dark:+$dark;}$num" ;; esac
   done
   if [ -z "$seen" ]; then
-    bad "$label" "the extractor found no numbered edits at all — it is measuring nothing"
-  elif [ -n "$want" ]; then
-    case " $dark " in
-      *" $want "*) ok "$label" ;;
-      *) bad "$label" "edit $want still yielded an anchor; dark:${dark:- none}" ;;
-    esac
-  elif [ "$expect" = expect-pass ]; then
-    [ -z "$dark" ] && [ -z "$missing" ] && ok "$label ($n anchors)" \
-      || bad "$label" "no anchor from edit(s):${dark:- none}; no body line carries:${missing:- none}"
-  else
-    [ -n "$missing" ] && ok "$label" || bad "$label" "$n anchors all matched; the control proved nothing"
+    rg_message error template-edits empty 'The extractor found no numbered edits.'
+    return 2
+  elif [ -n "$dark" ]; then
+    rg_message error template-unarmed-edit "$dark" 'An edit yielded no searchable anchor.'
+    return 1
+  elif [ -n "$missing" ]; then
+    rg_message error template-anchor-missing "$missing" 'No body line contains the anchor.'
+    return 1
   fi
+  rg_message notice template-anchors valid "$n anchors match the body."
 }
 
-echo "=== every RENDER VARIANT anchor occurs on one line of the body it edits ==="
-check_anchors "$TEMPLATE" "every REPLACE anchor is found in the body" expect-pass
+# The named mutations alter real template input, not the checker. Every edit
+# asserts its unique anchor and changed bytes before any row can pass.
+while IFS='|' read -r shape expected_exit kind code value; do
+  candidate="$TMP/$shape.md"
+  python3 - "$TEMPLATE" "$candidate" "$shape" "$MARKER" <<'PY_EDIT'
+from pathlib import Path
+import sys
+source, target, shape, marker = sys.argv[1:]
+path = Path(source)
+assert not path.is_symlink(), source
+text = path.read_text()
+body, separator, block = text.partition(marker)
+assert separator and marker not in block
 
-# The shipped defect: edit 7 quoting the phrase as it reads unwrapped while the
-# body wraps it across two lines, so neither half is findable.
-awk '
-  /^7\. In the last paragraph, replace "and cross-repo"/ {
-    print "7. In the last paragraph, replace \"cross-repo sync timing — an upstream fix not"
-    print "   yet re-vendored\" with \"refresh timing — an upstream fix not yet rendered\"."
-    dropping = 1
-    next
-  }
-  dropping && /^[[:space:]]*$/ { dropping = 0 }
-  dropping { next }
-  # The body is one paragraph per line, so the wrap is planted here too: the
-  # phrase edit 7 quotes is split across two body lines, as a hand-wrapped
-  # body would carry it.
-  !/^[0-9]+\. / && /an upstream fix not yet re-vendored/ {
-    sub(/an upstream fix not yet re-vendored/, "an upstream fix not\nyet re-vendored")
-  }
-  { print }
-' "$TEMPLATE" >"$TMP/wrapped.md"
-grep -qF -- 'replace "cross-repo sync timing' "$TMP/wrapped.md" ||
-  { echo "FATAL: the control did not reproduce edit 7's original anchor" >&2; exit 1; }
-check_anchors "$TMP/wrapped.md" "control: an anchor the body wraps across two lines reds" expect-fail
+def replace_once(text, before, after):
+    assert text.count(before) == 1, (shape, before, text.count(before))
+    changed = text.replace(before, after)
+    assert changed != text
+    return changed
 
-# And the general case the pin exists for: a body paragraph reworded out from
-# under an anchor that still names the old wording.
-sed 's/^\*\*Do not stay silent instead\.\*\*/**Never stay silent instead.**/' \
-  "$TEMPLATE" >"$TMP/reworded.md"
-check_anchors "$TMP/reworded.md" "control: a reworded body paragraph reds its anchor" expect-fail
-
-# And the phrasing that empties one edit rather than mismatching it: the
-# anchor moved behind the word "with", where the extraction rule reads it as
-# replacement text. The global count falls by one and every remaining anchor
-# still matches, so only the per-edit floor sees this.
-awk '
-  /^3\. REPLACE the second routing bullet \("The fix lands in these vendored bytes":$/ {
-    print "3. REPLACE the second routing bullet, the one beginning with \"The fix lands"
-    print "   in these vendored bytes\", with:"
-    dropping = 1
-    next
-  }
-  dropping && /^   REVIEW SUMMARY BODY\) with:$/ { dropping = 0; next }
-  { print }
-' "$TEMPLATE" >"$TMP/beginning-with.md"
-grep -qF -- 'the one beginning with "The fix lands' "$TMP/beginning-with.md" ||
-  { echo "FATAL: the control did not rephrase edit 3" >&2; exit 1; }
-check_anchors "$TMP/beginning-with.md" "control: an edit whose only quote follows the word with goes dark, and reds" expect-dark:3
+if shape == 'wrapped-anchor':
+    block = replace_once(block,
+        '7. In the last paragraph, replace "and cross-repo" with "and", and replace\n'
+        '   "sync timing — an upstream fix not yet re-vendored" with "refresh timing —\n'
+        '   an upstream fix not yet rendered". The phrase wraps in the body, so it is\n'
+        '   two edits on two lines rather than one search for the joined sentence.',
+        '7. In the last paragraph, replace "cross-repo sync timing — an upstream fix not\n'
+        '   yet re-vendored" with "refresh timing — an upstream fix not yet rendered".')
+    body = replace_once(body, 'an upstream fix not yet re-vendored',
+                        'an upstream fix not\nyet re-vendored')
+elif shape == 'reworded-body':
+    body = replace_once(body, '**Do not stay silent instead.**', '**Never stay silent instead.**')
+elif shape == 'unarmed-edit':
+    block = replace_once(block,
+        '3. REPLACE the second routing bullet ("The fix lands in these vendored bytes":\n'
+        '   REVIEW SUMMARY BODY) with:',
+        '3. REPLACE the second routing bullet, the one beginning with "The fix lands\n'
+        '   in these vendored bytes", with:')
+else:
+    assert shape == 'unchanged', shape
+result = body + separator + block
+assert (result == text) == (shape == 'unchanged')
+Path(target).write_text(result)
+PY_EDIT
+  rc=0
+  result="$(check_anchors "$candidate")" || rc=$?
+  printf -v quoted '%q' "$value"
+  if [ "$rc" = "$expected_exit" ] && [ "${result%%$'\n'*}" = "review-gate-$kind=$code value=$quoted" ]; then
+    ok "$shape"
+  else
+    bad "$shape" "exit=$rc result=$result"
+  fi
+done <<'CASES'
+unchanged|0|notice|template-anchors|valid
+wrapped-anchor|1|error|template-anchor-missing|cross-repo sync timing — an upstream fix not yet re-vendored
+reworded-body|1|error|template-anchor-missing|**Do not stay silent instead.**
+unarmed-edit|1|error|template-unarmed-edit|3
+CASES
 
 echo "=== the recipe states the number of edits it carries ==="
 # A spelled-out count in prose goes stale the next time an edit is included; this
@@ -174,7 +183,9 @@ spelled="$(awk -v n="$edits" 'BEGIN {
   split("one two three four five six seven eight nine ten", w, " ")
   print (n >= 1 && n <= 10) ? w[n] : n
 }')"
-stated="$(grep -cF -- "$spelled edits" "$TEMPLATE")"
+stated_rc=0
+stated="$(grep -cF -- "$spelled edits" "$TEMPLATE")" || stated_rc=$?
+[ "$stated_rc" -le 1 ] || exit 1
 if [ "$stated" -eq 2 ]; then
   ok "both counts read \"$spelled edits\" for the $edits numbered edits"
 else

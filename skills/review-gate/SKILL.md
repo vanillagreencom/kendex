@@ -49,7 +49,7 @@ git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml' \
 .agents/skills/review-gate/scripts/validate.sh; echo "exit $?"
 ```
 
-`validate.sh` prints one verdict line per check and every `FAIL` line names its own fix. Exit 0 = clean, 1 = findings, 2 = the check could not run at all (bad arguments, not a git repository, a missing file it derives checks from). Fix that first; a 2 is never a pass. Run it after every step below.
+`validate.sh` prints one verdict record per check: `ok` or `FAIL`, then `check=CODE value=VALUE`. Indented lines explain the result and the repair. Exit 0 = clean, 1 = findings, 2 = the check could not run at all (bad arguments, not a git repository, a missing file it derives checks from). Fix that first; a 2 is never a pass. Run it after every step below.
 
 ## 2. Adopt, when nothing is wired
 

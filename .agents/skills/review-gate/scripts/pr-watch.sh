@@ -8,10 +8,22 @@
 # for hours over a thread posted minutes after their last pass.
 # The authoritative contract — attention kinds, output format, exit
 # codes, env — is print_usage below: run with --help.
+# Stdout is the whole-text attention protocol consumed by orch oversee-watch:
+# PR number, head prefix, kind, and detail separated by literal tabs. The detail
+# includes the queue and submit-size annotations. Preserve these payloads.
+# Global refusals use diagnostic records on stderr, followed by explanation.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/settings.sh
+if [ ! -r "$script_dir/lib/diagnostics.sh" ]; then
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$script_dir/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 2
+fi
+. "$script_dir/lib/diagnostics.sh" 2>/dev/null || {
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$script_dir/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 2
+}
 . "$script_dir/lib/settings.sh"
 
 print_usage() {
@@ -133,7 +145,7 @@ for arg in "$@"; do
 done
 
 if [ -z "${GH_REPO:-}" ]; then
-  echo "::error::pr-watch: GH_REPO is required" >&2
+  rg_message error watch-repo-missing "${GH_REPO:-}" "::error::pr-watch: GH_REPO is required" >&2
   exit 2
 fi
 
@@ -149,7 +161,7 @@ while [ $# -gt 0 ]; do
       shift
       AWAITING_AFTER="${1:-}"
       case "$AWAITING_AFTER" in
-        ''|*[!0-9]*) echo "::error::pr-watch: --awaiting-after needs a positive integer" >&2; exit 2 ;;
+        ''|*[!0-9]*) rg_message error watch-wait-invalid "$AWAITING_AFTER" "::error::pr-watch: --awaiting-after needs a positive integer" >&2; exit 2 ;;
       esac
       # Same bound as the settings path: past Bash's integer range the later
       # [ -gt ] comparisons fail silently inside their ifs. Leading zeros
@@ -158,14 +170,14 @@ while [ $# -gt 0 ]; do
       AWAITING_AFTER="$(printf '%s' "$AWAITING_AFTER" | sed 's/^0*//')"
       [ -z "$AWAITING_AFTER" ] && AWAITING_AFTER=0
       if [ "${#AWAITING_AFTER}" -gt 9 ]; then
-        echo "::error::pr-watch: --awaiting-after is out of range (max 9 digits)" >&2
+        rg_message error watch-wait-range "$AWAITING_AFTER" "::error::pr-watch: --awaiting-after is out of range (max 9 digits)" >&2
         exit 2
       fi
       ;;
-    -*) echo "::error::pr-watch: unknown flag $1" >&2; exit 2 ;;
+    -*) rg_message error watch-flag-unknown "$1" "::error::pr-watch: unknown flag $1" >&2; exit 2 ;;
     *)
       case "$1" in
-        ''|*[!0-9]*) echo "::error::pr-watch: PR arguments must be numbers (got '$1')" >&2; exit 2 ;;
+        ''|*[!0-9]*) rg_message error watch-pr-invalid "$1" "::error::pr-watch: PR arguments must be numbers (got '$1')" >&2; exit 2 ;;
       esac
       # Base-10 normalization: a zero-padded "09" is not valid JSON for the
       # --argjson binding check downstream.
@@ -177,7 +189,7 @@ done
 
 GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 2
 if [ -z "$GATE_CONTEXT" ]; then
-  echo "::error::pr-watch: REVIEW_GATE_CONTEXT is explicitly empty — the predicate rejects this configuration and so does the watcher (cheap mode would otherwise search for an empty context)" >&2
+  rg_message error watch-context-empty "$GATE_CONTEXT" "::error::pr-watch: REVIEW_GATE_CONTEXT is explicitly empty — the predicate rejects this configuration and so does the watcher (cheap mode would otherwise search for an empty context)" >&2
   exit 2
 fi
 THREADS_TERM="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 2
@@ -194,14 +206,14 @@ GATE_MODE="$(rg_setting REVIEW_GATE_MODE "enforce")" || exit 2
 case "$GATE_MODE" in
   enforce|off) ;;
   *)
-    echo "::error::pr-watch: invalid REVIEW_GATE_MODE value '$GATE_MODE' (enforce|off) — refusing to reduce against unknown gate semantics" >&2
+    rg_message error watch-mode-invalid "$GATE_MODE" "::error::pr-watch: invalid REVIEW_GATE_MODE value '$GATE_MODE' (enforce|off) — refusing to reduce against unknown gate semantics" >&2
     exit 2
     ;;
 esac
 case "$THREADS_TERM" in
   enforce|off) ;;
   *)
-    echo "::error::pr-watch: invalid REVIEW_GATE_THREADS value '$THREADS_TERM' (enforce|off) — refusing to reduce against unknown enforcement semantics" >&2
+    rg_message error watch-threads-invalid "$THREADS_TERM" "::error::pr-watch: invalid REVIEW_GATE_THREADS value '$THREADS_TERM' (enforce|off) — refusing to reduce against unknown enforcement semantics" >&2
     exit 2
     ;;
 esac
@@ -216,14 +228,14 @@ if [ -z "$AWAITING_AFTER" ]; then
   # awaiting-stale alert. 9 digits (~31 years) is bound enough.
   case "$AWAITING_AFTER" in
     ''|*[!0-9]*)
-      echo "::error::pr-watch: PR_REVIEW_WAIT_SECS must be a non-negative integer, got '$AWAITING_AFTER'" >&2
+      rg_message error watch-wait-setting-invalid "$AWAITING_AFTER" "::error::pr-watch: PR_REVIEW_WAIT_SECS must be a non-negative integer, got '$AWAITING_AFTER'" >&2
       exit 2
       ;;
   esac
   AWAITING_AFTER="$(printf '%s' "$AWAITING_AFTER" | sed 's/^0*//')"
   [ -z "$AWAITING_AFTER" ] && AWAITING_AFTER=0
   if [ "${#AWAITING_AFTER}" -gt 9 ]; then
-    echo "::error::pr-watch: PR_REVIEW_WAIT_SECS is out of range (max 9 digits), got '$AWAITING_AFTER'" >&2
+    rg_message error watch-wait-setting-range "$AWAITING_AFTER" "::error::pr-watch: PR_REVIEW_WAIT_SECS is out of range (max 9 digits), got '$AWAITING_AFTER'" >&2
     exit 2
   fi
 fi
@@ -365,17 +377,17 @@ if [ -n "$PR_ARGS" ]; then
   pr_numbers="$PR_ARGS"
 else
   raw_prs="$(gh api "repos/$GH_REPO/pulls?state=open&per_page=100" --paginate)" || {
-    echo "::error::pr-watch: could not list open PRs" >&2
+    rg_message error watch-list-failed "$GH_REPO" "::error::pr-watch: could not list open PRs" >&2
     exit 2
   }
   if [ -z "$raw_prs" ]; then
-    echo "::error::pr-watch: open-PR listing produced zero bytes (broken read)" >&2
+    rg_message error watch-list-empty "$GH_REPO" "::error::pr-watch: open-PR listing produced zero bytes (broken read)" >&2
     exit 2
   fi
   pr_numbers="$(jq -rs 'if (length > 0) and all(type == "array")
       then (add | map(if (.number | type) != "number" then error("row without a number") else .number end) | join(" "))
       else error("not an array page") end' <<<"$raw_prs" 2>/dev/null)" || {
-    echo "::error::pr-watch: open-PR listing pages are malformed (broken read or a row without a number)" >&2
+    rg_message error watch-list-malformed "$GH_REPO" "::error::pr-watch: open-PR listing pages are malformed (broken read or a row without a number)" >&2
     exit 2
   }
 fi

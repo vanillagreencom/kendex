@@ -292,14 +292,19 @@ jobs:
           # defect this job exists to prevent, delivered by the job itself. Each default lands on a path that is already
           # green and already tested. (review-writer.sh, under the same
           # `set -u`, already reads WRITER_READ_ONLY this way.)
+          # No checkout runs in the relay. Its diagnostic records are printed
+          # here, before the explanation. Retry values carry rc, HTTP status,
+          # wait seconds and jitter seconds for structured log consumers.
           gh_repo="${GH_REPO:-}"
           dispatch_ref="${DISPATCH_REF:-}"
           case "${EVENT_NAME:-}" in
             workflow_dispatch|schedule)
+              printf 'review-gate-notice=relay-converge-leg value=%q\n' "${EVENT_NAME:-}"
               echo "::warning::the relay ran on a CONVERGE leg ('${EVENT_NAME:-}') — the job if: has been mis-edited; refusing to dispatch (a self-dispatch loop has no throttle)"
               exit 0
               ;;
             '')
+              printf 'review-gate-notice=relay-event-missing value=%q\n' "EVENT_NAME"
               echo "::warning::EVENT_NAME is unbound, so this guard cannot verify the run is a PR-attached leg; the job if: is the only loop breaker left"
               ;;
           esac
@@ -311,11 +316,13 @@ jobs:
           # this file's own and travel with it.
           case "${CHECK_NAME:-}" in
             "Request a gate convergence pass"|"Evaluate and write the review gate"|"Post the gate context on the merge-group sha")
+              printf 'review-gate-notice=relay-own-check value=%q\n' "${CHECK_NAME:-}"
               echo "::warning::the check_run event is this workflow's own job ('${CHECK_NAME:-}'); refusing to dispatch — relaying our own check runs amplifies without adding evidence"
               exit 0
               ;;
           esac
           if [ "${WRITER_READ_ONLY:-0}" = "1" ]; then
+            printf 'review-gate-notice=relay-read-only value=%q\n' "${WRITER_READ_ONLY:-}"
             echo "read-only token (fork pull_request_review); cannot dispatch — the scheduled writer pass converges this head"
             exit 0
           fi
@@ -333,6 +340,7 @@ jobs:
           # every unbounded wait is bounded. The suite asserts rc 0 on every
           # modeled path under both `bash -e` and `bash -eo pipefail`.
           if [ -z "$workflow_file" ]; then
+            printf 'review-gate-notice=relay-workflow-missing value=%q\n' "${WORKFLOW_REF:-}"
             echo "::warning::could not derive this workflow's file name from github.workflow_ref ('${WORKFLOW_REF:-<unset>}'); no converge pass requested — this event converges on the cron floor instead"
             exit 0
           fi
@@ -346,6 +354,7 @@ jobs:
           [ -n "$gh_repo" ] || missing="GH_REPO"
           [ -n "$dispatch_ref" ] || missing="${missing:+$missing and }DISPATCH_REF"
           if [ -n "$missing" ]; then
+            printf 'review-gate-notice=relay-binding-missing value=%q\n' "$missing"
             echo "::warning::the relay's env: block is missing $missing; no converge pass requested — this event converges on the cron floor instead"
             exit 0
           fi
@@ -388,6 +397,7 @@ jobs:
           rc=0
           dispatch || rc=$?
           if [ "$rc" = "0" ]; then
+            printf 'review-gate-notice=relay-dispatched value=%q\n' "$workflow_file@$dispatch_ref"
             echo "requested a converge pass ($workflow_file on $dispatch_ref)"
             exit 0
           fi
@@ -460,6 +470,7 @@ jobs:
             403) [ "$rate_limited" = "1" ] || permanent="403 (not rate limited — most likely the token lacks actions:write; check the repo/org default GITHUB_TOKEN workflow permissions)" ;;
           esac
           if [ -n "$permanent" ]; then
+            printf 'review-gate-notice=relay-dispatch-permanent value=%q\n' "$http_status"
             echo "::warning::the dispatch was refused permanently (HTTP $permanent); not retrying — this event converges on the cron floor instead"
             exit 0
           fi
@@ -467,6 +478,7 @@ jobs:
           # window the server named would fail by construction, and the wait
           # is a paid runner hold to reach that failure.
           if [ -n "$server_wait" ] && [ "$server_wait" -gt "$cap" ]; then
+            printf 'review-gate-notice=relay-window-budget value=%q\n' "$server_wait"
             echo "::warning::the rate-limit window runs another ${server_wait}s, beyond this job's budget; not retrying — this event converges on the cron floor instead"
             exit 0
           fi
@@ -490,11 +502,13 @@ jobs:
           # bounded so the timeout budget above still reconciles, and it is
           # applied after the clamp so it can only lengthen a wait.
           jitter_s=$(( RANDOM % jitter_max ))
+          printf 'review-gate-notice=relay-retry value=%q\n' "rc:$rc,http:${http_status:-none},wait:$wait_s,jitter:$jitter_s"
           echo "::warning::could not request a converge pass ($workflow_file on $dispatch_ref): $(why "$rc"); retrying once in ${wait_s}s + ${jitter_s}s jitter"
           sleep "$(( wait_s + jitter_s ))"
           rc=0
           dispatch || rc=$?
           if [ "$rc" = "0" ]; then
+            printf 'review-gate-notice=relay-retry-dispatched value=%q\n' "$workflow_file@$dispatch_ref"
             echo "requested a converge pass on retry ($workflow_file on $dispatch_ref)"
             exit 0
           fi
@@ -514,6 +528,7 @@ jobs:
           # run's log carries the warning below as its only per-run trace;
           # the detector of record is the staleness reducer that already runs
           # against every open PR.
+          printf 'review-gate-notice=relay-dispatch-exhausted value=%q\n' "$rc"
           echo "::warning::could not request a converge pass after two attempts ($workflow_file on $dispatch_ref): $(why "$rc"); this event converges on the cron floor instead (sustained failure surfaces as gate staleness — pr-watch --heal)"
   write:
     # ONE job-level writer group, cancel-in-progress: false. This is a

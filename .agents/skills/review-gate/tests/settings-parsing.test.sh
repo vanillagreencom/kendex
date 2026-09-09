@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Unit pins for lib/settings.sh's rg_setting contract: a value on stdout and
-# exit 0, or a `::error` naming the cause and a nonzero exit, never a silent
+# exit 0, or a stable error key/value and a nonzero exit, never a silent
 # fall-through to the caller default. Leading whitespace before a key is
 # valid TOML, so matching is whitespace-tolerant everywhere — presence, the
 # duplicate-key ambiguity guard, and extraction; column-one anchoring once
@@ -15,8 +15,8 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)" || { printf 'test-failure=temporary-directory value=mktemp\n' >&2; exit 2; }
+trap 'rm -rf "${TMP:?}"' EXIT
 
 # shellcheck source=../scripts/lib/settings.sh
 source "$SKILL_DIR/scripts/lib/settings.sh"
@@ -66,20 +66,12 @@ resolve() {
   ERR="$(cat "$TMP/err")"
 }
 
-# observe EXPECT — the run's value of every field EXPECT names, in order:
-#   rc       exit status
-#   out      the resolved value, `+` for a space, `-` for empty; a value the
-#            encoding cannot tell apart (one carrying `+`, or a literal `-`)
-#            renders as UNENCODABLE rather than as its collision
-#   err~<t>  whether stderr names <t>, `+` read as a space: the one phrase
-#            that tells this refusal from its neighbours, since every refusal
-#            exits 1
+# Observe only the fields the row names. Diagnostic keys and escaped values
+# come from the first line; explanatory prose is not part of this contract.
 observe() {
-  local got="" token name value needle
-  # $1 is split on whitespace into fields; pathname expansion must not also
-  # rewrite a token, so a bracket in an err~ phrase can never match a file in
-  # the caller's working directory. The call sites are command substitutions,
-  # so this stays inside the subshell.
+  local got="" token name value first temp_encoded
+  first="${ERR%%$'\n'*}"
+  printf -v temp_encoded '%q' "$TMP"
   set -f
   for token in $1; do
     name="${token%%=*}"
@@ -90,9 +82,16 @@ observe() {
           *+*|-) value="UNENCODABLE($OUT)" ;;
           *) value="${OUT// /+}"; value="${value:--}" ;;
         esac ;;
-      err~*)
-        needle="${name#err~}"; needle="${needle//+/ }"
-        value="$(grep -qF -- "$needle" <<<"$ERR" && echo true || echo false)" ;;
+      error)
+        case "$first" in
+          review-gate-error=*) value="${first%% *}"; value="${value#review-gate-error=}" ;;
+          *) value=missing ;;
+        esac ;;
+      value)
+        case "$first" in
+          review-gate-error=*' value='*) value="${first#* value=}"; value="${value//"$temp_encoded"/<tmp>}" ;;
+          *) value=missing ;;
+        esac ;;
       *) value=UNKNOWN_FIELD ;;
     esac
     got="$got $name=$value"
@@ -115,37 +114,37 @@ file_table() {
   local row label lines name default env expect before=$((PASS + FAIL))
   for row in "$@"; do
     IFS='|' read -r label lines name default env expect <<<"$row"
-    [[ -n "$expect" ]] || { printf 'file_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+    [[ -n "$expect" ]] || { printf 'test-failure=file-expectation value=%q\n' "$row" >&2; exit 1; }
     write_spec "$TMP/settings.toml" "$lines"
     resolve "$TMP" "$TMP/settings.toml" "$env" "$name" "$default"
     assert_eq "$(observe "$expect")" "$expect" "$label"
   done
-  [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "file_table: no row was asserted" >&2; exit 2; }
+  [[ "$((PASS + FAIL))" -gt "$before" ]] || { printf 'test-failure=file-assertions value=0\n' >&2; exit 2; }
 }
 file_table \
   'a column-one assignment reads|[env];REVIEW_GATE_T1 = "col1"|REVIEW_GATE_T1|dflt||rc=0 out=col1' \
   'an indented sole assignment reads, not the silent default|[env];  REVIEW_GATE_T2 = "indented"|REVIEW_GATE_T2|dflt||rc=0 out=indented' \
   'an explicit empty assignment overrides the default (empty disables)|[env];REVIEW_GATE_T3 = ""|REVIEW_GATE_T3|dflt||rc=0 out=-' \
   'an explicit environment variable wins over the file|[env];REVIEW_GATE_T4 = "file"|REVIEW_GATE_T4|dflt|REVIEW_GATE_T4=env|rc=0 out=env' \
-  'a column-one duplicate is a config error|[env];REVIEW_GATE_T5 = "a";REVIEW_GATE_T5 = "b"|REVIEW_GATE_T5|dflt||rc=1 out=- err~assigned+more+than+once=true' \
-  'an INDENTED duplicate is a config error, not invisible to the guard|[env];REVIEW_GATE_T6 = "a";  REVIEW_GATE_T6 = "b"|REVIEW_GATE_T6|dflt||rc=1 out=- err~assigned+more+than+once=true' \
-  'two indented duplicates are a config error|[env];  REVIEW_GATE_T7 = "a";  REVIEW_GATE_T7 = "b"|REVIEW_GATE_T7|dflt||rc=1 out=- err~assigned+more+than+once=true' \
-  'array syntax is a config error|[env];REVIEW_GATE_T8 = ["array"]|REVIEW_GATE_T8|dflt||rc=1 out=- err~unsupported+syntax=true' \
-  'indented array syntax is a config error, not a silent default|[env];  REVIEW_GATE_T9 = ["array"]|REVIEW_GATE_T9|dflt||rc=1 out=- err~unsupported+syntax=true' \
-  'a leading-digit name is refused|[env];REVIEW_GATE_OK = "x"|9BADNAME|dflt||rc=1 out=- err~invalid+key+name=true' \
-  'a regex-metacharacter name is refused before any interpolation|[env];REVIEW_GATE_OK = "x"|REVIEW_GATE.DOT|dflt||rc=1 out=- err~invalid+key+name=true' \
+  'a column-one duplicate is a config error|[env];REVIEW_GATE_T5 = "a";REVIEW_GATE_T5 = "b"|REVIEW_GATE_T5|dflt||rc=1 out=- error=settings-duplicate value=REVIEW_GATE_T5' \
+  'an INDENTED duplicate is a config error, not invisible to the guard|[env];REVIEW_GATE_T6 = "a";  REVIEW_GATE_T6 = "b"|REVIEW_GATE_T6|dflt||rc=1 out=- error=settings-duplicate value=REVIEW_GATE_T6' \
+  'two indented duplicates are a config error|[env];  REVIEW_GATE_T7 = "a";  REVIEW_GATE_T7 = "b"|REVIEW_GATE_T7|dflt||rc=1 out=- error=settings-duplicate value=REVIEW_GATE_T7' \
+  'array syntax is a config error|[env];REVIEW_GATE_T8 = ["array"]|REVIEW_GATE_T8|dflt||rc=1 out=- error=settings-syntax value=REVIEW_GATE_T8' \
+  'indented array syntax is a config error, not a silent default|[env];  REVIEW_GATE_T9 = ["array"]|REVIEW_GATE_T9|dflt||rc=1 out=- error=settings-syntax value=REVIEW_GATE_T9' \
+  'a leading-digit name is refused|[env];REVIEW_GATE_OK = "x"|9BADNAME|dflt||rc=1 out=- error=settings-key value=9BADNAME' \
+  'a regex-metacharacter name is refused before any interpolation|[env];REVIEW_GATE_OK = "x"|REVIEW_GATE.DOT|dflt||rc=1 out=- error=settings-key value=REVIEW_GATE.DOT' \
   'an underscore-prefixed name stays valid|[env];_REVIEW_GATE_U = "u1"|_REVIEW_GATE_U|dflt||rc=0 out=u1' \
   'an assignment ABOVE the [env] header is ignored|REVIEW_GATE_TT = "top";[env];REVIEW_GATE_OTHER = "x"|REVIEW_GATE_TT|dflt||rc=0 out=dflt' \
   'an assignment under an UNRELATED table is ignored|[notes];REVIEW_GATE_TT = "elsewhere"|REVIEW_GATE_TT|dflt||rc=0 out=dflt' \
-  'a duplicate across re-entered [env] sections is a config error|[env];REVIEW_GATE_TT = "a";[notes];x = "y";[env];REVIEW_GATE_TT = "b"|REVIEW_GATE_TT|dflt||rc=1 out=- err~assigned+more+than+once+in+[env]=true' \
+  'a duplicate across re-entered [env] sections is a config error|[env];REVIEW_GATE_TT = "a";[notes];x = "y";[env];REVIEW_GATE_TT = "b"|REVIEW_GATE_TT|dflt||rc=1 out=- error=settings-duplicate value=REVIEW_GATE_TT' \
   'a trailing comment is dropped from the decoded value|[env];REVIEW_GATE_TC = "spaced value" # trailing comment|REVIEW_GATE_TC|dflt||rc=0 out=spaced+value' \
-  'a backslash in the value is a config error, never decoded|[env];REVIEW_GATE_TB = "a\b"|REVIEW_GATE_TB|dflt||rc=1 out=- err~unsupported+syntax=true' \
-  'a commented [env] header is a config error, not an invisible table|[env] # comment;REVIEW_GATE_TH = "hidden"|REVIEW_GATE_TH|dflt||rc=1 out=- err~unsupported+table+header+shape=true' \
-  'a quoted foreign header after [env] is a config error, not a leaked key|[env];x = "y";["notes"];REVIEW_GATE_TH = "leak"|REVIEW_GATE_TH|dflt||rc=1 out=- err~unsupported+table+header+shape=true' \
-  'an unrelated non-contract assignment fails the read|[env];UNRELATED = bare;REVIEW_GATE_TW = "v"|REVIEW_GATE_TW|dflt||rc=1 out=- err~unsupported+syntax+for+UNRELATED=true' \
-  'an unrelated duplicated key fails the read|[env];UNRELATED = "a";UNRELATED = "b";REVIEW_GATE_TW = "v"|REVIEW_GATE_TW|dflt||rc=1 out=- err~UNRELATED+is+assigned+more+than+once=true' \
-  'an unrelated backslash value fails the read|[env];UNRELATED = "a\b";REVIEW_GATE_TW = "v"|REVIEW_GATE_TW|dflt||rc=1 out=- err~unsupported+syntax+for+UNRELATED=true' \
-  'an exported value does not mask a malformed settings file|[env];DUP = "a";DUP = "b"|REVIEW_GATE_TV|dflt|REVIEW_GATE_TV=envwin|rc=1 out=- err~assigned+more+than+once=true'
+  'a backslash in the value is a config error, never decoded|[env];REVIEW_GATE_TB = "a\b"|REVIEW_GATE_TB|dflt||rc=1 out=- error=settings-syntax value=REVIEW_GATE_TB' \
+  'a commented [env] header is a config error, not an invisible table|[env] # comment;REVIEW_GATE_TH = "hidden"|REVIEW_GATE_TH|dflt||rc=1 out=- error=settings-header value=1' \
+  'a quoted foreign header after [env] is a config error, not a leaked key|[env];x = "y";["notes"];REVIEW_GATE_TH = "leak"|REVIEW_GATE_TH|dflt||rc=1 out=- error=settings-header value=3' \
+  'an unrelated non-contract assignment fails the read|[env];UNRELATED = bare;REVIEW_GATE_TW = "v"|REVIEW_GATE_TW|dflt||rc=1 out=- error=settings-syntax value=UNRELATED' \
+  'an unrelated duplicated key fails the read|[env];UNRELATED = "a";UNRELATED = "b";REVIEW_GATE_TW = "v"|REVIEW_GATE_TW|dflt||rc=1 out=- error=settings-duplicate value=UNRELATED' \
+  'an unrelated backslash value fails the read|[env];UNRELATED = "a\b";REVIEW_GATE_TW = "v"|REVIEW_GATE_TW|dflt||rc=1 out=- error=settings-syntax value=UNRELATED' \
+  'an exported value does not mask a malformed settings file|[env];DUP = "a";DUP = "b"|REVIEW_GATE_TV|dflt|REVIEW_GATE_TV=envwin|rc=1 out=- error=settings-duplicate value=DUP'
 
 echo "=== the shape at the settings-file handle ==="
 # `label|path|env|expect`, resolving REVIEW_GATE_TN from $TMP with the handle
@@ -169,23 +168,35 @@ path_table() {
   local row label path env expect before=$((PASS + FAIL))
   for row in "$@"; do
     IFS='|' read -r label path env expect <<<"$row"
-    [[ -n "$expect" ]] || { printf 'path_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+    [[ -n "$expect" ]] || { printf 'test-failure=path-expectation value=%q\n' "$row" >&2; exit 1; }
     resolve "$TMP" "$path" "$env" REVIEW_GATE_TN dflt
     assert_eq "$(observe "$expect")" "$expect" "$label"
   done
-  [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "path_table: no row was asserted" >&2; exit 2; }
+  [[ "$((PASS + FAIL))" -gt "$before" ]] || { printf 'test-failure=path-assertions value=0\n' >&2; exit 2; }
 }
 path_table \
-  "a DIRECTORY settings path is a config error, not a silent default|$TMP/nonregular.dir||rc=1 out=- err~not+a+regular+file=true" \
-  "a DANGLING symlink settings path is a config error, not a silent default|$TMP/dangling.settings.toml||rc=1 out=- err~does+not+resolve=true" \
-  "a CYCLIC symlink settings path is a config error, not a silent default|$TMP/cycle-a.settings.toml||rc=1 out=- err~does+not+resolve=true" \
+  "a DIRECTORY settings path is a config error, not a silent default|$TMP/nonregular.dir||rc=1 out=- error=settings-type value=<tmp>/nonregular.dir" \
+  "a DANGLING symlink settings path is a config error, not a silent default|$TMP/dangling.settings.toml||rc=1 out=- error=settings-symlink value=<tmp>/dangling.settings.toml" \
+  "a CYCLIC symlink settings path is a config error, not a silent default|$TMP/cycle-a.settings.toml||rc=1 out=- error=settings-symlink value=<tmp>/cycle-a.settings.toml" \
   "a RESOLVING symlink reads its target|$TMP/link.settings.toml||rc=0 out=linked" \
   "/dev/null forces the built-in default|/dev/null||rc=0 out=dflt" \
   "an ABSENT plain file falls back to the default|$TMP/absent.settings.toml||rc=0 out=dflt" \
   "a dash-prefixed relative path reads its value (no option-injection fallback)|-e||rc=0 out=dashfile" \
   "an =-containing relative path reads its value (no awk-assignment fallback)|policy=on.toml||rc=0 out=eqfile"
+
+printf '\357\273\277[env]\nREVIEW_GATE_TN = "hidden"\n' >"$TMP/bom.settings.toml"
+RC=0
+OUT="$(rg_env_table "$TMP/bom.settings.toml" 2>"$TMP/err")" || RC=$?
+ERR="$(cat "$TMP/err")"
+assert_eq "$(observe "rc error value")" "rc=1 error=settings-bom value=<tmp>/bom.settings.toml" "a UTF-8 byte-order mark has the stable settings diagnostic"
+
+printf '[env]\nREVIEW_GATE_TN = "configured"\n' >"$TMP/awk.settings.toml"
+RC=0
+OUT="$({ awk() { return 7; }; rg_env_table "$TMP/awk.settings.toml"; } 2>"$TMP/err")" || RC=$?
+ERR="$(cat "$TMP/err")"
+assert_eq "$(observe "rc error value")" "rc=2 error=settings-awk value=<tmp>/awk.settings.toml" "an awk failure has the stable settings diagnostic"
 if [ "$(id -u)" -eq 0 ]; then
-  echo "  skip  unreadable-source rows need a non-root reader (chmod 000 cannot deny root)"
+  printf 'test-notice=permission-skip value=settings\n'
 else
   # grep exits 0/1 are measurements; anything else means the source could
   # not be read. -f and -e both pass on a mode-000 file, so only the read
@@ -194,9 +205,9 @@ else
   RC=0
   rg_settings_grep "^REVIEW_GATE_TN" "$TMP/unreadable.settings.toml" >/dev/null 2>"$TMP/err" || RC=$?
   ERR="$(cat "$TMP/err")"
-  assert_eq "$(observe "rc err~unreadable+while+resolving+a+setting")" "rc=2 err~unreadable+while+resolving+a+setting=true" "the read discipline reports 2 for an unreadable source, never 1 (no match)"
+  assert_eq "$(observe "rc error value")" "rc=2 error=settings-grep value=<tmp>/unreadable.settings.toml" "the read discipline reports 2 for an unreadable source, never 1 (no match)"
   path_table \
-    "an UNREADABLE settings path is a config error naming the file, not a silent default|$TMP/unreadable.settings.toml||rc=1 out=- err~unreadable.settings.toml:+unreadable+while+resolving+a+setting=true"
+    "an UNREADABLE settings path is a config error naming the file, not a silent default|$TMP/unreadable.settings.toml||rc=1 out=- error=settings-unreadable value=<tmp>/unreadable.settings.toml"
   chmod 600 "$TMP/unreadable.settings.toml"
   path_table \
     "the same file, readable, resolves its value|$TMP/unreadable.settings.toml||rc=0 out=configured"
@@ -223,7 +234,7 @@ world_table() {
   local row label root nested dotenv file name default env expect dir before=$((PASS + FAIL))
   for row in "$@"; do
     IFS='|' read -r label root nested dotenv file name default env expect <<<"$row"
-    [[ -n "$expect" ]] || { printf 'world_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
+    [[ -n "$expect" ]] || { printf 'test-failure=world-expectation value=%q\n' "$row" >&2; exit 1; }
     dir="$TMP/world.$((++WORLD_N))"
     mkdir -p "$dir/.kendex"
     write_spec "$dir/kendex.settings.toml" "$root"
@@ -233,7 +244,7 @@ world_table() {
     resolve "$dir" "$file" "$env" "$name" "$default"
     assert_eq "$(observe "$expect")" "$expect" "$label"
   done
-  [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "world_table: no row was asserted" >&2; exit 2; }
+  [[ "$((PASS + FAIL))" -gt "$before" ]] || { printf 'test-failure=world-assertions value=0\n' >&2; exit 2; }
 }
 ROOT='[env];REVIEW_GATE_TP = "root";REVIEW_GATE_MODE = "off"'
 world_table \
@@ -253,18 +264,18 @@ world_table \
   'an export-form dotenv assignment is recognized|[env];REVIEW_GATE_TP = "root"|-|export REVIEW_GATE_TD=42|unset|REVIEW_GATE_TD|dflt||rc=0 out=42' \
   "a single-quoted dotenv value with a trailing comment extracts the content|[env];REVIEW_GATE_TP = \"root\"|-|REVIEW_GATE_TD='19' # note|unset|REVIEW_GATE_TD|dflt||rc=0 out=19" \
   "an apostrophe in the trailing comment never leaks into a single-quoted value|[env];REVIEW_GATE_TP = \"root\"|-|REVIEW_GATE_TD='29' # don't raise|unset|REVIEW_GATE_TD|dflt||rc=0 out=29" \
-  'an adjacent segment after a quoted value fails loud, never truncates|[env];REVIEW_GATE_TP = "root"|-|REVIEW_GATE_TD="17".5|unset|REVIEW_GATE_TD|dflt||rc=1 out=- err~unsupported+syntax=true' \
-  'an adjacent # after a quoted value is a segment, not a comment: fails loud|[env];REVIEW_GATE_TP = "root"|-|REVIEW_GATE_TD="17"#note|unset|REVIEW_GATE_TD|dflt||rc=1 out=- err~unsupported+syntax=true' \
-  'a DIRECTORY at .env.local is a config error, not a skipped layer|[env];REVIEW_GATE_TP = "root"|-|DIR|unset|REVIEW_GATE_TD|dflt||rc=1 out=- err~not+a+regular+file=true' \
-  'a DANGLING symlink at .env.local is a config error, not a skipped layer|[env];REVIEW_GATE_TP = "root"|-|DANGLING|unset|REVIEW_GATE_TD|dflt||rc=1 out=- err~does+not+resolve=true' \
-  'a .env.local hit does not mask a malformed settings file|[env];DUP = "a";DUP = "b"|-|REVIEW_GATE_TV="local"|unset|REVIEW_GATE_TV|dflt||rc=1 out=- err~assigned+more+than+once=true' \
-  'an exported value does not mask a DIRECTORY at .env.local|[env];REVIEW_GATE_TP = "root"|-|DIR|unset|REVIEW_GATE_TV|dflt|REVIEW_GATE_TV=envwin|rc=1 out=- err~not+a+regular+file=true' \
+  'an adjacent segment after a quoted value fails loud, never truncates|[env];REVIEW_GATE_TP = "root"|-|REVIEW_GATE_TD="17".5|unset|REVIEW_GATE_TD|dflt||rc=1 out=- error=settings-dotenv value=REVIEW_GATE_TD' \
+  'an adjacent # after a quoted value is a segment, not a comment: fails loud|[env];REVIEW_GATE_TP = "root"|-|REVIEW_GATE_TD="17"#note|unset|REVIEW_GATE_TD|dflt||rc=1 out=- error=settings-dotenv value=REVIEW_GATE_TD' \
+  'a DIRECTORY at .env.local is a config error, not a skipped layer|[env];REVIEW_GATE_TP = "root"|-|DIR|unset|REVIEW_GATE_TD|dflt||rc=1 out=- error=settings-type value=.env.local' \
+  'a DANGLING symlink at .env.local is a config error, not a skipped layer|[env];REVIEW_GATE_TP = "root"|-|DANGLING|unset|REVIEW_GATE_TD|dflt||rc=1 out=- error=settings-symlink value=.env.local' \
+  'a .env.local hit does not mask a malformed settings file|[env];DUP = "a";DUP = "b"|-|REVIEW_GATE_TV="local"|unset|REVIEW_GATE_TV|dflt||rc=1 out=- error=settings-duplicate value=DUP' \
+  'an exported value does not mask a DIRECTORY at .env.local|[env];REVIEW_GATE_TP = "root"|-|DIR|unset|REVIEW_GATE_TV|dflt|REVIEW_GATE_TV=envwin|rc=1 out=- error=settings-type value=.env.local' \
   'REVIEW_GATE_MODE resolves past a broken .env.local it never reads|[env];REVIEW_GATE_MODE = "off"|-|DIR|unset|REVIEW_GATE_MODE|enforce||rc=0 out=off'
 if [ "$(id -u)" -eq 0 ]; then
-  echo "  skip  unreadable-.env.local row needs a non-root reader (chmod 000 cannot deny root)"
+  printf 'test-notice=permission-skip value=.env.local\n'
 else
   world_table \
-    'an UNREADABLE .env.local is a config error, not a skipped layer|[env];REVIEW_GATE_TP = "root"|-|UNREADABLE|unset|REVIEW_GATE_TD|dflt||rc=1 out=- err~unreadable+while+resolving+a+setting=true'
+    'an UNREADABLE .env.local is a config error, not a skipped layer|[env];REVIEW_GATE_TP = "root"|-|UNREADABLE|unset|REVIEW_GATE_TD|dflt||rc=1 out=- error=settings-unreadable value=.env.local'
 fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

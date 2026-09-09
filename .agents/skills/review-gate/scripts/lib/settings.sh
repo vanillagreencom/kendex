@@ -31,6 +31,19 @@
 # Scripts run from the repo root in CI (workflow working directory), so the
 # default settings path is relative.
 
+# Refusals start with the stable diagnostics protocol; source values remain
+# the resolver's stdout protocol and never include diagnostic text.
+rg_settings_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+if [ ! -r "$rg_settings_script_dir/diagnostics.sh" ]; then
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$rg_settings_script_dir/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  return 1
+fi
+. "$rg_settings_script_dir/diagnostics.sh" 2>/dev/null || {
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$rg_settings_script_dir/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  return 1
+}
+unset rg_settings_script_dir
+
 # A source is skipped only when it is ABSENT. A path that exists as
 # something else — directory, FIFO, socket, device — fails -f exactly like
 # an absent one, and a symlink that does not resolve fails -e as well as -f,
@@ -42,9 +55,9 @@ rg_settings_usable() { # PATH — 0 = readable-shaped or absent; 1 + ::error oth
   { [ -e "$1" ] || [ -L "$1" ]; } || return 0
   [ ! -f "$1" ] || return 0
   if [ ! -e "$1" ]; then
-    echo "::error::$1: settings source is a symlink that does not resolve (dangling target, cycle, or over-long chain); a source is skipped only when it is absent" >&2
+    rg_message error settings-symlink "$1" "::error::$1: settings source is a symlink that does not resolve (dangling target, cycle, or over-long chain); a source is skipped only when it is absent" >&2
   else
-    echo "::error::$1: settings source exists but is not a regular file (directory, FIFO, socket or device); a source is skipped only when it is absent" >&2
+    rg_message error settings-type "$1" "::error::$1: settings source exists but is not a regular file (directory, FIFO, socket or device); a source is skipped only when it is absent" >&2
   fi
   return 1
 }
@@ -54,8 +67,12 @@ rg_settings_usable() { # PATH — 0 = readable-shaped or absent; 1 + ::error oth
 # header or assignment it hides. Refuse the source whole, same discipline
 # as the header rule. Read via stdin so the path is never an operand.
 rg_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
+  if [ ! -r "$1" ]; then
+    rg_message error settings-unreadable "$1" "::error::$1: settings source is not readable" >&2
+    return 1
+  fi
   if [ "$(head -c 3 < "$1" 2>/dev/null)" = "$(printf '\357\273\277')" ]; then
-    echo "::error::$1: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
+    rg_message error settings-bom "$1" "::error::$1: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
     return 1
   fi
 }
@@ -66,9 +83,9 @@ rg_bom_guard() { # FILE — 0 = no leading BOM; 1 + ::error otherwise
 # resolved value.
 rg_settings_grep() { # REGEX FILE — matching lines on stdout; 1 = no match
   local status=0
-  grep -E -- "$1" "$2" || status=$?
+  grep -E -- "$1" "$2" 2>/dev/null || status=$?
   if [ "$status" -gt 1 ]; then
-    echo "::error::$2: unreadable while resolving a setting (grep exit $status)" >&2
+    rg_message error settings-grep "$2" "::error::$2: unreadable while resolving a setting (grep exit $status)" >&2
     return 2
   fi
   return "$status"
@@ -90,7 +107,7 @@ rg_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
   rg_bom_guard "$1" || return 1
   awk -v src="$1" '
     /^[[:space:]]*\[/ && !/^[[:space:]]*\[[A-Za-z0-9_.-]+\][[:space:]]*$/ {
-      printf "::error::%s:%d: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)\n", src, NR > "/dev/stderr"
+      printf "review-gate-error=settings-header value=%d\n::error::%s:%d: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)\n", NR, src, NR > "/dev/stderr"
       exit 3
     }
     /^[[:space:]]*\[/ {
@@ -114,7 +131,7 @@ rg_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
       sub(/[[:space:]]*=.*$/, "", key)
       if (key !~ /^[A-Za-z_][A-Za-z0-9_]*$/) { print; next }
       if (key in seen) {
-        printf "::error::%s: %s is assigned more than once in [env] (each key must be unique in the table)\n", src, key > "/dev/stderr"
+        printf "review-gate-error=settings-duplicate value=%s\n::error::%s: %s is assigned more than once in [env] (each key must be unique in the table)\n", key, src, key > "/dev/stderr"
         exit 3
       }
       seen[key] = 1
@@ -122,7 +139,7 @@ rg_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
       sub(/^[^=]*=[[:space:]]*/, "", value)
       sub(/[[:space:]]+$/, "", value)
       if (value !~ /^"[^"\\]*"[[:space:]]*(#.*)?$/) {
-        printf "::error::%s: unsupported syntax for %s (expected a single-line basic string, no double quote and no backslash: %s = \"value\")\n", src, key, key > "/dev/stderr"
+        printf "review-gate-error=settings-syntax value=%s\n::error::%s: unsupported syntax for %s (expected a single-line basic string, no double quote and no backslash: %s = \"value\")\n", key, src, key, key > "/dev/stderr"
         exit 3
       }
       print
@@ -130,7 +147,7 @@ rg_env_table() { # FILE — [env]-table lines on stdout; 1 + ::error on a
   ' < "$1" || status=$?
   [ "$status" -ne 3 ] || return 1
   if [ "$status" -ne 0 ]; then
-    echo "::error::$1: unreadable while resolving a setting (awk exit $status)" >&2
+    rg_message error settings-awk "$1" "::error::$1: unreadable while resolving a setting (awk exit $status)" >&2
     return 2
   fi
 }
@@ -192,7 +209,7 @@ rg_dotenv_layer() { # FILE NAME
   line="$(printf '%s\n' "$matches" | tail -n 1)"
   [ -n "$line" ] || return 1
   if ! val="$(rg_dotenv_value "${line#*=}")"; then
-    echo "::error::$file: unsupported syntax for $name (a quoted value must end at its closing quote, optionally followed by a comment)" >&2
+    rg_message error settings-dotenv "$name" "::error::$file: unsupported syntax for $name (a quoted value must end at its closing quote, optionally followed by a comment)" >&2
     return 2
   fi
   printf '%s' "$val"
@@ -206,7 +223,7 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   # misgrep nor inject pattern syntax.
   case "$name" in
     "" | [0-9]* | *[!A-Za-z0-9_]*)
-      echo "::error::rg_setting: invalid key name '$name' (shell identifier shape required: [A-Za-z_][A-Za-z0-9_]*)" >&2
+      rg_message error settings-key "$name" "::error::rg_setting: invalid key name '$name' (shell identifier shape required: [A-Za-z_][A-Za-z0-9_]*)" >&2
       return 1
       ;;
   esac
@@ -248,7 +265,7 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
         if [ -f ".env.local" ]; then
           rg_bom_guard ".env.local" || return 1
           if [ ! -r ".env.local" ]; then
-            echo "::error::.env.local: unreadable while resolving a setting (permission denied)" >&2
+            rg_message error settings-unreadable ".env.local" "::error::.env.local: unreadable while resolving a setting (permission denied)" >&2
             return 1
           fi
         fi
@@ -308,7 +325,7 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       # stale value on a security-sensitive path, so ambiguity is a
       # configuration error.
       if [ "$(printf '%s\n' "$matches" | grep -c .)" -gt 1 ]; then
-        echo "::error::$file: $name is assigned more than once in [env] (each key must be unique in the table)" >&2
+        rg_message error settings-duplicate "$name" "::error::$file: $name is assigned more than once in [env] (each key must be unique in the table)" >&2
         return 1
       fi
       # The first line in-shell, never `printf | head -n 1`: head closes the
@@ -324,7 +341,7 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       # exact even with a trailing TOML comment (accepted); anything else is
       # a configuration error.
       if ! printf '%s\n' "$line" | grep -Eq -- "^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"[^\"\\\\]*\"[[:space:]]*(#.*)?\$"; then
-        echo "::error::$file: unsupported syntax for $name (expected a single-line basic string with no '\"' and no '\\': $name = \"value\"; list keys pack items with ';' separators)" >&2
+        rg_message error settings-syntax "$name" "::error::$file: unsupported syntax for $name (expected a single-line basic string with no '\"' and no '\\': $name = \"value\"; list keys pack items with ';' separators)" >&2
         return 1
       fi
       val="$(printf '%s\n' "$line" | sed -n "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*\$/\1/p")"

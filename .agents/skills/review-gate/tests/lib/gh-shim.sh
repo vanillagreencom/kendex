@@ -34,7 +34,7 @@ while [ $# -gt 0 ]; do
           # to prevent.
           case "$graphql_after" in
             '' | *[!A-Za-z0-9_-]*)
-              echo "shim: cursor value unusable as a fixture key (allowed: non-empty A-Za-z0-9_-): $graphql_after" >&2
+              printf 'gh-shim-error=cursor value=%q\n' "$graphql_after" >&2
               exit 92
               ;;
           esac
@@ -56,7 +56,7 @@ case "$url" in
   *"/issues/"*"/comments"*) name=comments ;;
   graphql)       name=graphql ;;
   *"/pulls/"*)   name=pull ;;
-  *) echo "shim: unexpected request: $url" >&2; exit 90 ;;
+  *) printf 'gh-shim-error=request value=%q\n' "$url" >&2; exit 90 ;;
 esac
 echo "$url" >>"$GH_SHIM_FIXTURES/.urls.log"
 if [ -n "${GH_SHIM_FAIL:-}" ] && [ "$GH_SHIM_FAIL" = "$name" ]; then
@@ -66,11 +66,11 @@ if [ -n "${GH_SHIM_FAIL:-}" ] && [ "$GH_SHIM_FAIL" = "$name" ]; then
     [ -f "$counter" ] && count="$(cat "$counter")"
     if [ "$count" -lt "$GH_SHIM_FAIL_TIMES" ]; then
       echo $((count + 1)) >"$counter"
-      echo "shim: simulated API failure for $name ($((count + 1))/$GH_SHIM_FAIL_TIMES)" >&2
+      printf 'gh-shim-error=api value=%q\n' "$name:$((count + 1))/$GH_SHIM_FAIL_TIMES" >&2
       exit 1
     fi
   else
-    echo "shim: simulated API failure for $name" >&2
+    printf 'gh-shim-error=api value=%q\n' "$name" >&2
     exit 1
   fi
 fi
@@ -91,10 +91,10 @@ elif [ "$name" = "graphql" ] && [ -n "$graphql_after" ]; then
   # fixture would silently re-serve page one — a deep-walk case missing one
   # of its files (a valid-looking cursor with a fixture gap) must refuse,
   # not fabricate coverage.
-  echo "shim: follow-up page requested (after=$graphql_after) but no graphql.cursor-$graphql_after.json or graphql.page2.json fixture exists" >&2
+  printf 'gh-shim-error=page value=%q\n' "$graphql_after" >&2
   exit 93
 fi
-[ -f "$file" ] || { echo "shim: no fixture $file" >&2; exit 91; }
+[ -f "$file" ] || { printf 'gh-shim-error=fixture value=%q\n' "$file" >&2; exit 91; }
 if [ -n "$filter" ]; then jq -r "$filter" <"$file"; else cat "$file"; fi
 if [ "$paginate" = "1" ] && [ -f "$GH_SHIM_FIXTURES/$name.page2.json" ] && [ -z "$filter" ]; then
   cat "$GH_SHIM_FIXTURES/$name.page2.json"

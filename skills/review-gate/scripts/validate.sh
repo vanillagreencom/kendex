@@ -10,8 +10,24 @@
 # carry-forward exclusions still match something in this tree, and does the
 # adopted writer workflow still meet the template's contract.
 #
+# Report protocol: ok/FAIL/note check=KEY value=VALUE, then indented
+# explanation. The workflow peer uses the same protocol; only verdict lines
+# count toward the summary. Human explanation is not parsed.
 # The authoritative contract is print_usage below: run with --help.
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || {
+  printf 'review-gate-error=script-directory value=%q\n' "${BASH_SOURCE[0]}" >&2
+  exit 2
+}
+if [ ! -r "$SCRIPT_DIR/lib/diagnostics.sh" ]; then
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$SCRIPT_DIR/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 2
+fi
+. "$SCRIPT_DIR/lib/diagnostics.sh" 2>/dev/null || {
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$SCRIPT_DIR/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 2
+}
 
 print_usage() {
   cat <<'USAGE'
@@ -22,9 +38,11 @@ inside the repository; it resolves the repository root itself and reads the
 committed settings from there.
 
 Output: one verdict line per check.
-  ok    the check held
-  FAIL  this repo's configuration or wiring is wrong, and the line says how
-  note  informational — a source that is off, or a check nothing exercised
+  ok check=KEY value=VALUE    the check held
+  FAIL check=KEY value=VALUE  configuration or wiring is wrong
+  note check=KEY value=VALUE  informational result
+VALUE uses Bash printf %q escaping. Indented explanation follows each
+verdict; consumers do not parse it.
 
 Exit codes:
   0  every check held
@@ -65,21 +83,20 @@ if [ "$#" -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
   exit 0
 fi
 if [ "$#" -gt 0 ]; then
-  echo "validate.sh: unknown argument list ($# argument(s), first: '${1}') — no positional arguments (run --help)" >&2
+  rg_message error unknown-arguments "$#" "validate.sh: unknown argument list ($# argument(s), first: '${1}') — no positional arguments (run --help)" >&2
   exit 2
 fi
 
-die() { # MESSAGE — the check could not run at all
-  echo "::error::review-gate validate: $1" >&2
+die() { # CODE VALUE MESSAGE
+  rg_message error "$@" >&2
   exit 2
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || die "could not resolve this script's directory"
-SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)" || die "could not resolve the skill directory"
+SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)" || die skill-directory "$SCRIPT_DIR" "could not resolve the skill directory"
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" ||
-  die "not inside a git repository — the tracked-path and workflow checks have nothing to read"
-[ -n "$REPO_ROOT" ] || die "git named no repository root"
+  die repository "$PWD" "not inside a git repository — the tracked-path and workflow checks have nothing to read"
+[ -n "$REPO_ROOT" ] || die repository-empty "$PWD" "git named no repository root"
 
 # Resolved BEFORE the cd: a relative override means relative to where the
 # caller stood, and silently re-anchoring it to the repository root would
@@ -92,13 +109,12 @@ if [ -n "${REVIEW_GATE_SETTINGS_FILE:-}" ] && [ "$REVIEW_GATE_SETTINGS_FILE" != 
   export REVIEW_GATE_SETTINGS_FILE
 fi
 
-cd "$REPO_ROOT" || die "could not enter the repository root $REPO_ROOT"
+cd "$REPO_ROOT" || die repository-enter "$REPO_ROOT" "could not enter the repository root $REPO_ROOT"
 
 PASS=0
 FAILED=0
-ok() { PASS=$((PASS + 1)); printf 'ok    %s\n' "$1"; }
-bad() { FAILED=$((FAILED + 1)); printf 'FAIL  %s\n' "$1"; }
-note() { printf 'note  %s\n' "$1"; }
+ok() { PASS=$((PASS + 1)); rg_report ok "$@"; }
+bad() { FAILED=$((FAILED + 1)); rg_report FAIL "$@"; }
 group() { printf '\n== %s ==\n' "$1"; }
 
 # --------------------------------------------------------------- runtime ---
@@ -115,10 +131,10 @@ group "runtime"
 SKILL_REL="${SKILL_DIR#"$REPO_ROOT"/}"
 for rel in scripts/review-predicate.sh scripts/review-writer.sh \
   scripts/pr-watch.sh scripts/validate.sh \
-  scripts/validate-workflow.sh scripts/lib/settings.sh; do
+  scripts/validate-workflow.sh scripts/lib/settings.sh scripts/lib/diagnostics.sh; do
   path="$SKILL_DIR/$rel"
   if [ ! -f "$path" ]; then
-    bad "$rel is missing from the installed skill ($SKILL_DIR) — re-run \`kendex refresh\` and commit the result"
+    bad runtime-missing "$rel" "$rel is missing from the installed skill ($SKILL_DIR) — re-run \`kendex refresh\` and commit the result"
     continue
   fi
   # A tracked SYMLINK is not tracked content, and every check below follows
@@ -126,27 +142,27 @@ for rel in scripts/review-predicate.sh scripts/review-writer.sh \
   # fresh checkout holds the link itself, pointing at whatever is there —
   # nothing, if the target was untracked or outside the repository.
   if [ -L "$path" ]; then
-    bad "$rel is a SYMLINK — presence, syntax and mode below would answer for its target, while CI checks out the link and resolves whatever sits at the other end. Commit the file itself"
+    bad runtime-symlink "$rel" "$rel is a SYMLINK — presence, syntax and mode below would answer for its target, while CI checks out the link and resolves whatever sits at the other end. Commit the file itself"
     continue
   fi
   if ! bash -n "$path" 2>/dev/null; then
-    bad "$rel does not parse under \`bash -n\` — the install is truncated or edited; re-run \`kendex refresh\`"
+    bad runtime-syntax "$rel" "$rel does not parse under \`bash -n\` — the install is truncated or edited; re-run \`kendex refresh\`"
     continue
   fi
   # PRESENT is not COMMITTED, the same split the settings check closes: an
   # untracked engine passes every check here and does not exist in Actions,
   # where the writer then fails to execute on every leg.
   if ! git ls-files --error-unmatch -- "$SKILL_REL/$rel" >/dev/null 2>&1; then
-    bad "$rel is present but UNTRACKED — CI checks out tracked files only, so the engine validated here is absent there and the writer cannot run (\`git add $SKILL_REL/$rel\`)"
+    bad runtime-untracked "$rel" "$rel is present but UNTRACKED — CI checks out tracked files only, so the engine validated here is absent there and the writer cannot run (\`git add $SKILL_REL/$rel\`)"
     continue
   fi
   case "$rel" in
-    */lib/*) ok "$rel is present, tracked and parses" ;;
+    */lib/*) ok runtime-ready "$rel" "$rel is present, tracked and parses" ;;
     *)
       if [ -x "$path" ]; then
-        ok "$rel is present, tracked, executable and parses"
+        ok runtime-ready "$rel" "$rel is present, tracked, executable and parses"
       else
-        bad "$rel is not executable — CI runs it directly, so a lost mode bit reds the writer on every leg (\`git update-index --chmod=+x $SKILL_REL/$rel\`)"
+        bad runtime-mode "$rel" "$rel is not executable — CI runs it directly, so a lost mode bit reds the writer on every leg (\`git update-index --chmod=+x $SKILL_REL/$rel\`)"
       fi
       ;;
   esac
@@ -162,10 +178,10 @@ SETTINGS_FILE="${REVIEW_GATE_SETTINGS_FILE:-kendex.settings.toml}"
 # drift from what the engine documents.
 EXAMPLE="$SKILL_DIR/kendex.settings.toml.example"
 [ -f "$EXAMPLE" ] ||
-  die "$EXAMPLE is missing — it is the ledger of known keys, and without it an unknown-key scan would pass everything"
+  die ledger-missing "$EXAMPLE" "$EXAMPLE is missing — it is the ledger of known keys, and without it an unknown-key scan would pass everything"
 KNOWN_KEYS="$(sed -n 's/^[[:space:]]*\([A-Z][A-Z0-9_]*\)[[:space:]]*=.*/\1/p' "$EXAMPLE")"
 grep -q '^REVIEW_GATE_CONTEXT$' <<<"$KNOWN_KEYS" ||
-  die "$EXAMPLE names no REVIEW_GATE_CONTEXT assignment — the ledger is unreadable and the unknown-key scan would pass everything"
+  die ledger-empty "$EXAMPLE" "$EXAMPLE names no REVIEW_GATE_CONTEXT assignment — the ledger is unreadable and the unknown-key scan would pass everything"
 
 # Per-invocation seams, never repo settings: assigning one in a committed
 # file advertises a caller handle as configuration, and a settings file
@@ -192,13 +208,13 @@ scan_settings_source() { # FILE
   # REVIEW_GATE_SETTINGS_FILE is a caller handle pointing anywhere, so it is
   # exempt and says so.
   if [ -n "${REVIEW_GATE_SETTINGS_FILE:-}" ]; then
-    note "$sf is present (named by REVIEW_GATE_SETTINGS_FILE, so it is not required to be tracked)"
+    rg_report note settings-explicit "$sf" "$sf is present (named by REVIEW_GATE_SETTINGS_FILE, so it is not required to be tracked)"
   elif [ -L "$sf" ]; then
-    bad "$sf is a SYMLINK — everything below would read its target's bytes, while CI checks out the link itself and the engine resolves whatever sits there. Commit the real file, or name the shared one with REVIEW_GATE_SETTINGS_FILE, which is the handle for a path outside this repository"
+    bad settings-symlink "$sf" "$sf is a SYMLINK — everything below would read its target's bytes, while CI checks out the link itself and the engine resolves whatever sits there. Commit the real file, or name the shared one with REVIEW_GATE_SETTINGS_FILE, which is the handle for a path outside this repository"
   elif git ls-files --error-unmatch -- "$sf" >/dev/null 2>&1; then
-    ok "$sf is present and tracked"
+    ok settings-tracked "$sf" "$sf is present and tracked"
   else
-    bad "$sf is present but UNTRACKED — CI checks out tracked files only, so every value below is validated here and absent there; the gate would run on the built-in defaults. \`git add $sf\`"
+    bad settings-untracked "$sf" "$sf is present but UNTRACKED — CI checks out tracked files only, so every value below is validated here and absent there; the gate would run on the built-in defaults. \`git add $sf\`"
   fi
   # INVERTED, after four spellings arrived one at a time — quoted, dotted,
   # quoted-dotted, and a key nested in an inline table. Enumerate what the
@@ -265,24 +281,24 @@ scan_settings_source() { # FILE
 $assigned
 EOF_ASSIGNED
   if [ -n "$unknown" ]; then
-    bad "$sf assigns REVIEW_GATE_* key(s) the engine never reads: $unknown — a misspelled key resolves as unset, so the value written there is ignored and the gate runs on the default (key table: references/settings.md)"
+    bad settings-unknown "$sf:$unknown" "$sf assigns REVIEW_GATE_* key(s) the engine never reads: $unknown — a misspelled key resolves as unset, so the value written there is ignored and the gate runs on the default (key table: references/settings.md)"
   else
-    ok "every REVIEW_GATE_* key assigned in $sf is one the engine reads"
+    ok settings-known "$sf" "every REVIEW_GATE_* key assigned in $sf is one the engine reads"
   fi
   if [ -n "$seams" ]; then
-    bad "$sf assigns per-invocation env seam(s): $seams — these are caller handles, never repo settings; delete the assignment(s)"
+    bad settings-seam "$seams" "$sf assigns per-invocation env seam(s): $seams — these are caller handles, never repo settings; delete the assignment(s)"
   else
-    ok "no per-invocation env seam is assigned as a repo setting"
+    ok settings-no-seams "$sf" "no per-invocation env seam is assigned as a repo setting"
   fi
   if [ -n "$repo_vars" ]; then
-    bad "$sf assigns $repo_vars as a setting — it is a GitHub REPOSITORY VARIABLE (Settings → Secrets and variables → Actions), read by a workflow expression before any checkout exists, so nothing reads it here; set it in the repository's variables instead"
+    bad settings-repository-variable "$repo_vars" "$sf assigns $repo_vars as a setting — it is a GitHub REPOSITORY VARIABLE (Settings → Secrets and variables → Actions), read by a workflow expression before any checkout exists, so nothing reads it here; set it in the repository's variables instead"
   else
-    ok "no GitHub repository variable is assigned as a repo setting"
+    ok settings-no-repository-variables "$sf" "no GitHub repository variable is assigned as a repo setting"
   fi
   if [ -n "$outside" ]; then
-    bad "$sf assigns REVIEW_GATE_* key(s) outside the [env] table: $outside — the loader reads only [env], so the value written there is ignored and the gate runs on the default; move the assignment(s) under the [env] header"
+    bad settings-outside-env "$outside" "$sf assigns REVIEW_GATE_* key(s) outside the [env] table: $outside — the loader reads only [env], so the value written there is ignored and the gate runs on the default; move the assignment(s) under the [env] header"
   else
-    ok "every REVIEW_GATE_* assignment sits inside the [env] table"
+    ok settings-env-table "$sf" "every REVIEW_GATE_* assignment sits inside the [env] table"
   fi
   # The engine reads REVIEW_GATE_MODE from env and the COMMITTED root file
   # only, so a nested assignment of it is read by nothing: the mode set
@@ -290,9 +306,9 @@ EOF_ASSIGNED
   # as a misspelled key, pointed at the file the engine does read.
   if [ "$sf" = ".kendex/settings.toml" ]; then
     if printf '%s\n' "$assigned" | grep -qx "REVIEW_GATE_MODE"; then
-      bad "$sf assigns REVIEW_GATE_MODE, which the engine never reads from this file — that key resolves from env and the committed kendex.settings.toml only; move the assignment to kendex.settings.toml"
+      bad settings-mode-source "$sf" "$sf assigns REVIEW_GATE_MODE, which the engine never reads from this file — that key resolves from env and the committed kendex.settings.toml only; move the assignment to kendex.settings.toml"
     else
-      ok "REVIEW_GATE_MODE is not assigned in the machine-local file the engine skips for it"
+      ok settings-mode-source "$sf" "REVIEW_GATE_MODE is not assigned in the machine-local file the engine skips for it"
     fi
   fi
   # Headers decide which assignments load, so a header shape the loader
@@ -302,25 +318,25 @@ EOF_ASSIGNED
   # findings about lines below a malformed header describe the corrupted
   # read, so fix the header first.
   if [ -n "$badheaders" ]; then
-    bad "$sf has table header(s) the loader cannot parse (a header is a lone [name] on its own line, with no comment and no second bracket):
+    bad settings-header "$sf" "$sf has table header(s) the loader cannot parse (a header is a lone [name] on its own line, with no comment and no second bracket):
 $(printf '%s\n' "$badheaders" | sed 's/^/        /')"
   else
-    ok "every table header parses as a lone [name]"
+    ok settings-headers "$sf" "every table header parses as a lone [name]"
   fi
   # Every settings reader refuses a BOM-prefixed file whole (lib/settings.sh
   # rg_bom_guard): the BOM is neither whitespace nor `[` nor a key
   # character, so the first line would misclassify. Findings below a BOM
   # describe that corrupted read — remove the BOM first.
   if [ "$(head -c 3 < "$sf" 2>/dev/null)" = "$(printf '\357\273\277')" ]; then
-    bad "$sf starts with a UTF-8 byte-order mark; remove it (every settings reader refuses the file whole)"
+    bad settings-bom "$sf" "$sf starts with a UTF-8 byte-order mark; remove it (every settings reader refuses the file whole)"
   else
-    ok "no UTF-8 byte-order mark before the first line"
+    ok settings-no-bom "$sf" "no UTF-8 byte-order mark before the first line"
   fi
   if [ -n "$(printf '%s' "$unread" | tr -d '[:space:]')" ]; then
-    bad "$sf names REVIEW_GATE_ in a shape the loader does not read. The loader reads ONE shape — a bare KEY at the start of its own line, followed by its own \`=\` — and everything else is unsupported syntax read by nothing, so the gate runs on the built-in default. This is deliberately unforgiving, string values included: every exception this check has carried became a place for the next spelling to hide. Rewrite, or reword a mention, on the line(s) below:
+    bad settings-key-shape "$sf:$unread" "$sf names REVIEW_GATE_ in a shape the loader does not read. The loader reads ONE shape — a bare KEY at the start of its own line, followed by its own \`=\` — and everything else is unsupported syntax read by nothing, so the gate runs on the built-in default. This is deliberately unforgiving, string values included: every exception this check has carried became a place for the next spelling to hide. Rewrite, or reword a mention, on the line(s) below:
 $(printf '%s\n' "$unread" | sed 's/^/        /')"
   else
-    ok "every REVIEW_GATE_* assignment uses the bare key name the loader reads"
+    ok settings-key-shapes "$sf" "every REVIEW_GATE_* assignment uses the bare key name the loader reads"
   fi
 }
 
@@ -335,19 +351,19 @@ $(printf '%s\n' "$unread" | sed 's/^/        /')"
 scan_source() { # FILE [ABSENT_NOTE]
   if [ -f "$1" ]; then
     if [ ! -r "$1" ]; then
-      bad "$1 exists but cannot be READ (permission denied); nothing below was checked against it"
+      bad settings-unreadable "$1" "$1 exists but cannot be READ (permission denied); nothing below was checked against it"
       return 0
     fi
     scan_settings_source "$1"
   elif [ -e "$1" ] || [ -L "$1" ]; then
-    bad "$1 exists but is not a file the loader can read (directory, FIFO, socket, device, or a symlink that does not resolve); a source is skipped only when it is ABSENT"
+    bad settings-file-type "$1" "$1 exists but is not a file the loader can read (directory, FIFO, socket, device, or a symlink that does not resolve); a source is skipped only when it is ABSENT"
   elif [ -n "${2:-}" ]; then
-    note "$2"
+    rg_report note settings-absent "$1" "$2"
   fi
 }
 
 if [ "$SETTINGS_FILE" = "/dev/null" ]; then
-  note "REVIEW_GATE_SETTINGS_FILE=/dev/null — settings are forced to built-in defaults; no committed file is being validated"
+  rg_report note settings-defaults "$SETTINGS_FILE" "REVIEW_GATE_SETTINGS_FILE=/dev/null — settings are forced to built-in defaults; no committed file is being validated"
 else
   scan_source "$SETTINGS_FILE" \
     "$SETTINGS_FILE is absent — every key resolves to its built-in default, which is a valid install carrying no per-repo values"
@@ -378,14 +394,14 @@ EOF_SCRUB
 
 predicate="$SKILL_DIR/scripts/review-predicate.sh"
 if [ ! -x "$predicate" ]; then
-  bad "cannot validate settings values: scripts/review-predicate.sh is missing or not executable (the runtime group above says which)"
+  bad settings-predicate "scripts/review-predicate.sh" "cannot validate settings values: scripts/review-predicate.sh is missing or not executable (the runtime group above says which)"
 else
   cfg_rc=0
   cfg_err="$("${scrub[@]}" "$predicate" --check-config 2>&1 >/dev/null)" || cfg_rc=$?
   if [ "$cfg_rc" -eq 0 ]; then
-    ok "every committed setting resolves to a legal value (review-predicate.sh --check-config)"
+    ok settings-values "0" "every committed setting resolves to a legal value (review-predicate.sh --check-config)"
   else
-    bad "a committed setting is not legal:"
+    bad settings-values "$cfg_rc" "a committed setting is not legal:"
     printf '%s\n' "$cfg_err" | sed 's/^/        /'
   fi
 fi
@@ -394,7 +410,7 @@ fi
 
 group "carry-forward exclusions"
 
-CARRY_TMP="$(mktemp -d)" || die "could not create a scratch directory"
+CARRY_TMP="$(mktemp -d)" || die scratch "${TMPDIR:-/tmp}" "could not create a scratch directory"
 trap 'rm -rf "$CARRY_TMP"' EXIT
 
 # The loader's DIAGNOSTIC is kept and a refusal is a finding: collapsing a
@@ -412,7 +428,7 @@ carry_setting() { # KEY — sets CARRY_VALUE; a refusal is a FAIL row, not ""
   [ "$rc" -eq 0 ] && return 0
   CARRY_LOAD_FAILED=1
   CARRY_VALUE=""
-  bad "$SETTINGS_FILE: $1 could not be read — a refused load is a configuration error, never an empty value:
+  bad carry-load "$1" "$SETTINGS_FILE: $1 could not be read — a refused load is a configuration error, never an empty value:
 $(sed 's/^/        /' "$CARRY_TMP/err")"
   return 0
 }
@@ -429,9 +445,9 @@ carry_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC
 CARRY_PROPHYLACTIC="$CARRY_VALUE"
 
 if [ "$CARRY_LOAD_FAILED" -eq 1 ]; then
-  note "the exclusion checks below are SKIPPED — a value above could not be read, and checking the empty list it would otherwise default to reports a clean sheet"
+  rg_report note carry-skipped "$CARRY_LOAD_FAILED" "the exclusion checks below are SKIPPED — a value above could not be read, and checking the empty list it would otherwise default to reports a clean sheet"
 elif [ -z "$CARRY_FORWARD" ]; then
-  note "REVIEW_GATE_CARRY_FORWARD is empty — carry-forward is off and these exclusions are inert; they are checked anyway, because dead config bites on the day the class is turned on"
+  rg_report note carry-disabled "REVIEW_GATE_CARRY_FORWARD" "REVIEW_GATE_CARRY_FORWARD is empty — carry-forward is off and these exclusions are inert; they are checked anyway, because dead config bites on the day the class is turned on"
 fi
 
 TRACKED=()
@@ -441,7 +457,7 @@ while IFS= read -r -d '' path; do
   TRACKED_TOTAL=$((TRACKED_TOTAL + 1))
 done < <(git ls-files -z)
 [ "$TRACKED_TOTAL" -gt 0 ] ||
-  die "git tracks no files here — a dead-glob verdict would be unreachable and every exclusion would pass"
+  die tracked-empty "$REPO_ROOT" "git tracks no files here — a dead-glob verdict would be unreachable and every exclusion would pass"
 
 # Matching is the PREDICATE's: an unquoted case pattern, so '*' spans '/'
 # exactly as fnmatch-without-FNM_PATHNAME does at gate time. A checker
@@ -468,34 +484,34 @@ GLOB_FIRST=""
 GLOB_TOTAL=0
 glob_hits '*'
 [ -n "$GLOB_FIRST" ] && [ "$GLOB_TOTAL" -eq "$TRACKED_TOTAL" ] ||
-  die "the glob matcher did not match every tracked path against '*' — the universal and dead verdicts below are unreachable"
+  die glob-universal "$GLOB_TOTAL" "the glob matcher did not match every tracked path against '*' — the universal and dead verdicts below are unreachable"
 glob_hits '__review-gate-validate-no-such-path__/*'
 [ -z "$GLOB_FIRST" ] && [ "$GLOB_TOTAL" -eq 0 ] ||
-  die "the glob matcher matched a planted impossible path — every dead glob below would pass silently"
+  die glob-empty "$GLOB_TOTAL" "the glob matcher matched a planted impossible path — every dead glob below would pass silently"
 
 exclude_items="$(list_items "$CARRY_EXCLUDE")"
 prophylactic_items="$(list_items "$CARRY_PROPHYLACTIC")"
 
 if [ "$CARRY_LOAD_FAILED" -eq 1 ]; then : # the refusal above said why
 elif [ -z "$exclude_items" ]; then
-  note "REVIEW_GATE_CARRY_FORWARD_EXCLUDE is empty — no exclusion globs to check"
+  rg_report note carry-exclusions-empty "REVIEW_GATE_CARRY_FORWARD_EXCLUDE" "REVIEW_GATE_CARRY_FORWARD_EXCLUDE is empty — no exclusion globs to check"
 else
   while IFS= read -r pat; do
     [ -z "$pat" ] && continue
     glob_hits "$pat"
     if [ -z "$GLOB_FIRST" ]; then
       if grep -qxF -- "$pat" <<<"$prophylactic_items"; then
-        note "carry-exclude '$pat' matches no tracked path and is DECLARED prophylactic"
+        rg_report note carry-prophylactic "$pat" "carry-exclude '$pat' matches no tracked path and is DECLARED prophylactic"
       else
-        bad "carry-exclude '$pat' matches no tracked path — a typo or a wrong anchor is dead config that excludes nothing (declare it in REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC if it deliberately guards paths that do not exist yet)"
+        bad carry-unmatched "$pat" "carry-exclude '$pat' matches no tracked path — a typo or a wrong anchor is dead config that excludes nothing (declare it in REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC if it deliberately guards paths that do not exist yet)"
       fi
       continue
     fi
     if [ "$GLOB_TOTAL" -eq "$TRACKED_TOTAL" ]; then
-      bad "carry-exclude '$pat' matches EVERY tracked path — no delta could ever carry; narrow the exclusion, or turn REVIEW_GATE_CARRY_FORWARD off instead of excluding everything"
+      bad carry-universal "$pat" "carry-exclude '$pat' matches EVERY tracked path — no delta could ever carry; narrow the exclusion, or turn REVIEW_GATE_CARRY_FORWARD off instead of excluding everything"
       continue
     fi
-    ok "carry-exclude '$pat' matches $GLOB_TOTAL tracked path(s), e.g. $GLOB_FIRST"
+    ok carry-matched "$pat" "carry-exclude '$pat' matches $GLOB_TOTAL tracked path(s), e.g. $GLOB_FIRST"
   done <<EOF_EXCLUDE
 $exclude_items
 EOF_EXCLUDE
@@ -506,20 +522,20 @@ fi
 # live exclusion out of the checks above.
 if [ "$CARRY_LOAD_FAILED" -eq 1 ]; then : # ditto
 elif [ -z "$prophylactic_items" ]; then
-  note "REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC is empty — no declarations to reconcile"
+  rg_report note carry-declarations-empty "REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC" "REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC is empty — no declarations to reconcile"
 else
   while IFS= read -r pat; do
     [ -z "$pat" ] && continue
     if ! grep -qxF -- "$pat" <<<"$exclude_items"; then
-      bad "prophylactic declaration '$pat' is not an entry in REVIEW_GATE_CARRY_FORWARD_EXCLUDE — a waiver without its glob is stale config; remove the declaration, or restore the exclusion it waives"
+      bad carry-declaration-missing "$pat" "prophylactic declaration '$pat' is not an entry in REVIEW_GATE_CARRY_FORWARD_EXCLUDE — a waiver without its glob is stale config; remove the declaration, or restore the exclusion it waives"
       continue
     fi
     glob_hits "$pat"
     if [ -n "$GLOB_FIRST" ]; then
-      bad "prophylactic declaration '$pat' no longer holds: the glob now matches '$GLOB_FIRST' — remove the declaration so the live exclusion is checked"
+      bad carry-declaration-matched "$pat" "prophylactic declaration '$pat' no longer holds: the glob now matches '$GLOB_FIRST' — remove the declaration so the live exclusion is checked"
       continue
     fi
-    ok "prophylactic declaration '$pat' is an active exclusion and still matches nothing"
+    ok carry-declaration "$pat" "prophylactic declaration '$pat' is an active exclusion and still matches nothing"
   done <<EOF_PROPHYLACTIC
 $prophylactic_items
 EOF_PROPHYLACTIC
@@ -535,19 +551,28 @@ group "adopted writer workflow"
 # check that ran.
 workflow_tool="$SKILL_DIR/scripts/validate-workflow.sh"
 if [ ! -x "$workflow_tool" ]; then
-  bad "cannot check the adopted workflow: scripts/validate-workflow.sh is missing or not executable (the runtime group above says which)"
+  bad workflow-tool "scripts/validate-workflow.sh" "cannot check the adopted workflow: scripts/validate-workflow.sh is missing or not executable (the runtime group above says which)"
 else
   wf_rc=0
   wf_out="$("$workflow_tool")" || wf_rc=$?
   printf '%s\n' "$wf_out"
   [ "$wf_rc" -le 1 ] ||
-    die "the adopted-workflow check could not run (validate-workflow.sh exit $wf_rc); its ::error above says why"
+    die workflow-exit "$wf_rc" "the adopted-workflow check could not run (validate-workflow.sh exit $wf_rc); its ::error above says why"
   wf_ok=0
   wf_bad=0
+  wf_malformed=0
   while IFS= read -r line; do
     case "$line" in
-      ok*) wf_ok=$((wf_ok + 1)) ;;
-      FAIL*) wf_bad=$((wf_bad + 1)) ;;
+      ok\ check=* | FAIL\ check=*)
+        if [[ "$line" =~ ^ok[[:space:]]check=[^[:space:]]+[[:space:]]value=[^[:space:]]+$ ]]; then
+          wf_ok=$((wf_ok + 1))
+        elif [[ "$line" =~ ^FAIL[[:space:]]check=[^[:space:]]+[[:space:]]value=[^[:space:]]+$ ]]; then
+          wf_bad=$((wf_bad + 1))
+        else
+          wf_malformed=$((wf_malformed + 1))
+        fi
+        ;;
+      ok* | FAIL*) wf_malformed=$((wf_malformed + 1)) ;;
     esac
   done <<EOF_WF
 $wf_out
@@ -561,12 +586,14 @@ EOF_WF
   # exited: a truncated or replaced file that parses and exits 0 passes the
   # runtime group, folds zero counts, and leaves this summary speaking for a
   # check that never ran.
-  if [ "$((wf_ok + wf_bad))" -eq 0 ]; then
-    bad "the adopted-workflow check printed no verdict at all — it inspected nothing, so the workflow is unchecked here whatever its exit code said; re-run \`kendex refresh\` and commit the result"
+  if [ "$wf_malformed" -gt 0 ]; then
+    bad workflow-verdict-malformed "$wf_malformed" "the adopted-workflow check printed $wf_malformed malformed verdict record(s) — only 'ok check=KEY value=VALUE' and 'FAIL check=KEY value=VALUE' are verdicts"
+  elif [ "$((wf_ok + wf_bad))" -eq 0 ]; then
+    bad workflow-no-verdict "$wf_rc" "the adopted-workflow check printed no verdict at all — it inspected nothing, so the workflow is unchecked here whatever its exit code said; re-run \`kendex refresh\` and commit the result"
   elif [ "$wf_rc" -eq 1 ] && [ "$wf_bad" -eq 0 ]; then
-    bad "the adopted-workflow check exited 1 without printing a single FAIL verdict — it failed in a way it could not name, so nothing here knows whether the workflow was checked at all; re-run \`kendex refresh\` and commit the result"
+    bad workflow-no-failure "$wf_rc" "the adopted-workflow check exited 1 without printing a single FAIL verdict — it failed in a way it could not name, so nothing here knows whether the workflow was checked at all; re-run \`kendex refresh\` and commit the result"
   elif [ "$wf_rc" -eq 0 ] && [ "$wf_bad" -gt 0 ]; then
-    bad "the adopted-workflow check printed $wf_bad FAIL verdict(s) but exited 0 — its verdicts and its exit code disagree, so neither can be trusted"
+    bad workflow-status-mismatch "$wf_rc" "the adopted-workflow check printed $wf_bad FAIL verdict(s) but exited 0 — its verdicts and its exit code disagree, so neither can be trusted"
   fi
   PASS=$((PASS + wf_ok))
   FAILED=$((FAILED + wf_bad))
@@ -574,8 +601,8 @@ fi
 
 printf '\n'
 if [ "$FAILED" -gt 0 ]; then
-  printf 'review-gate validate: %d check(s) failed, %d passed\n' "$FAILED" "$PASS"
+  printf 'review-gate-failed=%d passed=%d\n' "$FAILED" "$PASS"
   exit 1
 fi
-printf 'review-gate validate: %d checks passed\n' "$PASS"
+printf 'review-gate-failed=0 passed=%d\n' "$PASS"
 exit 0

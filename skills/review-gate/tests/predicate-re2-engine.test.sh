@@ -174,7 +174,7 @@ fi
 # THE assertion, in a function, because control three has to be able to kill
 # it. A control running its own parallel diff proves the fixture is sensitive
 # and nothing about the line under it: misdirect that line and the control
-# stays green. Control three overwrites re2.out with a mutant's output and
+# stays green. The divergence control overwrites re2.out with a mutant's output and
 # calls this, so a comparison that has stopped comparing reds there.
 engines_agree() { diff -u "$work/local.out" "$work/re2.out" >"$work/engine.diff" 2>&1; }
 
@@ -184,60 +184,34 @@ else
   bad "both engines return the same verdict for every fixture reply" "$(head -20 "$work/engine.diff")"
 fi
 
-# ------------------------------------------------------------- control one ---
-# The defect, planted back into the line it shipped on: local jq must
-# stay green and RE2 must refuse to compile. A suite that keeps passing here
-# is reading the wrong engine again.
-lookbehind="$(printf '%s' "$prog" | plant \
-  'gsub("(?<w>[\\p{L}\\p{N}]+' \
-  'gsub("(?<![\\p{L}\\p{N}])(?<w>[\\p{L}\\p{N}]+')" || lookbehind=""
-if [ -z "$lookbehind" ] || [ "$lookbehind" = "$prog" ]; then
-  bad "control: a lookbehind can be planted" "the anchor matched nothing in the extracted program"
-else
-  ok "control: a lookbehind can be planted"
-
-  if local_jq "$lookbehind" >/dev/null 2>"$work/lb.local.err"; then
-    ok "control: local jq accepts the planted lookbehind (which is why it hid)"
-  else
-    bad "control: local jq accepts the planted lookbehind (which is why it hid)" \
-        "$(head -1 "$work/lb.local.err")"
+# Both regex positions must be reached by a fixture before gh compiles them.
+# The local-engine check on the reason pass preserves the inverse: local jq
+# accepts the syntax that gh refuses.
+while IFS='|' read -r label from to check_local; do
+  variant="$(printf '%s' "$prog" | plant "$from" "$to")" || variant=""
+  if [ -z "$variant" ] || [ "$variant" = "$prog" ]; then
+    bad "control: plant $label lookbehind" 'anchor matched nothing'
+    continue
   fi
-
-  if re2 "$lookbehind" >/dev/null 2>"$work/lb.re2.err"; then
-    bad "control: RE2 rejects the planted lookbehind" "the RE2 run succeeded — this suite cannot see the defect it exists for"
-  elif grep -q 'invalid regular expression' "$work/lb.re2.err"; then
-    ok "control: RE2 rejects the planted lookbehind"
-  else
-    bad "control: RE2 rejects the planted lookbehind" \
-        "failed for some other reason: $(head -1 "$work/lb.re2.err")"
+  ok "control: plant $label lookbehind"
+  if [ "$check_local" = yes ]; then
+    if local_jq "$variant" >/dev/null 2>"$work/lb.local.err"; then
+      ok "control: local jq accepts $label lookbehind"
+    else
+      bad "control: local jq accepts $label lookbehind" "$(cat "$work/lb.local.err")"
+    fi
   fi
-fi
-
-# ------------------------------------------------------------- control two ---
-# Control one plants into a pass every reply reaches. This one plants into the
-# untracked-claim test, which sits behind `select(disposition | not)` and is
-# compiled only when a reply reaches it — no corpus reply does, and a
-# lookbehind planted there once passed this suite 9 for 9. The two appended
-# fixture replies are what make it reachable, so this is also the assertion
-# that they still are.
-claimtest="$(printf '%s' "$prog" | plant \
-  'select(test("([A-Z][A-Z0-9]+-[0-9]+' \
-  'select(test("(?<![a-z])([A-Z][A-Z0-9]+-[0-9]+')" || claimtest=""
-if [ -z "$claimtest" ] || [ "$claimtest" = "$prog" ]; then
-  bad "control: a lookbehind can be planted in the untracked-claim test" \
-      "the anchor matched nothing in the extracted program"
-else
-  ok "control: a lookbehind can be planted in the untracked-claim test"
-  if re2 "$claimtest" >/dev/null 2>"$work/ct.re2.err"; then
-    bad "control: RE2 rejects a lookbehind in the untracked-claim test" \
-        "the RE2 run succeeded — no fixture reply reaches that regex, so it is never compiled"
-  elif grep -q 'invalid regular expression' "$work/ct.re2.err"; then
-    ok "control: RE2 rejects a lookbehind in the untracked-claim test"
+  rc=0
+  re2 "$variant" >/dev/null 2>"$work/lb.re2.err" || rc=$?
+  if [ "$rc" = 1 ] && grep -q 'invalid regular expression' "$work/lb.re2.err"; then
+    ok "control: RE2 rejects $label lookbehind"
   else
-    bad "control: RE2 rejects a lookbehind in the untracked-claim test" \
-        "failed for some other reason: $(head -1 "$work/ct.re2.err")"
+    bad "control: RE2 rejects $label lookbehind" "exit $rc: $(head -1 "$work/lb.re2.err")"
   fi
-fi
+done <<'CASES'
+reason|gsub("(?<w>[\\p{L}\\p{N}]+|gsub("(?<![\\p{L}\\p{N}])(?<w>[\\p{L}\\p{N}]+|yes
+claim|select(test("([A-Z][A-Z0-9]+-[0-9]+|select(test("(?<![a-z])([A-Z][A-Z0-9]+-[0-9]+|no
+CASES
 
 # ----------------------------------------------------------- control three ---
 # The compile-time controls would both pass with the comparison above gone or

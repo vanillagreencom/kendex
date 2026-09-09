@@ -217,7 +217,8 @@ for row in \
   "an untracked claim is counted by its own term, and is not a decline|0 1 0 false END|r:H=Out of scope, tracked." \
   "unresolved counting is untouched by either term|1 0 0 false END|u:H=looking" \
   "an issue-less tracking claim counts|0 1 0 false END|r:H=Out of scope for this PR, tracked." \
-  "a malformed id does not anchor a claim|0 2 0 false END|r:H=Tracked: KEN-12oops|r:H=tracked in #34abc" \
+  "a malformed Linear id does not anchor a claim|0 1 0 false END|r:H=Tracked: KEN-12oops" \
+  "a malformed GitHub id does not anchor a claim|0 1 0 false END|r:H=tracked in #34abc" \
   "claims naming KEN-, another prefix, or #id pass|0 0 0 false END|r:H=Tracked: KEN-536|r:H=Tracked: DRV-12|r:H=Fixed in abc123, tracked as #77" \
   "a bot's track-word is exempt|0 0 0 false END|r:B=this should be tracked somewhere" \
   "a decline naming its mechanism is not a claim|0 0 0 false END|r:H=Declined: probe is intentional" \
@@ -227,7 +228,8 @@ for row in \
   "a Fixed in reply is never a claim, whatever its prose|0 0 0 false END|r:H=Fixed in abc1234, every tracked caller now runs" \
   "a bot reply does not move the disposition, even one that would clear the claim|0 1 0 false END|r:H=Out of scope, tracked. + B=Tracked: KEN-9" \
   "a resolved thread whose last reply is a naked claim still counts|0 1 0 false END|r:H=Fixed in abc1234 + H=the rest is tracked for later" \
-  "a reply that is neither claim nor disposition does not move it, even one naming an issue|0 2 0 false END|r:H=Out of scope, tracked. + H=ok, see KEN-42|r:H=Out of scope, tracked. + H=Which issue? KEN-43?" \
+  "a later issue reference does not move a claim|0 1 0 false END|r:H=Out of scope, tracked. + H=ok, see KEN-42" \
+  "a later issue question does not move a claim|0 1 0 false END|r:H=Out of scope, tracked. + H=Which issue? KEN-43?" \
   "Fixed in without a sha is not a disposition|0 1 0 false END|r:H=Fixed in a follow-up, tracked separately" \
   "a Declined: reply with a naked track-word is never a claim|0 0 0 false END|r:H=Declined: the caller is tracked by the loader already" \
   "a path inside a mechanism still passes|0 0 0 false END|r:H=Declined: crates/core/src/lock.rs refuses that shape before the branch you name runs." \

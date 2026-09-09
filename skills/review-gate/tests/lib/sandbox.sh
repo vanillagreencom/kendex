@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# The sandbox and the assertion helpers, shared by the two suites that drive
+# The sandbox and assertion helpers shared by the suites that drive
 # scripts/validate.sh and scripts/validate-workflow.sh. SOURCED, never run:
 # the shard's runner globs tests/*.sh and does not descend here.
 #
@@ -14,6 +14,8 @@
 
 # The verdict counters and their two writers: every helper below reports
 # through these, and each suite prints the totals itself.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 PASS=0
 FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
@@ -77,8 +79,10 @@ commit() { # DIR — re-commit whatever the case mutated
 # driver either side of the source line; a suite whose subject is the workflow
 # half points it at that tool and proves the driver's fold of the peer's
 # verdicts in its own cases rather than re-proving it under every one of them.
-# Both tools print `FAIL` at the start of a verdict line and exit 1 on a
-# finding, which is the only shape expect_clean and expect_fail read.
+# Both tools report STATUS check=KEY value=VALUE, with Bash %q values.
+# Failure helpers require exit 1 and an exact FAIL record. Clean helpers
+# require exit 0, an ok record, and no FAIL record. Optional note pairs
+# require an exact companion record.
 DRIVER_REL="${DRIVER_REL:-$VALIDATE_REL}"
 
 OUT=""
@@ -94,48 +98,27 @@ settings() { # DIR KEY VALUE
   printf '%s = "%s"\n' "$2" "$3" >>"$1/kendex.settings.toml"
 }
 
-repo_fails() { # NAME SUBSTRING SHELL — SHELL runs at the sandbox root, then
-                # the case commits and expects a finding
-  sandbox
-  dir="$DIR"
-  ( cd "$dir" && eval "$3" )
-  commit "$dir"
-  expect_fail "$1" "$dir" "$2"
-}
-
-setting_fails() { # NAME KEY VALUE SUBSTRING — one setting, one expectation
-  sandbox
-  dir="$DIR"
-  settings "$dir" "$2" "$3"
-  expect_fail "$1" "$dir" "$4"
-}
-
-setting_clean() { # NAME KEY VALUE — one setting, expected to pass
-  sandbox
-  dir="$DIR"
-  settings "$dir" "$2" "$3"
-  expect_clean "$1" "$dir"
-}
-
-expect_clean() { # NAME DIR
+expect_clean() { # NAME DIR [NOTE_CHECK NOTE_VALUE]
+  local note=""
+  [ -z "${3:-}" ] || printf -v note 'note check=%s value=%q' "$3" "$4"
   run_validate "$2"
-  if [ "$RC" -eq 0 ] && ! printf '%s' "$OUT" | grep -q '^FAIL'; then
+  if [ "$RC" -eq 0 ] && grep -qE '^ok check=[a-z-]+ value=' <<<"$OUT" && ! grep -q '^FAIL check=' <<<"$OUT" &&
+      { [ -z "$note" ] || grep -qxF -- "$note" <<<"$OUT"; }; then
     ok "$1"
   else
     bad "$1 (rc=$RC)" "$OUT"
   fi
 }
 
-expect_fail() { # NAME DIR SUBSTRING
+expect_fail() { # NAME DIR CHECK VALUE [NOTE_CHECK NOTE_VALUE]
+  local expected note=""
+  [ -z "${5:-}" ] || printf -v note 'note check=%s value=%q' "$5" "$6"
   run_validate "$2"
-  if [ "$RC" -ne 1 ]; then
-    bad "$1 — expected exit 1, got $RC" "$OUT"
-    return 0
-  fi
-  if printf '%s' "$OUT" | grep -F -- "$3" | grep -q '^FAIL'; then
+  printf -v expected 'FAIL check=%s value=%q' "$3" "$4"
+  if [ "$RC" -eq 1 ] && grep -qxF -- "$expected" <<<"$OUT" &&
+      { [ -z "$note" ] || grep -qxF -- "$note" <<<"$OUT"; }; then
     ok "$1"
   else
-    bad "$1 — no FAIL line carrying: $3" "$OUT"
+    bad "$1 (rc=$RC, expected $expected)" "$OUT"
   fi
 }
-
