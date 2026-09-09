@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { harnessName } from "@/lib/labels";
+import {
+  HARNESS_VERSION_HELP,
+  harnessRootHelp,
+  showKindLabel,
+} from "@/lib/copy";
+import { harnessName, kindLabel } from "@/lib/labels";
 import { showEverythingLabel } from "@/lib/show-everything-label";
 import { useNavStore } from "@/stores/nav";
 import { mount as mountTree } from "@/test/dom";
@@ -16,13 +21,13 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const mount = (detectedRoot: string | null) => {
+const mount = (detectedRoot: string | null, version: string | null = null) => {
   useNavStore.setState(navHome);
   return mountTree(
     <HarnessRow
       place={{ harness: "claude" }}
       detectedRoot={detectedRoot}
-      version={null}
+      version={version}
       counts={[["skill", 3]]}
       folder=""
       onFolderChange={() => {}}
@@ -83,5 +88,43 @@ describe("the harness row's name", () => {
     );
     expect(named).toEqual([]);
     expect(useNavStore.getState().page).toBe("home");
+  });
+});
+
+// Three things on this row are shown without a word saying what they are: a
+// path, a version number, and a count badge whose press goes somewhere the
+// count does not name. Each says it where a pointer, a keyboard or a screen
+// reader can ask.
+describe("what a harness row's line and badges say they are", () => {
+  it("names the path, the version and where a count badge lands", () => {
+    const host = mount("/home/u/.claude", "2.4.0");
+    // The leaf that holds the words, not the wrapper around it and the
+    // pencil, which carries the same textContent and a title of its own.
+    const leaf = (text: string) =>
+      [...host.querySelectorAll<HTMLElement>("span")].find(
+        (el) => el.children.length === 0 && el.textContent === text,
+      );
+    const path = leaf("/home/u/.claude");
+    expect(path?.title).toBe(harnessRootHelp("Claude Code"));
+    const version = leaf("2.4.0");
+    expect(version?.title).toBe(HARNESS_VERSION_HELP);
+    const badge = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+      (b) => b.textContent === `3 ${kindLabel("skill", 3)}`,
+    );
+    expect(badge?.getAttribute("aria-label")).toBe(
+      showKindLabel(3, kindLabel("skill", 3), "Claude Code"),
+    );
+  });
+
+  // The must-fail half: a row that pinned one sentence to every line would
+  // pass the case above and call a missing harness's "Not installed" the
+  // place its files are kept.
+  it("claims no folder for a harness that has none", () => {
+    const host = mount(null);
+    const line = [...host.querySelectorAll<HTMLElement>("span")].find(
+      (el) => el.children.length === 0 && el.textContent === "Not installed",
+    );
+    if (!line) throw new Error("no not-installed line");
+    expect(line.title).toBe("");
   });
 });
