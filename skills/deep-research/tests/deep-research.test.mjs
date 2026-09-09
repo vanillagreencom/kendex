@@ -546,6 +546,65 @@ test("KENDEX_ENV_FILE names the private env file, and a quoted value reads back 
   assert.match(readFileSync(chosen, "utf8"), /FromChosen/);
 });
 
+// The shared shell loader resolves KENDEX_ENV_FILE from the process
+// environment, then .kendex/settings.toml, then kendex.settings.toml. This
+// package has to agree, or it sources a different private file from every
+// other package in the same project.
+test("KENDEX_ENV_FILE keeps the same precedence the shell loader gives it", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-envlayers-"));
+  mkdirSync(join(dir, ".kendex"), { recursive: true });
+  const mock = (name, answer) => {
+    const path = join(dir, `${name}.json`);
+    writeFileSync(path, JSON.stringify({ answer, results: [{ title: "Source", url: "https://example.com" }] }));
+    return path;
+  };
+  const rootMock = mock("root", "FromRoot");
+  const nestedMock = mock("nested", "FromNested");
+  const processMock = mock("process", "FromProcess");
+  const env = { ...process.env };
+  delete env.EXA_API_KEY;
+  delete env.EXA_MOCK_RESPONSE_FILE;
+  delete env.KENDEX_ENV_FILE;
+
+  writeFileSync(join(dir, "kendex.settings.toml"), '[env]\nKENDEX_ENV_FILE = ".env.root"\n');
+  writeFileSync(join(dir, ".env.root"), `EXA_MOCK_RESPONSE_FILE='${rootMock}'\nEXA_API_KEY='k'\n`);
+  writeFileSync(join(dir, ".env.nested"), `EXA_MOCK_RESPONSE_FILE='${nestedMock}'\nEXA_API_KEY='k'\n`);
+  writeFileSync(join(dir, ".env.chosen"), `EXA_MOCK_RESPONSE_FILE='${processMock}'\nEXA_API_KEY='k'\n`);
+
+  const ran = (name, over = {}) => {
+    const out = join(dir, `${name}.md`);
+    const result = spawnSync(process.execPath, [script, "report", "q", "--output", out], {
+      encoding: "utf8",
+      env: { ...env, ...over },
+      cwd: dir,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return readFileSync(out, "utf8");
+  };
+
+  // The root file alone answers.
+  assert.match(ran("root"), /FromRoot/);
+  // .kendex/settings.toml is read after it and wins.
+  writeFileSync(join(dir, ".kendex/settings.toml"), '[env]\nKENDEX_ENV_FILE = ".env.nested"\n');
+  assert.match(ran("nested"), /FromNested/);
+  // And the process environment outranks both.
+  assert.match(ran("process", { KENDEX_ENV_FILE: ".env.chosen" }), /FromProcess/);
+});
+
+test("a KENDEX_ENV_FILE assigned twice in one file stops the run", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-envdup-"));
+  const env = { ...process.env };
+  delete env.EXA_API_KEY;
+  delete env.EXA_MOCK_RESPONSE_FILE;
+  delete env.KENDEX_ENV_FILE;
+  writeFileSync(
+    join(dir, "kendex.settings.toml"),
+    '[env]\nKENDEX_ENV_FILE = ".env.a"\nKENDEX_ENV_FILE = ".env.b"\n',
+  );
+  const result = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
+  assert.equal(diagnostic(result).key, "private-env-duplicate");
+});
+
 test("a KENDEX_ENV_FILE that could reach outside the project stops the run", () => {
   const dir = mkdtempSync(join(tmpdir(), "deep-research-envpath-"));
   const env = { ...process.env };

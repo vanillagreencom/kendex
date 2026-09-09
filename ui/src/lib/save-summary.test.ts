@@ -100,6 +100,50 @@ describe("saveGroups", () => {
     expect(groups.map((group) => group.file)).toEqual([".env.secrets"]);
   });
 
+  /// The dialog says it lists every file the save writes, and a first
+  /// credential save writes the ignore entry first. Leaving it out would
+  /// make that claim false on the one save it matters most on.
+  it("names the ignore entry a first save writes", () => {
+    const missing = settings({
+      secrets: {
+        destination: {
+          file: ".env.local",
+          chosen: false,
+          state: { state: "missing", ignore: "/.env.local" },
+        },
+        candidates: [],
+        base: null,
+      },
+    });
+    expect(
+      saveGroups({
+        manifestDirty: false,
+        manifestFile: "kendex.toml",
+        settingsEdits: [],
+        secretEdits: [secret("LINEAR_API_KEY", "k")],
+        pickedFile: null,
+        settings: missing,
+      }).map((group) => [group.file, group.labels]),
+    ).toEqual([
+      [".gitignore", ["/.env.local"]],
+      [".env.local", ["LINEAR_API_KEY"]],
+    ]);
+    // The inverse: a save that stores nothing there takes the file on
+    // for nobody, so no ignore entry is claimed.
+    expect(
+      saveGroups({
+        manifestDirty: false,
+        manifestFile: "kendex.toml",
+        settingsEdits: [],
+        secretEdits: [
+          { skill: "linear", key: "LINEAR_API_KEY", value: { kind: "clear" } },
+        ],
+        pickedFile: null,
+        settings: missing,
+      }).map((group) => group.file),
+    ).toEqual([".env.local"]);
+  });
+
   /// Naming a private file the project does not already name is a write
   /// into the settings file, under the key both package loaders read. It
   /// is one line of the same group the public settings go in, because it

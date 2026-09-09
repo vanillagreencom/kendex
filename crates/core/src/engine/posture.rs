@@ -73,11 +73,18 @@ pub(super) fn plan_posture(
     let Scope::Project { root } = scope else {
         return Ok(());
     };
-    // Nothing to commit to, nothing to ignore for. A project that is not a
-    // repository gets no file it never had.
-    if !root.join(".git").exists() {
+    // Whether a repository carries this project is git's answer, not a
+    // marker in the project's own directory. A project nested inside one —
+    // a package living in a subdirectory of a larger checkout — has no
+    // `.git` of its own and is carried all the same, and that is exactly
+    // where a private env file with no ignore rule gets committed from.
+    // `Repo::probe` keeps the two failures apart: no repository is a clean
+    // answer, and a git that would not run is not.
+    let Some(repo) = Repo::probe(root)? else {
+        // Nothing to commit to, nothing to ignore for. A project outside
+        // every repository gets no file it never had.
         return Ok(());
-    }
+    };
     let path = root.join(".gitignore");
     let text = crate::fs::read_if_exists(&path)?.unwrap_or_default();
     for ignored in ignores_committed(&text) {
@@ -91,22 +98,14 @@ pub(super) fn plan_posture(
     // commit, and no pull can put that right. git says where that dir is:
     // guessing `<root>/.git` misses a linked worktree, whose `.git` is a
     // file, and a `--separate-git-dir` layout, whose `.git` is one
-    // everywhere. Where git cannot answer, the file goes unchecked and the
-    // note says so; the lock line below is still owed.
-    match Repo::at(root) {
-        Ok(repo) => {
-            let exclude = repo.common_dir.join("info/exclude");
-            let rules = crate::fs::read_if_exists(&exclude)?.unwrap_or_default();
-            for ignored in ignores_committed(&rules) {
-                notes.push(format!(
-                    "{} ignores {ignored} — git status on this machine never shows what kendex changes there, and no commit or pull carries that rule; remove it from this clone's git dir",
-                    exclude.display()
-                ));
-            }
-        }
-        Err(e) => notes.push(format!(
-            "git could not open this repository, so its info/exclude was not checked: {e}"
-        )),
+    // everywhere — and it misses a nested project, which has none at all.
+    let exclude = repo.common_dir.join("info/exclude");
+    let rules = crate::fs::read_if_exists(&exclude)?.unwrap_or_default();
+    for ignored in ignores_committed(&rules) {
+        notes.push(format!(
+            "{} ignores {ignored} — git status on this machine never shows what kendex changes there, and no commit or pull carries that rule; remove it from this clone's git dir",
+            exclude.display()
+        ));
     }
     let mut owed = vec![lock_owed()];
     owed.extend(private.map(private_owed));

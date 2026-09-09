@@ -77,13 +77,34 @@ impl Fixture {
 /// repository — the state every check here is about.
 #[allow(clippy::unwrap_used)]
 fn fixture(template: &str) -> Fixture {
+    fixture_in(template, Repository::AtTheProjectRoot)
+}
+
+/// The same project one directory inside the repository, which is where a
+/// package living in a subdirectory of a larger checkout sits.
+#[allow(clippy::unwrap_used)]
+fn nested_fixture(template: &str) -> Fixture {
+    fixture_in(template, Repository::Above)
+}
+
+/// Where the repository that carries the project is.
+enum Repository {
+    AtTheProjectRoot,
+    Above,
+}
+
+#[allow(clippy::unwrap_used)]
+fn fixture_in(template: &str, repository: Repository) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
     let project = project.canonicalize().unwrap();
-    git(&project, &["init", "-q"]);
+    match repository {
+        Repository::AtTheProjectRoot => git(&project, &["init", "-q"]),
+        Repository::Above => git(home.join("dev").as_path(), &["init", "-q"]),
+    }
 
     let source = home.join("catalog");
     let skill = source.join("skills/linear");
@@ -292,6 +313,30 @@ fn the_ignore_entry_is_planned_before_the_credential_it_protects() {
     assert!(
         at(".gitignore") < at(".env.local"),
         "the credential is planned first: {written:?}"
+    );
+}
+
+/// A project nested inside a larger checkout has no `.git` of its own and
+/// is carried by that checkout all the same. Whether a repository would
+/// commit the private file is git's answer, not a marker in the project's
+/// directory, so the ignore entry is owed here exactly as it is at a
+/// repository root.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_project_nested_in_a_repository_still_gets_its_ignore_entry() {
+    let f = nested_fixture(TEMPLATE);
+    assert!(
+        !f.project.join(".git").exists(),
+        "the fixture project has a .git of its own, so it proves nothing"
+    );
+
+    store(&f, vec![set("LINEAR_API_KEY", DUMMY)]).unwrap();
+
+    let ignored = fs::read_to_string(f.project.join(".gitignore")).unwrap();
+    assert!(ignored.contains("/.env.local"), "{ignored}");
+    assert_eq!(
+        fs::read_to_string(f.private(".env.local")).unwrap(),
+        format!("LINEAR_API_KEY='{DUMMY}'\n")
     );
 }
 

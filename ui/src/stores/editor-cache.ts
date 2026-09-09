@@ -123,6 +123,10 @@ export const placesOf = (scopes: Scope[]) =>
 export const opening = {
   settingsEdits: [] as SettingsEdit[],
   secretEdits: [] as SecretEdit[],
+  /** The private file picked here is part of the draft: a fresh read is
+   *  the project's own answer, so a pick that survived one would be held
+   *  with nothing on screen saying so. */
+  secretFile: null as string | null,
   dirty: false,
   manifestDirty: false,
   stale: false,

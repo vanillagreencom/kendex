@@ -29,7 +29,7 @@ use crate::apply::{Op, PlannedOp, Pre};
 use crate::error::Result;
 use crate::model::Scope;
 use crate::settings_secret::{
-    Destination, DestinationState, SecretEdit, SecretRefusal, SecretsDraft, destination,
+    Destination, DestinationState, SecretEdit, SecretRefusal, SecretsDraft, destination_layered,
 };
 
 use super::desired::DesiredState;
@@ -105,7 +105,11 @@ pub(super) fn target(
     }
     let settings = crate::fs::read_if_exists(&crate::settings_seed::settings_file_path(root))?;
     let want = draft.choose.then_some(draft.file.as_str());
-    let target = destination(root, settings.as_deref(), want);
+    // Every layer the shell loaders read, in their order: a file named in
+    // `.kendex/settings.toml` is the one the packages will source, so it
+    // is the one a write here has to agree with.
+    let layers = crate::settings_secret::settings_layers(root, settings.as_deref())?;
+    let target = destination_layered(root, &layers, want);
     if target.file != draft.file {
         return Err(SecretRefusal::Moved {
             then: draft.file.clone(),

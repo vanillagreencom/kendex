@@ -68,6 +68,11 @@ export function SecretFieldRow({
   const editing = typing || open;
   const stored = row.current.state === "set";
   const clearing = edit?.value.kind === "clear";
+  // Two things stop a write, and a control that offered one anyway would
+  // only fail on Save. The destination may refuse every key, and this key
+  // may be one core will not write over — assigned more than once, or in a
+  // shape kendex does not write — which is what leaves it unknown.
+  const settable = writable && row.current.state !== "unknown";
 
   const close = () => {
     setOpen(false);
@@ -140,7 +145,7 @@ export function SecretFieldRow({
             <Button
               variant="outline"
               size="sm"
-              disabled={!writable}
+              disabled={!settable}
               onClick={() => setOpen(true)}
             >
               {stored ? SECRET_REPLACE_ACTION : SECRET_SET_ACTION}
@@ -149,6 +154,7 @@ export function SecretFieldRow({
               <Button
                 variant="ghost"
                 size="sm"
+                disabled={!settable}
                 onClick={() =>
                   onEdit({ skill, key: row.key, value: { kind: "clear" } })
                 }

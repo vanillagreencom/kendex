@@ -145,9 +145,27 @@ describe("SecretFieldRow", () => {
   });
 
   /// Nothing may be written where the destination refuses, so the control
-  /// that would write is held rather than failing on save.
-  it("holds the set control where nothing can be written", () => {
-    const host = render({}, { writable: false });
+  /// that would write is held rather than failing on save. Clear is held
+  /// with it: core refuses the whole draft before it applies any edit, so
+  /// a staged clear would fail at Save just the same.
+  it("holds every write control where the destination refuses", () => {
+    const host = render({ current: { state: "set" } }, { writable: false });
+    expect(button(host, SECRET_REPLACE_ACTION)?.disabled).toBe(true);
+    expect(button(host, SECRET_CLEAR_ACTION)?.disabled).toBe(true);
+  });
+
+  /// A key core will not write over — assigned more than once, or in a
+  /// shape kendex does not write — is what leaves the row unknown. The
+  /// destination is fine, so `writable` says nothing about it, and a value
+  /// typed here would be refused on Save.
+  it("holds every write control for a key core will not write over", () => {
+    const host = render({
+      current: { state: "unknown", reason: "it is assigned more than once" },
+    });
     expect(button(host, SECRET_SET_ACTION)?.disabled).toBe(true);
+    // The control this reads against: the same row with a state core can
+    // write leaves the button live.
+    const settable = render({ current: { state: "not-set" } });
+    expect(button(settable, SECRET_SET_ACTION)?.disabled).toBe(false);
   });
 });

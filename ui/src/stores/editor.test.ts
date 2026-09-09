@@ -298,6 +298,98 @@ describe("editor store", () => {
     );
   });
 
+  /// The edits in hand were made against the bases the fields were read
+  /// with, and those bases are what the save carries back so a file
+  /// something else has written is refused. Adopting the confirmation
+  /// read's bases would replace them after the fact and turn that refusal
+  /// into an overwrite of somebody's newer value.
+  it("offers the reload when a file moved between typing and Save", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    await useEditorStore.getState().load();
+    useEditorStore.getState().editSecret(secretEdit);
+
+    // Somebody else writes the private file between typing and Save.
+    const held = settings();
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...held,
+        secrets: { ...held.secrets, base: "p2" } as NonNullable<
+          ScopeSettings["secrets"]
+        >,
+      },
+    });
+
+    await useEditorStore.getState().requestSave();
+    expect(useEditorStore.getState().stale).toBe(true);
+    expect(useEditorStore.getState().confirming).toBe(false);
+    expect(commands.saveCustomize).not.toHaveBeenCalled();
+    // The draft is kept: the reload is a choice, not something taken.
+    expect(useEditorStore.getState().secretEdits).toEqual([secretEdit]);
+  });
+
+  /// Discard is this same reload, so it must come back to the project's
+  /// own destination. A pick left in hand with nothing on screen saying so
+  /// would be recorded by a later unrelated edit.
+  it("clears a picked private file on reload", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    await useEditorStore.getState().load();
+    await useEditorStore.getState().pickSecretFile(".env.secrets");
+    expect(useEditorStore.getState().secretFile).toBe(".env.secrets");
+
+    await useEditorStore.getState().load();
+    expect(useEditorStore.getState().secretFile).toBeNull();
+    expect(useEditorStore.getState().dirty).toBe(false);
+    // And the read that reload made asked for the project's own answer.
+    expect(commands.getScopeSettings).toHaveBeenLastCalledWith(
+      { scope: "global" },
+      null,
+    );
+  });
+
+  /// Dirty is derived from every draft rather than set where one changes.
+  /// Set by hand it survived the change that emptied it: taking back the
+  /// last credential answer left the Save bar up over nothing, and picking
+  /// the file a project already names raised it over no change at all.
+  it("derives dirty from what is actually unsaved", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    await useEditorStore.getState().load();
+
+    useEditorStore.getState().editSecret(secretEdit);
+    expect(useEditorStore.getState().dirty).toBe(true);
+    useEditorStore.getState().setSecretEdits([]);
+    expect(useEditorStore.getState().dirty).toBe(false);
+
+    // A pick the project already holds is not a change either.
+    const held = settings();
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...held,
+        secrets: {
+          destination: {
+            file: ".env.secrets",
+            chosen: true,
+            state: { state: "ready" },
+          },
+          candidates: [],
+          base: "p1",
+        },
+      },
+    });
+    await useEditorStore.getState().pickSecretFile(".env.secrets");
+    expect(useEditorStore.getState().dirty).toBe(false);
+  });
+
   /// Pressing Save writes nothing. The summary is built from a read taken
   /// as it opens, because a project pointed at another private file since
   /// the fields were filled in would otherwise be confirmed against the

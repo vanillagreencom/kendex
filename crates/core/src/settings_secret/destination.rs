@@ -29,6 +29,12 @@ pub const DEFAULT_ENV_FILE: &str = ".env.local";
 /// The project file that lists what git must not carry.
 pub const IGNORE_FILE: &str = ".gitignore";
 
+/// The settings file the shell loaders read AFTER the root one, so its
+/// assignment of a key is the one that wins. kendex writes the root file,
+/// which is why a selector answered here is honoured but never recorded
+/// over.
+pub const NESTED_SETTINGS_FILE: &str = ".kendex/settings.toml";
+
 /// Where this project's secrets go, and whether they may.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -81,33 +87,66 @@ impl Destination {
 /// file, which is what tells a save whether it also has to record the
 /// choice.
 pub fn destination(root: &Path, settings: Option<&str>, want: Option<&str>) -> Destination {
-    let named = match settings.map(configured_file) {
-        Some(Err(problem)) => {
-            // A key the project assigns and nothing can read is not the
-            // same as one it never assigned. The shell loaders refuse the
-            // whole file over it, so falling back to the default here
-            // would write a credential into a file the packages are not
-            // even going to reach.
-            return Destination {
-                file: DEFAULT_ENV_FILE.to_owned(),
-                chosen: false,
-                state: refused(
-                    problem,
-                    format!(
-                        "settle {} in kendex.settings.toml, then open this page again",
-                        super::ENV_FILE_KEY
-                    ),
-                ),
-            };
+    destination_layered(root, &[settings.map(str::to_owned)], want)
+}
+
+/// The destination, given every settings layer in the order the shell
+/// loaders read them — lowest precedence first.
+///
+/// The loaders read `kendex.settings.toml`, then `.kendex/settings.toml`,
+/// and the later assignment wins. Reading only the first would show and
+/// write one private file while the installed packages source another, so
+/// the layers are read here the way they are read there.
+pub fn destination_layered(
+    root: &Path,
+    layers: &[Option<String>],
+    want: Option<&str>,
+) -> Destination {
+    // The last layer that answers is the one the loaders honour, so the
+    // walk runs from the top down and stops at the first answer.
+    let answered = layers.iter().enumerate().rev().find_map(|(at, text)| {
+        match text.as_deref().map(configured_file) {
+            None | Some(Ok(None)) => None,
+            Some(answer) => Some((at, answer)),
         }
-        Some(Ok(named)) => named,
-        None => None,
+    });
+    let (from, named) = match answered {
+        Some((at, Ok(named))) => (at, named),
+        Some((_, Err(problem))) => return refused_selector(problem),
+        None => (0, None),
     };
-    let file = want
-        .map(str::to_owned)
-        .or_else(|| named.clone())
-        .unwrap_or_else(|| DEFAULT_ENV_FILE.to_owned());
-    let chosen = named.as_deref() == Some(file.as_str());
+    // A file the higher-precedence layer names is honoured and never
+    // recorded over: kendex writes the root settings file, and a choice
+    // written there would be overridden by the layer above it the moment
+    // a package read it. `chosen` therefore stays false for such a file,
+    // and a save that would record one is refused rather than written.
+    let above = from > 0;
+    // What the loaders will read. A file the higher layer names is that
+    // answer whatever anyone picks here, because that layer is read last;
+    // otherwise the pick decides, then the root file, then the default.
+    let file = match (above, &named) {
+        (true, Some(named)) => named.clone(),
+        _ => want
+            .map(str::to_owned)
+            .or_else(|| named.clone())
+            .unwrap_or_else(|| DEFAULT_ENV_FILE.to_owned()),
+    };
+    let chosen = !above && named.as_deref() == Some(file.as_str());
+    if above && want.is_some_and(|want| want != file) {
+        return Destination {
+            chosen,
+            state: refused(
+                format!(
+                    "{NESTED_SETTINGS_FILE} names {file} as this project's private file, and it is read after the file kendex writes"
+                ),
+                format!(
+                    "settle {} in {NESTED_SETTINGS_FILE}, then open this page again",
+                    super::ENV_FILE_KEY
+                ),
+            ),
+            file,
+        };
+    }
     let state = match relative(&file) {
         Err(refusal) => refusal,
         Ok(()) => protection(root, &file),
@@ -116,6 +155,22 @@ pub fn destination(root: &Path, settings: Option<&str>, want: Option<&str>) -> D
         file,
         chosen,
         state,
+    }
+}
+
+/// A selector nothing can read is not a selector the default stands in
+/// for: the shell loaders refuse the whole file over one.
+fn refused_selector(problem: String) -> Destination {
+    Destination {
+        file: DEFAULT_ENV_FILE.to_owned(),
+        chosen: false,
+        state: refused(
+            problem,
+            format!(
+                "settle {} in the settings file that assigns it, then open this page again",
+                super::ENV_FILE_KEY
+            ),
+        ),
     }
 }
 

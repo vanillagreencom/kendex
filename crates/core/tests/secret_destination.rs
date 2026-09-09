@@ -22,7 +22,7 @@ use kendex_core::env::{Env, FakeOs};
 use kendex_core::error::CoreError;
 use kendex_core::model::Scope;
 use kendex_core::settings_secret::{
-    DestinationState, SecretEdit, SecretEditValue, SecretsDraft, destination,
+    DestinationState, SecretEdit, SecretEditValue, SecretsDraft, destination_layered,
 };
 
 const DUMMY: &str = "exa_dummy_0aF9";
@@ -99,10 +99,13 @@ fn fixture(repository: bool) -> Fixture {
     }
 }
 
-/// The destination this project resolves, given its settings text.
+/// The destination this project resolves, through every settings layer
+/// the shell loaders read — which is the entry production uses, so a case
+/// here cannot pass on a narrower read than the app takes.
 #[allow(clippy::unwrap_used)]
 fn state(f: &Fixture, settings: Option<&str>, want: Option<&str>) -> DestinationState {
-    destination(&f.project, settings, want).state
+    let layers = kendex_core::settings_secret::settings_layers(&f.project, settings).unwrap();
+    destination_layered(&f.project, &layers, want).state
 }
 
 fn refused(state: &DestinationState) -> (&str, &str) {
@@ -250,7 +253,7 @@ fn a_private_file_key_nothing_can_read_is_refused_rather_than_defaulted() {
     let state = state(&f, Some(twice), None);
     let (problem, fix) = refused(&state);
     assert!(problem.contains("KENDEX_ENV_FILE"), "{problem}");
-    assert!(fix.contains("kendex.settings.toml"), "{fix}");
+    assert!(fix.contains("KENDEX_ENV_FILE"), "{fix}");
 }
 
 /// Outside a repository there is no git to refuse a pathspec and no
@@ -329,7 +332,9 @@ fn a_chosen_file_is_recorded_where_the_loaders_read_it() {
 
     // And the project now names it, so the next read resolves there
     // without being told.
-    let now = destination(&f.project, Some(&settings), None);
+    let layers =
+        kendex_core::settings_secret::settings_layers(&f.project, Some(&settings)).unwrap();
+    let now = destination_layered(&f.project, &layers, None);
     assert_eq!(now.file, ".env.secrets");
     assert!(now.chosen);
 }
@@ -447,6 +452,58 @@ fn a_save_that_neither_stores_nor_names_writes_nothing() {
     assert!(!f.project.join(".env.local").exists());
     let settings = fs::read_to_string(f.project.join("kendex.settings.toml")).unwrap_or_default();
     assert!(!settings.contains("KENDEX_ENV_FILE"), "{settings}");
+}
+
+/// The shell loaders read `.kendex/settings.toml` after the root settings
+/// file, so a private file named there is the one every package sources.
+/// Reading only the root file would show and write one file while the
+/// packages read another, and the credential would be unavailable to them.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_higher_settings_layer_names_the_private_file() {
+    let f = fixture(true);
+    fs::create_dir_all(f.project.join(".kendex")).unwrap();
+    fs::write(
+        f.project.join("kendex.settings.toml"),
+        "[env]\nKENDEX_ENV_FILE = \".env.root\"\n",
+    )
+    .unwrap();
+    fs::write(
+        f.project.join(".kendex/settings.toml"),
+        "[env]\nKENDEX_ENV_FILE = \".env.nested\"\n",
+    )
+    .unwrap();
+
+    let read = kendex_core::settings_secret::read(
+        &f.project,
+        Some(&fs::read_to_string(f.project.join("kendex.settings.toml")).unwrap()),
+        None,
+    )
+    .unwrap();
+    assert_eq!(read.view.destination.file, ".env.nested");
+    // kendex writes the root file, which that layer overrides, so the
+    // project does not read as having chosen this file here: a save must
+    // not offer to record a choice it cannot make stick.
+    assert!(!read.view.destination.chosen);
+}
+
+/// And a choice that layer would override is refused rather than written
+/// into a file the packages read first.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_choice_the_higher_layer_would_override_is_refused() {
+    let f = fixture(true);
+    fs::create_dir_all(f.project.join(".kendex")).unwrap();
+    fs::write(
+        f.project.join(".kendex/settings.toml"),
+        "[env]\nKENDEX_ENV_FILE = \".env.nested\"\n",
+    )
+    .unwrap();
+
+    let state = state(&f, None, Some(".env.mine"));
+    let (problem, fix) = refused(&state);
+    assert!(problem.contains(".kendex/settings.toml"), "{problem}");
+    assert!(fix.contains("KENDEX_ENV_FILE"), "{fix}");
 }
 
 /// A save the person confirmed for one file must not land in another. The

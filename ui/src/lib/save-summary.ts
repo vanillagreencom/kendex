@@ -59,6 +59,18 @@ export function saveGroups({
   }
   const destination = settings?.secrets?.destination;
   if (destination) {
+    // The line that keeps git off a file this save is about to create is
+    // written first, and this dialog says it lists every file the save
+    // writes. Leaving it out would make that claim false on exactly the
+    // save it matters most on.
+    const state = destination.state;
+    const owed =
+      state.state === "missing" && state.ignore !== null ? state.ignore : null;
+    if (
+      owed !== null &&
+      (secretEdits.some(stores) || choosesFile(settings, pickedFile))
+    )
+      add(groups, IGNORE_FILE, [owed]);
     add(
       groups,
       destination.file,
@@ -67,6 +79,13 @@ export function saveGroups({
   }
   return groups;
 }
+
+/** Whether this edit puts a value in the file, which is the half that
+ *  makes the project take the file on. */
+const stores = (edit: SecretEdit): boolean => edit.value.kind === "set";
+
+/** The project file that lists what git must not carry. */
+const IGNORE_FILE = ".gitignore";
 
 /** The label kendex writes for the manifest half, which is a set of edits
  *  rather than one named key. */

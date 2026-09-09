@@ -43,7 +43,10 @@ use crate::settings_template::{SecretEntry, TemplateSource};
 
 mod destination;
 pub mod env_file;
-pub use destination::{DEFAULT_ENV_FILE, Destination, DestinationState, IGNORE_FILE, destination};
+pub use destination::{
+    DEFAULT_ENV_FILE, Destination, DestinationState, IGNORE_FILE, NESTED_SETTINGS_FILE,
+    destination, destination_layered,
+};
 
 /// The settings key naming this project's private env file. Read by
 /// kendex and by every shipped package loader, so one project names one
@@ -225,7 +228,7 @@ impl SecretsRead {
 /// answers rather than failures — every key comes back `Unknown` with the
 /// reason, so no field reads as unset because a check could not run.
 pub fn read(root: &Path, settings: Option<&str>, want: Option<&str>) -> Result<SecretsRead> {
-    let destination = destination(root, settings, want);
+    let destination = destination_layered(root, &settings_layers(root, settings)?, want);
     let path = destination.path(root);
     let (text, unreadable) = match &destination.state {
         DestinationState::Refused { problem, .. } => (None, Some(problem.clone())),
@@ -282,6 +285,19 @@ pub(crate) fn read_of(text: Option<&str>) -> SecretsRead {
         text,
         None,
     )
+}
+
+/// Every settings layer that can name this project's private file, in the
+/// order the shell loaders read them: `kendex.settings.toml` first, then
+/// `.kendex/settings.toml`, whose assignment wins.
+///
+/// The caller has usually read the root file already, for the settings
+/// rows, so it is passed in rather than read twice.
+pub fn settings_layers(root: &Path, root_text: Option<&str>) -> Result<Vec<Option<String>>> {
+    Ok(vec![
+        root_text.map(str::to_owned),
+        crate::fs::read_if_exists(&root.join(NESTED_SETTINGS_FILE))?,
+    ])
 }
 
 /// The files in a project's root that already look like a private env

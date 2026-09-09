@@ -12,7 +12,7 @@ import { refusalKind, refusalWords } from "@/lib/refusal";
 
 import { writingRepo } from "@/lib/rescan";
 import { everyPlace, sameScope } from "@/lib/scope";
-import { secretsDraft, withSecretEdit } from "@/lib/secret-rows";
+import { choosesFile, secretsDraft, withSecretEdit } from "@/lib/secret-rows";
 import { settingsDraft, withEdit } from "@/lib/settings-rows";
 import { saying } from "@/lib/undone";
 import {
@@ -120,13 +120,25 @@ interface EditorState {
   save: () => Promise<void>;
 }
 
+/** Whether either file these rows were read from has been written since.
+ *  Both bases are compared: a settings change moves the first and a
+ *  credential written outside this page moves the second. */
+const moved = (held: ScopeSettings, now: ScopeSettings): boolean =>
+  held.base !== now.base ||
+  (held.secrets?.base ?? null) !== (now.secrets?.base ?? null);
+
 export const useEditorStore = create<EditorState>((set, get) => {
   const load = async () => {
-    const { scope, secretFile } = get();
+    // Read the destination the PROJECT names, not the one picked here.
+    // This is also the Save bar's Discard, and a reload that kept the
+    // pick would leave it in hand with nothing on screen saying so — a
+    // later unrelated edit would then record a destination the person
+    // discarded. `opening` clears the pick with the rest of the draft.
+    const { scope } = get();
     set({ loading: true });
     let read: Awaited<ReturnType<typeof readPlace>>;
     try {
-      read = await readPlace(scope, secretFile);
+      read = await readPlace(scope, null);
     } finally {
       set({ loading: false });
     }
@@ -165,6 +177,21 @@ export const useEditorStore = create<EditorState>((set, get) => {
   /** Read the named places into the records the marks are drawn from. */
   const places = async (scopes: Scope[]) => {
     set(mergedPlaces(scopes, await placesOf(scopes)));
+  };
+
+  /** Whether anything is unsaved, derived from every draft rather than
+   *  set at each place that changes one. Set by hand, it survived the
+   *  change that emptied it: taking back the last credential answer left
+   *  the Save bar up over nothing, and picking the file a project already
+   *  names raised it over a change that is not one. */
+  const dirtyNow = (over: Partial<EditorState> = {}): boolean => {
+    const state = { ...get(), ...over };
+    return (
+      state.manifestDirty ||
+      state.settingsEdits.length > 0 ||
+      state.secretEdits.length > 0 ||
+      choosesFile(state.settings, state.secretFile)
+    );
   };
 
   const write = async (draft: Draft) => {
@@ -284,26 +311,17 @@ export const useEditorStore = create<EditorState>((set, get) => {
     },
 
     editSetting: (edit) => {
-      set((state) => ({
-        settingsEdits: withEdit(state.settingsEdits, edit),
-        dirty: true,
-      }));
+      const settingsEdits = withEdit(get().settingsEdits, edit);
+      set({ settingsEdits, dirty: dirtyNow({ settingsEdits }) });
     },
 
     editSecret: (edit) => {
-      set((state) => ({
-        secretEdits: withSecretEdit(state.secretEdits, edit),
-        dirty: true,
-      }));
+      const secretEdits = withSecretEdit(get().secretEdits, edit);
+      set({ secretEdits, dirty: dirtyNow({ secretEdits }) });
     },
 
-    setSecretEdits: (edits) => {
-      set((state) => ({
-        secretEdits: edits,
-        // Taking an answer back leaves the rest of the draft dirty; the
-        // manifest and settings halves have their own answers.
-        dirty: state.dirty,
-      }));
+    setSecretEdits: (secretEdits) => {
+      set({ secretEdits, dirty: dirtyNow({ secretEdits }) });
     },
 
     pickSecretFile: async (file) => {
@@ -319,7 +337,11 @@ export const useEditorStore = create<EditorState>((set, get) => {
         set({ error: settings.error });
         return;
       }
-      set({ settings: settings.data, error: null, dirty: true });
+      set({
+        settings: settings.data,
+        error: null,
+        dirty: dirtyNow({ settings: settings.data, secretFile: file }),
+      });
     },
 
     requestSave: async () => {
@@ -327,11 +349,22 @@ export const useEditorStore = create<EditorState>((set, get) => {
       // opens: a project pointed at another private file since the
       // fields were filled in would otherwise be confirmed against the
       // file it used to have.
-      const { scope, secretFile } = get();
+      const { scope, secretFile, settings: held } = get();
       const settings = await commands.getScopeSettings(scope, secretFile);
       if (!sameScope(get().scope, scope)) return;
       if (settings.status === "error") {
         set({ error: settings.error, confirming: false });
+        return;
+      }
+      // The edits in hand were made against the bases the fields were
+      // read with, and those bases are what the save carries back so a
+      // file something else has written is refused. Adopting the fresh
+      // read's bases here would replace them after the fact and turn that
+      // refusal into an overwrite of somebody's newer value. A file that
+      // moved is the reload, which is the same answer the save would have
+      // given.
+      if (held && moved(held, settings.data)) {
+        set({ stale: true, confirming: false, error: null });
         return;
       }
       set({ settings: settings.data, confirming: true });
