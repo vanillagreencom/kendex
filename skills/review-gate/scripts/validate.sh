@@ -556,10 +556,19 @@ else
     die workflow-exit "$wf_rc" "the adopted-workflow check could not run (validate-workflow.sh exit $wf_rc); its ::error above says why"
   wf_ok=0
   wf_bad=0
+  wf_malformed=0
   while IFS= read -r line; do
     case "$line" in
-      ok*) wf_ok=$((wf_ok + 1)) ;;
-      FAIL*) wf_bad=$((wf_bad + 1)) ;;
+      ok\ check=* | FAIL\ check=*)
+        if [[ "$line" =~ ^ok[[:space:]]check=[^[:space:]]+[[:space:]]value=[^[:space:]]+$ ]]; then
+          wf_ok=$((wf_ok + 1))
+        elif [[ "$line" =~ ^FAIL[[:space:]]check=[^[:space:]]+[[:space:]]value=[^[:space:]]+$ ]]; then
+          wf_bad=$((wf_bad + 1))
+        else
+          wf_malformed=$((wf_malformed + 1))
+        fi
+        ;;
+      ok* | FAIL*) wf_malformed=$((wf_malformed + 1)) ;;
     esac
   done <<EOF_WF
 $wf_out
@@ -573,7 +582,9 @@ EOF_WF
   # exited: a truncated or replaced file that parses and exits 0 passes the
   # runtime group, folds zero counts, and leaves this summary speaking for a
   # check that never ran.
-  if [ "$((wf_ok + wf_bad))" -eq 0 ]; then
+  if [ "$wf_malformed" -gt 0 ]; then
+    bad workflow-verdict-malformed "$wf_malformed" "the adopted-workflow check printed $wf_malformed malformed verdict record(s) — only 'ok check=KEY value=VALUE' and 'FAIL check=KEY value=VALUE' are verdicts"
+  elif [ "$((wf_ok + wf_bad))" -eq 0 ]; then
     bad workflow-no-verdict "$wf_rc" "the adopted-workflow check printed no verdict at all — it inspected nothing, so the workflow is unchecked here whatever its exit code said; re-run \`kendex refresh\` and commit the result"
   elif [ "$wf_rc" -eq 1 ] && [ "$wf_bad" -eq 0 ]; then
     bad workflow-no-failure "$wf_rc" "the adopted-workflow check exited 1 without printing a single FAIL verdict — it failed in a way it could not name, so nothing here knows whether the workflow was checked at all; re-run \`kendex refresh\` and commit the result"

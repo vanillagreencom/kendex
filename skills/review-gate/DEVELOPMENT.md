@@ -36,7 +36,7 @@ One judge per rule, and the judge is whoever owns the mechanism. The exclusion m
 
 ## How the selftest pins the decision table
 
-`review-predicate-selftest.sh` pins the decision table offline: a `gh` shim answers from fixtures and applies `--jq` through real jq, so the real predicate runs unmodified. Every case ending `approved` is paired with a near-miss that must not. The runner sources private test tables under `tests/predicate-selftest/` at the configuration, evidence, API-read and carry-forward boundaries. A configured layer derives its cases from the invoking repo's resolved settings.
+`review-predicate-selftest.sh` pins the decision table offline: a `gh` shim answers from fixtures and applies `--jq` through real jq, so the real predicate runs unmodified. Every case ending `approved` is paired with a near-miss that must not. The runner sources private test tables under `tests/lib/predicate-selftest/` at the configuration, evidence, API-read and carry-forward boundaries. A configured layer derives its cases from the invoking repo's resolved settings.
 
 ## Equality, not re-derivation
 

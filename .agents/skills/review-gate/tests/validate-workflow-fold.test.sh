@@ -23,6 +23,8 @@ while IFS='|' read -r shape check value; do
     empty-success) printf '#!/usr/bin/env bash\nexit 0\n' >"$DIR/$WORKFLOW_REL" ;;
     status-mismatch)
       printf '#!/usr/bin/env bash\nprintf "FAIL check=fixture value=peer\\n"\nexit 0\n' >"$DIR/$WORKFLOW_REL" ;;
+    malformed-record)
+      printf '#!/usr/bin/env bash\nprintf "okay check=fixture value=peer\\n"\nexit 0\n' >"$DIR/$WORKFLOW_REL" ;;
     *) printf 'fixture-error=unknown-peer value=%q\n' "$shape" >&2; exit 2 ;;
   esac
   run_validate "$DIR"
@@ -42,6 +44,7 @@ not-executable|workflow-tool|scripts/validate-workflow.sh
 empty-failure|workflow-no-verdict|1
 empty-success|workflow-no-verdict|0
 status-mismatch|workflow-status-mismatch|0
+malformed-record|workflow-verdict-malformed|1
 ROWS
 [ "$rows" -gt 0 ] && [ "$((PASS + FAIL - before))" -eq "$rows" ] || { printf 'fixture-error=fold-table value=%q\n' "$rows" >&2; exit 2; }
 

@@ -111,13 +111,12 @@ Concrete per-consumer values are tracked on the org adoption issue, not here. Ev
 | Verdict line | What to do |
 |---|---|
 | `settings-unknown` | Fix the spelling against [settings.md](settings.md). The written value is being ignored. |
-| `settings-values` | Read the indented engine diagnostic. Its first record identifies the setting error; the following lines explain the accepted values. |
+| `settings-values` | Read the indented engine diagnostic. Its first record identifies the setting error; the following lines explain the accepted values. A nested `predicate-pattern` record means the path pattern uses an unsupported anchor or metacharacter. |
 | `carry-unmatched` | Fix the glob, or declare it in `REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC` when it guards paths that do not exist yet. |
-| `predicate-pattern` | Drop the anchor: compare filenames are repository-relative. |
 | `carry-declaration-matched` or `carry-declaration-missing` | Reconcile the ledger — every declaration names an active exclusion that still matches nothing. |
 | `workflow-count` | Adopt (§ What an adoption PR contains), or `git add` the workflow: Actions runs only what is committed. |
 | `workflow-equality` | Re-copy `templates/review-gate-writer.yml` over the adopted file. The template carries no per-repo values, so a copy that differs is a copy someone edited; the line named under the verdict says where. Keep only the `check_run` opt-in's two trigger lines if that opt-in is on. |
-| `settings-unreadable` or `settings-syntax` | A committed value the loader refuses — the indented diagnostic names the key and the shape it rejected. Fix the assignment; an unreadable value is never an empty one. |
+| `carry-load` | Read the nested `settings-unreadable` or `settings-syntax` diagnostic. It names the key and the shape the loader rejected. Fix the assignment; an unreadable value is never an empty one. |
 | `runtime-mode` or `runtime-syntax` | Re-run `kendex refresh` and commit the result. |
 
 ## Migrating a v1 consumer (rerun/sweep-era wiring)
