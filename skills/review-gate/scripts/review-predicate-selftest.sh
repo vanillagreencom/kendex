@@ -322,26 +322,24 @@ EOF
 # invoking repo's own trust settings.
 echo "--- mechanism layer (forced configuration)"
 
-. "$here/../tests/lib/predicate-selftest/predicate-fixture-integrity.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-reads.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-checkruns.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-statuses.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-threads.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-review-objects.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-checkrun-skips.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-comments.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-override.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-configuration.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-thread-mode.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-retries.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-pagination.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-author.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-read-shapes.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-snapshot.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-request-shape.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-mode.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-carry.sh"
-. "$here/../tests/lib/predicate-selftest/predicate-configured.sh"
+for selftest_table in \
+  predicate-fixture-integrity.sh predicate-reads.sh predicate-checkruns.sh \
+  predicate-statuses.sh predicate-threads.sh predicate-review-objects.sh \
+  predicate-checkrun-skips.sh predicate-comments.sh predicate-override.sh \
+  predicate-configuration.sh predicate-thread-mode.sh predicate-retries.sh \
+  predicate-pagination.sh predicate-author.sh predicate-read-shapes.sh \
+  predicate-snapshot.sh predicate-request-shape.sh predicate-mode.sh \
+  predicate-carry.sh predicate-configured.sh; do
+  selftest_table_path="$here/../tests/lib/predicate-selftest/$selftest_table"
+  if [ ! -r "$selftest_table_path" ]; then
+    rg_message error selftest-table-load "$selftest_table_path" "Could not load predicate selftest table $selftest_table." >&2
+    exit 1
+  fi
+  . "$selftest_table_path" || {
+    rg_message error selftest-table-load "$selftest_table_path" "Could not load predicate selftest table $selftest_table." >&2
+    exit 1
+  }
+done
 
 if [ "$failures" -ne 0 ]; then
   rg_message error selftest-failed "$failures" "review-predicate selftest: $failures of $cases case(s) FAILED" >&2
