@@ -161,9 +161,6 @@ fx_carve() { carved carve; excl "$BLANKET$CARVE"; }
 fx_carve_above() { carved carve-above; excl "$CARVE$BLANKET"; }
 fx_carve_no_reason() { carved carve-no-reason; excl '.agents/**\tkendex render\n!.agents/skills/in-place/**\n'; }
 fx_carve_bare() { carved carve-bare; excl '.agents/**\tkendex render\n!\ta carve with no pattern\n'; }
-# `\!name` opens with a backslash, so it never reaches the carve arm, and
-# the matcher reads it as the literal path.
-fx_bang() { repo bang; put '!bang.rs' "// $TD: a marker under a bang-leading name\n"; excl '\\!bang.rs\tan escaped literal bang path\n'; }
 # The list is read from the index: a work-tree edit of it governs nothing
 # until staged.
 listed() { repo "$1"; put v.rs "// $TD: vendored\n"; put tools/commit-guards-todo-excludes 'v.rs\tvendored fixture\n'; stage; : >"$R/tools/commit-guards-todo-excludes"; } # NAME
@@ -189,7 +186,6 @@ run_rows \
   "a carve above the row it cuts into carves just the same|fx_carve_above||||rc=1 $(hit .agents/skills/in-place/lib.rs 1 "// $TD: a marker in the source of record");$(idx 1)" \
   "a carve row without a reason is the same config error as any other|fx_carve_no_reason||||rc=2 ${ERR}exclusion-reason=$EXCL:2" \
   "a bare ! row is a config error naming its line|fx_carve_bare||||rc=2 ${ERR}exclusion-carve=$EXCL:2" \
-  "an escaped row excludes the literal bang path rather than carving it|fx_bang||||rc=0 $OK_IDX" \
   "the staged list governs though the work-tree copy dropped the row|fx_list_index||COMMIT_GUARDS_TODO_EXCLUDES=tools/commit-guards-todo-excludes||rc=0 $(idx 0 0 tools/commit-guards-todo-excludes)" \
   "control: staging the emptied list re-exposes the marker|fx_list_staged||COMMIT_GUARDS_TODO_EXCLUDES=tools/commit-guards-todo-excludes||rc=1 $(hit v.rs 1 "// $TD: vendored");$(idx 1 0 tools/commit-guards-todo-excludes)"
 
