@@ -72,6 +72,7 @@ describe("a customized package in the Library list", () => {
         kind: "skill" as const,
         name: "gh",
         harness: "claude" as const,
+        at: installed(scope).path,
         origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
         package: { kind: "skill" as const, name: "gh" },
       })),
@@ -571,11 +572,14 @@ describe("one package several tools store differently", () => {
     ),
   ];
 
-  const row = (harness: string, kind: string, name: string) => ({
-    scope: VG,
-    kind,
-    name,
-    harness,
+  // One row per observation, each naming the file it was read from — the
+  // join answers per file, as the scan sees them.
+  const row = (item: ObservedItem) => ({
+    scope: item.scope,
+    kind: item.kind,
+    name: item.name,
+    harness: item.harness,
+    at: item.path,
     origin: { origin: "marketplace", source: "kendex", repo: "vg/kendex" },
     package: { kind: "hook", name: "block-bare-cd" },
   });
@@ -586,13 +590,14 @@ describe("one package several tools store differently", () => {
     useUpdatesStore.setState({ rows: [], read: READ_LANDED });
     useProvenanceStore.setState({
       rows: [
-        row("claude", "hook", "PreToolUse:Bash:block-bare-cd"),
-        row("cursor", "agent", "safety-block-bare-cd"),
+        row(items[0]),
+        row(items[1]),
         {
           scope: VG,
           kind: "agent",
           name: "safety-block-argv-kill",
           harness: "cursor",
+          at: items[2].path,
           origin: { origin: "unmanaged" },
           package: null,
         },
@@ -766,5 +771,22 @@ describe("the Library while the identity read has not answered", () => {
     expect(rows(host)).toBe(1);
     expect(host.textContent).toContain(PACKAGES_UNCONFIRMED_TITLE);
     expect(host.textContent).not.toContain(PACKAGES_CHECK_FAILED_TITLE);
+  });
+
+  // A read that failed after a scan has settled: it will not answer for
+  // that scan on its own, and its rows are the last answer there is.
+  // Treated as still pending, the table would hold a skeleton for ever
+  // under a heading saying these are the last kendex could check.
+  it("draws the last answer rather than waiting for one that failed", () => {
+    const host = arrange({
+      rows: [],
+      loaded: true,
+      // Answered about the scan before the one on screen.
+      answeredFor: -1,
+      read: readFailed("no lock"),
+    });
+    expect(skeleton(host)).toBe(false);
+    expect(rows(host)).toBe(1);
+    expect(host.textContent).toContain(PACKAGES_UNCONFIRMED_TITLE);
   });
 });

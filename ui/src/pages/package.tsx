@@ -90,7 +90,10 @@ export function PackagePage() {
   // The manifest this package's own edits live in, loaded up front so the
   // header can say whether there are any before the tab is opened.
   useEffect(() => {
-    if (ref) void openScope(ref.scope);
+    // Only where a declaration is what this page is about: the editor
+    // opens a place's manifest, and on an observed row that manifest
+    // belongs to whatever package shares its name.
+    if (ref && addressesDeclaration(ref)) void openScope(ref.scope);
   }, [ref, openScope]);
 
   const packageOf = usePackageIndex();
@@ -273,6 +276,7 @@ export function PackagePage() {
         scope={ref.scope}
         scopes={groupScopes(group)}
         installations={group.installations}
+        declares={declares}
         vendor={vendorAt(group.installations, ref.scope)}
         harnesses={group.harnesses as HarnessId[]}
         busy={mutating}

@@ -25,7 +25,8 @@ import {
   TRY_AGAIN_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
-import { DELETE_LABEL } from "@/lib/copy-projects";
+import { CUSTOMIZE_TAB, OVERVIEW_TAB } from "@/lib/copy-customize";
+import { DELETE_LABEL, PROJECTS_TAB } from "@/lib/copy-projects";
 import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
 import {
   EDITED_CANT_UPDATE_NOTE,
@@ -142,18 +143,24 @@ const openPage = async (
   // installation nothing recorded, and a fixture saying so would be
   // describing a different thing.
   useProvenanceStore.setState({
-    rows: installed.map((scope) => ({
-      scope,
-      kind,
-      name: "gh",
-      harness: "claude" as const,
-      origin: {
-        origin: "marketplace" as const,
-        source: "cat",
-        repo: "o/r",
-      },
-      package: { kind, name: "gh" },
-    })),
+    rows: installed.map((scope) => {
+      const item = installedAt(scope, kind);
+      return {
+        scope,
+        kind,
+        name: "gh",
+        harness: item.harness,
+        // The join answers per file, so a fixture naming a different one
+        // would be about a different installation.
+        at: item.path,
+        origin: {
+          origin: "marketplace" as const,
+          source: "cat",
+          repo: "o/r",
+        },
+        package: { kind, name: "gh" },
+      };
+    }),
     loaded: true,
     answeredFor: 0,
   });
@@ -851,6 +858,7 @@ describe("the package page's safety tab", () => {
           kind: "skill",
           name: "gh",
           harness: "codex",
+          at: installedAt(VG).path,
           origin: { origin: "marketplace", source: "cat", repo: "o/r" },
           package: { kind: "skill", name: "gh" },
         },
@@ -1091,7 +1099,11 @@ describe("a package page opened on an installation nothing recorded", () => {
     path: `${VG.root}/.cursor/skills/gh`,
   });
 
+  let opened: ReturnType<typeof vi.fn>;
+
   const openObserved = async () => {
+    opened = vi.fn().mockResolvedValue(undefined);
+    useEditorStore.setState({ openScope: opened as never });
     useScanStore.setState({
       result: {
         harnesses: [],
@@ -1107,6 +1119,7 @@ describe("a package page opened on an installation nothing recorded", () => {
         kind: "skill",
         name: "gh",
         harness: "claude",
+        at: null,
         origin: { origin: "marketplace", source: "cat", repo: "o/r" },
         package: { kind: "skill", name: "gh" },
       },
@@ -1115,6 +1128,7 @@ describe("a package page opened on an installation nothing recorded", () => {
         kind: "skill",
         name: "gh",
         harness: "cursor",
+        at: null,
         origin: { origin: "unmanaged" },
         package: null,
       },
@@ -1158,6 +1172,22 @@ describe("a package page opened on an installation nothing recorded", () => {
     );
     expect(labels).not.toContain(DELETE_LABEL);
     expect(host.querySelector("#package-enabled")).toBeNull();
+  });
+
+  // Every surface that reads or writes a declaration, not only the
+  // overview's buttons: Projects reads each place's record and offers that
+  // declaration's update and removal, and Customize edits its manifest.
+  it("offers no tab that would read or write the other package", async () => {
+    const host = await openObserved();
+    const tabs = Array.from(host.querySelectorAll('[role="tab"]')).map(
+      (one) => one.textContent,
+    );
+    expect(tabs).not.toContain(PROJECTS_TAB);
+    expect(tabs).not.toContain(CUSTOMIZE_TAB);
+    expect(tabs).toContain(OVERVIEW_TAB);
+    // And the editor was never pointed at this place's manifest, which is
+    // the other package's wherever one shares the name.
+    expect(opened).not.toHaveBeenCalled();
   });
 
   // The row it IS about stays inspectable: what the tool holds, where, and

@@ -1,0 +1,1 @@
+- Tell installations apart by the file each one is, so a package and a stranger sharing its name never take each other's origin, page, tabs or actions.

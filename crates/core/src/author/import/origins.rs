@@ -179,10 +179,13 @@ fn marketplace_origins(
         .marketplace
         .as_ref()
         .and_then(|meta| meta.license.clone());
-    let Some(path) = crate::source::find_item(&sealed, &config, row.kind, &row.name) else {
+    // A catalog holds this under the name it was declared as, never under
+    // what a tool stores it as.
+    let package = row.package_ref();
+    let Some(path) = crate::source::find_item(&sealed, &config, package.kind, &package.name) else {
         return unreachable(license);
     };
-    let Some(bytes) = read_bytes(&sealed, row.kind, &path) else {
+    let Some(bytes) = read_bytes(&sealed, package.kind, &path) else {
         return unreachable(license);
     };
     let source_hash = bytes.hash();
@@ -298,7 +301,9 @@ pub(super) fn resolve_selection(
     let mut unusable: Vec<(String, Option<String>)> = Vec::new();
     let mut selectable = false;
     for row in crate::library::provenance(env, scopes)? {
-        if row.kind != selection.kind || row.name != selection.name {
+        // Selected by the package, the way the inventory grouped it.
+        let package = row.package_ref();
+        if package.kind != selection.kind || package.name != selection.name {
             continue;
         }
         for read in origins_of(env, &row, &observed) {

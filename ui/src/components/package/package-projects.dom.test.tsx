@@ -56,6 +56,7 @@ const ownedBy = (...owned: [Scope, Origin][]): ProvenanceRow[] =>
     kind: "skill",
     name: "gh",
     harness: "claude",
+    at: null,
     origin,
     package: { kind: "skill", name: "gh" },
   }));
@@ -572,6 +573,7 @@ describe("a place whose copy the tool stores as another kind", () => {
         kind: "agent",
         name: "safety-gh",
         harness: "cursor",
+        at: null,
         origin: OURS,
         package: { kind: "hook", name: "gh" },
       },

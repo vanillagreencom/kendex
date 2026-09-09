@@ -2885,6 +2885,15 @@ export type ProvenanceRow = {
 	kind: ItemKind,
 	name: string,
 	harness: HarnessId,
+	/**
+	 *  Where this observation's bytes are, in the spelling the scan hands
+	 *  out. What tells two observations apart where their scope, kind,
+	 *  name and tool cannot: a tool reads both a shared skill root and one
+	 *  of its own, so a recorded `gh` in the first and somebody's own `gh`
+	 *  in the second are one key without it. `None` on a row a record
+	 *  seeded for an installation the scan did not see.
+	 */
+	at: string | null,
 	origin: Origin,
 	/**
 	 *  Which package this installation is, where the records establish

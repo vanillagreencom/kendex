@@ -48,7 +48,12 @@ interface ProvenanceState {
  *  only there, so never read, failed, and about to be replaced are all
  *  false. Anything about to act irreversibly on the join asks this. */
 export const joinCurrent = (state: ProvenanceState): boolean =>
-  state.read.status === "landed" && !state.reading;
+  state.read.status === "landed" &&
+  !state.reading &&
+  // And about the scan on screen. A landed idle read of the scan BEFORE
+  // this one is not an answer about what is on the page now, and this is
+  // the predicate an irreversible action asks.
+  state.answeredFor === useScanStore.getState().generation;
 
 /** Where every installation came from — the Library's From column and a
  * marketplace's Installed in column read this join and match rows into their
@@ -142,7 +147,12 @@ export const useProvenanceStore = create<ProvenanceState>((set, get) => {
 const rowIs = (row: ProvenanceRow, ref: PackageIdentityRef): boolean =>
   ref.identity === "recorded"
     ? row.package?.kind === ref.kind && row.package.name === ref.name
-    : row.package === null && row.kind === ref.kind && row.name === ref.name;
+    : row.package === null &&
+      row.kind === ref.kind &&
+      row.name === ref.name &&
+      // The file too: two rows in one place can wear this kind and name,
+      // and one may carry provenance the other does not.
+      row.at === ref.at;
 
 /** Every origin recorded across these scopes, in row order. Each place
  * records its own source, so one package installed in several places can

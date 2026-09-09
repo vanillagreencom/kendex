@@ -117,6 +117,27 @@ export function bytesAt(install: ObservedItem): string {
     : install.path;
 }
 
+/** The separator between a shared file and the entry inside it — a
+ *  character no path and no command can hold. Written as an escape, never
+ *  as the byte: a control character typed into a source file makes Git
+ *  call the file binary. */
+const ENTRY = "\u001f";
+
+/** What tells this observation from another the scan saw under the same
+ *  kind, name and tool — because it does see two: a tool reads both a
+ *  shared root and one of its own, and one registry file holds every hook
+ *  entry a tool runs.
+ *
+ *  For an artifact of its own that is where it sits; for an entry inside a
+ *  shared file it is that file and the action the entry runs, since the
+ *  file is every entry's. The same spelling core keys its rows by, so the
+ *  two sides of the join meet. Compared, never parsed. */
+export function observedAt(item: ObservedItem): string {
+  return item.fileState.state === "config-entry"
+    ? `${item.path}${ENTRY}${item.description ?? ""}`
+    : bytesAt(item);
+}
+
 /** The paths more than one harness reads, out of one item's installations.
  *
  * The badge that says a package is shared and the flyout that says which
@@ -159,7 +180,7 @@ export function groupItems(
     // file happens to be called must not join that file's row.
     const key = identity
       ? `package:${identity.kind}:${identity.name}`
-      : `observed:${item.kind}:${item.name}:${bytesAt(item)}`;
+      : `observed:${item.kind}:${item.name}:${observedAt(item)}`;
     let group = groups.get(key);
     if (!group) {
       group = {
@@ -237,7 +258,7 @@ export const groupRef = (group: ItemGroup): PackageIdentityRef =>
         identity: "observed",
         // Every installation on an unrecorded row reads one file — that is
         // what gathered them — so the first speaks for the row.
-        at: group.installations[0] && bytesAt(group.installations[0]),
+        at: group.installations[0] && observedAt(group.installations[0]),
       };
 
 /** The row a link opens, out of the rows on this machine.

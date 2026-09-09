@@ -105,6 +105,7 @@ const joined = (
   kind: "skill",
   name: "gh",
   harness,
+  at: null,
   origin,
   package: { kind: "skill", name: "gh" },
 });
@@ -117,6 +118,7 @@ const owned = (scopes: Scope[], origin: Origin = OURS): ProvenanceRow[] =>
     kind: "skill",
     name: "gh",
     harness: "claude",
+    at: null,
     origin,
     package: { kind: "skill", name: "gh" },
   }));

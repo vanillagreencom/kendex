@@ -33,17 +33,52 @@ pub struct PackageRef {
 /// One scope's recorded installations, indexed by what each of them put on
 /// this machine — the evidence an observation is matched against.
 pub(super) struct Recorded {
-    /// The artifact positions one install recorded writing, per harness.
-    /// Per harness because a shared tree is written once and read by
-    /// several tools: whose installation an observation is, is the tool
-    /// that observed it.
-    by_artifact: HashMap<(HarnessId, PathBuf), PackageRef>,
+    /// The artifact positions one install recorded writing, by position.
+    ///
+    /// By position and not by the tool that observed it: ownership is a
+    /// property of the path (invariant 6). One shared tree is written once
+    /// and scanned again for every tool that reads it, so keying this per
+    /// harness would answer for the writer's observation and leave every
+    /// other reader's looking like a stranger's file.
+    ///
+    /// `None` where two records claim one position: the records do not say
+    /// which package it is, and neither may speak for it.
+    by_artifact: HashMap<PathBuf, Option<PackageRef>>,
     /// The registry entry one hook install recorded writing, named the way
-    /// the scan names what it reads back.
-    by_registration: HashMap<(HarnessId, String), PackageRef>,
+    /// the scan names what it reads back, with the command it recorded.
+    /// The name reduces a command to its stem, which two different scripts
+    /// can share, so the whole command is kept and compared.
+    by_registration: HashMap<(HarnessId, String), Option<Registered>>,
     /// Every declared name recorded for a harness and kind, for the
-    /// observations a loader lists under a name of its own.
+    /// observations that have no artifact position of their own.
     declared: HashMap<(HarnessId, ItemKind), Vec<String>>,
+}
+
+/// One recorded registration: the package, and the command it went in
+/// with, whole.
+#[derive(Clone, PartialEq, Eq)]
+struct Registered {
+    package: PackageRef,
+    command: String,
+}
+
+/// Record one package's claim on a position. Two records claiming one
+/// position leave it unclaimed: the records do not say which package it
+/// is, and crediting either would be a guess.
+fn claim(
+    by_artifact: &mut HashMap<PathBuf, Option<PackageRef>>,
+    at: PathBuf,
+    package: &PackageRef,
+) {
+    match by_artifact.get(&at) {
+        Some(Some(known)) if known == package => {}
+        Some(_) => {
+            by_artifact.insert(at, None);
+        }
+        None => {
+            by_artifact.insert(at, Some(package.clone()));
+        }
+    }
 }
 
 /// Read a path in the one spelling comparisons meet it in. A recorded
@@ -72,14 +107,12 @@ pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
             // names the position the install wrote. Indexed under the one
             // helper removal reads it back through, so what is credited
             // here and what would be taken away cannot diverge.
-            by_artifact.insert(
-                (
-                    entry.harness,
-                    resolved(&crate::engine::disabled_name(&path)),
-                ),
-                package.clone(),
-            );
-            by_artifact.insert((entry.harness, resolved(&path)), package.clone());
+            for position in [
+                resolved(&crate::engine::disabled_name(&path)),
+                resolved(&path),
+            ] {
+                claim(&mut by_artifact, position, &package);
+            }
         }
         if entry.kind == ItemKind::Hook
             && let Some(registration) = &entry.registration
@@ -90,17 +123,27 @@ pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
             // observation keeps its own identity and says so.
             && let Some(matcher) = &registration.matcher
         {
-            by_registration.insert(
-                (
-                    entry.harness,
-                    crate::scan::hooks::registration_name(
-                        &registration.event,
-                        matcher,
-                        &registration.command,
-                    ),
+            let key = (
+                entry.harness,
+                crate::scan::hooks::registration_name(
+                    &registration.event,
+                    matcher,
+                    &registration.command,
                 ),
-                package.clone(),
             );
+            let held = Registered {
+                package: package.clone(),
+                command: registration.command.clone(),
+            };
+            match by_registration.get(&key) {
+                Some(Some(known)) if *known == held => {}
+                Some(_) => {
+                    by_registration.insert(key, None);
+                }
+                None => {
+                    by_registration.insert(key, Some(held));
+                }
+            }
         }
         declared
             .entry((entry.harness, entry.kind))
@@ -125,26 +168,48 @@ impl Recorded {
     /// this reader's own and stays its own, because a name two packages
     /// happen to share is not evidence that either wrote the file.
     pub(super) fn of(&self, item: &ObservedItem) -> Option<PackageRef> {
-        // An entry inside a config file is not named by the file holding
-        // it — every entry of its kind shares that path — so an entry is
-        // matched by the registration it was read as and never by where
-        // it sits.
-        if item.file_state != FileState::ConfigEntry
-            && let Some(package) = self.by_artifact.get(&(item.harness, resolved(&item.path)))
-        {
-            return Some(package.clone());
+        // An observation with a position of its own is answered by that
+        // position and nothing else: a file where no record claims one is
+        // somebody else's, whatever it is called.
+        if !Self::positionless(item) {
+            return self
+                .by_artifact
+                .get(&resolved(&item.path))
+                .cloned()
+                .flatten();
         }
+        // An entry inside a config file is not named by the file holding
+        // it — every entry of its kind shares that path — so a hook entry
+        // is matched by the registration it was read as.
         if item.kind == ItemKind::Hook
-            && let Some(package) = self.by_registration.get(&(item.harness, item.name.clone()))
+            && let Some(held) = self.by_registration.get(&(item.harness, item.name.clone()))
         {
-            return Some(package.clone());
+            // The name a registration is read under carries only the
+            // command's stem, and two unrelated scripts can share one. The
+            // record kept the whole command and the scan read the whole
+            // command back, so those are what is compared.
+            return held
+                .as_ref()
+                .filter(|held| item.description.as_deref() == Some(held.command.as_str()))
+                .map(|held| held.package.clone());
         }
         self.named(item)
+    }
+
+    /// Whether this observation has no artifact position a record could
+    /// claim: an entry inside a shared config file, and a kind whose
+    /// records own no path of their own.
+    fn positionless(item: &ObservedItem) -> bool {
+        item.file_state == FileState::ConfigEntry || item.kind == ItemKind::PiExtension
     }
 
     /// The one recorded declaration this observed name answers to, through
     /// the shared naming rule. Several would mean the records do not say
     /// which package this is, so none of them may speak for it.
+    ///
+    /// Reached only where there is no position to ask instead. A name is
+    /// not evidence about a file, so a path nothing claims never falls
+    /// through to here.
     fn named(&self, item: &ObservedItem) -> Option<PackageRef> {
         let names = self.declared.get(&(item.harness, item.kind))?;
         let mut found = names

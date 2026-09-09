@@ -108,6 +108,11 @@ export function InstalledView() {
     !packagesEverKnown && packagesRead.status === "failed"
       ? packagesRead
       : null;
+  // A read that failed has settled: it is not coming back on its own, and
+  // the rows it left are the last answer there is. Drawn as pending, the
+  // table would hold a skeleton for ever under a heading saying these are
+  // the last kendex could check.
+  const packagesSettled = packagesKnown || packagesRead.status === "failed";
   // Kept in nav rather than here so leaving for a package page and coming
   // back lands on the same narrowed table.
   const search = useNavStore((s) => s.search);
@@ -158,7 +163,7 @@ export function InstalledView() {
     // installation wearing a package's clothes, which is the duplication
     // this page exists to stop. With the read failed and nothing retained
     // the note above stands in their place instead.
-    if (!result || !packagesKnown || packagesUnreadable) return [];
+    if (!result || !packagesSettled || packagesUnreadable) return [];
     const filtered = filterItems(result.items, {
       scope,
       harness: harness === "any" ? undefined : harness,
@@ -197,7 +202,7 @@ export function InstalledView() {
     search,
     provenance,
     packageOf,
-    packagesKnown,
+    packagesSettled,
     packagesUnreadable,
     editedAnywhere,
   ]);
@@ -224,7 +229,7 @@ export function InstalledView() {
   const scanning =
     packagesUnreadable === null &&
     (result === null ||
-      !packagesKnown ||
+      !packagesSettled ||
       (edited === "edited" && editedAnywhere === null));
   const hasAnyItems = (result?.items.length ?? 0) > 0;
   const filters: FilterSelection = { kind, harness, tag, from, edited };

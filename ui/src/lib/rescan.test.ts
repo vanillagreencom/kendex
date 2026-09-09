@@ -4,7 +4,7 @@ import { identityCurrent } from "@/lib/package-identity";
 import { READ_LANDED } from "@/lib/read-state";
 import { rescanEverything } from "@/lib/rescan";
 import { useAuditStore } from "@/stores/audit";
-import { useProvenanceStore } from "@/stores/provenance";
+import { joinCurrent, useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 
 vi.mock("@/bindings", () => ({
@@ -65,6 +65,7 @@ describe("Scan again", () => {
           kind: "skill",
           name: "gh",
           harness: "claude",
+          at: null,
           origin: { origin: "marketplace", source: "kendex", repo: "a/b" },
         },
       ] as never,
@@ -166,5 +167,47 @@ describe("identity readiness across a rescan", () => {
     await useScanStore.getState().refresh();
     await settle;
     expect(known()).toBe(false);
+  });
+});
+
+// A scan that failed leaves the previous result and its number standing.
+// The join read after it would be stamped with that number and pass as an
+// answer about a scan it never saw — new identity rows over old
+// observations.
+describe("the identity read behind a scan that failed", () => {
+  it("is not asked for, and readiness stays what it was", async () => {
+    await rescanEverything();
+    const settled = useScanStore.getState().generation;
+    vi.mocked(commands.libraryProvenance).mockClear();
+
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "error",
+      error: "the machine could not be read",
+    });
+    await rescanEverything();
+
+    expect(useScanStore.getState().generation).toBe(settled);
+    expect(vi.mocked(commands.libraryProvenance)).not.toHaveBeenCalled();
+    expect(
+      identityCurrent(
+        useProvenanceStore.getState().answeredFor,
+        useScanStore.getState().generation,
+      ),
+    ).toBe(true);
+  });
+});
+
+// The predicate an irreversible action asks. A landed, idle read of the
+// scan BEFORE this one is not an answer about what is on the page now.
+describe("whether the join may be acted on", () => {
+  it("is false for a landed read that answered about an older scan", async () => {
+    await rescanEverything();
+    expect(joinCurrent(useProvenanceStore.getState())).toBe(true);
+
+    await useScanStore.getState().refresh();
+    expect(joinCurrent(useProvenanceStore.getState())).toBe(false);
+
+    await useProvenanceStore.getState().reload();
+    expect(joinCurrent(useProvenanceStore.getState())).toBe(true);
   });
 });

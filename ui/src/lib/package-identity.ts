@@ -8,7 +8,7 @@ import type {
   Scope,
 } from "@/bindings";
 import { PLACE_COUNTING_LABEL, PLACE_UNCHECKED_LABEL } from "@/lib/copy";
-import type { PackageIdentity } from "@/lib/derive";
+import { observedAt, type PackageIdentity } from "@/lib/derive";
 import type { ReadState } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 import { useProvenanceStore } from "@/stores/provenance";
@@ -39,8 +39,11 @@ const installationKey = (row: {
   kind: ItemKind;
   name: string;
   harness: HarnessId;
+  at: string | null;
 }): string =>
-  [scopeKey(row.scope), row.harness, row.kind, row.name].join(FIELD);
+  [scopeKey(row.scope), row.harness, row.kind, row.name, row.at ?? ""].join(
+    FIELD,
+  );
 
 /** The identity every surface reads, out of the one join that carries it.
  *
@@ -53,7 +56,11 @@ export function packageIndex(rows: ProvenanceRow[]): PackageOf {
   for (const row of rows) {
     if (row.package) byInstallation.set(installationKey(row), row.package);
   }
-  return (item) => byInstallation.get(installationKey(item)) ?? null;
+  // Keyed by the file as well: a tool reads more than one root, so its
+  // scope, kind and name do not tell a recorded copy from somebody's own.
+  return (item) =>
+    byInstallation.get(installationKey({ ...item, at: observedAt(item) })) ??
+    null;
 }
 
 /** The same index for a component, rebuilt only when the join changes:

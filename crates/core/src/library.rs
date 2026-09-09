@@ -46,6 +46,17 @@ pub struct ProvenanceRow {
     pub kind: ItemKind,
     pub name: String,
     pub harness: HarnessId,
+    /// What tells this observation from another the scan saw under the
+    /// same scope, kind, name and tool — because it does see two: a tool
+    /// reads both a shared skill root and one of its own, and one registry
+    /// file holds every hook entry a tool runs.
+    ///
+    /// For an artifact of its own that is where it sits. For an entry
+    /// inside a shared file it is that file and the action the entry runs,
+    /// since the file is every entry's. Compared, never parsed: it is one
+    /// opaque spelling of "which observation is this", and `None` on a row
+    /// a record seeded for an installation the scan did not see.
+    pub at: Option<String>,
     pub origin: Origin,
     /// Which package this installation is, where the records establish
     /// one. `None` says they do not: the observation keeps its own
@@ -58,11 +69,50 @@ pub struct ProvenanceRow {
 
 /// One installation as the Library joins it: where it is, what the scan
 /// called it, and which tool holds it.
-type RowKey = (Scope, ItemKind, String, HarnessId);
+type RowKey = (Scope, ItemKind, String, HarnessId, Option<String>);
+
+/// The separator between a shared file and the entry inside it, a
+/// character no path and no command can hold.
+const ENTRY: char = '\u{1f}';
+
+/// What tells one observation from another the scan saw alike. See
+/// [`ProvenanceRow::at`].
+fn observed_at(item: &crate::model::ObservedItem) -> String {
+    let at = crate::paths::slashed(
+        &crate::paths::canonical(&item.path).unwrap_or_else(|_| item.path.clone()),
+    );
+    match item.file_state {
+        crate::model::FileState::ConfigEntry => {
+            format!(
+                "{at}{ENTRY}{}",
+                item.description.as_deref().unwrap_or_default()
+            )
+        }
+        _ => at,
+    }
+}
 
 /// What is known about one such installation: where it came from, and
 /// which package it is when the records establish one.
 type RowFacts = (Origin, Option<PackageRef>);
+
+impl ProvenanceRow {
+    /// The package this row is about: the one the records establish, or
+    /// what the scan saw where they establish none.
+    ///
+    /// What every consumer speaking about packages asks — a catalog holds
+    /// a hook under the name it was declared as, never under the
+    /// `safety-…` rule a tool stores it in, so looking one up by the
+    /// observed spelling searches for something that was never there.
+    /// Anything reading the bytes on disk wants [`ProvenanceRow::at`]
+    /// instead, which is where they are.
+    pub fn package_ref(&self) -> PackageRef {
+        self.package.clone().unwrap_or(PackageRef {
+            kind: self.kind,
+            name: self.name.clone(),
+        })
+    }
+}
 
 /// Every installation's origin across the given scopes — one row per
 /// (scope, kind, name, harness), lock records outranking observation.
@@ -94,9 +144,38 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
         };
         let package = index.of(&item);
         let origin = observed_origin(env, records, &item, package.as_ref());
-        rows.entry((item.scope, item.kind, item.name, item.harness))
+        // Keyed by which observation it is as well: a tool reads more than
+        // one root and one registry file holds every entry, so two things
+        // it finds under one name are two installations rather than one
+        // row that has to pick an origin between them.
+        let at = observed_at(&item);
+        rows.entry((item.scope, item.kind, item.name, item.harness, Some(at)))
             .or_insert((origin, package));
     }
+    // A record seeded a row for every installation it holds, so that one
+    // the scan cannot see is still visible. Where the scan DID see it, that
+    // observation is the row — it carries the position, and the seeded one
+    // would stand beside it saying the same thing about no file.
+    let observed_packages: std::collections::BTreeSet<_> = rows
+        .iter()
+        .filter(|((.., at), _)| at.is_some())
+        .filter_map(|((scope, .., harness, _), (_, package))| {
+            package
+                .as_ref()
+                .map(|package| (scope.clone(), package.clone(), *harness))
+        })
+        .collect();
+    rows.retain(|(scope, kind, name, harness, at), _| {
+        at.is_some()
+            || !observed_packages.contains(&(
+                scope.clone(),
+                PackageRef {
+                    kind: *kind,
+                    name: name.clone(),
+                },
+                *harness,
+            ))
+    });
     for (scope, records) in &records_by_scope {
         if let Some(problem) = &records.record_problem {
             let recovered = rows.iter().any(|((row_scope, ..), (origin, _))| {
@@ -113,11 +192,12 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
     Ok(rows
         .into_iter()
         .map(
-            |((scope, kind, name, harness), (origin, package))| ProvenanceRow {
+            |((scope, kind, name, harness, at), (origin, package))| ProvenanceRow {
                 scope,
                 kind,
                 name,
                 harness,
+                at,
                 origin,
                 package,
             },
@@ -137,7 +217,13 @@ fn recorded(
     let manifest = records.manifest.as_deref().unwrap_or(&empty);
     for entry in records.lock.entries.values() {
         rows.insert(
-            (scope.clone(), entry.kind, entry.name.clone(), entry.harness),
+            (
+                scope.clone(),
+                entry.kind,
+                entry.name.clone(),
+                entry.harness,
+                None,
+            ),
             (
                 origin_of(
                     manifest,

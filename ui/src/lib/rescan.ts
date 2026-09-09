@@ -81,9 +81,15 @@ export async function rescanEverything(opts?: {
     // before this one and every count would read as unknown until
     // something else asked again.
     (async () => {
+      const before = useScanStore.getState().generation;
       await useScanStore
         .getState()
         .refresh({ announce: opts?.announce === true });
+      // Only behind a scan that landed. A scan that failed leaves the
+      // previous result and its number standing, and a join read after it
+      // would be stamped with that number and pass as an answer about a
+      // scan it never saw — new identity rows over old observations.
+      if (useScanStore.getState().generation === before) return;
       // Answers nothing to act on: a join that could not be read is the
       // previous rows staying put, which its store publishes as its read
       // state for every reader that gates on the answer.

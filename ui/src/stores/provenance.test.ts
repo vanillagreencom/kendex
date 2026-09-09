@@ -22,6 +22,7 @@ const ROWS: ProvenanceRow[] = [
     kind: "skill",
     name: "gh",
     harness: "claude",
+    at: null,
     origin: { origin: "marketplace", source: "kendex", repo: "acme/kendex" },
     package: { kind: "skill", name: "gh" },
   },
@@ -30,6 +31,7 @@ const ROWS: ProvenanceRow[] = [
     kind: "skill",
     name: "gh",
     harness: "claude",
+    at: null,
     origin: { origin: "own", forkedFrom: "kendex", source: "local" },
     package: { kind: "skill", name: "gh" },
   },
@@ -38,6 +40,7 @@ const ROWS: ProvenanceRow[] = [
     kind: "agent",
     name: "gh",
     harness: "claude",
+    at: null,
     origin: { origin: "unmanaged" },
     package: null,
   },
@@ -91,6 +94,7 @@ describe("the From column's join", () => {
         kind: "skill",
         name: "gh",
         harness: "claude",
+        at: "/p/.claude/skills/gh",
         origin: { origin: "marketplace", source: "kendex", repo: "a/k" },
         package: { kind: "skill", name: "gh" },
       },
@@ -99,6 +103,7 @@ describe("the From column's join", () => {
         kind: "skill",
         name: "gh",
         harness: "cursor",
+        at: "/p/.cursor/skills/gh",
         origin: { origin: "unmanaged" },
         package: null,
       },
@@ -109,9 +114,16 @@ describe("the From column's join", () => {
       repo: "a/k",
     });
     expect(
-      originFor(both, { kind: "skill", name: "gh", identity: "observed" }, [
-        here,
-      ]),
+      originFor(
+        both,
+        {
+          kind: "skill",
+          name: "gh",
+          identity: "observed",
+          at: "/p/.cursor/skills/gh",
+        },
+        [here],
+      ),
     ).toEqual({ origin: "unmanaged" });
   });
 

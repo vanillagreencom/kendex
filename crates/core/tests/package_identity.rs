@@ -57,6 +57,11 @@ struct Fixture {
 
 #[allow(clippy::unwrap_used)]
 fn fixture(declarations: &str) -> Fixture {
+    fixture_for(declarations, "copy", HARNESSES)
+}
+
+#[allow(clippy::unwrap_used)]
+fn fixture_for(declarations: &str, method: &str, harnesses: &str) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
@@ -90,7 +95,7 @@ fn fixture(declarations: &str) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{HARNESSES}]\nmethod = \"copy\"\n\n{declarations}",
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"{method}\"\n\n{declarations}",
             source_path(&catalog)
         ),
     )
@@ -157,6 +162,11 @@ fn row_for(rows: &[ProvenanceRow], harness: HarnessId, package: &PackageRef) -> 
     found[0].clone()
 }
 
+/// A fixture path in the spelling the scan hands out.
+fn paths_canonical(path: &Path) -> PathBuf {
+    kendex_core::paths::canonical(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn marketplace(catalog: &Path) -> Origin {
     Origin::Marketplace {
         source: "cat".to_owned(),
@@ -198,6 +208,100 @@ fn one_hook_across_every_tool_is_one_package_from_its_marketplace() {
     assert_eq!(claude.name, "PreToolUse:Bash:block-worktree-refresh");
     let opencode = row_for(&rows, HarnessId::Opencode, &hook);
     assert_eq!(opencode.name, "kendex-hook-block-worktree-refresh");
+}
+
+/// A file at a position no record claims is somebody else's, whatever it
+/// is called. A tool reads more than one root, so the same name in the
+/// other one is a different file — and a name is not evidence about a file.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_file_at_an_unclaimed_position_stays_nobody_s() {
+    // Copy delivery for Claude: the record claims Claude's own directory
+    // and nothing in the shared tree, which Claude also reads.
+    let f = fixture_for("[skills.gh]\nsource = \"cat\"\n", "copy", "\"claude\"");
+    apply_now(&f);
+    // Somebody's own gh in the tree Claude reads as well. Claude is the
+    // tool whose record names this package, so a name rule would hand this
+    // stranger's file that package.
+    let mine = f.project.join(".agents/skills/gh");
+    fs::create_dir_all(&mine).unwrap();
+    fs::write(
+        mine.join("SKILL.md"),
+        "---\nname: gh\ndescription: my own\n---\nBody.\n",
+    )
+    .unwrap();
+
+    let rows = observed(&rows(&f), &f);
+    let at = |path: &Path| kendex_core::paths::slashed(&paths_canonical(path));
+    let package_at = |position: String| -> Vec<Option<PackageRef>> {
+        rows.iter()
+            .filter(|row| row.at.as_deref() == Some(position.as_str()))
+            .map(|row| row.package.clone())
+            .collect()
+    };
+    // The position the record claims is the package.
+    assert_eq!(
+        package_at(at(&f.project.join(".claude/skills/gh"))),
+        vec![package(ItemKind::Skill, "gh")],
+        "the installed gh lost its package"
+    );
+    // The position no record claims is nobody's, for every tool that reads
+    // it — and a name rule would have handed all of them this package,
+    // since Claude's own record declares that very name.
+    let theirs = package_at(at(&mine));
+    assert!(!theirs.is_empty(), "the stranger's gh was never observed");
+    assert!(
+        theirs.iter().all(Option::is_none),
+        "a gh nobody recorded was credited to the package: {theirs:#?}"
+    );
+}
+
+/// A registration is named for its command's stem, and two unrelated
+/// scripts can share one. The record keeps the whole command, so that is
+/// what has to match before a package is credited with an entry.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_registration_running_another_script_is_not_this_package() {
+    let f = fixture_for(
+        "[hooks.block-worktree-refresh]\nsource = \"cat\"\n",
+        "copy",
+        "\"claude\"",
+    );
+    apply_now(&f);
+    // Somebody's own entry, same event and matcher, running a script of
+    // their own that happens to share the stem kendex's command reduces to.
+    let settings = f.project.join(".claude/settings.json");
+    let mut document: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    document["hooks"]["PreToolUse"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "matcher": "Bash",
+            "hooks": [{
+                "type": "command",
+                "command": "bash \"/opt/mine/block-worktree-refresh.sh\""
+            }],
+        }));
+    fs::write(&settings, serde_json::to_string_pretty(&document).unwrap()).unwrap();
+
+    let rows = observed(&rows(&f), &f);
+    let theirs: Vec<_> = rows
+        .iter()
+        .filter(|row| row.kind == ItemKind::Hook && row.package.is_none())
+        .collect();
+    assert_eq!(
+        theirs.len(),
+        1,
+        "somebody else's registration was credited to the package: {rows:#?}"
+    );
+    assert_eq!(theirs[0].origin, Origin::Unmanaged);
+    // And kendex's own entry still resolves.
+    row_for(
+        &rows,
+        HarnessId::Claude,
+        &package(ItemKind::Hook, "block-worktree-refresh").unwrap(),
+    );
 }
 
 /// A rule nobody installed keeps its own identity. The name it carries is

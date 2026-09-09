@@ -461,6 +461,7 @@ describe("a place card's kind badge", () => {
         kind: item.kind,
         name: item.name,
         harness: item.harness,
+        at: item.path,
         origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
         package: { kind: item.kind, name: item.name },
       })),
