@@ -13,6 +13,10 @@
 # in-process below the table.
 
 . "$(dirname "$0")/lib/harness.sh"
+# The tool records the path it resolved, and macOS reaches /var through a
+# symlink to /private/var, so a case comparing against the fixture path as
+# written passes on Linux and fails there. Resolve it the same way.
+bi_real() { ( cd -- "$1" 2>/dev/null && pwd -P ) || printf '%s' "$1"; }
 
 # `rendered` is a fresh repo that checks clean; the words after it move it
 # off that state: `stale-copilot` appends to a generated file, `no-git`
@@ -41,11 +45,175 @@ bi_world() {
 bi_table "the status, and what the first line names" "\
 a clean repo checks with exit 0|rendered|check|0|clean|-
 a drift finding exits 1|rendered stale-copilot|check|1|drift|-
-git unable to answer exits 2, naming the command that could not|rendered no-git|check|2|git ls-files -z|-
-a spec copy with no doctrine source exits 2, naming the file|rendered spec:no-doctrine|check|2|SKILL.md|-
-flag misuse exits 2 before any read, naming the flag|rendered|render --staged|2|-|--staged
-an unknown verb exits 2 from the parser|rendered|bogus|2|usage|-
+git unable to answer exits 2 under the source key|rendered no-git|check|2|source|-
+a spec copy with no doctrine source exits 2 under the spec key|rendered spec:no-doctrine|check|2|spec|-
+flag misuse exits 2 before any read, under the usage key|rendered|render --staged|2|usage|--staged
+an unknown verb exits 2 from the parser under the usage key|rendered|bogus|2|usage|-
 "
+
+# A row renders the key, so the value beside it is asserted here, on a world
+# whose paths this case knows. One record, one line, key and value.
+repo="$(bi_rendered_repo exit-record)" || exit 1
+rm -rf -- "${repo:?}/.git"
+record="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main check --repo "$repo" ) 2>&1 >/dev/null || : )"
+first="$(printf '%s\n' "$record" | sed -n '1p')"
+if [ "$first" = "bot-instructions: source=$(bi_real "$repo")" ]; then
+  ok 'the refusal record names the key and the repository it was about'
+else
+  bad 'the refusal record names the key and the repository it was about' "first line: $first"
+fi
+count="$(printf '%s\n' "$record" | grep -c '^bot-instructions: ' || :)"
+if [ "$count" = 1 ]; then
+  ok 'one condition prints one record'
+else
+  bad 'one condition prints one record' "printed $count"
+fi
+
+# Each branch below computes its own value, so each is pinned exactly:
+# the whole first line and the status, not a fragment.
+bi_record() { # -> the first line of a run's stderr, in $bi_first
+  bi_first="$(printf '%s\n' "$1" | sed -n '1p')"
+}
+
+
+exact() { # LABEL EXPECTED-FIRST-LINE ACTUAL-FIRST-LINE ACTUAL-STATUS EXPECTED-STATUS
+  if [ "$3" = "$2" ] && [ "$4" = "$5" ]; then
+    ok "$1"
+  else
+    bad "$1" "first line: $3 (exit $4)"
+  fi
+}
+
+# spec: its value is the spec root, chosen by a different branch than the repo.
+spec_repo="$(bi_rendered_repo exit-spec-value)" || exit 1
+spec_dir="$BI_TMP/spec-value-empty"
+rm -rf -- "${spec_dir:?}"
+mkdir -p "$spec_dir/schemas"
+printf -- '---\nmetadata:\n  version: "x"\n---\n\n# no doctrine\n' > "$spec_dir/SKILL.md"
+cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" "$spec_dir/schemas/renders.md"
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main check --repo "$spec_repo" --spec "$spec_dir" ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'the spec record names the spec root, not the repository' \
+  "bot-instructions: spec=$(bi_real "$spec_dir")" "$bi_first" "$status" 2
+
+# usage: argparse exits before the handlers, so its own record is asserted.
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main bogus ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'an unknown verb refuses with the usage record naming it' \
+  "bot-instructions: usage=bogus" "$bi_first" "$status" 2
+
+# usage: the flag-misuse branch, whose value is the flag.
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main render --staged --repo "$spec_repo" ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'flag misuse refuses with the usage record naming the flag' \
+  "bot-instructions: usage=--staged" "$bi_first" "$status" 2
+
+# findings: the value is the count, which no other case pins.
+drift_repo="$(bi_rendered_repo exit-findings-count)" || exit 1
+printf '\nstale\n' >> "$drift_repo/.github/copilot-instructions.md"
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main check --repo "$drift_repo" ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'the findings record carries the count and exits 1' \
+  "bot-instructions: findings=1" "$bi_first" "$status" 1
+
+# The parser names the arguments it was given, not the process's first one:
+# a bad flag after a good verb must not point at the verb.
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main check --bogus ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'the usage record names the arguments the parse was given' \
+  "bot-instructions: usage=check --bogus" "$bi_first" "$status" 2
+
+# A spec copy that will not decode raises a render failure, not a spec one,
+# so this pins that the subject is still the spec copy.
+badspec_repo="$(bi_rendered_repo exit-spec-bytes)" || exit 1
+badspec="$BI_TMP/spec-not-utf8"
+rm -rf -- "${badspec:?}"
+mkdir -p "$badspec/schemas"
+printf 'metadata\xff\xfe\n' > "$badspec/SKILL.md"
+cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" "$badspec/schemas/renders.md"
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main check --repo "$badspec_repo" --spec "$badspec" ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'a spec copy that will not decode names the spec copy, not the repository' \
+  "bot-instructions: render=$(bi_real "$badspec")" "$bi_first" "$status" 2
+
+# The other flag refusal, which only a prose assertion covered.
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main check --dry-run --repo "$spec_repo" ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'the other flag refusal names its own flag' \
+  "bot-instructions: usage=--dry-run" "$bi_first" "$status" 2
+
+# A doctrine block carrying a heading trips a content refusal, which leaves
+# the spec read as an input failure rather than a spec one. The subject is
+# still the spec copy.
+badblock="$BI_TMP/spec-doctrine-heading"
+rm -rf -- "${badblock:?}"
+mkdir -p "$badblock/schemas"
+# A level-1 or level-2 heading would END the Doctrine section rather than sit
+# inside the block, so the refusal never sees it. This one stays in the body.
+printf -- '---\nmetadata:\n  version: "x"\n---\n\n## Doctrine\n\n### one\n\ntext\n\n#### a heading inside the block\n' \
+  > "$badblock/SKILL.md"
+cp "$BI_ROOT/skills/bot-instructions/schemas/renders.md" "$badblock/schemas/renders.md"
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main check --repo "$spec_repo" --spec "$badblock" ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'a doctrine content refusal names the spec copy under the input key' \
+  "bot-instructions: input=$(bi_real "$badblock")" "$bi_first" "$status" 2
+
+# A file the repository owns stops the render inside the writer, and that
+# refusal is about the repository, not the spec copy.
+owned_repo="$(bi_rendered_repo exit-owned-region)" || exit 1
+printf 'the repo wrote this itself\n' > "$owned_repo/.github/copilot-instructions.md"
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main render --repo "$owned_repo" ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'a file the repo owns refuses the render under the render key' \
+  "bot-instructions: render=$(bi_real "$owned_repo")" "$bi_first" "$status" 2
+
+# The launcher's two runtime refusals, which no case reached before. Each runs
+# the launcher with a PATH that produces the condition.
+launcher="$BI_ROOT/skills/bot-instructions/scripts/bot-instructions"
+emptybin="$BI_TMP/no-python-bin"
+rm -rf -- "${emptybin:?}"
+mkdir -p "$emptybin"
+for tool in bash cat dirname pwd tr; do
+  real="$(command -v "$tool")" && ln -s "$real" "$emptybin/$tool"
+done
+status=0
+out="$( PATH="$emptybin" "$launcher" check 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'a missing python3 refuses under the python3 key' \
+  "bot-instructions: python3=missing" "$bi_first" "$status" 2
+
+oldbin="$BI_TMP/old-python-bin"
+rm -rf -- "${oldbin:?}"
+mkdir -p "$oldbin"
+for tool in bash cat dirname pwd tr; do
+  real="$(command -v "$tool")" && ln -s "$real" "$oldbin/$tool"
+done
+printf '#!/usr/bin/env bash\ncase "$1" in\n  -V) printf "Python 3.10.0\\n" ;;\n  *) exit 1 ;;\nesac\n' > "$oldbin/python3"
+chmod +x "$oldbin/python3"
+status=0
+out="$( PATH="$oldbin" "$launcher" check 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'an interpreter without tomllib refuses naming the version it found' \
+  "bot-instructions: python3=Python-3.10.0" "$bi_first" "$status" 2
 
 # A crash is 2 as well: the tool failed, nothing in the tree is wrong, and
 # Python's own exit for an uncaught exception is 1. A dispatched dependency
@@ -62,7 +230,10 @@ tree.open_tree = boom
 sys.exit(cli.main(["check", "--repo", sys.argv[1]]))
 PY
 )" && crash_status=0 || crash_status=$?
-if [ "$crash_status" -eq 2 ] && printf '%s\n' "$crash_out" | grep -q 'RuntimeError: dispatched dependency failed'; then
+crash_first="$(printf '%s\n' "$crash_out" | sed -n '1p')"
+if [ "$crash_status" -eq 2 ] \
+  && [ "$crash_first" = "bot-instructions: crashed=$(bi_real "$repo")" ] \
+  && printf '%s\n' "$crash_out" | grep -q 'RuntimeError: dispatched dependency failed'; then
   ok 'a crash outside the package error family exits 2 with its traceback'
 else
   bad 'a crash outside the package error family exits 2 with its traceback' \

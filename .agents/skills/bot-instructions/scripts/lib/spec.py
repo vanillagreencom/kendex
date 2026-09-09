@@ -22,7 +22,7 @@ from .constants import (
     MARKER_VERSION_CLASS,
     ROUTING_COLUMNS,
 )
-from .errors import InputError, SpecError
+from .errors import BotInstructionsError, InputError, SpecError
 from . import markdown, refusals
 
 # A version reaches a `#` comment and an HTML comment. Anything outside this
@@ -168,16 +168,30 @@ def parse_routing(renders_text, where):
 
 
 def load(spec_tree, skill_rel, renders_rel):
-    """Read a spec copy and return its Doctrine."""
-    skill_text = spec_tree.read(skill_rel)
-    if skill_text is None:
-        raise SpecError(f"{skill_rel}: the spec copy has no doctrine source")
-    renders_text = spec_tree.read(renders_rel)
-    if renders_text is None:
-        raise SpecError(f"{renders_rel}: the spec copy has no routing table")
-    version = read_version(skill_text, skill_rel)
-    blocks = parse_doctrine(skill_text, skill_rel)
-    routing, positions = parse_routing(renders_text, renders_rel)
+    """Read a spec copy and return its Doctrine.
+
+    Every failure in here is about the SPEC COPY, whichever family it
+    arrives as: a spec file that will not decode raises a render failure,
+    and a record naming the repository would send a caller to the wrong
+    tree. The subject is stamped once, on the way out.
+    """
+    try:
+        skill_text = spec_tree.read(skill_rel)
+        if skill_text is None:
+            raise SpecError(f"{skill_rel}: the spec copy has no doctrine source")
+        renders_text = spec_tree.read(renders_rel)
+        if renders_text is None:
+            raise SpecError(f"{renders_rel}: the spec copy has no routing table")
+        version = read_version(skill_text, skill_rel)
+        blocks = parse_doctrine(skill_text, skill_rel)
+        routing, positions = parse_routing(renders_text, renders_rel)
+    except BotInstructionsError as exc:
+        # Mark WHERE it failed, not what the tree happens to be rooted at:
+        # with `--staged --spec` inside the repository the backing tree is the
+        # repository index, and its root would name the wrong subject. The
+        # command line holds the spec root it resolved and fills it in.
+        exc.from_spec = True
+        raise
     return Doctrine(blocks, version, routing, positions)
 
 
