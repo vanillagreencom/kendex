@@ -154,9 +154,10 @@ describe("the words a Library row's badges stand for", () => {
   });
 
   it("opens what a bundled package is on focus", () => {
-    const bundled = groupItems([
-      { ...item(VG), vendor: "Anthropic" },
-    ] as never)[0];
+    const bundled = groupItems(
+      [{ ...item(VG), vendor: "Anthropic" }] as never,
+      () => null,
+    )[0];
     const host = mountTree(
       <tbody>
         <InstalledRow
