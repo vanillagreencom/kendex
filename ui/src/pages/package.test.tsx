@@ -996,6 +996,22 @@ describe("the package page's tabs", () => {
   });
 });
 
+// The chip in the Details block names a harness, and a harness has a page:
+// the Library, showing what is installed for it.
+describe("the harness chips on the package page", () => {
+  it("open the harness the chip names", async () => {
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+    const chip = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "Claude Code",
+    );
+    if (!chip) throw new Error("the harness chip is not a control");
+    await userEvent.click(chip);
+    const nav = useNavStore.getState();
+    expect(nav.page).toBe("library");
+    expect(nav.libraryFilter).toEqual({ harness: "claude" });
+  });
+});
+
 // The top-right button takes every copy in every place, so it says so —
 // and the dialog behind it names the places before it runs.
 describe("the package page's delete action", () => {

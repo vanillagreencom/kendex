@@ -1,4 +1,4 @@
-import type { AuditResult, ItemKind, Scope } from "@/bindings";
+import type { ItemKind, Scope } from "@/bindings";
 import { ScoreCircle } from "@/components/score-circle";
 import { ScoreTooltip } from "@/components/score-tooltip";
 import {
@@ -7,7 +7,7 @@ import {
   SAFETY_DOT_UNCHECKED,
   severityTone,
 } from "@/lib/copy-safety";
-import { installedSafety } from "@/lib/installed-safety";
+import { type InstalledSafety, installedSafety } from "@/lib/installed-safety";
 import { sameScope } from "@/lib/scope";
 import { useAuditStore } from "@/stores/audit";
 
@@ -15,7 +15,10 @@ import { useAuditStore } from "@/stores/audit";
  *  that is worth. A reading kept from before a failed check is not the same
  *  claim as one the check just made, so the two never arrive as one field. */
 export interface InstalledReading {
-  result: AuditResult | null;
+  /** The reading, and the place it answers for. Over several places it is
+   *  the worst-scoring one's, so anything offering a way to what is behind
+   *  the number sends the reader to that place. */
+  result: InstalledSafety | null;
   /** Why the last audit failed, or null. A result beside this is the check
    *  before the one that failed. */
   failure: string | null;

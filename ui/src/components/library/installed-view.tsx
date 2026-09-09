@@ -6,6 +6,7 @@ import { LibraryFilters } from "@/components/library/library-filters";
 import { TableEmptyRow } from "@/components/library/table-empty";
 import {
   applyLibraryView,
+  openLibraryAt,
   useFilterHandoff,
 } from "@/components/library/use-filter-handoff";
 import {
@@ -35,6 +36,7 @@ import {
 } from "@/stores/library-view";
 import { subscription } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
+import type { LibraryFilter } from "@/stores/nav-types";
 import {
   originFor,
   originLabel,
@@ -51,7 +53,6 @@ export function InstalledView() {
   const setScope = useNavStore((s) => s.setLibraryScope);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
   const goToMarketplace = useNavStore((s) => s.goToMarketplace);
-  const goToLibrary = useNavStore((s) => s.goToLibrary);
   const goToPackage = useNavStore((s) => s.goToPackage);
   const {
     kind,
@@ -90,6 +91,16 @@ export function InstalledView() {
   }, [loadProvenance, result]);
 
   const replaced = useFilterHandoff();
+
+  // A chip or a place on a row asks for the same view a link from another
+  // page asks for, so it goes through the same owner — which applies it in
+  // place here rather than leaving a handoff nothing on this page reads.
+  // The rows it lands on are a different set from the ones scrolled past,
+  // so the table starts at the top, exactly as an arriving link does.
+  const narrowTo = (handoff: LibraryFilter) => {
+    openLibraryAt(handoff);
+    if (scroller.current) scroller.current.scrollTop = 0;
+  };
 
   // Pick up where the table was last scrolled to, and record it again on the
   // way out — unless a link replaced the list, in which case that offset
@@ -242,9 +253,9 @@ export function InstalledView() {
                           scope: where,
                         });
                       }}
-                      onOpenHarness={(harness) => goToLibrary({ harness })}
+                      onOpenHarness={(harness) => narrowTo({ harness })}
                       onOpenPlace={(where) =>
-                        goToLibrary({ scope: selectionOf(where) })
+                        narrowTo({ scope: selectionOf(where) })
                       }
                       // Only a marketplace has a page to open. A package
                       // the reader wrote, and one nothing manages, name

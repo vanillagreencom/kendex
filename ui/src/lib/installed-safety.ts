@@ -25,6 +25,15 @@ import { sameScope } from "@/lib/scope";
 export const findingKey = (finding: Finding): string =>
   `${finding.rule}:${finding.severity}:${finding.location}:${finding.line}:${finding.message}`;
 
+/** A reading, and the place whose copy earned it. The scope travels with
+ *  the reading because a reading over several places is one place's: a
+ *  surface that shows the number and offers a way to what is behind it must
+ *  send the reader to that same place, not to whichever the backend listed
+ *  first. */
+export interface InstalledSafety extends AuditResult {
+  scope: Scope;
+}
+
 /** The reading for one package at the places asked about, or null where the
  *  audit has no row for it — it has not answered yet, or the package is not
  *  installed at any of them.
@@ -49,22 +58,30 @@ export function installedSafety(
   kind: ItemKind,
   name: string,
   scopes: Scope[],
-): AuditResult | null {
+): InstalledSafety | null {
+  // The place is the view's, not the row's: the view is what was matched
+  // against the places asked about, so it is the place this reading answers
+  // for.
   const rows = views
     .filter((view) => scopes.some((scope) => sameScope(view.scope, scope)))
-    .flatMap((view) => view.safety)
-    .filter((row) => row.kind === kind && row.name === name);
+    .flatMap((view) =>
+      view.safety
+        .filter((row) => row.kind === kind && row.name === name)
+        .map((row) => ({ row, scope: view.scope })),
+    );
   const worst = rows.reduce<(typeof rows)[number] | null>(
-    (lowest, row) => (lowest === null || worseThan(row, lowest) ? row : lowest),
+    (lowest, each) =>
+      lowest === null || worseThan(each.row, lowest.row) ? each : lowest,
     null,
   );
   if (worst === null) return null;
   return {
-    safety: worst.safety,
-    quality: worst.quality,
-    ruleset: worst.ruleset,
-    findings: dedupe(worst.findings, findingKey),
-    skipped: dedupe(worst.skipped, (skip) => `${skip.rule}:${skip.reason}`),
+    scope: worst.scope,
+    safety: worst.row.safety,
+    quality: worst.row.quality,
+    ruleset: worst.row.ruleset,
+    findings: dedupe(worst.row.findings, findingKey),
+    skipped: dedupe(worst.row.skipped, (skip) => `${skip.rule}:${skip.reason}`),
   };
 }
 

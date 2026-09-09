@@ -437,6 +437,59 @@ describe("the reading behind a row's score", () => {
     expect(host.textContent).not.toContain("SKILL.md:20");
   });
 
+  // A grouped row's disc is the worst of its places' readings, so it opens
+  // the place that earned it. Opening the row's first place would send a
+  // reader who clicked a warning to a different copy, scoring higher and
+  // carrying none of the findings the number stood for.
+  it("opens the place whose copy earned the reading, not the row's first", async () => {
+    const worst = scoredGh();
+    act(() => {
+      useAuditStore.setState({
+        views: [
+          // Personal is listed first and reads clean; the project's copy is
+          // the one the disc is showing.
+          {
+            ...worst,
+            safety: [
+              {
+                ...worst.safety[0],
+                findings: [],
+                safety: { score: 96, deductions: [] },
+              },
+            ],
+          },
+          {
+            ...worst,
+            scope: { scope: "project", root: "/work/vg" },
+            safety: [
+              {
+                ...worst.safety[0],
+                scope: { scope: "project", root: "/work/vg" },
+              },
+            ],
+          },
+        ],
+        auditedAt: Date.now(),
+        read: READ_LANDED,
+      });
+    });
+    const host = mount(
+      <UpdatesTable rows={[row("gh", null), row("gh", "/work/vg")]} />,
+    );
+    // One grouped row, so the disc is the merged reading rather than either
+    // place's own row.
+    expect(host.querySelectorAll("tbody tr")).toHaveLength(1);
+    await userEvent.click(score());
+
+    const nav = useNavStore.getState();
+    expect(nav.packageRef).toEqual({
+      kind: "skill",
+      name: "gh",
+      scope: { scope: "project", root: "/work/vg" },
+    });
+    expect(nav.packageView).toEqual({ mode: "safety" });
+  });
+
   // The control: the same row's name opens the same page, on no tab in
   // particular. Without it "opens the Safety tab" could be nothing more
   // than "opens the package".

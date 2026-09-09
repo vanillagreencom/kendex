@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ObservedItem, Scope } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
+import { openLibraryAt } from "@/components/library/use-filter-handoff";
 import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
 import {
   READ_LANDED,
@@ -248,5 +250,186 @@ describe("the update mark on a Library row", () => {
         name,
       ).toBe(marked);
     }
+  });
+});
+
+// A chip or a place clicked on a Library row asks for a view of the Library
+// while the Library is already on screen. Nothing remounts, so a handoff
+// left in the nav store would be read by no one: the table, the filter
+// strip and the scope pills all have to move now.
+describe("narrowing the Library from a row it is already showing", () => {
+  const codexHere = {
+    ...installed(VG),
+    name: "orch",
+    harness: "codex",
+    path: "/work/vg/.codex/skills/orch",
+  } as unknown as ObservedItem;
+
+  beforeEach(() => {
+    vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED });
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [installed(HYPR), codexHere],
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    useLibraryViewStore.setState({ ...NO_FILTERS });
+    useNavStore.setState({
+      page: "library",
+      libraryScope: "all",
+      libraryFilter: null,
+      search: "",
+    });
+  });
+
+  const rowNames = (host: HTMLElement) =>
+    [...host.querySelectorAll("tbody tr td:first-child")].map((cell) =>
+      cell.querySelector("button")?.textContent?.trim(),
+    );
+
+  const named = (host: HTMLElement, label: string) => {
+    const found = [...host.querySelectorAll("button")].find(
+      (button) =>
+        button.textContent === label ||
+        button.getAttribute("aria-label") === label,
+    );
+    if (!found) throw new Error(`no control named ${label}`);
+    return found;
+  };
+
+  it("narrows the table on screen from a harness chip", async () => {
+    const host = mount(<InstalledView />);
+    expect(rowNames(host)).toEqual(["gh", "orch"]);
+
+    await userEvent.click(named(host, "Codex"));
+
+    expect(rowNames(host)).toEqual(["orch"]);
+    expect(useLibraryViewStore.getState().harness).toBe("codex");
+    // Nothing is left for a later visit to pick up as its own link.
+    expect(useNavStore.getState().libraryFilter).toBeNull();
+    expect(useNavStore.getState().page).toBe("library");
+  });
+
+  it("narrows the table on screen from the place on a row", async () => {
+    const host = mount(<InstalledView />);
+    expect(rowNames(host)).toEqual(["gh", "orch"]);
+
+    await userEvent.click(named(host, "hyprtrade"));
+
+    expect(rowNames(host)).toEqual(["gh"]);
+    expect(useNavStore.getState().libraryScope).toEqual({
+      project: "/work/hyprtrade",
+    });
+    expect(useNavStore.getState().libraryFilter).toBeNull();
+  });
+
+  // The control: the same request from another page is still a navigation,
+  // and still hands the view over for the Library to adopt on arrival.
+  it("still hands the view over when the Library is not the page", () => {
+    useNavStore.setState({ page: "harnesses", libraryFilter: null });
+    openLibraryAt({ harness: "codex" });
+    const nav = useNavStore.getState();
+    expect(nav.page).toBe("library");
+    expect(nav.libraryFilter).toEqual({ harness: "codex" });
+    // Applied by the Library on mount, not by the call itself.
+    expect(useLibraryViewStore.getState().harness).toBe("any");
+  });
+});
+
+// A marketplace source is an alias declared at one place. A row that read
+// the alias from one project's record and the scope from another's
+// installation would open a subscription that exists at neither.
+describe("the marketplace a Library row came from", () => {
+  const fromKit = {
+    ...installed(HYPR),
+    path: "/work/hyprtrade/.claude/skills/gh",
+  } as unknown as ObservedItem;
+  const fromOther = {
+    ...installed(VG),
+    path: "/work/vg/.claude/skills/gh",
+  } as unknown as ObservedItem;
+
+  beforeEach(() => {
+    vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED });
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        // Installation order puts VG first, so a row reading the scope off
+        // the group's first installation would answer VG.
+        items: [fromOther, fromKit],
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    // Provenance answers in its own order, and the row it answers with is
+    // hyprtrade's: the alias below is declared there and nowhere else.
+    useProvenanceStore.setState({
+      rows: [
+        {
+          scope: HYPR,
+          kind: "skill",
+          name: "gh",
+          harness: "claude",
+          origin: { origin: "marketplace", source: "kit", repo: "vg/kit" },
+        },
+      ] as never,
+      loaded: true,
+    });
+    useLibraryViewStore.setState({ ...NO_FILTERS });
+    useNavStore.setState({
+      page: "library",
+      libraryScope: "all",
+      libraryFilter: null,
+      marketplaceRef: null,
+      search: "",
+    });
+  });
+
+  it("opens it at the place that declared the alias, not the group's first", async () => {
+    const host = mount(<InstalledView />);
+    const from = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "kit",
+    );
+    if (!from) throw new Error("the marketplace is not a control");
+    await userEvent.click(from);
+
+    const nav = useNavStore.getState();
+    expect(nav.page).toBe("marketplaceDetail");
+    expect(nav.marketplaceRef).toEqual({
+      by: "subscription",
+      scope: HYPR,
+      source: "kit",
+    });
+  });
+
+  // The control: a package the reader wrote names no marketplace, so the
+  // cell stays text and there is nothing to open.
+  it("leaves a row with no marketplace unopenable", () => {
+    useProvenanceStore.setState({
+      rows: [
+        {
+          scope: HYPR,
+          kind: "skill",
+          name: "gh",
+          harness: "claude",
+          origin: { origin: "own", forkedFrom: null },
+        },
+      ] as never,
+      loaded: true,
+    });
+    const host = mount(<InstalledView />);
+    const from = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "Your own",
+    );
+    expect(from).toBeUndefined();
+    expect(host.textContent).toContain("Your own");
   });
 });

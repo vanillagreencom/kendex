@@ -5,6 +5,7 @@ import {
 } from "@/lib/library-handoff";
 import { useLibraryViewStore } from "@/stores/library-view";
 import { useNavStore } from "@/stores/nav";
+import type { LibraryFilter } from "@/stores/nav-types";
 
 /** Show a view: write each part of it to the store that holds that part. */
 export function applyLibraryView(view: LibraryView): void {
@@ -12,6 +13,27 @@ export function applyLibraryView(view: LibraryView): void {
   const nav = useNavStore.getState();
   nav.setSearch(view.search);
   nav.setLibraryScope(view.scope);
+}
+
+/**
+ * Show the Library narrowed the way `handoff` asks, from wherever the link
+ * was clicked — the one owner of that question.
+ *
+ * From another page it is a navigation, and the handoff is consumed by
+ * {@link useFilterHandoff} when the Library mounts. From the Library itself
+ * there is nothing to mount: the handoff would sit in the store unread until
+ * some later visit picked it up as that visit's link, and the table on
+ * screen would not move. So the same view is applied in place, through the
+ * same reading of the handoff, and the two ways in cannot drift.
+ */
+export function openLibraryAt(handoff: LibraryFilter): void {
+  const nav = useNavStore.getState();
+  if (nav.page !== "library") {
+    nav.goToLibrary(handoff);
+    return;
+  }
+  const view = libraryViewFromHandoff(handoff);
+  if (view) applyLibraryView(view);
 }
 
 /**

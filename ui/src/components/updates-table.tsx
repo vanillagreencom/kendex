@@ -26,6 +26,7 @@ import { selectionOf } from "@/lib/derive";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
 import { opensOnActivate } from "@/lib/opens-on-activate";
+import { sameScope } from "@/lib/scope";
 import {
   groupKey,
   groupUpdates,
@@ -116,6 +117,15 @@ export function PackageRows({
   // One package can be installed in several places, and the package page
   // shows one of them. The row's first place is the one its name opens.
   const first = places[0];
+  // Which place the score is a reading of. Over several places the disc
+  // shows the worst of them, and the reading carries the place that earned
+  // it, so the score opens that copy: opening the row's first place would
+  // show a reader sent to check a warning a different copy, scoring higher
+  // and carrying none of the findings the number stood for.
+  const scored =
+    places.find(
+      (place) => reading.result && sameScope(place.scope, reading.result.scope),
+    ) ?? first;
   /** This package's page, at one of the places this row is about. */
   const openPackage = (place: UpdateRow | undefined, view?: PackageView) => {
     if (!place) return;
@@ -145,7 +155,7 @@ export function PackageRows({
                 Safety tab, where the findings already live. */}
             <InstalledScore
               reading={reading}
-              onOpen={() => openPackage(first, { mode: "safety" })}
+              onOpen={() => openPackage(scored, { mode: "safety" })}
             />
             {/* The name opens the package, on the rule the app follows
                 everywhere: a row, card or chip naming a thing opens it. */}
