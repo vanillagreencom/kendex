@@ -87,4 +87,9 @@ export interface HistoryEntry {
   bundleRef: BundleRef | null;
   availableRef: AvailableRef | null;
   unmanagedScope: Scope | null;
+  /** The place the browse at this entry was begun for. Part of where the
+   *  reader was, like every ref above it: backing out of a browse begun
+   *  for one project must not leave that project selected on the page the
+   *  reader lands on, where the next install would take it. */
+  installInto: Scope | null;
 }

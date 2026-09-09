@@ -57,7 +57,11 @@ interface NavState {
    *  path, so the Marketplaces pages a project's Add packages opens
    *  remember which project asked, and the guided install opens on it.
    *  Null wherever a reader arrived at Marketplaces on their own — nothing
-   *  guesses a place they did not name. */
+   *  guesses a place they did not name.
+   *
+   *  Snapshot into history like every ref: it is part of where the reader
+   *  was. Backing out of a browse begun for one project onto a page from
+   *  before it restores that page's own answer, which is usually none. */
   installInto: Scope | null;
   /** Consumed once by the package page on mount, then cleared. */
   packageView: PackageView | null;
@@ -266,6 +270,7 @@ function here(state: NavState): HistoryEntry {
     bundleRef: state.bundleRef,
     availableRef: state.availableRef,
     unmanagedScope: state.unmanagedScope,
+    installInto: state.installInto,
   };
 }
 

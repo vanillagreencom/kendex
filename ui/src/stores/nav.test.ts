@@ -163,6 +163,7 @@ describe("nav store", () => {
         bundleRef: null,
         availableRef: null,
         unmanagedScope: null,
+        installInto: null,
       },
     ]);
   });
@@ -227,6 +228,7 @@ describe("nav store", () => {
         bundleRef: null,
         availableRef: null,
         unmanagedScope: null,
+        installInto: null,
       },
     ]);
   });
@@ -280,5 +282,38 @@ describe("the place a browse is begun for", () => {
     // Arriving at Marketplaces from elsewhere with nobody named.
     useNavStore.getState().goToMarketplaces("packages");
     expect(useNavStore.getState().installInto).toBeNull();
+  });
+
+  // It is part of where the reader was, so back and forward carry it the
+  // way they carry every ref. Backing out of a browse begun for one
+  // project onto a page from before it must not leave that project
+  // standing, where the next install would take it.
+  it("is restored by back and forward, per entry", () => {
+    const acme: Scope = { scope: "project", root: "/work/acme" };
+    useNavStore.setState({
+      page: "home",
+      history: [],
+      future: [],
+      installInto: null,
+    });
+
+    // A page from before any browse, then a browse begun for acme.
+    useNavStore.getState().goTo("projects");
+    useNavStore.getState().goToMarketplaces("packages", acme);
+    expect(useNavStore.getState().installInto).toEqual(acme);
+
+    useNavStore.getState().back();
+    expect(useNavStore.getState().page).toBe("projects");
+    expect(useNavStore.getState().installInto).toBeNull();
+
+    useNavStore.getState().back();
+    expect(useNavStore.getState().page).toBe("home");
+    expect(useNavStore.getState().installInto).toBeNull();
+
+    // Forward returns to the browse, and to what it was begun for.
+    useNavStore.getState().forward();
+    useNavStore.getState().forward();
+    expect(useNavStore.getState().page).toBe("marketplaces");
+    expect(useNavStore.getState().installInto).toEqual(acme);
   });
 });
