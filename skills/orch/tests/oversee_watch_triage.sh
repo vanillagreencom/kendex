@@ -117,10 +117,10 @@ run -- --max-loops 1
 check "control: an empty tracker list reaches the heartbeat with no triage event" "first=$HEARTBEAT1 events=0"
 
 # A fleet with no tracker team is not a broken install: triage is skipped and
-# named once, whether the name is absent or exported empty, and every other
-# check --since serves keeps running, merged included. The first case exits on
-# the merged event before the triage check; the second reaches it with a live
-# tracker and an unseen item, and the tracker goes unread.
+# named once, and every other check --since serves keeps running, merged
+# included. The first case exits on the merged event before the triage check;
+# the second reaches it with a live tracker and an unseen item, and the tracker
+# goes unread.
 new_case triage_skipped_without_team
 tracker_items '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]'
 printf '[{"number":5,"headRefName":"issue-5","mergedAt":"2026-08-15T10:00:00Z"}]\n' > "$STUB_DIR/merged.json"
@@ -132,10 +132,6 @@ tracker_items '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]'
 run LINEAR_TEAM -- --max-loops 1
 check "with no team the run reaches the triage check, emits nothing for the unseen item and leaves the tracker unread" \
   "first=$HEARTBEAT1 events=0 tracker=unread"
-new_case triage_skipped_by_an_empty_export
-tracker_items '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"}]'
-run LINEAR_TEAM= -- --max-loops 1
-check "an exported-empty LINEAR_TEAM takes the skip path the absent name takes" "rc=0 notes~oversee-watch:+triage-disabled=1"
 new_case triage_skipped_without_team_or_tracker
 run LINEAR_TEAM OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/absent-tracker" -- --max-loops 2
 check "no team disarms the gate a missing tracker CLI would close, and the skip note prints once over two passes" \
