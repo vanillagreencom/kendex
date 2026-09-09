@@ -65,13 +65,12 @@ fn the_effect_comes_back_unrun_and_a_separate_yes_arms_it() {
         f.project.join(".git/hooks/kendex-guards").is_file(),
         "the yes did not arm the hooks"
     );
-    // The installer's own last word is what the window shows — its
-    // success wording, not the substring its failures share with it:
-    // every "NOT armed" line the installer can print contains "armed".
-    assert!(
-        said.stdout
-            .last()
-            .is_some_and(|line| line.contains("pre-commit and commit-msg armed in")),
+    assert_eq!(
+        said.stdout.first(),
+        Some(&format!(
+            "commit-guards git hooks: installed={}",
+            hooks.display()
+        )),
         "{said:?}"
     );
 }

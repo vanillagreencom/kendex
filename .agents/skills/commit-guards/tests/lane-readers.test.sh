@@ -54,6 +54,10 @@ lane() { # SHIM-DIR SCRIPT [ARG...]
   out="$(cd "$R" && PATH="${dir:+$dir:}$PATH" "$SCRIPTS/$script" "$@" 2>&1)" || rc=$?
   out="${out//"$R"/<repo>}"
   out="${out//"$ROOT"/<root>}"
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '
+    /^[a-z-]+: [a-z-]+=/ { print; next }
+    /^[[:space:]]*dependency-order-control:/ { sub(/^[[:space:]]*/, ""); print }
+  ')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | sed 's/[[:space:]]*$//' | paste -sd ';' -)}"
 }
 
@@ -97,18 +101,18 @@ fx_addadd addadd-fixture
 assert_eq "the add/add fixture really hides the addition from --diff-filter=A" 0 "$(git -C "$R" diff --cached --raw --diff-filter=A | wc -l | tr -d ' ')"
 
 echo "=== an unmerged index is refused, never scanned around ==="
-UNMERGED="f.txt;::error::CHECK: the index carries 1 unmerged path(s) (listed above) and a --cached scan skips them silently — finish or abort the merge, then re-run"
-BIG_UNMERGED="big.txt;::error::byte-ceiling: the index carries 1 unmerged path(s) (listed above) and a --cached scan skips them silently — finish or abort the merge, then re-run"
+UNMERGED="CHECK: unmerged-path=f.txt;CHECK: unmerged-count=1"
+BIG_UNMERGED="byte-ceiling: unmerged-path=big.txt;byte-ceiling: unmerged-count=1"
 # label | fixture | lane args | expect
 rows=(
   "conflict-markers refuses the unmerged index|conflicted_repo cm-unmerged|conflict-markers|rc=2 ${UNMERGED//CHECK/conflict-markers}"
   "prose refuses it before its walk, though no default path matches|conflicted_repo prose-unmerged|prose|rc=2 ${UNMERGED//CHECK/prose}"
-  "control: once staged, the same markers fail as violations|fx_conflict_staged cm-staged|conflict-markers|rc=1 conflict-markers FAIL conflict marker: f.txt:2:<<<<<<< HEAD;  remedies: finish the merge and delete the marker lines; a file that legitimately carries the trio at column 0 belongs in tools/conflict-markers-excludes with a reason;conflict-markers FAIL conflict marker: f.txt:6:>>>>>>> other;  remedies: finish the merge and delete the marker lines; a file that legitimately carries the trio at column 0 belongs in tools/conflict-markers-excludes with a reason;conflict-markers: 2 conflict marker(s) — excludes tools/conflict-markers-excludes"
-  "control: a resolved, marker-free tree passes|fx_conflict_resolved cm-resolved|conflict-markers|rc=0 conflict-markers: OK — no conflict markers in tracked files"
+  "control: once staged, the same markers fail as violations|fx_conflict_staged cm-staged|conflict-markers|rc=1 conflict-markers: match=conflict marker:f.txt:2:<<<<<<< HEAD;conflict-markers: match=conflict marker:f.txt:6:>>>>>>> other;conflict-markers: result=2:0:tools/conflict-markers-excludes"
+  "control: a resolved, marker-free tree passes|fx_conflict_resolved cm-resolved|conflict-markers|rc=0 conflict-markers: result=0:0:tools/conflict-markers-excludes"
   "byte-ceiling refuses an add/add conflict instead of measuring around it|fx_addadd bc-addadd|byte-ceiling|rc=2 $BIG_UNMERGED"
   "--all refuses it too, where ls-files emits one record per stage|fx_addadd bc-addadd-all|byte-ceiling --all|rc=2 $BIG_UNMERGED"
-  "control: a merged index still fails an oversized addition|fx_merged_big bc-merged-big|byte-ceiling|rc=1 byte-ceiling FAIL oversized file: big.txt — 400000 bytes (~391 KB) > ceiling 200 KB;  remedies: keep big artifacts out of the repo (asset store, Git LFS, build-time generation); a file that genuinely belongs gets a row in tools/byte-ceiling-excludes with its reason;byte-ceiling: 1 violation(s) — ceiling 200 KB, 1 staged file(s) checked"
-  "control: a merged index with nothing oversized passes|fx_merged_small bc-merged-small|byte-ceiling|rc=0 byte-ceiling: OK — 1 staged file(s) checked, ceiling 200 KB"
+  "control: a merged index still fails an oversized addition|fx_merged_big bc-merged-big|byte-ceiling|rc=1 byte-ceiling: oversized=big.txt:400000:391:200;byte-ceiling: result=1:1:200:staged:"
+  "control: a merged index with nothing oversized passes|fx_merged_small bc-merged-small|byte-ceiling|rc=0 byte-ceiling: result=0:1:200:staged:"
 )
 for row in "${rows[@]}"; do
   IFS='|' read -r label fixture args expect <<<"$row"
@@ -143,10 +147,10 @@ assert_eq "fixture: with '*.py -diff' a bare -I grep drops the file silently" "r
   "$(rc=0; out="$(cd "$R" && git grep --cached -nIE "$MARKER" -- code.py 2>&1)" || rc=$?; printf 'rc=%s%s' "$rc" "${out:+ $out}")"
 
 echo "=== content decides what is scanned, an attributes rule never does ==="
-TODO_HIT="todo-ban FAIL work marker: code.py:1:x = 1  # $MARKER: real;  remedies: do the work now, or move it to the tracker and delete the marker; vendored/generated trees belong in tools/todo-ban-excludes with a reason;todo-ban: 1 work marker(s) — excludes tools/todo-ban-excludes"
-SUPP_HIT="suppression-ban FAIL module-wide rust allow: lib.rs:1:#![allow(dead_code)];  remedies: delete the module-wide attribute and fix the findings, or annotate the surviving sites per line with a stated reason; vendored trees belong in tools/suppression-ban-excludes with a reason;suppression-ban: 1 violation(s) — 1 blanket, 0 ratchet (baseline tools/suppression-baseline.tsv)"
-RATCHET_HIT="suppression-ban FAIL new bare allow: a.rs — 1 reasonless allow(dead_code)/allow(unused) attribute(s), no baseline row;  remedies: state a reason on each attribute or fix the code; freezing a legacy count is a hand-added baseline row in this diff with justification;suppression-ban: 1 violation(s) — 0 blanket, 1 ratchet (baseline tools/suppression-baseline.tsv)"
-CM_HITS="conflict-markers FAIL conflict marker: merge.txt:1:<<<<<<< HEAD;  remedies: finish the merge and delete the marker lines; a file that legitimately carries the trio at column 0 belongs in tools/conflict-markers-excludes with a reason;conflict-markers FAIL conflict marker: merge.txt:5:>>>>>>> other;  remedies: finish the merge and delete the marker lines; a file that legitimately carries the trio at column 0 belongs in tools/conflict-markers-excludes with a reason;conflict-markers: 2 conflict marker(s) — excludes tools/conflict-markers-excludes"
+TODO_HIT="todo-ban: match=work marker:code.py:1:x = 1  # $MARKER: real;todo-ban: index-count=1:0:tools/todo-ban-excludes"
+SUPP_HIT="suppression-ban: match=module-wide rust allow:lib.rs:1:#![allow(dead_code)];suppression-ban: result=1:1:0:tools/suppression-baseline.tsv:0:tools/suppression-ban-excludes"
+RATCHET_HIT="suppression-ban: allow-new=a.rs:1;suppression-ban: result=1:0:1:tools/suppression-baseline.tsv:0:tools/suppression-ban-excludes"
+CM_HITS="conflict-markers: match=conflict marker:merge.txt:1:<<<<<<< HEAD;conflict-markers: match=conflict marker:merge.txt:5:>>>>>>> other;conflict-markers: result=2:0:tools/conflict-markers-excludes"
 CONFLICT='<<<<<<< HEAD\na\n=======\nb\n>>>>>>> other\n'
 # label | file | content (%b) | attributes row | lane args | expect
 rows=(
@@ -159,7 +163,7 @@ rows=(
   "a '-diff' row cannot hide a blanket suppression|lib.rs|#![allow(dead_code)]\\n|*.rs -diff|suppression-ban|rc=1 $SUPP_HIT"
   "control: the unbaselined bare allow fails with no attributes row, the live row not called stale|ratchet|||suppression-ban|rc=1 $RATCHET_HIT"
   "a '-diff' row cannot hide a bare allow from the ratchet count|ratchet||*.rs -diff|suppression-ban|rc=1 $RATCHET_HIT"
-  "--update cannot be led into erasing the ratchet: the re-check still fails|ratchet||*.rs -diff|suppression-ban --update|rc=1 suppression-ban --update: baseline tightened at tools/suppression-baseline.tsv (1 row(s));$RATCHET_HIT"
+  "--update cannot be led into erasing the ratchet: the re-check still fails|ratchet||*.rs -diff|suppression-ban --update|rc=1 suppression-ban: baseline-updated=tools/suppression-baseline.tsv:1;$RATCHET_HIT"
 )
 i=0
 for row in "${rows[@]}"; do
@@ -174,10 +178,10 @@ assert_eq "--update left the baseline as it was" "b.rs	1" "$(cat "$R/tools/suppr
 echo "=== a blob whose leading bytes carry a NUL is named unmeasured, not scanned ==="
 fx_attrs attrs-binary logo.png "PNG\0 $MARKER: not a marker\n"
 assert_eq "the unread match is named, counted apart, and the verdict carries the qualifier" \
-  "rc=0 todo-ban: not measured: logo.png — binary content, not text;todo-ban: OK — no work markers in tracked files; 1 matched path(s) not measured" "$(lane "" todo-ban)"
+  "rc=0 todo-ban: unmeasured=logo.png:binary;todo-ban: index-count=0:1:tools/todo-ban-excludes" "$(lane "" todo-ban)"
 fx_attrs attrs-text logo.png "PNG  $MARKER: not a marker\n"
 assert_eq "control: the same bytes without the NUL are scanned as text" \
-  "rc=1 todo-ban FAIL work marker: logo.png:1:PNG  $MARKER: not a marker;  remedies: do the work now, or move it to the tracker and delete the marker; vendored/generated trees belong in tools/todo-ban-excludes with a reason;todo-ban: 1 work marker(s) — excludes tools/todo-ban-excludes" "$(lane "" todo-ban)"
+  "rc=1 todo-ban: match=work marker:logo.png:1:PNG  $MARKER: not a marker;todo-ban: index-count=1:0:tools/todo-ban-excludes" "$(lane "" todo-ban)"
 
 # --- the shared readers fail closed -----------------------------------------
 
@@ -185,13 +189,18 @@ assert_eq "control: the same bytes without the NUL are scanned as text" \
 # readers: every lane collects through them, so an incomplete scan is refused
 # HERE, once, including the call sites no default-lane run reaches.
 git_shim() { # ARG — a git that exits 128 for any call carrying ARG
-  local dir="$ROOT/git-shim-$1"
+  local dir="$ROOT/git-shim-$1" message="git $1: simulated failure"
   mkdir -p "$dir"
-  printf '#!/usr/bin/env bash\ncase " $* " in *" %s "*) echo "git %s: simulated failure" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' "$1" "$1" "$REAL_GIT" >"$dir/git"
+  [ "$1" != grep ] || message="dependency-order-control: grep-exit"
+  printf '#!/usr/bin/env bash\ncase " $* " in *" %s "*) echo "%s" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' "$1" "$message" "$REAL_GIT" >"$dir/git"
   chmod +x "$dir/git"
 }
 git_shim grep
 git_shim cat-file
+mkdir -p "$ROOT/git-shim-cat-file-order"
+printf '#!/usr/bin/env bash\ncase " $* " in *" cat-file "*) echo "dependency-order-control: blob-read" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' \
+  "$REAL_GIT" >"$ROOT/git-shim-cat-file-order/git"
+chmod +x "$ROOT/git-shim-cat-file-order/git"
 # A wc that fails once, so the first count fails while the second succeeds;
 # a tr that fails every time, breaking only the strip inside the second count.
 mkdir -p "$ROOT/wc-shim" "$ROOT/tr-shim" "$ROOT/count-shim"
@@ -201,9 +210,10 @@ printf '#!/usr/bin/env bash\necho "tr: simulated execution failure" >&2\nexit 1\
 # suppression-ban's per-carrier count is its own call, made after the shared
 # listing has named the carrier; the shim errors that call alone and exits 0,
 # so the `error:` line on stderr is the only thing left that can refuse it.
-printf '#!/usr/bin/env bash\ncase " $* " in *" -acE "*) echo "error: %s: unable to read %s" >&2; exit 0 ;; esac\nexec "%s" "$@"\n' \
-  "'phantom.rs'" "0000000000000000000000000000000000000000" "$REAL_GIT" >"$ROOT/count-shim/git"
-chmod +x "$ROOT/wc-shim/wc" "$ROOT/tr-shim/tr" "$ROOT/count-shim/git"
+printf '#!/usr/bin/env bash\ncase " $* " in *" -acE "*) : >%q; echo "error: %s: unable to read %s" >&2; exit 0 ;; esac\nexec "%s" "$@"\n' \
+  "$ROOT/head-arm" "'phantom.rs'" "0000000000000000000000000000000000000000" "$REAL_GIT" >"$ROOT/count-shim/git"
+printf '#!/usr/bin/env bash\nif [ -e %q ]; then echo "dependency-order-control: early-reader" >&2; rm -f -- %q; fi\nexec %q "$@"\n' "$ROOT/head-arm" "$ROOT/head-arm" "$(command -v head)" >"$ROOT/count-shim/head"
+chmod +x "$ROOT/wc-shim/wc" "$ROOT/tr-shim/tr" "$ROOT/count-shim/git" "$ROOT/count-shim/head"
 
 # A sed script aliasing every staged blob's sha to OID(path): a reader that
 # names the blob it could not read is read back by the path it stands for.
@@ -224,21 +234,21 @@ fx_staged() { new_repo "$1"; printf 'fn main() {}\n' >"$R/ok.rs"; commit_all see
 fx_count() { new_repo "$1"; mkdir -p "$R/tools"; printf 'fn main() {}\n' >"$R/ok.rs"; printf '#[allow(dead_code)]\nfn b() {}\n' >"$R/bare.rs"; printf 'bare.rs\t1\n' >"$R/tools/suppression-baseline.tsv"; git -C "$R" add -A; }
 
 echo "=== the shared readers fail closed, once, for every lane that uses them ==="
-A_HIT="todo-ban FAIL work marker: a.rs:1:// $MARKER: stranded work;  remedies: do the work now, or move it to the tracker and delete the marker; vendored/generated trees belong in tools/todo-ban-excludes with a reason;todo-ban: 1 work marker(s) — excludes tools/todo-ban-excludes"
+A_HIT="todo-ban: match=work marker:a.rs:1:// $MARKER: stranded work;todo-ban: index-count=1:0:tools/todo-ban-excludes"
 # label | fixture | shim | lane args | expect
 rows=(
   "control: the staged marker trips with the real git|fx_readers readers-0||todo-ban|rc=1 $A_HIT"
-  "a git grep execution failure is a collection error, never OK|fx_readers readers-1|$ROOT/git-shim-grep|todo-ban|rc=2 git grep: simulated failure;::error::todo-ban: git grep failed scanning tracked files for work marker (exit 128)"
-  "a blob read that cannot run is exit 2, never a path skipped|fx_readers readers-2|$ROOT/git-shim-cat-file|todo-ban|rc=2 git cat-file: simulated failure;::error::todo-ban: cannot read blob :0:a.rs for a.rs — refusing to skip an unread work marker"
-  "a vanished staged blob is exit 2 carrying git's own error line|fx_vanished readers-3||todo-ban|rc=2 error: 'a.rs': unable to read OID(a.rs);::error::todo-ban: git grep could not read staged content while scanning tracked files for work marker (error: 'a.rs': unable to read OID(a.rs))"
-  "a scan matching one file it read and one it could not is exit 2, never a violation|fx_vanished readers-4 second||todo-ban|rc=2 error: 'a.rs': unable to read OID(a.rs);::error::todo-ban: git grep could not read staged content while scanning tracked files for work marker (error: 'a.rs': unable to read OID(a.rs))"
-  "control: the staged marker fires with the real tools|fx_staged staged-0||todo-ban --staged|rc=1 todo-ban FAIL work marker: ok.rs:2:// $MARKER: staged for the pre-filter to find;  remedies: do the work now, or move it to the tracker and delete the marker; vendored/generated trees belong in tools/todo-ban-excludes with a reason;todo-ban: 1 work marker(s) added by the staged diff — excludes tools/todo-ban-excludes"
-  "a broken staged pre-filter is a collection error, never OK|fx_staged staged-1|$ROOT/git-shim-grep|todo-ban --staged|rc=2 git grep: simulated failure;::error::todo-ban: git grep failed listing the staged files that carry a work marker (exit 128)"
-  "a staged blob the sniff cannot read is exit 2, never a path skipped|fx_staged staged-2|$ROOT/git-shim-cat-file|todo-ban --staged|rc=2 git cat-file: simulated failure;::error::todo-ban: cannot read blob OID(ok.rs) for ok.rs — refusing to skip an unread work marker"
-  "a first block that cannot be sized is exit 2, never OK|fx_staged staged-3|$ROOT/wc-shim|todo-ban --staged|rc=2 wc: simulated execution failure;::error::todo-ban: could not sample ok.rs to classify its content"
-  "a NUL-free count that cannot run is exit 2, never OK|fx_staged staged-4|$ROOT/tr-shim|todo-ban --staged|rc=2 tr: simulated execution failure;::error::todo-ban: could not sample ok.rs to classify its content"
-  "control: the baselined bare allow passes with the real git|fx_count count-0||suppression-ban|rc=0 suppression-ban: OK — no blanket suppressions, bare allows within baseline tools/suppression-baseline.tsv"
-  "a count whose stderr carries an error line is exit 2, never a clean zero|fx_count count-1|$ROOT/count-shim|suppression-ban|rc=2 error: 'phantom.rs': unable to read 0000000000000000000000000000000000000000;::error::suppression-ban: git grep could not read staged content while counting the bare allows in 'bare.rs' (error: 'phantom.rs': unable to read 0000000000000000000000000000000000000000)"
+  "a git grep execution failure puts the stable record before git's cause|fx_readers readers-1|$ROOT/git-shim-grep|todo-ban|rc=2 todo-ban: grep-exit=128;dependency-order-control: grep-exit"
+  "a blob read failure puts the stable record before git's cause|fx_readers readers-2|$ROOT/git-shim-cat-file-order|todo-ban|rc=2 todo-ban: blob-read=a.rs::0:a.rs;dependency-order-control: blob-read"
+  "a vanished staged blob is exit 2 carrying git's own error line|fx_vanished readers-3||todo-ban|rc=2 todo-ban: grep-content=1"
+  "a scan matching one file it read and one it could not is exit 2, never a violation|fx_vanished readers-4 second||todo-ban|rc=2 todo-ban: grep-content=0"
+  "control: the staged marker fires with the real tools|fx_staged staged-0||todo-ban --staged|rc=1 todo-ban: match=work marker:ok.rs:2:// $MARKER: staged for the pre-filter to find;todo-ban: staged-count=1:0:tools/todo-ban-excludes"
+  "a broken staged pre-filter puts the stable record before git's cause|fx_staged staged-1|$ROOT/git-shim-grep|todo-ban --staged|rc=2 todo-ban: grep-exit=128;dependency-order-control: grep-exit"
+  "a staged blob the sniff cannot read is exit 2, never a path skipped|fx_staged staged-2|$ROOT/git-shim-cat-file|todo-ban --staged|rc=2 todo-ban: blob-read=ok.rs:OID(ok.rs)"
+  "a first block that cannot be sized is exit 2, never OK|fx_staged staged-3|$ROOT/wc-shim|todo-ban --staged|rc=2 todo-ban: content-sample=ok.rs:1"
+  "a NUL-free count that cannot run is exit 2, never OK|fx_staged staged-4|$ROOT/tr-shim|todo-ban --staged|rc=2 todo-ban: content-sample=ok.rs:1"
+  "control: the baselined bare allow passes with the real git|fx_count count-0||suppression-ban|rc=0 suppression-ban: result=0:0:0:tools/suppression-baseline.tsv:0:tools/suppression-ban-excludes"
+  "a count whose stderr carries an error line refuses without an early-reader diagnostic|fx_count count-1|$ROOT/count-shim|suppression-ban|rc=2 suppression-ban: grep-content=0"
 )
 for row in "${rows[@]}"; do
   IFS='|' read -r label fixture shim args expect <<<"$row"

@@ -1,3 +1,5 @@
+# md-refs parses the verdict protocol: V<TAB>source<TAB>line<TAB>rule<TAB>value,
+# plus N<TAB>judged-count. Rule names are enums; values name the input and target.
 # md-refs.awk — what a markdown file cites, what it defines, and whether the
 # citations land. Runs over the line stream md-blocks.awk emits in `lines`
 # mode, so fenced code, indented code and front matter never reach it. POSIX
@@ -24,7 +26,7 @@
 #         [-v headings=FILE -v dec_dir=DIR -v dec_judge=0|1 -v id_prefix=D]
 #       reads the refs records; `targets` prints each tracked markdown path a
 #       heading citation needs indexed, `verdict` prints
-#       V<TAB>src<TAB>line<TAB>message per dead reference and a final
+#       V<TAB>src<TAB>line<TAB>rule<TAB>value per dead reference and a final
 #       N<TAB>count of references judged
 #
 # Loaded beside md-slug.awk, which holds the text reductions this file calls
@@ -314,7 +316,7 @@ function has_section_prefix(target, value,   key, prefix, name, tail, number) {
   return 0
 }
 
-function fail(msg) { if (phase == "verdict") printf "V\t%s\t%d\t%s\n", src_path, line_no, msg }
+function fail(rule, value) { if (phase == "verdict") printf "V\t%s\t%d\t%s\t%s\n", src_path, line_no, rule, value }
 
 function want_target(t) { if (phase == "targets" && !(t in wanted)) { wanted[t] = 1; print t } }
 
@@ -329,7 +331,7 @@ BEGIN {
   CONTROLS = CONTROLS sprintf("%c", 127)
   if (mode == "resolve") {
     if (phase != "targets" && phase != "verdict") {
-      printf "md-refs.awk: phase must be targets or verdict (got '%s')\n", phase > "/dev/stderr"
+      printf "md-refs: phase=%s\n  Expected targets or verdict.\n", phase > "/dev/stderr"
       exit 2
     }
     load_tracked()
@@ -338,7 +340,7 @@ BEGIN {
   } else if (mode == "index") {
     printf "F\t%s\n", src
   } else if (mode != "refs") {
-    printf "md-refs.awk: mode must be index, refs or resolve (got '%s')\n", mode > "/dev/stderr"
+    printf "md-refs: mode=%s\n  Expected index, refs or resolve.\n", mode > "/dev/stderr"
     exit 2
   }
 }
@@ -397,12 +399,12 @@ mode == "resolve" {
     if (path == "") target = src_path
     else target = resolve_from(dir_of(src_path), path)
     judged++
-    if (ESCAPED) { fail(raw ": the link climbs above the repository root"); next }
-    if (!(target in tracked_set) && !(target in dirs)) { fail(raw ": no tracked file or directory at " target); next }
+    if (ESCAPED) { fail("link-escape", raw); next }
+    if (!(target in tracked_set) && !(target in dirs)) { fail("link-target", raw ":" target); next }
     if (anchor == "") next
-    if (target !~ /\.md$/) { fail(raw ": an anchor into a file that is not markdown"); next }
+    if (target !~ /\.md$/) { fail("anchor-type", raw ":" target); next }
     want_target(target)
-    if (!((target "#" anchor) in slugs)) fail(raw ": " target " has no heading or explicit anchor #" anchor)
+    if (!((target "#" anchor) in slugs)) fail("anchor-missing", raw ":" target ":" anchor)
     next
   }
   if (kind == "C") {
@@ -415,30 +417,30 @@ mode == "resolve" {
     if (ESCAPED || !(target in tracked_set)) {
       target = normalize(path)
       if (ESCAPED || !(target in tracked_set)) {
-        fail("`" raw "`: no tracked file at " path " beside " src_path " or at the repository root")
+        fail("citation-target", raw ":" path ":" src_path)
         next
       }
     }
     want_target(target)
     if (ckind == "section") {
-      if (!((target "#" tolower(value)) in texts)) fail("`" raw "`: " target " has no heading '" value "'")
+      if (!((target "#" tolower(value)) in texts)) fail("heading-missing", raw ":" target ":" value)
     } else if (ckind == "prefix-section") {
-      if (!has_section_prefix(target, value)) fail(raw ": " target " has no heading at the start of '" value "'")
-    } else if (!((target "#" value) in slugs)) fail("`" raw "`: " target " has no heading or explicit anchor #" value)
+      if (!has_section_prefix(target, value)) fail("heading-prefix", raw ":" target ":" value)
+    } else if (!((target "#" value) in slugs)) fail("anchor-missing", "`" raw "`:" target ":" value)
     next
   }
   if (kind == "D") {
     if (!dec_judge) next
     judged++
-    if (!(f[4] in decisions)) { fail(f[4] ": no tracked decision file " dec_dir "/" f[4] "-*.md"); next }
+    if (!(f[4] in decisions)) { fail("decision-missing", f[4] ":" dec_dir "/" f[4] "-*.md"); next }
     if (f[5] == "") next
     if (!(f[4] in decfile)) {
-      fail(f[4] SECTION_SEP f[5] ": no tracked markdown file " dec_dir "/" f[4] "-*.md to read a heading from")
+      fail("decision-markdown", f[4] SECTION_SEP f[5] ":" dec_dir "/" f[4] "-*.md")
       next
     }
     want_target(decfile[f[4]])
     if (!has_section_prefix(decfile[f[4]], f[5])) \
-      fail(f[4] SECTION_SEP f[5] ": " decfile[f[4]] " has no heading at the start of '" f[5] "'")
+      fail("heading-prefix", f[4] SECTION_SEP f[5] ":" decfile[f[4]] ":" f[5])
     next
   }
 }

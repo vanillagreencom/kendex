@@ -60,14 +60,22 @@ line() { # RC OUT
 # $SHIM first on PATH when a row sets one.
 SHIM=""
 call() { # LIB SNIPPET
-  local rc=0 out
+  local rc=0 out err
   out="$(cd "$R" && PATH="${SHIM:+$SHIM:}$PATH" GG_CHECK=probe bash -c '
     set -euo pipefail
     . "$1"
     . "$2"
     shift 2
     eval "$1"
-  ' _ "$COMMON" "$1" "$2" 2>&1)" || rc=$?
+  ' _ "$COMMON" "$1" "$2" 2>"$TMP/error")" || rc=$?
+  err="$(LC_ALL=C awk '
+    /^[a-z-]+: [a-z-]+=/ { print; next }
+    /^[[:space:]]*dependency-order-control:/ {
+      sub(/^[[:space:]]*/, "")
+      print
+    }
+  ' "$TMP/error")"
+  out="${out}${out:+${err:+$'\n'}}${err}"
   line "$rc" "$out"
 }
 
@@ -96,10 +104,10 @@ echo "=== gg_policy_content ==="
 # label | fixture | shim | snippet | expect
 rows=(
   "the staged copy governs over an unstaged edit|fx_policy staged-wins INDEX WORKTREE||gg_policy_content tools/ex.tsv|rc=0 INDEX\\treason"
-  "an unreadable index is a collection error, never the worktree copy|fx_policy corrupt INDEX WORKTREE||GIT_INDEX_FILE=$ROOT/corrupt.idx gg_policy_content tools/ex.tsv|rc=2 ::error::probe: could not query the index for tools/ex.tsv (git ls-files exit 128); refusing to treat it as untracked"
+  "an unreadable index is a collection error, never the worktree copy|fx_policy corrupt INDEX WORKTREE||GIT_INDEX_FILE=$ROOT/corrupt.idx gg_policy_content tools/ex.tsv|rc=2 probe: index-query=tools/ex.tsv:128"
   "a staged deletion governs as absent with the worktree copy present|fx_staged_deletion||gg_policy_content tools/ex.tsv|rc=1"
   "a never-tracked policy file falls back to the worktree copy|fx_never_tracked never-tracked||gg_policy_content tools/ex.tsv|rc=0 ONDISK\\treason"
-  "a HEAD probe that failed is a collection error, never the worktree copy|fx_never_tracked head-probe|$ROOT/git-shim-ls-tree|gg_policy_content tools/ex.tsv|rc=2 ::error::probe: could not probe HEAD for tools/ex.tsv (git ls-tree exit 128); refusing to treat it as untracked"
+  "a HEAD probe that failed is a collection error, never the worktree copy|fx_never_tracked head-probe|$ROOT/git-shim-ls-tree|gg_policy_content tools/ex.tsv|rc=2 probe: head-query=tools/ex.tsv:128"
   "an unborn HEAD carries nothing and does not fail the read|fx_unborn||gg_policy_content tools/ex.tsv|rc=0 ONDISK\\treason"
   "a glob-shaped path matches only itself|fx_glob glob-path||gg_policy_content 'tools/ex?.tsv'|rc=1"
   "control: the literal path it names resolves|fx_glob literal-path||gg_policy_content tools/exA.tsv|rc=0 REAL\\treason"
@@ -130,17 +138,17 @@ assert_eq "the fixture really is mid-merge (three index stages)" 3 "$(git -C "$R
 # A git that cannot list the unmerged paths at all: the probe's failure is
 # never read as "nothing unmerged".
 mkdir -p "$ROOT/git-shim-unmerged"
-printf '#!/usr/bin/env bash\ncase " $* " in *" --unmerged "*) echo "git ls-files: simulated failure" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' "$(command -v git)" >"$ROOT/git-shim-unmerged/git"
+printf '#!/usr/bin/env bash\ncase " $* " in *" --unmerged "*) echo "dependency-order-control: unmerged-read" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' "$(command -v git)" >"$ROOT/git-shim-unmerged/git"
 chmod +x "$ROOT/git-shim-unmerged/git"
 
 echo "=== gg_require_merged_index ==="
-REFUSAL="f.txt;::error::probe: the index carries 1 unmerged path(s) (listed above) and a --cached scan skips them silently — finish or abort the merge, then re-run"
+REFUSAL="probe: unmerged-path=f.txt;probe: unmerged-count=1"
 # label | shim | pathspec | expect
 rows=(
   "an unmerged index is a collection error naming the path and the remedy|||rc=2 $REFUSAL"
   "an unmerged path outside the pathspec does not block that scan||'*.rs'|rc=0"
   "an unmerged path inside the pathspec does block it||'f.txt'|rc=2 $REFUSAL"
-  "a probe that could not list the unmerged paths is a collection error, never an empty list|$ROOT/git-shim-unmerged||rc=2 git ls-files: simulated failure;::error::probe: could not read the index for unmerged paths (git ls-files exit 128)"
+  "a probe that could not list the unmerged paths prints its stable refusal before the dependency cause|$ROOT/git-shim-unmerged||rc=2 probe: unmerged-read=128;dependency-order-control: unmerged-read"
 )
 for row in "${rows[@]}"; do
   IFS='|' read -r label SHIM pathspec expect <<<"$row"
@@ -178,14 +186,15 @@ lane() { # SHIM-DIR SCRIPT [ARG...] — one line for a lane run inside $R, SHIM-
   local dir="$1" script="$2" rc=0 out
   shift 2
   out="$(cd "$R" && PATH="${dir:+$dir:}$PATH" "$SCRIPTS/$script" "$@" 2>&1)" || rc=$?
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^[a-z-]+: [a-z-]+=/ { print }')"
   line "$rc" "$out"
 }
 
 echo "=== a failed policy read stops the gate, it does not become an empty list ==="
 assert_eq "control: with the excludes readable, the excluded marker passes" \
-  "rc=0 todo-ban: OK — no work markers in tracked files" "$(lane "" todo-ban)"
+  "rc=0 todo-ban: index-count=0:0:tools/todo-ban-excludes" "$(lane "" todo-ban)"
 assert_eq "an unreadable exclusion list stops the run at exit 2, with no verdict" \
-  "rc=2 ::error::todo-ban: could not query the index for tools/todo-ban-excludes (git ls-files exit 128); refusing to treat it as untracked;::error::todo-ban: refusing to run on an unread exclusion list: tools/todo-ban-excludes (exit 2, cause above)" \
+  "rc=2 todo-ban: index-query=tools/todo-ban-excludes:128;todo-ban: exclusion-read=tools/todo-ban-excludes:2" \
   "$(lane "$ROOT/gitstub" todo-ban)"
 
 # --- the settings cache ------------------------------------------------------
@@ -202,7 +211,7 @@ echo "=== the settings cache is materialized by rename, never by a live redirect
 assert_eq "the cache resolves the staged value when the rename succeeds, leaving no partial file" \
   "rc=0 COMMIT_GUARDS_TODO_MAX=7" "$(call "$SETTINGS" "$RESOLVE")"
 assert_eq "a failed rename fails the resolve loudly and hands out no cache path" \
-  "rc=3 ::error::kendex.settings.toml: could not materialize the staged copy while resolving a setting" \
+  "rc=3 probe: settings-materialize=kendex.settings.toml" \
   "$(call "$SETTINGS" "PATH=$ROOT/nomv:\$PATH; $RESOLVE")"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

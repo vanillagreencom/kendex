@@ -29,21 +29,22 @@ gg_changelog_scopes() {
   # of many — so a path in both is a configuration that cannot pass. One
   # judgement, made here, for every lane that reads these settings.
   ! gg_matches_path_glob "$GG_CHANGELOG_RECORD" \
-    || gg_config_error "COMMIT_GUARDS_CHANGELOG_RECORD ($(gg_shown "$GG_CHANGELOG_RECORD")) is also matched by COMMIT_GUARDS_CHANGELOG_PATHS — the collated record is not a fragment"
+    || gg_fail changelog-overlap "$GG_CHANGELOG_RECORD" "COMMIT_GUARDS_CHANGELOG_RECORD ($(gg_shown "$GG_CHANGELOG_RECORD")) is also matched by COMMIT_GUARDS_CHANGELOG_PATHS — the collated record is not a fragment"
 }
 
 # A fragment is one Markdown list item: it opens with a hyphen and a space,
 # and every later line indents under it. A second marker or a heading would
 # be a second entry, or would end the section it is folded into. The
-# complaint, or nothing.
+# output enum (empty, marker, continuation), or nothing. changelog-entries
+# consumes this internal result and supplies the explanation.
 GG_SHAPE_AWK='
-BEGIN { empty = "has no entry in it — a fragment is the Markdown list item it becomes" }
+BEGIN { empty = "empty" }
 { sub(/\r$/, "") }
 /^[[:space:]]*$/ { next }
 !seen {
   seen = 1
   if ($0 !~ /^- /) {
-    print "does not open with a list marker — a fragment is the Markdown list item it becomes, opening with a hyphen and a space"
+    print "marker"
     exit
   }
   # A marker with nothing after it is an entry that says nothing, which is
@@ -52,7 +53,7 @@ BEGIN { empty = "has no entry in it — a fragment is the Markdown list item it 
   next
 }
 !/^[ \t]/ {
-  print "holds more than the one entry it becomes — every line after the first indents under it"
+  print "continuation"
   exit
 }
 END { if (!seen) print empty }
@@ -97,10 +98,11 @@ gg_changelog_blob() { # SHA LABEL — fills $GG_TMP/blob; 1 = not changelog text
   # only NUL past the leading sample would be measured as the short prefix
   # instead of refused. \200 is a stray continuation byte, which the grammar
   # below already rejects, so the line reports as the invalid UTF-8 it is.
-  bad="$(LC_ALL=C tr '\000' '\200' <"$GG_TMP/blob" | LC_ALL=C awk "$GG_UTF8_AWK")" \
-    || gg_collection_error "could not read $(gg_shown "$label") to check its encoding"
+  if ! bad="$({ LC_ALL=C tr '\000' '\200' <"$GG_TMP/blob" | LC_ALL=C awk "$GG_UTF8_AWK"; } 2>"$GG_TMP/encoding.err")"; then
+    gg_fail_cause encoding-read "$label" "$GG_TMP/encoding.err" "could not read $(gg_shown "$label") to check its encoding"
+  fi
   if [ -n "$bad" ]; then
-    gg_collection_error "$(gg_shown "$label") line $bad is not valid UTF-8 — text with no character count cannot be measured"
+    gg_fail encoding-line "$label:$bad" "$(gg_shown "$label") line $bad is not valid UTF-8 — text with no character count cannot be measured"
   fi
 }
 
@@ -216,9 +218,8 @@ function heading_text(l,   i, n, t) {
     if (inside) printf "end\t%d\n", NR
     inside = (lvl == 2 && tolower(heading_text(line)) == "[unreleased]")
     if (inside) {
-      if (seen) { rc = 4; exit rc }
-      seen = 1
-      printf "unreleased\t%d\n", NR
+      seen++
+      if (seen == 1) printf "unreleased\t%d\n", NR
     }
     next
   }
@@ -226,9 +227,11 @@ function heading_text(l,   i, n, t) {
   if (lvl == 3) printf "section\t%d\t%s\n", NR, heading_text(line)
 }
 END {
-  # A body that bailed lands here too, and its status is the one to keep: an
-  # unclosed fence past the second heading must not rename that refusal.
+  # A body that bailed lands here too, and its status is the one to keep.
   if (rc) exit rc
+  # The duplicate count outranks a later unclosed fence, as the former
+  # early exit did, but only after the parser measures every visible heading.
+  if (seen > 1) { printf "heading-count\t%d\n", seen; exit 4 }
   # The fence first: it is why the heading below it was never seen, and
   # reporting the missing heading would name the symptom over the cause.
   if (fence != "") exit 3

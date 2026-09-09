@@ -6,9 +6,8 @@
 # scope judges the whole index, and a collection step that cannot run is a
 # collection error, never a pass. One table: a row builds its own
 # repository, stages what it means, runs the check once under its settings
-# and reads back the exit status with every line printed, so the verdict,
-# the file and line it names, the quoted line, the remedy and the summary
-# are one pin. The index readers this family shares — the carriers
+# and reads back the exit status and stable result records. The verdict,
+# file, line, matched bytes and counts are asserted together. The index readers this family shares — the carriers
 # pre-filter, the content sniff, the blob read — are pinned once in
 # lane-readers.test.sh, which drives them through this check.
 #
@@ -52,6 +51,10 @@ run() { # SHIM ENVS ARGS
   [ -z "$2" ] || IFS=',' read -ra envs <<<"$2"
   # shellcheck disable=SC2086
   out="$(cd "$R" && env PATH="$path" ${envs[@]+"${envs[@]}"} "$TB" $3 2>&1)" || rc=$?
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '
+    /^todo-ban: [a-z-]+=/ { print; next }
+    /^[[:space:]]*dependency-order-control:/ { sub(/^[[:space:]]*/, ""); print }
+  ')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
@@ -72,16 +75,14 @@ commit() { git -C "$R" commit -qm "${1:-seed}"; } # [MESSAGE]
 seeded() { repo "$1"; put ok.rs 'fn main() {}\n'; stage; commit; } # NAME — one committed clean file
 excl() { put tools/todo-ban-excludes "$1"; stage; } # ROWS — the exclusion list, staged
 
-# The lines the check prints, as functions of what a row put in.
+# Stable result records, without the explanation lines.
 EXCL=tools/todo-ban-excludes
-remedy() { printf '  remedies: do the work now, or move it to the tracker and delete the marker; vendored/generated trees belong in %s with a reason' "${1:-$EXCL}"; } # [EXCLUDES]
-hit() { printf 'todo-ban FAIL work marker: %s:%s:%s;%s' "$1" "$2" "$3" "$(remedy "${4:-}")"; } # PATH LINE CONTENT [EXCLUDES]
-idx() { printf 'todo-ban: %s work marker(s) — excludes %s' "$1" "${2:-$EXCL}"; } # COUNT [EXCLUDES]
-stg() { printf 'todo-ban: %s work marker(s) added by the staged diff — excludes %s' "$1" "${2:-$EXCL}"; } # COUNT [EXCLUDES]
-OK_IDX="todo-ban: OK — no work markers in tracked files"
-OK_STG="todo-ban: OK — the staged diff adds no work markers"
-ERR="::error::todo-ban: "
-NO_REASON="expected 'pattern<TAB>reason' (every exclusion carries its justification)"
+hit() { printf 'todo-ban: match=work marker:%s:%s:%s' "$1" "$2" "$3"; } # PATH LINE CONTENT
+idx() { printf 'todo-ban: index-count=%s:%s:%s' "$1" "${2:-0}" "${3:-$EXCL}"; } # COUNT [UNMEASURED]
+stg() { printf 'todo-ban: staged-count=%s:%s:%s' "$1" "${2:-0}" "${3:-$EXCL}"; } # COUNT [UNMEASURED]
+OK_IDX="todo-ban: index-count=0:0:$EXCL"
+OK_STG="todo-ban: staged-count=0:0:$EXCL"
+ERR="todo-ban: "
 
 run_rows() { # label | fixture | shim | env | args | expect
   local row label fx shim env args expect
@@ -172,25 +173,25 @@ ALT=COMMIT_GUARDS_TODO_EXCLUDES=alt-excludes
 run_rows \
   "control: the vendored marker fails without a row, and the remedy names the default list|fx_vendored||||rc=1 $(hit vendor/lib.rs 1 "// $TD: vendored upstream marker");$(idx 1)" \
   "the row silences exactly the vendored tree|fx_vendored_row||||rc=0 $OK_IDX" \
-  "a row without a tab-separated reason is a config error naming the line|fx_no_reason||||rc=2 ${ERR}$EXCL:1: $NO_REASON" \
+  "a row without a tab-separated reason is a config error naming the line|fx_no_reason||||rc=2 ${ERR}exclusion-reason=$EXCL:1" \
   "a comment row and a blank row are skipped, and the last row is read without its newline|fx_comment_rows||||rc=0 $OK_IDX" \
-  "a reason with no pattern before its tab is the same config error|fx_empty_pattern||||rc=2 ${ERR}$EXCL:1: $NO_REASON" \
-  "the list path resolves through the environment key, and the verdict names that list|fx_alt_env||$ALT||rc=0 $OK_IDX" \
-  "--excludes names the same list|fx_alt_flag|||--excludes alt-excludes|rc=0 $OK_IDX" \
-  "--excludes=PATH is the same flag|fx_alt_eq|||--excludes=alt-excludes|rc=0 $OK_IDX" \
+  "a reason with no pattern before its tab is the same config error|fx_empty_pattern||||rc=2 ${ERR}exclusion-reason=$EXCL:1" \
+  "the list path resolves through the environment key, and the verdict names that list|fx_alt_env||$ALT||rc=0 $(idx 0 0 alt-excludes)" \
+  "--excludes names the same list|fx_alt_flag|||--excludes alt-excludes|rc=0 $(idx 0 0 alt-excludes)" \
+  "--excludes=PATH is the same flag|fx_alt_eq|||--excludes=alt-excludes|rc=0 $(idx 0 0 alt-excludes)" \
   "control: without either, the default path has no file and the marker fails|fx_alt_none||||rc=1 $(hit vendor/lib.rs 1 "// $TD: vendored upstream marker");$(idx 1)" \
-  "--excludes with no path is a config error|fx_flag_bare|||--excludes|rc=2 ${ERR}--excludes requires a path" \
-  "an unknown argument is a config error quoting it|fx_unknown|||--no-such-flag|rc=2 ${ERR}unknown argument '--no-such-flag' (see --help)" \
+  "--excludes with no path is a config error|fx_flag_bare|||--excludes|rc=2 ${ERR}argument-missing=--excludes" \
+  "an unknown argument is a config error quoting it|fx_unknown|||--no-such-flag|rc=2 ${ERR}argument-unknown=--no-such-flag" \
   "a row anchored at a root silences its own tree and not the first-party tree of the same name|fx_anchored||||rc=1 $(hit crates/thing/src/lib.rs 1 "// $TD: our own marker");$(idx 1)" \
   "must-fail control: the crossing shorthand silences the first-party tree too|fx_shorthand||||rc=0 $OK_IDX" \
   "control: the blanket row alone silences both planted markers|fx_blanket||||rc=0 $OK_IDX" \
   "a ! row carves its subtree back into the scanned set, and the sibling render stays silent|fx_carve||||rc=1 $(hit .agents/skills/in-place/lib.rs 1 "// $TD: a marker in the source of record");$(idx 1)" \
   "a carve above the row it cuts into carves just the same|fx_carve_above||||rc=1 $(hit .agents/skills/in-place/lib.rs 1 "// $TD: a marker in the source of record");$(idx 1)" \
-  "a carve row without a reason is the same config error as any other|fx_carve_no_reason||||rc=2 ${ERR}$EXCL:2: $NO_REASON" \
-  "a bare ! row is a config error naming its line|fx_carve_bare||||rc=2 ${ERR}$EXCL:2: '!' carves matching paths back into the scanned set and needs a pattern after it" \
+  "a carve row without a reason is the same config error as any other|fx_carve_no_reason||||rc=2 ${ERR}exclusion-reason=$EXCL:2" \
+  "a bare ! row is a config error naming its line|fx_carve_bare||||rc=2 ${ERR}exclusion-carve=$EXCL:2" \
   "an escaped row excludes the literal bang path rather than carving it|fx_bang||||rc=0 $OK_IDX" \
-  "the staged list governs though the work-tree copy dropped the row|fx_list_index||COMMIT_GUARDS_TODO_EXCLUDES=tools/commit-guards-todo-excludes||rc=0 $OK_IDX" \
-  "control: staging the emptied list re-exposes the marker|fx_list_staged||COMMIT_GUARDS_TODO_EXCLUDES=tools/commit-guards-todo-excludes||rc=1 $(hit v.rs 1 "// $TD: vendored" tools/commit-guards-todo-excludes);$(idx 1 tools/commit-guards-todo-excludes)"
+  "the staged list governs though the work-tree copy dropped the row|fx_list_index||COMMIT_GUARDS_TODO_EXCLUDES=tools/commit-guards-todo-excludes||rc=0 $(idx 0 0 tools/commit-guards-todo-excludes)" \
+  "control: staging the emptied list re-exposes the marker|fx_list_staged||COMMIT_GUARDS_TODO_EXCLUDES=tools/commit-guards-todo-excludes||rc=1 $(hit v.rs 1 "// $TD: vendored");$(idx 1 0 tools/commit-guards-todo-excludes)"
 
 echo "=== --staged judges the lines the commit adds, read from the index, not the whole tree ==="
 # Someone else's marker, committed and untouched by the commit under judgement.
@@ -249,7 +250,7 @@ run_rows \
   "the row silences the staged vendored tree too|fx_staged_vendored_row|||--staged|rc=0 $OK_STG" \
   "a staged symlink whose target spells a marker has no lines to read|fx_staged_link|||--staged|rc=0 $OK_STG" \
   "a staged gitlink has no lines to read|fx_staged_gitlink|||--staged|rc=0 $OK_STG" \
-  "an unmerged index is refused before the walk|fx_unmerged|||--staged|rc=2 ok.rs;${ERR}the index carries 1 unmerged path(s) (listed above) and a --cached scan skips them silently — finish or abort the merge, then re-run"
+  "an unmerged index is refused before the walk|fx_unmerged|||--staged|rc=2 ${ERR}unmerged-path=ok.rs;${ERR}unmerged-count=1"
 
 echo "=== content decides what --staged reads: never an attribute, never a name ==="
 # A committed '-diff' rule makes git call every .rs file binary, so the
@@ -308,10 +309,10 @@ fx_pure_move_index() { pure_move pure-move-index; }
 run_rows \
   "a marker added under a non-diffable path is refused, at its own line|fx_attr|||--staged|rc=1 $(hit ok.rs 2 "// $TD: behind an attributes rule");$(stg 1)" \
   "control: a clean addition to a marker-carrying file under the same rule passes, the committed marker out of this commit's verdict|fx_attr_clean|||--staged|rc=0 $OK_STG" \
-  "a genuinely binary blob whose bytes spell a marker is named as unmeasured and carried into the verdict|fx_binary|||--staged|rc=0 todo-ban: not measured: asset.png — binary content, not text;$OK_STG; 1 matched path(s) not measured" \
+  "a genuinely binary blob whose bytes spell a marker is named as unmeasured and carried into the verdict|fx_binary|||--staged|rc=0 todo-ban: unmeasured=asset.png:binary;$(stg 0 1)" \
   "control: the same bytes without a NUL are text, and fire|fx_binary_control|||--staged|rc=1 $(hit asset.png 3 " $TD: in the pixels");$(stg 1)" \
-  "a skipped carrier qualifies a violation verdict too|fx_binary_beside|||--staged|rc=1 todo-ban: not measured: asset.png — binary content, not text;$(hit ok.rs 2 "// $TD: beside the asset");$(stg 1); 1 matched path(s) not measured" \
-  "and the index lane's violation verdict the same way|fx_binary_beside_index||||rc=1 todo-ban: not measured: asset.png — binary content, not text;$(hit ok.rs 2 "// $TD: beside the asset");$(idx 1); 1 matched path(s) not measured" \
+  "a skipped carrier qualifies a violation verdict too|fx_binary_beside|||--staged|rc=1 todo-ban: unmeasured=asset.png:binary;$(hit ok.rs 2 "// $TD: beside the asset");$(stg 1 1)" \
+  "and the index lane's violation verdict the same way|fx_binary_beside_index||||rc=1 todo-ban: unmeasured=asset.png:binary;$(hit ok.rs 2 "// $TD: beside the asset");$(idx 1 1)" \
   "a NUL past git's 8000-byte window leaves the blob text, and it fires|fx_late_nul|||--staged|rc=1 $(hit late-nul.rs 2 "// $TD: past the 8000-byte window");$(stg 1)" \
   "a type change to a clean regular file passes: a marker shape in the path is not content|fx_type_clean|||--staged|rc=0 $OK_STG" \
   "a marker in the new regular file fires at its own line, the section header and the clean line beside it never records|fx_type_marker|||--staged|rc=1 $(hit "a $TD: x.md" 1 "// $FX: added with the regular file");$(stg 1)" \
@@ -334,7 +335,7 @@ for a in "\$@"; do
   [ "\$a" = "$2" ] && saw_match=1
 done
 if [ "\$saw_diff" = 1 ] && [ "\$saw_match" = 1 ]; then
-  echo "git diff: simulated execution failure" >&2
+  echo "dependency-order-control: $2" >&2
   exit 128
 fi
 exec "$REAL_GIT" "\$@"
@@ -352,7 +353,7 @@ cat >"$TMP/awk-shim/awk" <<EOF
 for a in "\$@"; do
   case "\$a" in
     *hunk*)
-      echo "awk: simulated hunk-parser failure" >&2
+      echo "dependency-order-control: staged-parse" >&2
       exit 1
       ;;
   esac
@@ -367,7 +368,7 @@ mkdir -p "$TMP/grep-shim"
 cat >"$TMP/grep-shim/grep" <<EOF
 #!/usr/bin/env bash
 for a in "\$@"; do
-  [ "\$a" != "-aE" ] || { echo "grep: simulated scan failure" >&2; exit 2; }
+  [ "\$a" != "-aE" ] || { echo "dependency-order-control: staged-scan" >&2; exit 2; }
 done
 exec "$REAL_GREP" "\$@"
 EOF
@@ -388,16 +389,16 @@ fx_shim_grep() { marked shim-grep; }
 fx_chunked() { seeded chunked; put a000.rs "// $TD: in the first chunk\n"; local i=1; while [ "$i" -lt 300 ]; do put "$(printf 'a%03d' "$i").rs" "fn f$i() {}\n"; i=$((i + 1)); done; stage; }
 run_rows \
   "shim-free control: the clean fixture passes with the real git|fx_shim_clean|||--staged|rc=0 $OK_STG" \
-  "a failed change-set collection is exit 2 carrying git's own line|fx_shim_raw|$TMP/raw-shim||--staged|rc=2 git diff: simulated execution failure;${ERR}could not collect the staged changes (git diff --cached --raw failed)" \
+  "a failed change-set collection puts the stable record before git's cause|fx_shim_raw|$TMP/raw-shim||--staged|rc=2 ${ERR}staged-collect=128;dependency-order-control: --raw" \
   "shim-free control: the staged marker fires with the real tools|fx_shim_control|||--staged|rc=1 $(hit ok.rs 2 "// $TD: staged for the per-file read");$(stg 1)" \
-  "a file whose added lines cannot be read is exit 2, naming it|fx_shim_hunk|$TMP/hunk-shim||--staged|rc=2 git diff: simulated execution failure;${ERR}could not read the staged additions in 'ok.rs' (git diff exit 128)" \
-  "a hunk parser that fails is exit 2 naming the file, with no violation and no OK|fx_shim_awk|$TMP/awk-shim||--staged|rc=2 awk: simulated hunk-parser failure;${ERR}could not parse the staged additions in 'ok.rs' (awk exit 1)" \
-  "a per-file scan that fails is exit 2 naming the file, never a file skipped|fx_shim_grep|$TMP/grep-shim||--staged|rc=2 grep: simulated scan failure;${ERR}could not scan the staged additions in 'ok.rs' (grep exit 2)" \
+  "a file whose added lines cannot be read puts the record before git's cause|fx_shim_hunk|$TMP/hunk-shim||--staged|rc=2 ${ERR}staged-read=ok.rs:128;dependency-order-control: -U0" \
+  "a hunk parser failure puts the record before awk's cause|fx_shim_awk|$TMP/awk-shim||--staged|rc=2 ${ERR}staged-parse=ok.rs:1;dependency-order-control: staged-parse" \
+  "a per-file scan failure puts the record before grep's cause|fx_shim_grep|$TMP/grep-shim||--staged|rc=2 ${ERR}staged-scan=ok.rs:2;dependency-order-control: staged-scan" \
   "a marker in the first of 300 staged paths survives every later chunk|fx_chunked|||--staged|rc=1 $(hit a000.rs 1 "// $TD: in the first chunk");$(stg 1)"
 
 echo "=== the usage is answered ==="
 repo help
-assert_eq "--help prints the usage and exits 0" "rc=0 usage: todo-ban [--staged] [--excludes FILE]" "$(run "" "" --help | cut -d';' -f1)"
+assert_eq "--help emits its usage record and exits 0" "rc=0 todo-ban: usage=todo-ban" "$(run "" "" --help | cut -d';' -f1)"
 assert_eq "-h is the same flag" "$(run "" "" --help)" "$(run "" "" -h)"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

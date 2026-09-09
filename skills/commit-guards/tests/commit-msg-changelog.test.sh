@@ -44,16 +44,20 @@ judge() { # ENVS MSG
   local envs=() rc=0 out
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   out="$(cd "$R" && printf '%b\n' "$2" | env ${envs[@]+"${envs[@]}"} "$CM" 2>&1)" || rc=$?
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '
+    /^commit-msg: [a-z-]+=/ { print; next }
+    /^[[:space:]]*dependency-order-control:/ { sub(/^[[:space:]]*/, ""); print }
+  ')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
-OK="commit-msg: OK — conventional header:"
-GEN="commit-msg: git-generated header — shape and length not judged:"
+OK="commit-msg: header-valid="
+GEN="commit-msg: header-generated="
 owed() { # PATH — the whole violation: the path named, the remedies, the record's standing
-  printf '%s' "commit-msg FAIL $1 changed without a changelog entry;  write one of: changelog.d/*/*.md;  or put [no-changelog] in the header when the commit changes nothing a consumer sees;  CHANGELOG.md counts only under COMMIT_GUARDS_CHANGELOG_COLLATE=1, which is the release commit collating the fragments"
+  printf '%s' "commit-msg: changelog-missing=$1:changelog.d/*/*.md"
 }
 waived() { # PATH
-  printf '%s' "commit-msg: OK — [no-changelog] in the header waives the entry for $1"
+  printf '%s' "commit-msg: changelog-waived=$1"
 }
 
 # The seeded world every row builds on: crates/* and ui/* required, a record
@@ -78,6 +82,10 @@ fragment() { # PATH [TEXT]
   mkdir -p "$R/$(dirname "$1")"
   printf -- '- %s\n' "${2:-A fix consumers see.}" >"$R/$1"
 }
+
+mkdir -p "$ROOT/diff-shim"
+printf '#!/usr/bin/env bash\nsaw_diff=0\nsaw_cached=0\nsaw_raw=0\nfor a in "$@"; do [ "$a" = diff ] && saw_diff=1; [ "$a" = --cached ] && saw_cached=1; [ "$a" = --raw ] && saw_raw=1; done\nif [ "$saw_diff:$saw_cached:$saw_raw" = 1:1:1 ]; then echo "dependency-order-control: commit-files" >&2; exit 128; fi\nexec %q "$@"\n' "$(command -v git)" >"$ROOT/diff-shim/git"
+chmod +x "$ROOT/diff-shim/git"
 
 fx_docs_only() { base "$1"; printf 'notes\n' >"$R/docs/notes.md"; git -C "$R" add -A; }
 fx_crate() { base "$1"; touch_crate added; git -C "$R" add -A; }
@@ -128,18 +136,18 @@ CRATE="fix(KEN-1): change a crate"
 echo "=== what a commit touching the required paths owes ==="
 # label | fixture | env | message | expect
 rows=(
-  "a commit touching none of the required paths owes nothing|fx_docs_only docs-only||docs: a note|rc=0 $OK docs: a note"
-  "a staged crates/ change with no entry fails, naming the path, the fragment globs unescaped, the waiver and the record's standing|fx_crate crate-1||$CRATE|rc=1 $OK $CRATE;$(owed crates/core/lib.rs)"
-  "[no-changelog] in the header waives it, naming the path waived|fx_crate crate-2||$CRATE [no-changelog]|rc=0 $OK $CRATE [no-changelog];$(waived crates/core/lib.rs)"
-  "control: [no-changelog] in the body alone waives nothing|fx_crate crate-3||$CRATE\n\nThe rule here is [no-changelog] for pure refactors.|rc=1 $OK $CRATE;$(owed crates/core/lib.rs)"
-  "MUST: the rule runs over a git-generated header too|fx_crate crate-4||Merge branch 'topic' into main|rc=1 $GEN Merge branch 'topic' into main;$(owed crates/core/lib.rs)"
-  "control: [no-changelog] escapes it on a generated header as well|fx_crate crate-5||Merge branch 'topic' into main [no-changelog]|rc=0 $GEN Merge branch 'topic' into main [no-changelog];$(waived crates/core/lib.rs)"
-  "a path matching the SECOND required glob owes an entry too, and is the one named|fx_ui ui||fix(KEN-6): change the UI|rc=1 $OK fix(KEN-6): change the UI;$(owed ui/src/a.ts)"
-  "a required path git would quote is still matched, and named as bash spells it|fx_quoted quoted|LC_ALL=C|fix(KEN-4): change a crate under a quoted name|rc=1 $OK fix(KEN-4): change a crate under a quoted name;$(owed "\$'crates/core/na\\303\\257ve.rs'")"
-  "a chmod under a required path is a touch|fx_chmod_required chmod-required||fix(KEN-10): make a crate file executable|rc=1 $OK fix(KEN-10): make a crate file executable;$(owed crates/core/lib.rs)"
-  "a rename OUT of a required path is refused, naming the path it left|fx_rename_out rename-out-1||refactor(KEN-7): move a crate file out|rc=1 $OK refactor(KEN-7): move a crate file out;$(owed crates/core/lib.rs)"
-  "control: the same rename with [no-changelog] passes|fx_rename_out rename-out-2||refactor(KEN-7): move a crate file out [no-changelog]|rc=0 $OK refactor(KEN-7): move a crate file out [no-changelog];$(waived crates/core/lib.rs)"
-  "a rename within unrequired paths owes nothing|fx_rename_docs rename-docs||docs(KEN-7): rename a note|rc=0 $OK docs(KEN-7): rename a note"
+  "a commit touching none of the required paths owes nothing|fx_docs_only docs-only||docs: a note|rc=0 ${OK}docs: a note"
+  "a staged crates/ change with no entry fails, naming the path, the fragment globs unescaped, the waiver and the record's standing|fx_crate crate-1||$CRATE|rc=1 ${OK}$CRATE;$(owed crates/core/lib.rs)"
+  "[no-changelog] in the header waives it, naming the path waived|fx_crate crate-2||$CRATE [no-changelog]|rc=0 ${OK}$CRATE [no-changelog];$(waived crates/core/lib.rs)"
+  "control: [no-changelog] in the body alone waives nothing|fx_crate crate-3||$CRATE\n\nThe rule here is [no-changelog] for pure refactors.|rc=1 ${OK}$CRATE;$(owed crates/core/lib.rs)"
+  "MUST: the rule runs over a git-generated header too|fx_crate crate-4||Merge branch 'topic' into main|rc=1 ${GEN}Merge branch 'topic' into main;$(owed crates/core/lib.rs)"
+  "control: [no-changelog] escapes it on a generated header as well|fx_crate crate-5||Merge branch 'topic' into main [no-changelog]|rc=0 ${GEN}Merge branch 'topic' into main [no-changelog];$(waived crates/core/lib.rs)"
+  "a path matching the SECOND required glob owes an entry too, and is the one named|fx_ui ui||fix(KEN-6): change the UI|rc=1 ${OK}fix(KEN-6): change the UI;$(owed ui/src/a.ts)"
+  "a required path git would quote is still matched, and named by its path value|fx_quoted quoted|LC_ALL=C|fix(KEN-4): change a crate under a quoted name|rc=1 ${OK}fix(KEN-4): change a crate under a quoted name;$(owed "crates/core/naïve.rs")"
+  "a chmod under a required path is a touch|fx_chmod_required chmod-required||fix(KEN-10): make a crate file executable|rc=1 ${OK}fix(KEN-10): make a crate file executable;$(owed crates/core/lib.rs)"
+  "a rename OUT of a required path is refused, naming the path it left|fx_rename_out rename-out-1||refactor(KEN-7): move a crate file out|rc=1 ${OK}refactor(KEN-7): move a crate file out;$(owed crates/core/lib.rs)"
+  "control: the same rename with [no-changelog] passes|fx_rename_out rename-out-2||refactor(KEN-7): move a crate file out [no-changelog]|rc=0 ${OK}refactor(KEN-7): move a crate file out [no-changelog];$(waived crates/core/lib.rs)"
+  "a rename within unrequired paths owes nothing|fx_rename_docs rename-docs||docs(KEN-7): rename a note|rc=0 ${OK}docs(KEN-7): rename a note"
 )
 for row in "${rows[@]}"; do
   IFS='|' read -r label fixture env msg expect <<<"$row"
@@ -149,21 +157,21 @@ done
 
 echo "=== what counts as a written entry: a path that gained content ==="
 rows=(
-  "a staged fragment satisfies it|fx_crate_fragment fragment||$CRATE|rc=0 $OK $CRATE"
-  "deleting a fragment is not writing one|fx_fragment_deleted fragment-deleted||fix(KEN-2): change a crate again|rc=1 $OK fix(KEN-2): change a crate again;$(owed crates/core/lib.rs)"
-  "the record edited is no entry — nothing declares this a collation|fx_record_edited record-1||chore(release): collate the changelog|rc=1 $OK chore(release): collate the changelog;$(owed crates/core/lib.rs)"
-  "COMMIT_GUARDS_CHANGELOG_COLLATE=1 makes the collated record the entry|fx_record_edited record-2|COMMIT_GUARDS_CHANGELOG_COLLATE=1|chore(release): collate the changelog|rc=0 $OK chore(release): collate the changelog"
-  "a rename INTO the fragment tree is the entry|fx_rename_in rename-in||fix(KEN-7): change a crate|rc=0 $OK fix(KEN-7): change a crate"
-  "control: moving a fragment away is not writing one|fx_rename_away rename-away||fix(KEN-8): change a crate|rc=1 $OK fix(KEN-8): change a crate;$(owed crates/core/lib.rs)"
-  "a copy-configured repository is judged on the same record vocabulary|fx_copies copies-1||fix(KEN-9): change a crate|rc=1 $OK fix(KEN-9): change a crate;$(owed crates/core/lib.rs)"
-  "the entry written beside a copy is still the entry|fx_copies_entry copies-2||fix(KEN-9): change a crate|rc=0 $OK fix(KEN-9): change a crate"
-  "a chmod on an existing fragment is not the entry|fx_chmod_fragment chmod-fragment||fix(KEN-10): change a crate|rc=1 $OK fix(KEN-10): change a crate;$(owed crates/core/lib.rs)"
-  "control: rewriting the same fragment is|fx_rewrite_fragment rewrite-fragment||fix(KEN-10): change a crate|rc=0 $OK fix(KEN-10): change a crate"
-  "a chmod the other way, an executable fragment made plain, is not the entry either|fx_chmod_minus_x chmod-minus-x||fix(KEN-10): change a crate|rc=1 $OK fix(KEN-10): change a crate;$(owed crates/core/lib.rs)"
-  "a fragment that changed type from a link to a file is a written entry|fx_link_to_file link-to-file||fix(KEN-T): replace a link with a real fragment|rc=0 $OK fix(KEN-T): replace a link with a real fragment"
-  "a link becoming a file holding the link target's own bytes is the entry, one blob or not|fx_link_to_file_same_blob same-blob||fix(KEN-11): change a crate|rc=0 $OK fix(KEN-11): change a crate"
-  "control: a document becoming a link holding the same bytes is not the entry|fx_file_to_link file-to-link||fix(KEN-11): change a crate|rc=1 $OK fix(KEN-11): change a crate;$(owed crates/core/lib.rs)"
-  "control: a type change outside the fragment globs is no entry|fx_link_to_file_outside link-outside||fix(KEN-T): change a crate|rc=1 $OK fix(KEN-T): change a crate;$(owed crates/core/lib.rs)"
+  "a staged fragment satisfies it|fx_crate_fragment fragment||$CRATE|rc=0 ${OK}$CRATE"
+  "deleting a fragment is not writing one|fx_fragment_deleted fragment-deleted||fix(KEN-2): change a crate again|rc=1 ${OK}fix(KEN-2): change a crate again;$(owed crates/core/lib.rs)"
+  "the record edited is no entry — nothing declares this a collation|fx_record_edited record-1||chore(release): collate the changelog|rc=1 ${OK}chore(release): collate the changelog;$(owed crates/core/lib.rs)"
+  "COMMIT_GUARDS_CHANGELOG_COLLATE=1 makes the collated record the entry|fx_record_edited record-2|COMMIT_GUARDS_CHANGELOG_COLLATE=1|chore(release): collate the changelog|rc=0 ${OK}chore(release): collate the changelog"
+  "a rename INTO the fragment tree is the entry|fx_rename_in rename-in||fix(KEN-7): change a crate|rc=0 ${OK}fix(KEN-7): change a crate"
+  "control: moving a fragment away is not writing one|fx_rename_away rename-away||fix(KEN-8): change a crate|rc=1 ${OK}fix(KEN-8): change a crate;$(owed crates/core/lib.rs)"
+  "a copy-configured repository is judged on the same record vocabulary|fx_copies copies-1||fix(KEN-9): change a crate|rc=1 ${OK}fix(KEN-9): change a crate;$(owed crates/core/lib.rs)"
+  "the entry written beside a copy is still the entry|fx_copies_entry copies-2||fix(KEN-9): change a crate|rc=0 ${OK}fix(KEN-9): change a crate"
+  "a chmod on an existing fragment is not the entry|fx_chmod_fragment chmod-fragment||fix(KEN-10): change a crate|rc=1 ${OK}fix(KEN-10): change a crate;$(owed crates/core/lib.rs)"
+  "control: rewriting the same fragment is|fx_rewrite_fragment rewrite-fragment||fix(KEN-10): change a crate|rc=0 ${OK}fix(KEN-10): change a crate"
+  "a chmod the other way, an executable fragment made plain, is not the entry either|fx_chmod_minus_x chmod-minus-x||fix(KEN-10): change a crate|rc=1 ${OK}fix(KEN-10): change a crate;$(owed crates/core/lib.rs)"
+  "a fragment that changed type from a link to a file is a written entry|fx_link_to_file link-to-file||fix(KEN-T): replace a link with a real fragment|rc=0 ${OK}fix(KEN-T): replace a link with a real fragment"
+  "a link becoming a file holding the link target's own bytes is the entry, one blob or not|fx_link_to_file_same_blob same-blob||fix(KEN-11): change a crate|rc=0 ${OK}fix(KEN-11): change a crate"
+  "control: a document becoming a link holding the same bytes is not the entry|fx_file_to_link file-to-link||fix(KEN-11): change a crate|rc=1 ${OK}fix(KEN-11): change a crate;$(owed crates/core/lib.rs)"
+  "control: a type change outside the fragment globs is no entry|fx_link_to_file_outside link-outside||fix(KEN-T): change a crate|rc=1 ${OK}fix(KEN-T): change a crate;$(owed crates/core/lib.rs)"
 )
 for row in "${rows[@]}"; do
   IFS='|' read -r label fixture env msg expect <<<"$row"
@@ -174,19 +182,25 @@ done
 echo "=== the paths are configuration, validated like every other ==="
 SPACED="COMMIT_GUARDS_CHANGELOG_COLLATE=1,COMMIT_GUARDS_CHANGELOG_RECORD=docs/My Changelog.md"
 rows=(
-  "an explicitly empty required list switches the rule off|fx_crate config-1|COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS=|fix(KEN-3): change a crate|rc=0 $OK fix(KEN-3): change a crate"
-  "an absolute required path is a config error|fx_crate config-2|COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS=/etc/crates|fix(KEN-3): change a crate|rc=2 ::error::commit-msg: changelog-required path must be repo-root-relative, got absolute: /etc/crates"
-  "every entry is validated: a list whose second entry is absolute is the same error|fx_crate config-3|COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS=crates/* /etc/crates|fix(KEN-3): change a crate|rc=2 ::error::commit-msg: changelog-required path must be repo-root-relative, got absolute: /etc/crates"
-  "a record path carrying a space is one value: writing that file satisfies the rule|fx_spaced_record spaced-1|$SPACED|fix(KEN-5): change a crate|rc=0 $OK fix(KEN-5): change a crate"
-  "control: without that file the same commit owes an entry, the record named as it must be typed|fx_crate spaced-2|$SPACED|fix(KEN-5): change a crate|rc=1 $OK fix(KEN-5): change a crate;commit-msg FAIL crates/core/lib.rs changed without a changelog entry;  write one of: changelog.d/*/*.md;  or put [no-changelog] in the header when the commit changes nothing a consumer sees;  docs/My\\ Changelog.md counts only under COMMIT_GUARDS_CHANGELOG_COLLATE=1, which is the release commit collating the fragments"
-  "an empty fragment glob list is the config error both lanes give, after the header verdict|fx_crate config-4|COMMIT_GUARDS_CHANGELOG_PATHS=|fix(KEN-3): change a crate|rc=2 $OK fix(KEN-3): change a crate;::error::commit-msg: COMMIT_GUARDS_CHANGELOG_PATHS names no path — name at least one, or drop this check from COMMIT_GUARDS_CHECKS"
-  "the overlap between the two scopes is one judgement, made in the shared resolution|fx_crate config-5|COMMIT_GUARDS_CHANGELOG_RECORD=changelog.d/fixed/x.md|fix(KEN-3): change a crate|rc=2 $OK fix(KEN-3): change a crate;::error::commit-msg: COMMIT_GUARDS_CHANGELOG_RECORD (changelog.d/fixed/x.md) is also matched by COMMIT_GUARDS_CHANGELOG_PATHS — the collated record is not a fragment"
+  "an explicitly empty required list switches the rule off|fx_crate config-1|COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS=|fix(KEN-3): change a crate|rc=0 ${OK}fix(KEN-3): change a crate"
+  "an absolute required path is a config error|fx_crate config-2|COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS=/etc/crates|fix(KEN-3): change a crate|rc=2 commit-msg: path-absolute=changelog-required:/etc/crates"
+  "every entry is validated: a list whose second entry is absolute is the same error|fx_crate config-3|COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS=crates/* /etc/crates|fix(KEN-3): change a crate|rc=2 commit-msg: path-absolute=changelog-required:/etc/crates"
+  "a record path carrying a space is one value: writing that file satisfies the rule|fx_spaced_record spaced-1|$SPACED|fix(KEN-5): change a crate|rc=0 ${OK}fix(KEN-5): change a crate"
+  "control: without that file the same commit owes an entry, the record named as it must be typed|fx_crate spaced-2|$SPACED|fix(KEN-5): change a crate|rc=1 ${OK}fix(KEN-5): change a crate;commit-msg: changelog-missing=crates/core/lib.rs:changelog.d/*/*.md"
+  "an empty fragment glob list is the config error both lanes give, after the header verdict|fx_crate config-4|COMMIT_GUARDS_CHANGELOG_PATHS=|fix(KEN-3): change a crate|rc=2 ${OK}fix(KEN-3): change a crate;commit-msg: glob-empty=COMMIT_GUARDS_CHANGELOG_PATHS"
+  "the overlap between the two scopes is one judgement, made in the shared resolution|fx_crate config-5|COMMIT_GUARDS_CHANGELOG_RECORD=changelog.d/fixed/x.md|fix(KEN-3): change a crate|rc=2 ${OK}fix(KEN-3): change a crate;commit-msg: changelog-overlap=changelog.d/fixed/x.md"
 )
 for row in "${rows[@]}"; do
   IFS='|' read -r label fixture env msg expect <<<"$row"
   $fixture
   assert_eq "$label" "$expect" "$(judge "$env" "$msg")"
 done
+
+echo "=== a commit file-list failure keeps its stable record first ==="
+fx_crate commit-files
+assert_eq "a commit file-list failure puts the stable record before git's cause" \
+  "rc=2 commit-msg: header-valid=fix(KEN-1): change a crate;commit-msg: commit-files=128;dependency-order-control: commit-files" \
+  "$(judge "PATH=$ROOT/diff-shim:$PATH" "$CRATE")"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

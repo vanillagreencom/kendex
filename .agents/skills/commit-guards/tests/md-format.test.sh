@@ -34,7 +34,7 @@ assert_eq() { # LABEL EXPECT ACTUAL
 }
 
 # One line for a run in the row's repository: the exit status, then every
-# line printed, in order, joined by ';'. ENVS is a comma-separated list of
+# stable record printed, in order, joined by ';'. ENVS is a comma-separated list of
 # assignments; ARGS are passed through.
 R=""
 run() { # ENVS ARGS
@@ -42,6 +42,7 @@ run() { # ENVS ARGS
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   # shellcheck disable=SC2086
   out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$MDF" $2 2>&1)" || rc=$?
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^[a-z][a-z-]*: [a-z-]+=/ { print }')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
@@ -60,23 +61,22 @@ write() { mkdir -p "$R/$(dirname "$1")"; printf '%b' "$2" >"$R/$1"; } # PATH CON
 commit() { git -C "$R" commit -qm "$1"; }
 WRAPPED='Wrapped\ntext.\n'
 
-# The lines the judge prints, as functions of what a row put in.
-REMEDY="  remedies: reflow the file with md-reflow (scripts/md-reflow PATH), then stage it"
-ERR="::error::md-format: "
-NOTHING_STAGED="md-format: OK — nothing staged to judge (COMMIT_GUARDS_MD_SCOPE=touched judges the files a commit touches); run with --all, or set COMMIT_GUARDS_MD_SCOPE=all once this repository's markdown is reflowed"
-WRAP="a paragraph hard-wrapped over lines; put the whole paragraph on one line"
-ITEM="a list item continued on the next line; put the whole item on one line"
-H_BEFORE="a heading not preceded by a blank line"
-H_AFTER="a heading not followed by a blank line"
-F_AFTER="a fence not followed by a blank line"
-viol() { printf 'md-format FAIL format: %s:%s: %s;%s' "$1" "$2" "$3" "$REMEDY"; } # PATH LINE RULE
-skip() { printf 'md-format: not measured: %s — %s' "$1" "$2"; } # PATH REASON
-unmeasured() { printf '; %s matched path(s) not measured' "$1"; } # N
-clean() { printf 'md-format: OK — %s %s markdown file(s) clean%s' "$1" "${2:-tracked}" "${3-}"; } # N [SCOPE] [UNMEASURED]
-failed() { printf 'md-format: %s format violation(s) in %s %s markdown file(s)%s' "$1" "$2" "${3:-tracked}" "${4-}"; } # VIOLATIONS N [SCOPE] [UNMEASURED]
-nomatch() { printf 'md-format: OK — no %s markdown file(s) to judge (COMMIT_GUARDS_MD_PATHS %s)' "$1" "$2"; } # SCOPE GLOBS
-refused() { printf '%sdoc.md:%s: %s — the file cannot be judged past it; close the construct' "$ERR" "$1" "$2"; } # LINE REASON
-NONE="md-format: OK — nothing measurable to judge"
+# Expected stable records keep file, line, rule, count and scope.
+ERR="md-format: "
+NOTHING_STAGED="md-format: staged-count=0"
+WRAP="paragraph-wrap"
+ITEM="item-wrap"
+H_BEFORE="heading-before"
+H_AFTER="heading-after"
+F_AFTER="fence-after"
+viol() { printf 'md-format: %s=%s:%s' "$3" "$1" "$2"; } # PATH LINE RULE
+skip() { printf 'md-format: unmeasured=%s:%s' "$1" "$2"; } # PATH CODE
+unmeasured() { printf '%s' "$1"; } # N
+clean() { printf 'md-format: summary=violations=0 files=%s scope=%s skipped=%s' "$1" "${2:-all}" "${3:-0}"; } # N [SCOPE] [SKIPPED]
+failed() { printf 'md-format: summary=violations=%s files=%s scope=%s skipped=%s' "$1" "$2" "${3:-all}" "${4:-0}"; } # VIOLATIONS N [SCOPE] [SKIPPED]
+nomatch() { printf 'md-format: no-match=%s:%s' "$1" "$2"; } # SCOPE GLOBS
+refused() { local rule="$2"; printf 'md-format: %s=doc.md:%s' "${rule%%:*}" "$1"; case "$rule" in *:*) printf ':%s' "${rule#*:}" ;; esac; } # LINE RULE
+NONE="md-format: unmeasured-count="
 
 # Table one: doc.md holds CONTENT in a fresh repository, judged with --all.
 # The columns split on the pipe, so a pipe in the content is written as its
@@ -102,9 +102,9 @@ shape_rows \
   "an ordered item continued on the next line fails|1. item\n   continued\n|rc=1 $(viol doc.md 2 "$ITEM");$(failed 1 1)" \
   "a heading directly under a paragraph fails|Para\n# Heading\n|rc=1 $(viol doc.md 2 "$H_BEFORE");$(failed 1 1)" \
   "a heading not followed by a blank line fails|# Heading\nPara\n|rc=1 $(viol doc.md 2 "$H_AFTER");$(failed 1 1)" \
-  "a fence directly under a paragraph fails|Para\n\`\`\`\ncode\n\`\`\`\n|rc=1 $(viol doc.md 2 'a fence directly under a paragraph or list line; put a blank line before it');$(failed 1 1)" \
+  "a fence directly under a paragraph fails|Para\n\`\`\`\ncode\n\`\`\`\n|rc=1 $(viol doc.md 2 'fence-before');$(failed 1 1)" \
   "a fence closer not followed by a blank line fails|\`\`\`\ncode\n\`\`\`\nPara\n|rc=1 $(viol doc.md 4 "$F_AFTER");$(failed 1 1)" \
-  "a list directly under a paragraph fails|Para\n- item\n|rc=1 $(viol doc.md 2 'a list item directly under a paragraph line; put a blank line before the list');$(failed 1 1)" \
+  "a list directly under a paragraph fails|Para\n- item\n|rc=1 $(viol doc.md 2 'list-before');$(failed 1 1)" \
   "a table directly under a heading fails|# H\n\174 a \174\n\174---\174\n|rc=1 $(viol doc.md 2 "$H_AFTER");$(failed 1 1)" \
   "a thematic break directly under a heading fails|# H\n---\n|rc=1 $(viol doc.md 2 "$H_AFTER");$(failed 1 1)" \
   "an HTML comment directly under a heading fails|# H\n<!-- x -->\n|rc=1 $(viol doc.md 2 "$H_AFTER");$(failed 1 1)" \
@@ -118,12 +118,12 @@ shape_rows \
   "control: an HTML element's block still ends at the blank line|<details>\nx\n\nwrapped\nlines\n</details>\n|rc=1 $(viol doc.md 5 "$WRAP");$(failed 1 1)" \
   "control: a pipe line over prose is a wrap, not a table|a \174 b\nc \174 d\n|rc=1 $(viol doc.md 2 "$WRAP");$(failed 1 1)" \
   "control: a delimiter row under a line with no pipe is a wrap|a\n--\174--\n|rc=1 $(viol doc.md 2 "$WRAP");$(failed 1 1)" \
-  "a trailing double space fails|Line one  \n\nLine two\n|rc=1 $(viol doc.md 1 'a trailing-double-space line break; join the lines instead');$(failed 1 1)" \
-  "a trailing double space on a list item fails|- item  \n- next\n|rc=1 $(viol doc.md 1 'a trailing-double-space line break; join the lines instead');$(failed 1 1)" \
+  "a trailing double space fails|Line one  \n\nLine two\n|rc=1 $(viol doc.md 1 'trailing-space');$(failed 1 1)" \
+  "a trailing double space on a list item fails|- item  \n- next\n|rc=1 $(viol doc.md 1 'trailing-space');$(failed 1 1)" \
   "a hard wrap inside a blockquote fails|> quoted\n> continued\n|rc=1 $(viol doc.md 2 "$WRAP");$(failed 1 1)" \
   "a #hashtag line is a paragraph, not a heading: the line under it is its wrap|#tag one\nwrapped\n|rc=1 $(viol doc.md 2 "$WRAP");$(failed 1 1)" \
   "a lazy continuation of a quoted paragraph fails|> quoted\ncontinued\n|rc=1 $(viol doc.md 2 "$WRAP");$(failed 1 1)" \
-  "a CRLF line is the file's one violation: nothing past its first line is judged|Line one\r\nLine two\r\n|rc=1 $(viol doc.md 1 'a CRLF line ending; the format is LF, and the file is not judged past this line');$(failed 1 1)" \
+  "a CRLF line is the file's one violation: nothing past its first line is judged|Line one\r\nLine two\r\n|rc=1 $(viol doc.md 1 'crlf');$(failed 1 1)" \
   "two wraps are two violations, each on its own line|One\ntwo\n\nThree\nfour\n|rc=1 $(viol doc.md 2 "$WRAP");$(viol doc.md 5 "$WRAP");$(failed 2 1)"
 
 echo "=== the shapes the rule skips stay quiet ==="
@@ -152,9 +152,9 @@ shape_rows \
 
 echo "=== a construct with no end is a collection error naming the opener, not a pass ==="
 shape_rows \
-  "an unterminated fence is exit 2, naming the file and line|Para\n\n\`\`\`\nnever closed\n|rc=2 $(refused 3 'an unterminated fence')" \
-  "unterminated front matter is exit 2|---\ntitle: x\n|rc=2 $(refused 1 'unterminated front matter')" \
-  "a prompt-section block with no closing tag is exit 2, naming the opener's line and tag|Para\n\n<output_format>\nprose\n\nmore\n|rc=2 $(refused 3 'a block with no closing </output_format>')"
+  "fence-unclosed is exit 2, naming the file and line|Para\n\n\`\`\`\nnever closed\n|rc=2 $(refused 3 'fence-unclosed')" \
+  "front-unclosed is exit 2|---\ntitle: x\n|rc=2 $(refused 1 'front-unclosed')" \
+  "a prompt-section block with no closing tag is exit 2, naming the opener's line and tag|Para\n\n<output_format>\nprose\n\nmore\n|rc=2 $(refused 3 'block-unclosed:</output_format>')"
 
 # Table two: FIXTURE (a function and its words) builds the repository; the
 # judge runs with ARGS under ENVS.
@@ -195,8 +195,8 @@ run_rows \
   "control: under touched, the committed wrap is out of scope|seeded touched-committed|||rc=0 $NOTHING_STAGED" \
   "COMMIT_GUARDS_MD_SCOPE=all is --all|seeded env-all|COMMIT_GUARDS_MD_SCOPE=all||rc=1 $(viol wrapped.md 2 "$WRAP");$(failed 1 2)" \
   "the scope resolves from kendex.settings.toml [env]|fx_settings_all|||rc=1 $(viol wrapped.md 2 "$WRAP");$(failed 1 2)" \
-  "an unknown scope is exit 2, quoting it|seeded scope-unknown|COMMIT_GUARDS_MD_SCOPE=sometimes||rc=2 ${ERR}COMMIT_GUARDS_MD_SCOPE must be 'touched' or 'all', got 'sometimes'" \
-  "--staged with --all is exit 2|seeded both-flags||--staged --all|rc=2 ${ERR}--staged and --all are exclusive"
+  "an unknown scope is exit 2, quoting it|seeded scope-unknown|COMMIT_GUARDS_MD_SCOPE=sometimes||rc=2 ${ERR}scope=sometimes" \
+  "--staged with --all is exit 2|seeded both-flags||--staged --all|rc=2 ${ERR}scope-flags=--staged,--all"
 
 echo "=== the path list and the excludes list bound both scopes ==="
 paths() { repo "$1"; put docs/wrapped.md "$WRAPPED"; put vendor/wrapped.md "$WRAPPED"; put notes.txt "$WRAPPED"; } # NAME — two wrapped markdown files and a .txt
@@ -209,20 +209,20 @@ run_rows \
   "tools/md-excludes drops the vendored tree from --all|fx_excluded excluded-all||--all|rc=1 $(viol docs/wrapped.md 2 "$WRAP");$(failed 1 1)" \
   "and from --staged|fx_excluded excluded-staged||--staged|rc=1 $(viol docs/wrapped.md 2 "$WRAP");$(failed 1 1 staged)" \
   "a ! row carves a path back in|fx_carved||--all|rc=1 $(viol docs/wrapped.md 2 "$WRAP");$(viol vendor/wrapped.md 2 "$WRAP");$(failed 2 2)" \
-  "an exclusion without a reason is exit 2, naming the row|fx_reasonless||--all|rc=2 ${ERR}tools/md-excludes:1: expected 'pattern<TAB>reason' (every exclusion carries its justification)" \
-  "an empty path list is exit 2|paths empty-list|COMMIT_GUARDS_MD_PATHS= |--all|rc=2 ${ERR}COMMIT_GUARDS_MD_PATHS names no path — name at least one, or drop this check from COMMIT_GUARDS_CHECKS" \
-  "an unknown flag is exit 2, quoting it|paths unknown-flag||--no-such-flag|rc=2 ${ERR}unknown argument '--no-such-flag' (see --help)"
+  "an exclusion without a reason is exit 2, naming the row|fx_reasonless||--all|rc=2 ${ERR}exclusion-reason=tools/md-excludes:1" \
+  "an empty path list is exit 2|paths empty-list|COMMIT_GUARDS_MD_PATHS= |--all|rc=2 ${ERR}glob-empty=COMMIT_GUARDS_MD_PATHS" \
+  "an unknown flag is exit 2, quoting it|paths unknown-flag||--no-such-flag|rc=2 ${ERR}argument=--no-such-flag"
 # The usage text carries a '|', which a row cannot: its first line and the
 # exit status, beside the table.
-assert_eq "--help prints usage at exit 0" "rc=0 usage: md-format [--staged | --all]" "$(run '' --help | sed -n 1p | LC_ALL=C cut -d';' -f1)"
+assert_eq "--help prints usage at exit 0" "rc=0 md-format: usage=md-format" "$(run '' --help | sed -n 1p | LC_ALL=C cut -d';' -f1)"
 
 echo "=== a selected path that is not markdown is named, never counted clean ==="
 fx_symlink() { repo "$1"; put notes/target.md "$WRAPPED"; mkdir -p "$R/docs"; ln -s ../notes/target.md "$R/docs/link.md"; git -C "$R" add -A; }
 fx_symlink_and_binary() { fx_symlink symlink-binary; put docs/bin.md 'lead\0000Wrapped\ntext.\n'; }
 run_rows \
-  "a symlink at a selected path is named as unmeasured and counted apart, with no clean count|fx_symlink symlink-all|COMMIT_GUARDS_MD_PATHS=docs/*.md|--all|rc=0 $(skip docs/link.md 'tracked as a symlink, not markdown');$NONE$(unmeasured 1)" \
-  "the staged scope names the same link|fx_symlink symlink-staged|COMMIT_GUARDS_MD_PATHS=docs/*.md|--staged|rc=0 $(skip docs/link.md 'tracked as a symlink, not markdown');$NONE$(unmeasured 1)" \
-  "a binary blob at a selected path is named as unmeasured, in index order beside the link|fx_symlink_and_binary|COMMIT_GUARDS_MD_PATHS=docs/*.md|--all|rc=0 $(skip docs/bin.md 'binary content, not markdown');$(skip docs/link.md 'tracked as a symlink, not markdown');$NONE$(unmeasured 2)"
+  "a symlink at a selected path is named as unmeasured and counted apart, with no clean count|fx_symlink symlink-all|COMMIT_GUARDS_MD_PATHS=docs/*.md|--all|rc=0 $(skip docs/link.md symlink);$NONE$(unmeasured 1)" \
+  "the staged scope names the same link|fx_symlink symlink-staged|COMMIT_GUARDS_MD_PATHS=docs/*.md|--staged|rc=0 $(skip docs/link.md symlink);$NONE$(unmeasured 1)" \
+  "a binary blob at a selected path is named as unmeasured, in index order beside the link|fx_symlink_and_binary|COMMIT_GUARDS_MD_PATHS=docs/*.md|--all|rc=0 $(skip docs/bin.md binary);$(skip docs/link.md symlink);$NONE$(unmeasured 2)"
 
 echo "=== the skill's own shipped markdown is in the format ==="
 fx_shipped() { # NAME — the four shipped documents

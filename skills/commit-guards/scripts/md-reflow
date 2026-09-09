@@ -38,6 +38,7 @@ BLOCKS_AWK="$SCRIPT_DIR/lib/md-blocks.awk"
 SHAPES_AWK="$SCRIPT_DIR/lib/md-shapes.awk"
 
 usage() {
+  gg_message usage md-reflow "Command usage follows."
   cat <<EOF
 usage: md-reflow [--check] PATH... | [--check] --staged | [--check] --all
 
@@ -73,7 +74,7 @@ while [ $# -gt 0 ]; do
       exit 0
       ;;
     --) ;;
-    -*) gg_config_error "unknown argument '$1' (see --help)" ;;
+    -*) gg_fail argument "$1" "Unknown argument. See --help." ;;
     *)
       case "$1" in
         /*) PATHS+=("$1") ;;
@@ -84,13 +85,13 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-[ -r "$BLOCKS_AWK" ] || gg_config_error "$BLOCKS_AWK is missing — reinstall the commit-guards skill"
-[ -r "$SHAPES_AWK" ] || gg_config_error "$SHAPES_AWK is missing — reinstall the commit-guards skill"
+[ -r "$BLOCKS_AWK" ] || gg_fail dependency "$BLOCKS_AWK" "Reinstall the commit-guards skill to restore this file."
+[ -r "$SHAPES_AWK" ] || gg_fail dependency "$SHAPES_AWK" "Reinstall the commit-guards skill to restore this file."
 if [ "${#PATHS[@]}" -gt 0 ] && { [ "$STAGED" -eq 1 ] || [ "$ALL" -eq 1 ]; }; then
-  gg_config_error "PATH arguments and --staged/--all are exclusive"
+  gg_fail path-scope "${#PATHS[@]}" "Path arguments and scope flags are exclusive."
 fi
 if [ "${#PATHS[@]}" -eq 0 ] && [ "$STAGED" -eq 0 ] && [ "$ALL" -eq 0 ]; then
-  gg_config_error "name the files to reflow, or pass --staged or --all (see --help)"
+  gg_fail path-count 0 "Name files to reflow or pass --staged or --all."
 fi
 
 gg_repo_root_cd
@@ -101,14 +102,14 @@ gg_tmpdir
 if [ "${#PATHS[@]}" -gt 0 ]; then
   root="$PWD"
   for p in "${PATHS[@]}"; do
-    [ -f "$p" ] || gg_config_error "$(gg_shown "$p") is not a file"
-    dir="$(cd -- "$(dirname -- "$p")" && pwd -P; printf x)" || gg_config_error "cannot resolve $(gg_shown "$p")"
+    [ -f "$p" ] || gg_fail path-file "$p" "The path must name a file."
+    dir="$(cd -- "$(dirname -- "$p")" && pwd -P; printf x)" || gg_fail path-resolve "$p" "The path cannot be resolved."
     dir="${dir%x}"
     dir="${dir%$'\n'}"
     abs="$dir/$(basename -- "$p")"
     case "$abs" in
       "$root"/*) printf '%s\0' "${abs#"$root"/}" >>"$GG_TMP/targets.z" ;;
-      *) gg_config_error "$(gg_shown "$p") is outside this repository" ;;
+      *) gg_fail path-outside "$p" "The path is outside the repository." ;;
     esac
   done
 else
@@ -125,20 +126,32 @@ reflowed=0
 would=0
 checked=0
 while IFS= read -r -d '' f; do
-  [ -f "$f" ] || gg_collection_error "$(gg_shown "$f") is not a file in the work tree; reflow works on the checkout"
-  [ -L "$f" ] && gg_collection_error "$(gg_shown "$f") is a symlink; reflow the file it points at"
+  [ -f "$f" ] || gg_fail worktree-file "$f" "Reflow requires a file in the checkout."
+  [ -L "$f" ] && gg_fail symlink "$f" "Reflow the file this symlink points at."
   if gg_blob_is_binary "$f" "$f"; then
-    gg_collection_error "$(gg_shown "$f") holds a NUL byte; it is not a markdown file this tool rewrites"
+    gg_fail binary "$f" "Reflow cannot rewrite a file that holds a NUL byte."
   fi
   checked=$((checked + 1))
   status=0
+  block_stderr=""
   LC_ALL=C awk -f "$SHAPES_AWK" -f "$BLOCKS_AWK" -v mode=reflow -- "$f" >"$GG_TMP/reflowed" 2>"$GG_TMP/reflow.err" || status=$?
-  [ ! -s "$GG_TMP/reflow.err" ] || cat -- "$GG_TMP/reflow.err" >&2
-  if [ "$status" -ne 0 ]; then
-    refusal="$(grep '^R' -- "$GG_TMP/reflowed" | head -n 1 || true)"
-    refusal="${refusal#R"$GG_TAB"}"
-    gg_collection_error "$(gg_shown "$f"):${refusal%%"$GG_TAB"*}: ${refusal#*"$GG_TAB"} — refused, nothing written"
+  if [ -s "$GG_TMP/reflow.err" ]; then
+    # not-a-path: the parser diagnostic is text, not a file name.
+    block_stderr="$(cat -- "$GG_TMP/reflow.err")" \
+      || gg_fail diagnostic-read "$GG_TMP/reflow.err" "Could not read parser diagnostics."
   fi
+  if [ "$status" -ne 0 ]; then
+    refusal=""
+    while IFS= read -r row; do
+      case "$row" in R"$GG_TAB"*) refusal="$row"; break ;; esac
+    done <"$GG_TMP/reflowed"
+    [ -n "$refusal" ] \
+      || gg_fail_cause block-exit "$f:$status" "$GG_TMP/reflow.err" "The Markdown parser exited without a refusal record. No replacement was written."
+    refusal="${refusal#R"$GG_TAB"}"
+    gg_md_block_message "${refusal#*"$GG_TAB"}" "$f" "${refusal%%"$GG_TAB"*}"
+    gg_fail "$GG_MD_RULE" "$GG_MD_DETAIL" "$GG_MD_EXPLANATION No replacement was written.${block_stderr:+ $block_stderr}"
+  fi
+  [ -z "$block_stderr" ] || gg_message block-stderr "$f:$status" "$block_stderr" >&2
   # awk prints a newline after the last line; a file that had none keeps
   # having none, so a clean file stays byte-identical.
   if [ -s "$f" ] && [ -n "$(tail -c 1 -- "$f")" ]; then
@@ -150,21 +163,21 @@ while IFS= read -r -d '' f; do
     continue
   fi
   if [ "$CHECK" -eq 1 ]; then
-    echo "md-reflow: would reflow $(gg_shown "$f")"
+    gg_message would-reflow "$f" "Reflow would change this file."
     would=$((would + 1))
     continue
   fi
   gg_install_file "$GG_TMP/reflowed" "$f" "the reflowed markdown"
-  echo "md-reflow: reflowed $(gg_shown "$f")"
+  gg_message reflowed "$f" "The file was reflowed."
   reflowed=$((reflowed + 1))
 done <"$GG_TMP/targets.z"
 
 if [ "$CHECK" -eq 1 ]; then
   if [ "$would" -gt 0 ]; then
-    echo "md-reflow: $would of $checked file(s) would change"
+    gg_message check-summary "changed=$would checked=$checked" "The reflow check found files that would change."
     exit 1
   fi
-  echo "md-reflow: OK — $checked file(s) already in the format"
+  gg_message check-summary "changed=0 checked=$checked" "The checked files are already in the required format."
   exit 0
 fi
-echo "md-reflow: $reflowed of $checked file(s) rewritten"
+gg_message rewrite-summary "changed=$reflowed checked=$checked" "The reflow run is complete."

@@ -34,6 +34,7 @@ BLOCKS_AWK="$SCRIPT_DIR/lib/md-blocks.awk"
 SHAPES_AWK="$SCRIPT_DIR/lib/md-shapes.awk"
 
 usage() {
+  gg_message usage md-format "Command usage follows."
   cat <<EOF
 usage: md-format [--staged | --all]
 
@@ -70,13 +71,13 @@ while [ $# -gt 0 ]; do
       usage
       exit 0
       ;;
-    *) gg_config_error "unknown argument '$1' (see --help)" ;;
+    *) gg_fail argument "$1" "Unknown argument. See --help." ;;
   esac
   shift
 done
 
-[ -r "$BLOCKS_AWK" ] || gg_config_error "$BLOCKS_AWK is missing — reinstall the commit-guards skill"
-[ -r "$SHAPES_AWK" ] || gg_config_error "$SHAPES_AWK is missing — reinstall the commit-guards skill"
+[ -r "$BLOCKS_AWK" ] || gg_fail dependency "$BLOCKS_AWK" "Reinstall the commit-guards skill to restore this file."
+[ -r "$SHAPES_AWK" ] || gg_fail dependency "$SHAPES_AWK" "Reinstall the commit-guards skill to restore this file."
 
 gg_repo_root_cd
 gg_md_load_paths md-format COMMIT_GUARDS_MD_PATHS "$PATHS_DEFAULT"
@@ -86,15 +87,12 @@ gg_md_scope md-format "$STAGED" "$ALL"
 gg_tmpdir
 gg_md_select markdown
 skipped="$GG_WALK_SKIPPED"
-UNMEASURED=""
-[ "$skipped" -eq 0 ] || UNMEASURED="; $skipped matched path(s) not measured"
-SCOPE_DESC="$(gg_md_scope_desc)"
 
 if [ "$GG_MD_COUNT" -eq 0 ]; then
   if [ "$skipped" -eq 0 ]; then
-    echo "md-format: OK — no $SCOPE_DESC to judge (COMMIT_GUARDS_MD_PATHS $GG_PATH_GLOBS_SHOWN)"
+    gg_message no-match "$GG_MD_MODE:$GG_PATH_GLOBS_SHOWN" "No selected Markdown files match the configured paths."
   else
-    echo "md-format: OK — nothing measurable to judge$UNMEASURED"
+    gg_message unmeasured-count "$skipped" "No selected paths could be measured."
   fi
   exit 0
 fi
@@ -105,23 +103,28 @@ while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
   gg_read_blob "$sha" "$f" "markdown file"
   status=0
   LC_ALL=C awk -f "$SHAPES_AWK" -f "$BLOCKS_AWK" -v mode=check "$GG_TMP/blob" >"$GG_TMP/verdict" 2>"$GG_TMP/verdict.err" || status=$?
-  [ ! -s "$GG_TMP/verdict.err" ] || cat -- "$GG_TMP/verdict.err" >&2
+  if [ -s "$GG_TMP/verdict.err" ]; then
+    # not-a-path: the parser diagnostic is text, not a file name.
+    block_stderr="$(cat -- "$GG_TMP/verdict.err")" \
+      || gg_fail diagnostic-read "$GG_TMP/verdict.err" "Could not read parser diagnostics."
+    gg_message block-stderr "$f:$status" "$block_stderr" >&2
+  fi
   while IFS="$GG_TAB" read -r kind line text; do
     case "$kind" in
       V)
-        echo "md-format FAIL format: $(gg_shown "$f"):$line: $text"
-        echo "  remedies: $REMEDY"
+        gg_md_block_message "$text" "$f" "$line"
+        gg_message "$GG_MD_RULE" "$GG_MD_DETAIL" "$GG_MD_EXPLANATION $REMEDY"
         violations=$((violations + 1))
         ;;
-      R) gg_collection_error "$(gg_shown "$f"):$line: $text — the file cannot be judged past it; close the construct" ;;
-      *) gg_collection_error "unexpected record '$(gg_scrubbed "$kind")' judging $(gg_shown "$f")" ;;
+      R)
+        gg_md_block_message "$text" "$f" "$line"
+        gg_fail "$GG_MD_RULE" "$GG_MD_DETAIL" "$GG_MD_EXPLANATION"
+        ;;
+      *) gg_fail block-record "$f:$kind" "The block parser returned an unknown record." ;;
     esac
   done <"$GG_TMP/verdict"
-  [ "$status" -eq 0 ] || gg_collection_error "could not judge $(gg_shown "$f") (awk exit $status)"
+  [ "$status" -eq 0 ] || gg_fail block-exit "$f:$status" "The block parser failed."
 done <"$GG_TMP/md-files.z"
 
-if [ "$violations" -gt 0 ]; then
-  echo "md-format: $violations format violation(s) in $GG_MD_COUNT $SCOPE_DESC$UNMEASURED"
-  exit 1
-fi
-echo "md-format: OK — $GG_MD_COUNT $SCOPE_DESC clean$UNMEASURED"
+gg_message summary "violations=$violations files=$GG_MD_COUNT scope=$GG_MD_MODE skipped=$skipped" "The Markdown format scan is complete."
+[ "$violations" -eq 0 ] || exit 1

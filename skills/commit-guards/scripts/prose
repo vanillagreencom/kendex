@@ -49,6 +49,8 @@ PATHS_ARCH="docs/architecture/*.md"
 PATHS_DEFAULT="$PATHS_CORE $PATHS_ARCH"
 
 usage() {
+  gg_message usage prose "Command usage follows."
+  gg_message paths "$PATHS_DEFAULT" "These are the default path globs."
   cat <<EOF
 usage: prose
 
@@ -79,7 +81,7 @@ if [ $# -gt 0 ]; then
       usage
       exit 0
       ;;
-    *) gg_config_error "unknown argument '$1' (see --help)" ;;
+    *) gg_fail argument "$1" "Unknown argument. See --help." ;;
   esac
 fi
 
@@ -89,7 +91,7 @@ MD_SCOPE="$(gg_setting COMMIT_GUARDS_MD_SCOPE touched)" || exit 2
 case "$MD_SCOPE" in
   all) ;;
   touched) PATHS_DEFAULT="$PATHS_CORE" ;;
-  *) gg_config_error "COMMIT_GUARDS_MD_SCOPE must be 'touched' or 'all', got '$(gg_scrubbed "$MD_SCOPE")'" ;;
+  *) gg_fail scope "$MD_SCOPE" "COMMIT_GUARDS_MD_SCOPE must be touched or all." ;;
 esac
 PATHS_RAW="$(gg_setting COMMIT_GUARDS_PROSE_PATHS "$PATHS_DEFAULT")" || exit 2
 
@@ -132,8 +134,6 @@ add_spec() { # PATH BLOBFILE — one measurable path for the scan below
 gg_walk_configured_paths markdown file add_spec
 skipped="$GG_WALK_SKIPPED"
 
-UNMEASURED=""
-[ "$skipped" -eq 0 ] || UNMEASURED="; $skipped matched path(s) not measured"
 
 if [ "$matched" -eq 0 ]; then
   # The "nothing matched" line belongs to ONE state: the configured globs
@@ -142,9 +142,9 @@ if [ "$matched" -eq 0 ]; then
   # to widen a glob that was already right — the wrong verdict dressed as
   # advice.
   if [ "$skipped" -eq 0 ]; then
-    echo "prose: OK — no tracked file matches COMMIT_GUARDS_PROSE_PATHS ($GG_PATH_GLOBS_SHOWN)"
+    gg_message no-match "$GG_PATH_GLOBS_SHOWN" "No configured Markdown files match."
   else
-    echo "prose: OK — nothing measurable to scan$UNMEASURED"
+    gg_message unmeasured-count "$skipped" "No selected paths could be measured."
   fi
   exit 0
 fi
@@ -153,8 +153,8 @@ gg_grep_lane "history reference" "$PROSE_ERE" \
   "state the rule that holds now and delete the story; the date and the issue number belong in the commit that made the change" \
   "${MATCHED_SPECS[@]}"
 
+gg_message summary "violations=$GG_VIOLATIONS files=$matched skipped=$skipped" "The prose scan is complete."
 if [ "$GG_VIOLATIONS" -gt 0 ]; then
-  echo "prose: $GG_VIOLATIONS history reference(s) in $matched scanned file(s) — paths $GG_PATH_GLOBS_SHOWN$UNMEASURED"
+  gg_message paths "$GG_PATH_GLOBS_SHOWN" "The scan used this configuration."
   exit 1
 fi
-echo "prose: OK — no history references in $matched scanned file(s)$UNMEASURED"

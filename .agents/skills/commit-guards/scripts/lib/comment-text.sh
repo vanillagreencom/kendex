@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # Comment text out of a source file, for the comments lane: which grammar a
 # path takes, and the scanner that walks a file under it. Sourced by
-# scripts/comments; needs gg_collection_error and GG_TMP from lib/common.sh.
+# scripts/comments; needs gg_fail and GG_TMP from lib/common.sh.
 #
 # The scanner is a character walk with code, string, block-comment and
 # heredoc-body states carried across lines. A quoted shell command
@@ -56,8 +56,8 @@ gg_comment_family() { # PATH BLOBFILE — family token on stdout, empty when non
     html | htm | xml | svg | vue | svelte) printf 'xml' ;;
     "")
       # No extension: the shebang decides, and only a shebang does.
-      first="$(head -n 1 -- "$blob" | LC_ALL=C tr -d '\r')" \
-        || gg_collection_error "could not read the first line of $(gg_shown "$path")"
+      first="$({ head -n 1 -- "$blob" | LC_ALL=C tr -d '\r'; } 2>"$GG_TMP/shebang.err")" \
+        || gg_fail_cause shebang-read "$path" "$GG_TMP/shebang.err" "The first line could not be read."
       case "$first" in
         "#!"*) ;;
         *) return 0 ;;
@@ -72,6 +72,8 @@ gg_comment_family() { # PATH BLOBFILE — family token on stdout, empty when non
   esac
 }
 
+# comments and md-refs parse stdout as line<TAB>text. An extraction refusal
+# uses stderr enum:line[:terminator], retained in GG_COMMENT_ERROR.
 # The comment text of one file under one grammar, as "line<TAB>text"
 # records. A block comment spanning lines emits one record per line. A
 # shebang on line 1 of a hash-family file is not a comment. PATH is the
@@ -82,6 +84,7 @@ gg_comment_text() { # FAMILY FILE PATH [WANT] — records on stdout
   local fam="$1" file="$2" path="$3" want="${4:-comments}" status=0 reason want_str=0
   [ "$want" != strings ] || want_str=1
   GG_COMMENT_ERROR=""
+  GG_COMMENT_ERROR_DETAIL=""
   local base=c rust=0 tmpl=0 shell=0 esc_single=1 triple=0 str_multi=0
   case "$fam" in
     c) ;;
@@ -96,7 +99,7 @@ gg_comment_text() { # FAMILY FILE PATH [WANT] — records on stdout
     hash-toml) base=hash esc_single=0 triple=1 ;;
     hash-plain) base=hash esc_single=0 ;;
     sql | lua | xml) base="$fam" ;;
-    *) gg_collection_error "gg_comment_text: unknown comment family '$fam'" ;;
+    *) gg_fail comment-family "$fam" "The comment extractor received an unknown language family." ;;
   esac
   # The apostrophe arrives as a variable: the program is a single-quoted
   # literal, and not every awk reads a hex escape.
@@ -118,7 +121,7 @@ gg_comment_text() { # FAMILY FILE PATH [WANT] — records on stdout
     else if (fam == "sql") { bo = "/*"; bc = "*/"; lead = "--"; cls = "[\"" sq "/-]" }
     else if (fam == "lua") { bo = "--[["; bc = "]]"; lead = "--"; cls = "[\"" sq "-]" }
     else if (fam == "xml") { bo = "<!--"; bc = "-->"; lead = ""; cls = "[<]" }
-    else { print "gg_comment_text: unknown base family " fam > "/dev/stderr"; st = "bad"; exit 3 }
+    else { print "unknown-family:" fam > "/dev/stderr"; st = "bad"; exit 3 }
   }
   {
     line = $0; n = length(line); i = 1
@@ -267,17 +270,23 @@ gg_comment_text() { # FAMILY FILE PATH [WANT] — records on stdout
   END {
     if (st == "bad") exit 3
     if (st == "code" && subn == 0) exit 0
-    if (st == "block") what = "a block comment"
-    else if (st == "heredoc") what = "a heredoc (terminator " hdw ")"
-    else if (st == "code" && subn > 0) { what = "a command substitution"; opened = substart[subn] }
-    else what = "a string literal"
-    print what " opened at line " opened " is never closed" > "/dev/stderr"
+    if (st == "block") what = "unclosed-block"
+    else if (st == "heredoc") what = "unclosed-heredoc"
+    else if (st == "code" && subn > 0) { what = "unclosed-substitution"; opened = substart[subn] }
+    else what = "unclosed-string"
+    print what ":" opened ((st == "heredoc") ? ":" hdw : "") > "/dev/stderr"
     exit 3
   }
   ' "$file" 2>"$GG_TMP/extract.err" || status=$?
   if [ "$status" -ne 0 ]; then
-    reason="$(LC_ALL=C tr '\n' ' ' <"$GG_TMP/extract.err")"
-    GG_COMMENT_ERROR="${reason:-awk exit $status}"
+    # not-a-path: the extractor diagnostic is text, not a file name.
+    reason="$(cat -- "$GG_TMP/extract.err")" \
+      || gg_fail diagnostic-read "$GG_TMP/extract.err" "Could not read extractor diagnostics."
+    GG_COMMENT_ERROR_DETAIL="${reason:-The extractor exited with status $status.}"
+    case "$reason" in
+      unclosed-* | unknown-family:*) GG_COMMENT_ERROR="$reason" ;;
+      *) GG_COMMENT_ERROR="awk-exit:$status" ;;
+    esac
     return "$status"
   fi
 }

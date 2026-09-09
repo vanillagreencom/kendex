@@ -46,17 +46,18 @@ judge() { # ENVS MSG
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   out="$(cd "$R" && printf '%s\n' "$2" |
     env COMMIT_GUARDS_SETTINGS_FILE=/dev/null ${envs[@]+"${envs[@]}"} "$CM" 2>&1)" || rc=$?
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '/^commit-msg: [a-z-]+=/ { print }')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
 DEFAULT_TYPES="build chore ci docs feat fix perf refactor revert style test"
-OK="commit-msg: OK — conventional header:"
-GEN="commit-msg: git-generated header — shape and length not judged:"
+OK="commit-msg: header-valid="
+GEN="commit-msg: header-generated="
 shape_fail() { # HEADER-AS-SHOWN — the whole shape violation
-  printf '%s' "commit-msg FAIL non-conventional header: $1;  expected: type(scope)!: subject — scope and '!' optional; types: $DEFAULT_TYPES;  scope accepts uppercase issue keys and issue numbers, e.g. fix(ABC-123): tighten the gate / fix(#123): case-fold IDs;  git-generated headers (Merge/Revert/Reapply, fixup!/squash!/amend!) pass unchanged"
+  printf '%s' "commit-msg: header-shape=$1:$DEFAULT_TYPES"
 }
 too_long() { # HEADER COUNT MAX — the OK shape line, then the length violation
-  printf '%s' "$OK $1;commit-msg FAIL header is $2 characters (max $3): $1;  move the detail into the body — the header is the one line every log shows"
+  printf '%s' "${OK}$1;commit-msg: header-length=$2:$3:$1"
 }
 # N copies of a string, so a fixture states the length it means instead of
 # carrying a literal nobody can count.
@@ -83,14 +84,14 @@ H73="fix(KEN-1): $(rep x 61)"
 H32="fix(KEN-1): $(rep x 20)"
 echo "=== the cap: 72 by default, configurable, waived for a generated header ==="
 run_rows \
-  "a 72-character header passes||$H72|rc=0 $OK $H72" \
+  "a 72-character header passes||$H72|rc=0 ${OK}$H72" \
   "73 fails after the shape verdict, naming the count, the cap and the remedy||$H73|rc=1 $(too_long "$H73" 73 72)" \
-  "a long Merge header is exempt from the cap||Merge $(rep x 90)|rc=0 $GEN Merge $(rep x 90)" \
-  "a long fixup! header is exempt too||fixup! $H73 $(rep x 20)|rc=0 $GEN fixup! $H73 $(rep x 20)" \
-  "a raised cap admits the 73|COMMIT_GUARDS_SUBJECT_MAX=100|$H73|rc=0 $OK $H73" \
+  "a long Merge header is exempt from the cap||Merge $(rep x 90)|rc=0 ${GEN}Merge $(rep x 90)" \
+  "a long fixup! header is exempt too||fixup! $H73 $(rep x 20)|rc=0 ${GEN}fixup! $H73 $(rep x 20)" \
+  "a raised cap admits the 73|COMMIT_GUARDS_SUBJECT_MAX=100|$H73|rc=0 ${OK}$H73" \
   "a lowered cap refuses a header the default admits|COMMIT_GUARDS_SUBJECT_MAX=20|$H32|rc=1 $(too_long "$H32" 32 20)" \
-  "a cap that is not a positive integer is exit 2|COMMIT_GUARDS_SUBJECT_MAX=0|fix: x|rc=2 ::error::commit-msg: COMMIT_GUARDS_SUBJECT_MAX must be a positive integer, got '0'" \
-  "one run names both the shape and the length, never the first alone|COMMIT_GUARDS_SUBJECT_MAX=20|$(rep q 90)|rc=1 $(shape_fail "$(rep q 90)");commit-msg FAIL header is 90 characters (max 20): $(rep q 90);  move the detail into the body — the header is the one line every log shows"
+  "a cap that is not a positive integer is exit 2|COMMIT_GUARDS_SUBJECT_MAX=0|fix: x|rc=2 commit-msg: positive-integer=COMMIT_GUARDS_SUBJECT_MAX:0" \
+  "one run names both the shape and the length, never the first alone|COMMIT_GUARDS_SUBJECT_MAX=20|$(rep q 90)|rc=1 $(shape_fail "$(rep q 90)");commit-msg: header-length=90:20:$(rep q 90)"
 
 # Characters, not bytes, whatever locale the committer's shell carries: a git
 # hook inherits that environment, so a header measured in bytes would be
@@ -100,8 +101,8 @@ MULTI="fix(KEN-1): $(rep 'é' 55)"      # 67 characters, 122 bytes
 MULTI_OVER="fix(KEN-1): $(rep 'é' 61)" # 73 characters
 echo "=== the count is characters in every locale ==="
 run_rows \
-  "a 67-character multibyte header passes under C|LC_ALL=C|$MULTI|rc=0 $OK $MULTI" \
-  "a 67-character multibyte header passes under C.UTF-8|LC_ALL=C.UTF-8|$MULTI|rc=0 $OK $MULTI" \
+  "a 67-character multibyte header passes under C|LC_ALL=C|$MULTI|rc=0 ${OK}$MULTI" \
+  "a 67-character multibyte header passes under C.UTF-8|LC_ALL=C.UTF-8|$MULTI|rc=0 ${OK}$MULTI" \
   "73 of them is 73 characters under C, not the byte count|LC_ALL=C|$MULTI_OVER|rc=1 $(too_long "$MULTI_OVER" 73 72)" \
   "73 of them is 73 characters under C.UTF-8|LC_ALL=C.UTF-8|$MULTI_OVER|rc=1 $(too_long "$MULTI_OVER" 73 72)"
 
@@ -120,7 +121,7 @@ run_rows \
   "30 overlong forms are 95 characters||$OVERLONG|rc=1 $(too_long "$OVERLONG" 95 72)" \
   "30 surrogate encodings are 95 characters||$SURROGATE|rc=1 $(too_long "$SURROGATE" 95 72)" \
   "30 out-of-range sequences are 125 characters||$OUT_OF_RANGE|rc=1 $(too_long "$OUT_OF_RANGE" 125 72)" \
-  "control: 30 well-formed three-byte sequences are 35 characters and pass||$DASHES|rc=0 $OK $DASHES"
+  "control: 30 well-formed three-byte sequences are 35 characters and pass||$DASHES|rc=0 ${OK}$DASHES"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

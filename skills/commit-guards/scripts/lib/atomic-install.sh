@@ -19,7 +19,7 @@
 # file, and nothing here ever deletes it.
 #
 # Needs lib/common.sh sourced first — for gg_cleanup, gg_shown, gg_scrubbed
-# and gg_collection_error — and a caller that has armed gg_tmpdir for the
+# and gg_fail — and a caller that has armed gg_tmpdir for the
 # scratch the diagnostics are captured into. Sourced, never executed.
 
 set -euo pipefail
@@ -51,7 +51,7 @@ gg_install_file() { # SRC DEST LABEL
   # programming error, and says so rather than capturing each step's stderr to
   # whatever `$GG_TMP/install.err` means with GG_TMP empty.
   [ -n "${GG_TMP:-}" ] && [ -d "$GG_TMP" ] \
-    || gg_collection_error "gg_install_file needs gg_tmpdir called first — $label was not replaced"
+    || gg_fail replacement-scratch "$label" "gg_install_file needs gg_tmpdir called first — $label was not replaced"
   err="$GG_TMP/install.err"
   # The destination's mode is READ here and applied after the write, never
   # carried onto the staging file in between: one without owner-write would
@@ -64,7 +64,7 @@ gg_install_file() { # SRC DEST LABEL
     # fail wherever the second answers. An unreadable mode is not one to guess.
     mode="$(gg_file_mode "$dest")" || mode=""
     case "$mode" in
-      "" | *[!0-7]*) gg_collection_error "could not read the mode of $(gg_shown "$dest") — $label was not replaced" ;;
+      "" | *[!0-7]*) gg_fail file-mode "$dest" "could not read the mode of $(gg_shown "$dest") — $label was not replaced" ;;
     esac
   fi
   # mktemp, never a name derived from the pid: the staging file lands in a
@@ -82,27 +82,27 @@ gg_install_file() { # SRC DEST LABEL
   # create: it lands beside the DESTINATION, not inside GG_TMP.
   trap gg_cleanup EXIT
   GG_INSTALL_TMP="$(mktemp "$dest.gg-install.XXXXXX" 2>"$err")" \
-    || gg_collection_error "could not stage the replacement for $label beside $(gg_shown "$dest")$(gg_install_why "$err")"
+    || gg_fail stage-create "$dest" "could not stage the replacement for $label beside $(gg_shown "$dest")$(gg_install_why "$err")"
   # Past mktemp the staging file has ONE owner: gg_cleanup, which the EXIT trap
-  # runs and which removes GG_INSTALL_TMP first. gg_collection_error exits, so
+  # runs and which removes GG_INSTALL_TMP first. gg_fail exits, so
   # every branch below reaches it and none removes the file itself. `2>` goes
   # BEFORE the output redirect in each: redirections apply left to right, so a
   # failure of the one onto the staging file would otherwise be reported on the
   # terminal rather than captured.
   if ! cat -- "$src" 2>"$err" >"$GG_INSTALL_TMP"; then
-    gg_collection_error "could not stage the replacement for $label beside $(gg_shown "$dest")$(gg_install_why "$err")"
+    gg_fail stage-copy "$dest" "could not stage the replacement for $label beside $(gg_shown "$dest")$(gg_install_why "$err")"
   fi
   # No `--` after the mode: chmod's mode is a non-option argument, so a BSD
   # chmod stops option parsing there and reads the `--` as a file name.
   if [ -n "$mode" ] && ! chmod "$mode" "$GG_INSTALL_TMP" 2>"$err"; then
-    gg_collection_error "could not give the replacement for $label $(gg_shown "$dest")'s mode ($mode)$(gg_install_why "$err")"
+    gg_fail replacement-mode "$dest:$mode" "could not give the replacement for $label $(gg_shown "$dest")'s mode ($mode)$(gg_install_why "$err")"
   fi
   # -f, so the rename is non-interactive whatever the destination's mode: mv
   # PROMPTS before replacing one that denies write when stdin is a terminal —
   # exactly the destination this helper supports — and a gate that stops for
   # an answer nobody gives hangs. Pinned at a tty by tests/terminal-paths.
   if ! mv -f -- "$GG_INSTALL_TMP" "$dest" 2>"$err"; then
-    gg_collection_error "could not replace $label at $(gg_shown "$dest")$(gg_install_why "$err") — inspect the file before trusting it"
+    gg_fail replace-file "$dest" "could not replace $label at $(gg_shown "$dest")$(gg_install_why "$err") — inspect the file before trusting it"
   fi
   # The one assignment that IS load-bearing: the rename consumed the staging
   # file, so the trap must not go looking for it.

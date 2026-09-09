@@ -41,6 +41,10 @@ run() { # ENVS ARGS [TOOL]
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   # shellcheck disable=SC2086
   out="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$tool" $2 2>&1)" || rc=$?
+  out="$(printf '%s\n' "$out" | LC_ALL=C awk '
+    /^[a-z][a-z-]*: [a-z-]+=/ { print; next }
+    /^[[:space:]]*dependency-order-control:/ { sub(/^[[:space:]]*/, ""); print }
+  ')"
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
@@ -66,14 +70,14 @@ leftovers() { printf 'leftovers=%s' "$(find "$R" -maxdepth 1 -type f ! -name doc
 format_all() { git -C "$R" add -A; printf 'format:%s' "$(run '' --all "$MDF")"; } # the judge over what the row staged
 q() { local b; b="$(printf '%b' "$1"; printf x)"; printf '%q' "${b%x}"; } # CONTENT — its bytes, %q-rendered
 
-# The lines the tool prints, as functions of what a row put in.
-ERR="::error::md-reflow: "
-reflowed() { local n=$1 t=$2; shift 2; printf 'md-reflow: reflowed %s;' "$@"; printf 'md-reflow: %s of %s file(s) rewritten' "$n" "$t"; } # N T PATH...
-unchanged() { printf 'md-reflow: 0 of %s file(s) rewritten' "$1"; } # T
-would() { local n=$1 t=$2; shift 2; printf 'md-reflow: would reflow %s;' "$@"; printf 'md-reflow: %s of %s file(s) would change' "$n" "$t"; } # N T PATH...
-in_format() { printf 'md-reflow: OK — %s file(s) already in the format' "$1"; } # T
-refused() { printf '%s%s:%s: %s — refused, nothing written' "$ERR" "$1" "$2" "$3"; } # PATH LINE REASON
-FORMAT_OK="format:rc=0 md-format: OK — 1 tracked markdown file(s) clean"
+# Expected records keep the changed-file list and checked-file count.
+ERR="md-reflow: "
+reflowed() { local n=$1 t=$2; shift 2; printf 'md-reflow: reflowed=%s;' "$@"; printf 'md-reflow: rewrite-summary=changed=%s checked=%s' "$n" "$t"; } # N T PATH...
+unchanged() { printf 'md-reflow: rewrite-summary=changed=0 checked=%s' "$1"; } # T
+would() { local n=$1 t=$2; shift 2; printf 'md-reflow: would-reflow=%s;' "$@"; printf 'md-reflow: check-summary=changed=%s checked=%s' "$n" "$t"; } # N T PATH...
+in_format() { printf 'md-reflow: check-summary=changed=0 checked=%s' "$1"; } # T
+refused() { local rule="$3"; printf 'md-reflow: %s=%s:%s' "${rule%%:*}" "$1" "$2"; case "$rule" in *:*) printf ':%s' "${rule#*:}" ;; esac; } # PATH LINE RULE
+FORMAT_OK="format:rc=0 md-format: summary=violations=0 files=1 scope=all skipped=0"
 
 # Table one: doc.md holds CONTENT in a fresh repository; one reflow, then
 # the bytes it left, md-format's verdict over them, and a --check pass that
@@ -165,25 +169,34 @@ fx_section() { repo section; write section.md 'Para\n\n<output_format>\nprose\n\
 fx_symlink() { clean_file symlink; ln -s clean.md "$R/link.md"; }
 fx_nul() { repo nul; write bin.md 'lead\0000Wrapped\ntext.\n'; }
 fx_gone() { repo gone; put doc.md "$WRAPPED"; rm -- "$R/doc.md"; } # staged, then removed from the work tree
+fx_awk_exit() {
+  repo awk-exit
+  write doc.md "$WRAPPED"
+  mkdir -p "$R/shim"
+  printf '#!/usr/bin/env bash\ncase " $* " in *" mode=reflow "*) echo "dependency-order-control: block-exit" >&2; exit 7 ;; esac\nexec %q "$@"\n' "$(command -v awk)" >"$R/shim/awk"
+  chmod +x "$R/shim/awk"
+}
 st_crlf() { bytes crlf.md; }
 st_open() { bytes open.md; }
 st_section() { bytes section.md; }
+st_awk_exit() { bytes doc.md; }
 run_rows \
-  "a CRLF file is refused at exit 2, naming the line, and is not converted|fx_crlf||crlf.md|st_crlf|rc=2 $(refused crlf.md 1 'a CRLF line ending') / crlf.md=$(q 'Line one\r\nLine two\r\n')" \
-  "an unterminated fence is refused at exit 2, nothing written|fx_open||open.md|st_open|rc=2 $(refused open.md 3 'an unterminated fence') / open.md=$(q 'Para\n\n```\nopen\n')" \
-  "a prompt-section block with no closing tag is refused at exit 2, naming the opener, nothing written|fx_section||section.md|st_section|rc=2 $(refused section.md 3 'a block with no closing </output_format>') / section.md=$(q 'Para\n\n<output_format>\nprose\n\nmore\n')" \
-  "a symlink is refused rather than rewritten through|fx_symlink||link.md||rc=2 ${ERR}link.md is a symlink; reflow the file it points at" \
-  "a file holding a NUL byte is refused|fx_nul||bin.md||rc=2 ${ERR}bin.md holds a NUL byte; it is not a markdown file this tool rewrites" \
-  "a staged file missing from the work tree is refused: reflow works on the checkout|fx_gone||--staged||rc=2 ${ERR}doc.md is not a file in the work tree; reflow works on the checkout" \
-  "a missing path is exit 2, named as resolved from the invoking directory|clean_file absent||absent.md||rc=2 ${ERR}$TMP/absent/absent.md is not a file" \
-  "no path and no scope is exit 2|clean_file no-path||||rc=2 ${ERR}name the files to reflow, or pass --staged or --all (see --help)" \
-  "a path beside --staged is exit 2|clean_file path-and-scope||--staged clean.md||rc=2 ${ERR}PATH arguments and --staged/--all are exclusive" \
-  "an unknown flag is exit 2, quoting it|clean_file unknown-flag||--no-such-flag||rc=2 ${ERR}unknown argument '--no-such-flag' (see --help)" \
+  "a CRLF file is refused at exit 2, naming the line, and is not converted|fx_crlf||crlf.md|st_crlf|rc=2 $(refused crlf.md 1 'crlf') / crlf.md=$(q 'Line one\r\nLine two\r\n')" \
+  "fence-unclosed is refused at exit 2, nothing written|fx_open||open.md|st_open|rc=2 $(refused open.md 3 'fence-unclosed') / open.md=$(q 'Para\n\n```\nopen\n')" \
+  "a prompt-section block with no closing tag is refused at exit 2, naming the opener, nothing written|fx_section||section.md|st_section|rc=2 $(refused section.md 3 'block-unclosed:</output_format>') / section.md=$(q 'Para\n\n<output_format>\nprose\n\nmore\n')" \
+  "an AWK execution failure reports its status and keeps the file untouched|fx_awk_exit|PATH=$TMP/awk-exit/shim:$PATH|doc.md|st_awk_exit|rc=2 ${ERR}block-exit=doc.md:7;dependency-order-control: block-exit / doc.md=$(q "$WRAPPED")" \
+  "a symlink is refused rather than rewritten through|fx_symlink||link.md||rc=2 ${ERR}symlink=link.md" \
+  "a file holding a NUL byte is refused|fx_nul||bin.md||rc=2 ${ERR}binary=bin.md" \
+  "a staged file missing from the work tree is refused: reflow works on the checkout|fx_gone||--staged||rc=2 ${ERR}worktree-file=doc.md" \
+  "a missing path is exit 2, named as resolved from the invoking directory|clean_file absent||absent.md||rc=2 ${ERR}path-file=$TMP/absent/absent.md" \
+  "no path and no scope is exit 2|clean_file no-path||||rc=2 ${ERR}path-count=0" \
+  "a path beside --staged is exit 2|clean_file path-and-scope||--staged clean.md||rc=2 ${ERR}path-scope=1" \
+  "an unknown flag is exit 2, quoting it|clean_file unknown-flag||--no-such-flag||rc=2 ${ERR}argument=--no-such-flag" \
   "-- ends the options, and what follows is a path|clean_file dashdash||-- clean.md||rc=0 $(unchanged 1)"
 # The usage text carries a '|', which a row cannot: its first line and the
 # exit status, beside the table.
-assert_eq "--help prints usage at exit 0" "rc=0 usage: md-reflow [--check] PATH... | [--check] --staged | [--check] --all" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
-assert_eq "-h is --help" "rc=0 usage: md-reflow [--check] PATH... | [--check] --staged | [--check] --all" "$(run '' -h | LC_ALL=C cut -d';' -f1)"
+assert_eq "--help prints usage at exit 0" "rc=0 md-reflow: usage=md-reflow" "$(run '' --help | LC_ALL=C cut -d';' -f1)"
+assert_eq "-h is --help" "rc=0 md-reflow: usage=md-reflow" "$(run '' -h | LC_ALL=C cut -d';' -f1)"
 
 echo "=== a path is taken from the invoking directory, inside the repository ==="
 fx_deep() { repo deep; write docs/deep.md "$WRAPPED"; R="$R/docs"; } # the run happens in docs/
@@ -191,8 +204,8 @@ fx_outside() { repo "outside-$1"; write "../outside-$1.md" "$WRAPPED"; } # NAME 
 st_deep() { bytes deep.md; }
 run_rows \
   "a relative path resolves from where md-reflow was run, and is named repo-relative|fx_deep||deep.md|st_deep|rc=0 $(reflowed 1 1 docs/deep.md) / deep.md=$(q 'Wrapped text.\n')" \
-  "an absolute path outside the repository is refused, named as given|fx_outside abs||$TMP/outside-abs.md||rc=2 ${ERR}$TMP/outside-abs.md is outside this repository" \
-  "a relative path climbing out of the repository is refused, named as resolved|fx_outside rel||../outside-rel.md||rc=2 ${ERR}$TMP/outside-rel/../outside-rel.md is outside this repository"
+  "an absolute path outside the repository is refused, named as given|fx_outside abs||$TMP/outside-abs.md||rc=2 ${ERR}path-outside=$TMP/outside-abs.md" \
+  "a relative path climbing out of the repository is refused, named as resolved|fx_outside rel||../outside-rel.md||rc=2 ${ERR}path-outside=$TMP/outside-rel/../outside-rel.md"
 
 echo "=== --staged and --all select the files md-format would judge ==="
 selection() { # NAME — three wrapped files, the vendored one excluded, one.md re-wrapped and staged
@@ -209,8 +222,8 @@ fx_staged_included() { repo staged-included; put doc.md "$WRAPPED"; }
 st_selection() { bytes one.md; printf ' '; bytes two.md; printf ' '; bytes vendor/three.md; printf ' '; format_all; }
 st_doc() { bytes doc.md; }
 run_rows \
-  "--staged reflows the work-tree copy of the staged file and leaves the rest|selection staged||--staged|st_selection|rc=0 $(reflowed 1 1 one.md) / one.md=$(q 'Wrapped one more.\n') two.md=$(q 'Wrapped\ntwo.\n') vendor/three.md=$(q 'Wrapped\nthree.\n') format:rc=1 md-format FAIL format: two.md:2: a paragraph hard-wrapped over lines; put the whole paragraph on one line;  remedies: reflow the file with md-reflow (scripts/md-reflow PATH), then stage it;md-format: 1 format violation(s) in 2 tracked markdown file(s)" \
-  "--all reflows every tracked markdown file minus the excludes, and md-format then passes on them|selection all||--all|st_selection|rc=0 $(reflowed 2 2 one.md two.md) / one.md=$(q 'Wrapped one more.\n') two.md=$(q 'Wrapped two.\n') vendor/three.md=$(q 'Wrapped\nthree.\n') format:rc=0 md-format: OK — 2 tracked markdown file(s) clean" \
+  "--staged reflows the work-tree copy of the staged file and leaves the rest|selection staged||--staged|st_selection|rc=0 $(reflowed 1 1 one.md) / one.md=$(q 'Wrapped one more.\n') two.md=$(q 'Wrapped\ntwo.\n') vendor/three.md=$(q 'Wrapped\nthree.\n') format:rc=1 md-format: paragraph-wrap=two.md:2;md-format: summary=violations=1 files=2 scope=all skipped=0" \
+  "--all reflows every tracked markdown file minus the excludes, and md-format then passes on them|selection all||--all|st_selection|rc=0 $(reflowed 2 2 one.md two.md) / one.md=$(q 'Wrapped one more.\n') two.md=$(q 'Wrapped two.\n') vendor/three.md=$(q 'Wrapped\nthree.\n') format:rc=0 md-format: summary=violations=0 files=2 scope=all skipped=0" \
   "staged reflow leaves the excluded document unchanged|fx_staged_excluded||--staged|st_doc|rc=0 $(unchanged 0) / doc.md=$(q "$WRAPPED")" \
   "control: the same staged document reflows without its exclusion|fx_staged_included||--staged|st_doc|rc=0 $(reflowed 1 1 doc.md) / doc.md=$(q 'Wrapped text.\n')"
 
@@ -225,7 +238,7 @@ fx_failing_mv() { # NAME — a PATH whose mv refuses, ahead of the real one
 fx_stray() { repo stray; write doc.md "$WRAPPED"; write stray.txt 'x\n'; } # a file beside doc.md the leftovers reader must see
 st_replacement() { bytes doc.md; printf ' '; leftovers; }
 run_rows \
-  "a rename failure is an error naming the cause, preserves the original bytes and removes the staging file|fx_failing_mv failing-mv|PATH=$TMP/failing-mv/fail-bin:$PATH|doc.md|st_replacement|rc=2 ${ERR}could not replace the reflowed markdown at doc.md (injected rename failure) — inspect the file before trusting it / doc.md=$(q "$WRAPPED") leftovers=" \
+  "a rename failure is an error naming the cause, preserves the original bytes and removes the staging file|fx_failing_mv failing-mv|PATH=$TMP/failing-mv/fail-bin:$PATH|doc.md|st_replacement|rc=2 ${ERR}replace-file=doc.md / doc.md=$(q "$WRAPPED") leftovers=" \
   "control: the same file reflows when rename succeeds|fx_failing_mv working-mv||doc.md|st_replacement|rc=0 $(reflowed 1 1 doc.md) / doc.md=$(q 'Wrapped text.\n') leftovers=" \
   "control: the leftovers reader names a file beside doc.md|fx_stray||doc.md|st_replacement|rc=0 $(reflowed 1 1 doc.md) / doc.md=$(q 'Wrapped text.\n') leftovers=$TMP/stray/stray.txt"
 

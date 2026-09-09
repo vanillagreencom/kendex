@@ -79,16 +79,16 @@ gg_repo_git_dir() { # VAR REV-PARSE-ARG -> 0 resolved, 1 git did not answer
 # Uses `die` from install-git-hooks, which is the only caller.
 resolve_roots() {
   local gitdir="" bare=""
-  gg_path REPO_ABS gg_physical "$REPO" || die "could not resolve $REPO"
+  gg_path REPO_ABS gg_physical "$REPO" || gg_fail repo-resolve "$REPO" "could not resolve $REPO"
   gg_repo_git_dir COMMON_DIR --git-common-dir \
-    || die "could not resolve the common git directory of $REPO"
+    || gg_fail common-dir-resolve "$REPO" "could not resolve the common git directory of $REPO"
   HOOKS_DIR="$COMMON_DIR/hooks"
   # A linked work tree keeps its own git directory under the common one; the
   # main checkout's two answers name the same directory. This is git's own
   # test for the distinction, and the only one that does not guess from a
   # path shape.
   gg_repo_git_dir gitdir --git-dir \
-    || die "could not resolve the git directory of $REPO"
+    || gg_fail git-dir-resolve "$REPO" "could not resolve the git directory of $REPO"
   LINKED_WORKTREE=0
   [ "$gitdir" = "$COMMON_DIR" ] || LINKED_WORKTREE=1
   # Whether a main checkout exists at all. A bare clone with work trees added
@@ -115,10 +115,10 @@ classify_hooks_path_or_stop() {
   classify_hooks_path || status=$?
   [ "$status" -eq 0 ] && return 0
   if [ "$MODE" = "check" ]; then
-    echo "commit-guards git hooks: could not determine whether the shims are armed — core.hooksPath could not be read in $REPO_ABS"
+    summary unknown "hooks-path-read=$REPO_ABS" "The hooks path configuration could not be read."
     exit 2
   fi
-  die "could not read core.hooksPath in $REPO_ABS"
+  gg_fail hooks-path-read "$REPO_ABS" "could not read core.hooksPath in $REPO_ABS"
 }
 
 # core.hooksPath set to the empty string switches git hooks off outright.
@@ -156,7 +156,7 @@ HOOKS_PATH_REMEDY="Clear the setting at its source, then run kendex guard instal
 # stdout, and the install lane already reports there.
 hooks_path_origins() { # -> the stand-down text, on stderr
   local line="" listed=0
-  echo "  core.hooksPath is set." >&2
+  gg_message hooks-path-set core.hooksPath "$HOOKS_PATH_REMEDY" >&2
   # git's report, said the way the summary says the value: what git wrote,
   # rendered by %q. Relaying the raw bytes would put a value carrying ESC on
   # a terminal unescaped, which is the same value the summary is careful
@@ -166,14 +166,13 @@ hooks_path_origins() { # -> the stand-down text, on stderr
   # Nothing is dropped or reordered: one line in, one line out.
   while IFS= read -r line; do
     listed=1
-    printf '  %s\n' "$(gg_shown "$line")" >&2
+    gg_message hooks-path-origin "$(gg_shown "$line")" "Git reports this scope, source, and value." >&2
   done < <(git -C "$REPO_ABS" config --show-origin --show-scope --get-all core.hooksPath 2>/dev/null)
   # git prints at least one line for a value that is set, so nothing read
   # means nothing to read. That covers the failure and the empty answer
   # together, which is right: both leave the reader without the report, and
   # neither changes the verdict.
   if [ "$listed" -eq 0 ]; then
-    echo "  Its origin could not be listed." >&2
+    gg_message hooks-path-origin-unavailable core.hooksPath "The configuration origin could not be listed." >&2
   fi
-  echo "  $HOOKS_PATH_REMEDY" >&2
 }

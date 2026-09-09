@@ -9,6 +9,9 @@
 # Every step runs before the verdict, so one commit attempt reports every
 # blocker. Aggregation fails CLOSED: exit 2 if any step could not complete,
 # else 1 if any found violations, else 0. Both nonzero verdicts block.
+# Consumer protocol: the doc-limits compatibility branch reads exit 2 and
+# the complete first diagnostic line for the unsupported --staged flag.
+# Other output is presentation, not evidence for that branch.
 set -euo pipefail
 
 GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
@@ -52,7 +55,7 @@ case "${1-}" in
     exit 0
     ;;
 esac
-[ $# -eq 0 ] || gg_config_error "takes no arguments (see --help)"
+[ $# -eq 0 ] || gg_fail argument-count "$#" "takes no arguments (see --help)"
 
 gg_repo_root_cd
 
@@ -64,14 +67,14 @@ had_errors=0
 run_step() { # LABEL COMMAND [ARGS...] — runs one step and folds its verdict
   local label="$1" status=0
   shift
-  echo "=== pre-commit: $label"
+  gg_message step "$label" "=== pre-commit: $label"
   "$@" || status=$?
   case "$status" in
     0) ;;
     1) had_violations=1 ;;
     *)
       had_errors=1
-      echo "pre-commit: step '$label' did not complete (exit $status)"
+      gg_message step-incomplete "$label:$status" "pre-commit: step '$label' did not complete (exit $status)"
       ;;
   esac
 }
@@ -134,14 +137,14 @@ resolve_sibling() { # SKILL — skill directory on stdout; 1 when no side carrie
 
 if DOC_LIMITS_SKILL="$(resolve_sibling doc-limits)"; then
   DOC_LIMITS="$DOC_LIMITS_SKILL/scripts/doc-limits"
-  [ -x "$DOC_LIMITS" ] || gg_config_error "the doc-limits skill is installed at $DOC_LIMITS_SKILL but $DOC_LIMITS is missing or not executable — reinstall it"
+  [ -x "$DOC_LIMITS" ] || gg_fail lane-missing "$DOC_LIMITS" "the doc-limits skill is installed at $DOC_LIMITS_SKILL but $DOC_LIMITS is missing or not executable — reinstall it"
   # A consuming repo may replace the vendored script with its own gate — a
   # fork without the --staged interface, wired through its own hooks. This
   # chain owns only the kendex-shape script, and the ONE
   # deterministic signal is the run itself: an argument parser that rejects
   # --staged says so in its own first line. No help-prose inference — two
   # reviewers proved usage-shape detection cannot converge.
-  echo "=== pre-commit: doc-limits (document byte ceilings)"
+  gg_message step doc-limits "=== pre-commit: doc-limits (document byte ceilings)"
   sr_run_status=0
   sr_run_out="$("$DOC_LIMITS" --staged 2>&1)" || sr_run_status=$?
   [ -n "$sr_run_out" ] && printf '%s\n' "$sr_run_out"
@@ -164,15 +167,15 @@ if DOC_LIMITS_SKILL="$(resolve_sibling doc-limits)"; then
     0:*) ;;
     1:*) had_violations=1 ;;
     2:1)
-      echo "=== pre-commit: doc-limits at $DOC_LIMITS rejects --staged (repo-local replacement) — skipped; this repo's own wiring owns that gate"
+      gg_message staged-unsupported "$DOC_LIMITS" "=== pre-commit: doc-limits at $DOC_LIMITS rejects --staged (repo-local replacement) — skipped; this repo's own wiring owns that gate"
       ;;
     *)
       had_errors=1
-      echo "pre-commit: step 'doc-limits' did not complete (exit $sr_run_status)"
+      gg_message step-incomplete "doc-limits:$sr_run_status" "pre-commit: step 'doc-limits' did not complete (exit $sr_run_status)"
       ;;
   esac
 else
-  echo "=== pre-commit: doc-limits not installed — skipped (no doc-limits skill under $(gg_searched_roots) ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../doc-limits)"
+  gg_message lane-absent "doc-limits roots=$(gg_searched_roots) skills=$GG_SKILL_ROOTS fallback=$SCRIPT_DIR/../../doc-limits" "=== pre-commit: doc-limits not installed — skipped (no doc-limits skill under $(gg_searched_roots) ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../doc-limits)"
 fi
 
 # Same sibling contract for preflight: its --staged lanes judge the same
@@ -180,16 +183,16 @@ fi
 # checks CI would otherwise report first.
 if PREFLIGHT_SKILL="$(resolve_sibling preflight)"; then
   PREFLIGHT="$PREFLIGHT_SKILL/scripts/preflight"
-  [ -x "$PREFLIGHT" ] || gg_config_error "the preflight skill is installed at $PREFLIGHT_SKILL but $PREFLIGHT is missing or not executable — reinstall it"
+  [ -x "$PREFLIGHT" ] || gg_fail lane-missing "$PREFLIGHT" "the preflight skill is installed at $PREFLIGHT_SKILL but $PREFLIGHT is missing or not executable — reinstall it"
   if git rev-parse --verify --quiet HEAD >/dev/null; then
     run_step preflight "$PREFLIGHT" --staged
   else
     # The very first commit has nothing to diff --staged against; blocking
     # a repository's birth is not this chain's job.
-    echo "=== pre-commit: first commit — preflight --staged has no base; skipped"
+    gg_message base-missing preflight "=== pre-commit: first commit — preflight --staged has no base; skipped"
   fi
 else
-  echo "=== pre-commit: preflight not installed — skipped (no preflight skill under $(gg_searched_roots) ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../preflight)"
+  gg_message lane-absent "preflight roots=$(gg_searched_roots) skills=$GG_SKILL_ROOTS fallback=$SCRIPT_DIR/../../preflight" "=== pre-commit: preflight not installed — skipped (no preflight skill under $(gg_searched_roots) ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../preflight)"
 fi
 
 # Same sibling contract for the bot-instructions check: the rendered review
@@ -197,35 +200,35 @@ fi
 # one coherent staged state, so no consumer wires a wrapper of its own.
 if BOT_SKILL="$(resolve_sibling bot-instructions)"; then
   BOT_CHECK="$BOT_SKILL/scripts/bot-instructions"
-  [ -x "$BOT_CHECK" ] || gg_config_error "the bot-instructions skill is installed at $BOT_SKILL but $BOT_CHECK is missing or not executable — reinstall it"
+  [ -x "$BOT_CHECK" ] || gg_fail lane-missing "$BOT_CHECK" "the bot-instructions skill is installed at $BOT_SKILL but $BOT_CHECK is missing or not executable — reinstall it"
   run_step "bot-instructions check --staged" "$BOT_CHECK" check --staged
 else
-  echo "=== pre-commit: bot-instructions not installed — skipped (no bot-instructions skill under $(gg_searched_roots) ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../bot-instructions)"
+  gg_message lane-absent "bot-instructions roots=$(gg_searched_roots) skills=$GG_SKILL_ROOTS fallback=$SCRIPT_DIR/../../bot-instructions" "=== pre-commit: bot-instructions not installed — skipped (no bot-instructions skill under $(gg_searched_roots) ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../bot-instructions)"
 fi
 
 BATCH="$SCRIPT_DIR/commit-guards"
-[ -x "$BATCH" ] || gg_config_error "$BATCH is missing or not executable — reinstall the commit-guards skill"
+[ -x "$BATCH" ] || gg_fail lane-missing "$BATCH" "$BATCH is missing or not executable — reinstall the commit-guards skill"
 run_step "commit-guards all --staged" "$BATCH" all --staged
 
 LOCAL_RAW="$(gg_setting COMMIT_GUARDS_PRE_COMMIT_LOCAL "")" || exit 2
 if [ -n "$LOCAL_RAW" ]; then
   LOCAL_ENTRY="$(gg_config_path "$LOCAL_RAW" COMMIT_GUARDS_PRE_COMMIT_LOCAL)" || exit 2
-  [ -x "$LOCAL_ENTRY" ] || gg_config_error "COMMIT_GUARDS_PRE_COMMIT_LOCAL names '$LOCAL_ENTRY', which is missing or not executable"
+  [ -x "$LOCAL_ENTRY" ] || gg_fail local-missing "$LOCAL_ENTRY" "COMMIT_GUARDS_PRE_COMMIT_LOCAL names '$LOCAL_ENTRY', which is missing or not executable"
   # The family contract applies: 0 clean, 1 violations, anything else "could
   # not complete". Every nonzero blocks either way.
   run_step "repo-local: $LOCAL_ENTRY" "./$LOCAL_ENTRY"
 else
   # Announced like every ran or skipped lane: silence here is
   # indistinguishable from a lane the chain lost.
-  echo "=== pre-commit: repo-local entry: none configured"
+  gg_message local-entry none "=== pre-commit: repo-local entry: none configured"
 fi
 
 if [ "$had_errors" -eq 1 ]; then
-  echo "pre-commit: a guard could not complete — commit blocked; fix the errors above (bypass only with git commit --no-verify)"
+  gg_message result 2 "pre-commit: a guard could not complete — commit blocked; fix the errors above (bypass only with git commit --no-verify)"
   exit 2
 fi
 if [ "$had_violations" -eq 1 ]; then
-  echo "pre-commit: violations — commit blocked; see the failures above"
+  gg_message result 1 "pre-commit: violations — commit blocked; see the failures above"
   exit 1
 fi
-echo "pre-commit: OK — staged guard chain clean"
+gg_message result 0 "pre-commit: OK — staged guard chain clean"

@@ -109,7 +109,7 @@ fn an_existing_hook_keeps_its_content_and_its_verdict() {
     assert!(!blocked.status.success(), "{}", said(&blocked));
     assert!(said(&blocked).contains("theirs ran"), "{}", said(&blocked));
     assert!(
-        said(&blocked).contains("pre-commit: OK"),
+        said(&blocked).contains("pre-commit: result=0"),
         "the chain itself was clean: {}",
         said(&blocked)
     );
@@ -159,7 +159,7 @@ fn sibling_gates_join_the_chain_and_absent_ones_announce_themselves() {
 
     let without = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert!(
-        said(&without).contains("doc-limits not installed"),
+        said(&without).contains("pre-commit: lane-absent=doc-limits "),
         "{}",
         said(&without)
     );
@@ -167,12 +167,12 @@ fn sibling_gates_join_the_chain_and_absent_ones_announce_themselves() {
     install_package(home, &root, &["doc-limits"]);
     let with = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert!(
-        said(&with).contains("=== pre-commit: doc-limits"),
+        said(&with).contains("pre-commit: step=doc-limits"),
         "{}",
         said(&with)
     );
     assert!(
-        !said(&with).contains("doc-limits not installed"),
+        !said(&with).contains("pre-commit: lane-absent=doc-limits "),
         "{}",
         said(&with)
     );

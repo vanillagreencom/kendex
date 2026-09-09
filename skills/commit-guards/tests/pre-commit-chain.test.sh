@@ -55,10 +55,10 @@ PROJ=other-checkout-project/skills
 install "$TMP/$BARE"
 install "$TMP/$FULL"
 install "$TMP/$PROJ"
-stub "$TMP/$PROJ" doc-limits "project doc-limits ran" 0
-stub "$TMP/$FULL" doc-limits "install doc-limits ran" 0
-stub "$TMP/$FULL" preflight "install preflight ran" 0
-stub "$TMP/$FULL" bot-instructions "install bot-instructions ran" 0
+stub "$TMP/$PROJ" doc-limits "fixture=project-doc-limits" 0
+stub "$TMP/$FULL" doc-limits "fixture=install-doc-limits" 0
+stub "$TMP/$FULL" preflight "fixture=install-preflight" 0
+stub "$TMP/$FULL" bot-instructions "fixture=install-bot-instructions" 0
 
 # One line for a run in the row's repository from the named install: the
 # exit status, then every line printed, in order, joined by ';', with the
@@ -77,6 +77,7 @@ run() { # ENVS INSTALL ARGS
   r_p="$(cd "$R" && pwd -P)"
   # shellcheck disable=SC2086
   out="$(cd "$R" && env COMMIT_GUARDS_CHECKS=todo-ban ${envs[@]+"${envs[@]}"} "$TMP/$2/commit-guards/scripts/pre-commit" $3 2>&1)" || rc=$?
+  out="$(printf '%s\n' "$out" | sed '/^  /d')"
   out="${out//"$r_p"/<repo>}"
   out="${out//"$TMP_P"/<root>}"
   out="${out//"$R"/<repo>}"
@@ -105,24 +106,20 @@ local_entry() { mkdir -p "$R/tools"; printf '%b' "$1" >"$R/tools/local-check"; c
 
 # The lines the chain prints, as functions of what a row put in.
 ROOTS=".agents/skills .claude/skills .cursor/skills .gemini/skills .github/skills .opencode/skills skills"
-DL="=== pre-commit: doc-limits (document byte ceilings)"
-PF="=== pre-commit: preflight"
-BOT="=== pre-commit: bot-instructions check --staged"
-# A skip line: the tree, the install's checkout, the roots, the install's own side.
-skip() { printf '=== pre-commit: %s not installed — skipped (no %s skill under <repo> and <root>/%s (%s), nor at <root>/%s/skills/commit-guards/scripts/../../%s)' "$1" "$1" "${2:-other-checkout}" "$ROOTS" "${2:-other-checkout}" "$1"; } # LANE [CHECKOUT]
+DL="pre-commit: step=doc-limits"
+PF="pre-commit: step=preflight"
+BOT="pre-commit: step=bot-instructions check --staged"
+skip() { printf 'pre-commit: lane-absent=%s roots=<repo> and <root>/%s skills=%s fallback=<root>/%s/skills/commit-guards/scripts/../../%s' "$1" "${2:-other-checkout}" "$ROOTS" "${2:-other-checkout}" "$1"; } # LANE [CHECKOUT]
 SKIPS="$(skip doc-limits);$(skip preflight);$(skip bot-instructions)"
-BATCH="=== pre-commit: commit-guards all --staged;=== commit-guards: todo-ban --staged"
-BATCH_OK="$BATCH;todo-ban: OK — the staged diff adds no work markers;commit-guards: OK — enabled checks clean (todo-ban)"
-LOCAL_NONE="=== pre-commit: repo-local entry: none configured"
-LOCAL="=== pre-commit: repo-local: tools/local-check"
-CHAIN_OK="pre-commit: OK — staged guard chain clean"
-BLOCKED="pre-commit: violations — commit blocked; see the failures above"
-# The verdict names git's bypass flag; assembled from split tokens so this
-# file never carries the flag itself.
-ERRORS="pre-commit: a guard could not complete — commit blocked; fix the errors above (bypass only with git commit --no-""verify)"
-incomplete() { printf "pre-commit: step '%s' did not complete (exit %s)" "$1" "$2"; } # LABEL STATUS
-ERR="::error::pre-commit: "
-broken() { printf '%sthe %s skill is installed at <repo>/.agents/skills/%s but <repo>/.agents/skills/%s/scripts/%s is missing or not executable — reinstall it' "$ERR" "$1" "$1" "$1" "$1"; } # SKILL
+BATCH="pre-commit: step=commit-guards all --staged;commit-guards: step=todo-ban --staged"
+BATCH_OK="$BATCH;todo-ban: staged-count=0:0:tools/todo-ban-excludes;commit-guards: result=0:todo-ban"
+LOCAL_NONE="pre-commit: local-entry=none"
+LOCAL="pre-commit: step=repo-local: tools/local-check"
+CHAIN_OK="pre-commit: result=0"
+BLOCKED="pre-commit: result=1"
+ERRORS="pre-commit: result=2"
+incomplete() { printf 'pre-commit: step-incomplete=%s:%s' "$1" "$2"; } # LABEL STATUS
+broken() { printf 'pre-commit: lane-missing=<repo>/.agents/skills/%s/scripts/%s' "$1" "$1"; } # SKILL
 
 # The table: label | fixture | env | install | args | expect.
 run_rows() {
@@ -137,44 +134,44 @@ run_rows() {
 }
 
 echo "=== the committing tree's copy of a sibling gate runs; the install's serves only a tree without one ==="
-fx_tree_two() { repo tree-two; tree doc-limits "worktree doc-limits ran" 0; ROOT=.github/skills tree preflight "worktree preflight ran" 0; }
-fx_tree_fails() { repo tree-fails; tree doc-limits "doc-limits: staged violation" 1; }
-fx_tree_one() { repo tree-one; tree doc-limits "worktree doc-limits ran" 0; }
+fx_tree_two() { repo tree-two; tree doc-limits "fixture=worktree-doc-limits" 0; ROOT=.github/skills tree preflight "fixture=worktree-preflight" 0; }
+fx_tree_fails() { repo tree-fails; tree doc-limits "fixture=doc-limits-violation" 1; }
+fx_tree_one() { repo tree-one; tree doc-limits "fixture=worktree-doc-limits" 0; }
 fx_tree_none() { repo tree-none; }
-fx_tree_over_project() { repo tree-over-project; tree doc-limits "worktree doc-limits ran" 0; }
+fx_tree_over_project() { repo tree-over-project; tree doc-limits "fixture=worktree-doc-limits" 0; }
 fx_project() { repo project; }
-fx_tree_bot_fails() { repo tree-bot-fails; tree bot-instructions "bot-instructions: AGENTS.md differs from a fresh render" 1; }
+fx_tree_bot_fails() { repo tree-bot-fails; tree bot-instructions "fixture=bot-instructions-stale" 1; }
 fx_tree_bot_broken() { repo tree-bot-broken; tree bot-instructions "never runs" 0; chmod -x "$R/.agents/skills/bot-instructions/scripts/bot-instructions"; }
 fx_absent() { repo absent; }
 run_rows \
-  "the tree's doc-limits and preflight run, each under its own root, from an install carrying neither, and the third lane is a stated skip|fx_tree_two||$BARE||rc=0 $DL;worktree doc-limits ran --staged;$PF;worktree preflight ran --staged;$(skip bot-instructions);$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
-  "a failing tree-carried gate blocks with its own line in front of the committer|fx_tree_fails||$BARE||rc=1 $DL;doc-limits: staged violation --staged;$(skip preflight);$(skip bot-instructions);$BATCH_OK;$LOCAL_NONE;$BLOCKED" \
-  "the tree's copy outranks the install's, and the siblings the tree lacks still come from the install|fx_tree_one||$FULL||rc=0 $DL;worktree doc-limits ran --staged;$PF;install preflight ran --staged;$BOT;install bot-instructions ran check --staged;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
-  "a tree carrying no sibling gets all three from the install|fx_tree_none||$FULL||rc=0 $DL;install doc-limits ran --staged;$PF;install preflight ran --staged;$BOT;install bot-instructions ran check --staged;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
-  "the tree's copy outranks the one under the install's project root: the re-vendor rule|fx_tree_over_project||$PROJ||rc=0 $DL;worktree doc-limits ran --staged;$(skip preflight other-checkout-project);$(skip bot-instructions other-checkout-project);$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
-  "control: a tree carrying none gets the project root's copy|fx_project||$PROJ||rc=0 $DL;project doc-limits ran --staged;$(skip preflight other-checkout-project);$(skip bot-instructions other-checkout-project);$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
-  "a failing tree-carried bot-instructions check blocks under its own announcement|fx_tree_bot_fails||$BARE||rc=1 $(skip doc-limits);$(skip preflight);$BOT;bot-instructions: AGENTS.md differs from a fresh render check --staged;$BATCH_OK;$LOCAL_NONE;$BLOCKED" \
+  "the tree's doc-limits and preflight run, each under its own root, from an install carrying neither, and the third lane is a stated skip|fx_tree_two||$BARE||rc=0 $DL;fixture=worktree-doc-limits --staged;$PF;fixture=worktree-preflight --staged;$(skip bot-instructions);$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "a failing tree-carried gate blocks with its own line in front of the committer|fx_tree_fails||$BARE||rc=1 $DL;fixture=doc-limits-violation --staged;$(skip preflight);$(skip bot-instructions);$BATCH_OK;$LOCAL_NONE;$BLOCKED" \
+  "the tree's copy outranks the install's, and the siblings the tree lacks still come from the install|fx_tree_one||$FULL||rc=0 $DL;fixture=worktree-doc-limits --staged;$PF;fixture=install-preflight --staged;$BOT;fixture=install-bot-instructions check --staged;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "a tree carrying no sibling gets all three from the install|fx_tree_none||$FULL||rc=0 $DL;fixture=install-doc-limits --staged;$PF;fixture=install-preflight --staged;$BOT;fixture=install-bot-instructions check --staged;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "the tree's copy outranks the one under the install's project root: the re-vendor rule|fx_tree_over_project||$PROJ||rc=0 $DL;fixture=worktree-doc-limits --staged;$(skip preflight other-checkout-project);$(skip bot-instructions other-checkout-project);$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "control: a tree carrying none gets the project root's copy|fx_project||$PROJ||rc=0 $DL;fixture=project-doc-limits --staged;$(skip preflight other-checkout-project);$(skip bot-instructions other-checkout-project);$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "a failing tree-carried bot-instructions check blocks under its own announcement|fx_tree_bot_fails||$BARE||rc=1 $(skip doc-limits);$(skip preflight);$BOT;fixture=bot-instructions-stale check --staged;$BATCH_OK;$LOCAL_NONE;$BLOCKED" \
   "a tree-carried bot-instructions skill whose script is not executable is a broken install, never a skip|fx_tree_bot_broken||$BARE||rc=2 $(skip doc-limits);$(skip preflight);$(broken bot-instructions)" \
   "absence on both sides is a stated skip naming both probed sides and every root, and the chain passes|fx_absent||$BARE||rc=0 $SKIPS;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK"
 
 echo "=== every step runs before the verdict, and could-not-complete outranks violations ==="
-fx_both() { repo both; tree doc-limits "doc-limits: staged violation" 1; tree preflight "preflight died" 2; }
-fx_bot_dies() { repo bot-dies; tree bot-instructions "bot died" 3; }
+fx_both() { repo both; tree doc-limits "fixture=doc-limits-violation" 1; tree preflight "fixture=preflight-error" 2; }
+fx_bot_dies() { repo bot-dies; tree bot-instructions "fixture=bot-error" 3; }
 run_rows \
-  "a violation and a step that did not complete both print, every later lane still runs, and the verdict is the error's|fx_both||$BARE||rc=2 $DL;doc-limits: staged violation --staged;$PF;preflight died --staged;$(incomplete preflight 2);$(skip bot-instructions);$BATCH_OK;$LOCAL_NONE;$ERRORS" \
-  "a status past 1 is a step that did not complete, with its status|fx_bot_dies||$BARE||rc=2 $(skip doc-limits);$(skip preflight);$BOT;bot died check --staged;$(incomplete 'bot-instructions check --staged' 3);$BATCH_OK;$LOCAL_NONE;$ERRORS"
+  "a violation and a step that did not complete both print, every later lane still runs, and the verdict is the error's|fx_both||$BARE||rc=2 $DL;fixture=doc-limits-violation --staged;$PF;fixture=preflight-error --staged;$(incomplete preflight 2);$(skip bot-instructions);$BATCH_OK;$LOCAL_NONE;$ERRORS" \
+  "a status past 1 is a step that did not complete, with its status|fx_bot_dies||$BARE||rc=2 $(skip doc-limits);$(skip preflight);$BOT;fixture=bot-error check --staged;$(incomplete 'bot-instructions check --staged' 3);$BATCH_OK;$LOCAL_NONE;$ERRORS"
 
 echo "=== the repo-local entry: announced, run last, and its status folded like every lane's ==="
-fx_local_ran() { repo local-ran; local_entry '#!/bin/sh\necho "repo-local check ran"\nexit 0\n'; }
-fx_local_fails() { repo local-fails; local_entry '#!/bin/sh\necho "repo-local: nope"\nexit 1\n'; }
-fx_local_dies() { repo local-dies; local_entry '#!/bin/sh\necho "repo-local check died"\nexit 2\n'; }
+fx_local_ran() { repo local-ran; local_entry '#!/bin/sh\necho "fixture=local-clean"\nexit 0\n'; }
+fx_local_fails() { repo local-fails; local_entry '#!/bin/sh\necho "fixture=local-violation"\nexit 1\n'; }
+fx_local_dies() { repo local-dies; local_entry '#!/bin/sh\necho "fixture=local-error"\nexit 2\n'; }
 fx_local_unexecutable() { repo local-unexecutable; local_entry '#!/bin/sh\nexit 0\n'; chmod -x "$R/tools/local-check"; }
 LOCAL_ENV=COMMIT_GUARDS_PRE_COMMIT_LOCAL=tools/local-check
 run_rows \
-  "a configured entry announces itself in place of the none line, runs, and passes|fx_local_ran|$LOCAL_ENV|$BARE||rc=0 $SKIPS;$BATCH_OK;$LOCAL;repo-local check ran;$CHAIN_OK" \
-  "its violation blocks|fx_local_fails|$LOCAL_ENV|$BARE||rc=1 $SKIPS;$BATCH_OK;$LOCAL;repo-local: nope;$BLOCKED" \
-  "its status past 1 is a step that did not complete|fx_local_dies|$LOCAL_ENV|$BARE||rc=2 $SKIPS;$BATCH_OK;$LOCAL;repo-local check died;$(incomplete 'repo-local: tools/local-check' 2);$ERRORS" \
-  "an entry that is not executable is a config error naming it, after the batch ran|fx_local_unexecutable|$LOCAL_ENV|$BARE||rc=2 $SKIPS;$BATCH_OK;${ERR}COMMIT_GUARDS_PRE_COMMIT_LOCAL names 'tools/local-check', which is missing or not executable"
+  "a configured entry announces itself in place of the none line, runs, and passes|fx_local_ran|$LOCAL_ENV|$BARE||rc=0 $SKIPS;$BATCH_OK;$LOCAL;fixture=local-clean;$CHAIN_OK" \
+  "its violation blocks|fx_local_fails|$LOCAL_ENV|$BARE||rc=1 $SKIPS;$BATCH_OK;$LOCAL;fixture=local-violation;$BLOCKED" \
+  "its status past 1 is a step that did not complete|fx_local_dies|$LOCAL_ENV|$BARE||rc=2 $SKIPS;$BATCH_OK;$LOCAL;fixture=local-error;$(incomplete 'repo-local: tools/local-check' 2);$ERRORS" \
+  "an entry that is not executable is a config error naming it, after the batch ran|fx_local_unexecutable|$LOCAL_ENV|$BARE||rc=2 $SKIPS;$BATCH_OK;pre-commit: local-missing=tools/local-check"
 
 echo "=== the batch runs at commit scope: a marker the commit does not add belongs to CI ==="
 # The fixture proves its marker landed in HEAD: a row over a repository
@@ -192,7 +189,7 @@ marker_committed() { # NAME
 }
 fx_untouched_marker() { marker_committed untouched-marker; }
 fx_added_marker() { marker_committed added-marker; printf '// %s: added by this commit\n' "$TD" >>"$R/b.txt"; git -C "$R" add b.txt; }
-HIT="todo-ban FAIL work marker: b.txt:2:// $TD: added by this commit;  remedies: do the work now, or move it to the tracker and delete the marker; vendored/generated trees belong in tools/todo-ban-excludes with a reason;todo-ban: 1 work marker(s) added by the staged diff — excludes tools/todo-ban-excludes;commit-guards: violations — see the failures above"
+HIT="todo-ban: match=work marker:b.txt:2:// $TD: added by this commit;todo-ban: staged-count=1:0:tools/todo-ban-excludes;commit-guards: result=1"
 run_rows \
   "a marker committed earlier and untouched is not this commit's: the staged file is clean and the chain passes|fx_untouched_marker||$BARE||rc=0 $SKIPS;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
   "control: a marker this commit adds blocks it at its line|fx_added_marker||$BARE||rc=1 $SKIPS;$BATCH;$HIT;$LOCAL_NONE;$BLOCKED"
@@ -201,7 +198,7 @@ echo "=== the usage is answered, and an argument is refused ==="
 fx_usage() { repo usage; }
 fx_arg() { repo arg; }
 run_rows \
-  "an argument is a config error: git passes none|fx_arg||$BARE|--staged|rc=2 ${ERR}takes no arguments (see --help)"
+  "an argument is a config error: git passes none|fx_arg||$BARE|--staged|rc=2 pre-commit: argument-count=1"
 fx_usage
 assert_eq "--help prints the usage and exits 0" "rc=0 usage: pre-commit" "$(run "" "$BARE" --help | cut -d';' -f1)"
 assert_eq "-h is the same flag" "$(run "" "$BARE" --help)" "$(run "" "$BARE" -h)"

@@ -33,8 +33,8 @@ gg_commit_changes() { # sets GG_TMP/staged.z, written.z and product.z
   # shellcheck disable=SC2086
   git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% \
     $GG_COMMIT_BASE \
-    >"$GG_TMP/raw.z" \
-    || gg_collection_error "could not read the commit's file list — the changelog rule could not run"
+    >"$GG_TMP/raw.z" 2>"$GG_TMP/commit-files.err" \
+    || gg_fail_cause commit-files "$?" "$GG_TMP/commit-files.err" "could not read the commit's file list — the changelog rule could not run"
 
   # What "written" MEANS, over the record's full identity: a mode and a sha
   # together, never a sha alone. Equal shas are TWO states, and only the modes
@@ -81,7 +81,7 @@ gg_commit_changes() { # sets GG_TMP/staged.z, written.z and product.z
   : >"$GG_TMP/written.z"
   while IFS= read -r -d '' meta; do
     IFS= read -r -d '' src \
-      || gg_collection_error "the commit's file list ended mid-record after $(gg_shown "$meta") — the changelog rule could not run"
+      || gg_fail commit-record-end "$meta" "the commit's file list ended mid-record after $(gg_shown "$meta") — the changelog rule could not run"
     # Record shape: ":srcmode dstmode srcsha dstsha status". Splitting is safe
     # under `set -f` below — the fields are modes, hex
     # and a letter, and none of them is a path.
@@ -89,7 +89,7 @@ gg_commit_changes() { # sets GG_TMP/staged.z, written.z and product.z
     set -f
     set -- $meta
     [ "$#" -eq 5 ] \
-      || gg_collection_error "the commit's file list carried a record of $# field(s), not five: $(gg_shown "$meta") — the changelog rule could not run"
+      || gg_fail commit-record-fields "$#:$meta" "the commit's file list carried a record of $# field(s), not five: $(gg_shown "$meta") — the changelog rule could not run"
     srcmode="${1#:}"
     dstmode="$2"
     srcsha="$3"
@@ -97,11 +97,11 @@ gg_commit_changes() { # sets GG_TMP/staged.z, written.z and product.z
     status="$5"
     case "$status" in
       C*)
-        gg_collection_error "git reported a copy ($(gg_shown "$status")) though this scan pins diff.renames=true — the changelog rule could not run"
+        gg_fail commit-copy "$status" "git reported a copy ($(gg_shown "$status")) though this scan pins diff.renames=true — the changelog rule could not run"
         ;;
       R*)
         IFS= read -r -d '' dest \
-          || gg_collection_error "the commit's file list ended before the destination of a $(gg_shown "$status") record — the changelog rule could not run"
+          || gg_fail commit-rename-end "$status" "the commit's file list ended before the destination of a $(gg_shown "$status") record — the changelog rule could not run"
         printf '%s\0' "$src" "$dest" >>"$GG_TMP/staged.z"
         printf '%s\0' "$dest" >>"$GG_TMP/written.z"
         continue

@@ -45,6 +45,7 @@ EXCLUDES_DEFAULT="tools/comments-excludes"
 REFERENCE_TYPES_DEFAULT="issue-id issue-number date"
 
 usage() {
+  gg_message usage comments "Command usage follows."
   cat <<EOF
 usage: comments [--staged] [--excludes FILE]
 
@@ -83,7 +84,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --staged) MODE="staged" ;;
     --excludes)
-      [ $# -ge 2 ] || gg_config_error "--excludes requires a path"
+      [ $# -ge 2 ] || gg_fail argument-value --excludes "This option requires a path."
       shift
       EXCLUDES_OPT="$1"
       ;;
@@ -92,7 +93,7 @@ while [ $# -gt 0 ]; do
       usage
       exit 0
       ;;
-    *) gg_config_error "unknown argument '$1' (see --help)" ;;
+    *) gg_fail argument "$1" "Unknown argument. See --help." ;;
   esac
   shift
 done
@@ -127,11 +128,11 @@ for reference_type in $REFERENCE_TYPES; do
     issue-id) [ -z "$ISSUE_ERE" ] || CHECK_ISSUE=1 ;;
     issue-number) CHECK_HASH=1 ;;
     date) CHECK_DATE=1 ;;
-    *) gg_config_error "COMMIT_GUARDS_COMMENT_REFERENCE_TYPES contains unknown type '$(gg_scrubbed "$reference_type")'" ;;
+    *) gg_fail reference-type "$reference_type" "The configured reference type is unknown." ;;
   esac
 done
 [ "$((CHECK_ISSUE + CHECK_HASH + CHECK_DATE))" -gt 0 ] \
-  || gg_config_error "COMMIT_GUARDS_COMMENT_REFERENCE_TYPES must name an active type; issue-id needs GH_ISSUE_PATTERN"
+  || gg_fail reference-types inactive "Name an active reference type. Issue IDs require GH_ISSUE_PATTERN."
 # What the index pre-filter lists carriers by: a file whose whole content
 # matches no shape has no comment that does either.
 PATTERNS=()
@@ -154,16 +155,17 @@ probe_ere() { # VALUE KEY — require both engines to accept one configured ERE
   export GG_PROBE_ERE
   LC_ALL=C awk 'BEGIN { if ("" ~ ENVIRON["GG_PROBE_ERE"]) { } }' </dev/null 2>"$GG_TMP/awk.err" || status=$?
   [ "$status" -eq 0 ] && [ ! -s "$GG_TMP/awk.err" ] \
-    || gg_config_error "$key is not a POSIX ERE awk can read: '$(gg_scrubbed "$value")'"
+    || gg_fail awk-pattern "$key:$value" "AWK could not compile the configured pattern."
   status=0
   printf '' | LC_ALL=C grep -E -- "$value" >/dev/null 2>"$GG_TMP/grep.err" || status=$?
   [ "$status" -le 1 ] && [ ! -s "$GG_TMP/grep.err" ] \
-    || gg_config_error "$key is not a POSIX ERE grep can read: '$(gg_scrubbed "$value")'"
+    || gg_fail grep-pattern "$key:$value" "Grep could not compile the configured pattern."
 }
 [ -z "$ISSUE_ERE" ] || probe_ere "$ISSUE_BOUNDED" GH_ISSUE_PATTERN
 
 # Which shape a comment line carries, one record per (line, shape):
-# "line<TAB>shape<TAB>text". Reads the extractor's "line<TAB>text" records.
+# "line<TAB>shape<TAB>text", parsed by judge_blob. Shapes are issue-id,
+# issue-number and date enums. Reads the extractor's line<TAB>text records.
 classify() { # IN — records on stdout
   local status=0
   LC_ALL=C awk -F '\t' -v OFS='\t' '
@@ -175,12 +177,12 @@ classify() { # IN — records on stdout
       ln = $1
       text = substr($0, length(ln) + 2)
       low = tolower(text)
-      if (ENVIRON["CHECK_ISSUE"] && (text ~ issue || low ~ issue || toupper(text) ~ issue)) print ln, "issue id", text
-      if (ENVIRON["CHECK_DATE"] && text ~ date) print ln, "calendar date", text
-      if (ENVIRON["CHECK_HASH"] && text ~ hash) print ln, "issue number", text
+      if (ENVIRON["CHECK_ISSUE"] && (text ~ issue || low ~ issue || toupper(text) ~ issue)) print ln, "issue-id", text
+      if (ENVIRON["CHECK_DATE"] && text ~ date) print ln, "date", text
+      if (ENVIRON["CHECK_HASH"] && text ~ hash) print ln, "issue-number", text
     }
   ' "$1" || status=$?
-  [ "$status" -eq 0 ] || gg_collection_error "could not classify the comment text (awk exit $status)"
+  [ "$status" -eq 0 ] || gg_fail classify-exit "$status" "The comment classifier failed."
 }
 
 # The grammar a matched path takes, or the path named as unmeasured: a file
@@ -195,7 +197,7 @@ family_or_skip() { # PATH BLOBFILE — sets FAM; returns 1 when the path is name
   # blob would read as a path with no grammar.
   [ "$status" -eq 0 ] || exit "$status"
   if [ -z "$FAM" ]; then
-    gg_note_skip "$1" "no comment grammar for this path (CHECKS.md § comments)"
+    gg_note_skip "$1" grammar "no comment grammar for this path (CHECKS.md § comments)"
     return 1
   fi
   MATCHED=$((MATCHED + 1))
@@ -206,7 +208,8 @@ family_or_skip() { # PATH BLOBFILE — sets FAM; returns 1 when the path is name
 judge_blob() { # FAMILY PATH BLOBFILE ALLOW
   local fam="$1" f="$2" blob="$3" allow="$4" rec ln shape text
   if ! gg_comment_text "$fam" "$blob" "$f" >"$GG_TMP/text"; then
-    gg_note_skip "$f" "comment text could not be extracted: $GG_COMMENT_ERROR"
+    gg_message extraction "$f:$GG_COMMENT_ERROR" "The comment extractor failed: $GG_COMMENT_ERROR_DETAIL"
+    gg_note_skip "$f" extraction "The comment text could not be extracted."
     GG_COMMENT_EXTRACT_ERRORS=$((GG_COMMENT_EXTRACT_ERRORS + 1))
     MATCHED=$((MATCHED - 1))
     return 0
@@ -223,8 +226,7 @@ judge_blob() { # FAMILY PATH BLOBFILE ALLOW
         *) continue ;;
       esac
     fi
-    echo "$GG_CHECK FAIL history reference ($shape): $(gg_shown "$f"):$ln: $(gg_scrubbed "$text")"
-    echo "  remedies: $REMEDY"
+    gg_message "$shape" "$f:$ln:$(gg_scrubbed "$text")" "$REMEDY"
     GG_VIOLATIONS=$((GG_VIOLATIONS + 1))
   done <"$GG_TMP/hits"
 }
@@ -239,7 +241,7 @@ index_file() { # PATH BLOBFILE
   gg_is_excluded "$f" && return 0
   family_or_skip "$f" "$blob" || return 0
   LC_ALL=C grep -qiaE -- "$UNION_ERE" "$blob" || status=$?
-  [ "$status" -le 1 ] || gg_collection_error "could not pre-scan $(gg_shown "$f") (grep exit $status)"
+  [ "$status" -le 1 ] || gg_fail prescan-exit "$f:$status" "The comment pre-scan failed."
   [ "$status" -eq 0 ] || return 0
   judge_blob "$FAM" "$f" "$blob" ""
 }
@@ -271,41 +273,25 @@ staged_lane() {
   gg_walk_staged_paths source staged_file
 }
 
-unmeasured() { # the qualifier for this run, empty when everything matched was read
-  [ "$GG_WALK_SKIPPED" -eq 0 ] || printf '; %s matched path(s) not measured' "$GG_WALK_SKIPPED"
-}
-
-if [ "$MODE" = "staged" ]; then
+if [ "$MODE" = staged ]; then
   staged_lane
-  if [ "$GG_COMMENT_EXTRACT_ERRORS" -gt 0 ]; then
-    echo "comments: scan incomplete — $GG_COMMENT_EXTRACT_ERRORS file(s) could not be scanned; $GG_VIOLATIONS history reference(s) found in $MATCHED scanned file(s)$(unmeasured)"
-    exit 2
-  fi
-  if [ "$GG_VIOLATIONS" -gt 0 ]; then
-    echo "comments: $GG_VIOLATIONS history reference(s) in comments added by the staged diff — excludes $EXCLUDES_FILE$(unmeasured)"
-    exit 1
-  fi
-  echo "comments: OK — the staged diff adds no history references in comments ($MATCHED file(s) read)$(unmeasured)"
-  exit 0
+else
+  index_lane
 fi
-
-index_lane
 if [ "$GG_COMMENT_EXTRACT_ERRORS" -gt 0 ]; then
-  echo "comments: scan incomplete — $GG_COMMENT_EXTRACT_ERRORS file(s) could not be scanned; $GG_VIOLATIONS history reference(s) found in $MATCHED scanned file(s)$(unmeasured)"
+  gg_message incomplete "files=$GG_COMMENT_EXTRACT_ERRORS violations=$GG_VIOLATIONS scanned=$MATCHED skipped=$GG_WALK_SKIPPED" "Some comment files could not be scanned."
   exit 2
 fi
-if [ "$MATCHED" -eq 0 ]; then
-  # Same two states prose tells apart: nothing matched at all, or everything
-  # that matched was named as unmeasured.
+if [ "$MATCHED" -eq 0 ] && [ "$MODE" = index ]; then
   if [ "$GG_WALK_SKIPPED" -eq 0 ]; then
-    echo "comments: OK — no tracked file matches COMMIT_GUARDS_COMMENT_PATHS ($GG_PATH_GLOBS_SHOWN)"
+    gg_message no-match "$GG_PATH_GLOBS_SHOWN" "No configured source files match."
   else
-    echo "comments: OK — nothing measurable to scan$(unmeasured)"
+    gg_message unmeasured-count "$GG_WALK_SKIPPED" "No selected paths could be measured."
   fi
   exit 0
 fi
+gg_message summary "violations=$GG_VIOLATIONS files=$MATCHED scope=$MODE skipped=$GG_WALK_SKIPPED" "The comment scan is complete."
 if [ "$GG_VIOLATIONS" -gt 0 ]; then
-  echo "comments: $GG_VIOLATIONS history reference(s) in the comments of $MATCHED scanned file(s) — excludes $EXCLUDES_FILE$(unmeasured)"
+  gg_message excludes "$EXCLUDES_FILE" "The scan used this configuration."
   exit 1
 fi
-echo "comments: OK — no history references in the comments of $MATCHED scanned file(s)$(unmeasured)"

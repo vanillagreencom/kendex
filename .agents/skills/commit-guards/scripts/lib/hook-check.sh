@@ -123,35 +123,35 @@ check_helper_head() { # HEAD -> 0 ours, 1 not
 }
 
 CHECK_REASONS=""
-add_reason() { # MESSAGE
-  if [ -n "$CHECK_REASONS" ]; then
-    CHECK_REASONS="$CHECK_REASONS; $*"
-  else
-    CHECK_REASONS="$*"
-  fi
+CHECK_EXPLANATIONS=""
+add_reason() { # KEY VALUE EXPLANATION
+  local value
+  value="$(gg_scrubbed "$2")" || return 2
+  CHECK_REASONS="${CHECK_REASONS:+$CHECK_REASONS; }$1=$value"
+  CHECK_EXPLANATIONS="${CHECK_EXPLANATIONS:+$CHECK_EXPLANATIONS; }$3"
 }
 
 check_helper() { # -> 0 armed, 1 not armed, 3 unverifiable
   local helper="$HOOKS_DIR/$HELPER_NAME" status=0
   if [ ! -e "$helper" ] && [ ! -L "$helper" ]; then
-    add_reason "helper $HELPER_NAME is missing"
+    add_reason helper-missing "$HELPER_NAME" "helper $HELPER_NAME is missing"
     return 1
   fi
   if [ -L "$helper" ] || [ ! -f "$helper" ]; then
-    add_reason "helper $HELPER_NAME is not a regular file"
+    add_reason helper-not-file "$HELPER_NAME" "helper $HELPER_NAME is not a regular file"
     return 1
   fi
   grep -qF -- "$HELPER_MARKER" "$helper" 2>/dev/null || status=$?
   if [ "$status" -gt 1 ]; then
-    add_reason "helper $HELPER_NAME could not be read"
+    add_reason helper-read "$HELPER_NAME" "helper $HELPER_NAME could not be read"
     return 2
   fi
   if [ "$status" -eq 1 ]; then
-    add_reason "helper $HELPER_NAME was not written by this installer"
+    add_reason helper-foreign "$HELPER_NAME" "helper $HELPER_NAME was not written by this installer"
     return 1
   fi
   if [ ! -x "$helper" ]; then
-    add_reason "helper $HELPER_NAME is not executable (commits are blocked, not guarded)"
+    add_reason helper-disabled "$HELPER_NAME" "helper $HELPER_NAME is not executable (commits are blocked, not guarded)"
     return 1
   fi
   # The marker is a comment, and anything can carry one: an executable
@@ -171,7 +171,7 @@ check_helper() { # -> 0 armed, 1 not armed, 3 unverifiable
     || ! head="$(sed -e "$((head_lines + 1)),\$d" "$helper")" \
     || ! check_helper_head "$head" 2>/dev/null \
     || ! helper_program 2>/dev/null | cmp -s - <(sed -e "1,${head_lines}d" "$helper"); then
-    add_reason "helper $HELPER_NAME is not the one this installer generates, so what it runs cannot be verified"
+    add_reason helper-unverified "$HELPER_NAME" "helper $HELPER_NAME is not the one this installer generates, so what it runs cannot be verified"
     return 3
   fi
   check_delegated_lanes || return $?
@@ -195,11 +195,11 @@ check_delegated_lanes() { # -> 0 both lanes runnable, 1 not
   for lane in pre-commit commit-msg; do
     program="$SCRIPT_DIR/$lane"
     if [ ! -f "$program" ]; then
-      add_reason "$lane is missing from $(gg_shown "$SCRIPT_DIR"), so every commit is blocked rather than guarded"
+      add_reason lane-missing "$(gg_shown "$SCRIPT_DIR")/$lane" "$lane is missing from $(gg_shown "$SCRIPT_DIR"), so every commit is blocked rather than guarded"
       return 1
     fi
     if [ ! -x "$program" ]; then
-      add_reason "$lane in $(gg_shown "$SCRIPT_DIR") is not executable, so every commit is blocked rather than guarded"
+      add_reason lane-disabled "$(gg_shown "$SCRIPT_DIR")/$lane" "$lane in $(gg_shown "$SCRIPT_DIR") is not executable, so every commit is blocked rather than guarded"
       return 1
     fi
   done
@@ -210,21 +210,21 @@ check_hook() { # HOOK -> 0 armed, 1 not armed, 2 could not determine
   local hook="$1" path="$HOOKS_DIR/$1" line="" second="" shebang=""
   line="$(call_line "$hook")"
   if [ ! -e "$path" ] && [ ! -L "$path" ]; then
-    add_reason "$hook is missing"
+    add_reason hook-missing "$hook" "$hook is missing"
     return 1
   fi
   # Follows a symlink on purpose: git runs whatever the path resolves to, so
   # a link to a well-formed shim is armed and a dangling one is not.
   if [ ! -f "$path" ]; then
-    add_reason "$hook is not a file git can run"
+    add_reason hook-not-file "$hook" "$hook is not a file git can run"
     return 1
   fi
   if ! second="$(sed -n '2p' "$path" 2>/dev/null)"; then
-    add_reason "$hook could not be read"
+    add_reason hook-read "$hook" "$hook could not be read"
     return 2
   fi
   if ! head -n 1 "$path" 2>/dev/null | grep -qE "$SH_SHEBANG_RE"; then
-    add_reason "$hook is not a POSIX-shell script, so the guard line cannot run"
+    add_reason hook-shell "$hook" "$hook is not a POSIX-shell script, so the guard line cannot run"
     return 1
   fi
   # The interpreter decides whether the body runs AT ALL: handed the
@@ -232,15 +232,15 @@ check_hook() { # HOOK -> 0 armed, 1 not armed, 2 could not determine
   # control character or a path that is not on this host means git cannot
   # exec the hook. `--check` writes nothing, so the shims it is looking at
   # are not assumed to be the ones the installer last wrote.
-  shebang="$(head -n 1 "$path" 2>/dev/null)" || { add_reason "$hook could not be read"; return 2; }
+  shebang="$(head -n 1 "$path" 2>/dev/null)" || { add_reason hook-read "$hook" "$hook could not be read"; return 2; }
   case "$shebang" in
     *[[:cntrl:]]*)
-      add_reason "$hook has a control character in its shebang, so git cannot exec it"
+      add_reason hook-shebang-control "$hook" "$hook has a control character in its shebang, so git cannot exec it"
       return 1
       ;;
   esac
   if ! gg_trusted_interpreter "$shebang"; then
-    add_reason "$hook runs under an interpreter this check cannot vouch for ($(gg_shown "$shebang"))"
+    add_reason hook-interpreter "$hook interpreter=$(gg_shown "$shebang")" "$hook runs under an interpreter this check cannot vouch for ($(gg_shown "$shebang"))"
     return 2
   fi
   if [ "$second" != "$line" ]; then
@@ -250,14 +250,14 @@ check_hook() { # HOOK -> 0 armed, 1 not armed, 2 could not determine
     # gates; where exactly is beyond what this reads, so it is unverifiable
     # rather than a "not gated" verdict about a repository that is gated.
     if grep -qF -- "$line" "$path" 2>/dev/null; then
-      add_reason "$hook carries the guard line, but not at line 2 where this check can confirm it runs"
+      add_reason hook-position "$hook" "$hook carries the guard line, but not at line 2 where this check can confirm it runs"
       return 2
     fi
-    add_reason "$hook does not carry the guard line at line 2"
+    add_reason hook-line "$hook" "$hook does not carry the guard line at line 2"
     return 1
   fi
   if [ ! -x "$path" ]; then
-    add_reason "$hook is not executable, so git ignores it"
+    add_reason hook-disabled "$hook" "$hook is not executable, so git ignores it"
     return 1
   fi
   return 0
@@ -269,17 +269,17 @@ check_hook() { # HOOK -> 0 armed, 1 not armed, 2 could not determine
 check_hooks_dir() { # -> 0 armed, 1 not armed, 2 could not determine
   local drifted=0 unknown=0 status=0
   if [ ! -e "$HOOKS_DIR" ]; then
-    add_reason "$(gg_shown "$HOOKS_DIR") does not exist"
+    add_reason hooks-missing "$(gg_shown "$HOOKS_DIR")" "$(gg_shown "$HOOKS_DIR") does not exist"
     return 1
   fi
   if [ ! -d "$HOOKS_DIR" ]; then
-    add_reason "$(gg_shown "$HOOKS_DIR") is not a directory"
+    add_reason hooks-not-directory "$(gg_shown "$HOOKS_DIR")" "$(gg_shown "$HOOKS_DIR") is not a directory"
     return 1
   fi
   # An unsearchable directory makes every probe below read as absent, which
   # would misreport failure-to-measure as drift.
   if [ ! -r "$HOOKS_DIR" ] || [ ! -x "$HOOKS_DIR" ]; then
-    add_reason "$(gg_shown "$HOOKS_DIR") cannot be read"
+    add_reason hooks-unreadable "$(gg_shown "$HOOKS_DIR")" "$(gg_shown "$HOOKS_DIR") cannot be read"
     return 2
   fi
   # 3 is a helper this installer cannot vouch for: unknown, never drift, and

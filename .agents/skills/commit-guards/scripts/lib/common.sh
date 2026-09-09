@@ -5,7 +5,7 @@
 #
 # Family contract: exit 0 clean, 1 violations, 2 usage/config/collection
 # error. A measurement that could not be taken goes through
-# gg_collection_error — a loud exit 2, never a silent pass.
+# gg_fail — a loud exit 2, never a silent pass.
 #
 # Bash 3.2-safe throughout: no Bash 4+ builtins or array kinds, guarded
 # expansion for possibly-empty arrays.
@@ -19,6 +19,9 @@ set -euo pipefail
 # with the source unfound, rather than quietly resolving somewhere else.
 # shellcheck source=paths.sh
 source "$(dirname -- "${BASH_SOURCE[0]}")/paths.sh"
+# not-a-path: bootstrap for the shared message emitter.
+# shellcheck source=messages.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/messages.sh"
 # The glob-list concept, whole: the configured list, the excludes list, the
 # matcher both answer through, the walk, and what a lane may measure at a
 # matched path. Its helpers call back into this file, which is why it is
@@ -43,15 +46,6 @@ GG_SETTINGS_INDEX_OWNED=0
 # because the reset has to reach every guard and one process arms one trap.
 GG_INSTALL_TMP=""
 
-gg_config_error() {
-  echo "::error::${GG_CHECK:-commit-guards}: $*" >&2
-  exit 2
-}
-
-# Same loud exit, distinct name so call sites read as what they are: a
-# measurement that failed, never a verdict.
-gg_collection_error() { gg_config_error "$@"; }
-
 # Only what THIS process created: GG_SETTINGS_INDEX_DIR is exported to the
 # checks a hook lane runs, and they must not delete the directory their parent
 # is still resolving settings from.
@@ -64,14 +58,14 @@ gg_cleanup() {
 
 gg_tmpdir() { # per-run scratch directory in GG_TMP, removed at exit
   GG_TMP="$(mktemp -d "${TMPDIR:-/tmp}/gg-${GG_CHECK:-commit-guards}.XXXXXX")" \
-    || gg_config_error "could not create a temporary directory"
+    || gg_fail scratch-create "$?" "could not create a temporary directory"
   trap gg_cleanup EXIT
 }
 
 gg_repo_root_cd() { # cd to the repository root; all configured paths are repo-relative
   local root
-  gg_path root git rev-parse --show-toplevel || gg_config_error "not inside a git repository"
-  cd -- "$root" || gg_config_error "cannot cd to repository root $(gg_shown "$root")"
+  gg_path root git rev-parse --show-toplevel || gg_fail repository-root "$?" "not inside a git repository"
+  cd -- "$root" || gg_fail repository-cd "$root" "cannot cd to repository root $(gg_shown "$root")"
 }
 
 # A hook lane judges ONE commit, configuration included: tracked settings
@@ -80,7 +74,7 @@ gg_repo_root_cd() { # cd to the repository root; all configured paths are repo-r
 # repository root.
 gg_settings_index_mode() {
   GG_SETTINGS_INDEX_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gg-settings.XXXXXX")" \
-    || gg_config_error "could not create a temporary directory"
+    || gg_fail scratch-create "$?" "could not create a temporary directory"
   GG_SETTINGS_INDEX_OWNED=1
   trap gg_cleanup EXIT
   GG_SETTINGS_FROM_INDEX=1
@@ -89,7 +83,7 @@ gg_settings_index_mode() {
 
 gg_positive_int() { # VALUE NAME — config error unless VALUE is a positive integer
   case "$1" in
-    "" | *[!0-9]* | 0*[0-9] | 0) gg_config_error "$2 must be a positive integer, got '$(gg_scrubbed "$1")'" ;;
+    "" | *[!0-9]* | 0*[0-9] | 0) gg_fail positive-integer "$2:$1" "$2 must be a positive integer, got '$(gg_scrubbed "$1")'" ;;
   esac
 }
 
@@ -127,17 +121,17 @@ gg_config_path() { # RAW LABEL — normalized on stdout; nonzero + ::error on st
   local raw="$1" label="$2" norm
   case "$raw" in
     /*)
-      echo "::error::${GG_CHECK:-commit-guards}: $label path must be repo-root-relative, got absolute: $(gg_scrubbed "$raw")" >&2
+      gg_message path-absolute "$label:$raw" "The path must be relative to the repository root." >&2
       return 1
       ;;
   esac
   if ! norm="$(gg_normalize_rel_path "$raw")"; then
-    echo "::error::${GG_CHECK:-commit-guards}: $label path escapes the repository or normalizes empty: $(gg_scrubbed "$raw")" >&2
+    gg_message path-escape "$label:$raw" "The path escapes the repository or normalizes empty." >&2
     return 1
   fi
   case "$norm" in
     -*)
-      echo "::error::${GG_CHECK:-commit-guards}: $label path must not begin with '-': $(gg_scrubbed "$norm")" >&2
+      gg_message path-option "$label:$norm" "The path must not begin with a dash." >&2
       return 1
       ;;
   esac
@@ -177,16 +171,6 @@ gg_chars() { # TEXT — its character count on stdout
   printf '%s' "$1" | LC_ALL=C awk "$GG_CHARS_AWK_FN"'{ total += gg_chars($0) } END { print total + 0 }'
 }
 
-# Somebody's configured bytes, shown the way they have to be typed back. Not
-# gg_shown: %q escapes the globs out of a value whose whole purpose is to be
-# copied into a settings file or a path. Every C0 control except tab, and
-# DEL, is replaced instead, and a newline becomes one of those replacements,
-# so the value reaches the reader on one line and carries nothing a terminal
-# would act on.
-gg_scrubbed() { # VALUE — the value on one line, controls replaced
-  printf '%s' "$1" | LC_ALL=C awk '{ gsub(/[\001-\010\013-\037\177]/, "?"); printf "%s%s", sep, $0; sep = "?" }'
-}
-
 # What a git tree mode IS, asked by what a file is rather than by a list of
 # what it is not: 100644 and 100755 are a regular file, and 120000, 160000
 # and 040000 are a symlink, a gitlink and a tree. A mode nobody has thought
@@ -215,9 +199,11 @@ gg_resolve_path() { # FLAG-VALUE KEY DEFAULT LABEL — normalized path on stdout
 # finish or abort the merge.
 gg_require_merged_index() { # PATHSPEC... — returns only when nothing is unmerged
   local rows status=0 paths count=0 unmerged
-  rows="$(git ls-files --unmerged -- "$@")" || status=$?
+  [ -n "$GG_TMP" ] || gg_tmpdir
+  rows="$(git ls-files --unmerged -- "$@" 2>"$GG_TMP/unmerged.err")" || status=$?
   [ "$status" -eq 0 ] \
-    || gg_collection_error "could not read the index for unmerged paths (git ls-files exit $status)"
+    || gg_fail_cause unmerged-read "$status" "$GG_TMP/unmerged.err" "could not read the index for unmerged paths (git ls-files exit $status)"
+  [ ! -s "$GG_TMP/unmerged.err" ] || cat -- "$GG_TMP/unmerged.err" >&2
   [ -n "$rows" ] || return 0
   paths="$(printf '%s\n' "$rows" | cut -f2- | LC_ALL=C sort -u)"
   count="$(printf '%s\n' "$paths" | grep -c .)" || count=0
@@ -225,9 +211,9 @@ gg_require_merged_index() { # PATHSPEC... — returns only when nothing is unmer
   # list is the evidence for the refusal below.
   while IFS= read -r unmerged; do
     [ -n "$unmerged" ] || continue
-    printf '%s\n' "$(gg_shown "$unmerged")" >&2
+    gg_message unmerged-path "$unmerged" "Resolve this path before scanning the index." >&2
   done <<<"$paths"
-  gg_collection_error "the index carries $count unmerged path(s) (listed above) and a --cached scan skips them silently — finish or abort the merge, then re-run"
+  gg_fail unmerged-count "$count" "The index carries unmerged paths listed above. Finish or abort the merge, then re-run."
 }
 
 # Judge one `git grep` run from its exit status AND captured stderr. The
@@ -239,11 +225,13 @@ gg_require_merged_index() { # PATHSPEC... — returns only when nothing is unmer
 # git's C-locale spelling, so every call feeding this guard runs under
 # LC_ALL=C — a translated prefix would slip past the match.
 gg_grep_guard() { # STATUS ERRFILE CONTEXT — returns only when the scan is complete
-  local status="$1" errfile="$2" context="$3" first_err
+  local status="$1" errfile="$2" context="$3" first_err="" line
+  [ "$status" -le 1 ] || gg_fail_cause grep-exit "$status" "$errfile" "git grep failed $context (exit $status)"
+  while IFS= read -r line; do
+    case "$line" in error:*) first_err="$line"; break ;; esac
+  done <"$errfile"
+  [ -z "$first_err" ] || gg_fail_cause grep-content "$status" "$errfile" "git grep could not read staged content while $context ($(gg_scrubbed "$first_err"))"
   [ ! -s "$errfile" ] || cat -- "$errfile" >&2
-  [ "$status" -le 1 ] || gg_collection_error "git grep failed $context (exit $status)"
-  first_err="$(grep -E '^error:' -- "$errfile" | head -n 1 || true)"
-  [ -z "$first_err" ] || gg_collection_error "git grep could not read staged content while $context ($(gg_scrubbed "$first_err"))"
 }
 
 # One banned shape, listed over INDEX content: the tracked files whose staged
@@ -276,7 +264,7 @@ gg_content_carriers() { # OUTFILE LABEL ERE PATHSPEC... — measurable carriers,
     # the listing matched.
     gg_read_blob ":0:$f" "$f" "$label"
     if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
-      gg_note_skip "$f" "binary content, not text"
+      gg_note_skip "$f" binary "binary content, not text"
       continue
     fi
     printf '%s\0' "$f" >>"$out"
@@ -300,9 +288,9 @@ gg_grep_lane() { # LABEL ERE REMEDY PATHSPEC... — numbered violations on stdou
     gg_grep_guard "$hit_status" "$GG_TMP/lane.err" "detailing the $label hits in $(gg_shown "$f")"
     # This file just listed as containing hits; anything but a clean re-scan
     # (including "no matches") means the measurement is broken.
-    [ "$hit_status" -eq 0 ] || gg_collection_error "git grep could not detail the $label hits in $(gg_shown "$f") (exit $hit_status)"
+    [ "$hit_status" -eq 0 ] || gg_fail grep-detail "$f:$hit_status" "git grep could not detail the $label hits in $(gg_shown "$f") (exit $hit_status)"
     while IFS= read -r hit; do
-      echo "${GG_CHECK:-commit-guards} FAIL $label: $(gg_shown "$f"):$(gg_scrubbed "${hit#"$f":}")"
+      gg_message match "$label:$f:${hit#"$f":}" "$label in $(gg_shown "$f")"
       echo "  remedies: $remedy"
       GG_VIOLATIONS=$((GG_VIOLATIONS + 1))
     done <"$GG_TMP/lane.hits"
@@ -314,6 +302,6 @@ gg_count_nonempty_lines() { # FILE — count on stdout; loud exit if grep cannot
   # (execution/read failure) means the count is unknown.
   local n status=0
   n="$(grep -c . -- "$1")" || status=$?
-  [ "$status" -le 1 ] || gg_collection_error "could not count lines in $(gg_shown "$1") (grep exit $status)"
+  [ "$status" -le 1 ] || gg_fail lines-count "$1:$status" "could not count lines in $(gg_shown "$1") (grep exit $status)"
   printf '%s\n' "$n"
 }

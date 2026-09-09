@@ -20,6 +20,7 @@ source "$SCRIPT_DIR/lib/settings.sh"
 source "$SCRIPT_DIR/lib/staged-lines.sh"
 
 usage() {
+  gg_message usage "$GG_CHECK" "Command usage follows."
   cat <<'EOF'
 usage: todo-ban [--staged] [--excludes FILE]
 
@@ -45,7 +46,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --staged) MODE="staged" ;;
     --excludes)
-      [ $# -ge 2 ] || gg_config_error "--excludes requires a path"
+      [ $# -ge 2 ] || gg_fail argument-missing --excludes "--excludes requires a path"
       shift
       EXCLUDES_OPT="$1"
       ;;
@@ -54,7 +55,7 @@ while [ $# -gt 0 ]; do
       usage
       exit 0
       ;;
-    *) gg_config_error "unknown argument '$1' (see --help)" ;;
+    *) gg_fail argument-unknown "$1" "unknown argument '$1' (see --help)" ;;
   esac
   shift
 done
@@ -101,8 +102,8 @@ staged_lane() { # numbered violations on stdout, counted in GG_VIOLATIONS
   # dropped — it adds no line — while a file that moved AND changed arrives
   # as an addition and is read whole.
   git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% \
-    --diff-filter=AMT >"$GG_TMP/raw.z" \
-    || gg_collection_error "could not collect the staged changes (git diff --cached --raw failed)"
+    --diff-filter=AMT >"$GG_TMP/raw.z" 2>"$GG_TMP/raw.err" \
+    || gg_fail_cause staged-collect "$?" "$GG_TMP/raw.err" "could not collect the staged changes (git diff --cached --raw failed)"
   # List, then detail — the shape gg_grep_lane uses, with the list SCOPED to
   # the change set. The scan names every file whose staged content carries a
   # marker at all, and the per-file diff below is reached only for those, so
@@ -161,7 +162,7 @@ staged_lane() { # numbered violations on stdout, counted in GG_VIOLATIONS
     # NAMED as unmeasured rather than decoded into a record of raw bytes.
     gg_read_blob "$dstsha" "$f" "work marker"
     if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
-      gg_note_skip "$f" "binary content, not text"
+      gg_note_skip "$f" binary "binary content, not text"
       continue
     fi
     gg_staged_added_lines "$f" >"$GG_TMP/added"
@@ -169,14 +170,14 @@ staged_lane() { # numbered violations on stdout, counted in GG_VIOLATIONS
     # -a: a NUL past git's own binary sniff would otherwise make grep answer
     # with a one-line "binary file matches" summary, which this loop would
     # read as a violation record with no line number in it.
-    LC_ALL=C grep -aE -- "$MARKER_ERE" "$GG_TMP/added" >"$GG_TMP/hits" || grep_status=$?
+    LC_ALL=C grep -aE -- "$MARKER_ERE" "$GG_TMP/added" >"$GG_TMP/hits" 2>"$GG_TMP/hits.err" || grep_status=$?
     # 1 is "this file's additions carry no marker"; anything above it is a
     # scan that did not happen, which must never read as clean.
     [ "$grep_status" -le 1 ] \
-      || gg_collection_error "could not scan the staged additions in '$f' (grep exit $grep_status)"
+      || gg_fail_cause staged-scan "$f:$grep_status" "$GG_TMP/hits.err" "could not scan the staged additions in '$f' (grep exit $grep_status)"
     [ "$grep_status" -eq 0 ] || continue
     while IFS= read -r rec; do
-      echo "$GG_CHECK FAIL work marker: $f:${rec%%"$GG_TAB"*}:${rec#*"$GG_TAB"}"
+      gg_message match "work marker:$f:${rec%%"$GG_TAB"*}:${rec#*"$GG_TAB"}" "A staged line carries a work marker."
       echo "  remedies: $REMEDY"
       GG_VIOLATIONS=$((GG_VIOLATIONS + 1))
     done <"$GG_TMP/hits"
@@ -192,17 +193,17 @@ unmeasured() { # the qualifier for this run, empty when everything matched was r
 if [ "$MODE" = "staged" ]; then
   staged_lane
   if [ "$GG_VIOLATIONS" -gt 0 ]; then
-    echo "todo-ban: $GG_VIOLATIONS work marker(s) added by the staged diff — excludes $EXCLUDES_FILE$(unmeasured)"
+    gg_message staged-count "$GG_VIOLATIONS:$GG_WALK_SKIPPED:$EXCLUDES_FILE" "Work markers added by the staged diff; excludes $EXCLUDES_FILE$(unmeasured)"
     exit 1
   fi
-  echo "todo-ban: OK — the staged diff adds no work markers$(unmeasured)"
+  gg_message staged-count "0:$GG_WALK_SKIPPED:$EXCLUDES_FILE" "The staged diff adds no work markers$(unmeasured)"
   exit 0
 fi
 
 gg_grep_lane "work marker" "$MARKER_ERE" "$REMEDY" .
 
 if [ "$GG_VIOLATIONS" -gt 0 ]; then
-  echo "todo-ban: $GG_VIOLATIONS work marker(s) — excludes $EXCLUDES_FILE$(unmeasured)"
+  gg_message index-count "$GG_VIOLATIONS:$GG_WALK_SKIPPED:$EXCLUDES_FILE" "Work markers in the index; excludes $EXCLUDES_FILE$(unmeasured)"
   exit 1
 fi
-echo "todo-ban: OK — no work markers in tracked files$(unmeasured)"
+gg_message index-count "0:$GG_WALK_SKIPPED:$EXCLUDES_FILE" "No work markers in tracked files$(unmeasured)"

@@ -20,6 +20,7 @@ source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/settings.sh"
 
 usage() {
+  gg_message usage "$GG_CHECK" "Command usage follows."
   cat <<'EOF'
 usage: conflict-markers [--excludes FILE]
 
@@ -43,7 +44,7 @@ EXCLUDES_OPT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --excludes)
-      [ $# -ge 2 ] || gg_config_error "--excludes requires a path"
+      [ $# -ge 2 ] || gg_fail argument-missing --excludes "--excludes requires a path"
       shift
       EXCLUDES_OPT="$1"
       ;;
@@ -52,7 +53,7 @@ while [ $# -gt 0 ]; do
       usage
       exit 0
       ;;
-    *) gg_config_error "unknown argument '$1' (see --help)" ;;
+    *) gg_fail argument-unknown "$1" "unknown argument '$1' (see --help)" ;;
   esac
   shift
 done
@@ -79,7 +80,7 @@ UNMEASURED=""
 [ "$GG_WALK_SKIPPED" -eq 0 ] || UNMEASURED="; $GG_WALK_SKIPPED matched path(s) not measured"
 
 if [ "$GG_VIOLATIONS" -gt 0 ]; then
-  echo "conflict-markers: $GG_VIOLATIONS conflict marker(s) — excludes $EXCLUDES_FILE$UNMEASURED"
+  gg_message result "$GG_VIOLATIONS:$GG_WALK_SKIPPED:$EXCLUDES_FILE" "Conflict markers found$UNMEASURED"
   exit 1
 fi
-echo "conflict-markers: OK — no conflict markers in tracked files$UNMEASURED"
+gg_message result "0:$GG_WALK_SKIPPED:$EXCLUDES_FILE" "No conflict markers in tracked files$UNMEASURED"

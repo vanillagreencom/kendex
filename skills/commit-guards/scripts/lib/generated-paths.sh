@@ -1,21 +1,31 @@
 # shellcheck shell=bash
 # The render writer produces .kendex-generated.json; paths are literal files.
 # Callers supply the inventory from the same state their scan measures.
+# jq returns 20 for document count and 21 for entry shape; the shell reports
+# that status as the stable refusal value. Parse/tool failures retain their status.
+# not-a-path: standalone inventory reader loads the shared message emitter.
+# shellcheck source=messages.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/messages.sh"
 GENERATED_PATHS=""
 GENERATED_NL='
 '
 generated_paths_load() { # JSON — load the writer's exact paths, or refuse
-  GENERATED_PATHS="$(jq -ers '
-    if length == 1 then .[0] else error("expected one inventory") end
+  local output="" status=0 explanation="Cannot read .kendex-generated.json. Install jq or refresh and stage the inventory."
+  output="$(jq -ers '
+    if length == 1 then .[0] else "" | halt_error(20) end
     | if type == "array" and all(.[];
         type == "string" and length > 0
         and (contains("\n") or contains("\u0000") | not))
       then join("\n")
-      else error("expected an array of paths without newline or NUL") end
-  ' <<<"$1")" || {
-    echo '::error::generated paths: cannot read .kendex-generated.json; jq is required; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders' >&2
+      else "" | halt_error(21) end
+  ' <<<"$1" 2>&1)" || status=$?
+  if [ "$status" -ne 0 ]; then
+    GENERATED_PATHS=""
+    [ -z "$output" ] || explanation="$output"
+    gg_message inventory-status "$status" "$explanation" >&2
     return 2
-  }
+  fi
+  GENERATED_PATHS="$output"
 }
 
 generated_path_contains() { # PATH — literal membership, never a glob
