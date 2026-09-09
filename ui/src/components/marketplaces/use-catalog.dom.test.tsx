@@ -9,7 +9,7 @@ import type { CatalogSummary, MarketplaceRow, Scope } from "@/bindings";
 import { UNNAMED_MARKETPLACE } from "@/lib/copy-marketplaces";
 import { useCommunityStore } from "@/stores/community";
 import { useMarketplacesStore } from "@/stores/marketplaces";
-import { catalogKey } from "@/stores/marketplaces-shared";
+import { catalogKey, subscription } from "@/stores/marketplaces-shared";
 import { mount } from "@/test/dom";
 import { useCatalog } from "./use-catalog";
 
@@ -90,6 +90,31 @@ describe("what a converted Community page calls its marketplace", () => {
     });
 
     expect(resolved()).toEqual({ catalog: "subscription", name: "kendex" });
+  });
+
+  // A curated set and an offered package are opened FROM the marketplace
+  // page, which hands them the subscription it became — so their own
+  // `requested` is that subscription, while the summary that discovered it
+  // is still cached under the repository the reader browsed. Before the
+  // overview rows land they have neither row nor summary under the key they
+  // hold, and the page read `Unnamed marketplace` under a breadcrumb
+  // reading the declared name.
+  it("recovers the summary for a page reached from a converted one", () => {
+    useMarketplacesStore.setState({
+      summaries: { [catalogKey(REQUESTED)]: summary() },
+    });
+
+    const seen = { name: "" };
+    function Nested() {
+      // What `goToBundle`/`goToAvailablePackage` carried from the
+      // marketplace page: the subscription, never the repository.
+      const { display } = useCatalog(subscription(PLACE, "."));
+      seen.name = display.name;
+      return null;
+    }
+    mount(<Nested />);
+
+    expect(seen.name).toBe("kendex");
   });
 
   // Nothing read and nothing declared: the alias is a relative path and

@@ -6,6 +6,7 @@ import {
   listedNameOf,
   type MarketplaceDisplay,
   rowForCatalog,
+  summaryFor,
 } from "@/lib/marketplace-display";
 import { useCommunityStore } from "@/stores/community";
 import {
@@ -37,7 +38,12 @@ export function useCatalog(requested: Catalog): {
   retry: () => void;
 } {
   const key = catalogKey(requested);
-  const summary = useMarketplacesStore((s) => s.summaries[key] ?? null);
+  // Not the key alone: a page reached from a converted Community page holds
+  // the subscription that page became, while the summary that discovered it
+  // is cached under the repository. [summaryFor] recovers it.
+  const summary = useMarketplacesStore((s) =>
+    summaryFor(s.summaries, requested),
+  );
   const rows = useMarketplacesStore((s) => s.rows);
   const directory = useCommunityStore((s) => s.directory?.rows);
   const error = useMarketplacesStore(

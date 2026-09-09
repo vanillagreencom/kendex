@@ -208,6 +208,37 @@ export const discoveredCatalog = (
     ? subscription(summary.subscription.scope, summary.subscription.source)
     : catalog;
 
+/** One catalog's own fetched account of itself, wherever it landed.
+ *
+ *  A Community read caches under the repository the page was opened by, and
+ *  the subscription that read discovered is addressed by its own key. So a
+ *  page reached FROM such a page — a curated set, an offered package — is
+ *  handed the subscription and finds nothing under the key it holds, and
+ *  before the overview rows land it has neither row nor summary to name the
+ *  marketplace by. The summary that named this subscription is that page's
+ *  answer too, so it is recovered rather than missed.
+ *
+ *  The scan is over opened catalogs, one entry each, and returns the stored
+ *  object rather than a fresh one — a selector minting a value here would
+ *  re-render forever. */
+export const summaryFor = (
+  summaries: Record<string, CatalogSummary>,
+  catalog: Catalog,
+): CatalogSummary | null => {
+  const own = summaries[catalogKey(catalog)];
+  if (own) return own;
+  if (catalog.by !== "subscription") return null;
+  const wanted = marketKey(catalog.scope, catalog.source);
+  return (
+    Object.values(summaries).find(
+      (summary) =>
+        summary.subscription &&
+        marketKey(summary.subscription.scope, summary.subscription.source) ===
+          wanted,
+    ) ?? null
+  );
+};
+
 /** What a directory lists a repository under, for the page showing it and
  *  the breadcrumb over that page. Spelled once, so a title and the crumb
  *  above it cannot be resolved from different inputs: a subscription is
@@ -236,7 +267,7 @@ export const catalogDisplay = (
   // discovered is what the page has become. Both halves, here, so a crumb
   // resolving from the address alone reaches the same marketplace the page
   // and the card do.
-  const summary = summaries[catalogKey(catalog)] ?? null;
+  const summary = summaryFor(summaries, catalog);
   const declared = discoveredCatalog(catalog, summary);
   return displayFor({
     catalog: declared,
