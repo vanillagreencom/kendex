@@ -1,0 +1,1 @@
+- A marketplace's page, its card and the breadcrumb above it show one name: the one its catalogue declares, with a directory's own label standing in only until that name has been read.

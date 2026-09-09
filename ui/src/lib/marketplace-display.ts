@@ -1,6 +1,7 @@
 import type {
   Catalog,
   CatalogSummary,
+  DirectoryRow,
   MarketplaceMeta,
   MarketplaceRow,
 } from "@/bindings";
@@ -58,17 +59,25 @@ const readable = (text: string): boolean => {
  *  hand-written one can be `.`, which names nothing on screen. */
 export function displayName({
   meta,
+  listedName,
   resolvedPath,
   repo,
   alias,
 }: {
   meta: MarketplaceMeta | null;
+  /** What a directory listed this repository under, where a page was opened
+   *  from one. Below the catalogue's own name and above the address: the
+   *  issue's rule is the declared name first, and a listing that outranked
+   *  it would title a subscribed repository by its directory label on the
+   *  page while its card and crumb read the catalogue's own. */
+  listedName?: string | null;
   resolvedPath: string | null;
   repo: string | null;
   alias: string;
 }): string {
   const candidates = [
     meta?.name ?? "",
+    listedName ?? "",
     leaf(resolvedPath),
     leaf(repo),
     alias,
@@ -129,9 +138,9 @@ export interface CatalogFacts {
   row?: MarketplaceRow | null;
   /** The catalog's own account of itself, once it has been fetched. */
   summary?: CatalogSummary | null;
-  /** What a directory listed a bare repository under, where the page was
-   *  opened from one. It leads for a repository, being what the reader
-   *  clicked, and nothing declares such a page on this machine. */
+  /** What a directory listed this repository under, where the page was
+   *  opened from one — [listedNameOf] over the community rows. It answers
+   *  below the catalogue's own declared name and above the address. */
   listedName?: string | null;
 }
 
@@ -162,23 +171,33 @@ export const displayFor = ({
     (catalog.by === "repo" ? catalog.repo : summary?.provenance) ??
     null;
   const alias = catalog.by === "repo" ? catalog.repo : catalog.source;
-  const listed = listedName?.trim();
   const local = row ? row.repo === null && row.repoIdentity === null : false;
   return {
-    name:
-      listed !== undefined && listed !== ""
-        ? listed
-        : displayName({
-            meta,
-            resolvedPath: row?.resolvedPath ?? null,
-            repo,
-            alias,
-          }),
+    name: displayName({
+      meta,
+      listedName,
+      resolvedPath: row?.resolvedPath ?? null,
+      repo,
+      alias,
+    }),
     local,
     where: (local ? row?.resolvedPath : repo) ?? row?.resolvedPath ?? "",
     alias,
   };
 };
+
+/** What a directory lists a repository under, for the page showing it and
+ *  the breadcrumb over that page. Spelled once, so a title and the crumb
+ *  above it cannot be resolved from different inputs: a subscription is
+ *  never a directory row, so a page carried on as one reads its
+ *  catalogue's own name in both places. */
+export const listedNameOf = (
+  rows: DirectoryRow[] | undefined,
+  catalog: Catalog,
+): string | null =>
+  catalog.by === "repo"
+    ? (rows?.find((row) => row.repo === catalog.repo)?.name ?? null)
+    : null;
 
 /** The same answer for a surface holding only a catalog and the store's own
  *  slices — it finds the declaring row and the fetched summary itself. A
@@ -189,13 +208,13 @@ export const catalogDisplay = (
   rows: MarketplaceRow[],
   summaries: Record<string, CatalogSummary>,
   catalog: Catalog,
-  listedName?: string | null,
+  directory?: DirectoryRow[],
 ): MarketplaceDisplay =>
   displayFor({
     catalog,
     row: rowForCatalog(rows, catalog),
     summary: summaries[catalogKey(catalog)] ?? null,
-    listedName,
+    listedName: listedNameOf(directory, catalog),
   });
 
 /** What a catalog is called in a title or breadcrumb. */
@@ -203,5 +222,6 @@ export const catalogTitle = (
   rows: MarketplaceRow[],
   summaries: Record<string, CatalogSummary>,
   catalog: Catalog | undefined,
+  directory?: DirectoryRow[],
 ): string | null =>
-  catalog ? catalogDisplay(rows, summaries, catalog).name : null;
+  catalog ? catalogDisplay(rows, summaries, catalog, directory).name : null;

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { CatalogSummary, MarketplaceRow, Scope } from "@/bindings";
+import type {
+  CatalogSummary,
+  DirectoryRow,
+  MarketplaceRow,
+  Scope,
+} from "@/bindings";
 import {
   LOCAL_FOLDER_LABEL,
   UNNAMED_MARKETPLACE,
@@ -200,13 +205,47 @@ describe("naming the catalog a page is showing", () => {
     }
   });
 
-  // What a directory listed a repository under is what the reader clicked,
-  // and the page header has always led with it; the crumb over that header
-  // reads the same function, so the two cannot drift.
-  it("leads with the name a directory listed a repository under", () => {
+  // A directory's label names a repository nobody subscribes to and has
+  // read nothing from. It never outranks what the catalogue calls itself:
+  // a page carried on as a subscription would otherwise wear the directory
+  // label while its card and crumb wore the declared name.
+  it("uses a directory's label below the catalogue's own name", () => {
     const repo = { by: "repo" as const, repo: "acme/kit" };
-    expect(catalogDisplay(rows, {}, repo, "Kit").name).toBe("Kit");
-    expect(catalogDisplay(rows, {}, repo, "  ").name).toBe("kit");
+    const listed: DirectoryRow[] = [
+      {
+        repo: "acme/kit",
+        repoKey: "acme/kit",
+        repoIdentity: "github.com/acme/kit",
+        name: "Kit by Acme",
+        description: null,
+        tags: [],
+        featured: false,
+        packageCount: 0,
+        bundleCount: 0,
+        subscribed: false,
+        packages: [],
+        bundles: [],
+      },
+    ];
+    const read = { [catalogKey(repo)]: summary({ meta: { name: "kendex" } }) };
+
+    expect(catalogDisplay(rows, {}, repo, listed).name).toBe("Kit by Acme");
+    expect(catalogDisplay(rows, read, repo, listed).name).toBe("kendex");
+    expect(catalogDisplay(rows, {}, repo, []).name).toBe("kit");
+    // A subscription is never a directory row, so a Community page carried
+    // on as one drops the label rather than keeping it over the crumb.
+    // Asserted through an alias spelled like the listed repository and
+    // declared by no place here: with the label suppressed the alias itself
+    // answers, and a label reaching it would read "Kit by Acme" over a
+    // subscription the directory knows nothing about.
+    expect(
+      catalogDisplay(
+        rows,
+        {},
+        subscription({ scope: "global" }, "acme/kit"),
+        listed,
+      ).name,
+    ).toBe("acme/kit");
   });
 
   it("addresses the row a subscription names, and no other place's", () => {

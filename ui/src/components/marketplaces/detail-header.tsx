@@ -24,6 +24,7 @@ import { shortRevision } from "@/lib/labels";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import {
   displayFor,
+  listedNameOf,
   marketplaceDisplay,
   sourceLine,
 } from "@/lib/marketplace-display";
@@ -57,6 +58,7 @@ export function DetailHeader({
   const read = useMarketplacesStore((s) => s.read);
   const load = useMarketplacesStore((s) => s.load);
   const stale = catalog.by === "subscription" && read.status === "failed";
+  const directory = useCommunityStore((s) => s.directory?.rows);
   const listing = useCommunityStore((s) =>
     requested.by === "repo"
       ? s.directory?.rows.find((r) => r.repo === requested.repo)
@@ -78,7 +80,7 @@ export function DetailHeader({
     catalog,
     row,
     summary,
-    listedName: listing?.name ?? null,
+    listedName: listedNameOf(directory, requested),
   }).name;
   const description = meta?.description ?? listing?.description ?? null;
   const commit = row?.commit ?? summary?.commit ?? null;

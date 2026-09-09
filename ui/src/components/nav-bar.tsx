@@ -10,6 +10,7 @@ import {
 } from "@/lib/layout";
 import { catalogTitle } from "@/lib/marketplace-display";
 import { cn } from "@/lib/utils";
+import { useCommunityStore } from "@/stores/community";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 
@@ -33,6 +34,9 @@ export function NavBar() {
   // have not arrived yet — a crumb drawn from the address alone would spell
   // a folder subscription's alias.
   const summaries = useMarketplacesStore((s) => s.summaries);
+  // The same directory rows the page's own header reads, so a repository
+  // opened from Community is named alike above and below the crumb.
+  const directory = useCommunityStore((s) => s.directory?.rows);
 
   if (!hasHistory) return null;
 
@@ -72,6 +76,7 @@ export function NavBar() {
               rows,
               summaries,
               marketplaceRef ?? bundleRef?.catalog ?? availableRef?.catalog,
+              directory,
             ),
             bundleName: bundleRef?.bundle ?? null,
           })}
