@@ -336,5 +336,6 @@ Summary: [ISSUE_ID] ✓
    Branch: [BRANCH]
    Commits: [COUNT] ([SHAS])
    QA: [AGGREGATED_SIGNALS or "none"]
+   Proposed rule: [proposal or "none"]
    Summaries: [all issue IDs ✓]
    </output_format>
