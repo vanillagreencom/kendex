@@ -491,6 +491,41 @@ describe("the reading behind a row's score", () => {
     expect(nav.packageView).toEqual({ mode: "safety" });
   });
 
+  // A grouped row can hold one place the audit read and one it could not.
+  // The disc then shows the failure, and the only place that failure can be
+  // read is the place it happened at.
+  it("opens the place whose read failed when that is what the score shows", async () => {
+    const worst = scoredGh();
+    act(() => {
+      useAuditStore.setState({
+        views: [
+          // Personal read cleanly; the project's read failed, so the disc
+          // is showing that failure rather than a number.
+          { ...worst, safety: [] },
+          {
+            ...worst,
+            scope: { scope: "project", root: "/work/vg" },
+            safety: [],
+            error: { message: "could not read /work/vg" },
+          },
+        ] as never,
+        auditedAt: Date.now(),
+        read: READ_LANDED,
+      });
+    });
+    const host = mount(
+      <UpdatesTable rows={[row("gh", null), row("gh", "/work/vg")]} />,
+    );
+    await userEvent.click(score(host));
+
+    expect(useNavStore.getState().packageRef).toEqual({
+      kind: "skill",
+      name: "gh",
+      scope: { scope: "project", root: "/work/vg" },
+    });
+    expect(useNavStore.getState().packageView).toEqual({ mode: "safety" });
+  });
+
   // The control: the same row's name opens the same page, on no tab in
   // particular. Without it "opens the Safety tab" could be nothing more
   // than "opens the package".

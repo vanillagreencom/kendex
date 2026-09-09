@@ -22,6 +22,12 @@ export interface InstalledReading {
   /** Why the last audit failed, or null. A result beside this is the check
    *  before the one that failed. */
   failure: string | null;
+  /** The place whose own read failed, where one of the places asked about
+   *  did. Null for a failure that belongs to the audit as a whole, which
+   *  names no place. It travels with the reading for the same reason the
+   *  result's scope does: a surface offering a way to what is behind the
+   *  words has to land where those words are true. */
+  failedAt: Scope | null;
   /** No audit has answered and none has failed: the reading is still on its
    *  way, which is a wait rather than an outcome. */
   waiting: boolean;
@@ -53,16 +59,19 @@ export function useInstalledReading(
   const result = installedSafety(views, kind, name, scopes);
   // A place the audit could not read has failed for this row even when the
   // audit as a whole came back: what is on screen for it is whatever it
-  // last said, and nothing has confirmed it since.
+  // last said, and nothing has confirmed it since. The view is kept whole
+  // rather than reduced to its message, because the place it failed at is
+  // where that failure can be read.
   const unreadable =
     views.find(
       (view) =>
         view.error && scopes.some((scope) => sameScope(view.scope, scope)),
-    )?.error ?? null;
-  const failure = auditFailure ?? unreadable?.message ?? null;
+    ) ?? null;
+  const failure = auditFailure ?? unreadable?.error?.message ?? null;
   return {
     result,
     failure,
+    failedAt: unreadable?.scope ?? null,
     waiting: auditedAt === null && failure === null,
     checkedAt: auditedAt,
     retry: () => void refresh({ force: true }),

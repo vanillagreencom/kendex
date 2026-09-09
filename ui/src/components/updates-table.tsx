@@ -118,15 +118,17 @@ export function PackageRows({
   // One package can be installed in several places, and the package page
   // shows one of them. The row's first place is the one its name opens.
   const first = places[0];
-  // Which place the score is a reading of. Over several places the disc
-  // shows the worst of them, and the reading carries the place that earned
-  // it, so the score opens that copy: opening the row's first place would
-  // show a reader sent to check a warning a different copy, scoring higher
-  // and carrying none of the findings the number stood for.
+  // Which place the score is showing the state of, which is where it opens.
+  // With a reading, that is the copy that earned it — over several places
+  // the disc shows the worst of them, so opening the row's first place
+  // would send a reader who clicked a warning to a copy carrying none of
+  // the findings the number stood for. With no reading and a place whose
+  // own read failed, the disc is showing that failure, and the place it
+  // failed at is the only one where it can be read. An audit that failed as
+  // a whole names no place, and leaves the row's first.
+  const at = reading.result?.scope ?? reading.failedAt;
   const scored =
-    places.find(
-      (place) => reading.result && sameScope(place.scope, reading.result.scope),
-    ) ?? first;
+    (at && places.find((place) => sameScope(place.scope, at))) ?? first;
   /** This package's page, at one of the places this row is about. */
   const openPackage = (place: UpdateRow | undefined, view?: PackageView) => {
     if (!place) return;
