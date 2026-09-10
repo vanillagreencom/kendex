@@ -159,8 +159,12 @@ export const SECRET_FILE_DEFAULT_NOTE =
   "The file every project uses unless it names another.";
 export const SECRET_FILE_RECORDED = (file: string): string =>
   `Saving records ${file} as this project's private file, so the packages read it too.`;
+/** Saving a destination on its own records the choice and adds the ignore
+ *  rule; it writes no private file, because nothing puts a file there but
+ *  a credential someone typed. So the promise is about saving a key, which
+ *  is true whether or not this draft carries one. */
 export const SECRET_FILE_WILL_CREATE = (file: string): string =>
-  `${file} doesn't exist yet. Saving creates it, readable only by you.`;
+  `${file} doesn't exist yet. Saving a key creates it, readable only by you.`;
 export const SECRET_FILE_WILL_IGNORE = (entry: string, file: string): string =>
   `Saving also adds ${entry} to .gitignore first, so git never carries ${file}.`;
 export const SECRET_FILE_REFUSED = "Nothing can be saved here yet";

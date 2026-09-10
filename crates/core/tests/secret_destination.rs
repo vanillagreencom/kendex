@@ -288,6 +288,49 @@ fn a_link_on_the_way_out_of_the_project_is_refused() {
     assert!(problem.contains("outside this project"), "{problem}");
 }
 
+/// The owed rule is a `.gitignore` pattern, and a pattern is a glob. A
+/// filename carrying glob metacharacters written straight into the file
+/// ignores something else, and git then carries the credential the same
+/// save writes. The picker lists whatever `.env*` files the folder holds,
+/// so these names reach the rule.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_owed_ignore_rule_matches_the_file_it_names() {
+    let f = fixture(true);
+    for (named, want) in [
+        (".env.[prod]", "/.env.\\[prod\\]"),
+        (".env.*", "/.env.\\*"),
+        (".env.?", "/.env.\\?"),
+        // Git drops a pattern's trailing spaces unless the last is
+        // escaped, so a name ending in one would ignore a different file.
+        (".env.trail ", "/.env.trail\\ "),
+        (".env.plain", "/.env.plain"),
+    ] {
+        let settings = format!("[env]\nKENDEX_ENV_FILE = \"{named}\"\n");
+        let DestinationState::Missing { ignore } = state(&f, Some(&settings), None) else {
+            panic!("{named}: expected a missing file owed an ignore rule");
+        };
+        assert_eq!(ignore.as_deref(), Some(want), "{named}");
+    }
+
+    // And git agrees the rule covers the file, which is the whole claim.
+    for named in [".env.[prod]", ".env.*", ".env.trail ", ".env.plain"] {
+        let settings = format!("[env]\nKENDEX_ENV_FILE = \"{named}\"\n");
+        let DestinationState::Missing { ignore: Some(rule) } = state(&f, Some(&settings), None)
+        else {
+            panic!("{named}: expected an owed rule");
+        };
+        fs::write(f.project.join(".gitignore"), format!("{rule}\n")).unwrap();
+        fs::write(f.project.join(named), "X='1'\n").unwrap();
+        // `git()` asserts the command succeeded, and `check-ignore -q`
+        // succeeds exactly when the rule covers the file — which is the
+        // claim. It is also the one caller here that clears the git
+        // environment, so a run under a commit hook asks this fixture.
+        git(&f.project, &["check-ignore", "-q", "--", named]);
+        fs::remove_file(f.project.join(named)).unwrap();
+    }
+}
+
 /// kendex's own configuration is never a private file, whatever git says
 /// about it. A project with no repository has no tracked answer to lean
 /// on, so this is the case where the git checks say nothing at all and

@@ -341,9 +341,45 @@ fn protection(root: &Path, file: &str) -> DestinationState {
         // kendex does not quietly start ignoring a file they can see.
         Ok(Some(_)) if exists => refused(
             format!("git does not ignore {file}, so a secret written there would show up as a change to commit"),
-            format!("add /{file} to {IGNORE_FILE}, then open this page again"),
+            format!(
+                "add {} to {IGNORE_FILE}, then open this page again",
+                ignore_pattern(file)
+            ),
         ),
-        Ok(Some(_)) => ready(false, Some(format!("/{file}"))),
+        Ok(Some(_)) => ready(false, Some(ignore_pattern(file))),
+    }
+}
+
+/// The `.gitignore` line that ignores exactly this file and nothing else.
+///
+/// A pattern is a glob, so a filename is not one: `.env.[prod]` written
+/// straight into `.gitignore` is a character class that matches
+/// `.env.d`, `.env.o`, `.env.p` and `.env.r`, and never the file it came
+/// from. Git would then carry the credential the plan is about to write
+/// there. The picker lists whatever `.env*` files the project's folder
+/// holds and a person may type any name into the settings key, so the
+/// metacharacters below reach here.
+///
+/// Leading, because the pattern is rooted at the project: `/` first means
+/// this file at the top level rather than any file of that name anywhere
+/// under it. `#` and `!` are special only at the start of a pattern, and
+/// the `/` holds that position, so neither is escaped. `\` and `:` cannot
+/// appear at all — [`relative`] refuses a name carrying either — so
+/// neither is escaped here.
+fn ignore_pattern(file: &str) -> String {
+    let mut out = String::from("/");
+    for character in file.chars() {
+        if matches!(character, '*' | '?' | '[' | ']') {
+            out.push('\\');
+        }
+        out.push(character);
+    }
+    // Git drops trailing spaces from a pattern unless the last one is
+    // escaped, and a settings value is taken as written rather than
+    // trimmed, so a name ending in one would ignore a different file.
+    match out.ends_with(' ') {
+        true => format!("{}\\ ", &out[..out.len() - 1]),
+        false => out,
     }
 }
 
