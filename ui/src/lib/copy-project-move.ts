@@ -105,14 +105,6 @@ export const standingSaid = (standing: Standing, name: string): string => {
   }
 };
 
-/** Whether a folder in this standing can be reconnected to at all. The one
- *  place the dialog asks; the write refuses the same set on its own. */
-export const canReconnect = (standing: Standing): boolean =>
-  standing.kind === "moved" ||
-  standing.kind === "settled" ||
-  standing.kind === "no-record" ||
-  standing.kind === "registered";
-
 export const reconnected = (name: string, root: string): string =>
   `${name} is now at ${root}.`;
 /** After the reconnect, what the fresh read of that place found. The

@@ -30,6 +30,14 @@ pub struct ScanResult {
     /// Registered projects whose directory the scan could not read as one
     /// — flagged, never dropped.
     pub missing_projects: Vec<MissingProject>,
+    /// The registered project folders this scan opened.
+    ///
+    /// Positive evidence, because absence from `missing_projects` is not
+    /// evidence at all: a path this scan never met — a project registered
+    /// since it ran — is missing from that list exactly as a folder that
+    /// was read is. Whether a place may be written to rests on this, and
+    /// nothing may rest on a silence.
+    pub read_projects: Vec<PathBuf>,
     /// Unreadable or unparsable surfaces; truth the scan could not reach.
     pub warnings: Vec<ScanWarning>,
 }
@@ -318,12 +326,15 @@ fn scan_scope(
             }
         }
         Scope::Project { root: project } => {
-            if let Some(why) = missing_why(project) {
-                pass.result.missing_projects.push(MissingProject {
-                    root: project.clone(),
-                    why,
-                });
-                return;
+            match missing_why(project) {
+                Some(why) => {
+                    pass.result.missing_projects.push(MissingProject {
+                        root: project.clone(),
+                        why,
+                    });
+                    return;
+                }
+                None => pass.result.read_projects.push(project.clone()),
             }
             for adapter in all_adapters() {
                 for kind in kinds.iter().copied() {

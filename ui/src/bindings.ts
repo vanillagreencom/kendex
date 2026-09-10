@@ -158,8 +158,9 @@ export const commands = {
 	 */
 	projectRelocation: (from: string, to: string) => typedError<Relocation, string>(__TAURI_INVOKE("project_relocation", { from, to })),
 	/**
-	 *  Point one registered project at the folder it was moved to. Nothing in
-	 *  either folder is read for this, written, moved or removed.
+	 *  Point one registered project at the folder it was moved to. Neither
+	 *  folder is written to, moved or removed; the destination is read, to see
+	 *  whose record it holds.
 	 */
 	relocateProject: (from: string, to: string, consolidate: boolean) => typedError<RelocatedProject, string>(__TAURI_INVOKE("relocate_project", { from, to, consolidate })),
 	/**
@@ -1184,6 +1185,24 @@ export type Comparison = {
 	/**  How many differ in all. Zero means the two are byte-identical. */
 	differingTotal: number,
 };
+
+/**
+ *  What the person may be offered for a folder in this standing.
+ * 
+ *  Decided here, from the one table [`Standing::refusal`] holds, so a
+ *  window drawing the choice and the write enforcing it cannot come
+ *  apart: a standing added later reaches both through this.
+ */
+export type Confirm = 
+/**
+ *  The move may not go ahead: the folder is explained and nothing is
+ *  offered.
+ */
+"none" | 
+/**  It may, on the ordinary confirmation. */
+"reconnect" | 
+/**  It may only as the choice to join two entries into one. */
+"consolidate";
 
 /**
  *  A key two installed packages disagree about: one declares it public,
@@ -3182,7 +3201,7 @@ export type RelocatedProject = {
 
 /**
  *  One proposed reconnection: the entry it replaces, the folder it would
- *  point at, and what stands there.
+ *  point at, what stands there, and what may be offered for it.
  */
 export type Relocation = {
 	/**
@@ -3196,6 +3215,7 @@ export type Relocation = {
 	 */
 	to: string,
 	standing: Standing,
+	confirm: Confirm,
 };
 
 /**  A package's declared effects on the repository it installs into. */
@@ -3355,6 +3375,16 @@ export type ScanResult = {
 	 *  — flagged, never dropped.
 	 */
 	missingProjects: MissingProject[],
+	/**
+	 *  The registered project folders this scan opened.
+	 * 
+	 *  Positive evidence, because absence from `missing_projects` is not
+	 *  evidence at all: a path this scan never met — a project registered
+	 *  since it ran — is missing from that list exactly as a folder that
+	 *  was read is. Whether a place may be written to rests on this, and
+	 *  nothing may rest on a silence.
+	 */
+	readProjects: string[],
 	/**  Unreadable or unparsable surfaces; truth the scan could not reach. */
 	warnings: ScanWarning[],
 };

@@ -11,7 +11,7 @@ use crate::fs::{atomic_write, read_if_exists};
 use crate::model::Scope;
 
 mod relocate;
-pub use relocate::{Relocation, Standing, inspect, relocate_project};
+pub use relocate::{Confirm, Relocation, Standing, inspect, relocate_project};
 
 mod zoom;
 use zoom::bring_zoom_into_range;

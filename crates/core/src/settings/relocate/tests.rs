@@ -101,6 +101,7 @@ fn a_renamed_folder_reconnects_without_touching_what_is_installed() {
     let (plan, settings, _) = relocate_project(&env, &registered, &new, false).unwrap();
 
     assert_eq!(plan.standing, Standing::Moved);
+    assert_eq!(plan.confirm, Confirm::Reconnect);
     assert_eq!(settings.projects, [crate::paths::canonical(&new).unwrap()]);
     assert_eq!(
         crate::settings::load(&env).unwrap().projects,
@@ -157,6 +158,7 @@ fn inspecting_a_folder_changes_nothing() {
     let plan = inspect(&env, &registered, &new).unwrap();
 
     assert_eq!(plan.standing, Standing::NoRecord);
+    assert_eq!(plan.confirm, Confirm::Reconnect);
     assert_eq!(plan.from, registered);
     assert_eq!(
         std::fs::read_to_string(env.settings_file()).unwrap(),
@@ -193,6 +195,11 @@ fn a_folder_holding_another_projects_record_is_refused() {
         Standing::RecordElsewhere {
             root: crate::paths::canonical(&third).unwrap()
         }
+    );
+    assert_eq!(
+        plan.confirm,
+        Confirm::None,
+        "a folder that is another project's is offered nothing, not a choice"
     );
     assert!(
         matches!(&refused, CoreError::ProjectRecordElsewhere { path, recorded }
@@ -300,6 +307,7 @@ fn the_folder_the_entry_already_names_is_refused() {
     let refused = relocate_project(&env, &registered, &root, false).unwrap_err();
 
     assert_eq!(plan.standing, Standing::Unchanged);
+    assert_eq!(plan.confirm, Confirm::None);
     assert!(
         matches!(&refused, CoreError::ProjectAlreadyRegistered { path } if path == &registered),
         "{refused:?}"
@@ -334,6 +342,11 @@ fn an_already_registered_destination_is_joined_only_when_that_is_chosen() {
     let plan = inspect(&env, &stale, &live).unwrap();
     let refused = relocate_project(&env, &stale, &live, false).unwrap_err();
     assert_eq!(plan.standing, Standing::Registered);
+    assert_eq!(
+        plan.confirm,
+        Confirm::Consolidate,
+        "joining two entries is the only thing offered here"
+    );
     assert!(
         matches!(&refused, CoreError::ProjectFolderRegistered { path } if path == &live),
         "{refused:?}"
@@ -446,7 +459,34 @@ fn a_folder_whose_record_names_itself_reconnects() {
     let (plan, settings, _) = relocate_project(&env, &registered, &new, false).unwrap();
 
     assert_eq!(plan.standing, Standing::Settled);
+    assert_eq!(plan.confirm, Confirm::Reconnect);
     assert_eq!(settings.projects, [crate::paths::canonical(&new).unwrap()]);
+}
+
+/// A folder named from beside it, the way a shell names one: `..` is
+/// folded rather than left standing, since a path spelled through it
+/// equals no entry the registry stores.
+#[test]
+fn an_entry_named_through_a_sibling_directory_is_matched() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::test_util::rooted(&tmp);
+    let env = env_in(&home);
+    let old = home.join("work/app");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::create_dir_all(home.join("work/sub")).unwrap();
+    let registered = crate::settings::register_project(&env, &old).unwrap().2;
+    let new = home.join("work/renamed");
+    std::fs::rename(&old, &new).unwrap();
+
+    assert_eq!(
+        crate::paths::absolute(&home.join("work/sub/../app")),
+        registered,
+        "the folded path is the entry the registry stores"
+    );
+
+    let (plan, _, _) = relocate_project(&env, &home.join("work/sub/../app"), &new, false).unwrap();
+
+    assert_eq!(plan.from, registered);
 }
 
 /// The reconnect answers under the spelling the registry stores, whatever

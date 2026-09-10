@@ -103,7 +103,13 @@ beforeEach(() => {
   useScanStore.setState({
     scanning: false,
     error: null,
-    result: { harnesses: [], items: [], warnings: [], missingProjects: [] },
+    result: {
+      harnesses: [],
+      items: [],
+      warnings: [],
+      missingProjects: [],
+      readProjects: [ACME.root, BETA.root],
+    },
   });
   useInstallFlow.setState({ ask: null, outcome: null, running: false });
 });
@@ -334,6 +340,7 @@ describe("the guided install", () => {
         items: [],
         warnings: [],
         missingProjects: [{ root: BETA.root, why: { kind: "gone" } }],
+        readProjects: [ACME.root],
       },
     });
     useNavStore.setState({ installInto: BETA });
@@ -358,6 +365,30 @@ describe("the guided install", () => {
     // Where the subscription lives, which is what a null destination
     // means: the personal setup, and no project among them.
     expect(install.mock.calls[0][0].destination).toBeNull();
+  });
+
+  // A project registered since the last scan ran is in neither of that
+  // scan's lists: it was never met. Reading its absence from the missing
+  // list as "found" offers a folder nothing has opened — the reading has
+  // to be positive.
+  it("offers no project the last scan never met", async () => {
+    useScanStore.setState({
+      scanning: false,
+      error: null,
+      result: {
+        harnesses: [],
+        items: [],
+        warnings: [],
+        missingProjects: [],
+        readProjects: [ACME.root],
+      },
+    });
+    useNavStore.setState({ installInto: BETA });
+    await open();
+
+    expect(button(INSTALL_ACTION).disabled).toBe(true);
+    expect(document.body.textContent).toContain(INSTALL_NO_PLACE);
+    expect(install).not.toHaveBeenCalled();
   });
 
   // Nowhere to install is not an install: the button is off and says why
@@ -497,6 +528,7 @@ describe("the guided install", () => {
         items: [],
         warnings: [],
         missingProjects: [{ root: ACME.root, why: { kind: "gone" } }],
+        readProjects: [BETA.root],
       },
     });
 
@@ -529,6 +561,7 @@ describe("the guided install", () => {
           items: [],
           warnings: [],
           missingProjects: [{ root: BETA.root, why: { kind: "gone" } }],
+          readProjects: [ACME.root],
         },
       });
     });

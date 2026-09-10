@@ -4,7 +4,7 @@
 //! pointing at a path nothing is at. What is installed there did not
 //! change: the manifest, the record, the customizations and the files are
 //! all in the folder that moved. So the recovery is one registry entry
-//! replaced by another, and nothing on disk touched — never a removal and
+//! replaced by another, and nothing on disk written — never a removal and
 //! a fresh install, which is what loses the local packages, the ignored
 //! env files and the uncommitted work in that folder.
 //!
@@ -88,8 +88,25 @@ impl Standing {
     }
 }
 
+/// What the person may be offered for a folder in this standing.
+///
+/// Decided here, from the one table [`Standing::refusal`] holds, so a
+/// window drawing the choice and the write enforcing it cannot come
+/// apart: a standing added later reaches both through this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum Confirm {
+    /// The move may not go ahead: the folder is explained and nothing is
+    /// offered.
+    None,
+    /// It may, on the ordinary confirmation.
+    Reconnect,
+    /// It may only as the choice to join two entries into one.
+    Consolidate,
+}
+
 /// One proposed reconnection: the entry it replaces, the folder it would
-/// point at, and what stands there.
+/// point at, what stands there, and what may be offered for it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Relocation {
@@ -100,6 +117,22 @@ pub struct Relocation {
     /// as it was given where nothing is there to resolve.
     pub to: PathBuf,
     pub standing: Standing,
+    pub confirm: Confirm,
+}
+
+impl Relocation {
+    /// Asked of the refusal table itself rather than of the standing's
+    /// name: what a person may press is exactly what the write accepts.
+    fn confirm_for(standing: &Standing, to: &Path) -> Confirm {
+        match (
+            standing.refusal(to, false).is_none(),
+            standing.refusal(to, true).is_none(),
+        ) {
+            (true, _) => Confirm::Reconnect,
+            (false, true) => Confirm::Consolidate,
+            (false, false) => Confirm::None,
+        }
+    }
 }
 
 /// What the person is agreeing to, without doing any of it.
@@ -110,22 +143,32 @@ pub fn inspect(env: &Env, from: &Path, to: &Path) -> Result<Relocation> {
     let settings = super::load(env)?;
     let from = recorded_entry(&settings, from)?;
     let Some(to) = reachable(to) else {
+        let standing = unreachable_standing(to);
+        let confirm = Relocation::confirm_for(&standing, to);
         return Ok(Relocation {
             from,
             to: to.to_path_buf(),
-            standing: unreachable_standing(to),
+            standing,
+            confirm,
         });
     };
     let standing = standing_at(env, &settings, &from, &to);
-    Ok(Relocation { from, to, standing })
+    let confirm = Relocation::confirm_for(&standing, &to);
+    Ok(Relocation {
+        from,
+        to,
+        standing,
+        confirm,
+    })
 }
 
 /// Point one registry entry at the folder its project moved to.
 ///
 /// One targeted settings mutation: the entry is replaced, the machine-local
 /// preferences recorded against the old folder come with it, and every
-/// other entry and setting in the file is left exactly as it was. Nothing
-/// under either folder is read for this, written, moved or removed.
+/// other entry and setting in the file is left exactly as it was. Neither
+/// folder is written to, moved or removed; the destination is read, since
+/// [`inspect`] opens it and reads the record it holds.
 ///
 /// `consolidate` is the person's choice to join this entry with one the
 /// destination already has. Without it a destination that is already

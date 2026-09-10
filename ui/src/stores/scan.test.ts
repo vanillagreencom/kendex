@@ -18,6 +18,7 @@ const emptyResult: ScanResult = {
   harnesses: [],
   items: [],
   missingProjects: [],
+  readProjects: [],
   warnings: [],
 };
 

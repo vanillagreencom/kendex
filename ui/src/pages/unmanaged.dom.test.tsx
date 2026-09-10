@@ -152,6 +152,7 @@ describe("an item a tool reads through a shortcut it set up", () => {
         harnesses: [],
         items: [LINKED],
         missingProjects: [],
+        readProjects: [],
         warnings: [],
       },
     });

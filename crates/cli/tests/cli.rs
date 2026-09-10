@@ -257,20 +257,15 @@ fn a_moved_project_reconnects_and_a_third_partys_folder_is_refused() {
         String::from_utf8_lossy(&refused.stderr)
     );
 
-    // Named the way the shell names them, from the directory holding both:
-    // `project add dev/app` took a relative path, and the folder being
-    // gone is exactly when a person types one for it.
+    // Named the way a shell names folders, from inside the one the project
+    // moved to: `project add dev/app` took a relative path, and the folder
+    // being gone is exactly when a person types one for it. `..` is the
+    // ordinary spelling from there and has to fold, since a path left
+    // holding one equals no entry the registry stores.
     let moved = kendex(
         home,
-        home,
-        &[
-            "project",
-            "reconnect",
-            "--from",
-            "dev/app",
-            "--to",
-            "dev/renamed",
-        ],
+        &new,
+        &["project", "reconnect", "--from", "../app", "--to", "."],
     );
     assert!(
         moved.status.success(),

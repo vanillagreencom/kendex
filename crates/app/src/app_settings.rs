@@ -178,8 +178,9 @@ fn relocate_project_at(
     })
 }
 
-/// Point one registered project at the folder it was moved to. Nothing in
-/// either folder is read for this, written, moved or removed.
+/// Point one registered project at the folder it was moved to. Neither
+/// folder is written to, moved or removed; the destination is read, to see
+/// whose record it holds.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn relocate_project(

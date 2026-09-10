@@ -14,7 +14,6 @@ import { afterReconnect } from "@/lib/after-reconnect";
 import {
   CHECKING_FOLDER,
   CLOSE_LABEL,
-  canReconnect,
   LOCATE_CHOOSE_ANOTHER,
   LOCATE_CONFIRM,
   LOCATE_JOIN,
@@ -32,7 +31,11 @@ import {
 } from "@/lib/copy-project-move";
 import { pickFolder } from "@/lib/pick-folder";
 import { useNavStore } from "@/stores/nav";
-import { useBlockedPlaces, useProblems } from "@/stores/problems";
+import {
+  useBlockedPlaces,
+  useProblems,
+  useUnreadableFiles,
+} from "@/stores/problems";
 import { useSettingsStore } from "@/stores/settings";
 
 /** One folder path, labelled — the two the reader is being asked to
@@ -81,6 +84,9 @@ export function LocateFolderDialog({
   const goTo = useNavStore((s) => s.goTo);
   const problems = useProblems();
   const blocked = useBlockedPlaces();
+  // The scan's own half of what Problems draws for a place: a file it
+  // could not read is a repair there and is in no audit row.
+  const unreadable = useUnreadableFiles();
   const [asking, setAsking] = useState(picked);
   const [plan, setPlan] = useState<Relocation | null>(null);
   const [working, setWorking] = useState(false);
@@ -110,18 +116,20 @@ export function LocateFolderDialog({
   const reconnect = async () => {
     if (!plan) return;
     setWorking(true);
+    // Joining two entries is the one thing that needs the person's own
+    // answer, and which folders those are is core's to say: the dialog
+    // presses what it was offered rather than reclassifying the standing.
     const now = await relocateProject(
       root,
       plan.to,
-      plan.standing.kind === "registered",
+      plan.confirm === "consolidate",
     );
     setWorking(false);
     if (now) setDone(now);
   };
 
-  const standing = plan?.standing;
   const settled =
-    done === null ? null : afterReconnect(problems, blocked, done);
+    done === null ? null : afterReconnect(problems, blocked, unreadable, done);
 
   return (
     <Dialog
@@ -195,13 +203,13 @@ export function LocateFolderDialog({
               >
                 {LOCATE_CHOOSE_ANOTHER}
               </Button>
-              {standing && canReconnect(standing) ? (
+              {plan && plan.confirm !== "none" ? (
                 <Button
                   type="button"
                   disabled={working}
                   onClick={() => void reconnect()}
                 >
-                  {standing.kind === "registered"
+                  {plan.confirm === "consolidate"
                     ? LOCATE_JOIN
                     : LOCATE_CONFIRM}
                 </Button>

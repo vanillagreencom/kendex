@@ -81,11 +81,14 @@ vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 const ACME: Scope = { scope: "project", root: "/work/acme" };
 
+/** A machine a scan has read, having opened every project folder these
+ *  cases register: what a place's own actions are offered from. */
 const emptyScan: ScanResult = {
   items: [],
   harnesses: [],
   warnings: [],
   missingProjects: [],
+  readProjects: ["/work/acme", "/work/client"],
 };
 
 const view = (scope: Scope, drift: DriftRow[]): AuditView => ({

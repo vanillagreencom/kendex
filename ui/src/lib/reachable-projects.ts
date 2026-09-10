@@ -21,15 +21,18 @@ import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { projectsOf } from "@/stores/settings-projects";
 
-/** Whether a scan read this project's folder and found it. False while no
- *  scan has answered: what is there is then unknown, and unknown is not a
- *  folder anything may be written into. A reading that failed leaves the
- *  last one standing, which is the same evidence every card draws from. */
+/** Whether a scan opened this project's folder.
+ *
+ *  Asked of what the scan read, never of what it did not flag. A project
+ *  registered since the last scan ran is missing from that scan's
+ *  missing list exactly as a folder it opened is, so absence says
+ *  nothing — and says nothing indefinitely where the read that would
+ *  have covered it fails. A reading that failed leaves the last one
+ *  standing, which is the same evidence every card draws from. */
 export const placeIsReachable = (
   root: string,
   result: ScanResult | null,
-): boolean =>
-  result !== null && !result.missingProjects.some((one) => one.root === root);
+): boolean => (result ? result.readProjects.includes(root) : false);
 
 /** `projects` narrowed to the ones that reading found. */
 export const reachableProjects = (

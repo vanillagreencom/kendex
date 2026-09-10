@@ -90,7 +90,17 @@ export const useProjectSetupStore = create<ProjectSetupState>((set) => ({
         // only its own would leave a project marked "package check failed"
         // over a reading that has since refreshed it, with a Try again that
         // does nothing new.
-        unchecked: failed && !stale ? with_(state.unchecked, root) : [],
+        // Three answers, not two. A read that answered clears every
+        // root, since it read the whole machine. One that failed for a
+        // root still tracked marks that root. One that failed for a
+        // folder nobody tracks any more says nothing about any of them,
+        // so every other project keeps the mark it had.
+        unchecked: (() => {
+          if (!failed) return [];
+          return stale
+            ? without(state.unchecked, root)
+            : with_(state.unchecked, root);
+        })(),
       }));
     }
   },

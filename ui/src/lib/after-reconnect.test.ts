@@ -27,21 +27,36 @@ const problem = (scope: Problem["scope"]): Problem => ({
 describe("what the read after a reconnect says about the new folder", () => {
   it("counts the items at that folder, not the places holding them", () => {
     expect(
-      afterReconnect([], [blocked(here, 3), blocked(elsewhere, 2)], ROOT),
+      afterReconnect([], [blocked(here, 3), blocked(elsewhere, 2)], [], ROOT),
     ).toEqual({ state: "problems", count: 3 });
-    expect(afterReconnect([], [blocked(elsewhere)], ROOT)).toEqual({
+    expect(afterReconnect([], [blocked(elsewhere)], [], ROOT)).toEqual({
       state: "clean",
     });
+  });
+
+  // A file the scan could not read is a repair Problems draws for this
+  // folder, and it is in no audit row: counting only the audit's rows is
+  // how the line says nothing needs doing over a page that offers one.
+  it("counts the files the scan could not read here", () => {
+    const warning = (path: string) => ({ path }) as never;
+    expect(
+      afterReconnect(
+        [],
+        [],
+        [warning(`${ROOT}/.claude/settings.json`), warning("/work/other/x")],
+        ROOT,
+      ),
+    ).toEqual({ state: "problems", count: 1 });
   });
 
   // The one claim this must never make: a place kendex could not read is
   // not a place kendex found nothing wrong with.
   it("claims nothing where the read could not answer", () => {
-    expect(afterReconnect([], null, ROOT)).toEqual({ state: "unchecked" });
-    expect(afterReconnect([problem(here)], [], ROOT)).toEqual({
+    expect(afterReconnect([], null, [], ROOT)).toEqual({ state: "unchecked" });
+    expect(afterReconnect([problem(here)], [], [], ROOT)).toEqual({
       state: "unchecked",
     });
-    expect(afterReconnect([problem(null)], [], ROOT)).toEqual({
+    expect(afterReconnect([problem(null)], [], [], ROOT)).toEqual({
       state: "clean",
     });
   });

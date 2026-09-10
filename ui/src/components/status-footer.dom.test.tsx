@@ -62,7 +62,13 @@ const stage = (views: AuditView[]) =>
 const stageScan = (warnings: ScanWarning[]) =>
   act(() => {
     useScanStore.setState({
-      result: { harnesses: [], items: [], missingProjects: [], warnings },
+      result: {
+        harnesses: [],
+        items: [],
+        missingProjects: [],
+        readProjects: [],
+        warnings,
+      },
       error: null,
     });
   });

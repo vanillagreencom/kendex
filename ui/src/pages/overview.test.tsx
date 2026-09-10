@@ -113,6 +113,7 @@ const scanned: ScanResult = {
   harnesses: [],
   items: [],
   missingProjects: [],
+  readProjects: [],
   warnings: [],
 };
 

@@ -37,7 +37,7 @@
 //! the GUI has no shell in front of it. [`expand_tilde`] is that rule.
 
 use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// The prefix Windows canonicalization answers in.
 const VERBATIM: &str = r"\\?\";
@@ -113,13 +113,40 @@ pub fn absolute(path: &Path) -> PathBuf {
     if let Ok(resolved) = canonical(path) {
         return resolved;
     }
-    match path.is_absolute() {
+    let joined = match path.is_absolute() {
         true => path.to_path_buf(),
         false => match std::env::current_dir() {
             Ok(here) => here.join(path),
-            Err(_) => path.to_path_buf(),
+            Err(_) => return path.to_path_buf(),
         },
+    };
+    folded(&joined)
+}
+
+/// `path` with `.` dropped and each `..` taking the component before it.
+///
+/// Folded rather than resolved, because this is the path that did not
+/// resolve: `../app` from a sibling directory is how a person names a
+/// folder that moved, and left as written it equals no entry the registry
+/// stores. What a `..` crosses cannot be a link here — a link resolves,
+/// and a path that resolves never reaches this — so there is no reading
+/// the fold could get wrong. A leading `..` with nothing before it is kept,
+/// naming what it names.
+fn folded(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => match out.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                _ => out.push(part),
+            },
+            other => out.push(other),
+        }
     }
+    out
 }
 
 /// An already-resolved `path` in the spelling kendex hands out —

@@ -55,7 +55,13 @@ describe("settings store", () => {
     vi.clearAllMocks();
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
-      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+      data: {
+        harnesses: [],
+        items: [],
+        missingProjects: [],
+        readProjects: [],
+        warnings: [],
+      },
     });
     vi.mocked(commands.windowZoomState).mockResolvedValue({
       status: "ok",

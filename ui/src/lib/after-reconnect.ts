@@ -3,11 +3,12 @@
 //
 // The reconnect repairs nothing: it moves one registry entry, and whatever
 // the move left behind — a hook registered under the old path, files a
-// declaration lands on — is still there afterwards. So the app reads the
-// place again through the audit it already runs and says what is left,
-// where the app already offers to fix it. Nothing here proposes a repair
-// of its own.
-import type { Scope } from "@/bindings";
+// declaration lands on, a config file nothing can parse — is still there
+// afterwards. So the app reads the place again through the reads it
+// already runs, the audit and the scan both, and says what is left where
+// the app already offers to fix it. Nothing here proposes a repair of its
+// own, and nothing here counts what Problems would not show.
+import type { ScanWarning, Scope } from "@/bindings";
 import { type BlockedPlace, blockedCount } from "@/lib/audit-counts";
 import type { Problem } from "@/stores/problems";
 
@@ -24,9 +25,15 @@ export type AfterReconnect =
 const at = (root: string, scope: Scope | null): boolean =>
   scope?.scope === "project" && scope.root === root;
 
+/** Whether this file sits under that folder. Both are absolute paths a
+ *  scan produced, so the folder is a prefix of what is inside it. */
+const under = (root: string, path: string): boolean =>
+  path === root || path.startsWith(`${root}/`);
+
 export function afterReconnect(
   problems: Problem[],
   blocked: BlockedPlace[] | null,
+  warnings: ScanWarning[],
   root: string,
 ): AfterReconnect {
   // Null is the audit's own failure, and a place inside a landed audit can
@@ -38,6 +45,13 @@ export function afterReconnect(
   // The items, not the places holding them: one place carries every
   // blocked row at that folder, and its length is 1 however many there
   // are. The count is a sentence a person reads.
-  const count = blockedCount(blocked.filter((place) => at(root, place.scope)));
+  // Both kinds Problems draws for a place: a declaration landing on files
+  // kendex did not write, and a file it could not read as the document its
+  // surface expects. A line saying nothing else needs doing while Problems
+  // holds a repair for this very folder is the claim this must not make,
+  // and the second kind is in no audit row.
+  const count =
+    blockedCount(blocked.filter((place) => at(root, place.scope))) +
+    warnings.filter((warning) => under(root, warning.path)).length;
   return count > 0 ? { state: "problems", count } : { state: "clean" };
 }

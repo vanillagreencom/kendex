@@ -68,7 +68,13 @@ beforeEach(() => {
     data: { rows: [], warnings: [] },
   } as never);
   useScanStore.setState({
-    result: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+    result: {
+      harnesses: [],
+      items: [],
+      missingProjects: [],
+      readProjects: [],
+      warnings: [],
+    },
     error: null,
     scanning: false,
   });

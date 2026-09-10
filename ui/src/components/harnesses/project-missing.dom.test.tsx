@@ -61,6 +61,7 @@ const scan = (missing: ScanResult["missingProjects"]): ScanResult => ({
   harnesses: [],
   warnings: [],
   missingProjects: missing,
+  readProjects: [],
 });
 
 const view = (scope: Scope) => ({
@@ -74,10 +75,14 @@ const view = (scope: Scope) => ({
   exits: [],
 });
 
-const relocation = (standing: Relocation["standing"]): Relocation => ({
+const relocation = (
+  standing: Relocation["standing"],
+  confirm: Relocation["confirm"] = "reconnect",
+): Relocation => ({
   from: OLD,
   to: NEW,
   standing,
+  confirm,
 });
 
 const card = (host: HTMLElement): HTMLElement | undefined =>
@@ -268,7 +273,10 @@ describe("locating the folder a project moved to", () => {
   it("explains a folder that belongs to another project and offers no reconnect", async () => {
     vi.mocked(commands.projectRelocation).mockResolvedValue({
       status: "ok",
-      data: relocation({ kind: "record-elsewhere", root: "/work/other" }),
+      data: relocation(
+        { kind: "record-elsewhere", root: "/work/other" },
+        "none",
+      ),
     } as never);
     mount(<ProjectList />);
     await settle();
@@ -286,7 +294,7 @@ describe("locating the folder a project moved to", () => {
   it("joins two entries only on the choice that says so", async () => {
     vi.mocked(commands.projectRelocation).mockResolvedValue({
       status: "ok",
-      data: relocation({ kind: "registered" }),
+      data: relocation({ kind: "registered" }, "consolidate"),
     } as never);
     vi.mocked(commands.relocateProject).mockResolvedValue({
       status: "ok",

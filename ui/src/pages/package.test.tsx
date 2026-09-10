@@ -153,6 +153,7 @@ const openPage = async (
       harnesses: [],
       items: installed.map((scope) => installedAt(scope, kind)),
       missingProjects: [],
+      readProjects: [],
       warnings: [],
     },
   });
@@ -914,6 +915,7 @@ describe("the package page's safety tab", () => {
           { ...installedAt(VG), harness: "codex" },
         ],
         missingProjects: [],
+        readProjects: [],
         warnings: [],
       },
     });
@@ -1179,6 +1181,7 @@ describe("a package page opened on an installation nothing recorded", () => {
         harnesses: [],
         items: [installedAt(VG), stray()],
         missingProjects: [],
+        readProjects: [],
         warnings: [],
       },
     });
@@ -1331,6 +1334,7 @@ describe("a package page opened on an installation nothing recorded", () => {
         harnesses: [],
         items: [installedAt(VG)],
         missingProjects: [],
+        readProjects: [],
         warnings: [],
       },
     });

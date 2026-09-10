@@ -30,6 +30,7 @@ const emptyScan: ScanResult = {
   harnesses: [],
   warnings: [],
   missingProjects: [],
+  readProjects: [],
 };
 
 /** The machine read, held until the case lets it answer. Once only: a
@@ -167,17 +168,20 @@ describe("adding a project", () => {
 // took off — the card at the folder the project moved to would inherit
 // "package check failed" from the path it left.
 describe("a read still out when the project stops being one", () => {
-  it("lands nothing back onto a forgotten folder", async () => {
+  it("lands nothing back onto a forgotten folder, and takes nothing else off", async () => {
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "error",
       error: "the machine could not be read",
     });
+    // Another project, marked from a read that failed earlier. No read has
+    // answered since, so nothing here may clear its mark.
+    useProjectSetupStore.setState({ unchecked: ["/work/other"] });
 
     const out = useProjectSetupStore.getState().check("/work/vsys-view");
     useProjectSetupStore.getState().forget("/work/vsys-view");
     await out;
 
-    expect(useProjectSetupStore.getState().unchecked).toEqual([]);
+    expect(useProjectSetupStore.getState().unchecked).toEqual(["/work/other"]);
     expect(useProjectSetupStore.getState().checking).toEqual([]);
   });
 

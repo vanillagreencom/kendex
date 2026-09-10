@@ -73,6 +73,10 @@ fn scans_a_realistic_machine() {
             why: MissingWhy::Gone
         }]
     );
+    // The other half, and the one anything may rest on: the folders this
+    // scan opened. A project registered after it ran is in neither list,
+    // which is what absence from the first cannot say.
+    assert_eq!(result.read_projects, std::slice::from_ref(&project));
 
     let detected: Vec<_> = result.harnesses.iter().map(|h| h.harness).collect();
     assert_eq!(
