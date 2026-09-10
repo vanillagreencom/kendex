@@ -6,6 +6,7 @@ import type { Relocation, ScanResult, Scope } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { TRY_AGAIN_LABEL } from "@/lib/copy";
+import { PACKAGE_CHECKS_LABEL } from "@/lib/copy-package-checks";
 import {
   CHANGE_FOLDER_LABEL,
   LOCATE_CONFIRM,
@@ -20,7 +21,6 @@ import {
   removeFromList,
   standingSaid,
 } from "@/lib/copy-project-move";
-import { SESSION_NOTE_LABEL } from "@/lib/copy-session-note";
 import { READ_LANDED } from "@/lib/read-state";
 import { showEverythingLabel } from "@/lib/show-everything-label";
 import { useAuditStore } from "@/stores/audit";
@@ -34,6 +34,7 @@ import { mount, settle } from "@/test/dom";
 import { ProjectList } from "./project-list";
 
 vi.mock("@/bindings", () => ({
+  PACKAGE_CHECK_HARNESSES: ["claude", "pi"] as const,
   commands: {
     auditAll: vi.fn(),
     libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
@@ -44,7 +45,8 @@ vi.mock("@/bindings", () => ({
     getSettings: vi.fn(),
     capabilityTable: vi.fn(),
     updateSettings: vi.fn(),
-    installDriftHook: vi.fn(),
+    enablePackageChecks: vi.fn(),
+    packageCheckPlan: vi.fn(),
     // The passive read of what each tracked project has waiting for a
     // commit, which the rescan behind a reconnection runs.
     projectChangesScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
@@ -178,7 +180,7 @@ describe("a project whose folder the scan could not read", () => {
     // empty place, no offer to write into it, no note about it.
     expect(project?.textContent).not.toContain("Nothing from kendex yet.");
     expect(project?.textContent).not.toContain("Add packages to");
-    expect(project?.textContent).not.toContain(SESSION_NOTE_LABEL);
+    expect(project?.textContent).not.toContain(PACKAGE_CHECKS_LABEL);
   });
 
   // The card body is replaced, and so are the two ways into the place it

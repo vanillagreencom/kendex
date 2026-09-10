@@ -13,5 +13,6 @@
 pub mod hook;
 pub mod refresh;
 pub mod report;
+pub mod setup;
 pub mod snapshot;
 pub mod stamps;

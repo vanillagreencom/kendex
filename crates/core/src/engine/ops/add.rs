@@ -321,7 +321,7 @@ fn hold_commit(
 /// How a source is named in a collision message: its repository or path when
 /// the alias is a subscription, the local-source name when it is a fork, and
 /// the bare alias as a last resort.
-fn source_repo_label(manifest: &Manifest, alias: &str) -> String {
+pub(crate) fn source_repo_label(manifest: &Manifest, alias: &str) -> String {
     if alias == crate::manifest::LOCAL_SOURCE_NAME {
         return alias.to_owned();
     }

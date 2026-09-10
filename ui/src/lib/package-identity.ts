@@ -3,6 +3,7 @@ import type {
   HarnessId,
   ItemKind,
   ObservedItem,
+  Origin,
   PackageRef,
   ProvenanceRow,
   Scope,
@@ -85,6 +86,39 @@ export function summaryIndex(rows: ProvenanceRow[]): SummaryOf {
   return (item) =>
     byInstallation.get(installationKey({ ...item, at: observedAt(item) })) ??
     null;
+}
+
+/** Where one observed installation came from, or null where the join has
+ *  no record of it.
+ *
+ *  The record of what installed a thing is the only thing that says whose
+ *  it is. A name cannot: a hook is named for the event and command it
+ *  registered, so a package from a marketplace can occupy the same name as
+ *  one of kendex's own, and a surface reading the name alone would report
+ *  somebody else's hook as ours. */
+export type OriginOf = (item: ObservedItem) => Origin | null;
+
+/** Which source each installation came from, out of the same join that
+ *  says which package it is. */
+export function originIndex(rows: ProvenanceRow[]): OriginOf {
+  const byInstallation = new Map<string, Origin>();
+  for (const row of rows) byInstallation.set(installationKey(row), row.origin);
+  return (item) =>
+    byInstallation.get(installationKey({ ...item, at: observedAt(item) })) ??
+    null;
+}
+
+/** The origin lookup for a component, or null where nothing can say it.
+ *
+ *  Null rather than an older index, for the reason {@link usePackageIndex}
+ *  is: an answer about a different scan is how a surface attributes one
+ *  installation's record to another. A caller that has nothing must say
+ *  so rather than guess. */
+export function useOriginIndex(): OriginOf | null {
+  const rows = useProvenanceStore((s) => s.rows);
+  const current = usePackagesKnown();
+  const index = useMemo(() => originIndex(rows), [rows]);
+  return current ? index : null;
 }
 
 /** The summary lookup for a component, rebuilt only when the join changes.

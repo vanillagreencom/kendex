@@ -297,9 +297,9 @@ describe("settings store", () => {
       .registerProject("/home/x/acme-web");
 
     expect(ok).toBe(true);
-    // Only that the project was added: the start-of-session note is
-    // offered on the project's card, where a person can come back to it,
-    // never as an action that vanishes with the toast.
+    // Only that the project was added: package checks are offered on the
+    // project's card, where a person can come back to them, never as an
+    // action that vanishes with the toast.
     expect(toast.success).toHaveBeenCalledWith("Added acme-web");
   });
 

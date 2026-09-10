@@ -12,9 +12,9 @@ import type { AuditView, Disclosure, Scope } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { emptyDraft } from "@/lib/editor-draft";
+import { enableChecks } from "@/lib/package-checks";
 import { READ_LANDED } from "@/lib/read-state";
 import { rescansSettled } from "@/lib/rescan";
-import { addSessionNote } from "@/lib/session-note";
 import { useAuditStore } from "./audit";
 import { useEditorStore } from "./editor";
 import { useMarketplacesStore } from "./marketplaces";
@@ -33,7 +33,8 @@ vi.mock("@/bindings", async (importOriginal) => ({
     marketplacesOverview: vi.fn(),
     repoEffectsApply: vi.fn(),
     sourceToggle: vi.fn(),
-    installDriftHook: vi.fn(),
+    enablePackageChecks: vi.fn(),
+    packageCheckPlan: vi.fn(),
     registerProject: vi.fn(),
     saveCustomize: vi.fn(),
     getManifest: vi.fn(),
@@ -266,17 +267,17 @@ describe("a write that reaches repo_effects and is refused", () => {
     readAgain();
   });
 
-  // The drift hook is applied before the command can answer either way, so
-  // its refusal comes back with the hook already on disk.
-  it("reads the machine again behind a start-of-session note install", async () => {
-    vi.mocked(commands.installDriftHook).mockResolvedValue({
+  // The check script is written before the command can answer either way,
+  // so its refusal comes back with the script already on disk.
+  it("reads the machine again behind a package checks install", async () => {
+    vi.mocked(commands.enablePackageChecks).mockResolvedValue({
       status: "error",
       error: "the hook folder is read-only",
     });
-    await addSessionNote("/home/me/app", "app");
+    await enableChecks("/home/me/app", "app");
     await rescansSettled();
 
-    expect(commands.installDriftHook).toHaveBeenCalled();
+    expect(commands.enablePackageChecks).toHaveBeenCalled();
     readAgain();
   });
 

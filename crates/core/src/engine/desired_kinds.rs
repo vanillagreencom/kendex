@@ -104,7 +104,7 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
 /// harness never fires it, and turned into the target's artifact. One path
 /// for both authors — the catalog loop above and the custom-hook loop
 /// (`desired_custom_hooks`) differ only in where the spec came from.
-pub(super) fn restated_hook_artifact(
+pub(crate) fn restated_hook_artifact(
     env: &Env,
     scope: &Scope,
     name: &str,

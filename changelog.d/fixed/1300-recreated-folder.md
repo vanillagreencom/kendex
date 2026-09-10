@@ -1,0 +1,1 @@
+- Setting up a project's package checks refuses a registered folder that is gone, naming the path, instead of rebuilding it as a project-shaped folder. The card offers nothing until it is found.

@@ -1,13 +1,14 @@
 import { MoreHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ChangesState, MissingProject, Scope } from "@/bindings";
+import { PACKAGE_CHECK_HARNESSES } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AddProjectDialog } from "@/components/harnesses/add-project-dialog";
 import { FindProjectsDialog } from "@/components/harnesses/find-projects-dialog";
 import { LocateFolderDialog } from "@/components/harnesses/locate-folder-dialog";
+import { PackageChecksRow } from "@/components/harnesses/package-checks-row";
 import { PlaceMarketplacesDialog } from "@/components/harnesses/place-marketplaces-dialog";
 import { ProjectCard } from "@/components/harnesses/project-card";
-import { SessionNoteRow } from "@/components/harnesses/session-note-row";
 import { ChangesLine } from "@/components/project-changes/changes-line";
 import { Button } from "@/components/ui/button";
 import {
@@ -47,8 +48,10 @@ import {
 } from "@/lib/derive";
 import { scopeNames } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
+import { checksStanding } from "@/lib/package-checks";
 import {
   packagesUncounted,
+  useOriginIndex,
   usePackageIndex,
   usePackagesKnown,
   usePackagesRead,
@@ -56,7 +59,6 @@ import {
 import { pickFolder } from "@/lib/pick-folder";
 import { placeIsReachable } from "@/lib/reachable-projects";
 import { everyPlace, sameScope } from "@/lib/scope";
-import { sessionNoteState } from "@/lib/session-note";
 import { availableUpdatesIn, outOfDateIn } from "@/lib/update-groups";
 import { readUnsettled } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
@@ -236,6 +238,14 @@ function PlaceActions({
 export function ProjectList() {
   useAuditOnMount();
   const result = useScanStore((s) => s.result);
+  // Whether the last scan landed. `stores/scan.ts` keeps the previous
+  // result through a failure on purpose, so a reader that takes `result`
+  // for this pass's observations is reading a read that did not happen.
+  const scanFailure = useScanStore((s) => s.error);
+  // Which source each observed installation came from. A hook wearing the
+  // check's name is only the check where the record says it is kendex's
+  // own, and the checks line reads this rather than the name.
+  const originOf = useOriginIndex();
   const views = useAuditStore((s) => s.views);
   // The audit read's own outcome: a failed adopt is not a failed audit, and
   // says so through the problems dialog rather than this list.
@@ -264,26 +274,36 @@ export function ProjectList() {
       auditFailure,
     );
   // The lines under a project's counts: what kendex has waiting for a
-  // commit here, and the start-of-session note's standing. Both are about
-  // the place rather than about what is installed, which is why they sit
+  // commit here, and where its package checks stand. Both are about the
+  // place rather than about what is installed, which is why they sit
   // together below the counts.
-  const noteRow = (root: string, name: string) => {
-    const state = result
-      ? sessionNoteState(
-          result.items,
-          views.find((v) => sameScope(v.scope, { scope: "project", root })),
-          auditFailure,
-          root,
-        )
-      : null;
+  //
+  // Drawn only for a place whose folder was read. A card over a folder
+  // nothing was read from draws no note at all — it is replaced by what
+  // could not be read and the ways out of it, which is the card's own
+  // state and neither of these lines'.
+  const noteRow = (root: string, name: string, place: ItemPlace) => {
+    // What the scan observed this pass, which a failed scan is none of.
+    const observations = scanFailure === null ? result : null;
     return (
       <>
         <div className="px-4">
           <ChangesLine root={root} />
         </div>
-        {state ? (
-          <SessionNoteRow name={name} root={root} state={state} />
-        ) : null}
+        <PackageChecksRow
+          name={name}
+          root={root}
+          harnesses={PACKAGE_CHECK_HARNESSES}
+          standing={checksStanding(
+            observations?.items ?? [],
+            views.find((v) => sameScope(v.scope, { scope: "project", root })),
+            auditFailure,
+            root,
+            observations ? PACKAGE_CHECK_HARNESSES : null,
+            originOf,
+          )}
+          onOpenLibrary={() => goToLibrary({ ...place, kind: "hook" })}
+        />
       </>
     );
   };
@@ -470,11 +490,7 @@ export function ProjectList() {
                     onRemove: () => setRemoveTarget(root),
                   }
                 }
-                // Not drawn until the scan and the audit have answered for
-                // this place: a card saying the note is off before either
-                // was read would be claiming a state the app has not
-                // checked.
-                note={noteRow(root, name)}
+                note={noteRow(root, name, place)}
                 action={
                   <PlaceActions
                     scope={scope}

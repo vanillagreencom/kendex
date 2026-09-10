@@ -5,12 +5,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AuditView,
   DriftRow,
+  HarnessId,
   ObservedItem,
   ProjectChanges,
   ScanResult,
   Scope,
 } from "@/bindings";
-import { commands } from "@/bindings";
+import { commands, PACKAGE_CHECK_HARNESSES } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
 import { updateRow } from "@/components/updates-test-rows";
 import { ADOPTABLE } from "@/lib/adoptable";
@@ -22,15 +23,20 @@ import {
   placeMarketplacesTitle,
 } from "@/lib/copy-model";
 import {
+  ENABLE_CHECKS_LABEL,
+  INCOMPLETE_MEANS,
+  notRunningIn,
+  ON_MEANS,
+  PACKAGE_CHECKS_LABEL,
+  runsIn,
+  STATE_UNKNOWN,
+  UNKNOWN_MEANS,
+} from "@/lib/copy-package-checks";
+import {
   CHANGE_FOLDER_LABEL,
   REMOVE_FROM_LIST_LABEL,
   removeFromList,
 } from "@/lib/copy-project-move";
-import {
-  SESSION_NOTE_LABEL,
-  SESSION_NOTE_ON,
-  SESSION_NOTE_WAITING,
-} from "@/lib/copy-session-note";
 import {
   outOfDateHereLabel,
   UPDATE_NEEDS_CHECK_NOTE,
@@ -60,6 +66,7 @@ import { observed } from "@/test/observed";
 import { ProjectList } from "./project-list";
 
 vi.mock("@/bindings", () => ({
+  PACKAGE_CHECK_HARNESSES: ["claude", "pi"] as const,
   commands: {
     auditAll: vi.fn(),
     libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
@@ -70,7 +77,8 @@ vi.mock("@/bindings", () => ({
     getSettings: vi.fn(),
     capabilityTable: vi.fn(),
     updateSettings: vi.fn(),
-    installDriftHook: vi.fn(),
+    enablePackageChecks: vi.fn(),
+    packageCheckPlan: vi.fn(),
     // The passive read of what each tracked project has waiting for a
     // commit, which the card's own Review changes line draws from.
     projectChangesScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
@@ -91,6 +99,11 @@ vi.mock("@/bindings", () => ({
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 const ACME: Scope = { scope: "project", root: "/work/acme" };
+
+const button = (host: HTMLElement, label: string) =>
+  [...host.querySelectorAll("button")].find(
+    (el) => el.textContent?.trim() === label,
+  );
 
 /** A machine a scan has read, having opened every project folder these
  *  cases register: what a place's own actions are offered from. */
@@ -181,46 +194,99 @@ describe("a project added while the list is on screen", () => {
   });
 });
 
-// The note's line is the card's, wired to the scan the list already
-// reads: a project whose settings run the hook says so, Personal carries
-// no such line. The words are the copy's own, so a relabel fails here.
-describe("the start-of-session note on a project's card", () => {
-  it("names the state the scan shows, on the project's card only", async () => {
+// The checks line is the card's, wired to the scan and the audit the list
+// already reads. What it may say is decided per tool: the check is on only
+// where every tool this installation registers it in runs it, and a card
+// that cannot be read says so rather than vanishing. The words are the
+// copy's own, so a relabel fails here.
+describe("package checks on a project's card", () => {
+  const rendered = (harness: HarnessId, root = "/work/acme"): ObservedItem =>
+    installed({
+      kind: "hook",
+      name: "SessionStart:*:kendex-drift",
+      harness,
+      scope: { scope: "project", root },
+      path: `${root}/.claude/settings.json`,
+    });
+
+  const onProject = () => {
     useSettingsStore.setState({
       settings: { projects: ["/work/acme"] } as never,
     });
+  };
+
+  /** Tell the join that every hook the scan saw is kendex's own. The card
+   *  reads whose a hook is from the record of what installed it, never
+   *  from its name, so a scan alone establishes no On. */
+  const oursByRecord = () => {
+    const scanned = useScanStore.getState().result?.items ?? [];
+    useProvenanceStore.setState({
+      rows: scanned.map((item) => ({
+        scope: item.scope,
+        kind: item.kind,
+        name: item.name,
+        harness: item.harness,
+        at: item.at,
+        origin: {
+          origin: "own" as const,
+          forkedFrom: null,
+          source: "local",
+        },
+        summary: null,
+        package: { kind: item.kind, name: item.name },
+      })),
+      loaded: true,
+      answeredFor: useScanStore.getState().generation,
+      read: READ_LANDED,
+    });
+  };
+
+  it("says On only once every supported tool runs the check", async () => {
+    onProject();
     useScanStore.setState({
       scanning: false,
       error: null,
       result: {
         ...emptyScan,
-        items: [
-          installed({
-            kind: "hook",
-            name: "SessionStart:*:kendex-drift",
-            scope: ACME,
-            path: "/work/acme/.claude/settings.json",
-          }),
-        ],
+        items: PACKAGE_CHECK_HARNESSES.map((harness) => rendered(harness)),
       },
     });
+    oursByRecord();
     const host = mount(<ProjectList />);
     await settle();
     const cards = [...host.querySelectorAll<HTMLElement>('[data-slot="card"]')];
     const personal = cards.find((el) => el.textContent?.startsWith("Personal"));
     const acme = cards.find((el) => el.textContent?.startsWith("acme"));
-    expect(acme?.textContent).toContain(SESSION_NOTE_ON);
-    expect(personal?.textContent).not.toContain(SESSION_NOTE_LABEL);
+    expect(acme?.textContent).toContain(ON_MEANS);
+    expect(acme?.textContent).toContain(runsIn([...PACKAGE_CHECK_HARNESSES]));
+    expect(personal?.textContent).not.toContain(PACKAGE_CHECKS_LABEL);
+  });
+
+  // One discovered registration is not the whole promise. A card reading
+  // "On" off the first tool it finds would say the check runs where it
+  // does not.
+  it("says the setup is incomplete while a supported tool is not registered", async () => {
+    onProject();
+    useScanStore.setState({
+      scanning: false,
+      error: null,
+      result: { ...emptyScan, items: [rendered("claude")] },
+    });
+    oursByRecord();
+    useAuditStore.setState({ views: [view(ACME, [])] });
+    const host = mount(<ProjectList />);
+    await settle();
+    expect(host.textContent).toContain(INCOMPLETE_MEANS);
+    expect(host.textContent).toContain(runsIn(["claude"]));
+    expect(host.textContent).toContain(notRunningIn(["pi"]));
   });
 
   // Declared and nothing rendered is the audit's to say: the install ran
   // with other changes pending, so only the declaration landed. A card
-  // reading the scan alone would say off, with a button that re-runs an
+  // reading the scan alone would say Off, with a button that re-runs an
   // install already declared.
-  it("says the note is waiting from the audit's missing row", async () => {
-    useSettingsStore.setState({
-      settings: { projects: ["/work/acme"] } as never,
-    });
+  it("says the setup is incomplete from the audit's missing row", async () => {
+    onProject();
     useAuditStore.setState({
       views: [
         view(ACME, [
@@ -237,35 +303,93 @@ describe("the start-of-session note on a project's card", () => {
     });
     const host = mount(<ProjectList />);
     await settle();
-    expect(host.textContent).toContain(SESSION_NOTE_WAITING);
+    expect(host.textContent).toContain(INCOMPLETE_MEANS);
   });
 
-  // The audit reads every place over seconds, and a cold start can fail
-  // it outright. "Off" at first paint would claim a state the app has not
-  // checked, on a card whose note may be declared and waiting.
-  it("says nothing about the note until the audit has answered for the place", async () => {
-    useSettingsStore.setState({
-      settings: { projects: ["/work/acme"] } as never,
-    });
+  // The audit reads every place over seconds, and a cold start can fail it
+  // outright. "Off" at first paint would claim a state the app has not
+  // checked, on a card whose check may be declared and waiting — and the
+  // line stays on screen, because a card that drops it leaves the reader
+  // with nothing to read at all.
+  it("says Unknown and offers nothing until the audit has answered", async () => {
+    onProject();
     useAuditStore.setState({ views: [view({ scope: "global" }, [])] });
     const host = mount(<ProjectList />);
     await settle();
-    expect(host.textContent).toContain("acme");
-    expect(host.textContent).not.toContain(SESSION_NOTE_LABEL);
+    expect(host.textContent).toContain(PACKAGE_CHECKS_LABEL);
+    expect(host.textContent).toContain(STATE_UNKNOWN);
+    expect(button(host, ENABLE_CHECKS_LABEL)).toBeUndefined();
+    // Nothing failed here — the reads are still out — so the line says
+    // what it does not know rather than reporting a failure.
+    expect(useScanStore.getState().error).toBeNull();
+    expect(host.textContent).toContain(UNKNOWN_MEANS);
   });
 
-  // Before the scan has answered there is nothing to say either: a card
-  // that may already run the hook must not offer to add it.
-  it("says nothing about the note until the scan has answered", async () => {
-    useSettingsStore.setState({
-      settings: { projects: ["/work/acme"] } as never,
+  // A hook wearing the check's name that a marketplace package installed.
+  // The scan sees exactly what an On card sees; only the record of what
+  // put it there differs, and that is the whole of whose it is.
+  it("does not report a marketplace hook of the same name as On", async () => {
+    onProject();
+    useScanStore.setState({
+      scanning: false,
+      error: null,
+      result: {
+        ...emptyScan,
+        items: PACKAGE_CHECK_HARNESSES.map((harness) => rendered(harness)),
+      },
     });
-    useScanStore.setState({ scanning: true, result: null, error: null });
+    const scanned = useScanStore.getState().result?.items ?? [];
+    useProvenanceStore.setState({
+      rows: scanned.map((item) => ({
+        scope: item.scope,
+        kind: item.kind,
+        name: item.name,
+        harness: item.harness,
+        at: item.at,
+        origin: { origin: "marketplace" as const, source: "cat", repo: "o/c" },
+        summary: null,
+        package: { kind: item.kind, name: item.name },
+      })),
+      loaded: true,
+      answeredFor: useScanStore.getState().generation,
+      read: READ_LANDED,
+    });
     useAuditStore.setState({ views: [view(ACME, [])] });
     const host = mount(<ProjectList />);
     await settle();
-    expect(host.textContent).toContain("acme");
-    expect(host.textContent).not.toContain(SESSION_NOTE_LABEL);
+    const acme = [...host.querySelectorAll<HTMLElement>('[data-slot="card"]')]
+      .filter((el) => el.textContent?.startsWith("acme"))
+      .at(0);
+    expect(acme?.textContent).toContain(STATE_UNKNOWN);
+    expect(acme?.textContent).not.toContain(ON_MEANS);
+    expect(button(host, ENABLE_CHECKS_LABEL)).toBeUndefined();
+  });
+
+  // The scan store keeps the last good result through a failure, which is
+  // right for the pages drawing figures off it. Read here as this pass's
+  // observations it is a read that did not happen: a card saying the check
+  // runs, with a button offering to install over it, on evidence nothing
+  // gathered.
+  it("says Unknown and offers nothing after a scan that failed", async () => {
+    onProject();
+    useScanStore.setState({
+      scanning: false,
+      error: "the machine could not be read",
+      // What a landed scan would have to say for the card to read On.
+      result: {
+        ...emptyScan,
+        items: PACKAGE_CHECK_HARNESSES.map((harness) => rendered(harness)),
+      },
+    });
+    useAuditStore.setState({ views: [view(ACME, [])] });
+    const host = mount(<ProjectList />);
+    await settle();
+    const acme = [...host.querySelectorAll<HTMLElement>('[data-slot="card"]')]
+      .filter((el) => el.textContent?.startsWith("acme"))
+      .at(0);
+    expect(acme?.textContent).toContain(STATE_UNKNOWN);
+    expect(acme?.textContent).not.toContain(ON_MEANS);
+    expect(button(host, ENABLE_CHECKS_LABEL)).toBeUndefined();
   });
 });
 
