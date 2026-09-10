@@ -33,6 +33,17 @@ pub enum CoreError {
     #[error("{path} is not a directory")]
     NotADirectory { path: PathBuf },
 
+    /// A registered project whose own root is not there. Every write
+    /// kendex plans creates the directories above it, so an install aimed
+    /// at such a root would rebuild the old path as a fresh
+    /// project-shaped folder instead of refusing.
+    ///
+    /// Not [`CoreError::ProjectFolderMissing`], which is about a folder
+    /// being reconnected TO: this one is the root a project is already
+    /// registered at.
+    #[error("{path} is not there; find the project folder again before installing into it")]
+    ProjectRootMissing { path: PathBuf },
+
     #[error("project already registered: {path}")]
     ProjectAlreadyRegistered { path: PathBuf },
 
@@ -450,6 +461,13 @@ pub enum CoreError {
 
     #[error("the bundle '{name}' is not readable in its catalog — {problem}")]
     UnreadableBundle { name: String, problem: String },
+
+    /// The check script this build embeds does not parse. An invariant of
+    /// the binary rather than of anything on disk: `drift::hook::HOOK_SCRIPT`
+    /// is both what the install writes and what the renderer places, so
+    /// where it cannot be read there is nothing to describe or install.
+    #[error("the built-in package check script does not read: {problem}")]
+    CheckScriptUnreadable { problem: String },
 
     /// The name is real and what it holds is not: declaring it would record
     /// an install and put nothing anywhere. Beside [`Self::NoSuchBundle`]

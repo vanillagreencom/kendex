@@ -127,6 +127,24 @@ pub(super) fn plan_posture(
     Ok(())
 }
 
+/// The ops a plan of this scope owes its git posture, alone.
+///
+/// What kendex wants for managing a project at all, derived from the scope
+/// and the disk rather than from anything declared in it. A caller telling
+/// the person's own pending work from kendex's housekeeping asks here, so
+/// there is no second list of what counts as housekeeping to keep in step.
+///
+/// Asked with no private file, which is what [`plan_posture`]'s caller
+/// reaches on every pass but a first credential save: a caller planning
+/// under default options owes no such line, so this and the pass it is
+/// compared against read the same ignore rules.
+pub(crate) fn planned(scope: &Scope) -> Result<Vec<PlannedOp>> {
+    let mut ops = Vec::new();
+    let mut notes = Vec::new();
+    plan_posture(scope, None, &mut ops, &mut notes)?;
+    Ok(ops)
+}
+
 /// The file with every line kendex owes in it, or nothing where the rules
 /// already cover them all.
 fn with_ignored(text: &str, owed: &[Owed]) -> Option<String> {

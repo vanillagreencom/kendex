@@ -15,6 +15,7 @@ mod legal;
 pub mod marketplaces;
 mod mine;
 mod native;
+mod package_checks;
 mod packages;
 pub mod recovery;
 pub mod repo_effects;
@@ -49,7 +50,16 @@ fn constants(builder: Builder<tauri::Wry>) -> Builder<tauri::Wry> {
     // documents are published. The first-run screen decides from the same
     // number the record stores and the command line prints, so the three
     // cannot disagree about which documents someone accepted.
-    builder.constant("LEGAL", kendex_core::legal::LEGAL)
+    let builder = builder.constant("LEGAL", kendex_core::legal::LEGAL);
+    // The tools a project's package checks register in. A constant rather
+    // than a command: the answer reads the scope's kind alone, so a list
+    // drawing a card per project would ask one question many times, and a
+    // second copy of the list in the UI is a card naming a tool the
+    // install skips.
+    builder.constant(
+        "PACKAGE_CHECK_HARNESSES",
+        kendex_core::drift::hook::project_target_harnesses(),
+    )
 }
 
 /// The runtime the generated bindings call every `Result`-returning command
@@ -116,7 +126,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         app_settings::project_relocation,
         app_settings::relocate_project,
         app_settings::project_offers,
-        commands::install_drift_hook,
+        package_checks::package_check_plan,
+        package_checks::enable_package_checks,
         app_settings::discover_projects,
         commands::capability_table,
         commands::report_route,

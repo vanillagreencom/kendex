@@ -1,13 +1,14 @@
 import { MoreHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ChangesState, MissingProject, Scope } from "@/bindings";
+import { PACKAGE_CHECK_HARNESSES } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AddProjectDialog } from "@/components/harnesses/add-project-dialog";
 import { FindProjectsDialog } from "@/components/harnesses/find-projects-dialog";
 import { LocateFolderDialog } from "@/components/harnesses/locate-folder-dialog";
+import { PackageChecksRow } from "@/components/harnesses/package-checks-row";
 import { PlaceMarketplacesDialog } from "@/components/harnesses/place-marketplaces-dialog";
 import { ProjectCard } from "@/components/harnesses/project-card";
-import { SessionNoteRow } from "@/components/harnesses/session-note-row";
 import { ChangesLine } from "@/components/project-changes/changes-line";
 import { Button } from "@/components/ui/button";
 import {
@@ -47,6 +48,7 @@ import {
 } from "@/lib/derive";
 import { scopeNames } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
+import { checksStanding } from "@/lib/package-checks";
 import {
   packagesUncounted,
   usePackageIndex,
@@ -56,7 +58,6 @@ import {
 import { pickFolder } from "@/lib/pick-folder";
 import { placeIsReachable } from "@/lib/reachable-projects";
 import { everyPlace, sameScope } from "@/lib/scope";
-import { sessionNoteState } from "@/lib/session-note";
 import { availableUpdatesIn, outOfDateIn } from "@/lib/update-groups";
 import { readUnsettled } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
@@ -267,26 +268,33 @@ export function ProjectList() {
   // commit here, and the start-of-session note's standing. Both are about
   // the place rather than about what is installed, which is why they sit
   // together below the counts.
-  const noteRow = (root: string, name: string) => {
-    const state = result
-      ? sessionNoteState(
-          result.items,
+  const noteRow = (
+    root: string,
+    name: string,
+    place: ItemPlace,
+    missing: MissingProject | undefined,
+  ) => (
+    <>
+      <div className="px-4">
+        <ChangesLine root={root} />
+      </div>
+      <PackageChecksRow
+        name={name}
+        root={root}
+        harnesses={PACKAGE_CHECK_HARNESSES}
+        folderMissing={missing !== undefined}
+        standing={checksStanding(
+          result?.items ?? [],
           views.find((v) => sameScope(v.scope, { scope: "project", root })),
           auditFailure,
           root,
-        )
-      : null;
-    return (
-      <>
-        <div className="px-4">
-          <ChangesLine root={root} />
-        </div>
-        {state ? (
-          <SessionNoteRow name={name} root={root} state={state} />
-        ) : null}
-      </>
-    );
-  };
+          result ? PACKAGE_CHECK_HARNESSES : null,
+          missing !== undefined,
+        )}
+        onOpenLibrary={() => goToLibrary({ ...place, kind: "hook" })}
+      />
+    </>
+  );
   const { settings, registerProject, unregisterProject, discoverProjects } =
     useSettingsStore();
   // What each place's own packages are standing on. Only a landed read puts
@@ -470,11 +478,7 @@ export function ProjectList() {
                     onRemove: () => setRemoveTarget(root),
                   }
                 }
-                // Not drawn until the scan and the audit have answered for
-                // this place: a card saying the note is off before either
-                // was read would be claiming a state the app has not
-                // checked.
-                note={noteRow(root, name)}
+                note={noteRow(root, name, place, missing)}
                 action={
                   <PlaceActions
                     scope={scope}

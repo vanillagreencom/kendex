@@ -245,7 +245,7 @@ impl std::fmt::Debug for Op {
 
 impl Op {
     /// Every path this op mutates — journaled before execution.
-    pub(super) fn touched(&self) -> Vec<PathBuf> {
+    pub fn touched(&self) -> Vec<PathBuf> {
         match self {
             Op::WriteFile { path, .. } => vec![path.clone()],
             Op::WriteTree { root, .. } => vec![root.clone()],

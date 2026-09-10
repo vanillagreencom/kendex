@@ -171,16 +171,25 @@ export const commands = {
 	 */
 	projectOffers: (root: string) => typedError<DriftRow_Serialize[], string>(__TAURI_INVOKE("project_offers", { root })),
 	/**
-	 *  Install the session-start drift report hook for a scope: script into the
-	 *  scope's local source, declaration into its manifest, then the ordinary
-	 *  apply renders it. The offer surface (project registration) calls this
-	 *  after the user says yes — the declared, user-approved install per scope.
-	 *  Returns whether the hook was fully rendered. The user approved the hook
-	 *  and nothing else, so the rendering apply runs only when the scope had no
-	 *  other pending work; otherwise the declaration lands and `false` says the
-	 *  scope's next apply finishes the job.
+	 *  What switching the checks on at this scope would write, from the plan
+	 *  that would write it. Reads only; a preview installs nothing.
+	 * 
+	 *  Refuses a registered project whose folder is not there, so a card left
+	 *  standing from before a move cannot open an offer to rebuild it.
 	 */
-	installDriftHook: (scope: Scope) => typedError<boolean, string>(__TAURI_INVOKE("install_drift_hook", { scope })),
+	packageCheckPlan: (scope: Scope) => typedError<SetupPlan, string>(__TAURI_INVOKE("package_check_plan", { scope })),
+	/**
+	 *  Switch the session-start package check on for a scope: the script into
+	 *  the scope's local source, the declaration into its manifest, then the
+	 *  ordinary apply renders it into each tool.
+	 * 
+	 *  The person approved the check and nothing else, so the rendering apply
+	 *  runs only when the scope had no other pending work. With work waiting,
+	 *  the declaration lands and the registration waits with it — which is
+	 *  what the confirmation says before it is pressed, and what the answer
+	 *  says afterwards.
+	 */
+	enablePackageChecks: (scope: Scope) => typedError<SetupResult, string>(__TAURI_INVOKE("enable_package_checks", { scope })),
 	discoverProjects: (root: string) => typedError<string[], string>(__TAURI_INVOKE("discover_projects", { root })),
 	/**
 	 *  The full harness × kind capability matrix — the UI gates every action on
@@ -609,6 +618,8 @@ export const events = {
 export const LEGAL = {"version":1,"termsUrl":"https://kendex.ai/legal/terms","privacyUrl":"https://kendex.ai/legal/privacy"} as const;
 
 export const MANIFEST_SCHEMA = 6 as const;
+
+export const PACKAGE_CHECK_HARNESSES = ["claude","pi"] as const;
 
 export const ZOOM = {"min":50,"max":200,"step":10,"default":100} as const;
 
@@ -1727,6 +1738,12 @@ export type Enforcement =
  */
 "not-applicable";
 
+/**
+ *  Whether the file is there already. Read from disk at preview time, so a
+ *  project that has had the checks before is not told they are all new.
+ */
+export type FileChange = "add" | "change";
+
 /**  What the window has to show for one file the offer covers. */
 export type FileChanges = 
 /**
@@ -1765,6 +1782,24 @@ export type FileMode = {
 	before: string,
 	after: string,
 };
+
+/**
+ *  What one file the setup writes is for. The reader gets a role rather
+ *  than a path to interpret: `.claude/settings.json` says nothing about
+ *  why a session-start check needs it.
+ */
+export type FileRole = 
+/**  The script a session start runs. */
+"check-script" | 
+/**  A tool's own configuration, which is what makes it run the script. */
+"startup-registration" | 
+/**
+ *  The project's kendex.toml, where the check is declared like any
+ *  other installed package.
+ */
+"declaration" | 
+/**  kendex's record of what it installed here. */
+"install-record";
 
 /**
  *  How an observed item exists on disk. Kinds that live as entries inside a
@@ -2720,6 +2755,24 @@ export type MissingWhy =
 { kind: "unreadable"; said: string };
 
 /**
+ *  Why a file has no preview beside it. A reason rather than silence: a
+ *  list where some rows open and others do not is a list the reader
+ *  cannot trust.
+ */
+export type NoPreview = 
+/**
+ *  One entry goes into a file the tool shares with the person's own
+ *  settings. The rest of that file is theirs and is left alone, so
+ *  there is no whole-file content to show ahead of the write.
+ */
+"shared-file" | 
+/**
+ *  Written from what the apply did, so its content does not exist
+ *  until the apply has run.
+ */
+"generated";
+
+/**
  *  One item as the scanner found it — read-only truth, no interpretation of
  *  whether it is declared or managed.
  */
@@ -3149,6 +3202,22 @@ export type PackagesUpdate_Serialize = {
 	view: AuditView_Serialize,
 	/**  One entry per target, in the order they were given. */
 	packages: PackageOutcome_Serialize[],
+};
+
+/**  One file the setup writes. */
+export type PlannedFile = {
+	/**  Relative to the project root, `/`-spelled. */
+	path: string,
+	change: FileChange,
+	role: FileRole,
+	/**  The tool this file belongs to, where it belongs to one. */
+	harness: HarnessId | null,
+	/**
+	 *  The bytes the write puts there, where kendex holds them before
+	 *  writing. `None` with a reason in `no_preview`; never both empty.
+	 */
+	preview: string | null,
+	noPreview: NoPreview | null,
 };
 
 /**
@@ -3875,6 +3944,61 @@ export type SettingsRow = {
 	 *  two say what is in the way instead.
 	 */
 	current: Current,
+};
+
+/**  Why the setup did not finish in this action. */
+export type SetupHeld = 
+/**
+ *  The project had changes waiting that this yes did not cover. The
+ *  script and the declaration landed; the registration goes in when
+ *  those changes do. Nothing here says that will succeed — the same
+ *  positions can refuse then too.
+ */
+{ kind: "otherChanges"; count: number } | 
+/**
+ *  Positions in this project that nothing can settle on its own. Said
+ *  as the audit says them, so the reader gets the position rather than
+ *  a verdict about it.
+ */
+{ kind: "conflicts"; detail: string[] };
+
+/**  What switching a scope's package checks on would do. */
+export type SetupPlan = {
+	/**
+	 *  The tools this installation registers the check in, in the order
+	 *  the declaration names them.
+	 */
+	harnesses: HarnessId[],
+	files: PlannedFile[],
+	/**
+	 *  Changes this project already has waiting that switching the checks
+	 *  on does not ask for. While any stand, the action writes the script
+	 *  and the declaration and the registration waits with them: a yes to
+	 *  the checks is not a yes to unrelated work.
+	 */
+	otherPending: number,
+	/**
+	 *  Positions in this project that nothing can settle on its own —
+	 *  what an apply of those pending changes would refuse at, said as
+	 *  the audit says it. Empty is the ordinary case.
+	 */
+	conflicts: string[],
+};
+
+/**  Where the checks stand after the action. */
+export type SetupResult = {
+	/**
+	 *  Every tool the declaration names is registered. Read from the
+	 *  scope's drift, never from what a write returned: an installer's
+	 *  answer says a plan ran, not that every promised target is live.
+	 */
+	complete: boolean,
+	/**
+	 *  Why it is not, when it is not. Which tools are covered and which
+	 *  are not is the card's to say from the scan that follows this;
+	 *  this is the part no read of the machine can recover afterwards.
+	 */
+	held: SetupHeld | null,
 };
 
 /**
