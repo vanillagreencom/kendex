@@ -2,7 +2,7 @@ use serde::Serialize;
 use specta::Type;
 
 mod repos;
-pub use repos::{RepoSubscription, repo_subscriptions};
+pub use repos::{RepoSubscription, Subscription, repo_subscriptions, subscriptions};
 
 use crate::engine::{EngineReport, PlanOptions, plan_scope};
 use crate::env::Env;

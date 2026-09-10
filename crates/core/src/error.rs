@@ -644,6 +644,27 @@ pub enum CoreError {
     )]
     TemplateCopyUnreadable { copy: String, why: String },
 
+    /// A bookmark kendex will not save, or a word it does not know in the
+    /// vocabulary a saved item is named by. `why` is the whole reason.
+    #[error(
+        "'{}' cannot be saved as a bookmark — {why}",
+        crate::names::shown(what)
+    )]
+    BookmarkUnusable { what: String, why: String },
+
+    #[error("nothing saved is called '{}'", crate::names::shown(name))]
+    NoSuchBookmark { name: String },
+
+    /// The bookmark index holds a row naming nothing a surface can act on.
+    /// Refused whole rather than skipped: a skipped row is a bookmark that
+    /// silently stops existing, and the next save would write the file back
+    /// without it.
+    #[error(
+        "{}: a saved item cannot be read — {why}",
+        crate::names::shown(&path.display().to_string())
+    )]
+    BookmarkIndexUnusable { path: PathBuf, why: String },
+
     /// No credential is stored on this machine — signing in is the fix.
     #[error("not signed in — run `kendex login` first")]
     NotSignedIn,

@@ -136,6 +136,27 @@ pub struct BundleDetail {
     pub records_unreadable: bool,
 }
 
+/// Whether one catalog still offers a package of this kind and name.
+///
+/// Opened through the same reader every other read in this module goes
+/// through, so a caller holding a saved identity — a bookmark — asks the
+/// catalog rather than opening one of its own. A catalog that will not
+/// open answers with its own refusal, never with "not offered": that a
+/// marketplace cannot be served and that it has dropped a package are
+/// different sentences with different remedies.
+pub fn offers_package(env: &Env, catalog: &Catalog, kind: ItemKind, name: &str) -> Result<bool> {
+    let browsed = open(env, catalog)?;
+    Ok(crate::source::find_item(&browsed.sealed, &browsed.config, kind, name).is_some())
+}
+
+/// Whether one catalog still declares a curated set of this name. A set
+/// declared in a shape this reader will not read is not a set the catalog
+/// offers, and its reason travels rather than reading as absence.
+pub fn offers_bundle(env: &Env, catalog: &Catalog, name: &str) -> Result<bool> {
+    let browsed = open(env, catalog)?;
+    Ok(super::bundles::find(&browsed.sealed, &browsed.config, name)?.is_some())
+}
+
 /// Every package one catalog offers, across kinds.
 pub fn packages(env: &Env, catalog: &Catalog) -> Result<Vec<AvailablePackage>> {
     let browsed = open(env, catalog)?;

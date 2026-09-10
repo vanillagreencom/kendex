@@ -28,6 +28,9 @@ vi.mock("@/bindings", () => ({
     marketplacePackagePreview: vi.fn(),
     marketplacePackageFile: vi.fn(),
     installTargets: vi.fn(),
+    // The Bookmark control every marketplace surface now carries reads
+    // the saved list once on mount.
+    bookmarksList: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
   },
 }));
 vi.mock("sonner", () => ({

@@ -2,6 +2,7 @@ mod account;
 mod app_settings;
 mod app_update;
 pub mod audit;
+mod bookmarks;
 mod commands;
 pub mod commit_offer;
 mod community;
@@ -212,6 +213,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         packages::package_file,
         packages::package_readme,
         packages::package_meta,
+        bookmarks::bookmarks_list,
+        bookmarks::bookmark_add,
+        bookmarks::bookmark_remove,
         templates::templates_list,
         templates::template_draft,
         templates::template_create_from_project,

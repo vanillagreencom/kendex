@@ -580,6 +580,15 @@ export const commands = {
 	fork: ForkProvenance_Serialize | null,
 	catalog: CatalogGroupMeta | null,
 } | null, string>(__TAURI_INVOKE("package_meta", { scope, kind, name })),
+	/**
+	 *  Every saved item, read against this machine. One read for the whole
+	 *  app: the Bookmarks tab draws these rows, and every Bookmark control
+	 *  elsewhere decides whether its own row is saved by looking for its
+	 *  marketplace's identity in this list.
+	 */
+	bookmarksList: () => typedError<SavedItem[], string>(__TAURI_INVOKE("bookmarks_list")),
+	bookmarkAdd: (bookmark: Bookmark) => typedError<Bookmark, string>(__TAURI_INVOKE("bookmark_add", { bookmark })),
+	bookmarkRemove: (bookmark: Bookmark) => typedError<null, string>(__TAURI_INVOKE("bookmark_remove", { bookmark })),
 	templatesList: () => typedError<Template_Serialize[], string>(__TAURI_INVOKE("templates_list")),
 	/**
 	 *  Everything the create-from-project modal draws, read fresh. Nothing is
@@ -971,6 +980,32 @@ export type AvailablePackage = {
  *  is not the bytes, and reading them apart is how the two come adrift.
  */
 export type Base = string | null;
+
+/**  One saved marketplace item. */
+export type Bookmark = {
+	/**
+	 *  The marketplace, named the way a source declaration names it: the
+	 *  repository, or the folder a path source points at. Never the
+	 *  subscription's alias — an alias is a per-place manifest key, and a
+	 *  bookmark belongs to no place, so two projects spelling one
+	 *  marketplace differently would save as two different bookmarks.
+	 */
+	repo: string,
+	item: BookmarkItem,
+	/**  The name the catalog offers it under. */
+	name: string,
+};
+
+/**
+ *  What a bookmark points at inside a marketplace: one package the catalog
+ *  offers, of one kind, or a curated set the catalog declares and installs
+ *  whole.
+ * 
+ *  The kind rides inside the package arm rather than beside it, so a set —
+ *  which has no package kind — cannot be recorded with one, and a package
+ *  cannot be recorded without one.
+ */
+export type BookmarkItem = { is: "package"; kind: ItemKind } | { is: "bundle" };
 
 /**  Package-owned review-bot settings, retained without interpreting their schema. */
 export type BotInstructions = Record<string, unknown>;
@@ -3911,6 +3946,31 @@ export type QualityScore = {
 	penaltyPercent: number,
 };
 
+/**  Where a saved item stands on this machine. */
+export type Reach = 
+/**
+ *  A subscription here carries the marketplace, its catalog reads, and
+ *  it still offers this item. The one state an install may start from.
+ */
+{ at: "offered" } | 
+/**
+ *  The catalog reads and no longer offers it — renamed or dropped
+ *  after the bookmark was saved. The row stays, saying so.
+ */
+{ at: "not-offered"; why: string } | 
+/**
+ *  Nothing here subscribes to the marketplace, and it is a repository
+ *  kendex can browse. Opening the row fetches it; installing from it
+ *  subscribes first, which is the marketplace page's own offer and not
+ *  this list's to make.
+ */
+{ at: "unsubscribed" } | 
+/**
+ *  The marketplace cannot be served right now, or cannot be addressed
+ *  at all. `why` is the whole reason, from whichever reader judged it.
+ */
+{ at: "unavailable"; why: string };
+
 /**  A step that did not go through. */
 export type Refused = {
 	/**  The step, as its own line names it. */
@@ -4230,6 +4290,27 @@ export type SafetyTarget = {
 export type Said = {
 	stdout: string[],
 	stderr: string[],
+};
+
+/**  One saved item as a surface draws it. */
+export type SavedItem = {
+	bookmark: Bookmark,
+	/**
+	 *  The marketplace folded to one string, from
+	 *  [`crate::source_ref::repo_identity`]. Carried rather than left to
+	 *  the reader: a surface deciding whether the row it is drawing is
+	 *  saved compares this against its own marketplace's identity, and a
+	 *  second spelling of that fold outside core is a second answer.
+	 */
+	repoIdentity: string,
+	/**
+	 *  The catalog this item is addressed through, or null where nothing
+	 *  on this machine can address the marketplace at all. It is what a
+	 *  row opens; a row with none opens nothing rather than opening some
+	 *  other marketplace's page.
+	 */
+	catalog: Catalog | null,
+	reach: Reach,
 };
 
 /**

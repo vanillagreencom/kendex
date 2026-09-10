@@ -47,7 +47,7 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 ## Decisions
 
 - Stack: Tauri 2, React 19, Vite, Tailwind v4, shadcn/ui, zustand, tauri-specta, serde and toml.
-- No database: manifests, locks and native directories are the state; scans are in-memory views; preferences and saved selections are two files.
+- No database: manifests, locks and native directories are the state; scans are in-memory views; preferences, saved selections and bookmarks are three files.
 - No migration machinery: manifest and lock carry a format version, this build reads exactly the one it writes, and a file from another version is refused and left byte-for-byte.
 - One spelling per artifact: `kendex.toml`, `.kendex-lock.json`, `.kendex-local/`, `kendex.settings.toml`, `KENDEX_*` variables; no older product name is read anywhere.
 - App and CLI are equal thin shells over core; the only app-only operations are install-beside (`fork_beside`) and per-package update (`package::update_one`).

@@ -17,6 +17,7 @@ pub mod app_update;
 pub mod apply;
 pub mod author;
 pub mod base;
+pub mod bookmark;
 pub(crate) mod capture;
 pub mod check_catalog;
 pub mod clock;

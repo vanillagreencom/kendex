@@ -20,6 +20,9 @@ vi.mock("@/bindings", () => ({
     // The page reads the provenance join once, to say which projects hold
     // each package and each set.
     libraryProvenance: vi.fn(),
+    // The Bookmark control every marketplace surface now carries reads
+    // the saved list once on mount.
+    bookmarksList: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
   },
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));

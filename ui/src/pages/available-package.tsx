@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { commands, type PackageView } from "@/bindings";
+import { BookmarkButton } from "@/components/bookmarks/bookmark-button";
 import { FileBrowser } from "@/components/files/file-browser";
 import { packageFileEntries } from "@/components/files/package-file-rows";
 import { MarkdownView } from "@/components/markdown-view";
@@ -154,23 +155,34 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
           </>
         }
         action={
-          catalog.by === "repo" ? (
-            <RepoAction
-              repo={catalog.repo}
-              summary={summary}
-              subscribeLabel="Subscribe to install"
+          // Saving is offered whether or not this machine subscribes: a
+          // bookmark is a note about where something came from, and a
+          // repository opened from the Community tab is exactly the case a
+          // person wants to come back to.
+          <span className="flex items-center gap-2">
+            <BookmarkButton
+              catalog={catalog}
+              item={{ is: "package", kind }}
+              name={name}
             />
-          ) : scope ? (
-            // One button, because there is one action. What goes where is
-            // the guided flow's two questions, asked in one place behind
-            // it rather than as three controls beside it.
-            <Button
-              disabled={busy || !view || recordsUnknown}
-              onClick={doInstall}
-            >
-              {INSTALL_ACTION}
-            </Button>
-          ) : null
+            {catalog.by === "repo" ? (
+              <RepoAction
+                repo={catalog.repo}
+                summary={summary}
+                subscribeLabel="Subscribe to install"
+              />
+            ) : scope ? (
+              // One button, because there is one action. What goes where is
+              // the guided flow's two questions, asked in one place behind
+              // it rather than as three controls beside it.
+              <Button
+                disabled={busy || !view || recordsUnknown}
+                onClick={doInstall}
+              >
+                {INSTALL_ACTION}
+              </Button>
+            ) : null}
+          </span>
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto">

@@ -40,9 +40,9 @@ export type Page =
 export type MarketplacesTab = "subscribed" | "packages" | "community" | "mine";
 
 /** Which of My Library's tabs is showing. Installed is the default and
- * keeps the location filter; Templates is the person's across projects and
- * has no place to filter by. Bookmarks joins this list when it exists. */
-export type LibraryTab = "installed" | "templates";
+ * keeps the location filter; Templates and Bookmarks are the person's
+ * across projects and have no place to filter by. */
+export type LibraryTab = "installed" | "templates" | "bookmarks";
 
 /** What a link into the Library is asking to see — every narrowing it wants,
  * where to look included. A link states the whole thing, so a field it leaves

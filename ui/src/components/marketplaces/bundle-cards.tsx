@@ -1,5 +1,6 @@
 import { Package } from "lucide-react";
 import type { BundleDetail, Catalog, ItemKind, Scope } from "@/bindings";
+import { BookmarkButton } from "@/components/bookmarks/bookmark-button";
 import { InstalledIn } from "@/components/marketplaces/installed-in";
 import { Card, CardContent } from "@/components/ui/card";
 import { bundlePlaces } from "@/lib/installed-places";
@@ -70,7 +71,7 @@ export function BundleCards({
           <Card
             key={detail.name}
             {...opensOnActivate(open, opensLabel(detail.name))}
-            className="cursor-pointer gap-0 py-0 transition-colors hover:bg-accent/40 hover:border-input"
+            className="group cursor-pointer gap-0 py-0 transition-colors hover:bg-accent/40 hover:border-input"
           >
             <CardContent className="flex h-full flex-col gap-1.5 p-4">
               <div className="flex items-center gap-2">
@@ -84,6 +85,15 @@ export function BundleCards({
                 >
                   {detail.name}
                 </button>
+                {/* A control inside the card that does not open it, the
+                    same as the places count below. */}
+                <BookmarkButton
+                  catalog={catalog}
+                  item={{ is: "bundle" }}
+                  name={detail.name}
+                  reveal
+                  className="-my-1 ml-auto"
+                />
               </div>
               {detail.description ? (
                 <p className="line-clamp-2 text-[13px] text-muted-foreground">

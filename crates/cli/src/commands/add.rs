@@ -10,6 +10,7 @@ use super::ledger::{Wrote, say_ledger};
 use super::{CliResult, fail_refusal, harness_picker, install_destination, warn};
 use crate::ui;
 
+#[derive(Default)]
 pub struct AddArgs {
     pub source: Option<String>,
     pub global: bool,
@@ -78,12 +79,24 @@ fn split(values: &[String]) -> Vec<String> {
         .collect()
 }
 
-pub fn run(env: &Env, mut args: AddArgs) -> CliResult {
+pub fn run(env: &Env, args: AddArgs) -> CliResult {
     ui::intro("kendex add");
     let scope = match args.global {
         true => Scope::Global,
         false => install_destination(env, args.yes)?,
     };
+    run_into(env, &scope, args)
+}
+
+/// The install itself, into a place the caller has already settled.
+///
+/// Split from [`run`] so a verb that names its own destination — the
+/// bookmark verb's install, which takes `--project` — performs the same
+/// run rather than a second one of its own: the same selection rules, the
+/// same planning, the same repository-effects disclosure and the same
+/// registration of the folder the packages landed in.
+pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
+    let scope = scope.clone();
 
     // A collection link is a whole install of its own: the set the link
     // resolves to, never mixed with item flags.
