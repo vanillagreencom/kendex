@@ -50,7 +50,7 @@ ZERO=0000000000000000000000000000000000000000
 # are dropped, so a row reads as the push does: what was judged, what was
 # found, and the verdict. todo-ban's per-hit lines quote the marker they found,
 # and this file carries no marker shape, so only its count is kept.
-KEEP='^(pre-push: |byte-ceiling: |todo-ban: index-count=|md-format: (staged-count|summary)=|md-refs: link-target=|commit-guards: (unscoped|withheld-all)=)'
+KEEP='^(pre-push: |byte-ceiling: |todo-ban: index-count=|md-format: (staged-count|summary|no-match)=|md-refs: link-target=|commit-guards: (unscoped|withheld-all)=)'
 # No fixture here carries a doc-limits sibling, so that lane states its skip on
 # every single run and would repeat one long line in every row below. It is
 # asserted once, directly, after the table; what the lane finds at push is
@@ -546,6 +546,57 @@ wrapped SWEEPING sweeping "" 'COMMIT_GUARDS_MD_SCOPE = "all"\n'
 assert_eq "a lane configured to sweep the tree runs under the whole-tree scope, and refuses the replayed document" \
   "rc=1 pre-push: base-none=refs/heads/topic;pre-push: step=all;md-format: summary=violations=1 files=1 scope=all skipped=0;pre-push: result=1" \
   "$(push_url "$SWEEPING" topic)"
+
+# The same setting under a scope this lane CAN bound. A range is narrower than
+# that sweep, so handing one over would answer a smaller question under the
+# setting's name: a document already malformed, untouched by the range, would
+# read clean. The lane keeps the sweep the project configured.
+outdated() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose malformed document predates the range
+  local __v="$1" r=""
+  new_repo r "$2" "${3:-}"
+  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-format"\nCOMMIT_GUARDS_MD_SCOPE = "all"\n' >"$r/kendex.settings.toml"
+  printf '# Title\n\nA paragraph that is hard\nwrapped over two lines.\n' >"$r/DOC.md"
+  q git -C "$r" add kendex.settings.toml DOC.md
+  # The document predates the guard, so it is committed with none running, and
+  # so is every push below: the fixture is the state, not a row's subject.
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: seed with a malformed document"
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
+  q git -C "$r" checkout -q -b topic
+  printf 'unrelated\n' >"$r/other.txt"
+  q git -C "$r" add other.txt
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: a change touching no markdown"
+  # On the remote, so the ref line below carries a destination oid and the
+  # scope resolves to --against rather than a boundary walk.
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
+  printf 'more\n' >>"$r/other.txt"
+  q git -C "$r" add other.txt
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: another such change"
+  eval "$__v=\$r"
+}
+
+OUTDATED=""
+outdated OUTDATED outdated
+assert_eq "and keeps that sweep where the push HAS a range, so a malformed document outside the range still refuses" \
+  "rc=1 pre-push: step=against:<oid>;md-format: summary=violations=1 files=1 scope=all skipped=0;pre-push: result=1" \
+  "$(push_ref "$OUTDATED" topic)"
+
+# The must-fail control: a copy of the batch that hands the range over
+# whatever the lane's configured scope is. The range changed no markdown, so
+# the same document reads clean and the push goes through.
+SUBST="$TMP/.subst/commit-guards"
+mkdir -p "$(dirname "$SUBST")"
+cp -R "$SKILL_TEMPLATE" "$SUBST"
+SUBST_BEFORE="$(cat -- "$SUBST/scripts/commit-guards")"
+sed -i.bak 's#^    if \[ "$MD_BARE_SCOPE" = all \]; then$#    if false; then#' "$SUBST/scripts/commit-guards"
+rm -f -- "$SUBST/scripts/commit-guards.bak"
+assert_eq "the substituting edit took" "rewritten" \
+  "$(if [ "$SUBST_BEFORE" = "$(cat -- "$SUBST/scripts/commit-guards")" ]; then echo unchanged; else echo rewritten; fi)"
+
+SUBSTITUTED=""
+outdated SUBSTITUTED substituted "$SUBST"
+assert_eq "must-fail: with the range substituted for the configured sweep, that document reads clean and pushes" \
+  "rc=0 pre-push: step=against:<oid>;md-format: no-match=range:*.md;pre-push: result=0" \
+  "$(push_ref "$SUBSTITUTED" topic)"
 
 printf '\n%s: %s passed, %s failed\n' "$gg_suite" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

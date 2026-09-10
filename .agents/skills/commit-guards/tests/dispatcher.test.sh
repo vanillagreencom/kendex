@@ -119,6 +119,16 @@ fx_committed_md() { # NAME
   commit
 }
 full_scope() { repo "$1"; put big.txt "$(head -c 2048 /dev/zero | tr '\0' a)"; commit 'feat: seed'; git -C "$R" tag base; } # NAME — a committed 2 KB file, tagged base
+# A hard-wrapped document committed BEFORE the base tag, then one commit that
+# touches no markdown: the range since base excludes the document entirely.
+fx_swept_md() { # NAME
+  clean "$1"
+  put doc.md 'Wrapped\ntext.\n'
+  commit
+  git -C "$R" tag base
+  put other.txt 'unrelated\n'
+  commit 'feat: touch no markdown'
+}
 grown() { full_scope "$1"; printf 'x' >>"$R/big.txt"; git -C "$R" add -A; commit 'feat: grow'; } # NAME — and one byte of growth since base
 
 run_rows() { # label | fixture | envs | args | expect — through `batch`
@@ -155,7 +165,7 @@ mkdir -p "$INFERRED"
 cp -R "$SKILL_DIR/scripts" "$INFERRED/scripts"
 INFERRED_GG="$INFERRED/scripts/commit-guards"
 INFERRED_BEFORE="$(cat -- "$INFERRED_GG")"
-sed -i.bak 's#if \[ "$SKIP_UNSCOPED" -eq 1 \] && \[ "$BARE_SCOPE" = touched \]; then#if [ "$SKIP_UNSCOPED" -eq 1 ]; then#' \
+sed -i.bak 's#if \[ "$SKIP_UNSCOPED" -eq 1 \] && \[ "$MD_BARE_SCOPE" = touched \]; then#if [ "$SKIP_UNSCOPED" -eq 1 ]; then#' \
   "$INFERRED_GG"
 rm -f -- "$INFERRED_GG.bak"
 assert_eq "the inferred-derivation edit took" "rewritten" \
@@ -197,6 +207,12 @@ run_rows \
   "'--base' without a ref is exit 2|grown base-4||all --base|rc=2 ${ERR}argument-missing=--base" \
   "'--staged' with '--base' is exit 2: one scope per batch|grown base-5||all --staged --base base|rc=2 ${ERR}scope-conflict=2" \
   "an unknown base ref is a check that could not complete|grown base-6|COMMIT_GUARDS_CHECKS=byte-ceiling|all --base no-such-ref|rc=2 $(steps base:no-such-ref byte-ceiling byte-ceiling)$INCOMPLETE"
+
+echo "=== a range never narrows a lane whose configured scope is the whole tree ==="
+run_rows \
+  "a lane configured to sweep the tree keeps that scope under --base, so a document the range never touched still fails|fx_swept_md swept-1|COMMIT_GUARDS_CHECKS=md-format,COMMIT_GUARDS_MD_SCOPE=all|all --base base|rc=1 commit-guards: step=md-format --all;$VIOLATIONS" \
+  "control: under the default touched scope the same batch hands that lane the range, which changed no markdown|fx_swept_md swept-2|COMMIT_GUARDS_CHECKS=md-format|all --base base|rc=0 commit-guards: step=md-format --base base;$(ok md-format)" \
+  "byte-ceiling takes the range under either setting: it is ratcheted, and the range is the question it answers|grown swept-3|$BC=1,COMMIT_GUARDS_CHECKS=byte-ceiling,COMMIT_GUARDS_MD_SCOPE=all|all --base base|rc=1 $(steps base:base byte-ceiling)$VIOLATIONS"
 
 echo "=== a single check runs alone, flags and exit status passed through; a batch announces before the check speaks ==="
 single_rows() { # label | fixture | envs | args | stdin | expect — through `single`

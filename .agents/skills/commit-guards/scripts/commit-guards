@@ -48,12 +48,14 @@ STAGED_SCOPED_CHECKS="todo-ban byte-ceiling md-format md-refs comments"
 # about nothing.
 FULL_SCOPED_CHECKS="byte-ceiling"
 # The lanes a ref-range scope reaches. byte-ceiling is scoped to a range by
-# design; the markdown lanes take one so a document a replay carried in is
-# judged where nothing is staged — a push — and their bare touched scope
-# would open no file. The whole-tree scope deliberately does NOT reach them:
-# that sweep is absolute rather than ratcheted, so imposing it would refuse
-# every push in a repository holding markdown that predates the guard, and
-# choosing it is COMMIT_GUARDS_MD_SCOPE=all, the project's call.
+# design and takes one under every setting: it is ratcheted, so a range is the
+# question it was written to answer. A markdown lane takes one only where its
+# configured scope is `touched`, which selects from the staged diff and so
+# opens no file at a caller that stages nothing; the range is what gives it a
+# document a replay carried in. Under COMMIT_GUARDS_MD_SCOPE=all its
+# configured scope is the whole-tree sweep, which is WIDER than any range, and
+# scope_for hands it that sweep instead — a range there would answer a smaller
+# question under the setting's name.
 RANGE_SCOPED_CHECKS="byte-ceiling md-format md-refs"
 
 usage() {
@@ -169,17 +171,43 @@ done
 # stages nothing asks for those to be withheld; each is named here, and the
 # verdict record below lists only the checks that ran.
 #
-# Three questions, and none answers another. WHAT THIS RUN HANDS the check is
-# asked first, of scope_for below, because a lane given an explicit scope
-# opens files whatever its bare default would have done — that is what a
-# range scope is for. WHICH checks take their bare scope from the shared
-# markdown selector is asked of each check's own script, rather than listed
-# here, so a lane that starts deferring to it later cannot rejoin the clean
-# count in silence. WHAT that selector would resolve to is asked of the
-# selector itself, below, because deferring to it says where the answer comes
-# from and not what it is: configured to sweep the tree, such a lane needs
-# nothing staged and this caller reaches it.
+# Two questions, and neither answers the other. WHICH checks take their bare
+# scope from the shared markdown selector is asked of each check's own script,
+# rather than listed here, so a lane that starts deferring to it later cannot
+# slip past either decision below in silence. WHAT that selector would resolve
+# to is asked of the selector itself, because deferring to it says where the
+# answer comes from and not what it is.
+#
+# Both decisions read both answers. A lane is withheld only where its bare
+# scope opens no file, and handed a RANGE only where a range is not narrower
+# than the scope the project configured — under `all` it is, and the sweep
+# wins.
 MD_SELECTOR="lib/md-scope.sh"
+
+defers_to_md_selector() { # CHECK — 0 when the check takes its bare scope from the selector
+  local status=0
+  grep -q -- "$MD_SELECTOR" "$SCRIPT_DIR/$1" || status=$?
+  [ "$status" -le 1 ] \
+    || gg_fail selector-read "$1:$status" "could not read $1 to see how it resolves its scope; refusing to guess"
+  return "$status"
+}
+
+# What a bare run of such a lane resolves to, resolved once on FIRST NEED and
+# kept, so both decisions below read one value and cannot disagree.
+#
+# Lazily, and that is the point rather than an optimization: gg_md_bare_scope
+# refuses an invalid COMMIT_GUARDS_MD_SCOPE, and a run that never needed the
+# answer must not start refusing on a setting it would never have read. A
+# --staged batch is exactly that — those lanes are handed --staged and
+# gg_md_scope returns before it reaches the setting — so resolving here
+# unconditionally would make a bad value block commits that pass today.
+# gg_md_bare_scope answers touched or all and exits otherwise, so an empty
+# value is unasked and nothing else.
+MD_BARE_SCOPE=""
+md_bare_scope() { # -> the answer in MD_BARE_SCOPE
+  [ -z "$MD_BARE_SCOPE" ] || return 0
+  gg_md_bare_scope MD_BARE_SCOPE
+}
 
 # The scope this run hands ONE check, in SCOPE. Read by the withholding pass
 # and by the run loop, so the two cannot disagree about what a check was
@@ -190,32 +218,50 @@ scope_for() { # CHECK
   case "$SCOPE_MODE" in
     staged)
       case " $STAGED_SCOPED_CHECKS " in *" $1 "*) SCOPE=(--staged) ;; esac
+      return 0
       ;;
     all)
       case " $FULL_SCOPED_CHECKS " in *" $1 "*) SCOPE=(--all) ;; esac
+      return 0
       ;;
-    base)
-      case " $RANGE_SCOPED_CHECKS " in *" $1 "*) SCOPE=(--base "$BASE_REF") ;; esac
-      ;;
-    against)
-      case " $RANGE_SCOPED_CHECKS " in *" $1 "*) SCOPE=(--against "$BASE_REF") ;; esac
-      ;;
+  esac
+  case " $RANGE_SCOPED_CHECKS " in
+    *" $1 "*) ;;
+    *) return 0 ;;
+  esac
+  # A range is NARROWER than the whole-tree sweep. A lane whose CONFIGURED
+  # scope is that sweep must therefore never be handed one: the project chose
+  # an absolute scope, and answering a smaller question under its name is a
+  # refusal turning into a pass — a document already over the format rules,
+  # untouched by the range, reads clean. The sweep is handed over explicitly
+  # rather than left for the lane's own default to rediscover, so the batch's
+  # step line names the scope the lane actually read and this function stays
+  # an honest answer to what the run gives a check.
+  #
+  # byte-ceiling is unaffected either way: it does not defer to the selector,
+  # it is ratcheted, and a range is the question it was written to answer.
+  if defers_to_md_selector "$1"; then
+    md_bare_scope
+    if [ "$MD_BARE_SCOPE" = all ]; then
+      SCOPE=(--all)
+      return 0
+    fi
+  fi
+  case "$SCOPE_MODE" in
+    base) SCOPE=(--base "$BASE_REF") ;;
+    against) SCOPE=(--against "$BASE_REF") ;;
   esac
 }
 
 if [ "$SKIP_UNSCOPED" -eq 1 ]; then
-  # What a bare run of such a lane would resolve to, asked once of the file
-  # that owns the setting's meaning rather than inferred from the fact that a
-  # lane defers to it. Deferring says where the answer comes from, not what
-  # it is: under `all` the lane sweeps the tree and needs nothing staged, so
-  # this scope reaches it perfectly well and withholding it would drop a
-  # check the project explicitly asked for. An invalid value is refused
-  # there, which is also why it is asked here at all: withholding a lane
-  # before it runs means its own validation never fires.
-  BARE_SCOPE=""
-  gg_md_bare_scope BARE_SCOPE
+  # Resolved up front under this flag, rather than left to first need: an
+  # invalid value is refused in the selector, and withholding a lane before it
+  # runs means its own validation never fires. Under `all` the lane sweeps the
+  # tree and needs nothing staged, so this caller reaches it perfectly well
+  # and withholding it would drop a check the project explicitly asked for.
+  md_bare_scope
 fi
-if [ "$SKIP_UNSCOPED" -eq 1 ] && [ "$BARE_SCOPE" = touched ]; then
+if [ "$SKIP_UNSCOPED" -eq 1 ] && [ "$MD_BARE_SCOPE" = touched ]; then
   KEPT=""
   WITHHELD=""
   for c in $CHECKS; do
@@ -224,11 +270,7 @@ if [ "$SKIP_UNSCOPED" -eq 1 ] && [ "$BARE_SCOPE" = touched ]; then
       KEPT="${KEPT:+$KEPT }$c"
       continue
     fi
-    selector_status=0
-    grep -q -- "$MD_SELECTOR" "$SCRIPT_DIR/$c" || selector_status=$?
-    [ "$selector_status" -le 1 ] \
-      || gg_fail selector-read "$c:$selector_status" "could not read $c to see how it resolves its scope; refusing to guess"
-    if [ "$selector_status" -eq 0 ]; then
+    if defers_to_md_selector "$c"; then
       WITHHELD="${WITHHELD:+$WITHHELD }$c"
       gg_message unscoped "$c" "This check selects its files from the staged diff under the configured scope, and this run was told nothing is staged, so it would open no file. Withheld rather than counted clean."
       continue
