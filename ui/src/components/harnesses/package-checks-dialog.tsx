@@ -7,7 +7,9 @@ import { FileBrowser } from "@/components/files/file-browser";
 import { FilePane } from "@/components/files/file-pane";
 import { Button } from "@/components/ui/button";
 import {
+  BLOCKED_LABEL,
   CHANGE_WORDS,
+  CHECKS_BLOCKED_NOTE,
   CHECKS_CONFLICTS_NOTE,
   CHECKS_QUIET,
   CHECKS_WHEN,
@@ -111,6 +113,19 @@ export function PackageChecksDialog({
             conflict sentence answer for both, and it cannot. */}
         {plan && plan.otherPending > 0 ? (
           <p>{otherChangesWaiting(plan.otherPending)}</p>
+        ) : null}
+        {plan && plan.blocked.length > 0 ? (
+          <div className="flex flex-col gap-1">
+            <p>{CHECKS_BLOCKED_NOTE}</p>
+            <p className="font-medium text-foreground">{BLOCKED_LABEL}</p>
+            <ul className="list-disc pl-4">
+              {plan.blocked.map((detail) => (
+                <li key={detail} className="font-mono text-xs">
+                  {detail}
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : null}
         {plan && plan.conflicts.length > 0 ? (
           <div className="flex flex-col gap-1">

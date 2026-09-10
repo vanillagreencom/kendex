@@ -39,13 +39,23 @@ pub enum FileRole {
     InstallRecord,
 }
 
-/// Whether the file is there already. Read from disk at preview time, so a
-/// project that has had the checks before is not told they are all new.
+/// What this action does to the file, read from the operations it will
+/// run rather than from what happens to sit on disk. A person pressing a
+/// button is told what the press does; a file already as the setup needs
+/// it, and one the press deliberately leaves for later, are not changes
+/// the press makes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum FileChange {
+    /// Written by this action; nothing is there now.
     Add,
+    /// Written by this action over something already there.
     Change,
+    /// Already what the setup needs. This action writes nothing here.
+    Unchanged,
+    /// Part of the setup, and not written by this action: the render
+    /// waits with the changes this project already had.
+    Later,
 }
 
 /// Why a file has no preview beside it. A reason rather than silence: a
@@ -92,10 +102,15 @@ pub struct SetupPlan {
     /// and the declaration and the registration waits with them: a yes to
     /// the checks is not a yes to unrelated work.
     pub other_pending: u32,
-    /// Positions in this project that nothing can settle on its own —
-    /// what an apply of those pending changes would refuse at, said as
-    /// the audit says it. Empty is the ordinary case.
+    /// Positions in this project that nothing can settle on its own and
+    /// that the check does not sit at. They hold up their own items and
+    /// nothing else. Empty is the ordinary case.
     pub conflicts: Vec<String>,
+    /// Unsettled positions at the check's own destinations. These do stop
+    /// its registration, which is what tells them from `conflicts` — a
+    /// surface saying the same thing about both would be false about one
+    /// of them.
+    pub blocked: Vec<String>,
 }
 
 /// Read what switching the checks on at this scope would write.
@@ -109,6 +124,49 @@ pub fn setup_plan(env: &Env, scope: &Scope) -> Result<SetupPlan> {
         check.check()?;
     }
     let root = project_root(&scope);
+
+    // What this action will actually run, and what it will hold back.
+    //
+    // The declaration plan is the ops that land now — it omits the script
+    // write when the script already matches, so a re-enable does not claim
+    // a file it never touches. The render plan is the scope as it stands
+    // with the check declared: its ops are the registrations and the
+    // record, and whether they run now is the same judgement the install
+    // makes, that nothing unrelated is waiting.
+    let unrelated = pending_without_checks(env, &scope)?;
+    let renders_now = unrelated.plan.is_empty();
+    let mut writes = Writes {
+        // The declaration step runs whatever else is waiting, and its plan
+        // is the judge of what it writes: it omits the script when the
+        // script already matches, so a re-enable claims no file it does
+        // not touch.
+        now: super::hook::install_plan(env, &scope)?
+            .ops
+            .iter()
+            .flat_map(|planned| planned.op.touched())
+            .collect(),
+        later: BTreeSet::new(),
+    };
+
+    // Everything the render puts in place, the tools it reaches, and the
+    // record it writes at the end.
+    let (harnesses, mut rendered) = rendered_into(env, &scope)?;
+    rendered.push(Rendered {
+        path: crate::lock::lock_path(env, &scope),
+        role: FileRole::InstallRecord,
+        harness: None,
+        preview: None,
+    });
+
+    // The render's own positions. Whether they are written by this press
+    // is the same judgement the install makes — nothing unrelated waiting
+    // — so a held press names them without claiming to write them.
+    let destinations: BTreeSet<PathBuf> = rendered.iter().map(|row| row.path.clone()).collect();
+    match renders_now {
+        true => writes.now.extend(destinations),
+        false => writes.later = destinations,
+    }
+
     let mut files = vec![
         planned(
             &super::hook::script_path(env, &scope),
@@ -116,6 +174,7 @@ pub fn setup_plan(env: &Env, scope: &Scope) -> Result<SetupPlan> {
             FileRole::CheckScript,
             None,
             Some(HOOK_SCRIPT.to_owned()),
+            &writes,
         ),
         planned(
             &crate::manifest::manifest_path(env, &scope),
@@ -123,70 +182,21 @@ pub fn setup_plan(env: &Env, scope: &Scope) -> Result<SetupPlan> {
             FileRole::Declaration,
             None,
             None,
+            &writes,
         ),
     ];
-
-    // Where the script lands in each tool, and which of that tool's own
-    // files registers it — asked of the renderer that will place it, so
-    // the list cannot name a destination the render does not use. Read
-    // without writing anything: the script's bytes are this binary's, so
-    // the placement does not need the install to have happened.
-    let script: crate::hook::HookSpec = crate::hook::parse_hook(HOOK_SCRIPT)
-        .map_err(|problem| crate::error::CoreError::CheckScriptUnreadable { problem })?
-        .into();
-    let mut harnesses = Vec::new();
-    let mut notes = crate::engine::desired::DesiredState::default();
-    for harness in super::hook::target_harnesses(&scope) {
-        let Some(artifact) = crate::engine::desired_kinds::restated_hook_artifact(
-            env, &scope, HOOK_NAME, &script, true, harness, &mut notes,
-        ) else {
-            // The tool never fires this event, so the install registers
-            // nothing there. Left off both lists rather than named as a
-            // target with no file: the card reads this list to say which
-            // tools run the check.
-            continue;
-        };
-        harnesses.push(harness);
-        // Every position the rendering occupies for this tool, whichever
-        // shape the renderer gives it — a registration today, and an
-        // exhaustive match rather than one arm so a renderer that changes
-        // shape cannot quietly drop rows out of the list.
-        let places: Vec<(&PathBuf, Option<String>)> = match &artifact {
-            Artifact::Registration { script, edits } => script
-                .iter()
-                .map(|(path, bytes)| (path, String::from_utf8(bytes.clone()).ok()))
-                .chain(edits.iter().map(|(path, _)| (path, None)))
-                .collect(),
-            Artifact::File { path, bytes } => {
-                vec![(path, String::from_utf8(bytes.clone()).ok())]
-            }
-            Artifact::Tree {
-                canonical, link, ..
-            } => std::iter::once(canonical)
-                .chain(link.iter())
-                .map(|path| (path, None))
-                .collect(),
-        };
-        for (path, preview) in places {
-            files.push(planned(
-                path,
-                root,
-                FileRole::StartupRegistration,
-                Some(harness),
-                preview,
-            ));
-        }
+    for row in rendered {
+        files.push(planned(
+            &row.path,
+            root,
+            row.role,
+            row.harness,
+            row.preview,
+            &writes,
+        ));
     }
-    files.push(planned(
-        &crate::lock::lock_path(env, &scope),
-        root,
-        FileRole::InstallRecord,
-        None,
-        None,
-    ));
     dedupe(&mut files);
 
-    let unrelated = pending_without_checks(env, &scope)?;
     Ok(SetupPlan {
         harnesses,
         files,
@@ -194,7 +204,112 @@ pub fn setup_plan(env: &Env, scope: &Scope) -> Result<SetupPlan> {
         // than wrapping keeps a nonsense count from reading as none.
         other_pending: u32::try_from(unrelated.plan.ops.len()).unwrap_or(u32::MAX),
         conflicts: conflicts(&unrelated),
+        // Read from the plan that has the check declared, because the one
+        // that strips it cannot hold a row about the check's own
+        // positions — which is exactly where a conflict stops the
+        // registration rather than something else's.
+        blocked: check_conflicts(&plan_with_checks(env, &scope)?),
     })
+}
+
+/// One position the render occupies, and what the reader is told it is.
+struct Rendered {
+    path: PathBuf,
+    role: FileRole,
+    harness: Option<HarnessId>,
+    preview: Option<String>,
+}
+
+/// Where the render puts the check in each tool, and which of that tool's
+/// own files reaches it — asked of the renderer that will place it, so no
+/// list here can name a destination the render does not use. Read without
+/// writing anything: the script's bytes are this binary's, so the
+/// placement does not need the install to have happened.
+///
+/// The tools answered are the ones the render reaches. A tool that never
+/// fires the event registers nothing, and is left off rather than named
+/// as a target with no file: the card reads these tools to say where the
+/// check runs.
+fn rendered_into(env: &Env, scope: &Scope) -> Result<(Vec<HarnessId>, Vec<Rendered>)> {
+    let script: crate::hook::HookSpec = crate::hook::parse_hook(HOOK_SCRIPT)
+        .map_err(|problem| crate::error::CoreError::CheckScriptUnreadable { problem })?
+        .into();
+    let mut harnesses = Vec::new();
+    let mut rendered = Vec::new();
+    let mut notes = crate::engine::desired::DesiredState::default();
+    for harness in super::hook::target_harnesses(scope) {
+        let Some(artifact) = crate::engine::desired_kinds::restated_hook_artifact(
+            env, scope, HOOK_NAME, &script, true, harness, &mut notes,
+        ) else {
+            continue;
+        };
+        harnesses.push(harness);
+        for (path, role, preview) in places(&artifact) {
+            rendered.push(Rendered {
+                path: path.clone(),
+                role,
+                harness: Some(harness),
+                preview,
+            });
+        }
+    }
+    Ok((harnesses, rendered))
+}
+
+/// Every position one tool's rendering occupies, whichever shape the
+/// renderer gives it, and what each position is.
+///
+/// The split is the same in every shape: bytes kendex renders are the
+/// script a session runs, and an entry or a link in the tool's own files
+/// is what makes the tool reach it. A rendered script described as what
+/// makes the tool run the script tells the reader the opposite of what it
+/// is. An exhaustive match rather than one arm, so a renderer that changes
+/// shape cannot quietly drop rows out of the list.
+fn places(artifact: &Artifact) -> Vec<(&PathBuf, FileRole, Option<String>)> {
+    match artifact {
+        Artifact::Registration { script, edits } => script
+            .iter()
+            .map(|(path, bytes)| {
+                (
+                    path,
+                    FileRole::CheckScript,
+                    String::from_utf8(bytes.clone()).ok(),
+                )
+            })
+            .chain(
+                edits
+                    .iter()
+                    .map(|(path, _)| (path, FileRole::StartupRegistration, None)),
+            )
+            .collect(),
+        Artifact::File { path, bytes } => vec![(
+            path,
+            FileRole::CheckScript,
+            String::from_utf8(bytes.clone()).ok(),
+        )],
+        Artifact::Tree {
+            canonical, link, ..
+        } => std::iter::once((canonical, FileRole::CheckScript, None))
+            .chain(
+                link.iter()
+                    .map(|path| (path, FileRole::StartupRegistration, None)),
+            )
+            .collect(),
+    }
+}
+
+/// The scope planned with the check declared: what the render will write,
+/// and what stands in its way at the check's own destinations.
+fn plan_with_checks(env: &Env, scope: &Scope) -> Result<crate::engine::EngineReport> {
+    let mut wanted = crate::engine::ops::manifest_for_mutation(env, scope)?;
+    super::hook::declare(&mut wanted, scope);
+    crate::engine::plan_scope(
+        env,
+        scope,
+        &wanted,
+        &loaded_lock(env, scope)?,
+        &crate::engine::PlanOptions::default(),
+    )
 }
 
 /// Everything waiting in this scope that the checks did not ask for: the
@@ -225,13 +340,7 @@ pub fn pending_without_checks(env: &Env, scope: &Scope) -> Result<crate::engine:
         return crate::engine::plan_apply(env, &scope, &crate::engine::PlanOptions::default());
     };
     declared.hooks.remove(HOOK_NAME);
-    let lock = match crate::lock::load_file(&crate::lock::lock_path(env, &scope))? {
-        LockFile::Current(lock) => lock,
-        LockFile::Absent => Lock {
-            version: crate::lock::LOCK_VERSION,
-            ..Lock::default()
-        },
-    };
+    let lock = loaded_lock(env, &scope)?;
     let mut report = crate::engine::plan_scope(
         env,
         &scope,
@@ -253,6 +362,9 @@ pub fn pending_without_checks(env: &Env, scope: &Scope) -> Result<crate::engine:
 
 /// Whether every tool the check runs in has its registration in place.
 ///
+/// A bit for the caller that only needs one; [`targets_waiting`] keeps
+/// which tools they are.
+///
 /// The one answer to "are the checks running here", asked after a write by
 /// the surface that has to report what it achieved: an installer's return
 /// value says a plan ran, never that every promised target is live.
@@ -266,50 +378,99 @@ pub fn every_target_registered(
     scope: &Scope,
     report: &crate::engine::EngineReport,
 ) -> Result<bool> {
+    Ok(targets_waiting(env, scope, report)?.is_empty())
+}
+
+/// The tools the check runs in that have no registration in place —
+/// [`every_target_registered`] with the answer kept rather than folded to
+/// a bit, for the surface that has to say which ones are waiting.
+pub fn targets_waiting(
+    env: &Env,
+    scope: &Scope,
+    report: &crate::engine::EngineReport,
+) -> Result<Vec<HarnessId>> {
     let scope = scope.canonical();
+    let targets = super::hook::target_harnesses(&scope);
     // A pass that could not derive everything it was asked for has not
     // looked at every target, and a target it never reached raises no row.
     if report.declaration_status == crate::engine::DeclarationStatus::Incomplete {
-        return Ok(false);
+        return Ok(targets);
     }
-    let targets = super::hook::target_harnesses(&scope);
     if targets.is_empty() {
-        return Ok(false);
+        return Ok(Vec::new());
     }
     let LockFile::Current(lock) = crate::lock::load_file(&crate::lock::lock_path(env, &scope))?
     else {
-        return Ok(false);
+        return Ok(targets);
     };
-    Ok(targets.into_iter().all(|harness| {
-        // Positive evidence, both halves. The record says the install put
-        // it there; the drift rows say nothing has happened to it since.
-        // Absence of a complaint alone is not evidence: a target the pass
-        // never reached, and one a narrower declaration never asked for,
-        // both raise no row at all.
-        let recorded = lock.entries.values().any(|entry| {
-            entry.kind == ItemKind::Hook && entry.name == HOOK_NAME && entry.harness == harness
-        });
-        let complained = report.drift.iter().any(|row| {
-            row.kind == ItemKind::Hook
-                && row.name == HOOK_NAME
-                && row.harness == harness
-                && !matches!(
-                    row.state,
-                    crate::engine::DriftState::Orphaned | crate::engine::DriftState::Unmanaged
-                )
-        });
-        recorded && !complained
-    }))
+    Ok(targets
+        .into_iter()
+        .filter(|harness| {
+            // Positive evidence, both halves. The record says the install put
+            // it there; the drift rows say nothing has happened to it since.
+            // Absence of a complaint alone is not evidence: a target the pass
+            // never reached, and one a narrower declaration never asked for,
+            // both raise no row at all.
+            let recorded = lock.entries.values().any(|entry| {
+                entry.kind == ItemKind::Hook && entry.name == HOOK_NAME && entry.harness == *harness
+            });
+            let complained = report.drift.iter().any(|row| {
+                about_the_check(row)
+                    && row.harness == *harness
+                    && !matches!(
+                        row.state,
+                        crate::engine::DriftState::Orphaned | crate::engine::DriftState::Unmanaged
+                    )
+            });
+            !recorded || complained
+        })
+        .collect())
 }
 
-/// Positions in a scope that nothing can settle on its own, said as the
-/// audit says them: the reader gets the position rather than a verdict
-/// about it.
+/// The scope's lock, or an empty one where it has none.
+fn loaded_lock(env: &Env, scope: &Scope) -> Result<Lock> {
+    Ok(
+        match crate::lock::load_file(&crate::lock::lock_path(env, scope))? {
+            LockFile::Current(lock) => lock,
+            LockFile::Absent => Lock {
+                version: crate::lock::LOCK_VERSION,
+                ..Lock::default()
+            },
+        },
+    )
+}
+
+/// Whether a drift row is about the check itself. The one predicate the
+/// two questions below are asked through, so neither can drift into a
+/// second reading of what belongs to the check.
+fn about_the_check(row: &crate::engine::DriftRow) -> bool {
+    row.kind == ItemKind::Hook && row.name == HOOK_NAME
+}
+
+/// Positions nothing can settle that the check does not sit at, said as
+/// the audit says them: the reader gets the position rather than a
+/// verdict about it. These hold up their own items and nothing else.
 pub fn conflicts(report: &crate::engine::EngineReport) -> Vec<String> {
+    unsettled(report, |row| !about_the_check(row))
+}
+
+/// Positions nothing can settle at the check's own destinations. Read
+/// from a report planned WITH the check declared — one that strips it
+/// cannot carry a row about the check's positions at all, and reading
+/// that one is what left an unreadable settings file out of the
+/// confirmation.
+pub fn check_conflicts(report: &crate::engine::EngineReport) -> Vec<String> {
+    unsettled(report, about_the_check)
+}
+
+fn unsettled(
+    report: &crate::engine::EngineReport,
+    about: impl Fn(&crate::engine::DriftRow) -> bool,
+) -> Vec<String> {
     report
         .drift
         .iter()
-        .filter(|row| row.state == crate::engine::DriftState::Conflict)
+        .filter(|row| row.state == crate::engine::DriftState::Conflict && about(row))
         .map(|row| row.detail.clone())
         .collect()
 }
@@ -324,12 +485,41 @@ fn project_root(scope: &Scope) -> Option<&Path> {
     }
 }
 
+/// What the ops of this invocation say about one position.
+///
+/// The whole judge of a row's status. `now` is every path the operations
+/// this action runs will touch, and `later` every path the setup reaches
+/// that this action leaves for the render it is holding back; a position
+/// in neither is already what the setup needs. The disk is read only to
+/// tell an add from a change, never to decide whether this action writes
+/// at all — that is what the operations say.
+struct Writes {
+    now: BTreeSet<PathBuf>,
+    later: BTreeSet<PathBuf>,
+}
+
+impl Writes {
+    fn of(&self, path: &Path) -> FileChange {
+        if self.now.contains(path) {
+            return match path.exists() {
+                true => FileChange::Change,
+                false => FileChange::Add,
+            };
+        }
+        match self.later.contains(path) {
+            true => FileChange::Later,
+            false => FileChange::Unchanged,
+        }
+    }
+}
+
 fn planned(
     path: &Path,
     root: Option<&Path>,
     role: FileRole,
     harness: Option<HarnessId>,
     preview: Option<String>,
+    writes: &Writes,
 ) -> PlannedFile {
     let no_preview = match (&preview, role) {
         (Some(_), _) => None,
@@ -338,10 +528,7 @@ fn planned(
     };
     PlannedFile {
         path: shown(path, root),
-        change: match path.exists() {
-            true => FileChange::Change,
-            false => FileChange::Add,
-        },
+        change: writes.of(path),
         role,
         harness,
         preview,

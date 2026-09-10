@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
-import { act } from "react";
+import { act, useState } from "react";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlannedFile, SetupPlan } from "@/bindings";
 import { commands } from "@/bindings";
 import {
+  CHECKS_BLOCKED_NOTE,
   CHECKS_CONFLICTS_NOTE,
   CHECKS_QUIET,
   CHECKS_REMOVE,
@@ -19,10 +20,12 @@ import {
   FILES_DISCLOSURE_LABEL,
   heldBecause,
   NO_PREVIEW_WORDS,
+  notRunningIn,
   otherChangesWaiting,
   PACKAGE_CHECKS_HELP_LABEL,
   PACKAGE_CHECKS_LIBRARY_LABEL,
   roleMeans,
+  runsIn,
 } from "@/lib/copy-package-checks";
 import type { ChecksStanding } from "@/lib/package-checks";
 import { rescansSettled } from "@/lib/rescan";
@@ -71,6 +74,7 @@ const plan = (over: Partial<SetupPlan> = {}): SetupPlan => ({
   ],
   otherPending: 0,
   conflicts: [],
+  blocked: [],
   ...over,
 });
 
@@ -82,6 +86,34 @@ const standing = (over: Partial<ChecksStanding> = {}): ChecksStanding => ({
 });
 
 const openLibrary = vi.fn();
+
+/** A row whose standing the test can change, the way a rescan changes it
+ *  under a mounted card. */
+const drivenRow = () => {
+  let drive: ((next: ChecksStanding) => void) | null = null;
+  function Driven() {
+    const [current, set] = useState<ChecksStanding>(standing());
+    drive = set;
+    return (
+      <PackageChecksRow
+        name="acme"
+        root={ROOT}
+        standing={current}
+        harnesses={["claude", "pi"]}
+        folderMissing={false}
+        onOpenLibrary={openLibrary}
+      />
+    );
+  }
+  const host = mount(<Driven />);
+  const rescan = async (next: Partial<ChecksStanding>) => {
+    if (!drive) throw new Error("the row never mounted");
+    const set = drive;
+    await act(async () => set(standing(next)));
+    await settle();
+  };
+  return { host, rescan };
+};
 
 const row = (over: Partial<ChecksStanding> = {}) =>
   mount(
@@ -256,6 +288,21 @@ describe("the package checks confirmation", () => {
     expect(alone).not.toContain("goes in when those changes do");
   });
 
+  // A position at the check's OWN destination does stop the registration,
+  // unlike one anywhere else in the project. The two sentences must stay
+  // distinguishable or one of them is false.
+  it("says a position at the check's own target stops it", async () => {
+    vi.mocked(commands.packageCheckPlan).mockResolvedValue({
+      status: "ok",
+      data: plan({ blocked: ["/work/acme/.claude/settings.json"] }),
+    });
+    await ask(row());
+    const text = document.body.textContent ?? "";
+    expect(text).toContain(CHECKS_BLOCKED_NOTE);
+    expect(text).toContain("/work/acme/.claude/settings.json");
+    expect(text).not.toContain(CHECKS_CONFLICTS_NOTE);
+  });
+
   it("offers nothing over a plan it could not read", async () => {
     vi.mocked(commands.packageCheckPlan).mockResolvedValue({
       status: "error",
@@ -303,6 +350,25 @@ describe("what the confirmation reports", () => {
     );
   });
 
+  // An incomplete setup always has a reason now, because complete is the
+  // absence of one. This is the answer of last resort.
+  it("says which tools are waiting when nothing else explains it", async () => {
+    vi.mocked(commands.enablePackageChecks).mockResolvedValue({
+      status: "ok",
+      data: {
+        complete: false,
+        held: { kind: "notRegistered", harnesses: ["pi"] },
+      },
+    });
+    const host = row();
+    await ask(host);
+    await confirm();
+    expect(toast.success).toHaveBeenCalledWith(checksHeld("acme"));
+    expect(host.textContent).toContain(
+      heldBecause({ kind: "notRegistered", harnesses: ["pi"] }),
+    );
+  });
+
   it("puts a refusal in the problems dialog under the feature's own title", async () => {
     vi.mocked(commands.enablePackageChecks).mockResolvedValue({
       status: "error",
@@ -318,6 +384,32 @@ describe("what the confirmation reports", () => {
   });
 });
 
+describe("a reason the row was given", () => {
+  // The reason belongs to the setup it was given about. Once a rescan
+  // finds the checks running, that setup is over: a later rescan finding
+  // them incomplete again is a different state, and the old reason does
+  // not explain it.
+  it("does not come back after the checks have reached on", async () => {
+    vi.mocked(commands.enablePackageChecks).mockResolvedValue({
+      status: "ok",
+      data: { complete: false, held: { kind: "otherChanges", count: 2 } },
+    });
+    const { host, rescan } = drivenRow();
+    await ask(host);
+    await confirm();
+    const reason = heldBecause({ kind: "otherChanges", count: 2 });
+    expect(host.textContent).toContain(reason);
+
+    await rescan({ state: "on", running: ["claude", "pi"], waiting: [] });
+    expect(host.textContent).not.toContain(reason);
+
+    // An external apply finished the setup and a registration went away
+    // after it: incomplete again, with nothing here that explains why.
+    await rescan({ state: "incomplete", running: ["claude"], waiting: ["pi"] });
+    expect(host.textContent).not.toContain(reason);
+  });
+});
+
 describe("a project whose checks are already set up", () => {
   // Nothing to enable, and a route to where it is turned off, removed, or
   // seen beside whatever else is waiting here.
@@ -325,6 +417,13 @@ describe("a project whose checks are already set up", () => {
     for (const state of ["on", "incomplete"] as const) {
       const host = row({ state, running: ["claude"], waiting: ["pi"] });
       expect(button(host, ENABLE_CHECKS_LABEL), state).toBeUndefined();
+      // Partial coverage is read per tool, and the incomplete state is
+      // where both halves are said: the state's own sentence stands in
+      // front of them and has to hold beside them.
+      expect(host.textContent, state).toContain(runsIn(["claude"]));
+      if (state === "incomplete") {
+        expect(host.textContent, state).toContain(notRunningIn(["pi"]));
+      }
       const open = button(host, PACKAGE_CHECKS_LIBRARY_LABEL);
       if (!open) throw new Error(`no Library route in ${state}`);
       act(() => open.click());

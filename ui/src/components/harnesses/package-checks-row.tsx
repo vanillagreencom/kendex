@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { HarnessId, SetupHeld } from "@/bindings";
 import { PackageChecksDialog } from "@/components/harnesses/package-checks-dialog";
 import { PackageChecksHelp } from "@/components/harnesses/package-checks-help";
@@ -66,6 +66,13 @@ export function PackageChecksRow({
   // the rest are waiting on other changes or on a position that needs a
   // person, so the answer the write gave stays on the row.
   const [held, setHeld] = useState<SetupHeld | null>(null);
+  // A reason describes the setup it was given about. Once a rescan finds
+  // the checks running, that setup is finished and the reason is spent:
+  // dropped rather than hidden, so a card that goes incomplete again
+  // later cannot bring back an explanation of an earlier hold.
+  useEffect(() => {
+    if (standing.state === "on") setHeld(null);
+  }, [standing.state]);
   const offerable = standing.state === "off";
   return (
     <div className="flex items-start justify-between gap-4 px-4">
@@ -88,6 +95,8 @@ export function PackageChecksRow({
             ? ` ${LOCATE_FOLDER_FIRST}`
             : ""}
         </p>
+        {/* The guard keeps the render that reaches "on" from painting the
+            reason for the frame before the effect above drops it. */}
         {held && standing.state !== "on" ? (
           <p className="text-[13px] text-muted-foreground">
             {heldBecause(held)}

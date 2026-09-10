@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use kendex_core::apply;
 use kendex_core::drift;
-use kendex_core::drift::setup::{FileRole, SetupPlan};
+use kendex_core::drift::setup::{FileChange, FileRole, SetupPlan};
 use kendex_core::engine;
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::error::CoreError;
@@ -84,10 +84,13 @@ fn positions(plan: &SetupPlan, root: &Path) -> BTreeSet<PathBuf> {
         .collect()
 }
 
-fn role_of(plan: &SetupPlan, role: FileRole) -> Vec<&str> {
+/// The rows of one role that belong to the project itself rather than to
+/// a tool's rendering: its own copy of the check script, its manifest and
+/// its install record all carry no harness.
+fn own_rows(plan: &SetupPlan, role: FileRole) -> Vec<&str> {
     plan.files
         .iter()
-        .filter(|file| file.role == role)
+        .filter(|file| file.role == role && file.harness.is_none())
         .map(|file| file.path.as_str())
         .collect()
 }
@@ -182,11 +185,11 @@ fn the_preview_lists_every_position_the_install_writes_and_no_other_tool() {
     // Each role is on the list, and every row says either what it will
     // hold or why it cannot be shown.
     assert_eq!(
-        role_of(&preview, FileRole::Declaration),
+        own_rows(&preview, FileRole::Declaration),
         vec!["kendex.toml"]
     );
-    assert_eq!(role_of(&preview, FileRole::CheckScript).len(), 1);
-    assert_eq!(role_of(&preview, FileRole::InstallRecord).len(), 1);
+    assert_eq!(own_rows(&preview, FileRole::CheckScript).len(), 1);
+    assert_eq!(own_rows(&preview, FileRole::InstallRecord).len(), 1);
     for harness in &preview.harnesses {
         assert!(
             preview
@@ -512,5 +515,176 @@ fn an_unrelated_conflict_is_named_and_does_not_hold_the_registration() {
     assert!(
         occupied.is_symlink(),
         "the unsettled position was written over"
+    );
+}
+
+/// A conflict at the check's OWN destination. It stops the registration,
+/// unlike one anywhere else in the project, so the confirmation has to
+/// name it before the ask and the answer afterwards has to say it is what
+/// went wrong. Reading a plan with the check's declaration stripped — the
+/// one that counts the person's unrelated work — cannot see this at all.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_conflict_at_the_checks_own_target_is_named_and_is_the_reason() {
+    let w = fresh_git_world();
+    declare(&w, "");
+    // The checks already set up here, which is what puts the check's
+    // script in the local source and so lets the planner see the item at
+    // all. A first install learns the same thing from the result instead.
+    install(&w);
+    let preview = drift::setup::setup_plan(&w.env, &w.scope).unwrap();
+    let target = preview
+        .files
+        .iter()
+        .find(|file| file.role == FileRole::CheckScript && file.harness.is_some())
+        .map(|file| w.root.join(&file.path))
+        .unwrap();
+
+    // A link kendex will not follow, exactly where the check registers.
+    fs::remove_file(&target).unwrap();
+    std::os::unix::fs::symlink("/dev/null", &target).unwrap();
+
+    let blocked = drift::setup::setup_plan(&w.env, &w.scope).unwrap();
+    assert!(
+        blocked
+            .blocked
+            .iter()
+            .any(|said| said.contains(target.file_name().unwrap().to_str().unwrap())),
+        "the confirmation never named the position that stops the check: {:?}",
+        blocked
+            .files
+            .iter()
+            .map(|f| f.path.as_str())
+            .collect::<Vec<_>>()
+    );
+    // And it is not filed as somebody else's unsettled position, which
+    // carries a sentence that says the check is unaffected.
+    assert!(blocked.conflicts.is_empty(), "{:?}", blocked.conflicts);
+
+    // And the scope read back is incomplete and able to say why, rather
+    // than reporting a state with no reason at all.
+    let after = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default()).unwrap();
+    let waiting = drift::setup::targets_waiting(&w.env, &w.scope, &after).unwrap();
+    assert!(!waiting.is_empty(), "{:?}", after.drift);
+    assert!(
+        !drift::setup::check_conflicts(&after).is_empty(),
+        "an incomplete setup with no reason to give: {:?}",
+        after.drift
+    );
+}
+
+/// Re-enabling on a project whose script already matches writes no
+/// script: `install_plan` omits that op. The row must not call it a
+/// change this press makes.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_script_already_in_place_is_not_a_change_this_action_makes() {
+    let w = fresh_git_world();
+    declare(&w, "");
+    install(&w);
+
+    let again = drift::setup::setup_plan(&w.env, &w.scope).unwrap();
+    let script = again
+        .files
+        .iter()
+        .find(|file| file.role == FileRole::CheckScript)
+        .unwrap();
+    assert_eq!(
+        script.change,
+        FileChange::Unchanged,
+        "the confirmation named a file this press does not touch: {script:?}"
+    );
+    // The destination is still on the list. The defect was the status,
+    // never the disclosure.
+    assert!(script.path.ends_with("kendex-drift.sh"), "{script:?}");
+}
+
+/// A held setup writes the declaration and stops. Every destination stays
+/// on the list, because that is the disclosure the ask owes; none of them
+/// is presented as a file this press writes.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_held_setup_does_not_present_the_render_as_this_actions_writes() {
+    let w = fresh_git_world();
+    let source = w.root.join(".kendex-local/skills/mine");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(
+        source.join("SKILL.md"),
+        "---\nname: mine\ndescription: a skill of my own\n---\n\nBody.\n",
+    )
+    .unwrap();
+    declare(&w, "[skills.mine]\nsource = \"local\"\n");
+
+    let held = drift::setup::setup_plan(&w.env, &w.scope).unwrap();
+    assert!(held.other_pending > 0, "the fixture holds nothing back");
+    for file in &held.files {
+        // The declaration step runs whatever else waits, so the project's
+        // own source and its manifest land now. Everything the render
+        // places — a tool's own copy of the script included — waits with
+        // the changes this project already had.
+        let now = file.harness.is_none() && file.role != FileRole::InstallRecord;
+        match now {
+            true => assert!(
+                matches!(file.change, FileChange::Add | FileChange::Change),
+                "{file:?}"
+            ),
+            false => assert_eq!(
+                file.change,
+                FileChange::Later,
+                "a held press claimed to write {}",
+                file.path
+            ),
+        }
+    }
+    // Every destination is still disclosed.
+    for harness in &held.harnesses {
+        assert!(
+            held.files.iter().any(|file| file.harness == Some(*harness)),
+            "{harness:?} dropped off the list"
+        );
+    }
+}
+
+/// A tool's registration occupies two positions of different kinds: the
+/// script kendex renders for that tool, and the entry in the tool's own
+/// files that makes it run at session start. Flattening both into one role
+/// tells the reader that the script they are about to install is what
+/// makes the tool run the script.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_rendered_script_is_disclosed_as_a_script_not_as_the_registration() {
+    let w = world();
+    declare(&w, "");
+
+    let preview = drift::setup::setup_plan(&w.env, &w.scope).unwrap();
+    let mut with_both = 0;
+    for harness in &preview.harnesses {
+        let rows: Vec<_> = preview
+            .files
+            .iter()
+            .filter(|file| file.harness == Some(*harness))
+            .collect();
+        for file in &rows {
+            if file.preview.is_some() {
+                assert_eq!(
+                    file.role,
+                    FileRole::CheckScript,
+                    "a rendered script described as the thing that runs it: {file:?}"
+                );
+            }
+        }
+        let script = rows.iter().any(|file| file.role == FileRole::CheckScript);
+        let entry = rows
+            .iter()
+            .any(|file| file.role == FileRole::StartupRegistration);
+        if script && entry {
+            with_both += 1;
+        }
+    }
+    // Without a tool that has both, nothing here separates the two roles.
+    assert!(
+        with_both > 0,
+        "no tool disclosed a script and a registration: {:?}",
+        preview.files
     );
 }

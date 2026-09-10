@@ -29,8 +29,13 @@ export const OFF_MEANS =
   "Agents starting a session here are not told when an installed package is outdated or changed.";
 export const ON_MEANS =
   "Agents starting a session here are told when an installed package is outdated or changed.";
+/** Partial coverage is this state, so the sentence says which claim is
+ *  false — running everywhere — rather than saying the check does not
+ *  run. The row appends [runsIn] and [notRunningIn] straight after it,
+ *  and "not running yet" beside "Runs in Claude Code" is untrue of the
+ *  tool where it does run. */
 export const INCOMPLETE_MEANS =
-  "The check is set up in this project and is not running yet.";
+  "The check is set up in this project and does not yet run in every supported tool.";
 export const UNKNOWN_MEANS =
   "kendex could not read this project, so it cannot say whether the check runs here.";
 /** The registered folder is gone: the one state with an action of its own,
@@ -71,8 +76,16 @@ export const FILES_TREE_LABEL = "Files this adds or changes";
 export const PLAN_PENDING = "Reading what this would write…";
 export const PLAN_FAILED = "kendex could not read what this would write.";
 
-/** The status word beside a row in the file list. */
-export const CHANGE_WORDS = { add: "Add", change: "Change" } as const;
+/** What this action does to a row's file. "Unchanged" and "Later" are
+ *  not writes: a file already as the setup needs it, and one the action
+ *  deliberately leaves for the render it is holding back, are both named
+ *  so the list never claims a change the press does not make. */
+export const CHANGE_WORDS = {
+  add: "Add",
+  change: "Change",
+  unchanged: "Unchanged",
+  later: "Later",
+} as const;
 
 /** What each file in the list is for. The reader gets the role: a path
  *  under a tool's own directory says nothing about why a session-start
@@ -90,7 +103,11 @@ export const roleMeans = (
 ): string => {
   switch (role) {
     case "check-script":
-      return "The script a coding session runs at start.";
+      // A tool gets its own copy of the script. Both rows are check
+      // scripts, so the tool is what tells them apart on the list.
+      return harness
+        ? `The copy of the script ${harnessName(harness)} runs at session start.`
+        : "The script a coding session runs at start.";
     case "startup-registration":
       return harness
         ? `What makes ${harnessName(harness)} run the script at session start.`
@@ -126,6 +143,14 @@ export const CHECKS_CONFLICTS_NOTE =
   "Some positions in this project need you before kendex will write over them. Enabling the checks does not change them.";
 export const CONFLICTS_LABEL = "Positions that need you";
 
+/** Positions at the check's own destinations that nothing can settle.
+ *  Unlike [CHECKS_CONFLICTS_NOTE] these do stop the registration, so this
+ *  sentence says so; the two must not be run together, or one of them
+ *  becomes false. */
+export const CHECKS_BLOCKED_NOTE =
+  "The check cannot be registered until these are settled. kendex will not write over them.";
+export const BLOCKED_LABEL = "In the way of the check";
+
 // ── After the write ────────────────────────────────────────────────────
 
 export const checksOn = (project: string): string =>
@@ -144,5 +169,7 @@ export const heldBecause = (held: SetupHeld): string => {
       return `The check script and the declaration are written. The registration is waiting with ${held.count} other change${held.count === 1 ? "" : "s"} this project already had.`;
     case "conflicts":
       return `The check script and the declaration are written. The registration cannot go in while these need you: ${held.detail.join(", ")}.`;
+    case "notRegistered":
+      return `The check script and the declaration are written. ${notRunningIn(held.harnesses)} kendex could not confirm the registration from this project's install record.`;
   }
 };

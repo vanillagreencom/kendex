@@ -1739,10 +1739,24 @@ export type Enforcement =
 "not-applicable";
 
 /**
- *  Whether the file is there already. Read from disk at preview time, so a
- *  project that has had the checks before is not told they are all new.
+ *  What this action does to the file, read from the operations it will
+ *  run rather than from what happens to sit on disk. A person pressing a
+ *  button is told what the press does; a file already as the setup needs
+ *  it, and one the press deliberately leaves for later, are not changes
+ *  the press makes.
  */
-export type FileChange = "add" | "change";
+export type FileChange = 
+/**  Written by this action; nothing is there now. */
+"add" | 
+/**  Written by this action over something already there. */
+"change" | 
+/**  Already what the setup needs. This action writes nothing here. */
+"unchanged" | 
+/**
+ *  Part of the setup, and not written by this action: the render
+ *  waits with the changes this project already had.
+ */
+"later";
 
 /**  What the window has to show for one file the offer covers. */
 export type FileChanges = 
@@ -3956,11 +3970,19 @@ export type SetupHeld =
  */
 { kind: "otherChanges"; count: number } | 
 /**
- *  Positions in this project that nothing can settle on its own. Said
- *  as the audit says them, so the reader gets the position rather than
- *  a verdict about it.
+ *  Positions at the check's own destinations that nothing can settle
+ *  on its own. These stop the registration itself, which is what
+ *  tells them from the unsettled positions the confirmation lists
+ *  beside its file disclosure.
  */
-{ kind: "conflicts"; detail: string[] };
+{ kind: "conflicts"; detail: string[] } | 
+/**
+ *  The scope was read back after the write and these tools still have
+ *  no registration in place, with nothing else here saying why. The
+ *  answer of last resort, so that an incomplete setup can never
+ *  report itself without a reason.
+ */
+{ kind: "notRegistered"; harnesses: HarnessId[] };
 
 /**  What switching a scope's package checks on would do. */
 export type SetupPlan = {
@@ -3978,11 +4000,18 @@ export type SetupPlan = {
 	 */
 	otherPending: number,
 	/**
-	 *  Positions in this project that nothing can settle on its own —
-	 *  what an apply of those pending changes would refuse at, said as
-	 *  the audit says it. Empty is the ordinary case.
+	 *  Positions in this project that nothing can settle on its own and
+	 *  that the check does not sit at. They hold up their own items and
+	 *  nothing else. Empty is the ordinary case.
 	 */
 	conflicts: string[],
+	/**
+	 *  Unsettled positions at the check's own destinations. These do stop
+	 *  its registration, which is what tells them from `conflicts` — a
+	 *  surface saying the same thing about both would be false about one
+	 *  of them.
+	 */
+	blocked: string[],
 };
 
 /**  Where the checks stand after the action. */
