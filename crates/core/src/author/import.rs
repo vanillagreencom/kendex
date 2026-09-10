@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::env::Env;
-use crate::error::Result;
+use crate::error::{CoreError, Result};
 use crate::model::{ItemKind, Scope};
 
 /// One importable package, with every byte origin that offers it.
@@ -99,7 +99,7 @@ impl CandidateGroup {
 
     /// The licence question applies to marketplace bytes and to edited
     /// copies of them alike — editing does not launder provenance.
-    pub(super) fn licensed_source(&self) -> Option<(&str, Option<&str>, bool)> {
+    pub fn licensed_source(&self) -> Option<(&str, Option<&str>, bool)> {
         match self {
             CandidateGroup::Marketplace {
                 source,
@@ -369,15 +369,41 @@ pub struct ResolvedBytes {
     /// `(relative path, bytes)` pairs. A skill is its tree; every other
     /// kind is the one file it keeps, under the leaf it was read as.
     pub files: Vec<(PathBuf, Vec<u8>)>,
-    /// Root-level LICENSE/NOTICE/COPYING files of a licensed origin's
-    /// catalog, so bytes copied out of one keep the terms they came under.
-    pub notices: Vec<(String, Vec<u8>)>,
+    /// The licence and attribution files a licensed origin travels with,
+    /// at the `NOTICES/<source>/<file>` paths a catalog-shaped tree keeps
+    /// them under. Empty for content that is the person's own.
+    pub notices: Vec<(PathBuf, Vec<u8>)>,
 }
 
-/// Re-resolve one selection's bytes. The hash the preview showed is
-/// revalidated, so bytes that changed underneath refuse rather than copy.
+/// Re-resolve one selection's bytes, past the same gates the import into
+/// a catalog passes.
+///
+/// The hash the preview showed is revalidated, so bytes that changed
+/// underneath refuse rather than copy; a name no harness could hold
+/// refuses; a kind with no package boundary of its own refuses; and
+/// licensed bytes refuse without the person's evidence. A caller that
+/// copies what this hands back does not repeat any of those questions,
+/// and cannot skip one by not knowing it existed.
 pub fn resolve(env: &Env, scopes: &[Scope], selection: &ImportSelection) -> Result<ResolvedBytes> {
+    if let Some(problem) = crate::names::item_problem(&selection.destination) {
+        return Err(CoreError::Authoring {
+            message: format!(
+                "'{}' cannot name a copied {} — {problem}",
+                crate::names::shown(&selection.destination),
+                selection.kind.name()
+            ),
+        });
+    }
+    if !carries(selection.kind) {
+        return Err(CoreError::Authoring {
+            message: format!(
+                "a {} is installed with the package that carries it, so it cannot be copied on its own",
+                selection.kind.name()
+            ),
+        });
+    }
     let answer = resolve_selection(env, scopes, selection)?;
+    license_gate(selection, &answer.group)?;
     let files = match answer.bytes {
         Bytes::Tree(files) => files,
         Bytes::File(bytes) => {
@@ -390,10 +416,91 @@ pub fn resolve(env: &Env, scopes: &[Scope], selection: &ImportSelection) -> Resu
             vec![(leaf, bytes)]
         }
     };
-    Ok(ResolvedBytes {
-        files,
-        notices: answer.notices,
-    })
+    // Laid out the way an authored catalog lays them out, so bytes that
+    // travel on carry their terms in the one place every reader of a
+    // catalog-shaped tree already looks.
+    let notices = match answer.group.licensed_source() {
+        Some((source, _, _)) => answer
+            .notices
+            .into_iter()
+            .map(|(name, bytes)| (PathBuf::from(NOTICES_DIR).join(source).join(name), bytes))
+            .collect(),
+        None => Vec::new(),
+    };
+    Ok(ResolvedBytes { files, notices })
+}
+
+/// Where licence and attribution files sit inside a catalog-shaped tree:
+/// `NOTICES/<source>/<file>`. One spelling, because the import writes it
+/// and the template store and every destination read it back.
+pub const NOTICES_DIR: &str = "NOTICES";
+
+/// Whether the evidence a person gave satisfies [`license_gate`] for
+/// bytes offered under `license`.
+///
+/// The gate's own rule, asked without a resolved origin in hand, so a
+/// surface can say which answer is still needed before the copy runs
+/// rather than restating the rule and drifting from it. The gate is still
+/// what refuses; this only decides whether it would.
+pub fn license_answered(
+    license: Option<&str>,
+    recognized: bool,
+    confirmed: bool,
+    basis: Option<&str>,
+) -> bool {
+    match license {
+        // A licence kendex recognizes takes the confirmation and nothing
+        // else: a stated basis is what stands in for one it cannot judge.
+        Some(_) if recognized => confirmed,
+        _ => basis_given(basis),
+    }
+}
+
+fn basis_given(basis: Option<&str>) -> bool {
+    basis.map(str::trim).is_some_and(|basis| !basis.is_empty())
+}
+
+/// Licensed-origin content copies only past licence evidence: a shown,
+/// *recognized* licence the person confirmed, or an explicit basis they
+/// stated. Confirmation never synthesizes permission — an unrecognized
+/// licence cannot be checkbox-approved.
+///
+/// Both copiers ask it: the import into an authored catalog, and the copy
+/// a template takes into its own store. It lives here rather than in
+/// either of them so a second copier cannot arrive without it.
+pub(super) fn license_gate(selection: &ImportSelection, group: &CandidateGroup) -> Result<()> {
+    let Some((source, license, recognized)) = group.licensed_source() else {
+        return Ok(());
+    };
+    let basis_given = basis_given(selection.license_basis.as_deref());
+    match license {
+        Some(license) if recognized => match selection.license_confirmed {
+            true => Ok(()),
+            false => Err(CoreError::Authoring {
+                message: format!(
+                    "'{}' comes from marketplace '{source}' under licence {license} — confirm the licence permits republishing, or pick another origin",
+                    selection.name
+                ),
+            }),
+        },
+        Some(license) if basis_given => {
+            let _ = license;
+            Ok(())
+        }
+        Some(license) => Err(CoreError::Authoring {
+            message: format!(
+                "'{}' comes from marketplace '{source}' under '{license}', which kendex does not recognize as redistributable — state your basis for copying it (--license-basis), or pick another origin",
+                selection.name
+            ),
+        }),
+        None if basis_given => Ok(()),
+        None => Err(CoreError::Authoring {
+            message: format!(
+                "'{}' comes from marketplace '{source}' with no detectable licence — state your basis for copying it (--license-basis), or pick another origin",
+                selection.name
+            ),
+        }),
+    }
 }
 
 #[cfg(test)]

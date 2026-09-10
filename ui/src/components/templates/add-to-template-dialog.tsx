@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import type { Member_Deserialize as Member } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -23,10 +22,12 @@ import {
   ADD_TO_TEMPLATE_HELP,
   ADD_TO_TEMPLATE_TITLE,
   addedToTemplate,
+  droppedFromTemplate,
   NEW_TEMPLATE_OPTION,
   PICK_TEMPLATE_LABEL,
   TEMPLATE_NAME_LABEL,
 } from "@/lib/copy-templates";
+import type { Saveable } from "@/lib/template-members";
 import { useTemplatesStore } from "@/stores/templates";
 
 /** The value the picker holds while the answer is "a new one". Not a
@@ -38,15 +39,16 @@ const NEW = " new";
  *  here. Install stays the primary action wherever this is offered; this
  *  is the selection's secondary one. */
 export function AddToTemplateDialog({
-  members,
+  saveable,
   open,
   onOpenChange,
 }: {
-  /** The packages to save, already in the shape a template records. */
-  members: Member[];
+  /** The packages to save, and the ticked rows no template can record. */
+  saveable: Saveable;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { members, dropped } = saveable;
   const templates = useTemplatesStore((s) => s.templates);
   const load = useTemplatesStore((s) => s.load);
   const addMembers = useTemplatesStore((s) => s.addMembers);
@@ -120,6 +122,13 @@ export function AddToTemplateDialog({
               />
             </div>
           ) : null}
+          {/* The rows that cannot be recorded, named before the save
+              rather than silently missing from the count afterwards. */}
+          {dropped.length > 0 ? (
+            <p className="text-[13px] text-muted-foreground">
+              {droppedFromTemplate(dropped)}
+            </p>
+          ) : null}
           {refused ? (
             <p className="text-[13px] text-critical">{refused}</p>
           ) : null}
@@ -128,7 +137,10 @@ export function AddToTemplateDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button disabled={busy || target === ""} onClick={submit}>
+          <Button
+            disabled={busy || target === "" || members.length === 0}
+            onClick={submit}
+          >
             Save
           </Button>
         </DialogFooter>

@@ -30,7 +30,9 @@ mod index;
 mod install;
 mod store;
 
-pub use create::{Chosen, Side, add_from_project, create_from_project, create_from_selection};
+pub use create::{
+    Chosen, LicenseAnswer, Side, add_from_project, create_from_project, create_from_selection,
+};
 pub use draft::{
     Draft, DraftError, DraftLocal, DraftMember, DraftOrigin, Excluded, draft_from_project,
     member_key,
@@ -166,6 +168,26 @@ impl Member {
 pub struct MemberRef {
     pub kind: MemberKind,
     pub name: String,
+    /// Which of the members wearing this kind and name is meant — the
+    /// same discriminator [`Member::identity`] tells them apart by, since
+    /// a template deliberately keeps one name from two marketplaces as two
+    /// members. Absent means every member of this kind and name, which is
+    /// what a caller with one of them in hand asks for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+}
+
+impl MemberRef {
+    /// Whether this reference names that member.
+    pub fn names(&self, member: &Member) -> bool {
+        if self.kind != member.kind || self.name != member.name {
+            return false;
+        }
+        let (_, _, repo) = member.identity();
+        // A reference that names no marketplace is about the kind and the
+        // name alone, so it reaches every member wearing them.
+        self.repo.is_none() || self.repo.as_deref() == repo
+    }
 }
 
 /// Package customizations a template carries, keyed the way the manifest
@@ -209,6 +231,15 @@ pub struct Template {
     #[serde(default, skip_serializing_if = "Customizations::is_empty")]
     pub customizations: Customizations,
 }
+
+/// The refusal for a Pi extension named on its own: it installs with the
+/// package that carries it, and the engine says so wherever one is asked
+/// for directly. A template keeps that relationship by carrying the
+/// package or the curated set that brings the extension, never the
+/// extension itself — so the draft leaves a bare one out with this
+/// sentence rather than saving a member no install could ever take.
+pub const PI_EXTENSION_DIRECT: &str =
+    "a Pi extension installs with the package that carries it, never on its own";
 
 /// The longest a template name may be. A name is a row label and names no
 /// file, so the ceiling is about what a person can read back rather than
@@ -340,6 +371,9 @@ pub fn delete(env: &Env, name: &str) -> Result<()> {
 /// Add members to a template, deduplicating by identity. Returns the
 /// template as it now stands.
 pub fn add_members(env: &Env, name: &str, members: Vec<Member>) -> Result<Template> {
+    if members.is_empty() {
+        return Err(CoreError::TemplateEmpty);
+    }
     change(env, name, |template| {
         for member in members {
             if !template
@@ -359,11 +393,9 @@ pub fn add_members(env: &Env, name: &str, members: Vec<Member>) -> Result<Templa
 pub fn remove_members(env: &Env, name: &str, members: &[MemberRef]) -> Result<Template> {
     let before = get(env, name)?;
     let after = change(env, name, |template| {
-        template.members.retain(|held| {
-            !members
-                .iter()
-                .any(|wanted| wanted.kind == held.kind && wanted.name == held.name)
-        });
+        template
+            .members
+            .retain(|held| !members.iter().any(|wanted| wanted.names(held)));
         Ok(())
     })?;
     store::prune(env, &before, &after)?;

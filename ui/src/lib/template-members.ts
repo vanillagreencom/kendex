@@ -25,18 +25,35 @@ export function repoOf(
   return row?.repo ?? row?.path ?? null;
 }
 
-/** The ticked rows as template members. A row whose marketplace nothing
- *  can name is left out rather than saved under a name a later install
- *  would not resolve. */
+/** What a ticked selection can be saved as: the members, and the rows it
+ *  could not name.
+ *
+ *  A row whose marketplace nothing can name is not saved under a guess —
+ *  a template records the repository, and a member with none resolves to
+ *  nothing at install. The dropped rows come back rather than vanishing,
+ *  so the surface can say which ones and why instead of reporting a
+ *  count that is short. */
+export interface Saveable {
+  members: Member[];
+  /** The rows left out, by the name they were ticked under. */
+  dropped: string[];
+}
+
 export function membersFor(
   entries: OfferedRow[],
   rows: MarketplaceRow[],
-): Member[] {
+): Saveable {
   const members: Member[] = [];
+  const dropped: string[] = [];
   for (const entry of entries) {
-    if (entry.catalog.by !== "subscription") continue;
-    const repo = repoOf(rows, entry.catalog.scope, entry.catalog.source);
-    if (repo === null) continue;
+    const repo =
+      entry.catalog.by === "subscription"
+        ? repoOf(rows, entry.catalog.scope, entry.catalog.source)
+        : null;
+    if (repo === null) {
+      dropped.push(entry.row.name);
+      continue;
+    }
     members.push({
       kind: entry.row.kind,
       name: entry.row.name,
@@ -44,5 +61,5 @@ export function membersFor(
       source: { held: "marketplace", repo, rev: null },
     });
   }
-  return members;
+  return { members, dropped };
 }

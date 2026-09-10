@@ -60,6 +60,14 @@ pub enum DraftOrigin {
         hash: Option<String>,
         /// Why the edited copy cannot be stored, when it cannot.
         why: Option<String>,
+        /// The licence the marketplace declares, where it declares one.
+        /// Taking the edited copy copies that marketplace's bytes, so the
+        /// person answers for the licence before it is stored.
+        license: Option<String>,
+        /// Whether kendex recognizes that licence as redistributable. An
+        /// unrecognized one cannot be confirmed away: it needs a stated
+        /// basis.
+        license_recognized: bool,
     },
     /// Nothing a template can record. The member stays visible and the
     /// save refuses until it is resolved or excluded.
@@ -166,13 +174,26 @@ pub fn draft_from_project(env: &Env, root: &std::path::Path) -> Result<Draft> {
         .collect();
 
     let mut members = Vec::new();
-    let excluded = Vec::new();
+    let mut excluded = Vec::new();
     for row in planned {
+        let kind = MemberKind::of(row.kind);
         let candidate = bytes_of.get(&(row.kind, row.name.clone())).copied();
+        // Two reasons a package the project holds cannot be a member at
+        // all. Both are decided here, where the person can see them
+        // before saving, rather than at install, where the template is
+        // already saved and every install of it refuses.
+        if let Some(why) = left_out(row.kind, candidate) {
+            excluded.push(Excluded {
+                kind,
+                name: row.name,
+                why,
+            });
+            continue;
+        }
         let origin = origin_of(&manifest, &row.decl, candidate);
         members.push(DraftMember {
-            key: member_key(MemberKind::of(row.kind), &row.name),
-            kind: MemberKind::of(row.kind),
+            key: member_key(kind, &row.name),
+            kind,
             name: row.name,
             enabled: row.decl.enabled,
             derived: row.derived,
@@ -222,6 +243,21 @@ pub fn draft_from_project(env: &Env, root: &std::path::Path) -> Result<Draft> {
     })
 }
 
+/// Why this package cannot be a template member at all, or `None` where
+/// it can.
+///
+/// A bare Pi extension is one: it installs with what carries it, so a
+/// member of its own is a member nothing can ever install. A name no
+/// harness would accept is the other: the store would join it into a path
+/// and the destination's manifest would refuse it only after the bytes
+/// had landed.
+fn left_out(kind: ItemKind, candidate: Option<&ImportCandidate>) -> Option<String> {
+    if kind == ItemKind::PiExtension {
+        return Some(super::PI_EXTENSION_DIRECT.to_owned());
+    }
+    candidate.and_then(|candidate| candidate.name_problem.clone())
+}
+
 /// The exclusion reason for a package with no boundary of its own to copy:
 /// an entry that lives inside a tool's shared configuration file is that
 /// file's, not a package's, and copying the file would take every
@@ -266,6 +302,16 @@ fn offered_locally(
             .iter()
             .any(|member| member.kind == kind && member.name == candidate.name)
         {
+            continue;
+        }
+        // Judged the same way a managed member is: a name no harness
+        // would accept is not offered for copying.
+        if let Some(why) = candidate.name_problem.clone() {
+            excluded.push(Excluded {
+                kind,
+                name: candidate.name.clone(),
+                why,
+            });
             continue;
         }
         match (&unmanaged.problem, unmanaged.hash.is_empty()) {
@@ -362,13 +408,15 @@ fn origin_of(
     // and taking the edited copy would save something the marketplace
     // never offered.
     match candidate.and_then(edited_bytes) {
-        Some((at, hash, why)) => DraftOrigin::Choice {
+        Some(edited) => DraftOrigin::Choice {
             repo,
             source: decl.source.clone(),
             rev,
-            at,
-            hash,
-            why,
+            at: edited.at,
+            hash: edited.hash,
+            why: edited.why,
+            license: edited.license,
+            license_recognized: edited.license_recognized,
         },
         None => DraftOrigin::Marketplace {
             repo,
@@ -392,28 +440,46 @@ fn own_bytes(candidate: Option<&ImportCandidate>) -> Option<(String, String)> {
 
 /// The edited copy of a marketplace package, when the inventory saw one:
 /// where it is and the identity it would be copied at, or the reason its
-/// current rendering cannot be stored.
-type Edited = (Option<String>, Option<String>, Option<String>);
+/// current rendering cannot be stored, plus the licence those bytes come
+/// under.
+struct Edited {
+    at: Option<String>,
+    hash: Option<String>,
+    why: Option<String>,
+    license: Option<String>,
+    license_recognized: bool,
+}
 
 fn edited_bytes(candidate: &ImportCandidate) -> Option<Edited> {
     let origin = candidate
         .origins
         .iter()
         .find(|origin| matches!(origin.group, CandidateGroup::Edited { .. }))?;
-    match origin.hash.is_empty() {
-        true => Some((
-            origin.locations.first().cloned(),
-            None,
-            Some(origin.problem.clone().unwrap_or_else(|| {
+    // Editing does not launder provenance: the licence question is the
+    // marketplace's, whatever the bytes have become since.
+    let (license, license_recognized) = match origin.group.licensed_source() {
+        Some((_, license, recognized)) => (license.map(str::to_owned), recognized),
+        None => (None, false),
+    };
+    let at = origin.locations.first().cloned();
+    Some(match origin.hash.is_empty() {
+        true => Edited {
+            at,
+            hash: None,
+            why: Some(origin.problem.clone().unwrap_or_else(|| {
                 "this tool's copy of the package is not in a form a template can store".to_owned()
             })),
-        )),
-        false => Some((
-            origin.locations.first().cloned(),
-            Some(origin.hash.clone()),
-            None,
-        )),
-    }
+            license,
+            license_recognized,
+        },
+        false => Edited {
+            at,
+            hash: Some(origin.hash.clone()),
+            why: None,
+            license,
+            license_recognized,
+        },
+    })
 }
 
 /// The customizations this manifest holds for these packages, and nothing

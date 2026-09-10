@@ -1,6 +1,7 @@
 //! `kendex template …` — the same saved selections the window shows, over
 //! the same core operations. Nothing about a template is decided here.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
@@ -32,6 +33,25 @@ pub enum TemplateCommand {
         /// Also carry the project's package settings
         #[arg(long, requires = "from_project")]
         include_customizations: bool,
+        /// Leave a package out, as `<kind>:<name>`; repeat for more
+        #[arg(long = "exclude", requires = "from_project")]
+        excluded: Vec<String>,
+        /// For a package this project edited, save the marketplace's
+        /// version — `<kind>:<name>`; repeat for more
+        #[arg(long, requires = "from_project")]
+        use_marketplace: Vec<String>,
+        /// For a package this project edited, save this project's own
+        /// copy — `<kind>:<name>`; repeat for more
+        #[arg(long, requires = "from_project")]
+        use_project_copy: Vec<String>,
+        /// Confirm the marketplace licence permits copying, for every
+        /// --use-project-copy whose licence kendex recognizes
+        #[arg(long, requires = "use_project_copy")]
+        confirm_license: bool,
+        /// Your basis for copying, for a --use-project-copy whose licence
+        /// kendex does not recognize
+        #[arg(long, requires = "use_project_copy")]
+        license_basis: Option<String>,
         #[command(flatten)]
         picked: Picked,
         /// Skip confirmation prompts
@@ -78,7 +98,9 @@ pub enum TemplateCommand {
 /// The packages a verb names, in the spelling every other verb takes.
 #[derive(Args, Clone, Default)]
 pub struct Picked {
-    /// The marketplace these packages come from — `owner/repo` or a folder
+    /// The marketplace these packages come from — `owner/repo` or a
+    /// folder. Naming it also tells two members of one kind and name
+    /// apart; without it a removal reaches every member wearing them
     #[arg(long)]
     pub source: Option<String>,
     #[arg(short = 'a', long)]
@@ -146,7 +168,11 @@ impl Picked {
         }
         Ok(named
             .into_iter()
-            .map(|(kind, name)| MemberRef { kind, name })
+            .map(|(kind, name)| MemberRef {
+                kind,
+                name,
+                repo: self.source.clone(),
+            })
             .collect())
     }
 }
@@ -164,14 +190,26 @@ pub fn run(env: &Env, command: TemplateCommand) -> CliResult {
             from_project,
             include_local,
             include_customizations,
+            excluded,
+            use_marketplace,
+            use_project_copy,
+            confirm_license,
+            license_basis,
             picked,
             yes,
         } => create(
             env,
             &name,
             from_project,
-            include_local,
-            include_customizations,
+            CreateAnswers {
+                include_local,
+                include_customizations,
+                excluded,
+                use_marketplace,
+                use_project_copy,
+                confirm_license,
+                license_basis,
+            },
             picked,
             yes,
         ),
@@ -254,9 +292,13 @@ fn print_resolution(resolution: &Resolution) {
             (Some(commit), false) => format!("  ({})", &commit[..commit.len().min(7)]),
             (None, _) => String::new(),
         };
-        let subscribed = match &group.source {
-            Some(name) => format!("subscribed as '{name}'"),
-            None => "not subscribed yet — installing subscribes".to_owned(),
+        // What the saved revision does, rather than a version this
+        // install could pin: an add reads the subscription the scope
+        // already declares, so the pin only ever spells a fresh one.
+        let subscribed = match (&group.source, &group.rev) {
+            (Some(name), _) => format!("subscribed as '{name}'"),
+            (None, Some(rev)) => format!("not subscribed yet — installing subscribes at {rev}"),
+            (None, None) => "not subscribed yet — installing subscribes".to_owned(),
         };
         say(&format!("{}  [{subscribed}]{version}", group.repo));
         for item in &group.items {
@@ -290,13 +332,44 @@ fn print_resolution(resolution: &Resolution) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// The answers `create --from-project` takes for the questions core
+/// refuses without: which packages to leave out, which side of an edited
+/// package to save, and the licence evidence a marketplace's bytes need.
+///
+/// A struct rather than seven parameters because they are one answer set,
+/// and because the verb fails naming the flag that is missing — the flag
+/// names live beside the fields they fill.
+pub struct CreateAnswers {
+    pub include_local: bool,
+    pub include_customizations: bool,
+    pub excluded: Vec<String>,
+    pub use_marketplace: Vec<String>,
+    pub use_project_copy: Vec<String>,
+    pub confirm_license: bool,
+    pub license_basis: Option<String>,
+}
+
+/// A draft key a flag named, refused where the project holds no such
+/// package — a typo must not read as "nothing to exclude".
+fn known(draft: &template::Draft, flag: &str, keys: &[String]) -> Result<(), String> {
+    for key in keys {
+        let known = draft.members.iter().any(|member| member.key == *key)
+            || draft.locals.iter().any(|local| local.key == *key);
+        if !known {
+            return Err(format!(
+                "{flag} names '{key}', which is not one of {}'s packages — `kendex template create` lists them",
+                draft.project
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn create(
     env: &Env,
     name: &str,
     from_project: Option<PathBuf>,
-    include_local: bool,
-    include_customizations: bool,
+    answers: CreateAnswers,
     picked: Picked,
     yes: bool,
 ) -> CliResult {
@@ -316,23 +389,48 @@ fn create(
         );
     }
     let draft = template::draft_from_project(env, &project)?;
+    known(&draft, "--exclude", &answers.excluded)?;
+    known(&draft, "--use-marketplace", &answers.use_marketplace)?;
+    known(&draft, "--use-project-copy", &answers.use_project_copy)?;
+    if let Some(both) = answers
+        .use_marketplace
+        .iter()
+        .find(|key| answers.use_project_copy.contains(key))
+    {
+        return Err(
+            format!("'{both}' is named for both --use-marketplace and --use-project-copy").into(),
+        );
+    }
     if let Some(short) = &draft.incomplete {
         warn(&short.why);
     }
+    let kept: Vec<&template::DraftMember> = draft
+        .members
+        .iter()
+        .filter(|member| !answers.excluded.contains(&member.key))
+        .collect();
     say(&format!(
         "{} manages {} package(s)",
         draft.project,
-        draft.members.len()
+        kept.len()
     ));
-    for member in &draft.members {
+    for member in &kept {
         say(&format!("  {} {}", member.kind.name(), member.name));
     }
-    if include_local {
+    let locals: Vec<&template::DraftLocal> = match answers.include_local {
+        true => draft
+            .locals
+            .iter()
+            .filter(|local| !answers.excluded.contains(&local.key))
+            .collect(),
+        false => Vec::new(),
+    };
+    if answers.include_local {
         say(&format!(
             "copying in {} package(s) this project manages nothing of",
-            draft.locals.len()
+            locals.len()
         ));
-        for local in &draft.locals {
+        for local in &locals {
             say(&format!("  {} {}", local.kind.name(), local.name));
         }
     }
@@ -344,6 +442,7 @@ fn create(
             gone.why
         ));
     }
+    let (sides, licenses) = answered(&kept, &answers)?;
     note(COPIES_GO_INTO_THIS_TEMPLATE);
     ask_before_writing(&format!("save this as '{name}'?"), yes)?;
     let template = template::create_from_project(
@@ -351,17 +450,11 @@ fn create(
         &project,
         &Chosen {
             name: name.to_owned(),
-            members: draft
-                .members
-                .iter()
-                .map(|member| member.key.clone())
-                .collect(),
-            locals: match include_local {
-                true => draft.locals.iter().map(|local| local.key.clone()).collect(),
-                false => Vec::new(),
-            },
-            customizations: include_customizations,
-            ..Chosen::default()
+            members: kept.iter().map(|member| member.key.clone()).collect(),
+            locals: locals.iter().map(|local| local.key.clone()).collect(),
+            sides,
+            licenses,
+            customizations: answers.include_customizations,
         },
     )?;
     out(&format!(
@@ -370,6 +463,128 @@ fn create(
         template.members.len()
     ));
     Ok(())
+}
+
+/// The per-member answers, or the refusal naming the flag that is still
+/// missing.
+///
+/// Asked before the first write, which is the contract this crate keeps
+/// for every verb: a run with nobody to ask must not stop half-way
+/// through a save.
+type Answers = (
+    BTreeMap<String, template::Side>,
+    BTreeMap<String, template::LicenseAnswer>,
+);
+
+fn answered(
+    kept: &[&template::DraftMember],
+    answers: &CreateAnswers,
+) -> Result<Answers, Box<dyn std::error::Error>> {
+    let mut sides = BTreeMap::new();
+    let mut licenses = BTreeMap::new();
+    for member in kept {
+        let side = match (
+            answers.use_marketplace.contains(&member.key),
+            answers.use_project_copy.contains(&member.key),
+        ) {
+            (true, _) => Some(template::Side::Marketplace),
+            (_, true) => Some(template::Side::Copy),
+            _ => None,
+        };
+        if let Some(side) = side {
+            sides.insert(member.key.clone(), side);
+        }
+        if let Some(missing) = unanswered(member, side, answers) {
+            return Err(missing.into());
+        }
+        if side == Some(template::Side::Copy) {
+            licenses.insert(
+                member.key.clone(),
+                template::LicenseAnswer {
+                    confirmed: answers.confirm_license,
+                    basis: answers.license_basis.clone(),
+                },
+            );
+        }
+    }
+    Ok((sides, licenses))
+}
+
+/// The flag this member still needs, or `None` where it is answered.
+///
+/// Said before the first write and naming the flag, because a verb with
+/// nobody to ask must not stop half-way through a save — and because the
+/// refusal core gives names a choice the command line could not make
+/// until now.
+fn unanswered(
+    member: &template::DraftMember,
+    side: Option<template::Side>,
+    answers: &CreateAnswers,
+) -> Option<String> {
+    match &member.origin {
+        template::DraftOrigin::Unresolved { why } => Some(format!(
+            "{} '{}' cannot be saved — {why}. Leave it out with --exclude {}",
+            member.kind.name(),
+            member.name,
+            member.key
+        )),
+        template::DraftOrigin::Choice {
+            license,
+            license_recognized,
+            ..
+        } => match side {
+            None => Some(format!(
+                "{} '{}' is installed from a marketplace and edited here, and a template holds one of them — choose with --use-marketplace {} or --use-project-copy {}, or leave it out with --exclude {}",
+                member.kind.name(),
+                member.name,
+                member.key,
+                member.key,
+                member.key
+            )),
+            Some(template::Side::Copy) => {
+                license_needed(member, license.as_deref(), *license_recognized, answers)
+            }
+            Some(template::Side::Marketplace) => None,
+        },
+        _ => None,
+    }
+}
+
+/// The licence evidence a marketplace's bytes need before they are
+/// copied, named as the flag that supplies it.
+///
+/// Whether evidence is missing is the import gate's judgement, asked
+/// through `license_answered` rather than restated here — a second
+/// spelling of that rule would drift from the gate that enforces it.
+/// What belongs here is only the flag name, which the gate cannot know.
+fn license_needed(
+    member: &template::DraftMember,
+    license: Option<&str>,
+    recognized: bool,
+    answers: &CreateAnswers,
+) -> Option<String> {
+    if kendex_core::author::import::license_answered(
+        license,
+        recognized,
+        answers.confirm_license,
+        answers.license_basis.as_deref(),
+    ) {
+        return None;
+    }
+    let flag = match (license, recognized) {
+        (Some(_), true) => "confirm it permits copying with --confirm-license",
+        _ => "state your basis with --license-basis",
+    };
+    let under = match license {
+        Some(license) => format!("under licence {license}"),
+        None => "with no licence kendex could detect".to_owned(),
+    };
+    Some(format!(
+        "{} '{}' comes from a marketplace {under} — {flag}, or choose --use-marketplace {}",
+        member.kind.name(),
+        member.name,
+        member.key
+    ))
 }
 
 /// The sentence the create-from-project path says wherever it is said. One
@@ -473,5 +688,14 @@ fn install(env: &Env, name: &str, project: Option<PathBuf>, yes: bool) -> CliRes
     for note_line in &landed.notes {
         note(note_line);
     }
-    Ok(())
+    // The lines above are what is on disk. A run that stopped short says
+    // so after them and exits non-zero: reporting the refusal alone would
+    // deny the packages that are in, and reporting success would deny the
+    // rest of the template that is not.
+    match landed.stopped {
+        Some(why) => {
+            Err(format!("{why} — what is listed above is installed and stays installed").into())
+        }
+        None => Ok(()),
+    }
 }

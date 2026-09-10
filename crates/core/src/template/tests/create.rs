@@ -44,6 +44,9 @@ pub(super) fn seeded() -> Project {
         "[marketplace]\nname = \"cat\"\nlicense = \"MIT\"\n",
     )
     .unwrap();
+    // The terms themselves, so a copy taken out of this marketplace has
+    // something to carry with it.
+    fs::write(catalog.join("LICENSE"), "MIT License\n").unwrap();
 
     let root = home.join("app");
     // The person's own package, captured into the project's local source.
@@ -368,9 +371,13 @@ fn the_customization_opt_in_carries_package_settings_only() {
 /// A package installed from a marketplace and edited here is two things
 /// under one name. Neither is picked for the person: the save refuses
 /// until they choose, and each choice records what it says it does.
+///
+/// Taking the project's copy copies the marketplace's bytes, so it passes
+/// the same licence gate an import into a catalog passes — the row for no
+/// evidence at all is the must-fail control on that gate.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn an_edited_marketplace_package_requires_a_choice() {
+fn an_edited_marketplace_package_requires_a_choice_and_licence_evidence() {
     let project = seeded();
     // The installed copy drifts from the marketplace's bytes.
     skill(
@@ -379,36 +386,95 @@ fn an_edited_marketplace_package_requires_a_choice() {
         "edited here, not upstream",
     );
     let draft = draft_from_project(&project.env, &project.root).unwrap();
-    let DraftOrigin::Choice { hash, .. } = &member(&draft, "skill:gh").origin else {
+    let DraftOrigin::Choice {
+        hash,
+        license,
+        license_recognized,
+        ..
+    } = &member(&draft, "skill:gh").origin
+    else {
         panic!(
             "gh should be a choice: {:?}",
             member(&draft, "skill:gh").origin
         );
     };
     assert!(hash.is_some());
+    // The licence reaches the modal, so it can ask before the save does.
+    assert_eq!(license.as_deref(), Some("MIT"));
+    assert!(license_recognized);
 
-    let chosen = |name: &str, sides: BTreeMap<String, Side>| Chosen {
+    let chosen = |name: &str,
+                  sides: BTreeMap<String, Side>,
+                  licenses: BTreeMap<String, LicenseAnswer>| Chosen {
         name: name.to_owned(),
         members: vec!["skill:gh".to_owned()],
         sides,
+        licenses,
         ..Chosen::default()
     };
+    let taking_copy = || BTreeMap::from([("skill:gh".to_owned(), Side::Copy)]);
+    let confirmed = || {
+        BTreeMap::from([(
+            "skill:gh".to_owned(),
+            LicenseAnswer {
+                confirmed: true,
+                basis: None,
+            },
+        )])
+    };
+
     // Unanswered, the save refuses and says what has to be decided.
     assert!(matches!(
         create_from_project(
             &project.env,
             &project.root,
-            &chosen("Unanswered", BTreeMap::new())
+            &chosen("Unanswered", BTreeMap::new(), BTreeMap::new())
         ),
         Err(CoreError::TemplateMemberUnresolved { .. })
     ));
 
+    // The control on the licence gate: the copy is chosen and the
+    // marketplace's terms are not answered for. Nothing is saved.
+    let ungated = create_from_project(
+        &project.env,
+        &project.root,
+        &chosen("Ungated", taking_copy(), BTreeMap::new()),
+    );
+    assert!(
+        matches!(ungated, Err(CoreError::Authoring { .. })),
+        "an unconfirmed licence must refuse the copy: {ungated:?}"
+    );
+    assert!(list(&project.env).unwrap().is_empty());
+
+    // A confirmation kendex can accept, because it recognizes the
+    // licence, and the bytes stored are the edited ones.
+    let mine = create_from_project(
+        &project.env,
+        &project.root,
+        &chosen("Mine", taking_copy(), confirmed()),
+    )
+    .unwrap();
+    let MemberSource::Copy { copy, from } = &mine.members[0].source else {
+        panic!("gh should be a copy: {:?}", mine.members[0].source);
+    };
+    let stored = copy_path(&project.env, &mine, copy).unwrap();
+    let text = fs::read_to_string(stored.join("SKILL.md")).unwrap();
+    assert!(text.contains("edited here, not upstream"), "{text}");
+    // The copy still says where the package came from, and the terms it
+    // came under travel with it.
+    assert!(from.is_some());
+    let notices = copy_path(&project.env, &mine, "NOTICES").unwrap();
+    assert!(notices.is_dir(), "the licence should travel with the copy");
+
+    // The other side records the marketplace identity and copies nothing,
+    // so it asks no licence question at all.
     let upstream = create_from_project(
         &project.env,
         &project.root,
         &chosen(
             "Upstream",
             BTreeMap::from([("skill:gh".to_owned(), Side::Marketplace)]),
+            BTreeMap::new(),
         ),
     )
     .unwrap();
@@ -416,25 +482,98 @@ fn an_edited_marketplace_package_requires_a_choice() {
         upstream.members[0].source,
         MemberSource::Marketplace { .. }
     ));
+}
 
-    let mine = create_from_project(
-        &project.env,
-        &project.root,
-        &chosen(
-            "Mine",
-            BTreeMap::from([("skill:gh".to_owned(), Side::Copy)]),
-        ),
+/// A Pi extension installs with the package that carries it. A project
+/// declaring one must not produce a template that can never be installed:
+/// the draft leaves it out with that reason, and no save path can mint
+/// one.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pi_extension_the_project_declares_is_left_out_with_its_reason() {
+    let project = seeded();
+    let manifest = project.root.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        format!("{text}[pi-extensions.pi-widgets]\nsource = \"cat\"\n"),
     )
     .unwrap();
-    let MemberSource::Copy { copy, from } = &mine.members[0].source else {
-        panic!("gh should be a copy: {:?}", mine.members[0].source);
-    };
-    // The bytes are the edited ones, and the copy still says where the
-    // package came from.
-    let stored = copy_path(&project.env, &mine, copy).unwrap();
-    let text = fs::read_to_string(stored.join("SKILL.md")).unwrap();
-    assert!(text.contains("edited here, not upstream"), "{text}");
-    assert!(from.is_some());
+
+    let draft = draft_from_project(&project.env, &project.root).unwrap();
+    assert!(
+        !draft
+            .members
+            .iter()
+            .any(|member| member.name == "pi-widgets"),
+        "a bare Pi extension is not a member: {:?}",
+        draft.members
+    );
+    let gone = draft
+        .excluded
+        .iter()
+        .find(|gone| gone.name == "pi-widgets")
+        .unwrap_or_else(|| panic!("pi-widgets should be excluded: {:?}", draft.excluded));
+    assert_eq!(gone.why, super::super::PI_EXTENSION_DIRECT);
+
+    // Saving everything the draft offers gives a template that resolves
+    // with nothing missing — the whole point of deciding it here.
+    let saved = create_from_project(
+        &project.env,
+        &project.root,
+        &Chosen {
+            name: "No Pi".to_owned(),
+            members: draft
+                .members
+                .iter()
+                .map(|member| member.key.clone())
+                .collect(),
+            ..Chosen::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(resolve(&project.env, &saved).unwrap().missing, Vec::new());
+
+    // And no other path can mint one either.
+    assert!(matches!(
+        create_from_selection(
+            &project.env,
+            "By hand",
+            vec![Member {
+                kind: MemberKind::PiExtension,
+                name: "pi-widgets".to_owned(),
+                enabled: true,
+                source: MemberSource::Marketplace {
+                    repo: "a/b".to_owned(),
+                    rev: None,
+                },
+            }],
+        ),
+        Err(CoreError::TemplateMemberUnresolved { .. })
+    ));
+}
+
+/// A name no harness would accept is not a member: the store would join
+/// it into a path and the destination's manifest would refuse it only
+/// after the bytes had landed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_package_whose_name_no_harness_would_accept_is_left_out() {
+    let project = seeded();
+    // A name `names::item_problem` refuses, in content nothing manages.
+    skill(&project.root.join(".claude/skills"), "-flag", "unmanaged");
+    let draft = draft_from_project(&project.env, &project.root).unwrap();
+    assert!(
+        !draft.locals.iter().any(|local| local.name == "-flag"),
+        "{:?}",
+        draft.locals
+    );
+    let gone = draft
+        .excluded
+        .iter()
+        .find(|gone| gone.name == "-flag")
+        .unwrap_or_else(|| panic!("-flag should be excluded: {:?}", draft.excluded));
+    assert!(gone.why.contains("flag"), "{}", gone.why);
 }
 
 /// A choice naming something the draft does not list is refused, and so is

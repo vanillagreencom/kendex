@@ -230,7 +230,8 @@ fn delete_removes_the_store_and_refuses_a_name_it_does_not_hold() {
 
 /// Members are added by identity: the same package from the same
 /// marketplace twice is one member, and the same name from two
-/// marketplaces is two.
+/// marketplaces is two — which is only true if a removal can tell them
+/// apart afterwards.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn members_deduplicate_by_identity_and_not_by_name() {
@@ -252,24 +253,65 @@ fn members_deduplicate_by_identity_and_not_by_name() {
     )
     .unwrap();
     assert_eq!(again.members.len(), 2);
-    let repos: Vec<_> = again
-        .members
-        .iter()
-        .map(|member| match &member.source {
-            MemberSource::Marketplace { repo, .. } => repo.clone(),
-            MemberSource::Copy { copy, .. } => copy.clone(),
-        })
-        .collect();
-    assert_eq!(repos, ["vanillagreencom/kendex", "someone/else"]);
+    let repos = |template: &Template| -> Vec<String> {
+        template
+            .members
+            .iter()
+            .map(|member| match &member.source {
+                MemberSource::Marketplace { repo, .. } => repo.clone(),
+                MemberSource::Copy { copy, .. } => copy.clone(),
+            })
+            .collect()
+    };
+    assert_eq!(repos(&again), ["vanillagreencom/kendex", "someone/else"]);
 
-    let fewer = remove_members(
+    // Removing one of the two leaves the other. Without the
+    // discriminator this took both, and a template could reach a state
+    // its own edit surface could not unwind.
+    let one_left = remove_members(
         &env,
         "Rust service",
         &[MemberRef {
             kind: MemberKind::Skill,
             name: "code-quality".to_owned(),
+            repo: Some("vanillagreencom/kendex".to_owned()),
         }],
     )
     .unwrap();
-    assert!(fewer.members.is_empty());
+    assert_eq!(repos(&one_left), ["someone/else"]);
+
+    // A reference naming no marketplace is about the kind and the name
+    // alone, which is what a caller holding one copy asks for.
+    let none_left = remove_members(
+        &env,
+        "Rust service",
+        &[MemberRef {
+            kind: MemberKind::Skill,
+            name: "code-quality".to_owned(),
+            repo: None,
+        }],
+    )
+    .unwrap();
+    assert!(none_left.members.is_empty());
+}
+
+/// A selection with nothing in it is not a saved selection. Every path
+/// that can produce one refuses, so no surface can report success over a
+/// template that installs nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_selection_with_nothing_in_it_is_refused_by_every_path() {
+    let (_tmp, env) = home();
+    assert!(matches!(
+        create_from_selection(&env, "Empty", Vec::new()),
+        Err(CoreError::TemplateEmpty)
+    ));
+    assert!(list(&env).unwrap().is_empty());
+
+    saved(&env, "Rust service");
+    assert!(matches!(
+        add_members(&env, "Rust service", Vec::new()),
+        Err(CoreError::TemplateEmpty)
+    ));
+    assert_eq!(get(&env, "Rust service").unwrap().members.len(), 1);
 }

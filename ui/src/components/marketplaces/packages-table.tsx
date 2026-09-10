@@ -398,7 +398,7 @@ export function PackagesTable({
         </div>
       ) : null}
       <AddToTemplateDialog
-        members={membersFor(chosen, rows)}
+        saveable={membersFor(chosen, rows)}
         open={addingToTemplate}
         onOpenChange={setAddingToTemplate}
       />

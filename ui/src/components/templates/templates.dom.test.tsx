@@ -8,9 +8,11 @@ import { CreateTemplateDialog } from "@/components/templates/create-template-dia
 import { InstallTemplateDialog } from "@/components/templates/install-template-dialog";
 import { TemplatesView } from "@/components/templates/templates-view";
 import {
+  CHOICE_LOCAL,
   COPIES_GO_INTO_THIS_TEMPLATE,
   INCLUDE_CUSTOMIZATIONS_LABEL,
   INCLUDE_LOCAL_LABEL,
+  LICENSE_CONFIRM,
   NEW_TEMPLATE_LABEL,
   TEMPLATES_EMPTY,
   templateSummary,
@@ -212,6 +214,7 @@ describe("creating a template from a project", () => {
         members: ["skill:gh"],
         locals: [],
         sides: {},
+        licenses: {},
         customizations: false,
       },
     );
@@ -254,6 +257,7 @@ describe("creating a template from a project", () => {
         members: ["skill:gh"],
         locals: ["skill:stray"],
         sides: {},
+        licenses: {},
         customizations: true,
       },
     );
@@ -268,7 +272,13 @@ describe("installing a template into a place", () => {
     });
     vi.mocked(commands.templateInstall).mockResolvedValue({
       status: "ok",
-      data: { subscribed: [], declared: [], copied: [], notes: [] },
+      data: {
+        subscribed: [],
+        declared: [],
+        copied: [],
+        notes: [],
+        stopped: null,
+      },
     });
     const acme = { scope: "project" as const, root: "/work/acme" };
     mount(<InstallTemplateDialog into={acme} open onOpenChange={() => {}} />);
@@ -330,7 +340,7 @@ describe("saving a marketplace selection into a template", () => {
       status: "ok",
       data: RUST_SERVICE,
     });
-    const members = membersFor(
+    const saveable = membersFor(
       [
         {
           catalog: {
@@ -353,7 +363,7 @@ describe("saving a marketplace selection into a template", () => {
     // The identity a template saves is the repository, never the alias:
     // an alias is a per-place manifest key and a template belongs to no
     // place.
-    expect(members).toEqual([
+    expect(saveable.members).toEqual([
       {
         kind: "skill",
         name: "gh",
@@ -367,13 +377,156 @@ describe("saving a marketplace selection into a template", () => {
     ]);
 
     mount(
-      <AddToTemplateDialog members={members} open onOpenChange={() => {}} />,
+      <AddToTemplateDialog saveable={saveable} open onOpenChange={() => {}} />,
     );
     await settle();
     await act(async () => button(document, "Save").click());
     expect(commands.templateAddMembers).toHaveBeenCalledWith(
       "Rust service",
-      members,
+      saveable.members,
+    );
+  });
+});
+
+describe("a template install that stopped part-way", () => {
+  // The guided install already draws a place that took some of an
+  // install and refused the rest. A template that landed one repository
+  // and stopped on the next is exactly that, so both halves travel.
+  it("reports what landed and why it went no further", async () => {
+    vi.mocked(commands.templatesList).mockResolvedValue({
+      status: "ok",
+      data: [RUST_SERVICE],
+    });
+    vi.mocked(commands.templateInstall).mockResolvedValue({
+      status: "ok",
+      data: {
+        subscribed: ["vanillagreencom/kendex"],
+        declared: ["skill code-quality"],
+        copied: [],
+        notes: [],
+        stopped: "skill 'house-style' is already here with different bytes",
+      },
+    });
+    const acme = { scope: "project" as const, root: "/work/acme" };
+    mount(<InstallTemplateDialog into={acme} open onOpenChange={() => {}} />);
+    await settle();
+    await act(async () => button(document, "Install").click());
+    await act(async () => {
+      useInstallFlow.setState({ places: [acme] });
+      await useInstallFlow.getState().install();
+    });
+
+    const outcome = useInstallFlow.getState().outcome?.places[0];
+    expect(outcome?.wrote).toBe(true);
+    expect(outcome?.refused).toBe(
+      "skill 'house-style' is already here with different bytes",
+    );
+  });
+});
+
+describe("a marketplace selection nothing can name", () => {
+  it("names the rows it cannot record and refuses to save none of them", async () => {
+    vi.mocked(commands.templatesList).mockResolvedValue({
+      status: "ok",
+      data: [RUST_SERVICE],
+    });
+    // A row from a bare repository: no subscription, so no repository a
+    // template could record it under.
+    const saveable = membersFor(
+      [
+        {
+          catalog: { by: "repo", repo: "someone/unsubscribed" },
+          row: { kind: "skill", name: "stranger" } as never,
+          recordsUnreadable: false,
+        },
+      ],
+      [],
+    );
+    expect(saveable.members).toEqual([]);
+    expect(saveable.dropped).toEqual(["stranger"]);
+
+    mount(
+      <AddToTemplateDialog saveable={saveable} open onOpenChange={() => {}} />,
+    );
+    await settle();
+    // The row is named rather than silently missing from a count, and
+    // there is nothing to save.
+    expect(document.body.textContent).toContain("stranger");
+    expect(button(document, "Save").disabled).toBe(true);
+  });
+});
+
+describe("an edited marketplace package in the modal", () => {
+  // Taking the project's copy copies the marketplace's bytes, so the
+  // modal asks about the terms before the save does. Core refuses
+  // without the answer; this is the surface that collects it.
+  it("collects the licence answer and sends it with the save", async () => {
+    vi.mocked(commands.templateDraft).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...DRAFT,
+        locals: [],
+        members: [
+          {
+            key: "skill:gh",
+            kind: "skill",
+            name: "gh",
+            enabled: true,
+            derived: false,
+            requiredBy: [],
+            origin: {
+              origin: "choice",
+              repo: "vanillagreencom/kendex",
+              source: "kendex",
+              rev: null,
+              at: ".claude/skills/gh",
+              hash: "abc",
+              why: null,
+              license: "MIT",
+              licenseRecognized: true,
+            },
+          },
+        ],
+      },
+    });
+    vi.mocked(commands.templateCreateFromProject).mockResolvedValue({
+      status: "ok",
+      data: RUST_SERVICE,
+    });
+    mount(
+      <CreateTemplateDialog
+        project="/work/acme"
+        place="acme"
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+    await settle();
+
+    // Neither side is chosen, so there is nothing to save yet.
+    expect(button(document, NEW_TEMPLATE_LABEL).disabled).toBe(true);
+    await act(async () => button(document, CHOICE_LOCAL).click());
+    // The terms are shown, and the save still waits on the answer.
+    expect(document.body.textContent).toContain("MIT");
+    expect(button(document, NEW_TEMPLATE_LABEL).disabled).toBe(true);
+
+    const confirm = [
+      ...document.querySelectorAll<HTMLElement>('[role="checkbox"]'),
+    ].find((one) => one.getAttribute("aria-label") === LICENSE_CONFIRM);
+    if (!confirm) throw new Error("no licence confirmation on screen");
+    await act(async () => confirm.click());
+    await act(async () => button(document, NEW_TEMPLATE_LABEL).click());
+
+    expect(commands.templateCreateFromProject).toHaveBeenCalledWith(
+      "/work/acme",
+      {
+        name: "acme",
+        members: ["skill:gh"],
+        locals: [],
+        sides: { "skill:gh": "copy" },
+        licenses: { "skill:gh": { confirmed: true, basis: null } },
+        customizations: false,
+      },
     );
   });
 });

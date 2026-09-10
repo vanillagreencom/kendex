@@ -20,6 +20,15 @@ use crate::source_read::SealedSource;
 
 use super::{Member, MemberSource, Template};
 
+/// One package's copied files, as the `(relative path, bytes)` pairs
+/// every write and read in this module passes around.
+type CopyFiles = Vec<(PathBuf, Vec<u8>)>;
+
+/// One slot and what it held before a replacement began writing over it:
+/// its kind, its name, and its former bytes, or `None` where the slot was
+/// empty.
+type PriorSlot = (ItemKind, String, Option<CopyFiles>);
+
 /// The tree one template's copies live in.
 pub(super) fn root(env: &Env, id: &str) -> PathBuf {
     env.template_store_dir().join(id)
@@ -62,7 +71,18 @@ pub(super) fn write(
     kind: ItemKind,
     name: &str,
     files: &[(PathBuf, Vec<u8>)],
+    notices: &[(PathBuf, Vec<u8>)],
 ) -> Result<String> {
+    // The name is joined into a path here and into the destination's
+    // manifest at install. Asked again rather than trusted from the
+    // caller: this is the one write in the template flow that does not go
+    // through a plan, so nothing else would catch it.
+    if let Some(problem) = crate::names::item_problem(name) {
+        return Err(CoreError::TemplateCopyUnreadable {
+            copy: name.to_owned(),
+            why: problem,
+        });
+    }
     if !crate::author::import::carries(kind) {
         return Err(CoreError::TemplateCopyUnreadable {
             copy: slot_id(kind, name),
@@ -96,7 +116,89 @@ pub(super) fn write(
             write_file(&slot, bytes)?;
         }
     }
+    // The terms travel with the bytes. Written beside the copy, at the
+    // paths a catalog-shaped tree keeps them under, so an install reads
+    // them back without knowing which origin they came from.
+    for (relative, bytes) in notices {
+        write_file(&root.join(relative), bytes)?;
+    }
     Ok(slot_id(kind, name))
+}
+
+/// What a template's store holds at one package's slot right now, or
+/// `None` where the slot is empty. Read before a replacement so the
+/// replacement can be undone.
+pub(super) fn held(
+    env: &Env,
+    template: &Template,
+    kind: ItemKind,
+    name: &str,
+) -> Result<Option<CopyFiles>> {
+    let root = root(env, &template.id);
+    let slot = local_slot(&root, kind, name);
+    if !slot.exists() {
+        return Ok(None);
+    }
+    let sealed = SealedSource::open(&root)?;
+    match kind {
+        ItemKind::Skill => Ok(Some(sealed.collect_skill_tree(&slot)?)),
+        _ => {
+            let leaf = slot
+                .file_name()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(name));
+            Ok(Some(vec![(leaf, sealed.read(&slot)?)]))
+        }
+    }
+}
+
+/// Put back what [`held`] read, slot by slot. A slot that held nothing is
+/// emptied again, so a fresh copy a refused replacement wrote does not
+/// survive it.
+pub(super) fn restore(env: &Env, template: &Template, slots: &[PriorSlot]) -> Result<()> {
+    let root = root(env, &template.id);
+    for (kind, name, before) in slots {
+        let slot = local_slot(&root, *kind, name);
+        if slot.exists() {
+            remove_path(&slot)?;
+        }
+        let Some(files) = before else {
+            continue;
+        };
+        match kind {
+            ItemKind::Skill => {
+                for (relative, bytes) in files {
+                    write_file(&slot.join(relative), bytes)?;
+                }
+            }
+            _ => {
+                if let Some((_, bytes)) = files.first() {
+                    write_file(&slot, bytes)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The licence and attribution files this template's store holds, at
+/// their paths relative to the store root. Empty where no member's bytes
+/// came under anybody's terms.
+pub(super) fn notices(env: &Env, template: &Template) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+    let root = root(env, &template.id);
+    let held = root.join(crate::author::import::NOTICES_DIR);
+    if !held.is_dir() {
+        return Ok(Vec::new());
+    }
+    let sealed = SealedSource::open(&root)?;
+    let mut files = Vec::new();
+    let mut carried = Vec::new();
+    walk(&sealed, &root, &held, &mut files)?;
+    for file in files {
+        let relative = PathBuf::from(&file.path);
+        carried.push((relative.clone(), sealed.read(&root.join(&relative))?));
+    }
+    Ok(carried)
 }
 
 fn write_file(target: &Path, bytes: &[u8]) -> Result<()> {

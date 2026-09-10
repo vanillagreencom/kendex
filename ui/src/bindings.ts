@@ -593,7 +593,7 @@ export const commands = {
 	 */
 	templateCreateFromSelection: (name: string, members: Member_Deserialize[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_create_from_selection", { name, members })),
 	templateAddMembers: (name: string, members: Member_Deserialize[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_add_members", { name, members })),
-	templateRemoveMembers: (name: string, members: MemberRef[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_remove_members", { name, members })),
+	templateRemoveMembers: (name: string, members: MemberRef_Deserialize[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_remove_members", { name, members })),
 	templateRename: (name: string, to: string) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_rename", { name, to })),
 	templateDelete: (name: string) => typedError<null, string>(__TAURI_INVOKE("template_delete", { name })),
 	/**
@@ -1238,6 +1238,13 @@ export type Chosen = {
 	 */
 	sides?: { [key in string]: Side },
 	/**
+	 *  The licence evidence for each member whose copy comes from a
+	 *  marketplace's bytes. Keyed like `sides`, and read only for the
+	 *  members that take one — the person's own content and content
+	 *  nothing manages carry no licence question.
+	 */
+	licenses?: { [key in string]: LicenseAnswer },
+	/**
 	 *  Local packages to copy in, by [`super::DraftLocal::key`]. Empty is
 	 *  the opt-in left off.
 	 */
@@ -1760,7 +1767,19 @@ hash: string } |
  */
 at: string | null; hash: string | null; 
 /**  Why the edited copy cannot be stored, when it cannot. */
-why: string | null } | 
+why: string | null; 
+/**
+ *  The licence the marketplace declares, where it declares one.
+ *  Taking the edited copy copies that marketplace's bytes, so the
+ *  person answers for the licence before it is stored.
+ */
+license: string | null; 
+/**
+ *  Whether kendex recognizes that licence as redistributable. An
+ *  unrecognized one cannot be confirmed away: it needs a stated
+ *  basis.
+ */
+licenseRecognized: boolean } | 
 /**
  *  Nothing a template can record. The member stays visible and the
  *  save refuses until it is resolved or excluded.
@@ -2661,6 +2680,17 @@ export type License = "mit" | "apache2" |
 /**  Valid locally forever; blocks submission until chosen. */
 "none-yet";
 
+/**
+ *  What the person said about a licensed origin's terms before its bytes
+ *  are copied. Confirming is only an answer for a licence kendex
+ *  recognizes as redistributable; anything else needs a stated basis,
+ *  because a checkbox cannot make proprietary text copyable.
+ */
+export type LicenseAnswer = {
+	confirmed?: boolean,
+	basis?: string | null,
+};
+
 export type Line = {
 	kind: LineKind,
 	text: string,
@@ -2959,9 +2989,34 @@ export type Member = Member_Serialize | Member_Deserialize;
 export type MemberKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension" | "bundle";
 
 /**  One member, named the way a caller outside core addresses it. */
-export type MemberRef = {
+export type MemberRef = MemberRef_Serialize | MemberRef_Deserialize;
+
+/**  One member, named the way a caller outside core addresses it. */
+export type MemberRef_Deserialize = {
 	kind: MemberKind,
 	name: string,
+	/**
+	 *  Which of the members wearing this kind and name is meant — the
+	 *  same discriminator [`Member::identity`] tells them apart by, since
+	 *  a template deliberately keeps one name from two marketplaces as two
+	 *  members. Absent means every member of this kind and name, which is
+	 *  what a caller with one of them in hand asks for.
+	 */
+	repo?: string | null,
+};
+
+/**  One member, named the way a caller outside core addresses it. */
+export type MemberRef_Serialize = {
+	kind: MemberKind,
+	name: string,
+	/**
+	 *  Which of the members wearing this kind and name is meant — the
+	 *  same discriminator [`Member::identity`] tells them apart by, since
+	 *  a template deliberately keeps one name from two marketplaces as two
+	 *  members. Absent means every member of this kind and name, which is
+	 *  what a caller with one of them in hand asks for.
+	 */
+	repo?: string | null,
 };
 
 /**  Where a member's content comes from when the template is installed. */
@@ -3956,7 +4011,15 @@ export type ResolvedGroup = {
 	 *  installing would subscribe first.
 	 */
 	source: string | null,
-	/**  The version choice saved with these members, when there was one. */
+	/**
+	 *  The revision a fresh subscription to this repository would be made
+	 *  at, when the members named one. It reaches nothing where the
+	 *  repository is already subscribed: an add reads the subscription the
+	 *  scope already declares, and re-pinning somebody's subscription as a
+	 *  side effect of installing a template is not this operation's to do.
+	 *  Members that disagree about it are reported as unavailable rather
+	 *  than silently reduced to one.
+	 */
 	rev: string | null,
 	/**
 	 *  The commit this repository resolves to, from what is on this
@@ -4879,6 +4942,14 @@ export type TemplateInstall = {
 	copied: string[],
 	/**  What a step said while it worked. */
 	notes: string[],
+	/**
+	 *  Why the run stopped short of the whole template, or null where it
+	 *  finished. Whatever the lists above name is installed either way —
+	 *  that is what makes this an account rather than a refusal, and it is
+	 *  why a run that stopped still answers rather than throwing its own
+	 *  record away.
+	 */
+	stopped: string | null,
 };
 
 /**  One saved selection. */

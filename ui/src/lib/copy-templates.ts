@@ -63,6 +63,17 @@ export const DRAFT_UNREADABLE = "This project could not be read.";
 /** A member the reader has to decide about before the template can be
  *  saved. */
 export const CHOICE_LABEL = "Choose which copy to save";
+/** The licence a marketplace's bytes come under, asked before they are
+ *  copied. Confirming is only an answer for a licence kendex recognizes;
+ *  anything else needs a stated reason. */
+export const licenseUnder = (license: string): string =>
+  `These files come from the marketplace under licence ${license}.`;
+export const LICENSE_NONE =
+  "The marketplace states no licence for these files.";
+export const LICENSE_CONFIRM = "The licence permits copying these files";
+export const LICENSE_BASIS_LABEL = "Your reason for copying them";
+export const LICENSE_BASIS_HELP =
+  "kendex does not recognize this licence as one that permits copying, so state the basis yourself.";
 export const CHOICE_MARKETPLACE = "The marketplace package";
 export const CHOICE_LOCAL = "This project's edited copy";
 export const choiceHelp = (repo: string): string =>
@@ -83,6 +94,11 @@ export const RESOLVE_UNREADABLE =
 export const lastKnownVersion = (version: string): string =>
   `last known ${version}`;
 export const notSubscribedYet = "installing subscribes to this marketplace";
+/** What a saved revision actually does: it spells a fresh subscription
+ *  and reaches nothing where one already exists, so the row says that
+ *  rather than offering it as a version this install will pin. */
+export const notSubscribedYetAt = (rev: string): string =>
+  `installing subscribes to this marketplace at ${rev}`;
 export const subscribedAs = (alias: string): string => `subscribed as ${alias}`;
 
 export const DELETE_TITLE = (name: string): string => `Delete ${name}?`;
@@ -99,6 +115,11 @@ export const PICK_TEMPLATE_LABEL = "Template";
 export const NEW_TEMPLATE_OPTION = "Create a template…";
 export const addedToTemplate = (count: number, name: string): string =>
   `Added ${packageCount(count)} to ${name}.`;
+/** Said when a ticked row carries no marketplace a template can record.
+ *  Named rather than counted: the person picked those rows and is the
+ *  only one who can pick different ones. */
+export const droppedFromTemplate = (names: string[]): string =>
+  `${names.join(", ")} ${names.length === 1 ? "is" : "are"} not in a subscribed marketplace, so a template cannot record ${names.length === 1 ? "it" : "them"}. Subscribe first, or untick ${names.length === 1 ? "it" : "them"}.`;
 
 export const INSTALL_TEMPLATE_TITLE = "Install a template";
 export const BROWSE_PACKAGES_LABEL = "Browse packages";

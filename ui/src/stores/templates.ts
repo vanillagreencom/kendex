@@ -145,9 +145,13 @@ export async function installTemplate(
       ),
     ),
   );
-  return answer.status === "ok"
-    ? { ok: true, reason: null }
-    : { ok: false, reason: answer.error };
+  if (answer.status === "error") return { ok: false, reason: answer.error };
+  // A run that stopped short landed part of the template and says why it
+  // went no further. Both halves, because both are true: the dialog
+  // already draws a place that took some of an install and refused the
+  // rest, and reporting only the reason would deny the packages that are
+  // in.
+  return { ok: true, reason: answer.data.stopped };
 }
 
 /** What a template installs as it stands on this machine. Read on demand

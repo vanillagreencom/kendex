@@ -30,6 +30,19 @@ pub enum Side {
     Copy,
 }
 
+/// What the person said about a licensed origin's terms before its bytes
+/// are copied. Confirming is only an answer for a licence kendex
+/// recognizes as redistributable; anything else needs a stated basis,
+/// because a checkbox cannot make proprietary text copyable.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LicenseAnswer {
+    #[serde(default)]
+    pub confirmed: bool,
+    #[serde(default)]
+    pub basis: Option<String>,
+}
+
 /// The modal's answers.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -42,6 +55,12 @@ pub struct Chosen {
     /// member left without one refuses the save.
     #[serde(default)]
     pub sides: BTreeMap<String, Side>,
+    /// The licence evidence for each member whose copy comes from a
+    /// marketplace's bytes. Keyed like `sides`, and read only for the
+    /// members that take one — the person's own content and content
+    /// nothing manages carry no licence question.
+    #[serde(default)]
+    pub licenses: BTreeMap<String, LicenseAnswer>,
     /// Local packages to copy in, by [`super::DraftLocal::key`]. Empty is
     /// the opt-in left off.
     #[serde(default)]
@@ -99,7 +118,14 @@ pub fn create_from_project(env: &Env, root: &std::path::Path, chosen: &Chosen) -
         },
     )?;
     for (copy, bytes) in resolved {
-        if let Err(error) = store::write(env, &saved.id, copy.kind, &copy.name, &bytes.files) {
+        if let Err(error) = store::write(
+            env,
+            &saved.id,
+            copy.kind,
+            &copy.name,
+            &bytes.files,
+            &bytes.notices,
+        ) {
             // The index names copies that are not there. Nothing has been
             // installed from it and nothing else points at it, so the
             // entry goes and the refusal is the one the copy gave.
@@ -156,8 +182,40 @@ pub fn add_from_project(
             import::resolve(env, std::slice::from_ref(&scope), &copy.selection)?,
         ));
     }
+    // What each slot held before this write, so a refusal half-way puts
+    // the template back the way the doc above says it does. Read before
+    // the first write, because after it the bytes are already gone.
+    let mut replaced = Vec::new();
+    for (copy, _) in &bytes {
+        replaced.push((
+            copy.kind,
+            copy.name.clone(),
+            store::held(env, &template, copy.kind, &copy.name)?,
+        ));
+    }
     for (copy, resolved) in bytes {
-        store::write(env, &template.id, copy.kind, &copy.name, &resolved.files)?;
+        if let Err(error) = store::write(
+            env,
+            &template.id,
+            copy.kind,
+            &copy.name,
+            &resolved.files,
+            &resolved.notices,
+        ) {
+            // The index still names the old copies, so the store is put
+            // back to match it. A restore that itself fails is said out
+            // loud rather than folded into the write's own reason: the
+            // template is then neither what it was nor what was asked for.
+            if let Err(restoring) = store::restore(env, &template, &replaced) {
+                return Err(CoreError::TemplateCopyUnreadable {
+                    copy: copy.name.clone(),
+                    why: format!(
+                        "{error} — and putting this template's own copies back failed too: {restoring}"
+                    ),
+                });
+            }
+            return Err(error);
+        }
     }
     super::change(env, name, |template| {
         for member in members {
@@ -174,6 +232,9 @@ pub fn add_from_project(
 /// table, a set's page. No bytes are copied: every member is a marketplace
 /// identity.
 pub fn create_from_selection(env: &Env, name: &str, members: Vec<Member>) -> Result<Template> {
+    if members.is_empty() {
+        return Err(CoreError::TemplateEmpty);
+    }
     for member in &members {
         if let MemberSource::Copy { copy, .. } = &member.source {
             return Err(CoreError::TemplateCopyUnreadable {
@@ -184,6 +245,14 @@ pub fn create_from_selection(env: &Env, name: &str, members: Vec<Member>) -> Res
     }
     let mut kept: Vec<Member> = Vec::new();
     for member in members {
+        // The same refusal the draft applies: a member no install could
+        // ever take must not be saveable by any path.
+        if member.kind == super::MemberKind::PiExtension {
+            return Err(CoreError::TemplateMemberUnresolved {
+                member: member.name.clone(),
+                why: super::PI_EXTENSION_DIRECT.to_owned(),
+            });
+        }
         if !kept.iter().any(|held| held.identity() == member.identity()) {
             kept.push(member);
         }
@@ -213,7 +282,12 @@ fn wanted(draft: &Draft, chosen: &Chosen) -> Result<(Vec<Member>, Vec<Copying>, 
             .ok_or_else(|| CoreError::TemplateMemberUnknown {
                 member: wanted.clone(),
             })?;
-        let source = source_of(member, chosen.sides.get(wanted).copied(), &mut copying)?;
+        let source = source_of(
+            member,
+            chosen.sides.get(wanted).copied(),
+            chosen.licenses.get(wanted),
+            &mut copying,
+        )?;
         kept.push(member.name.clone());
         members.push(Member {
             kind: member.kind,
@@ -248,7 +322,7 @@ fn wanted(draft: &Draft, chosen: &Chosen) -> Result<(Vec<Member>, Vec<Copying>, 
         copying.push(Copying {
             kind,
             name: local.name.clone(),
-            selection: selection_of(kind, &local.name, &local.hash),
+            selection: selection_of(kind, &local.name, &local.hash, None),
         });
         kept.push(local.name.clone());
         members.push(Member {
@@ -277,6 +351,7 @@ fn wanted(draft: &Draft, chosen: &Chosen) -> Result<(Vec<Member>, Vec<Copying>, 
 fn source_of(
     member: &super::DraftMember,
     side: Option<Side>,
+    license: Option<&LicenseAnswer>,
     copying: &mut Vec<Copying>,
 ) -> Result<MemberSource> {
     let key = &member.key;
@@ -297,7 +372,7 @@ fn source_of(
         copying.push(Copying {
             kind,
             name: member.name.clone(),
-            selection: selection_of(kind, &member.name, hash),
+            selection: selection_of(kind, &member.name, hash, license),
         });
         Ok(MemberSource::Copy {
             copy: store::slot_id(kind, &member.name),
@@ -345,14 +420,19 @@ const CHOOSE_A_SIDE: &str = "this package is installed from a marketplace and ed
 
 /// The selection the import reader re-resolves: the package's own name at
 /// both ends, since a template stores what the project called it.
-fn selection_of(kind: crate::model::ItemKind, name: &str, hash: &str) -> ImportSelection {
+fn selection_of(
+    kind: crate::model::ItemKind,
+    name: &str,
+    hash: &str,
+    license: Option<&LicenseAnswer>,
+) -> ImportSelection {
     ImportSelection {
         kind,
         name: name.to_owned(),
         destination: name.to_owned(),
         hash: hash.to_owned(),
-        license_confirmed: false,
-        license_basis: None,
+        license_confirmed: license.is_some_and(|answer| answer.confirmed),
+        license_basis: license.and_then(|answer| answer.basis.clone()),
     }
 }
 

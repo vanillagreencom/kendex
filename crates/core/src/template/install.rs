@@ -43,7 +43,13 @@ pub struct ResolvedGroup {
     /// The personal subscription that already carries it, or null where
     /// installing would subscribe first.
     pub source: Option<String>,
-    /// The version choice saved with these members, when there was one.
+    /// The revision a fresh subscription to this repository would be made
+    /// at, when the members named one. It reaches nothing where the
+    /// repository is already subscribed: an add reads the subscription the
+    /// scope already declares, and re-pinning somebody's subscription as a
+    /// side effect of installing a template is not this operation's to do.
+    /// Members that disagree about it are reported as unavailable rather
+    /// than silently reduced to one.
     pub rev: Option<String>,
     /// The commit this repository resolves to, from what is on this
     /// machine. Null where nothing has been fetched.
@@ -92,6 +98,14 @@ pub struct Resolution {
     pub missing: Vec<MissingMember>,
 }
 
+impl TemplateInstall {
+    /// Whether anything this run did is on disk. What decides between an
+    /// install that refused and one that stopped part-way.
+    fn anything_landed(&self) -> bool {
+        !self.subscribed.is_empty() || !self.declared.is_empty() || !self.copied.is_empty()
+    }
+}
+
 impl Resolution {
     /// Every package this install would declare, however it gets there.
     pub fn count(&self) -> usize {
@@ -118,6 +132,12 @@ pub struct TemplateInstall {
     pub copied: Vec<String>,
     /// What a step said while it worked.
     pub notes: Vec<String>,
+    /// Why the run stopped short of the whole template, or null where it
+    /// finished. Whatever the lists above name is installed either way —
+    /// that is what makes this an account rather than a refusal, and it is
+    /// why a run that stopped still answers rather than throwing its own
+    /// record away.
+    pub stopped: Option<String>,
 }
 
 /// Read a template against this machine: which repositories carry its
@@ -146,6 +166,20 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
                         bundles: Vec::new(),
                     }
                 });
+                // One repository reads at one revision per scope, so two
+                // members of it pinned differently is not a selection
+                // anything can install. Said here, against the member that
+                // disagrees, rather than resolved by keeping whichever was
+                // seen first.
+                if group.rev != *rev {
+                    missing.push(MissingMember {
+                        kind: member.kind,
+                        name: member.name.clone(),
+                        repo: Some(repo.clone()),
+                        why: disagreeing_revs(repo, group.rev.as_deref(), rev.as_deref()),
+                    });
+                    continue;
+                }
                 match member.kind.item() {
                     None => group.bundles.push(member.name.clone()),
                     // A plugin is its registry's own curated set, so it
@@ -156,7 +190,7 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
                         kind: member.kind,
                         name: member.name.clone(),
                         repo: Some(repo.clone()),
-                        why: PI_EXTENSION_DIRECT.to_owned(),
+                        why: super::PI_EXTENSION_DIRECT.to_owned(),
                     }),
                     Some(kind) => group.items.push(ResolvedItem {
                         kind,
@@ -211,11 +245,22 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
     })
 }
 
-/// The refusal for a Pi extension named on its own: it installs with the
-/// package that carries it, and the engine says so wherever one is asked
-/// for directly.
-const PI_EXTENSION_DIRECT: &str =
-    "a Pi extension installs with the package that carries it, never on its own";
+/// Two members of one repository asking for different revisions. The
+/// same condition a collection refuses for the same reason: a scope reads
+/// one repository at one revision, so this is not a snapshot anybody can
+/// install.
+fn disagreeing_revs(repo: &str, held: Option<&str>, wanted: Option<&str>) -> String {
+    let named = |rev: Option<&str>| match rev {
+        Some(rev) => format!("'{}'", crate::names::shown(rev)),
+        None => "whatever it points at now".to_owned(),
+    };
+    format!(
+        "this template pins {} at {} for another package and at {} here — one repository reads at one revision, so remove one of them or save them in two templates",
+        crate::names::shown(repo),
+        named(held),
+        named(wanted)
+    )
+}
 
 /// The personal subscription that already carries this repository, by the
 /// identity every source comparison uses rather than by spelling.
@@ -231,6 +276,41 @@ fn subscription_for(personal: &Manifest, repo: &str) -> Option<String> {
                 .is_some_and(|declared| crate::source_ref::repo_identity(declared) == identity)
         })
         .map(|(name, _)| name.clone())
+}
+
+/// What a failing step does to the run: nothing landed yet, so the
+/// failure is the whole answer; or something did, and the account of it
+/// travels back with the reason it stopped.
+///
+/// A template install is several writes and only the per-scope
+/// transactions are atomic, so a person whose third step failed still has
+/// the first two on disk. Dropping the record and reporting the error
+/// alone would leave those invisible.
+enum Stopped<T> {
+    Went(T),
+    Short(CoreError),
+}
+
+fn step<T>(landed: &TemplateInstall, result: Result<T>) -> Result<Stopped<T>> {
+    match result {
+        Ok(value) => Ok(Stopped::Went(value)),
+        Err(error) if landed.anything_landed() => Ok(Stopped::Short(error)),
+        Err(error) => Err(error),
+    }
+}
+
+/// Take the value a step produced, or stop the run and hand back what had
+/// already landed.
+macro_rules! went {
+    ($landed:expr, $result:expr) => {
+        match step(&$landed, $result)? {
+            Stopped::Went(value) => value,
+            Stopped::Short(error) => {
+                $landed.stopped = Some(error.to_string());
+                return Ok($landed);
+            }
+        }
+    };
 }
 
 /// Install a template into one place.
@@ -271,12 +351,13 @@ pub fn install(
                     Some(rev) => format!("{}@{rev}", group.repo),
                     None => group.repo.clone(),
                 };
-                let subscribed = step(
-                    &mut landed,
-                    crate::source_ops::subscribe(env, &Scope::Global, &reference, None),
-                )?;
+                let subscribed = went!(
+                    landed,
+                    crate::source_ops::subscribe(env, &Scope::Global, &reference, None)
+                );
+                let written = crate::apply::execute(env, &subscribed.report.plan);
+                went!(landed, written);
                 landed.subscribed.push(group.repo.clone());
-                crate::apply::execute(env, &subscribed.report.plan)?;
                 subscribed.name
             }
         };
@@ -301,16 +382,16 @@ pub fn install(
         // A whole set carries its own members; expanding agents' skills on
         // top would install beyond what the set declares.
         request.no_auto_skills = !request.bundles.is_empty();
-        let report = step(
-            &mut landed,
+        let report = went!(
+            landed,
             match destination {
                 Scope::Project { root } if *destination != Scope::Global => {
                     crate::source_ops::install_project_from_personal(env, root, &source, &request)
                 }
                 _ => engine_ops::add(env, destination, &request),
-            },
-        )?;
-        step(&mut landed, crate::apply::execute(env, &report.plan))?;
+            }
+        );
+        went!(landed, crate::apply::execute(env, &report.plan));
         landed.notes.extend(report.notes);
         for item in &group.items {
             landed
@@ -322,40 +403,23 @@ pub fn install(
         }
     }
     if !resolution.copies.is_empty() {
-        let copied = step(
-            &mut landed,
+        let copied = went!(
+            landed,
             install_local(
                 env,
                 template,
                 destination,
                 &resolution,
                 harnesses.clone(),
-                method,
-            ),
-        )?;
+                method
+            )
+        );
         landed.copied.extend(copied.copied);
         landed.declared.extend(copied.declared);
         landed.notes.extend(copied.notes);
     }
-    step(
-        &mut landed,
-        carry_customizations(env, template, destination),
-    )?;
+    went!(landed, carry_customizations(env, template, destination));
     Ok(landed)
-}
-
-/// Report what landed before handing the failure on: a template install is
-/// several writes, and a person whose third step failed still has the
-/// first two on disk.
-fn step<T>(landed: &mut TemplateInstall, result: Result<T>) -> Result<T> {
-    if let Err(error) = &result
-        && (!landed.declared.is_empty() || !landed.copied.is_empty())
-    {
-        landed.notes.push(format!(
-            "stopped here: {error} — what is listed above is installed and stays installed"
-        ));
-    }
-    result
 }
 
 /// Write the template's own copies into the destination's local packages
@@ -421,6 +485,7 @@ pub fn install_local(
             .declared
             .push(format!("{} {}", copy.kind.name(), copy.name));
     }
+    ops.extend(notice_ops(env, template, &local_root)?);
     let manifest_path = crate::manifest::manifest_path(env, destination);
     ops.push(PlannedOp {
         description: "declare the template's own packages in kendex.toml".into(),
@@ -476,6 +541,35 @@ pub fn install_local(
     crate::apply::execute(env, &report.plan)?;
     landed.notes.extend(report.notes);
     Ok(landed)
+}
+
+/// The writes that carry the terms the copied bytes came under into the
+/// destination, at the same `NOTICES/<source>/` the store keeps them in
+/// and an authored catalog writes them to.
+///
+/// Bytes already there under one of these names are left alone: identical
+/// ones need no write, and different ones are somebody else's.
+fn notice_ops(
+    env: &Env,
+    template: &Template,
+    local_root: &std::path::Path,
+) -> Result<Vec<PlannedOp>> {
+    let mut ops = Vec::new();
+    for (relative, bytes) in store::notices(env, template)? {
+        let target = local_root.join(&relative);
+        if crate::fs::read_if_exists(&target)?.is_some() {
+            continue;
+        }
+        ops.push(PlannedOp {
+            description: "copy the licence the template's packages came under".into(),
+            op: Op::WriteFile {
+                pre: Pre::observed(&target)?,
+                path: target,
+                bytes,
+            },
+        });
+    }
+    Ok(ops)
 }
 
 /// Write the template's package customizations into the destination,

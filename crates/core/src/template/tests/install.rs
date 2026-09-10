@@ -6,7 +6,7 @@ use std::fs;
 use super::super::*;
 use super::create::{seeded, snapshot};
 use super::skill;
-use crate::model::{ItemKind, Scope};
+use crate::model::Scope;
 
 /// The whole project, saved with its own local package copied in.
 #[allow(clippy::unwrap_used)]
@@ -182,10 +182,21 @@ fn a_populated_destination_keeps_its_own_packages_and_refuses_a_clash() {
     // And one wearing a template member's name with different bytes.
     skill(&local.join("skills"), "house-style", "their house style");
 
-    assert!(matches!(
-        install(&project.env, &template, &target, None, None),
-        Err(CoreError::LocalTargetOccupied { .. })
-    ));
+    // The marketplace group lands, then the local copy refuses. What
+    // landed travels back with the reason it stopped: reporting the
+    // refusal alone would deny the packages that are in, and reporting
+    // success would deny the rest of the template that is not.
+    let stopped = install(&project.env, &template, &target, None, None).unwrap();
+    let why = stopped
+        .stopped
+        .clone()
+        .unwrap_or_else(|| panic!("the run should say it stopped: {stopped:?}"));
+    assert!(why.contains("house-style"), "{why}");
+    assert!(
+        stopped.declared.iter().any(|one| one == "skill gh"),
+        "what landed before the refusal is reported: {:?}",
+        stopped.declared
+    );
     // Their bytes are untouched.
     let theirs = fs::read_to_string(local.join("skills/house-style/SKILL.md")).unwrap();
     assert!(theirs.contains("their house style"), "{theirs}");
@@ -257,37 +268,102 @@ fn env_store(env: &Env, template: &Template) -> std::path::PathBuf {
     env.template_store_dir().join(&template.id)
 }
 
-/// A Pi extension named on its own is refused wherever it is asked for,
-/// and a template is not the way around that.
+/// Two members of one repository pinned at different revisions is not a
+/// selection anything can install: a scope reads one repository at one
+/// revision. Reported against the member that disagrees rather than
+/// resolved by keeping whichever was seen first.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_pi_extension_saved_on_its_own_is_reported_missing_rather_than_installed() {
+fn members_of_one_repository_pinned_differently_are_reported_not_reduced() {
     let project = seeded();
+    let repo = project_repo(&project);
+    let pinned = |name: &str, rev: &str| Member {
+        kind: MemberKind::Skill,
+        name: name.to_owned(),
+        enabled: true,
+        source: MemberSource::Marketplace {
+            repo: repo.clone(),
+            rev: Some(rev.to_owned()),
+        },
+    };
     let template = create_from_selection(
         &project.env,
-        "Pi only",
-        vec![Member {
-            kind: MemberKind::PiExtension,
-            name: "thing".to_owned(),
-            enabled: true,
-            source: MemberSource::Marketplace {
-                repo: project_repo(&project),
-                rev: None,
-            },
-        }],
+        "Two pins",
+        vec![pinned("gh", "v1"), pinned("note", "v2")],
     )
     .unwrap();
+
     let resolution = resolve(&project.env, &template).unwrap();
     assert_eq!(resolution.missing.len(), 1, "{:?}", resolution.missing);
+    assert_eq!(resolution.missing[0].name, "note");
+    assert!(
+        resolution.missing[0].why.contains("one revision"),
+        "{}",
+        resolution.missing[0].why
+    );
+    // And the install refuses whole rather than picking a pin.
     assert!(matches!(
         install(
             &project.env,
             &template,
-            &destination(&project, "pi"),
+            &destination(&project, "pinned"),
             None,
             None
         ),
         Err(CoreError::TemplateMemberUnavailable { .. })
     ));
-    let _ = ItemKind::PiExtension;
+}
+
+/// Taking a fresh copy into a template that already holds one is a
+/// replacement, and a refused replacement puts back what it replaced —
+/// which is what the operation's own doc promises.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refused_replacement_leaves_the_template_as_it_was() {
+    let project = seeded();
+    let template = template_of(&project, "Rust service");
+    let stray = template
+        .members
+        .iter()
+        .find(|member| member.name == "stray")
+        .unwrap();
+    let MemberSource::Copy { copy, .. } = &stray.source else {
+        panic!("stray should be a copy");
+    };
+    let stored = copy_path(&project.env, &template, copy).unwrap();
+    let before = fs::read_to_string(stored.join("SKILL.md")).unwrap();
+
+    // The project's copy has moved on, and a second member named in the
+    // same call cannot be copied at all — the project holds no such
+    // package, so the resolve refuses after the first write would have
+    // gone in.
+    skill(
+        &project.root.join(".claude/skills"),
+        "stray",
+        "changed since the template was made",
+    );
+    let refused = add_from_project(
+        &project.env,
+        "Rust service",
+        &project.root,
+        &[
+            MemberRef {
+                kind: MemberKind::Skill,
+                name: "stray".to_owned(),
+                repo: None,
+            },
+            MemberRef {
+                kind: MemberKind::Skill,
+                name: "never-here".to_owned(),
+                repo: None,
+            },
+        ],
+    );
+    assert!(refused.is_err(), "{refused:?}");
+    // The bytes the template held are the bytes it still holds.
+    assert_eq!(
+        fs::read_to_string(stored.join("SKILL.md")).unwrap(),
+        before,
+        "a refused replacement changed the template's own copy"
+    );
 }

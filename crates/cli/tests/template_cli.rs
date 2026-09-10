@@ -59,8 +59,11 @@ fn world() -> (tempfile::TempDir, std::path::PathBuf) {
     skill(&catalog.join("skills"), "gh", "market bytes");
     write(
         &catalog.join("kendex.toml"),
-        "[marketplace]\nname = \"cat\"\n",
+        "[marketplace]\nname = \"cat\"\nlicense = \"MIT\"\n",
     );
+    // The terms themselves, so a copy taken out of this marketplace has
+    // something to carry with it.
+    write(&catalog.join("LICENSE"), "MIT License\n");
 
     let app = home.join("app");
     skill(
@@ -321,6 +324,164 @@ fn members_are_named_with_the_selectors_every_other_verb_takes() {
     assert!(
         said(&removed).contains("0 package(s)"),
         "{}",
+        said(&removed)
+    );
+}
+
+/// The two answers core refuses without, and the flags that give them.
+///
+/// Without them `create --from-project` refused whole on any project
+/// holding a locally edited marketplace package, with the refusal naming
+/// an input the verb had no way to take. One row per answer the verb can
+/// now give, and per answer it still refuses without.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn create_from_a_project_takes_the_exclusion_and_the_side_that_core_requires() {
+    let (_tmp, home) = world();
+    let app = home.join("app");
+    // The installed copy drifts from the marketplace's, which is what
+    // makes gh a choice with no default. The install is a link into the
+    // catalog, so it is taken away first: writing through it would edit
+    // the marketplace's own bytes and leave nothing to drift from.
+    let installed = app.join(".claude/skills/gh");
+    fs::remove_dir_all(&installed)
+        .or_else(|_| fs::remove_file(&installed))
+        .unwrap();
+    skill(&app.join(".claude/skills"), "gh", "edited here");
+    let project = app.to_str().unwrap().to_owned();
+
+    // name, the answer's flags, whether it saves, and the word the run
+    // has to say — the flag that is missing, or the package that is.
+    type Row<'a> = (&'a str, Vec<&'a str>, bool, &'a str);
+    let rows: Vec<Row<'_>> = vec![
+        ("Unanswered", vec![], false, "--use-project-copy"),
+        (
+            "Upstream",
+            vec!["--use-marketplace", "skill:gh"],
+            true,
+            "saved",
+        ),
+        (
+            "Ungated",
+            vec!["--use-project-copy", "skill:gh"],
+            false,
+            "--confirm-license",
+        ),
+        (
+            // A stated basis stands in for a licence kendex cannot judge,
+            // so it is not an answer for one it recognizes.
+            "Basis instead",
+            vec![
+                "--use-project-copy",
+                "skill:gh",
+                "--license-basis",
+                "the author granted permission",
+            ],
+            false,
+            "--confirm-license",
+        ),
+        (
+            "Mine",
+            vec!["--use-project-copy", "skill:gh", "--confirm-license"],
+            true,
+            "saved",
+        ),
+        ("Trimmed", vec!["--exclude", "skill:gh"], true, "saved"),
+        (
+            "Typo",
+            vec!["--exclude", "skill:never-here"],
+            false,
+            "never-here",
+        ),
+    ];
+
+    for (name, flags, saves, says) in rows {
+        let mut args = vec!["template", "create", name, "--from-project", &project];
+        args.extend(flags);
+        args.push("--yes");
+        let run = kendex(&home, &home, &args);
+        let text = said(&run);
+        assert_eq!(run.status.success(), saves, "{name}: {text}");
+        assert!(text.contains(says), "{name} should say {says}: {text}");
+    }
+
+    // The exclusion really left the package out, and kept the rest.
+    let shown = said(&kendex(&home, &home, &["template", "show", "Trimmed"]));
+    assert!(!shown.contains("gh"), "{shown}");
+    assert!(shown.contains("house-style"), "{shown}");
+    // Every refused row saved nothing.
+    let listed = said(&kendex(&home, &home, &["template", "list"]));
+    for refused in ["Unanswered", "Ungated", "Basis instead", "Typo"] {
+        assert!(!listed.contains(refused), "{refused} was saved: {listed}");
+    }
+}
+
+/// A removal names which of two same-named members it means, so the other
+/// stays.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removing_one_of_two_same_named_members_leaves_the_other() {
+    let (_tmp, home) = world();
+    let catalog = home.join("catalog");
+    let second = home.join("catalog-two");
+    skill(&second.join("skills"), "gh", "another marketplace");
+    write(
+        &second.join("kendex.toml"),
+        "[marketplace]\nname = \"two\"\n",
+    );
+
+    assert!(
+        kendex(
+            &home,
+            &home,
+            &[
+                "template",
+                "create",
+                "Both",
+                "--source",
+                catalog.to_str().unwrap(),
+                "--skill",
+                "gh",
+            ],
+        )
+        .status
+        .success()
+    );
+    assert!(
+        kendex(
+            &home,
+            &home,
+            &[
+                "template",
+                "add",
+                "Both",
+                "--source",
+                second.to_str().unwrap(),
+                "--skill",
+                "gh",
+            ],
+        )
+        .status
+        .success()
+    );
+
+    let removed = kendex(
+        &home,
+        &home,
+        &[
+            "template",
+            "remove",
+            "Both",
+            "--source",
+            catalog.to_str().unwrap(),
+            "--skill",
+            "gh",
+        ],
+    );
+    assert!(removed.status.success(), "{}", said(&removed));
+    assert!(
+        said(&removed).contains("1 package(s)"),
+        "the other member stays: {}",
         said(&removed)
     );
 }

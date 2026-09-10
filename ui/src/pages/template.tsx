@@ -20,6 +20,7 @@ import {
   MISSING_HEADING,
   NO_FILES,
   notSubscribedYet,
+  notSubscribedYetAt,
   REMOVE_MEMBER_LABEL,
   RENAME_TEMPLATE_LABEL,
   RESOLVE_READING,
@@ -161,9 +162,11 @@ export function TemplatePage() {
               key={group.repo}
               title={group.repo}
               description={
-                group.source === null
-                  ? notSubscribedYet
-                  : subscribedAs(group.source)
+                group.source !== null
+                  ? subscribedAs(group.source)
+                  : group.rev
+                    ? notSubscribedYetAt(group.rev)
+                    : notSubscribedYet
               }
               action={
                 group.version ? (
@@ -193,7 +196,16 @@ export function TemplatePage() {
                   name={row.name}
                   detail={row.off ? "switched off" : null}
                   busy={busy}
-                  onRemove={() => remove({ kind: row.kind, name: row.name })}
+                  // The repository this section is for, so removing one
+                  // of two members sharing a kind and name leaves the
+                  // other where it is.
+                  onRemove={() =>
+                    remove({
+                      kind: row.kind,
+                      name: row.name,
+                      repo: group.repo,
+                    })
+                  }
                 />
               ))}
             </Section>
@@ -208,10 +220,14 @@ export function TemplatePage() {
                   name={copy.name}
                   detail={copy.from ? `edited copy of ${copy.from}` : null}
                   busy={busy}
+                  // A copy the template owns is not a marketplace's, so
+                  // there is no repository to tell it apart by: its kind
+                  // and name are its identity.
                   onRemove={() =>
                     remove({
                       kind: copy.kind as MemberRef["kind"],
                       name: copy.name,
+                      repo: null,
                     })
                   }
                 />
@@ -248,7 +264,11 @@ export function TemplatePage() {
                       variant="outline"
                       disabled={busy}
                       onClick={() =>
-                        remove({ kind: member.kind, name: member.name })
+                        remove({
+                          kind: member.kind,
+                          name: member.name,
+                          repo: member.repo,
+                        })
                       }
                     >
                       {REMOVE_MEMBER_LABEL}
