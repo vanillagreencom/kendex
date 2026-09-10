@@ -42,6 +42,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
   commands: {
     packageMeta: vi.fn(),
     packageFiles: vi.fn(),
+    packageFile: vi.fn(),
     packageVersions: vi.fn(),
     packageReadme: vi.fn(),
     getManifest: vi.fn(),
@@ -298,6 +299,16 @@ const engineWrites = () => {
       },
     }),
   );
+  vi.mocked(commands.packageFile).mockImplementation((_s, _k, _n, path) =>
+    Promise.resolve({
+      status: "ok",
+      data: {
+        path,
+        content: write.landed ? "PANE-AFTER" : "PANE-BEFORE",
+        truncated: false,
+      },
+    }),
+  );
   vi.mocked(commands.packageUpdate).mockImplementation(() => {
     write.landed = true;
     return Promise.resolve({
@@ -347,6 +358,54 @@ const readsOn = async (host: HTMLElement) => {
   await openTab(host, OVERVIEW_TAB);
   return `${overview}\n${files}`;
 };
+
+// The Files tab holds the one read on this page that is not the page's own:
+// the file a person picked. Its address is the package, which an update does
+// not move, and the header's Update stays on screen while the tab is open —
+// so without the tab starting over, the tree lists the new inventory beside
+// the bytes of the copy that was replaced. The update is pressed from the
+// header here and the tab never left, which is the only way to reach that
+// state: moving to another tab and back unmounts the tab's content and
+// starts its reads over whatever the page does.
+describe("the package page's file pane after an update", () => {
+  it("does not keep the replaced copy's bytes under a file that was picked", async () => {
+    const write = engineWrites();
+    vi.mocked(commands.updatesOverview).mockImplementation(() =>
+      Promise.resolve({
+        status: "ok",
+        data: {
+          rows: [rowAt(write.landed ? NEW : OLD, !write.landed)],
+          warnings: [],
+          unreadable: [],
+          lastFetched: null,
+        },
+      }),
+    );
+    const host = await openPage();
+    await openTab(host, FILES_TAB);
+    const row = [...host.querySelectorAll("button")].find(
+      (one) => one.title === "BEFORE.md",
+    );
+    if (!row) throw new Error("no row for BEFORE.md");
+    await act(async () => {
+      row.click();
+    });
+    await settle();
+    expect(host.textContent).toContain("PANE-BEFORE");
+
+    const update = [
+      ...(host.querySelector("header")?.querySelectorAll("button") ?? []),
+    ].find((one) => one.textContent === UPDATE_LABEL);
+    if (!update) throw new Error("no Update in the header");
+    await act(async () => {
+      update.click();
+    });
+    await settle();
+
+    expect(host.textContent).not.toContain("PANE-BEFORE");
+    expect(host.textContent).toContain("READS-AFTER");
+  });
+});
 
 describe("the package page after an update started from its Projects tab", () => {
   const outcomes = [

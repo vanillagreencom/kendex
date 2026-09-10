@@ -219,7 +219,27 @@ fn working(root: &Path, path: &str) -> Result<Option<Vec<u8>>, Failed> {
     if kind.is_dir() {
         return Ok(None);
     }
-    absent_or(std::fs::read(&whole), &whole)
+    canonical(root, path)
+}
+
+/// The bytes git would put in the commit for this path, which are not
+/// always the bytes on disk. `.gitattributes` can name a clean filter for a
+/// path, and `core.autocrlf` — on by default in a Git for Windows checkout —
+/// rewrites line endings on the way in. The commit stages with `git add`, so
+/// a comparison built from raw disk bytes shows a change git will not make:
+/// under that setting, every line of every text file.
+///
+/// git is asked rather than imitated. `hash-object` applies exactly the
+/// filters staging applies, `--path` names the path whose attributes decide
+/// which, and the object it writes is the one `git add` writes moments
+/// later. The path is passed after `--`, as the file it is rather than as a
+/// pathspec, so a name holding `[`, `*`, `?` or a leading `:` reaches git
+/// whole; it is relative because every call this module makes runs in the
+/// checkout.
+fn canonical(root: &Path, path: &str) -> Result<Option<Vec<u8>>, Failed> {
+    let printed = git::read_required(root, &["hash-object", "-w", "--path", path, "--", path])?;
+    let oid = String::from_utf8_lossy(&printed).trim().to_owned();
+    git::read_required(root, &["cat-file", "blob", &oid]).map(Some)
 }
 
 /// What the walk from `root` down to `path`'s leaf found standing in place

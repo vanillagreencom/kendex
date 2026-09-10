@@ -1422,7 +1422,7 @@ describe("the package page's Overview", () => {
   // The control: the Overview reads one file and one only. A package whose
   // readme read failed says so where the readme would be, and does not
   // fall through to a tree of files that belongs on the other tab.
-  it("says a readme that could not be read could not be shown", async () => {
+  it("says a readme that could not be read could not be shown, and offers it again", async () => {
     vi.mocked(commands.packageReadme).mockResolvedValue({
       status: "error",
       error: "REFUSED-BY-CORE: the install directory is gone",
@@ -1433,6 +1433,29 @@ describe("the package page's Overview", () => {
     expect(host.textContent).toContain(
       "REFUSED-BY-CORE: the install directory is gone",
     );
+
+    // A failed read is offered again where it failed, the way every other
+    // failed read on this page is: without it a transient refusal leaves
+    // the Overview holding an error until the page is left.
+    const retry = Array.from(host.querySelectorAll("button")).filter(
+      (button) =>
+        button.textContent === TRY_AGAIN_LABEL &&
+        button.closest("header") === null,
+    );
+    expect(retry).toHaveLength(1);
+
+    vi.mocked(commands.packageReadme).mockResolvedValue({
+      status: "ok",
+      data: {
+        path: "SKILL.md",
+        content: "THE-README-THE-RETRY-FOUND",
+        truncated: false,
+      },
+    });
+    await userEvent.click(retry[0] as HTMLElement);
+    await settle();
+    expect(host.textContent).toContain("THE-README-THE-RETRY-FOUND");
+    expect(host.textContent).not.toContain(FILE_READ_FAILED_TITLE);
   });
 });
 

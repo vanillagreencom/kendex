@@ -1095,6 +1095,38 @@ fn a_file_replaced_by_a_folder_of_the_same_name_shows_both_halves() {
     assert_eq!(hunk_text(&arrived.diff), ["+the skill's body"]);
 }
 
+/// The commit stages with `git add`, and staging is where a repository's
+/// attributes apply: a checkout with `core.autocrlf` on, or a
+/// `.gitattributes` naming end-of-line conversion, holds bytes on disk that
+/// are not the bytes committed. The after side is what git would stage, so
+/// the window shows the one line that changed and not every line in the
+/// file — which is what a person on Windows would otherwise be asked to
+/// approve.
+#[test]
+fn the_after_side_is_what_git_would_stage_and_not_the_bytes_on_disk() {
+    const ATTRIBUTES: &str = ".gitattributes";
+    let repo = Repo::new(&[
+        (ATTRIBUTES, "* text=auto eol=lf\n"),
+        (OWNED[0], "one\ntwo\n"),
+    ]);
+    // The same file with one line edited, written the way a checkout under
+    // `core.autocrlf` holds it.
+    repo.write(OWNED[0], "one\r\ntwo changed\r\n");
+    let generated = repo.generated(&[OWNED[0]], &[]);
+    let found = repo.scan(&generated).unwrap();
+
+    let opened = shown(&found, OWNED[0]);
+    assert_eq!(
+        opened.diff.files[0].status,
+        crate::package::diff::FileStatus::Modified
+    );
+    assert_eq!(
+        hunk_text(&opened.diff),
+        [" one", "-two", "+two changed"],
+        "the line endings on disk were compared against the blob git holds"
+    );
+}
+
 /// The replacement runs the other way too: an update can put the file `foo`
 /// back where the folder `foo/bar` stood. Then the covered path `foo/bar`
 /// has an ancestor that is a regular file, which no read can continue

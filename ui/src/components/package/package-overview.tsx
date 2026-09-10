@@ -24,6 +24,7 @@ export function PackageOverview({
   versions,
   readme,
   readmeRead,
+  readsRunning,
   busy,
   declares,
   onToggle,
@@ -41,6 +42,9 @@ export function PackageOverview({
   /** The package's README, and how the page's read of it went. */
   readme: ItemSource | null;
   readmeRead: ReadState;
+  /** Whether the page's reads are out again, so a Try again offered here
+   *  says the page is doing something about it. */
+  readsRunning: boolean;
   busy: boolean;
   /** Whether this page addresses a declaration. Everything here that reads
    *  or writes by scope, kind and name speaks to whatever package the
@@ -89,7 +93,12 @@ export function PackageOverview({
           that says a package carries none would be a claim about a package
           this page did not read. */}
       {declares ? (
-        <PackageReadme readme={readme} read={readmeRead} />
+        <PackageReadme
+          readme={readme}
+          read={readmeRead}
+          retryRunning={readsRunning}
+          onRetry={onReload}
+        />
       ) : null}
     </div>
   );

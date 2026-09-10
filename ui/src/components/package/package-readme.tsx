@@ -1,7 +1,9 @@
 import type { ItemSource } from "@/bindings";
 import { FilePane } from "@/components/files/file-pane";
 import { StatusNote } from "@/components/status-note";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import { FILE_READ_FAILED_TITLE, NO_README_NOTE } from "@/lib/copy-files";
 import type { ReadState } from "@/lib/read-state";
 
@@ -20,15 +22,37 @@ import type { ReadState } from "@/lib/read-state";
 export function PackageReadme({
   readme,
   read,
+  retryRunning,
+  onRetry,
 }: {
   /** The README the last landed read found, or null where the package
    *  carries none. */
   readme: ItemSource | null;
   read: ReadState;
+  /** Whether the page's reads are out again, which is what disables the
+   *  button while the answer under it is being asked for. */
+  retryRunning: boolean;
+  onRetry: () => void;
 }) {
   if (read.status === "failed" && read.error !== null) {
+    // A read that failed is offered again where it failed, the way every
+    // other failed read on this page is: without it a transient refusal
+    // leaves the Overview holding an error until the page is left.
     return (
-      <StatusNote tone="critical" title={FILE_READ_FAILED_TITLE}>
+      <StatusNote
+        tone="critical"
+        title={FILE_READ_FAILED_TITLE}
+        action={
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={retryRunning}
+            onClick={onRetry}
+          >
+            {TRY_AGAIN_LABEL}
+          </Button>
+        }
+      >
         {read.error}
       </StatusNote>
     );
