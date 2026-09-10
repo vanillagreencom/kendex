@@ -295,7 +295,11 @@ export function PackagePage() {
         onDelete={declares ? () => setConfirmDelete(true) : undefined}
         body={body}
       />
-      {dirty ? (
+      {/* The editor's dirty state belongs to the last manifest it opened,
+          and an observed page opens none — so a bar here would offer to
+          save another package's settings from a page that is not about
+          it. On the same one decision as every other declaration write. */}
+      {declares && dirty ? (
         <SaveBar
           saving={saving}
           busy={mutating}

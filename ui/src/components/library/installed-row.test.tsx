@@ -30,7 +30,14 @@ const item = (scope: Scope) => ({
   tags: [],
 });
 
-const group = groupItems([item(VG), item(HYPR)] as never, () => null)[0];
+// One package the records account for, installed in two places. It takes a
+// declared identity because that is what puts two places on one row: two
+// copies nothing recorded are two unrelated files that happen to share a
+// name, and the Library keeps those apart.
+const group = groupItems([item(VG), item(HYPR)] as never, () => ({
+  kind: "skill",
+  name: "gh",
+}))[0];
 
 describe("opening a package from its Library row", () => {
   it("opens the intended target once and preserves a selected row drag", async () => {
@@ -211,7 +218,7 @@ describe("the other things a Library row names", () => {
     const host = mountTree(
       <tbody>
         <InstalledRow
-          group={groupItems([item(VG)] as never)[0]}
+          group={groupItems([item(VG)] as never, () => null)[0]}
           origin={{
             origin: "marketplace",
             source: "kendex",

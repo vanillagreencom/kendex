@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ObservedItem, Scope } from "@/bindings";
+import type { ObservedItem, Origin, ProvenanceRow, Scope } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
 import { openLibraryAt } from "@/components/library/use-filter-handoff";
 import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
@@ -11,6 +11,7 @@ import {
   TRY_AGAIN_LABEL,
 } from "@/lib/copy";
 import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
+import { observedAt } from "@/lib/derive";
 import {
   READ_LANDED,
   READ_PENDING,
@@ -25,6 +26,7 @@ import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
+import { joinAnswered } from "@/test/identity-join";
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
 const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
@@ -386,6 +388,19 @@ describe("the marketplace a Library row came from", () => {
     path: "/work/vg/.claude/skills/gh",
   } as unknown as ObservedItem;
 
+  // What the records say about one of those copies. Both places record the
+  // same package, which is what puts the two copies on one row; the alias
+  // below is declared at hyprtrade and nowhere else.
+  const recorded = (item: ObservedItem, origin: Origin): ProvenanceRow => ({
+    scope: item.scope,
+    kind: item.kind,
+    name: item.name,
+    harness: item.harness,
+    at: observedAt(item),
+    package: { kind: "skill", name: "gh" },
+    origin,
+  });
+
   beforeEach(() => {
     vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
     vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
@@ -402,19 +417,16 @@ describe("the marketplace a Library row came from", () => {
       } as never,
     });
     // Provenance answers in its own order, and the row it answers with is
-    // hyprtrade's: the alias below is declared there and nowhere else.
-    useProvenanceStore.setState({
-      rows: [
-        {
-          scope: HYPR,
-          kind: "skill",
-          name: "gh",
-          harness: "claude",
-          origin: { origin: "marketplace", source: "kit", repo: "vg/kit" },
-        },
-      ] as never,
-      loaded: true,
-    });
+    // hyprtrade's: the alias is declared there and nowhere else, while the
+    // group's first installation is vg's.
+    joinAnswered([
+      recorded(fromKit, {
+        origin: "marketplace",
+        source: "kit",
+        repo: "vg/kit",
+      }),
+      recorded(fromOther, { origin: "own", forkedFrom: null, source: "local" }),
+    ]);
     useLibraryViewStore.setState({ ...NO_FILTERS });
     useNavStore.setState({
       page: "library",
@@ -445,18 +457,10 @@ describe("the marketplace a Library row came from", () => {
   // The control: a package the reader wrote names no marketplace, so the
   // cell stays text and there is nothing to open.
   it("leaves a row with no marketplace unopenable", () => {
-    useProvenanceStore.setState({
-      rows: [
-        {
-          scope: HYPR,
-          kind: "skill",
-          name: "gh",
-          harness: "claude",
-          origin: { origin: "own", forkedFrom: null },
-        },
-      ] as never,
-      loaded: true,
-    });
+    joinAnswered([
+      recorded(fromKit, { origin: "own", forkedFrom: null, source: "local" }),
+      recorded(fromOther, { origin: "own", forkedFrom: null, source: "local" }),
+    ]);
     const host = mount(<InstalledView />);
     const from = [...host.querySelectorAll("button")].find(
       (button) => button.textContent === "Your own",

@@ -431,6 +431,9 @@ describe("the reading behind a row's score", () => {
     expect(nav.packageRef).toEqual({
       kind: "skill",
       name: "gh",
+      // An update row is built from the install records, so it opens the
+      // package they account for.
+      identity: "recorded",
       scope: { scope: "global" },
     });
     expect(nav.packageView).toEqual({ mode: "safety" });
@@ -486,6 +489,7 @@ describe("the reading behind a row's score", () => {
     expect(nav.packageRef).toEqual({
       kind: "skill",
       name: "gh",
+      identity: "recorded",
       scope: { scope: "project", root: "/work/vg" },
     });
     expect(nav.packageView).toEqual({ mode: "safety" });
@@ -521,6 +525,7 @@ describe("the reading behind a row's score", () => {
     expect(useNavStore.getState().packageRef).toEqual({
       kind: "skill",
       name: "gh",
+      identity: "recorded",
       scope: { scope: "project", root: "/work/vg" },
     });
     expect(useNavStore.getState().packageView).toEqual({ mode: "safety" });
@@ -560,6 +565,7 @@ describe("the reading behind a row's score", () => {
     expect(useNavStore.getState().packageRef).toEqual({
       kind: "skill",
       name: "gh",
+      identity: "recorded",
       scope: { scope: "global" },
     });
   });

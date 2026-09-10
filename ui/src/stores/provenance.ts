@@ -77,12 +77,19 @@ export const useProvenanceStore = create<ProvenanceState>((set, get) => {
   // there is no ranking to keep: loosen it and the ordering goes with it.
   let inFlight: Promise<void> | null = null;
   let queued: Promise<void> | null = null;
+  // The scan the read now out is answering about, or null with none out.
+  // Whether a read is running says nothing about which machine it will
+  // describe: one that began before the current scan landed will land with
+  // an answer about the scan before it, so [ensureFor] has to ask what it
+  // is answering rather than whether anything is.
+  let asking: number | null = null;
 
   const land = async (): Promise<void> => {
     // Taken as the read begins, not as it lands: what these rows describe
     // is the machine at the moment they were asked for, and a scan landing
     // while the read is out is a scan they know nothing about.
     const asked = useScanStore.getState().generation;
+    asking = asked;
     // The wrapper folds a rejected command into an error status, so
     // `settled` is the last guard rather than the first: it names a refusal
     // that carries no reason, and a read that never answered at all is
@@ -103,7 +110,10 @@ export const useProvenanceStore = create<ProvenanceState>((set, get) => {
 
   const start = (): Promise<void> => {
     const running = land().finally(() => {
-      if (inFlight === running) inFlight = null;
+      if (inFlight === running) {
+        inFlight = null;
+        asking = null;
+      }
       // Not simply false: a re-read waiting behind this one is about to
       // replace these rows, so nothing may call them current yet.
       set({ reading: queued !== null });
@@ -123,10 +133,12 @@ export const useProvenanceStore = create<ProvenanceState>((set, get) => {
       await get().reload();
     },
     ensureFor: async (generation) => {
-      const { answeredFor, reading } = get();
-      // Already this scan's answer, or already on its way to one: a read
-      // that began after this scan landed will answer for it.
-      if (answeredFor === generation || reading) return;
+      if (get().answeredFor === generation) return;
+      // A read that is out answers only for the scan it began after. One
+      // that began earlier will land describing that earlier machine, and
+      // no state change would ask again — so it is not dedupated against,
+      // and `reload` takes the one re-read behind it.
+      if (asking !== null && asking >= generation) return;
       await get().reload();
     },
     // A read already out cannot answer for what has happened since it

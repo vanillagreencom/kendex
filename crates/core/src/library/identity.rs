@@ -61,18 +61,26 @@ pub(super) struct Recorded {
 
 /// One recorded registration: the package, and the command it went in
 /// with, whole.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 struct Registered {
     claim: Claim,
     command: String,
 }
 
 /// Record one package's claim on a position. Two records claiming one
-/// position leave it unclaimed: the records do not say which package it
-/// is, and crediting either would be a guess.
+/// position for DIFFERENT packages leave it unclaimed: the records do not
+/// say which package it is, and crediting either would be a guess.
+///
+/// Agreeing on the package is not that ambiguity. One install of a shared
+/// surface writes the files once and records an entry per harness member,
+/// every one of them naming the same paths, so a position is normally
+/// claimed once per member. Those records agree on what the file is —
+/// which is the whole question here — and the standing claim stands. It
+/// answers for the origin too, because entries that name one package at
+/// one scope came from one install and so carry one source.
 fn claim(by_artifact: &mut HashMap<PathBuf, Option<Claim>>, at: PathBuf, held: &Claim) {
     match by_artifact.get(&at) {
-        Some(Some(known)) if known == held => {}
+        Some(Some(known)) if known.0 == held.0 => {}
         Some(_) => {
             by_artifact.insert(at, None);
         }
@@ -95,7 +103,7 @@ fn resolved(path: &Path) -> PathBuf {
 /// with here is exactly what taking it back out would touch.
 pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
     let mut by_artifact = HashMap::new();
-    let mut by_registration = HashMap::new();
+    let mut by_registration: HashMap<(HarnessId, String), Option<Registered>> = HashMap::new();
     let mut declared: HashMap<(HarnessId, ItemKind), Vec<String>> = HashMap::new();
     for entry in lock.entries.values() {
         let held: Claim = (
@@ -140,7 +148,12 @@ pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
                 command: registration.command.clone(),
             };
             match by_registration.get(&key) {
-                Some(Some(known)) if *known == entry_held => {}
+                // Same rule as a position: one package recorded twice
+                // under one registration is that package, and only a
+                // second package makes the entry ambiguous.
+                Some(Some(known))
+                    if known.claim.0 == entry_held.claim.0
+                        && known.command == entry_held.command => {}
                 Some(_) => {
                     by_registration.insert(key, None);
                 }

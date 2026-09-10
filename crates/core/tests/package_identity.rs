@@ -210,6 +210,36 @@ fn one_hook_across_every_tool_is_one_package_from_its_marketplace() {
     assert_eq!(opencode.name, "kendex-hook-block-worktree-refresh");
 }
 
+/// One install of a shared skill surface writes the tree once and records
+/// an entry per member tool, every one of them naming the same paths. Those
+/// records agree on which package the tree is, which is the whole question
+/// a position answers — reading each of them as a competing claimant leaves
+/// the tree unclaimed and every tool's copy observed-only, and the package
+/// then loses the controls its declaration backs.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn one_surface_recorded_per_member_is_still_one_package() {
+    let f = fixture_for("[skills.gh]\nsource = \"cat\"\n", "symlink", HARNESSES);
+    apply_now(&f);
+    let rows = observed(&rows(&f), &f);
+    let gh = PackageRef {
+        kind: ItemKind::Skill,
+        name: "gh".to_owned(),
+    };
+    let readers: Vec<_> = rows
+        .iter()
+        .filter(|row| row.kind == ItemKind::Skill && row.name == "gh")
+        .collect();
+    // More than one tool reads it, which is what puts several records on
+    // one position in the first place.
+    assert!(readers.len() > 1, "one reader only: {readers:#?}");
+    let catalog = f.home.join("catalog");
+    for row in readers {
+        assert_eq!(row.package.as_ref(), Some(&gh), "{row:#?}");
+        assert_eq!(row.origin, marketplace(&catalog), "{row:#?}");
+    }
+}
+
 /// A file at a position no record claims is somebody else's, whatever it
 /// is called. A tool reads more than one root, so the same name in the
 /// other one is a different file — and a name is not evidence about a file.

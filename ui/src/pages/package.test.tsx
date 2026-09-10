@@ -25,7 +25,7 @@ import {
   TRY_AGAIN_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
-import { CUSTOMIZE_TAB, OVERVIEW_TAB } from "@/lib/copy-customize";
+import { CUSTOMIZE_TAB, OVERVIEW_TAB, SAVE_NOTE } from "@/lib/copy-customize";
 import { DELETE_LABEL, PROJECTS_TAB } from "@/lib/copy-projects";
 import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
 import {
@@ -1153,6 +1153,11 @@ describe("a package page opened on an installation nothing recorded", () => {
   it("reads no declaration and offers no write that would land on one", async () => {
     const back = vi.fn();
     useNavStore.setState({ back });
+    // Edits left in the editor from the package opened before this one.
+    // They belong to that manifest, and this page never opens one of its
+    // own, so a save bar here would write them from a page about a file
+    // the records know nothing about.
+    useEditorStore.setState({ dirty: true });
     const host = await openObserved();
 
     // The page stays: this installation is on the machine and is what the
@@ -1172,6 +1177,7 @@ describe("a package page opened on an installation nothing recorded", () => {
     );
     expect(labels).not.toContain(DELETE_LABEL);
     expect(host.querySelector("#package-enabled")).toBeNull();
+    expect(host.textContent).not.toContain(SAVE_NOTE);
   });
 
   // Every surface that reads or writes a declaration, not only the
