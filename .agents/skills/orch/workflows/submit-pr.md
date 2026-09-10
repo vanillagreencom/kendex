@@ -221,6 +221,7 @@ For `off`, skip the wait and go to § 5 — the internal review, CI, and comment
    | `reviewed` | Clear the review-wait budget, then → step 2 |
    | `proceeded` | Reviewer-down degrade under `PR_REVIEW_ON_TIMEOUT=proceed`. Clear the review-wait budget, record `pr_approval.reviewer_down` (below), then → step 2. CI and gate 3 still apply in full. Orch posts no status and manufactures no review evidence |
    | `changes_requested` or `comments` | Run the triage pass, then the Restart check |
+   | `unreviewable` | No automatic reviewer targets this PR's base ([references/gates.md](../references/gates.md) § Stacked pull requests). Run `gh pr edit [PR_NUMBER] --add-reviewer @copilot` once, then the Restart check. If the wait returns `unreviewable` again, `auto-recommended` records `review-gate-unreviewable`; `ask` presents `Force merge` \| `Keep waiting` \| `Stop here`, with `Stop here` recommended |
    | `timeout` | `auto-recommended` logs `Keep waiting` and enters the Restart check; `ask` presents `Force merge` \| `Keep waiting` \| `Stop here`, with `Keep waiting` recommended |
    | `error` | Re-run step 1 once. If it repeats, `auto-recommended` records `review-gate-read-failed`; `ask` presents `Keep waiting` \| `Stop here`, with `Keep waiting` recommended |
 

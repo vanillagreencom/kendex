@@ -97,6 +97,8 @@ Keys a repo decides: [references/adoption.md](references/adoption.md) § Keys a 
 
 **Watching one or many PRs without stalling.** Never key a hand-rolled monitor on gate-state transitions. Run `.agents/skills/review-gate/scripts/pr-watch.sh` (optionally `--heal`) on the harness's wake-up mechanism: silence + exit 0 means nothing needs you; attention lines name exactly what does. See [Watching PRs as an agent](references/adoption.md#watching-prs-as-an-agent-pr-watch).
 
+**A pull request drew no automatic review.** The automatic reviewer is armed by a branch ruleset, and a base outside that ruleset's target set never draws one. Request the review by hand with `gh pr edit <PR#> --add-reviewer @copilot`. The target set, the ruleset parameters, and the fallbacks when the manual request draws nothing: [references/automatic-review.md](references/automatic-review.md).
+
 **Reviewers are down / nothing is reviewing.** Run the internal review loop: fix findings, resolve every thread, then post the override status with a real reason. It cannot bypass an objection or an open thread.
 
 **A PR that repairs the gate itself.** The writer always runs the merged engine. Merge the repair PR with the ruleset's bypass actor and say so in the commit message.
