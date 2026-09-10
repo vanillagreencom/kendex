@@ -113,14 +113,36 @@ pub fn absolute(path: &Path) -> PathBuf {
     if let Ok(resolved) = canonical(path) {
         return resolved;
     }
-    let joined = match path.is_absolute() {
-        true => path.to_path_buf(),
-        false => match std::env::current_dir() {
-            Ok(here) => here.join(path),
-            Err(_) => return path.to_path_buf(),
-        },
-    };
-    resolving_what_is_there(&joined)
+    match joined(path) {
+        Some(joined) => resolving_what_is_there(&joined),
+        None => path.to_path_buf(),
+    }
+}
+
+/// `path` as an absolute path by spelling alone: nothing resolved, `.`
+/// dropped and each `..` taking the component before it.
+///
+/// The spelling a path was written in, which is what a stored one has to
+/// be looked for under first. [`absolute`] resolves, and resolution
+/// answers about what is at a path now: a folder registered as
+/// `/work/app` and since replaced by a symlink to somewhere else resolves
+/// to that somewhere else, so the entry the registry holds under its own
+/// recorded spelling is no longer reachable by naming it.
+pub fn as_written(path: &Path) -> PathBuf {
+    match joined(path) {
+        Some(joined) => folded(&joined),
+        None => path.to_path_buf(),
+    }
+}
+
+/// `path` joined onto the directory the process is in where it is
+/// relative, or `None` where it is relative and that directory cannot be
+/// read — nothing here invents an absolute path there is no basis for.
+fn joined(path: &Path) -> Option<PathBuf> {
+    match path.is_absolute() {
+        true => Some(path.to_path_buf()),
+        false => std::env::current_dir().ok().map(|here| here.join(path)),
+    }
 }
 
 /// `path` with its longest existing ancestor resolved and the rest left as

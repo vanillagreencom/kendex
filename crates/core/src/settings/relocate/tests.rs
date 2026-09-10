@@ -519,6 +519,30 @@ fn an_entry_reached_through_a_linked_ancestor_is_matched() {
     assert_eq!(plan.from, registered);
 }
 
+/// A symlink standing at the recorded path now. Resolution answers about
+/// what is there today, and what is there today is the folder the project
+/// moved to — so an entry looked for by resolving first is looked for
+/// under the destination and refused as one nobody registered, with the
+/// person naming their own recorded path.
+#[cfg(unix)]
+#[test]
+fn an_entry_whose_recorded_path_is_now_a_link_is_matched() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::test_util::rooted(&tmp);
+    let env = env_in(&home);
+    let old = home.join("app");
+    std::fs::create_dir_all(&old).unwrap();
+    let registered = crate::settings::register_project(&env, &old).unwrap().2;
+    let new = home.join("moved");
+    std::fs::rename(&old, &new).unwrap();
+    std::os::unix::fs::symlink(&new, &old).unwrap();
+
+    let (plan, settings, _) = relocate_project(&env, &registered, &new, false).unwrap();
+
+    assert_eq!(plan.from, registered);
+    assert_eq!(settings.projects, [crate::paths::canonical(&new).unwrap()]);
+}
+
 /// The reconnect answers under the spelling the registry stores, whatever
 /// spelling the caller asked under.
 #[test]

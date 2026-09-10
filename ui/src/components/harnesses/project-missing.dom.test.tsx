@@ -14,6 +14,7 @@ import {
   missingBadge,
   missingLead,
   RECONNECT_CLEAN,
+  RECONNECT_UNCHECKED,
   REMOVE_FROM_LIST_LABEL,
   reconnected,
   removeFromList,
@@ -56,12 +57,15 @@ const OLD = "/work/vsys-view";
 const NEW = "/work/vsys";
 const GONE = { root: OLD, why: { kind: "gone" } } as const;
 
-const scan = (missing: ScanResult["missingProjects"]): ScanResult => ({
+const scan = (
+  missing: ScanResult["missingProjects"],
+  read: string[] = [],
+): ScanResult => ({
   items: [],
   harnesses: [],
   warnings: [],
   missingProjects: missing,
-  readProjects: [],
+  readProjects: read,
 });
 
 const view = (scope: Scope) => ({
@@ -260,6 +264,13 @@ describe("locating the folder a project moved to", () => {
       standingSaid({ kind: "moved" }, "vsys-view"),
     );
 
+    // The read that follows the write opened the folder the entry now
+    // names, which is what the line below is a claim about.
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: scan([], [NEW]) as never,
+    });
+
     await press(LOCATE_CONFIRM);
 
     expect(commands.relocateProject).toHaveBeenCalledWith(OLD, NEW, false);
@@ -268,6 +279,41 @@ describe("locating the folder a project moved to", () => {
     // followed it found — never that the project is fixed.
     expect(document.body.textContent).toContain(reconnected("vsys-view", NEW));
     expect(document.body.textContent).toContain(RECONNECT_CLEAN);
+  });
+
+  // The entry moves and the folder it now names still cannot be opened —
+  // a permission, a disk not mounted. Nothing holds a row for a folder
+  // nothing was read from, so every count comes to zero and the clean
+  // line is the one thing that must not be said over it.
+  it("claims nothing where the folder it now names could not be read", async () => {
+    vi.mocked(commands.projectRelocation).mockResolvedValue({
+      status: "ok",
+      data: relocation({ kind: "moved" }),
+    } as never);
+    vi.mocked(commands.relocateProject).mockResolvedValue({
+      status: "ok",
+      data: {
+        read: { settings: { projects: [NEW] }, base: null },
+        was: OLD,
+        root: NEW,
+      },
+    } as never);
+    mount(<ProjectList />);
+    await settle();
+
+    await press(LOCATE_FOLDER_LABEL);
+    // The scan lands and reports the new folder missing, so it is in
+    // nothing the scan read.
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: scan([{ root: NEW, why: { kind: "gone" } }]) as never,
+    });
+
+    await press(LOCATE_CONFIRM);
+
+    expect(document.body.textContent).toContain(reconnected("vsys-view", NEW));
+    expect(document.body.textContent).toContain(RECONNECT_UNCHECKED);
+    expect(document.body.textContent).not.toContain(RECONNECT_CLEAN);
   });
 
   it("explains a folder that belongs to another project and offers no reconnect", async () => {

@@ -8,8 +8,9 @@
 // already runs, the audit and the scan both, and says what is left where
 // the app already offers to fix it. Nothing here proposes a repair of its
 // own, and nothing here counts what Problems would not show.
-import type { ScanWarning, Scope } from "@/bindings";
+import type { ScanResult, ScanWarning, Scope } from "@/bindings";
 import { type BlockedPlace, blockedCount } from "@/lib/audit-counts";
+import { placeIsReachable } from "@/lib/reachable-projects";
 import type { Problem } from "@/stores/problems";
 
 export type AfterReconnect =
@@ -45,15 +46,22 @@ export function afterReconnect(
   problems: Problem[],
   blocked: BlockedPlace[] | null,
   warnings: ScanWarning[],
+  result: ScanResult | null,
   root: string,
 ): AfterReconnect {
   // Every reading that did not land, and they are all the same answer: no
-  // reading, so no claim. The audit's own failure is `blocked` being null;
-  // a place inside a landed audit can still be one kendex could not read;
-  // and a scan that could not finish is a problem about the machine rather
-  // than about any one place, which is what its null scope means — the
-  // read that would have covered this folder is exactly the one that
-  // failed.
+  // reading, so no claim. The scan landing is not the same as this folder
+  // being read: a scan that could not open the destination puts it in the
+  // missing list and leaves it out of what it read, and an audit with no
+  // manifest for a folder reads as an empty scope — every count below
+  // then comes to zero and the line says the folder needs no repair. So
+  // the same judge the destinations use is asked here, where the outcome
+  // is reported. The audit's own failure is `blocked` being null; a place
+  // inside a landed audit can still be one kendex could not read; and a
+  // scan that could not finish is a problem about the machine rather than
+  // about any one place, which is what its null scope means — the read
+  // that would have covered this folder is exactly the one that failed.
+  if (!placeIsReachable(root, result)) return { state: "unchecked" };
   if (blocked === null) return { state: "unchecked" };
   if (
     problems.some(

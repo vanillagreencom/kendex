@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ScanResult } from "@/bindings";
 import type { BlockedPlace } from "@/lib/audit-counts";
 import type { Problem } from "@/stores/problems";
 import { afterReconnect } from "./after-reconnect";
@@ -24,12 +25,33 @@ const problem = (scope: Problem["scope"]): Problem => ({
   message: "no",
 });
 
+/** A landed scan that opened `readProjects` and nothing else. */
+const read = (...readProjects: string[]): ScanResult =>
+  ({
+    items: [],
+    harnesses: [],
+    warnings: [],
+    missingProjects: [],
+    readProjects,
+  }) as never;
+
+/** The scan that read the folder every case below is about. */
+const READ_HERE = read(ROOT);
+
 describe("what the read after a reconnect says about the new folder", () => {
   it("counts the items at that folder, not the places holding them", () => {
     expect(
-      afterReconnect([], [blocked(here, 3), blocked(elsewhere, 2)], [], ROOT),
+      afterReconnect(
+        [],
+        [blocked(here, 3), blocked(elsewhere, 2)],
+        [],
+        READ_HERE,
+        ROOT,
+      ),
     ).toEqual({ state: "problems", count: 3 });
-    expect(afterReconnect([], [blocked(elsewhere)], [], ROOT)).toEqual({
+    expect(
+      afterReconnect([], [blocked(elsewhere)], [], READ_HERE, ROOT),
+    ).toEqual({
       state: "clean",
     });
   });
@@ -44,6 +66,7 @@ describe("what the read after a reconnect says about the new folder", () => {
         [],
         [],
         [warning(`${ROOT}/.claude/settings.json`), warning("/work/other/x")],
+        READ_HERE,
         ROOT,
       ),
     ).toEqual({ state: "problems", count: 1 });
@@ -59,6 +82,7 @@ describe("what the read after a reconnect says about the new folder", () => {
         [],
         [],
         [warning(String.raw`C:\work\app\.claude\settings.json`)],
+        read(String.raw`C:\work\app`),
         String.raw`C:\work\app`,
       ),
     ).toEqual({ state: "problems", count: 1 });
@@ -67,14 +91,31 @@ describe("what the read after a reconnect says about the new folder", () => {
   // The one claim this must never make: a place kendex could not read is
   // not a place kendex found nothing wrong with.
   it("claims nothing where the read could not answer", () => {
-    expect(afterReconnect([], null, [], ROOT)).toEqual({ state: "unchecked" });
-    expect(afterReconnect([problem(here)], [], [], ROOT)).toEqual({
+    expect(afterReconnect([], null, [], READ_HERE, ROOT)).toEqual({
+      state: "unchecked",
+    });
+    expect(afterReconnect([problem(here)], [], [], READ_HERE, ROOT)).toEqual({
       state: "unchecked",
     });
     // A scan that could not finish is a problem about the machine, and
     // the read that would have covered this folder is the one that
     // failed: nothing here may be called clean on it.
-    expect(afterReconnect([problem(null)], [], [], ROOT)).toEqual({
+    expect(afterReconnect([problem(null)], [], [], READ_HERE, ROOT)).toEqual({
+      state: "unchecked",
+    });
+  });
+
+  // The scan landing is not this folder being read. A scan that could not
+  // open the destination reports it missing and leaves it out of what it
+  // read; nothing then holds a row for it, and every count above comes to
+  // zero — the shape of a folder with nothing wrong in it. The one bit
+  // that tells the two apart is whether the folder was opened.
+  it("claims nothing about a folder the scan could not open", () => {
+    expect(afterReconnect([], [], [], read("/work/other"), ROOT)).toEqual({
+      state: "unchecked",
+    });
+    // And before any scan has landed at all.
+    expect(afterReconnect([], [], [], null, ROOT)).toEqual({
       state: "unchecked",
     });
   });

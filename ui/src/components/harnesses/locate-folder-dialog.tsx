@@ -36,6 +36,7 @@ import {
   useProblems,
   useUnreadableFiles,
 } from "@/stores/problems";
+import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 
 /** One folder path, labelled — the two the reader is being asked to
@@ -87,6 +88,11 @@ export function LocateFolderDialog({
   // The scan's own half of what Problems draws for a place: a file it
   // could not read is a repair there and is in no audit row.
   const unreadable = useUnreadableFiles();
+  // The scan itself, for the one bit the counts cannot carry: whether the
+  // folder now pointed at was opened at all. A folder nothing was read
+  // from holds no rows anywhere, which counts to zero exactly as a folder
+  // with nothing wrong in it does.
+  const scanned = useScanStore((s) => s.result);
   const [asking, setAsking] = useState(picked);
   const [plan, setPlan] = useState<Relocation | null>(null);
   const [working, setWorking] = useState(false);
@@ -129,7 +135,9 @@ export function LocateFolderDialog({
   };
 
   const settled =
-    done === null ? null : afterReconnect(problems, blocked, unreadable, done);
+    done === null
+      ? null
+      : afterReconnect(problems, blocked, unreadable, scanned, done);
 
   return (
     <Dialog

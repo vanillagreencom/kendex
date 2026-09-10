@@ -23,6 +23,7 @@ vi.mock("@/bindings", () => ({
     appUpdateCommandChannel: vi.fn(),
     appVersion: vi.fn(),
     commitOfferScan: vi.fn(),
+    relocateProject: vi.fn(),
   },
   ZOOM: { min: 50, max: 200, step: 10, default: 100 },
 }));
@@ -37,7 +38,27 @@ function Startup() {
  *  away. */
 const NEW_PROJECT = "/home/p/dev/vsys-view";
 
+/** The folder that project is reconnected to. */
+const MOVED_TO = "/home/p/dev/vsys";
+
 type SettingsReply = Awaited<ReturnType<typeof commands.getSettings>>;
+
+type SettingsData = Extract<SettingsReply, { status: "ok" }>["data"];
+
+const settingsData = (
+  projects: string[],
+  appearance = "system",
+): SettingsData =>
+  ({
+    settings: {
+      schema: 1,
+      appearance,
+      "harness-roots": {},
+      projects,
+      zoom: 100,
+    },
+    base: null,
+  }) as unknown as SettingsData;
 
 const settingsRead = (
   projects: string[],
@@ -45,16 +66,7 @@ const settingsRead = (
 ): SettingsReply =>
   ({
     status: "ok",
-    data: {
-      settings: {
-        schema: 1,
-        appearance,
-        "harness-roots": {},
-        projects,
-        zoom: 100,
-      },
-      base: null,
-    },
+    data: settingsData(projects, appearance),
   }) as unknown as SettingsReply;
 
 describe("the project registry on window focus", () => {
@@ -305,6 +317,53 @@ describe("the project registry on window focus", () => {
     expect(useSettingsStore.getState().settings?.projects).toEqual([
       NEW_PROJECT,
     ]);
+    vi.useRealTimers();
+  });
+
+  // A reconnect is a write of this file like the other two, and the same
+  // order defeats it: the write leaves first, the focus read answers
+  // first with the registry from before it, and the read's newer ticket
+  // would put the old missing path back on the card with the new one
+  // already on disk.
+  it("keeps a reconnection whose write left before the read that answered first", async () => {
+    vi.useFakeTimers();
+    useSettingsStore.setState({ settings: null, base: null });
+    vi.mocked(commands.getSettings).mockResolvedValue(
+      settingsRead([NEW_PROJECT]),
+    );
+    mount(<Startup />);
+    await settle();
+
+    let answerTheWrite: (
+      read: Awaited<ReturnType<typeof commands.relocateProject>>,
+    ) => void = () => {};
+    vi.mocked(commands.relocateProject).mockReturnValue(
+      new Promise((resolve) => {
+        answerTheWrite = resolve;
+      }) as ReturnType<typeof commands.relocateProject>,
+    );
+    // The reconnect leaves first and is still out.
+    const moving = useSettingsStore
+      .getState()
+      .relocateProject(NEW_PROJECT, MOVED_TO, false);
+    // The window comes back, and the read answers with the registry from
+    // before the reconnect.
+    await refocus();
+
+    await act(async () => {
+      answerTheWrite({
+        status: "ok",
+        data: {
+          read: settingsData([MOVED_TO]),
+          was: NEW_PROJECT,
+          root: MOVED_TO,
+        },
+      } as unknown as Awaited<ReturnType<typeof commands.relocateProject>>);
+      await moving;
+      await settle();
+    });
+
+    expect(useSettingsStore.getState().settings?.projects).toEqual([MOVED_TO]);
     vi.useRealTimers();
   });
 });

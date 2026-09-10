@@ -25,7 +25,7 @@ use crate::error::{CoreError, Result};
 use crate::model::Scope;
 use crate::package::updates::{IgnoredUpdate, scope_key};
 
-use super::{AppSettings, mutate};
+use super::{AppSettings, mutate, recorded_entry};
 
 /// What stands at the folder a project would be reconnected to.
 ///
@@ -210,21 +210,6 @@ pub fn relocate_project(
         Ok(())
     })?;
     Ok((plan, settings, base))
-}
-
-/// The registry entry this is about, by the rule
-/// [`super::unregister_project`] matches one: the canonical path where it
-/// resolves, and an absolute path where it does not — the folder being
-/// gone is the whole reason this is being asked, and a shell hands a
-/// relative name for a folder that is not there just as readily as for one
-/// that is. The registry stores absolute paths, so a relative name is
-/// compared against nothing until it is one.
-fn recorded_entry(settings: &AppSettings, from: &Path) -> Result<PathBuf> {
-    let target = crate::paths::absolute(from);
-    match settings.projects.contains(&target) {
-        true => Ok(target),
-        false => Err(CoreError::ProjectNotRegistered { path: target }),
-    }
 }
 
 /// The destination in the one spelling everything else compares against,
