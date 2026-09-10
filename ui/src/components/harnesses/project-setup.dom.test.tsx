@@ -61,6 +61,7 @@ const emptyScan: ScanResult = {
   harnesses: [],
   warnings: [],
   missingProjects: [],
+  readProjects: [ACME.root],
 };
 
 const view = (scope: Scope): AuditView => ({

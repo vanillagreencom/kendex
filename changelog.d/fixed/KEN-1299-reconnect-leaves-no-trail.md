@@ -1,0 +1,1 @@
+- Reconnecting a project leaves nothing behind pointing at the folder it came from: no page to go back to, no read still landing, no question waiting.

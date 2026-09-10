@@ -27,6 +27,7 @@ A package on a local path needs no git. On Windows, `kendex guard` runs the comm
 - Convert agent and skill files into the formats each tool reads.
 - Preview package changes before applying them.
 - Keep personal settings and a separate setup for each project.
+- Move or rename a project folder, then point kendex at where it is now: everything installed there stays as it is.
 - Adopt customizations you already set up yourself: kendex keeps your files and starts managing them.
 - Browse the [community marketplace](https://kendex.ai) for packages to install.
 - Subscribe to a package repository so you can install from it too.

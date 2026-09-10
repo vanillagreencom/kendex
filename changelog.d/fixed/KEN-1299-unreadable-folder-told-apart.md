@@ -1,0 +1,1 @@
+- A project folder that could not be read is told apart from one that is gone, a folder kendex cannot open included, and a place it has not read takes no install.

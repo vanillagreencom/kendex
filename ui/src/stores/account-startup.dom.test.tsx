@@ -61,7 +61,13 @@ describe("the account read on window focus", () => {
     });
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
-      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+      data: {
+        harnesses: [],
+        items: [],
+        missingProjects: [],
+        readProjects: [],
+        warnings: [],
+      },
     });
     vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
     vi.mocked(commands.updatesOverview).mockResolvedValue({

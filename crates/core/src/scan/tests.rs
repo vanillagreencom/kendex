@@ -66,7 +66,17 @@ fn scans_a_realistic_machine() {
     let result = scan(&env, &settings);
 
     assert_eq!(result.warnings, Vec::new());
-    assert_eq!(result.missing_projects, [home.join("dev/vanished")]);
+    assert_eq!(
+        result.missing_projects,
+        [MissingProject {
+            root: home.join("dev/vanished"),
+            why: MissingWhy::Gone
+        }]
+    );
+    // The other half, and the one anything may rest on: the folders this
+    // scan opened. A project registered after it ran is in neither list,
+    // which is what absence from the first cannot say.
+    assert_eq!(result.read_projects, std::slice::from_ref(&project));
 
     let detected: Vec<_> = result.harnesses.iter().map(|h| h.harness).collect();
     assert_eq!(
@@ -415,4 +425,67 @@ fn a_local_pi_package_reports_its_own_summary_and_mtime() {
     assert_eq!(remote.summary, None);
     assert_eq!(remote.action.as_deref(), Some("npm:@vg/remote@1.0"));
     assert_eq!(remote.modified_at, None);
+}
+
+/// What stood in the way of reading a registered path as a folder, told
+/// apart: a folder that is gone is reconnected to wherever it moved, a
+/// path holding something else is neither, and a path the account cannot
+/// read is read again once it can. One empty reading, three remedies.
+#[test]
+fn a_path_that_is_not_a_readable_folder_says_which_it_is() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::test_util::rooted(&tmp);
+    fs::create_dir_all(home.join("dev")).unwrap();
+    fs::write(home.join("dev/file.txt"), "not a folder").unwrap();
+
+    assert_eq!(missing_why(&home.join("dev")), None);
+    assert_eq!(missing_why(&home.join("dev/gone")), Some(MissingWhy::Gone));
+    assert_eq!(
+        missing_why(&home.join("dev/file.txt")),
+        Some(MissingWhy::NotAFolder)
+    );
+    // A component of the path is a file, so nothing can be opened at it.
+    // Which of the three readings that is belongs to the platform, and
+    // both are the system's own words: Unix fails the stat as "not a
+    // directory", and Windows resolves the path first, so a file in the
+    // way makes the path itself not found — which is what it is there.
+    // Neither says a file stands at this path, and the card offers the
+    // reading's own remedy either way.
+    #[cfg(unix)]
+    assert!(
+        matches!(
+            missing_why(&home.join("dev/file.txt/inside")),
+            Some(MissingWhy::Unreadable { said }) if !said.is_empty()
+        ),
+        "a path that could not be read at all is neither gone nor a file"
+    );
+    #[cfg(windows)]
+    assert_eq!(
+        missing_why(&home.join("dev/file.txt/inside")),
+        Some(MissingWhy::Gone)
+    );
+
+    // A folder the account may not open. It stats like any other, so a
+    // reading that stopped at the stat would call this place readable and
+    // report the empty scan of it as a project holding nothing.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let sealed = home.join("dev/sealed");
+        fs::create_dir_all(&sealed).unwrap();
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).unwrap();
+        let denied = fs::read_dir(&sealed).is_err();
+        let answer = missing_why(&sealed);
+        // Unsealed before anything can panic: a sealed directory outlives
+        // the TempDir that cannot remove it.
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o700)).unwrap();
+        // Permissions do not bind this user (root): there is no denial to
+        // read here, and nothing to assert about one.
+        if denied {
+            assert!(
+                matches!(answer, Some(MissingWhy::Unreadable { said }) if !said.is_empty()),
+                "a folder the account cannot open is unreadable, never a place holding nothing"
+            );
+        }
+    }
 }

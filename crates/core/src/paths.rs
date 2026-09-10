@@ -37,7 +37,7 @@
 //! the GUI has no shell in front of it. [`expand_tilde`] is that rule.
 
 use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// The prefix Windows canonicalization answers in.
 const VERBATIM: &str = r"\\?\";
@@ -98,6 +98,120 @@ fn spelled(text: &str, separator: char) -> String {
 /// extended-length prefix taken back off wherever [`plain`] can.
 pub fn canonical(path: &Path) -> std::io::Result<PathBuf> {
     Ok(reduced(&path.canonicalize()?))
+}
+
+/// `path` as an absolute path, without requiring it to exist.
+///
+/// [`canonical`] where it resolves, which is the one spelling everything
+/// compares against (invariant 17). Where it does not — a folder that was
+/// renamed or removed, which is exactly when a person names one — a
+/// relative path is joined onto the directory the process is in, because
+/// that is what the person typing it meant. A path that is already
+/// absolute is handed back as it came: nothing here invents a resolution
+/// the filesystem would not give.
+pub fn absolute(path: &Path) -> PathBuf {
+    if let Ok(resolved) = canonical(path) {
+        return resolved;
+    }
+    match joined(path) {
+        Some(joined) => resolving_what_is_there(&joined),
+        None => path.to_path_buf(),
+    }
+}
+
+/// `path` as an absolute path by spelling alone, exactly as it was
+/// written: nothing resolved and nothing folded.
+///
+/// The spelling a path was written in, which is what a stored one has to
+/// be looked for under first. [`absolute`] resolves, and resolution
+/// answers about what is at a path now: a folder registered as
+/// `/work/app` and since replaced by a symlink to somewhere else resolves
+/// to that somewhere else, so the entry the registry holds under its own
+/// recorded spelling is no longer reachable by naming it.
+///
+/// **A `..` is left standing here.** Folding one is a claim about the
+/// directory above, and where the component before it is a link that
+/// claim is wrong: `/lex/link/../app` with `link` resolving to
+/// `/real/dir` names `/real/app`, and a fold hands back `/lex/app` —
+/// another folder, which can be another project's entry. So an alias
+/// spelled through `..` is not answered here at all; it goes to
+/// [`absolute`], which resolves what is there before it folds what is
+/// left, and only that fold has no link left to cross.
+pub fn as_written(path: &Path) -> PathBuf {
+    joined(path).unwrap_or_else(|| path.to_path_buf())
+}
+
+/// `path` joined onto the directory the process is in where it is
+/// relative, or `None` where it is relative and that directory cannot be
+/// read — nothing here invents an absolute path there is no basis for.
+fn joined(path: &Path) -> Option<PathBuf> {
+    match path.is_absolute() {
+        true => Some(path.to_path_buf()),
+        false => std::env::current_dir().ok().map(|here| here.join(path)),
+    }
+}
+
+/// `path` with its longest existing ancestor resolved and the rest left as
+/// spelled.
+///
+/// The whole path failing to resolve says nothing about its ancestors: a
+/// project registered as `link/app`, where `link` is a symlink, is stored
+/// under the directory `link` resolves to, and after `app` is renamed the
+/// same spelling resolves nothing at all. Left unresolved it names a
+/// directory the registry has never heard of, and the entry it is asking
+/// about is refused as unregistered.
+///
+/// So what is there is resolved and what is not there is folded onto it.
+/// Nothing in the remainder can be a link, since a link resolves and a
+/// path that resolves never reaches here.
+fn resolving_what_is_there(path: &Path) -> PathBuf {
+    let mut walk = path;
+    let mut remainder: Vec<&std::ffi::OsStr> = Vec::new();
+    loop {
+        if let Ok(base) = canonical(walk) {
+            let mut out = base;
+            for name in remainder.iter().rev() {
+                out.push(name);
+            }
+            return folded(&out);
+        }
+        match (walk.parent(), walk.file_name()) {
+            (Some(parent), Some(name)) => {
+                remainder.push(name);
+                walk = parent;
+            }
+            // A path with no resolvable ancestor at all, or one ending in a
+            // component `file_name` does not answer for: nothing here can
+            // be resolved, so it is folded as spelled.
+            _ => return folded(path),
+        }
+    }
+}
+
+/// `path` with `.` dropped and each `..` taking the component before it.
+///
+/// Folded rather than resolved, because this is the path that did not
+/// resolve: `../app` from a sibling directory is how a person names a
+/// folder that moved, and left as written it equals no entry the registry
+/// stores. What a `..` crosses cannot be a link here — a link resolves,
+/// and a path that resolves never reaches this — so there is no reading
+/// the fold could get wrong. A leading `..` with nothing before it is kept,
+/// naming what it names.
+fn folded(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => match out.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                _ => out.push(part),
+            },
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// An already-resolved `path` in the spelling kendex hands out —

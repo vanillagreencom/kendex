@@ -93,6 +93,7 @@ const scanFound = (...items: ObservedItem[]) =>
       harnesses: [],
       items,
       missingProjects: [],
+      readProjects: [],
       warnings: [],
     },
   });

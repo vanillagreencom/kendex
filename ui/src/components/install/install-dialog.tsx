@@ -42,18 +42,18 @@ import {
 } from "@/lib/copy-install";
 import { selectionOf } from "@/lib/derive";
 import { scopeName, scopeNames, scopePath } from "@/lib/labels";
+import { useReachableProjects } from "@/lib/reachable-projects";
 import { scopeKey } from "@/lib/scope";
 import {
   type InstallAsk,
   installablePlaces,
   picked,
   placeIsAChoice,
+  placesToWrite,
   togglePlace,
   useInstallFlow,
 } from "@/stores/install-flow";
 import { useNavStore } from "@/stores/nav";
-import { useSettingsStore } from "@/stores/settings";
-import { projectsOf } from "@/stores/settings-projects";
 
 /** The one guided install, rendered once in App.tsx and opened by every
  *  Install in the app.
@@ -80,7 +80,9 @@ function InstallFlow({ ask }: { ask: InstallAsk }) {
   const setChoice = useInstallFlow((s) => s.setChoice);
   const install = useInstallFlow((s) => s.install);
   const goToLibrary = useNavStore((s) => s.goToLibrary);
-  const projects = useSettingsStore(projectsOf);
+  // Only the places a write can reach: a project whose folder the scan
+  // could not read is not a destination, and its own card says why.
+  const projects = useReachableProjects();
 
   const subject =
     ask.subjects.find((one) => one.id === subjectId) ?? ask.subjects[0];
@@ -94,7 +96,12 @@ function InstallFlow({ ask }: { ask: InstallAsk }) {
   // Which tools take an install is a fact about one place. Across several
   // there is no single answer, so the question is not asked and each
   // place's own defaults decide — `TOOLS_PER_PLACE` says so.
-  const onePlace = places.length === 1 ? places[0] : null;
+  // What the button would actually write to. A place picked before a scan
+  // took its folder away is still in the reader's selection and is not one
+  // of these, so the action goes off and says why rather than running into
+  // a folder that is not there.
+  const writable = placesToWrite(subject, places);
+  const onePlace = writable.length === 1 ? writable[0] : null;
 
   if (outcome) {
     // Three answers a place can give, and every place gives exactly one:
@@ -266,7 +273,7 @@ function InstallFlow({ ask }: { ask: InstallAsk }) {
         <DialogFooter>
           {/* Said where the button is, because it is the reason the button
               is off. */}
-          {places.length === 0 ? (
+          {writable.length === 0 ? (
             <p className="mr-auto text-[13px] text-muted-foreground">
               {INSTALL_NO_PLACE}
             </p>
@@ -280,7 +287,7 @@ function InstallFlow({ ask }: { ask: InstallAsk }) {
           <Button
             disabled={
               running ||
-              places.length === 0 ||
+              writable.length === 0 ||
               !subject ||
               // An empty tool list is a choice to install nowhere, which
               // reports success over a plan that wrote nothing.

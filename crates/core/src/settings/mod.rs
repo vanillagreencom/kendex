@@ -10,6 +10,9 @@ use crate::error::{CoreError, Result};
 use crate::fs::{atomic_write, read_if_exists};
 use crate::model::Scope;
 
+mod relocate;
+pub use relocate::{Confirm, Relocation, Standing, inspect, relocate_project};
+
 mod zoom;
 use zoom::bring_zoom_into_range;
 pub use zoom::{ZOOM, ZoomRange, clamp_zoom, zoom_scale};
@@ -317,22 +320,46 @@ pub fn ensure_project_registered(env: &Env, path: &Path) -> Result<Registration>
     })
 }
 
-/// Removes by canonical path when resolvable, else by the recorded path —
-/// a registered project whose directory vanished must still be removable.
+/// The registry entry `path` names, in the spelling the registry stores
+/// it under.
 ///
-/// By the rule [`register_project`] wrote the entry under, since this is a
-/// comparison against what that stored.
+/// The one judge for "which entry is this", asked by every door that acts
+/// on an entry a person named: removal and reconnection both. The stored
+/// spelling is tried before anything is resolved, because resolution
+/// answers about what is at that path *now* — a folder registered as
+/// `/work/app` and since replaced by a symlink to somewhere else resolves
+/// to that somewhere else, and a caller naming the recorded path exactly
+/// would be told its own entry is not registered. That is the case a
+/// person is in when they reach for either door.
+///
+/// Resolution still answers for the aliases they type — a relative name,
+/// a trailing separator, a path through a symlinked ancestor — since a
+/// registry entry is written canonical (invariant 17) and none of those
+/// spellings equals one until it is resolved.
+fn recorded_entry(settings: &AppSettings, path: &Path) -> Result<PathBuf> {
+    let written = crate::paths::as_written(path);
+    if settings.projects.contains(&written) {
+        return Ok(written);
+    }
+    let resolved = crate::paths::absolute(path);
+    match settings.projects.contains(&resolved) {
+        true => Ok(resolved),
+        false => Err(CoreError::ProjectNotRegistered { path: resolved }),
+    }
+}
+
+/// Removes the entry [`recorded_entry`] matches — a registered project
+/// whose directory vanished, or whose path something else now stands at,
+/// must still be removable.
+///
+/// Matched against the file being written rather than the copy any earlier
+/// read holds, so an entry another window dropped in between is one
+/// refusal here rather than a removal that took nothing away.
 pub fn unregister_project(env: &Env, path: &Path) -> Result<(AppSettings, Base)> {
-    let target = crate::paths::canonical(path).unwrap_or_else(|_| path.to_path_buf());
     mutate(env, |settings| {
-        let before = settings.projects.len();
+        let target = recorded_entry(settings, path)?;
         settings.projects.retain(|p| *p != target);
-        match settings.projects.len() == before {
-            true => Err(CoreError::ProjectNotRegistered {
-                path: target.clone(),
-            }),
-            false => Ok(()),
-        }
+        Ok(())
     })
 }
 
@@ -447,6 +474,28 @@ pub(crate) mod tests {
             unregister_project(&env, &project),
             Err(CoreError::ProjectNotRegistered { .. })
         ));
+    }
+
+    /// The other door onto [`recorded_entry`], with a symlink standing at
+    /// the recorded path. Removing an entry is exactly what a person
+    /// reaches for once the folder is gone, and resolving the path first
+    /// looks the entry up under whatever now stands there.
+    #[cfg(unix)]
+    #[test]
+    fn a_project_whose_recorded_path_is_now_a_link_is_still_removable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = crate::test_util::rooted(&tmp);
+        let env = env_in(&home);
+        let project = home.join("app");
+        std::fs::create_dir(&project).unwrap();
+        let recorded = register_project(&env, &project).unwrap().2;
+        let moved = home.join("moved");
+        std::fs::rename(&project, &moved).unwrap();
+        std::os::unix::fs::symlink(&moved, &project).unwrap();
+
+        let (settings, _) = unregister_project(&env, &recorded).unwrap();
+
+        assert!(settings.projects.is_empty());
     }
 
     /// A registry holding one project, an unrelated one beside it and an

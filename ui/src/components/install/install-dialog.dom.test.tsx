@@ -35,6 +35,7 @@ import {
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import type { InstallResult } from "@/stores/marketplaces-install";
 import { useNavStore } from "@/stores/nav";
+import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { mount, settle } from "@/test/dom";
 import { InstallDialog } from "./install-dialog";
@@ -96,6 +97,20 @@ beforeEach(() => {
     settings: { projects: [ACME.root, BETA.root] } as AppSettings,
   });
   useNavStore.setState({ installInto: null, page: "marketplaces" });
+  // A machine a scan has read, with every project's folder found: what a
+  // place is offered from. A reading that never landed is not evidence
+  // that a folder is there, and no place is offered from one.
+  useScanStore.setState({
+    scanning: false,
+    error: null,
+    result: {
+      harnesses: [],
+      items: [],
+      warnings: [],
+      missingProjects: [],
+      readProjects: [ACME.root, BETA.root],
+    },
+  });
   useInstallFlow.setState({ ask: null, outcome: null, running: false });
 });
 
@@ -312,6 +327,70 @@ describe("the guided install", () => {
     expect(install.mock.calls[0][0].destination).toEqual(BETA);
   });
 
+  // The errand was for that project. A folder the scan could not read
+  // takes no install, and the place the reader named is not quietly
+  // swapped for another one: the packages would land somewhere nobody
+  // asked for, under a button that says Install.
+  it("picks nowhere when the place it came from cannot be reached", async () => {
+    useScanStore.setState({
+      scanning: false,
+      error: null,
+      result: {
+        harnesses: [],
+        items: [],
+        warnings: [],
+        missingProjects: [{ root: BETA.root, why: { kind: "gone" } }],
+        readProjects: [ACME.root],
+      },
+    });
+    useNavStore.setState({ installInto: BETA });
+    await open();
+
+    expect(button(INSTALL_ACTION).disabled).toBe(true);
+    expect(document.body.textContent).toContain(INSTALL_NO_PLACE);
+    expect(install).not.toHaveBeenCalled();
+  });
+
+  // The same hold before any reading at all: an empty missing list read
+  // off a scan that has not landed clears exactly the folders nobody has
+  // looked at yet.
+  it("offers no project until a scan has read the machine", async () => {
+    useScanStore.setState({ scanning: true, error: null, result: null });
+    await open();
+
+    expect(document.body.textContent).not.toContain(ALL_PROJECTS_LABEL);
+    await userEvent.click(button(INSTALL_ACTION));
+    await settle();
+    expect(install).toHaveBeenCalledTimes(1);
+    // Where the subscription lives, which is what a null destination
+    // means: the personal setup, and no project among them.
+    expect(install.mock.calls[0][0].destination).toBeNull();
+  });
+
+  // A project registered since the last scan ran is in neither of that
+  // scan's lists: it was never met. Reading its absence from the missing
+  // list as "found" offers a folder nothing has opened — the reading has
+  // to be positive.
+  it("offers no project the last scan never met", async () => {
+    useScanStore.setState({
+      scanning: false,
+      error: null,
+      result: {
+        harnesses: [],
+        items: [],
+        warnings: [],
+        missingProjects: [],
+        readProjects: [ACME.root],
+      },
+    });
+    useNavStore.setState({ installInto: BETA });
+    await open();
+
+    expect(button(INSTALL_ACTION).disabled).toBe(true);
+    expect(document.body.textContent).toContain(INSTALL_NO_PLACE);
+    expect(install).not.toHaveBeenCalled();
+  });
+
   // Nowhere to install is not an install: the button is off and says why
   // rather than reporting success over a plan that wrote nothing.
   it("holds the action back with no place picked", async () => {
@@ -435,5 +514,61 @@ describe("the guided install", () => {
       scope: ACME,
       destination: null,
     });
+  });
+
+  // The place a project's own marketplace installs into is that project,
+  // and it is a folder like any other: one no scan found takes no write,
+  // whichever door the install came through.
+  it("holds a project marketplace's own install when its folder is gone", async () => {
+    useScanStore.setState({
+      scanning: false,
+      error: null,
+      result: {
+        harnesses: [],
+        items: [],
+        warnings: [],
+        missingProjects: [{ root: ACME.root, why: { kind: "gone" } }],
+        readProjects: [BETA.root],
+      },
+    });
+
+    await open(
+      askFor({
+        ...gh,
+        groups: [{ ...gh.groups[0], browsing: ACME }],
+      }),
+    );
+
+    expect(button(INSTALL_ACTION).disabled).toBe(true);
+    expect(document.body.textContent).toContain(INSTALL_NO_PLACE);
+    expect(install).not.toHaveBeenCalled();
+  });
+
+  // The selection is made before the write, and a scan landing in between
+  // can take the folder away: what the button acts on is asked again where
+  // it is acted on, not held from when the dialog opened.
+  it("holds a place its folder left while the dialog was open", async () => {
+    useNavStore.setState({ installInto: BETA });
+    await open();
+    expect(button(INSTALL_ACTION).disabled).toBe(false);
+
+    await act(async () => {
+      useScanStore.setState({
+        scanning: false,
+        error: null,
+        result: {
+          harnesses: [],
+          items: [],
+          warnings: [],
+          missingProjects: [{ root: BETA.root, why: { kind: "gone" } }],
+          readProjects: [ACME.root],
+        },
+      });
+    });
+    await settle();
+
+    expect(button(INSTALL_ACTION).disabled).toBe(true);
+    expect(document.body.textContent).toContain(INSTALL_NO_PLACE);
+    expect(install).not.toHaveBeenCalled();
   });
 });

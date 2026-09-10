@@ -113,6 +113,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         legal::accept_terms,
         app_settings::register_project,
         app_settings::unregister_project,
+        app_settings::project_relocation,
+        app_settings::relocate_project,
         app_settings::project_offers,
         commands::install_drift_hook,
         app_settings::discover_projects,

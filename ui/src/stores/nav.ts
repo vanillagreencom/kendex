@@ -95,6 +95,13 @@ interface NavState {
   goToBundle: (ref: BundleRef) => void;
   goToAvailablePackage: (ref: AvailableRef) => void;
   goToUnmanaged: (scope: Scope) => void;
+  /** A project's folder changed, so nothing this store holds about where
+   *  the reader has been is about that project any more: a page, a ref or
+   *  a trail entry naming the old folder opens a place nothing tracks.
+   *  They are let go of rather than rewritten — a ref carries a scope, a
+   *  catalogue and a recorded path, and a rewrite has to know every field
+   *  that can hold one. */
+  projectMoved: (from: string) => void;
   clearLibraryFilter: () => void;
   clearPackageView: () => void;
   back: () => void;
@@ -134,6 +141,37 @@ export const useNavStore = create<NavState>((set) => ({
       installInto: null,
     }),
   setLibraryScope: (libraryScope) => set({ libraryScope }),
+  projectMoved: (from) => {
+    // Everything about where the reader has been, let go of at once.
+    //
+    // Rewriting each field that can name a folder was the shape this took
+    // first, and it was wrong twice over: a ref carries a scope, a
+    // catalogue, a recorded path, and each new one is another field to
+    // keep in step, found one review round at a time. Nothing here has to
+    // follow the folder — the reader is on the Projects page, looking at
+    // the card they just reconnected — so nothing does. The refs go, the
+    // trail goes, and no field is left naming a folder that moved.
+    //
+    // `to` is unused for the same reason: there is nothing to point at
+    // the new folder, only things to stop pointing at the old one.
+    set((state) => ({
+      libraryScope:
+        typeof state.libraryScope === "object" &&
+        state.libraryScope.project === from
+          ? "all"
+          : state.libraryScope,
+      packageRef: null,
+      marketplaceRef: null,
+      bundleRef: null,
+      availableRef: null,
+      unmanagedScope: null,
+      installInto: null,
+      packageView: null,
+      libraryFilter: null,
+      history: [],
+      future: [],
+    }));
+  },
   setSearch: (search) => set({ search }),
   // Asking to search means "find me this thing": the box on screen answers
   // where there is one, and the Library answers everywhere else.

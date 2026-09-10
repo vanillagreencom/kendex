@@ -101,6 +101,7 @@ describe("a customized package in the Library list", () => {
         harnesses: [],
         items: [installed(VG), installed(HYPR)],
         missingProjects: [],
+        readProjects: [],
         warnings: [],
       } as never,
     });
@@ -174,6 +175,7 @@ describe("the Library narrowed to packages edited on disk", () => {
         harnesses: [],
         items: [installed(VG), other],
         missingProjects: [],
+        readProjects: [],
         warnings: [],
       } as never,
     });
@@ -245,6 +247,7 @@ describe("the update mark on a Library row", () => {
         harnesses: [],
         items: [installed(VG)],
         missingProjects: [],
+        readProjects: [],
         warnings: [],
       } as never,
     });
@@ -319,6 +322,7 @@ describe("narrowing the Library from a row it is already showing", () => {
         harnesses: [],
         items: [installed(HYPR), codexHere],
         missingProjects: [],
+        readProjects: [],
         warnings: [],
       } as never,
     });
@@ -424,6 +428,7 @@ describe("the marketplace a Library row came from", () => {
         // the group's first installation would answer VG.
         items: [fromOther, fromKit],
         missingProjects: [],
+        readProjects: [],
         warnings: [],
       } as never,
     });
@@ -502,6 +507,7 @@ describe("the Library narrowed to a place that has nothing", () => {
         harnesses: [],
         warnings: [],
         missingProjects: [],
+        readProjects: [],
       },
     });
   });
@@ -632,6 +638,7 @@ describe("one package several tools store differently", () => {
         harnesses: [],
         items,
         missingProjects: [],
+        readProjects: [],
         warnings: [],
       } as never,
     });
@@ -816,6 +823,7 @@ describe("the Library while the identity read has not answered", () => {
         harnesses: [],
         items,
         missingProjects: [],
+        readProjects: [],
         warnings: [],
       } as never,
     });

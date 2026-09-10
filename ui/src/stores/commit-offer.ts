@@ -12,6 +12,7 @@ import {
   NOTHING_TO_COMMIT_TOAST,
   pushedToast,
 } from "@/lib/copy-commit-offer";
+import { askingAgain, forgetRoot, isForgotten } from "@/lib/forgotten-roots";
 import { useProblemsStore } from "./problems";
 
 /** Which of the three the person picked. `leave` is not one: leaving is
@@ -91,6 +92,12 @@ interface CommitOfferState {
    *  other one in the order. */
   scanning: boolean;
   enqueue: (roots: string[]) => Promise<void>;
+  /** Drop everything held about one project folder: the offer waiting on
+   *  it and the flag its card draws. Called when that folder stops being
+   *  a project kendex tracks — it is reconnected somewhere else, or it is
+   *  removed — because both are questions about files at a path nothing
+   *  points at any more. */
+  forget: (root: string) => void;
   /** The held scan failure has been reported; drop it. */
   scanFailureSaid: () => void;
   pick: (route: Route) => void;
@@ -220,6 +227,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
 
     enqueue: async (roots) => {
       if (roots.length === 0) return;
+      askingAgain(roots);
       const ticket = ++started;
       set({ scanning: true });
       const response = await commands.commitOfferScan(roots);
@@ -239,7 +247,15 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
         set({ scanFailure: response.error, scanning });
         return;
       }
-      const found: CommitOfferScan = response.data;
+      const found: CommitOfferScan = {
+        ...response.data,
+        offers: response.data.offers.filter(
+          (offer) => !isForgotten(offer.root),
+        ),
+        flagged: response.data.flagged.filter(
+          (flag) => !isForgotten(flag.root),
+        ),
+      };
       const { queue, stage } = get();
       // A project already in the line keeps its PLACE, and takes the fresh
       // reading of what it holds.
@@ -273,6 +289,31 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
         // The reader's own typing is theirs: a fresh reading of the files
         // says nothing about the message they are part-way through.
         message: queue.length > 0 ? get().message : (next[0]?.message ?? ""),
+      });
+    },
+
+    forget: (root) => {
+      forgetRoot(root);
+      const { queue } = get();
+      const kept = queue.filter((offer) => offer.root !== root);
+      if (kept.length === queue.length) {
+        set({ flagged: get().flagged.filter((flag) => flag.root !== root) });
+        return;
+      }
+      set({
+        queue: kept,
+        flagged: get().flagged.filter((flag) => flag.root !== root),
+        // The dialog on screen was about the offer at the head. Where that
+        // is the one being dropped, the answer in progress is about a
+        // folder nothing tracks, so the question starts again at whoever
+        // is next rather than swapping under the reader's answer.
+        ...(queue[0]?.root === root
+          ? {
+              stage: { at: "offer" as const },
+              route: "commit" as const,
+              message: kept[0]?.message ?? "",
+            }
+          : {}),
       });
     },
 

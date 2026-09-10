@@ -34,7 +34,13 @@ const warning = (
 
 const source = (over: Partial<AttentionSource>): AttentionSource => ({
   editedPackages: [],
-  result: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+  result: {
+    harnesses: [],
+    items: [],
+    missingProjects: [],
+    readProjects: [],
+    warnings: [],
+  },
   updatesError: null,
   updates: null,
   auditError: null,
@@ -167,6 +173,7 @@ describe("the unreadable file rows", () => {
               harnesses: [],
               items: [],
               missingProjects: [],
+              readProjects: [],
               warnings: [warning(problem)],
             },
             onProblems,
@@ -191,6 +198,7 @@ describe("the unreadable file rows", () => {
           harnesses: [],
           items: [],
           missingProjects: [],
+          readProjects: [],
           warnings: [warning({ kind: "empty-file" }, "unused-empty-container")],
         },
       }),
@@ -209,6 +217,7 @@ describe("the unreadable file rows", () => {
           harnesses: [],
           items: [],
           missingProjects: [],
+          readProjects: [],
           warnings: [first, second],
         },
       }),
@@ -290,7 +299,8 @@ describe("the updates row", () => {
         result: {
           harnesses: [],
           items: [],
-          missingProjects: ["/work/gone"],
+          missingProjects: [{ root: "/work/gone", why: { kind: "gone" } }],
+          readProjects: [],
           warnings: [warning({ kind: "empty-file" })],
         },
       }),

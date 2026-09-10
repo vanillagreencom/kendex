@@ -86,7 +86,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
    *  the read's newer ticket would put the file from before that save back
    *  on screen.
    *
-   *  Every write of this file goes through here, the zoom save and the two
+   *  Every write of this file goes through here, the zoom save and the
    *  project-registry writes included; they are wrapped where the store is
    *  built, so the slices that own them keep their signatures. */
   let writesOutstanding = 0;
@@ -170,11 +170,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     };
   };
 
-  // Saving the size, and registering or dropping a project, are writes of
-  // this file like any other, so a read must not speak over one. Wrapped
-  // where the store is built rather than inside each slice: the count
-  // belongs to the store that owns the ticket order, and the slices keep
-  // their signatures.
+  // Saving the size, and registering, dropping or reconnecting a project,
+  // are writes of this file like any other, so a read must not speak over
+  // one. Wrapped where the store is built rather than inside each slice:
+  // the count belongs to the store that owns the ticket order, and the
+  // slices keep their signatures.
   const projects = projectActions({ ticket, hold });
   const zoom = zoomActions(set, get);
 
@@ -188,6 +188,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     registerProject: (path) => writing(() => projects.registerProject(path)),
     unregisterProject: (path) =>
       writing(() => projects.unregisterProject(path)),
+    // `projectRelocation` is a read of what a move would mean and stays
+    // unwrapped; this is the write it leads to.
+    relocateProject: (from, to, consolidate) =>
+      writing(() => projects.relocateProject(from, to, consolidate)),
 
     load: async () => {
       // The size comes from the window, not from the file: the file holds

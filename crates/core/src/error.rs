@@ -39,6 +39,32 @@ pub enum CoreError {
     #[error("project not registered: {path}")]
     ProjectNotRegistered { path: PathBuf },
 
+    /// The folder a project is being reconnected to cannot be read as a
+    /// folder on this machine. Named apart from the three below because
+    /// nothing was found to judge: the other three are what a readable
+    /// folder turned out to hold.
+    #[error("{path} cannot be read as a folder: {said}")]
+    ProjectFolderMissing { path: PathBuf, said: String },
+
+    /// The folder holds a record written under a third project, so it is
+    /// not the project the entry being moved names. Reconnecting to it
+    /// would point one entry at another project's files.
+    #[error(
+        "{path} holds a record written under {recorded}, so it is not the project being reconnected"
+    )]
+    ProjectRecordElsewhere { path: PathBuf, recorded: PathBuf },
+
+    /// The folder holds a record this build cannot read, which supports no
+    /// claim about whose folder it is.
+    #[error("{path} holds a record that could not be read: {said}")]
+    ProjectRecordUnreadable { path: PathBuf, said: String },
+
+    /// The folder is a registered project in its own right. Moving an
+    /// entry onto it joins two entries into one, which only an explicit
+    /// choice may do.
+    #[error("{path} is already a registered project: joining the two entries has to be chosen")]
+    ProjectFolderRegistered { path: PathBuf },
+
     #[error("{}: invalid manifest:\n{}", crate::names::shown(&path.display().to_string()), crate::manifest::joined(findings))]
     ManifestInvalid {
         path: PathBuf,

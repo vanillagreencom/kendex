@@ -1,0 +1,1 @@
+- A read that fails after a reconnect leaves the new folder saying it could not be checked, instead of the card reading as a project with nothing in it.

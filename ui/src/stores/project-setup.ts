@@ -13,6 +13,7 @@
 // is never one of these: it is what a card would say while the read that
 // would have found them is still out.
 import { create } from "zustand";
+import { askingAgain, forgetRoot, isForgotten } from "@/lib/forgotten-roots";
 import { rescanEverything } from "@/lib/rescan";
 import { useAuditStore } from "./audit";
 import { useScanStore } from "./scan";
@@ -28,6 +29,10 @@ interface ProjectSetupState {
    *  a place the moment the registry says so, and the reader is taken
    *  back to it while this runs. */
   check: (root: string) => Promise<void>;
+  /** Drop what is held about one folder. A read still out for it answers
+   *  about a place nothing tracks, and the card at the folder it moved to
+   *  must not inherit "package check failed" from the path it left. */
+  forget: (root: string) => void;
 }
 
 const without = (roots: readonly string[], root: string): string[] =>
@@ -47,7 +52,21 @@ export const useProjectSetupStore = create<ProjectSetupState>((set) => ({
   checking: [],
   unchecked: [],
 
+  forget: (root) => {
+    // Said where every store that holds something per project says it: the
+    // read below is not awaited by whoever started it, so its `finally`
+    // can land after this and put the failure back.
+    forgetRoot(root);
+    set((state) => ({
+      checking: without(state.checking, root),
+      unchecked: without(state.unchecked, root),
+    }));
+  },
+
   check: async (root) => {
+    // Asking about a folder is what makes it a project again: the same
+    // folder registered afresh reads here like any other.
+    askingAgain([root]);
     set((state) => ({
       checking: with_(state.checking, root),
       unchecked: without(state.unchecked, root),
@@ -59,6 +78,11 @@ export const useProjectSetupStore = create<ProjectSetupState>((set) => ({
       // `rescanEverything` answers with nothing, and a caller that decided
       // from its own return would be deciding from silence.
       const failed = readFailed();
+      // A folder that stopped being a project while this was out gets no
+      // state back from it: the reading is about a place nothing tracks,
+      // and putting the failure back is the mark this read's own forget
+      // took off.
+      const stale = isForgotten(root);
       set((state) => ({
         checking: without(state.checking, root),
         // A read that answered read the whole machine, not this root — so
@@ -66,7 +90,17 @@ export const useProjectSetupStore = create<ProjectSetupState>((set) => ({
         // only its own would leave a project marked "package check failed"
         // over a reading that has since refreshed it, with a Try again that
         // does nothing new.
-        unchecked: failed ? with_(state.unchecked, root) : [],
+        // Three answers, not two. A read that answered clears every
+        // root, since it read the whole machine. One that failed for a
+        // root still tracked marks that root. One that failed for a
+        // folder nobody tracks any more says nothing about any of them,
+        // so every other project keeps the mark it had.
+        unchecked: (() => {
+          if (!failed) return [];
+          return stale
+            ? without(state.unchecked, root)
+            : with_(state.unchecked, root);
+        })(),
       }));
     }
   },

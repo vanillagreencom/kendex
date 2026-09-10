@@ -208,6 +208,7 @@ const openPage = async () => {
       harnesses: [],
       items: [INSTALLED],
       missingProjects: [],
+      readProjects: [],
       warnings: [],
     },
   });

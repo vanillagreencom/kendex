@@ -207,6 +207,81 @@ fn project_registry_round_trips() {
     assert_eq!(String::from_utf8_lossy(&list.stdout).trim(), "");
 }
 
+/// A folder renamed outside kendex, reconnected from the shell: the entry
+/// moves, the list stops saying the folder is not there, and the folder
+/// keeps everything in it. The refusals are core's, and the one this
+/// reaches for is the folder that belongs to somebody else.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_moved_project_reconnects_and_a_third_partys_folder_is_refused() {
+    let tmp = fixture_home();
+    let home = tmp.path();
+    let old = home.join("dev/app");
+    let new = home.join("dev/renamed");
+
+    kendex(home, home, &["project", "add", "dev/app"]);
+    fs::rename(&old, &new).unwrap();
+    let missing = kendex(home, home, &["project", "list"]);
+    assert!(
+        String::from_utf8_lossy(&missing.stdout).contains("(folder not found)"),
+        "{}",
+        String::from_utf8_lossy(&missing.stdout)
+    );
+
+    let elsewhere = home.join("dev/other");
+    fs::create_dir_all(&elsewhere).unwrap();
+    fs::write(
+        elsewhere.join(".kendex-lock.json"),
+        format!(
+            "{{\n  \"version\": 10,\n  \"root\": \"{}\"\n}}\n",
+            home.join("dev/third").display()
+        ),
+    )
+    .unwrap();
+    let refused = kendex(
+        home,
+        home,
+        &[
+            "project",
+            "reconnect",
+            "--from",
+            old.to_str().unwrap(),
+            "--to",
+            elsewhere.to_str().unwrap(),
+        ],
+    );
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("dev/third"),
+        "the refusal names the project whose record is there: {}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+
+    // Named the way a shell names folders, from inside the one the project
+    // moved to: `project add dev/app` took a relative path, and the folder
+    // being gone is exactly when a person types one for it. `..` is the
+    // ordinary spelling from there and has to fold, since a path left
+    // holding one equals no entry the registry stores.
+    let moved = kendex(
+        home,
+        &new,
+        &["project", "reconnect", "--from", "../app", "--to", "."],
+    );
+    assert!(
+        moved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&moved.stderr)
+    );
+    let list = kendex(home, home, &["project", "list"]);
+    let listed = String::from_utf8_lossy(&list.stdout);
+    assert!(listed.contains("dev/renamed"), "{listed}");
+    assert!(!listed.contains("(folder not found)"), "{listed}");
+    assert!(
+        new.join(".claude/skills/deploy/SKILL.md").exists(),
+        "the folder keeps what is installed in it"
+    );
+}
+
 /// A hook can be installed exactly as declared and still do nothing. The one
 /// command built for pipelines has to say so rather than tick it green.
 #[test]

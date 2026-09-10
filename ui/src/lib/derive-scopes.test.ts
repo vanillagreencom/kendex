@@ -21,7 +21,13 @@ function result(roots: string[]): ScanResult {
       vendor: null,
     }),
   );
-  return { harnesses: [], items, missingProjects: [], warnings: [] };
+  return {
+    harnesses: [],
+    items,
+    missingProjects: [],
+    readProjects: [],
+    warnings: [],
+  };
 }
 
 describe("scopeChoices", () => {

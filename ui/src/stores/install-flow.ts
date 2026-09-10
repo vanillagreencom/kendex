@@ -19,11 +19,10 @@ import type {
   Scope,
 } from "@/bindings";
 import type { Choice } from "@/components/marketplaces/harness-select";
+import { reachableProjectsNow } from "@/lib/reachable-projects";
 import { everyPlace, sameScope, scopeKey } from "@/lib/scope";
 import { useMarketplacesStore } from "./marketplaces";
 import { useNavStore } from "./nav";
-import { useSettingsStore } from "./settings";
-import { projectsOf } from "./settings-projects";
 
 /** What one subscription contributes to an answer. A selection can span
  *  marketplaces — the cross-marketplace Packages tab lists them together —
@@ -159,11 +158,13 @@ export const useInstallFlow = create<InstallFlowState>((set, get) => ({
   setChoice: (choice) => set({ choice }),
 
   install: async () => {
-    const { ask, subjectId, places, choice, running } = get();
-    if (!ask || running || places.length === 0) return;
+    const { ask, subjectId, choice, running } = get();
+    if (!ask || running) return;
     const subject =
       ask.subjects.find((one) => one.id === subjectId) ?? ask.subjects[0];
     if (!subject) return;
+    const places = placesToWrite(subject, get().places);
+    if (places.length === 0) return;
     set({ running: true, outcome: null });
     const outcomes: PlaceOutcome[] = [];
     // Whether the reader was offered the where question at all. It decides
@@ -254,25 +255,56 @@ export function installablePlaces(
   const seen = new Map<string, Scope>();
   for (const group of subject.groups)
     seen.set(scopeKey(group.browsing), group.browsing);
-  return [...seen.values()];
+  // A subscription that lives in a project installs where it lives, and
+  // that place is a folder like any other: one no scan found takes no
+  // write, whichever door the install came through. `projects` is what
+  // reading found, so the rule is the same one the personal arm above
+  // applies — stated once, over both.
+  return [...seen.values()].filter(
+    (place) => place.scope === "global" || projects.includes(place.root),
+  );
 }
+
+/** The picked places this install may still write to.
+ *
+ *  Which places the reader chose is theirs; whether a place can take a
+ *  write is the machine's, and the second can change while the dialog is
+ *  open — a scan landing behind it takes a renamed folder away, and the
+ *  selection made before it still names that folder. So the answer is
+ *  taken again where it is acted on: the button that says Install reads
+ *  it, and so does the write. */
+export const placesToWrite = (
+  subject: InstallSubject | undefined,
+  places: Scope[],
+): Scope[] =>
+  subject
+    ? places.filter((one) =>
+        picked(installablePlaces(subject, reachableProjectsNow()), one),
+      )
+    : [];
 
 /** Whether the where question has an answer for the reader to give. */
 export const placeIsAChoice = (subject: InstallSubject): boolean =>
   subject.groups.every((group) => group.browsing.scope === "global");
 
 /** The places a freshly opened flow starts on: the one the reader came
- *  from where this answer can reach it, else everywhere it can only go. */
+ *  from where this answer can reach it, else everywhere it can only go.
+ *
+ *  A reader who named a place and a reader who named none are two
+ *  different questions. With none named, the first place offered is where
+ *  an install lands unless the reader says otherwise. With one named that
+ *  this answer cannot reach — a project whose folder the scan could not
+ *  read — nothing is picked: the errand was for that place, and swapping
+ *  another one in would write the packages somewhere nobody asked for.
+ *  The dialog holds its own action back on an empty list and says why. */
 function openingPlaces(subject: InstallSubject): Scope[] {
-  const offered = installablePlaces(
-    subject,
-    projectsOf(useSettingsStore.getState()),
-  );
+  const offered = installablePlaces(subject, reachableProjectsNow());
   if (!placeIsAChoice(subject)) return offered;
   const came = useNavStore.getState().installInto;
-  const carried =
-    came && offered.find((place) => sameScope(place, came)) ? came : offered[0];
-  return carried ? [carried] : [];
+  const opening = came
+    ? offered.find((place) => sameScope(place, came))
+    : offered[0];
+  return opening ? [opening] : [];
 }
 
 /** Whether this place is among those picked. */

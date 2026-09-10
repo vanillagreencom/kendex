@@ -20,6 +20,11 @@ import {
   placeMarketplacesTitle,
 } from "@/lib/copy-model";
 import {
+  CHANGE_FOLDER_LABEL,
+  REMOVE_FROM_LIST_LABEL,
+  removeFromList,
+} from "@/lib/copy-project-move";
+import {
   SESSION_NOTE_LABEL,
   SESSION_NOTE_ON,
   SESSION_NOTE_WAITING,
@@ -58,6 +63,9 @@ vi.mock("@/bindings", () => ({
     capabilityTable: vi.fn(),
     updateSettings: vi.fn(),
     installDriftHook: vi.fn(),
+    // Read again on a registry write: update rows are keyed by the
+    // folder each one is at.
+    updatesOverview: vi.fn(),
     packageDiff: vi.fn().mockResolvedValue({
       status: "ok",
       data: {
@@ -73,11 +81,14 @@ vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 const ACME: Scope = { scope: "project", root: "/work/acme" };
 
+/** A machine a scan has read, having opened every project folder these
+ *  cases register: what a place's own actions are offered from. */
 const emptyScan: ScanResult = {
   items: [],
   harnesses: [],
   warnings: [],
   missingProjects: [],
+  readProjects: ["/work/acme", "/work/client"],
 };
 
 const view = (scope: Scope, drift: DriftRow[]): AuditView => ({
@@ -270,7 +281,7 @@ const menuItems = (): string[] =>
 // Every setting that decides what a place installs is reached from that
 // place's card — the marketplaces it installs from included, since the
 // marketplace's own page changes none of them. Personal is a place like any
-// other and has no tracking to stop.
+// other, and Personal has no folder to change and no entry to remove.
 describe("a place card's actions", () => {
   beforeEach(() => {
     useSettingsStore.setState({
@@ -293,7 +304,8 @@ describe("a place card's actions", () => {
     expect(menuItems()).toEqual([
       ADD_PACKAGES_LABEL,
       PLACE_MARKETPLACES_LABEL,
-      "Stop tracking acme…",
+      CHANGE_FOLDER_LABEL,
+      removeFromList("acme"),
     ]);
 
     const item = [...document.querySelectorAll('[role="menuitem"]')].find(
@@ -306,7 +318,44 @@ describe("a place card's actions", () => {
     expect(useNavStore.getState().page).toBe("projects");
   });
 
-  it("offers Personal its marketplaces and no tracking to stop", async () => {
+  // The menu withholds every write once the folder cannot be read, and a
+  // dialog already open is the same write one step past the menu: its
+  // controls rewrite this place's manifest, and a write aimed at a folder
+  // nothing was read from is what the guard exists to stop. A folder goes
+  // unreadable while a window is open — a rescan on focus, an unmounted
+  // disk — so the dialog closes on the same bit the menu reads.
+  it("closes an open marketplaces dialog when the folder stops being readable", async () => {
+    const host = mount(<ProjectList />);
+    await settle();
+
+    await openActions(host, "acme");
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (el) => el.textContent === PLACE_MARKETPLACES_LABEL,
+    );
+    if (!(item instanceof HTMLElement)) throw new Error("no marketplaces item");
+    await userEvent.click(item);
+    await settle();
+    expect(document.body.textContent).toContain(placeMarketplacesTitle("acme"));
+
+    await act(async () => {
+      useScanStore.setState({
+        result: {
+          ...emptyScan,
+          readProjects: ["/work/client"],
+          missingProjects: [
+            { root: "/work/acme", why: { kind: "gone" } },
+          ] as never,
+        },
+      });
+    });
+    await settle();
+
+    expect(document.body.textContent).not.toContain(
+      placeMarketplacesTitle("acme"),
+    );
+  });
+
+  it("offers Personal its marketplaces and nothing about a folder", async () => {
     const host = mount(<ProjectList />);
     await settle();
 
@@ -314,12 +363,12 @@ describe("a place card's actions", () => {
     expect(menuItems()).toEqual([ADD_PACKAGES_LABEL, PLACE_MARKETPLACES_LABEL]);
   });
 
-  // Stopping tracking moved off its own button and into this menu, and a
-  // menu item is the shape whose click the card used to answer. Rendering
-  // the item proves nothing about the path behind it: the removal has to
-  // reach the settings store with this card's own root, and the card must
-  // not navigate out from under the confirm.
-  it("stops tracking the project the card names, without leaving the page", async () => {
+  // Removal moved off its own button and into this menu, and a menu item
+  // is the shape whose click the card used to answer. Rendering the item
+  // proves nothing about the path behind it: the removal has to reach the
+  // settings store with this card's own root, and the card must not
+  // navigate out from under the confirm.
+  it("removes the project the card names, without leaving the page", async () => {
     vi.mocked(commands.unregisterProject).mockResolvedValue({
       status: "ok",
       data: { settings: { projects: [] }, base: null } as never,
@@ -329,16 +378,15 @@ describe("a place card's actions", () => {
 
     await openActions(host, "acme");
     const item = [...document.querySelectorAll('[role="menuitem"]')].find(
-      (el) => el.textContent === "Stop tracking acme…",
+      (el) => el.textContent === removeFromList("acme"),
     );
-    if (!(item instanceof HTMLElement))
-      throw new Error("no stop-tracking item");
+    if (!(item instanceof HTMLElement)) throw new Error("no removal item");
     await userEvent.click(item);
     await settle();
     expect(useNavStore.getState().page).toBe("projects");
 
     const confirm = [...document.querySelectorAll("button")].find(
-      (one) => one.textContent === "Stop tracking",
+      (one) => one.textContent === REMOVE_FROM_LIST_LABEL,
     );
     if (!confirm) throw new Error("no confirm");
     await userEvent.click(confirm);
@@ -365,7 +413,8 @@ describe("a place card's actions", () => {
     expect(menuItems()).toEqual([
       ADD_PACKAGES_LABEL,
       PLACE_MARKETPLACES_LABEL,
-      "Stop tracking /work/client…",
+      CHANGE_FOLDER_LABEL,
+      removeFromList("/work/client"),
     ]);
 
     const item = [...document.querySelectorAll('[role="menuitem"]')].find(

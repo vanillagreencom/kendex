@@ -14,6 +14,7 @@ vi.mock("@/bindings", () => ({
     updateSettings: vi.fn(),
     registerProject: vi.fn(),
     unregisterProject: vi.fn(),
+    updatesOverview: vi.fn(),
     discoverProjects: vi.fn(),
     scanMachine: vi.fn(),
     // Registering or dropping a project re-audits: the scopes changed.
@@ -54,7 +55,13 @@ describe("settings store", () => {
     vi.clearAllMocks();
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
-      data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+      data: {
+        harnesses: [],
+        items: [],
+        missingProjects: [],
+        readProjects: [],
+        warnings: [],
+      },
     });
     vi.mocked(commands.windowZoomState).mockResolvedValue({
       status: "ok",

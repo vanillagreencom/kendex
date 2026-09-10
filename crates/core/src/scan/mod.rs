@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -27,10 +27,78 @@ mod standing;
 pub struct ScanResult {
     pub harnesses: Vec<DetectedHarness>,
     pub items: Vec<ObservedItem>,
-    /// Registered projects whose directory is gone — flagged, never dropped.
-    pub missing_projects: Vec<PathBuf>,
+    /// Registered projects whose directory the scan could not read as one
+    /// — flagged, never dropped.
+    pub missing_projects: Vec<MissingProject>,
+    /// The registered project folders this scan opened.
+    ///
+    /// Positive evidence, because absence from `missing_projects` is not
+    /// evidence at all: a path this scan never met — a project registered
+    /// since it ran — is missing from that list exactly as a folder that
+    /// was read is. Whether a place may be written to rests on this, and
+    /// nothing may rest on a silence.
+    pub read_projects: Vec<PathBuf>,
     /// Unreadable or unparsable surfaces; truth the scan could not reach.
     pub warnings: Vec<ScanWarning>,
+}
+
+/// A registered project the scan could not read at its recorded path,
+/// with what stood in the way. A folder that is gone and a folder the
+/// account may not read are one empty reading and two different remedies:
+/// one is reconnected to where it moved, the other is read again once the
+/// machine can reach it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct MissingProject {
+    pub root: PathBuf,
+    pub why: MissingWhy,
+}
+
+/// Why a recorded project path is not a folder this scan can read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum MissingWhy {
+    /// Nothing is at the path.
+    Gone,
+    /// Something is at the path and it is not a folder.
+    NotAFolder,
+    /// The path could not be read at all, in the words the system gave —
+    /// a permission the account lacks, a mount that is not there. Not a
+    /// claim that the project is gone, which is what a reading of "no
+    /// packages here" over one of these would be.
+    Unreadable { said: String },
+}
+
+/// Why a registered project's folder cannot be read as one, or `None`
+/// where it can. One judge for the whole product: the scan flags a place
+/// with it, the CLI's project list prints it, and the app's card offers
+/// the recovery it names.
+pub fn missing_why(root: &Path) -> Option<MissingWhy> {
+    match std::fs::metadata(root) {
+        Ok(found) if found.is_dir() => opens(root),
+        Ok(_) => Some(MissingWhy::NotAFolder),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(MissingWhy::Gone),
+        Err(e) => Some(MissingWhy::Unreadable {
+            said: e.to_string(),
+        }),
+    }
+}
+
+/// Whether the directory can be read, asked by reading it.
+///
+/// A stat is not a read. A directory the account may not open still
+/// answers `metadata` — a mode or an ACL that denies it binds the open,
+/// not the stat — so a scan that stopped at the stat would go on to read
+/// nothing out of the place and report it as a project holding nothing.
+/// The answer everything here rests on is "kendex read this folder", and
+/// only opening it establishes that.
+fn opens(root: &Path) -> Option<MissingWhy> {
+    match std::fs::read_dir(root) {
+        Ok(_) => None,
+        Err(e) => Some(MissingWhy::Unreadable {
+            said: e.to_string(),
+        }),
+    }
 }
 
 /// One surface the scan could not read as the document it expects, with
@@ -258,9 +326,15 @@ fn scan_scope(
             }
         }
         Scope::Project { root: project } => {
-            if !project.is_dir() {
-                pass.result.missing_projects.push(project.clone());
-                return;
+            match missing_why(project) {
+                Some(why) => {
+                    pass.result.missing_projects.push(MissingProject {
+                        root: project.clone(),
+                        why,
+                    });
+                    return;
+                }
+                None => pass.result.read_projects.push(project.clone()),
             }
             for adapter in all_adapters() {
                 for kind in kinds.iter().copied() {

@@ -1,0 +1,1 @@
+- A project whose folder kendex cannot read says so, instead of reporting "Nothing from kendex yet" and offering to add a start-of-session note to a folder that is not there.

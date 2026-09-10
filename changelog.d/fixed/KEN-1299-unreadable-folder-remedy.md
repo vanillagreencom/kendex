@@ -1,0 +1,1 @@
+- Home says to restore access to a project folder it could not read, instead of sending you to point the project at a folder it never left.

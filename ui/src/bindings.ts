@@ -152,6 +152,18 @@ export const commands = {
 	registerProject: (path: string) => typedError<RegisteredProject, string>(__TAURI_INVOKE("register_project", { path })),
 	unregisterProject: (path: string) => typedError<SettingsRead, string>(__TAURI_INVOKE("unregister_project", { path })),
 	/**
+	 *  What reconnecting this project to that folder would mean, before
+	 *  anything is written. Reads and answers; the window puts what it says on
+	 *  screen and asks.
+	 */
+	projectRelocation: (from: string, to: string) => typedError<Relocation, string>(__TAURI_INVOKE("project_relocation", { from, to })),
+	/**
+	 *  Point one registered project at the folder it was moved to. Neither
+	 *  folder is written to, moved or removed; the destination is read, to see
+	 *  whose record it holds.
+	 */
+	relocateProject: (from: string, to: string, consolidate: boolean) => typedError<RelocatedProject, string>(__TAURI_INVOKE("relocate_project", { from, to, consolidate })),
+	/**
 	 *  What a project already holds that nothing manages, for the offer the
 	 *  registration flow puts on screen. Read after the project is registered
 	 *  rather than folded into that call: registering must not fail because a
@@ -1173,6 +1185,24 @@ export type Comparison = {
 	/**  How many differ in all. Zero means the two are byte-identical. */
 	differingTotal: number,
 };
+
+/**
+ *  What the person may be offered for a folder in this standing.
+ * 
+ *  Decided here, from the one table [`Standing::refusal`] holds, so a
+ *  window drawing the choice and the write enforcing it cannot come
+ *  apart: a standing added later reaches both through this.
+ */
+export type Confirm = 
+/**
+ *  The move may not go ahead: the folder is explained and nothing is
+ *  offered.
+ */
+"none" | 
+/**  It may, on the ordinary confirmation. */
+"reconnect" | 
+/**  It may only as the choice to join two entries into one. */
+"consolidate";
 
 /**
  *  A key two installed packages disagree about: one declares it public,
@@ -2547,6 +2577,32 @@ export type MineRow = {
 };
 
 /**
+ *  A registered project the scan could not read at its recorded path,
+ *  with what stood in the way. A folder that is gone and a folder the
+ *  account may not read are one empty reading and two different remedies:
+ *  one is reconnected to where it moved, the other is read again once the
+ *  machine can reach it.
+ */
+export type MissingProject = {
+	root: string,
+	why: MissingWhy,
+};
+
+/**  Why a recorded project path is not a folder this scan can read. */
+export type MissingWhy = 
+/**  Nothing is at the path. */
+{ kind: "gone" } | 
+/**  Something is at the path and it is not a folder. */
+{ kind: "not-a-folder" } | 
+/**
+ *  The path could not be read at all, in the words the system gave —
+ *  a permission the account lacks, a mount that is not there. Not a
+ *  claim that the project is gone, which is what a reading of "no
+ *  packages here" over one of these would be.
+ */
+{ kind: "unreadable"; said: string };
+
+/**
  *  One item as the scanner found it — read-only truth, no interpretation of
  *  whether it is declared or managed.
  */
@@ -3169,6 +3225,41 @@ export type RegisteredProject = {
 	root: string,
 };
 
+/**
+ *  A reconnection's answer: the settings it wrote, the entry it replaced
+ *  and the folder that entry now names.
+ * 
+ *  The entry it replaced is here rather than left to the caller's own copy
+ *  of what it asked with: the registry stores one spelling and the caller
+ *  asked under whatever the person picked, and every piece of state the
+ *  window keys by folder — the reads out for a place, the offer waiting on
+ *  one — has to be dropped by the spelling it was filed under.
+ */
+export type RelocatedProject = {
+	read: SettingsRead,
+	was: string,
+	root: string,
+};
+
+/**
+ *  One proposed reconnection: the entry it replaces, the folder it would
+ *  point at, what stands there, and what may be offered for it.
+ */
+export type Relocation = {
+	/**
+	 *  The registry entry being replaced, in the spelling the registry
+	 *  stores it under.
+	 */
+	from: string,
+	/**
+	 *  The folder picked, canonical where it resolved (invariant 17) and
+	 *  as it was given where nothing is there to resolve.
+	 */
+	to: string,
+	standing: Standing,
+	confirm: Confirm,
+};
+
 /**  A package's declared effects on the repository it installs into. */
 export type RepoEffects = {
 	/**  One line: what installing this changes about the repository. */
@@ -3321,8 +3412,21 @@ export type ScanProblem =
 export type ScanResult = {
 	harnesses: DetectedHarness[],
 	items: ObservedItem[],
-	/**  Registered projects whose directory is gone — flagged, never dropped. */
-	missingProjects: string[],
+	/**
+	 *  Registered projects whose directory the scan could not read as one
+	 *  — flagged, never dropped.
+	 */
+	missingProjects: MissingProject[],
+	/**
+	 *  The registered project folders this scan opened.
+	 * 
+	 *  Positive evidence, because absence from `missing_projects` is not
+	 *  evidence at all: a path this scan never met — a project registered
+	 *  since it ran — is missing from that list exactly as a folder that
+	 *  was read is. Whether a place may be written to rests on this, and
+	 *  nothing may rest on a silence.
+	 */
+	readProjects: string[],
 	/**  Unreadable or unparsable surfaces; truth the scan could not reach. */
 	warnings: ScanWarning[],
 };
@@ -3754,6 +3858,53 @@ export type SourcesAfter_Serialize = {
 	sources: SourceRow[],
 	undone?: string[],
 };
+
+/**
+ *  What stands at the folder a project would be reconnected to.
+ * 
+ *  One answer, in precedence order: everything that refuses the move
+ *  outranks everything that allows it, so a folder holding another
+ *  project's record is never offered as a place to join entries at.
+ */
+export type Standing = 
+/**
+ *  The folder cannot be read as a folder on this machine, in the words
+ *  the system gave.
+ */
+{ kind: "folder-missing"; said: string } | 
+/**
+ *  It holds a record this build cannot read, which supports no claim
+ *  about whose folder it is.
+ */
+{ kind: "record-unreadable"; said: string } | 
+/**
+ *  It holds a record written under a third project. This is not the
+ *  project being reconnected, whatever the folder is called.
+ */
+{ kind: "record-elsewhere"; root: string } | 
+/**  It is the folder this entry already names. */
+{ kind: "unchanged" } | 
+/**
+ *  It is a registered project in its own right, so the move joins two
+ *  entries into one. Only an explicit choice may do that.
+ */
+{ kind: "registered" } | 
+/**
+ *  It holds the record written under the folder being left: this is
+ *  that project, moved.
+ */
+{ kind: "moved" } | 
+/**
+ *  It holds a record naming itself — the shape a move leaves once
+ *  anything has applied here since.
+ */
+{ kind: "settled" } | 
+/**
+ *  It holds no kendex record. Nothing there contradicts the move and
+ *  nothing confirms it: a project registered before anything was
+ *  installed in it leaves no record behind.
+ */
+{ kind: "no-record" };
 
 /**  One check finding shaped for a screen with an Open button. */
 export type StatusFinding = {

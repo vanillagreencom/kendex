@@ -52,6 +52,7 @@ const scanned: ScanResult = {
     installed({ harness: "codex", path: "/h/.codex/skills/deploy" }),
   ],
   missingProjects: [],
+  readProjects: [],
   warnings: [],
 };
 

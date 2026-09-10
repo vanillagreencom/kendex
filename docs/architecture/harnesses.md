@@ -24,6 +24,8 @@ An adapter owns one harness's paths and rendering, and nothing else. What kendex
 10. An agent's bytes come from its published file at the installed commit with the catalog's tables and the person's own overrides; a rendering restricting it further is refused. Enforced by `crates/core/tests/edits_and_forks/agent_tables.rs`.
 11. Every scan warning carries a standing, actionable unless the scan proves otherwise. Only an empty MCP container qualifies for information: no other kind is read out of that file, and the scopes an apply would write it through — `crates/core/src/engine/targets.rs::mcp_registry`, not the scopes that read it — are all in the pass with a manifest, a record and a declaration set that read and name no server on the harness that writes there. A scan that reads a container without its writing scope, and evidence that will not read, both leave the warning actionable. Enforced by the tests in `crates/core/src/scan/standing/tests.rs` and `crates/cli/tests/cli.rs::an_unused_empty_mcp_container_is_listed_without_asking_for_a_repair`.
 
+12. A registered project the scan cannot read as a folder is flagged with why, never dropped and never read as empty: nothing is there, something that is not a folder is, or the path could not be read at all, in the system's own words. One judge answers for every surface that asks, `crates/core/src/scan/mod.rs::missing_why` — the scan's flag, the CLI's project list and the app's card. Enforced by `crates/core/src/scan/tests.rs::a_path_that_is_not_a_readable_folder_says_which_it_is`.
+
 ## Decisions
 
 - Every capability ships cross-harness through the table; a harness without native support for a kind is marked unsupported, never shimmed.
