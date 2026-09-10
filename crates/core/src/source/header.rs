@@ -86,12 +86,16 @@ pub(crate) struct DeclaredHeaders {
 
 /// What decides which catalog a declaration opens: the scope whose
 /// manifest declared the source, the name it declared it under, and the
-/// hold the item takes on it.
+/// revision the read is held at.
 ///
 /// The scope belongs in the key because the name alone does not name a
 /// catalog: `local` and `in-place` are per-scope roots, a `path =` is
 /// read against the scope's root, and a repo source is whatever the
 /// asking scope's own manifest declared. One string, two catalogs.
+///
+/// The revision belongs in it because one source serves several
+/// revisions: two items pinned differently, and two installations of one
+/// package recorded at different commits, each read their own.
 type OpenedKey = (crate::model::Scope, String, Option<String>);
 
 impl DeclaredHeaders {
@@ -100,6 +104,15 @@ impl DeclaredHeaders {
     /// source or the item cannot be reached — an unreachable source
     /// describes a package with nothing, never with a borrowed or stale
     /// reading of a same-named package somewhere else.
+    ///
+    /// `installed` is the commit the record kept for this installation,
+    /// and it outranks the declaration's own `rev`. A declaration naming
+    /// a branch or a tag names a selector, re-resolved every refresh, so
+    /// resolving through it would read whatever the cache holds now — and
+    /// a stale-source refresh moves that ahead of the bytes on disk. The
+    /// newer upstream's words about an older installed version are
+    /// borrowed words. `None` where the record kept no commit, which is
+    /// every source that has none: the declaration's hold answers then.
     ///
     /// Nothing here fetches. [`super::resolve_at`] answers out of the cache
     /// a previous install filled and reports the source pending otherwise,
@@ -111,16 +124,18 @@ impl DeclaredHeaders {
         manifest: &crate::manifest::Manifest,
         kind: ItemKind,
         name: &str,
+        installed: Option<&str>,
     ) -> Option<Metadata> {
         let decl = manifest.declared(kind).get(name)?;
+        let hold = installed.map(str::to_owned).or_else(|| decl.rev.clone());
         // Keyed by everything that resolves the bytes — the scope, the
-        // source and the hold this item declares on it — so two items of
-        // one source pinned to different revisions, and two scopes that
-        // declared one name differently, never read each other's catalog.
-        let key = (scope.clone(), decl.source.clone(), decl.rev.clone());
+        // source and the revision this read is held at — so two items of
+        // one source at different revisions, and two scopes that declared
+        // one name differently, never read each other's catalog.
+        let key = (scope.clone(), decl.source.clone(), hold.clone());
         let opened = self.opened.entry(key).or_insert_with(|| {
             let state =
-                super::resolve_at(env, scope, &decl.source, manifest, decl.rev.as_deref()).ok()?;
+                super::resolve_at(env, scope, &decl.source, manifest, hold.as_deref()).ok()?;
             let super::SourceState::Ready(ready) = state else {
                 return None;
             };

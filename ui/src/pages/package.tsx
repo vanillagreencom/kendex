@@ -25,6 +25,7 @@ import {
   groupRef,
   groupScopes,
   installationAt,
+  summaryAt,
 } from "@/lib/derive";
 import { harnessName, packageDisplayName } from "@/lib/labels";
 import { PAGE_GUTTER } from "@/lib/layout";
@@ -296,7 +297,7 @@ export function PackagePage() {
       <PackageHeader
         kind={group.kind}
         displayName={displayName}
-        summary={group.summary}
+        summary={summaryAt(group, ref.scope, summaryOf)}
         forked={meta?.fork != null}
         forkEdited={forkEdited}
         mark={mark}

@@ -257,7 +257,32 @@ fn declared_header(
 ) -> Option<crate::scan::metadata::Metadata> {
     let package = package?;
     let manifest = records.manifest.as_deref()?;
-    headers.of(env, &item.scope, manifest, package.kind, &package.name)
+    let installed = recorded_commit(records, package.kind, &package.name, item.harness);
+    headers.of(
+        env,
+        &item.scope,
+        manifest,
+        package.kind,
+        &package.name,
+        installed.as_deref(),
+    )
+}
+
+/// The source commit one installation was written from, as its own record
+/// kept it. `None` for a source that has no commit to keep — a folder, a
+/// local capture — and for a record written before the field existed.
+fn recorded_commit(
+    records: &crate::ownership::Records,
+    kind: ItemKind,
+    name: &str,
+    harness: HarnessId,
+) -> Option<String> {
+    records
+        .lock
+        .entries
+        .get(&crate::lock::entry_key(kind, name, harness))?
+        .source_commit
+        .clone()
 }
 
 /// The words for every row the scan could not see.
@@ -274,18 +299,19 @@ fn seeded_summaries(
     records_by_scope: &BTreeMap<Scope, crate::ownership::Records>,
     rows: &mut BTreeMap<RowKey, RowFacts>,
 ) {
-    for ((scope, kind, name, _, at), facts) in rows {
+    for ((scope, kind, name, harness, at), facts) in rows {
         if at.is_some() || facts.summary.is_some() {
             continue;
         }
-        let Some(manifest) = records_by_scope
-            .get(scope)
-            .and_then(|records| records.manifest.as_deref())
-        else {
+        let Some(records) = records_by_scope.get(scope) else {
             continue;
         };
+        let Some(manifest) = records.manifest.as_deref() else {
+            continue;
+        };
+        let installed = recorded_commit(records, *kind, name, *harness);
         facts.summary = headers
-            .of(env, scope, manifest, *kind, name)
+            .of(env, scope, manifest, *kind, name, installed.as_deref())
             .and_then(|header| header.summary_or_description().map(str::to_owned));
     }
 }

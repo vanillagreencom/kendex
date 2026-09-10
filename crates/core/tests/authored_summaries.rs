@@ -460,3 +460,94 @@ fn the_reserved_local_source_reads_each_scopes_own_capture() {
         Some("Keeps this project's decisions where the team can find them.".to_owned())
     );
 }
+
+/// A person's Library row reads the version they installed, not the
+/// version upstream has moved to since.
+///
+/// A declaration naming no revision, or naming a branch or a tag, names a
+/// selector: what it resolves to is whatever the cache holds, and the
+/// stale-source refresh moves that on its own. The bytes on disk stay
+/// where the install put them. Resolving the words through the selector
+/// would put the newer upstream's sentence on an older installed version,
+/// which is the borrowed reading the record exists to prevent.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_row_reads_the_version_installed_not_the_one_upstream_moved_to() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let base = format!("file://{}", home.join("base").display());
+    let env = Env::fake(&home, FakeOs::Linux).with_var("KENDEX_GIT_BASE", &base);
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 6\n\n[sources.up]\nrepo = \"team/tools\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[agents.notes]\nsource = \"up\"\n",
+    )
+    .unwrap();
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+
+    let upstream = home.join("base/team/tools");
+    fs::create_dir_all(upstream.join("agents")).unwrap();
+    fs::write(upstream.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    write_notes(&upstream, "Keeps the notes you had when you installed it.");
+    git(&upstream, &["init", "--quiet", "-b", "main"]);
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "--quiet", "-m", "one"]);
+    kendex_core::remote::sync(&env, "team/tools", None).unwrap();
+
+    let report = audit(&env, &scope).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
+
+    // Upstream moves and the refresh brings the cache with it. Nothing
+    // rewrites the file the install put on disk.
+    write_notes(&upstream, "Keeps notes nobody here has installed yet.");
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "--quiet", "-m", "two"]);
+    kendex_core::remote::sync(&env, "team/tools", None).unwrap();
+
+    let rows = kendex_core::library::provenance(&env, std::slice::from_ref(&scope)).unwrap();
+    let row = rows
+        .iter()
+        .find(|row| row.package_ref().name == "notes")
+        .expect("the agent has a provenance row");
+    assert_eq!(
+        row.summary.as_deref(),
+        Some("Keeps the notes you had when you installed it.")
+    );
+}
+
+/// The catalog's agent, at one version of its words.
+#[allow(clippy::unwrap_used)]
+fn write_notes(catalog: &Path, summary: &str) {
+    fs::write(
+        catalog.join("agents/notes.md"),
+        format!("---\nname: notes\ndescription: Use when writing notes.\nsummary: {summary}\n---\nBody.\n"),
+    )
+    .unwrap();
+}
+
+/// Git in a fixture, with the caller's git environment dropped: run from a
+/// commit hook, `GIT_DIR` and friends point at the repository being
+/// committed to and every command here would act on that one instead.
+#[allow(clippy::unwrap_used)]
+fn git(dir: &Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+        .args(args)
+        .current_dir(dir)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_PREFIX")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

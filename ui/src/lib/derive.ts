@@ -366,6 +366,33 @@ export function installationAt(
   return group.installations.find((install) => sameScope(install.scope, scope));
 }
 
+/** What the author says this package does, as the scope a page is about
+ *  has it.
+ *
+ *  A page names one scope, and its buttons work on that scope's copy, so
+ *  the words beside the name are that scope's too. `ItemGroup.summary`
+ *  folds every scope together — whichever installation the scan reached
+ *  first — which on a project page can be another scope's line about a
+ *  package that scope installed from a different source or version.
+ *
+ *  Within the scope it keeps the group's own rule, because one tool's
+ *  copy can carry words where another's says nothing. Null where none of
+ *  that scope's installations has any: a blank is this scope's answer,
+ *  never a borrowed one. */
+export function summaryAt(
+  group: ItemGroup | null | undefined,
+  scope: Scope | null | undefined,
+  summaryOf: SummaryOf,
+): string | null {
+  if (!group || !scope) return null;
+  for (const install of group.installations) {
+    if (!sameScope(install.scope, scope)) continue;
+    const summary = summaryOf(install);
+    if (summary) return summary;
+  }
+  return null;
+}
+
 /** Who ships this item, when a tool ships it itself — the vendor named by
  *  every installation, or null the moment they disagree or none says. */
 export function groupVendor(group: ItemGroup): string | null {
