@@ -15,6 +15,7 @@ vi.mock("@/bindings", () => ({
     capabilityTable: vi.fn(),
     windowZoomState: vi.fn(),
     scanMachine: vi.fn(),
+    libraryProvenance: vi.fn(),
     auditAll: vi.fn(),
     updatesOverview: vi.fn(),
     appUpdateCheck: vi.fn(),
@@ -77,6 +78,10 @@ describe("the project registry on window focus", () => {
     vi.mocked(commands.scanMachine).mockResolvedValue({
       status: "ok",
       data: { harnesses: [], items: [], missingProjects: [], warnings: [] },
+    });
+    vi.mocked(commands.libraryProvenance).mockResolvedValue({
+      status: "ok",
+      data: [],
     });
     vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
