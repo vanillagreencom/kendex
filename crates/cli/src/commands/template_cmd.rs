@@ -742,6 +742,22 @@ pub fn plan_install(
         print_resolution(&resolution);
         return Err("this template has members nothing can reach — remove them, choose a replacement, or try again once their marketplace reads".into());
     }
+    // A template can be emptied: `template remove` takes the last member
+    // out and saving that is legitimate. Installing one is not, and the
+    // refusal belongs here rather than inside the run — `project add
+    // --template` registers the project between this and the apply, so an
+    // install that only refused once it started left the entry behind.
+    //
+    // What is asked is core's own count of what this resolution would
+    // declare; what an empty install means stays core's, which still
+    // refuses every other caller.
+    if resolution.count() == 0 {
+        return Err(format!(
+            "{} has no packages in it — add some to it, or install a different template",
+            template.name
+        )
+        .into());
+    }
     Ok(Planned {
         template,
         destination,

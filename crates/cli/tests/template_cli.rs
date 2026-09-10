@@ -632,6 +632,26 @@ fn project_add_with_a_template_settles_it_before_registering() {
         .success()
     );
 
+    // A template emptied by an ordinary removal. `template remove` takes
+    // the last member out and saving that is legitimate, so this is a
+    // template a person really can have.
+    let catalog = home.join("catalog");
+    for args in [
+        vec![
+            "template",
+            "create",
+            "Emptied",
+            "--source",
+            catalog.to_str().unwrap(),
+            "--skill",
+            "gh",
+        ],
+        vec!["template", "remove", "Emptied", "--skill", "gh"],
+    ] {
+        let run = kendex(&home, &home, &args);
+        assert!(run.status.success(), "{}", said(&run));
+    }
+
     // name, the flags after the path, whether the project ends up
     // registered, and the word the run has to say.
     type Row<'a> = (&'a str, Vec<&'a str>, bool, &'a str);
@@ -647,6 +667,12 @@ fn project_add_with_a_template_settles_it_before_registering() {
             vec!["--template", "Rust service"],
             false,
             "--yes",
+        ),
+        (
+            "a template with nothing left in it",
+            vec!["--template", "Emptied", "--yes"],
+            false,
+            "has no packages in it",
         ),
         (
             "a template and an answer",
