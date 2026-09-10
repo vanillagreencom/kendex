@@ -4,21 +4,29 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AppSettings,
   Draft_Serialize,
+  Member_Serialize,
   Template_Serialize,
 } from "@/bindings";
 import { commands } from "@/bindings";
 import { AddToTemplateDialog } from "@/components/templates/add-to-template-dialog";
 import { CreateTemplateDialog } from "@/components/templates/create-template-dialog";
 import { InstallTemplateDialog } from "@/components/templates/install-template-dialog";
+import { templateSubject } from "@/components/templates/template-subject";
 import { TemplatesView } from "@/components/templates/templates-view";
+import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
+  BROWSE_PACKAGES_LABEL,
   CHOICE_LOCAL,
   COPIES_GO_INTO_THIS_TEMPLATE,
   INCLUDE_CUSTOMIZATIONS_LABEL,
   INCLUDE_LOCAL_LABEL,
   LICENSE_CONFIRM,
   NEW_TEMPLATE_LABEL,
+  NO_TEMPLATES_TO_INSTALL,
   TEMPLATES_EMPTY,
+  TEMPLATES_LAST_KNOWN,
+  TEMPLATES_SEARCH,
+  TEMPLATES_UNREADABLE,
   templateSummary,
 } from "@/lib/copy-templates";
 import { membersFor } from "@/lib/template-members";
@@ -155,6 +163,10 @@ beforeEach(() => {
   });
 });
 
+/** Everything on screen, the dialogs included: a dialog renders into a
+ *  portal, so its text is on the document rather than under the mount. */
+const said = (): string => document.body.textContent ?? "";
+
 /** The one button whose text is exactly this. */
 function button(host: HTMLElement | Document, text: string): HTMLButtonElement {
   const found = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
@@ -209,6 +221,70 @@ describe("the Templates tab", () => {
     });
     expect(host.textContent).toContain(TEMPLATES_EMPTY);
     expect(host.textContent).not.toContain("Templates could not be read");
+  });
+});
+
+// The dialog used to read emptiness off the list alone, so an index it
+// could not read looked like a person with no templates and offered them
+// Browse packages over it. The store now answers with its read state
+// attached, and every surface has to say what it shows for a failure.
+describe("the install dialog over a read that did not answer", () => {
+  const acme = { scope: "project" as const, root: ACME_ROOT };
+
+  it("offers the read again instead of claiming there are none", async () => {
+    vi.mocked(commands.templatesList).mockResolvedValue({
+      status: "error",
+      error: "the templates file could not be read",
+    });
+    mount(<InstallTemplateDialog into={acme} open onOpenChange={() => {}} />);
+    await settle();
+
+    expect(said()).toContain(TEMPLATES_UNREADABLE);
+    expect(said()).not.toContain(NO_TEMPLATES_TO_INSTALL);
+    expect(said()).toContain(TRY_AGAIN_LABEL);
+    // Browsing packages is what a person with no templates is offered, and
+    // this is not that person.
+    expect(said()).not.toContain(BROWSE_PACKAGES_LABEL);
+  });
+
+  it("keeps rows a read landed and heads them as the last answer", async () => {
+    vi.mocked(commands.templatesList).mockResolvedValue({
+      status: "ok",
+      data: [RUST_SERVICE],
+    });
+    mount(<InstallTemplateDialog into={acme} open onOpenChange={() => {}} />);
+    await settle();
+    expect(said()).toContain("Rust service");
+
+    vi.mocked(commands.templatesList).mockResolvedValue({
+      status: "error",
+      error: "the templates file could not be read",
+    });
+    await act(async () => {
+      await useTemplatesStore.getState().load();
+    });
+
+    // The rows stand, said to be the last kendex could check, and the
+    // install is still offered over them.
+    expect(said()).toContain(TEMPLATES_LAST_KNOWN);
+    expect(said()).toContain("Rust service");
+    expect(said()).not.toContain(NO_TEMPLATES_TO_INSTALL);
+  });
+
+  // The inverse, so the rows above cannot pass over a dialog that never
+  // says it: a read that answered with none is the one state that claim
+  // belongs to.
+  it("says there are none only over a read that answered", async () => {
+    vi.mocked(commands.templatesList).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+    mount(<InstallTemplateDialog into={acme} open onOpenChange={() => {}} />);
+    await settle();
+
+    expect(said()).toContain(NO_TEMPLATES_TO_INSTALL);
+    expect(said()).toContain(BROWSE_PACKAGES_LABEL);
+    expect(said()).not.toContain(TEMPLATES_UNREADABLE);
   });
 });
 
@@ -565,5 +641,83 @@ describe("an edited marketplace package in the modal", () => {
         customizations: false,
       },
     );
+  });
+});
+
+// The tools picker is built from a subject's kinds, and what a curated set
+// holds is the catalog's to say. Naming the direct kinds beside a set — and
+// passing a plugin as a package kind, which core resolves as a set — offered
+// a narrower list of tools than the set's own members can install to.
+describe("the kinds a template subject names", () => {
+  /** A template holding whatever members a case needs. */
+  const holding = (members: Member_Serialize[]): Template_Serialize => ({
+    name: "Mixed",
+    id: "mixed",
+    members,
+    customizations: {},
+  });
+  const fromMarket = (
+    kind: Member_Serialize["kind"],
+    name: string,
+  ): Member_Serialize => ({
+    kind,
+    name,
+    enabled: true,
+    source: {
+      held: "marketplace",
+      repo: "vanillagreencom/kendex",
+      rev: null,
+    },
+  });
+
+  it("names no kind where a member is a whole set, and the kinds otherwise", () => {
+    // Direct members only: the picker can offer exactly what they install to.
+    expect(
+      templateSubject(
+        holding([fromMarket("skill", "gh"), fromMarket("command", "note")]),
+      ).kinds,
+    ).toEqual(["skill", "command"]);
+
+    // A bundle beside them: what it holds is not knowable from here, so no
+    // kind is named and core performs the precise check.
+    expect(
+      templateSubject(
+        holding([fromMarket("skill", "gh"), fromMarket("bundle", "starter")]),
+      ).kinds,
+    ).toEqual([]);
+
+    // A plugin is its registry's own curated set, and core resolves it as
+    // one, so it answers the same way a bundle does.
+    expect(
+      templateSubject(
+        holding([fromMarket("skill", "gh"), fromMarket("plugin", "review")]),
+      ).kinds,
+    ).toEqual([]);
+  });
+});
+
+// The "/" shortcut fires from any page and bumps one counter; the box on
+// screen is the one that reads it. The Templates box was outside that
+// mechanism, so "/" on this tab reached nothing. Only the tab in front is
+// mounted — `Tabs.Panel` renders an inactive panel only under
+// `keepMounted`, which `pages/library.tsx` does not pass — so the box that
+// reads the counter here is always the one a person is looking at.
+describe("the search shortcut on the Templates tab", () => {
+  it("focuses this tab's search box", async () => {
+    vi.mocked(commands.templatesList).mockResolvedValue({
+      status: "ok",
+      data: [RUST_SERVICE],
+    });
+    mount(<TemplatesView />);
+    await settle();
+
+    const search = document.querySelector(`[aria-label="${TEMPLATES_SEARCH}"]`);
+    expect(document.activeElement).not.toBe(search);
+
+    await act(async () => {
+      useNavStore.getState().focusSearch();
+    });
+    await settle();
+    expect(document.activeElement).toBe(search);
   });
 });

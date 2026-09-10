@@ -20,6 +20,7 @@ export const TEMPLATES_EMPTY =
 export const TEMPLATES_UNREADABLE = "Templates could not be read.";
 export const TEMPLATES_LAST_KNOWN =
   "Templates could not be read. These are the last kendex could check.";
+export const TEMPLATES_READING = "Reading your templates…";
 export const TEMPLATES_SEARCH = "Search templates";
 export const TEMPLATES_NONE_MATCH = "No template matches this search.";
 

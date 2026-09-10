@@ -28,6 +28,8 @@ import {
   RESOLVE_READING,
   RESOLVE_UNREADABLE,
   subscribedAs,
+  TEMPLATES_LAST_KNOWN,
+  TEMPLATES_UNREADABLE,
 } from "@/lib/copy-templates";
 import { shortRevision } from "@/lib/labels";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
@@ -38,6 +40,7 @@ import {
   resolveTemplate,
   templateFile,
   templateFiles,
+  useTemplatesAnswer,
   useTemplatesStore,
 } from "@/stores/templates";
 
@@ -45,7 +48,7 @@ import {
  *  actions over it. */
 export function TemplatePage() {
   const name = useNavStore((s) => s.templateName);
-  const templates = useTemplatesStore((s) => s.templates);
+  const answer = useTemplatesAnswer();
   const load = useTemplatesStore((s) => s.load);
   const removeMembers = useTemplatesStore((s) => s.removeMembers);
   const busy = useTemplatesStore((s) => s.busy);
@@ -66,7 +69,20 @@ export function TemplatePage() {
   const [renaming, setRenaming] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const template = templates.find((one) => one.name === name) ?? null;
+  // Which template this page is showing, from an answer that says whether
+  // the index was read at all. A read that has not landed or failed with
+  // nothing behind it holds no rows, so the page waits or says why rather
+  // than presenting a template it cannot find as a template that is gone.
+  const template =
+    answer.shown === "waiting" || answer.shown === "unreadable"
+      ? null
+      : (answer.templates.find((one) => one.name === name) ?? null);
+  const listFailure =
+    answer.shown === "unreadable"
+      ? TEMPLATES_UNREADABLE
+      : answer.shown === "lastKnown"
+        ? TEMPLATES_LAST_KNOWN
+        : null;
 
   useEffect(() => {
     void load();
@@ -173,6 +189,17 @@ export function TemplatePage() {
         <div className={cn("flex flex-col gap-8", WIDE_CONTENT_WIDTH)}>
           {refused ? (
             <p className="text-[13px] text-critical">{refused}</p>
+          ) : null}
+          {/* The read of the saved templates, where it did not answer.
+              Said here because every action in the header is about the
+              template this page could not find in it. */}
+          {listFailure !== null ? (
+            <div className="flex items-center gap-3">
+              <p className="text-[13px] text-muted-foreground">{listFailure}</p>
+              <Button size="sm" variant="outline" onClick={() => void load()}>
+                {TRY_AGAIN_LABEL}
+              </Button>
+            </div>
           ) : null}
           {resolveError ? (
             <div className="flex items-center gap-3">

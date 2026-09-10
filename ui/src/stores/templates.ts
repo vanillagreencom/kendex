@@ -5,6 +5,7 @@
 // it from here. Nothing in this file decides what a template may hold or
 // what installing one writes — those are core's answers, reached through
 // the commands.
+import { useMemo } from "react";
 import { create } from "zustand";
 import {
   type Chosen,
@@ -40,6 +41,10 @@ export type Read =
   | { status: "failed"; error: string };
 
 interface TemplatesState {
+  /** The rows the last read that answered landed. Not read on its own by
+   *  any surface: what may be claimed from it depends on the two fields
+   *  below, so the three are read together through
+   *  [`useTemplatesAnswer`]. */
   templates: Template[];
   /** Whether any answer has ever landed, which is what tells a failure
    *  with rows behind it from one with nothing. */
@@ -223,7 +228,50 @@ export async function templateDraft(
   return settled(commands.templateDraft(project));
 }
 
-/** Templates by name, for a picker. A stable reference per store answer,
- *  because a selector minting an array re-renders for ever. */
-export const templatesOf = (state: TemplatesState): Template[] =>
-  state.templates;
+/** What the templates index says, as one answer a surface reads whole.
+ *
+ *  The rows, whether any read has landed, and how the last read went are
+ *  three facts, and a surface that read only the rows presented an index
+ *  kendex could not read as a person with no templates — and offered them
+ *  Browse packages over it. So the rows are not offered on their own:
+ *  every state carries what it has, and no caller can claim "none"
+ *  without having been handed `read` with an empty list. */
+export type TemplatesAnswer =
+  /** No read has landed. Nothing may be claimed about what is saved —
+   *  neither a count nor an emptiness. */
+  | { shown: "waiting" }
+  /** The last read failed and nothing landed before it. */
+  | { shown: "unreadable"; error: string }
+  /** The last read failed over rows an earlier one landed. They stand,
+   *  headed as the last answer that came back rather than as current. */
+  | { shown: "lastKnown"; templates: Template[]; error: string }
+  /** A read answered. An empty list here is a person with no templates,
+   *  which is the one state that claim may be made from. */
+  | { shown: "read"; templates: Template[] };
+
+/** The one reading of the store's read state, as a function over the three
+ *  fields so the hook and its test drive the same rule. */
+export function templatesAnswer(
+  templates: Template[],
+  read: Read,
+  everRead: boolean,
+): TemplatesAnswer {
+  if (read.status === "failed")
+    return everRead
+      ? { shown: "lastKnown", templates, error: read.error }
+      : { shown: "unreadable", error: read.error };
+  return everRead ? { shown: "read", templates } : { shown: "waiting" };
+}
+
+/** What the templates index says, for a surface that draws it. Recomputed
+ *  from the three fields the store holds; each is a stable reference, so
+ *  nothing here mints one per render. */
+export function useTemplatesAnswer(): TemplatesAnswer {
+  const templates = useTemplatesStore((s) => s.templates);
+  const read = useTemplatesStore((s) => s.read);
+  const everRead = useTemplatesStore((s) => s.everRead);
+  return useMemo(
+    () => templatesAnswer(templates, read, everRead),
+    [templates, read, everRead],
+  );
+}

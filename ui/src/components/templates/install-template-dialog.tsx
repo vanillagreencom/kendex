@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import { INSTALL_ACTION } from "@/lib/copy-install";
 import {
   BROWSE_PACKAGES_LABEL,
@@ -25,10 +26,21 @@ import {
   NO_TEMPLATES_TO_INSTALL,
   PICK_TEMPLATE_LABEL,
   TEMPLATES_EXPLAINER,
+  TEMPLATES_LAST_KNOWN,
+  TEMPLATES_READING,
+  TEMPLATES_UNREADABLE,
 } from "@/lib/copy-templates";
 import { useInstallFlow } from "@/stores/install-flow";
 import { useNavStore } from "@/stores/nav";
-import { useTemplatesStore } from "@/stores/templates";
+import {
+  type Template,
+  useTemplatesAnswer,
+  useTemplatesStore,
+} from "@/stores/templates";
+
+/** The rows an answer with none has, as one value rather than a fresh
+ *  array per render. */
+const NO_TEMPLATES: Template[] = [];
 
 /** Pick a saved selection to install into one place, then hand it to the
  *  guided install, which asks where and which tools exactly as it does for
@@ -44,11 +56,26 @@ export function InstallTemplateDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const templates = useTemplatesStore((s) => s.templates);
+  const answer = useTemplatesAnswer();
   const load = useTemplatesStore((s) => s.load);
   const openInstall = useInstallFlow((s) => s.open);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
   const [picked, setPicked] = useState("");
+
+  // The rows this answer has. A wait and an unreadable index have none,
+  // and neither of them is a person with no templates: the sentence that
+  // says so, and the Browse packages button beside it, are drawn only from
+  // a read that answered.
+  const templates =
+    answer.shown === "waiting" || answer.shown === "unreadable"
+      ? NO_TEMPLATES
+      : answer.templates;
+  const failure =
+    answer.shown === "unreadable"
+      ? TEMPLATES_UNREADABLE
+      : answer.shown === "lastKnown"
+        ? TEMPLATES_LAST_KNOWN
+        : null;
 
   useEffect(() => {
     if (open) void load();
@@ -65,9 +92,13 @@ export function InstallTemplateDialog({
         <DialogHeader>
           <DialogTitle>{INSTALL_TEMPLATE_TITLE}</DialogTitle>
           <DialogDescription>
-            {templates.length === 0
-              ? NO_TEMPLATES_TO_INSTALL
-              : TEMPLATES_EXPLAINER}
+            {answer.shown === "waiting"
+              ? TEMPLATES_READING
+              : failure !== null
+                ? failure
+                : templates.length === 0
+                  ? NO_TEMPLATES_TO_INSTALL
+                  : TEMPLATES_EXPLAINER}
           </DialogDescription>
         </DialogHeader>
         {templates.length > 0 ? (
@@ -94,16 +125,18 @@ export function InstallTemplateDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          {templates.length === 0 ? (
-            <Button
-              onClick={() => {
-                onOpenChange(false);
-                goToMarketplaces("packages", into);
-              }}
-            >
-              {BROWSE_PACKAGES_LABEL}
+          {/* A read that failed is offered again rather than answered for:
+              sending somebody to browse packages over it would be acting
+              on a library kendex has not read. */}
+          {failure !== null ? (
+            <Button variant="outline" onClick={() => void load()}>
+              {TRY_AGAIN_LABEL}
             </Button>
-          ) : (
+          ) : null}
+          {/* Rows to install from, or a read that answered and found none
+              — and nothing at all while a read is out or one failed with
+              nothing behind it, where neither answer is known. */}
+          {templates.length > 0 ? (
             <Button
               disabled={chosen === null}
               onClick={() => {
@@ -117,7 +150,16 @@ export function InstallTemplateDialog({
             >
               {INSTALL_ACTION}
             </Button>
-          )}
+          ) : answer.shown === "read" ? (
+            <Button
+              onClick={() => {
+                onOpenChange(false);
+                goToMarketplaces("packages", into);
+              }}
+            >
+              {BROWSE_PACKAGES_LABEL}
+            </Button>
+          ) : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>

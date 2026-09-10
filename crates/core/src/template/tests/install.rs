@@ -615,3 +615,56 @@ fn removing_the_last_licensed_copy_takes_its_notices_with_it() {
     let stale = carried_in("unlicensed", &after);
     assert!(!stale.exists(), "{}", stale.display());
 }
+
+/// A marketplace that dropped a package after the template was saved makes
+/// that member unavailable, and an install refuses before it writes
+/// anything.
+///
+/// A template records identities, so upstream change is ordinary: without
+/// the check the page went on offering the member, and an install wrote
+/// whatever resolved before the add refused on the one that had gone.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_member_the_marketplace_no_longer_offers_is_reported_before_any_write() {
+    let project = seeded();
+    let template = template_of(&project, "Rust service");
+    // The first install subscribes personally, which is what gives this
+    // machine the marketplace to read at all.
+    let first = destination(&project, "fresh");
+    install(&project.env, &template, &first, None, None).unwrap();
+
+    // Ordinary upstream change: the marketplace stops offering a package
+    // the template names.
+    fs::remove_dir_all(project.catalog.join("skills/gh")).unwrap();
+
+    let resolution = resolve(&project.env, &template).unwrap();
+    let missing: Vec<&str> = resolution
+        .missing
+        .iter()
+        .map(|member| member.name.as_str())
+        .collect();
+    assert_eq!(missing, ["gh"], "{:?}", resolution.missing);
+    // And it is not offered as installable beside being unavailable: one
+    // row, one claim.
+    let offered: Vec<&str> = resolution
+        .groups
+        .iter()
+        .flat_map(|group| group.items.iter())
+        .map(|item| item.name.as_str())
+        .collect();
+    assert_eq!(offered, ["note"], "{offered:?}");
+    // The rest of the template still resolves, so the refusal below is
+    // about the member and not about a template nothing can read.
+    assert!(resolution.copies.len() > 1, "{:?}", resolution.copies);
+
+    let target = destination(&project, "second");
+    let Scope::Project { root } = &target else {
+        unreachable!("built as a project scope")
+    };
+    let before = snapshot(root);
+    assert!(matches!(
+        install(&project.env, &template, &target, None, None),
+        Err(CoreError::TemplateMemberUnavailable { .. })
+    ));
+    assert_eq!(snapshot(root), before, "the refusal wrote into the project");
+}

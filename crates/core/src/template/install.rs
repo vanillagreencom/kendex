@@ -257,12 +257,158 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
             group.version = Some(resolution.commit);
             group.last_known = true;
         }
+        // And what it still offers. A template records identities, not
+        // content: the marketplace can drop or rename a package after the
+        // template was saved, and nothing used to notice until an add
+        // refused — after any earlier group had already been written.
+        // Asked here, where an unreachable copy is already answered, so
+        // both the page and the install read one judgement made before
+        // the first write.
+        match offered_by(env, &personal, group) {
+            None => {}
+            Some(Ok((sealed, config))) => keep_offered(&sealed, &config, group, &mut missing),
+            // The marketplace is there and will not read. No member of it
+            // can be confirmed, which is what its rows have to say — the
+            // answer an unreadable copy already gets.
+            Some(Err(error)) => drop_unconfirmed(group, &mut missing, &error.to_string()),
+        }
     }
     Ok(Resolution {
         groups,
         copies,
         missing,
     })
+}
+
+/// The catalog a group's marketplace resolves to on this machine, or
+/// `None` where nothing here can read it yet and so nothing can be said
+/// about its members.
+///
+/// Only a marketplace a personal subscription already carries is asked.
+/// One nothing subscribes to, and one whose cache cannot serve it yet, are
+/// fetched when the install runs: a member is not absent from a catalog
+/// that has never been read, and claiming otherwise would refuse every
+/// template a person saved before subscribing.
+fn offered_by(
+    env: &Env,
+    personal: &Manifest,
+    group: &ResolvedGroup,
+) -> Option<
+    Result<(
+        crate::source_read::SealedSource,
+        crate::source::SourceConfig,
+    )>,
+> {
+    let alias = group.source.as_deref()?;
+    match crate::source::resolve(env, &Scope::Global, alias, personal) {
+        Ok(crate::source::SourceState::Ready(source)) => Some(read_catalog(&source)),
+        // Pending, disabled or missing. Each is a fact about the
+        // subscription rather than about a member, and each is reported by
+        // the add that meets it.
+        Ok(_) => None,
+        Err(error) => Some(Err(error)),
+    }
+}
+
+fn read_catalog(
+    source: &crate::source::ResolvedSource,
+) -> Result<(
+    crate::source_read::SealedSource,
+    crate::source::SourceConfig,
+)> {
+    let sealed = crate::source_read::SealedSource::open(&source.root)?;
+    let config = crate::source::source_config_for(&sealed, &source.provenance)?;
+    Ok((sealed, config))
+}
+
+/// Keep the members this catalog still offers, and report the rest.
+///
+/// A catalog kendex cannot read as a catalog at all says nothing about any
+/// name in it: every lookup below would answer "not offered" and the
+/// person would be told their whole template had gone, when what is wrong
+/// is the marketplace.
+fn keep_offered(
+    sealed: &crate::source_read::SealedSource,
+    config: &crate::source::SourceConfig,
+    group: &mut ResolvedGroup,
+    missing: &mut Vec<MissingMember>,
+) {
+    if config.mode == crate::source::CatalogMode::Unusable {
+        return;
+    }
+    let repo = group.repo.clone();
+    let mut gone: Vec<(MemberKind, String, String)> = Vec::new();
+    group.items.retain(|item| {
+        match crate::source::find_item(sealed, config, item.kind, &item.name).is_some() {
+            true => true,
+            false => {
+                gone.push((
+                    MemberKind::of(item.kind),
+                    item.name.clone(),
+                    no_longer_offered(&repo),
+                ));
+                false
+            }
+        }
+    });
+    group.bundles.retain(
+        |set| match crate::source::bundles::find(sealed, config, &set.name) {
+            Ok(Some(_)) => true,
+            Ok(None) => {
+                gone.push((set.kind, set.name.clone(), no_longer_offered(&repo)));
+                false
+            }
+            // The catalog declares a set this reader will not read. That is
+            // the marketplace's problem, not a set the person imagined, and
+            // the row says which.
+            Err(error) => {
+                gone.push((set.kind, set.name.clone(), error.to_string()));
+                false
+            }
+        },
+    );
+    for (kind, name, why) in gone {
+        missing.push(MissingMember {
+            kind,
+            name,
+            repo: Some(repo.clone()),
+            which: super::MemberWhich::Marketplace { repo: repo.clone() },
+            why,
+        });
+    }
+}
+
+/// Report every member of a group whose marketplace will not read, and
+/// leave the group with none.
+fn drop_unconfirmed(group: &mut ResolvedGroup, missing: &mut Vec<MissingMember>, why: &str) {
+    let repo = group.repo.clone();
+    let which = super::MemberWhich::Marketplace { repo: repo.clone() };
+    for item in group.items.drain(..) {
+        missing.push(MissingMember {
+            kind: MemberKind::of(item.kind),
+            name: item.name,
+            repo: Some(repo.clone()),
+            which: which.clone(),
+            why: why.to_owned(),
+        });
+    }
+    for set in group.bundles.drain(..) {
+        missing.push(MissingMember {
+            kind: set.kind,
+            name: set.name,
+            repo: Some(repo.clone()),
+            which: which.clone(),
+            why: why.to_owned(),
+        });
+    }
+}
+
+/// Said for a member the marketplace it was saved from no longer offers.
+fn no_longer_offered(repo: &str) -> String {
+    format!(
+        "{} no longer offers this package — the marketplace changed after this template was saved, so remove the member or save it again",
+        crate::names::shown(repo)
+    )
 }
 
 /// Which of the members wearing one kind and name this one is, read off

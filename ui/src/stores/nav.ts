@@ -21,7 +21,8 @@ export type * from "./nav-types";
 const HISTORY_CAP = 20;
 
 /** Whether the current page has a search box on screen right now — the
- * Library always does; the Marketplaces page only on its Packages tab. */
+ * Library always does, on either of its tabs; the Marketplaces page only
+ * on its Packages tab. */
 function searchBoxOnScreen(state: { page: Page; marketplacesTab: string }) {
   if (state.page === "library") return true;
   return state.page === "marketplaces" && state.marketplacesTab === "packages";
@@ -223,10 +224,21 @@ export const useNavStore = create<NavState>((set) => ({
   // Carried whole rather than field by field: a narrowing the filter gains
   // is one a badge already counts by, and a link that dropped it would open
   // a wider page than the number that was clicked.
-  goToLibrary: (filter = {}) =>
+  goToLibrary: (filter) =>
     set((state) => ({
       page: "library",
       libraryFilter: { ...filter },
+      // A link that asks for a narrowed list is asking for the list, and
+      // the Installed tab is the one that has it: left on Templates the
+      // reader would arrive at a tab with no table and never see the rows
+      // the link named. A call with no filter is a plain return to the
+      // Library and keeps the tab the reader was on, which is what brings
+      // them back to Templates from a template page.
+      //
+      // Decided here rather than at the callers because there are a dozen
+      // of them and any new one would have to remember: the argument they
+      // already pass is what says which of the two this is.
+      libraryTab: filter === undefined ? state.libraryTab : "installed",
       installInto: null,
       history: pushHistory(state, "library"),
       future: [],

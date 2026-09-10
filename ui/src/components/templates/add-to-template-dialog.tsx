@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
   ADD_TO_TEMPLATE_HELP,
   ADD_TO_TEMPLATE_TITLE,
@@ -26,9 +27,19 @@ import {
   NEW_TEMPLATE_OPTION,
   PICK_TEMPLATE_LABEL,
   TEMPLATE_NAME_LABEL,
+  TEMPLATES_LAST_KNOWN,
+  TEMPLATES_UNREADABLE,
 } from "@/lib/copy-templates";
 import type { Saveable } from "@/lib/template-members";
-import { useTemplatesStore } from "@/stores/templates";
+import {
+  type Template,
+  useTemplatesAnswer,
+  useTemplatesStore,
+} from "@/stores/templates";
+
+/** The rows an answer with none has, as one value rather than a fresh
+ *  array per render. */
+const NO_TEMPLATES: Template[] = [];
 
 /** The value the picker holds while the answer is "a new one". Not a
  *  template name: a template really called this would be picked by
@@ -49,7 +60,7 @@ export function AddToTemplateDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const { members, dropped } = saveable;
-  const templates = useTemplatesStore((s) => s.templates);
+  const answer = useTemplatesAnswer();
   const load = useTemplatesStore((s) => s.load);
   const addMembers = useTemplatesStore((s) => s.addMembers);
   const createFromSelection = useTemplatesStore((s) => s.createFromSelection);
@@ -58,6 +69,21 @@ export function AddToTemplateDialog({
   const clearRefusal = useTemplatesStore((s) => s.clearRefusal);
   const [picked, setPicked] = useState<string>(NEW);
   const [name, setName] = useState("");
+
+  // The templates this answer can offer. A wait and an unreadable index
+  // offer none — and say so rather than presenting a picker holding only
+  // "New template", which reads as a person who has never made one.
+  // Saving a new one is unaffected either way: it needs no list.
+  const templates =
+    answer.shown === "waiting" || answer.shown === "unreadable"
+      ? NO_TEMPLATES
+      : answer.templates;
+  const failure =
+    answer.shown === "unreadable"
+      ? TEMPLATES_UNREADABLE
+      : answer.shown === "lastKnown"
+        ? TEMPLATES_LAST_KNOWN
+        : null;
 
   useEffect(() => {
     if (!open) return;
@@ -128,6 +154,18 @@ export function AddToTemplateDialog({
             <p className="text-[13px] text-muted-foreground">
               {droppedFromTemplate(dropped)}
             </p>
+          ) : null}
+          {/* What the read of the saved templates did, where it did not
+              answer: the picker below is short for a reason, and the
+              reason is offered again rather than left to be read as an
+              empty library. */}
+          {failure !== null ? (
+            <div className="flex items-center gap-3">
+              <p className="text-[13px] text-muted-foreground">{failure}</p>
+              <Button size="sm" variant="outline" onClick={() => void load()}>
+                {TRY_AGAIN_LABEL}
+              </Button>
+            </div>
           ) : null}
           {refused ? (
             <p className="text-[13px] text-critical">{refused}</p>
