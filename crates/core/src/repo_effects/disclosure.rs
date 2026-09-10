@@ -217,6 +217,10 @@ fn lands_at(root: &Path, git_dir: Option<&Path>, declared: &str) -> PathBuf {
 
 /// The part of a declared path that sits under the git directory.
 ///
+/// `Some` is the whole of "this path is the repository's rather than this
+/// checkout's", which is why a checker's declared evidence is read through
+/// this and not through a second spelling of it.
+///
 /// Read as components, not as a text prefix. `writes` accepts a path
 /// spelled `.git//hooks/pre-commit` or `.git/./hooks/pre-commit` — a
 /// doubled separator and a `.` are both ordinary in a path somebody typed —
@@ -225,7 +229,7 @@ fn lands_at(root: &Path, git_dir: Option<&Path>, declared: &str) -> PathBuf {
 /// disclosed as this checkout's when it is the whole repository's, on the
 /// one screen where that distinction is what is being authorized. `.git`
 /// alone matched nothing and landed under the project.
-fn under_git(declared: &str) -> Option<PathBuf> {
+pub(super) fn under_git(declared: &str) -> Option<PathBuf> {
     let mut components = Path::new(declared)
         .components()
         .filter(|component| !matches!(component, Component::CurDir));

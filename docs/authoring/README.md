@@ -70,6 +70,56 @@ Only a skill seeds settings into a project, through its `kendex.settings.toml.ex
 
 For project-defined shell command restrictions, configure the [command-safety hook](command-safety.md).
 
+## Repository effects
+
+Almost every package is inert: installing it writes files into the tool directories and changes nothing else. A package that also changes the repository itself — a git hook, a config value, anything outside the folders kendex manages — declares that in its `SKILL.md` frontmatter, under `repo-effects`, and kendex shows the declaration and asks a separate question about it. The package's files land with the rest of the install; the effect waits for that second answer.
+
+```yaml
+repo-effects:
+  summary: "One line: what this changes about the repository."
+  writes:
+    - ".git/hooks/kendex-guards"
+  installer: "scripts/install-git-hooks"
+  uninstaller: "scripts/install-git-hooks --uninstall"
+  checker:
+    script: "scripts/install-git-hooks --check"
+    evidence: ".git/hooks/kendex-guards"
+  removal: "How to undo it by hand."
+  notes:
+    - "Anything the reader should know before saying yes."
+  companions:
+    - "doc-limits"
+```
+
+- `writes` are repo-relative paths, each of which stays inside the repository. A path under `.git/` maps to the repository's common git directory, which every work tree shares, and is disclosed as shared.
+- `installer` and `uninstaller` are commands relative to the package directory. kendex runs the installer when somebody says yes, and the uninstaller before any verb takes the package away.
+- `checker` is optional and read-only. `script` reports whether the effect stands here; `evidence` is the path — one of `writes`, and one under `.git/` — whose presence licenses running it.
+- Every field is refused whole rather than read short. A shape kendex cannot read is a declaration it will not act on, and a script or evidence path kendex will not use is dropped while the rest of the block stands.
+
+### The checker contract
+
+The exit status is the whole answer, and it is the same taxonomy the commit hooks use:
+
+| Exit | Means |
+|---|---|
+| `0` | The effect is in force here. |
+| `1` | It is not. |
+| anything else | The check could not be taken. |
+
+The script writes nothing and changes nothing. Whatever it prints on either stream reaches the person as the package's own words, so put the remedy there.
+
+`evidence` is what stops a page load running a cloned repository's scripts. Git clones nothing in the common git directory, so a file of the package's sitting there got there from a local act on this machine. kendex runs the checker only where that file is present; where it is absent, kendex reports that nothing here has set the effect up and runs nothing. Name a file only your own installer writes — a `pre-commit` hook a repository may already have of its own is not evidence of anything.
+
+kendex reports one of these per project, and a package that declares an effect with no checker shows a status it does not have rather than a guess:
+
+| State | Reached by |
+|---|---|
+| Active | The checker exited `0`. |
+| Not active | The evidence is absent. Nothing ran. |
+| Needs repair | The evidence is present and the checker exited `1`. |
+| Could not check | The checker exited outside the taxonomy, or would not run. |
+| Status unavailable | The package declares an effect and no checker. |
+
 ## The check
 
 ```sh

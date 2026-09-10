@@ -19,13 +19,15 @@
 //! notice they most need to read.
 mod declaration;
 pub mod disclosure;
+pub mod setup;
 mod undo;
 use declaration::split_script;
-pub use declaration::{Declaration, RepoEffects, declaration, declared};
+pub use declaration::{Checker, Declaration, RepoEffects, declaration, declared};
 pub use disclosure::{
     Companion, Disclosure, Offers, Withheld, Written, installed_skills, offers, offers_for,
     touches_git,
 };
+pub use setup::{SetupState, SetupStatus, status};
 pub use undo::{Spoken, UndoError, undo};
 
 use serde::{Deserialize, Serialize};

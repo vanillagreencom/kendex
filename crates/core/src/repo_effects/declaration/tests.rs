@@ -11,7 +11,8 @@ fn block(field: &str) -> String {
 /// kendex cannot read; the ordinary written paths read, `.git/` included,
 /// which is the whole point of the mapping the refusals below guard; a
 /// script path that leaves the package is dropped, so nothing outside it
-/// is ever resolved as an installer.
+/// is ever resolved as an installer. The checker field has its own two
+/// tiers and its own case below.
 #[test]
 fn a_declaration_reads_whole() {
     let summary_only = RepoEffects {
@@ -19,6 +20,7 @@ fn a_declaration_reads_whole() {
         writes: Vec::new(),
         installer: None,
         uninstaller: None,
+        checker: None,
         removal: None,
         notes: Vec::new(),
         companions: Vec::new(),
@@ -31,6 +33,7 @@ fn a_declaration_reads_whole() {
                 writes: vec![".git/hooks/pre-commit".to_owned()],
                 installer: Some("scripts/install-git-hooks".to_owned()),
                 uninstaller: Some("scripts/install-git-hooks --uninstall".to_owned()),
+                checker: None,
                 removal: None,
                 notes: Vec::new(),
                 companions: Vec::new(),
@@ -68,7 +71,7 @@ fn a_declaration_reads_whole() {
     for (text, read) in rows {
         assert_eq!(
             declaration(&text),
-            Declaration::Effects(read.clone()),
+            Declaration::Effects(Box::new(read.clone())),
             "{text}"
         );
         assert_eq!(declared(&text), Some(read), "{text}");
@@ -101,7 +104,8 @@ fn a_declaration_reads_whole() {
 /// comma-split scalar read `.git/hooks/a,b` as two files that do not
 /// exist — every member says something, and a list with a member kendex
 /// cannot read is not a shorter list, because a short list of written
-/// paths reads as the complete account it is not.
+/// paths reads as the complete account it is not. The checker block is
+/// judged the same way, in its own case below.
 #[test]
 fn a_declaration_that_will_not_read_is_unreadable_and_absent_stays_absent() {
     let rows = [
@@ -193,6 +197,109 @@ fn a_declaration_that_will_not_read_is_unreadable_and_absent_stays_absent() {
     ];
     for (text, read) in rows {
         assert_eq!(declaration(&text), read, "{text}");
+        assert_eq!(declared(&text), None, "arming reads it as nothing: {text}");
+    }
+}
+
+/// The checker block, which is its own surface: the two tiers the rest of
+/// this reader has, applied to a field kendex will run a script from.
+///
+/// A wrong SHAPE is a declaration kendex could not read and refuses whole —
+/// a scalar where a block belongs, either field missing or not a scalar, a
+/// key kendex does not know. A block that reads perfectly well and names
+/// something kendex will not use drops the checker and leaves the rest of
+/// the declaration standing: a script that leaves the package, an evidence
+/// path the package never said it writes, and one that does not land in the
+/// git directory. That last is the whole trust rule — evidence licenses
+/// running a script out of a checkout, and the only thing that makes it one
+/// is that git clones nothing where it sits.
+#[test]
+fn a_checker_block_reads_or_is_dropped_whole() {
+    let summary_only = RepoEffects {
+        summary: "s".to_owned(),
+        writes: Vec::new(),
+        installer: None,
+        uninstaller: None,
+        checker: None,
+        removal: None,
+        notes: Vec::new(),
+        companions: Vec::new(),
+    };
+    let read = [
+        (
+            block(
+                "  writes:\n    - .git/hooks/kendex-guards\n  checker:\n    script: scripts/check --read-only\n    evidence: .git/hooks/kendex-guards\n",
+            ),
+            RepoEffects {
+                writes: vec![".git/hooks/kendex-guards".to_owned()],
+                checker: Some(Checker {
+                    script: "scripts/check --read-only".to_owned(),
+                    evidence: ".git/hooks/kendex-guards".to_owned(),
+                }),
+                ..summary_only.clone()
+            },
+        ),
+        (
+            block(
+                "  writes:\n    - .git/hooks/kendex-guards\n  checker:\n    script: ../../elsewhere/check\n    evidence: .git/hooks/kendex-guards\n",
+            ),
+            RepoEffects {
+                writes: vec![".git/hooks/kendex-guards".to_owned()],
+                ..summary_only.clone()
+            },
+        ),
+        (
+            block(
+                "  writes:\n    - .git/hooks/kendex-guards\n  checker:\n    script: scripts/check\n    evidence: .git/hooks/other\n",
+            ),
+            RepoEffects {
+                writes: vec![".git/hooks/kendex-guards".to_owned()],
+                ..summary_only.clone()
+            },
+        ),
+        (
+            block(
+                "  writes:\n    - tools/guard\n  checker:\n    script: scripts/check\n    evidence: tools/guard\n",
+            ),
+            RepoEffects {
+                writes: vec!["tools/guard".to_owned()],
+                ..summary_only.clone()
+            },
+        ),
+    ];
+    for (text, effects) in read {
+        assert_eq!(
+            declaration(&text),
+            Declaration::Effects(Box::new(effects.clone())),
+            "{text}"
+        );
+        assert_eq!(declared(&text), Some(effects), "{text}");
+    }
+    let refused = [
+        (block("  checker: scripts/check\n"), Declaration::Unreadable),
+        (
+            block("  checker:\n    evidence: .git/hooks/kendex-guards\n"),
+            Declaration::Unreadable,
+        ),
+        (
+            block("  checker:\n    script: scripts/check\n"),
+            Declaration::Unreadable,
+        ),
+        (
+            block(
+                "  checker:\n    script:\n      - scripts/check\n    evidence: .git/hooks/kendex-guards\n",
+            ),
+            Declaration::Unreadable,
+        ),
+        (
+            block(
+                "  checker:\n    script: scripts/check\n    evidance: .git/hooks/kendex-guards\n",
+            ),
+            Declaration::Unreadable,
+        ),
+    ];
+    for (text, verdict) in refused {
+        assert_eq!(declaration(&text), verdict, "{text}");
         assert_eq!(declared(&text), None, "arming reads it as nothing: {text}");
     }
 }

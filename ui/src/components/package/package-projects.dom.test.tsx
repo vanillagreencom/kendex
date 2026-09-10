@@ -219,6 +219,7 @@ const openTab = async (
       scopes={scopes}
       installations={installations}
       busy={false}
+      focus={null}
       onDelete={onDelete}
     />,
   );
@@ -263,6 +264,7 @@ describe("the Projects tab", () => {
         scopes={[VG]}
         installations={[install(VG)]}
         busy={false}
+        focus={null}
         onDelete={onDelete}
       />,
     );

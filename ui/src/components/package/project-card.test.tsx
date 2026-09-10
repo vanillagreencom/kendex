@@ -23,9 +23,13 @@ describe("a place whose install date cannot be read", () => {
         place={place}
         busy={false}
         removalHeld={false}
+        focused={false}
+        setup={null}
         onOpen={() => {}}
         onUpdate={() => {}}
         onRemove={() => {}}
+        onSetUp={() => {}}
+        onCheckAgain={() => {}}
       />,
     );
     expect(html).toContain("/home/me/app");

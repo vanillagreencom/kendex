@@ -217,22 +217,15 @@ pub fn uninstall(dir: &Path) -> Result<GuardReport> {
 /// in a directory git never clones is still local state. What the file
 /// actually is remains the package's `--check` to say, and it does.
 ///
-/// `symlink_metadata`, so a dangling link still counts: something local
-/// made it, and the package's checker is the one that grades it.
-///
-/// Three states, not two. `NotFound` is an answer — nothing of this
-/// package's is there. Every other error is the absence of one, and it is
-/// returned rather than folded into `false`: an unreadable hooks directory
-/// answered `false` alongside a plain absence, and the caller turned that
-/// into a positive verdict about a repository whose commits were gated
-/// perfectly well.
+/// Three states and not two, and a dangling link counting as present:
+/// [`crate::fs::exists`] is the one reading of "is this file there", and
+/// the declared-setup license in `repo_effects::setup` asks it of a
+/// package's own declared evidence. An unreadable hooks directory once
+/// answered `false` alongside a plain absence here, and the caller turned
+/// that into a positive verdict about a repository whose commits were
+/// gated perfectly well.
 pub fn locally_armed(repo: &Repo) -> Result<bool> {
-    let helper = repo.common_dir.join("hooks").join(HELPER);
-    match std::fs::symlink_metadata(&helper) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(CoreError::io(&helper, error)),
-    }
+    crate::fs::exists(&repo.common_dir.join("hooks").join(HELPER))
 }
 
 /// Whether any copy of the package's installer is where this repository

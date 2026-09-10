@@ -23,6 +23,7 @@ fn declared(writes: &[&str], companions: &[&str]) -> DeclaredEffects {
             writes: writes.iter().map(|s| (*s).to_owned()).collect(),
             installer: Some("scripts/arm".to_owned()),
             uninstaller: None,
+            checker: None,
             removal: None,
             notes: Vec::new(),
             companions: companions.iter().map(|s| (*s).to_owned()).collect(),
