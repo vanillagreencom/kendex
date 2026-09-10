@@ -10,7 +10,7 @@ mod fold;
 mod validate;
 pub use file::{
     ManifestFile, is_source_catalog, load, load_current, load_for_mutation, manifest_path,
-    parse_text, read_for_mutation, seed,
+    parse_text, project_manifest_path, read_for_mutation, seed,
 };
 // Crate-only: the apply op is `save`'s one sanctioned caller — it checks
 // its precondition first. Anywhere else, a direct save is a whole-file

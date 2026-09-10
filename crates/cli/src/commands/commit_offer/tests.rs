@@ -23,6 +23,7 @@ fn scan() -> Scan {
             })
             .collect(),
         shared: vec![".claude/settings.json".to_owned()],
+        manifest: None,
         others: 4,
         branch: Branch::On("main".to_owned()),
     }

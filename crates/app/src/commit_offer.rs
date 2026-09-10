@@ -134,6 +134,11 @@ pub struct ProjectOffer {
     pub tangled: Vec<TangledFile>,
     /// The shared configuration files kendex writes one key in.
     pub shared: Vec<String>,
+    /// The project's manifest, where this action wrote it and the commit
+    /// does not carry it. `null` where every declaration these renders
+    /// need is committed already, or where a person opened the offer and
+    /// there is no action to attribute a change to.
+    pub manifest: Option<String>,
     /// How many of the person's own files changed.
     pub others: u32,
     pub branch: String,
@@ -401,6 +406,7 @@ fn drawn(root: &Path, key: &str, offer: Offer, pending: Option<&Pending>) -> Pro
             })
             .unwrap_or_default(),
         shared: offer.scan.shared.clone(),
+        manifest: pending.and_then(|pending| pending.manifest_not_carried().map(str::to_owned)),
         others: counted(offer.scan.others),
         push: offer.push.as_ref().err().map(Why::from),
         pull_request: offer.pull_request.as_ref().err().map(Why::from),

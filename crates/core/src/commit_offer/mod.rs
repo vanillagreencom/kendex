@@ -236,6 +236,11 @@ pub struct Scan {
     /// The shared configuration files kendex writes one key in that git
     /// reports as changed, sorted. Named to the person and left alone.
     pub shared: Vec<String>,
+    /// The file this project declares what it asks kendex for in — its
+    /// manifest — where git reports it changed. kendex folds keys into
+    /// that document and owns none of its bytes, so it is one of the files
+    /// the offer names and never commits.
+    pub manifest: Option<String>,
     /// How many other paths in this repository changed. The person's own
     /// changes, which the offer counts and never touches.
     pub others: usize,
