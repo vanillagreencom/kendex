@@ -50,7 +50,7 @@ ZERO=0000000000000000000000000000000000000000
 # are dropped, so a row reads as the push does: what was judged, what was
 # found, and the verdict. todo-ban's per-hit lines quote the marker they found,
 # and this file carries no marker shape, so only its count is kept.
-KEEP='^(pre-push: |byte-ceiling: |todo-ban: index-count=)'
+KEEP='^(pre-push: |byte-ceiling: |todo-ban: index-count=|md-format: staged-count=|commit-guards: (unscoped|withheld-all)=)'
 
 # Assembled from split tokens, so this file never holds a marker shape itself:
 # the kendex repo runs todo-ban over its own tree, tests included.
@@ -331,7 +331,7 @@ MUTANT="$TMP/.mutant/commit-guards"
 mkdir -p "$(dirname "$MUTANT")"
 cp -R "$SKILL_TEMPLATE" "$MUTANT"
 MUTANT_BEFORE="$(cat -- "$MUTANT/scripts/pre-push")"
-sed -i.bak 's# all "$@" </dev/null || status=$?# all "$@" </dev/null || status=0#' "$MUTANT/scripts/pre-push"
+sed -i.bak 's# all --skip-unscoped "$@" </dev/null || status=$?# all --skip-unscoped "$@" </dev/null || status=0#' "$MUTANT/scripts/pre-push"
 rm -f -- "$MUTANT/scripts/pre-push.bak"
 MUTANT_AFTER="$(cat -- "$MUTANT/scripts/pre-push")"
 assert_eq "the mutant edit took" "rewritten" \
@@ -402,6 +402,52 @@ diverged THREEDOTTED threedotted "$THREEDOT"
 assert_eq "must-fail: judged from the shared ancestor, that growth reads as a shrink and pushes" \
   "rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
   "$(push_ref "$THREEDOTTED" topic --force-with-lease)"
+
+# ------------------------------------------------------- what is not judged
+#
+# The index-drift refusal above guarantees nothing is staged by the time the
+# batch runs, and the markdown lanes select their files from the staged diff.
+# They would open no file and report a clean count over a document nobody
+# read, so the batch withholds them and says which. A replayed malformed
+# document is not caught at push, and the push says so rather than implying
+# it was checked.
+wrapped() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose HEAD carries a hard-wrapped document
+  local __v="$1" r=""
+  new_repo r "$2" "${3:-}"
+  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-format"\n' >"$r/kendex.settings.toml"
+  q git -C "$r" add kendex.settings.toml
+  q git -C "$r" commit -q -m "feat: seed"
+  q git -C "$r" push -q origin main
+  q git -C "$r" checkout -q -b topic
+  printf '# Title\n\nA paragraph that is hard\nwrapped over two lines.\n' >"$r/DOC.md"
+  q git -C "$r" add DOC.md
+  # Committed with no hook, which is the state a replay leaves.
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: add the document"
+  eval "$__v=\$r"
+}
+
+WRAPPED=""
+wrapped WRAPPED wrapped
+assert_eq "a lane this scope leaves nothing for is named, not folded into a clean verdict" \
+  "rc=0 pre-push: step=base:<oid>;commit-guards: unscoped=md-format;commit-guards: withheld-all=md-format;pre-push: result=0" \
+  "$(push_ref "$WRAPPED" topic)"
+
+# The must-fail control: the same push with the old batch call, which counts
+# that lane clean over a document it never opened.
+FOLDED="$TMP/.folded/commit-guards"
+mkdir -p "$(dirname "$FOLDED")"
+cp -R "$SKILL_TEMPLATE" "$FOLDED"
+FOLDED_BEFORE="$(cat -- "$FOLDED/scripts/pre-push")"
+sed -i.bak 's# all --skip-unscoped "$@" </dev/null# all "$@" </dev/null#' "$FOLDED/scripts/pre-push"
+rm -f -- "$FOLDED/scripts/pre-push.bak"
+assert_eq "the folded edit took" "rewritten" \
+  "$(if [ "$FOLDED_BEFORE" = "$(cat -- "$FOLDED/scripts/pre-push")" ]; then echo unchanged; else echo rewritten; fi)"
+
+FOLDED_REPO=""
+wrapped FOLDED_REPO folded "$FOLDED"
+assert_eq "must-fail: folded back in, the same push reports that document clean" \
+  "rc=0 pre-push: step=base:<oid>;md-format: staged-count=0;pre-push: result=0" \
+  "$(push_ref "$FOLDED_REPO" topic)"
 
 printf '\n%s: %s passed, %s failed\n' "$gg_suite" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

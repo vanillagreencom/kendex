@@ -110,6 +110,14 @@ staged_batch() { # NAME — a committed marker, and a staged change that adds no
   printf 'fn other() {}\n' >>"$R/ok.rs"; git -C "$R" add ok.rs
 }
 fx_staged_md() { staged_batch staged-md; put doc.md 'Wrapped\ntext.\n'; }
+# A committed, hard-wrapped document and nothing staged: the markdown lanes
+# select their files from the staged diff, so an unflagged batch opens it
+# never and calls the tree clean.
+fx_committed_md() { # NAME
+  clean "$1"
+  put doc.md 'Wrapped\ntext.\n'
+  commit
+}
 full_scope() { repo "$1"; put big.txt "$(head -c 2048 /dev/zero | tr '\0' a)"; commit 'feat: seed'; git -C "$R" tag base; } # NAME — a committed 2 KB file, tagged base
 grown() { full_scope "$1"; printf 'x' >>"$R/big.txt"; git -C "$R" add -A; commit 'feat: grow'; } # NAME — and one byte of growth since base
 
@@ -123,6 +131,18 @@ run_rows() { # label | fixture | envs | args | expect — through `batch`
     assert_eq "$label" "$expect" "$(batch "$envs" "$args")"
   done
 }
+
+echo "=== a scope that stages nothing withholds the checks that read only that ==="
+# The lanes are named rather than counted clean, and which lanes those are is
+# read off their own scripts, so this row moves if the library does.
+MD_ONLY=COMMIT_GUARDS_CHECKS=md-format
+MD_AND_MARKERS='COMMIT_GUARDS_CHECKS=todo-ban md-format'
+run_rows \
+  "must-fail: without the flag the batch reports a document it never opened as clean|fx_committed_md md-folded|$MD_ONLY||rc=0 commit-guards: step=md-format;$(ok md-format)" \
+  "control: the document really is malformed, which --all over the same tree finds|fx_committed_md md-really|$MD_ONLY|md-format --all|rc=1" \
+  "with the flag the lane is named as unscoped, and every enabled check being one is said outright|fx_committed_md md-withheld|$MD_ONLY|all --skip-unscoped|rc=0 commit-guards: unscoped=md-format;commit-guards: withheld-all=md-format" \
+  "the checks the scope does reach still run, and the verdict names only those|fx_committed_md md-partial|$MD_AND_MARKERS|all --skip-unscoped|rc=0 commit-guards: unscoped=md-format;commit-guards: step=todo-ban;$(ok todo-ban)" \
+  "--skip-unscoped under --staged is a contradiction, since that is the scope those checks read|fx_committed_md md-contradiction|$MD_ONLY|all --staged --skip-unscoped|rc=2 ${ERR}scope-contradiction=--staged,--skip-unscoped"
 
 echo "=== the batch runs the enabled checks in order and aggregates fail-closed ==="
 BC=COMMIT_GUARDS_BYTE_CEILING_KB

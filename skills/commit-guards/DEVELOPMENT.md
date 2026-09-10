@@ -4,7 +4,7 @@ What a maintainer must not break. What each check fails: [CHECKS.md](CHECKS.md);
 
 ## One definition each
 
-- `scripts/commit-guards` is the dispatcher; `STAGED_SCOPED_CHECKS` names the checks the commit batch hands `--staged`.
+- `scripts/commit-guards` is the dispatcher; `STAGED_SCOPED_CHECKS` names the checks the commit batch hands `--staged`, and `--skip-unscoped` withholds the ones a scope leaves nothing for, derived from each check's own script rather than from a list.
 - `scripts/lib/common.sh` holds the shared scan helpers, `gg_content_carriers` and `gg_grep_lane`. `scripts/lib/messages.sh` emits a stable key and value before the English explanation and owns the collection-error exit.
 - `scripts/lib/configured-paths.sh` holds a glob-list lane's list, excludes, matcher, index walk and `gg_note_skip`.
 - `scripts/lib/staged-lines.sh` is the lines a commit adds to one path, off a pinned `-U0` diff.
@@ -48,7 +48,7 @@ The installer writes into `.git/hooks`, never `core.hooksPath`:
 
 ## The pre-push lane
 
-`scripts/pre-push` judges what each pushed branch adds to the remote. Git runs no hook when it replays a commit, so a rebase, a cherry-pick or an autosquash can leave a branch in a state no commit hook ever saw; push is where the branch leaves the machine, whatever produced its state.
+`scripts/pre-push` judges what each pushed branch would do to the remote. Git runs no hook when it replays a commit, so a rebase, a cherry-pick or an autosquash can leave a branch in a state no commit hook ever saw; push is where the branch leaves the machine, whatever produced its state.
 
 - Git passes the remote name and URL as arguments and the ref lines `<local-ref> <local-oid> <remote-ref> <remote-oid>` on stdin. They are read whole before the first check runs, and the batch is given `/dev/null`, so no check can take a line the loop has not reached.
 - A line missing a field is refused with `ref-line-short`, exit 2: a line the lane cannot read may be depositing anything, and passing over it is the fail-open the lane exists to refuse.
@@ -62,7 +62,8 @@ The installer writes into `.git/hooks`, never `core.hooksPath`:
 - Whole tree is not the fallback when the remote oid is zero, and the reason is byte-ceiling's, not this lane's: `--all` emits candidates with no source blob, so the tighten-only ratchet never applies and every tracked file over the ceiling fails (CHECKS.md § byte-ceiling states the scopes apart). Falling there would permanently refuse every new-branch push in the repositories that ratchet exists for. Giving `--all` a ratchet is byte-ceiling's to do.
 - The remote reaches `--remotes=` and no message. `git push <url> <branch>` passes the URL as the remote, userinfo and token included; git strips userinfo from its own diagnostics, and a lane printing what git withholds would put a credential in scrollback and in every log that captures hook output.
 - The index holding content HEAD does not is refused with `index-drift`, exit 2, one `index-path` line per staged path. byte-ceiling is the only lane scoped to a commit range; every other one scans the index, so staged content makes the batch answer about a tree nobody is pushing — clean over a violation that is being uploaded, most of all. The index, not the work tree: an unstaged edit and an untracked file change nothing any lane reads, so neither is consulted. Asked once, at the first line that would be judged.
-- The batch runs once per distinct scope: `commit-guards all --base REF`, or `commit-guards all` for the whole tree, with `/dev/null` on its stdin. A second ref line at the same scope is announced as `scope-repeat` rather than judged again.
+- The batch runs once per distinct scope: `commit-guards all --against REF`, `--base REF`, or `commit-guards all` for the whole tree, with `/dev/null` on its stdin. A second ref line at the same scope is announced as `scope-repeat` rather than judged again.
+- Every batch run passes `--skip-unscoped`, so a check that selects its files from the staged diff is withheld and named as `unscoped` rather than counted clean. The index-drift refusal guarantees nothing is staged here, so those checks would open no file at all; the index-reading checks are untouched by that and judge the pushed tree exactly. The dispatcher derives the set by asking each enabled check's own script whether it resolves scope through `scripts/lib/md-scope.sh`, so no second list of lane names exists to fall behind. `md-format` and `md-refs` are those lanes today, which means a malformed document or a broken reference carried in by a replay reaches the remote unjudged; the fix is a scope a push can hand them, which neither has and `--all` cannot supply, since `md-format` is absolute rather than ratcheted and would refuse every push in a repository holding markdown that predates the guard.
 - Verdicts fold as the pre-commit chain's do: exit 2 if any scope could not be judged, else 1 if any found violations, else 0.
 - Tracked settings resolve from the index, as the pre-commit chain's do: the refusal above holds the index to HEAD, so the policy a push is measured against is the pushed commit's. The untracked sources — `.env.local`, `.kendex/settings.toml`, the environment — are local override by design and are untouched by it.
 

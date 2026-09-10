@@ -31,7 +31,12 @@ usage() {
 usage: pre-push REMOTE URL
 
 Runs the commit-guards batch over what each pushed branch would do to the
-remote, so COMMIT_GUARDS_CHECKS still decides the lanes. Git passes the
+remote. COMMIT_GUARDS_CHECKS decides the lanes, less the ones this scope
+leaves nothing for: a check that selects its files from the staged diff
+opens no file here, since nothing is staged by the time judging starts, so
+the batch withholds it and names it rather than counting it clean. The
+markdown lanes are those today, which means a malformed document or a
+broken reference a replay carried in is not caught at push. Git passes the
 remote name and its URL as arguments and the ref lines
 `<local-ref> <local-oid> <remote-ref> <remote-oid>` on stdin. Wire it through
 the installed shim: `install-git-hooks --repo <root>`.
@@ -291,10 +296,23 @@ judge() { # SCOPE REF SCOPE-FLAGS... — run the batch once per distinct scope
   esac
   JUDGED="$JUDGED$scope$GG_NL"
   gg_message step "$scope" "=== pre-push: commit-guards all $*, for $ref"
+  # --skip-unscoped because nothing is staged here, and this lane guarantees
+  # it: the index-drift refusal above holds the index equal to HEAD before
+  # any judging. The index-reading checks are unaffected by that and judge
+  # the pushed tree exactly; the ones that select their files from the
+  # staged DIFF would open no file at all and report a clean count over a
+  # document nobody read. The batch names each one it withholds.
+  #
+  # Withheld, not given a wider scope: those lanes have no range scope to
+  # give, and the whole-tree one they do have is absolute rather than
+  # ratcheted, so asking for it would refuse every push in a repository
+  # holding markdown that predates the guard. Judging a replayed markdown
+  # change at push is work this lane does not do yet.
+  #
   # The batch reads no input, and is given none: a check that read stdin
   # would take the ref lines this loop has not reached, and a line nobody
   # reads is a branch nobody judges.
-  "$BATCH" all "$@" </dev/null || status=$?
+  "$BATCH" all --skip-unscoped "$@" </dev/null || status=$?
   case "$status" in
     0) ;;
     1) had_violations=1 ;;
