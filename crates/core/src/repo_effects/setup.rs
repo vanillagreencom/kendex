@@ -140,15 +140,6 @@ impl SetupStatus {
 pub fn status(scope: &Scope, declared: &DeclaredEffects, ask: Ask) -> SetupStatus {
     let can_apply = declared.effects.installer.is_some();
     let shared = super::touches_git(&declared.effects);
-    let Some(checker) = &declared.effects.checker else {
-        return SetupStatus {
-            state: SetupState::Unavailable,
-            said: Vec::new(),
-            can_apply,
-            can_check: false,
-            shared,
-        };
-    };
     // Not a project, so there is no repository for an effect to stand in.
     // A state of its own rather than a check that could not be taken: the
     // personal scope is a place the app draws a card for, and a
@@ -159,6 +150,15 @@ pub fn status(scope: &Scope, declared: &DeclaredEffects, ask: Ask) -> SetupStatu
             state: SetupState::NotARepository,
             said: Vec::new(),
             can_apply: false,
+            can_check: false,
+            shared,
+        };
+    };
+    let Some(checker) = &declared.effects.checker else {
+        return SetupStatus {
+            state: SetupState::Unavailable,
+            said: Vec::new(),
+            can_apply,
             can_check: false,
             shared,
         };

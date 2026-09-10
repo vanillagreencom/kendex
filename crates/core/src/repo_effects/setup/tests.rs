@@ -301,18 +301,37 @@ fn a_checker_that_cannot_run_could_not_check() {
 
 /// A personal install changes no repository, so there is nothing to set up
 /// and nothing to report — never a read that failed, and never a sentence
-/// about scopes on a card.
+/// about scopes on a card. What the package declares does not move that
+/// answer: the place decides it, so a package that ships no checker is
+/// still told there is no repository here rather than that its check is
+/// unavailable.
 #[test]
 fn the_personal_place_has_no_repository_to_set_up() {
-    let fixture = Fixture::new();
-    let declared = fixture.declared(Some("check"), Some("arm"));
+    for checker in [Some("check"), None] {
+        let fixture = Fixture::new();
+        let declared = fixture.declared(checker, Some("arm"));
 
-    let status = status(&crate::model::Scope::Global, &declared, Ask::Person);
+        let status = status(&crate::model::Scope::Global, &declared, Ask::Person);
 
-    assert_eq!(status.state, SetupState::NotARepository);
-    assert!(status.said.is_empty(), "{:?}", status.said);
-    assert!(!status.can_apply, "nothing here can be set up");
-    assert!(!status.can_check, "nothing here can be checked");
+        assert_eq!(
+            status.state,
+            SetupState::NotARepository,
+            "checker {checker:?}"
+        );
+        assert!(
+            status.said.is_empty(),
+            "checker {checker:?}: {:?}",
+            status.said
+        );
+        assert!(
+            !status.can_apply,
+            "checker {checker:?}: nothing here can be set up"
+        );
+        assert!(
+            !status.can_check,
+            "checker {checker:?}: nothing here can be checked"
+        );
+    }
 }
 
 /// A project that is not a git work tree has nowhere git-private to record

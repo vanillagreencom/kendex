@@ -48,7 +48,7 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 
 - Stack: Tauri 2, React 19, Vite, Tailwind v4, shadcn/ui, zustand, tauri-specta, serde and toml.
 - No database: manifests, locks and native directories are the state; scans are in-memory views; app preferences live in one settings file.
-- No migration machinery: manifest and lock carry a format version, this build reads exactly the one it writes, and a file from another version is refused and left byte-for-byte. After the person moves an unreadable lock aside, `apply --record-existing` writes a current lock only when current source and every declared render match; it converts no old record.
+- No migration machinery: manifest and lock carry a format version, this build reads exactly the one it writes, and a file from another version is refused and left byte-for-byte.
 - One spelling per artifact: `kendex.toml`, `.kendex-lock.json`, `.kendex-local/`, `kendex.settings.toml`, `KENDEX_*` variables; no older product name is read anywhere.
 - App and CLI are equal thin shells over core; the only app-only operations are install-beside (`fork_beside`) and per-package update (`package::update_one`).
 - A capability the harness lacks natively is marked unsupported, never shimmed; where a vendor stores one surface as another the table names the stored kind and the lock records what was written.
@@ -57,6 +57,7 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 - Hook events have one vocabulary, Claude Code's names in `crates/core/src/hook.rs::EVENTS`; every other harness maps from it.
 - Propagation into consuming repositories is local: kendex reports drift at session start and a local refresh brings the repo current; opening pull requests there is a permanent non-goal.
 - Commits walk through the commit-guards package's committed scripts whatever tool makes them; kendex implements no check of its own and `kendex check` relays the package's verdict.
+- A package's declared check runs only under a licence: kendex's arming record in the repository's common git directory, or a person pressing the control that asks.
 - kendex never emits a pasteable command line: errors, hints and recovery instructions present the verb and its parameters as data. The one exception is the session-start drift report, whose remedies come from a fixed template set with validated identifiers.
 - The default catalog is `vanillagreencom/kendex`; subscriptions are matched by what a declaration names, never by literal spelling.
 - The app decides its launch environment once, before its first spawn, by relaunching (`crates/app/src/launch_env.rs`): the Linux display, the macOS `PATH`. Setting it in place needs `unsafe`, which is banned.
