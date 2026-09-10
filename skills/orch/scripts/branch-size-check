@@ -5,9 +5,16 @@
 # Usage:
 #   branch-size-check --worktree PATH --issue ID [--state-dir DIR] [--json]
 #
-# --issue is the normalized workflow-state key: `issue-N` for GitHub, the
-# tracker identifier (KEN-123) otherwise. The state file resolves exactly like
-# any other workflow-state call: --state-dir, then $ORCH_STATE_DIR, then tmp/
+# --issue names the tracker issue whose `**Expected delta**` line is this
+# branch's allowance: `issue-N` for GitHub, the tracker identifier (KEN-123)
+# otherwise. It is the subset of workflow-state keys that names an issue, not
+# every key: the repository-local `pr-N` fallback that ci-fix, merge-pr and
+# review-pr-comments use for a branch carrying no issue id names none, states
+# no allowance, and is not an input here — the one caller, submit-pr.md § 1.2,
+# resolves its key from the PR's own issue and never produces one.
+#
+# The state file resolves exactly like any other workflow-state call:
+# --state-dir, then $ORCH_STATE_DIR, then tmp/
 # under the caller's working directory — which is the caller's, not the
 # worktree's, so name it when the two differ.
 #
@@ -93,7 +100,7 @@ message() {
       ;;
     missing-issue)
       printf 'branch-size-check: missing-issue option=%s\n' "--issue"
-      printf '%s\n' "--issue is required (the normalized workflow-state key)"
+      printf '%s\n' "--issue is required (the tracker issue whose allowance governs the branch)"
       ;;
     invalid-issue)
       printf 'branch-size-check: invalid-issue issue=%s\n' "$issue"

@@ -289,6 +289,66 @@ env ORCH_STATE_DIR="$GW/tmp" "$MUTANT_WRITE" --worktree "$GW" --issue KEN-GROWTH
 env ORCH_STATE_DIR="$GW/tmp" "$MUTANT_CHECK" --worktree "$GW" --issue KEN-GROWTH --round-id 6-6 >/dev/null
 assert_eq "$([[ -f "$GW/tmp/dev-round-KEN-GROWTH-5-5.json" ]] && echo yes || echo no),$("$STATE" --state-dir "$GW/tmp" get KEN-GROWTH .pr.baseline_lines)" "yes,5" "control: without the gate and the guard the oversized round is written and the baseline overwritten"
 
+echo "=== a branch with no recorded baseline adopts its own size, once ==="
+# A PR opened outside `orch start` — a baseline import, a hotfix branch, a
+# human's PR — reaches its first fix round holding the null pr.baseline_lines
+# `workflow-state init` writes, because nothing ever accepted an implementation
+# receipt for it. The round adopts the branch as it stands, records the origin,
+# and every later round is held to twice that. The two values adoption does not
+# answer stay refusals: a declared cut, which exists only where a recorded
+# baseline already refused this branch, and a non-null value that is not a
+# count. The control removes the adoption from a private copy of the writer and
+# the round is unreachable again, which is the reported failure.
+AW="$(new_repo adopt-wt)"
+git -C "$AW" switch -q -c baseline/import
+printf 'one\ntwo\nthree\n' > "$AW/import.txt"
+git -C "$AW" add import.txt
+git -C "$AW" commit -q -m imported
+init_growth_state "$STATE" "$AW" pr-2 1-1 >/dev/null
+pr_baseline() { "$STATE" --state-dir "$AW/tmp" get pr-2 '.pr | "\(.baseline_lines) \(.baseline_origin)"'; }
+assert_eq "$("$STATE" --state-dir "$AW/tmp" get pr-2 '.pr | "\(has("baseline_origin")) \(.baseline_lines) \(.baseline_origin)"')" "true null null" \
+  "a fresh state file carries the baseline and its origin as one null pair, both present"
+run_write --worktree "$AW" --issue pr-2 --round-id 1-1 --item 1 adopt "$OK_REACH"
+E="rc=0 written=yes stderr~dev-round-write:+baseline-adopted+issue=pr-2+lines=3+origin=adopted=true"
+assert_eq "$(observe "$E")" "$E" "a round over an absent baseline adopts the branch as it stands and says so" "$ERR"
+assert_eq "$(pr_baseline)" "3 adopted" "the adopted baseline and its origin are what the round recorded"
+printf 'four\nfive\nsix\n' >> "$AW/import.txt"
+git -C "$AW" add import.txt
+git -C "$AW" commit -q -m grew
+run_write --worktree "$AW" --issue pr-2 --round-id 2-2 --item 1 bounded "$OK_REACH"
+E="rc=0 written=yes stderr~dev-round-write:+baseline-adopted=false"
+assert_eq "$(observe "$E")" "$E" "a later round reads the adopted baseline rather than adopting again" "$ERR"
+printf 'seven\n' >> "$AW/import.txt"
+git -C "$AW" add import.txt
+git -C "$AW" commit -q -m over
+run_write --worktree "$AW" --issue pr-2 --round-id 3-3 --item 1 over "$OK_REACH"
+E="rc=3 stderr~dev-round-write:+growth-limit+current=7+baseline=3+limit=6+origin=adopted=true"
+assert_eq "$(observe "$E")" "$E" "the over-limit refusal names where the baseline it holds the branch to came from" "$ERR"
+"$STATE" --state-dir "$AW/tmp" set pr-2 pr '{"baseline_lines":null,"baseline_origin":null}' >/dev/null
+run_write --worktree "$AW" --issue pr-2 --round-id 4-4 --cut --item 1 cut "$OK_REACH"
+E="rc=2 written=no stderr~dev-round-write:+growth-unmeasured=true"
+assert_eq "$(observe "$E")" "$E" "a declared cut adopts nothing and still refuses an absent baseline" "$ERR"
+assert_eq "$(pr_baseline)" "null null" "the refused cut recorded no baseline of its own"
+"$STATE" --state-dir "$AW/tmp" set pr-2 pr '{"baseline_lines":"lots","baseline_origin":null}' >/dev/null
+run_write --worktree "$AW" --issue pr-2 --round-id 5-5 --item 1 invalid "$OK_REACH"
+E="rc=2 written=no stderr~dev-round-write:+growth-unmeasured=true"
+assert_eq "$(observe "$E")" "$E" "a non-null baseline that is not a count refuses instead of being replaced" "$ERR"
+assert_eq "$(pr_baseline)" "lots null" "the refused round left the unreadable value in place"
+ADOPT_SCRIPTS="$(copy_scripts adopt-mutant)"
+ADOPT_MUTANT="$ADOPT_SCRIPTS/dev-round-write"
+assert_eq "$(grep -Fc 'adopt_branch_baseline "$worktree" "$issue"' "$ADOPT_MUTANT")" "1" "control: exactly one live adoption call to remove"
+sed -i.bak 's|^    adopt_branch_baseline "$worktree" "$issue"$|    : # adoption removed by must-fail control|' "$ADOPT_MUTANT"
+assert_eq "$([[ "$(grep -Fc 'adopt_branch_baseline "$worktree" "$issue"' "$ADOPT_MUTANT")" == 0 ]] && ! cmp -s "$ADOPT_MUTANT" "$WRITE_BIN" && echo yes || echo no)" "yes" \
+  "control: the adoption is removed from the private copy alone"
+"$STATE" --state-dir "$AW/tmp" set pr-2 pr '{"baseline_lines":null,"baseline_origin":null}' >/dev/null
+"$STATE" --state-dir "$AW/tmp" set pr-2 dev_round_id 6-6 >/dev/null
+set +e
+env ORCH_STATE_DIR="$AW/tmp" "$ADOPT_MUTANT" --worktree "$AW" --issue pr-2 --round-id 6-6 --item 1 mutant "$OK_REACH" >/dev/null 2>&1
+adopt_mutant_rc=$?
+set -e
+assert_eq "$adopt_mutant_rc,$([[ -f "$AW/tmp/dev-round-pr-2-6-6.json" ]] && echo yes || echo no),$(pr_baseline)" "2,no,null null" \
+  "control: without the adoption the round is refused and the branch keeps no baseline"
+
 echo "=== a record the reader cannot use fails acceptance closed ==="
 # A record removed after delegation, a non-string base_sha, an empty path
 # component in adds, and a whitespace path the delegation cannot express each

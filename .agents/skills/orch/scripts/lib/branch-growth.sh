@@ -46,20 +46,41 @@ branch_baseline_lines() {
   printf -v "$out_name" '%s' "$measured"
 }
 BRANCH_GROWTH_BASELINE=""
+# Where the recorded baseline came from: `implement` an accepted implementation
+# receipt, `adopted` a fix round on a branch no receipt ever covered, and
+# `unrecorded` a value written before either writer stamped an origin. Carried
+# so a refusal can say which number it is holding the branch to.
+BRANCH_GROWTH_BASELINE_ORIGIN=""
+# How the recorded value read: `present` a positive integer, `absent` the null a
+# fresh state file carries, `invalid` anything else, and empty when the state
+# itself could not be read. Only `absent` says no writer has spoken yet, which
+# is the one case a caller may answer by adopting a baseline of its own.
+BRANCH_GROWTH_BASELINE_STATE=""
 BRANCH_GROWTH_CURRENT=""
 BRANCH_GROWTH_LIMIT=""
 # The recorded baseline and the headroom over it, in one place: every gate that
 # reads pr.baseline_lines reads it here, so the multiplier moves for all of
 # them or for none.
 branch_growth_read_baseline() {
-  local script_dir="$1" issue="$2" baseline
-  baseline="$("$script_dir/workflow-state" get "$issue" '.pr.baseline_lines // "null"')" \
+  local script_dir="$1" issue="$2" recorded baseline origin
+  BRANCH_GROWTH_BASELINE_STATE=""
+  recorded="$("$script_dir/workflow-state" get "$issue" \
+    '"\(.pr.baseline_lines // "null") \(.pr.baseline_origin // "unrecorded")"')" \
     || branch_growth_fail "workflow state baseline for '$issue' could not be read" || return 1
-  [[ "$baseline" =~ ^[1-9][0-9]*$ ]] || {
+  read -r baseline origin <<<"$recorded"
+  if [[ "$baseline" =~ ^[1-9][0-9]*$ ]]; then
+    BRANCH_GROWTH_BASELINE_STATE="present"
+  elif [[ "$baseline" == "null" ]]; then
+    BRANCH_GROWTH_BASELINE_STATE="absent"
+  else
+    BRANCH_GROWTH_BASELINE_STATE="invalid"
+  fi
+  [[ "$BRANCH_GROWTH_BASELINE_STATE" == "present" ]] || {
     branch_growth_fail "workflow state pr.baseline_lines is missing or invalid"
     return 1
   }
   BRANCH_GROWTH_BASELINE="$baseline"
+  BRANCH_GROWTH_BASELINE_ORIGIN="$origin"
   BRANCH_GROWTH_LIMIT=$(( baseline * 2 ))
 }
 # Measure the branch against workflow state pr.baseline_lines without judging
