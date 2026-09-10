@@ -1,9 +1,11 @@
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { ProjectOffer, Refused } from "@/bindings";
-import { CommitOfferFiles } from "@/components/commit-offer-files";
+import type { ProjectOffer, Refused, TangledFile } from "@/bindings";
 import { ExternalLink } from "@/components/external-link";
+import { changeEntries } from "@/components/project-changes/change-rows";
+import { ChangedFiles } from "@/components/project-changes/changed-files";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -13,9 +15,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useMayAsk } from "@/lib/asks-first";
 import {
+  ACCEPT_EARLIER_HELD,
+  ACCEPT_EARLIER_LABEL,
+  ACTION_SEGMENT,
+  ALL_SEGMENT,
+  actionScopeNote,
   addsToPullRequest,
+  allScopeNote,
   BRANCH_REFUSED_LINE,
   BRANCH_REFUSED_TITLE,
   BRANCH_ROW_LABEL,
@@ -28,11 +37,13 @@ import {
   COMMIT_SEGMENT,
   COMMIT_STAYS,
   COMMITTING_LABEL,
+  carriesEarlier,
   commitIsOn,
   commitOfferTitle,
   commitOn,
   commitRefusedTitle,
   DONE_LABEL,
+  declaresWhatChanged,
   didNotFinish,
   FILES_LABEL,
   LEAVE_IT_HERE_LABEL,
@@ -68,13 +79,17 @@ import {
   saidLabel,
   stillCarries,
   stillStaged,
+  TANGLED_LABEL,
   unavailableReason,
   WHAT_TO_DO_LABEL,
+  WHICH_CHANGES_LABEL,
 } from "@/lib/copy-commit-offer";
 import { cn } from "@/lib/utils";
 import {
   type Route,
+  ready,
   routesFor,
+  type Scoped,
   type Stage,
   useCommitOfferStore,
 } from "@/stores/commit-offer";
@@ -258,6 +273,10 @@ function OfferState({
   const setMessage = useCommitOfferStore((s) => s.setMessage);
   const run = useCommitOfferStore((s) => s.run);
   const leave = useCommitOfferStore((s) => s.leave);
+  // A commit labelled as one action's work never carries an earlier change
+  // the reader has not said yes to, so the primary action waits on that
+  // answer rather than the reader finding out afterwards.
+  const held = useCommitOfferStore(ready);
   const routes = routesFor(offer);
   const busy = stage.at === "busy";
   return (
@@ -270,8 +289,12 @@ function OfferState({
       </DialogHeader>
       <div className="space-y-4 text-sm">
         <Section title={FILES_LABEL}>
-          <CommitOfferFiles root={offer.root} paths={offer.files} />
+          <ChangedFiles
+            root={offer.root}
+            entries={changeEntries(offer.files)}
+          />
         </Section>
+        <Scope offer={offer} busy={busy} />
         {offer.shared.length > 0 ? (
           <Section title={SHARED_LABEL}>
             <Paths paths={offer.shared} />
@@ -307,11 +330,101 @@ function OfferState({
         <Button variant="outline" disabled={busy} onClick={leave}>
           {LEAVE_LABEL}
         </Button>
-        <Button disabled={busy} onClick={() => void run()}>
+        <Button disabled={busy || !held} onClick={() => void run()}>
           {busy ? busyLabel(stage.step) : primaryLabel(route)}
         </Button>
       </DialogFooter>
     </>
+  );
+}
+
+/** Which pending changes the commit carries.
+ *
+ *  Drawn only where the two choices would make different commits: with
+ *  nothing else pending, "only this action" and "all pending changes" are
+ *  the same commit, and a choice with one answer is a control that teaches
+ *  a reader nothing.
+ *
+ *  Where the action touched a file that was already changed, or adds a file
+ *  whose declaration was already changed, no commit can carry one change
+ *  and not the other — git commits whole files. Those files are named, and
+ *  the primary action is held until the reader says yes, so nothing
+ *  labelled as one action's work ever quietly carries earlier work. */
+function Scope({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
+  const scoped = useCommitOfferStore((s) => s.scoped);
+  const accepted = useCommitOfferStore((s) => s.accepted);
+  const scope = useCommitOfferStore((s) => s.scope);
+  const accept = useCommitOfferStore((s) => s.accept);
+  const tangled = scoped === "action" ? offer.tangled : [];
+  if (!offer.choice) {
+    // No choice to make, and still the truth to tell: the one commit on
+    // offer carries earlier work in these files.
+    return offer.tangled.length > 0 ? (
+      <Section title={TANGLED_LABEL}>
+        <Tangles tangled={offer.tangled} />
+      </Section>
+    ) : null;
+  }
+  return (
+    <Section title={WHICH_CHANGES_LABEL}>
+      <div className="flex w-fit rounded-md border border-border p-0.5">
+        {(["action", "all"] as Scoped[]).map((each) => (
+          <button
+            key={each}
+            type="button"
+            disabled={busy}
+            onClick={() => scope(each)}
+            className={cn(
+              "rounded px-3 py-1 text-sm",
+              each === scoped
+                ? "bg-accent text-accent-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {each === "action" ? ACTION_SEGMENT : ALL_SEGMENT}
+          </button>
+        ))}
+      </div>
+      <p className="text-muted-foreground">
+        {scoped === "action"
+          ? actionScopeNote(offer.actionPaths.length)
+          : allScopeNote(offer.files.length)}
+      </p>
+      {tangled.length > 0 ? (
+        <div className="space-y-2 rounded border border-border p-3">
+          <Tangles tangled={tangled} />
+          <Label className="flex items-baseline gap-2 text-sm font-normal">
+            {/* Named on the box itself: a label element around a button is
+                not what names it. */}
+            <Checkbox
+              aria-label={ACCEPT_EARLIER_LABEL}
+              checked={accepted}
+              disabled={busy}
+              onCheckedChange={(next) => accept(next === true)}
+            />
+            <span>{ACCEPT_EARLIER_LABEL}</span>
+          </Label>
+          {accepted ? null : (
+            <p className="text-muted-foreground">{ACCEPT_EARLIER_HELD}</p>
+          )}
+        </div>
+      ) : null}
+    </Section>
+  );
+}
+
+/** Each file that cannot be committed on its own, and why. */
+function Tangles({ tangled }: { tangled: TangledFile[] }) {
+  return (
+    <ul className="space-y-1 text-sm text-muted-foreground">
+      {tangled.map((file) => (
+        <li key={file.path} className="break-all">
+          {file.reason === "carriesEarlier"
+            ? carriesEarlier(file.path)
+            : declaresWhatChanged(file.path)}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -437,7 +550,10 @@ function CommitRefusedState({
         {/* The files the commit covers stay on screen, so the person can
             still see what they are answering about. */}
         <Section title={FILES_LABEL}>
-          <CommitOfferFiles root={offer.root} paths={offer.files} />
+          <ChangedFiles
+            root={offer.root}
+            entries={changeEntries(offer.files)}
+          />
         </Section>
         {offer.others > 0 ? (
           <Section title={OTHER_LABEL}>

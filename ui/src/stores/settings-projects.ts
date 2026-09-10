@@ -11,6 +11,7 @@ import { rescanEverything } from "@/lib/rescan";
 import { useCommitOfferStore } from "./commit-offer";
 import { useNavStore } from "./nav";
 import { useProblemsStore } from "./problems";
+import { useProjectChangesStore } from "./project-changes";
 import { useProjectSetupStore } from "./project-setup";
 import { useUpdatesStore } from "./updates";
 
@@ -97,6 +98,7 @@ export function projectActions(ordered: {
         ordered.hold(response.data, at);
         useProjectSetupStore.getState().forget(path);
         useCommitOfferStore.getState().forget(path);
+        useProjectChangesStore.getState().forget(path);
         await Promise.all([rescanEverything(), updatesAgain()]);
       } else {
         useProblemsStore.getState().showError({
@@ -139,6 +141,7 @@ export function projectActions(ordered: {
       ordered.hold(response.data.read, at);
       useProjectSetupStore.getState().forget(was);
       useCommitOfferStore.getState().forget(was);
+      useProjectChangesStore.getState().forget(was);
       useNavStore.getState().projectMoved(was);
       // Through the project-setup owner, the way a registration's read
       // goes: it marks the new root checking and, where the read fails,

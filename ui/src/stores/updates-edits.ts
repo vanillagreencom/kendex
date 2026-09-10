@@ -8,7 +8,7 @@ import {
   UPDATES_ONE_AT_A_TIME_NOTE,
 } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
-import { offerToCommit, rescanEverything, trackedProjects } from "@/lib/rescan";
+import { beforeWriting, offerToCommit, rescanEverything } from "@/lib/rescan";
 import { caught } from "@/lib/settled";
 import { saying } from "@/lib/undone";
 import { readUnsettled, workOut } from "@/lib/updates-read-state";
@@ -25,6 +25,9 @@ type Outcome<T> = { error: string } | { ok: T };
 
 const run = <T>(work: () => Promise<Outcome<T>>): Promise<Outcome<T>> =>
   holdingBusy(async () => {
+    // Before the work: the offer at the end is about what this action did,
+    // and that is a comparison against how the projects stood before it.
+    const roots = await beforeWriting();
     // A transport failure rejects rather than refusing; caught here it is
     // presented as the refusal shape, which claims nothing happened.
     const answer = await caught(work());
@@ -35,7 +38,7 @@ const run = <T>(work: () => Promise<Outcome<T>>): Promise<Outcome<T>> =>
     // Then the machine, on `rescan.ts`'s rule: asked whatever the work
     // answered, and inside the busy this wrapper holds.
     await rescanEverything();
-    void offerToCommit(trackedProjects());
+    void offerToCommit(roots);
     return answer.status === "error" ? { error: answer.error } : answer.data;
   });
 

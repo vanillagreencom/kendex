@@ -322,6 +322,7 @@ pub fn program_said(step: Step) -> &'static str {
         | Step::Stage
         | Step::Commit
         | Step::Unstage
+        | Step::Restore
         | Step::Branch
         | Step::SwitchBack
         | Step::RemoveBranch

@@ -6,7 +6,7 @@
 //! and never summarised: the step's own words are printed, then the way on
 //! that step's state allows.
 
-use kendex_core::commit_offer::{self, Committed, Offer};
+use kendex_core::commit_offer::{self, Committed, Offer, Selection};
 use kendex_core::engine::GeneratedPaths;
 
 use super::block::{self, Recover, Retry};
@@ -67,12 +67,12 @@ fn straight(
     let before = commit_offer::previous_head(root).unwrap_or(None);
     let mut message = message(offer, given, asking)?;
     loop {
-        match commit_offer::commit(root, generated, &message) {
+        match commit_offer::commit(root, generated, &message, &Selection::All) {
             Ok(Committed::Nothing) => {
                 block::nothing_to_commit();
                 return Ok(Outcome::Nothing);
             }
-            Ok(Committed::Made { sha, files }) => {
+            Ok(Committed::Made { sha, files, .. }) => {
                 block::committed(&sha, files, None);
                 return match then {
                     Push::No => Ok(Outcome::Committed(files)),
@@ -203,7 +203,7 @@ fn pull_request(
         // so it is not asked for twice.
         return without_pull_request(offer, generated, Some(message), asking);
     }
-    let (sha, files) = match commit_offer::commit(root, generated, &message) {
+    let (sha, files) = match commit_offer::commit(root, generated, &message, &Selection::All) {
         Ok(Committed::Nothing) => {
             // The checkout already moved to a branch that will now carry
             // no commit, so kendex clears that leftover the way it does
@@ -220,7 +220,7 @@ fn pull_request(
                 }
             };
         }
-        Ok(Committed::Made { sha, files }) => (sha, files),
+        Ok(Committed::Made { sha, files, .. }) => (sha, files),
         Err(refused) => return abandoned(offer, generated, refused, message, asking),
     };
     block::committed(&sha, files, Some(&offer.new_branch));

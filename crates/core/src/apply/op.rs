@@ -461,13 +461,7 @@ fn trash(env: &Env, path: &Path, pre: &Pre, absent_is_done: bool) -> Result<()> 
         Ok(_) => {}
     }
     pre.check(path)?;
-    let trash = env.trash_dir();
-    fs::create_dir_all(&trash).map_err(|e| CoreError::io(&trash, e))?;
-    let base = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "item".to_owned());
-    crate::fs::move_any(path, &unique_in(&trash, &base))
+    crate::fs::move_to_trash(env, path)
 }
 
 fn write_tree(root: &Path, files: &[(PathBuf, Vec<u8>)], pre: &Pre) -> Result<()> {
@@ -538,19 +532,4 @@ pub fn read_git_config(file: &Path, key: &str) -> Result<Option<String>> {
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
         }),
     }
-}
-
-fn unique_in(dir: &Path, base: &str) -> PathBuf {
-    let stamp = crate::clock::timestamp().replace(':', "-");
-    let mut candidate = dir.join(format!("{stamp}-{base}"));
-    let mut counter = 1;
-    // A link, not what it points at: a relative link lands in the trash
-    // pointing nowhere, and `exists` on a broken link says the name is
-    // free. The rename onto it then fails, and one apply's rollback takes
-    // the whole removal with it.
-    while candidate.exists() || candidate.is_symlink() {
-        candidate = dir.join(format!("{stamp}-{counter}-{base}"));
-        counter += 1;
-    }
-    candidate
 }

@@ -12,6 +12,7 @@ vi.mock("@/bindings", () => ({
     scanMachine: vi.fn(),
     auditAll: vi.fn(),
     libraryProvenance: vi.fn(),
+    projectChangesScan: vi.fn(),
   },
 }));
 
@@ -32,6 +33,10 @@ beforeEach(() => {
   });
   vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
   vi.mocked(commands.libraryProvenance).mockResolvedValue({
+    status: "ok",
+    data: [],
+  });
+  vi.mocked(commands.projectChangesScan).mockResolvedValue({
     status: "ok",
     data: [],
   });

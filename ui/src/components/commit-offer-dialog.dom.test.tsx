@@ -11,7 +11,12 @@ vi.mock("sonner", () => ({ toast: { info: vi.fn(), success: vi.fn() } }));
 const offer: ProjectOffer = {
   root: "/home/method/dev/site",
   name: "site",
-  files: [".claude/CLAUDE.md"],
+  files: [
+    { path: ".claude/CLAUDE.md", did: "action", added: false, removed: false },
+  ],
+  actionPaths: [".claude/CLAUDE.md"],
+  choice: false,
+  tangled: [],
   shared: [],
   others: 0,
   branch: "main",
@@ -39,9 +44,10 @@ const buttons = () =>
 beforeEach(() => {
   useCommitOfferStore.setState({
     queue: [offer],
-    flagged: [],
     stage: { at: "offer" },
     route: "commit",
+    scoped: "action",
+    accepted: false,
     message: offer.message,
   });
 });

@@ -20,11 +20,14 @@
 //! edits with kendex's. [`crate::engine::GeneratedPaths`] is where that
 //! split is made, once, for the inventory and for this.
 //!
-//! **kendex never undoes.** It does not revert a commit, does not move a
-//! branch ref backwards, does not reset, and does not stash. The two
+//! **kendex never undoes a commit.** It does not revert one, does not move
+//! a branch ref backwards, does not reset, and does not stash. The two
 //! cleanups here — unstaging what its own `git add` staged, and removing an
 //! empty branch it made a moment earlier — are kendex clearing its own
 //! leftovers: no commit exists to undo, and no branch ref moves backwards.
+//! [`fn@restore`] writes the working tree and nothing else: it puts a pending
+//! change back to what the last commit already holds, on paths a person
+//! named and confirmed, and leaves the index and every ref alone.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -39,12 +42,19 @@ mod git;
 mod message;
 mod paths;
 mod pathspec;
+mod pending;
+mod restore;
 mod run;
 
 pub use changes::{Changed, Changes, ModeChange, file_changes};
 pub use gh::{OpenPullRequest, probe};
 pub use git::previous_head;
 pub use message::default_message;
+pub use pending::{
+    Attribution, Baseline, Held, Pending, PendingFile, Selection, Tangle, Tangled, baseline,
+    pending,
+};
+pub use restore::{RestorePlan, restore, restore_plan};
 pub use run::{
     CommitFailure, Committed, Opened, Pushed, abandon_branch, body, commit, open_pull_request,
     push, push_head, start_branch,
@@ -66,6 +76,8 @@ pub enum Step {
     Stage,
     Commit,
     Unstage,
+    /// Putting a pending change back to what the last commit holds.
+    Restore,
     Branch,
     SwitchBack,
     RemoveBranch,
@@ -87,9 +99,12 @@ impl Step {
         match self {
             Step::Read => Step::READ,
             // Local writes over the set, with no hook to wait on.
-            Step::Stage | Step::Unstage | Step::Branch | Step::SwitchBack | Step::RemoveBranch => {
-                INTERACTIVE_TIMEOUT
-            }
+            Step::Stage
+            | Step::Unstage
+            | Step::Restore
+            | Step::Branch
+            | Step::SwitchBack
+            | Step::RemoveBranch => INTERACTIVE_TIMEOUT,
             Step::Commit => Step::COMMIT,
             Step::Probe => Step::PROBE,
             Step::Push | Step::PullRequest => DEFAULT_TIMEOUT,
@@ -104,6 +119,7 @@ impl Step {
             Step::Stage => "the staging",
             Step::Commit => "the commit",
             Step::Unstage => "the unstaging",
+            Step::Restore => "the restore",
             Step::Branch => "the branch",
             Step::SwitchBack => "the switch back",
             Step::RemoveBranch => "removing the branch",

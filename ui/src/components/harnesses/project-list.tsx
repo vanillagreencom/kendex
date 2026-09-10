@@ -1,6 +1,6 @@
 import { MoreHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { MissingProject, ProjectFlag, Scope } from "@/bindings";
+import type { ChangesState, MissingProject, Scope } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AddProjectDialog } from "@/components/harnesses/add-project-dialog";
 import { FindProjectsDialog } from "@/components/harnesses/find-projects-dialog";
@@ -8,6 +8,7 @@ import { LocateFolderDialog } from "@/components/harnesses/locate-folder-dialog"
 import { PlaceMarketplacesDialog } from "@/components/harnesses/place-marketplaces-dialog";
 import { ProjectCard } from "@/components/harnesses/project-card";
 import { SessionNoteRow } from "@/components/harnesses/session-note-row";
+import { ChangesLine } from "@/components/project-changes/changes-line";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -59,8 +60,8 @@ import { availableUpdatesIn, outOfDateIn } from "@/lib/update-groups";
 import { readUnsettled } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount, useAuditStore } from "@/stores/audit";
-import { useCommitOfferStore } from "@/stores/commit-offer";
 import { useNavStore } from "@/stores/nav";
+import { changesFor, useProjectChangesStore } from "@/stores/project-changes";
 import { useProjectSetupStore } from "@/stores/project-setup";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
@@ -69,39 +70,49 @@ import { useUpdatesStore } from "@/stores/updates";
 const GLOBAL: Scope = { scope: "global" };
 
 /** What the card flags beside the project's name. A missing folder is a
- *  fault and outranks everything; uncommitted files kendex wrote are not a
- *  fault, and their reason is on hover the way the card already hides a
- *  status word behind one. */
+ *  fault and outranks everything; a checkout kendex cannot commit in is not
+ *  a fault, and its reason is on hover the way the card already hides a
+ *  status word behind one.
+ *
+ *  The second half is read from the passive project-changes row, which is
+ *  the one answer about what a project holds and what state it is in. The
+ *  ordinary case — files waiting on a branch a commit could land on —
+ *  carries no badge at all: the card's own Review changes line says it in
+ *  words, and a badge over it would be the same fact twice. */
 function badgeFor(
-  root: string,
   missing: MissingProject | undefined,
-  flagged: ProjectFlag[],
+  state: ChangesState | null,
 ):
   | { text: string; variant: "destructive" | "info"; title?: string }
   | undefined {
   if (missing)
     return { text: missingBadge(missing.why), variant: "destructive" };
-  const flag = flagged.find((each) => each.root === root);
-  if (!flag) return undefined;
-  switch (flag.reason.kind) {
-    case "noBranch":
-      return {
-        text: uncommittedBadge(flag.count),
-        variant: "info",
-        title: uncommittedNoBranch(flag.count),
-      };
-    case "inProgress":
-      return {
-        text: uncommittedBadge(flag.count),
-        variant: "info",
-        title: uncommittedInProgress(flag.count, flag.reason.operation),
-      };
+  if (state === null) return undefined;
+  switch (state.kind) {
+    case "clean":
+      return undefined;
     case "unreadable":
       return {
         text: NOT_CHECKED_BADGE,
         variant: "info",
-        title: notChecked(flag.reason.said),
+        title: notChecked(state.said),
       };
+    case "pending": {
+      const count = state.files.length;
+      if (state.operation !== null)
+        return {
+          text: uncommittedBadge(count),
+          variant: "info",
+          title: uncommittedInProgress(count, state.operation),
+        };
+      return state.branch === null
+        ? {
+            text: uncommittedBadge(count),
+            variant: "info",
+            title: uncommittedNoBranch(count),
+          }
+        : undefined;
+    }
   }
 }
 
@@ -228,7 +239,10 @@ export function ProjectList() {
       views.find((v) => sameScope(v.scope, scope)),
       auditFailure,
     );
-  // The start-of-session note's line, or nothing while no read can say.
+  // The lines under a project's counts: what kendex has waiting for a
+  // commit here, and the start-of-session note's standing. Both are about
+  // the place rather than about what is installed, which is why they sit
+  // together below the counts.
   const noteRow = (root: string, name: string) => {
     const state = result
       ? sessionNoteState(
@@ -238,9 +252,16 @@ export function ProjectList() {
           root,
         )
       : null;
-    return state ? (
-      <SessionNoteRow name={name} root={root} state={state} />
-    ) : null;
+    return (
+      <>
+        <div className="px-4">
+          <ChangesLine root={root} />
+        </div>
+        {state ? (
+          <SessionNoteRow name={name} root={root} state={state} />
+        ) : null}
+      </>
+    );
   };
   const { settings, registerProject, unregisterProject, discoverProjects } =
     useSettingsStore();
@@ -287,10 +308,10 @@ export function ProjectList() {
   const [adding, setAdding] = useState(false);
   const [scanning, setScanning] = useState(false);
 
-  // Projects where kendex owns changed files and no offer can be made: a
-  // dialog that offers nothing is a modal a person has to dismiss for no
-  // reason, so the state is flagged on the card instead.
-  const flagged = useCommitOfferStore((s) => s.flagged);
+  // What each project has waiting for a commit, from the one passive read.
+  // The card draws two things from it: the quiet Review changes line, and
+  // the badge for a checkout no commit could land in.
+  const changes = useProjectChangesStore((s) => s.rows);
   const items = result?.items ?? [];
   const packageOf = usePackageIndex();
   // The badges count packages and their clicks open the Library on the same
@@ -392,7 +413,10 @@ export function ProjectList() {
                 }
                 uncounted={uncounted}
                 emptyLabel="Nothing from kendex yet."
-                badge={badgeFor(root, missing, flagged)}
+                badge={badgeFor(
+                  missing,
+                  changesFor(changes, root)?.state ?? null,
+                )}
                 onOpen={() => goToLibrary(place)}
                 onKindClick={(kind) => goToLibrary({ ...place, kind })}
                 unmanaged={notManaged(scope)}

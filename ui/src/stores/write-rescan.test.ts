@@ -45,6 +45,8 @@ vi.mock("@/bindings", async (importOriginal) => ({
     auditAll: vi.fn(),
     libraryProvenance: vi.fn(),
     commitOfferScan: vi.fn(),
+    commitOfferBaseline: vi.fn(),
+    projectChangesScan: vi.fn(),
   },
 }));
 
@@ -120,7 +122,17 @@ beforeEach(() => {
   // this machine tracks, and answers with nothing to offer.
   vi.mocked(commands.commitOfferScan).mockResolvedValue({
     status: "ok",
-    data: { offers: [], flagged: [] },
+    data: [],
+  });
+  // Read before the write, so the offer behind it can say what the write
+  // itself did. Nothing pending here, which is what a clean project answers.
+  vi.mocked(commands.commitOfferBaseline).mockResolvedValue({
+    status: "ok",
+    data: [{ root: "/home/me/tracked", held: [] }],
+  });
+  vi.mocked(commands.projectChangesScan).mockResolvedValue({
+    status: "ok",
+    data: [],
   });
   useSettingsStore.setState({
     settings: { projects: ["/home/me/tracked"] } as never,
@@ -157,6 +169,15 @@ const readAgain = () => {
   // project's root, so the scope alone would miss it.
   expect(commands.commitOfferScan).toHaveBeenCalledWith(
     useSettingsStore.getState().settings?.projects,
+    [{ root: "/home/me/tracked", held: [] }],
+  );
+  // And that reading was taken BEFORE the write. An offer scoped against a
+  // reading from after it would report the write's own files as work that
+  // was already there.
+  expect(
+    vi.mocked(commands.commitOfferBaseline).mock.invocationCallOrder[0],
+  ).toBeLessThan(
+    vi.mocked(commands.commitOfferScan).mock.invocationCallOrder[0],
   );
 };
 

@@ -13,7 +13,7 @@ import {
   VERSION_ERROR_TITLE,
 } from "@/lib/copy";
 import { UPDATES_ONE_AT_A_TIME_NOTE } from "@/lib/copy-updates";
-import { offerToCommit, rescanEverything, trackedProjects } from "@/lib/rescan";
+import { beforeWriting, offerToCommit, rescanEverything } from "@/lib/rescan";
 import { settled } from "@/lib/settled";
 import { saying } from "@/lib/undone";
 import { workOut } from "@/lib/updates-read-state";
@@ -37,13 +37,13 @@ export function packageVersionActions(
     useProblemsStore
       .getState()
       .showError({ title: VERSION_ERROR_TITLE, message });
-  const afterChange = () => {
+  const afterChange = (roots: string[]) => {
     reload();
     // The package's own reads, then the two the whole app derives from —
     // the same call the updates store's own apply makes, on the rule
     // `rescan.ts`'s header states.
     void rescanEverything();
-    void offerToCommit(trackedProjects());
+    void offerToCommit(roots);
   };
   // Every one of these applies a plan that can refuse a rendering, so
   // none of them toasts off the click: the command's own report says what
@@ -68,6 +68,11 @@ export function packageVersionActions(
       return showError(UPDATES_ONE_AT_A_TIME_NOTE);
     setBusy(true);
     return holdingBusy(async () => {
+      // Before the command is sent, and inside the store's busy: the offer
+      // afterwards is about what this action did, which is a comparison
+      // against how the projects stood before it, and the exclusion between
+      // a check and a write must not open a window across this read.
+      const roots = await beforeWriting();
       // A promise that rejects here rather than answering would skip the
       // report, leave `setBusy` up for the life of the view and skip the
       // read-back this promises either way; `settled` also stands words in
@@ -81,12 +86,12 @@ export function packageVersionActions(
         // header says what does and does not survive a failed apply — so
         // the version this page shows as settled is the engine's answer to
         // give. The page reads back either way.
-        afterChange();
+        afterChange(roots);
         return;
       }
       // One package's apply, so a removal it reports is that package's.
       sayApply(done, response.data, 1);
-      afterChange();
+      afterChange(roots);
     });
   };
 

@@ -51,7 +51,12 @@ const guards = {
 const offer = {
   root: "/work/acme",
   name: "acme",
-  files: ["skills/gh/SKILL.md"],
+  files: [
+    { path: "skills/gh/SKILL.md", did: "action", added: true, removed: false },
+  ],
+  actionPaths: ["skills/gh/SKILL.md"],
+  choice: false,
+  tangled: [],
   message: "add gh",
   branch: null,
   push: null,
@@ -74,7 +79,6 @@ beforeEach(() => {
   useMarketplacesStore.setState({ pendingEffects: null, busy: false });
   useCommitOfferStore.setState({
     queue: [],
-    flagged: [],
     stage: { at: "offer" },
     route: "commit",
     message: "",
@@ -222,7 +226,7 @@ describe("the questions a write leaves behind", () => {
     vi.mocked(commands.commitOfferScan)
       .mockResolvedValueOnce({
         status: "ok",
-        data: { offers: [offer], flagged: [] },
+        data: [offer],
       })
       .mockReturnValueOnce(
         new Promise<Answer>((resolve) => {
@@ -237,7 +241,7 @@ describe("the questions a write leaves behind", () => {
     expect(useCommitOfferStore.getState().queue).toHaveLength(1);
     expect(host.ownerDocument.body.textContent).not.toContain("acme");
 
-    answerTheLater({ status: "ok", data: { offers: [offer], flagged: [] } });
+    answerTheLater({ status: "ok", data: [offer] });
     await later;
     await settle();
     expect(host.ownerDocument.body.textContent).toContain("acme");

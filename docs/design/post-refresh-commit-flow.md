@@ -16,8 +16,8 @@ The offer runs after the write, never before it, and never as part of it.
 - A file kendex owns one key in is not a file it owns whole. kendex does not commit one, because it cannot commit its own key without committing whatever else the person changed in the same file. It names those files and leaves them.
 - The commit runs through `git commit`, so the repository's own hooks run on it.
 - A refusal from git, from a hook, or from `gh` reaches the person in that program's own words, whole.
-- kendex never undoes. It does not revert a commit, does not move a branch ref backwards, does not reset, and does not stash.
-- kendex asks at most once per run per project.
+- kendex never undoes a commit. It does not revert one, does not move a branch ref backwards, does not reset, and does not stash. KEN-1297 adds one working-tree write, `commit_offer::restore`, which puts named paths back to what the last commit holds; it touches no ref and no index.
+- kendex asks at most once per run per project. KEN-1297 narrows what it asks about: the offer follows the action that wrote, and covers what that action changed. See § What KEN-1297 changed.
 
 ## The path set
 
@@ -44,7 +44,7 @@ That one call answers three questions at once.
 
 The set is re-derived immediately before the commit runs. A path that no longer differs is dropped. When none is left, the action reports that nothing was committed and the run ends without a commit. On the `pr` route the checkout has already moved to the new branch by then, so kendex clears that leftover the way it does after a refused commit there: `git switch -` back and `git branch -d <branch>`, and both surfaces say so with the line the refused commit uses.
 
-`kendex.toml` is the person's file and `.kendex-lock.json` is this machine's install ledger. Neither is in the collection, so neither is ever in the set.
+`.kendex-lock.json` is this machine's install ledger. It is not in the collection, so it is never in the set. `kendex.toml` was not in the set either until KEN-1297 added it; see § What KEN-1297 changed.
 
 ## Where the offer runs
 
@@ -66,7 +66,9 @@ In the app the offer is enqueued by one exported function in `ui/src/lib/rescan.
 | `ui/src/lib/rescan.ts` | `writingRepo` |
 | `ui/src/stores/updates.ts` | `updateOne`, `updateRows` |
 | `ui/src/stores/updates-edits.ts` | `run` |
-| `ui/src/components/package/package-version-actions.ts` | `afterChange` |
+| `ui/src/components/package/package-version-actions.ts` | `run` |
+
+Each of them now reads the projects before its write as well, through `rescan.ts`'s `beforeWriting`. § What KEN-1297 changed says why.
 
 That table is the whole set, and `rescan.ts`'s header is where that is established. The Updates page's review is the app's most common write and reaches the offer through `updateRows` at every scope it offers — one place, one package everywhere, a project's worth, or all of them. `updateOne` is the package page's Projects tab, which acts on one copy at a time.
 
@@ -680,3 +682,47 @@ Every state, its detection, and where its words are.
 | Nothing left to commit at commit time | The re-read path set is empty | `nothing to commit; the files changed since the offer`, and on the `pr` route the branch is abandoned and `this checkout is back on main and kendex/renders is gone` follows | Toast `Nothing to commit`, dialog closes, the branch abandoned on the `pr` route |
 | A flag named a removed choice | The flag's choice is not on offer | The head line, then that choice's reason, nothing committed | not reachable |
 | Cancelled | Ctrl-C, or the dialog dismissed | exit 130 | The dialog closes, nothing runs |
+
+## What KEN-1297 changed
+
+The KEN-1027 design above holds, with the changes below. Each names the code that carries it.
+
+### The offer follows the action, not the run
+
+The app reads every tracked project before a write (`ui/src/lib/rescan.ts::beforeWriting`, `commit_offer::baseline`) and compares that reading with the one taken after it (`commit_offer::pending`). The comparison is of content, not of path names. Each changed path kendex owns reads as one of three things: the action's own change, an earlier change the action did not touch, or a file carrying both.
+
+- A project the action changed nothing in gets no offer, whatever else is pending there. Editing one project cannot prompt about another.
+- A no-op or failed write changes nothing, so it makes no offer and claims nothing.
+- A project already in the line takes the new write's reading, so a queued offer is about the write that just ran.
+- The first reading of a project stands until that project's question is answered, so one reader action that runs many writes — the guided install writes once per place and once per marketplace — is one action.
+
+### The commit carries a chosen set
+
+`commit_offer::Selection` is `All` or `Only(paths)`, and `commit_offer::commit` narrows it against a fresh reading, reporting any path that reading no longer covers. Both offers pass a selection, so the commit behind a label is the label.
+
+Where the action's own work and everything pending would make different commits, the app puts the choice to the reader. Where they would make the same commit, it does not.
+
+git commits whole files, so two cases have no separable commit. `commit_offer::Pending::tangled` names them, and the app holds the primary action until the reader says yes:
+
+- a file the action changed that was already changed before it;
+- a file that records what kendex renders here — `.kendex-generated.json` or `kendex.toml` — whose own pending change is not the action's, where the action adds or removes a render.
+
+### The manifest is in the set
+
+`GeneratedPaths::owned` now includes the project's `kendex.toml` beside `.kendex-generated.json`. A commit carrying a render whose declaration stayed behind is a checkout the next write sweeps that render out of.
+
+### Pending changes have a place in the project UI
+
+`project_changes_scan` reads what each tracked project has waiting, on the ordinary refresh path — start-up, focus, an explicit scan, and behind every write. It opens nothing, and it runs whatever the offer setting says: that setting decides whether kendex asks a question, not whether a person may see their own project.
+
+`ui/src/stores/project-changes.ts` holds the answer. The project's card and the project's own view draw one line from it (`ChangesLine`), and `ui/src/pages/project-changes.tsx` is the review behind that line: the project, its branch, its folder, the changed files with the shared file/diff viewer, and the two actions. `commit_offer_open` opens the commit dialog from there, ignoring the offer setting because the reader is asking.
+
+Dismissing an offer lasts. Nothing puts a project's changes back in front of a reader until a write changes them again or the reader opens the review.
+
+### Putting files back
+
+`commit_offer::restore` writes the working tree and nothing else. A path the last commit holds gets that version back; a path it does not hold — one kendex added — moves to the trash, because removal never deletes. `git restore --worktree` leaves the index alone, so a change the person staged survives. The files that record what kendex renders here travel with a restore that changes which paths exist.
+
+`project_changes_restore_plan` states the exact effect before anything runs, and `project_changes_restore` derives it again when it does.
+
+This is not the engine's discard-and-render-again. The review names both and calls neither the other.

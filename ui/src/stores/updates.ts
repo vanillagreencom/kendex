@@ -9,7 +9,7 @@ import {
 } from "@/lib/copy-updates";
 import { countingWrites } from "@/lib/package-places";
 import { READ_PENDING } from "@/lib/read-state";
-import { offerToCommit, rescanEverything, trackedProjects } from "@/lib/rescan";
+import { beforeWriting, offerToCommit, rescanEverything } from "@/lib/rescan";
 import { caught, settled } from "@/lib/settled";
 import { saying } from "@/lib/undone";
 import {
@@ -135,6 +135,10 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       if (get().busy) return oneAtATime();
       if (readUnsettled(get())) return needsCheck();
       await holdingBusy(async () => {
+        // Before the write: the offer at the end is about what this update
+        // did, and that is a comparison against how the projects stood
+        // before it.
+        const roots = await beforeWriting();
         const answer = await caught(applyRow(row, reportUpdate));
         if (answer.status === "error") {
           // A transport failure rejects rather than refusing, and only
@@ -157,7 +161,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         // Then the machine, on `rescan.ts`'s rule: asked whatever the apply
         // answered, and inside the busy the write holds.
         await rescanEverything();
-        void offerToCommit(trackedProjects());
+        void offerToCommit(roots);
       });
     },
 
@@ -166,6 +170,8 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       if (state.busy) return oneAtATime();
       if (readUnsettled(state)) return needsCheck();
       await holdingBusy(async () => {
+        // Before the writes, for the reason `updateOne` states.
+        const roots = await beforeWriting();
         // Edited packages are held by the engine and cannot be updated
         // this way — their row says so and offers the install beside — so
         // they are left out rather than silently surviving the click.
@@ -210,7 +216,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         // plan moved, which is the wrong question for a refresh.
         wrote(rows);
         await rescanEverything();
-        void offerToCommit(trackedProjects());
+        void offerToCommit(roots);
       });
     },
 

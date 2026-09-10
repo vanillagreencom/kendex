@@ -144,6 +144,7 @@ const PAGE_LABELS: Record<Page, string> = {
   harnesses: "Harnesses",
   projects: "Projects",
   unmanaged: "Not managed",
+  projectChanges: "Changes to review",
   customize: "Customize",
   settings: "Settings",
   problems: "Problems",

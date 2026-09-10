@@ -18,6 +18,7 @@ use crate::engine::GeneratedPaths;
 use crate::process::Hardened;
 
 use super::pathspec::Spec;
+use super::pending::Selection;
 use super::{Failed, Refusal, Step, git};
 
 /// What the commit did.
@@ -30,6 +31,11 @@ pub enum Committed {
         /// The short name of the commit, for the line that reports it.
         sha: String,
         files: usize,
+        /// Paths the selection named that the re-read set no longer covers:
+        /// they changed back, or kendex stopped owning them, between the
+        /// offer being drawn and the commit running. Named rather than
+        /// dropped in silence — the person chose them.
+        dropped: Vec<String>,
     },
 }
 
@@ -46,12 +52,20 @@ pub struct Opened {
     pub url: String,
 }
 
-/// The commit sequence: stage the set's untracked members, then commit the
-/// whole set.
+/// The commit sequence: stage the selection's untracked members, then
+/// commit the selection.
 ///
-/// The set is re-derived immediately before the commit runs. A path that no
-/// longer differs is dropped, and when none is left the run reports that
-/// nothing was committed rather than making an empty one.
+/// The set is re-derived immediately before the commit runs, and the
+/// selection is narrowed to it. A path that no longer differs is reported as
+/// dropped rather than committed, and when none is left the run reports that
+/// nothing was committed rather than making an empty one. That re-read is
+/// what makes [`Selection::Only`] true: the paths committed are exactly the
+/// ones named, so a commit labelled as one action's work carries that work
+/// and no other pending path.
+///
+/// It cannot make the commit narrower than a whole file. Where the same file
+/// carries both the action's change and an earlier one, both go in, and
+/// [`super::Pending::tangled`] is what names that before a person chooses.
 ///
 /// The one mark a refusal leaves is the `git add`: a path that was
 /// untracked stays staged. kendex unstages exactly the paths it staged, so
@@ -63,23 +77,28 @@ pub fn commit(
     root: &Path,
     generated: &GeneratedPaths,
     message: &str,
+    selection: &Selection,
 ) -> Result<Committed, CommitFailure> {
     let Some(scan) = super::paths::scan(root, generated).map_err(CommitFailure::from)? else {
         return Ok(Committed::Nothing);
     };
-    let files = scan.owned.len();
-    let untracked: Vec<String> = scan
-        .owned
+    let (taken, dropped) = selection.over(&scan.owned);
+    if taken.is_empty() {
+        return Ok(Committed::Nothing);
+    }
+    let files = taken.len();
+    let untracked: Vec<String> = taken
         .iter()
         .filter(|owned| owned.untracked)
         .map(|owned| owned.path.clone())
         .collect();
-    let all: Vec<String> = scan.owned.iter().map(|owned| owned.path.clone()).collect();
+    let all: Vec<String> = taken.iter().map(|owned| owned.path.clone()).collect();
     stage(root, &untracked).map_err(CommitFailure::from)?;
     match make(root, &all, message) {
         Ok(()) => Ok(Committed::Made {
             sha: git::head_short(root).map_err(CommitFailure::from)?,
             files,
+            dropped,
         }),
         Err(failed) => Err(CommitFailure {
             // Both facts reach the person: the refusal that stopped the

@@ -1,16 +1,45 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { commands, type ProjectOffer } from "@/bindings";
-import { routesFor, useCommitOfferStore } from "./commit-offer";
+import { type ChangedFile, commands, type ProjectOffer } from "@/bindings";
+import {
+  ready,
+  routesFor,
+  selectionOf,
+  useCommitOfferStore,
+} from "./commit-offer";
+import { useProjectChangesStore } from "./project-changes";
 
-vi.mock("@/bindings", () => ({ commands: { commitOfferScan: vi.fn() } }));
+vi.mock("@/bindings", () => ({
+  commands: {
+    commitOfferScan: vi.fn(),
+    commitOfferBaseline: vi.fn(),
+    commitOfferCommit: vi.fn(),
+    commitOfferPreviousHead: vi.fn(),
+    projectChangesScan: vi.fn(),
+  },
+}));
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), success: vi.fn() } }));
+
+/** One changed path the write is said to have made, unless the row says
+ *  otherwise. */
+const file = (path: string, over: Partial<ChangedFile> = {}): ChangedFile => ({
+  path,
+  did: "action",
+  added: false,
+  removed: false,
+  ...over,
+});
+
+const named = (paths: string[]): ChangedFile[] => paths.map((p) => file(p));
 
 /** A project with every choice standing: a remote chosen, `gh` answering,
  *  and no pull request open for the branch. */
 const offer = (over: Partial<ProjectOffer> = {}): ProjectOffer => ({
   root: "/home/method/dev/site",
   name: "site",
-  files: [".claude/CLAUDE.md", ".kendex-generated.json"],
+  files: named([".claude/CLAUDE.md", ".kendex-generated.json"]),
+  actionPaths: [".claude/CLAUDE.md", ".kendex-generated.json"],
+  choice: false,
+  tangled: [],
   shared: [],
   others: 0,
   branch: "main",
@@ -65,18 +94,24 @@ describe("the line of projects to ask", () => {
     vi.clearAllMocks();
     useCommitOfferStore.setState({
       queue: [],
-      flagged: [],
       stage: { at: "offer" },
       route: "commit",
+      scoped: "action",
+      accepted: false,
       message: "",
       scanFailure: null,
+      baselines: {},
+    });
+    vi.mocked(commands.commitOfferBaseline).mockResolvedValue({
+      status: "ok",
+      data: [],
     });
   });
 
   it("asks each project once, whatever the write reached it twice", async () => {
     vi.mocked(commands.commitOfferScan).mockResolvedValue({
       status: "ok",
-      data: { offers: [offer()], flagged: [] },
+      data: [offer()],
     });
     const { enqueue } = useCommitOfferStore.getState();
     await enqueue(["/home/method/dev/site"]);
@@ -98,17 +133,14 @@ describe("the line of projects to ask", () => {
   it("takes the fresh reading for a project already in the line", async () => {
     vi.mocked(commands.commitOfferScan).mockResolvedValueOnce({
       status: "ok",
-      data: { offers: [offer({ files: ["one.md"] })], flagged: [] },
+      data: [offer({ files: named(["one.md"]) })],
     });
     const { enqueue } = useCommitOfferStore.getState();
     await enqueue(["/home/method/dev/site"]);
 
     vi.mocked(commands.commitOfferScan).mockResolvedValueOnce({
       status: "ok",
-      data: {
-        offers: [offer({ files: ["one.md", "two.md"] })],
-        flagged: [],
-      },
+      data: [offer({ files: named(["one.md", "two.md"]) })],
     });
     await enqueue(["/home/method/dev/site"]);
 
@@ -116,7 +148,10 @@ describe("the line of projects to ask", () => {
     expect(state.queue.map((each) => each.root)).toEqual([
       "/home/method/dev/site",
     ]);
-    expect(state.queue[0].files).toEqual(["one.md", "two.md"]);
+    expect(state.queue[0].files.map((each) => each.path)).toEqual([
+      "one.md",
+      "two.md",
+    ]);
   });
 
   // Except while it is being answered: that answer is in flight against
@@ -125,21 +160,20 @@ describe("the line of projects to ask", () => {
   it("leaves the head alone while its answer is running", async () => {
     vi.mocked(commands.commitOfferScan).mockResolvedValueOnce({
       status: "ok",
-      data: { offers: [offer({ files: ["one.md"] })], flagged: [] },
+      data: [offer({ files: named(["one.md"]) })],
     });
     await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
     useCommitOfferStore.setState({ stage: { at: "busy", step: "commit" } });
 
     vi.mocked(commands.commitOfferScan).mockResolvedValueOnce({
       status: "ok",
-      data: {
-        offers: [offer({ files: ["one.md", "two.md"] })],
-        flagged: [],
-      },
+      data: [offer({ files: named(["one.md", "two.md"]) })],
     });
     await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
 
-    expect(useCommitOfferStore.getState().queue[0].files).toEqual(["one.md"]);
+    expect(
+      useCommitOfferStore.getState().queue[0].files.map((each) => each.path),
+    ).toEqual(["one.md"]);
   });
 
   // The scans overlap and can answer in any order: `writingRepo` starts one
@@ -159,13 +193,15 @@ describe("the line of projects to ask", () => {
       .mockReturnValueOnce(older)
       .mockResolvedValueOnce({
         status: "ok",
-        data: { offers: [offer({ files: ["two.md"] })], flagged: [] },
+        data: [offer({ files: named(["two.md"]) })],
       });
     const outstanding = useCommitOfferStore
       .getState()
       .enqueue(["/home/method/dev/site"]);
     await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
-    expect(useCommitOfferStore.getState().queue[0].files).toEqual(["two.md"]);
+    expect(
+      useCommitOfferStore.getState().queue[0].files.map((each) => each.path),
+    ).toEqual(["two.md"]);
     return { outstanding, answer };
   };
 
@@ -173,10 +209,12 @@ describe("the line of projects to ask", () => {
     const { outstanding, answer } = await olderScanOutstanding();
     answer({
       status: "ok",
-      data: { offers: [offer({ files: ["one.md"] })], flagged: [] },
+      data: [offer({ files: named(["one.md"]) })],
     });
     await outstanding;
-    expect(useCommitOfferStore.getState().queue[0].files).toEqual(["two.md"]);
+    expect(
+      useCommitOfferStore.getState().queue[0].files.map((each) => each.path),
+    ).toEqual(["two.md"]);
   });
 
   it("drops the failure an older scan answers with", async () => {
@@ -201,7 +239,7 @@ describe("the line of projects to ask", () => {
 
     vi.mocked(commands.commitOfferScan).mockResolvedValueOnce({
       status: "ok",
-      data: { offers: [offer()], flagged: [] },
+      data: [offer()],
     });
     await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
     expect(useCommitOfferStore.getState().scanFailure).toBeNull();
@@ -216,7 +254,7 @@ describe("the line of projects to ask", () => {
     const second = offer({ root: "/home/method/dev/other", name: "other" });
     vi.mocked(commands.commitOfferScan).mockResolvedValue({
       status: "ok",
-      data: { offers: [offer(), second], flagged: [] },
+      data: [offer(), second],
     });
     await useCommitOfferStore.getState().enqueue(["/a", "/b"]);
     useCommitOfferStore.getState().pick("pr");
@@ -232,6 +270,238 @@ describe("the line of projects to ask", () => {
   });
 });
 
+// The reading the offer is scoped against. One reader action runs many
+// writes — the guided install writes once per place and once per
+// marketplace inside each — so the reading has to be the one taken before
+// the FIRST of them, or the install's own earlier steps read as work that
+// was already there.
+describe("the reading an action is scoped against", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useCommitOfferStore.setState({
+      queue: [],
+      stage: { at: "offer" },
+      route: "commit",
+      scoped: "action",
+      accepted: false,
+      message: "",
+      scanFailure: null,
+      baselines: {},
+    });
+    vi.mocked(commands.commitOfferBaseline).mockResolvedValue({
+      status: "ok",
+      data: [{ root: "/home/method/dev/site", held: [] }],
+    });
+    vi.mocked(commands.commitOfferScan).mockResolvedValue({
+      status: "ok",
+      data: [offer()],
+    });
+  });
+
+  it("keeps the first reading through a burst of writes", async () => {
+    const { noteBaseline } = useCommitOfferStore.getState();
+    await noteBaseline(["/home/method/dev/site"]);
+    await noteBaseline(["/home/method/dev/site"]);
+    expect(commands.commitOfferBaseline).toHaveBeenCalledTimes(1);
+    await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
+    expect(commands.commitOfferScan).toHaveBeenCalledWith(
+      ["/home/method/dev/site"],
+      [{ root: "/home/method/dev/site", held: [] }],
+    );
+  });
+
+  // Answered means answered: the next write in this project reads it
+  // afresh, so whatever the reader chose to leave behind is older work from
+  // that write's point of view rather than part of it.
+  it("reads the project again once its question is answered", async () => {
+    const { noteBaseline } = useCommitOfferStore.getState();
+    await noteBaseline(["/home/method/dev/site"]);
+    await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
+    useCommitOfferStore.getState().leave();
+    await useCommitOfferStore
+      .getState()
+      .noteBaseline(["/home/method/dev/site"]);
+    expect(commands.commitOfferBaseline).toHaveBeenCalledTimes(2);
+  });
+
+  // A reading that would not run records nothing, and the offer after the
+  // write then attributes every pending change to that write. Over-reporting
+  // rather than labelling somebody else's work as this action's.
+  it("records nothing from a reading that would not run", async () => {
+    vi.mocked(commands.commitOfferBaseline).mockResolvedValue({
+      status: "error",
+      error: "git is not on the path",
+    });
+    await useCommitOfferStore
+      .getState()
+      .noteBaseline(["/home/method/dev/site"]);
+    await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
+    expect(commands.commitOfferScan).toHaveBeenCalledWith(
+      ["/home/method/dev/site"],
+      [],
+    );
+  });
+});
+
+// Which pending changes a step carries, and when the reader has to say so.
+// The rule: a commit labelled as one action's work never carries an earlier
+// change nobody said yes to.
+describe("the set a step carries", () => {
+  const state = (over: Partial<Parameters<typeof selectionOf>[0]> = {}) => ({
+    queue: [offer({ choice: true, actionPaths: ["one.md"] })],
+    scoped: "action" as const,
+    ...over,
+  });
+
+  it("sends the action's own paths, or everything, as the reader picked", () => {
+    expect(selectionOf(state())).toEqual({ kind: "only", paths: ["one.md"] });
+    expect(selectionOf(state({ scoped: "all" }))).toEqual({ kind: "all" });
+  });
+
+  // A review a person opened themselves has no action to scope to, so
+  // asking for one would send an empty list and commit nothing.
+  it("sends everything where no action opened the offer", () => {
+    expect(
+      selectionOf({ queue: [offer({ actionPaths: [] })], scoped: "action" }),
+    ).toEqual({ kind: "all" });
+    expect(selectionOf({ queue: [], scoped: "action" })).toEqual({
+      kind: "all",
+    });
+  });
+
+  it("holds the action's own commit until the earlier changes are accepted", () => {
+    const tangled = offer({
+      choice: true,
+      actionPaths: ["one.md"],
+      tangled: [{ path: "one.md", reason: "carriesEarlier" }],
+    });
+    expect(ready({ queue: [tangled], scoped: "action", accepted: false })).toBe(
+      false,
+    );
+    expect(ready({ queue: [tangled], scoped: "action", accepted: true })).toBe(
+      true,
+    );
+    // Every other state runs: all-pending never claims to be one action's
+    // work, and an offer with nothing tangled has nothing to accept.
+    expect(ready({ queue: [tangled], scoped: "all", accepted: false })).toBe(
+      true,
+    );
+    expect(ready({ queue: [offer()], scoped: "action", accepted: false })).toBe(
+      true,
+    );
+  });
+
+  // Picking a different set drops the acceptance with it: a yes given about
+  // one set is not a yes about another.
+  it("drops an acceptance when the set changes", () => {
+    useCommitOfferStore.setState({ accepted: true });
+    useCommitOfferStore.getState().scope("all");
+    expect(useCommitOfferStore.getState().accepted).toBe(false);
+  });
+});
+
+// What the commit actually carries, and what a dismissal is worth.
+describe("answering an offer", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useCommitOfferStore.setState({
+      queue: [],
+      stage: { at: "offer" },
+      route: "commit",
+      scoped: "action",
+      accepted: false,
+      message: "",
+      scanFailure: null,
+      baselines: {},
+    });
+    vi.mocked(commands.commitOfferBaseline).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+    vi.mocked(commands.commitOfferPreviousHead).mockResolvedValue({
+      status: "ok",
+      data: "abc1234",
+    });
+    vi.mocked(commands.commitOfferCommit).mockResolvedValue({
+      status: "ok",
+      data: { kind: "made", sha: "def5678", files: 1, dropped: [] },
+    });
+  });
+
+  // The set the reader picked reaches the commit as the paths themselves.
+  // A label alone would leave core re-deriving everything pending, which is
+  // the whole of what "only this action" has to rule out.
+  it("commits the paths the picked set names", async () => {
+    vi.mocked(commands.commitOfferScan).mockResolvedValue({
+      status: "ok",
+      data: [offer({ choice: true, actionPaths: ["one.md"] })],
+    });
+    await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
+    await useCommitOfferStore.getState().run();
+    expect(commands.commitOfferCommit).toHaveBeenCalledWith(
+      "/home/method/dev/site",
+      "chore: kendex refresh",
+      { kind: "only", paths: ["one.md"] },
+    );
+
+    useCommitOfferStore.setState({ scoped: "all" });
+    await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
+    await useCommitOfferStore.getState().run();
+    expect(commands.commitOfferCommit).toHaveBeenLastCalledWith(
+      "/home/method/dev/site",
+      "chore: kendex refresh",
+      { kind: "all" },
+    );
+  });
+
+  // Dismissing is an answer, and it lasts. The passive read behind the
+  // project cards never enqueues, so a refresh — start-up, focus, a scan —
+  // cannot put a dismissed question back on screen.
+  it("keeps a dismissal through a passive read of the same project", async () => {
+    vi.mocked(commands.projectChangesScan).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          root: "/home/method/dev/site",
+          name: "site",
+          state: {
+            kind: "pending",
+            files: [".claude/CLAUDE.md"],
+            shared: [],
+            others: 0,
+            branch: "main",
+            operation: null,
+          },
+        },
+      ],
+    });
+    vi.mocked(commands.commitOfferScan).mockResolvedValue({
+      status: "ok",
+      data: [offer()],
+    });
+    await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
+    useCommitOfferStore.getState().leave();
+    expect(useCommitOfferStore.getState().queue).toEqual([]);
+
+    await useProjectChangesStore.getState().refresh(["/home/method/dev/site"]);
+    // The changes are still there to review, and the question stays shut.
+    expect(useProjectChangesStore.getState().rows).toHaveLength(1);
+    expect(useCommitOfferStore.getState().queue).toEqual([]);
+  });
+
+  // A write in another project says nothing about this one: the backend
+  // reports an offer only where the write itself changed something, and the
+  // line stays as it was.
+  it("adds nothing for a write that changed nothing here", async () => {
+    vi.mocked(commands.commitOfferScan).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+    await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
+    expect(useCommitOfferStore.getState().queue).toEqual([]);
+  });
+});
+
 // A scan behind a write reads several projects and answers later. In
 // between, a project can stop being one: reconnected to another folder,
 // or removed. The answer is about the folder it was started for, and
@@ -240,12 +510,12 @@ describe("a project that stops being one while a scan is out", () => {
   beforeEach(() => {
     useCommitOfferStore.setState({
       queue: [],
-      flagged: [],
       stage: { at: "offer" },
       route: "commit",
       message: "",
       scanFailure: null,
       scanning: false,
+      baselines: {},
     });
   });
 
@@ -260,14 +530,25 @@ describe("a project that stops being one while a scan is out", () => {
 
     const out = useCommitOfferStore.getState().enqueue([gone.root]);
     useCommitOfferStore.getState().forget(gone.root);
-    answer({
-      status: "ok",
-      data: { offers: [gone], flagged: [{ root: gone.root }] },
-    });
+    answer({ status: "ok", data: [gone] });
     await out;
 
     expect(useCommitOfferStore.getState().queue).toEqual([]);
-    expect(useCommitOfferStore.getState().flagged).toEqual([]);
+  });
+
+  // The reading taken before the write goes with the folder: a question
+  // about files at a path nothing points at any more is not one to keep.
+  it("keeps no reading for a folder that stopped being a project", async () => {
+    const gone = offer({ root: "/work/vsys-view", name: "vsys-view" });
+    vi.mocked(commands.commitOfferBaseline).mockResolvedValue({
+      status: "ok",
+      data: [{ root: gone.root, held: [] }],
+    });
+    await useCommitOfferStore.getState().noteBaseline([gone.root]);
+    expect(useCommitOfferStore.getState().baselines).toHaveProperty(gone.root);
+
+    useCommitOfferStore.getState().forget(gone.root);
+    expect(useCommitOfferStore.getState().baselines).toEqual({});
   });
 
   // The same folder registered afresh is a project again, and the ask
@@ -277,7 +558,7 @@ describe("a project that stops being one while a scan is out", () => {
     useCommitOfferStore.getState().forget(back.root);
     vi.mocked(commands.commitOfferScan).mockResolvedValue({
       status: "ok",
-      data: { offers: [back], flagged: [] },
+      data: [back],
     });
 
     await useCommitOfferStore.getState().enqueue([back.root]);

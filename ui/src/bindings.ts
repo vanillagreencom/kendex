@@ -348,10 +348,36 @@ export const commands = {
 	repoEffectsApply: (scope: Scope, declared: DeclaredEffects) => typedError<Said, string>(__TAURI_INVOKE("repo_effects_apply", { scope, declared })),
 	packageSetup: (scope: Scope, name: string, ask: Ask) => typedError<PackageSetup, string>(__TAURI_INVOKE("package_setup", { scope, name, ask })),
 	/**
+	 *  Read what every project the next write could reach holds now, so the
+	 *  offer after that write can say what the write itself did.
+	 * 
+	 *  Taken before the action runs and handed back to [`commit_offer_scan`]
+	 *  afterwards. A project this cannot read contributes nothing: the reading
+	 *  after the action then finds no baseline for it and treats every pending
+	 *  change there as the action's, which over-reports rather than claiming a
+	 *  change is somebody else's.
+	 */
+	commitOfferBaseline: (roots: string[]) => typedError<ProjectBaseline[], string>(__TAURI_INVOKE("commit_offer_baseline", { roots })),
+	/**
 	 *  Read every project the write could reach, and say for each one whether
 	 *  there is an offer to make, a state to flag on its card, or nothing.
+	 * 
+	 *  `since` is what [`commit_offer_baseline`] read before the write. A
+	 *  project whose pending changes the write did not touch has no offer to
+	 *  make about it, whatever else is pending there: editing one project may
+	 *  not put another project's older work in front of the reader.
 	 */
-	commitOfferScan: (roots: string[]) => typedError<CommitOfferScan, string>(__TAURI_INVOKE("commit_offer_scan", { roots })),
+	commitOfferScan: (roots: string[], since: ProjectBaseline[]) => typedError<ProjectOffer[], string>(__TAURI_INVOKE("commit_offer_scan", { roots, since })),
+	/**
+	 *  Build the offer for one project because a person asked for it, rather
+	 *  than because a write left it behind.
+	 * 
+	 *  The setting that turns off asking is not consulted: it decides whether
+	 *  kendex opens the question by itself, and this is the person opening it.
+	 *  Nothing is attributed to an action either — there is none — so every
+	 *  pending change is theirs to choose from.
+	 */
+	commitOfferOpen: (root: string) => typedError<OpenOffer, string>(__TAURI_INVOKE("commit_offer_open", { root })),
 	/**
 	 *  What changed in one file the offer covers, for the viewer the window
 	 *  opens on it.
@@ -363,7 +389,21 @@ export const commands = {
 	 *  it names.
 	 */
 	commitOfferFileChanges: (root: string, path: string) => typedError<FileChanges, string>(__TAURI_INVOKE("commit_offer_file_changes", { root, path })),
-	commitOfferCommit: (root: string, message: string) => typedError<CommitStep, string>(__TAURI_INVOKE("commit_offer_commit", { root, message })),
+	projectChangesScan: (roots: string[]) => typedError<ProjectChanges[], string>(__TAURI_INVOKE("project_changes_scan", { roots })),
+	/**
+	 *  The exact effect of putting these paths back, without putting any of
+	 *  them back. What the confirmation states.
+	 */
+	projectChangesRestorePlan: (root: string, paths: string[]) => typedError<RestoreResult, string>(__TAURI_INVOKE("project_changes_restore_plan", { root, paths })),
+	/**
+	 *  Put these paths back to what the last commit holds.
+	 * 
+	 *  The effect is derived again here rather than taken from the preview a
+	 *  person read: a preview describes a project that may have moved on, and a
+	 *  restore may never take a path the offer has stopped covering.
+	 */
+	projectChangesRestore: (root: string, paths: string[]) => typedError<RestoreResult, string>(__TAURI_INVOKE("project_changes_restore", { root, paths })),
+	commitOfferCommit: (root: string, message: string, selection: ChangeSelection) => typedError<CommitStep, string>(__TAURI_INVOKE("commit_offer_commit", { root, message, selection })),
 	commitOfferPush: (root: string, remote: string, branch: string, tracked: boolean) => typedError<StepResult, string>(__TAURI_INVOKE("commit_offer_push", { root, remote, branch, tracked })),
 	/**
 	 *  Push a commit that already exists to a branch of its own, without
@@ -1096,6 +1136,58 @@ export type CatalogSummary = {
 };
 
 /**
+ *  Which of a project's pending kendex changes a step is about, as the
+ *  window states it.
+ */
+export type ChangeSelection = 
+/**  Every pending change kendex owns in this project. */
+{ kind: "all" } | 
+/**
+ *  Exactly these paths. Core re-reads the project and narrows them to
+ *  what it still covers, so a window that has been open a while cannot
+ *  name a path the project has moved past.
+ */
+{ kind: "only"; paths: string[] };
+
+/**
+ *  One changed path kendex owns, and what the action that opened this offer
+ *  did to it.
+ */
+export type ChangedFile = {
+	path: string,
+	did: DidWhat,
+	/**  This path did not exist before: the change is that it now does. */
+	added: boolean,
+	/**  Nothing stands at this path now: the change is that it is gone. */
+	removed: boolean,
+};
+
+/**  What a passive read of one project found. */
+export type ChangesState = 
+/**  Nothing kendex owns has changed here. */
+{ kind: "clean" } | 
+/**  Changes are pending, and this is what stands behind them. */
+{ kind: "pending"; 
+/**  The files kendex owns whole that changed. */
+files: string[]; 
+/**  The shared configuration files kendex writes one key in. */
+shared: string[]; 
+/**  How many of the person's own files changed. */
+others: number; 
+/**  The branch a commit would land on, or `null` where none would. */
+branch: string | null; 
+/**
+ *  The git operation the checkout is in the middle of, as a line
+ *  names it, or `null`.
+ */
+operation: string | null } | 
+/**
+ *  A read this answer is built from would not run. Not zero changes —
+ *  nothing is known about this project at all.
+ */
+{ kind: "unreadable"; said: string[] };
+
+/**
  *  What the sidebar card says about the `kendex` command beside the app.
  *  Read before Update now is pressed, and read again after an install that
  *  answered rather than restarting, which leaves the card up with this the
@@ -1141,16 +1233,12 @@ export type CommandNotice =
  */
 export type CommitOffer = "ask" | "off";
 
-/**  What one read of every project the write could reach found. */
-export type CommitOfferScan = {
-	offers: ProjectOffer[],
-	flagged: ProjectFlag[],
-};
-
 /**  What the commit did. */
 export type CommitStep = 
 /**  The re-read set was empty: the files changed since the offer. */
-{ kind: "nothing" } | { kind: "made"; sha: string; files: number } | { kind: "refused"; refused: Refused; 
+{ kind: "nothing" } | { kind: "made"; sha: string; files: number; 
+/**  Paths the selection named that the re-read set no longer covers. */
+dropped: string[] } | { kind: "refused"; refused: Refused; 
 /**
  *  Paths kendex staged and could not then unstage. They are still
  *  staged, against the rule that the index ends as it began.
@@ -1392,6 +1480,18 @@ export type DetectedHarness = {
 	root: string,
 	version: string | null,
 };
+
+/**  What one action did to one changed path, on its way to the window. */
+export type DidWhat = 
+/**  The path was clean before the action; the change is the action's. */
+"action" | 
+/**
+ *  The path already carried a change before the action, and the action
+ *  changed it again. A commit of it carries both.
+ */
+"both" | 
+/**  The action left this path as it found it. */
+"older";
 
 export type DimensionScore = {
 	dimension: string,
@@ -1828,6 +1928,18 @@ export type GitReadiness = {
 };
 
 export type HarnessId = "claude" | "codex" | "opencode" | "cursor" | "pi" | "gemini" | "copilot" | "antigravity";
+
+/**  One path that already carried a pending change, and what stood there. */
+export type HeldPath = {
+	path: string,
+	/**
+	 *  A digest of what stood there, `null` where nothing stood there and
+	 *  `""` where it could not be read. Three states, because a reading
+	 *  that could not be taken must never compare equal to a later one.
+	 */
+	digest: string | null,
+	unreadable: boolean,
+};
 
 /**
  *  Whose hold keeps a place at its revision — which hold this
@@ -2687,6 +2799,16 @@ export type OpSupport = {
 	global: boolean,
 };
 
+/**  What asking for one project's offer answered with. */
+export type OpenOffer = { kind: "offer"; offer: ProjectOffer } | 
+/**  Nothing kendex owns has changed here any more. */
+{ kind: "nothing" } | 
+/**
+ *  The offer cannot be made in this project's state, and the state says
+ *  why — the same reason the project's card carries.
+ */
+{ kind: "blocked"; flag: ProjectFlag };
+
 /**  What opening the pull request did. */
 export type OpenResult = { kind: "opened"; url: string } | { kind: "refused"; refused: Refused };
 
@@ -3084,6 +3206,31 @@ export type PreflightCheck = {
 };
 
 /**
+ *  What one project's pending kendex changes held before an action ran, on
+ *  its way to the window and back.
+ */
+export type ProjectBaseline = {
+	root: string,
+	held: HeldPath[],
+};
+
+/**
+ *  What one project holds for the review a person opens themselves.
+ * 
+ *  Read on the ordinary refresh path — start-up, focus, an explicit scan,
+ *  and behind every write — and it opens nothing: it is what the project's
+ *  card and its review draw from. Deliberately the cheap half of the offer:
+ *  no remote is chosen and `gh` is not asked, so a passive read costs no
+ *  network call.
+ */
+export type ProjectChanges = {
+	root: string,
+	/**  The project's folder name. */
+	name: string,
+	state: ChangesState,
+};
+
+/**
  *  A project where kendex owns changed files and the offer cannot be made.
  *  The window flags it on the project's card rather than opening a dialog
  *  that offers nothing.
@@ -3104,7 +3251,21 @@ export type ProjectOffer = {
 	 *  abbreviation guesses at a directory and names a different file from
 	 *  the one being committed.
 	 */
-	files: string[],
+	files: ChangedFile[],
+	/**
+	 *  The paths a commit of only this action's work would carry. Empty
+	 *  where the offer was opened by a person rather than by an action, in
+	 *  which case there is no action to scope to.
+	 */
+	actionPaths: string[],
+	/**
+	 *  Whether committing only the action's work and committing everything
+	 *  pending would make different commits. Where they would not, there is
+	 *  no choice to put to the reader.
+	 */
+	choice: boolean,
+	/**  What stops the action's work from being committed on its own. */
+	tangled: TangledFile[],
 	/**  The shared configuration files kendex writes one key in. */
 	shared: string[],
 	/**  How many of the person's own files changed. */
@@ -3313,6 +3474,34 @@ export type ReportRouteView = {
 	/**  Install-record and scan failures kept beside fallback routing. */
 	warnings: string[],
 };
+
+/**
+ *  What putting the named paths back to what the last commit holds would
+ *  do, path by path.
+ */
+export type RestoreEffect = {
+	/**  Paths whose committed content comes back over what stands there now. */
+	restored: string[],
+	/**
+	 *  Paths the last commit does not hold. Putting them back means taking
+	 *  them away, and kendex takes nothing away by deleting: they move to
+	 *  the trash.
+	 */
+	removed: string[],
+	/**  Paths named that the offer no longer covers. */
+	dropped: string[],
+	/**
+	 *  Paths not named that go with them anyway, because what is being put
+	 *  back cannot stand without them.
+	 */
+	added: string[],
+};
+
+/**
+ *  What a restore answered with: the exact effect, or the words of a step
+ *  that would not run.
+ */
+export type RestoreResult = { kind: "effect"; effect: RestoreEffect } | { kind: "refused"; refused: Refused };
 
 /**
  *  What one installation of an item is waiting on, and what may be done
@@ -4035,6 +4224,28 @@ export type Tag =
 "integration" | 
 /**  Driving other tools and agents, and the workflows that chain them. */
 "automation";
+
+export type TangleReason = 
+/**
+ *  The action changed this file and it already carried an earlier
+ *  change. git commits whole files, so both go in together.
+ */
+"carriesEarlier" | 
+/**
+ *  The action adds or takes away a rendered path, and the file that
+ *  declares what kendex renders here carries an earlier change of its
+ *  own.
+ */
+"declaresWhatChanged";
+
+/**
+ *  Why the action's own work cannot be committed on its own, one file at a
+ *  time.
+ */
+export type TangledFile = {
+	path: string,
+	reason: TangleReason,
+};
 
 /**  A defect at a place in the template, with what to do about it. */
 export type TemplateFinding = {

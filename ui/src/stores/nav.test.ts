@@ -164,6 +164,7 @@ describe("nav store", () => {
         bundleRef: null,
         availableRef: null,
         unmanagedScope: null,
+        changesRoot: null,
         installInto: null,
       },
     ]);
@@ -229,6 +230,7 @@ describe("nav store", () => {
         bundleRef: null,
         availableRef: null,
         unmanagedScope: null,
+        changesRoot: null,
         installInto: null,
       },
     ]);

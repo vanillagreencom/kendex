@@ -19,6 +19,9 @@ vi.mock("@/bindings", () => ({
     scanMachine: vi.fn(),
     auditAll: vi.fn(),
     libraryProvenance: vi.fn(),
+    projectChangesScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
+    commitOfferBaseline: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
+    commitOfferScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
   },
 }));
 vi.mock("sonner", () => ({

@@ -1,14 +1,16 @@
 import { toast } from "sonner";
 import { create } from "zustand";
 import {
-  type CommitOfferScan,
+  type ChangeSelection,
   commands,
+  type ProjectBaseline,
   type ProjectFlag,
   type ProjectOffer,
   type Refused,
 } from "@/bindings";
 import {
   committedToast,
+  droppedToast,
   NOTHING_TO_COMMIT_TOAST,
   pushedToast,
 } from "@/lib/copy-commit-offer";
@@ -18,6 +20,16 @@ import { useProblemsStore } from "./problems";
 /** Which of the three the person picked. `leave` is not one: leaving is
  *  dismissing, and nothing runs for it. */
 export type Route = "commit" | "push" | "pr";
+
+/** Which pending changes the picked route is about.
+ *
+ *  `action` is the work the write that opened this offer did; `all` is
+ *  everything kendex has pending in the project, this action's work
+ *  included. The choice is put to the reader only where the two would make
+ *  different commits — [`ProjectOffer.choice`] says so — and `action` is
+ *  what an offer a write opened starts on, because that write is what the
+ *  reader just did. */
+export type Scoped = "action" | "all";
 
 /** Where the dialog is. Each state carries exactly what its own copy
  *  draws, so no view has to guess which fields apply to it. */
@@ -73,11 +85,17 @@ interface CommitOfferState {
   /** One entry per project the last write reached, first in line first.
    *  Each is asked on its own and answered on its own. */
   queue: ProjectOffer[];
-  /** Projects where kendex owns changed files and no offer can be made.
-   *  The Projects page draws these on the cards. */
-  flagged: ProjectFlag[];
   stage: Stage;
   route: Route;
+  /** Which pending changes the picked route is about. Reset to `action`
+   *  whenever the head of the line changes: the choice belongs to the offer
+   *  in front of the reader, not to the store. */
+  scoped: Scoped;
+  /** Whether the reader has said yes to committing the earlier edits that
+   *  ride along with the action's own work, on the files the offer names as
+   *  carrying both. Nothing labelled as one action's work commits an
+   *  earlier change without this. Reset with the head of the line. */
+  accepted: boolean;
   message: string;
   /** Why the scan behind a write could not say what this project holds, or
    *  null. Held rather than shown: the scan runs inside the write's own
@@ -91,6 +109,24 @@ interface CommitOfferState {
    *  question waits — `lib/asks-first.ts` holds that condition, like every
    *  other one in the order. */
   scanning: boolean;
+  /** What each project held before the write that is running now, kept from
+   *  the FIRST write of a reader's action until that project's question has
+   *  been answered.
+   *
+   *  One reader action runs many writes — the guided install writes once per
+   *  place and once per marketplace inside each — and a reading taken before
+   *  the second write would report the first write's own files as work that
+   *  was already there. So the first reading of each project stands, and
+   *  [`noteBaseline`] reads only the projects it has none for.
+   *
+   *  No view draws this. It is here rather than in a closure so that it is
+   *  one thing the store owns, reset with the rest of the store. */
+  baselines: Record<string, ProjectBaseline>;
+  /** Read what each of these projects holds now, before a write. Kept per
+   *  project until that project's question has been answered, so the offer
+   *  at the end of a guided install is about the install rather than about
+   *  its last step. */
+  noteBaseline: (roots: string[]) => Promise<void>;
   enqueue: (roots: string[]) => Promise<void>;
   /** Drop everything held about one project folder: the offer waiting on
    *  it and the flag its card draws. Called when that folder stops being
@@ -98,14 +134,76 @@ interface CommitOfferState {
    *  removed — because both are questions about files at a path nothing
    *  points at any more. */
   forget: (root: string) => void;
+  /** Put one project's offer in front of the reader because they asked for
+   *  it, not because a write left it behind. Nothing is attributed to an
+   *  action, so every pending change is theirs to choose from, and the
+   *  setting that turns off asking does not apply — they are asking.
+   *  Answers with the reason where no offer can be made. */
+  openFor: (root: string) => Promise<OpenedFor>;
   /** The held scan failure has been reported; drop it. */
   scanFailureSaid: () => void;
   pick: (route: Route) => void;
+  /** Pick which pending changes the route is about. */
+  scope: (scoped: Scoped) => void;
+  /** Say yes to the earlier edits riding along with this action's work. */
+  accept: (accepted: boolean) => void;
   setMessage: (message: string) => void;
   run: () => Promise<void>;
   openPullRequest: () => Promise<void>;
-  /** Leaving the files as diffs, which dismissing the dialog also is. */
+  /** Leaving the files as diffs, which dismissing the dialog also is.
+   *
+   *  Dismissing is an answer, and it lasts: nothing puts this project's
+   *  changes back in front of the reader until a write changes them again
+   *  or the reader opens the review themselves. The passive read behind the
+   *  project cards never enqueues, so a refresh — start-up, focus, a scan —
+   *  cannot bring a dismissed question back. */
   leave: () => void;
+}
+
+/** What asking for one project's offer answered with, for the surface that
+ *  asked. */
+export type OpenedFor =
+  | { at: "offer" }
+  /** Nothing kendex owns has changed here any more. */
+  | { at: "nothing" }
+  /** The offer cannot be made in this project's state. The flag is the
+   *  reason the read itself gave, carried rather than re-derived: the page
+   *  drew its own row from an earlier read, and this one is newer. */
+  | { at: "blocked"; flag: ProjectFlag }
+  /** The read itself would not run. */
+  | { at: "failed"; error: string };
+
+/** Which pending changes a step should carry, from the offer and what the
+ *  reader picked.
+ *
+ *  `all` is every pending change kendex owns here. `action` names the paths
+ *  the write did, and core narrows those to what it still covers when the
+ *  step runs — so the commit behind the label is the label.
+ *
+ *  An offer with nothing attributed to an action — one a person opened
+ *  themselves — has no action set, and asking for one would send an empty
+ *  list. It sends `all`, which is what that reader is choosing from. */
+export function selectionOf(state: {
+  queue: ProjectOffer[];
+  scoped: Scoped;
+}): ChangeSelection {
+  const offer = state.queue[0];
+  if (!offer || state.scoped === "all" || offer.actionPaths.length === 0)
+    return { kind: "all" };
+  return { kind: "only", paths: offer.actionPaths };
+}
+
+/** Whether the primary action may run: a commit labelled as one action's
+ *  work never carries an earlier change the reader has not said yes to.
+ *  Every other state is free to run. */
+export function ready(state: {
+  queue: ProjectOffer[];
+  scoped: Scoped;
+  accepted: boolean;
+}): boolean {
+  const offer = state.queue[0];
+  if (!offer || state.scoped === "all") return true;
+  return offer.tangled.length === 0 || state.accepted;
 }
 
 /** The choices this offer carries, in the order the design fixes. */
@@ -120,14 +218,44 @@ export function routesFor(offer: ProjectOffer): Route[] {
 }
 
 export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
+  /** Forget the readings for projects with nothing left to answer, so the
+   *  next action reads them afresh. Only once no scan is still out: a
+   *  project is not absent from the line while an answer about it is still
+   *  on its way. */
+  const settle = () => {
+    if (get().scanning) return;
+    const waiting = new Set(get().queue.map((offer) => offer.root));
+    set({
+      baselines: Object.fromEntries(
+        Object.entries(get().baselines).filter(([root]) => waiting.has(root)),
+      ),
+    });
+  };
+
+  /** Drop one project's reading: its question has been answered, so a write
+   *  that changes it again reads it afresh and what is pending then is that
+   *  write's own work against whatever the reader chose to leave.
+   *
+   *  Named apart from the store's own `forget`, which is about a folder
+   *  that stopped being a project rather than about a question that has
+   *  been answered. */
+  const spent = (root: string) => {
+    const { [root]: _gone, ...rest } = get().baselines;
+    set({ baselines: rest });
+  };
+
   /** Take the project at the head of the line off it, closing the dialog
    *  when nobody is left. */
   const advance = () => {
+    const gone = get().queue[0];
     const queue = get().queue.slice(1);
+    if (gone) spent(gone.root);
     set({
       queue,
       stage: { at: "offer" },
       route: "commit",
+      scoped: "action",
+      accepted: false,
       message: queue[0]?.message ?? "",
     });
   };
@@ -218,19 +346,44 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
 
   return {
     queue: [],
-    flagged: [],
     stage: { at: "offer" },
     route: "commit",
+    scoped: "action",
+    accepted: false,
     message: "",
     scanFailure: null,
     scanning: false,
+    baselines: {},
+
+    noteBaseline: async (roots) => {
+      const held = get().baselines;
+      const missing = roots.filter((root) => !(root in held));
+      if (missing.length === 0) return;
+      const response = await commands.commitOfferBaseline(missing);
+      // A reading that would not run says nothing about these projects, and
+      // nothing is recorded for them. The offer after the write then finds
+      // no reading to compare against and treats every pending change there
+      // as the write's own — which over-reports rather than labelling
+      // somebody else's work as this action's.
+      if (response.status === "error") return;
+      set({
+        baselines: {
+          ...get().baselines,
+          ...Object.fromEntries(response.data.map((one) => [one.root, one])),
+        },
+      });
+    },
 
     enqueue: async (roots) => {
       if (roots.length === 0) return;
       askingAgain(roots);
       const ticket = ++started;
       set({ scanning: true });
-      const response = await commands.commitOfferScan(roots);
+      const held = get().baselines;
+      const response = await commands.commitOfferScan(
+        roots,
+        roots.flatMap((root) => (root in held ? [held[root]] : [])),
+      );
       // A scan that started before one already answered says nothing about
       // what the projects hold now.
       if (ticket < answered) return;
@@ -247,15 +400,12 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
         set({ scanFailure: response.error, scanning });
         return;
       }
-      const found: CommitOfferScan = {
-        ...response.data,
-        offers: response.data.offers.filter(
-          (offer) => !isForgotten(offer.root),
-        ),
-        flagged: response.data.flagged.filter(
-          (flag) => !isForgotten(flag.root),
-        ),
-      };
+      // A folder that stopped being a project while this scan was out is
+      // not one to put back on screen: `forgotten-roots` owns that rule for
+      // every store that holds something per project.
+      const found: ProjectOffer[] = response.data.filter(
+        (offer) => !isForgotten(offer.root),
+      );
       const { queue, stage } = get();
       // A project already in the line keeps its PLACE, and takes the fresh
       // reading of what it holds.
@@ -271,17 +421,20 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
       // in flight against the offer on screen, and swapping it underneath
       // would change what the running step is about. Its own next scan
       // corrects it.
-      const fresh = new Map(found.offers.map((offer) => [offer.root, offer]));
+      const fresh = new Map(found.map((offer) => [offer.root, offer]));
       const answering = stage.at !== "offer";
+      // A project already in the line takes the fresh reading, which is the
+      // new write's: its files, and its own account of what that write did
+      // against what was already pending. A queued offer left alone would
+      // still name the earlier write's work as "this action".
       const kept = queue.map((offer, at) =>
         at === 0 && answering ? offer : (fresh.get(offer.root) ?? offer),
       );
       const waiting = new Set(kept.map((offer) => offer.root));
-      const added = found.offers.filter((offer) => !waiting.has(offer.root));
+      const added = found.filter((offer) => !waiting.has(offer.root));
       const next = [...kept, ...added];
       set({
         queue: next,
-        flagged: found.flagged,
         // A read of these projects that did land is the answer about them,
         // so an earlier scan's held failure has nothing left to report.
         scanFailure: null,
@@ -290,19 +443,49 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
         // says nothing about the message they are part-way through.
         message: queue.length > 0 ? get().message : (next[0]?.message ?? ""),
       });
+      settle();
+    },
+
+    openFor: async (root) => {
+      const response = await commands.commitOfferOpen(root);
+      if (response.status === "error") {
+        return { at: "failed", error: response.error };
+      }
+      if (response.data.kind === "nothing") return { at: "nothing" };
+      if (response.data.kind === "blocked")
+        return { at: "blocked", flag: response.data.flag };
+      const offer = response.data.offer;
+      // Ahead of whatever a write left behind: the reader asked for this
+      // one, and it is the project they are looking at. A project already
+      // in the line is not asked about twice, and the fresh reading — which
+      // attributes nothing to an action, because none opened it — is the
+      // one that stands.
+      const rest = get().queue.filter((each) => each.root !== root);
+      // No action opened this, so there is no action to scope to.
+      spent(root);
+      set({
+        queue: [offer, ...rest],
+        stage: { at: "offer" },
+        route: "commit",
+        scoped: "all",
+        accepted: false,
+        message: offer.message,
+      });
+      return { at: "offer" };
     },
 
     forget: (root) => {
       forgetRoot(root);
+      // The reading taken before a write goes with the folder it was taken
+      // in: a question about files at a path nothing points at any more is
+      // not one to keep, and holding it would compare the next write in a
+      // folder registered afresh against a reading from before the move.
+      spent(root);
       const { queue } = get();
       const kept = queue.filter((offer) => offer.root !== root);
-      if (kept.length === queue.length) {
-        set({ flagged: get().flagged.filter((flag) => flag.root !== root) });
-        return;
-      }
+      if (kept.length === queue.length) return;
       set({
         queue: kept,
-        flagged: get().flagged.filter((flag) => flag.root !== root),
         // The dialog on screen was about the offer at the head. Where that
         // is the one being dropped, the answer in progress is about a
         // folder nothing tracks, so the question starts again at whoever
@@ -320,6 +503,8 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
     scanFailureSaid: () => set({ scanFailure: null }),
 
     pick: (route) => set({ route }),
+    scope: (scoped) => set({ scoped, accepted: false }),
+    accept: (accepted) => set({ accepted }),
     setMessage: (message) => set({ message }),
 
     leave: () => advance(),
@@ -328,6 +513,11 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
       const offer = head();
       if (!offer) return;
       const { route, message } = get();
+      // Settled before the first step and carried through every one of
+      // them: the commit, the push and the pull request are three ways of
+      // sending the same set, and a set that changed between them would put
+      // a different commit behind the label the reader read.
+      const selection = selectionOf(get());
       set({ stage: { at: "busy", step: route } });
       // Read before the commit: it is the commit a recovery would put the
       // branch back to, and after the commit it is no longer HEAD.
@@ -349,7 +539,11 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
           return;
         }
       }
-      const committed = await commands.commitOfferCommit(offer.root, message);
+      const committed = await commands.commitOfferCommit(
+        offer.root,
+        message,
+        selection,
+      );
       if (committed.status === "error") return transport(committed.error);
       if (committed.data.kind === "nothing") {
         if (route === "pr") {
@@ -409,7 +603,11 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
         });
         return;
       }
-      const { sha, files } = committed.data;
+      const { sha, files, dropped } = committed.data;
+      // Paths the reader chose that the project no longer holds a change
+      // for. Said rather than dropped in silence: they chose them, and a
+      // count alone would leave them wondering which.
+      if (dropped.length > 0) toast.info(droppedToast(dropped));
       if (route === "commit") {
         toast.success(committedToast(files));
         advance();

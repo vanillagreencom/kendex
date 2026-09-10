@@ -19,6 +19,17 @@ use super::instruction_shims::{ShimStanding, ShimState};
 /// The name of the inventory CI reads, at a project root.
 pub const INVENTORY: &str = ".kendex-generated.json";
 
+/// The two files every render in a project depends on: the inventory that
+/// records which paths kendex owns here, and the manifest that declares
+/// what is installed. A commit that adds or removes a render without them
+/// is one the next apply undoes.
+pub fn companions(root: &Path) -> [PathBuf; 2] {
+    [
+        root.join(INVENTORY),
+        root.join(crate::manifest::MANIFEST_FILE),
+    ]
+}
+
 /// What kendex renders in one project, split by whether it owns the whole
 /// file.
 ///
@@ -57,12 +68,14 @@ impl GeneratedPaths {
     /// The files kendex owns whole, the inventory file among them — what
     /// the commit offer covers. The inventory is kendex's own file end to
     /// end, so it is committed with the renders it records.
+    ///
+    /// The project's manifest is here for the same reason and no other: a
+    /// commit carrying a render whose declaration stays behind is a
+    /// checkout the next `kendex apply` sweeps the render back out of. It
+    /// is kendex's own format end to end — every key in it is an
+    /// instruction to kendex — which a shared configuration file is not.
     pub fn owned(&self, root: &Path) -> BTreeSet<PathBuf> {
-        self.whole
-            .iter()
-            .cloned()
-            .chain(std::iter::once(root.join(INVENTORY)))
-            .collect()
+        self.whole.iter().cloned().chain(companions(root)).collect()
     }
 }
 

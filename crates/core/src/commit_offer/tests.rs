@@ -532,11 +532,24 @@ fn the_commit_takes_the_set_and_leaves_the_persons_changes_alone() {
     repo.git(&["add", "staged.md"]);
     let before = git::previous_head(&repo.root).unwrap().unwrap();
 
-    let made = commit(&repo.root, &generated, "chore: kendex refresh").unwrap();
-    let Committed::Made { sha, files } = made else {
+    let made = commit(
+        &repo.root,
+        &generated,
+        "chore: kendex refresh",
+        &Selection::All,
+    )
+    .unwrap();
+    let Committed::Made {
+        sha,
+        files,
+        dropped,
+    } = made
+    else {
         panic!("nothing was committed");
     };
     assert_eq!(files, 2);
+    // Every pending path is taken, so none is dropped.
+    assert!(dropped.is_empty(), "{dropped:?}");
     assert_ne!(sha, before);
     assert_eq!(git::head_short(&repo.root).unwrap(), sha);
     assert_eq!(
@@ -558,7 +571,7 @@ fn the_commit_takes_the_set_and_leaves_the_persons_changes_alone() {
     // Re-derived immediately before the commit runs: nothing left means
     // no commit, not an empty one.
     assert_eq!(
-        commit(&repo.root, &generated, "again").unwrap(),
+        commit(&repo.root, &generated, "again", &Selection::All).unwrap(),
         Committed::Nothing
     );
     assert_eq!(git::head_short(&repo.root).unwrap(), sha);
@@ -594,7 +607,9 @@ fn a_path_with_metacharacters_commits_itself_and_nothing_it_would_match() {
         repo.write(ours, "ours\n");
         repo.write(theirs, "theirs\n");
     }
-    let Committed::Made { files, .. } = commit(&repo.root, &generated, "m").unwrap() else {
+    let Committed::Made { files, .. } =
+        commit(&repo.root, &generated, "m", &Selection::All).unwrap()
+    else {
         panic!("nothing was committed");
     };
     assert_eq!(files, rows.len());
@@ -684,7 +699,7 @@ fn a_refused_commit_carries_the_hooks_words_and_puts_the_index_back() {
         "",
     );
     let before = git::head_short(&repo.root).unwrap();
-    let refused = commit(&repo.root, &generated, "m").unwrap_err();
+    let refused = commit(&repo.root, &generated, "m", &Selection::All).unwrap_err();
     assert_eq!(refused.failed.step, Step::Commit);
     assert_eq!(
         refused.failed.said(),
@@ -718,7 +733,7 @@ fn a_cleanup_that_cannot_unstage_says_how_many_paths_are_still_staged() {
     let generated = repo.generated(OWNED, &[]);
     repo.write(OWNED[1], "@AGENTS.md\n");
     repo.refusing_hook("pre-commit", &["no"], "chmod 555 .git");
-    let refused = commit(&repo.root, &generated, "m").unwrap_err();
+    let refused = commit(&repo.root, &generated, "m", &Selection::All).unwrap_err();
     fs::set_permissions(repo.root.join(".git"), fs::Permissions::from_mode(0o755)).unwrap();
     let _ = fs::remove_file(repo.root.join(".git/index.lock"));
     assert_eq!(
@@ -1299,5 +1314,499 @@ fn a_glob_shaped_path_reads_its_own_mode_and_not_a_neighbours() {
     assert_eq!(
         opened.mode, None,
         "the decoy's mode was reported as this file's"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Which pending change one action made, and which was already there.
+
+/// What the action did to each covered path, as a sorted list the rows
+/// below read.
+fn attributed(scan: &Scan, since: &Baseline) -> Vec<(String, Attribution)> {
+    pending(scan, since)
+        .files
+        .iter()
+        .map(|file| (file.path.clone(), file.attribution))
+        .collect()
+}
+
+/// The comparison is of the content, not of the path list. A file the
+/// action left exactly as it found it is earlier work whatever its name;
+/// one it changed is the action's; one it changed that was already changed
+/// is both, because git commits whole files and no commit can carry one and
+/// not the other.
+#[test]
+fn what_the_action_did_is_read_from_the_content_and_not_from_the_names() {
+    let repo = Repo::new(&[
+        (OWNED[0], "one\n"),
+        (OWNED[1], "two\n"),
+        ("docs/left.md", "left\n"),
+    ]);
+    let generated = repo.generated(&[OWNED[0], OWNED[1], "docs/left.md"], &[]);
+    // Left as diffs before the action ran: one file rewritten, one still
+    // clean.
+    repo.write(OWNED[0], "one, edited by hand\n");
+    repo.write("docs/left.md", "left, edited by hand\n");
+    let before = baseline(&repo.scope(), &generated).unwrap();
+    assert_eq!(before.held.len(), 2, "the pending paths were not read");
+
+    // The action rewrites one clean file, rewrites one already-pending file
+    // again, and leaves the third alone.
+    repo.write(OWNED[1], "two, written by kendex\n");
+    repo.write(OWNED[0], "one, written by kendex over the edit\n");
+
+    // The scan sorts by path, so the rows read in that order.
+    let scan = repo.scan(&generated).unwrap();
+    assert_eq!(
+        attributed(&scan, &before),
+        [
+            (OWNED[1].to_owned(), Attribution::Action),
+            (OWNED[0].to_owned(), Attribution::Both),
+            ("docs/left.md".to_owned(), Attribution::Older),
+        ]
+    );
+
+    let pending = pending(&scan, &before);
+    assert!(pending.acted(), "an action that wrote read as having not");
+    assert!(!pending.same(), "the two choices read as one commit");
+    // The file the action changed over an earlier edit is named, and the
+    // one the action never touched is not — it is simply left out.
+    assert_eq!(
+        pending
+            .tangled()
+            .iter()
+            .map(|tangle| (tangle.path.clone(), tangle.reason))
+            .collect::<Vec<_>>(),
+        [(OWNED[0].to_owned(), Tangled::CarriesEarlier)]
+    );
+}
+
+/// A project the action never wrote in has nothing to offer about, however
+/// much is pending there. This is what stops a write in one project putting
+/// another project's old work in front of the reader.
+#[test]
+fn an_action_that_wrote_nothing_here_has_nothing_to_offer_about_it() {
+    let repo = Repo::new(&[(OWNED[0], "one\n")]);
+    let generated = repo.generated(&[OWNED[0]], &[]);
+    repo.write(OWNED[0], "left as a diff\n");
+    let before = baseline(&repo.scope(), &generated).unwrap();
+
+    let scan = repo.scan(&generated).unwrap();
+    let pending = pending(&scan, &before);
+    assert!(!pending.acted());
+    assert_eq!(pending.action_set(), BTreeSet::new());
+}
+
+/// A reading the machine refused is not a match. Reporting it as unchanged
+/// would put earlier work into a commit labelled as the action's — the one
+/// thing this comparison exists to stop.
+#[test]
+fn a_reading_that_could_not_be_taken_never_compares_as_unchanged() {
+    let repo = Repo::new(&[(OWNED[0], "one\n")]);
+    let generated = repo.generated(&[OWNED[0]], &[]);
+    repo.write(OWNED[0], "edited by hand\n");
+    let mut before = baseline(&repo.scope(), &generated).unwrap();
+    before.held.insert(OWNED[0].to_owned(), Held::Unreadable);
+
+    let scan = repo.scan(&generated).unwrap();
+    assert_eq!(
+        attributed(&scan, &before),
+        [(OWNED[0].to_owned(), Attribution::Both)]
+    );
+}
+
+/// A commit that adds or takes away a rendered path carries the files that
+/// declare what kendex renders here. Where their own pending change is not
+/// the action's, the action's work cannot be committed on its own, and the
+/// file that stops it is named rather than quietly taken.
+#[test]
+fn a_render_the_action_adds_takes_its_declarations_with_it() {
+    let repo = Repo::new(&[(OWNED[0], "one\n")]);
+    let generated = repo.generated(&[OWNED[0], OWNED[1]], &[]);
+    // Earlier work in the inventory alone, left as a diff.
+    repo.write(INVENTORY, "[\"changed by hand\"]");
+    let before = baseline(&repo.scope(), &generated).unwrap();
+
+    // The action adds a render.
+    repo.write(OWNED[1], "@AGENTS.md\n");
+    let scan = repo.scan(&generated).unwrap();
+    let pending = pending(&scan, &before);
+
+    assert!(
+        pending.action_set().contains(INVENTORY),
+        "a render was added without the file that records it"
+    );
+    assert_eq!(
+        pending
+            .tangled()
+            .iter()
+            .map(|tangle| (tangle.path.clone(), tangle.reason))
+            .collect::<Vec<_>>(),
+        [(INVENTORY.to_owned(), Tangled::DeclaresWhatChanged)]
+    );
+}
+
+/// A render the action only rewrites changes no declaration, so a
+/// declaration's own earlier change stays out of the action's commit.
+#[test]
+fn a_render_the_action_only_rewrites_leaves_the_declarations_alone() {
+    let repo = Repo::new(&[(OWNED[0], "one\n")]);
+    let generated = repo.generated(&[OWNED[0]], &[]);
+    repo.write(INVENTORY, "[\"changed by hand\"]");
+    let before = baseline(&repo.scope(), &generated).unwrap();
+
+    repo.write(OWNED[0], "one, written by kendex\n");
+    let scan = repo.scan(&generated).unwrap();
+    let pending = pending(&scan, &before);
+
+    assert_eq!(
+        pending.action_set(),
+        [OWNED[0].to_owned()].into_iter().collect::<BTreeSet<_>>()
+    );
+    assert!(pending.tangled().is_empty(), "{:?}", pending.tangled());
+}
+
+/// The project's own manifest is committed with the renders it declares. A
+/// commit carrying a render whose declaration stayed behind is a checkout
+/// the next write sweeps that render back out of.
+#[test]
+fn the_manifest_is_one_of_the_files_the_offer_covers() {
+    let repo = Repo::new(&[(OWNED[0], "one\n"), ("kendex.toml", "schema = 6\n")]);
+    let generated = repo.generated(&[OWNED[0]], &[]);
+    repo.write("kendex.toml", "schema = 6\n[skills]\ngh = \"kit\"\n");
+    let scan = repo.scan(&generated).unwrap();
+    assert!(
+        scan.owned.iter().any(|owned| owned.path == "kendex.toml"),
+        "{:?}",
+        scan.owned
+    );
+}
+
+// ---------------------------------------------------------------------
+// What a selected commit carries, proved by the commit and the tree it
+// leaves behind.
+
+/// The paths of one commit, and what `git status` says afterwards.
+fn committed_and_left(repo: &Repo) -> (BTreeSet<String>, String) {
+    (repo.head_files(), repo.status())
+}
+
+/// Only this action's work goes in, and everything else stays exactly where
+/// it was: earlier kendex work still pending, the person's own changes,
+/// their staged copy, and the shared configuration file kendex writes one
+/// key in.
+#[test]
+fn only_this_actions_work_is_committed_and_the_rest_stays_pending() {
+    const SHARED: &str = ".mcp.json";
+    const EARLIER: &str = "docs/earlier.md";
+    const GONE: &str = "docs/gone.md";
+    let repo = Repo::new(&[
+        (OWNED[0], "one\n"),
+        (EARLIER, "earlier\n"),
+        (GONE, "gone\n"),
+        ("mine.md", "mine\n"),
+        ("staged.md", "s\n"),
+        (SHARED, "{}\n"),
+    ]);
+    let generated = repo.generated(&[OWNED[0], OWNED[1], EARLIER, GONE], &[SHARED]);
+    // Everything that was already there before the action: one render left
+    // as a diff, the person's own change, their staged copy, and the shared
+    // configuration file kendex writes one key in.
+    repo.write(EARLIER, "earlier, left as a diff\n");
+    repo.write("mine.md", "changed\n");
+    repo.write("staged.md", "staged\n");
+    repo.write(SHARED, "{\"servers\":{}}\n");
+    repo.git(&["add", "staged.md"]);
+    let before = baseline(&repo.scope(), &generated).unwrap();
+
+    // The action: one render rewritten, one added, one taken away.
+    repo.write(OWNED[0], "one, written by kendex\n");
+    repo.write(OWNED[1], "@AGENTS.md\n");
+    fs::remove_file(repo.root.join(GONE)).unwrap();
+
+    let scan = repo.scan(&generated).unwrap();
+    let pending = pending(&scan, &before);
+    let chosen = Selection::Only(pending.action_set());
+
+    let made = commit(&repo.root, &generated, "chore: kendex install", &chosen).unwrap();
+    let Committed::Made { files, dropped, .. } = made else {
+        panic!("nothing was committed");
+    };
+    assert!(dropped.is_empty(), "{dropped:?}");
+
+    let (in_commit, left) = committed_and_left(&repo);
+    // The action's three paths, and NOT the render that was already pending
+    // before it.
+    assert_eq!(
+        in_commit,
+        [OWNED[0], OWNED[1], GONE]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>()
+    );
+    assert_eq!(files, in_commit.len());
+    // The addition is a file in the commit, and the removal is a removal.
+    assert_eq!(
+        repo.git(&["show", &format!("HEAD:{}", OWNED[1])]),
+        "@AGENTS.md\n"
+    );
+    assert!(
+        !repo
+            .git(&["ls-tree", "--name-only", "HEAD", "--", GONE])
+            .contains(GONE),
+        "the removal did not land"
+    );
+    // Everything else is exactly where it was.
+    assert!(left.contains(&format!(" M {EARLIER}")), "{left}");
+    assert!(left.contains(" M mine.md"), "{left}");
+    assert!(left.contains("M  staged.md"), "{left}");
+    assert!(left.contains(&format!(" M {SHARED}")), "{left}");
+}
+
+/// The same project, the same moment, the other choice: everything pending
+/// goes in. The earlier render joins the commit and nothing of the
+/// person's does.
+#[test]
+fn all_pending_changes_commits_the_earlier_work_too() {
+    let repo = Repo::new(&[
+        (OWNED[0], "one\n"),
+        ("docs/earlier.md", "earlier\n"),
+        ("mine.md", "mine\n"),
+    ]);
+    let generated = repo.generated(&[OWNED[0], "docs/earlier.md"], &[]);
+    repo.write("docs/earlier.md", "earlier, left as a diff\n");
+    repo.write("mine.md", "changed\n");
+    let before = baseline(&repo.scope(), &generated).unwrap();
+    repo.write(OWNED[0], "one, written by kendex\n");
+
+    let scan = repo.scan(&generated).unwrap();
+    let pending = pending(&scan, &before);
+    // The two choices differ here, which is what makes the choice worth
+    // putting to a reader at all.
+    assert!(!pending.same());
+
+    commit(
+        &repo.root,
+        &generated,
+        "chore: kendex refresh",
+        &Selection::All,
+    )
+    .unwrap();
+    let (in_commit, left) = committed_and_left(&repo);
+    assert_eq!(
+        in_commit,
+        [OWNED[0], "docs/earlier.md"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>()
+    );
+    assert!(left.contains(" M mine.md"), "{left}");
+}
+
+/// A file both the action and earlier work changed goes in whole or not at
+/// all: git commits whole files. The action's commit carries the earlier
+/// edit with it, which is why the surfaces name the file and make the
+/// reader say yes.
+#[test]
+fn one_file_that_carries_both_changes_goes_in_whole() {
+    let repo = Repo::new(&[(OWNED[0], "one\nkeep\n")]);
+    let generated = repo.generated(&[OWNED[0]], &[]);
+    repo.write(OWNED[0], "one\nedited by hand\n");
+    let before = baseline(&repo.scope(), &generated).unwrap();
+    repo.write(OWNED[0], "written by kendex\nedited by hand\n");
+
+    let scan = repo.scan(&generated).unwrap();
+    let pending = pending(&scan, &before);
+    assert_eq!(
+        pending
+            .tangled()
+            .iter()
+            .map(|tangle| tangle.reason)
+            .collect::<Vec<_>>(),
+        [Tangled::CarriesEarlier]
+    );
+
+    commit(
+        &repo.root,
+        &generated,
+        "chore: kendex refresh",
+        &Selection::Only(pending.action_set()),
+    )
+    .unwrap();
+    // The whole file is in the commit, the hand edit with it, and nothing
+    // of it is left pending.
+    assert_eq!(
+        repo.git(&["show", &format!("HEAD:{}", OWNED[0])]),
+        "written by kendex\nedited by hand\n"
+    );
+    assert!(!repo.status().contains(OWNED[0]), "{}", repo.status());
+}
+
+/// A path the project stopped holding a change for between the offer being
+/// drawn and the commit running is left out and named, never guessed at.
+#[test]
+fn a_chosen_path_that_changed_back_is_dropped_and_named() {
+    let repo = Repo::new(&[(OWNED[0], "one\n"), (OWNED[1], "two\n")]);
+    let generated = repo.generated(&[OWNED[0], OWNED[1]], &[]);
+    repo.write(OWNED[0], "one, written by kendex\n");
+    repo.write(OWNED[1], "two, written by kendex\n");
+    let chosen: BTreeSet<String> = [OWNED[0], OWNED[1]]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    // One of them changes back before the commit runs.
+    repo.write(OWNED[1], "two\n");
+
+    let made = commit(
+        &repo.root,
+        &generated,
+        "chore: kendex refresh",
+        &Selection::Only(chosen),
+    )
+    .unwrap();
+    let Committed::Made { files, dropped, .. } = made else {
+        panic!("nothing was committed");
+    };
+    assert_eq!(files, 1);
+    assert_eq!(dropped, [OWNED[1].to_owned()]);
+    assert_eq!(
+        repo.head_files(),
+        [OWNED[0].to_owned()].into_iter().collect::<BTreeSet<_>>()
+    );
+}
+
+/// A selection the fresh reading covers none of is nothing to commit, and
+/// no empty commit is made for it.
+#[test]
+fn a_selection_the_project_no_longer_covers_commits_nothing() {
+    let repo = Repo::new(&[(OWNED[0], "one\n"), (OWNED[1], "two\n")]);
+    let generated = repo.generated(&[OWNED[0], OWNED[1]], &[]);
+    repo.write(OWNED[1], "two, written by kendex\n");
+    let before = git::head_short(&repo.root).unwrap();
+    assert_eq!(
+        commit(
+            &repo.root,
+            &generated,
+            "chore: kendex refresh",
+            &Selection::Only([OWNED[0].to_owned()].into_iter().collect()),
+        )
+        .unwrap(),
+        Committed::Nothing
+    );
+    assert_eq!(git::head_short(&repo.root).unwrap(), before);
+}
+
+// ---------------------------------------------------------------------
+// Putting a pending change back to what the last commit holds.
+
+fn env_in(home: &Path) -> Env {
+    Env::fake(home, crate::env::FakeOs::Linux)
+}
+
+/// The committed version comes back over a file that was rewritten, a file
+/// kendex added moves to the trash rather than being deleted, and a file it
+/// removed comes back. Everything else — the index, the person's own
+/// changes, the shared file — is exactly where it was.
+#[test]
+fn putting_files_back_restores_what_the_commit_holds_and_trashes_the_rest() {
+    let home = tempfile::tempdir().unwrap();
+    let env = env_in(&crate::test_util::rooted(&home));
+    const SHARED: &str = ".mcp.json";
+    let repo = Repo::new(&[
+        (OWNED[0], "committed\n"),
+        ("docs/swept.md", "swept\n"),
+        ("mine.md", "mine\n"),
+        ("staged.md", "s\n"),
+        (SHARED, "{}\n"),
+    ]);
+    let generated = repo.generated(&[OWNED[0], OWNED[1], "docs/swept.md"], &[SHARED]);
+    repo.write(OWNED[0], "rewritten\n");
+    repo.write(OWNED[1], "added\n");
+    fs::remove_file(repo.root.join("docs/swept.md")).unwrap();
+    repo.write("mine.md", "changed\n");
+    repo.write("staged.md", "staged\n");
+    repo.write(SHARED, "{\"servers\":{}}\n");
+    repo.git(&["add", "staged.md"]);
+
+    let scan = repo.scan(&generated).unwrap();
+    let chosen: BTreeSet<String> = scan.owned.iter().map(|one| one.path.clone()).collect();
+    let planned = restore_plan(&repo.scope(), &generated, &chosen).unwrap();
+    let done = restore(&env, &repo.scope(), &generated, &chosen).unwrap();
+    // The preview is what ran, not a guess beside it.
+    assert_eq!(planned, done);
+    assert_eq!(
+        done.restored,
+        [OWNED[0].to_owned(), "docs/swept.md".to_owned()]
+    );
+    assert_eq!(done.removed, [OWNED[1].to_owned()]);
+
+    assert_eq!(
+        fs::read_to_string(repo.root.join(OWNED[0])).unwrap(),
+        "committed\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.root.join("docs/swept.md")).unwrap(),
+        "swept\n"
+    );
+    assert!(
+        !repo.root.join(OWNED[1]).exists(),
+        "the added file is still there"
+    );
+    // Removal never deletes: what was taken away is in the trash.
+    let trashed: Vec<String> = fs::read_dir(env.trash_dir())
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(trashed.len(), 1, "{trashed:?}");
+    assert!(trashed[0].ends_with("CLAUDE.md"), "{trashed:?}");
+
+    // Nothing else moved.
+    let left = repo.status();
+    assert!(left.contains(" M mine.md"), "{left}");
+    assert!(left.contains("M  staged.md"), "{left}");
+    assert!(left.contains(&format!(" M {SHARED}")), "{left}");
+    assert!(!left.contains(".claude/"), "{left}");
+}
+
+/// Putting back a render kendex added takes the files that declare it back
+/// too, and says so. Left behind, the next write into this project would
+/// put the render straight back.
+#[test]
+fn putting_back_a_render_that_was_added_takes_its_declarations_with_it() {
+    let home = tempfile::tempdir().unwrap();
+    let env = env_in(&crate::test_util::rooted(&home));
+    let repo = Repo::new(&[(OWNED[0], "one\n")]);
+    let generated = repo.generated(&[OWNED[0], OWNED[1]], &[]);
+    repo.write(OWNED[1], "added\n");
+    repo.write(INVENTORY, "[\"a\",\"b\"]");
+
+    let chosen: BTreeSet<String> = [OWNED[1].to_owned()].into_iter().collect();
+    let done = restore(&env, &repo.scope(), &generated, &chosen).unwrap();
+    assert_eq!(done.added, [INVENTORY.to_owned()]);
+    assert_eq!(done.restored, [INVENTORY.to_owned()]);
+    assert_eq!(done.removed, [OWNED[1].to_owned()]);
+    assert!(!repo.status().contains(INVENTORY), "{}", repo.status());
+}
+
+/// Only what the offer covers is put back. A path the person names that
+/// kendex does not own, or that has changed back, is reported and left
+/// alone.
+#[test]
+fn putting_files_back_touches_nothing_the_offer_does_not_cover() {
+    let home = tempfile::tempdir().unwrap();
+    let env = env_in(&crate::test_util::rooted(&home));
+    let repo = Repo::new(&[(OWNED[0], "one\n"), ("mine.md", "mine\n")]);
+    let generated = repo.generated(&[OWNED[0]], &[]);
+    repo.write(OWNED[0], "rewritten\n");
+    repo.write("mine.md", "changed\n");
+
+    let chosen: BTreeSet<String> = ["mine.md".to_owned()].into_iter().collect();
+    let done = restore(&env, &repo.scope(), &generated, &chosen).unwrap();
+    assert!(done.empty(), "{done:?}");
+    assert_eq!(done.dropped, ["mine.md".to_owned()]);
+    assert_eq!(
+        fs::read_to_string(repo.root.join("mine.md")).unwrap(),
+        "changed\n"
     );
 }

@@ -14,13 +14,16 @@
 
 use std::path::{Path, PathBuf};
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use kendex_core::commit_offer::{
-    self, Branch, Changes, Committed, Failed, Offer, Probe, Step, Unavailable,
+    self, Attribution, Baseline, Branch, Changes, Committed, Failed, Held, Offer, Pending, Probe,
+    RestorePlan, Selection, Step, Tangled, Unavailable,
 };
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
 use kendex_core::package::diff::PackageDiff;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::scopes::env;
@@ -51,6 +54,63 @@ impl From<&Unavailable> for Why {
     }
 }
 
+/// What one action did to one changed path, on its way to the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum DidWhat {
+    /// The path was clean before the action; the change is the action's.
+    Action,
+    /// The path already carried a change before the action, and the action
+    /// changed it again. A commit of it carries both.
+    Both,
+    /// The action left this path as it found it.
+    Older,
+}
+
+impl From<Attribution> for DidWhat {
+    fn from(attribution: Attribution) -> DidWhat {
+        match attribution {
+            Attribution::Action => DidWhat::Action,
+            Attribution::Both => DidWhat::Both,
+            Attribution::Older => DidWhat::Older,
+        }
+    }
+}
+
+/// One changed path kendex owns, and what the action that opened this offer
+/// did to it.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangedFile {
+    pub path: String,
+    pub did: DidWhat,
+    /// This path did not exist before: the change is that it now does.
+    pub added: bool,
+    /// Nothing stands at this path now: the change is that it is gone.
+    pub removed: bool,
+}
+
+/// Why the action's own work cannot be committed on its own, one file at a
+/// time.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TangledFile {
+    pub path: String,
+    pub reason: TangleReason,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum TangleReason {
+    /// The action changed this file and it already carried an earlier
+    /// change. git commits whole files, so both go in together.
+    CarriesEarlier,
+    /// The action adds or takes away a rendered path, and the file that
+    /// declares what kendex renders here carries an earlier change of its
+    /// own.
+    DeclaresWhatChanged,
+}
+
 /// One project's offer, everything the dialog draws it from.
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -61,7 +121,17 @@ pub struct ProjectOffer {
     /// The files kendex owns whole that changed, printed whole: an
     /// abbreviation guesses at a directory and names a different file from
     /// the one being committed.
-    pub files: Vec<String>,
+    pub files: Vec<ChangedFile>,
+    /// The paths a commit of only this action's work would carry. Empty
+    /// where the offer was opened by a person rather than by an action, in
+    /// which case there is no action to scope to.
+    pub action_paths: Vec<String>,
+    /// Whether committing only the action's work and committing everything
+    /// pending would make different commits. Where they would not, there is
+    /// no choice to put to the reader.
+    pub choice: bool,
+    /// What stops the action's work from being committed on its own.
+    pub tangled: Vec<TangledFile>,
     /// The shared configuration files kendex writes one key in.
     pub shared: Vec<String>,
     /// How many of the person's own files changed.
@@ -108,14 +178,6 @@ pub enum FlagReason {
     },
 }
 
-/// What one read of every project the write could reach found.
-#[derive(Debug, Clone, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct CommitOfferScan {
-    pub offers: Vec<ProjectOffer>,
-    pub flagged: Vec<ProjectFlag>,
-}
-
 /// A step that did not go through.
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -153,6 +215,8 @@ pub enum CommitStep {
     Made {
         sha: String,
         files: u32,
+        /// Paths the selection named that the re-read set no longer covers.
+        dropped: Vec<String>,
     },
     Refused {
         refused: Refused,
@@ -220,15 +284,14 @@ impl From<Result<(), Failed>> for StepResult {
     }
 }
 
-fn read(env: &Env, root: &Path) -> Result<Option<Result<ProjectOffer, ProjectFlag>>, String> {
+fn read(
+    env: &Env,
+    root: &Path,
+    since: Option<&Baseline>,
+) -> Result<Option<Result<ProjectOffer, ProjectFlag>>, String> {
     let scope = Scope::Project {
         root: root.to_owned(),
     };
-    // The setting turns off the asking, and the window has no flag that
-    // could answer instead, so nothing is read at all when it is off.
-    if !commit_offer::asking(env) {
-        return Ok(None);
-    }
     let scan = match commit_offer::scan(&scope, &generated(env, &scope)?) {
         Ok(None) => return Ok(None),
         Ok(Some(scan)) => scan,
@@ -255,10 +318,14 @@ fn read(env: &Env, root: &Path) -> Result<Option<Result<ProjectOffer, ProjectFla
         }
         Branch::On(_) => {}
     }
+    // Read against the state the action found, where an action opened this.
+    // A person who opened the review themselves has no action to scope to,
+    // and every pending change is theirs to choose from.
+    let pending = since.map(|since| commit_offer::pending(&scan, since));
     // The window's write is not a typed command, so the message names the
     // shell the person is in rather than a verb they typed.
     match commit_offer::offer(scan, COMMAND, Probe::Gh) {
-        Ok(offer) => Ok(Some(Ok(drawn(root, offer)))),
+        Ok(offer) => Ok(Some(Ok(drawn(root, offer, pending.as_ref())))),
         Err(failed) => Ok(Some(Err(ProjectFlag {
             root: shown(root),
             count: 0,
@@ -273,19 +340,59 @@ fn read(env: &Env, root: &Path) -> Result<Option<Result<ProjectOffer, ProjectFla
 /// The rule is the command, and in the app the command is the app.
 const COMMAND: &str = "app";
 
-fn drawn(root: &Path, offer: Offer) -> ProjectOffer {
+fn drawn(root: &Path, offer: Offer, pending: Option<&Pending>) -> ProjectOffer {
+    let did: BTreeMap<&str, &kendex_core::commit_offer::PendingFile> = pending
+        .map(|pending| {
+            pending
+                .files
+                .iter()
+                .map(|file| (file.path.as_str(), file))
+                .collect()
+        })
+        .unwrap_or_default();
     ProjectOffer {
         root: shown(root),
-        name: root
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| shown(root)),
+        name: named(root),
         files: offer
             .scan
             .owned
             .iter()
-            .map(|owned| owned.path.clone())
+            .map(|owned| match did.get(owned.path.as_str()) {
+                // No action opened this offer, so nothing is attributed to
+                // one: every pending change stands on its own.
+                None => ChangedFile {
+                    path: owned.path.clone(),
+                    did: DidWhat::Older,
+                    added: owned.untracked,
+                    removed: false,
+                },
+                Some(file) => ChangedFile {
+                    path: owned.path.clone(),
+                    did: file.attribution.into(),
+                    added: file.untracked,
+                    removed: file.gone,
+                },
+            })
             .collect(),
+        action_paths: pending
+            .map(|pending| pending.action_set().into_iter().collect())
+            .unwrap_or_default(),
+        choice: pending.is_some_and(|pending| !pending.same()),
+        tangled: pending
+            .map(|pending| {
+                pending
+                    .tangled()
+                    .into_iter()
+                    .map(|tangle| TangledFile {
+                        path: tangle.path,
+                        reason: match tangle.reason {
+                            Tangled::CarriesEarlier => TangleReason::CarriesEarlier,
+                            Tangled::DeclaresWhatChanged => TangleReason::DeclaresWhatChanged,
+                        },
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         shared: offer.scan.shared.clone(),
         others: counted(offer.scan.others),
         push: offer.push.as_ref().err().map(Why::from),
@@ -325,27 +432,183 @@ fn shown(path: &Path) -> String {
     kendex_core::paths::slashed(path)
 }
 
-/// Read every project the write could reach, and say for each one whether
-/// there is an offer to make, a state to flag on its card, or nothing.
+/// What a project is called on a card and in a title: its folder's last
+/// segment, falling back to the whole path where it has none.
+fn named(root: &Path) -> String {
+    root.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| shown(root))
+}
+
+/// What one project's pending kendex changes held before an action ran, on
+/// its way to the window and back.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectBaseline {
+    pub root: String,
+    pub held: Vec<HeldPath>,
+}
+
+/// One path that already carried a pending change, and what stood there.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct HeldPath {
+    pub path: String,
+    /// A digest of what stood there, `null` where nothing stood there and
+    /// `""` where it could not be read. Three states, because a reading
+    /// that could not be taken must never compare equal to a later one.
+    pub digest: Option<String>,
+    pub unreadable: bool,
+}
+
+impl ProjectBaseline {
+    fn into_core(self) -> Baseline {
+        Baseline {
+            held: self
+                .held
+                .into_iter()
+                .map(|held| {
+                    let state = match (held.unreadable, held.digest) {
+                        (true, _) => Held::Unreadable,
+                        (false, Some(digest)) => Held::At(digest),
+                        (false, None) => Held::Gone,
+                    };
+                    (held.path, state)
+                })
+                .collect(),
+        }
+    }
+}
+
+fn baseline_of(root: &Path, baseline: &Baseline) -> ProjectBaseline {
+    ProjectBaseline {
+        root: shown(root),
+        held: baseline
+            .held
+            .iter()
+            .map(|(path, state)| HeldPath {
+                path: path.clone(),
+                digest: match state {
+                    Held::At(digest) => Some(digest.clone()),
+                    Held::Gone | Held::Unreadable => None,
+                },
+                unreadable: *state == Held::Unreadable,
+            })
+            .collect(),
+    }
+}
+
+/// Read what every project the next write could reach holds now, so the
+/// offer after that write can say what the write itself did.
+///
+/// Taken before the action runs and handed back to [`commit_offer_scan`]
+/// afterwards. A project this cannot read contributes nothing: the reading
+/// after the action then finds no baseline for it and treats every pending
+/// change there as the action's, which over-reports rather than claiming a
+/// change is somebody else's.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn commit_offer_scan(roots: Vec<String>) -> Result<CommitOfferScan, String> {
+pub fn commit_offer_baseline(roots: Vec<String>) -> Result<Vec<ProjectBaseline>, String> {
     let env = env()?;
-    let mut found = CommitOfferScan {
-        offers: Vec::new(),
-        flagged: Vec::new(),
-    };
+    let mut taken = Vec::new();
+    for root in roots {
+        let root = PathBuf::from(root);
+        let scope = Scope::Project { root: root.clone() };
+        let Ok(generated) = generated(&env, &scope) else {
+            continue;
+        };
+        if let Ok(baseline) = commit_offer::baseline(&scope, &generated) {
+            taken.push(baseline_of(&root, &baseline));
+        }
+    }
+    Ok(taken)
+}
+
+/// Read every project the write could reach, and say for each one whether
+/// there is an offer to make, a state to flag on its card, or nothing.
+///
+/// `since` is what [`commit_offer_baseline`] read before the write. A
+/// project whose pending changes the write did not touch has no offer to
+/// make about it, whatever else is pending there: editing one project may
+/// not put another project's older work in front of the reader.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn commit_offer_scan(
+    roots: Vec<String>,
+    since: Vec<ProjectBaseline>,
+) -> Result<Vec<ProjectOffer>, String> {
+    let env = env()?;
+    // The setting turns off the asking, and the window has no flag that
+    // could answer instead, so nothing is read at all when it is off. The
+    // passive read behind `project_changes_scan` is not asking, and keeps
+    // running: what is pending stays on the project's card and in its
+    // review, and only the question goes away.
+    if !commit_offer::asking(&env) {
+        return Ok(Vec::new());
+    }
+    let mut taken: BTreeMap<String, Baseline> = since
+        .into_iter()
+        .map(|one| (one.root.clone(), one.into_core()))
+        .collect();
+    let mut offers = Vec::new();
     for root in roots {
         // A project whose plan will not derive is not one this offer can
         // claim anything about, and it is not a failure of the write that
         // reached it either: the read is skipped and nothing is said.
-        match read(&env, &PathBuf::from(root)) {
+        let before = taken.remove(&root).unwrap_or_default();
+        match read(&env, &PathBuf::from(root), Some(&before)) {
             Ok(None) | Err(_) => {}
-            Ok(Some(Ok(offer))) => found.offers.push(offer),
-            Ok(Some(Err(flag))) => found.flagged.push(flag),
+            // An offer is made about what the write did. A project where it
+            // did nothing is left alone: its pending changes are on the
+            // project's card and in its own review, which is where deferred
+            // work belongs.
+            Ok(Some(Ok(offer))) if !offer.files.iter().any(|file| file.did != DidWhat::Older) => {}
+            Ok(Some(Ok(offer))) => offers.push(offer),
+            // A project whose state allows no offer is not flagged from
+            // here. `project_changes_scan` reads that state on the ordinary
+            // refresh path with the reason behind it, and the card and the
+            // review draw from that one answer, so a write is not a second
+            // route to the same fact with less of it.
+            Ok(Some(Err(_))) => {}
         }
     }
-    Ok(found)
+    Ok(offers)
+}
+
+/// Build the offer for one project because a person asked for it, rather
+/// than because a write left it behind.
+///
+/// The setting that turns off asking is not consulted: it decides whether
+/// kendex opens the question by itself, and this is the person opening it.
+/// Nothing is attributed to an action either — there is none — so every
+/// pending change is theirs to choose from.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn commit_offer_open(root: String) -> Result<OpenOffer, String> {
+    let env = env()?;
+    Ok(match read(&env, &PathBuf::from(root), None)? {
+        Some(Ok(offer)) => OpenOffer::Offer {
+            offer: Box::new(offer),
+        },
+        Some(Err(flag)) => OpenOffer::Blocked { flag },
+        None => OpenOffer::Nothing,
+    })
+}
+
+/// What asking for one project's offer answered with.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum OpenOffer {
+    Offer {
+        offer: Box<ProjectOffer>,
+    },
+    /// Nothing kendex owns has changed here any more.
+    Nothing,
+    /// The offer cannot be made in this project's state, and the state says
+    /// why — the same reason the project's card carries.
+    Blocked {
+        flag: ProjectFlag,
+    },
 }
 
 /// What changed in one file the offer covers, for the viewer the window
@@ -388,24 +651,228 @@ pub fn commit_offer_file_changes(root: String, path: String) -> Result<FileChang
     })
 }
 
+/// Which of a project's pending kendex changes a step is about, as the
+/// window states it.
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ChangeSelection {
+    /// Every pending change kendex owns in this project.
+    All,
+    /// Exactly these paths. Core re-reads the project and narrows them to
+    /// what it still covers, so a window that has been open a while cannot
+    /// name a path the project has moved past.
+    Only { paths: Vec<String> },
+}
+
+impl ChangeSelection {
+    fn into_core(self) -> Selection {
+        match self {
+            ChangeSelection::All => Selection::All,
+            ChangeSelection::Only { paths } => {
+                Selection::Only(paths.into_iter().collect::<BTreeSet<String>>())
+            }
+        }
+    }
+}
+
 #[tauri::command(async)]
 #[specta::specta]
-pub fn commit_offer_commit(root: String, message: String) -> Result<CommitStep, String> {
+pub fn commit_offer_commit(
+    root: String,
+    message: String,
+    selection: ChangeSelection,
+) -> Result<CommitStep, String> {
     let env = env()?;
     let root = PathBuf::from(root);
     let scope = Scope::Project { root: root.clone() };
     let generated = generated(&env, &scope)?;
-    Ok(match commit_offer::commit(&root, &generated, &message) {
-        Ok(Committed::Nothing) => CommitStep::Nothing,
-        Ok(Committed::Made { sha, files }) => CommitStep::Made {
-            sha,
-            files: counted(files),
+    let selection = selection.into_core();
+    Ok(
+        match commit_offer::commit(&root, &generated, &message, &selection) {
+            Ok(Committed::Nothing) => CommitStep::Nothing,
+            Ok(Committed::Made {
+                sha,
+                files,
+                dropped,
+            }) => CommitStep::Made {
+                sha,
+                files: counted(files),
+                dropped,
+            },
+            Err(failure) => CommitStep::Refused {
+                refused: Refused::from(&failure.failed),
+                still_staged: failure.still_staged.map(counted),
+            },
         },
-        Err(failure) => CommitStep::Refused {
-            refused: Refused::from(&failure.failed),
-            still_staged: failure.still_staged.map(counted),
+    )
+}
+
+/// What one project holds for the review a person opens themselves.
+///
+/// Read on the ordinary refresh path — start-up, focus, an explicit scan,
+/// and behind every write — and it opens nothing: it is what the project's
+/// card and its review draw from. Deliberately the cheap half of the offer:
+/// no remote is chosen and `gh` is not asked, so a passive read costs no
+/// network call.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectChanges {
+    pub root: String,
+    /// The project's folder name.
+    pub name: String,
+    pub state: ChangesState,
+}
+
+/// What a passive read of one project found.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ChangesState {
+    /// Nothing kendex owns has changed here.
+    Clean,
+    /// Changes are pending, and this is what stands behind them.
+    Pending {
+        /// The files kendex owns whole that changed.
+        files: Vec<String>,
+        /// The shared configuration files kendex writes one key in.
+        shared: Vec<String>,
+        /// How many of the person's own files changed.
+        others: u32,
+        /// The branch a commit would land on, or `null` where none would.
+        branch: Option<String>,
+        /// The git operation the checkout is in the middle of, as a line
+        /// names it, or `null`.
+        operation: Option<String>,
+    },
+    /// A read this answer is built from would not run. Not zero changes —
+    /// nothing is known about this project at all.
+    Unreadable { said: Vec<String> },
+}
+
+#[tauri::command(async)]
+#[specta::specta]
+pub fn project_changes_scan(roots: Vec<String>) -> Result<Vec<ProjectChanges>, String> {
+    let env = env()?;
+    let mut found = Vec::new();
+    for root in roots {
+        let root = PathBuf::from(root);
+        let scope = Scope::Project { root: root.clone() };
+        // A project whose plan will not derive is one this read can claim
+        // nothing about, and saying "no changes" over it would be the claim.
+        let Ok(generated) = generated(&env, &scope) else {
+            continue;
+        };
+        found.push(ProjectChanges {
+            root: shown(&root),
+            name: named(&root),
+            state: match commit_offer::scan(&scope, &generated) {
+                Ok(None) => ChangesState::Clean,
+                Ok(Some(scan)) => ChangesState::Pending {
+                    files: scan.owned.iter().map(|owned| owned.path.clone()).collect(),
+                    shared: scan.shared.clone(),
+                    others: counted(scan.others),
+                    branch: scan.on_branch().map(str::to_owned),
+                    operation: match &scan.branch {
+                        Branch::InProgress(operation) => Some(operation.article().to_owned()),
+                        Branch::On(_) | Branch::Detached => None,
+                    },
+                },
+                Err(failed) => ChangesState::Unreadable {
+                    said: failed.said().to_vec(),
+                },
+            },
+        });
+    }
+    Ok(found)
+}
+
+/// What putting the named paths back to what the last commit holds would
+/// do, path by path.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreEffect {
+    /// Paths whose committed content comes back over what stands there now.
+    pub restored: Vec<String>,
+    /// Paths the last commit does not hold. Putting them back means taking
+    /// them away, and kendex takes nothing away by deleting: they move to
+    /// the trash.
+    pub removed: Vec<String>,
+    /// Paths named that the offer no longer covers.
+    pub dropped: Vec<String>,
+    /// Paths not named that go with them anyway, because what is being put
+    /// back cannot stand without them.
+    pub added: Vec<String>,
+}
+
+impl From<RestorePlan> for RestoreEffect {
+    fn from(plan: RestorePlan) -> RestoreEffect {
+        RestoreEffect {
+            restored: plan.restored,
+            removed: plan.removed,
+            dropped: plan.dropped,
+            added: plan.added,
+        }
+    }
+}
+
+/// What a restore answered with: the exact effect, or the words of a step
+/// that would not run.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RestoreResult {
+    Effect { effect: RestoreEffect },
+    Refused { refused: Refused },
+}
+
+/// The exact effect of putting these paths back, without putting any of
+/// them back. What the confirmation states.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn project_changes_restore_plan(
+    root: String,
+    paths: Vec<String>,
+) -> Result<RestoreResult, String> {
+    let env = env()?;
+    let scope = Scope::Project {
+        root: PathBuf::from(root),
+    };
+    let generated = generated(&env, &scope)?;
+    let chosen: BTreeSet<String> = paths.into_iter().collect();
+    Ok(
+        match commit_offer::restore_plan(&scope, &generated, &chosen) {
+            Ok(plan) => RestoreResult::Effect {
+                effect: plan.into(),
+            },
+            Err(failed) => RestoreResult::Refused {
+                refused: Refused::from(&failed),
+            },
         },
-    })
+    )
+}
+
+/// Put these paths back to what the last commit holds.
+///
+/// The effect is derived again here rather than taken from the preview a
+/// person read: a preview describes a project that may have moved on, and a
+/// restore may never take a path the offer has stopped covering.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn project_changes_restore(root: String, paths: Vec<String>) -> Result<RestoreResult, String> {
+    let env = env()?;
+    let scope = Scope::Project {
+        root: PathBuf::from(root),
+    };
+    let generated = generated(&env, &scope)?;
+    let chosen: BTreeSet<String> = paths.into_iter().collect();
+    Ok(
+        match commit_offer::restore(&env, &scope, &generated, &chosen) {
+            Ok(plan) => RestoreResult::Effect {
+                effect: plan.into(),
+            },
+            Err(failed) => RestoreResult::Refused {
+                refused: Refused::from(&failed),
+            },
+        },
+    )
 }
 
 #[tauri::command(async)]

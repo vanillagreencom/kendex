@@ -10,6 +10,7 @@ import {
   useFilterHandoff,
 } from "@/components/library/use-filter-handoff";
 import { PackagesNote } from "@/components/packages-note";
+import { ChangesLine } from "@/components/project-changes/changes-line";
 import {
   Table,
   TableBody,
@@ -300,6 +301,17 @@ export function InstalledView() {
         {packagesRead.status === "failed" ? (
           <div className={cn("pb-4", WIDE_CONTENT_WIDTH)}>
             <PackagesNote />
+          </div>
+        ) : null}
+        {/* The project's own view of what kendex has written here and not
+            committed — the same line the project's card carries, from the
+            same read, so a reader who came in from the card finds it where
+            they left it. Only where the table IS one project: on the
+            machine-wide list it would be a line about a project the reader
+            has not named. */}
+        {onePlace?.scope === "project" ? (
+          <div className={cn("pb-4", WIDE_CONTENT_WIDTH)}>
+            <ChangesLine root={onePlace.root} />
           </div>
         ) : null}
         <div className={cn("flex min-h-0 flex-1", WIDE_CONTENT_WIDTH)}>

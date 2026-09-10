@@ -12,7 +12,8 @@ import {
 } from "@/lib/copy-commit-offer";
 import { CLOSE_CHANGES_LABEL, UNCHANGED_FILE_NOTE } from "@/lib/copy-files";
 import { mount, settle } from "@/test/dom";
-import { CommitOfferFiles } from "./commit-offer-files";
+import { pathEntries } from "./change-rows";
+import { ChangedFiles } from "./changed-files";
 
 vi.mock("@/bindings", () => ({
   commands: { commitOfferFileChanges: vi.fn() },
@@ -80,7 +81,8 @@ const answersInTurn = () => {
   return waiting;
 };
 
-const render = () => mount(<CommitOfferFiles root={ROOT} paths={paths} />);
+const render = () =>
+  mount(<ChangedFiles root={ROOT} entries={pathEntries(paths)} />);
 
 /** A tree row by the path it names, read off the document: the panel this
  *  component opens is portalled out of the tree it mounted into. */

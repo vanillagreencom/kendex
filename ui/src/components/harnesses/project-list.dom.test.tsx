@@ -63,6 +63,9 @@ vi.mock("@/bindings", () => ({
     capabilityTable: vi.fn(),
     updateSettings: vi.fn(),
     installDriftHook: vi.fn(),
+    // The passive read of what each tracked project has waiting for a
+    // commit, which the card's own Review changes line draws from.
+    projectChangesScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     // Read again on a registry write: update rows are keyed by the
     // folder each one is at.
     updatesOverview: vi.fn(),
