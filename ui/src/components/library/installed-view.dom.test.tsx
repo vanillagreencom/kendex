@@ -11,12 +11,12 @@ import type {
 } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
 import { openLibraryAt } from "@/components/library/use-filter-handoff";
-import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
 import {
   PACKAGES_CHECK_FAILED_TITLE,
   PACKAGES_UNCONFIRMED_TITLE,
   TRY_AGAIN_LABEL,
 } from "@/lib/copy";
+import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
 import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
 import { observedAt } from "@/lib/derive";
 import {
@@ -535,6 +535,9 @@ describe("the Library narrowed to a place that has nothing", () => {
 
     expect(host.textContent).not.toContain(nothingInstalledIn("hyprtrade"));
     expect(host.textContent).toContain("Clear filters");
+  });
+});
+
 // The reported defect: one hook installed for several tools stood as a
 // row per tool, because each tool stores it under a spelling of its own.
 // The join says which of those are one package, and the table shows that.

@@ -275,9 +275,12 @@ describe("the place a browse is begun for", () => {
     expect(useNavStore.getState().installInto).toEqual(acme);
 
     // Leaving for a package clears it: nothing there was begun for acme.
-    useNavStore
-      .getState()
-      .goToPackage({ kind: "skill", name: "gh", scope: acme });
+    useNavStore.getState().goToPackage({
+      kind: "skill",
+      name: "gh",
+      scope: acme,
+      identity: "recorded",
+    });
     expect(useNavStore.getState().installInto).toBeNull();
 
     // Arriving at Marketplaces from elsewhere with nobody named.
