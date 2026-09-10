@@ -10,7 +10,9 @@
 #   commit-guards CHECK [ARGS..]   run one check, flags passed through
 #
 # --skip-unscoped withholds the checks the named scope leaves nothing for,
-# rather than folding a clean count over content they never opened.
+# rather than folding a clean count over content they never opened. Which
+# checks those are depends on their configured scope, not on which library
+# they read it from.
 #
 # commit-msg reads a message, so it never runs in the batch — the commit-msg
 # hook invokes it directly. Batch aggregation fails closed: exit 2 if ANY
@@ -26,6 +28,11 @@ GG_CHECK="commit-guards"
 source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/settings.sh
 source "$SCRIPT_DIR/lib/settings.sh"
+# The owner of COMMIT_GUARDS_MD_SCOPE's meaning, for --skip-unscoped below.
+# Sourcing it defines gg_md_bare_scope and two constants and does nothing
+# else; the selecting helpers it also defines go unused here.
+# shellcheck source=lib/md-scope.sh
+source "$SCRIPT_DIR/lib/md-scope.sh"
 
 KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs comments commit-msg"
 BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs"
@@ -55,9 +62,11 @@ $FULL_SCOPED_CHECKS gets --all, the rest read the index by design.
 --base REF hands $FULL_SCOPED_CHECKS --base REF instead (CI on a PR), and
 --against REF hands them --against REF (what the change does to REF's tree).
 --staged is passed to: $STAGED_SCOPED_CHECKS.
---skip-unscoped withholds every check that selects its files from the staged
-diff, naming each one, for a caller whose scope stages nothing. It is a
-contradiction under --staged, which is the scope those checks read.
+--skip-unscoped is for a caller whose scope stages nothing: it withholds every
+check that would then open no file, naming each one. That is the checks whose
+configured scope selects from the staged diff; one configured to sweep the
+tree needs nothing staged and runs. It is a contradiction under --staged,
+which is the scope those checks read.
 Those checks apply their own commit scope. md-refs checks all configured
 documents for broken references, including unchanged callers.
 commit-msg reads a message file/stdin and only runs by name.
@@ -145,19 +154,34 @@ for c in $CHECKS; do
   esac
 done
 
-# A check that selects its files from the STAGED diff reads nothing at all
-# under a scope that stages nothing: it reports a count of zero and a clean
-# verdict over content it never opened, which is the verdict about nothing
-# this dispatcher exists not to give. A caller that knows its scope stages
-# nothing asks for them to be withheld; each is named here, and the verdict
-# record below lists only the checks that ran.
+# A check whose CONFIGURED scope selects from the staged diff reads nothing
+# at all under a caller that stages nothing: it reports a count of zero and a
+# clean verdict over content it never opened, which is the verdict about
+# nothing this dispatcher exists not to give. A caller that knows its scope
+# stages nothing asks for those to be withheld; each is named here, and the
+# verdict record below lists only the checks that ran.
 #
-# Which checks those are is asked of each check's own script rather than
-# listed here. A lane that starts resolving its scope through the shared
-# markdown selector later must not rejoin the clean count in silence, and a
-# second list here is how that happens.
+# Two questions, and neither answers the other. WHICH checks take their scope
+# from the shared markdown selector is asked of each check's own script,
+# rather than listed here, so a lane that starts deferring to it later cannot
+# rejoin the clean count in silence. WHAT that selector would resolve to is
+# asked of the selector itself, below, because deferring to it says where the
+# answer comes from and not what it is: configured to sweep the tree, such a
+# lane needs nothing staged and this caller reaches it.
 MD_SELECTOR="lib/md-scope.sh"
 if [ "$SKIP_UNSCOPED" -eq 1 ]; then
+  # What a bare run of such a lane would resolve to, asked once of the file
+  # that owns the setting's meaning rather than inferred from the fact that a
+  # lane defers to it. Deferring says where the answer comes from, not what
+  # it is: under `all` the lane sweeps the tree and needs nothing staged, so
+  # this scope reaches it perfectly well and withholding it would drop a
+  # check the project explicitly asked for. An invalid value is refused
+  # there, which is also why it is asked here at all: withholding a lane
+  # before it runs means its own validation never fires.
+  BARE_SCOPE=""
+  gg_md_bare_scope BARE_SCOPE
+fi
+if [ "$SKIP_UNSCOPED" -eq 1 ] && [ "$BARE_SCOPE" = touched ]; then
   KEPT=""
   WITHHELD=""
   for c in $CHECKS; do
@@ -167,7 +191,7 @@ if [ "$SKIP_UNSCOPED" -eq 1 ]; then
       || gg_fail selector-read "$c:$selector_status" "could not read $c to see how it resolves its scope; refusing to guess"
     if [ "$selector_status" -eq 0 ]; then
       WITHHELD="${WITHHELD:+$WITHHELD }$c"
-      gg_message unscoped "$c" "This check selects its files from the staged diff, which this scope does not fill, so it would judge nothing. Withheld rather than counted clean."
+      gg_message unscoped "$c" "This check selects its files from the staged diff under the configured scope, and this run was told nothing is staged, so it would open no file. Withheld rather than counted clean."
       continue
     fi
     KEPT="${KEPT:+$KEPT }$c"
@@ -176,7 +200,7 @@ if [ "$SKIP_UNSCOPED" -eq 1 ]; then
   case "$CHECKS" in
     *[!\ ]*) ;;
     *)
-      gg_message withheld-all "$WITHHELD" "Every enabled check selects its files from the staged diff, so this scope has nothing for any of them to judge."
+      gg_message withheld-all "$WITHHELD" "Every enabled check selects its files from the staged diff under the configured scope, so this run has nothing for any of them to open."
       exit 0
       ;;
   esac

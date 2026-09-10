@@ -50,7 +50,7 @@ ZERO=0000000000000000000000000000000000000000
 # are dropped, so a row reads as the push does: what was judged, what was
 # found, and the verdict. todo-ban's per-hit lines quote the marker they found,
 # and this file carries no marker shape, so only its count is kept.
-KEEP='^(pre-push: |byte-ceiling: |todo-ban: index-count=|md-format: staged-count=|commit-guards: (unscoped|withheld-all)=)'
+KEEP='^(pre-push: |byte-ceiling: |todo-ban: index-count=|md-format: (staged-count|summary)=|commit-guards: (unscoped|withheld-all)=)'
 
 # Assembled from split tokens, so this file never holds a marker shape itself:
 # the kendex repo runs todo-ban over its own tree, tests included.
@@ -411,10 +411,12 @@ assert_eq "must-fail: judged from the shared ancestor, that growth reads as a sh
 # read, so the batch withholds them and says which. A replayed malformed
 # document is not caught at push, and the push says so rather than implying
 # it was checked.
-wrapped() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose HEAD carries a hard-wrapped document
+wrapped() { # VAR NAME [SKILL-SOURCE] [SETTINGS-LINE] — VAR gets a repo whose HEAD carries a hard-wrapped document
   local __v="$1" r=""
   new_repo r "$2" "${3:-}"
-  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-format"\n' >"$r/kendex.settings.toml"
+  # %b for the caller's line: it arrives with its own escapes, as every other
+  # fixture in this file writes them.
+  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-format"\n%b' "${4:-}" >"$r/kendex.settings.toml"
   q git -C "$r" add kendex.settings.toml
   q git -C "$r" commit -q -m "feat: seed"
   q git -C "$r" push -q origin main
@@ -448,6 +450,14 @@ wrapped FOLDED_REPO folded "$FOLDED"
 assert_eq "must-fail: folded back in, the same push reports that document clean" \
   "rc=0 pre-push: step=base:<oid>;md-format: staged-count=0;pre-push: result=0" \
   "$(push_ref "$FOLDED_REPO" topic)"
+
+# A project that configured those lanes to sweep the tree asked for the check
+# and gets it: that scope stages nothing either, so a push reaches it.
+SWEEPING=""
+wrapped SWEEPING sweeping "" 'COMMIT_GUARDS_MD_SCOPE = "all"\n'
+assert_eq "a lane configured to sweep the tree runs at push, and refuses the replayed document" \
+  "rc=1 pre-push: step=base:<oid>;md-format: summary=violations=1 files=1 scope=all skipped=0;pre-push: result=1" \
+  "$(push_ref "$SWEEPING" topic)"
 
 printf '\n%s: %s passed, %s failed\n' "$gg_suite" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -11,7 +11,8 @@
 #   --all      every tracked markdown file matching the lane's path globs
 #   neither    COMMIT_GUARDS_MD_SCOPE decides: `touched` (the default) is
 #              --staged, and with nothing staged the lane judges nothing
-#              and says so; `all` is --all
+#              and says so; `all` is --all. gg_md_bare_scope reports which,
+#              for a caller that has to know before running the lane
 #
 # md-refs widens a triggered check to all configured documents so target edits
 # recheck unchanged callers.
@@ -23,6 +24,32 @@
 
 GG_MD_SCOPE_DEFAULT="touched"
 GG_MD_EXCLUDES_DEFAULT="tools/md-excludes"
+
+# What a run with no scope flag resolves to, without resolving it.
+#
+# Two callers. gg_md_scope below, so the setting is read once and the answer
+# and the run cannot disagree. And a batch caller that needs to know, BEFORE
+# running a lane, whether a bare run would open any file: `touched` selects
+# from the staged diff and opens none where nothing is staged, while `all`
+# needs nothing staged and sweeps the tree. A caller that inferred that from
+# the lane merely deferring to this file would withhold a lane the project
+# explicitly asked to run over everything.
+#
+# Side-effect-free: it prints nothing, reads no index and leaves GG_MD_MODE
+# alone, so it needs neither `set -f` nor gg_tmpdir — only the repository
+# root, which every settings read needs. An invalid value is refused here
+# rather than by each caller, so the refusal has one spelling; the refusal
+# runs in the CALLER's shell, which is why the answer comes back in a
+# variable rather than on stdout.
+gg_md_bare_scope() { # VAR — VAR gets touched or all; refuses anything else
+  local __v="$1" value=""
+  value="$(gg_setting COMMIT_GUARDS_MD_SCOPE "$GG_MD_SCOPE_DEFAULT")" || exit 2
+  case "$value" in
+    all | touched) ;;
+    *) gg_fail scope "$value" "COMMIT_GUARDS_MD_SCOPE must be touched or all." ;;
+  esac
+  eval "$__v=\$value"
+}
 
 # Resolve the run's scope from the flags and the setting. Sets GG_MD_MODE to
 # staged, all, or none — none being the touched scope with nothing staged,
@@ -38,14 +65,12 @@ gg_md_scope() { # LANE STAGED-FLAG ALL-FLAG
     GG_MD_MODE=all
     return 0
   fi
-  setting="$(gg_setting COMMIT_GUARDS_MD_SCOPE "$GG_MD_SCOPE_DEFAULT")" || exit 2
+  gg_md_bare_scope setting
   case "$setting" in
     all)
       GG_MD_MODE=all
       return 0
       ;;
-    touched) ;;
-    *) gg_fail scope "$setting" "COMMIT_GUARDS_MD_SCOPE must be touched or all." ;;
   esac
   gg_require_merged_index
   if git diff --cached --quiet --diff-filter=AMT 2>/dev/null; then
