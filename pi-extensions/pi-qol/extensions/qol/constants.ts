@@ -15,6 +15,7 @@ export const QOL_NOTIFICATION_SERVICE_SYMBOL = Symbol.for("kendex.pi-qol.notific
 export const KENDEX_MODAL_LOCK_SYMBOL = Symbol.for("kendex.pi.modal-lock");
 export const CAVEMAN_BRIDGE_SYMBOL = Symbol.for("kendex.pi.caveman");
 export const PI_AGENTS_STATUSLINE_SYMBOL = Symbol.for("kendex.pi-agents-tmux.statusline");
+export const CLAUDE_BILLING_IDENTITY_SYMBOL = Symbol.for("kendex.pi.claude-bridge.billing-identity.v1");
 
 export const CAVEMAN_ICON_ACTIVE = "\uee9a";
 export const CAVEMAN_ICON_INACTIVE = "\u{f19e0}";

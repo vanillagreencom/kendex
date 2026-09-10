@@ -4,7 +4,7 @@
 
 ### Unreleased
 
-- The statusline can name the account a turn bills to. When the active model comes from the Claude bridge, the email signed in to the session's `CLAUDE_CONFIG_DIR` is appended to the row; a gateway, API-key or local model shows nothing, because the Claude directory does not name its payer. The new `statusline.showAccount` setting turns the segment off; it defaults to on.
+- The statusline can name the Claude login the session authenticated as, read from the Claude bridge's published `kendex.pi.claude-bridge.billing-identity.v1` surface. The bridge owns the judgement of what counts as a confirmed login, so the row shows an email only where the SDK confirmed one: nothing appears before the session's first turn, and nothing appears when the request used an API key or a third-party backend such as Bedrock or Vertex. The new `statusline.showAccount` setting turns the segment off; it defaults to on.
 
 ### 2.0.1
 
