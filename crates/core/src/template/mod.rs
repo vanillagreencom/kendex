@@ -20,7 +20,7 @@
 //! root, because a template outlives the project its copies were taken
 //! from.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -272,6 +272,33 @@ impl Customizations {
     pub fn is_empty(&self) -> bool {
         *self == Customizations::default()
     }
+
+    /// Drop every customization whose package is not one of `kept`.
+    ///
+    /// The keying is the package's name, so a name any remaining member
+    /// still carries keeps its settings — two members of different kinds
+    /// can share one name, and the name is what the manifest is keyed by.
+    /// A harness left with no agent overrides goes with them, the way
+    /// `draft::customizations_for` never builds one.
+    ///
+    /// Here rather than at install because what is written is what is
+    /// saved: `install::carry_customizations` writes every key this object
+    /// holds into the destination's manifest and asks nothing about
+    /// members, and a key left here would still be shown, still be saved,
+    /// and still travel to another machine.
+    pub(crate) fn keep_only(&mut self, kept: &BTreeSet<String>) {
+        let mine = |name: &String| kept.contains(name);
+        self.optional_dependencies.retain(|name, _| mine(name));
+        self.agent_skills.retain(|name, _| mine(name));
+        self.agent_launch_instructions.retain(|name, _| mine(name));
+        self.agent_additional_instructions
+            .retain(|name, _| mine(name));
+        self.skill_instructions.retain(|name, _| mine(name));
+        self.agent_frontmatter.retain(|_, agents| {
+            agents.retain(|name, _| mine(name));
+            !agents.is_empty()
+        });
+    }
 }
 
 /// One saved selection.
@@ -485,13 +512,23 @@ pub fn add_members(env: &Env, name: &str, members: Vec<Member>) -> Result<Templa
 }
 
 /// Take members out. A member whose bytes only this template held goes
-/// from the store with it.
+/// from the store with it, and so do the customizations that were its.
 pub fn remove_members(env: &Env, name: &str, members: &[MemberRef]) -> Result<Template> {
     let before = get(env, name)?;
     let after = change(env, name, |template| {
         template
             .members
             .retain(|held| !members.iter().any(|wanted| wanted.names(held)));
+        // Inside the same change, so the index write carries the members
+        // and their settings together: a template that kept a removed
+        // package's declarations would inject them into the manifest of
+        // every place it is installed into afterwards.
+        let kept: BTreeSet<String> = template
+            .members
+            .iter()
+            .map(|held| held.name.clone())
+            .collect();
+        template.customizations.keep_only(&kept);
         Ok(())
     })?;
     store::prune(env, &before, &after)?;

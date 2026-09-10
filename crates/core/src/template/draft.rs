@@ -232,14 +232,15 @@ pub fn draft_from_project(env: &Env, root: &std::path::Path) -> Result<Draft> {
         .map(|member| member.name.as_str())
         .chain(locals.iter().map(|local| local.name.as_str()))
         .collect();
+    let customizations = customizations_for(&manifest, &names);
     Ok(Draft {
         project: crate::paths::slashed(root),
-        fingerprint: fingerprint(&members, &locals),
+        fingerprint: fingerprint(&members, &locals, &customizations),
         suggested_name: root
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| crate::paths::slashed(root)),
-        customizations: customizations_for(&manifest, &names),
+        customizations,
         members,
         locals,
         excluded,
@@ -252,11 +253,20 @@ pub fn draft_from_project(env: &Env, root: &std::path::Path) -> Result<Draft> {
 /// The offer these rows make, as one value a save can be checked against.
 ///
 /// Over what a save reads back off the draft and writes: each row's key,
-/// the switch it would be saved under, and the identity it was offered
-/// under — a copy's hash, a choice's hash and the sides it offers, a local
-/// package's hash. A member whose bytes changed between the modal opening
-/// and Save therefore changes this, and the save refuses instead of
-/// capturing bytes nobody looked at.
+/// the switch it would be saved under, the identity it was offered under —
+/// a copy's hash, a choice's hash and the sides it offers, a local
+/// package's hash — and the package customizations the draft showed. A
+/// member whose bytes changed between the modal opening and Save therefore
+/// changes this, and so does an instruction, an override or a dependency
+/// list edited there; the save refuses instead of capturing what nobody
+/// looked at.
+///
+/// The customizations are in because the save writes them: with the opt-in
+/// on, [`super::create::create_from_project`] reads the manifest a second
+/// time and saves what [`customizations_for`] makes of it, and nothing
+/// about a settings edit moves a member key or a hash. The whole set the
+/// draft showed is covered, not the part a selection keeps: which members
+/// a person will keep is not known at the moment this is minted.
 ///
 /// Not over what only the rows say for themselves — which package requires
 /// which, what was left out, whether the reading was short — because
@@ -266,7 +276,11 @@ pub fn draft_from_project(env: &Env, root: &std::path::Path) -> Result<Draft> {
 /// Every field is written length-prefixed: without that, two different
 /// offers could spell one string by moving a separator into a name or a
 /// path, and the check would pass over the difference it exists to find.
-fn fingerprint(members: &[DraftMember], locals: &[DraftLocal]) -> String {
+fn fingerprint(
+    members: &[DraftMember],
+    locals: &[DraftLocal],
+    customizations: &Customizations,
+) -> String {
     let mut text = String::new();
     for member in members {
         field(&mut text, "member");
@@ -316,7 +330,26 @@ fn fingerprint(members: &[DraftMember], locals: &[DraftLocal]) -> String {
         field(&mut text, &local.at);
         field(&mut text, &local.hash);
     }
+    field(&mut text, "customizations");
+    field(&mut text, &rendered(customizations));
     crate::hash::hash_bytes(text.as_bytes())
+}
+
+/// The customizations as one string, rendered by the serializer rather
+/// than field by field.
+///
+/// A customization is a manifest value of whatever shape the manifest
+/// gives it, down to the per-agent frontmatter overrides, and a
+/// hand-written second spelling of those fields would go stale the day one
+/// is added — a field nobody listed here is a change this cannot see. The
+/// order is the type's own: declaration order for the fields, key order
+/// for every map, so one reading renders one string.
+fn rendered(customizations: &Customizations) -> String {
+    serde_json::to_string(customizations).unwrap_or_else(|_| {
+        unreachable!(
+            "customizations hold strings, bools and maps keyed by string, which JSON renders"
+        )
+    })
 }
 
 /// One field of a fingerprint's text, length-prefixed.

@@ -593,6 +593,11 @@ fn a_package_whose_name_no_harness_would_accept_is_left_out() {
 /// a package edited between the modal opening and Save is captured
 /// silently — bytes nobody looked at, under a template the person believes
 /// holds what they saw.
+///
+/// A customization edited there is the same loss with nothing on disk to
+/// notice: the save reads the manifest a second time and keeps what it
+/// finds, and no member key or hash moves. Both rows are here because both
+/// are inputs the save writes from.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_save_answering_an_older_reading_of_the_project_refuses() {
@@ -605,8 +610,28 @@ fn a_save_answering_an_older_reading_of_the_project_refuses() {
         ..Chosen::default()
     };
 
-    // The copy is edited while the modal stands. The bytes the save would
-    // take are not the bytes the reading offered.
+    // A package customization is edited while the modal stands. Nothing a
+    // member key or a hash covers has moved.
+    let manifest = project.root.join("kendex.toml");
+    let declared = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        declared.replace("read this first", "read this other thing first"),
+    )
+    .unwrap();
+    let refused = create_from_project(&project.env, &project.root, &chosen(&offered.fingerprint));
+    assert!(
+        matches!(refused, Err(CoreError::TemplateDraftStale)),
+        "a save against the reading before the settings edit must refuse: {refused:?}"
+    );
+    assert!(
+        list(&project.env).unwrap().is_empty(),
+        "the refusal saved a template"
+    );
+
+    // The copy is edited too. The bytes the save would take are not the
+    // bytes the reading offered.
+    let offered = draft_from_project(&project.env, &project.root).unwrap();
     skill(
         &project
             .root

@@ -481,6 +481,101 @@ fn a_carried_customization_reaches_the_installed_file() {
     assert!(rendered.contains("read this first"), "{rendered}");
 }
 
+/// Removing a member takes its customizations with it, and a later install
+/// carries only what the template still holds.
+///
+/// The customizations are keyed by package name and nothing else in the
+/// template ties them to a member, so a removal that left them behind kept
+/// declarations for a package the template no longer holds — and
+/// `carry_customizations` writes every key the template carries into the
+/// destination's manifest without asking whether a member of that name is
+/// still there. Left behind they would be saved, shown, and installed into
+/// every later destination.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removing_a_member_takes_its_customizations_out_of_the_template() {
+    let project = seeded();
+    // A second instruction, so one member's settings can be told from the
+    // other's on both sides of the removal.
+    let declared = project.root.join("kendex.toml");
+    let manifest = fs::read_to_string(&declared).unwrap();
+    fs::write(
+        &declared,
+        manifest.replace(
+            "\"gh\" = \"read this first\"",
+            "\"gh\" = \"read this first\"\n\"house-style\" = \"and this one after\"",
+        ),
+    )
+    .unwrap();
+
+    let draft = draft_from_project(&project.env, &project.root).unwrap();
+    let template = create_from_project(
+        &project.env,
+        &project.root,
+        &Chosen {
+            name: "Both".to_owned(),
+            members: draft
+                .members
+                .iter()
+                .filter(|member| member.name == "gh" || member.name == "house-style")
+                .map(|member| member.key.clone())
+                .collect(),
+            customizations: true,
+            fingerprint: draft.fingerprint.clone(),
+            ..Chosen::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        template
+            .customizations
+            .skill_instructions
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["gh", "house-style"],
+        "the fixture should carry both instructions"
+    );
+
+    let after = remove_members(
+        &project.env,
+        "Both",
+        &[MemberRef {
+            kind: MemberKind::Skill,
+            name: "gh".to_owned(),
+            which: MemberWhich::Any,
+        }],
+    )
+    .unwrap();
+    assert_eq!(
+        after
+            .customizations
+            .skill_instructions
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["house-style"],
+        "the removed package's instruction stayed in the template"
+    );
+
+    // And the install writes what the template still holds, and only that.
+    let target = destination(&project, "pruned");
+    let Scope::Project { root } = &target else {
+        unreachable!("built as a project scope")
+    };
+    install(
+        &project.env,
+        &after,
+        &target,
+        Some(vec![HarnessId::Claude]),
+        None,
+    )
+    .unwrap();
+    let written = fs::read_to_string(root.join("kendex.toml")).unwrap();
+    assert!(written.contains("and this one after"), "{written}");
+    assert!(!written.contains("read this first"), "{written}");
+}
+
 /// A plugin is its registry's own curated set, so it installs whole the
 /// way a bundle does — and the resolved row keeps saying it is a plugin,
 /// so a reference built from that row reaches the member rather than
