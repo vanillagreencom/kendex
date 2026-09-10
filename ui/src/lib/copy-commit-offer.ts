@@ -28,6 +28,48 @@ export const otherNote = (others: number) =>
 export const WHAT_TO_DO_LABEL = "What to do";
 export const MESSAGE_LABEL = "Message";
 
+/** Which pending changes the commit carries. Drawn only where the two
+ *  choices would make different commits — with nothing else waiting, both
+ *  mean the same thing and there is nothing to choose. */
+export const WHICH_CHANGES_LABEL = "Which changes";
+export const ACTION_SEGMENT = "Only this action";
+export const ALL_SEGMENT = "All pending changes";
+export const actionScopeNote = (files: number) =>
+  `Commits the ${files} file${plural(files)} this action changed. The rest stay as diffs.`;
+export const allScopeNote = (files: number) =>
+  `Commits all ${files} file${plural(files)} kendex has waiting in this project.`;
+
+/** A file this action changed that was already changed before it. git
+ *  commits whole files, so there is no commit that carries one change and
+ *  not the other, and the reader is told which file and asked. */
+export const TANGLED_LABEL = "These files also carry earlier changes";
+export const carriesEarlier = (path: string) =>
+  `${path} was already changed before this action. git commits whole files, so committing it commits that earlier change too.`;
+export const declaresWhatChanged = (path: string) =>
+  `${path} records what kendex renders here and was already changed before this action. This action adds or removes a file, so the commit cannot leave it out.`;
+/** The file this action declared what it wrote in. kendex folds keys into
+ *  that document and owns none of its bytes, so no commit it makes can
+ *  include it, and the reader is told which file to commit rather than
+ *  finding out later. Stated at its real size: this is about somebody else
+ *  reproducing the install, not about anything breaking. */
+export const MANIFEST_LEFT_LABEL = "This commit leaves out your declaration";
+export const manifestLeft = (path: string) =>
+  `This action changed ${path}, which records what this project asks kendex for. kendex writes keys in that file and leaves the rest of it to you, so it never commits it. Commit ${path} yourself: until you do, a checkout made from this commit holds the files without the declaration that asks for them, and nobody else can reproduce this install from it.`;
+
+export const ACCEPT_EARLIER_LABEL =
+  "Commit the earlier changes in these files too";
+export const ACCEPT_EARLIER_HELD =
+  "Say yes above, or switch to all pending changes.";
+/** Where the action's work and everything pending are the same commit
+ *  there is no segmented control to switch to, so the line names only the
+ *  answer that exists. */
+export const ACCEPT_EARLIER_ONLY = "Say yes above.";
+
+/** Paths the reader picked that the project stopped holding a change for
+ *  between the offer being drawn and the commit running. */
+export const droppedToast = (paths: string[]) =>
+  `Left out ${paths.length} file${plural(paths.length)} that changed back: ${paths.join(", ")}`;
+
 export const COMMIT_SEGMENT = "Commit";
 export const PUSH_SEGMENT = "Commit and push";
 export const PR_SEGMENT = "Pull request";
@@ -107,7 +149,8 @@ export const saidLabel = (refused: Refused) =>
 export const didNotFinish = (seconds: number) =>
   `kendex stopped waiting after ${seconds} second${plural(seconds)}. Whether it finished is not known here.`;
 
-const capitalised = (step: string) =>
+/** A line that opens mid-sentence elsewhere, starting a sentence here. */
+export const capitalised = (step: string) =>
   step.charAt(0).toUpperCase() + step.slice(1);
 
 /** The title of the state a refused commit reaches. The staging is its own

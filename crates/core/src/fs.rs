@@ -412,6 +412,37 @@ pub(crate) fn move_any(from: &Path, to: &Path) -> Result<()> {
         })
 }
 
+/// Move one artifact into this machine's trash directory, under a name
+/// nothing there already holds. The one place a removal's bytes go: the
+/// apply engine's `Trash` op and the project restore both land here, so
+/// neither can decide on its own that a removal deletes.
+pub fn move_to_trash(env: &crate::env::Env, path: &Path) -> Result<()> {
+    let trash = env.trash_dir();
+    fs::create_dir_all(&trash).map_err(|e| CoreError::io(&trash, e))?;
+    let base = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "item".to_owned());
+    move_any(path, &unique_in(&trash, &base))
+}
+
+/// A free name for `base` inside `dir`.
+///
+/// A link, not what it points at: a relative link lands in the trash
+/// pointing nowhere, and `exists` on a broken link says the name is free.
+/// The rename onto it then fails, and one apply's rollback takes the whole
+/// removal with it.
+fn unique_in(dir: &Path, base: &str) -> PathBuf {
+    let stamp = crate::clock::timestamp().replace(':', "-");
+    let mut candidate = dir.join(format!("{stamp}-{base}"));
+    let mut counter = 1;
+    while candidate.exists() || candidate.is_symlink() {
+        candidate = dir.join(format!("{stamp}-{counter}-{base}"));
+        counter += 1;
+    }
+    candidate
+}
+
 #[cfg(unix)]
 pub(crate) fn make_symlink(target: &Path, link: &Path) -> Result<()> {
     std::os::unix::fs::symlink(target, link).map_err(|e| CoreError::io(link, e))

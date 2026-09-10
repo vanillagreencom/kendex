@@ -93,6 +93,16 @@ export const SEVERITY_DOT_TONE: Record<
   low: "muted",
 };
 
+/** The last segment of a path, under either separator.
+ *
+ *  A project root keeps the spelling the registry holds so the two compare
+ *  equal, which on Windows means backslashes: splitting on `/` alone finds
+ *  no segment there and hands back the whole path. */
+export function folderName(path: string): string {
+  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return cut === -1 ? path : path.slice(cut + 1) || path;
+}
+
 // "Personal" (Claude Code convention) lives in the home folder and applies everywhere; project items travel with the repo.
 export function scopeName(scope: Scope): string {
   if (scope.scope === "global") return "Personal";
@@ -144,6 +154,7 @@ const PAGE_LABELS: Record<Page, string> = {
   harnesses: "Harnesses",
   projects: "Projects",
   unmanaged: "Not managed",
+  projectChanges: "Changes to review",
   customize: "Customize",
   settings: "Settings",
   problems: "Problems",

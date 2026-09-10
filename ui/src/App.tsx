@@ -12,6 +12,7 @@ import { TermsGate } from "@/components/terms-gate";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { WindowControls } from "@/components/window-controls";
 import { receiveDeepLinks } from "@/lib/deep-link";
+import { trackedProjects } from "@/lib/rescan";
 import { AvailablePackagePage } from "@/pages/available-package";
 import { BundleDetailPage } from "@/pages/bundle-detail";
 import { CustomizePage } from "@/pages/customize";
@@ -22,6 +23,7 @@ import { MarketplacesPage } from "@/pages/marketplaces";
 import { OverviewPage } from "@/pages/overview";
 import { PackagePage } from "@/pages/package";
 import { ProblemsPage } from "@/pages/problems";
+import { ProjectChangesPage } from "@/pages/project-changes";
 import { ProjectsPage } from "@/pages/projects";
 import { SettingsPage } from "@/pages/settings";
 import { UnmanagedPage } from "@/pages/unmanaged";
@@ -30,6 +32,7 @@ import { useAccountStore } from "@/stores/account";
 import { useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
 import { useNoticeStore } from "@/stores/notice";
+import { useProjectChangesStore } from "@/stores/project-changes";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
@@ -137,6 +140,19 @@ export function useStartupLoads() {
   const accountLoad = useAccountStore((s) => s.load);
   const scanGeneration = useScanStore((s) => s.generation);
   const ensurePackages = useProvenanceStore((s) => s.ensureFor);
+  // What each project has waiting for a commit. Read here rather than by
+  // the pages that show it — the Projects page's cards, a project's own
+  // view and the review page all draw the same fact — and keyed on the
+  // tracked list, because that list arrives with the settings read and a
+  // read started before it would have covered no projects at all. It opens
+  // nothing: a passive read of a git checkout, and no dialog anywhere is
+  // reachable from it.
+  const projects = useSettingsStore((s) => s.settings?.projects);
+  const readProjectChanges = useProjectChangesStore((s) => s.refresh);
+  useEffect(() => {
+    if (!projects) return;
+    void readProjectChanges(projects);
+  }, [projects, readProjectChanges]);
   // Which observations are one package is read here rather than by the
   // pages that show packages: the Library table, Home's Installed tile and
   // every place's badges all count in that unit, and a page asking for
@@ -187,6 +203,10 @@ export function useStartupLoads() {
       void updatesLoad();
       void auditRefresh({ force: true });
       void accountLoad();
+      // Somebody can commit, stash or edit in a terminal while the window
+      // is away, so what is waiting here is exactly the fact focus has to
+      // re-read. It still opens nothing.
+      void useProjectChangesStore.getState().refresh(trackedProjects());
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
@@ -268,6 +288,7 @@ export default function App() {
                 {page === "updates" && <UpdatesPage />}
                 {page === "harnesses" && <HarnessesPage />}
                 {page === "projects" && <ProjectsPage />}
+                {page === "projectChanges" && <ProjectChangesPage />}
                 {page === "unmanaged" && <UnmanagedPage />}
                 {page === "customize" && <CustomizePage />}
                 {page === "settings" && <SettingsPage />}

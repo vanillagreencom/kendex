@@ -52,6 +52,10 @@ interface NavState {
   /** Which place the unmanaged page is listing. Every way in names one —
    *  the page is a project card's own list, not a machine-wide inbox. */
   unmanagedScope: Scope | null;
+  /** Which project the changes review is of. Every way in names one: the
+   *  review is one project's pending work, reached from that project's card
+   *  or from its own view, never a machine-wide list. */
+  changesRoot: string | null;
   /** The place a browse arrived from, carried until the reader leaves the
    *  browsing surfaces. "Add a project, then add packages to it" is one
    *  path, so the Marketplaces pages a project's Add packages opens
@@ -102,6 +106,8 @@ interface NavState {
    *  catalogue and a recorded path, and a rewrite has to know every field
    *  that can hold one. */
   projectMoved: (from: string) => void;
+  /** Review what kendex has written in this project and not committed. */
+  goToProjectChanges: (root: string) => void;
   clearLibraryFilter: () => void;
   clearPackageView: () => void;
   back: () => void;
@@ -120,6 +126,7 @@ export const useNavStore = create<NavState>((set) => ({
   bundleRef: null,
   availableRef: null,
   unmanagedScope: null,
+  changesRoot: null,
   installInto: null,
   packageView: null,
   history: [],
@@ -138,6 +145,7 @@ export const useNavStore = create<NavState>((set) => ({
       bundleRef: null,
       availableRef: null,
       unmanagedScope: null,
+      changesRoot: null,
       installInto: null,
     }),
   setLibraryScope: (libraryScope) => set({ libraryScope }),
@@ -270,6 +278,18 @@ export const useNavStore = create<NavState>((set) => ({
       history: pushHistory(state, "unmanaged"),
       future: [],
     })),
+  goToProjectChanges: (root) =>
+    set((state) => ({
+      page: "projectChanges",
+      changesRoot: root,
+      // Named rather than pushed by page alone: two reviews are two places,
+      // so arriving at one from another has to be a move Back undoes.
+      history:
+        state.page === "projectChanges" && state.changesRoot === root
+          ? state.history
+          : [...state.history, here(state)].slice(-HISTORY_CAP),
+      future: [],
+    })),
   clearLibraryFilter: () => set({ libraryFilter: null }),
   clearPackageView: () => set({ packageView: null }),
   back: () =>
@@ -308,6 +328,7 @@ function here(state: NavState): HistoryEntry {
     bundleRef: state.bundleRef,
     availableRef: state.availableRef,
     unmanagedScope: state.unmanagedScope,
+    changesRoot: state.changesRoot,
     installInto: state.installInto,
   };
 }

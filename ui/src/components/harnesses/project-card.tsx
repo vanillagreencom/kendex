@@ -123,9 +123,10 @@ export function ProjectCard({
      *  here whose wording has to say what it does not do. */
     onRemove: () => void;
   };
-  /** A line about this place that is neither a count nor a fault: the
-   *  start-of-session note's standing, with its one button. Under the
-   *  counts because it is about the place, not about what is installed. */
+  /** The lines about this place that are neither a count nor a fault: what
+   *  kendex has written here and not committed, and the start-of-session
+   *  note's standing. Under the counts because they are about the place,
+   *  not about what is installed. */
   note?: ReactNode;
 }) {
   return (

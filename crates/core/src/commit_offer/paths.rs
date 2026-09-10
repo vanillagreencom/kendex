@@ -24,6 +24,15 @@ impl Row<'_> {
         self.x == b'?' && self.y == b'?'
     }
 
+    /// This path is not in the last commit: git has never seen it, or it
+    /// is staged as an addition. A different question from `untracked`
+    /// above, which is about what `git add` still has to do; a person who
+    /// staged kendex's new file themselves changed that answer and not
+    /// this one.
+    fn added(&self) -> bool {
+        self.untracked() || self.x == b'A'
+    }
+
     fn deleted(&self) -> bool {
         self.x == b'D' || self.y == b'D'
     }
@@ -38,6 +47,7 @@ pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Fai
     let whole = generated.owned(root);
     let owned = relative(root, &whole);
     let shared = relative(root, &generated.shared);
+    let declared = declaration(root);
     let status = git::read_required(
         root,
         &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -47,6 +57,7 @@ pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Fai
     let mut committed: Option<BTreeSet<String>> = None;
     let mut ours: Vec<Owned> = Vec::new();
     let mut theirs: Vec<String> = Vec::new();
+    let mut manifest: Option<String> = None;
     let mut others = 0usize;
     for row in rows(&status) {
         let Some(path) = text(row.path) else {
@@ -60,12 +71,22 @@ pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Fai
         if owned.contains(&path) {
             ours.push(Owned {
                 untracked: row.untracked(),
+                added: row.added(),
                 path,
             });
             continue;
         }
         if shared.contains(&path) {
             theirs.push(path);
+            continue;
+        }
+        // Counted with the person's own changed files, which is what it
+        // is: kendex writes keys in this one and owns none of its bytes.
+        // Named as well, because a commit of renders the person has not
+        // declared anywhere committed is the thing the offer must say.
+        if declared.as_deref() == Some(path.as_str()) {
+            manifest = Some(path);
+            others += 1;
             continue;
         }
         // A path that left the inventory and is gone from the working tree
@@ -81,6 +102,10 @@ pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Fai
             if inventory.contains(&path) {
                 ours.push(Owned {
                     untracked: row.untracked(),
+                    // A path the committed inventory holds is one the last
+                    // commit has, whatever git says about it now: this row
+                    // is its deletion, not an addition.
+                    added: false,
                     path,
                 });
                 continue;
@@ -99,9 +124,24 @@ pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Fai
         root: root.to_owned(),
         owned: ours,
         shared: theirs,
+        manifest,
         others,
         branch: branch(root)?,
     }))
+}
+
+/// Where this project declares what it asks kendex for, spelled the way
+/// `git status` spells a path.
+///
+/// `crate::manifest::project_manifest_path` is the one place that decides
+/// which file that is: a source catalog publishes its own kendex.toml and
+/// declares its installs in the sibling file. `None` where that path is
+/// not under this root, which no project scope produces.
+pub(super) fn declaration(root: &Path) -> Option<String> {
+    crate::manifest::project_manifest_path(root)
+        .strip_prefix(root)
+        .ok()
+        .map(crate::paths::slashed)
 }
 
 /// Where the checkout stands, and whether a commit could land at all.

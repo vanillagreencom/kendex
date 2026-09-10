@@ -20,9 +20,11 @@ fn scan() -> Scan {
             .map(|n| Owned {
                 path: format!(".claude/skills/{n}/SKILL.md"),
                 untracked: false,
+                added: false,
             })
             .collect(),
         shared: vec![".claude/settings.json".to_owned()],
+        manifest: None,
         others: 4,
         branch: Branch::On("main".to_owned()),
     }

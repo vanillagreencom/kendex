@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
-import { act } from "react";
+import { act, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileChanges, FileMode } from "@/bindings";
 import { commands } from "@/bindings";
@@ -12,7 +12,8 @@ import {
 } from "@/lib/copy-commit-offer";
 import { CLOSE_CHANGES_LABEL, UNCHANGED_FILE_NOTE } from "@/lib/copy-files";
 import { mount, settle } from "@/test/dom";
-import { CommitOfferFiles } from "./commit-offer-files";
+import { pathEntries } from "./change-rows";
+import { ChangedFiles } from "./changed-files";
 
 vi.mock("@/bindings", () => ({
   commands: { commitOfferFileChanges: vi.fn() },
@@ -80,7 +81,8 @@ const answersInTurn = () => {
   return waiting;
 };
 
-const render = () => mount(<CommitOfferFiles root={ROOT} paths={paths} />);
+const render = () =>
+  mount(<ChangedFiles root={ROOT} entries={pathEntries(paths)} />);
 
 /** A tree row by the path it names, read off the document: the panel this
  *  component opens is portalled out of the tree it mounted into. */
@@ -140,6 +142,44 @@ describe("the files a commit would carry", () => {
   // regaining its execute bit is one kendex itself makes. Drawing that as
   // an empty comparison would tell the person nothing changed in a file
   // the commit does change.
+  // Putting a file back takes it to what the last commit holds, and the
+  // next read of the project carries no row for it. The panel over it was
+  // showing a diff that no longer exists, and the caller's record of what
+  // is open still named that path — so a button acting on "the open file"
+  // acted on one this project holds no change for.
+  it("closes the panel when the open file leaves the list", async () => {
+    answers(shown("A-LINE-KENDEX-WROTE"));
+    let opened: string | null = "unset";
+    let reread: (paths: string[]) => void = () => {};
+    function Reading() {
+      const [listed, set] = useState(paths);
+      reread = set;
+      return (
+        <ChangedFiles
+          root={ROOT}
+          entries={pathEntries(listed)}
+          onOpen={(path) => {
+            opened = path;
+          }}
+        />
+      );
+    }
+    mount(<Reading />);
+    await open(".claude/CLAUDE.md");
+    expect(panel()).toContain("A-LINE-KENDEX-WROTE");
+    expect(opened).toBe(".claude/CLAUDE.md");
+
+    // The project is read again and that file is gone from it.
+    await act(async () => {
+      reread(paths.filter((path) => path !== ".claude/CLAUDE.md"));
+    });
+    await settle();
+    expect(panel()).not.toContain("A-LINE-KENDEX-WROTE");
+    expect(opened, "the caller was left holding a path that is gone").toBe(
+      null,
+    );
+  });
+
   it("says what a change the contents do not show is", async () => {
     answers(noContentChange({ before: "100644", after: "100755" }));
     render();

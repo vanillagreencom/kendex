@@ -20,6 +20,8 @@ vi.mock("@/bindings", () => ({
     // Registering or dropping a project re-audits: the scopes changed.
     auditAll: vi.fn(),
     libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
+    // And the passive read of what each tracked project has waiting.
+    projectChangesScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     windowSetZoom: vi.fn(),
     windowZoomState: vi.fn(),
     saveZoom: vi.fn(),

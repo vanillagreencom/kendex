@@ -98,39 +98,41 @@ export function auditRunner(
   // each. The fresh view an ok answer carries is this scope's alone, and a
   // refusal carries none at all.
   const run: Run = (action, opts) =>
-    writingRepo(async () => {
-      set({ busy: true });
-      attempted();
-      let response: Awaited<ReturnType<typeof action>>;
-      try {
-        response = await action();
-      } finally {
-        set({ busy: false });
+    writingRepo(
+      async () => {
         attempted();
-      }
-      if (response.status === "ok") {
-        set({ views: replaceView(get().views, response.data) });
-        if (opts.successMessage) toast.success(opts.successMessage);
-        // What the removal ran in the repository, said whatever the action
-        // was called: every command here answers with the same view.
-        sayUndone(response.data.undone);
-        return true;
-      }
-      // The dialog and nowhere else: the audit store's `read` is the
-      // audit's own signal, an item refusal is not a failed audit, and the
-      // read behind this call answers for the machine either way.
-      const retry: ErrorAction = {
-        label: "Retry",
-        onClick: () => void run(action, opts),
-      };
-      useProblemsStore.getState().showError({
-        title: opts.title,
-        message: response.error,
-        steps: opts.steps,
-        actions: [retry],
-      });
-      return false;
-    });
+        let response: Awaited<ReturnType<typeof action>>;
+        try {
+          response = await action();
+        } finally {
+          set({ busy: false });
+          attempted();
+        }
+        if (response.status === "ok") {
+          set({ views: replaceView(get().views, response.data) });
+          if (opts.successMessage) toast.success(opts.successMessage);
+          // What the removal ran in the repository, said whatever the action
+          // was called: every command here answers with the same view.
+          sayUndone(response.data.undone);
+          return true;
+        }
+        // The dialog and nowhere else: the audit store's `read` is the
+        // audit's own signal, an item refusal is not a failed audit, and the
+        // read behind this call answers for the machine either way.
+        const retry: ErrorAction = {
+          label: "Retry",
+          onClick: () => void run(action, opts),
+        };
+        useProblemsStore.getState().showError({
+          title: opts.title,
+          message: response.error,
+          steps: opts.steps,
+          actions: [retry],
+        });
+        return false;
+      },
+      () => set({ busy: true }),
+    );
   return run;
 }
 

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FileChanges, FileMode, PackageDiff, Refused } from "@/bindings";
 import { commands } from "@/bindings";
 import { ChangesPanel } from "@/components/files/changes-panel";
@@ -29,21 +29,35 @@ type Read =
   | { at: "nothing" }
   | { at: "refused"; said: string[] };
 
-/** The files a commit would carry, as the app's file tree, with each one
- *  opening what changed in it.
+/** The changed files kendex owns in one project, as the app's file tree,
+ *  with each one opening what changed in it.
  *
  *  A list of paths asks a person to answer for a change they cannot see.
  *  The tree names the files the way every other file list in the app does,
  *  and the diff arrives in the same panel a package comparison arrives in,
- *  over the dialog rather than in place of it: the question the dialog
- *  asks is still the question. */
-export function CommitOfferFiles({
+ *  over whatever asked for it rather than in place of it: the commit dialog
+ *  is still asking its question underneath, and the review is still the
+ *  page the reader is on.
+ *
+ *  Only what the offer covers reaches this. The read behind each row asks
+ *  core for one path and core answers `Nothing` for any path its own fresh
+ *  scan does not cover, so a shared configuration file — which kendex
+ *  writes one key in and never commits whole — has no route to a diff here,
+ *  and neither has anything else in the repository. */
+export function ChangedFiles({
   root,
-  paths,
+  entries,
+  onOpen,
 }: {
   root: string;
-  /** The paths this section lists, as the offer named them. */
-  paths: string[];
+  /** The rows this tree lists, with whatever the surface says about each —
+   *  what the action did to it, whether it is new or gone. */
+  entries: FileEntry[];
+  /** Which path is open, for a surface with an action about one file. Which
+   *  path that is lives here rather than in the caller: the panel and the
+   *  read behind it are this component's, and two owners of one selection
+   *  would let a caller open a panel with nothing under it. */
+  onOpen?: (path: string | null) => void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
   const [read, setRead] = useState<Read>({ at: "reading" });
@@ -54,9 +68,23 @@ export function CommitOfferFiles({
   // newer one's name.
   const order = useRef(readOrder());
 
+  // The rows can be read again out from under an open panel: putting a
+  // file back takes it to what the last commit holds, and the next read
+  // carries no row for it. Nothing stands under the panel then, so it
+  // closes — and the caller's own record of what is open closes with it,
+  // because one selection has one owner. The button that acts on the open
+  // file goes back to acting on all of them, rather than on a path this
+  // project no longer holds a change for.
+  useEffect(() => {
+    if (open === null || entries.some((entry) => entry.path === open)) return;
+    setOpen(null);
+    onOpen?.(null);
+  }, [entries, open, onOpen]);
+
   const show = (path: string) => {
     const ticket = order.current.begin();
     setOpen(path);
+    onOpen?.(path);
     setRead({ at: "reading" });
     void commands.commitOfferFileChanges(root, path).then((response) => {
       if (!order.current.lands(ticket)) return;
@@ -69,9 +97,9 @@ export function CommitOfferFiles({
   const close = () => {
     order.current.begin();
     setOpen(null);
+    onOpen?.(null);
   };
 
-  const entries: FileEntry[] = paths.map((path) => ({ path }));
   return (
     <>
       <FileTree

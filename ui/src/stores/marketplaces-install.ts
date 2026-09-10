@@ -148,76 +148,78 @@ export function installActions(set: Set, get: Get): InstallActions {
       delivery,
       quiet = false,
     }: InstallRequest) =>
-      writingRepo(async () => {
-        set({ busy: true });
-        let response: Awaited<ReturnType<typeof commands.marketplaceInstall>>;
-        try {
-          response = await commands.marketplaceInstall(
-            scope,
-            source,
-            items,
-            bundle,
-            destination ?? null,
-            false,
-            delivery?.harnesses ?? null,
-            delivery?.method ?? null,
-            // Empty is the answer, not the absence of one: an extra nobody
-            // ticked is not installed.
-            delivery?.optional ?? [],
-          );
-        } finally {
-          set({ busy: false });
-        }
-        if (response.status === "error") {
-          if (!quiet) toast.error(response.error);
-          return { ok: false, reason: response.error };
-        }
-        const target = destination ?? scope;
-        // The command answers with the refreshed package list for this
-        // subscription, so the table flips to Installed without a second query.
-        // Null where reading it back failed, which is not an empty
-        // subscription: the rows already on screen are the last reading
-        // anything has, so they stay.
-        const listed = response.data.packages;
-        const key = catalogKey(subscription(target, source));
-        const { shown, withheld } = response.data.repoEffects;
-        set((state) => ({
-          packages:
-            listed === null
-              ? state.packages
-              : { ...state.packages, [key]: listed },
-          // Member states in every set this install touched moved with it,
-          // in the open set and in the list of sets alike.
-          ...droppedSetCaches(),
-          error: null,
-          // The files are in; what a package does to the repository is a
-          // second question, asked once the install is reported. Added to
-          // whatever is already in line rather than replacing it: an
-          // install into several places reports each place separately, and
-          // the last one answering with no effect would otherwise drop
-          // every question the places before it raised.
-          pendingEffects: queued(
-            state.pendingEffects,
-            shown.map((disclosure) => ({ scope: target, disclosure })),
-          ),
-        }));
-        if (!quiet) {
-          const what = bundle
-            ? `the ${bundle} bundle`
-            : items.length === 1
-              ? items[0].name
-              : `${items.length} packages`;
-          toast.success(`Installed ${what}`);
-        }
-        // Whatever an install's plan took away, and what its uninstaller
-        // ran on the way out. Said, never asked about: the second question
-        // this dialog exists for is about arming, and this already happened.
-        sayUndone(response.data.undone);
-        for (const held of withheld) {
-          toast.info(repoEffectsWithheldToast(held.name, held.reason));
-        }
-        return { ok: true, unread: response.data.unread };
-      }),
+      writingRepo(
+        async () => {
+          let response: Awaited<ReturnType<typeof commands.marketplaceInstall>>;
+          try {
+            response = await commands.marketplaceInstall(
+              scope,
+              source,
+              items,
+              bundle,
+              destination ?? null,
+              false,
+              delivery?.harnesses ?? null,
+              delivery?.method ?? null,
+              // Empty is the answer, not the absence of one: an extra nobody
+              // ticked is not installed.
+              delivery?.optional ?? [],
+            );
+          } finally {
+            set({ busy: false });
+          }
+          if (response.status === "error") {
+            if (!quiet) toast.error(response.error);
+            return { ok: false, reason: response.error };
+          }
+          const target = destination ?? scope;
+          // The command answers with the refreshed package list for this
+          // subscription, so the table flips to Installed without a second query.
+          // Null where reading it back failed, which is not an empty
+          // subscription: the rows already on screen are the last reading
+          // anything has, so they stay.
+          const listed = response.data.packages;
+          const key = catalogKey(subscription(target, source));
+          const { shown, withheld } = response.data.repoEffects;
+          set((state) => ({
+            packages:
+              listed === null
+                ? state.packages
+                : { ...state.packages, [key]: listed },
+            // Member states in every set this install touched moved with it,
+            // in the open set and in the list of sets alike.
+            ...droppedSetCaches(),
+            error: null,
+            // The files are in; what a package does to the repository is a
+            // second question, asked once the install is reported. Added to
+            // whatever is already in line rather than replacing it: an
+            // install into several places reports each place separately, and
+            // the last one answering with no effect would otherwise drop
+            // every question the places before it raised.
+            pendingEffects: queued(
+              state.pendingEffects,
+              shown.map((disclosure) => ({ scope: target, disclosure })),
+            ),
+          }));
+          if (!quiet) {
+            const what = bundle
+              ? `the ${bundle} bundle`
+              : items.length === 1
+                ? items[0].name
+                : `${items.length} packages`;
+            toast.success(`Installed ${what}`);
+          }
+          // Whatever an install's plan took away, and what its uninstaller
+          // ran on the way out. Said, never asked about: the second question
+          // this dialog exists for is about arming, and this already happened.
+          sayUndone(response.data.undone);
+          for (const held of withheld) {
+            toast.info(repoEffectsWithheldToast(held.name, held.reason));
+          }
+          return { ok: true, unread: response.data.unread };
+        },
+        () => set({ busy: true }),
+      ),
 
     /** Run the installer of the package at the head of the line, here and
      *  now, and show its own last word: an installer that deliberately
@@ -233,43 +235,47 @@ export function installActions(set: Set, get: Get): InstallActions {
       const pending = get().pendingEffects;
       if (!pending) return false;
       const [head] = pending.queue;
-      return writingRepo(async () => {
-        set({ busy: true });
-        let response: Awaited<ReturnType<typeof commands.repoEffectsApply>>;
-        try {
-          response = await commands.repoEffectsApply(
-            head.scope,
-            head.disclosure.declared,
-          );
-        } finally {
-          set({ busy: false });
-        }
-        if (response.status === "error") {
-          useProblemsStore.getState().showError({
-            title: repoEffectsFailedTitle(head.disclosure.name),
-            message: response.error,
-          });
+      return writingRepo(
+        async () => {
+          let response: Awaited<ReturnType<typeof commands.repoEffectsApply>>;
+          try {
+            response = await commands.repoEffectsApply(
+              head.scope,
+              head.disclosure.declared,
+            );
+          } finally {
+            set({ busy: false });
+          }
+          if (response.status === "error") {
+            useProblemsStore.getState().showError({
+              title: repoEffectsFailedTitle(head.disclosure.name),
+              message: response.error,
+            });
+            advance();
+            return false;
+          }
           advance();
-          return false;
-        }
-        advance();
-        const { stdout, stderr } = response.data;
-        // The last line it printed, not the last element: relay keeps the
-        // installer's trailing blank lines, and an empty toast says nothing.
-        const summary = spoken(stdout) ?? spoken(stderr);
-        toast.success(summary ?? repoEffectsAppliedToast(head.disclosure.name));
-        // An installer can exit clean and still have skipped its work — the
-        // reason, and what to do about it, go to stderr while the summary
-        // goes to stdout. A toast is one line, so the account a person has
-        // to act on gets the dialog the app opens for exactly that.
-        if (spoken(stderr) !== undefined) {
-          useProblemsStore.getState().showError({
-            title: repoEffectsSaidTitle(head.disclosure.name),
-            message: [...stderr, ...stdout].join("\n"),
-          });
-        }
-        return true;
-      });
+          const { stdout, stderr } = response.data;
+          // The last line it printed, not the last element: relay keeps the
+          // installer's trailing blank lines, and an empty toast says nothing.
+          const summary = spoken(stdout) ?? spoken(stderr);
+          toast.success(
+            summary ?? repoEffectsAppliedToast(head.disclosure.name),
+          );
+          // An installer can exit clean and still have skipped its work — the
+          // reason, and what to do about it, go to stderr while the summary
+          // goes to stdout. A toast is one line, so the account a person has
+          // to act on gets the dialog the app opens for exactly that.
+          if (spoken(stderr) !== undefined) {
+            useProblemsStore.getState().showError({
+              title: repoEffectsSaidTitle(head.disclosure.name),
+              message: [...stderr, ...stdout].join("\n"),
+            });
+          }
+          return true;
+        },
+        () => set({ busy: true }),
+      );
     },
 
     askToApply: (scope, disclosure) =>

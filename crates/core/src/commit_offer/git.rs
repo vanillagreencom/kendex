@@ -211,11 +211,49 @@ pub fn first_free_branch(root: &Path, remote: Option<&Remote>) -> Result<String,
 /// The branch kendex opens a pull request from.
 pub const BRANCH: &str = "kendex/renders";
 
+/// Whether `HEAD` resolves to a commit.
+///
+/// Asked with the exit status rather than with the presence of output,
+/// because those two are different questions here. `git rev-parse --verify
+/// --quiet HEAD` exits 1 and prints nothing for an unborn `HEAD`, and 128
+/// for a repository git cannot read; [`read`] maps both to `None`, so a
+/// caller reading born-ness off it would take a broken repository for an
+/// empty one.
+///
+/// That distinction is not cosmetic where a restore asks it. A restore puts
+/// a path back to what the last commit holds, and takes it away where the
+/// last commit holds nothing — so an unborn answer given for a transport
+/// failure turns "put my files back" into "take my files away". The rule
+/// [`super::changes`] already states for its own reads is this one.
+pub fn born(root: &Path) -> Result<bool, Failed> {
+    let hardened = Hardened::git(&["rev-parse", "--verify", "--quiet", "HEAD"], Some(root))
+        .timeout(Step::READ);
+    match hardened.run() {
+        Ok(output) if output.status.success() => Ok(true),
+        // git's own exit for "this repository has no commit yet". Every
+        // other status is git failing and travels as the failure it is.
+        Ok(output) if output.status.code() == Some(1) => Ok(false),
+        Ok(output) => Err(Failed {
+            step: Step::Read,
+            refusal: Refusal::Said(said(&output.stderr, &output.stdout)),
+        }),
+        Err(error) => Err(Failed {
+            step: Step::Read,
+            refusal: refusal(&error),
+        }),
+    }
+}
+
 /// The short name of the commit `HEAD` points at, or `None` in a
 /// repository with no commit yet — the state a first kendex write in a
 /// fresh `git init` reaches. Read before a commit, it is the commit a
 /// recovery would put the branch back to, and there is nothing to put it
 /// back to when there is none.
+///
+/// A read that failed answers `None` here, which is right for the one thing
+/// this answer is used for: the line naming a commit to go back to is left
+/// out rather than guessed at. A caller asking whether the repository HAS a
+/// commit wants [`born`], where that conflation would cost something.
 pub fn previous_head(root: &Path) -> Result<Option<String>, Failed> {
     Ok(read(root, &["rev-parse", "--short", "HEAD"])?
         .map(line)

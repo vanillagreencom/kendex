@@ -26,6 +26,7 @@ import { showEverythingLabel } from "@/lib/show-everything-label";
 import { useAuditStore } from "@/stores/audit";
 import { useCommitOfferStore } from "@/stores/commit-offer";
 import { useNavStore } from "@/stores/nav";
+import { useProjectChangesStore } from "@/stores/project-changes";
 import { useProjectSetupStore } from "@/stores/project-setup";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
@@ -44,6 +45,9 @@ vi.mock("@/bindings", () => ({
     capabilityTable: vi.fn(),
     updateSettings: vi.fn(),
     installDriftHook: vi.fn(),
+    // The passive read of what each tracked project has waiting for a
+    // commit, which the rescan behind a reconnection runs.
+    projectChangesScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     pickFolder: vi.fn(),
     projectRelocation: vi.fn(),
     relocateProject: vi.fn(),
@@ -152,7 +156,8 @@ beforeEach(() => {
     backgroundFailureAnnounced: false,
   });
   useProjectSetupStore.setState({ checking: [], unchecked: [] });
-  useCommitOfferStore.setState({ queue: [], flagged: [] });
+  useCommitOfferStore.setState({ queue: [] });
+  useProjectChangesStore.setState({ rows: [] });
   useSettingsStore.setState({ settings: { projects: [OLD] } as never });
 });
 
@@ -435,7 +440,11 @@ describe("what a folder leaving the list leaves behind", () => {
     useProjectSetupStore.setState({ checking: [OLD], unchecked: [OLD] });
     useCommitOfferStore.setState({
       queue: [{ root: OLD, message: "" }] as never,
-      flagged: [{ root: OLD }] as never,
+    });
+    // What the card draws about that folder moved to the passive read, so
+    // that is where the state a relocation has to drop now lives.
+    useProjectChangesStore.setState({
+      rows: [{ root: OLD, name: "site", state: { kind: "clean" } }],
     });
     useNavStore.setState({
       unmanagedScope: { scope: "project", root: OLD },
@@ -454,7 +463,7 @@ describe("what a folder leaving the list leaves behind", () => {
     expect(useProjectSetupStore.getState().checking).toEqual([]);
     expect(useProjectSetupStore.getState().unchecked).toEqual([]);
     expect(useCommitOfferStore.getState().queue).toEqual([]);
-    expect(useCommitOfferStore.getState().flagged).toEqual([]);
+    expect(useProjectChangesStore.getState().rows).toEqual([]);
     // Nothing is left naming the folder the project came from, and
     // nothing is rewritten to name the new one either: a ref carries a
     // scope, a catalogue and a recorded path, so where the reader has
@@ -502,7 +511,9 @@ describe("what a folder leaving the list leaves behind", () => {
     useProjectSetupStore.setState({ checking: [OLD], unchecked: [OLD] });
     useCommitOfferStore.setState({
       queue: [{ root: OLD, message: "" }] as never,
-      flagged: [{ root: OLD }] as never,
+    });
+    useProjectChangesStore.setState({
+      rows: [{ root: OLD, name: "site", state: { kind: "clean" } }],
     });
 
     await useSettingsStore.getState().unregisterProject(OLD);
@@ -510,6 +521,6 @@ describe("what a folder leaving the list leaves behind", () => {
     expect(useProjectSetupStore.getState().checking).toEqual([]);
     expect(useProjectSetupStore.getState().unchecked).toEqual([]);
     expect(useCommitOfferStore.getState().queue).toEqual([]);
-    expect(useCommitOfferStore.getState().flagged).toEqual([]);
+    expect(useProjectChangesStore.getState().rows).toEqual([]);
   });
 });

@@ -13,6 +13,10 @@ export type Page =
   // Reached from one place's card on Projects — adopting is an offer
   // about that place, not a sidebar destination.
   | "unmanaged"
+  // Reached from a project's card and from the project's own view — the
+  // review of what kendex has written there and not committed. Which
+  // project lives in `changesRoot`, so it is never a sidebar destination.
+  | "projectChanges"
   | "settings"
   | "updates"
   // Reached from the status footer's problems segment and from every note
@@ -99,6 +103,8 @@ export interface HistoryEntry {
   bundleRef: BundleRef | null;
   availableRef: AvailableRef | null;
   unmanagedScope: Scope | null;
+  /** The project whose pending changes the review at this entry was of. */
+  changesRoot: string | null;
   /** The place the browse at this entry was begun for. Part of where the
    *  reader was, like every ref above it: backing out of a browse begun
    *  for one project must not leave that project selected on the page the

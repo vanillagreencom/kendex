@@ -6,6 +6,7 @@ import type {
   AuditView,
   DriftRow,
   ObservedItem,
+  ProjectChanges,
   ScanResult,
   Scope,
 } from "@/bindings";
@@ -14,6 +15,7 @@ import { InstalledView } from "@/components/library/installed-view";
 import { updateRow } from "@/components/updates-test-rows";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { unmanagedHereLabel } from "@/lib/copy";
+import { NOT_CHECKED_BADGE } from "@/lib/copy-commit-offer";
 import { ADD_PACKAGES_LABEL } from "@/lib/copy-install";
 import {
   PLACE_MARKETPLACES_LABEL,
@@ -36,12 +38,18 @@ import {
   updateReviewManyTitle,
 } from "@/lib/copy-updates";
 import { kindLabel } from "@/lib/labels";
-import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
+import {
+  READ_LANDED,
+  READ_PENDING,
+  type ReadState,
+  readFailed,
+} from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
 import { useLibraryViewStore } from "@/stores/library-view";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
+import { useProjectChangesStore } from "@/stores/project-changes";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
@@ -63,6 +71,9 @@ vi.mock("@/bindings", () => ({
     capabilityTable: vi.fn(),
     updateSettings: vi.fn(),
     installDriftHook: vi.fn(),
+    // The passive read of what each tracked project has waiting for a
+    // commit, which the card's own Review changes line draws from.
+    projectChangesScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     // Read again on a registry write: update rows are keyed by the
     // folder each one is at.
     updatesOverview: vi.fn(),
@@ -695,5 +706,76 @@ describe("out-of-date packages on a place's card", () => {
     );
     expect(update?.disabled).toBe(true);
     expect(update?.getAttribute("title")).toBe(UPDATE_NEEDS_CHECK_NOTE);
+  });
+});
+
+// The card is where a person decides whether to look, so all four states of
+// the read behind it are distinguishable there. A project kendex could not
+// check must never draw the way a clean one does.
+describe("a card's badge about what is waiting", () => {
+  const ROOT = "/work/acme";
+
+  beforeEach(() => {
+    useSettingsStore.setState({ settings: { projects: [ROOT] } as never });
+  });
+
+  it("marks a project the read could not cover, and one it could not confirm", async () => {
+    const rows: {
+      name: string;
+      state: { rows: ProjectChanges[]; read: ReadState };
+      badge: boolean;
+    }[] = [
+      // Nothing has looked yet: no badge, the answer is coming.
+      {
+        name: "waiting",
+        state: { rows: [], read: READ_PENDING },
+        badge: false,
+      },
+      // The landed read carries no row for it — the backend skipped it.
+      { name: "skipped", state: { rows: [], read: READ_LANDED }, badge: true },
+      // Its own read refused.
+      {
+        name: "unreadable",
+        state: {
+          rows: [
+            {
+              root: ROOT,
+              name: "acme",
+              state: { kind: "unreadable", said: ["fatal: bad object"] },
+            },
+          ],
+          read: READ_LANDED,
+        },
+        badge: true,
+      },
+      // A row the current read could not confirm.
+      {
+        name: "stale",
+        state: {
+          rows: [{ root: ROOT, name: "acme", state: { kind: "clean" } }],
+          read: readFailed("git is not on the path"),
+        },
+        badge: true,
+      },
+      // A clean project a landed read confirmed says nothing at all.
+      {
+        name: "clean",
+        state: {
+          rows: [{ root: ROOT, name: "acme", state: { kind: "clean" } }],
+          read: READ_LANDED,
+        },
+        badge: false,
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const one of rows) {
+      useProjectChangesStore.setState(one.state);
+      const host = mount(<ProjectList />);
+      await settle();
+      expect(
+        host.ownerDocument.body.textContent?.includes(NOT_CHECKED_BADGE),
+        one.name,
+      ).toBe(one.badge);
+    }
   });
 });

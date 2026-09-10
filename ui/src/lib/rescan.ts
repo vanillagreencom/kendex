@@ -63,6 +63,7 @@
 // reason the registry writes above rescan at all.
 import { useAuditStore } from "@/stores/audit";
 import { useCommitOfferStore } from "@/stores/commit-offer";
+import { useProjectChangesStore } from "@/stores/project-changes";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
@@ -101,6 +102,15 @@ export async function rescanEverything(opts?: {
     // Forced: a write moved the very bytes a score answers for, and the
     // audit's freshness window would otherwise answer from before it.
     useAuditStore.getState().refresh({ force: true }),
+    // What each project has waiting for a commit. A passive read: it puts a
+    // line on the project's card and fills its review, and opens nothing.
+    // Here rather than on any one page, because the same fact is drawn on
+    // the Projects page, on a project's own view and in the review, and a
+    // page asking for itself would have each of them answering from a
+    // different read. It runs whatever the offer setting says: that setting
+    // decides whether kendex asks a question, not whether a person may see
+    // what is pending.
+    useProjectChangesStore.getState().refresh(trackedProjects()),
   ]);
 }
 
@@ -146,12 +156,42 @@ const readBehindWrites = (): Promise<void> => {
  *  before it and never as part of it, and the backend answers with nothing
  *  for a project where there is nothing to ask about.
  *
+ *  `roots` is what [`beforeWriting`] handed back: the projects whose state
+ *  was read before the write. The offer is about what the write itself did,
+ *  so a project whose kendex files the write left alone is not asked about,
+ *  however much is pending there — that work is on the project's card and
+ *  in its own review, and it waits there until a write in that project, or
+ *  the person, brings it up.
+ *
  *  Not awaited by its callers, for the reason the read behind a write is
  *  not: the caller's own busy window and refusal belong to the write, and
  *  holding either behind a git read of every project would leave a
  *  destructive button live with nothing under it. */
 export async function offerToCommit(roots: string[]): Promise<void> {
   await useCommitOfferStore.getState().enqueue(roots);
+}
+
+/** Read what every tracked project holds, before a write changes it.
+ *
+ *  This is what lets the offer after the write say what the write did.
+ *  Names alone cannot: two writes reach the same render, so the reading is
+ *  of the content, and it has to be taken before anything moves.
+ *
+ *  Awaited, and it is the one thing in this file that is: the answer is
+ *  worthless if it lands after the write it is a reading from before. It is
+ *  a `git status` per tracked project and a read of the files already
+ *  pending there, which in the ordinary case — a project with nothing
+ *  pending — is the status call alone.
+ *
+ *  One reader action runs many writes: the guided install writes once per
+ *  place and once per marketplace inside each. The store keeps the first
+ *  reading of each project and ignores the rest until that project's
+ *  question has been answered, so the offer at the end of the install is
+ *  about the install, not about its last step. */
+export async function beforeWriting(): Promise<string[]> {
+  const roots = trackedProjects();
+  await useCommitOfferStore.getState().noteBaseline(roots);
+  return roots;
 }
 
 /** The project roots a write could have reached: every project this
@@ -186,13 +226,28 @@ export function trackedProjects(): string[] {
  *  refusal beside the button, and holding that back through a forced audit
  *  would leave a destructive button live with nothing under it. So no hold
  *  covers the read, and every busy window stays where its caller had it.
- *  [`rescansSettled`] is how a test waits for what no caller waits for. */
-export async function writingRepo<R>(body: () => Promise<R>): Promise<R> {
+ *  [`rescansSettled`] is how a test waits for what no caller waits for.
+ *
+ *  `enter` is the caller's own busy window, opened before the reading and
+ *  closed by `body` where it always closed it. The reading is a git call
+ *  per project and the controls that started this action are live until
+ *  something disables them: without this the reader can start a second
+ *  action inside that window, whose write lands against a reading taken
+ *  for the first. Callers with no busy window of their own pass nothing. */
+export async function writingRepo<R>(
+  body: () => Promise<R>,
+  enter?: () => void,
+): Promise<R> {
+  enter?.();
+  // Before the body, and awaited: the offer after the write is about what
+  // the write did, and that is a comparison against how the projects stood
+  // before it. [`beforeWriting`] says what this costs.
+  const roots = await beforeWriting();
   try {
     return await body();
   } finally {
     void readBehindWrites();
-    void offerToCommit(trackedProjects());
+    void offerToCommit(roots);
   }
 }
 

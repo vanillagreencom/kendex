@@ -48,6 +48,9 @@ vi.mock("@/bindings", () => ({
     unregisterProject: vi.fn(),
     discoverProjects: vi.fn(),
     pickFolder: vi.fn(),
+    // The passive read of what each tracked project has waiting for a
+    // commit, which every whole-machine read now asks for.
+    projectChangesScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
   },
 }));
 vi.mock("sonner", () => ({
