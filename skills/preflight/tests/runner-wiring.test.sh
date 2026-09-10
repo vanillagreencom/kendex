@@ -127,14 +127,17 @@ pf_world() {
 # `far.test.ts` is the whole fired set, so `sub/app.test.ts` is wired by the
 # same row.
 #
-# The nine `bun` rows are one clause of the two-token rule each: the bare
+# The eleven `bun` rows are one clause of the two-token rule each: the bare
 # invocation and its flags-only form wire, the shell suite and the two
 # subtree rows bound what the default glob reaches, and `bun` alone, `bun run
-# test`, `bun test.ts` and `bun test src/` are the four neighbouring
-# spellings that record no default glob at all -- the last one still wired by
-# the `src/` token it writes, which is why its row strands only
-# `far.test.ts`. `bun` alone is the row that holds the second token: without
-# it a rule reading the word as optional passes the whole table.
+# test`, `bun test.ts` and the three `src/` spellings record no default glob
+# at all -- those three still wired by the `src/` token they write, which is
+# why their rows strand only `far.test.ts`. `bun` alone is the row that holds
+# the second token: without it a rule reading the word as optional passes the
+# whole table. The two quoted `src/` rows hold the other half of the tail: a
+# quote ends the invocation only against the last word, so a rule accepting
+# any quote after whitespace reads a quoted positional as a bare run and
+# wires the whole scope.
 #
 # The `make` world is the one runner kind here with no `fires` twin, and the
 # gap that leaves is deliberate. Its row is clean, so dropping `Makefile` from
@@ -175,6 +178,8 @@ a script value of exactly bun is the package runner and wires nothing|manifest p
 bun run test re-enters the script table and wires nothing|manifest package.json "scripts": { "test": "bun run test" } -- br.test.ts|-|-|1|br.test.ts:0: [unwired-suite]|-
 bun running a file whose name opens with test wires nothing|manifest package.json "scripts": { "test": "bun test.ts" } -- bp.test.ts|-|-|1|bp.test.ts:0: [unwired-suite]|-
 a bun test naming a path wires that subtree and nothing outside it|manifest package.json "scripts": { "test": "bun test src/" } -- src/near.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
+a bun test naming a single-quoted path is that same positional|manifest package.json "scripts": { "test": "bun test 'src/'" } -- src/near.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
+a bun test naming a double-quoted path is that same positional|make bun test "src/" -- src/near.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
 a sub-package bun test runner wires nothing outside its subtree|manifest pkg/package.json "scripts": { "test": "bun test" } -- far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
 ROWS
 pf_table "the runner grammar the unwired-suite lane reads" "$rows"

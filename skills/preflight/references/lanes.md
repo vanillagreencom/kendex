@@ -18,7 +18,7 @@ A command position means directly, chained after `;`/`&`/`|`, behind a directly 
 
 A comment (full-line or trailing), dependency key, or package path is not an invocation, and neither is a prose mention, except a colon-opened value beginning with the runner word, accepted erring quiet. A path-prefixed binary (`node_modules/.bin/vitest`) is not recognized, and a pinned explicit `include`/`testMatch` is not evaluated.
 
-`bun` on its own is the package runner and `bun run test` re-enters the script table, so neither records a default glob. Flags may follow `test`; a positional word may not, so `bun test src/` is wired by the `src/` token it writes rather than by the whole default glob.
+`bun` on its own is the package runner and `bun run test` re-enters the script table, so neither records a default glob. Flags may follow `test`; a positional word may not, quoted or not, so `bun test src/` and `bun test 'src/'` alike are wired by the `src/` token they write rather than by the whole default glob.
 
 ## Glob semantics
 

@@ -982,9 +982,12 @@ build_runner_index() {
         # the script table, so only the two-token invocation is Bun's test
         # runner, and only while every word after it is a flag. `bun test
         # src/` names a path, which is the token evidence below and not the
-        # whole default glob, so this tail ends at a quote, a connector or
-        # the line end rather than at any whitespace.
-        bun) word="bun[[:space:]]+test([[:space:]]+-[^[:space:]\"'\`&;|)]*)*[[:space:]]*([\"'\`&;|)]|\$)" ;;
+        # whole default glob. A quote therefore ends the invocation only
+        # where it stands against the last word, closing the manifest or
+        # workflow value; once whitespace has opened another word, only a
+        # connector or the line end ends it, so the quotes of a quoted
+        # positional (bun test 'src/') never read as that closing quote.
+        bun) word="bun[[:space:]]+test([[:space:]]+-[^[:space:]\"'\`&;|)]*)*([\"']|[[:space:]]*([\`&;|)]|\$))" ;;
         # A one-word runner ends at whitespace, a quote, a connector, or
         # the line end.
         *) word="$kind([[:space:]\"'\`&;|)]|\$)" ;;
