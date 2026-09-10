@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 // What an update started from the package page leaves behind. The Projects
 // tab's Update commits through the updates store, which refreshes the scan
-// and the audit and knows nothing about this page's own three reads: its
+// and the audit and knows nothing about this page's own four reads: its
 // card follows the landed commit, and the Overview and the header must not
-// go on describing the copy the update replaced.
+// go on describing the copy the update replaced — its README included,
+// which is the Overview.
 //
 // One control, and the fixture it needs. The page's other tests are
 // `package.test.tsx`'s.
@@ -258,9 +259,9 @@ describe("the package page while a check is running", () => {
 });
 
 /** The engine before and after the apply lands: core stamps the whole
- *  installation when the source hash moves, so the record, the timeline and
- *  the files move together. The standing read behind the write is the
- *  caller's, since that is what the two cases differ on. */
+ *  installation when the source hash moves, so the record, the timeline,
+ *  the files and the README move together. The standing read behind the
+ *  write is the caller's, since that is what the two cases differ on. */
 const engineWrites = () => {
   const write = { landed: false };
   vi.mocked(commands.packageMeta).mockResolvedValue({
@@ -285,6 +286,16 @@ const engineWrites = () => {
           isReadme: false,
         },
       ],
+    }),
+  );
+  vi.mocked(commands.packageReadme).mockImplementation(() =>
+    Promise.resolve({
+      status: "ok",
+      data: {
+        path: "SKILL.md",
+        content: write.landed ? "READS-AFTER" : "READS-BEFORE",
+        truncated: false,
+      },
     }),
   );
   vi.mocked(commands.packageUpdate).mockImplementation(() => {
@@ -325,10 +336,10 @@ const pressUpdate = async (host: HTMLElement) => {
   await openTab(host, OVERVIEW_TAB);
 };
 
-/** What the page says across the two tabs these reads feed: the version on
- *  the Overview, the files on Files. One string, so a row names what
- *  changed without having to name which tab said it. Leaves the page back
- *  on the Overview, where it opened. */
+/** What the page says across the two tabs these reads feed: the version and
+ *  the README on the Overview, the files on Files. One string, so a row
+ *  names what changed without having to name which tab said it. Leaves the
+ *  page back on the Overview, where it opened. */
 const readsOn = async (host: HTMLElement) => {
   const overview = host.textContent ?? "";
   await openTab(host, FILES_TAB);
@@ -340,27 +351,27 @@ const readsOn = async (host: HTMLElement) => {
 describe("the package page after an update started from its Projects tab", () => {
   const outcomes = [
     {
-      name: "re-reads its files, its version and its update offer",
+      name: "re-reads its files, its README, its version and its update offer",
       outcome: "ok",
-      before: ["BEFORE.md", "v1"],
-      after: ["AFTER.md", "v2"],
-      absent: ["BEFORE.md", "v1"],
+      before: ["BEFORE.md", "READS-BEFORE", "v1"],
+      after: ["AFTER.md", "READS-AFTER", "v2"],
+      absent: ["BEFORE.md", "READS-BEFORE", "v1"],
       update: true,
     },
     {
       name: "re-reads them when the write answers an error",
       outcome: "write-error",
-      before: ["BEFORE.md"],
-      after: ["AFTER.md", "v2"],
-      absent: ["BEFORE.md"],
+      before: ["BEFORE.md", "READS-BEFORE"],
+      after: ["AFTER.md", "READS-AFTER", "v2"],
+      absent: ["BEFORE.md", "READS-BEFORE"],
       update: false,
     },
     {
       name: "re-reads them when the read behind the write fails",
       outcome: "read-error",
-      before: ["BEFORE.md", "v1"],
-      after: ["AFTER.md", "v2"],
-      absent: ["BEFORE.md", "v1"],
+      before: ["BEFORE.md", "READS-BEFORE", "v1"],
+      after: ["AFTER.md", "READS-AFTER", "v2"],
+      absent: ["BEFORE.md", "READS-BEFORE", "v1"],
       update: false,
     },
   ];

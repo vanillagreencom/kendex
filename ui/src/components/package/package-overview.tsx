@@ -1,5 +1,6 @@
 import type {
   HarnessId,
+  ItemSource,
   ObservedItem,
   PackageMeta_Serialize,
   VersionRow,
@@ -8,6 +9,7 @@ import { EditedNotice } from "@/components/package/fork-notice";
 import { PackageDetails } from "@/components/package/package-details";
 import { PackageReadme } from "@/components/package/package-readme";
 import type { ItemGroup } from "@/lib/derive";
+import type { ReadState } from "@/lib/read-state";
 import type { PackageRef } from "@/stores/nav";
 
 /** What a package is, read top to bottom: where it came from, whether your
@@ -20,6 +22,8 @@ export function PackageOverview({
   primary,
   meta,
   versions,
+  readme,
+  readmeRead,
   busy,
   declares,
   onToggle,
@@ -34,6 +38,9 @@ export function PackageOverview({
   primary: ObservedItem;
   meta: PackageMeta_Serialize | null;
   versions: VersionRow[];
+  /** The package's README, and how the page's read of it went. */
+  readme: ItemSource | null;
+  readmeRead: ReadState;
   busy: boolean;
   /** Whether this page addresses a declaration. Everything here that reads
    *  or writes by scope, kind and name speaks to whatever package the
@@ -78,15 +85,11 @@ export function PackageOverview({
         onFollow={onFollow}
       />
       {/* The README is read by scope, kind and name — the declaration's
-          address. An observed row has no declaration to read, and asking
-          anyway would put the other package's words under this one's
-          name. */}
+          address — so a page with none never asks for it, and the note
+          that says a package carries none would be a claim about a package
+          this page did not read. */}
       {declares ? (
-        <PackageReadme
-          scope={reference.scope}
-          kind={reference.kind}
-          name={reference.name}
-        />
+        <PackageReadme readme={readme} read={readmeRead} />
       ) : null}
     </div>
   );

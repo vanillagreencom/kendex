@@ -121,7 +121,14 @@ export function PackagePage() {
   );
 
   const mutating = useManifestBusy(switching);
-  const { meta, files, versions, reads, load: reload } = usePackageData(ref);
+  const {
+    meta,
+    files,
+    readme,
+    versions,
+    reads,
+    load: reload,
+  } = usePackageData(ref);
   const diff = usePackageDiff(
     ref,
     comparison,
@@ -259,6 +266,8 @@ export function PackagePage() {
       primary={primary}
       meta={meta}
       versions={versions}
+      readme={readme}
+      readmeRead={reads.readme}
       busy={mutating}
       declares={declares}
       onToggle={

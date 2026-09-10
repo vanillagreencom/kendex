@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   commands,
   type HarnessId,
+  type ItemSource,
   type PackageDiff,
   type PackageFile,
   type PackageMeta_Serialize,
@@ -59,14 +60,20 @@ export const diffHarness = (
 export function usePackageData(ref: PackageRef | null): {
   meta: PackageMeta_Serialize | null;
   files: PackageFile[];
+  readme: ItemSource | null;
   versions: VersionRow[];
   reads: PackageReads;
   load: () => void;
 } {
   const [meta, setMeta] = useState<PackageMeta_Serialize | null>(null);
   const [files, setFiles] = useState<PackageFile[]>([]);
+  // The README the Overview shows. Read here rather than by the component
+  // that draws it: an update or a version switch rewrites the installed
+  // files without moving the address, so a read keyed on the package's
+  // name would go on showing the replaced copy's words.
+  const [readme, setReadme] = useState<ItemSource | null>(null);
   const [versions, setVersions] = useState<VersionRow[]>([]);
-  // How each of the three went, kept beside the values: a read that failed
+  // How each of the four went, kept beside the values: a read that failed
   // leaves the same empty page as one that found nothing, and the reason it
   // came back with is the only thing that tells them apart.
   const [record, setRecord] = useState<ReadState>(READ_PENDING);
@@ -76,8 +83,9 @@ export function usePackageData(ref: PackageRef | null): {
   // from one that failed because only a refresh, never a re-read, lifts it.
   const [unfetched, setUnfetched] = useState<string | null>(null);
   const [filesRead, setFilesRead] = useState<ReadState>(READ_PENDING);
+  const [readmeRead, setReadmeRead] = useState<ReadState>(READ_PENDING);
   // Whether the newest load is still out. Counted here rather than read off
-  // the order below: one ticket covers three answers, and `outstanding` flips
+  // the order below: one ticket covers four answers, and `outstanding` flips
   // on the first of them to land, so it is not this order's question to ask.
   const [reading, setReading] = useState(true);
   // One ticket per load, asked as each of its three answers arrives. Reads
@@ -120,10 +128,10 @@ export function usePackageData(ref: PackageRef | null): {
       return;
     }
     const ticket = order.current.begin();
-    let left = 3;
+    let left = 4;
     setReading(true);
     // Whether this answer is the newest load's to write, and the last of its
-    // three when it is. A superseded load never reaches its own count, so
+    // four when it is. A superseded load never reaches its own count, so
     // the load on screen is the only one that can say it has finished.
     const lands = () => {
       if (!order.current.lands(ticket)) return false;
@@ -131,7 +139,7 @@ export function usePackageData(ref: PackageRef | null): {
       if (left === 0) setReading(false);
       return true;
     };
-    // `settled` on all three: it normalizes a refusal that says nothing,
+    // `settled` on all four: it normalizes a refusal that says nothing,
     // and it is the last guard behind the wrapper's own fold. A landing that
     // never ran leaves the read pending for the life of the view, the note
     // that says a read failed never appears, and the rejection goes out
@@ -150,6 +158,13 @@ export function usePackageData(ref: PackageRef | null): {
         setFilesRead(readOf(response));
       },
     );
+    void settled(commands.packageReadme(ref.scope, ref.kind, ref.name)).then(
+      (response) => {
+        if (!lands()) return;
+        setReadme(response.status === "ok" ? response.data : null);
+        setReadmeRead(readOf(response));
+      },
+    );
     void settled(commands.packageVersions(ref.scope, ref.kind, ref.name)).then(
       (response) => {
         if (!lands()) return;
@@ -166,8 +181,16 @@ export function usePackageData(ref: PackageRef | null): {
   return {
     meta,
     files,
+    readme,
     versions,
-    reads: { record, timeline, unfetched, files: filesRead, reading },
+    reads: {
+      record,
+      timeline,
+      unfetched,
+      files: filesRead,
+      readme: readmeRead,
+      reading,
+    },
     load,
   };
 }

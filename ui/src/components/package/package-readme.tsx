@@ -1,15 +1,9 @@
-import { useEffect, useState } from "react";
-import { commands, type ItemKind, type Scope } from "@/bindings";
+import type { ItemSource } from "@/bindings";
 import { FilePane } from "@/components/files/file-pane";
 import { StatusNote } from "@/components/status-note";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FILE_READ_FAILED_TITLE, NO_README_NOTE } from "@/lib/copy-files";
-
-type ReadmeState =
-  | { status: "loading" }
-  | { status: "none" }
-  | { status: "error"; error: string }
-  | { status: "ok"; path: string; content: string; truncated: boolean };
+import type { ReadState } from "@/lib/read-state";
 
 /** The package's own words about itself, and nothing else.
  *
@@ -17,37 +11,29 @@ type ReadmeState =
  *  Falling back to whichever file happens to be first would put an
  *  arbitrary source file under the package's details, where a reader would
  *  take it for the package describing itself. Its files are a tab of their
- *  own, where picking one is the reader's own act. */
+ *  own, where picking one is the reader's own act.
+ *
+ *  The read is the page's, not this component's: an update or a version
+ *  switch replaces the installed copy without moving the address, and a
+ *  read of its own keyed on the package would go on showing the words of
+ *  the copy that was replaced. */
 export function PackageReadme({
-  scope,
-  kind,
-  name,
+  readme,
+  read,
 }: {
-  scope: Scope;
-  kind: ItemKind;
-  name: string;
+  /** The README the last landed read found, or null where the package
+   *  carries none. */
+  readme: ItemSource | null;
+  read: ReadState;
 }) {
-  const [state, setState] = useState<ReadmeState>({ status: "loading" });
-
-  useEffect(() => {
-    let cancelled = false;
-    setState({ status: "loading" });
-    void commands.packageReadme(scope, kind, name).then((response) => {
-      if (cancelled) return;
-      setState(
-        response.status === "error"
-          ? { status: "error", error: response.error }
-          : response.data === null
-            ? { status: "none" }
-            : { status: "ok", ...response.data },
-      );
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [scope, kind, name]);
-
-  if (state.status === "loading") {
+  if (read.status === "failed" && read.error !== null) {
+    return (
+      <StatusNote tone="critical" title={FILE_READ_FAILED_TITLE}>
+        {read.error}
+      </StatusNote>
+    );
+  }
+  if (read.status === "pending") {
     return (
       <div className="space-y-2">
         <Skeleton className="h-3.5 w-3/4" />
@@ -56,15 +42,8 @@ export function PackageReadme({
       </div>
     );
   }
-  if (state.status === "none") {
+  if (readme === null) {
     return <p className="text-sm text-muted-foreground">{NO_README_NOTE}</p>;
   }
-  if (state.status === "error") {
-    return (
-      <StatusNote tone="critical" title={FILE_READ_FAILED_TITLE}>
-        {state.error}
-      </StatusNote>
-    );
-  }
-  return <FilePane {...state} />;
+  return <FilePane {...readme} />;
 }
