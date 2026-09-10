@@ -216,7 +216,11 @@ impl From<&Failed> for Refused {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum CommitStep {
     /// The re-read set was empty: the files changed since the offer.
-    Nothing,
+    Nothing {
+        /// Paths the selection named that the re-read set no longer covers.
+        /// Every path it named, since none was left.
+        dropped: Vec<String>,
+    },
     Made {
         sha: String,
         files: u32,
@@ -703,7 +707,7 @@ pub fn commit_offer_commit(
     let selection = selection.into_core();
     Ok(
         match commit_offer::commit(&root, &generated, &message, &selection) {
-            Ok(Committed::Nothing) => CommitStep::Nothing,
+            Ok(Committed::Nothing { dropped }) => CommitStep::Nothing { dropped },
             Ok(Committed::Made {
                 sha,
                 files,

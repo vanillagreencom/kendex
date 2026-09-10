@@ -1236,7 +1236,12 @@ export type CommitOffer = "ask" | "off";
 /**  What the commit did. */
 export type CommitStep = 
 /**  The re-read set was empty: the files changed since the offer. */
-{ kind: "nothing" } | { kind: "made"; sha: string; files: number; 
+{ kind: "nothing"; 
+/**
+ *  Paths the selection named that the re-read set no longer covers.
+ *  Every path it named, since none was left.
+ */
+dropped: string[] } | { kind: "made"; sha: string; files: number; 
 /**  Paths the selection named that the re-read set no longer covers. */
 dropped: string[] } | { kind: "refused"; refused: Refused; 
 /**

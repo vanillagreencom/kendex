@@ -68,7 +68,7 @@ fn straight(
     let mut message = message(offer, given, asking)?;
     loop {
         match commit_offer::commit(root, generated, &message, &Selection::All) {
-            Ok(Committed::Nothing) => {
+            Ok(Committed::Nothing { .. }) => {
                 block::nothing_to_commit();
                 return Ok(Outcome::Nothing);
             }
@@ -204,7 +204,7 @@ fn pull_request(
         return without_pull_request(offer, generated, Some(message), asking);
     }
     let (sha, files) = match commit_offer::commit(root, generated, &message, &Selection::All) {
-        Ok(Committed::Nothing) => {
+        Ok(Committed::Nothing { .. }) => {
             // The checkout already moved to a branch that will now carry
             // no commit, so kendex clears that leftover the way it does
             // after a refused commit.

@@ -60,6 +60,10 @@ export const ACCEPT_EARLIER_LABEL =
   "Commit the earlier changes in these files too";
 export const ACCEPT_EARLIER_HELD =
   "Say yes above, or switch to all pending changes.";
+/** Where the action's work and everything pending are the same commit
+ *  there is no segmented control to switch to, so the line names only the
+ *  answer that exists. */
+export const ACCEPT_EARLIER_ONLY = "Say yes above.";
 
 /** Paths the reader picked that the project stopped holding a change for
  *  between the offer being drawn and the commit running. */

@@ -53,14 +53,17 @@ export const useProjectChangesStore = create<ProjectChangesState>(
       // `forgotten-roots` owns that rule for every store that holds
       // something per project.
       askingAgain(roots);
-      // Nothing tracked is nothing to read, and a read of no projects has no
-      // answer to publish: the rows stay as they are and the last read's own
-      // outcome stands.
+      // Ticketed before the branch, not after it: an emptied registry is an
+      // answer like any other, and one that lands while a read of the old
+      // list is still out. Without a ticket of its own that older read lands
+      // afterwards and puts rows back for projects nobody tracks.
+      const ticket = order.begin();
+      // Nothing tracked is nothing to read, and no read to wait for.
       if (roots.length === 0) {
+        if (!order.lands(ticket)) return;
         set({ rows: [], read: READ_LANDED });
         return;
       }
-      const ticket = order.begin();
       const response = await commands.projectChangesScan(roots);
       if (!order.lands(ticket)) return;
       // A read that failed answers for nothing: the rows it had stay put,
@@ -69,8 +72,8 @@ export const useProjectChangesStore = create<ProjectChangesState>(
       set(
         response.status === "ok"
           ? {
-              // A folder that stopped being a project while this read was out
-              // is not one to put back on screen.
+              // A folder that stopped being a project while this read was
+              // out is not one to put back on screen.
               rows: response.data.filter((row) => !isForgotten(row.root)),
               read: readOf(response),
             }

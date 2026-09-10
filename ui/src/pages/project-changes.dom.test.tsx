@@ -4,12 +4,14 @@ import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectChanges } from "@/bindings";
 import { commands } from "@/bindings";
+import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import { capitalised, uncommittedInProgress } from "@/lib/copy-commit-offer";
 import {
   CHANGES_UNAVAILABLE_TITLE,
   COMMIT_CHANGES_LABEL,
   COULD_NOT_CHECK,
   inProgressHeld,
+  LAST_CHECKED_NOTE,
   NO_BRANCH_HELD,
   NOTHING_PENDING,
   PACKAGE_EDITS_LABEL,
@@ -22,7 +24,7 @@ import {
   REVERT_CONFIRM_LABEL,
   REVERT_LABEL,
 } from "@/lib/copy-project-changes";
-import { READ_LANDED } from "@/lib/read-state";
+import { READ_LANDED, readFailed } from "@/lib/read-state";
 import { useCommitOfferStore } from "@/stores/commit-offer";
 import { useNavStore } from "@/stores/nav";
 import { useProjectChangesStore } from "@/stores/project-changes";
@@ -184,6 +186,41 @@ describe("the review of one project's pending changes", () => {
     expect(body()).toContain(COULD_NOT_CHECK);
     expect(body()).toContain("fatal: bad object HEAD");
     expect(body()).not.toContain(NOTHING_PENDING);
+  });
+
+  // A row kept from an earlier read, under a read that has since failed.
+  // The files are the last kendex could check, not what is there now, and
+  // this page says so and offers the read again — the same rule the card
+  // keeps, on the surface the card sends people to.
+  it("says the rows are unconfirmed when the re-read failed", async () => {
+    useProjectChangesStore.setState({
+      rows: [row()],
+      read: readFailed("git is not on the path"),
+    });
+    mount(<ProjectChangesPage />);
+    await settle();
+    expect(body()).toContain(capitalised(LAST_CHECKED_NOTE));
+    expect(body()).toContain("git is not on the path");
+    expect(button(TRY_AGAIN_LABEL), "no way to ask again").toBeDefined();
+    // The files it does have are still shown: they are the best answer
+    // available, and hiding them would lose that.
+    expect(body()).toContain(FILES[0].split("/").pop());
+  });
+
+  // The folder name comes from the read, which knows this platform's
+  // separator. A Windows root holds no `/`, so splitting one here would
+  // title the page with the whole path.
+  it("titles the page with the folder name, not the path", async () => {
+    const windows = "C:\\Users\\p\\dev\\site";
+    useNavStore.setState({ changesRoot: windows });
+    useProjectChangesStore.setState({
+      rows: [{ root: windows, name: "site", state: { kind: "clean" } }],
+      read: READ_LANDED,
+    });
+    mount(<ProjectChangesPage />);
+    await settle();
+    expect(body()).toContain(projectChangesTitle("site"));
+    expect(body()).not.toContain(projectChangesTitle(windows));
   });
 
   it("says so when nothing is waiting", async () => {

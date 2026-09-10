@@ -584,7 +584,10 @@ fn the_commit_takes_the_set_and_leaves_the_persons_changes_alone() {
     // no commit, not an empty one.
     assert_eq!(
         commit(&repo.root, &generated, "again", &Selection::All).unwrap(),
-        Committed::Nothing
+        Committed::Nothing {
+            // Nothing was named, so nothing can be reported as dropped.
+            dropped: Vec::new()
+        }
     );
     assert_eq!(git::head_short(&repo.root).unwrap(), sha);
 }
@@ -1828,7 +1831,10 @@ fn a_chosen_path_that_changed_back_is_dropped_and_named() {
 }
 
 /// A selection the fresh reading covers none of is nothing to commit, and
-/// no empty commit is made for it.
+/// no empty commit is made for it. The paths the person chose travel with
+/// that answer: "nothing to commit" on its own leaves them wondering what
+/// became of the files they picked, and this is the same account
+/// [`Committed::Made`] gives when it drops some of them.
 #[test]
 fn a_selection_the_project_no_longer_covers_commits_nothing() {
     let repo = Repo::new(&[(OWNED[0], "one\n"), (OWNED[1], "two\n")]);
@@ -1843,7 +1849,9 @@ fn a_selection_the_project_no_longer_covers_commits_nothing() {
             &Selection::Only([OWNED[0].to_owned()].into_iter().collect()),
         )
         .unwrap(),
-        Committed::Nothing
+        Committed::Nothing {
+            dropped: vec![OWNED[0].to_owned()]
+        }
     );
     assert_eq!(git::head_short(&repo.root).unwrap(), before);
 }

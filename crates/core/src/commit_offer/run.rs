@@ -26,7 +26,14 @@ use super::{Failed, Refusal, Step, git};
 pub enum Committed {
     /// The re-read set was empty: the files changed since the offer, so
     /// there was nothing left to commit and no commit was made.
-    Nothing,
+    Nothing {
+        /// The paths the selection named, all of which the re-read set no
+        /// longer covers — that is why nothing was left. Carried for the
+        /// same reason [`Committed::Made`] carries them: the person chose
+        /// these, and "nothing to commit" without them leaves them
+        /// wondering what happened to the files they picked.
+        dropped: Vec<String>,
+    },
     Made {
         /// The short name of the commit, for the line that reports it.
         sha: String,
@@ -80,11 +87,14 @@ pub fn commit(
     selection: &Selection,
 ) -> Result<Committed, CommitFailure> {
     let Some(scan) = super::paths::scan(root, generated).map_err(CommitFailure::from)? else {
-        return Ok(Committed::Nothing);
+        // The read covers nothing at all, so every path the selection named
+        // is one it no longer covers. `over` decides that, here as below.
+        let (_, dropped) = selection.over(&[]);
+        return Ok(Committed::Nothing { dropped });
     };
     let (taken, dropped) = selection.over(&scan.owned);
     if taken.is_empty() {
-        return Ok(Committed::Nothing);
+        return Ok(Committed::Nothing { dropped });
     }
     let files = taken.len();
     let untracked: Vec<String> = taken

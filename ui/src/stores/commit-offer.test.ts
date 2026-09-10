@@ -1,5 +1,7 @@
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { type ChangedFile, commands, type ProjectOffer } from "@/bindings";
+import { droppedToast, NOTHING_TO_COMMIT_TOAST } from "@/lib/copy-commit-offer";
 import {
   ready,
   routesFor,
@@ -325,6 +327,33 @@ describe("the reading an action is scoped against", () => {
     expect(commands.commitOfferBaseline).toHaveBeenCalledTimes(2);
   });
 
+  // A reading is spent once the write it was taken for has been read for,
+  // and a read that FAILED has still had its turn. Held past that, the next
+  // write in the same project would be compared against a reading taken
+  // before somebody else's action, and that action's files would be
+  // reported as this write's own.
+  it("keeps no reading past a scan that failed", async () => {
+    vi.mocked(commands.commitOfferScan).mockResolvedValue({
+      status: "error",
+      error: "git is not on the path",
+    });
+    await useCommitOfferStore
+      .getState()
+      .noteBaseline(["/home/method/dev/site"]);
+    await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
+    expect(useCommitOfferStore.getState().scanFailure).toBe(
+      "git is not on the path",
+    );
+    expect(useCommitOfferStore.getState().baselines).toEqual({});
+
+    // So the next write reads the project again rather than comparing
+    // against the reading that scan never got to use.
+    await useCommitOfferStore
+      .getState()
+      .noteBaseline(["/home/method/dev/site"]);
+    expect(commands.commitOfferBaseline).toHaveBeenCalledTimes(2);
+  });
+
   // A reading that would not run records nothing, and the offer after the
   // write then attributes every pending change to that write. Over-reporting
   // rather than labelling somebody else's work as this action's.
@@ -429,6 +458,25 @@ describe("answering an offer", () => {
     });
   });
 
+  // Every path the reader picked changed back before the commit ran, so
+  // there was nothing left to commit. The names travel with that answer:
+  // "nothing to commit" on its own leaves them wondering what became of the
+  // files they chose.
+  it("names the picked files when none of them is left", async () => {
+    vi.mocked(commands.commitOfferScan).mockResolvedValue({
+      status: "ok",
+      data: [offer({ choice: true, actionPaths: ["one.md"] })],
+    });
+    vi.mocked(commands.commitOfferCommit).mockResolvedValue({
+      status: "ok",
+      data: { kind: "nothing", dropped: ["one.md"] },
+    });
+    await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
+    await useCommitOfferStore.getState().run();
+    expect(toast.info).toHaveBeenCalledWith(droppedToast(["one.md"]));
+    expect(toast.info).toHaveBeenCalledWith(NOTHING_TO_COMMIT_TOAST);
+  });
+
   // The set the reader picked reaches the commit as the paths themselves.
   // A label alone would leave core re-deriving everything pending, which is
   // the whole of what "only this action" has to rule out.
@@ -503,21 +551,25 @@ describe("answering an offer", () => {
   });
 });
 
-// An offer with no choice to make holds nothing back. `choice` is false where
-// the action's own work and everything pending are the same commit, and the
-// controls that could answer a tangle live inside the choice — so a gate that
-// held there would disable the only primary action with no way to free it.
+// An offer with no choice to make still asks for the yes. `choice` is false
+// where the action's own work and everything pending are the same commit —
+// which does not make the earlier changes in those files the reader's own,
+// and the one commit on offer carries them. The dialog draws the answer in
+// that branch too, so the gate is one a reader can free.
 describe("an offer with no choice to make", () => {
-  it("runs even with files that carry earlier changes", () => {
+  it("waits for the yes before committing earlier work", () => {
     const both = offer({
       choice: false,
       tangled: [{ path: "one.md", reason: "carriesEarlier" }],
     });
     expect(ready({ queue: [both], scoped: "action", accepted: false })).toBe(
+      false,
+    );
+    expect(ready({ queue: [both], scoped: "action", accepted: true })).toBe(
       true,
     );
-    // And the choice still gates where there IS a choice, so the fix does not
-    // reach the case the gate exists for.
+    // Picking every pending change is itself that answer: the reader asked
+    // for the earlier work by name.
     const choosable = offer({
       choice: true,
       actionPaths: ["one.md"],
@@ -526,6 +578,9 @@ describe("an offer with no choice to make", () => {
     expect(
       ready({ queue: [choosable], scoped: "action", accepted: false }),
     ).toBe(false);
+    expect(ready({ queue: [choosable], scoped: "all", accepted: false })).toBe(
+      true,
+    );
   });
 
   // With no choice on screen the two labels name the same commit, so the set

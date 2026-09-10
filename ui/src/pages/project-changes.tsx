@@ -31,6 +31,7 @@ import {
   FOLDER_LABEL,
   inProgressHeld,
   inProgressValue,
+  LAST_CHECKED_NOTE,
   NO_BRANCH_HELD,
   NO_BRANCH_VALUE,
   NOT_APPLICABLE,
@@ -47,6 +48,7 @@ import {
   UNREADABLE_HELD,
   WHERE_SECTION,
 } from "@/lib/copy-project-changes";
+import { folderName } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { rescanEverything, trackedProjects } from "@/lib/rescan";
 import { cn } from "@/lib/utils";
@@ -55,6 +57,7 @@ import { useNavStore } from "@/stores/nav";
 import {
   changesFor,
   pendingPaths,
+  surenessOf,
   useProjectChangesStore,
 } from "@/stores/project-changes";
 
@@ -90,10 +93,18 @@ export function ProjectChangesPage() {
   // No project named is no page: every way in names one, so this is a
   // navigation that never happened rather than a state to design for.
   if (!root) return null;
-  const name = root.split("/").pop() ?? root;
   const row = changesFor(rows, root);
+  // The folder name the read derived, which knows this platform's separator.
+  // Splitting the root here would print the whole of a Windows path, whose
+  // roots keep their native spelling so they compare equal to the registry.
+  const name = row?.name ?? folderName(root);
   const paths = pendingPaths(row);
   const state = row?.state ?? null;
+  // How sure this page may be, from the one place that tells the four
+  // states apart. A row kept from an earlier read is the last kendex could
+  // check, not what is there now, and saying so is this page's half of the
+  // rule the card already keeps.
+  const sureness = surenessOf({ rows, read }, root);
 
   // The files moved, so every read that answers for them is asked again —
   // this page's own row among them, on `rescan.ts`'s rule.
@@ -134,6 +145,29 @@ export function ProjectChangesPage() {
               <Row label={BRANCH_LABEL}>{branchValue(state)}</Row>
             </dl>
           </Section>
+
+          {/* The read that would have confirmed these rows failed, so what
+              is below is the last kendex could check rather than what is
+              there now. Said above the files rather than instead of them:
+              they are still the best answer available, and the read is
+              offered again here the way the card offers it. */}
+          {sureness === "stale" ? (
+            <StatusNote
+              tone="warning"
+              title={capitalised(LAST_CHECKED_NOTE)}
+              action={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void rescanEverything({ announce: true })}
+                >
+                  {TRY_AGAIN_LABEL}
+                </Button>
+              }
+            >
+              {read.error}
+            </StatusNote>
+          ) : null}
 
           {/* The read itself failed and left nothing behind. Not zero
               changes: nothing is known about this project, so the page says

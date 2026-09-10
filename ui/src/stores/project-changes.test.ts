@@ -41,6 +41,32 @@ beforeEach(() => {
   useProjectChangesStore.setState({ rows: [], read: READ_PENDING });
 });
 
+// The registry emptied while a read of the old list was still out. That
+// read describes projects nobody tracks now, and landing it afterwards puts
+// their rows back on every card.
+describe("an emptied registry", () => {
+  it("supersedes a read that has not answered yet", async () => {
+    let answer: (value: { status: "ok"; data: ProjectChanges[] }) => void =
+      () => {};
+    vi.mocked(commands.projectChangesScan).mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }) as ReturnType<typeof commands.projectChangesScan>,
+    );
+    const out = useProjectChangesStore.getState().refresh([ROOT]);
+    // The projects are unregistered, and that answer lands first.
+    await useProjectChangesStore.getState().refresh([]);
+    expect(useProjectChangesStore.getState().rows).toEqual([]);
+
+    answer({ status: "ok", data: [row()] });
+    await out;
+    expect(
+      useProjectChangesStore.getState().rows,
+      "a read of the old list landed after the registry emptied",
+    ).toEqual([]);
+  });
+});
+
 describe("what each project has waiting", () => {
   it("keeps what the read found and never opens anything", async () => {
     vi.mocked(commands.projectChangesScan).mockResolvedValue({

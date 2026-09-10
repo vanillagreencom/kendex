@@ -20,6 +20,7 @@ import { useMayAsk } from "@/lib/asks-first";
 import {
   ACCEPT_EARLIER_HELD,
   ACCEPT_EARLIER_LABEL,
+  ACCEPT_EARLIER_ONLY,
   ACTION_SEGMENT,
   ALL_SEGMENT,
   actionScopeNote,
@@ -356,21 +357,21 @@ function OfferState({
  *
  *  Where the action touched a file that was already changed, or adds a file
  *  whose declaration was already changed, no commit can carry one change
- *  and not the other — git commits whole files. Those files are named, and
- *  the primary action is held until the reader says yes, so nothing
- *  labelled as one action's work ever quietly carries earlier work. */
+ *  and not the other — git commits whole files. Those files are named and
+ *  the primary action is held until the reader says yes, so no commit ever
+ *  quietly carries earlier work. That answer is drawn in both branches:
+ *  with no selection on offer the one commit still carries those earlier
+ *  changes, and the consent is about the work, not about the label. */
 function Scope({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
   const scoped = useCommitOfferStore((s) => s.scoped);
-  const accepted = useCommitOfferStore((s) => s.accepted);
   const scope = useCommitOfferStore((s) => s.scope);
-  const accept = useCommitOfferStore((s) => s.accept);
   const tangled = scoped === "action" ? offer.tangled : [];
   if (!offer.choice) {
-    // No choice to make, and still the truth to tell: the one commit on
-    // offer carries earlier work in these files.
+    // No selection to make, and still the truth to tell and the same yes to
+    // ask for: the one commit on offer carries earlier work in these files.
     return offer.tangled.length > 0 ? (
       <Section title={TANGLED_LABEL}>
-        <Tangles tangled={offer.tangled} />
+        <Earlier tangled={offer.tangled} busy={busy} alone />
       </Section>
     ) : null;
   }
@@ -381,6 +382,7 @@ function Scope({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
           <button
             key={each}
             type="button"
+            aria-pressed={each === scoped}
             disabled={busy}
             onClick={() => scope(each)}
             className={cn(
@@ -400,25 +402,48 @@ function Scope({ offer, busy }: { offer: ProjectOffer; busy: boolean }) {
           : allScopeNote(offer.files.length)}
       </p>
       {tangled.length > 0 ? (
-        <div className="space-y-2 rounded border border-border p-3">
-          <Tangles tangled={tangled} />
-          <Label className="flex items-baseline gap-2 text-sm font-normal">
-            {/* Named on the box itself: a label element around a button is
-                not what names it. */}
-            <Checkbox
-              aria-label={ACCEPT_EARLIER_LABEL}
-              checked={accepted}
-              disabled={busy}
-              onCheckedChange={(next) => accept(next === true)}
-            />
-            <span>{ACCEPT_EARLIER_LABEL}</span>
-          </Label>
-          {accepted ? null : (
-            <p className="text-muted-foreground">{ACCEPT_EARLIER_HELD}</p>
-          )}
-        </div>
+        <Earlier tangled={tangled} busy={busy} alone={false} />
       ) : null}
     </Section>
+  );
+}
+
+/** The files a commit cannot separate, and the answer that frees it.
+ *
+ *  `alone` is the offer with no selection to draw: the held line then names
+ *  only the answer that exists, since there is no segmented control to
+ *  switch to. */
+function Earlier({
+  tangled,
+  busy,
+  alone,
+}: {
+  tangled: TangledFile[];
+  busy: boolean;
+  alone: boolean;
+}) {
+  const accepted = useCommitOfferStore((s) => s.accepted);
+  const accept = useCommitOfferStore((s) => s.accept);
+  return (
+    <div className="space-y-2 rounded border border-border p-3">
+      <Tangles tangled={tangled} />
+      <Label className="flex items-baseline gap-2 text-sm font-normal">
+        {/* Named on the box itself: a label element around a button is
+            not what names it. */}
+        <Checkbox
+          aria-label={ACCEPT_EARLIER_LABEL}
+          checked={accepted}
+          disabled={busy}
+          onCheckedChange={(next) => accept(next === true)}
+        />
+        <span>{ACCEPT_EARLIER_LABEL}</span>
+      </Label>
+      {accepted ? null : (
+        <p className="text-muted-foreground">
+          {alone ? ACCEPT_EARLIER_ONLY : ACCEPT_EARLIER_HELD}
+        </p>
+      )}
+    </div>
   );
 }
 

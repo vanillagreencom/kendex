@@ -1,7 +1,15 @@
 // @vitest-environment jsdom
+import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectOffer, Refused } from "@/bindings";
-import { COMMIT_LABEL, TANGLED_LABEL } from "@/lib/copy-commit-offer";
+import {
+  ACCEPT_EARLIER_LABEL,
+  ACCEPT_EARLIER_ONLY,
+  ACTION_SEGMENT,
+  ALL_SEGMENT,
+  COMMIT_LABEL,
+  TANGLED_LABEL,
+} from "@/lib/copy-commit-offer";
 import { useCommitOfferStore } from "@/stores/commit-offer";
 import { mount, settle } from "@/test/dom";
 import { CommitOfferDialog } from "./commit-offer-dialog";
@@ -174,9 +182,31 @@ describe("the commit refused where the checkout could not be put back", () => {
   });
 });
 
-// The state item 2 named: every pending path is one the action touched, so
-// there is no choice to draw — and the controls that could answer a tangle
-// live inside that choice. The primary action has to stay reachable.
+// Every pending path is one the action touched, so there is no selection to
+// draw — and the one commit on offer still carries changes the reader did
+// not make. The answer that frees it has to be on screen, or the primary
+// action is a dead end.
+// The segments are buttons that hold a selection, so which one is chosen
+// has to reach a screen reader. Drawn state alone says it to sighted
+// readers only, and the repo draws its other choice controls this way.
+describe("the which-changes segments", () => {
+  it("says which segment is chosen", async () => {
+    useCommitOfferStore.setState({
+      queue: [{ ...offer, choice: true, actionPaths: [".claude/CLAUDE.md"] }],
+      scoped: "action",
+    });
+    const host = mount(<CommitOfferDialog />);
+    await settle();
+    const pressed = [
+      ...host.ownerDocument.body.querySelectorAll("button[aria-pressed]"),
+    ].map((one) => [one.textContent, one.getAttribute("aria-pressed")]);
+    expect(pressed).toEqual([
+      [ACTION_SEGMENT, "true"],
+      [ALL_SEGMENT, "false"],
+    ]);
+  });
+});
+
 describe("an offer whose files all carry earlier changes", () => {
   const both: ProjectOffer = {
     ...offer,
@@ -187,17 +217,35 @@ describe("an offer whose files all carry earlier changes", () => {
     tangled: [{ path: ".claude/CLAUDE.md", reason: "carriesEarlier" }],
   };
 
-  it("keeps the commit reachable and still names the files", async () => {
-    useCommitOfferStore.setState({ queue: [both], scoped: "action" });
+  it("asks for the yes on screen and commits once it is given", async () => {
+    useCommitOfferStore.setState({
+      queue: [both],
+      scoped: "action",
+      accepted: false,
+    });
     const host = mount(<CommitOfferDialog />);
     await settle();
-    const primary = [...host.ownerDocument.body.querySelectorAll("button")]
-      .filter((one) => one.textContent === COMMIT_LABEL)
-      .at(-1);
-    expect(primary, buttons().join(" | ")).toBeDefined();
-    expect((primary as HTMLButtonElement).disabled).toBe(false);
-    // The reader is still told what the commit carries.
+    const primary = () =>
+      [...host.ownerDocument.body.querySelectorAll("button")]
+        .filter((one) => one.textContent === COMMIT_LABEL)
+        .at(-1) as HTMLButtonElement;
+    expect(primary(), buttons().join(" | ")).toBeDefined();
+    expect(primary().disabled).toBe(true);
+    // The reader is told what the commit carries, and why it is held.
     expect(host.ownerDocument.body.textContent).toContain(TANGLED_LABEL);
     expect(host.ownerDocument.body.textContent).toContain(".claude/CLAUDE.md");
+    expect(host.ownerDocument.body.textContent).toContain(ACCEPT_EARLIER_ONLY);
+
+    // The control that takes the answer is here, in the branch with no
+    // selection: this is the dead end the state used to be.
+    const box = host.ownerDocument.body.querySelector(
+      `[aria-label="${ACCEPT_EARLIER_LABEL}"]`,
+    );
+    expect(box, "no way to answer").not.toBeNull();
+    await act(async () => {
+      (box as HTMLElement).click();
+    });
+    await settle();
+    expect(primary().disabled).toBe(false);
   });
 });

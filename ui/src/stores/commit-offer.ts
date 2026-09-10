@@ -197,19 +197,22 @@ export function selectionOf(state: {
  *  work never carries an earlier change the reader has not said yes to.
  *  Every other state is free to run.
  *
- *  An offer with no choice to make is one of those. `choice` is false where
- *  the action's own work and everything pending are the same commit, so
- *  neither label claims anything the other does not, and there is nothing
- *  for a yes to be about. The tangled files are still named — the dialog
- *  draws them either way — but the answer cannot be asked for, because the
- *  control that would take it belongs to a choice that is not on screen. */
+ *  What the yes is about is the earlier work, not which label the commit
+ *  carries. Picking "all pending changes" IS that answer: the reader asked
+ *  for everything pending by name. Every other route to a commit that
+ *  includes work the action did not do waits for the checkbox — including
+ *  an offer with no choice to draw, where the one commit on offer carries
+ *  the earlier changes in those files whatever the label says. The dialog
+ *  draws the answer wherever this can hold, so the gate is never one a
+ *  reader cannot free. */
 export function ready(state: {
   queue: ProjectOffer[];
   scoped: Scoped;
   accepted: boolean;
 }): boolean {
   const offer = state.queue[0];
-  if (!offer || state.scoped === "all" || !offer.choice) return true;
+  if (!offer) return true;
+  if (offer.choice && state.scoped === "all") return true;
   return offer.tangled.length === 0 || state.accepted;
 }
 
@@ -405,6 +408,14 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
         // write's `finally` and the install that started it may still be
         // on screen saying what it did.
         set({ scanFailure: response.error, scanning });
+        // A reading is spent when the write it was taken for has been read
+        // for, answered or not. Kept past that, the next write in the same
+        // project compares against a reading taken before somebody else's
+        // action and reports that action's files as its own — which is the
+        // one thing this whole comparison exists to stop. Settled on the
+        // same rule as a scan that landed: a project with no offer waiting
+        // has no question left to answer.
+        settle();
         return;
       }
       // A folder that stopped being a project while this scan was out is
@@ -553,6 +564,12 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
       );
       if (committed.status === "error") return transport(committed.error);
       if (committed.data.kind === "nothing") {
+        // Which files the reader picked that the project no longer holds a
+        // change for. "Nothing to commit" alone leaves them wondering what
+        // became of the ones they chose, and this is the same account a
+        // commit that dropped only some of them gives.
+        const gone = committed.data.dropped;
+        if (gone.length > 0) toast.info(droppedToast(gone));
         if (route === "pr") {
           // The checkout was switched to the new branch before the commit
           // and no commit landed on it, so without this the branch would
