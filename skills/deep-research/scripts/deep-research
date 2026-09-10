@@ -2,7 +2,7 @@
 // Diagnostic protocol: command refusals write one JSON object to stderr with
 // {ok:false,key,value,error}. Validate keeps errors/warnings and adds problems
 // with {level,key,value}; English remains display text, not a test contract.
-import { existsSync, realpathSync, writeSync } from "node:fs";
+import { existsSync, realpathSync, statSync, writeSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, extname, join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -227,11 +227,19 @@ function insideProject(root, named) {
     }
   };
   const top = resolved(root, root);
+  // Climb only past components that are ABSENT. One that exists as
+  // something other than a directory blocks the path: no file can be
+  // created under it, so climbing past it would call the path contained
+  // and then read as absent, and the credential would silently never
+  // load.
   let at = dirname(path);
   while (!existsSync(at)) {
     const up = dirname(at);
     if (up === at) break;
     at = up;
+  }
+  if (!statSync(at).isDirectory()) {
+    fail("private-env-blocked", named, `The private env file ${named} cannot exist: ${at} is a file, not a directory. Name a path whose parents are directories.`);
   }
   const here = resolved(at, at);
   if (here !== top && !here.startsWith(top.endsWith(sep) ? top : top + sep)) {

@@ -395,6 +395,12 @@ KENDEX_ENV_FILE = "keys/private.env"
   'kept-nested|' \
   "scenario 10: a nested private file inside the project still loads"
 
+# A component that exists as a regular file blocks the path: nothing can
+# be created under it. Climbing past it would call the path contained and
+# then read as absent, so the credential would silently never load.
+printf 'X=1\n' > "$PROJ10/blocking"
+s10_link_refuses "blocking/private.env" "private-env-blocked"
+
 # The default is held to the same rule, in both directions: a linked
 # .env.local loads, and a .env.local reached through a linked directory
 # does not. The guard is about the path, never about which of the two

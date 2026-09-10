@@ -78,6 +78,10 @@ kendex_env_message() {
       printf 'kendex-env: private-env-path arg1=%s\n' "$1"
       printf '%s\n' "::error::KENDEX_ENV_FILE is $1: it must name a file inside the project, written as a relative path with no '..' segment, no backslash and no colon"
       ;;
+    private-env-blocked)
+      printf 'kendex-env: private-env-blocked arg1=%s\n' "$1"
+      printf '%s\n' "::error::the private env file $1 cannot exist: a component of its path is a file, not a directory; name a path whose parents are directories"
+      ;;
     private-env-outside)
       printf 'kendex-env: private-env-outside arg1=%s\n' "$1"
       printf '%s\n' "::error::the private env file $1 resolves outside the project through a link on the way to it; a private env file is sourced, so it must stay inside the project it belongs to"
@@ -260,11 +264,20 @@ kendex_inside_project() { # PROJECT_ROOT RELATIVE_FILE — 0 = the file's direct
     return 1
   }
   _kendex_path="$_kendex_root/$_kendex_file"
+  # Climb only past components that are ABSENT. One that exists as
+  # something other than a directory blocks the path: no file can be
+  # created under it, so climbing past it would resolve the project root,
+  # call the path contained, and then read as absent — the credential
+  # silently never loads and nothing says why.
   _kendex_dir="${_kendex_path%/*}"
-  while [[ -n "$_kendex_dir" && ! -d "$_kendex_dir" ]]; do
+  while [[ -n "$_kendex_dir" && ! -e "$_kendex_dir" ]]; do
     _kendex_dir="${_kendex_dir%/*}"
   done
   [[ -n "$_kendex_dir" ]] || _kendex_dir="/"
+  if [[ ! -d "$_kendex_dir" ]]; then
+    kendex_env_message private-env-blocked "$_kendex_file" >&2
+    return 1
+  fi
   _kendex_at=$(cd -P -- "$_kendex_dir" 2>/dev/null && pwd -P) || {
     kendex_env_message private-env-unresolved "$_kendex_dir" >&2
     return 1

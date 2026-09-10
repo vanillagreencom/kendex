@@ -50,10 +50,17 @@ pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
         .map_err(|error| CoreError::io(path, error))
 }
 
-/// Windows has no mode to set at creation: a new file inherits its
-/// parent directory's access-control list, which for a file inside the
-/// user's own project is that project's. The bytes go down the same way,
-/// so the caller's contract holds and only the mechanism differs.
+/// Windows has no mode to set at creation: a new file inherits its parent
+/// directory's access-control list, and nothing here narrows it.
+///
+/// So the owner-only guarantee above does NOT hold on Windows, and this
+/// is the one place that says so rather than a caller assuming the name.
+/// A project directory anyone else can read hands them the credential
+/// too. Giving the file an owner-only DACL means building a SID and an
+/// ACL and creating through `CreateFileW` with a `SECURITY_ATTRIBUTES` —
+/// a Windows API dependency this crate does not have and more than a
+/// narrow fix; it is filed as follow-up work rather than half-done here.
+/// The copy a person reads promises only what both platforms deliver.
 #[cfg(not(unix))]
 pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     fs::write(path, bytes).map_err(|error| CoreError::io(path, error))

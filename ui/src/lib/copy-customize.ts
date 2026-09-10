@@ -166,9 +166,15 @@ export const SECRET_FILE_RECORDED = (file: string): string =>
 /** Saving a destination on its own records the choice and adds the ignore
  *  rule; it writes no private file, because nothing puts a file there but
  *  a credential someone typed. So the promise is about saving a key, which
- *  is true whether or not this draft carries one. */
+ *  is true whether or not this draft carries one.
+ *
+ *  It says nothing about who can read the file. kendex creates it
+ *  owner-only on macOS and Linux, and on Windows a new file inherits the
+ *  folder's access-control list, which kendex does not narrow — so a
+ *  sentence promising otherwise would be false on one platform, and this
+ *  page has no way to tell which one it is on. */
 export const SECRET_FILE_WILL_CREATE = (file: string): string =>
-  `${file} doesn't exist yet. Saving a key creates it, readable only by you.`;
+  `${file} doesn't exist yet. Saving a key creates it.`;
 export const SECRET_FILE_WILL_IGNORE = (entry: string, file: string): string =>
   `Saving also adds ${entry} to .gitignore first, so git never carries ${file}.`;
 export const SECRET_FILE_REFUSED = "Nothing can be saved here yet";

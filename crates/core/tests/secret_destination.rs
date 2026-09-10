@@ -288,6 +288,52 @@ fn a_link_on_the_way_out_of_the_project_is_refused() {
     assert!(problem.contains("outside this project"), "{problem}");
 }
 
+/// Every shipped loader refuses the whole settings file when any row is
+/// outside its grammar, so a selector read out of such a file would name
+/// a destination no package can ever read from. The destination is
+/// refused for the same reasons and in the same order the loaders use.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_settings_file_no_loader_reads_refuses_the_destination() {
+    let f = fixture(true);
+    for (settings, why) in [
+        (
+            "[env]\nKENDEX_ENV_FILE = \".env.secrets\"\nOTHER = 900\n",
+            "a value outside the grammar",
+        ),
+        (
+            "[env]\nKENDEX_ENV_FILE = \".env.secrets\"\nOTHER = \"a\"\nOTHER = \"b\"\n",
+            "a duplicate key",
+        ),
+        (
+            "[env] # the table\nKENDEX_ENV_FILE = \".env.secrets\"\n",
+            "a commented header",
+        ),
+        (
+            "[[env]]\nKENDEX_ENV_FILE = \".env.secrets\"\n",
+            "a doubled header",
+        ),
+        (
+            "\u{feff}[env]\nKENDEX_ENV_FILE = \".env.secrets\"\n",
+            "a byte-order mark",
+        ),
+    ] {
+        let state = state(&f, Some(settings), None);
+        let (problem, _) = refused(&state);
+        assert!(problem.contains("no script reads"), "{why}: {problem}");
+    }
+
+    // The inverse: a file every loader reads still resolves its selector.
+    let good = "[env]\nKENDEX_ENV_FILE = \".env.secrets\"\nOTHER = \"a\"\n";
+    assert!(
+        !matches!(
+            state(&f, Some(good), None),
+            DestinationState::Refused { .. }
+        ),
+        "a readable settings file must still resolve"
+    );
+}
+
 /// The owed rule is a `.gitignore` pattern, and a pattern is a glob. A
 /// filename carrying glob metacharacters written straight into the file
 /// ignores something else, and git then carries the credential the same

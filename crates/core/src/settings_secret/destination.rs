@@ -199,6 +199,17 @@ enum Assigned {
 /// Read through the same view of the settings file the settings rows come
 /// from, so kendex and the shipped loaders resolve one key one way.
 fn configured_file(settings: &str) -> std::result::Result<Assigned, String> {
+    // The whole file first. Every shipped loader stops before it sources
+    // anything when any row is outside the grammar, so a selector read
+    // out of a file they refuse would name a destination no package can
+    // ever read from — the app would save a credential into a file that
+    // is, from the packages' side, never opened.
+    if let Some(problem) = crate::settings_file::loaders_refuse(settings) {
+        return Err(format!(
+            "no script reads {}: {problem}",
+            crate::settings_seed::SETTINGS_FILE
+        ));
+    }
     let sites = crate::settings_file::sites(settings);
     match crate::settings_file::current_of(&sites, super::ENV_FILE_KEY) {
         crate::settings_file::Current::Absent => Ok(Assigned::Absent),

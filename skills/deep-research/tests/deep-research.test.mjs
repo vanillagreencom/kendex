@@ -702,6 +702,20 @@ test("a KENDEX_ENV_FILE that escapes through a link stops the run", () => {
   assert.match(readFileSync(nestedOut, "utf8"), /FromNested/);
 });
 
+// A component that exists as a regular file blocks the path. Climbing
+// past it would call the path contained and then read as absent, so the
+// credential would silently never load and nothing would say why.
+test("a KENDEX_ENV_FILE blocked by a file in its path stops the run", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-blocked-"));
+  const env = { ...process.env };
+  delete env.EXA_API_KEY;
+  delete env.EXA_MOCK_RESPONSE_FILE;
+  writeFileSync(join(dir, "config"), "X=1\n");
+  writeFileSync(join(dir, "kendex.settings.toml"), '[env]\nKENDEX_ENV_FILE = "config/private.env"\n');
+  const result = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
+  assert.equal(diagnostic(result).key, "private-env-blocked");
+});
+
 test("resolves EXA_API_KEY op:// references with op CLI", () => {
   const dir = mkdtempSync(join(tmpdir(), "deep-research-op-"));
   const bin = join(dir, "bin");
