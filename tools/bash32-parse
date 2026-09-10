@@ -170,13 +170,21 @@ die_cause() { # KEY VALUE CAUSE — CAUSE is the failing command's own words
 # next unescaped backquote, so the early close above cannot reach them, but
 # `bash -n` leaves their body unparsed exactly as it leaves a `$( )` body.
 #
-# What it does not reach, each an under-read that reports nothing rather than
-# something wrong: the inside of `$(( ))`, which is arithmetic and not a
-# command list; and a heredoc body at the top level, which Bash reads as a
-# word and expands later, and which a quoted delimiter makes literal text, so
-# scanning it as code would red on correct source. A heredoc opened INSIDE a
-# body is scanned, because 3.2's paren count runs straight through one —
-# measured under the pinned image, not assumed.
+# A heredoc body at the top level is a WORD Bash reads whole and expands
+# later, so the spelling that opened it decides everything. A quoted
+# delimiter (`<<'EOF'`, `<<"EOF"`, `<<\EOF`) makes the body literal text that
+# is never expanded and so never parsed, and it is passed over: scanning
+# prose as code would red on correct source. An unquoted delimiter DOES
+# expand it, and a `$( )` in there carries the construct above as surely as
+# one in code, so that body is scanned in the only mode true of a word —
+# `$(`, a backquote and a backslash act, and a loose quote or paren outside
+# an open body is a character. A heredoc opened INSIDE a body is neither,
+# because 3.2's paren count runs straight through one — measured under the
+# pinned image, not assumed.
+#
+# What it does not reach: the inside of `$(( ))`, which is arithmetic and not
+# a command list. That is an under-read, reporting nothing rather than
+# something wrong.
 extractor_program() { # the awk program, on stdout
   cat <<'EXTRACTOR'
 # Every command substitution body in the files named on the command line,
@@ -210,28 +218,44 @@ function settle() {
   if (depth != 0 || quote != "" || bq != 0 || arith != 0 || pending != 0)
     print file > lost
 }
+# The body of the heredoc now at the head of the queue. An unquoted delimiter
+# expands it, and an expanded word is what a double-quoted string is with the
+# closing `"` taken away, which is how `word_body` reads below.
+function open_body() {
+  strip_tabs = dash[1]
+  if (bare[1]) { word_body = 1; quote = "\"" }
+}
 BEGIN { id = 0; file = "" }
 FNR == 1 {
   settle()
   file = FILENAME
-  depth = 0; quote = ""; paren = 0; arith = 0; bq = 0; pending = 0; in_heredoc = 0
+  depth = 0; quote = ""; paren = 0; arith = 0; bq = 0; ansi_c = 0
+  pending = 0; in_heredoc = 0; word_body = 0
 }
 {
   line = $0
-  # A heredoc body at the top level is a word Bash reads whole and expands
-  # later, and a quoted delimiter makes it literal text, so it is passed over
-  # rather than scanned as code. Inside a body it is NOT passed over: 3.2's
-  # paren count runs straight through a heredoc body, quoted or not.
+  # The terminator line is found at READ time, before any expansion, so it is
+  # looked for first and whatever the body left open does not hold it back.
+  # What follows depends on the spelling that opened the heredoc: an unquoted
+  # delimiter leaves `word_body` set and the line falls through to be scanned
+  # as an expanded word, a quoted one passes the line over.
   if (in_heredoc) {
     term = line
     if (strip_tabs) sub(/^\t+/, "", term)
     if (term == delim[1]) {
-      for (k = 1; k < pending; k++) { delim[k] = delim[k + 1]; dash[k] = dash[k + 1] }
+      # A substitution still open where the body ends is one Bash 3.2 runs off
+      # the end of too, and this scan can no more say where it ends.
+      if (depth != 0 || bq != 0 || arith != 0) print file > lost
+      depth = 0; quote = ""; paren = 0; bq = 0; arith = 0; word_body = 0
+      for (k = 1; k < pending; k++) {
+        delim[k] = delim[k + 1]; dash[k] = dash[k + 1]; bare[k] = bare[k + 1]
+      }
       pending--
       if (pending == 0) in_heredoc = 0
-      else strip_tabs = dash[1]
+      else open_body()
+      next
     }
-    next
+    if (!word_body) next
   }
   i = 1
   last = length(line)
@@ -260,12 +284,15 @@ FNR == 1 {
       i++; prev = c; continue
     }
     if (quote == "'") {
-      if (c == "'") quote = ""
+      # `$'...'` takes backslash escapes, `'...'` does not, so `\'` ends the
+      # word in one spelling and is a character in the other.
+      if (ansi_c && c == "\\") { i += 2; prev = "x"; continue }
+      if (c == "'") { quote = ""; ansi_c = 0 }
       i++; prev = c; continue
     }
     if (quote == "\"") {
       if (c == "\\") { i += 2; prev = "x"; continue }
-      if (c == "\"") { quote = ""; i++; prev = c; continue }
+      if (c == "\"" && !(word_body && depth == 0)) { quote = ""; i++; prev = c; continue }
       if (c == "`") { bq = 1; bqstart = i + 1; bqline = FNR; i++; prev = c; continue }
       if (c == "$" && substr(line, i + 1, 1) == "(") {
         if (substr(line, i + 2, 1) == "(") { arith = 2; i += 3; prev = "x"; continue }
@@ -278,7 +305,7 @@ FNR == 1 {
       i++; prev = c; continue
     }
     if (c == "\\") { i += 2; prev = "x"; continue }
-    if (c == "'") { quote = "'"; i++; prev = c; continue }
+    if (c == "'") { quote = "'"; ansi_c = (prev == "$"); i++; prev = c; continue }
     if (c == "\"") { quote = "\""; i++; prev = c; continue }
     if (c == "#" && word_start(prev)) break
     if (c == "`") { bq = 1; bqstart = i + 1; bqline = FNR; i++; prev = c; continue }
@@ -315,11 +342,13 @@ FNR == 1 {
       if (substr(line, j, 1) == "-") { indented = 1; j++ }
       while (substr(line, j, 1) == " " || substr(line, j, 1) == "\t") j++
       word = ""
-      # Quoting inside the delimiter word decides whether the body expands,
-      # which this scan does not care about, and Bash strips it before
-      # matching the terminator line, which it does.
+      # Quoting inside the delimiter word decides BOTH things this scan needs:
+      # Bash strips it before matching the terminator line, and its presence
+      # anywhere in the word is what stops the body from being expanded.
+      unquoted = 1
       c2 = substr(line, j, 1)
       if (c2 == "'" || c2 == "\"") {
+        unquoted = 0
         j++
         while (j <= last && substr(line, j, 1) != c2) { word = word substr(line, j, 1); j++ }
         j++
@@ -328,8 +357,9 @@ FNR == 1 {
           c2 = substr(line, j, 1)
           if (c2 == " " || c2 == "\t" || c2 == ";" || c2 == "&" || c2 == "|" ||
               c2 == "<" || c2 == ">" || c2 == ")") break
-          if (c2 == "\\") { j++; c2 = substr(line, j, 1); if (c2 == "") break }
+          if (c2 == "\\") { unquoted = 0; j++; c2 = substr(line, j, 1); if (c2 == "") break }
           else if (c2 == "'" || c2 == "\"") {
+            unquoted = 0
             j++
             while (j <= last && substr(line, j, 1) != c2) { word = word substr(line, j, 1); j++ }
             j++
@@ -338,7 +368,12 @@ FNR == 1 {
           word = word c2; j++
         }
       }
-      if (word != "") { pending++; delim[pending] = word; dash[pending] = indented }
+      # Not while a heredoc body is open: the queue in hand is that body's own
+      # terminator, and a `<<` inside a substitution in it would displace it.
+      if (word != "" && !in_heredoc) {
+        pending++
+        delim[pending] = word; dash[pending] = indented; bare[pending] = unquoted
+      }
       i = j; prev = "x"; continue
     }
     i++; prev = c; continue
@@ -348,8 +383,11 @@ FNR == 1 {
     start[k] = 1
   }
   if (bq) { bqbody = bqbody substr(line, bqstart) "\n"; bqstart = 1 }
-  if (pending > 0 && depth == 0 && !bq) { in_heredoc = 1; strip_tabs = dash[1] }
-  else if (pending > 0) pending = 0
+  if (in_heredoc) next
+  if (pending > 0 && depth == 0 && quote == "" && !bq) {
+    in_heredoc = 1
+    open_body()
+  } else if (pending > 0) pending = 0
 }
 END { settle() }
 EXTRACTOR

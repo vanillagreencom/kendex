@@ -243,6 +243,38 @@ else
   fi
 fi
 
+# The same construct inside a heredoc body. An unquoted delimiter makes the
+# body a word Bash expands, so 3.2 parses its substitution at expansion and
+# refuses it as it refuses the ones above; a quoted delimiter makes the body
+# text that is never expanded, so the identical body is correct source there.
+plant refuse "the same case inside an unquoted heredoc body reds the lane" \
+  'cat <<EOF' \
+  '$(for v in a b; do' \
+  '  case "$v" in' \
+  '    a) echo one ;;' \
+  '    b) echo two ;;' \
+  '  esac' \
+  'done)' \
+  'EOF'
+plant pass "the same case inside a quoted heredoc body passes, never being expanded" \
+  "cat <<'EOF'" \
+  '$(for v in a b; do' \
+  '  case "$v" in' \
+  '    a) echo one ;;' \
+  '    b) echo two ;;' \
+  '  esac' \
+  'done)' \
+  'EOF'
+
+# A backslash escapes a quote inside `$'...'` and is a plain character inside
+# `'...'`. A scan that reads either spelling the other way is still inside a
+# quote at the end of the file, and the run ends at 2 instead of passing. The
+# plain spelling comes first: a scan that misreads `$'...'` is left inside a
+# quote that a `'\'` after it would close again.
+plant pass "ANSI-C and plain single quotes each close where Bash closes them" \
+  "sep='\\'" \
+  "msg=\$'don\\'t'"
+
 # --- 4. the fail-closed paths, each proven red ---------------------------
 # A row is `label|mutation|argv|exit|first`:
 #   mutation  a copy of the lane with one or two of its declaration lines
@@ -492,8 +524,13 @@ extractor_mutant() { # extractor_mutant DIR FROM TO — a lane copy, one line re
 #               than report the bodies it did reach.
 #   BEGIN       the extractor program itself no longer parses, so awk exits
 #               without having read anything.
+#
+# `from` is read twice: as the sed pattern that replaces the line and as the
+# text grep -F counts back afterwards. It is spelled as the lane spells the
+# line, because an escape sed takes is a character grep counts, and a count
+# of a line that never existed passes whether or not the replacement landed.
 extractor_rows="\
-a file the scan loses track of ends the run|      if (substr(line, i + 1, 1) == \"(\" \&\& word_start(prev)) {|      if (0) {|shifted=0; (( shifted = 1 << 2 ))|unscannable=1
+a file the scan loses track of ends the run|      if (substr(line, i + 1, 1) == \"(\" && word_start(prev)) {|      if (0) {|shifted=0; (( shifted = 1 << 2 ))|unscannable=1
 an extractor that cannot run ends the run|BEGIN { id = 0; file = \"\" }|BEGIN { id = 0; file = \"\"|shifted=0|extractor=1"
 
 while IFS='|' read -r label from to fixture inner; do
