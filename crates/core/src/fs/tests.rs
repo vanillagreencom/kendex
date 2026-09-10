@@ -520,6 +520,28 @@ fn a_list_the_volume_did_not_keep_is_refused() {
     assert_eq!(refused.kind(), std::io::ErrorKind::Unsupported, "{refused}");
 }
 
+/// A create that never confirms its list leaves nothing behind: the file
+/// is pending deletion from the moment it exists, and only `keep` after
+/// the read-back lets it stay. Against a create without that disposition,
+/// the unconfirmed file stands, and the next save takes it for a file the
+/// person owns.
+#[cfg(windows)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unconfirmed_create_takes_its_file_with_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let user = dacl::current_user().unwrap();
+    let unconfirmed = tmp.path().join("unconfirmed");
+    drop(dacl::create_pending(&unconfirmed, user.sid()).unwrap());
+    assert!(!unconfirmed.exists());
+
+    let kept = tmp.path().join("kept");
+    let file = dacl::create_pending(&kept, user.sid()).unwrap();
+    dacl::keep(&file).unwrap();
+    drop(file);
+    assert!(kept.exists());
+}
+
 /// A refusal carries the code the failing call itself reported, not what
 /// an earlier call left on the thread: a handle opened without the right
 /// to read its security is refused by `GetSecurityInfo` in its return

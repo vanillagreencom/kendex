@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
 use crate::fs::{
-    copy_file_durable, copy_tree_durable, make_symlink, remove_any, sync_dir, sync_dir_durable,
+    copy_file_durable, copy_file_over_durable, copy_tree_durable, make_symlink, remove_any,
+    sync_dir, sync_dir_durable,
 };
 
 /// Pre-images of everything an apply is about to touch. Restore is
@@ -172,20 +173,18 @@ fn rollback_where(dir: &Path, restore: impl Fn(&Path) -> bool) -> Result<()> {
     clear(dir)
 }
 
-/// Put a file's pre-image back. A file still standing is, on Windows,
-/// rewritten in place rather than replaced: a copy makes a new file with
-/// the folder's access-control list, and the private credential file,
-/// whose list is its own and which `write_private` truncates rather than
+/// Put a file's pre-image back. A file still standing is copied over
+/// rather than removed and made again: a new file takes the folder's
+/// access-control list on Windows, and the private credential file, whose
+/// list is its own and which `write_private` truncates rather than
 /// replaces, would come back readable by whoever the folder admits, with
-/// the old credential in it. Rewritten in place, its list is never
-/// touched at any instant. A destination that is gone, or a link, is
-/// made from the copy like any new file. Unix replaces throughout:
-/// `fs::copy` carries the mode the pre-image had, where a rewrite would
-/// keep whatever a replacement since then left.
+/// the old credential in it. Copied over, its list is never touched at
+/// any instant, and the bytes, mode and attributes are the pre-image's on
+/// both platforms. A destination that is gone, or a link standing in the
+/// name's place, is made from the copy like any new file.
 fn restore_file(slot: &Path, path: &Path) -> Result<()> {
-    #[cfg(windows)]
     if crate::fs::entry(path)?.is_some_and(|meta| meta.is_file()) {
-        return crate::fs::rewrite_in_place(slot, path);
+        return copy_file_over_durable(slot, path);
     }
     remove_any(path)?;
     if let Some(parent) = path.parent() {

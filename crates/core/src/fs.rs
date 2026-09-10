@@ -77,21 +77,6 @@ pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
         .map_err(|error| CoreError::io(path, error))
 }
 
-/// Replace a standing file's bytes with `from`'s through the file itself,
-/// so it keeps its access-control list; a file that is gone is an error,
-/// never created here with the folder's list.
-#[cfg(windows)]
-pub(crate) fn rewrite_in_place(from: &Path, to: &Path) -> Result<()> {
-    let bytes = fs::read(from).map_err(|error| CoreError::io(from, error))?;
-    fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(to)
-        .and_then(|mut file| file.write_all(&bytes))
-        .map_err(|error| CoreError::io(to, error))?;
-    sync_written_file(to)
-}
-
 /// Give a file the execute bit if its bytes open with a shebang. A tree
 /// carries bytes and not modes, so every path that writes one out asks this
 /// same question: a skill's helper that lands 644 fails its own hook the
@@ -234,6 +219,27 @@ pub fn read_if_exists(path: &Path) -> Result<Option<String>> {
 pub(crate) fn copy_file_durable(from: &Path, to: &Path) -> Result<()> {
     fs::copy(from, to).map_err(|e| CoreError::io(from, e))?;
     sync_written_file(to)
+}
+
+/// `copy_file_durable` onto a file that is standing, which keeps: the
+/// copy writes through the file rather than making a new one, so its
+/// access-control list stays as it is while the bytes, mode and
+/// attributes become the source's. A destination made read-only is
+/// opened for the copy the way `sync_written_file` opens for the flush,
+/// with the write bit relaxed first; the copy then sets the source's mode
+/// over it, and a copy that fails puts the destination's own back.
+pub(crate) fn copy_file_over_durable(from: &Path, to: &Path) -> Result<()> {
+    let mode = fs::metadata(to)
+        .map(|meta| meta.permissions())
+        .map_err(|e| CoreError::io(to, e))?;
+    if mode.readonly() {
+        fs::set_permissions(to, writable(&mode)).map_err(|e| CoreError::io(to, e))?;
+    }
+    let copied = copy_file_durable(from, to);
+    if copied.is_err() {
+        fs::set_permissions(to, mode).map_err(|e| CoreError::io(to, e))?;
+    }
+    copied
 }
 
 /// Flush a file this process has just written, leaving its mode on disk

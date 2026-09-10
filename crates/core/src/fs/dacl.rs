@@ -27,29 +27,43 @@ use windows_sys::Win32::Security::{
     PSID, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
     SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
-use windows_sys::Win32::Storage::FileSystem::{CREATE_NEW, CreateFileW, FILE_ALL_ACCESS};
+use windows_sys::Win32::Storage::FileSystem::{
+    CREATE_NEW, CreateFileW, DELETE, FILE_ALL_ACCESS, FILE_DISPOSITION_FLAG_DO_NOT_DELETE,
+    FILE_DISPOSITION_FLAG_ON_CLOSE, FILE_DISPOSITION_INFO_EX, FILE_FLAG_DELETE_ON_CLOSE,
+    FileDispositionInfoEx, SetFileInformationByHandle,
+};
 use windows_sys::Win32::System::SystemServices::{
     ACCESS_ALLOWED_ACE_TYPE, SECURITY_DESCRIPTOR_REVISION,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 /// Create `path`, refusing if it exists, with an access-control list that
-/// names the current account and nobody else. The list is marked protected
-/// so the folder's inheritable entries are not merged in behind it, and it
-/// is read back through the handle before the file is handed out: a
-/// volume that keeps no lists, FAT among them, accepts the descriptor and
-/// creates the file open to everyone, and that create is refused and the
-/// empty file removed. A step that fails refuses the create, naming the
-/// step: a file with the folder's list is the outcome this exists to
-/// prevent, not a fallback.
+/// names the current account and nobody else. The list is read back
+/// through the handle before the file is handed out: a volume that keeps
+/// no lists, FAT among them, accepts the descriptor and creates the file
+/// open to everyone. Until that read-back confirms the list the file is
+/// pending deletion at close, so every way out of here without a
+/// confirmed list takes the empty file with it and no retry can meet a
+/// leftover the folder's list governs. A step that fails refuses the
+/// create, naming the step: a file with the folder's list is the outcome
+/// this exists to prevent, not a fallback.
+pub(super) fn create_owner_only(path: &Path) -> io::Result<File> {
+    let user = current_user()?;
+    let file = create_pending(path, user.sid())?;
+    applied(&file, user.sid())?;
+    keep(&file)?;
+    Ok(file)
+}
+
+/// `path` created with the owner-only list for `sid` in its security
+/// descriptor, marked protected so the folder's inheritable entries are
+/// not merged in behind it, and pending deletion when its handle closes
+/// until [`keep`] says otherwise.
 #[allow(
     unsafe_code,
     reason = "Win32 has no safe binding; each site states its contract"
 )]
-pub(super) fn create_owner_only(path: &Path) -> io::Result<File> {
-    let user = current_user()?;
-    let sid = user.sid();
-
+pub(super) fn create_pending(path: &Path, sid: PSID) -> io::Result<File> {
     // The sizing rule `AddAccessAllowedAce` documents: the header, one
     // allowed entry whose trailing `SidStart` word is replaced by the SID.
     // SAFETY: `sid` points into `user`, which outlives this call.
@@ -115,11 +129,11 @@ pub(super) fn create_owner_only(path: &Path) -> io::Result<File> {
     let handle = unsafe {
         CreateFileW(
             wide.as_ptr(),
-            GENERIC_WRITE,
+            GENERIC_WRITE | DELETE,
             0,
             &attributes,
             CREATE_NEW,
-            0,
+            FILE_FLAG_DELETE_ON_CLOSE,
             ptr::null_mut(),
         )
     };
@@ -128,20 +142,38 @@ pub(super) fn create_owner_only(path: &Path) -> io::Result<File> {
     }
     // SAFETY: `handle` is a valid file handle this function owns, opened
     // just above and given to nothing else.
-    let file = unsafe { File::from_raw_handle(handle) };
-    if let Err(refused) = applied(&file, sid) {
-        // The handle's share mode kept every other open out, so the file
-        // is still empty; dropping the handle is what lets the remove in.
-        drop(file);
-        return Err(match std::fs::remove_file(path) {
-            Ok(()) => refused,
-            Err(left) => io::Error::new(
-                refused.kind(),
-                format!("{refused}; the empty file could not be removed either ({left})"),
-            ),
-        });
+    Ok(unsafe { File::from_raw_handle(handle) })
+}
+
+/// Clear the deletion at close a pending file was created with. A clear
+/// that fails is a refusal, and the file goes with the handle as it would
+/// have anyway.
+#[allow(
+    unsafe_code,
+    reason = "Win32 has no safe binding; each site states its contract"
+)]
+pub(super) fn keep(file: &File) -> io::Result<()> {
+    let disposition = FILE_DISPOSITION_INFO_EX {
+        Flags: FILE_DISPOSITION_FLAG_DO_NOT_DELETE | FILE_DISPOSITION_FLAG_ON_CLOSE,
+    };
+    // SAFETY: `file` holds an open handle with `DELETE` access, and
+    // `disposition` is a live `FILE_DISPOSITION_INFO_EX` of the length
+    // passed, the shape `FileDispositionInfoEx` reads.
+    let cleared = unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle(),
+            FileDispositionInfoEx,
+            ptr::from_ref(&disposition).cast(),
+            size_of::<FILE_DISPOSITION_INFO_EX>() as u32,
+        )
+    };
+    match cleared {
+        0 => Err(failed(
+            "SetFileInformationByHandle",
+            io::Error::last_os_error(),
+        )),
+        _ => Ok(()),
     }
-    Ok(file)
 }
 
 /// Whether the list `file` carries is the one this module writes, read
