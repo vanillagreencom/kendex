@@ -68,13 +68,40 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     set({ settings: read.settings, base: read.base });
   };
 
+  /** How many writes are still to answer.
+   *
+   *  The ticket order alone cannot place a read against a write: it orders
+   *  by when a request left, and a read that left later can still answer
+   *  first — the backend serializes writes under the settings lock, a read
+   *  waits on nothing. Its newer ticket then becomes the newest held, and
+   *  the write's own reply, carrying the file it had just made, is dropped
+   *  as an older view. The person's change is on disk and off the screen.
+   *
+   *  So a read only speaks for the file while no write is outstanding.
+   *  Every write goes through [`writing`]; a read that finds a write still
+   *  out keeps the rows it had, and the write's reply is what moves the
+   *  store. */
+  let writesOutstanding = 0;
+  const writing = async <T>(run: () => Promise<T>): Promise<T> => {
+    writesOutstanding += 1;
+    try {
+      return await run();
+    } finally {
+      writesOutstanding -= 1;
+    }
+  };
+
   /** One change, written as the whole file with the base its copy was read
    *  from. A stale refusal means something else wrote the file since the
    *  copy was read — a resize, another window. The change is a field-level
    *  intent, so it is carried onto a freshly read copy and written once
    *  more; that reverts nothing, because the fresh copy holds everything
    *  the stale one predated. Only a second refusal reaches the person. */
-  const write = async (
+  const write = (
+    change: (current: AppSettings) => AppSettings,
+  ): Promise<WriteOutcome> => writing(() => writeOnce(change));
+
+  const writeOnce = async (
     change: (current: AppSettings) => AppSettings,
   ): Promise<WriteOutcome> => {
     const { settings, base } = get();
@@ -132,12 +159,21 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     };
   };
 
+  // Registering and dropping a project are writes of this file like any
+  // other, so a read must not outrank one still in flight. Wrapped here
+  // rather than inside the slice: the outstanding count belongs to the
+  // store that owns the ticket order, and the slice keeps its signature.
+  const projects = projectActions({ ticket, hold });
+
   return {
     settings: null,
     base: null,
     capabilities: [],
     ...zoomActions(set, get),
-    ...projectActions({ ticket, hold }),
+    ...projects,
+    registerProject: (path) => writing(() => projects.registerProject(path)),
+    unregisterProject: (path) =>
+      writing(() => projects.unregisterProject(path)),
 
     load: async () => {
       // The size comes from the window, not from the file: the file holds
@@ -193,7 +229,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
       // A read that failed answers for nothing: the rows in hand stay,
       // and the next focus tries again. Nothing on screen is waiting on
       // it, so there is no one to tell.
-      if (settings.status === "ok") hold(settings.data, at);
+      if (settings.status !== "ok") return;
+      // Nor does a read speak while a write is still to answer. A read
+      // waits on nothing and a write waits on the settings lock, so this
+      // one can be a view of the file from before a save the person has
+      // already made — and its newer ticket would drop that save's own
+      // reply. The write is what moves the store; the next focus reads
+      // again.
+      if (writesOutstanding > 0) return;
+      hold(settings.data, at);
     },
 
     // Theme and tool folder saves are instant and their

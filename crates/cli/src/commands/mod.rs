@@ -100,8 +100,12 @@ fn current_project(env: &Env) -> Option<PathBuf> {
 /// or written, and a session with nobody to ask refuses and names the flag
 /// that would have answered.
 pub fn install_destination(env: &Env, yes: bool) -> Result<Scope, Box<dyn std::error::Error>> {
+    // `std::fs::canonicalize`'s spelling, because the home test below is a
+    // comparison and `discover` makes it in that one; the root this settles
+    // on is reduced by `destination`, the way the walk reduces its own
+    // answer.
     let here = std::env::current_dir()
-        .and_then(|cwd| kendex_core::paths::canonical(&cwd))
+        .and_then(|cwd| cwd.canonicalize())
         .map_err(|e| format!("the current folder could not be read: {e}"))?;
     destination(current_project(env), here, env.real_home(), yes)
 }
@@ -116,6 +120,10 @@ pub fn install_destination(env: &Env, yes: bool) -> Result<Scope, Box<dyn std::e
 /// rule, the same one the walk above refuses a marker at home under: a home
 /// made into a project would resolve every folder below it, and its
 /// project scope would manage the personal scope's own directories.
+///
+/// `here` arrives in the spelling that comparison is made in, and the root
+/// handed back is `paths::reduced` of it — the split `project_root_from`
+/// makes, for the reason stated on `may_be_a_project_root`.
 fn destination(
     established: Option<PathBuf>,
     here: PathBuf,
@@ -125,15 +133,16 @@ fn destination(
     if let Some(root) = established {
         return Ok(Scope::Project { root });
     }
+    let root = kendex_core::paths::reduced(&here);
     if !discover::may_be_a_project_root(&here, home) {
         return Err(format!(
             "{} is your home directory, and kendex does not make it a project — everything below it would install into it; pass --global for your personal setup, or run this inside the project you mean",
-            here.display()
+            root.display()
         )
         .into());
     }
-    start_a_project_here(&here, yes)?;
-    Ok(Scope::Project { root: here })
+    start_a_project_here(&root, yes)?;
+    Ok(Scope::Project { root })
 }
 
 /// The question a fresh destination is settled by. Asked before the plan,

@@ -13,7 +13,7 @@ use kendex_core::source_ops::{self, SourceAction};
 use super::engine_common::{apply_report, ask_before_writing, print_report, print_safety};
 use super::ledger::{Wrote, say_ledger};
 use super::offers::Blocked;
-use super::{CliResult, say, scope_label, warn};
+use super::{CliResult, fail_refusal, say, scope_label};
 
 pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -> CliResult {
     let collection = collections::resolve(&CurlFetch, id)?;
@@ -103,7 +103,7 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
         // The step's failure is what the run reports, so a registry that
         // also refused says so on its own line rather than displacing it.
         if let Err(refused) = register() {
-            warn(&format!("warning: {refused}"));
+            fail_refusal("warning: ", refused.as_ref());
         }
         return Err(error);
     }
@@ -122,7 +122,7 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
         Ok(()) => registered,
         Err(error) => {
             if let Err(refused) = registered {
-                warn(&format!("warning: {refused}"));
+                fail_refusal("warning: ", refused.as_ref());
             }
             Err(error)
         }

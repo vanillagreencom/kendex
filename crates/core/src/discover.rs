@@ -47,11 +47,20 @@ pub fn is_project(dir: &Path) -> bool {
 /// below it resolves to it, and its project scope manages the very
 /// directories the personal scope does — `$HOME/.claude` is both.
 ///
-/// Asked by every place that settles a project root, so the rule and the
-/// spelling it is compared in are stated once: [`project_root_from`]'s
-/// walk, and the CLI choosing a folder to install into. `dir` is
-/// canonical; `home` is canonicalized here, and a home that cannot be
-/// resolved is compared as it was given, which is the honest answer left.
+/// Asked by every place that settles a project root, so the rule is stated
+/// once: [`project_root_from`]'s walk, and the CLI choosing a folder to
+/// install into.
+///
+/// **`dir` is [`std::fs::canonicalize`]'s spelling, not `paths::canonical`'s.**
+/// This is a comparison, and `paths::reduced` decides the extended-length
+/// prefix per path — reducing each end separately, a start deep enough to
+/// keep the prefix would never meet the home that lost it, and a marker at
+/// home would be taken for a project. [`project_root_from`] walks in that
+/// spelling for this reason and reduces only its answer; a caller settling
+/// a root of its own asks here in the same spelling and reduces its own
+/// answer the same way. `home` is canonicalized here, and a home that
+/// cannot be resolved is compared as it was given, which is the honest
+/// answer left.
 pub fn may_be_a_project_root(dir: &Path, home: &Path) -> bool {
     dir != home.canonicalize().unwrap_or_else(|_| home.to_path_buf())
 }

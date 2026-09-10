@@ -7,7 +7,7 @@ use kendex_core::manifest::Method;
 
 use super::engine_common::{confirm_and_apply, parse_harnesses, print_report};
 use super::ledger::{Wrote, say_ledger};
-use super::{CliResult, harness_picker, install_destination, warn};
+use super::{CliResult, fail_refusal, harness_picker, install_destination, warn};
 use crate::ui;
 
 pub struct AddArgs {
@@ -232,7 +232,7 @@ fn write_and_close(
         Ok(()) => registered,
         Err(error) => {
             if let Err(refused) = registered {
-                warn(&format!("warning: {refused}"));
+                fail_refusal("warning: ", refused.as_ref());
             }
             Err(error)
         }

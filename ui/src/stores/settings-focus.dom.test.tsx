@@ -200,4 +200,47 @@ describe("the project registry on window focus", () => {
     ]);
     vi.useRealTimers();
   });
+
+  // The other order, and the one the ticket alone cannot place: the save
+  // leaves first and the focus read answers first. A read waits on
+  // nothing and a write waits on the settings lock, so its newer ticket
+  // would become the newest held and drop the save's own reply — the
+  // change on disk and off the screen.
+  it("keeps a setting whose save left before the read that answered first", async () => {
+    vi.useFakeTimers();
+    mount(<Startup />);
+    await settle();
+
+    let answerTheWrite: (
+      read: Awaited<ReturnType<typeof commands.updateSettings>>,
+    ) => void = () => {};
+    vi.mocked(commands.updateSettings).mockReturnValue(
+      new Promise((resolve) => {
+        answerTheWrite = resolve;
+      }) as ReturnType<typeof commands.updateSettings>,
+    );
+    // The save leaves first and is still out.
+    const saving = useSettingsStore.getState().setAppearance("dark");
+    // The window comes back, and the read answers with the file from
+    // before the save.
+    vi.mocked(commands.getSettings).mockResolvedValue(settingsRead([]));
+    await refocus();
+    expect(commands.getSettings).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      answerTheWrite(
+        settingsRead([NEW_PROJECT], "dark") as unknown as Awaited<
+          ReturnType<typeof commands.updateSettings>
+        >,
+      );
+      await saving;
+      await settle();
+    });
+
+    expect(useSettingsStore.getState().settings?.appearance).toBe("dark");
+    expect(useSettingsStore.getState().settings?.projects).toEqual([
+      NEW_PROJECT,
+    ]);
+    vi.useRealTimers();
+  });
 });

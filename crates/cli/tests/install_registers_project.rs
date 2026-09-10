@@ -480,6 +480,57 @@ fn an_installer_that_fails_still_leaves_the_folder_on_the_projects_list() {
     assert_eq!(registered(&home), std::slice::from_ref(&fresh), "{text}");
 }
 
+/// The installer failing and the registry refusing together. The
+/// installer's failure is the run's error; the registry's is said beside
+/// it, and it owns its own line break — printed through the door that
+/// escapes a whole message, the retry sentence would arrive as a literal
+/// escape in the middle of the first line.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_registry_refusal_beside_an_installer_failure_keeps_its_own_lines() {
+    let (_tmp, home, catalog) = world();
+    let Some(fresh) = fresh_folder(&home, "dev/fresh") else {
+        return;
+    };
+    git(&fresh, &["init", "--quiet", "-b", "main"]);
+    declare_a_failing_installer(&catalog);
+    let mut lock = settings_file(&home).into_os_string();
+    lock.push(".lock");
+    fs::create_dir_all(PathBuf::from(lock)).unwrap();
+
+    let output = kendex(
+        &home,
+        &fresh,
+        &[
+            "add",
+            catalog.to_str().unwrap(),
+            "--skill",
+            "wobble",
+            "--harness",
+            "claude",
+            "-y",
+            "--allow-repo-effects",
+        ],
+    );
+    let text = said(&output);
+
+    assert!(!output.status.success(), "{text}");
+    // The installer's failure is still what the run reports.
+    assert!(text.contains("scripts/arm"), "{text}");
+    // Both halves of the registry's refusal reach the reader, and the
+    // second is a line rather than an escape inside the first.
+    assert!(text.contains("the packages are installed in"), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("the project add verb")),
+        "the retry did not start a line of its own:\n{text}"
+    );
+    assert!(
+        !text.contains("\\n"),
+        "a break printed as an escape:\n{text}"
+    );
+}
+
 /// A package that declares a repository effect whose installer exits
 /// nonzero — the shape a shipped package reaches on an ordinary checkout
 /// when the hooks it finds are not ones it vouches for.
