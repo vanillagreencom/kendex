@@ -630,12 +630,19 @@ fn a_script_still_open_for_writing_is_retried_until_the_bound() {
             .timeout(Duration::from_millis(500))
             .refused_to(refused);
         let holder = std::thread::spawn(move || {
+            // One deadline for the whole wait, not one per message: a run
+            // that never gave up would report a refusal every poll, and a
+            // wait renewed on each of them would hold the writer shut for
+            // as long as the job ran. At the deadline the writer goes, the
+            // run gets through, and the row below fails on what it got.
+            let hung = Instant::now() + WATCHDOG;
+            let left = || hung.saturating_duration_since(Instant::now());
             refusals
-                .recv_timeout(WATCHDOG)
+                .recv_timeout(left())
                 .expect("a start was refused inside the watchdog");
             if !released {
                 // Held until the run has given up: its seam goes with it.
-                while refusals.recv_timeout(WATCHDOG).is_ok() {}
+                while !left().is_zero() && refusals.recv_timeout(left()).is_ok() {}
             }
             drop(writer);
         });
