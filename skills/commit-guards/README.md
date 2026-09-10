@@ -20,7 +20,7 @@ Requires Git, awk, jq and standard POSIX tools. Bash 3.2 is supported. Run `kend
 
 ## How it works
 
-You select checks in the project settings and install the Git hooks. When you commit, the pre-commit hook runs the enabled checks on the staged files. The commit-msg hook checks the commit message. When you push, the pre-push hook runs the enabled checks over what the branch adds to the remote. A failed check stops the commit or the push and prints the problem.
+You select checks in the project settings and install the Git hooks. When you commit, the pre-commit hook runs the enabled checks on the staged files. The commit-msg hook checks the commit message. When you push, the pre-push hook runs the enabled checks over what the push would change on the remote. Checks that read only staged files are skipped there, because a push stages nothing, and the hook names each one it skipped. A failed check stops the commit or the push and prints the problem.
 
 The push check is there because Git runs no hook when it replays a commit. A rebase or a cherry-pick can leave a branch in a state no commit hook ever saw.
 
