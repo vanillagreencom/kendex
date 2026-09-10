@@ -41,7 +41,7 @@ Work the chain in this order:
 
    Then re-run the wait. It works on a base the ruleset does not target.
 
-2. Merge the bottom of the stack. GitHub retargets the next PR onto the new base, and a base inside the target set draws a review on its own.
+2. Merge the bottom of the stack. GitHub retargets the next PR onto the new base, but a retarget is not a documented review trigger: request the review by hand as in step 1, or push a new head where the rule's `review_on_push` is on, then re-run the wait.
 3. Fallback, only when the manual request draws nothing: close the PR and open a fresh one against the default branch. Close-and-open, never reopen — reopening re-arms the reviewer only on a PR it has already reviewed once, and does nothing for one it never reviewed.
 
 ## Waiter auth ladder
