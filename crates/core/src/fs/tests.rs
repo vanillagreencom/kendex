@@ -417,7 +417,8 @@ mod acl {
     )]
     pub(super) fn entries(path: &Path) -> Vec<Entry> {
         let user = super::dacl::current_user().unwrap();
-        let wide: Vec<u16> = path
+        let wide: Vec<u16> = crate::paths::verbatim(path)
+            .unwrap()
             .as_os_str()
             .encode_wide()
             .chain(std::iter::once(0))
@@ -536,4 +537,29 @@ fn an_existing_private_file_keeps_its_own_list() {
 
     assert_eq!(fs::read(&path).unwrap(), b"OTHER='kept'\nTOKEN='secret'\n");
     assert_eq!(acl::entries(&path), before);
+}
+
+/// A private file whose plain spelling runs past the legacy path limit is
+/// still created, and still owner-only: the create hands Win32 the path
+/// itself, so it has to put the verbatim marker on the way `std` would.
+/// Against a create that encodes the path as given, `CreateFileW` refuses
+/// this one with "path not found" about a folder that exists.
+#[cfg(windows)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_private_file_past_the_legacy_path_limit_is_created_owner_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Longer than the limit on its own, and within the name length NTFS
+    // takes for one component.
+    let path = tmp.path().join("e".repeat(250));
+
+    write_private(&path, b"TOKEN='secret'\n").unwrap();
+
+    assert_eq!(fs::read(&path).unwrap(), b"TOKEN='secret'\n");
+    let entries = acl::entries(&path);
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert!(
+        entries[0].this_account && !entries[0].inherited,
+        "{entries:?}"
+    );
 }

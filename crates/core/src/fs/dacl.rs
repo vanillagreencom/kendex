@@ -83,7 +83,9 @@ pub(super) fn create_owner_only(path: &Path) -> io::Result<File> {
         lpSecurityDescriptor: descriptor_ptr,
         bInheritHandle: 0,
     };
-    let wide: Vec<u16> = path
+    // `std` is not between this path and Win32 to lift the legacy length
+    // limit, so the spelling that does is taken here.
+    let wide: Vec<u16> = crate::paths::verbatim(path)?
         .as_os_str()
         .encode_wide()
         .chain(std::iter::once(0))
