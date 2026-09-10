@@ -248,4 +248,57 @@ describe("the project registry on window focus", () => {
     ]);
     vi.useRealTimers();
   });
+
+  // The completion order a count alone cannot see: the save leaves first,
+  // so the read's ticket is the newer one; the save then lands while the
+  // read is still out, and the read's reply arrives with nothing
+  // outstanding any more. Nothing in the count says a write happened, and
+  // the newer ticket would put the file from before the save back on
+  // screen with the save already on disk.
+  it("keeps a setting whose save landed while the read was still out", async () => {
+    vi.useFakeTimers();
+    mount(<Startup />);
+    await settle();
+
+    let answerTheWrite: (
+      read: Awaited<ReturnType<typeof commands.updateSettings>>,
+    ) => void = () => {};
+    let answerTheRead: (read: SettingsReply) => void = () => {};
+    vi.mocked(commands.updateSettings).mockReturnValue(
+      new Promise((resolve) => {
+        answerTheWrite = resolve;
+      }) as ReturnType<typeof commands.updateSettings>,
+    );
+    vi.mocked(commands.getSettings).mockReturnValue(
+      new Promise<SettingsReply>((resolve) => {
+        answerTheRead = resolve;
+      }),
+    );
+
+    // The save leaves first, so the read that follows holds the newer
+    // ticket.
+    const saving = useSettingsStore.getState().setAppearance("dark");
+    await refocus();
+    // Then the save lands, while the read is still out.
+    await act(async () => {
+      answerTheWrite(
+        settingsRead([NEW_PROJECT], "dark") as unknown as Awaited<
+          ReturnType<typeof commands.updateSettings>
+        >,
+      );
+      await saving;
+    });
+    expect(useSettingsStore.getState().settings?.appearance).toBe("dark");
+
+    await act(async () => {
+      answerTheRead(settingsRead([]));
+      await settle();
+    });
+
+    expect(useSettingsStore.getState().settings?.appearance).toBe("dark");
+    expect(useSettingsStore.getState().settings?.projects).toEqual([
+      NEW_PROJECT,
+    ]);
+    vi.useRealTimers();
+  });
 });

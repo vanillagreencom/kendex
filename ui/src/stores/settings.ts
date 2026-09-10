@@ -77,17 +77,28 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
    *  the write's own reply, carrying the file it had just made, is dropped
    *  as an older view. The person's change is on disk and off the screen.
    *
-   *  So a read only speaks for the file while no write is outstanding.
-   *  Every write goes through [`writing`]; a read that finds a write still
-   *  out keeps the rows it had, and the write's reply is what moves the
-   *  store. */
+   *  So a read only speaks for the file while no write happened around it.
+   *  Two values say that, and both are needed: `outstanding` catches a
+   *  write still to answer when the read replies, and `epoch` — moved at
+   *  both ends of every write — catches one that started, or finished,
+   *  while the read was out. Without the second, a write that began before
+   *  the read and landed during it would leave the count back at zero, and
+   *  the read's newer ticket would put the file from before that save back
+   *  on screen.
+   *
+   *  Every write of this file goes through here, the zoom save and the two
+   *  project-registry writes included; they are wrapped where the store is
+   *  built, so the slices that own them keep their signatures. */
   let writesOutstanding = 0;
+  let writeEpoch = 0;
   const writing = async <T>(run: () => Promise<T>): Promise<T> => {
     writesOutstanding += 1;
+    writeEpoch += 1;
     try {
       return await run();
     } finally {
       writesOutstanding -= 1;
+      writeEpoch += 1;
     }
   };
 
@@ -159,17 +170,20 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     };
   };
 
-  // Registering and dropping a project are writes of this file like any
-  // other, so a read must not outrank one still in flight. Wrapped here
-  // rather than inside the slice: the outstanding count belongs to the
-  // store that owns the ticket order, and the slice keeps its signature.
+  // Saving the size, and registering or dropping a project, are writes of
+  // this file like any other, so a read must not speak over one. Wrapped
+  // where the store is built rather than inside each slice: the count
+  // belongs to the store that owns the ticket order, and the slices keep
+  // their signatures.
   const projects = projectActions({ ticket, hold });
+  const zoom = zoomActions(set, get);
 
   return {
     settings: null,
     base: null,
     capabilities: [],
-    ...zoomActions(set, get),
+    ...zoom,
+    saveZoom: () => writing(() => zoom.saveZoom()),
     ...projects,
     registerProject: (path) => writing(() => projects.registerProject(path)),
     unregisterProject: (path) =>
@@ -225,18 +239,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
 
     reload: async () => {
       const at = ticket();
+      const epoch = writeEpoch;
       const settings = await commands.getSettings();
       // A read that failed answers for nothing: the rows in hand stay,
       // and the next focus tries again. Nothing on screen is waiting on
       // it, so there is no one to tell.
       if (settings.status !== "ok") return;
-      // Nor does a read speak while a write is still to answer. A read
+      // Nor does a read speak for a file a write touched around it. A read
       // waits on nothing and a write waits on the settings lock, so this
-      // one can be a view of the file from before a save the person has
-      // already made — and its newer ticket would drop that save's own
-      // reply. The write is what moves the store; the next focus reads
-      // again.
-      if (writesOutstanding > 0) return;
+      // one can be a view from before a save the person has already made
+      // — and its newer ticket would put that older view back on screen,
+      // whether the save is still out or landed while this was reading.
+      // The write is what moves the store; the next focus reads again.
+      if (writesOutstanding > 0 || writeEpoch !== epoch) return;
       hold(settings.data, at);
     },
 

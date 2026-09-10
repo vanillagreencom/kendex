@@ -86,13 +86,58 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
             &closing.scored,
         );
     };
-    // Registered on the strength of what landed, whichever way the run
-    // ends: the folder holds installed packages whether a step failed, a
-    // package's installer did, or nothing did at all, and a folder the app
-    // cannot see is the thing this registration exists to prevent. A run
-    // that wrote nothing installed into nowhere and registers nothing.
-    let register = || match closing.count.is_some_and(|changes| changes > 0) {
-        true => super::project::register_destination(env, scope),
+    let (outcome, refused) = finish(
+        closing.count.is_some_and(|changes| changes > 0),
+        failed,
+        close,
+        |close| {
+            // Every member is installed by now, so the account and its
+            // separate yes come last — and the close is handed over, so
+            // what the run wrote is reported whatever the reader answers.
+            super::repo_effects::disclose_and_finish(
+                env,
+                scope,
+                &closing.pending,
+                allow_effects,
+                close,
+            )
+        },
+        || super::project::register_destination(env, scope),
+    );
+    if let Some(refused) = refused {
+        fail_refusal("warning: ", refused.as_ref());
+    }
+    outcome
+}
+
+/// How a collection run ends: the ledger, the repository account, and the
+/// registration of the folder the packages landed in.
+///
+/// The parts are handed in so the order can be asked without a registry, a
+/// network and a git host — the same reason [`install_steps`] takes its
+/// installer. What it decides is the whole of what a reviewer of this file
+/// would otherwise have to read the callers to know.
+///
+/// The registration runs on every arm where packages landed, and never
+/// behind the account's answer: a package's declared installer exiting
+/// nonzero, or a cancel at its prompt, leaves the packages on disk, and a
+/// folder the app cannot see is what the registration exists to prevent. A
+/// run that wrote nothing installed into nowhere and registers nothing.
+///
+/// What comes back is what the run reports — the step's failure first,
+/// then the account's — and, separately, a registry refusal to be said
+/// beside it rather than in place of it.
+type Refusal = Box<dyn std::error::Error>;
+
+fn finish<C: FnOnce()>(
+    wrote: bool,
+    failed: Option<Refusal>,
+    close: C,
+    effects: impl FnOnce(C) -> CliResult,
+    register: impl FnOnce() -> CliResult,
+) -> (CliResult, Option<Refusal>) {
+    let registered = |wrote: bool| match wrote {
+        true => register(),
         false => Ok(()),
     };
     if let Some(error) = failed {
@@ -100,32 +145,13 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
         // wrote is reported before the error goes up, and the repository
         // account is not asked for on a run that is already failing.
         close();
-        // The step's failure is what the run reports, so a registry that
-        // also refused says so on its own line rather than displacing it.
-        if let Err(refused) = register() {
-            fail_refusal("warning: ", refused.as_ref());
-        }
-        return Err(error);
+        return (Err(error), registered(wrote).err());
     }
-    // Every member is installed by now, so the account and its separate
-    // yes come last — and the close is handed over, so what the run wrote
-    // is reported whatever the reader answers.
-    let walked = super::repo_effects::disclose_and_finish(
-        env,
-        scope,
-        &closing.pending,
-        allow_effects,
-        close,
-    );
-    let registered = register();
+    let walked = effects(close);
+    let registry = registered(wrote);
     match walked {
-        Ok(()) => registered,
-        Err(error) => {
-            if let Err(refused) = registered {
-                fail_refusal("warning: ", refused.as_ref());
-            }
-            Err(error)
-        }
+        Ok(()) => (registry, None),
+        Err(error) => (Err(error), registry.err()),
     }
 }
 
@@ -344,7 +370,7 @@ fn prevalidate(env: &Env, step: &kendex_core::source_ops::CollectionStep) -> Cli
 
 #[cfg(test)]
 mod tests {
-    use super::{Written, install_steps, wrote_count};
+    use super::{Written, finish, install_steps, wrote_count};
     use kendex_core::repo_effects::{DeclaredEffects, RepoEffects};
     use kendex_core::source_ops::{CollectionStep, SourceAction};
 
@@ -420,5 +446,114 @@ mod tests {
         assert_eq!(wrote_count(0, true), Some(0));
         // Nothing planned and nothing written is the one silent case.
         assert_eq!(wrote_count(0, false), None);
+    }
+
+    /// Every way a collection run can end, and what each does about the
+    /// registry. A collection needs a directory service, a git host and a
+    /// registry to reach this by any other route, so the parts are handed
+    /// in — the shape `install_steps` above is already tested through.
+    ///
+    /// The claim every row makes is the one the issue turns on: the folder
+    /// the packages landed in is registered on every arm where they
+    /// landed, the arms that end in an error included, and on no arm where
+    /// nothing was written.
+    #[test]
+    fn the_close_registers_wherever_packages_landed() {
+        // wrote, a step failed, the effects step's answer, the registry's;
+        // then what ran (closed, effects, registered), whether the run
+        // came back ok, and whether a registry refusal was handed back to
+        // be said beside it.
+        type Ran = (bool, bool, bool);
+        type Row = (&'static str, bool, bool, bool, bool, Ran, bool, bool);
+        let rows: [Row; 6] = [
+            (
+                "clean",
+                true,
+                false,
+                true,
+                true,
+                (true, true, true),
+                true,
+                false,
+            ),
+            (
+                "step failed, wrote",
+                true,
+                true,
+                true,
+                true,
+                (true, false, true),
+                false,
+                false,
+            ),
+            (
+                "step failed, wrote nothing",
+                false,
+                true,
+                true,
+                true,
+                (true, false, false),
+                false,
+                false,
+            ),
+            (
+                "installer exited nonzero",
+                true,
+                false,
+                false,
+                true,
+                (true, true, true),
+                false,
+                false,
+            ),
+            (
+                "installer failed, registry refused",
+                true,
+                false,
+                false,
+                false,
+                (true, true, true),
+                false,
+                true,
+            ),
+            (
+                "clean, registry refused",
+                true,
+                false,
+                true,
+                false,
+                (true, true, true),
+                false,
+                false,
+            ),
+        ];
+
+        for (name, wrote, failed, effects_ok, registry_ok, expected, ok, said) in rows {
+            let (mut closed, mut ran_effects, mut registered) = (false, false, false);
+            let (outcome, refusal) = finish(
+                wrote,
+                failed.then(|| -> Box<dyn std::error::Error> { "the repository moved".into() }),
+                || closed = true,
+                |close| {
+                    close();
+                    ran_effects = true;
+                    match effects_ok {
+                        true => Ok(()),
+                        false => Err("the installer exited 1".into()),
+                    }
+                },
+                || {
+                    registered = true;
+                    match registry_ok {
+                        true => Ok(()),
+                        false => Err("the settings file could not be written".into()),
+                    }
+                },
+            );
+
+            assert_eq!((closed, ran_effects, registered), expected, "{name}");
+            assert_eq!(outcome.is_ok(), ok, "{name}: {outcome:?}");
+            assert_eq!(refusal.is_some(), said, "{name}");
+        }
     }
 }

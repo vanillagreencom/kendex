@@ -449,17 +449,11 @@ pub(crate) mod tests {
         ));
     }
 
-    /// The registration an install makes, over every way the same folder
-    /// can arrive twice: the same path again, and a symlink to it. A
-    /// second install into a project kendex already tracks is a success
-    /// with nothing to add — the registry holds one entry, and everything
-    /// else in the file is exactly where it was.
-    #[cfg(unix)]
-    #[test]
-    fn an_install_registration_adds_one_entry_however_often_it_is_asked() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = crate::paths::canonical(tmp.path()).unwrap();
-        let env = env_in(&root);
+    /// A registry holding one project, an unrelated one beside it and an
+    /// unrelated setting written over both — the ground the two cases
+    /// below stand on. Answers the project's canonical path.
+    fn a_registry_with_one_project_in_it(root: &Path) -> (Env, PathBuf) {
+        let env = env_in(root);
         let project = root.join("proj");
         std::fs::create_dir(&project).unwrap();
         let elsewhere = root.join("other");
@@ -470,25 +464,55 @@ pub(crate) mod tests {
             Ok(())
         })
         .unwrap();
-        // The second spelling of one directory: a person can be standing
-        // in either when they install.
-        let through_a_link = root.join("link");
-        std::os::unix::fs::symlink(&project, &through_a_link).unwrap();
 
         let first = ensure_project_registered(&env, &project).unwrap();
         assert!(first.added);
         assert_eq!(first.root, project);
+        (env, project)
+    }
 
-        for again in [&project, &through_a_link] {
-            let repeat = ensure_project_registered(&env, again).unwrap();
-            assert!(!repeat.added, "{} added a second entry", again.display());
-            assert_eq!(repeat.root, project);
-        }
+    /// The registration an install makes, asked twice for the same folder.
+    /// A second install into a project kendex already tracks is a success
+    /// with nothing to add — the registry holds one entry, and everything
+    /// else in the file is exactly where it was.
+    ///
+    /// Portable, and deliberately so: repeating an install is what a person
+    /// does on every platform.
+    #[test]
+    fn an_install_registration_adds_one_entry_however_often_it_is_asked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::paths::canonical(tmp.path()).unwrap();
+        let (env, project) = a_registry_with_one_project_in_it(&root);
 
+        let repeat = ensure_project_registered(&env, &project).unwrap();
+
+        assert!(!repeat.added, "the same path added a second entry");
+        assert_eq!(repeat.root, project);
         let stored = load(&env).unwrap();
-        assert_eq!(stored.projects, [elsewhere, project]);
+        assert_eq!(stored.projects, [root.join("other"), project]);
         // Every unrelated field the registrations were written over.
         assert_eq!(stored.appearance, Appearance::Dark);
+    }
+
+    /// The same folder reached by a second spelling. Unix only: a symlink
+    /// is what makes one directory answer to two names here, and Windows
+    /// has no equivalent a fixture may create without a privilege the test
+    /// runner does not have.
+    #[cfg(unix)]
+    #[test]
+    fn an_install_registration_answers_one_entry_for_a_second_spelling() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::paths::canonical(tmp.path()).unwrap();
+        let (env, project) = a_registry_with_one_project_in_it(&root);
+        // A person can be standing in either when they install.
+        let through_a_link = root.join("link");
+        std::os::unix::fs::symlink(&project, &through_a_link).unwrap();
+
+        let repeat = ensure_project_registered(&env, &through_a_link).unwrap();
+
+        assert!(!repeat.added, "the link added a second entry");
+        assert_eq!(repeat.root, project);
+        assert_eq!(load(&env).unwrap().projects, [root.join("other"), project]);
     }
 
     /// A destination that is not a directory is refused before the registry
