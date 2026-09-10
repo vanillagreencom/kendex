@@ -139,6 +139,12 @@ impl Repo {
         repo.git(&["config", "user.email", "t@t"]);
         repo.git(&["config", "user.name", "t"]);
         repo.git(&["config", "commit.gpgsign", "false"]);
+        // The bytes a checkout holds are the bytes these cases wrote. Left
+        // to the machine's default, git rewrites a line ending on the way
+        // into the working tree on Windows, and a case reading a restored
+        // file back would be asserting git's eol policy rather than what
+        // the restore put there.
+        repo.git(&["config", "core.autocrlf", "false"]);
         repo.git(&["config", "core.hooksPath", ".git/hooks"]);
         let inventory: Vec<&str> = committed
             .iter()
@@ -165,6 +171,12 @@ impl Repo {
         repo.git(&["config", "user.email", "t@t"]);
         repo.git(&["config", "user.name", "t"]);
         repo.git(&["config", "commit.gpgsign", "false"]);
+        // The bytes a checkout holds are the bytes these cases wrote. Left
+        // to the machine's default, git rewrites a line ending on the way
+        // into the working tree on Windows, and a case reading a restored
+        // file back would be asserting git's eol policy rather than what
+        // the restore put there.
+        repo.git(&["config", "core.autocrlf", "false"]);
         repo.git(&["config", "core.hooksPath", ".git/hooks"]);
         repo
     }
