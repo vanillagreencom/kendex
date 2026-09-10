@@ -126,10 +126,20 @@ pub struct PackageSetup {
 /// than from the window, which is the same rule [`apply`] states: a root
 /// the caller chose is a check against the caller's own answer.
 ///
+/// `ask` is who wants it, and it decides whether the package's script may
+/// run: a page drawing itself gets the check only where kendex recorded
+/// arming the effect, and a person pressing the control that asks is their
+/// own licence. The window sends the second only from that control.
+///
 /// A package that declares nothing answers `None` throughout rather than
 /// an error. Almost every package is inert, and a card asks this of every
 /// place it draws.
-pub fn setup(env: &Env, scope: &Scope, name: &str) -> Result<PackageSetup, String> {
+pub fn setup(
+    env: &Env,
+    scope: &Scope,
+    name: &str,
+    ask: kendex_core::repo_effects::Ask,
+) -> Result<PackageSetup, String> {
     let Some(declared) = kendex_core::engine::installed_declaration(env, scope, name)
         .map_err(|error| error.to_string())?
     else {
@@ -138,7 +148,7 @@ pub fn setup(env: &Env, scope: &Scope, name: &str) -> Result<PackageSetup, Strin
             disclosure: None,
         });
     };
-    let status = kendex_core::repo_effects::status(scope, &declared);
+    let status = kendex_core::repo_effects::status(scope, &declared, ask);
     // The block against the scope as it stands now, so a companion
     // installed since the effect was declined counts as installed. One
     // declaration in, so at most one disclosure out; a package the offer
@@ -154,9 +164,13 @@ pub fn setup(env: &Env, scope: &Scope, name: &str) -> Result<PackageSetup, Strin
 
 #[tauri::command(async)]
 #[specta::specta]
-pub fn package_setup(scope: Scope, name: String) -> Result<PackageSetup, String> {
+pub fn package_setup(
+    scope: Scope,
+    name: String,
+    ask: kendex_core::repo_effects::Ask,
+) -> Result<PackageSetup, String> {
     let env = Env::detect().map_err(|error| error.to_string())?;
-    setup(&env, &scope, &name)
+    setup(&env, &scope, &name, ask)
 }
 
 /// Why a report did not get written.

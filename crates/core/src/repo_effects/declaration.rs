@@ -12,36 +12,6 @@ use crate::frontmatter::{Map, Value};
 
 use super::KEY;
 
-/// A package's read-only check: does its effect stand in this repository?
-///
-/// Two fields and both required, because either alone is unusable. The
-/// script is what kendex runs; the evidence is what lets kendex run it.
-///
-/// `evidence` is a repo-relative path the package also lists under
-/// `writes`, and one that lands in the repository's common git directory.
-/// Git clones nothing there, so a file of the package's sitting in it got
-/// there from a local act by whoever owns this machine — which is the one
-/// durable difference between a repository somebody armed and a checkout
-/// that merely carries the package's files. Opening a package's page must
-/// not run a cloned repository's scripts, and this is what stops it.
-///
-/// The package names its own evidence rather than kendex deriving one,
-/// because only the package knows which of the files it writes is the one
-/// nothing else writes. Naming a file the repository may hold for its own
-/// reasons — a `pre-commit` hook somebody wrote by hand — would hand a
-/// clone the license this field exists to withhold.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct Checker {
-    /// The read-only command, relative to the package directory, that
-    /// reports whether the effect stands. Its exit status is the whole
-    /// answer: 0 the effect stands, 1 it does not, anything else the
-    /// check could not be taken.
-    pub script: String,
-    /// The repo-relative path whose presence licenses running `script`.
-    pub evidence: String,
-}
-
 /// A package's declared effects on the repository it installs into.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -57,11 +27,14 @@ pub struct RepoEffects {
     /// The script that undoes the effect. A CLI verb that takes the package
     /// out of a scope runs it first, while the file is still there.
     pub uninstaller: Option<String>,
-    /// The read-only check that says whether the effect stands here, and
-    /// the local evidence that licenses running it. Absent means kendex
-    /// has no way to ask, and every surface says the status is
-    /// unavailable rather than guessing at one.
-    pub checker: Option<Checker>,
+    /// The read-only command that says whether the effect stands here.
+    /// Absent means kendex has no way to ask, and every surface says the
+    /// status is unavailable rather than guessing at one.
+    ///
+    /// What licenses running it is kendex's own record of having armed
+    /// this effect in this repository, never anything the declaration
+    /// names: see `super::armed`.
+    pub checker: Option<String>,
     /// How to undo the effect by hand, for the disclosure's last line.
     pub removal: Option<String>,
     /// Lines the package wants read before anyone says yes — what its
@@ -168,16 +141,15 @@ fn effects(map: &Map) -> Option<RepoEffects> {
     if !only_known(map) {
         return None;
     }
-    let writes = writes(map)?;
     Some(RepoEffects {
         summary: scalar(map, "summary")?,
+        writes: writes(map)?,
         installer: script(map, "installer")?,
         uninstaller: script(map, "uninstaller")?,
-        checker: checker(map, &writes)?,
+        checker: script(map, "checker")?,
         removal: text(map, "removal")?,
         notes: list(map, "notes")?,
         companions: list(map, "companions")?,
-        writes,
     })
 }
 
@@ -272,64 +244,6 @@ fn writes(map: &Map) -> Option<Vec<String>> {
     contained.then_some(paths)
 }
 
-/// The declared checker, or `None` where the package named none.
-///
-/// Two tiers, the same two every other field here has. A wrong SHAPE — not
-/// a map, a missing or non-scalar `script` or `evidence`, a key kendex does
-/// not know — is a declaration kendex could not read, and refuses the whole
-/// block: the alternative is showing a person a disclosure with a field
-/// silently missing from it.
-///
-/// A block that reads perfectly well and names something kendex will not
-/// use is the other tier: the checker is dropped and the rest of the
-/// declaration stands. Two ways to land there, and both leave a package
-/// that declares an effect with no way to be asked about it, which every
-/// surface reports as a status it does not have.
-///
-/// - A `script` that leaves the package directory, the same rule
-///   [`script`] applies to the installer.
-/// - An `evidence` path the package does not also list under `writes`, or
-///   one that does not land in the repository's common git directory.
-///   Evidence is a license to run a script out of a checkout, and the only
-///   thing that makes it one is that git clones nothing where it sits. A
-///   path under the work tree arrives with the fetch, and a path the
-///   package never said it writes is somebody else's file.
-fn checker(map: &Map, writes: &[String]) -> Option<Option<Checker>> {
-    let value = match map.get("checker") {
-        None | Some(Value::Null) => return Some(None),
-        Some(value) => value,
-    };
-    let Value::Map(block) = value else {
-        return None;
-    };
-    if !block
-        .entries()
-        .all(|(key, _)| CHECKER_FIELDS.contains(&key))
-    {
-        return None;
-    }
-    let script = scalar(block, "script")?;
-    let evidence = scalar(block, "evidence")?;
-    let usable =
-        inside(&script) && writes.iter().any(|written| written == &evidence) && shared(&evidence);
-    Some(usable.then_some(Checker { script, evidence }))
-}
-
-/// The fields a checker block may have. Every one of them is read above.
-const CHECKER_FIELDS: [&str; 2] = ["script", "evidence"];
-
-/// Whether a declared path lands in the repository's common git directory
-/// rather than under the work tree.
-///
-/// One reading of that question in this crate:
-/// [`super::disclosure::under_git`] is what maps a declared path onto where
-/// it really goes, and a checker's evidence is held to the same test the
-/// block a person reads is held to. A second spelling would let a path be
-/// licensed here and disclosed as this checkout's there.
-fn shared(declared: &str) -> bool {
-    super::disclosure::under_git(declared).is_some()
-}
-
 /// A scalar field, with the same rule.
 fn text(map: &Map, key: &str) -> Option<Option<String>> {
     match map.get(key) {
@@ -340,6 +254,10 @@ fn text(map: &Map, key: &str) -> Option<Option<String>> {
 }
 
 /// A script field: a scalar, and a path that stays inside the package.
+///
+/// The installer, the uninstaller and the checker are one field shape and
+/// are read through one function. A second reader for the checker was a
+/// second answer to what kendex may run.
 ///
 /// The two failures are not the same failure. A wrong SHAPE means kendex
 /// could not read what the package said, so the declaration is refused

@@ -41,18 +41,25 @@ export function shownState(
 /** The tone a state carries, from the app's own four, or none where the
  *  state is neutral.
  *
- *  Active is the only one that reads as settled. The two that need
- *  somebody are warnings. The two that say nothing was measured carry no
- *  tone at all: a warning over a state nobody read teaches people to
- *  distrust the colour, which is the rule `STATUS_TONES` exists to keep. */
-const toneOf: Record<SetupShown, StatusTone | null> = {
+ *  Active reads as settled and Needs repair as a warning: something here
+ *  was set up and has broken.
+ *
+ *  Not active carries no tone. Declining the setup dialog is an answer,
+ *  and the issue asks that it leave a neutral inactive status rather than
+ *  a standing warning — an amber row over a choice somebody made reads as
+ *  a reproach for making it. The states that say nothing was measured are
+ *  untoned for the neighbouring reason: a warning over a state nobody read
+ *  teaches people to distrust the colour, which is the rule `STATUS_TONES`
+ *  exists to keep. */
+export const toneOf: Record<SetupShown, StatusTone | null> = {
   checking: null,
   active: "good",
-  notActive: "warning",
+  notActive: null,
   needsRepair: "warning",
   couldNotCheck: null,
   unavailable: null,
   notDeclared: null,
+  notARepository: null,
 };
 
 const toneClass = (state: SetupShown): string => {
@@ -70,6 +77,7 @@ const toneClass = (state: SetupShown): string => {
 export function SetupRow({
   place,
   setup,
+  refused,
   state,
   busy,
   onActivate,
@@ -81,6 +89,9 @@ export function SetupRow({
   /** The last answer, or null where there is none yet or none could be
    *  read. The package's own summary and words come from here. */
   setup: PackageSetup | null;
+  /** Why the command could not answer, or null. Printed as the row's
+   *  cause where there is no answer to take one from. */
+  refused: string | null;
   state: SetupShown;
   busy: boolean;
   onActivate: () => void;
@@ -94,7 +105,11 @@ export function SetupRow({
   // engine would refuse is worse than no button — the same rule the update
   // and removal controls on this card are held to.
   const canApply = status?.canApply === true;
-  const canCheck = status?.canCheck === true;
+  // Offered whenever the row is drawn at all, not only where a previous
+  // answer said there was a check. A refused command leaves no answer to
+  // read that from, and a row with no way to try again strands the reader
+  // on the one state trying again is the remedy for.
+  const canCheck = status === null || status.canCheck;
   const repairing = state === "needsRepair";
   const offerApply =
     canApply && (state === "notActive" || repairing || state === "unavailable");
@@ -131,6 +146,14 @@ export function SetupRow({
           {status?.shared === true && offerApply ? (
             <p className="mt-0.5 text-[13px] text-muted-foreground">
               {SETUP_SHARED_NOTE}
+            </p>
+          ) : null}
+          {/* Why the command could not answer, where it did not. The
+              only account of a place whose declaration will not read, so
+              it is printed rather than folded into the state's word. */}
+          {refused ? (
+            <p className="mt-0.5 break-words font-mono text-xs text-muted-foreground">
+              {refused}
             </p>
           ) : null}
           {/* What the check itself said, whatever it said. This is the

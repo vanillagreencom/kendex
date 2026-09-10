@@ -166,7 +166,9 @@ export function PackageProjects({
                   focus !== null && scopeKey(focus) === scopeKey(place.scope)
                 }
                 setup={
-                  declares ? (entry ?? { setup: null, reading: true }) : null
+                  declares && place.scope.scope === "project"
+                    ? (entry ?? { setup: null, refused: null, reading: true })
+                    : null
                 }
                 onOpen={() => goToLibrary({ scope: selectionOf(place.scope) })}
                 onUpdate={() => place.row && void updateOne(place.row)}

@@ -5,7 +5,7 @@
 //! account — a second spelling of this would be a second answer to "was
 //! that repository disarmed".
 
-use super::{DeclaredEffects, run_script, touches_git};
+use super::{DeclaredEffects, armed, run_script, setup, touches_git};
 
 /// A line an undo produced, tagged with where it came from.
 ///
@@ -163,6 +163,17 @@ pub fn undo(
                 uninstaller: uninstaller.clone(),
                 code: report.code,
             });
+        }
+        // The uninstaller ran clean, so kendex's record of having armed
+        // this effect here is no longer true. Left behind it would licence
+        // a check of an effect nothing armed, which is the fail-open the
+        // record exists to close, arriving later.
+        //
+        // Not an error either way: the effect is disarmed, and a removal
+        // that reported failure over a bookkeeping file would send
+        // somebody to repeat work that landed.
+        if let Ok(Some(common_dir)) = setup::record_dir(root) {
+            let _ = armed::disarm(&common_dir, &declared.name);
         }
     }
     Ok(())

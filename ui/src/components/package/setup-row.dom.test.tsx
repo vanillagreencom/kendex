@@ -15,7 +15,7 @@ import {
   SETUP_UNAVAILABLE,
 } from "@/lib/copy-setup";
 import { mount } from "@/test/dom";
-import { SetupRow, type SetupShown, shownState } from "./setup-row";
+import { SetupRow, type SetupShown, shownState, toneOf } from "./setup-row";
 
 const setup = (
   state: SetupState,
@@ -59,11 +59,13 @@ const draw = (
   answer: PackageSetup | null,
   onActivate = vi.fn(),
   onCheckAgain = vi.fn(),
+  refused: string | null = null,
 ) =>
   mount(
     <SetupRow
       place="vg"
       setup={answer}
+      refused={refused}
       state={state}
       busy={false}
       onActivate={onActivate}
@@ -80,7 +82,10 @@ const draw = (
  */
 describe("a project's setup row", () => {
   const rows: [string, SetupShown, PackageSetup | null, string, string[]][] = [
-    ["a read still out", "checking", null, SETUP_CHECKING, []],
+    // Check again stands from the first draw and goes dead while the read
+    // is out, rather than appearing under the reader's cursor when it
+    // lands — the rule this card's Remove already follows.
+    ["a read still out", "checking", null, SETUP_CHECKING, [CHECK_AGAIN_LABEL]],
     [
       "the effect in force",
       "active",
@@ -169,6 +174,55 @@ describe("a project's setup row", () => {
     await userEvent.click(found[0] as HTMLButtonElement);
     await userEvent.click(found[1] as HTMLButtonElement);
     expect(onActivate).toHaveBeenCalledTimes(1);
+    expect(onCheckAgain).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** Which states carry a tone, and which carry none.
+ *
+ *  Only what somebody has to act on is coloured. Needs repair is a
+ *  warning: something here was set up and has broken. Not active is not —
+ *  declining the setup dialog is an answer, and the issue asks that it
+ *  leave a neutral inactive status rather than a standing warning. The
+ *  states that say nothing was measured are untoned for the neighbouring
+ *  reason: a warning over a state nobody read teaches people to distrust
+ *  the colour. */
+describe("the tone each state carries", () => {
+  it("warns only where something set up here has broken", () => {
+    expect(toneOf).toEqual({
+      checking: null,
+      active: "good",
+      notActive: null,
+      needsRepair: "warning",
+      couldNotCheck: null,
+      unavailable: null,
+      notDeclared: null,
+      notARepository: null,
+    });
+  });
+});
+
+/** A command that refused leaves no answer to read a state or a control
+ *  from, and the row still has to say what happened and offer the one
+ *  thing that helps. Reached where one project's installed declaration
+ *  will not read while its siblings answer normally. */
+describe("a place whose command refused", () => {
+  it("prints the cause and keeps the way to try again", async () => {
+    const onCheckAgain = vi.fn();
+    const host = draw(
+      "couldNotCheck",
+      null,
+      vi.fn(),
+      onCheckAgain,
+      "its repo-effects declaration will not read",
+    );
+
+    expect(host.textContent).toContain(SETUP_COULD_NOT_CHECK);
+    expect(host.textContent).toContain(
+      "its repo-effects declaration will not read",
+    );
+    expect(buttons(host)).toEqual([CHECK_AGAIN_LABEL]);
+    await userEvent.click(host.querySelector("button") as HTMLButtonElement);
     expect(onCheckAgain).toHaveBeenCalledTimes(1);
   });
 });

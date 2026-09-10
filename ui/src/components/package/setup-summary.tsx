@@ -36,9 +36,16 @@ export function SetupSummary({
     return state === "notActive" || state === "needsRepair";
   });
   if (needing.length === 0) return null;
+  // A warning only where something that was set up has broken. A project
+  // that was never set up, or whose setup dialog was declined, is a state
+  // somebody chose: the line still points at it, in the tone of a notice
+  // rather than of a fault. The row below carries the same rule.
+  const broken = needing.some(
+    (scope) => entryFor(scope)?.setup?.status.state === "needsRepair",
+  );
   return (
     <StatusNote
-      tone="warning"
+      tone={broken ? "warning" : "info"}
       className="mb-6"
       title={setupNeededSummary(
         needing.map((scope) => placeName(scope, scopes)),

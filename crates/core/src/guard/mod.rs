@@ -186,8 +186,22 @@ pub(crate) fn relay(output: &std::process::Output) -> GuardReport {
 }
 
 /// Arm the shims: the package's own installer, in this repository.
+///
+/// A clean run records the arming the way the desktop's does, through
+/// `repo_effects::armed`. The two verbs mean one thing, so a repository
+/// armed at a terminal reports as armed on the package's page instead of
+/// waiting for somebody to ask the package again.
 pub fn install(dir: &Path) -> Result<GuardReport> {
-    installer(dir, &[], DEFAULT_TIMEOUT)
+    let report = installer(dir, &[], DEFAULT_TIMEOUT)?;
+    if report.code == 0
+        && let Ok(repo) = Repo::at(dir)
+    {
+        // Bookkeeping, never the verb's verdict: the shims are armed, and
+        // reporting a failed install over a record nobody reads for
+        // correctness would send somebody to repeat work that landed.
+        let _ = crate::repo_effects::armed::arm(&repo.common_dir, SKILL);
+    }
+    Ok(report)
 }
 
 /// Disarm: the package removes its helper and its own marked line, and
@@ -198,7 +212,13 @@ pub fn install(dir: &Path) -> Result<GuardReport> {
 /// could not run is exit 2 with the reason, never a quiet success about a
 /// repository nobody can commit to.
 pub fn uninstall(dir: &Path) -> Result<GuardReport> {
-    installer(dir, &["--uninstall"], DEFAULT_TIMEOUT)
+    let report = installer(dir, &["--uninstall"], DEFAULT_TIMEOUT)?;
+    if report.code == 0
+        && let Ok(repo) = Repo::at(dir)
+    {
+        let _ = crate::repo_effects::armed::disarm(&repo.common_dir, SKILL);
+    }
+    Ok(report)
 }
 
 /// Whether somebody standing at this repository ran the installer.

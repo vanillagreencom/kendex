@@ -11,15 +11,12 @@ use super::*;
 use crate::process::Hardened;
 use crate::repo_effects::RepoEffects;
 
-/// The declared evidence commit-guards names, and what every fixture here
-/// writes to license a run.
-const EVIDENCE: &str = ".git/hooks/kendex-guards";
-
 /// A repository with a package directory in it, and nothing armed.
 struct Fixture {
     _tmp: tempfile::TempDir,
     root: PathBuf,
     package: PathBuf,
+    common_dir: PathBuf,
 }
 
 impl Fixture {
@@ -33,10 +30,12 @@ impl Fixture {
             .run()
             .unwrap();
         assert!(output.status.success(), "git init");
+        let common_dir = crate::guard::Repo::at(&root).unwrap().common_dir;
         Fixture {
             _tmp: tmp,
             root,
             package,
+            common_dir,
         }
     }
 
@@ -55,25 +54,23 @@ impl Fixture {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    /// Leave the package's declared evidence in the hooks directory — the
-    /// local act that licenses running its check.
+    /// Record that kendex armed this package's effect here — the licence
+    /// to run its check, written by `arm` and by nothing else.
     #[allow(clippy::unwrap_used, reason = "fixture preconditions")]
-    fn arm(&self) {
-        let helper = self.root.join(EVIDENCE);
-        fs::create_dir_all(helper.parent().unwrap()).unwrap();
-        fs::write(&helper, "#!/bin/sh\n").unwrap();
+    fn record(&self) {
+        crate::repo_effects::armed::arm(&self.common_dir, "guards").unwrap();
     }
 
-    fn declared(&self, checker: Option<Checker>, installer: Option<&str>) -> DeclaredEffects {
+    fn declared(&self, checker: Option<&str>, installer: Option<&str>) -> DeclaredEffects {
         DeclaredEffects {
             name: "guards".to_owned(),
             root: self.package.clone(),
             effects: RepoEffects {
                 summary: "arms hooks".to_owned(),
-                writes: vec![EVIDENCE.to_owned()],
+                writes: vec![".git/hooks/kendex-guards".to_owned()],
                 installer: installer.map(str::to_owned),
                 uninstaller: None,
-                checker,
+                checker: checker.map(str::to_owned),
                 removal: None,
                 notes: Vec::new(),
                 companions: Vec::new(),
@@ -82,21 +79,14 @@ impl Fixture {
     }
 }
 
-fn checker(script: &str) -> Option<Checker> {
-    Some(Checker {
-        script: script.to_owned(),
-        evidence: EVIDENCE.to_owned(),
-    })
-}
-
 /// A checker exits under a shell that may hand back ETXTBSY: a sibling
 /// test's fork between this file's write and its close holds the write
 /// descriptor open until that child execs. The script is complete on disk
 /// either way; only the timing is off, and the retry is the fixture's, not
 /// the subject's.
-fn settled(scope: &crate::model::Scope, declared: &DeclaredEffects) -> SetupStatus {
+fn settled(scope: &crate::model::Scope, declared: &DeclaredEffects, ask: Ask) -> SetupStatus {
     for _ in 0..50 {
-        let status = status(scope, declared);
+        let status = status(scope, declared, ask);
         if !status
             .said
             .iter()
@@ -106,19 +96,19 @@ fn settled(scope: &crate::model::Scope, declared: &DeclaredEffects) -> SetupStat
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    status(scope, declared)
+    status(scope, declared, ask)
 }
 
 /// Every state the judge reaches, and what it ran to get there. One row per
-/// state, because a state is the pair "what kendex read" and "what it was
-/// allowed to run" — reading one without the other is what let a clone's
-/// script run on a page load.
+/// state, because a state is the pair "what kendex recorded" and "what it
+/// was allowed to run" — reading one without the other is what let a
+/// clone's script run on a page load.
 #[test]
 fn each_state_says_what_it_read_and_what_it_ran() {
     struct Row {
         what: &'static str,
-        /// Whether the package's declared evidence is in the hooks
-        /// directory before the status is taken.
+        /// Whether kendex's own record of arming this effect is in place
+        /// before the status is taken.
         armed: bool,
         /// The exit the declared checker is written to take, or `None` for
         /// a package that declares no checker at all.
@@ -129,28 +119,28 @@ fn each_state_says_what_it_read_and_what_it_ran() {
     }
     let rows = [
         Row {
-            what: "nothing local set it up: no script runs",
+            what: "kendex did not set it up here: no script runs",
             armed: false,
             exits: Some(0),
             state: SetupState::NotActive,
             speaks: false,
         },
         Row {
-            what: "armed, and the package says the effect stands",
+            what: "recorded, and the package says the effect stands",
             armed: true,
             exits: Some(0),
             state: SetupState::Active,
             speaks: true,
         },
         Row {
-            what: "armed, and the package says it does not",
+            what: "recorded, and the package says it does not",
             armed: true,
             exits: Some(1),
             state: SetupState::NeedsRepair,
             speaks: true,
         },
         Row {
-            what: "armed, and the package could not answer",
+            what: "recorded, and the package could not answer",
             armed: true,
             exits: Some(2),
             state: SetupState::CouldNotCheck,
@@ -174,16 +164,16 @@ fn each_state_says_what_it_read_and_what_it_ran() {
     for row in rows {
         let fixture = Fixture::new();
         if row.armed {
-            fixture.arm();
+            fixture.record();
         }
         let declared = match row.exits {
             Some(code) => {
                 fixture.script("check", "the package spoke", code);
-                fixture.declared(checker("check"), Some("arm"))
+                fixture.declared(Some("check"), Some("arm"))
             }
             None => fixture.declared(None, Some("arm")),
         };
-        let status = settled(&fixture.scope(), &declared);
+        let status = settled(&fixture.scope(), &declared, Ask::Surface);
         assert_eq!(status.state, row.state, "{}", row.what);
         assert_eq!(
             status.said.iter().any(|line| line == "the package spoke"),
@@ -207,9 +197,15 @@ fn each_state_says_what_it_read_and_what_it_ran() {
 }
 
 /// The trust rule, planted rather than argued: a clone's checker is on
-/// disk and executable, and taking the status must not run it.
+/// disk and executable, every path the package declares is present, and
+/// taking the status for a page must run none of it.
+///
+/// The declared paths are planted because a licence read off one of them
+/// would pass here: `.git/config` is in every repository ever cloned, and
+/// a package naming it would be checked everywhere. The only licence is a
+/// record kendex writes itself.
 #[test]
-fn a_status_taken_without_local_evidence_runs_nothing() {
+fn no_file_the_repository_holds_licenses_the_checkout_s_scripts() {
     let fixture = Fixture::new();
     let ran = fixture.root.join("ran");
     let path = fixture.package.join("check");
@@ -221,15 +217,66 @@ fn a_status_taken_without_local_evidence_runs_nothing() {
         )
         .unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        // Every path the declaration lists, and a git file that is there in
+        // every repository ever cloned.
+        let helper = fixture.common_dir.join("hooks/kendex-guards");
+        fs::create_dir_all(helper.parent().unwrap()).unwrap();
+        fs::write(&helper, "#!/bin/sh\n").unwrap();
+        assert!(fixture.common_dir.join("config").is_file(), "no git config");
     }
-    let declared = fixture.declared(checker("check"), Some("arm"));
+    let declared = fixture.declared(Some("check"), Some("arm"));
 
-    let status = status(&fixture.scope(), &declared);
+    let status = status(&fixture.scope(), &declared, Ask::Surface);
 
     assert_eq!(status.state, SetupState::NotActive);
     assert!(
         !Path::new(&ran).exists(),
-        "the checker ran without a local act licensing it"
+        "the checker ran off a file kendex did not write"
+    );
+}
+
+/// Somebody asking is its own licence, and their answer is the package's
+/// own — which is how a repository armed at a terminal or by hand gets a
+/// true state at all.
+///
+/// The package says the effect stands and kendex has no record: that is
+/// Active, not a repair. Nothing here was ever broken.
+#[test]
+fn a_person_asking_needs_no_record() {
+    let fixture = Fixture::new();
+    fixture.script("check", "armed", 0);
+    let declared = fixture.declared(Some("check"), Some("arm"));
+
+    assert_eq!(
+        settled(&fixture.scope(), &declared, Ask::Surface).state,
+        SetupState::NotActive
+    );
+    assert_eq!(
+        settled(&fixture.scope(), &declared, Ask::Person).state,
+        SetupState::Active
+    );
+}
+
+/// A package that says no, where kendex never armed it, is not a repair.
+///
+/// Repair means "this was set up here and broke", and the record is the
+/// only thing that establishes the first half. Without it the honest state
+/// is the one Set up acts on.
+#[test]
+fn a_no_without_a_record_is_not_a_repair() {
+    let fixture = Fixture::new();
+    fixture.script("check", "not armed", 1);
+    let declared = fixture.declared(Some("check"), Some("arm"));
+
+    assert_eq!(
+        settled(&fixture.scope(), &declared, Ask::Person).state,
+        SetupState::NotActive
+    );
+
+    fixture.record();
+    assert_eq!(
+        settled(&fixture.scope(), &declared, Ask::Person).state,
+        SetupState::NeedsRepair
     );
 }
 
@@ -238,10 +285,10 @@ fn a_status_taken_without_local_evidence_runs_nothing() {
 #[test]
 fn a_checker_that_cannot_run_could_not_check() {
     let fixture = Fixture::new();
-    fixture.arm();
-    let declared = fixture.declared(checker("missing"), Some("arm"));
+    fixture.record();
+    let declared = fixture.declared(Some("missing"), Some("arm"));
 
-    let status = status(&fixture.scope(), &declared);
+    let status = status(&fixture.scope(), &declared, Ask::Surface);
 
     assert_eq!(status.state, SetupState::CouldNotCheck);
     assert!(status.can_check, "there is still a check to try again");
@@ -252,17 +299,53 @@ fn a_checker_that_cannot_run_could_not_check() {
     );
 }
 
-/// Outside a project there is no repository to set anything up in, and the
-/// answer says so rather than claiming a state.
+/// A personal install changes no repository, so there is nothing to set up
+/// and nothing to report — never a read that failed, and never a sentence
+/// about scopes on a card.
 #[test]
-fn the_global_scope_has_no_setup_to_report() {
+fn the_personal_place_has_no_repository_to_set_up() {
     let fixture = Fixture::new();
-    let declared = fixture.declared(checker("check"), Some("arm"));
+    let declared = fixture.declared(Some("check"), Some("arm"));
 
-    let status = status(&crate::model::Scope::Global, &declared);
+    let status = status(&crate::model::Scope::Global, &declared, Ask::Person);
 
-    assert_eq!(status.state, SetupState::CouldNotCheck);
-    assert!(!status.can_check, "nothing here can be checked again");
+    assert_eq!(status.state, SetupState::NotARepository);
+    assert!(status.said.is_empty(), "{:?}", status.said);
+    assert!(!status.can_apply, "nothing here can be set up");
+    assert!(!status.can_check, "nothing here can be checked");
+}
+
+/// A project that is not a git work tree has nowhere git-private to record
+/// an arming, so there is no standing licence — and the state says what
+/// kendex knows rather than claiming the check failed.
+#[test]
+#[allow(clippy::unwrap_used, reason = "fixture preconditions")]
+fn a_project_outside_a_work_tree_has_no_standing_licence() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = crate::paths::canonical(tmp.path()).unwrap().join("plain");
+    let package = root.join(".agents/skills/guards");
+    fs::create_dir_all(&package).unwrap();
+    let scope = crate::model::Scope::Project { root };
+    let declared = DeclaredEffects {
+        name: "guards".to_owned(),
+        root: package,
+        effects: RepoEffects {
+            summary: "writes a tool".to_owned(),
+            writes: vec!["tools/guard".to_owned()],
+            installer: Some("arm".to_owned()),
+            uninstaller: None,
+            checker: Some("check".to_owned()),
+            removal: None,
+            notes: Vec::new(),
+            companions: Vec::new(),
+        },
+    };
+
+    let status = status(&scope, &declared, Ask::Surface);
+
+    assert_eq!(status.state, SetupState::NotActive);
+    assert!(status.can_check, "asking directly is still offered");
+    assert!(!status.shared, "nothing it writes lands in a git directory");
 }
 
 /// A checker's words are a third party's bytes on a line a person reads as
@@ -271,11 +354,11 @@ fn the_global_scope_has_no_setup_to_report() {
 #[test]
 fn the_checks_own_words_are_escaped_once() {
     let fixture = Fixture::new();
-    fixture.arm();
+    fixture.record();
     fixture.script("check", "armed \u{202e}gnimalc", 0);
-    let declared = fixture.declared(checker("check"), Some("arm"));
+    let declared = fixture.declared(Some("check"), Some("arm"));
 
-    let status = settled(&fixture.scope(), &declared);
+    let status = settled(&fixture.scope(), &declared, Ask::Surface);
 
     assert_eq!(status.state, SetupState::Active);
     assert!(

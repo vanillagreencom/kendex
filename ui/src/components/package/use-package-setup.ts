@@ -24,7 +24,14 @@ import {
  *  declaration would draw a setup row on every package whose command
  *  refused. Until a place answers, nothing is drawn — almost every
  *  package is inert, and flashing a Checking row over each of them says
- *  something false about all but a few. */
+ *  something false about all but a few.
+ *
+ *  The personal place is not one of these. Repository setup is a fact
+ *  about a repository, and the personal setup is not one — so it is
+ *  filtered before anything is asked rather than after, and its card
+ *  carries no setup row at all. [`repositories`] is that filter, shared
+ *  with the reader below so the two can never disagree about which places
+ *  were asked. */
 export function usePackageSetup(
   name: string,
   scopes: Scope[],
@@ -35,18 +42,36 @@ export function usePackageSetup(
 } {
   const entries = usePackageSetupStore((s) => s.entries);
   const check = usePackageSetupStore((s) => s.check);
-  const answered = scopes
+  const answered = repositories(scopes)
     .map((scope) => setupAt(entries, scope, name))
     .filter((entry) => entry !== undefined && !entry.reading);
   return {
-    entryFor: (scope) => setupAt(entries, scope, name),
+    // Undefined for the personal place, which draws no setup row: it was
+    // never asked, and an entry it never had is what says so.
+    entryFor: (scope) =>
+      scope.scope === "project" ? setupAt(entries, scope, name) : undefined,
     declares: answered.some(
       (entry) =>
         entry?.setup != null && entry.setup.status.state !== "notDeclared",
     ),
-    recheck: (scope) => void check(scope, name),
+    // Somebody pressed the control, so the package is asked directly
+    // whether or not kendex recorded arming the effect here. That is the
+    // route to a true answer in a repository armed at a terminal or by
+    // hand, and the reason the row says what the button will do.
+    recheck: (scope) => void check(scope, name, "person"),
   };
 }
+
+/** The places a repository setup can be a fact about: the projects.
+ *
+ *  The personal place is a card on the same tab — a package installed
+ *  personally and in a project shows both — and a repository effect
+ *  changes no repository there. Asking about it returned a state, which
+ *  the card then had to word; not asking is the simpler answer and the one
+ *  the issue states, that personal installation alone establishes nothing
+ *  about any project. */
+export const repositories = (scopes: Scope[]): Scope[] =>
+  scopes.filter((scope) => scope.scope === "project");
 
 /** Start the reads the two surfaces above draw from. Mounted once, by the
  *  page that owns both.
@@ -79,8 +104,9 @@ export function usePackageSetupRead(
   // question this page raised is answered there.
   const asking = useMarketplacesStore((s) => s.pendingEffects !== null);
   // Which package and which places, not which array: the scan rebuilds
-  // the group on every read.
-  const subject = `${name}|${scopes.map(scopeKey).join("|")}`;
+  // the group on every read. The personal place is not among them.
+  const asked = repositories(scopes);
+  const subject = `${name}|${asked.map(scopeKey).join("|")}`;
   const shown = useRef<string | null>(null);
   const wasAsking = useRef(asking);
 
@@ -93,13 +119,13 @@ export function usePackageSetupRead(
       shown.current = subject;
       forget();
     }
-    void checkAll(scopes, name);
+    void checkAll(asked, name);
   }, [subject, checkAll, forget, name]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the closing of the line is the signal, not the places
   useEffect(() => {
     const closed = wasAsking.current && !asking;
     wasAsking.current = asking;
-    if (closed) void checkAll(scopes, name);
+    if (closed) void checkAll(asked, name);
   }, [asking, checkAll, name]);
 }

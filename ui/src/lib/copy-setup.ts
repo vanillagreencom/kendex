@@ -37,6 +37,11 @@ export const setupStateLabel = (state: SetupState | "checking"): string => {
       return SETUP_COULD_NOT_CHECK;
     case "unavailable":
     case "notDeclared":
+    // Neither reaches a row — a package that changes nothing about the
+    // repository has no setup to report, and the personal place is not a
+    // repository — but both are worded, so a state drawn by mistake says
+    // something true rather than nothing at all.
+    case "notARepository":
       return SETUP_UNAVAILABLE;
   }
 };
@@ -66,6 +71,8 @@ export const setupStateNote = (
     case "unavailable":
     case "notDeclared":
       return "This package cannot report whether its setup is working. You can still set it up.";
+    case "notARepository":
+      return "Your personal setup is not a repository, so there is nothing here to set up.";
   }
 };
 

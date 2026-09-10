@@ -11,13 +11,14 @@
 mod fixture;
 use fixture::*;
 
-use kendex_core::repo_effects::SetupState;
+use kendex_core::repo_effects::{Ask, SetupState};
 
-/// The evidence commit-guards declares, and the file its installer leaves.
-const EVIDENCE: &str = ".git/hooks/kendex-guards";
+/// The helper commit-guards' installer writes, and the file every other
+/// tool that arms git hooks does not write.
+const HELPER: &str = ".git/hooks/kendex-guards";
 
-fn state(f: &Fixture, name: &str) -> SetupState {
-    kendex_app::repo_effects::setup(&f.env, &f.scope, name)
+fn state(f: &Fixture, name: &str, ask: Ask) -> SetupState {
+    kendex_app::repo_effects::setup(&f.env, &f.scope, name, ask)
         .unwrap_or_else(|error| panic!("setup {name}: {error}"))
         .status
         .state
@@ -31,7 +32,7 @@ fn a_package_that_changes_nothing_has_no_setup() {
     let f = fixture();
     install_skills(&f, &["deploy"], None);
 
-    let read = kendex_app::repo_effects::setup(&f.env, &f.scope, "deploy")
+    let read = kendex_app::repo_effects::setup(&f.env, &f.scope, "deploy", Ask::Surface)
         .unwrap_or_else(|error| panic!("setup: {error}"));
 
     assert_eq!(read.status.state, SetupState::NotDeclared);
@@ -53,31 +54,37 @@ fn setup_is_read_off_the_repository_each_time_it_is_asked() {
     let [offer] = installed.repo_effects.shown.as_slice() else {
         panic!("one offer: {:?}", installed.repo_effects);
     };
-    let helper = f.project.join(EVIDENCE);
+    let helper = f.project.join(HELPER);
     assert!(!helper.exists(), "the install armed the repository");
 
-    // Installed, and nothing local has set it up. Said without running the
-    // package's check at all.
-    assert_eq!(state(&f, "commit-guards"), SetupState::NotActive);
+    // Installed, and kendex has no record of setting it up. Said without
+    // running the package's check at all.
+    assert_eq!(
+        state(&f, "commit-guards", Ask::Surface),
+        SetupState::NotActive
+    );
 
     // The window's yes, through the one command that runs a declared
     // installer.
     kendex_app::repo_effects::apply(&f.env, &f.scope, &offer.declared)
         .unwrap_or_else(|error| panic!("apply: {error}"));
     assert!(helper.is_file(), "the installer wrote no helper");
-    assert_eq!(state(&f, "commit-guards"), SetupState::Active);
+    assert_eq!(state(&f, "commit-guards", Ask::Surface), SetupState::Active);
 
-    // Armed here and broken since: the evidence stands and the package's
-    // own check says the shims are gone. Not "never set up", which the
-    // evidence disproves.
+    // Armed here and broken since: kendex's record stands and the
+    // package's own check says the shims are gone. Not "never set up",
+    // which the record disproves.
     fs::remove_file(f.project.join(".git/hooks/pre-commit")).unwrap();
-    assert_eq!(state(&f, "commit-guards"), SetupState::NeedsRepair);
+    assert_eq!(
+        state(&f, "commit-guards", Ask::Surface),
+        SetupState::NeedsRepair
+    );
 
     // Repair is the same run, and the state is read off the repository
     // again rather than taken from its exit.
     kendex_app::repo_effects::apply(&f.env, &f.scope, &offer.declared)
         .unwrap_or_else(|error| panic!("repair: {error}"));
-    assert_eq!(state(&f, "commit-guards"), SetupState::Active);
+    assert_eq!(state(&f, "commit-guards", Ask::Surface), SetupState::Active);
 }
 
 /// The block the Set up button opens is the one an install would have
@@ -91,7 +98,7 @@ fn the_setup_block_is_the_install_s_own_disclosure() {
         panic!("one offer: {:?}", installed.repo_effects);
     };
 
-    let read = kendex_app::repo_effects::setup(&f.env, &f.scope, "commit-guards")
+    let read = kendex_app::repo_effects::setup(&f.env, &f.scope, "commit-guards", Ask::Surface)
         .unwrap_or_else(|error| panic!("setup: {error}"));
 
     let shown = read.disclosure.unwrap_or_else(|| panic!("no disclosure"));
@@ -100,16 +107,20 @@ fn the_setup_block_is_the_install_s_own_disclosure() {
     assert_eq!(shown.writes, offer.writes);
 }
 
-/// Opening a package's page must not run a script the checkout supplies.
+/// Opening a package's page must not run a script the checkout supplies,
+/// and no file the repository happens to hold may license one.
 ///
-/// The whole trust rule, planted rather than argued: the package is
-/// installed and its `--check` is on disk and executable, exactly as a
-/// clone would carry it, and nothing local has armed the repository. The
-/// status is taken and the checker leaves no trace, because it was never
-/// run.
+/// The whole trust rule, planted rather than argued. Every path the
+/// package declares is on disk — its helper and both hook files, exactly
+/// as a repository armed by another tool or by a hostile clone's own
+/// installer would carry them — and its `--check` is executable. kendex
+/// never armed this effect here, so nothing runs.
+///
+/// The declared paths are planted because a licence read off one of them
+/// would pass here. Only a record kendex wrote itself is one.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_status_on_an_unarmed_checkout_runs_none_of_its_scripts() {
+fn no_file_the_repository_holds_licenses_the_checkout_s_scripts() {
     let f = fixture();
     install_skills(&f, &["commit-guards"], None);
     // The package's own checker, replaced with one that records having
@@ -124,11 +135,103 @@ fn a_status_on_an_unarmed_checkout_runs_none_of_its_scripts() {
     )
     .unwrap();
     fs::set_permissions(&checker, fs::Permissions::from_mode(0o755)).unwrap();
+    // Every path the declaration lists, present and looking armed.
+    for written in [HELPER, ".git/hooks/pre-commit", ".git/hooks/commit-msg"] {
+        let path = f.project.join(written);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "#!/bin/sh\n").unwrap();
+    }
 
-    assert_eq!(state(&f, "commit-guards"), SetupState::NotActive);
+    assert_eq!(
+        state(&f, "commit-guards", Ask::Surface),
+        SetupState::NotActive
+    );
 
     assert!(
         !ran.exists(),
-        "the checkout's script ran without a local act licensing it"
+        "the checkout's script ran off a file kendex did not write"
     );
+}
+
+/// Somebody asking is its own licence, which is what makes a repository
+/// armed at a terminal — or by hand — reportable at all.
+///
+/// The same fixture as the trust case above: no record of kendex arming
+/// anything, and the package's own scripts on disk. A surface gets no
+/// check; a person pressing the control that asks gets the package's real
+/// answer.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_person_asking_reaches_a_repository_kendex_did_not_arm() {
+    let f = fixture();
+    install_skills(&f, &["commit-guards"], None);
+    // Armed the way a terminal arms it, straight through the package's own
+    // installer, with nothing of kendex's recorded.
+    let report = kendex_core::repo_effects::run_script(
+        &f.scope,
+        &f.project.join(".agents/skills/commit-guards"),
+        "scripts/install-git-hooks",
+    )
+    .unwrap_or_else(|error| panic!("arm by hand: {error}"));
+    assert_eq!(report.code, 0, "{report:?}");
+    assert!(f.project.join(HELPER).is_file());
+
+    assert_eq!(
+        state(&f, "commit-guards", Ask::Surface),
+        SetupState::NotActive,
+        "a page drawing itself has no licence here"
+    );
+    assert_eq!(
+        state(&f, "commit-guards", Ask::Person),
+        SetupState::Active,
+        "somebody asking gets the package's own answer"
+    );
+}
+
+/// `kendex guard install` and the window's yes mean one thing: a
+/// repository armed at the terminal reports as armed on the page, without
+/// anybody having to ask the package again.
+#[test]
+fn the_terminal_s_arming_is_the_window_s_arming() {
+    let f = fixture();
+    install_skills(&f, &["commit-guards"], None);
+
+    let report = kendex_core::guard::install(&f.project)
+        .unwrap_or_else(|error| panic!("guard install: {error}"));
+    assert_eq!(report.code, 0, "{report:?}");
+
+    assert_eq!(state(&f, "commit-guards", Ask::Surface), SetupState::Active);
+
+    let report = kendex_core::guard::uninstall(&f.project)
+        .unwrap_or_else(|error| panic!("guard uninstall: {error}"));
+    assert_eq!(report.code, 0, "{report:?}");
+
+    // Disarmed, and the record with it: a record left behind would licence
+    // a check of an effect nothing here armed.
+    assert_eq!(
+        state(&f, "commit-guards", Ask::Surface),
+        SetupState::NotActive
+    );
+}
+
+/// A personal install changes no repository, so there is nothing there to
+/// be set up and no state to report — never a read that failed.
+#[test]
+fn the_personal_place_has_no_repository_to_set_up() {
+    let f = fixture();
+    let installed = install_skills(&f, &["commit-guards"], None);
+    let [offer] = installed.repo_effects.shown.as_slice() else {
+        panic!("one offer: {:?}", installed.repo_effects);
+    };
+
+    let status = kendex_core::repo_effects::status(
+        &kendex_core::model::Scope::Global,
+        &offer.declared,
+        Ask::Person,
+    );
+
+    assert_eq!(status.state, SetupState::NotARepository);
+    assert!(status.said.is_empty(), "{:?}", status.said);
+    assert!(!status.can_apply);
+    assert!(!status.can_check);
 }

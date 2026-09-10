@@ -2,6 +2,7 @@
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  Ask,
   ObservedItem,
   PackageMeta_Serialize,
   PackageSetup,
@@ -41,6 +42,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
 const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
+const PERSONAL: Scope = { scope: "global" };
 
 const install = (scope: Scope): ObservedItem => ({
   kind: "skill",
@@ -119,6 +121,12 @@ const answer = (
 });
 
 /** What the command answers with, per place. */
+/** Every scope the command was asked about, and how it was asked. */
+const asked = (): [Scope, Ask][] =>
+  vi
+    .mocked(commands.packageSetup)
+    .mock.calls.map(([scope, , ask]) => [scope, ask]);
+
 const setupSays = (per: (scope: Scope) => PackageSetup) =>
   vi
     .mocked(commands.packageSetup)
@@ -252,6 +260,68 @@ describe("setup on the Projects tab", () => {
     expect(
       useMarketplacesStore.getState().pendingEffects?.queue[0]?.scope,
     ).toEqual(VG);
+  });
+
+  it("asks nothing about the personal place and draws it no setup row", async () => {
+    // A personal install writes into the tool directories and changes no
+    // repository, so there is nothing there to be set up. Decided before a
+    // status is taken, not after: asking returned a state the card then had
+    // to word.
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [install(VG), install(PERSONAL)],
+        missingProjects: [],
+        warnings: [],
+      },
+    });
+    vi.mocked(commands.libraryProvenance).mockResolvedValue({
+      status: "ok",
+      data: [owned(VG), owned(PERSONAL)],
+    });
+    setupSays(() => answer("notActive"));
+
+    const host = await openTab([VG, PERSONAL]);
+
+    // The effect re-runs across renders, so what matters is which places
+    // were named at all, not how many times.
+    expect(asked().map(([scope]) => scopeKey(scope))).not.toContain(
+      scopeKey(PERSONAL),
+    );
+    expect(asked().map(([scope]) => scopeKey(scope))).toContain(scopeKey(VG));
+    expect(
+      Array.from(host.querySelectorAll("button")).filter(
+        (one) => one.textContent === ACTIVATE_LABEL,
+      ),
+    ).toHaveLength(1);
+    expect(host.textContent).not.toContain(setupHeading("User level"));
+  });
+
+  it("asks as a surface on open and as a person on Check again", async () => {
+    // The backend runs the package's own script only under a licence, and
+    // somebody pressing the control is one. A page drawing itself is not.
+    setupSays(() => answer("notActive"));
+    const host = await openTab([VG]);
+    expect(asked().map(([, ask]) => ask)).not.toContain("person");
+
+    await userEvent.click(buttonNamed(host, CHECK_AGAIN_LABEL));
+    await settle();
+
+    expect(asked().at(-1)).toEqual([VG, "person"]);
+  });
+
+  it("prints the cause when a place's command refuses", async () => {
+    vi.mocked(commands.packageSetup).mockImplementation((scope) =>
+      Promise.resolve(
+        scopeKey(scope) === scopeKey(VG)
+          ? { status: "ok", data: answer("active") }
+          : { status: "error", error: "its declaration will not read" },
+      ),
+    );
+
+    const host = await openTab([VG, HYPR]);
+
+    expect(host.textContent).toContain("its declaration will not read");
   });
 
   it("reads the repository again when Check again is pressed", async () => {

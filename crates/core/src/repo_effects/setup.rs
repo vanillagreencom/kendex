@@ -17,23 +17,42 @@
 //! ## What licenses the run
 //!
 //! The check is a script out of a checkout, and a checkout arrives with a
-//! fetch. Opening a page must not run it. What separates a repository
-//! somebody armed from one that merely carries the files is the package's
-//! declared `evidence`: a path in the repository's common git directory,
-//! which git clones for nobody, so anything of the package's sitting there
-//! got there from a local act on this machine.
+//! fetch. Opening a page must not run it. The licence is kendex's own
+//! record of having armed this effect in this repository — written by
+//! [`super::arm`], kept where git clones nothing, and argued in
+//! [`super::armed`].
 //!
-//! Evidence absent is therefore an answer and not an error — nothing local
-//! set this up — and it is reached without running anything.
+//! No record is therefore an answer and not an error — kendex did not set
+//! this up here — and it is reached without running anything. It is not a
+//! claim that the effect is not in force: somebody may have run the
+//! package's installer themselves. That is what [`Ask::Person`] is for,
+//! and why the surface reporting it offers a way to ask the package
+//! directly.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::model::Scope;
 
-use super::{Checker, DeclaredEffects};
+use super::DeclaredEffects;
+
+/// Who wants the status, which is what decides whether the package's
+/// script may run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum Ask {
+    /// A surface reading a page. It gets the check only where kendex's own
+    /// record licenses one, so opening a package's page in a repository
+    /// nothing here armed runs none of its code.
+    Surface,
+    /// Somebody asked for this status, by pressing the control that asks.
+    /// Their act is its own licence and needs no record — the same
+    /// standing a guard verb typed at a prompt has, and the route to a
+    /// true answer in a repository armed at a terminal or by hand.
+    Person,
+}
 
 /// What a package's declared setup is doing in one project.
 ///
@@ -46,13 +65,18 @@ pub enum SetupState {
     /// setup to have a state about and no row to draw. Almost every
     /// package is this.
     NotDeclared,
+    /// A scope that is not a project. A personal install writes into the
+    /// tool directories and changes no repository, so there is nothing
+    /// here to set up and nothing to report.
+    NotARepository,
     /// The package's check ran and said the effect is in force.
     Active,
-    /// Nothing on this machine has set the effect up in this project. No
-    /// script was run to establish it: the package's own evidence is not
-    /// there, and only a local act puts it there.
+    /// kendex has no record of setting this effect up in this project, or
+    /// the package says it is not in force where there is no such record.
+    /// No verdict is claimed about a repository nothing measured — the
+    /// surface showing this offers a way to ask the package itself.
     NotActive,
-    /// Something here set the effect up and the package now says it is not
+    /// kendex set this effect up here and the package now says it is not
     /// in force — a setup that was applied and has since broken. The
     /// remedy is to apply it again, which is what tells this from
     /// [`SetupState::NotActive`].
@@ -75,13 +99,14 @@ pub struct SetupStatus {
     ///
     /// Empty where the state is what kendex read for itself and the
     /// package was never run: [`SetupState::NotDeclared`],
-    /// [`SetupState::NotActive`] and [`SetupState::Unavailable`].
+    /// [`SetupState::NotARepository`], [`SetupState::NotActive`] and
+    /// [`SetupState::Unavailable`].
     pub said: Vec<String>,
     /// Whether the effect can be applied from here: the package declares
     /// an installer to run.
     pub can_apply: bool,
-    /// Whether kendex has a check to run at all — what says a Check again
-    /// would do something.
+    /// Whether kendex has a check to run at all — what says asking the
+    /// package again would do something.
     pub can_check: bool,
     /// Whether the effect writes into the repository's common git
     /// directory, which every work tree of the repository shares — so
@@ -112,11 +137,7 @@ impl SetupStatus {
 }
 
 /// The declared setup's standing in this project.
-///
-/// A project scope, always: an effect is a change to a repository and the
-/// global scope is not one — [`super::arm`] refuses it, so a status there
-/// would describe something no yes could change.
-pub fn status(scope: &Scope, declared: &DeclaredEffects) -> SetupStatus {
+pub fn status(scope: &Scope, declared: &DeclaredEffects, ask: Ask) -> SetupStatus {
     let can_apply = declared.effects.installer.is_some();
     let shared = super::touches_git(&declared.effects);
     let Some(checker) = &declared.effects.checker else {
@@ -128,45 +149,60 @@ pub fn status(scope: &Scope, declared: &DeclaredEffects) -> SetupStatus {
             shared,
         };
     };
+    // Not a project, so there is no repository for an effect to stand in.
+    // A state of its own rather than a check that could not be taken: the
+    // personal scope is a place the app draws a card for, and a
+    // read-failure verdict over a place that has no state to read is a
+    // failure report about nothing.
     let Scope::Project { root } = scope else {
-        return could_not_check(
-            can_apply,
-            false,
+        return SetupStatus {
+            state: SetupState::NotARepository,
+            said: Vec::new(),
+            can_apply: false,
+            can_check: false,
             shared,
-            "repository setup applies to a project, not the global scope",
-        );
+        };
     };
-    // Where the evidence really is, or why that cannot be said. The same
-    // reading the disclosure makes, so the file licensing a run and the
-    // file a person authorized are one file.
-    let common_dir = match crate::guard::Repo::at(root) {
-        Ok(repo) => repo.common_dir,
+    // Where kendex's record would be, or why that cannot be said.
+    //
+    // Three answers, the same three [`super::undo`] takes: a work tree, no
+    // work tree, and git declining to answer. No work tree is not a
+    // failure — there is nothing git-private to have recorded anything in,
+    // so there is no standing licence and the honest state is the one a
+    // person can act on.
+    let common_dir = match crate::guard::Repo::probe(root) {
+        Ok(Some(repo)) => Some(repo.common_dir),
+        Ok(None) => None,
         Err(error) => {
             return could_not_check(
                 can_apply,
-                false,
+                true,
                 shared,
-                format!(
-                    "this repository's git directory could not be resolved, so where \
-                     {} sets things up cannot be read ({error})",
-                    declared.name
-                ),
+                format!("this repository could not be read, so its setup could not be: {error}"),
             );
         }
     };
-    match armed_here(&common_dir, &checker.evidence) {
-        // Nothing local set this up. Said without running anything, which
-        // is the whole trust rule: a clone reaches here.
-        Ok(false) => SetupStatus {
+    let armed_here = match &common_dir {
+        Some(dir) => super::armed::recorded(dir, &declared.name),
+        None => Ok(false),
+    };
+    let armed_here = match armed_here {
+        Ok(armed) => armed,
+        Err(error) => return could_not_check(can_apply, true, shared, error.to_string()),
+    };
+    // A record licenses the run on its own. So does somebody pressing the
+    // control that asks, which is the route to a true answer where the
+    // repository was armed at a terminal or by hand.
+    if !armed_here && ask == Ask::Surface {
+        return SetupStatus {
             state: SetupState::NotActive,
             said: Vec::new(),
             can_apply,
             can_check: true,
             shared,
-        },
-        Err(error) => could_not_check(can_apply, true, shared, error.to_string()),
-        Ok(true) => run(scope, declared, checker, can_apply, shared),
+        };
     }
+    run(scope, declared, checker, can_apply, shared, armed_here)
 }
 
 /// Run the declared check and report what its exit status carried.
@@ -180,11 +216,12 @@ pub fn status(scope: &Scope, declared: &DeclaredEffects) -> SetupStatus {
 fn run(
     scope: &Scope,
     declared: &DeclaredEffects,
-    checker: &Checker,
+    checker: &str,
     can_apply: bool,
     shared: bool,
+    armed_here: bool,
 ) -> SetupStatus {
-    let report = match super::run_script(scope, &declared.root, &checker.script) {
+    let report = match super::run_script(scope, &declared.root, checker) {
         Ok(report) => report,
         Err(error) => return could_not_check(can_apply, true, shared, error.to_string()),
     };
@@ -192,44 +229,18 @@ fn run(
     SetupStatus {
         state: match report.code {
             0 => SetupState::Active,
-            // Evidence of a local arming is on disk and the package says
-            // the effect is not in force: something set this up and it has
-            // since broken. Not "never set up", which the evidence
-            // disproves.
-            1 => SetupState::NeedsRepair,
+            // kendex armed this here and the package says the effect is
+            // not in force: something set it up and it has since broken.
+            // Without that record the package is simply saying no, which
+            // is not a repair.
+            1 if armed_here => SetupState::NeedsRepair,
+            1 => SetupState::NotActive,
             _ => SetupState::CouldNotCheck,
         },
         said,
         can_apply,
         can_check: true,
         shared,
-    }
-}
-
-/// Whether the package's declared evidence of a local arming is there.
-///
-/// Three answers and not two, for the reason [`crate::guard::locally_armed`]
-/// has three: a directory that would not open is a question nobody asked,
-/// and folding it into "not there" turns it into a positive claim about a
-/// repository nothing looked at.
-fn armed_here(common_dir: &Path, evidence: &str) -> crate::error::Result<bool> {
-    crate::fs::exists(&lands_at(common_dir, evidence))
-}
-
-/// Where a declared `.git/...` evidence path really sits.
-///
-/// The declaration was already refused unless the path lands in the common
-/// git directory, so the leading `.git` is what is stripped and the rest
-/// joined onto the directory git named. `super::disclosure::under_git` is
-/// the one reader of that shape, here as everywhere.
-fn lands_at(common_dir: &Path, evidence: &str) -> PathBuf {
-    match super::disclosure::under_git(evidence) {
-        Some(rest) if !rest.as_os_str().is_empty() => common_dir.join(rest),
-        // The git directory named on its own, and the arm the declaration
-        // reader has already excluded — a path that is not under `.git`
-        // never becomes a checker's evidence. Kept as a path rather than a
-        // panic: nothing here is worth aborting a page over.
-        _ => common_dir.to_path_buf(),
     }
 }
 
@@ -240,9 +251,9 @@ fn lands_at(common_dir: &Path, evidence: &str) -> PathBuf {
 /// `crates/app/src/repo_effects.rs` puts an installer's output through.
 /// Blank lines dropped: a status has no room for the shell's spacing.
 ///
-/// stderr first, then stdout. The package's contract puts its summary on
-/// stdout and its diagnostics on stderr, and a reader meets the diagnosis
-/// last where it explains a verdict they have just read.
+/// stdout, then stderr. The package's contract puts its summary on stdout
+/// and its diagnostics on stderr, so a reader meets the diagnosis last,
+/// where it explains a verdict they have just read.
 fn spoken(report: &crate::guard::GuardReport) -> Vec<String> {
     report
         .stdout
@@ -268,6 +279,13 @@ fn could_not_check(
         can_check,
         shared,
     }
+}
+
+/// Where a project's arming records live, for the callers that arm and
+/// disarm one: `None` outside a work tree, where there is nothing
+/// git-private to write into.
+pub(super) fn record_dir(root: &std::path::Path) -> crate::error::Result<Option<PathBuf>> {
+    Ok(crate::guard::Repo::probe(root)?.map(|repo| repo.common_dir))
 }
 
 #[cfg(test)]

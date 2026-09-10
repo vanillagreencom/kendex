@@ -81,9 +81,7 @@ repo-effects:
     - ".git/hooks/kendex-guards"
   installer: "scripts/install-git-hooks"
   uninstaller: "scripts/install-git-hooks --uninstall"
-  checker:
-    script: "scripts/install-git-hooks --check"
-    evidence: ".git/hooks/kendex-guards"
+  checker: "scripts/install-git-hooks --check"
   removal: "How to undo it by hand."
   notes:
     - "Anything the reader should know before saying yes."
@@ -93,7 +91,7 @@ repo-effects:
 
 - `writes` are repo-relative paths, each of which stays inside the repository. A path under `.git/` maps to the repository's common git directory, which every work tree shares, and is disclosed as shared.
 - `installer` and `uninstaller` are commands relative to the package directory. kendex runs the installer when somebody says yes, and the uninstaller before any verb takes the package away.
-- `checker` is optional and read-only. `script` reports whether the effect stands here; `evidence` is the path — one of `writes`, and one under `.git/` — whose presence licenses running it.
+- `checker` is optional and read-only: a command, relative to the package directory, that reports whether the effect stands here.
 - Every field is refused whole rather than read short. A shape kendex cannot read is a declaration it will not act on, and a script or evidence path kendex will not use is dropped while the rest of the block stands.
 
 ### The checker contract
@@ -108,15 +106,17 @@ The exit status is the whole answer, and it is the same taxonomy the commit hook
 
 The script writes nothing and changes nothing. Whatever it prints on either stream reaches the person as the package's own words, so put the remedy there.
 
-`evidence` is what stops a page load running a cloned repository's scripts. Git clones nothing in the common git directory, so a file of the package's sitting there got there from a local act on this machine. kendex runs the checker only where that file is present; where it is absent, kendex reports that nothing here has set the effect up and runs nothing. Name a file only your own installer writes — a `pre-commit` hook a repository may already have of its own is not evidence of anything.
+Nothing the declaration says decides when the checker runs. Your script comes out of a checkout, and a checkout arrives with a fetch, so opening a package's page must not run it. What licenses a run is kendex's own record of having armed the effect in that repository: kendex writes it when your installer exits clean, keeps it in the common git directory, which git clones for nobody, and drops it when your uninstaller runs. A repository nothing here armed runs none of your code.
+
+That leaves a repository somebody armed by hand, which kendex has no record of. The person can ask for the status themselves — the package page offers it — and their asking is its own licence, so your checker still answers there.
 
 kendex reports one of these per project, and a package that declares an effect with no checker shows a status it does not have rather than a guess:
 
 | State | Reached by |
 |---|---|
 | Active | The checker exited `0`. |
-| Not active | The evidence is absent. Nothing ran. |
-| Needs repair | The evidence is present and the checker exited `1`. |
+| Not active | There is no arming record, so nothing ran; or somebody asked, and the checker exited `1` where kendex had no record. |
+| Needs repair | kendex armed it here and the checker exited `1`. |
 | Could not check | The checker exited outside the taxonomy, or would not run. |
 | Status unavailable | The package declares an effect and no checker. |
 

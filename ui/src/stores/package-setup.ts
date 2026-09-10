@@ -13,7 +13,7 @@
 // place that has not been read has no entry, which is what the row draws
 // its checking state from — an absent answer is never an inactive one.
 import { create } from "zustand";
-import { commands, type PackageSetup, type Scope } from "@/bindings";
+import { type Ask, commands, type PackageSetup, type Scope } from "@/bindings";
 import { placeKey } from "@/lib/package-places";
 
 /** One place's last answer, or the fact that its read is out.
@@ -21,9 +21,16 @@ import { placeKey } from "@/lib/package-places";
  *  `reading` rides beside the answer rather than replacing it: a re-check
  *  after an operation keeps the previous state on screen with the spinner
  *  over it, and blanking it would flash "Not active" over a project that
- *  is about to report Active. */
+ *  is about to report Active.
+ *
+ *  `refused` is why the command could not answer, kept rather than folded
+ *  into a bare null. It is the cause the row prints: a project whose
+ *  installed declaration will not read refuses while its siblings answer
+ *  normally, and a row saying only "could not check" leaves the one person
+ *  who can fix it with nothing to go on. */
 export interface SetupEntry {
   setup: PackageSetup | null;
+  refused: string | null;
   reading: boolean;
 }
 
@@ -32,10 +39,16 @@ interface PackageSetupState {
   /** Read one place's setup. Nothing is cached between calls: the answer
    *  is a fact about a repository somebody else can change, and a page
    *  showing a retained one would state a repository as it stood before
-   *  the change. */
-  check: (scope: Scope, name: string) => Promise<void>;
+   *  the change.
+   *
+   *  `ask` says who wants it, and the backend decides from it whether the
+   *  package's own script may run. A page drawing itself sends `surface`;
+   *  the control a person presses sends `person`, which is their licence
+   *  to have the package asked directly. */
+  check: (scope: Scope, name: string, ask?: Ask) => Promise<void>;
   /** Read every place in `scopes`, in parallel. What a page calls when it
-   *  opens and after a write it started has been answered for. */
+   *  opens and after a write it started has been answered for — always as
+   *  a surface, because nobody pressed anything. */
   checkAll: (scopes: Scope[], name: string) => Promise<void>;
   /** Drop every entry for a package other than this one's places. Called
    *  when the page moves to another package, so a card can never draw the
@@ -53,30 +66,36 @@ const keyOf = (scope: Scope, name: string): string =>
 export const usePackageSetupStore = create<PackageSetupState>((set, get) => ({
   entries: {},
 
-  check: async (scope, name) => {
+  check: async (scope, name, ask = "surface") => {
     const key = keyOf(scope, name);
     set((state) => ({
       entries: {
         ...state.entries,
-        [key]: { setup: state.entries[key]?.setup ?? null, reading: true },
+        [key]: {
+          setup: state.entries[key]?.setup ?? null,
+          refused: state.entries[key]?.refused ?? null,
+          reading: true,
+        },
       },
     }));
     let setup: PackageSetup | null = null;
+    let refused: string | null = null;
     try {
-      const response = await commands.packageSetup(scope, name);
+      const response = await commands.packageSetup(scope, name, ask);
       // A refusal leaves the place with no answer rather than the answer
       // it had: the command reads the declaration and the repository
-      // together, so one that could not answer describes neither. The row
-      // draws its own could-not-read state from the null.
-      setup = response.status === "ok" ? response.data : null;
-    } catch {
+      // together, so one that could not answer describes neither. Its
+      // reason is kept, because it is the only account of why.
+      if (response.status === "ok") setup = response.data;
+      else refused = response.error;
+    } catch (error) {
       // The wrapper folds a rejected command into an error status, so this
       // is the last guard rather than the first. A place nobody could
-      // reach is a place with no answer.
-      setup = null;
+      // reach still says what stopped it.
+      refused = error instanceof Error ? error.message : String(error);
     }
     set((state) => ({
-      entries: { ...state.entries, [key]: { setup, reading: false } },
+      entries: { ...state.entries, [key]: { setup, refused, reading: false } },
     }));
   },
 

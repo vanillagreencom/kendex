@@ -323,7 +323,7 @@ export const commands = {
 	 */
 	installTargets: (scope: Scope, kinds: ItemKind[]) => typedError<InstallTarget[], string>(__TAURI_INVOKE("install_targets", { scope, kinds })),
 	repoEffectsApply: (scope: Scope, declared: DeclaredEffects) => typedError<Said, string>(__TAURI_INVOKE("repo_effects_apply", { scope, declared })),
-	packageSetup: (scope: Scope, name: string) => typedError<PackageSetup, string>(__TAURI_INVOKE("package_setup", { scope, name })),
+	packageSetup: (scope: Scope, name: string, ask: Ask) => typedError<PackageSetup, string>(__TAURI_INVOKE("package_setup", { scope, name, ask })),
 	/**
 	 *  Read every project the write could reach, and say for each one whether
 	 *  there is an offer to make, a state to flag on its card, or nothing.
@@ -674,6 +674,25 @@ export type AppSettings = {
 export type AppUpdateStatus = { kind: "neverChecked" } | { kind: "upToDate"; version: string } | { kind: "updateAvailable"; version: string; releaseNotesUrl: string; cliAssetAvailable: boolean; muted: boolean } | { kind: "feedOlder"; version: string };
 
 export type Appearance = "system" | "light" | "dark";
+
+/**
+ *  Who wants the status, which is what decides whether the package's
+ *  script may run.
+ */
+export type Ask = 
+/**
+ *  A surface reading a page. It gets the check only where kendex's own
+ *  record licenses one, so opening a package's page in a repository
+ *  nothing here armed runs none of its code.
+ */
+"surface" | 
+/**
+ *  Somebody asked for this status, by pressing the control that asks.
+ *  Their act is its own licence and needs no record — the same
+ *  standing a guard verb typed at a prompt has, and the route to a
+ *  true answer in a repository armed at a terminal or by hand.
+ */
+"person";
 
 /**
  *  The advisory payload, exactly as one audit produced it. Every surface
@@ -1051,38 +1070,6 @@ export type CatalogSummary = {
 	 *  it, if any. A subscription answers with itself.
 	 */
 	subscription: SubscriptionRef | null,
-};
-
-/**
- *  A package's read-only check: does its effect stand in this repository?
- * 
- *  Two fields and both required, because either alone is unusable. The
- *  script is what kendex runs; the evidence is what lets kendex run it.
- * 
- *  `evidence` is a repo-relative path the package also lists under
- *  `writes`, and one that lands in the repository's common git directory.
- *  Git clones nothing there, so a file of the package's sitting in it got
- *  there from a local act by whoever owns this machine — which is the one
- *  durable difference between a repository somebody armed and a checkout
- *  that merely carries the package's files. Opening a package's page must
- *  not run a cloned repository's scripts, and this is what stops it.
- * 
- *  The package names its own evidence rather than kendex deriving one,
- *  because only the package knows which of the files it writes is the one
- *  nothing else writes. Naming a file the repository may hold for its own
- *  reasons — a `pre-commit` hook somebody wrote by hand — would hand a
- *  clone the license this field exists to withhold.
- */
-export type Checker = {
-	/**
-	 *  The read-only command, relative to the package directory, that
-	 *  reports whether the effect stands. Its exit status is the whole
-	 *  answer: 0 the effect stands, 1 it does not, anything else the
-	 *  check could not be taken.
-	 */
-	script: string,
-	/**  The repo-relative path whose presence licenses running `script`. */
-	evidence: string,
 };
 
 /**
@@ -3079,12 +3066,15 @@ export type RepoEffects = {
 	 */
 	uninstaller: string | null,
 	/**
-	 *  The read-only check that says whether the effect stands here, and
-	 *  the local evidence that licenses running it. Absent means kendex
-	 *  has no way to ask, and every surface says the status is
-	 *  unavailable rather than guessing at one.
+	 *  The read-only command that says whether the effect stands here.
+	 *  Absent means kendex has no way to ask, and every surface says the
+	 *  status is unavailable rather than guessing at one.
+	 * 
+	 *  What licenses running it is kendex's own record of having armed
+	 *  this effect in this repository, never anything the declaration
+	 *  names: see `super::armed`.
 	 */
-	checker: Checker | null,
+	checker: string | null,
 	/**  How to undo the effect by hand, for the disclosure's last line. */
 	removal: string | null,
 	/**
@@ -3350,16 +3340,23 @@ export type SetupState =
  *  package is this.
  */
 "notDeclared" | 
+/**
+ *  A scope that is not a project. A personal install writes into the
+ *  tool directories and changes no repository, so there is nothing
+ *  here to set up and nothing to report.
+ */
+"notARepository" | 
 /**  The package's check ran and said the effect is in force. */
 "active" | 
 /**
- *  Nothing on this machine has set the effect up in this project. No
- *  script was run to establish it: the package's own evidence is not
- *  there, and only a local act puts it there.
+ *  kendex has no record of setting this effect up in this project, or
+ *  the package says it is not in force where there is no such record.
+ *  No verdict is claimed about a repository nothing measured — the
+ *  surface showing this offers a way to ask the package itself.
  */
 "notActive" | 
 /**
- *  Something here set the effect up and the package now says it is not
+ *  kendex set this effect up here and the package now says it is not
  *  in force — a setup that was applied and has since broken. The
  *  remedy is to apply it again, which is what tells this from
  *  [`SetupState::NotActive`].
@@ -3385,7 +3382,8 @@ export type SetupStatus = {
 	 * 
 	 *  Empty where the state is what kendex read for itself and the
 	 *  package was never run: [`SetupState::NotDeclared`],
-	 *  [`SetupState::NotActive`] and [`SetupState::Unavailable`].
+	 *  [`SetupState::NotARepository`], [`SetupState::NotActive`] and
+	 *  [`SetupState::Unavailable`].
 	 */
 	said: string[],
 	/**
@@ -3394,8 +3392,8 @@ export type SetupStatus = {
 	 */
 	canApply: boolean,
 	/**
-	 *  Whether kendex has a check to run at all — what says a Check again
-	 *  would do something.
+	 *  Whether kendex has a check to run at all — what says asking the
+	 *  package again would do something.
 	 */
 	canCheck: boolean,
 	/**

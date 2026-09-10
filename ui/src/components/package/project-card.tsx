@@ -145,6 +145,7 @@ export function ProjectCard({
         <SetupRow
           place={place.name}
           setup={setup.setup}
+          refused={setup.refused}
           state={shownState(setup)}
           busy={busy}
           onActivate={onSetUp}
