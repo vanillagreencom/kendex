@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { commands, type PackageView } from "@/bindings";
 import { FileBrowser } from "@/components/files/file-browser";
-import type { FileEntry } from "@/components/files/file-tree-model";
+import { packageFileEntries } from "@/components/files/package-file-rows";
 import { MarkdownView } from "@/components/markdown-view";
 import { AvailableAside } from "@/components/marketplaces/available-aside";
 import { CatalogFilePreview } from "@/components/marketplaces/catalog-file-preview";
@@ -16,7 +16,6 @@ import { Button } from "@/components/ui/button";
 import {
   FILE_TREE_LABEL,
   FILES_TAB,
-  fileSizeLabel,
   NO_README_NOTE,
   PICK_A_FILE_NOTE,
 } from "@/lib/copy-files";
@@ -100,12 +99,10 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   // rather than letting a raw engine error stand in for the reason.
   const recordsUnknown = view !== null && recordsUnreadable(view.preview.state);
 
-  // The tree's rows carry each file's size, the same fact the installed
-  // package's Files tab puts there.
-  const fileEntries: FileEntry[] = (view?.preview.files ?? []).map((file) => ({
-    path: file.path,
-    meta: fileSizeLabel(file.size),
-  }));
+  // The tree's rows say what the installed package's Files tab says about
+  // the same files, through the same mapper: each file's size, and the
+  // readme marker on the one the preview opens on.
+  const fileEntries = packageFileEntries(view?.preview.files ?? []);
 
   const doInstall = () => {
     if (catalog.by !== "subscription") return;

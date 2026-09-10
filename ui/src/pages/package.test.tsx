@@ -7,6 +7,7 @@ import type {
   ItemKind,
   Manifest_Serialize,
   ObservedItem,
+  PackageFile,
   Scope,
   UpdateRow,
   VersionRow,
@@ -35,6 +36,7 @@ import { CUSTOMIZE_TAB, OVERVIEW_TAB, SAVE_NOTE } from "@/lib/copy-customize";
 import {
   CHANGES_TITLE,
   FILE_READ_FAILED_TITLE,
+  FILES_READING_NOTE,
   FILES_TAB,
   NO_FILES_NOTE,
   NO_README_NOTE,
@@ -699,6 +701,30 @@ describe("the package page's Files tab", () => {
     );
     expect(filesRetry(host)).toHaveLength(1);
     expect(header(host)).toContain(UPDATE_LABEL);
+  });
+
+  // A first read still on its way is not a package that ships no files:
+  // the tab says it is reading, and only the landing may make that claim.
+  it("says it is reading while the first read is out, then that there are no files", async () => {
+    let land: (files: PackageFile[]) => void = () => {};
+    vi.mocked(commands.packageFiles).mockReturnValue(
+      new Promise((resolve) => {
+        land = (data) => resolve({ status: "ok", data });
+      }),
+    );
+    const host = await openWithUpdate();
+    await openFiles(host);
+
+    expect(host.textContent).not.toContain(NO_FILES_NOTE);
+    expect(host.textContent).toContain(FILES_READING_NOTE);
+    expect(filesRetry(host)).toHaveLength(0);
+
+    await act(async () => {
+      land([]);
+    });
+    await settle();
+    expect(host.textContent).toContain(NO_FILES_NOTE);
+    expect(host.textContent).not.toContain(FILES_READING_NOTE);
   });
 
   // The control: a landed read with nothing in it is the one answer that

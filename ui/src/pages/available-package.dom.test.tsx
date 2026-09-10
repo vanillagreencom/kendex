@@ -8,6 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppSettings, Scope } from "@/bindings";
 import { commands, type PackageView } from "@/bindings";
+import { README_TAG } from "@/lib/copy";
 import { PICK_A_FILE_NOTE } from "@/lib/copy-files";
 import { INSTALL_ACTION, justThisLabel } from "@/lib/copy-install";
 import {
@@ -245,9 +246,15 @@ describe("the available package's files", () => {
     );
     expect(folder).toBeDefined();
 
-    const row = [...host.querySelectorAll("button")].find(
-      (one) => one.title === "references/deep.md",
-    );
+    // The readme is marked here the way it is on the installed package's
+    // Files tab: without it, the file the preview opens on is a pane whose
+    // source no row names.
+    const rowFor = (path: string) =>
+      [...host.querySelectorAll("button")].find((one) => one.title === path);
+    expect(rowFor("SKILL.md")?.textContent).toContain(README_TAG);
+    expect(rowFor("references/deep.md")?.textContent).not.toContain(README_TAG);
+
+    const row = rowFor("references/deep.md");
     if (!row) throw new Error("no row for references/deep.md");
     await userEvent.click(row);
     await settle();

@@ -79,11 +79,15 @@ export const timelineOf = (
 export const unfetchedNote = (reads: PackageReads): string | null =>
   reads.unfetched === null ? null : sourceUnfetchedNote(reads.unfetched);
 
-/** What the Overview's file list says instead of files when its read did
- *  not land, or null while it is pending or once it landed. Its own note,
- *  not the header's: the header's says why there is no Update, and this read
- *  never withholds one. */
-export const packageFilesNote = ({ files }: PackageReads): string | null =>
+/** What the file list says instead of files when its read did not land, or
+ *  null while it is pending or once it landed. Its own note, not the
+ *  header's: the header's says why there is no Update, and this read never
+ *  withholds one.
+ *
+ *  Takes the read itself rather than the page's three, because null here
+ *  covers a read still on its way as well as one that landed, and the
+ *  surface needs the state to tell those apart. */
+export const packageFilesNote = (files: ReadState): string | null =>
   files.status === "failed" && files.error !== null
     ? packageFilesReadFailedNote(files.error)
     : null;

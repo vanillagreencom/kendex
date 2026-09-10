@@ -1,16 +1,19 @@
 import { useState } from "react";
 import type { ItemKind, PackageFile, Scope } from "@/bindings";
 import { FileBrowser } from "@/components/files/file-browser";
-import type { FileEntry } from "@/components/files/file-tree-model";
+import { packageFileEntries } from "@/components/files/package-file-rows";
+import { DotSpinner } from "@/components/loading";
 import { FilePreview } from "@/components/package/file-preview";
 import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
-import { README_TAG, TRY_AGAIN_LABEL } from "@/lib/copy";
+import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
   FILE_TREE_LABEL,
-  fileSizeLabel,
+  FILES_READING_NOTE,
   NO_FILES_NOTE,
 } from "@/lib/copy-files";
+import { packageFilesNote } from "@/lib/package-read-state";
+import type { ReadState } from "@/lib/read-state";
 
 /** The package's Files tab: its tree on the left, the file you picked on
  *  the right, across the width of the page. Opens on the readme, which is
@@ -20,7 +23,7 @@ export function PackageFiles({
   kind,
   name,
   files,
-  note,
+  read,
   retryRunning,
   onRetry,
 }: {
@@ -28,11 +31,11 @@ export function PackageFiles({
   kind: ItemKind;
   name: string;
   files: PackageFile[];
-  /** Why there are no files to list, where the read did not land:
-   *  `package-read-state.ts` [`packageFilesNote`]. Null while the read is
-   *  pending or once it landed, and a landed read with nothing in it is a
-   *  package that ships no files. */
-  note: string | null;
+  /** How the read that found these files went. The tab renders off the
+   *  read's own state and not off the empty list alone: a first read still
+   *  on its way leaves the same empty list as a landed one, and only a
+   *  landed read may say the package ships no files. */
+  read: ReadState;
   /** Whether the page's reads are out again. The note stays put while they
    *  run — it is still the last answer — so the button is what says the
    *  page is doing something about it. */
@@ -41,6 +44,7 @@ export function PackageFiles({
 }) {
   const [chosen, setChosen] = useState<string | null>(null);
 
+  const note = packageFilesNote(read);
   if (note !== null) {
     // The note already carries the headline and the reason the read came
     // back with; the button beside it is what the page can do about it.
@@ -61,25 +65,20 @@ export function PackageFiles({
       />
     );
   }
+  if (read.status === "pending") {
+    return (
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <DotSpinner />
+        {FILES_READING_NOTE}
+      </p>
+    );
+  }
   if (files.length === 0) {
     return <p className="text-sm text-muted-foreground">{NO_FILES_NOTE}</p>;
   }
-  // The tab opens on the readme, so the row that holds it says so: a pane
-  // showing a file no row is marked as leaves the reader hunting for where
-  // it came from.
-  const entries: FileEntry[] = files.map((file) => ({
-    path: file.path,
-    meta: file.isReadme ? (
-      <>
-        {README_TAG} {fileSizeLabel(file.size)}
-      </>
-    ) : (
-      fileSizeLabel(file.size)
-    ),
-  }));
   return (
     <FileBrowser
-      entries={entries}
+      entries={packageFileEntries(files)}
       selected={chosen}
       onSelect={setChosen}
       label={FILE_TREE_LABEL}

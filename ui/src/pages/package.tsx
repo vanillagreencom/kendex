@@ -35,11 +35,7 @@ import {
 } from "@/lib/package-identity";
 import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
-import {
-  packageFilesNote,
-  packageReadNote,
-  unfetchedNote,
-} from "@/lib/package-read-state";
+import { packageReadNote, unfetchedNote } from "@/lib/package-read-state";
 import {
   packageForkEdited,
   packageRequiredBy,
@@ -330,7 +326,7 @@ export function PackagePage() {
             kind={group.kind}
             name={group.name}
             files={files}
-            note={packageFilesNote(reads)}
+            read={reads.files}
             retryRunning={reads.reading}
             onRetry={reload}
           />
