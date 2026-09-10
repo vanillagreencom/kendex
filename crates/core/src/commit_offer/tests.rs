@@ -216,20 +216,26 @@ impl Repo {
         scan(&self.scope(), generated).unwrap()
     }
 
+    /// A hook in this repository: `body` under `/bin/sh`, ending at `exit`.
+    #[cfg(unix)]
+    fn hook(&self, name: &str, body: &str, exit: u8) {
+        use std::os::unix::fs::PermissionsExt;
+        let hooks = self.root.join(".git/hooks");
+        fs::create_dir_all(&hooks).unwrap();
+        let path = hooks.join(name);
+        fs::write(&path, format!("#!/bin/sh\n{body}\nexit {exit}\n")).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
     /// A hook in this repository that prints `lines` on stderr and exits 1.
     #[cfg(unix)]
     fn refusing_hook(&self, name: &str, lines: &[&str], then: &str) {
-        use std::os::unix::fs::PermissionsExt;
         let body = lines
             .iter()
             .map(|line| format!("echo '{line}' >&2"))
             .collect::<Vec<_>>()
             .join("\n");
-        let hooks = self.root.join(".git/hooks");
-        fs::create_dir_all(&hooks).unwrap();
-        let path = hooks.join(name);
-        fs::write(&path, format!("#!/bin/sh\n{body}\n{then}\nexit 1\n")).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        self.hook(name, &format!("{body}\n{then}"), 1);
     }
 
     /// A bare repository this one calls `origin`, so a push has somewhere
@@ -559,8 +565,8 @@ fn the_commit_takes_the_set_and_leaves_the_persons_changes_alone() {
 }
 
 /// A rendered path holding pathspec metacharacters names itself and no
-/// other file. The must-fail control is the literal option: without it
-/// `a[b].md` is a glob that matches `ab.md`, the person's file.
+/// other file. The must-fail control is the entries' `:(literal)` prefix:
+/// without it `a[b].md` is a glob that matches `ab.md`, the person's file.
 #[test]
 fn a_path_with_metacharacters_commits_itself_and_nothing_it_would_match() {
     let repo = Repo::new(&[(OWNED[0], "one\n")]);
@@ -576,6 +582,61 @@ fn a_path_with_metacharacters_commits_itself_and_nothing_it_would_match() {
         BTreeSet::from(["docs/a[b].md".to_owned()])
     );
     assert!(repo.status().contains("?? docs/ab.md"), "{}", repo.status());
+}
+
+/// A hook reads the same git a plain `git commit` gives it. The selection
+/// travels inside the pathspec file, so no git-wide option becomes
+/// `GIT_LITERAL_PATHSPECS=1` in the environment git hands the hook — where
+/// the hook's own `:(glob)` pathspec would match nothing and its `git
+/// check-ignore` would exit 128 on magic the hook never wrote. Both are
+/// read from the hook child itself, the only place the leak is visible:
+/// the argv kendex builds shows nothing either way.
+///
+/// The must-fail control is the git-wide option: put `--literal-pathspecs`
+/// back on the commit and all three lines change.
+#[cfg(unix)]
+#[test]
+fn a_hook_reads_the_git_a_plain_commit_would_give_it() {
+    let repo = Repo::new(&[
+        (OWNED[0], "one\n"),
+        ("docs/one.md", "a\n"),
+        ("docs/deep/two.md", "b\n"),
+        (".gitignore", "ignored/\n"),
+    ]);
+    let generated = repo.generated(OWNED, &[]);
+    repo.write(OWNED[0], "two\n");
+    repo.write(OWNED[1], "@AGENTS.md\n");
+    // Outside the checkout: a file the hook wrote inside it would be one
+    // more change in the working tree the commit is being made from.
+    let record = repo.root.parent().unwrap().join("hook-record");
+    repo.hook(
+        "pre-commit",
+        &format!(
+            "{{ echo \"literal=${{GIT_LITERAL_PATHSPECS-unset}}\"\n\
+             echo \"glob=$(git ls-files -- ':(glob)docs/**/*.md' | wc -l | tr -d ' ')\"\n\
+             echo ignored/x.md | git check-ignore --stdin >/dev/null 2>&1\n\
+             echo \"check-ignore=$?\"; }} > '{}'",
+            record.display()
+        ),
+        0,
+    );
+
+    let Committed::Made { files, .. } = commit(&repo.root, &generated, "m").unwrap() else {
+        panic!("nothing was committed");
+    };
+    assert_eq!(files, 2);
+
+    // What the glob is expected to reach is the repository's own answer to
+    // the same pathspec, not a number written here: a fixture that grew a
+    // markdown file would otherwise pin a total nothing produces.
+    let matched = repo.git(&["ls-files", "--", ":(glob)docs/**/*.md"]);
+    let expected = matched.lines().count();
+    assert!(expected > 0, "the fixture matched nothing: {matched:?}");
+    let seen = fs::read_to_string(&record).unwrap();
+    assert_eq!(
+        seen,
+        format!("literal=unset\nglob={expected}\ncheck-ignore=0\n")
+    );
 }
 
 /// A hook's refusal reaches the person whole and in order, and the index

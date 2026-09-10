@@ -9,6 +9,16 @@
 //!
 //! The file is outside the checkout, so it is never a path the offer could
 //! then find, and it is removed when the step ends.
+//!
+//! Each entry carries its own [`Spec::LITERAL`] magic prefix rather than
+//! the step passing git's `--literal-pathspecs`. The two select the same
+//! files, but the git-wide option is one git re-exports as
+//! `GIT_LITERAL_PATHSPECS=1` to everything it starts, and `git commit`
+//! starts the repository's hooks. A hook is other people's code reading
+//! their own repository: under that variable a hook's `git ls-files --
+//! ':(glob)docs/**/*.md'` matches nothing and its `git check-ignore`
+//! exits 128 on magic it never wrote. The prefix keeps the selection
+//! inside the file, where only the step that wrote it reads it.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -28,7 +38,8 @@ impl Spec {
             .tempfile()
             .map_err(|error| failure(step, &error))?;
         for path in paths {
-            file.write_all(path.as_bytes())
+            file.write_all(Spec::LITERAL.as_bytes())
+                .and_then(|()| file.write_all(path.as_bytes()))
                 .and_then(|()| file.write_all(&[0]))
                 .map_err(|error| failure(step, &error))?;
         }
@@ -48,16 +59,16 @@ impl Spec {
         ]
     }
 
-    /// The git-wide option every step passing this file carries, placed
-    /// before the subcommand, where git reads it.
+    /// The magic prefix every entry in the file is written behind.
     ///
     /// `--pathspec-file-nul` fixes the separator, not the matching: git
     /// still reads each entry as a pathspec, so a rendered path holding
     /// `[`, `*` or `?` would match a different file and put a path in the
-    /// commit that was never in the set. This takes every entry as the
-    /// path it is, including one beginning with the `:` a pathspec magic
-    /// prefix starts with.
-    pub const LITERAL: &'static str = "--literal-pathspecs";
+    /// commit that was never in the set. Behind this prefix git takes the
+    /// rest of the entry as the path it is, and it is read only at the
+    /// start of an entry, so a `:` inside a path is a character like any
+    /// other rather than the opening of a second prefix.
+    const LITERAL: &'static str = ":(literal)";
 }
 
 impl Drop for Spec {

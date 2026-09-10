@@ -114,7 +114,7 @@ fn stage(root: &Path, untracked: &[String]) -> Result<(), Failed> {
         return Ok(());
     }
     let spec = Spec::write(untracked, Step::Stage)?;
-    let mut args = vec![Spec::LITERAL.to_owned(), "add".to_owned()];
+    let mut args = vec!["add".to_owned()];
     args.extend(spec.args());
     git::run(Hardened::git(&borrowed(&args), Some(root)), Step::Stage)?;
     Ok(())
@@ -122,11 +122,7 @@ fn stage(root: &Path, untracked: &[String]) -> Result<(), Failed> {
 
 fn make(root: &Path, all: &[String], message: &str) -> Result<(), Failed> {
     let spec = Spec::write(all, Step::Commit)?;
-    let mut args = vec![
-        Spec::LITERAL.to_owned(),
-        "commit".to_owned(),
-        "--only".to_owned(),
-    ];
+    let mut args = vec!["commit".to_owned(), "--only".to_owned()];
     args.extend(spec.args());
     args.push("-m".to_owned());
     args.push(message.to_owned());
@@ -143,11 +139,7 @@ fn unstage(root: &Path, untracked: &[String]) -> Result<(), Failed> {
         return Ok(());
     }
     let spec = Spec::write(untracked, Step::Unstage)?;
-    let mut args = vec![
-        Spec::LITERAL.to_owned(),
-        "reset".to_owned(),
-        "--quiet".to_owned(),
-    ];
+    let mut args = vec!["reset".to_owned(), "--quiet".to_owned()];
     args.extend(spec.args());
     git::run(Hardened::git(&borrowed(&args), Some(root)), Step::Unstage)?;
     Ok(())
