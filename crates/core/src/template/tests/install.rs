@@ -6,7 +6,7 @@ use std::fs;
 use super::super::*;
 use super::create::{seeded, snapshot};
 use super::skill;
-use crate::model::Scope;
+use crate::model::{HarnessId, Scope};
 
 /// The whole project, saved with its own local package copied in.
 #[allow(clippy::unwrap_used)]
@@ -405,27 +405,77 @@ fn a_member_saved_switched_off_installs_switched_off() {
     let Scope::Project { root } = &target else {
         unreachable!("built as a project scope")
     };
-    install(&project.env, &template, &target, None, None).unwrap();
+    // A harness to render into: the switch is about the artifact, and a
+    // destination nothing renders to has none to look at.
+    install(
+        &project.env,
+        &template,
+        &target,
+        Some(vec![HarnessId::Claude]),
+        None,
+    )
+    .unwrap();
 
-    let manifest = fs::read_to_string(root.join("kendex.toml")).unwrap();
-    let declared: toml::Table = toml::from_str(&manifest).unwrap();
-    let enabled = |table: &str, name: &str| -> bool {
-        declared
-            .get(table)
-            .and_then(|kind| kind.get(name))
-            .and_then(|decl| decl.get("enabled"))
-            .and_then(toml::Value::as_bool)
-            // Absent means enabled: that is the manifest's own default.
-            .unwrap_or(true)
+    // The files, not the declaration. The manifest saying `enabled =
+    // false` over a file rendered enabled is the defect this row exists
+    // for, so what is asserted is what is on disk.
+    let parked = root.join(".claude/commands/note.md.disabled");
+    let live = root.join(".claude/commands/note.md");
+    assert!(parked.is_file(), "{}", parked.display());
+    assert!(!live.exists(), "{}", live.display());
+    let on = root.join(".claude/skills/gh/SKILL.md");
+    assert!(on.is_file(), "{}", on.display());
+}
+
+/// A carried customization reaches the file it is about, not only the
+/// manifest that names it.
+///
+/// The carrier runs after the add that rendered the destination, so a
+/// manifest-only write left the installed skill without the instruction
+/// its own manifest said it carried — until some later apply happened to
+/// run. What is asserted is the rendered file.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_carried_customization_reaches_the_installed_file() {
+    let project = seeded();
+    let draft = draft_from_project(&project.env, &project.root).unwrap();
+    let template = create_from_project(
+        &project.env,
+        &project.root,
+        &Chosen {
+            name: "With settings".to_owned(),
+            members: draft
+                .members
+                .iter()
+                .filter(|member| member.name == "gh")
+                .map(|member| member.key.clone())
+                .collect(),
+            customizations: true,
+            ..Chosen::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        !template.customizations.is_empty(),
+        "the fixture should carry a skill instruction: {:?}",
+        template.customizations
+    );
+
+    let target = destination(&project, "instructed");
+    let Scope::Project { root } = &target else {
+        unreachable!("built as a project scope")
     };
-    assert!(
-        !enabled("commands", "note"),
-        "a member saved switched off installed enabled: {manifest}"
-    );
-    assert!(
-        enabled("skills", "gh"),
-        "a member saved switched on should install enabled: {manifest}"
-    );
+    install(
+        &project.env,
+        &template,
+        &target,
+        Some(vec![HarnessId::Claude]),
+        None,
+    )
+    .unwrap();
+
+    let rendered = fs::read_to_string(root.join(".claude/skills/gh/SKILL.md")).unwrap();
+    assert!(rendered.contains("read this first"), "{rendered}");
 }
 
 /// A plugin is its registry's own curated set, so it installs whole the
@@ -519,7 +569,7 @@ fn a_render_that_refuses_after_the_copy_committed_reports_the_copy() {
         &project.env,
         &template,
         &target,
-        Some(vec![crate::model::HarnessId::Claude]),
+        Some(vec![HarnessId::Claude]),
         None,
     );
     fs::set_permissions(&slot, fs::Permissions::from_mode(0o755)).unwrap();

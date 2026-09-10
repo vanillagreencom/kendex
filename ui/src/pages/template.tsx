@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { MemberRef, PackageFile, Resolution } from "@/bindings";
 import { FileBrowser } from "@/components/files/file-browser";
 import { FilePane } from "@/components/files/file-pane";
@@ -48,6 +48,9 @@ import {
  *  actions over it. */
 export function TemplatePage() {
   const name = useNavStore((s) => s.templateName);
+  // Which run of `reread` is the newest. A ref rather than state: it
+  // orders the replies and nothing renders from it.
+  const issued = useRef(0);
   const answer = useTemplatesAnswer();
   const load = useTemplatesStore((s) => s.load);
   const removeMembers = useTemplatesStore((s) => s.removeMembers);
@@ -90,8 +93,21 @@ export function TemplatePage() {
 
   const reread = useCallback(async () => {
     if (!name) return;
+    // Three things start a read of this page — the effect below, Retry,
+    // and a member removal — so the replies can arrive in any order. A
+    // ticket taken as each run leaves orders them again on arrival: an
+    // answer older than the newest run is a view of a template something
+    // newer has already replaced, and holding it would put a member the
+    // person has just removed back on screen. The same ticket order the
+    // templates store keeps, for the same reason.
+    const at = ++issued.current;
+    const newest = () => at === issued.current;
+    if (!newest()) return;
     setResolveError(null);
     const answer = await resolveTemplate(name);
+    // The failure branch is ordered too: a late failure over a fresh
+    // success would head rows the newer read had just returned.
+    if (!newest()) return;
     if (answer.status === "error") {
       setResolution(null);
       setResolveError(answer.error);
@@ -100,6 +116,7 @@ export function TemplatePage() {
     setResolution(answer.data);
     setFilesError(null);
     const owned = await templateFiles(name);
+    if (!newest()) return;
     if (owned.status === "error") {
       setFiles(null);
       setFilesError(owned.error);
@@ -130,6 +147,11 @@ export function TemplatePage() {
     }
     let live = true;
     setContentError(null);
+    // The pane is given the new path the moment the selection changes, so
+    // bytes held from the file before it would be drawn under a name that
+    // is not theirs — and copied under it. Nothing is shown until this
+    // read answers.
+    setContent(null);
     void templateFile(name, selected).then((answer) => {
       if (!live) return;
       if (answer.status === "error") {

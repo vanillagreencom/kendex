@@ -8,7 +8,7 @@
 // a read that answered.
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Resolution, Template_Serialize } from "@/bindings";
+import type { PackageFile, Resolution, Template_Serialize } from "@/bindings";
 import { commands } from "@/bindings";
 import { COPY_PATH_LABEL } from "@/lib/copy";
 import {
@@ -238,5 +238,130 @@ describe("a member taken out of the template", () => {
         },
       ],
     );
+  });
+});
+
+// Three things start a read of this page, so the replies can arrive in any
+// order. An answer older than the newest run is a view something newer has
+// already replaced, and holding it put a member the person had just
+// removed back on screen.
+describe("reads of the page that overlap", () => {
+  const SKILL = {
+    path: "skills/house-style/SKILL.md",
+    size: 12,
+    isReadme: false,
+  };
+  const withCopy: Resolution = {
+    groups: [],
+    copies: [
+      {
+        kind: "skill",
+        name: "house-style",
+        enabled: true,
+        copy: "skills/house-style",
+        from: null,
+      },
+    ],
+    missing: [],
+  };
+  const withoutCopy: Resolution = { groups: [], copies: [], missing: [] };
+
+  it("drops an answer older than the newest read", async () => {
+    // The read the page starts on mount answers with the member, but its
+    // file list is still out when the removal below starts a second read.
+    let answerTheFirstFiles: (answer: {
+      status: "ok";
+      data: PackageFile[];
+    }) => void = () => {};
+    const stillOut = new Promise<{ status: "ok"; data: PackageFile[] }>(
+      (resolve) => {
+        answerTheFirstFiles = resolve;
+      },
+    );
+    vi.mocked(commands.templateResolve)
+      .mockResolvedValueOnce({ status: "ok", data: withCopy })
+      .mockResolvedValue({ status: "ok", data: withoutCopy });
+    vi.mocked(commands.templateFiles)
+      .mockReturnValueOnce(stillOut)
+      .mockResolvedValue({ status: "ok", data: [] });
+    vi.mocked(commands.templateRemoveMembers).mockResolvedValue({
+      status: "ok",
+      data: TEMPLATE,
+    });
+
+    const host = mount(<TemplatePage />);
+    await settle();
+    expect(host.textContent).toContain("house-style");
+
+    // Removing the member starts the second read, which answers first.
+    const remove = [...host.querySelectorAll<HTMLElement>("button")].find(
+      (one) => one.textContent?.includes(REMOVE_MEMBER_LABEL),
+    );
+    if (!remove) throw new Error("no Remove control for the copied member");
+    await act(async () => remove.click());
+    await settle();
+    expect(host.textContent).not.toContain("house-style");
+
+    // The first read's file list answers last, still holding the file the
+    // removed member owned.
+    await act(async () => {
+      answerTheFirstFiles({ status: "ok", data: [SKILL] });
+    });
+    await settle();
+
+    expect(host.textContent).not.toContain("SKILL.md");
+  });
+
+  it("never draws one file's bytes under another file's name", async () => {
+    const OTHER = { path: "commands/note.md", size: 8, isReadme: false };
+    vi.mocked(commands.templateResolve).mockResolvedValue({
+      status: "ok",
+      data: withoutCopy,
+    });
+    vi.mocked(commands.templateFiles).mockResolvedValue({
+      status: "ok",
+      data: [SKILL, OTHER],
+    });
+    vi.mocked(commands.templateFile).mockResolvedValue({
+      status: "ok",
+      data: "the first file's bytes",
+    });
+    const host = mount(<TemplatePage />);
+    await settle();
+
+    const row = (text: string) =>
+      [...host.querySelectorAll<HTMLElement>("button")].find((one) =>
+        one.textContent?.includes(text),
+      );
+    const first = row("SKILL.md");
+    if (!first) throw new Error("no first file row");
+    await act(async () => first.click());
+    await settle();
+    expect(host.textContent).toContain("the first file's bytes");
+
+    // The second file's read is held, which is the window this is about:
+    // the pane already carries its path.
+    let answerTheSecondRead: (answer: { status: "ok"; data: string }) => void =
+      () => {};
+    vi.mocked(commands.templateFile).mockReturnValueOnce(
+      new Promise((resolve) => {
+        answerTheSecondRead = resolve;
+      }),
+    );
+    const second = row("note.md");
+    if (!second) throw new Error("no second file row");
+    await act(async () => second.click());
+    await settle();
+
+    // The intermediate state is the assertion: the first file's bytes are
+    // gone before the second file's arrive, so nothing is ever drawn — or
+    // copied — under a name that is not its own.
+    expect(host.textContent).not.toContain("the first file's bytes");
+
+    await act(async () => {
+      answerTheSecondRead({ status: "ok", data: "the second file's bytes" });
+    });
+    await settle();
+    expect(host.textContent).toContain("the second file's bytes");
   });
 });

@@ -883,6 +883,35 @@ fn notice_ops(
     Ok(ops)
 }
 
+/// Commit a change to the destination's manifest as the render that
+/// change implies, not as a manifest write on its own.
+///
+/// Both carriers below change the manifest after the add that wrote it,
+/// and a bare manifest write would leave the destination's files
+/// disagreeing with its own manifest: a package switched off after its
+/// artifact was rendered stays on disk enabled, and carried instructions
+/// never reach the file they belong in. So the change goes out as the plan
+/// `apply` itself would make for that manifest — the persist and the
+/// render in one transaction, planned by the one function the Audit page
+/// and `apply` both read.
+fn commit_rendered(
+    env: &Env,
+    destination: &Scope,
+    manifest: Manifest,
+    landed: &mut Landing,
+) -> Result<()> {
+    let lock = crate::lock::load(&crate::lock::lock_path(env, destination))?;
+    let mut report = crate::engine::plan_scope(
+        env,
+        destination,
+        &manifest,
+        &lock,
+        &crate::engine::PlanOptions::default(),
+    )?;
+    engine_ops::ensure_manifest_persisted(env, destination, &manifest, &mut report)?;
+    landed.commit(env, &report.plan, |_| {})
+}
+
 /// Put every member this group saved switched off back to switched off in
 /// the destination's manifest.
 ///
@@ -918,17 +947,7 @@ fn carry_saved_switches(
     if manifest == before {
         return Ok(());
     }
-    let manifest_path = crate::manifest::manifest_path(env, destination);
-    let op = PlannedOp {
-        description: "keep the template's switched-off packages switched off".into(),
-        op: Op::WriteManifest {
-            pre: Pre::observed(&manifest_path)?,
-            path: manifest_path,
-            manifest: Box::new(manifest),
-        },
-    };
-    let plan = Plan::landed(destination.canonical(), vec![op])?;
-    landed.commit(env, &plan, |_| {})
+    commit_rendered(env, destination, manifest, landed)
 }
 
 /// Write the template's package customizations into the destination,
@@ -978,17 +997,7 @@ fn carry_customizations(
     if manifest == before {
         return Ok(());
     }
-    let manifest_path = crate::manifest::manifest_path(env, destination);
-    let op = PlannedOp {
-        description: "carry the template's package settings into kendex.toml".into(),
-        op: Op::WriteManifest {
-            pre: Pre::observed(&manifest_path)?,
-            path: manifest_path,
-            manifest: Box::new(manifest),
-        },
-    };
-    let plan = Plan::landed(destination.canonical(), vec![op])?;
-    landed.commit(env, &plan, |_| {})
+    commit_rendered(env, destination, manifest, landed)
 }
 
 fn fill<V: Clone>(into: &mut BTreeMap<String, V>, from: &BTreeMap<String, V>) {

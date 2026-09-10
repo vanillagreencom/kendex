@@ -350,7 +350,7 @@ pub fn toggle(
 
 /// The plan must persist the mutated manifest exactly once; plan_scope adds
 /// its own write only when upstream skill merges changed it further.
-fn ensure_manifest_persisted(
+pub(crate) fn ensure_manifest_persisted(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,

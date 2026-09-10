@@ -182,3 +182,76 @@ fn a_licence_file_already_in_the_store_is_reused_or_refuses() {
         "the refusal took the copy with it"
     );
 }
+
+/// The folder a template's store lives in is one path segment, and the
+/// index is asked for it on the way in.
+///
+/// `store::root` makes that folder by joining the recorded id, and a join
+/// takes an absolute path by replacing the base and takes `..` as the
+/// parent — so an id out of a hand-edited file could name a directory
+/// outside the store, and delete removes one whole. The member paths
+/// inside the store answer the same rule; this is the root that holds
+/// them.
+///
+/// Driven over the spellings directly rather than over a platform, the way
+/// the recorded-path rows above are.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_index_naming_a_store_folder_it_may_not_is_refused_on_the_way_in() {
+    let (tmp, env) = home();
+    // Somebody else's directory, which a delete must never reach.
+    let theirs = tmp.path().join("theirs");
+    fs::create_dir_all(&theirs).unwrap();
+    fs::write(theirs.join("keep.md"), "their bytes").unwrap();
+
+    let saved = |id: &str| {
+        let file = env.templates_file();
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(
+            &file,
+            format!("[[templates]]\nname = \"Mine\"\nid = {id}\n"),
+        )
+        .unwrap();
+    };
+    for id in [
+        // Absolute: a join takes it by replacing the base entirely.
+        format!("{:?}", theirs.display().to_string()),
+        // The parent directory, in both separators.
+        "\"..\"".to_owned(),
+        "\"../theirs\"".to_owned(),
+        r#""..\\theirs""#.to_owned(),
+        // Drive-relative, and the spellings Windows trims back.
+        "\"C:theirs\"".to_owned(),
+        "\".. \"".to_owned(),
+        "\"mine.\"".to_owned(),
+        "\"\"".to_owned(),
+    ] {
+        saved(&id);
+        let listed = list(&env);
+        assert!(
+            matches!(listed, Err(CoreError::TemplateIndexUnusable { .. })),
+            "{id} should be refused on load: {listed:?}"
+        );
+        // And nothing acts on it: delete refuses before it reaches a path.
+        let deleted = delete(&env, "Mine");
+        assert!(
+            matches!(deleted, Err(CoreError::TemplateIndexUnusable { .. })),
+            "{id} should be refused before a delete: {deleted:?}"
+        );
+        assert!(
+            theirs.join("keep.md").is_file(),
+            "{id} reached somebody else's files"
+        );
+    }
+
+    // The inverse: an id the product actually writes still loads, and its
+    // delete reaches its own tree and nothing else.
+    saved("\"mine\"");
+    let root = env.template_store_dir().join("mine");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("held.md"), "our bytes").unwrap();
+    assert_eq!(list(&env).unwrap().len(), 1);
+    delete(&env, "Mine").unwrap();
+    assert!(!root.exists(), "{}", root.display());
+    assert!(theirs.join("keep.md").is_file());
+}

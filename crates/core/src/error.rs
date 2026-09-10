@@ -609,6 +609,22 @@ pub enum CoreError {
     #[error("{name} is not available — {why}")]
     TemplateMemberUnavailable { name: String, why: String },
 
+    /// The saved-selection index names a template's store folder with
+    /// something that is not one path segment. Refused whole rather than
+    /// skipped: a skipped row is a template that silently stops existing,
+    /// and the folder that value names may be somewhere a delete must
+    /// never reach.
+    #[error(
+        "{}: a template's store folder is named '{}' — {why}",
+        crate::names::shown(&path.display().to_string()),
+        crate::names::shown(id)
+    )]
+    TemplateIndexUnusable {
+        path: PathBuf,
+        id: String,
+        why: String,
+    },
+
     /// A copy the template's store no longer holds, or holds in a form
     /// that cannot be read back.
     #[error(

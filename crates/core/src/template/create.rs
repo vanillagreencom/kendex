@@ -244,7 +244,7 @@ pub fn add_from_project(
             return Err(error);
         }
     }
-    super::change(env, name, |template| {
+    let after = super::change(env, name, |template| {
         for member in members {
             // Every member of that kind and name, deliberately: this verb
             // promises to replace what the template held under the name,
@@ -257,7 +257,18 @@ pub fn add_from_project(
             template.members.push(member);
         }
         Ok(())
-    })
+    })?;
+    // What only the replaced member accounted for goes with it, through
+    // the same prune a removal makes — a replacement takes a member out
+    // as much as a removal does, and the store should not hold what no
+    // member names.
+    //
+    // Litter is the smaller half. A licence file nothing references still
+    // sits where the terms comparison looks, so a later capture whose own
+    // terms differ from that orphan refuses against a file no copy here
+    // came under: yesterday's leftover becomes tomorrow's false refusal.
+    store::prune(env, &template, &after)?;
+    Ok(after)
 }
 
 /// Save a template from packages picked somewhere else — a marketplace's

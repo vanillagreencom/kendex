@@ -9,6 +9,8 @@
 //! whole-file settings write. The lock, the wait and the atomic write are
 //! [`crate::settings`]'s, called rather than re-spelled.
 
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
 use crate::env::Env;
@@ -26,28 +28,48 @@ pub(super) struct Index {
 
 pub(super) fn load(env: &Env) -> Result<Index> {
     let path = env.templates_file();
-    match read_if_exists(&path)? {
-        None => Ok(Index::default()),
-        Some(text) => text
-            .parse::<toml::Table>()
-            .map(toml::Value::Table)
-            .map_or_else(
-                |e| {
-                    Err(CoreError::TomlParse {
-                        path: path.clone(),
-                        message: e.to_string(),
-                    })
-                },
-                |value| {
-                    value
-                        .try_into()
-                        .map_err(|e: toml::de::Error| CoreError::TomlParse {
-                            path: path.clone(),
-                            message: e.to_string(),
-                        })
-                },
-            ),
+    let Some(text) = read_if_exists(&path)? else {
+        return Ok(Index::default());
+    };
+    let unreadable = |message: String| CoreError::TomlParse {
+        path: path.clone(),
+        message,
+    };
+    let value = text
+        .parse::<toml::Table>()
+        .map(toml::Value::Table)
+        .map_err(|e| unreadable(e.to_string()))?;
+    let index: Index = value
+        .try_into()
+        .map_err(|e: toml::de::Error| unreadable(e.to_string()))?;
+    holdable(&path, index)
+}
+
+/// Every template's store folder is one path segment, asked here so no
+/// caller can reach an unchecked one.
+///
+/// [`super::store::root`] makes the store root by joining this id, and a
+/// join takes an absolute path by replacing the base and takes `..` as the
+/// parent — so an id out of a hand-edited file could name a directory
+/// outside the store, which delete then removes whole. The member paths
+/// inside the store answer the same rule at `store::copy_path`; this is
+/// the root that holds them, asked at the load boundary rather than at
+/// each use so there is one place to be right and no way past it.
+///
+/// The whole file refuses rather than the one row being dropped: a
+/// skipped row is a template that silently stops existing, and the next
+/// write would save the index back without it.
+fn holdable(path: &Path, index: Index) -> Result<Index> {
+    for template in &index.templates {
+        if let Some(why) = crate::names::segment_problem(&template.id) {
+            return Err(CoreError::TemplateIndexUnusable {
+                path: path.to_path_buf(),
+                id: template.id.clone(),
+                why,
+            });
+        }
     }
+    Ok(index)
 }
 
 /// Load, change, save — one breath, under the cross-process write lock, so

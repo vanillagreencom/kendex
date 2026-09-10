@@ -704,3 +704,96 @@ fn a_create_whose_rollback_also_fails_reports_both_causes() {
         false => assert!(refused.is_ok(), "{refused:?}"),
     }
 }
+
+/// Replacing a member takes what only the replaced one owned with it.
+///
+/// A licence file nothing references is not only litter: the terms
+/// comparison a capture makes reads whatever is stored, so an orphan left
+/// by one replacement makes the next valid one refuse against terms no
+/// copy here came under.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn replacing_a_member_takes_the_terms_only_it_owned() {
+    let project = seeded();
+    // An installed copy that has drifted, so the project's own bytes can
+    // be taken — which is what carries the marketplace's terms along.
+    skill(
+        &project.root.join(".claude/skills"),
+        "gh",
+        "edited here, not upstream",
+    );
+    let confirmed = || LicenseAnswer {
+        confirmed: true,
+        basis: None,
+    };
+    let template = create_from_project(
+        &project.env,
+        &project.root,
+        &Chosen {
+            name: "Licensed".to_owned(),
+            members: vec!["skill:gh".to_owned()],
+            sides: BTreeMap::from([(
+                "skill:gh".to_owned(),
+                Side::Copy {
+                    license: confirmed(),
+                },
+            )]),
+            ..Chosen::default()
+        },
+    )
+    .unwrap();
+    let stored =
+        |file: &str| copy_path(&project.env, &template, &format!("NOTICES/cat/{file}")).unwrap();
+    assert!(
+        stored("LICENSE").is_file(),
+        "the terms should travel with the copy"
+    );
+
+    // The catalog's licence, under whichever file name a step wants.
+    let licence_at = |file: &str, text: &str| {
+        for name in ["LICENSE", "LICENSE.md"] {
+            let at = project.catalog.join(name);
+            if at.exists() {
+                fs::remove_file(&at).unwrap();
+            }
+        }
+        fs::write(project.catalog.join(file), text).unwrap();
+    };
+    let replace = || {
+        add_from_project(
+            &project.env,
+            "Licensed",
+            &project.root,
+            &[MemberRef {
+                kind: MemberKind::Skill,
+                name: "gh".to_owned(),
+                which: MemberWhich::Any,
+            }],
+            &confirmed(),
+        )
+    };
+
+    // Upstream renames its licence file: the terms land under the new
+    // name, and the file under the old one is nothing's any more.
+    licence_at("LICENSE.md", "MIT License\n");
+    replace().unwrap();
+    assert!(
+        stored("LICENSE.md").is_file(),
+        "the new terms should be stored"
+    );
+    assert!(
+        !stored("LICENSE").exists(),
+        "terms only the replaced member owned were left behind"
+    );
+
+    // Renamed back, with the text changed. This is the point: without the
+    // prune above, the orphan would still be sitting at that name holding
+    // the old text, and this valid replacement would refuse against terms
+    // no copy here came under.
+    licence_at("LICENSE", "MIT License, amended\n");
+    replace().unwrap();
+    assert_eq!(
+        fs::read_to_string(stored("LICENSE")).unwrap(),
+        "MIT License, amended\n"
+    );
+}

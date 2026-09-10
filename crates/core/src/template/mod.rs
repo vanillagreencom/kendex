@@ -355,10 +355,20 @@ fn usable_name(existing: &[Template], name: &str, renaming: Option<&str>) -> Res
     }
 }
 
-/// A folder name for a template's store that no live template holds.
+/// A folder name for a template's store that no live template holds and
+/// that the store can hold at all.
+///
 /// Derived from the name for a person reading the directory, and made
 /// unique by a counter rather than by the name, so two templates named
 /// alike after a rename cannot meet.
+///
+/// The counter also answers the one way a derived stem can be a name no
+/// folder may take: every character here is already `[a-z0-9-]` with no
+/// leading or trailing dash, which leaves only a Windows device stem —
+/// a template called `NUL` derives `nul` — and a suffix settles that in
+/// one turn, since `nul-2` is a device no longer. Asked of the same rule
+/// [`index::load`] refuses an id by, so this producer cannot mint a value
+/// that reader would turn away.
 fn fresh_id(existing: &[Template], name: &str) -> String {
     let stem: String = name
         .chars()
@@ -374,7 +384,9 @@ fn fresh_id(existing: &[Template], name: &str) -> String {
     };
     let mut candidate = stem.clone();
     let mut n = 2;
-    while existing.iter().any(|template| template.id == candidate) {
+    while existing.iter().any(|template| template.id == candidate)
+        || crate::names::segment_problem(&candidate).is_some()
+    {
         candidate = format!("{stem}-{n}");
         n += 1;
     }
