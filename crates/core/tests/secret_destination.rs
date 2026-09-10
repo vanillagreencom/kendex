@@ -288,6 +288,45 @@ fn a_link_on_the_way_out_of_the_project_is_refused() {
     assert!(problem.contains("outside this project"), "{problem}");
 }
 
+/// kendex's own configuration is never a private file, whatever git says
+/// about it. A project with no repository has no tracked answer to lean
+/// on, so this is the case where the git checks say nothing at all and
+/// the refusal has to come from somewhere else: a credential appended to
+/// `kendex.settings.toml` is one the project publishes with its settings
+/// the moment it becomes a repository.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn kendex_own_configuration_is_refused_with_no_repository() {
+    let f = fixture(false);
+    for named in [
+        "kendex.settings.toml",
+        ".kendex/settings.toml",
+        ".kendex-generated.json",
+    ] {
+        let settings = format!("[env]\nKENDEX_ENV_FILE = \"{named}\"\n");
+        let state = state(&f, Some(&settings), None);
+        let (problem, _) = refused(&state);
+        assert!(
+            problem.contains("kendex's own configuration"),
+            "{named}: {problem}"
+        );
+    }
+}
+
+/// The same refusal in a repository that ignores the settings file — the
+/// other way a kendex file reaches `ready`, since an ignored path is one
+/// git will not carry.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn kendex_own_configuration_is_refused_even_where_git_ignores_it() {
+    let f = fixture(true);
+    fs::write(f.project.join(".gitignore"), "kendex.settings.toml\n").unwrap();
+    let settings = "[env]\nKENDEX_ENV_FILE = \"./kendex.settings.toml\"\n";
+    let state = state(&f, Some(settings), None);
+    let (problem, _) = refused(&state);
+    assert!(problem.contains("kendex's own configuration"), "{problem}");
+}
+
 /// A project with no repository has nothing that could carry the file
 /// anywhere, so the ignore question does not apply and the save goes
 /// through.

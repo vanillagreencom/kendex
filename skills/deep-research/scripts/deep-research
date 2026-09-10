@@ -2,9 +2,9 @@
 // Diagnostic protocol: command refusals write one JSON object to stderr with
 // {ok:false,key,value,error}. Validate keeps errors/warnings and adds problems
 // with {level,key,value}; English remains display text, not a test contract.
-import { existsSync, writeSync } from "node:fs";
+import { existsSync, realpathSync, writeSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, extname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const deepTypes = new Set(["deep-reasoning", "deep-lite", "deep"]);
@@ -193,7 +193,50 @@ async function privateEnvFile(root) {
   if (named.startsWith("/") || named.includes("\\") || named.includes(":") || parts.includes("..")) {
     fail("private-env-path", "KENDEX_ENV_FILE", `KENDEX_ENV_FILE is ${named}: it must name a file inside the project, written as a relative path with no '..' segment, no backslash and no colon.`);
   }
+  // Spelling is only half the answer. `resolve` and `readFile` follow
+  // links, so `config/private.env` reads a file anywhere at all when
+  // `config` points out of the project — the name never said `..`. The
+  // default is checked on the same rule, so the guarantee is about the
+  // file this loader opens and not about which of the two named it.
+  insideProject(root, named);
   return named;
+}
+
+// Whether the DIRECTORY the private env file sits in stays inside the
+// project once every link on the way is followed. The file may not exist
+// yet, so the deepest existing ancestor is resolved and the rest is
+// spelling, already judged above.
+//
+// The file ITSELF being a link is left alone on purpose, and this is the
+// line between the two. A directory link is the configured NAME reaching
+// somewhere the project never wrote down, which is what this guard is
+// against. A link at the private file is the project's own layout, put
+// there by whoever owns the directory: a git worktree links `.env.local`
+// back to its main checkout so every worktree shares one credential file,
+// and refusing that would stop every package in every worktree while
+// stopping nobody who can already write inside the project root. The
+// shared shell loader draws the same line, so one project reads one file
+// whichever package asks.
+function insideProject(root, named) {
+  const path = resolve(root, named);
+  const resolved = (at, what) => {
+    try {
+      return realpathSync(at);
+    } catch (error) {
+      fail("private-env-unresolved", what, `${what} could not be resolved (${error.code ?? error.message}), so nothing can say whether the private env file is inside the project.`);
+    }
+  };
+  const top = resolved(root, root);
+  let at = dirname(path);
+  while (!existsSync(at)) {
+    const up = dirname(at);
+    if (up === at) break;
+    at = up;
+  }
+  const here = resolved(at, at);
+  if (here !== top && !here.startsWith(top.endsWith(sep) ? top : top + sep)) {
+    fail("private-env-outside", named, `The private env file ${named} resolves outside the project through a link on the way to it. Name a file inside the project.`);
+  }
 }
 
 async function loadEnv() {

@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { SecretRow } from "@/bindings";
+import type { SecretEdit, SecretRow } from "@/bindings";
 import {
   SECRET_CLEAR_ACTION,
   SECRET_NOT_SET,
@@ -82,6 +83,56 @@ describe("SecretFieldRow", () => {
     const input = host.querySelector("input");
     expect(input?.type).toBe("password");
     expect(input?.value).toBe("");
+  });
+
+  /// A save clears every edit and leaves this row mounted, so the box has
+  /// to close with the draft that was typed into it. Left open it would
+  /// stand as an empty password input exactly where the saved key's
+  /// Set/Replace controls belong, inviting a second save of nothing.
+  ///
+  /// The inverse is the other half of the rule: a box opened and never
+  /// typed into is the person's own and stays open, because no answer of
+  /// theirs went away.
+  it("closes the box when the draft it was typed into is cleared", async () => {
+    function Draft() {
+      const [edit, setEdit] = useState<SecretEdit | undefined>(undefined);
+      return (
+        <>
+          <SecretFieldRow
+            skill="linear"
+            row={row({ current: { state: "set" } })}
+            file=".env.local"
+            writable
+            edit={edit}
+            onEdit={setEdit}
+            onCancel={() => setEdit(undefined)}
+          />
+          <button type="button" onClick={() => setEdit(undefined)}>
+            saved
+          </button>
+        </>
+      );
+    }
+    const host = mount(<Draft />);
+    const replace = button(host, SECRET_REPLACE_ACTION);
+    if (!replace) throw new Error("a stored key offers no replace");
+    await userEvent.click(replace);
+
+    // Opened and not yet typed into: the person's own box, left alone.
+    const saved = button(host, "saved");
+    if (!saved) throw new Error("the harness offered no save");
+    await userEvent.click(saved);
+    expect(host.querySelector("input")).not.toBeNull();
+
+    const input = host.querySelector("input");
+    if (!input) throw new Error("replace opened no input");
+    await userEvent.type(input, "k");
+    expect(host.querySelector("input")?.value).toBe("k");
+
+    // The answer goes away with the save, and the box goes with it.
+    await userEvent.click(saved);
+    expect(host.querySelector("input")).toBeNull();
+    expect(button(host, SECRET_REPLACE_ACTION)).not.toBeNull();
   });
 
   /// A key nothing has answered opens with Set and offers no clear:

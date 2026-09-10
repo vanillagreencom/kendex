@@ -11,38 +11,44 @@ export function secretsIn(skill: SkillSettings | null): SecretRow[] {
   return skill?.template.state === "rows" ? skill.template.secrets : [];
 }
 
+/** This key's unsaved answer, whichever package's page it was typed on.
+ *
+ *  The key alone is the identity, because the key alone is what the file
+ *  holds: one line, one value, however many packages declare it. Two
+ *  packages declaring one key is a shape core allows on purpose, so a
+ *  field showing an answer only on the page it was typed on would hide
+ *  the pending value from the other page that writes the same line. */
 export function secretEditIn(
   edits: SecretEdit[],
-  skill: string,
   key: string,
 ): SecretEdit | undefined {
-  return edits.find((edit) => edit.skill === skill && edit.key === key);
+  return edits.find((edit) => edit.key === key);
 }
 
 /** The edits after one more, replacing any earlier answer for the same
- *  key of the same skill — a save carries one answer per field, and two
- *  answers for one key is what core refuses the whole save over. */
+ *  key — a save carries one answer per key, and two answers for one key
+ *  is what core refuses the whole save over. The package the new answer
+ *  names replaces the old one as the declaration the write is checked
+ *  against: it is the page the person last typed on, and either package
+ *  declaring the key makes the write a legal one. */
 export function withSecretEdit(
   edits: SecretEdit[],
   next: SecretEdit,
 ): SecretEdit[] {
-  const at = edits.findIndex(
-    (edit) => edit.skill === next.skill && edit.key === next.key,
-  );
+  const at = edits.findIndex((edit) => edit.key === next.key);
   if (at === -1) return [...edits, next];
   const out = edits.slice();
   out[at] = next;
   return out;
 }
 
-/** The edits without this field's answer: the person went back to leaving
+/** The edits without this key's answer: the person went back to leaving
  *  whatever is stored alone. */
 export function withoutSecretEdit(
   edits: SecretEdit[],
-  skill: string,
   key: string,
 ): SecretEdit[] {
-  return edits.filter((edit) => !(edit.skill === skill && edit.key === key));
+  return edits.filter((edit) => edit.key !== key);
 }
 
 /** Whether picking this file is a change the project does not already

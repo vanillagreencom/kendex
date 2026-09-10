@@ -42,7 +42,7 @@ Prefix keys with the skill name in upper-snake: `REVIEW_GATE_MODE` for a skill n
 
 ## Where a value comes from
 
-Scripts read the `[env]` table, ignoring assignments outside it, with one precedence, highest first: the process environment, the project's private env file, `.kendex/settings.toml`, `kendex.settings.toml`, the built-in default. The private env file is `.env.local` unless `KENDEX_ENV_FILE` names another path inside the project; a path that could reach outside it fails the load. That key is read from the same layers in the same order as every other setting, so `.kendex/settings.toml` outranks `kendex.settings.toml` and the process environment outranks both. The app writes the root file, so it honours a file the higher layer names and refuses to record a different one over it. A key may hold itself to a different policy as long as its own comment says so.
+Scripts read the `[env]` table, ignoring assignments outside it, with one precedence, highest first: the process environment, the project's private env file, `.kendex/settings.toml`, `kendex.settings.toml`, the built-in default. The private env file is `.env.local` unless `KENDEX_ENV_FILE` names another path inside the project; a path that could reach outside it fails the load. Inside is decided by resolving the directory the file sits in, not by reading the name: a name with no `..` in it still reaches out through a directory that is a link, and that fails the load too. A link at the private file itself is the project's own layout and loads — a git worktree links `.env.local` back to its main checkout so every worktree shares one credential file. That key is read from the same layers in the same order as every other setting, so `.kendex/settings.toml` outranks `kendex.settings.toml` and the process environment outranks both. The app writes the root file, so it honours a file the higher layer names and refuses to record a different one over it. A key may hold itself to a different policy as long as its own comment says so.
 
 ## Secrets
 
@@ -58,7 +58,7 @@ MY_SKILL_TOKEN = "" # required
 
 A `[secrets]` declaration is a key name, the comment block above it, and `# required` where the skill refuses to run without the key. Its value is the empty string and nothing else: a value there is a check finding, so no template can ship a credential, a placeholder or a default.
 
-The consumer sets one in the app's Customize tab. kendex writes it to the project's private env file — `.env.local`, or the file `KENDEX_ENV_FILE` names — after confirming git does not track it and does ignore it, adding the ignore entry first where one is owed. Nothing under `[secrets]` is ever seeded into `kendex.settings.toml`, and no value reaches a plan, a diff, an error or a commit offer.
+The consumer sets one in the app's Customize tab. kendex writes it to the project's private env file — `.env.local`, or the file `KENDEX_ENV_FILE` names — after confirming the file is not one kendex writes itself — `kendex.settings.toml`, `.kendex/settings.toml` and `.kendex-generated.json` are refused as destinations whatever git says about them — and that git does not track it and does ignore it, adding the ignore entry first where one is owed. Nothing under `[secrets]` is ever seeded into `kendex.settings.toml`, and no value reaches a plan, a diff, an error or a commit offer.
 
 Declare a key under one table. A key declared under both, in one template or across two installed skills, has no destination anything can choose: the app offers no field for it and both write routes refuse it.
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -643,6 +643,63 @@ test("a KENDEX_ENV_FILE that could reach outside the project stops the run", () 
     const result = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
     assert.equal(diagnostic(result).key, "settings-value-syntax", line);
   }
+});
+
+// Spelling is only half the guarantee. A name carrying no `..` still
+// reads a file anywhere at all when a directory on the way out is a link,
+// and the credentials this loader is after are the whole point of the
+// containment claim.
+test("a KENDEX_ENV_FILE that escapes through a link stops the run", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-envlink-"));
+  const outside = mkdtempSync(join(tmpdir(), "deep-research-outside-"));
+  const stolen = join(outside, "stolen.env");
+  const outsideMock = join(outside, "mock.json");
+  writeFileSync(outsideMock, JSON.stringify({ answer: "FromOutside", results: [{ title: "S", url: "https://example.com" }] }));
+  writeFileSync(stolen, `EXA_MOCK_RESPONSE_FILE=${outsideMock}\nEXA_API_KEY='k'\n`);
+  const env = { ...process.env };
+  delete env.EXA_API_KEY;
+  delete env.EXA_MOCK_RESPONSE_FILE;
+
+  // A directory on the way out is a link: the name says nothing about it.
+  symlinkSync(outside, join(dir, "linked"));
+  writeFileSync(join(dir, "kendex.settings.toml"), '[env]\nKENDEX_ENV_FILE = "linked/stolen.env"\n');
+  const through = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
+  assert.equal(diagnostic(through).key, "private-env-outside");
+
+  // The file ITSELF being a link is the project's own layout and still
+  // loads: a git worktree links .env.local back to its main checkout so
+  // every worktree shares one credential file, and refusing that would
+  // stop every package in every worktree.
+  const shared = join(outside, "shared.env");
+  writeFileSync(shared, `EXA_MOCK_RESPONSE_FILE=${outsideMock}\nEXA_API_KEY='k'\n`);
+  symlinkSync(shared, join(dir, "linked.env"));
+  writeFileSync(join(dir, "kendex.settings.toml"), '[env]\nKENDEX_ENV_FILE = "linked.env"\n');
+  const directOut = join(dir, "direct.md");
+  const direct = spawnSync(process.execPath, [script, "report", "q", "--output", directOut], { encoding: "utf8", env, cwd: dir });
+  assert.equal(direct.status, 0, direct.stderr);
+  assert.match(readFileSync(directOut, "utf8"), /FromOutside/);
+
+  // The default is held to the same rule rather than to a rule about
+  // configured names.
+  const plain = mkdtempSync(join(tmpdir(), "deep-research-envlink-default-"));
+  symlinkSync(shared, join(plain, ".env.local"));
+  const plainOut = join(plain, "plain.md");
+  const byDefault = spawnSync(process.execPath, [script, "report", "q", "--output", plainOut], { encoding: "utf8", env, cwd: plain });
+  assert.equal(byDefault.status, 0, byDefault.stderr);
+  assert.match(readFileSync(plainOut, "utf8"), /FromOutside/);
+
+  // A subdirectory is not a way out: the check refuses an escape, not
+  // nesting.
+  const inside = mkdtempSync(join(tmpdir(), "deep-research-envlink-inside-"));
+  const insideMock = join(inside, "mock.json");
+  writeFileSync(insideMock, JSON.stringify({ answer: "FromNested", results: [{ title: "S", url: "https://example.com" }] }));
+  mkdirSync(join(inside, "keys"));
+  writeFileSync(join(inside, "keys/private.env"), `EXA_MOCK_RESPONSE_FILE=${insideMock}\nEXA_API_KEY='k'\n`);
+  writeFileSync(join(inside, "kendex.settings.toml"), '[env]\nKENDEX_ENV_FILE = "keys/private.env"\n');
+  const nestedOut = join(inside, "nested.md");
+  const nested = spawnSync(process.execPath, [script, "report", "q", "--output", nestedOut], { encoding: "utf8", env, cwd: inside });
+  assert.equal(nested.status, 0, nested.stderr);
+  assert.match(readFileSync(nestedOut, "utf8"), /FromNested/);
 });
 
 test("resolves EXA_API_KEY op:// references with op CLI", () => {

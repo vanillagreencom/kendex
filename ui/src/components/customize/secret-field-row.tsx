@@ -65,6 +65,18 @@ export function SecretFieldRow({
 }) {
   const typing = edit?.value.kind === "set";
   const [open, setOpen] = useState(false);
+  // The box belongs to the draft that was typed into it. A save clears
+  // every edit and leaves this row mounted, so an `open` that outlived
+  // its answer would leave an empty password box where the saved key's
+  // Set/Replace controls belong. Adjusted during render rather than in an
+  // effect, so the box and the state it was opened for are never a frame
+  // apart: the answer going away is what closes it, and a box opened and
+  // never typed into is still the person's to keep open.
+  const [answered, setAnswered] = useState(false);
+  if (typing !== answered) {
+    setAnswered(typing);
+    if (!typing) setOpen(false);
+  }
   const editing = typing || open;
   const stored = row.current.state === "set";
   const clearing = edit?.value.kind === "clear";

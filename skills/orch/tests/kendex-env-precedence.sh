@@ -341,6 +341,77 @@ s10_refuses "/etc/passwd" "an ABSOLUTE path"
 s10_refuses "../outside.env" "a LEADING .. segment"
 s10_refuses "a/../../outside.env" "a NESTED .. segment"
 s10_refuses "C:keys.env" "a DRIVE COLON"
+
+# Spelling is only half the guarantee. A name with no `..` in it reads a
+# file anywhere at all when a directory on the way is a link out of the
+# project, and this loader SOURCES what it opens.
+s10_link_refuses() { # NAME REASON — plants the shape, then expects the named refusal
+  local err code
+  set +e
+  err=$(
+    unset -v KENDEX_ENV_FILE
+    printf '[env]\nKENDEX_ENV_FILE = "%s"\n' "$1" > "$PROJ10/kendex.settings.toml"
+    # shellcheck source=/dev/null
+    source "$LIB"
+    kendex_load_project_env "$PROJ10" 2>&1 >/dev/null
+  )
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 && "$err" == *"kendex-env: $2 arg1=$1"* ]]; then
+    PASS=$((PASS + 1)); printf '  ok    scenario 10: %s fails the load as %s\n' "$1" "$2"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 10: %s fails the load as %s\n        code=%s stderr: %s\n' "$1" "$2" "$code" "$err"
+  fi
+}
+
+OUTSIDE10="$TMP_ROOT/outside10"
+mkdir -p "$OUTSIDE10"
+printf '%s\n' "SECRET='not-this-project'" > "$OUTSIDE10/stolen.env"
+ln -s "$OUTSIDE10" "$PROJ10/linked"
+s10_link_refuses "linked/stolen.env" "private-env-outside"
+
+# The file ITSELF being a link is the project's own layout and still
+# loads: a git worktree links .env.local back to its main checkout so
+# every worktree shares one credential file, and refusing that would stop
+# every package in every worktree. The line the guard draws is the
+# configured NAME reaching out, not the directory's own contents.
+printf '%s\n' "SECRET='kept-through-link'" > "$OUTSIDE10/shared.env"
+ln -s "$OUTSIDE10/shared.env" "$PROJ10/linked.env"
+assert_eq \
+  "$(s10_load '[env]
+KENDEX_ENV_FILE = "linked.env"
+')" \
+  'kept-through-link|' \
+  "scenario 10: a LINKED private file is the project's own layout and loads"
+
+# A directory inside the project is not a way out, so a nested private
+# file still loads: the check refuses an escape, not a subdirectory.
+mkdir -p "$PROJ10/keys"
+printf '%s\n' "SECRET='kept-nested'" > "$PROJ10/keys/private.env"
+assert_eq \
+  "$(s10_load '[env]
+KENDEX_ENV_FILE = "keys/private.env"
+')" \
+  'kept-nested|' \
+  "scenario 10: a nested private file inside the project still loads"
+
+# The default is held to the same rule, in both directions: a linked
+# .env.local loads, and a .env.local reached through a linked directory
+# does not. The guard is about the path, never about which of the two
+# named the file.
+PROJ10B="$TMP_ROOT/proj10b"
+mkdir -p "$PROJ10B"
+ln -s "$OUTSIDE10/shared.env" "$PROJ10B/.env.local"
+s10b_default=$(
+  unset -v SECRET KENDEX_ENV_FILE
+  # shellcheck source=/dev/null
+  source "$LIB"
+  kendex_load_project_env "$PROJ10B" >/dev/null 2>&1
+  printf '%s\n' "${SECRET:-}"
+)
+assert_eq "$s10b_default" "kept-through-link" \
+  "scenario 10: a LINKED .env.local is the project's own layout and loads"
+
 # A backslash never reaches that check: the settings grammar refuses the
 # value first, and refusing it twice would say the grammar was optional.
 # Pinned here so the two refusals stay told apart.

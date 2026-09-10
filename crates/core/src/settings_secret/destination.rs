@@ -257,11 +257,40 @@ fn relative(file: &str) -> std::result::Result<(), DestinationState> {
     Ok(())
 }
 
-/// Whether a credential may be written at this path: inside the project
-/// through every link on the way, a regular file or nothing at all, and
-/// out of git's reach.
+/// The project files kendex writes itself, none of which is a place a
+/// credential may go.
+///
+/// `kendex.settings.toml` is the public settings file this very save
+/// records the destination choice in, and `.kendex/settings.toml` is the
+/// layer read after it; both are configuration a project commits, and
+/// neither is env-file syntax to begin with. `.kendex-generated.json` is
+/// rewritten wholesale by every apply.
+const KENDEX_FILES: [&str; 3] = [
+    crate::settings_seed::SETTINGS_FILE,
+    NESTED_SETTINGS_FILE,
+    crate::engine::generated_paths::INVENTORY,
+];
+
+/// Whether a credential may be written at this path: not a file kendex
+/// writes itself, inside the project through every link on the way, a
+/// regular file or nothing at all, and out of git's reach.
 fn protection(root: &Path, file: &str) -> DestinationState {
     let path = root.join(file);
+    // Asked before git, because it is not a question about git. A project
+    // with no repository, or one that ignores its settings file, would
+    // otherwise take `kendex.settings.toml` as ready and append a
+    // credential to the configuration kendex publishes — and a project
+    // that becomes a repository later commits it.
+    if let Some(owned) = KENDEX_FILES.iter().find(|owned| same_file(file, owned)) {
+        return refused(
+            format!(
+                "{owned} is kendex's own configuration, not a private file — a secret written there would be published with the project's settings"
+            ),
+            format!(
+                "name another file for this project's secrets, or leave it on {DEFAULT_ENV_FILE}"
+            ),
+        );
+    }
     if let Err(refusal) = inside(root, &path, file) {
         return refusal;
     }
@@ -316,6 +345,21 @@ fn protection(root: &Path, file: &str) -> DestinationState {
         ),
         Ok(Some(_)) => ready(false, Some(format!("/{file}"))),
     }
+}
+
+/// Whether the configured name and one of kendex's own are the same file
+/// as written. Compared by component so `./kendex.settings.toml` and
+/// `.kendex//settings.toml` are the file they name, and not by resolving
+/// anything: a name kendex will not write is refused before the disk is
+/// touched, and a link pointing at one is refused as a link.
+fn same_file(file: &str, owned: &str) -> bool {
+    fn parts(name: &str) -> Vec<std::path::Component<'_>> {
+        Path::new(name)
+            .components()
+            .filter(|part| !matches!(part, std::path::Component::CurDir))
+            .collect()
+    }
+    parts(file) == parts(owned)
 }
 
 fn ready(exists: bool, ignore: Option<String>) -> DestinationState {

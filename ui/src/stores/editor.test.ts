@@ -229,6 +229,53 @@ describe("editor store", () => {
     );
   });
 
+  /// The private file holds one line per key, however many packages
+  /// declare it, and core allows two packages to declare one — while it
+  /// refuses a save carrying one key twice. The draft is scope-wide and
+  /// every package page in a scope edits the same one, so answering a
+  /// shared key on two pages has to leave one answer rather than two the
+  /// save is guaranteed to fail on.
+  it("keeps one answer per key when two packages declare it", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "ok",
+      data: {} as AuditView_Serialize,
+    });
+    await useEditorStore.getState().load();
+
+    // Typed on the package that declares it, then again on the other.
+    useEditorStore.getState().editSecret(secretEdit);
+    const shared = {
+      ...secretEdit,
+      skill: "deep-research",
+      value: { kind: "set" as const, value: "second" },
+    };
+    useEditorStore.getState().editSecret(shared);
+    expect(useEditorStore.getState().secretEdits).toEqual([shared]);
+
+    // A different key is a different line and still travels beside it:
+    // the rule folds one key's answers, not the whole draft.
+    const other = { ...secretEdit, key: "EXA_API_KEY" };
+    useEditorStore.getState().editSecret(other);
+    expect(useEditorStore.getState().secretEdits).toEqual([shared, other]);
+
+    await useEditorStore.getState().save();
+    expect(commands.saveCustomize).toHaveBeenCalledWith(
+      { scope: "global" },
+      null,
+      null,
+      {
+        edits: [shared, other],
+        file: ".env.local",
+        choose: false,
+        base: "p1",
+      },
+    );
+  });
+
   /// Naming a private file is a save of its own. The choice is written
   /// into the settings file as the key both package loaders read, so it
   /// must not wait for somebody to also type a credential — the page has

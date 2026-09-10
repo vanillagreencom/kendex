@@ -163,10 +163,10 @@ export function SkillSettings({
                 row={row}
                 file={secretsView.destination.file}
                 writable={secretsView.destination.state.state !== "refused"}
-                edit={secretEditIn(secretEdits, skill, row.key)}
+                edit={secretEditIn(secretEdits, row.key)}
                 onEdit={onSecretEdit}
                 onCancel={() =>
-                  onSecretEdits(withoutSecretEdit(secretEdits, skill, row.key))
+                  onSecretEdits(withoutSecretEdit(secretEdits, row.key))
                 }
               />
             ))}
