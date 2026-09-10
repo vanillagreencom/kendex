@@ -1228,6 +1228,14 @@ operation: string | null } |
 export type Chosen = {
 	name: string,
 	/**
+	 *  The [`super::Draft::fingerprint`] of the reading these answers were
+	 *  made against. The save reads the project again and refuses when the
+	 *  two differ, so nothing is captured that the person did not see.
+	 *  Carried rather than defaulted: a caller that could leave it out
+	 *  would save an unchecked selection.
+	 */
+	fingerprint: string,
+	/**
 	 *  Managed members to keep, by [`super::DraftMember::key`]. Anything
 	 *  the draft listed and this omits is a deliberate exclusion.
 	 */
@@ -1798,6 +1806,13 @@ export type Draft_Deserialize = {
 	customizations: Customizations_Deserialize,
 	/**  Why the managed reading is short, when it is. */
 	incomplete: DraftError | null,
+	/**
+	 *  What the rows above offer, as one value. A save carries it back on
+	 *  [`super::Chosen`] and the save's own reading refuses when the two
+	 *  differ, so answers made against this draft cannot save something
+	 *  else. See [`fingerprint`].
+	 */
+	fingerprint: string,
 };
 
 /**  Everything the create-from-project modal draws. */
@@ -1818,6 +1833,13 @@ export type Draft_Serialize = {
 	customizations: Customizations_Serialize,
 	/**  Why the managed reading is short, when it is. */
 	incomplete: DraftError | null,
+	/**
+	 *  What the rows above offer, as one value. A save carries it back on
+	 *  [`super::Chosen`] and the save's own reading refuses when the two
+	 *  differ, so answers made against this draft cannot save something
+	 *  else. See [`fingerprint`].
+	 */
+	fingerprint: string,
 };
 
 /**

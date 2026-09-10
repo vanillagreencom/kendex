@@ -423,8 +423,8 @@ pub fn resolve(env: &Env, scopes: &[Scope], selection: &ImportSelection) -> Resu
         Some((source, _, _)) => answer
             .notices
             .into_iter()
-            .map(|(name, bytes)| (PathBuf::from(NOTICES_DIR).join(source).join(name), bytes))
-            .collect(),
+            .map(|(name, bytes)| Ok((notice_path(source, &name)?, bytes)))
+            .collect::<Result<Vec<_>>>()?,
         None => Vec::new(),
     };
     Ok(ResolvedBytes { files, notices })
@@ -434,6 +434,37 @@ pub fn resolve(env: &Env, scopes: &[Scope], selection: &ImportSelection) -> Resu
 /// `NOTICES/<source>/<file>`. One spelling, because the import writes it
 /// and the template store and every destination read it back.
 pub const NOTICES_DIR: &str = "NOTICES";
+
+/// The path one licensed origin's licence file sits at inside a
+/// catalog-shaped tree, refusing a source alias that could not be one
+/// directory name.
+///
+/// The alias is the person's, not kendex's: `kendex subscribe --name` and
+/// the app's subscribe field take it as typed, and a project's
+/// `kendex.toml` names a source by its table key. Joined unexamined it
+/// spells its own destination, so licence bytes would land outside the
+/// tree the caller passed — the template's store, or an authored catalog.
+/// [`crate::names::segment_problem`] is the judge, the rule this
+/// repository already keeps for what one name may be and what Windows will
+/// quietly make of one; a test against the literal `..` never sees
+/// `..\victim`, where the backslash is the separator.
+///
+/// The file's own name is not asked here: it is a directory entry's
+/// `file_name` read off the origin's catalog root, which no filesystem
+/// lets hold a separator. The write boundaries ask every segment again —
+/// `template::store::write` does — because they are what a path reaching
+/// them may not leave.
+pub fn notice_path(source: &str, name: &str) -> Result<PathBuf> {
+    if let Some(problem) = crate::names::segment_problem(source) {
+        return Err(CoreError::Authoring {
+            message: format!(
+                "'{}' cannot name the marketplace these terms came from — {problem}",
+                crate::names::shown(source)
+            ),
+        });
+    }
+    Ok(PathBuf::from(NOTICES_DIR).join(source).join(name))
+}
 
 /// How a licence file already at a destination stands against the bytes
 /// that want to be there.

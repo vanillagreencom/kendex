@@ -96,7 +96,7 @@ fn plan_notices<'a>(
         return Ok(());
     };
     for (name, bytes) in &answer.notices {
-        let dest = target.join("NOTICES").join(source).join(name);
+        let dest = target.join(crate::author::import::notice_path(source, name)?);
         // The path is what a write is claimed under, so the question is
         // asked of it rather than of the label it renders as. A shared
         // licence file reached through two origins is one write.

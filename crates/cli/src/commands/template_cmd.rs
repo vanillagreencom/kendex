@@ -500,6 +500,10 @@ fn create(
         &project,
         &Chosen {
             name: name.to_owned(),
+            // The reading this run printed and asked about. A project that
+            // changed while the question stood refuses in core rather than
+            // saving something the person was never shown.
+            fingerprint: draft.fingerprint.clone(),
             members: kept.iter().map(|member| member.key.clone()).collect(),
             locals: locals.iter().map(|local| local.key.clone()).collect(),
             sides,

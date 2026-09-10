@@ -56,6 +56,12 @@ pub struct LicenseAnswer {
 #[serde(rename_all = "camelCase")]
 pub struct Chosen {
     pub name: String,
+    /// The [`super::Draft::fingerprint`] of the reading these answers were
+    /// made against. The save reads the project again and refuses when the
+    /// two differ, so nothing is captured that the person did not see.
+    /// Carried rather than defaulted: a caller that could leave it out
+    /// would save an unchecked selection.
+    pub fingerprint: String,
     /// Managed members to keep, by [`super::DraftMember::key`]. Anything
     /// the draft listed and this omits is a deliberate exclusion.
     pub members: Vec<String>,
@@ -86,10 +92,18 @@ struct Copying {
 ///
 /// The draft is read again here rather than trusted from the modal: a
 /// project that changed underneath must refuse, not save a selection that
-/// no longer describes it. Every byte is resolved before the index is
-/// written, so a refusal leaves neither an index entry nor a store.
+/// no longer describes it. The answers name the reading they were made
+/// against, and that is what the second reading is compared to — the
+/// hashes the copies are revalidated at come from this reading, so they
+/// match whatever is on disk now and could never notice on their own that
+/// what is on disk is not what was offered. Every byte is resolved before
+/// the index is written, so a refusal leaves neither an index entry nor a
+/// store.
 pub fn create_from_project(env: &Env, root: &std::path::Path, chosen: &Chosen) -> Result<Template> {
     let draft = draft_from_project(env, root)?;
+    if draft.fingerprint != chosen.fingerprint {
+        return Err(CoreError::TemplateDraftStale);
+    }
     let scope = Scope::Project {
         root: crate::paths::canonical(root).map_err(|e| CoreError::io(root, e))?,
     };
@@ -171,8 +185,11 @@ pub fn add_from_project(
     let scope = Scope::Project {
         root: crate::paths::canonical(root).map_err(|e| CoreError::io(root, e))?,
     };
+    // Its own reading, taken above and answered here in one breath: there
+    // is no modal between the two for the project to change under.
     let mut chosen = Chosen {
         name: template.name.clone(),
+        fingerprint: draft.fingerprint.clone(),
         ..Chosen::default()
     };
     for want in wanted {

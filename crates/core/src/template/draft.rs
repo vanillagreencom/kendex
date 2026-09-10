@@ -149,6 +149,11 @@ pub struct Draft {
     pub customizations: Customizations,
     /// Why the managed reading is short, when it is.
     pub incomplete: Option<DraftError>,
+    /// What the rows above offer, as one value. A save carries it back on
+    /// [`super::Chosen`] and the save's own reading refuses when the two
+    /// differ, so answers made against this draft cannot save something
+    /// else. See [`fingerprint`].
+    pub fingerprint: String,
 }
 
 /// Read a project and answer with everything the modal shows.
@@ -229,6 +234,7 @@ pub fn draft_from_project(env: &Env, root: &std::path::Path) -> Result<Draft> {
         .collect();
     Ok(Draft {
         project: crate::paths::slashed(root),
+        fingerprint: fingerprint(&members, &locals),
         suggested_name: root
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -241,6 +247,103 @@ pub fn draft_from_project(env: &Env, root: &std::path::Path) -> Result<Draft> {
             why: INCOMPLETE.to_owned(),
         }),
     })
+}
+
+/// The offer these rows make, as one value a save can be checked against.
+///
+/// Over what a save reads back off the draft and writes: each row's key,
+/// the switch it would be saved under, and the identity it was offered
+/// under — a copy's hash, a choice's hash and the sides it offers, a local
+/// package's hash. A member whose bytes changed between the modal opening
+/// and Save therefore changes this, and the save refuses instead of
+/// capturing bytes nobody looked at.
+///
+/// Not over what only the rows say for themselves — which package requires
+/// which, what was left out, whether the reading was short — because
+/// nothing a save writes comes from those, and a refusal there would stop
+/// a save the project has not actually changed under.
+///
+/// Every field is written length-prefixed: without that, two different
+/// offers could spell one string by moving a separator into a name or a
+/// path, and the check would pass over the difference it exists to find.
+fn fingerprint(members: &[DraftMember], locals: &[DraftLocal]) -> String {
+    let mut text = String::new();
+    for member in members {
+        field(&mut text, "member");
+        field(&mut text, &member.key);
+        field(&mut text, switch(member.enabled));
+        match &member.origin {
+            DraftOrigin::Marketplace { repo, source, rev } => {
+                field(&mut text, "marketplace");
+                field(&mut text, repo);
+                field(&mut text, source);
+                maybe(&mut text, rev.as_deref());
+            }
+            DraftOrigin::Copy { at, hash } => {
+                field(&mut text, "copy");
+                field(&mut text, at);
+                field(&mut text, hash);
+            }
+            DraftOrigin::Choice {
+                repo,
+                source,
+                rev,
+                at,
+                hash,
+                why,
+                license,
+                license_recognized,
+            } => {
+                field(&mut text, "choice");
+                field(&mut text, repo);
+                field(&mut text, source);
+                maybe(&mut text, rev.as_deref());
+                maybe(&mut text, at.as_deref());
+                maybe(&mut text, hash.as_deref());
+                maybe(&mut text, why.as_deref());
+                maybe(&mut text, license.as_deref());
+                field(&mut text, switch(*license_recognized));
+            }
+            DraftOrigin::Unresolved { why } => {
+                field(&mut text, "unresolved");
+                field(&mut text, why);
+            }
+        }
+    }
+    for local in locals {
+        field(&mut text, "local");
+        field(&mut text, &local.key);
+        field(&mut text, &local.at);
+        field(&mut text, &local.hash);
+    }
+    crate::hash::hash_bytes(text.as_bytes())
+}
+
+/// One field of a fingerprint's text, length-prefixed.
+fn field(text: &mut String, value: &str) {
+    use std::fmt::Write as _;
+    let _ = write!(text, "{}:{value}", value.len());
+}
+
+/// A field a row may not carry, written so that absent and present-and-empty
+/// are two different offers.
+fn maybe(text: &mut String, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            field(text, "some");
+            field(text, value);
+        }
+        None => field(text, "none"),
+    }
+}
+
+/// A boolean as a field, spelled rather than rendered, so the text says
+/// what the bit means.
+fn switch(on: bool) -> &'static str {
+    match on {
+        true => "on",
+        false => "off",
+    }
 }
 
 /// Why this package cannot be a template member at all, or `None` where

@@ -9,6 +9,7 @@
 //! whole-file settings write. The lock, the wait and the atomic write are
 //! [`crate::settings`]'s, called rather than re-spelled.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -56,17 +57,34 @@ pub(super) fn load(env: &Env) -> Result<Index> {
 /// the root that holds them, asked at the load boundary rather than at
 /// each use so there is one place to be right and no way past it.
 ///
+/// One id belongs to one template, asked here too: two rows under one id
+/// resolve to one store folder, where each template's copies are the
+/// other's to replace and a delete of either takes both.
+///
+/// Judged on [`crate::names::fold`], the spelling two names collide under,
+/// because macOS and Windows hand one folder to two ids that differ only
+/// in case or in how an accent is written. `fresh_id` mints an unused id,
+/// so a repeat is a hand-edited file.
+///
 /// The whole file refuses rather than the one row being dropped: a
 /// skipped row is a template that silently stops existing, and the next
 /// write would save the index back without it.
 fn holdable(path: &Path, index: Index) -> Result<Index> {
+    let unusable = |id: &str, why: String| CoreError::TemplateIndexUnusable {
+        path: path.to_path_buf(),
+        id: id.to_owned(),
+        why,
+    };
+    let mut held: BTreeSet<String> = BTreeSet::new();
     for template in &index.templates {
         if let Some(why) = crate::names::segment_problem(&template.id) {
-            return Err(CoreError::TemplateIndexUnusable {
-                path: path.to_path_buf(),
-                id: template.id.clone(),
-                why,
-            });
+            return Err(unusable(&template.id, why));
+        }
+        if !held.insert(crate::names::fold(&template.id)) {
+            return Err(unusable(
+                &template.id,
+                "two templates are recorded under this store folder, so each one's copies are the other's to replace".to_owned(),
+            ));
         }
     }
     Ok(index)

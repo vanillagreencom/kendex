@@ -183,6 +183,115 @@ fn a_licence_file_already_in_the_store_is_reused_or_refuses() {
     );
 }
 
+/// A licence file's path inside the store answers the same rule a copy's
+/// does, asked at the write before a byte of the copy moves.
+///
+/// The source component of that path is a subscription alias the person
+/// typed — `kendex subscribe --name`, the app's subscribe field, or a
+/// project's `kendex.toml` table key — so joined unexamined it spells its
+/// own destination and licence bytes land outside the store, where the
+/// prune that reads this store back would never see them. The producer
+/// refuses too, at `author::import::notice_path`; this is the boundary
+/// those paths may not leave whatever built them.
+///
+/// Driven over the spellings directly rather than over a platform, the way
+/// the recorded-path rows above are.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_notice_path_that_would_leave_the_store_is_refused_before_the_copy_moves() {
+    let (_tmp, env) = home();
+    let files = vec![(std::path::PathBuf::from("SKILL.md"), b"body".to_vec())];
+    let store = env.template_store_dir();
+    for spelling in [
+        "NOTICES/../../victim/LICENSE",
+        r"NOTICES/..ictim/LICENSE",
+        "NOTICES//LICENSE",
+        "/victim/LICENSE",
+        "NOTICES/C:victim/LICENSE",
+        "NOTICES/. /LICENSE",
+        "NOTICES/cat/NUL",
+    ] {
+        let notices = vec![(
+            std::path::PathBuf::from(spelling),
+            b"MIT License\n".to_vec(),
+        )];
+        let refused =
+            super::super::store::write(&env, "mine", ItemKind::Skill, "gh", &files, &notices);
+        assert!(
+            matches!(refused, Err(CoreError::TemplateCopyUnreadable { .. })),
+            "{spelling:?} should be refused: {refused:?}"
+        );
+        // Nothing of either half landed: not the terms at what the path
+        // resolves to, and not the copy, whose slot the refusal beat.
+        assert!(
+            !store.join("victim").exists(),
+            "{spelling:?} wrote outside the store"
+        );
+        assert!(
+            !store.join("mine/skills/gh").exists(),
+            "{spelling:?} moved the copy before refusing"
+        );
+    }
+
+    // The inverse: the path the import actually builds still writes.
+    let notices = vec![(
+        std::path::PathBuf::from("NOTICES/cat/LICENSE"),
+        b"MIT License\n".to_vec(),
+    )];
+    super::super::store::write(&env, "mine", ItemKind::Skill, "gh", &files, &notices).unwrap();
+    assert_eq!(
+        fs::read_to_string(store.join("mine/NOTICES/cat/LICENSE")).unwrap(),
+        "MIT License\n"
+    );
+}
+
+/// One store folder belongs to one template, and an index recording two
+/// under it is refused on the way in.
+///
+/// `store::root` joins the recorded id, so two rows under one id are one
+/// folder: each template's copies are the other's to replace, and a delete
+/// of either takes both. Judged on the spelling two names collide under,
+/// because macOS and Windows hand one folder to two ids that differ only in
+/// case.
+///
+/// Refused whole rather than deduplicated, for the reason the per-id check
+/// gives: a skipped row is a template that silently stops existing, and the
+/// next write saves the index back without it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_index_recording_two_templates_under_one_store_folder_is_refused() {
+    let (_tmp, env) = home();
+    let saved = |first: &str, second: &str| {
+        let file = env.templates_file();
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(
+            &file,
+            format!(
+                "[[templates]]\nname = \"Mine\"\nid = \"{first}\"\n\
+                 [[templates]]\nname = \"Theirs\"\nid = \"{second}\"\n"
+            ),
+        )
+        .unwrap();
+    };
+    for (first, second) in [("mine", "mine"), ("mine", "Mine"), ("cafe\u{301}", "café")] {
+        saved(first, second);
+        let listed = list(&env);
+        let Err(CoreError::TemplateIndexUnusable { id, .. }) = &listed else {
+            panic!("{first} beside {second} should be refused on load: {listed:?}");
+        };
+        assert_eq!(id, second, "the refusal must name the repeated id");
+        // And nothing acts on it: every verb reads the index first.
+        assert!(matches!(
+            delete(&env, "Mine"),
+            Err(CoreError::TemplateIndexUnusable { .. })
+        ));
+    }
+
+    // The inverse: two templates with folders of their own load.
+    saved("mine", "theirs");
+    assert_eq!(list(&env).unwrap().len(), 2);
+}
+
 /// The folder a template's store lives in is one path segment, and the
 /// index is asked for it on the way in.
 ///

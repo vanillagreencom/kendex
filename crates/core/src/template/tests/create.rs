@@ -195,8 +195,8 @@ fn the_draft_includes_every_managed_package_and_offers_the_local_ones() {
 #[allow(clippy::unwrap_used)]
 fn the_local_opt_in_decides_whether_unmanaged_packages_are_copied() {
     let project = seeded();
-    let managed: Vec<String> = draft_from_project(&project.env, &project.root)
-        .unwrap()
+    let draft = draft_from_project(&project.env, &project.root).unwrap();
+    let managed: Vec<String> = draft
         .members
         .iter()
         .map(|member| member.key.clone())
@@ -208,6 +208,7 @@ fn the_local_opt_in_decides_whether_unmanaged_packages_are_copied() {
         &Chosen {
             name: "Off".to_owned(),
             members: managed.clone(),
+            fingerprint: draft.fingerprint.clone(),
             ..Chosen::default()
         },
     )
@@ -221,6 +222,7 @@ fn the_local_opt_in_decides_whether_unmanaged_packages_are_copied() {
             name: "On".to_owned(),
             members: managed,
             locals: vec!["skill:stray".to_owned(), "agent:drifter".to_owned()],
+            fingerprint: draft.fingerprint,
             ..Chosen::default()
         },
     )
@@ -287,6 +289,7 @@ fn the_originating_project_is_byte_identical_after_success_and_after_a_refusal()
             members: managed.clone(),
             locals: vec!["skill:stray".to_owned(), "agent:drifter".to_owned()],
             customizations: true,
+            fingerprint: draft.fingerprint.clone(),
             ..Chosen::default()
         },
     )
@@ -306,6 +309,7 @@ fn the_originating_project_is_byte_identical_after_success_and_after_a_refusal()
                 name: "Kept".to_owned(),
                 members: managed,
                 locals: vec!["skill:stray".to_owned()],
+                fingerprint: draft.fingerprint.clone(),
                 ..Chosen::default()
             },
         ),
@@ -326,8 +330,8 @@ fn the_originating_project_is_byte_identical_after_success_and_after_a_refusal()
 #[allow(clippy::unwrap_used)]
 fn the_customization_opt_in_carries_package_settings_only() {
     let project = seeded();
-    let managed: Vec<String> = draft_from_project(&project.env, &project.root)
-        .unwrap()
+    let draft = draft_from_project(&project.env, &project.root).unwrap();
+    let managed: Vec<String> = draft
         .members
         .iter()
         .map(|member| member.key.clone())
@@ -339,6 +343,7 @@ fn the_customization_opt_in_carries_package_settings_only() {
         &Chosen {
             name: "Off".to_owned(),
             members: managed.clone(),
+            fingerprint: draft.fingerprint.clone(),
             ..Chosen::default()
         },
     )
@@ -352,6 +357,7 @@ fn the_customization_opt_in_carries_package_settings_only() {
             name: "On".to_owned(),
             members: managed,
             customizations: true,
+            fingerprint: draft.fingerprint,
             ..Chosen::default()
         },
     )
@@ -407,6 +413,7 @@ fn an_edited_marketplace_package_requires_a_choice_and_licence_evidence() {
         name: name.to_owned(),
         members: vec!["skill:gh".to_owned()],
         sides,
+        fingerprint: draft.fingerprint.clone(),
         ..Chosen::default()
     };
     // The licence evidence travels inside the copy side, so a copy cannot
@@ -527,6 +534,7 @@ fn a_pi_extension_the_project_declares_is_left_out_with_its_reason() {
                 .iter()
                 .map(|member| member.key.clone())
                 .collect(),
+            fingerprint: draft.fingerprint.clone(),
             ..Chosen::default()
         },
     )
@@ -575,12 +583,65 @@ fn a_package_whose_name_no_harness_would_accept_is_left_out() {
     assert!(gone.why.contains("flag"), "{}", gone.why);
 }
 
+/// A save names the reading its answers were made against, and a project
+/// that changed since then refuses.
+///
+/// The hashes the copies are revalidated at come out of the save's own
+/// second reading, so they match whatever is on disk at that moment and
+/// could never notice on their own that what is on disk is not what was
+/// offered. Without the reading's own identity travelling with the answers,
+/// a package edited between the modal opening and Save is captured
+/// silently — bytes nobody looked at, under a template the person believes
+/// holds what they saw.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_save_answering_an_older_reading_of_the_project_refuses() {
+    let project = seeded();
+    let offered = draft_from_project(&project.env, &project.root).unwrap();
+    let chosen = |fingerprint: &str| Chosen {
+        name: "Mine".to_owned(),
+        members: vec!["skill:house-style".to_owned()],
+        fingerprint: fingerprint.to_owned(),
+        ..Chosen::default()
+    };
+
+    // The copy is edited while the modal stands. The bytes the save would
+    // take are not the bytes the reading offered.
+    skill(
+        &project
+            .root
+            .join(crate::source::LOCAL_SOURCE_DIR)
+            .join("skills"),
+        "house-style",
+        "edited after the modal opened",
+    );
+    let refused = create_from_project(&project.env, &project.root, &chosen(&offered.fingerprint));
+    assert!(
+        matches!(refused, Err(CoreError::TemplateDraftStale)),
+        "a save against the older reading must refuse: {refused:?}"
+    );
+    assert!(
+        list(&project.env).unwrap().is_empty(),
+        "the refusal saved a template"
+    );
+
+    // The inverse: answers made against what the project offers now save,
+    // and what they save is the bytes that reading offered.
+    let now = draft_from_project(&project.env, &project.root).unwrap();
+    assert_ne!(now.fingerprint, offered.fingerprint);
+    let saved =
+        create_from_project(&project.env, &project.root, &chosen(&now.fingerprint)).unwrap();
+    let held = stored_file(&project.env, &saved, "skills/house-style/SKILL.md").unwrap();
+    assert!(held.contains("edited after the modal opened"), "{held}");
+}
+
 /// A choice naming something the draft does not list is refused, and so is
 /// a selection with nothing in it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_selection_is_checked_against_the_project_it_claims_to_come_from() {
     let project = seeded();
+    let draft = draft_from_project(&project.env, &project.root).unwrap();
     assert!(matches!(
         create_from_project(
             &project.env,
@@ -588,6 +649,7 @@ fn a_selection_is_checked_against_the_project_it_claims_to_come_from() {
             &Chosen {
                 name: "Invented".to_owned(),
                 members: vec!["skill:never-existed".to_owned()],
+                fingerprint: draft.fingerprint.clone(),
                 ..Chosen::default()
             },
         ),
@@ -599,6 +661,7 @@ fn a_selection_is_checked_against_the_project_it_claims_to_come_from() {
             &project.root,
             &Chosen {
                 name: "Empty".to_owned(),
+                fingerprint: draft.fingerprint,
                 ..Chosen::default()
             },
         ),
@@ -689,6 +752,9 @@ fn a_create_whose_rollback_also_fails_reports_both_causes() {
         &Chosen {
             name: "Mine".to_owned(),
             locals: vec!["skill:stray".to_owned()],
+            fingerprint: draft_from_project(&project.env, &project.root)
+                .unwrap()
+                .fingerprint,
             ..Chosen::default()
         },
     );
@@ -726,11 +792,13 @@ fn replacing_a_member_takes_the_terms_only_it_owned() {
         confirmed: true,
         basis: None,
     };
+    let draft = draft_from_project(&project.env, &project.root).unwrap();
     let template = create_from_project(
         &project.env,
         &project.root,
         &Chosen {
             name: "Licensed".to_owned(),
+            fingerprint: draft.fingerprint,
             members: vec!["skill:gh".to_owned()],
             sides: BTreeMap::from([(
                 "skill:gh".to_owned(),

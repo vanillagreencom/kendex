@@ -99,13 +99,25 @@ fn held_paths(template: &Template) -> impl Iterator<Item = &str> {
 /// neither, so an id carrying one is an index somebody edited, and the
 /// rule already says so.
 pub fn copy_path(env: &Env, template: &Template, copy: &str) -> Result<PathBuf> {
-    let mut path = root(env, &template.id);
-    for segment in copy.split('/') {
+    inside(&root(env, &template.id), copy).map_err(|problem| CoreError::TemplateCopyUnreadable {
+        copy: copy.to_owned(),
+        why: format!("the copy is recorded at a path this store cannot hold: {problem}"),
+    })
+}
+
+/// One store-relative path resolved under `root`, or why a segment of it is
+/// not one this store may hold.
+///
+/// The rule [`copy_path`] documents, in one place because a second caller
+/// asks it: the notice writes in [`write()`] resolve their targets here too.
+/// The path is built from the segments checked here rather than by joining
+/// the string, so nothing unexamined reaches the filesystem, and the
+/// caller spells the refusal its own site gives.
+fn inside(root: &Path, relative: &str) -> std::result::Result<PathBuf, String> {
+    let mut path = root.to_path_buf();
+    for segment in relative.split('/') {
         if let Some(problem) = crate::names::segment_problem(segment) {
-            return Err(CoreError::TemplateCopyUnreadable {
-                copy: copy.to_owned(),
-                why: format!("the copy is recorded at a path this store cannot hold: {problem}"),
-            });
+            return Err(problem);
         }
         path.push(segment);
     }
@@ -144,12 +156,26 @@ pub(super) fn write(
         });
     }
     let root = root(env, id);
+    // Where a licence file is allowed to land, asked of every segment of
+    // every one of them before any of them is written. The relative path
+    // carries a subscription alias the person typed, and this is the
+    // boundary it may not leave: a path built by joining it unexamined
+    // would put licence bytes outside the store, and the prune that reads
+    // this store back would never see them.
+    let notice_target = |relative: &Path| -> Result<PathBuf> {
+        inside(&root, &crate::paths::slashed(relative)).map_err(|problem| {
+            CoreError::TemplateCopyUnreadable {
+                copy: slot_id(kind, name),
+                why: format!("the terms are recorded at a path this store cannot hold: {problem}"),
+            }
+        })
+    };
     // The terms first, before a byte of the copy moves: a licence file
     // already there under different bytes refuses, and a refusal that
     // arrived after the slot had been replaced would have taken the copy
     // this template held with it.
     for (relative, bytes) in notices {
-        let target = root.join(relative);
+        let target = notice_target(relative)?;
         match crate::author::import::notice_standing(&target, bytes) {
             crate::author::import::NoticeStanding::Absent
             | crate::author::import::NoticeStanding::Same => {}
@@ -193,7 +219,7 @@ pub(super) fn write(
     // already there are the same bytes — the loop above refused anything
     // else — so one licence file two copies came under is written once.
     for (relative, bytes) in notices {
-        let target = root.join(relative);
+        let target = notice_target(relative)?;
         if crate::author::import::notice_standing(&target, bytes)
             == crate::author::import::NoticeStanding::Absent
         {

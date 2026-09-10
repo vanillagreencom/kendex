@@ -188,6 +188,10 @@ export function CreateTemplateDialog({
       locals: [...locals],
       sides,
       customizations,
+      // The reading these answers were made against. Core reads the
+      // project again and refuses when it no longer offers this, so a
+      // package edited while the modal stood is never captured unseen.
+      fingerprint: draft.fingerprint,
     };
     void createFromProject(project, chosen).then((ok) => {
       if (!ok) return;

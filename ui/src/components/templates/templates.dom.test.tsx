@@ -128,6 +128,7 @@ const DRAFT: Draft_Serialize = {
   ],
   customizations: {},
   incomplete: null,
+  fingerprint: "offer-1",
 };
 
 beforeEach(() => {
@@ -327,6 +328,7 @@ describe("creating a template from a project", () => {
         locals: [],
         sides: {},
         customizations: false,
+        fingerprint: "offer-1",
       },
     );
   });
@@ -369,6 +371,7 @@ describe("creating a template from a project", () => {
         locals: ["skill:stray"],
         sides: {},
         customizations: true,
+        fingerprint: "offer-1",
       },
     );
   });
@@ -642,6 +645,7 @@ describe("an edited marketplace package in the modal", () => {
           },
         },
         customizations: false,
+        fingerprint: "offer-1",
       },
     );
   });

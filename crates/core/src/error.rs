@@ -610,10 +610,12 @@ pub enum CoreError {
     TemplateMemberUnavailable { name: String, why: String },
 
     /// The saved-selection index names a template's store folder with
-    /// something that is not one path segment. Refused whole rather than
-    /// skipped: a skipped row is a template that silently stops existing,
-    /// and the folder that value names may be somewhere a delete must
-    /// never reach.
+    /// something that is not one path segment, or names one folder for two
+    /// templates. Refused whole rather than skipped: a skipped row is a
+    /// template that silently stops existing, the folder a bad value names
+    /// may be somewhere a delete must never reach, and one folder held by
+    /// two templates is each one's copies waiting to be replaced by the
+    /// other's.
     #[error(
         "{}: a template's store folder is named '{}' — {why}",
         crate::names::shown(&path.display().to_string()),
@@ -624,6 +626,15 @@ pub enum CoreError {
         id: String,
         why: String,
     },
+
+    /// The project changed between the reading a save's answers were made
+    /// against and the save's own reading of it. Refused rather than
+    /// saved: the answers describe packages that are no longer the ones
+    /// offered, and the save would capture bytes nobody looked at.
+    #[error(
+        "this project changed while the template was being set up — read it again and choose once more"
+    )]
+    TemplateDraftStale,
 
     /// A copy the template's store no longer holds, or holds in a form
     /// that cannot be read back.

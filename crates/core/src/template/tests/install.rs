@@ -24,6 +24,7 @@ fn template_of(project: &super::create::Project, name: &str) -> Template {
                 .collect(),
             locals: vec!["skill:stray".to_owned()],
             customizations: true,
+            fingerprint: draft.fingerprint.clone(),
             ..Chosen::default()
         },
     )
@@ -390,6 +391,7 @@ fn a_member_saved_switched_off_installs_switched_off() {
                 .filter(|member| member.name == "gh" || member.name == "note")
                 .map(|member| member.key.clone())
                 .collect(),
+            fingerprint: draft.fingerprint.clone(),
             ..Chosen::default()
         },
     )
@@ -451,6 +453,7 @@ fn a_carried_customization_reaches_the_installed_file() {
                 .map(|member| member.key.clone())
                 .collect(),
             customizations: true,
+            fingerprint: draft.fingerprint.clone(),
             ..Chosen::default()
         },
     )
@@ -547,6 +550,9 @@ fn a_render_that_refuses_after_the_copy_committed_reports_the_copy() {
         &Chosen {
             name: "Local only".to_owned(),
             locals: vec!["skill:stray".to_owned()],
+            fingerprint: draft_from_project(&project.env, &project.root)
+                .unwrap()
+                .fingerprint,
             ..Chosen::default()
         },
     )
@@ -611,6 +617,9 @@ fn removing_the_last_licensed_copy_takes_its_notices_with_it() {
         &Chosen {
             name: "Licensed".to_owned(),
             members: vec!["skill:gh".to_owned()],
+            fingerprint: draft_from_project(&project.env, &project.root)
+                .unwrap()
+                .fingerprint,
             sides: std::collections::BTreeMap::from([(
                 "skill:gh".to_owned(),
                 Side::Copy {
@@ -738,6 +747,9 @@ fn a_destination_holding_different_terms_refuses_rather_than_skipping() {
         &Chosen {
             name: "Licensed".to_owned(),
             members: vec!["skill:gh".to_owned()],
+            fingerprint: draft_from_project(&project.env, &project.root)
+                .unwrap()
+                .fingerprint,
             sides: std::collections::BTreeMap::from([(
                 "skill:gh".to_owned(),
                 Side::Copy {
