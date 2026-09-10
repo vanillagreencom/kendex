@@ -590,97 +590,102 @@ fn a_program_that_cannot_be_spawned_says_it_never_started() {
     assert!(!why.is_empty(), "the reason it could not start is empty");
 }
 
-/// A script somebody still holds open for writing cannot start — Linux
-/// answers `ETXTBSY`, macOS runs it — and the holder is usually another
-/// thread's spawn mid-exec, gone within the millisecond. Released inside
-/// the bound, the run goes through as if nothing happened; held past it,
-/// the refusal is the spawn's, reported at the bound rather than after a
-/// run that never was.
+/// How long a test waits on the run before calling it hung. Every other
+/// wait in these cases is on the run's own seam, never a clock.
+#[cfg(target_os = "linux")]
+const WATCHDOG: Duration = Duration::from_secs(10);
+
+/// A script written and still held open for writing, the way a sibling
+/// thread's spawn holds one mid-exec: Linux answers `ETXTBSY` until the
+/// handle goes, macOS runs it regardless. The handle is the test's to let
+/// go of.
+#[cfg(target_os = "linux")]
+fn held_script(tmp: &tempfile::TempDir, body: &str) -> (std::path::PathBuf, fs::File) {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    let script = tmp.path().join("script");
+    let mut writer = fs::File::create(&script).unwrap();
+    writeln!(writer, "#!/bin/sh\n{body}").unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    (script, writer)
+}
+
+/// A start refused because the file is still open for writing is made
+/// again once the handle goes, and given up at the bound if it never
+/// does. The handle goes only after the run has reported a refusal, so
+/// the start that succeeds is a retry and never a first attempt that
+/// happened to find the file free.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_script_still_open_for_writing_is_retried_until_the_bound() {
-    use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
-
     let rows = [
-        (
-            "released before the bound",
-            Some(Duration::from_millis(100)),
-        ),
-        ("held past the bound", None),
+        ("released after a refusal", true),
+        ("held past the bound", false),
     ];
-    for (label, released_after) in rows {
+    for (label, released) in rows {
         let tmp = tempfile::tempdir().unwrap();
-        let script = tmp.path().join("script");
-        let mut writer = fs::File::create(&script).unwrap();
-        writer.write_all(b"#!/bin/sh\necho ran\n").unwrap();
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
-        let mut writer = Some(writer);
-        let releaser = released_after.map(|after| {
-            let writer = writer.take();
-            std::thread::spawn(move || {
-                std::thread::sleep(after);
-                drop(writer);
-            })
+        let (script, writer) = held_script(&tmp, "echo ran");
+        let (refused, refusals) = std::sync::mpsc::channel();
+        let hardened = Hardened::program(script.to_str().unwrap(), &[])
+            .timeout(Duration::from_millis(500))
+            .refused_to(refused);
+        let holder = std::thread::spawn(move || {
+            refusals
+                .recv_timeout(WATCHDOG)
+                .expect("a start was refused inside the watchdog");
+            if !released {
+                // Held until the run has given up: its seam goes with it.
+                while refusals.recv_timeout(WATCHDOG).is_ok() {}
+            }
+            drop(writer);
         });
 
         let started = Instant::now();
-        let result = Hardened::program(script.to_str().unwrap(), &[])
-            .timeout(Duration::from_millis(500))
-            .run();
-        assert!(
-            started.elapsed() < Duration::from_secs(2),
-            "{label}: the start was retried past the bound: {:?}",
-            started.elapsed()
-        );
-        match (released_after, result) {
-            (Some(_), Ok(output)) => assert_eq!(output.stdout, b"ran\n", "{label}"),
-            (None, Err(CoreError::CommandNotStarted { .. })) => {}
+        let result = hardened.run();
+        assert!(started.elapsed() < WATCHDOG, "{label}: hung");
+        holder.join().unwrap();
+        match (released, result) {
+            (true, Ok(output)) => assert_eq!(output.stdout, b"ran\n", "{label}"),
+            (false, Err(CoreError::CommandNotStarted { .. })) => {}
             (_, result) => panic!("{label}: {result:?}"),
-        }
-        drop(writer);
-        if let Some(releaser) = releaser {
-            releaser.join().unwrap();
         }
     }
 }
 
 /// The bound is the whole contract, so a start refused inside it is
 /// never made after it. The script marks its own run, which tells "never
-/// started" from "started and lost": the writer lets go after the bound
-/// but inside the poll the retry sleeps, the one window in which a retry
-/// that consulted the clock only on refusal would start it.
+/// started" from "started and lost".
+///
+/// The handle goes one bound after the run reported its first refusal.
+/// The refusal came after the clock was set, so that is past the deadline
+/// whatever the scheduler did in between — and inside the poll a retry
+/// that consulted the clock only on refusal would sleep through before
+/// starting the script.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_start_refused_inside_the_bound_is_not_made_after_it() {
-    use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
-
     let tmp = tempfile::tempdir().unwrap();
-    let script = tmp.path().join("script");
     let marker = tmp.path().join("ran");
-    let mut writer = fs::File::create(&script).unwrap();
-    writeln!(writer, "#!/bin/sh\n: > {}", marker.display()).unwrap();
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
-    let bound = POLL / 5;
-    let released_after = POLL * 4 / 5;
-    let hardened = Hardened::program(script.to_str().unwrap(), &[]).timeout(bound);
-
-    let started = Instant::now();
-    let releaser = std::thread::spawn(move || {
-        std::thread::sleep(released_after);
+    let (script, writer) = held_script(&tmp, &format!(": > {}", marker.display()));
+    let bound = POLL / 2;
+    let (refused, refusals) = std::sync::mpsc::channel();
+    let hardened = Hardened::program(script.to_str().unwrap(), &[])
+        .timeout(bound)
+        .refused_to(refused);
+    let holder = std::thread::spawn(move || {
+        refusals
+            .recv_timeout(WATCHDOG)
+            .expect("a start was refused inside the watchdog");
+        std::thread::sleep(bound);
         drop(writer);
     });
-    let result = hardened.run();
-    let ended = started.elapsed();
-    releaser.join().unwrap();
 
+    let started = Instant::now();
+    let result = hardened.run();
+    assert!(started.elapsed() < WATCHDOG, "hung");
+    holder.join().unwrap();
     let Err(CoreError::CommandNotStarted { .. }) = result else {
         panic!("a start after the bound: {result:?}");
     };
-    assert!(
-        ended < POLL,
-        "reported past the poll, not at the bound: {ended:?}"
-    );
     assert!(!marker.exists(), "the script ran after the bound");
 }

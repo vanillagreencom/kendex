@@ -155,6 +155,12 @@ pub struct Hardened {
     /// service rather than a local tool — a hostile server must not be
     /// able to stream the process out of memory. None = uncapped.
     max_output: Option<usize>,
+    /// Test seam: told once per start refused with `ETXTBSY`, so a test
+    /// holding a script open for writing lets go only after the retry
+    /// path has been taken, synchronised on the run rather than on a
+    /// clock.
+    #[cfg(test)]
+    refused: Option<std::sync::mpsc::Sender<()>>,
 }
 
 impl Hardened {
@@ -198,6 +204,12 @@ impl Hardened {
             match self.command.spawn() {
                 Ok(child) => break child,
                 Err(error) if error.kind() == io::ErrorKind::ExecutableFileBusy => {
+                    #[cfg(test)]
+                    if let Some(refused) = &self.refused {
+                        // A test that has heard what it waited for may
+                        // have hung up; that is its business, not a fault.
+                        let _ = refused.send(());
+                    }
                     std::thread::sleep(
                         POLL.min(deadline.saturating_duration_since(Instant::now())),
                     );
@@ -329,12 +341,20 @@ impl Hardened {
             label,
             timeout: DEFAULT_TIMEOUT,
             max_output: None,
+            #[cfg(test)]
+            refused: None,
         }
     }
 
     #[cfg(test)]
     fn program(program: &str, args: &[&str]) -> Hardened {
         Hardened::new(program, owned(args))
+    }
+
+    #[cfg(test)]
+    fn refused_to(mut self, refused: std::sync::mpsc::Sender<()>) -> Hardened {
+        self.refused = Some(refused);
+        self
     }
 }
 
