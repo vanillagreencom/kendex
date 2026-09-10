@@ -100,6 +100,79 @@ pub fn repo_effects_apply(scope: Scope, declared: DeclaredEffects) -> Result<Sai
     apply(&env, &scope, &declared)
 }
 
+/// One project's standing on one installed package's declared setup, and
+/// the block a person reads before changing it.
+///
+/// Both halves in one answer, because a card that offers Set up needs the
+/// disclosure the moment it is pressed and a second round trip there would
+/// draw the dialog over a block read after the state that raised it. The
+/// disclosure is the same value an install hands the effects dialog, so
+/// the window asks one question about repository changes wherever it
+/// arose.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageSetup {
+    pub status: kendex_core::repo_effects::SetupStatus,
+    /// What running the setup would change, or null where the package
+    /// declares nothing about the repository at all — which is every
+    /// package but a few, and the state a card draws no setup row for.
+    pub disclosure: Option<kendex_core::repo_effects::Disclosure>,
+}
+
+/// Read one installed package's declared setup in one project: what it
+/// says it does, and whether it is doing it.
+///
+/// The declaration comes off the tree this scope actually rendered rather
+/// than from the window, which is the same rule [`apply`] states: a root
+/// the caller chose is a check against the caller's own answer.
+///
+/// `ask` is who wants it, and it decides whether the package's script may
+/// run: a page drawing itself gets the check only where kendex recorded
+/// arming the effect, and a person pressing the control that asks is their
+/// own licence. The window sends the second only from that control.
+///
+/// A package that declares nothing answers `None` throughout rather than
+/// an error. Almost every package is inert, and a card asks this of every
+/// place it draws.
+pub fn setup(
+    env: &Env,
+    scope: &Scope,
+    name: &str,
+    ask: kendex_core::repo_effects::Ask,
+) -> Result<PackageSetup, String> {
+    let Some(declared) = kendex_core::engine::installed_declaration(env, scope, name)
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(PackageSetup {
+            status: kendex_core::repo_effects::SetupStatus::not_declared(),
+            disclosure: None,
+        });
+    };
+    let status = kendex_core::repo_effects::status(scope, &declared, ask);
+    // The block against the scope as it stands now, so a companion
+    // installed since the effect was declined counts as installed. One
+    // declaration in, so at most one disclosure out; a package the offer
+    // withheld has no block to show and the status carries the reason the
+    // repository could not be read.
+    let offers = kendex_core::repo_effects::offers_for(env, scope, std::slice::from_ref(&declared))
+        .map_err(|error| error.to_string())?;
+    Ok(PackageSetup {
+        status,
+        disclosure: offers.shown.into_iter().next(),
+    })
+}
+
+#[tauri::command(async)]
+#[specta::specta]
+pub fn package_setup(
+    scope: Scope,
+    name: String,
+    ask: kendex_core::repo_effects::Ask,
+) -> Result<PackageSetup, String> {
+    let env = Env::detect().map_err(|error| error.to_string())?;
+    setup(&env, &scope, &name, ask)
+}
+
 /// Why a report did not get written.
 ///
 /// Two, because the caller has to be able to tell them apart. The editor

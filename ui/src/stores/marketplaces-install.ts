@@ -97,6 +97,13 @@ export interface InstallActions {
   pendingEffects: PendingEffects | null;
   applyRepoEffect: () => Promise<boolean>;
   declineRepoEffect: () => void;
+  /** Put one package's repository-effect block in front of the reader,
+   *  from a surface that did not just install it — the package page's
+   *  Set up and Repair. The same line, the same dialog and the same yes:
+   *  a second dialog asking the same question in different words is how a
+   *  person learns to stop reading either. Added to the line rather than
+   *  replacing it, for the reason an install's own effects are. */
+  askToApply: (scope: Scope, disclosure: Disclosure) => void;
 }
 
 type Set = (partial: object | ((state: Installed) => object)) => void;
@@ -264,6 +271,11 @@ export function installActions(set: Set, get: Get): InstallActions {
         return true;
       });
     },
+
+    askToApply: (scope, disclosure) =>
+      set((state) => ({
+        pendingEffects: queued(state.pendingEffects, [{ scope, disclosure }]),
+      })),
 
     /** Leave the package installed and its effect unapplied — a state,
      *  not a failure. */

@@ -186,8 +186,34 @@ pub(crate) fn relay(output: &std::process::Output) -> GuardReport {
 }
 
 /// Arm the shims: the package's own installer, in this repository.
+///
+/// Where this package's arming record lives, asked of the one function
+/// that answers it.
+///
+/// The shims and the helper this package installs sit in the hooks
+/// directory under the common git directory, which every linked work tree
+/// of the repository commits through — so the effect reaches all of them
+/// and the record does too. [`locally_armed`] reads the helper from the
+/// same directory for the same reason.
+fn record_dir(repo: &Repo) -> &Path {
+    crate::repo_effects::armed::record_dir(repo, true)
+}
+
+/// A clean run records the arming the way the desktop's does, through
+/// `repo_effects::armed`. The two verbs mean one thing, so a repository
+/// armed at a terminal reports as armed on the package's page instead of
+/// waiting for somebody to ask the package again.
 pub fn install(dir: &Path) -> Result<GuardReport> {
-    installer(dir, &[], DEFAULT_TIMEOUT)
+    let report = installer(dir, &[], DEFAULT_TIMEOUT)?;
+    if report.code == 0
+        && let Ok(repo) = Repo::at(dir)
+    {
+        // Bookkeeping, never the verb's verdict: the shims are armed, and
+        // reporting a failed install over a record nobody reads for
+        // correctness would send somebody to repeat work that landed.
+        let _ = crate::repo_effects::armed::arm(record_dir(&repo), SKILL);
+    }
+    Ok(report)
 }
 
 /// Disarm: the package removes its helper and its own marked line, and
@@ -198,7 +224,13 @@ pub fn install(dir: &Path) -> Result<GuardReport> {
 /// could not run is exit 2 with the reason, never a quiet success about a
 /// repository nobody can commit to.
 pub fn uninstall(dir: &Path) -> Result<GuardReport> {
-    installer(dir, &["--uninstall"], DEFAULT_TIMEOUT)
+    let report = installer(dir, &["--uninstall"], DEFAULT_TIMEOUT)?;
+    if report.code == 0
+        && let Ok(repo) = Repo::at(dir)
+    {
+        let _ = crate::repo_effects::armed::disarm(record_dir(&repo), SKILL);
+    }
+    Ok(report)
 }
 
 /// Whether somebody standing at this repository ran the installer.
@@ -217,22 +249,15 @@ pub fn uninstall(dir: &Path) -> Result<GuardReport> {
 /// in a directory git never clones is still local state. What the file
 /// actually is remains the package's `--check` to say, and it does.
 ///
-/// `symlink_metadata`, so a dangling link still counts: something local
-/// made it, and the package's checker is the one that grades it.
-///
-/// Three states, not two. `NotFound` is an answer — nothing of this
-/// package's is there. Every other error is the absence of one, and it is
-/// returned rather than folded into `false`: an unreadable hooks directory
-/// answered `false` alongside a plain absence, and the caller turned that
-/// into a positive verdict about a repository whose commits were gated
-/// perfectly well.
+/// Three states and not two, and a dangling link counting as present:
+/// [`crate::fs::exists`] is the one reading of "is this file there", and
+/// the declared-setup license in `repo_effects::setup` asks it of a
+/// package's own declared evidence. An unreadable hooks directory once
+/// answered `false` alongside a plain absence here, and the caller turned
+/// that into a positive verdict about a repository whose commits were
+/// gated perfectly well.
 pub fn locally_armed(repo: &Repo) -> Result<bool> {
-    let helper = repo.common_dir.join("hooks").join(HELPER);
-    match std::fs::symlink_metadata(&helper) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(CoreError::io(&helper, error)),
-    }
+    crate::fs::exists(&repo.common_dir.join("hooks").join(HELPER))
 }
 
 /// Whether any copy of the package's installer is where this repository

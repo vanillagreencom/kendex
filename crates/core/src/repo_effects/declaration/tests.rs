@@ -11,7 +11,8 @@ fn block(field: &str) -> String {
 /// kendex cannot read; the ordinary written paths read, `.git/` included,
 /// which is the whole point of the mapping the refusals below guard; a
 /// script path that leaves the package is dropped, so nothing outside it
-/// is ever resolved as an installer.
+/// is ever resolved as an installer. The checker field has its own two
+/// tiers and its own case below.
 #[test]
 fn a_declaration_reads_whole() {
     let summary_only = RepoEffects {
@@ -19,6 +20,7 @@ fn a_declaration_reads_whole() {
         writes: Vec::new(),
         installer: None,
         uninstaller: None,
+        checker: None,
         removal: None,
         notes: Vec::new(),
         companions: Vec::new(),
@@ -31,6 +33,7 @@ fn a_declaration_reads_whole() {
                 writes: vec![".git/hooks/pre-commit".to_owned()],
                 installer: Some("scripts/install-git-hooks".to_owned()),
                 uninstaller: Some("scripts/install-git-hooks --uninstall".to_owned()),
+                checker: None,
                 removal: None,
                 notes: Vec::new(),
                 companions: Vec::new(),
@@ -68,7 +71,7 @@ fn a_declaration_reads_whole() {
     for (text, read) in rows {
         assert_eq!(
             declaration(&text),
-            Declaration::Effects(read.clone()),
+            Declaration::Effects(Box::new(read.clone())),
             "{text}"
         );
         assert_eq!(declared(&text), Some(read), "{text}");
@@ -101,7 +104,8 @@ fn a_declaration_reads_whole() {
 /// comma-split scalar read `.git/hooks/a,b` as two files that do not
 /// exist — every member says something, and a list with a member kendex
 /// cannot read is not a shorter list, because a short list of written
-/// paths reads as the complete account it is not.
+/// paths reads as the complete account it is not. The checker block is
+/// judged the same way, in its own case below.
 #[test]
 fn a_declaration_that_will_not_read_is_unreadable_and_absent_stays_absent() {
     let rows = [
@@ -193,6 +197,64 @@ fn a_declaration_that_will_not_read_is_unreadable_and_absent_stays_absent() {
     ];
     for (text, read) in rows {
         assert_eq!(declaration(&text), read, "{text}");
+        assert_eq!(declared(&text), None, "arming reads it as nothing: {text}");
+    }
+}
+
+/// The checker field, held to the same rule as the other two scripts: a
+/// scalar that stays inside the package reads, a wrong shape refuses the
+/// whole declaration, and a path that leaves the package is dropped while
+/// the rest stands.
+///
+/// Nothing else about it is the declaration's to say. What licenses
+/// running the checker is kendex's own record of having armed the effect
+/// (`repo_effects::armed`), so a declaration has no field to nominate one
+/// with and no way to widen when its own script runs.
+#[test]
+fn the_checker_is_a_script_field_like_the_others() {
+    let summary_only = RepoEffects {
+        summary: "s".to_owned(),
+        writes: Vec::new(),
+        installer: None,
+        uninstaller: None,
+        checker: None,
+        removal: None,
+        notes: Vec::new(),
+        companions: Vec::new(),
+    };
+    let read = [
+        (
+            block("  checker: scripts/check --read-only\n"),
+            RepoEffects {
+                checker: Some("scripts/check --read-only".to_owned()),
+                ..summary_only.clone()
+            },
+        ),
+        (block("  checker: ~\n"), summary_only.clone()),
+        (
+            block("  checker: ../../elsewhere/check\n"),
+            summary_only.clone(),
+        ),
+        (block("  checker: /bin/sh\n"), summary_only.clone()),
+        (
+            block("  checker: scripts/../../check\n"),
+            summary_only.clone(),
+        ),
+    ];
+    for (text, effects) in read {
+        assert_eq!(
+            declaration(&text),
+            Declaration::Effects(Box::new(effects.clone())),
+            "{text}"
+        );
+        assert_eq!(declared(&text), Some(effects), "{text}");
+    }
+    let refused = [
+        block("  checker:\n    - scripts/check\n"),
+        block("  checker:\n    script: scripts/check\n"),
+    ];
+    for text in refused {
+        assert_eq!(declaration(&text), Declaration::Unreadable, "{text}");
         assert_eq!(declared(&text), None, "arming reads it as nothing: {text}");
     }
 }

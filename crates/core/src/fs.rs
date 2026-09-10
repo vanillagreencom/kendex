@@ -168,6 +168,24 @@ fn follow_link(path: &Path) -> PathBuf {
     }
 }
 
+/// Whether a path is there, as three answers rather than two.
+///
+/// `Ok(false)` is a state that was read: nothing of that name is there.
+/// Every other error is the absence of a reading — an unreadable parent
+/// directory, a permission refusal — and it is returned rather than folded
+/// into `false`, which would turn a question nobody could ask into a
+/// positive claim about what is on disk.
+///
+/// `symlink_metadata`, so a dangling link counts: something made it, and
+/// what it points at is a different question from whether it is there.
+pub fn exists(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == NotFound => Ok(false),
+        Err(e) => Err(CoreError::io(path, e)),
+    }
+}
+
 pub fn read_if_exists(path: &Path) -> Result<Option<String>> {
     match fs::read_to_string(path) {
         Ok(text) => Ok(Some(text)),

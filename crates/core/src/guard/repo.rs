@@ -30,6 +30,11 @@ const NOT_A_REPOSITORY: [&str; 2] = ["not a git repository", "not a working tree
 pub struct Repo {
     pub worktree: PathBuf,
     pub common_dir: PathBuf,
+    /// This work tree's own git directory, canonical. The common dir for
+    /// the main work tree, and `<common>/worktrees/<name>` for a linked
+    /// one — so it is what tells one linked work tree from another, where
+    /// `common_dir` is what they share.
+    pub git_dir: PathBuf,
     /// Where the verb was invoked, canonical. A kendex project can sit
     /// below the git top level, and the package renders under *its* root —
     /// so finding the render means starting where the caller stood, not
@@ -132,10 +137,20 @@ impl Repo {
         let common_dir = common_dir
             .canonicalize()
             .map_err(|e| CoreError::io(&common_dir, e))?;
+        // Absolute from git, so there is no second reading of what a
+        // relative answer is relative to: `--git-common-dir` above already
+        // needs that rule, and one of them is enough.
+        let Some(git_dir) = one_path(dir, "--absolute-git-dir")? else {
+            return Err(no_work_tree());
+        };
+        let git_dir = git_dir
+            .canonicalize()
+            .map_err(|e| CoreError::io(&git_dir, e))?;
         let started_at = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
         Ok(Repo {
             worktree,
             common_dir,
+            git_dir,
             started_at,
         })
     }

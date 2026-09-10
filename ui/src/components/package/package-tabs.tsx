@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import type { HarnessId, ItemKind, ObservedItem, Scope } from "@/bindings";
 import { ItemCustomize } from "@/components/customize/item-customize";
 import { PackageProjects } from "@/components/package/package-projects";
@@ -7,6 +7,8 @@ import {
   SafetyScoreLabel,
   usePackageSafety,
 } from "@/components/package/package-safety";
+import { SetupSummary } from "@/components/package/setup-summary";
+import { usePackageSetupRead } from "@/components/package/use-package-setup";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CUSTOMIZE_TAB, OVERVIEW_TAB } from "@/lib/copy-customize";
 import { FILES_TAB } from "@/lib/copy-files";
@@ -14,6 +16,7 @@ import { PROJECTS_TAB } from "@/lib/copy-projects";
 import { canCustomize } from "@/lib/customization";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
+import { declaresSetup } from "@/stores/package-setup";
 
 /** The package page's scrolling content: what the package is, the files it
  *  is made of, the places it is installed in, what the safety check made of
@@ -85,10 +88,30 @@ export function PackageTabs({
   // recorded, the same scope, kind and name may belong to a package that
   // IS recorded, so both would read and write that one.
   const customizable = declares && canCustomize(kind);
+  // Which tab is open, seeded by the link that opened the page. Held here
+  // rather than left to the Tabs default because the Overview's setup
+  // summary moves it: a line saying a project needs setup has to be able
+  // to put that project's row on screen.
+  const [tab, setTab] = useState<string>(openOn);
+  const [focus, setFocus] = useState<Scope | null>(null);
+  // Once for the page, above both surfaces that read it: the summary line
+  // on Overview and the rows on Projects answer from one set of entries,
+  // and a status is a script that must not be run twice for one screen.
+  // Above the tabs rather than inside one, so switching tabs re-reads
+  // nothing.
+  //
+  // Held to `declares` for the reason the two tabs above are: a page about
+  // an installation nothing recorded has no declaration to read a setup
+  // from. And to the kind, because a repository effect is declared in a
+  // `SKILL.md` and every entry here is keyed as a skill — a page about an
+  // agent of the same name would otherwise report, and offer to run, the
+  // skill's effect.
+  const setupName = declares && declaresSetup(kind) ? name : null;
+  usePackageSetupRead(setupName, scopes);
   return (
     <div className={cn("min-h-0 flex-1 overflow-y-auto", PAGE_GUTTER)}>
       <div className={cn("pb-8", WIDE_CONTENT_WIDTH)}>
-        <Tabs defaultValue={openOn}>
+        <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
             <TabsTrigger value="overview">{OVERVIEW_TAB}</TabsTrigger>
             {declares ? (
@@ -105,6 +128,19 @@ export function PackageTabs({
             ) : null}
           </TabsList>
           <TabsContent value="overview" className="pt-6">
+            {/* One line, above what the package is: a project that needs
+                setup is the thing to act on, and the link is the way to
+                the row that acts on it. */}
+            {setupName !== null ? (
+              <SetupSummary
+                name={name}
+                scopes={scopes}
+                onShow={(scope) => {
+                  setFocus(scope);
+                  setTab("projects");
+                }}
+              />
+            ) : null}
             {overview}
           </TabsContent>
           {declares ? (
@@ -120,6 +156,7 @@ export function PackageTabs({
                 scopes={scopes}
                 installations={installations}
                 busy={busy}
+                focus={focus}
                 onDelete={onDelete}
               />
             </TabsContent>

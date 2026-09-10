@@ -177,7 +177,7 @@ pub(super) fn leaving(
             continue;
         };
         let effects = match declaration(&installed.text) {
-            Declaration::Effects(effects) => effects,
+            Declaration::Effects(effects) => *effects,
             // A package that declares nothing has nothing to undo.
             Declaration::Absent => continue,
             Declaration::Unreadable => return Err(unreadable(&installed.declaration)),
@@ -192,6 +192,40 @@ pub(super) fn leaving(
         );
     }
     Ok(found.into_values().collect())
+}
+
+/// One installed package's declaration, read out of the tree this scope
+/// actually rendered.
+///
+/// The same locator a removal uses, so what a page says a package declares
+/// and what the removal runs come from one file. A caller reading a
+/// package's standing in a project has no plan in hand and no lock diff to
+/// take the tree from — the package is already installed — and deriving
+/// `.agents/skills/<name>` would miss every copy delivery.
+///
+/// `Ok(None)` where nothing is rendered under any of this scope's
+/// directories, which is a package whose files are gone rather than one
+/// that declares nothing. A declaration that will not read is an error for
+/// the reason [`leaving`] gives: calling it "declares nothing" is the one
+/// answer that is never safe.
+pub fn installed_declaration(
+    env: &Env,
+    scope: &Scope,
+    name: &str,
+) -> Result<Option<DeclaredEffects>> {
+    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
+    let Some(installed) = installed_tree(env, scope, &lock, name)? else {
+        return Ok(None);
+    };
+    match declaration(&installed.text) {
+        Declaration::Effects(effects) => Ok(Some(DeclaredEffects {
+            name: name.to_owned(),
+            root: installed.root,
+            effects: *effects,
+        })),
+        Declaration::Absent => Ok(None),
+        Declaration::Unreadable => Err(unreadable(&installed.declaration)),
+    }
 }
 
 /// The packages a lock carries, by name: the package, not any tool's copy

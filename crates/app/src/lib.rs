@@ -146,6 +146,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         marketplaces::install::marketplace_install,
         marketplaces::install::install_targets,
         repo_effects::repo_effects_apply,
+        repo_effects::package_setup,
         commit_offer::commit_offer_scan,
         commit_offer::commit_offer_file_changes,
         commit_offer::commit_offer_commit,

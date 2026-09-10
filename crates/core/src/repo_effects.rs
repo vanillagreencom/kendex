@@ -17,8 +17,10 @@
 //! nobody vouched for; arming a hook the person asked for is a contract,
 //! and rendering it as a warning teaches people to click past the one
 //! notice they most need to read.
+pub mod armed;
 mod declaration;
 pub mod disclosure;
+pub mod setup;
 mod undo;
 use declaration::split_script;
 pub use declaration::{Declaration, RepoEffects, declaration, declared};
@@ -26,6 +28,7 @@ pub use disclosure::{
     Companion, Disclosure, Offers, Withheld, Written, installed_skills, offers, offers_for,
     touches_git,
 };
+pub use setup::{Ask, SetupState, SetupStatus, status};
 pub use undo::{Spoken, UndoError, undo};
 
 use serde::{Deserialize, Serialize};
@@ -140,6 +143,20 @@ pub fn arm(
             undo: declared.undo(repo),
             report: Box::new(report),
         });
+    }
+    // The record that kendex armed this effect here, written only after a
+    // clean exit. It is the licence to run the package's declared check
+    // later, and it is the whole of what makes that check safe to run
+    // unasked — `armed` argues why nothing the declaration names can be
+    // one. A failed arming leaves no licence.
+    //
+    // A failure to write it is not a failure to arm: the installer has
+    // already run and the repository is changed, and reporting that as a
+    // failed arming would send somebody to undo work that landed. The
+    // person loses the automatic check, not the effect, and the control
+    // that asks the package directly still answers.
+    if let Ok(Some(record_dir)) = setup::record_dir(repo, touches_git(&declared.effects)) {
+        let _ = armed::arm(&record_dir, &declared.name);
     }
     Ok(report)
 }

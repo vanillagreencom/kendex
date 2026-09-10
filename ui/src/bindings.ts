@@ -334,6 +334,7 @@ export const commands = {
 	 */
 	installTargets: (scope: Scope, kinds: ItemKind[]) => typedError<InstallTarget[], string>(__TAURI_INVOKE("install_targets", { scope, kinds })),
 	repoEffectsApply: (scope: Scope, declared: DeclaredEffects) => typedError<Said, string>(__TAURI_INVOKE("repo_effects_apply", { scope, declared })),
+	packageSetup: (scope: Scope, name: string, ask: Ask) => typedError<PackageSetup, string>(__TAURI_INVOKE("package_setup", { scope, name, ask })),
 	/**
 	 *  Read every project the write could reach, and say for each one whether
 	 *  there is an offer to make, a state to flag on its card, or nothing.
@@ -684,6 +685,25 @@ export type AppSettings = {
 export type AppUpdateStatus = { kind: "neverChecked" } | { kind: "upToDate"; version: string } | { kind: "updateAvailable"; version: string; releaseNotesUrl: string; cliAssetAvailable: boolean; muted: boolean } | { kind: "feedOlder"; version: string };
 
 export type Appearance = "system" | "light" | "dark";
+
+/**
+ *  Who wants the status, which is what decides whether the package's
+ *  script may run.
+ */
+export type Ask = 
+/**
+ *  A surface reading a page. It gets the check only where kendex's own
+ *  record licenses one, so opening a package's page in a repository
+ *  nothing here armed runs none of its code.
+ */
+"surface" | 
+/**
+ *  Somebody asked for this status, by pressing the control that asks.
+ *  Their act is its own licence and needs no record — the same
+ *  standing a guard verb typed at a prompt has, and the route to a
+ *  true answer in a repository armed at a terminal or by hand.
+ */
+"person";
 
 /**
  *  The advisory payload, exactly as one audit produced it. Every surface
@@ -2792,6 +2812,27 @@ export type PackageSafety = {
 } & AuditResult;
 
 /**
+ *  One project's standing on one installed package's declared setup, and
+ *  the block a person reads before changing it.
+ * 
+ *  Both halves in one answer, because a card that offers Set up needs the
+ *  disclosure the moment it is pressed and a second round trip there would
+ *  draw the dialog over a block read after the state that raised it. The
+ *  disclosure is the same value an install hands the effects dialog, so
+ *  the window asks one question about repository changes wherever it
+ *  arose.
+ */
+export type PackageSetup = {
+	status: SetupStatus,
+	/**
+	 *  What running the setup would change, or null where the package
+	 *  declares nothing about the repository at all — which is every
+	 *  package but a few, and the state a card draws no setup row for.
+	 */
+	disclosure: Disclosure | null,
+};
+
+/**
  *  What a single-package apply did to the package it named, beside the
  *  scope's view afterwards. The plan holds a rendering back rather than
  *  writing over a copy somebody changed, and the view alone cannot say
@@ -3103,6 +3144,16 @@ export type RepoEffects = {
 	 *  out of a scope runs it first, while the file is still there.
 	 */
 	uninstaller: string | null,
+	/**
+	 *  The read-only command that says whether the effect stands here.
+	 *  Absent means kendex has no way to ask, and every surface says the
+	 *  status is unavailable rather than guessing at one.
+	 * 
+	 *  What licenses running it is kendex's own record of having armed
+	 *  this effect in this repository, never anything the declaration
+	 *  names: see `super::armed`.
+	 */
+	checker: string | null,
 	/**  How to undo the effect by hand, for the disclosure's last line. */
 	removal: string | null,
 	/**
@@ -3460,6 +3511,87 @@ export type SettingsRow = {
 	 *  two say what is in the way instead.
 	 */
 	current: Current,
+};
+
+/**
+ *  What a package's declared setup is doing in one project.
+ * 
+ *  No default among them. A surface never has to decide what an unread
+ *  state means, because a state nobody read is one of these.
+ */
+export type SetupState = 
+/**
+ *  The package says nothing about the repository, so there is no
+ *  setup to have a state about and no row to draw. Almost every
+ *  package is this.
+ */
+"notDeclared" | 
+/**
+ *  A scope that is not a project. A personal install writes into the
+ *  tool directories and changes no repository, so there is nothing
+ *  here to set up and nothing to report.
+ */
+"notARepository" | 
+/**  The package's check ran and said the effect is in force. */
+"active" | 
+/**
+ *  kendex has no record of setting this effect up in this project, or
+ *  the package says it is not in force where there is no such record.
+ *  No verdict is claimed about a repository nothing measured — the
+ *  surface showing this offers a way to ask the package itself.
+ */
+"notActive" | 
+/**
+ *  kendex set this effect up here and the package now says it is not
+ *  in force — a setup that was applied and has since broken. The
+ *  remedy is to apply it again, which is what tells this from
+ *  [`SetupState::NotActive`].
+ */
+"needsRepair" | 
+/**
+ *  The check ran and could not answer, or could not be run at all. Not
+ *  a verdict about the repository: nothing here was measured.
+ */
+"couldNotCheck" | 
+/**
+ *  The package declares an effect and no way to be asked about it, so
+ *  there is no status to have. Its setup action is still offered.
+ */
+"unavailable";
+
+/**  One project's answer about one package's declared setup. */
+export type SetupStatus = {
+	state: SetupState,
+	/**
+	 *  What the package said, or why kendex could not ask it. Display
+	 *  text: escaped once here, printed as it is.
+	 * 
+	 *  Empty where the state is what kendex read for itself and the
+	 *  package was never run: [`SetupState::NotDeclared`],
+	 *  [`SetupState::NotARepository`], [`SetupState::NotActive`] and
+	 *  [`SetupState::Unavailable`].
+	 */
+	said: string[],
+	/**
+	 *  Whether the effect can be applied from here: the package declares
+	 *  an installer to run.
+	 */
+	canApply: boolean,
+	/**
+	 *  Whether kendex has a check to run at all — what says asking the
+	 *  package again would do something.
+	 */
+	canCheck: boolean,
+	/**
+	 *  Whether the effect writes into the repository's common git
+	 *  directory, which every work tree of the repository shares — so
+	 *  setting it up here changes the repository for all of them, and a
+	 *  linked work tree is reporting the state its main checkout armed.
+	 * 
+	 *  Read off the declaration, so it is the same answer whether or not
+	 *  the check ran.
+	 */
+	shared: boolean,
 };
 
 export type Severity = "low" | "medium" | "high" | "critical";

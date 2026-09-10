@@ -45,6 +45,7 @@ const disclosure = (name: string): Disclosure => ({
     writes: [".git/hooks/pre-commit"],
     installer: "scripts/arm",
     uninstaller: null,
+    checker: null,
     removal: null,
     notes: [],
     companions: [],

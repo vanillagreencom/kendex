@@ -27,6 +27,14 @@ pub struct RepoEffects {
     /// The script that undoes the effect. A CLI verb that takes the package
     /// out of a scope runs it first, while the file is still there.
     pub uninstaller: Option<String>,
+    /// The read-only command that says whether the effect stands here.
+    /// Absent means kendex has no way to ask, and every surface says the
+    /// status is unavailable rather than guessing at one.
+    ///
+    /// What licenses running it is kendex's own record of having armed
+    /// this effect in this repository, never anything the declaration
+    /// names: see `super::armed`.
+    pub checker: Option<String>,
     /// How to undo the effect by hand, for the disclosure's last line.
     pub removal: Option<String>,
     /// Lines the package wants read before anyone says yes — what its
@@ -55,8 +63,10 @@ pub enum Declaration {
     Absent,
     /// A declaration that is there and will not read.
     Unreadable,
-    /// The declaration, read whole.
-    Effects(RepoEffects),
+    /// The declaration, read whole. Boxed: this is the rare case, every
+    /// other package carries `Absent`, and the block is far the largest
+    /// thing the enum holds.
+    Effects(Box<RepoEffects>),
 }
 
 /// Read one package's declaration out of its `SKILL.md`.
@@ -95,7 +105,7 @@ pub fn declaration(skill_md: &str) -> Declaration {
         return Declaration::Unreadable;
     };
     match effects(map) {
-        Some(effects) => Declaration::Effects(effects),
+        Some(effects) => Declaration::Effects(Box::new(effects)),
         None => Declaration::Unreadable,
     }
 }
@@ -111,7 +121,7 @@ pub fn declaration(skill_md: &str) -> Declaration {
 /// [`declaration`], which keeps the two apart.
 pub fn declared(skill_md: &str) -> Option<RepoEffects> {
     match declaration(skill_md) {
-        Declaration::Effects(effects) => Some(effects),
+        Declaration::Effects(effects) => Some(*effects),
         Declaration::Absent | Declaration::Unreadable => None,
     }
 }
@@ -136,6 +146,7 @@ fn effects(map: &Map) -> Option<RepoEffects> {
         writes: writes(map)?,
         installer: script(map, "installer")?,
         uninstaller: script(map, "uninstaller")?,
+        checker: script(map, "checker")?,
         removal: text(map, "removal")?,
         notes: list(map, "notes")?,
         companions: list(map, "companions")?,
@@ -143,11 +154,12 @@ fn effects(map: &Map) -> Option<RepoEffects> {
 }
 
 /// The fields a declaration may have. Every one of them is read above.
-const FIELDS: [&str; 7] = [
+const FIELDS: [&str; 8] = [
     "summary",
     "writes",
     "installer",
     "uninstaller",
+    "checker",
     "removal",
     "notes",
     "companions",
@@ -162,9 +174,9 @@ const FIELDS: [&str; 7] = [
 /// from a package which genuinely writes nothing.
 ///
 /// So the same rule as every field above — refused whole, not read short.
-/// It costs a package nothing: this is a fixed set of seven keys with no
-/// extension point, and a declaration carrying an eighth is one somebody
-/// mistyped.
+/// It costs a package nothing: this is a fixed set of keys with no
+/// extension point, `FIELDS` is the whole of it, and a declaration
+/// carrying one that is not there is one somebody mistyped.
 fn only_known(map: &Map) -> bool {
     map.entries().all(|(key, _)| FIELDS.contains(&key))
 }
@@ -242,6 +254,10 @@ fn text(map: &Map, key: &str) -> Option<Option<String>> {
 }
 
 /// A script field: a scalar, and a path that stays inside the package.
+///
+/// The installer, the uninstaller and the checker are one field shape and
+/// are read through one function. A second reader for the checker was a
+/// second answer to what kendex may run.
 ///
 /// The two failures are not the same failure. A wrong SHAPE means kendex
 /// could not read what the package said, so the declaration is refused

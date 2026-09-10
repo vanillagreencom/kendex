@@ -70,6 +70,56 @@ Only a skill seeds settings into a project, through its `kendex.settings.toml.ex
 
 For project-defined shell command restrictions, configure the [command-safety hook](command-safety.md).
 
+## Repository effects
+
+Almost every package is inert: installing it writes files into the tool directories and changes nothing else. A package that also changes the repository itself — a git hook, a config value, anything outside the folders kendex manages — declares that in its `SKILL.md` frontmatter, under `repo-effects`, and kendex shows the declaration and asks a separate question about it. The package's files land with the rest of the install; the effect waits for that second answer.
+
+```yaml
+repo-effects:
+  summary: "One line: what this changes about the repository."
+  writes:
+    - ".git/hooks/kendex-guards"
+  installer: "scripts/install-git-hooks"
+  uninstaller: "scripts/install-git-hooks --uninstall"
+  checker: "scripts/install-git-hooks --check"
+  removal: "How to undo it by hand."
+  notes:
+    - "Anything the reader should know before saying yes."
+  companions:
+    - "doc-limits"
+```
+
+- `writes` are repo-relative paths, each of which stays inside the repository. A path under `.git/` maps to the repository's common git directory, which every work tree shares, and is disclosed as shared.
+- `installer` and `uninstaller` are commands relative to the package directory. kendex runs the installer when somebody says yes, and the uninstaller before any verb takes the package away.
+- `checker` is optional and read-only: a command, relative to the package directory, that reports whether the effect stands here.
+- Every field is refused whole rather than read short. A shape kendex cannot read is a declaration it will not act on, and a script or evidence path kendex will not use is dropped while the rest of the block stands.
+
+### The checker contract
+
+The exit status is the whole answer, and it is the same taxonomy the commit hooks use:
+
+| Exit | Means |
+|---|---|
+| `0` | The effect is in force here. |
+| `1` | It is not. |
+| anything else | The check could not be taken. |
+
+The script writes nothing and changes nothing. Whatever it prints on either stream reaches the person as the package's own words, so put the remedy there.
+
+Nothing the declaration says decides when the checker runs. Your script comes out of a checkout, and a checkout arrives with a fetch, so opening a package's page must not run it. What licenses a run is kendex's own record of having armed the effect in that repository: kendex writes it when your installer exits clean, keeps it in a git directory, which git clones for nobody, and drops it when your uninstaller runs. Which one is your effect's reach: an effect under `.git/` is the whole repository's, so one arming answers for every work tree; an effect elsewhere in the checkout is the work tree it was armed in and no other. A repository nothing here armed runs none of your code.
+
+That leaves a repository somebody armed by hand, which kendex has no record of. The person can ask for the status themselves — the package page offers it — and their asking is its own licence, so your checker still answers there.
+
+kendex reports one of these per project, and a package that declares an effect with no checker shows a status it does not have rather than a guess:
+
+| State | Reached by |
+|---|---|
+| Active | The checker exited `0`. |
+| Not active | There is no arming record, so nothing ran; or somebody asked, and the checker exited `1` where kendex had no record. |
+| Needs repair | kendex armed it here and the checker exited `1`. |
+| Could not check | The checker exited outside the taxonomy, or would not run. |
+| Status unavailable | The package declares an effect and no checker. |
+
 ## The check
 
 ```sh
