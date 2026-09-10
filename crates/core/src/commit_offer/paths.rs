@@ -25,9 +25,10 @@ impl Row<'_> {
     }
 
     /// This path is not in the last commit: git has never seen it, or it
-    /// is staged as an addition. A different question from [`untracked`],
-    /// which is about what `git add` still has to do; a person who staged
-    /// kendex's new file themselves changed that answer and not this one.
+    /// is staged as an addition. A different question from `untracked`
+    /// above, which is about what `git add` still has to do; a person who
+    /// staged kendex's new file themselves changed that answer and not
+    /// this one.
     fn added(&self) -> bool {
         self.untracked() || self.x == b'A'
     }
