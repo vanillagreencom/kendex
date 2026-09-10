@@ -8,7 +8,7 @@
 // where the app already offers to fix it. Nothing here proposes a repair
 // of its own.
 import type { Scope } from "@/bindings";
-import type { BlockedPlace } from "@/lib/audit-counts";
+import { type BlockedPlace, blockedCount } from "@/lib/audit-counts";
 import type { Problem } from "@/stores/problems";
 
 export type AfterReconnect =
@@ -35,6 +35,9 @@ export function afterReconnect(
   if (blocked === null) return { state: "unchecked" };
   if (problems.some((problem) => at(root, problem.scope)))
     return { state: "unchecked" };
-  const count = blocked.filter((place) => at(root, place.scope)).length;
+  // The items, not the places holding them: one place carries every
+  // blocked row at that folder, and its length is 1 however many there
+  // are. The count is a sentence a person reads.
+  const count = blockedCount(blocked.filter((place) => at(root, place.scope)));
   return count > 0 ? { state: "problems", count } : { state: "clean" };
 }

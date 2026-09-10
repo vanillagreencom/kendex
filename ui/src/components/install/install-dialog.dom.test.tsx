@@ -97,7 +97,14 @@ beforeEach(() => {
     settings: { projects: [ACME.root, BETA.root] } as AppSettings,
   });
   useNavStore.setState({ installInto: null, page: "marketplaces" });
-  useScanStore.setState({ scanning: false, error: null, result: null });
+  // A machine a scan has read, with every project's folder found: what a
+  // place is offered from. A reading that never landed is not evidence
+  // that a folder is there, and no place is offered from one.
+  useScanStore.setState({
+    scanning: false,
+    error: null,
+    result: { harnesses: [], items: [], warnings: [], missingProjects: [] },
+  });
   useInstallFlow.setState({ ask: null, outcome: null, running: false });
 });
 
@@ -335,6 +342,22 @@ describe("the guided install", () => {
     expect(button(INSTALL_ACTION).disabled).toBe(true);
     expect(document.body.textContent).toContain(INSTALL_NO_PLACE);
     expect(install).not.toHaveBeenCalled();
+  });
+
+  // The same hold before any reading at all: an empty missing list read
+  // off a scan that has not landed clears exactly the folders nobody has
+  // looked at yet.
+  it("offers no project until a scan has read the machine", async () => {
+    useScanStore.setState({ scanning: true, error: null, result: null });
+    await open();
+
+    expect(document.body.textContent).not.toContain(ALL_PROJECTS_LABEL);
+    await userEvent.click(button(INSTALL_ACTION));
+    await settle();
+    expect(install).toHaveBeenCalledTimes(1);
+    // Where the subscription lives, which is what a null destination
+    // means: the personal setup, and no project among them.
+    expect(install.mock.calls[0][0].destination).toBeNull();
   });
 
   // Nowhere to install is not an install: the button is off and says why

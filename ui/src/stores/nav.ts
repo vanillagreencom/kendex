@@ -144,8 +144,17 @@ export const useNavStore = create<NavState>((set) => ({
       scope && scope.scope === "project" && scope.root === from
         ? { scope: "project", root: to }
         : scope;
+    // A package is addressed by the place its copy sits in, so a package
+    // ref is a scope like the two above: left naming the old folder, Back
+    // reopens the package page on a copy the machine has no record of and
+    // it reads as gone.
+    const movedPackage = (ref: PackageRef | null): PackageRef | null => {
+      const scope = moved(ref?.scope ?? null);
+      return ref && scope ? { ...ref, scope } : ref;
+    };
     const entry = (one: HistoryEntry): HistoryEntry => ({
       ...one,
+      packageRef: movedPackage(one.packageRef),
       unmanagedScope: moved(one.unmanagedScope),
       installInto: moved(one.installInto),
     });
@@ -155,6 +164,7 @@ export const useNavStore = create<NavState>((set) => ({
         state.libraryScope.project === from
           ? { project: to }
           : state.libraryScope,
+      packageRef: movedPackage(state.packageRef),
       unmanagedScope: moved(state.unmanagedScope),
       installInto: moved(state.installInto),
       history: state.history.map(entry),

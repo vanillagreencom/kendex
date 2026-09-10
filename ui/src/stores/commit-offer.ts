@@ -118,6 +118,16 @@ export function routesFor(offer: ProjectOffer): Route[] {
   return routes;
 }
 
+/** Roots a [`forget`] took out while a scan about them was in flight.
+ *
+ *  `forget` can only drop what is already here, and the scan behind a
+ *  write answers later: one started before a project was reconnected or
+ *  removed lands afterwards holding an offer and a flag for the old
+ *  folder, and putting those back is the prompt the forget existed to
+ *  end. So the answer is filtered here too, and a root asked about again
+ *  — the same folder registered afresh — leaves this set at the ask. */
+const forgotten = new Set<string>();
+
 export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
   /** Take the project at the head of the line off it, closing the dialog
    *  when nobody is left. */
@@ -226,6 +236,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
 
     enqueue: async (roots) => {
       if (roots.length === 0) return;
+      for (const root of roots) forgotten.delete(root);
       const ticket = ++started;
       set({ scanning: true });
       const response = await commands.commitOfferScan(roots);
@@ -245,7 +256,15 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
         set({ scanFailure: response.error, scanning });
         return;
       }
-      const found: CommitOfferScan = response.data;
+      const found: CommitOfferScan = {
+        ...response.data,
+        offers: response.data.offers.filter(
+          (offer) => !forgotten.has(offer.root),
+        ),
+        flagged: response.data.flagged.filter(
+          (flag) => !forgotten.has(flag.root),
+        ),
+      };
       const { queue, stage } = get();
       // A project already in the line keeps its PLACE, and takes the fresh
       // reading of what it holds.
@@ -283,6 +302,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
     },
 
     forget: (root) => {
+      forgotten.add(root);
       const { queue } = get();
       const kept = queue.filter((offer) => offer.root !== root);
       if (kept.length === queue.length) {

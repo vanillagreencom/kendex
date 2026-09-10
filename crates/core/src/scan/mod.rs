@@ -67,9 +67,26 @@ pub enum MissingWhy {
 /// the recovery it names.
 pub fn missing_why(root: &Path) -> Option<MissingWhy> {
     match std::fs::metadata(root) {
-        Ok(found) if found.is_dir() => None,
+        Ok(found) if found.is_dir() => opens(root),
         Ok(_) => Some(MissingWhy::NotAFolder),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(MissingWhy::Gone),
+        Err(e) => Some(MissingWhy::Unreadable {
+            said: e.to_string(),
+        }),
+    }
+}
+
+/// Whether the directory can be read, asked by reading it.
+///
+/// A stat is not a read. A directory the account may not open still
+/// answers `metadata` — a mode or an ACL that denies it binds the open,
+/// not the stat — so a scan that stopped at the stat would go on to read
+/// nothing out of the place and report it as a project holding nothing.
+/// The answer everything here rests on is "kendex read this folder", and
+/// only opening it establishes that.
+fn opens(root: &Path) -> Option<MissingWhy> {
+    match std::fs::read_dir(root) {
+        Ok(_) => None,
         Err(e) => Some(MissingWhy::Unreadable {
             said: e.to_string(),
         }),

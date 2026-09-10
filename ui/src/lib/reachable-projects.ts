@@ -1,5 +1,5 @@
-// The projects a write may be aimed at: the registered ones whose folder
-// the last scan could read.
+// The projects a write may be aimed at: the registered ones a scan read
+// and found.
 //
 // A place kendex cannot reach takes no install. The plan for one is
 // written against files under that folder, and every reading behind the
@@ -7,33 +7,47 @@
 // read that found nothing because there was nothing to read. So the
 // folder that could not be read is not offered as a destination, and the
 // project's own card is where that is explained.
-import type { MissingProject } from "@/bindings";
+//
+// With no reading at all this answers nothing rather than everything. An
+// empty missing list read off a scan that has not landed is a claim made
+// from silence: the folders it would clear are exactly the ones nobody
+// has looked at yet, and a write aimed at one of them lands under a path
+// this machine never confirmed. One judge answers for every surface that
+// asks — the card's own actions, the empty state's button and the guided
+// install's destinations — so none of them can hold a place the others
+// offer.
+import type { ScanResult } from "@/bindings";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { projectsOf } from "@/stores/settings-projects";
 
-const NONE: MissingProject[] = [];
+/** Whether a scan read this project's folder and found it. False while no
+ *  scan has answered: what is there is then unknown, and unknown is not a
+ *  folder anything may be written into. A reading that failed leaves the
+ *  last one standing, which is the same evidence every card draws from. */
+export const placeIsReachable = (
+  root: string,
+  result: ScanResult | null,
+): boolean =>
+  result !== null && !result.missingProjects.some((one) => one.root === root);
 
-/** `projects` without the ones `missing` names. */
+/** `projects` narrowed to the ones that reading found. */
 export const reachableProjects = (
   projects: string[],
-  missing: MissingProject[],
-): string[] =>
-  missing.length === 0
-    ? projects
-    : projects.filter((root) => !missing.some((one) => one.root === root));
+  result: ScanResult | null,
+): string[] => projects.filter((root) => placeIsReachable(root, result));
 
 /** The same list for code outside a component, read from the stores that
  *  hold both halves. */
 export const reachableProjectsNow = (): string[] =>
   reachableProjects(
     projectsOf(useSettingsStore.getState()),
-    useScanStore.getState().result?.missingProjects ?? NONE,
+    useScanStore.getState().result,
   );
 
 /** The same list in a component. */
 export function useReachableProjects(): string[] {
   const projects = useSettingsStore(projectsOf);
-  const missing = useScanStore((s) => s.result?.missingProjects ?? NONE);
-  return reachableProjects(projects, missing);
+  const result = useScanStore((s) => s.result);
+  return reachableProjects(projects, result);
 }

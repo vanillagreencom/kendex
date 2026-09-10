@@ -231,3 +231,59 @@ describe("the line of projects to ask", () => {
     expect(useCommitOfferStore.getState().queue).toEqual([]);
   });
 });
+
+// A scan behind a write reads several projects and answers later. In
+// between, a project can stop being one: reconnected to another folder,
+// or removed. The answer is about the folder it was started for, and
+// putting it back reopens the very prompt the forget closed.
+describe("a project that stops being one while a scan is out", () => {
+  beforeEach(() => {
+    useCommitOfferStore.setState({
+      queue: [],
+      flagged: [],
+      stage: { at: "offer" },
+      route: "commit",
+      message: "",
+      scanFailure: null,
+      scanning: false,
+    });
+  });
+
+  it("keeps a late answer about it out of the line", async () => {
+    let answer = (_: unknown): void => {};
+    vi.mocked(commands.commitOfferScan).mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }) as never,
+    );
+    const gone = offer({ root: "/work/vsys-view", name: "vsys-view" });
+
+    const out = useCommitOfferStore.getState().enqueue([gone.root]);
+    useCommitOfferStore.getState().forget(gone.root);
+    answer({
+      status: "ok",
+      data: { offers: [gone], flagged: [{ root: gone.root }] },
+    });
+    await out;
+
+    expect(useCommitOfferStore.getState().queue).toEqual([]);
+    expect(useCommitOfferStore.getState().flagged).toEqual([]);
+  });
+
+  // The same folder registered afresh is a project again, and the ask
+  // that names it is what says so.
+  it("asks about it again once it is registered again", async () => {
+    const back = offer({ root: "/work/vsys-view", name: "vsys-view" });
+    useCommitOfferStore.getState().forget(back.root);
+    vi.mocked(commands.commitOfferScan).mockResolvedValue({
+      status: "ok",
+      data: { offers: [back], flagged: [] },
+    });
+
+    await useCommitOfferStore.getState().enqueue([back.root]);
+
+    expect(useCommitOfferStore.getState().queue.map((one) => one.root)).toEqual(
+      [back.root],
+    );
+  });
+});

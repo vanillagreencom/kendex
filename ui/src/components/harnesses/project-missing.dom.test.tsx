@@ -45,6 +45,9 @@ vi.mock("@/bindings", () => ({
     pickFolder: vi.fn(),
     projectRelocation: vi.fn(),
     relocateProject: vi.fn(),
+    // The update standing is read again on a registry write: rows keyed
+    // by the folder a project left answer for a place that is not there.
+    updatesOverview: vi.fn(),
   },
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
@@ -126,6 +129,10 @@ beforeEach(() => {
     status: "ok",
     data: NEW,
   } as never);
+  vi.mocked(commands.updatesOverview).mockResolvedValue({
+    status: "ok",
+    data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+  } as never);
   useScanStore.setState({ scanning: false, result: scan([GONE]), error: null });
   useAuditStore.setState({
     views: [view({ scope: "global" }), view({ scope: "project", root: OLD })],
@@ -180,6 +187,23 @@ describe("a project whose folder the scan could not read", () => {
   // installs from is a write into the folder that is not there. What is
   // left is the two actions about the entry itself.
   it("offers nothing that writes to the folder", async () => {
+    const host = mount(<ProjectList />);
+    await settle();
+
+    await openActions(host);
+
+    expect(menuItems()).toEqual([
+      CHANGE_FOLDER_LABEL,
+      removeFromList("vsys-view"),
+    ]);
+  });
+
+  // The same hold before any reading at all. A scan that has not answered
+  // names no missing folder and has found none either, and an offer to
+  // install under a path nobody has looked at is that silence read as a
+  // fact.
+  it("offers nothing that writes before a scan has read the machine", async () => {
+    useScanStore.setState({ scanning: true, result: null, error: null });
     const host = mount(<ProjectList />);
     await settle();
 
@@ -330,7 +354,14 @@ describe("what a folder leaving the list leaves behind", () => {
       queue: [{ root: OLD, message: "" }] as never,
       flagged: [{ root: OLD }] as never,
     });
-    useNavStore.setState({ unmanagedScope: { scope: "project", root: OLD } });
+    useNavStore.setState({
+      unmanagedScope: { scope: "project", root: OLD },
+      packageRef: {
+        kind: "skill",
+        name: "gh",
+        scope: { scope: "project", root: OLD },
+      },
+    });
 
     await useSettingsStore.getState().relocateProject(OLD, NEW, false);
 
@@ -342,6 +373,17 @@ describe("what a folder leaving the list leaves behind", () => {
       scope: "project",
       root: NEW,
     });
+    // A package is addressed by the place its copy sits in, so a package
+    // ref is one more scope: left naming the old folder, Back reopens the
+    // package page on a copy the machine has no record of.
+    expect(useNavStore.getState().packageRef).toEqual({
+      kind: "skill",
+      name: "gh",
+      scope: { scope: "project", root: NEW },
+    });
+    // What a package's source has moved on to is a fourth read, keyed by
+    // the place each row is at and not covered by the rescan.
+    expect(commands.updatesOverview).toHaveBeenCalled();
   });
 
   it("drops them for a project removed from the list too", async () => {

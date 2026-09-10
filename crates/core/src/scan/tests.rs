@@ -445,4 +445,28 @@ fn a_path_that_is_not_a_readable_folder_says_which_it_is() {
         ),
         "a path that could not be read at all is neither gone nor a file"
     );
+
+    // A folder the account may not open. It stats like any other, so a
+    // reading that stopped at the stat would call this place readable and
+    // report the empty scan of it as a project holding nothing.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let sealed = home.join("dev/sealed");
+        fs::create_dir_all(&sealed).unwrap();
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).unwrap();
+        let denied = fs::read_dir(&sealed).is_err();
+        let answer = missing_why(&sealed);
+        // Unsealed before anything can panic: a sealed directory outlives
+        // the TempDir that cannot remove it.
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o700)).unwrap();
+        // Permissions do not bind this user (root): there is no denial to
+        // read here, and nothing to assert about one.
+        if denied {
+            assert!(
+                matches!(answer, Some(MissingWhy::Unreadable { said }) if !said.is_empty()),
+                "a folder the account cannot open is unreadable, never a place holding nothing"
+            );
+        }
+    }
 }

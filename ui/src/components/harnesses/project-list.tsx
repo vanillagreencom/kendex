@@ -52,6 +52,7 @@ import {
   usePackagesRead,
 } from "@/lib/package-identity";
 import { pickFolder } from "@/lib/pick-folder";
+import { placeIsReachable } from "@/lib/reachable-projects";
 import { everyPlace, sameScope } from "@/lib/scope";
 import { sessionNoteState } from "@/lib/session-note";
 import { availableUpdatesIn, outOfDateIn } from "@/lib/update-groups";
@@ -356,6 +357,12 @@ export function ProjectList() {
             const missing = (result?.missingProjects ?? []).find(
               (one) => one.root === root,
             );
+            // Whether anything may be written here. Not the inverse of the
+            // line above: a scan that has not answered names no missing
+            // folder and has found none either, and an offer to install
+            // under a path nobody has looked at is the same claim made
+            // from silence. One judge, shared with the guided install.
+            const reachable = placeIsReachable(root, result);
             return (
               <ProjectCard
                 key={root}
@@ -387,8 +394,10 @@ export function ProjectList() {
                 checking={checking.includes(root)}
                 checkFailed={unchecked.includes(root)}
                 onRecheck={() => void check(root)}
-                onAddPackages={() => addPackages(scope)}
-                addPackagesLabel={addPackagesTo(namedAlone(root))}
+                onAddPackages={reachable ? () => addPackages(scope) : undefined}
+                addPackagesLabel={
+                  reachable ? addPackagesTo(namedAlone(root)) : undefined
+                }
                 missing={
                   missing && {
                     why: missing.why,
@@ -406,7 +415,7 @@ export function ProjectList() {
                   <PlaceActions
                     scope={scope}
                     place={namedAlone(root)}
-                    reachable={missing === undefined}
+                    reachable={reachable}
                     onAddPackages={() => addPackages(scope)}
                     onChangeFolder={() => locate(root, namedAlone(root))}
                     onRemove={() => setRemoveTarget(root)}

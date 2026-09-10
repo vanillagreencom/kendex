@@ -12,6 +12,7 @@ import { useCommitOfferStore } from "./commit-offer";
 import { useNavStore } from "./nav";
 import { useProblemsStore } from "./problems";
 import { useProjectSetupStore } from "./project-setup";
+import { useUpdatesStore } from "./updates";
 
 interface ProjectFields {
   settings: AppSettings | null;
@@ -96,7 +97,7 @@ export function projectActions(ordered: {
         ordered.hold(response.data, at);
         useProjectSetupStore.getState().forget(path);
         useCommitOfferStore.getState().forget(path);
-        await rescanEverything();
+        await Promise.all([rescanEverything(), updatesAgain()]);
       } else {
         useProblemsStore.getState().showError({
           title: "Couldn't stop tracking the project",
@@ -139,7 +140,7 @@ export function projectActions(ordered: {
       useProjectSetupStore.getState().forget(was);
       useCommitOfferStore.getState().forget(was);
       useNavStore.getState().projectMoved(was, root);
-      await rescanEverything();
+      await Promise.all([rescanEverything(), updatesAgain()]);
       return root;
     },
 
@@ -155,6 +156,17 @@ export function projectActions(ordered: {
     },
   };
 }
+
+/** The update standing again, on a registry write.
+ *
+ *  `rescanEverything` is the scan, the audit and the provenance join, and
+ *  says so: what a package's source has moved on to is a fourth read,
+ *  held by its own store and keyed by the place each row is at. Left
+ *  alone across a reconnect every row still names the folder the project
+ *  left, so the card at the new folder shows no updates — a definite
+ *  nothing, from rows about a place that is not there — and the Updates
+ *  page's own actions still name the old one. */
+const updatesAgain = (): Promise<void> => useUpdatesStore.getState().reload();
 
 // The answer before the settings read lands, shared rather than spelled at
 // each call. A selector that wrote `[]` itself would mint a fresh array per

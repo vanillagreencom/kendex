@@ -7,8 +7,16 @@ const ROOT = "/work/vsys";
 const here = { scope: "project" as const, root: ROOT };
 const elsewhere = { scope: "project" as const, root: "/work/other" };
 
-const blocked = (scope: BlockedPlace["scope"]): BlockedPlace =>
-  ({ key: "k", scope, rows: [], exits: null, alsoApplies: false }) as never;
+/** One place with `rows` blocked items in it. The count a person reads is
+ *  the items, and one place holds every one of them at that folder. */
+const blocked = (scope: BlockedPlace["scope"], rows = 1): BlockedPlace =>
+  ({
+    key: "k",
+    scope,
+    rows: Array.from({ length: rows }, (_, at) => ({ name: `item${at}` })),
+    exits: null,
+    alsoApplies: false,
+  }) as never;
 const problem = (scope: Problem["scope"]): Problem => ({
   key: "k",
   scope,
@@ -17,10 +25,10 @@ const problem = (scope: Problem["scope"]): Problem => ({
 });
 
 describe("what the read after a reconnect says about the new folder", () => {
-  it("counts only what is at that folder", () => {
+  it("counts the items at that folder, not the places holding them", () => {
     expect(
-      afterReconnect([], [blocked(here), blocked(elsewhere)], ROOT),
-    ).toEqual({ state: "problems", count: 1 });
+      afterReconnect([], [blocked(here, 3), blocked(elsewhere, 2)], ROOT),
+    ).toEqual({ state: "problems", count: 3 });
     expect(afterReconnect([], [blocked(elsewhere)], ROOT)).toEqual({
       state: "clean",
     });
