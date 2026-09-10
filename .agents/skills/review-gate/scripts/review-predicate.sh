@@ -75,8 +75,11 @@ change writes it into the review BODY, under a `### Suppressed comments (N)`
 heading, and no review comment is posted — so `unresolved` is 0 and the
 gate would approve over a finding the reviewer itself marked `Blocking:`.
 `suppressed-findings` counts those blocks across the rows the evidence
-select accepts at head, BEFORE the min_state reduction, and names the count
-and the file:line entries: the detail carries a bounded list (a status
+select accepts, BEFORE the min_state reduction, at the commit the gate
+RELIES ON — the head, and the carry base too once carry decided the evidence,
+since the carried row is the one whose body carries the block. Lines inside a
+fenced snippet are skipped, so the pasted code under an entry cannot end the
+block. It names the count and the file:line entries: the detail carries a bounded list (a status
 description holds 140 characters, so a truncated list says how many it
 dropped) and the full list goes to stderr. It has NO settings key and no
 disposition protocol: nothing in the PR clears it, only a review at a new
@@ -1760,17 +1763,41 @@ fi
 #
 # The block ends at the next heading of any level or at `</details>`, so the
 # `- **Files reviewed:**` trailer Copilot writes after the entries is outside
-# it and the next review section cannot donate entries to it.
+# it and the next review section cannot donate entries to it. Lines inside a
+# fenced snippet are skipped before either arm is considered: the offending
+# code a reviewer pastes under an entry is full of `#` comment lines, and one
+# of those read as a heading would end the block and drop every entry after
+# it from the list. A nested fence desyncs the toggle; both directions of a
+# desync end in a refusal, never an approval — a block read short disagrees
+# with its own declared count.
+#
+# THE SCAN READS THE COMMIT THE GATE RELIES ON, not only the head. Carry
+# accepts a review row at an ANCESTOR when nothing reviewed the head, and the
+# carry-candidate select is this one with `.commit_id != $sha` where this has
+# `== $sha` — so the row whose body carries the block is itself an eligible
+# carry candidate. Head-only would refuse at one commit and approve at the
+# next over the same body, with nothing reviewed at the new head: this term's
+# own fail-open on a second path, and the one refusal carry could erase (a
+# standing changes-requested is unscoped by sha and threads are PR-scoped).
 suppressed=0
 suppressed_state=ok
 supp_detail=""
+# `carry_base` is set only together with carried=1, and min_state is left off
+# both shas on purpose: the wider set is the fail-closed one, and a second
+# copy of the carry term's state filter here could drift from it.
+supp_carry_base=""
+[ "$carried" != "1" ] || supp_carry_base="$carry_base"
 supp_raw="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
-        --arg trusted "$TRUSTED_LOGINS_N" \
+        --arg trusted "$TRUSTED_LOGINS_N" --arg carrybase "$supp_carry_base" \
         --arg errmarks "$ERROR_PATTERNS" "$ATTESTATION_DEF"'
   def suppressed_scan:
     reduce (((. // "") | gsub("\r"; "")) | split("\n"))[] as $l
-      ({declared: 0, entries: 0, unparsed: 0, inblock: false, list: []};
-        if ($l | test("^#{1,6}[ \t]+Suppressed comments[ \t]*\\([0-9]+\\)[ \t]*$")) then
+      ({declared: 0, entries: 0, unparsed: 0, inblock: false, fence: false, list: []};
+        if ($l | test("^[ \t]{0,3}(```|~~~)")) then
+          .fence = (.fence | not)
+        elif .fence then
+          .
+        elif ($l | test("^#{1,6}[ \t]+Suppressed comments[ \t]*\\([0-9]+\\)[ \t]*$")) then
           .declared += ($l | capture("\\((?<n>[0-9]+)\\)") | .n | tonumber)
           | .inblock = true
         elif ($l | test("^#{1,6}[ \t]+Suppressed comments([ \t]|$)")) then
@@ -1784,7 +1811,8 @@ supp_raw="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
   ($trusted | split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
   | ($errmarks | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $mk
   | [ .[]
-      | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
+      | select(.commit_id == $sha or ($carrybase != "" and .commit_id == $carrybase))
+      | select(.state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
       | select(($t | length) == 0 or (.user.login as $l | ($t | index($l)) != null))
       | select(not_errored_attestation($mk))
       | (.body // "") | suppressed_scan
