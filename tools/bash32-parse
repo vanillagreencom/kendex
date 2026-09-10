@@ -10,12 +10,21 @@
 # three tool suites with it. The judge for "does this file parse under Bash
 # 3.2" is Bash 3.2, so this lane runs one.
 #
+# `bash -n` alone is not that judge. Bash parses a command substitution's
+# body when it EXPANDS it, not when it reads the file, so under 3.2 `bash -n`
+# descends into no `$( )` and no backquote in any spelling — quoted,
+# unquoted or nested. The construct above sits inside one, which is why a
+# pass built on `bash -n` over the file alone read the file that carried it
+# as clean. Each body is therefore delimited the way 3.2 delimits one and
+# parsed on its own; § the extractor states how, and what that reaches.
+#
 # Usage: tools/bash32-parse [--list] [DIR...]
 #   no argument   parse the covered set below
 #   DIR...        parse those directories instead, each inside this repository
 #   --list        print the covered set the discovery resolved to
 #   --check FILE...
-#                 parse those files with the shell running this script, and
+#                 parse those files, and every command substitution body
+#                 inside them, with the shell running this script, and
 #                 answer on the protocol below. This is the mode the resolved
 #                 Bash 3.2 re-enters this file in, never one to run by hand:
 #                 under any other shell it answers for that shell, which is
@@ -115,9 +124,13 @@ message_text() { # KEY VALUE [EXTRA...] — the English for one key, and all of 
   no-verdict)
     echo "the pass under Bash 3.2 exited with that status and answered with nothing this run can read, so it reached no verdict; its own output follows." ;;
   syntax)
-    echo "shell files that do not parse under Bash 3.2; that shell names each below." ;;
+    echo "shell files Bash 3.2 refuses, in the file's own text or in a command substitution body inside it; that shell names each below." ;;
+  extractor)
+    echo "the command substitution bodies could not be extracted: the value names the step that failed, or the status the extractor exited with, and whatever it wrote follows. A file whose substitutions went unread is never reported as parsed." ;;
+  unscannable)
+    echo "shell files Bash 3.2 parsed and this pass could not follow to the end of, named below." ;;
   clean)
-    printf '%s shell file(s), each parsed by Bash %s via %s.\n' "$2" "$3" "$4" ;;
+    printf '%s shell file(s), each parsed by Bash %s via %s, and every command substitution body inside them parsed on its own.\n' "$2" "$3" "$4" ;;
   *)
     echo "no explanation is defined for this key: tools/bash32-parse is broken." ;;
   esac
@@ -143,15 +156,217 @@ die_cause() { # KEY VALUE CAUSE — CAUSE is the failing command's own words
   exit 2
 }
 
+# --- the extractor ------------------------------------------------------
+# Bash 3.2 finds the END of a `$( )` by counting parens — aware of quoting,
+# of comments and of nesting, and of nothing else — and parses whatever that
+# delimited only once it expands it. `foo)` in a case pattern closes the
+# substitution there, so the text 3.2 ends up parsing is not the text the
+# author wrote, and `bash -n` over the file asks it to parse neither.
+#
+# The program below delimits every body the same way, so the text it hands to
+# `bash -n` is the text 3.2 would parse at expansion. That is what makes a
+# mis-scan a RED rather than a silent green: a body cut at the wrong paren
+# does not parse. Backquote bodies are taken as well — their delimiter is the
+# next unescaped backquote, so the early close above cannot reach them, but
+# `bash -n` leaves their body unparsed exactly as it leaves a `$( )` body.
+#
+# What it does not reach, each an under-read that reports nothing rather than
+# something wrong: the inside of `$(( ))`, which is arithmetic and not a
+# command list; and a heredoc body at the top level, which Bash reads as a
+# word and expands later, and which a quoted delimiter makes literal text, so
+# scanning it as code would red on correct source. A heredoc opened INSIDE a
+# body is scanned, because 3.2's paren count runs straight through one —
+# measured under the pinned image, not assumed.
+extractor_program() { # the awk program, on stdout
+  cat <<'EXTRACTOR'
+# Every command substitution body in the files named on the command line,
+# delimited the way Bash 3.2 delimits one.
+#
+# `dir` receives one file per body, named by its id. `lost` receives the name
+# of any file the scan did not reach the end of in a settled state. stdout
+# carries one line per body: `<id> <line> <file>`, the file last so a path
+# holding a blank stays whole.
+function word_start(c) {
+  return c == "\n" || c == " " || c == "\t" || c == ";" || c == "&" || c == "|"
+}
+function keep(text, ln,   f) {
+  id++
+  f = dir "/" id
+  printf "%s", text > f
+  close(f)
+  print id, ln, file
+}
+# A file whose last line leaves a substitution, a quote, a backquote,
+# arithmetic or a heredoc open is one this scan lost track of. Every caller
+# has already seen Bash 3.2 parse that file, so the open state is this
+# scanner being wrong about a construct rather than the file being broken,
+# and the pass refuses instead of reporting what it did reach.
+#
+# `paren` is deliberately not among them. A case pattern at the top level
+# ends in a `)` with no `(` before it, so the count there is not a balance
+# and a file can settle with it anywhere.
+function settle() {
+  if (file == "") return
+  if (depth != 0 || quote != "" || bq != 0 || arith != 0 || pending != 0)
+    print file > lost
+}
+BEGIN { id = 0; file = "" }
+FNR == 1 {
+  settle()
+  file = FILENAME
+  depth = 0; quote = ""; paren = 0; arith = 0; bq = 0; pending = 0; in_heredoc = 0
+}
+{
+  line = $0
+  # A heredoc body at the top level is a word Bash reads whole and expands
+  # later, and a quoted delimiter makes it literal text, so it is passed over
+  # rather than scanned as code. Inside a body it is NOT passed over: 3.2's
+  # paren count runs straight through a heredoc body, quoted or not.
+  if (in_heredoc) {
+    term = line
+    if (strip_tabs) sub(/^\t+/, "", term)
+    if (term == delim[1]) {
+      for (k = 1; k < pending; k++) { delim[k] = delim[k + 1]; dash[k] = dash[k + 1] }
+      pending--
+      if (pending == 0) in_heredoc = 0
+      else strip_tabs = dash[1]
+    }
+    next
+  }
+  i = 1
+  last = length(line)
+  prev = "\n"
+  while (i <= last) {
+    c = substr(line, i, 1)
+    # `$(( ))` is arithmetic, not a command list, and its parens balance, so
+    # the scan steps over it rather than handing its text to a shell parser.
+    if (arith > 0) {
+      if (c == "\\") { i += 2; prev = "x"; continue }
+      if (c == "(") arith++
+      else if (c == ")") arith--
+      i++; prev = c; continue
+    }
+    # A backquote body ends at the next unescaped backquote, whatever parens
+    # or quotes it holds. That delimiter cannot be closed early the way a
+    # paren count can, but its body goes unparsed by `bash -n` all the same.
+    if (bq) {
+      if (c == "\\") { i += 2; prev = "x"; continue }
+      if (c == "`") {
+        bqbody = bqbody substr(line, bqstart, i - bqstart)
+        bq = 0
+        keep(bqbody, bqline)
+        bqbody = ""
+      }
+      i++; prev = c; continue
+    }
+    if (quote == "'") {
+      if (c == "'") quote = ""
+      i++; prev = c; continue
+    }
+    if (quote == "\"") {
+      if (c == "\\") { i += 2; prev = "x"; continue }
+      if (c == "\"") { quote = ""; i++; prev = c; continue }
+      if (c == "`") { bq = 1; bqstart = i + 1; bqline = FNR; i++; prev = c; continue }
+      if (c == "$" && substr(line, i + 1, 1) == "(") {
+        if (substr(line, i + 2, 1) == "(") { arith = 2; i += 3; prev = "x"; continue }
+        held_quote[depth] = quote; held_paren[depth] = paren
+        depth++
+        quote = ""; paren = 0
+        body[depth] = ""; start[depth] = i + 2; opened[depth] = FNR
+        i += 2; prev = "x"; continue
+      }
+      i++; prev = c; continue
+    }
+    if (c == "\\") { i += 2; prev = "x"; continue }
+    if (c == "'") { quote = "'"; i++; prev = c; continue }
+    if (c == "\"") { quote = "\""; i++; prev = c; continue }
+    if (c == "#" && word_start(prev)) break
+    if (c == "`") { bq = 1; bqstart = i + 1; bqline = FNR; i++; prev = c; continue }
+    if (c == "$" && substr(line, i + 1, 1) == "(") {
+      if (substr(line, i + 2, 1) == "(") { arith = 2; i += 3; prev = "x"; continue }
+      held_quote[depth] = quote; held_paren[depth] = paren
+      depth++
+      quote = ""; paren = 0
+      body[depth] = ""; start[depth] = i + 2; opened[depth] = FNR
+      i += 2; prev = "x"; continue
+    }
+    if (c == "(") {
+      # `(( ))` opening a word is an arithmetic command, not two subshells,
+      # and inside it `<<` is a shift rather than a heredoc.
+      if (substr(line, i + 1, 1) == "(" && word_start(prev)) {
+        arith = 2; i += 2; prev = "x"; continue
+      }
+      paren++; i++; prev = c; continue
+    }
+    if (c == ")") {
+      if (paren > 0) paren--
+      else if (depth > 0) {
+        body[depth] = body[depth] substr(line, start[depth], i - start[depth])
+        keep(body[depth], opened[depth])
+        depth--
+        quote = held_quote[depth]; paren = held_paren[depth]
+      }
+      i++; prev = c; continue
+    }
+    if (c == "<" && substr(line, i + 1, 1) == "<") {
+      if (substr(line, i + 2, 1) == "<") { i += 3; prev = "x"; continue }
+      j = i + 2
+      indented = 0
+      if (substr(line, j, 1) == "-") { indented = 1; j++ }
+      while (substr(line, j, 1) == " " || substr(line, j, 1) == "\t") j++
+      word = ""
+      # Quoting inside the delimiter word decides whether the body expands,
+      # which this scan does not care about, and Bash strips it before
+      # matching the terminator line, which it does.
+      c2 = substr(line, j, 1)
+      if (c2 == "'" || c2 == "\"") {
+        j++
+        while (j <= last && substr(line, j, 1) != c2) { word = word substr(line, j, 1); j++ }
+        j++
+      } else {
+        while (j <= last) {
+          c2 = substr(line, j, 1)
+          if (c2 == " " || c2 == "\t" || c2 == ";" || c2 == "&" || c2 == "|" ||
+              c2 == "<" || c2 == ">" || c2 == ")") break
+          if (c2 == "\\") { j++; c2 = substr(line, j, 1); if (c2 == "") break }
+          else if (c2 == "'" || c2 == "\"") {
+            j++
+            while (j <= last && substr(line, j, 1) != c2) { word = word substr(line, j, 1); j++ }
+            j++
+            continue
+          }
+          word = word c2; j++
+        }
+      }
+      if (word != "") { pending++; delim[pending] = word; dash[pending] = indented }
+      i = j; prev = "x"; continue
+    }
+    i++; prev = c; continue
+  }
+  for (k = 1; k <= depth; k++) {
+    body[k] = body[k] substr(line, start[k]) "\n"
+    start[k] = 1
+  }
+  if (bq) { bqbody = bqbody substr(line, bqstart) "\n"; bqstart = 1 }
+  if (pending > 0 && depth == 0 && !bq) { in_heredoc = 1; strip_tabs = dash[1] }
+  else if (pending > 0) pending = 0
+}
+END { settle() }
+EXTRACTOR
+}
+
 # --- the inner pass -----------------------------------------------------
 # THE PROTOCOL between the two passes, which the outer one holds this pass to:
 # two lines on stdout, in this order, whatever the outcome —
 #
 #   bash32-parse: parsed=<files this pass ran bash -n over>
-#   bash32-parse: failed=<how many of them did not parse>
+#   bash32-parse: failed=<how many of them Bash 3.2 refused>
 #
-# with the shell's own complaint about each failure on stderr, and the exit
-# status 0 when failed is 0 and 1 when it is not. Those two lines are the
+# Both counts are FILES, and a file is one of the failed whether its own text
+# or a command substitution body inside it is what 3.2 refused, so the outer
+# pass's count check against the list it handed over still holds. The shell's
+# own complaint about each failure goes to stderr, and the exit status is 0
+# when failed is 0 and 1 when it is not. Those two lines are the
 # WHOLE of stdout, and the outer pass holds this one to that: anything else —
 # silence, noise before them, anything after them, a short count, a status
 # that disagrees with the count — is a pass that reached no verdict, and the
@@ -162,12 +377,66 @@ die_cause() { # KEY VALUE CAUSE — CAUSE is the failing command's own words
 # tree with whatever the host has, which is the whole defect.
 if [ "${1-}" = "--check" ]; then
   shift
+  SCRATCH=""
+  SCRATCH="$(mktemp -d)" || die extractor mktemp
+  trap 'rm -rf -- "${SCRATCH:?}"' EXIT
+  mkdir -p "$SCRATCH/bodies" || die extractor "$SCRATCH/bodies"
+  extractor_program >"$SCRATCH/substs.awk" || die extractor "$SCRATCH/substs.awk"
+  : >"$SCRATCH/lost" || die extractor "$SCRATCH/lost"
+
+  # The file's own text first. A file 3.2 already refuses says nothing about
+  # the extractor and is not handed to it, which is what leaves an open state
+  # at the end of a scanned file meaning one thing only: the scan is wrong
+  # about a construct in a file 3.2 accepted, and the run ends rather than
+  # reporting the bodies it did reach.
   parsed=0
   failed=0
+  taken=0
+  scanned=()
   for f in "$@"; do
     parsed=$((parsed + 1))
-    "$BASH" -n -- "$f" || failed=$((failed + 1))
+    if "$BASH" -n -- "$f"; then
+      scanned[$taken]="$f"
+      taken=$((taken + 1))
+    else
+      failed=$((failed + 1))
+    fi
   done
+
+  : >"$SCRATCH/index" || die extractor "$SCRATCH/index"
+  if [ "$taken" -gt 0 ]; then
+    status=0
+    awk -v dir="$SCRATCH/bodies" -v lost="$SCRATCH/lost" \
+      -f "$SCRATCH/substs.awk" -- "${scanned[@]}" \
+      >"$SCRATCH/index" 2>"$SCRATCH/extract-err" || status=$?
+    [ "$status" -eq 0 ] ||
+      die_cause extractor "$status" "$(cat "$SCRATCH/extract-err")"
+    [ ! -s "$SCRATCH/lost" ] ||
+      die_cause unscannable "$(wc -l <"$SCRATCH/lost" | tr -d ' ')" \
+        "$(cat "$SCRATCH/lost")"
+  fi
+
+  # Each body on stdin, so what the shell says names a line in the body it
+  # was given rather than a path in a directory that is gone by the time
+  # anyone reads it; the line above its words names the file and the line the
+  # body was cut from. A file is counted once however many of its bodies
+  # fail, and its bodies are consecutive here because they are emitted in the
+  # order the files were handed over.
+  last_bad=""
+  while read -r id at src; do
+    [ -n "$id" ] || continue
+    if "$BASH" -n <"$SCRATCH/bodies/$id" 2>"$SCRATCH/body-err"; then
+      continue
+    fi
+    printf '%s: line %s: the command substitution body Bash 3.2 delimits here does not parse:\n' \
+      "$src" "$at" >&2
+    sed 's/^/  /' "$SCRATCH/body-err" >&2
+    if [ "$src" != "$last_bad" ]; then
+      failed=$((failed + 1))
+      last_bad="$src"
+    fi
+  done <"$SCRATCH/index"
+
   printf 'bash32-parse: parsed=%s\n' "$parsed"
   printf 'bash32-parse: failed=%s\n' "$failed"
   [ "$failed" -eq 0 ] || exit 1
