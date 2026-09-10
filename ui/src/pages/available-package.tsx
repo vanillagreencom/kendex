@@ -20,7 +20,6 @@ import {
   PICK_A_FILE_NOTE,
 } from "@/lib/copy-files";
 import { INSTALL_ACTION, justThisLabel } from "@/lib/copy-install";
-import { scopeLabel } from "@/lib/derive";
 import { recordsUnreadable } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
