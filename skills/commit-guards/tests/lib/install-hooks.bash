@@ -148,7 +148,7 @@ aliased() { # TEXT -> the text with the row's repository and the scratch root al
 # print. The lanes' own lines — the step announcements, each check's
 # findings, the sibling gates' reports — are their suites' contract and are
 # dropped here.
-KEEP='^(commit-guards git hooks: |install-git-hooks: |::error::|kendex-guards: |commit-guards: hook-helper=|pre-commit: (result|lane-missing|local-missing|path-escape)=|commit-msg: |foreign: |local: |fatal: |error: )'
+KEEP='^(commit-guards git hooks: |install-git-hooks: |::error::|kendex-guards: |commit-guards: hook-helper=|commit-guards: hook-refs=|pre-commit: (result|lane-missing|local-missing|path-escape)=|pre-push: (result|lane-missing)=|commit-msg: |foreign: |local: |fatal: |error: )'
 
 # One line for a run inside the row's repository: the exit status, then
 # every kept line in order joined by ';'. ENVS is a comma-separated list of
@@ -156,10 +156,11 @@ KEEP='^(commit-guards git hooks: |install-git-hooks: |::error::|kendex-guards: |
 # repository carries, every line kept; ARG carries any further installer
 # arguments, word-split), commit (a real `git commit -m ARG` from the checkout's physical path, the
 # kept lines only), commit-here (the same from the path as the fixture
-# spelled it) or hook (the pre-commit shim run from the repository root,
-# the way git runs it, the kept lines only). A fixture that keeps its render
-# somewhere other than the checkout root names that directory in
-# INSTALLER_DIR.
+# spelled it), hook (the pre-commit shim run from the repository root,
+# the way git runs it, the kept lines only) or push-hook (the pre-push shim
+# run the way git runs it, with ARG as the one ref line on its stdin). A
+# fixture that keeps its render somewhere other than the checkout root names
+# that directory in INSTALLER_DIR.
 run() { # ENVS ACTION ARG
   local envs=() rc=0 out="" installer="" filtered=1 dir="" target="$R"
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
@@ -199,6 +200,13 @@ run() { # ENVS ACTION ARG
       ;;
     hook)
       out="$(cd -- "$dir" && env ${envs[@]+"${envs[@]}"} .git/hooks/pre-commit 2>&1)" || rc=$?
+      ;;
+    push-hook)
+      # git hands a pre-push hook the remote's name and URL as arguments and
+      # its ref lines on stdin; ARG is that one line.
+      # shellcheck disable=SC2086
+      out="$(cd -- "$dir" && printf '%s\n' "$3" \
+        | env ${envs[@]+"${envs[@]}"} .git/hooks/pre-push origin "$R" 2>&1)" || rc=$?
       ;;
     *)
       echo "harness: unknown action $2" >&2

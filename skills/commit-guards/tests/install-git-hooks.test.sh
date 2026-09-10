@@ -149,6 +149,25 @@ fx_refuses() { install_over refuses '#!/bin/sh\necho "foreign: says no" >&2\nexi
 fx_refuses_hook() { install_over refuses-hook '#!/bin/sh\necho "foreign: says no" >&2\nexit 3\n'; stage a.txt 'hello\n'; }
 fx_mentions_helper() { R="$(new_repo mentions-helper)"; foreign pre-commit '#!/bin/sh\n# see .git/hooks/kendex-guards for the shared guard\nexit 0\n'; }
 fx_bash_consumer() { R="$(new_repo bash-consumer)"; foreign pre-commit '#!/bin/bash\nm=(state)\necho "consumer ${m[0]}"\n'; }
+# git sends a pre-push hook its ref lines on stdin ONCE, and a ref-aware
+# consumer hook below our delegating line has no other way to learn what is
+# being pushed. This one counts what it reads, so a row can say whether the
+# stream reached it; git-lfs, husky, lefthook and a pre-commit-framework
+# wrapper all have a loop of this shape.
+COUNTER='#!/bin/sh\nn=0\nwhile IFS=" " read -r a b c d; do n=$((n + 1)); done\necho "foreign: ref-lines=$n"\n'
+push_consumer() { # NAME — a ref-counting pre-push hook, then the install over it
+  R="$(new_repo "$1")"
+  foreign pre-push "$COUNTER"
+  "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true
+}
+fx_push_consumer() { push_consumer push-consumer; }
+# The must-fail control: the same composed hook with the handback taken out of
+# our own delegating line, which is what the lane read before it gave the
+# stream back. The edit is asserted to have matched.
+fx_push_consumer_spent() {
+  push_consumer push-consumer-spent
+  edit "$R/.git/hooks/pre-push" '2s|exec <"$kendex_gg_r"; ||'
+}
 run_rows \
   "a consumer's hooks are kept: one delegate at line 2, the body and its missing final newline as they were, an unrelated hook untouched|fx_compose||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@~echo foreign: pre-commit<noeol> commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH +post-checkout=$X:#!/bin/sh~echo foreign: post-checkout hooksPath=<unset>" \
   "control: the composed hook commits clean content and the foreign part runs after ours|fx_compose_clean|$ONE|commit|feat: add a|rc=0 $CHAIN_OK;foreign: pre-commit;${MSG_OK}feat: add a|" \
@@ -158,7 +177,9 @@ run_rows \
   "a foreign hook's own refusal is preserved after ours passes|fx_refuses|$ONE|commit|feat: add a|rc=1 $CHAIN_OK;foreign: says no|" \
   "and its own exit status is the hook's|fx_refuses_hook|$ONE|hook||rc=3 $CHAIN_OK;foreign: says no|" \
   "a hook that merely mentions the helper by name still gets the guard|fx_mentions_helper||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@~# see .git/hooks/kendex-guards for the shared guard~exit 0 commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
-  "a consumer's bash shebang and bash-only body survive the rewrite|fx_bash_consumer||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/bash~@PRE@~m=(state)~echo \"consumer \${m[0]}\" commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>"
+  "a consumer's bash shebang and bash-only body survive the rewrite|fx_bash_consumer||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/bash~@PRE@~m=(state)~echo \"consumer \${m[0]}\" commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a consumer's ref-aware pre-push hook still reads the lines git sent|fx_push_consumer||push-hook|refs/heads/main 0000000000000000000000000000000000000000 refs/heads/main 0000000000000000000000000000000000000000|rc=0 pre-push: result=0;foreign: ref-lines=1|" \
+  "must-fail: with the handback removed from our line, that hook reads an empty stream|fx_push_consumer_spent||push-hook|refs/heads/main 0000000000000000000000000000000000000000 refs/heads/main 0000000000000000000000000000000000000000|rc=0 pre-push: result=0;foreign: ref-lines=0|"
 
 echo "=== hooks the installer must not touch ==="
 fx_symlinked() { R="$(new_repo symlinked)"; mkdir -p "$TMP/elsewhere"; printf '#!/bin/sh\nexit 0\n' >"$TMP/elsewhere/shared-pre-commit"; chmod +x "$TMP/elsewhere/shared-pre-commit"; ln -s "$TMP/elsewhere/shared-pre-commit" "$R/.git/hooks/pre-commit"; }

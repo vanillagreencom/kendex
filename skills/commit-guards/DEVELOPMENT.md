@@ -33,9 +33,9 @@ The installer writes into `.git/hooks`, never `core.hooksPath`:
 | `kendex-guards` | Helper the installer owns and rewrites on every run. |
 | `pre-commit` | One marked line delegating to the helper, created, or inserted after the shebang of an existing hook. |
 | `commit-msg` | Same, passing git's message file through. |
-| `pre-push` | Same, passing the remote name and URL through; git's ref lines reach the lane on the hook's stdin. |
+| `pre-push` | Same, passing the remote name and URL through; git's ref lines are staged in a file, handed to the lane, and handed on to the rest of the hook. |
 
-- The delegating line goes first (hook content ending in `exit` would leave an appended line unreachable), blocks on any nonzero, and falls through to the hook's own content, whose exit status still decides. In `pre-push` that means a consumer's own content below it reads a stdin the lane has already spent; buffering the stream and handing it back is the only alternative, and the delegating line still has to go first.
+- The delegating line goes first (hook content ending in `exit` would leave an appended line unreachable), blocks on any nonzero, and falls through to the hook's own content, whose exit status still decides. In `pre-push` it also stages git's ref lines in a temporary file, reads the lane from that file, and `exec`s the hook's own stdin onto it before falling through, since git sends those lines once and a ref-aware consumer hook below ours would otherwise read an empty stream and check nothing. The file is unlinked while the redirection holds it open; a staging file that cannot be made or filled blocks the push.
 - Repeat runs are no-ops and repairs: only the exact line on a line of its own is current; a cleared executable bit is restored.
 - Left alone, reported, exit 1: a symlinked or non-executable hook; a shebang naming a non-POSIX-shell interpreter, an `env` lookup, an interpreter option, or a shell outside the trusted full paths under `/bin` and `/usr/bin`. A helper file this installer did not write is never overwritten. A bare repository is refused.
 - `core.hooksPath` set to anything makes install a reported skip; removal and `--check` still run. `hooks_path_origins` prints the stand-down on stderr: git's `--show-origin --show-scope --get-all` lines verbatim through `%q`, and one sentence naming no path and no command.
@@ -50,10 +50,14 @@ The installer writes into `.git/hooks`, never `core.hooksPath`:
 
 `scripts/pre-push` judges what each pushed branch adds to the remote. Git runs no hook when it replays a commit, so a rebase, a cherry-pick or an autosquash can leave a branch in a state no commit hook ever saw; push is where the branch leaves the machine, whatever produced its state.
 
-- Git passes the remote name and URL as arguments and the ref lines `<local-ref> <local-oid> <remote-ref> <remote-oid>` on stdin. They are read whole before the first check runs, since the batch and its checks inherit the same stdin.
-- A deletion (an all-zero local oid) and a ref outside `refs/heads/` are announced and skipped.
+- Git passes the remote name and URL as arguments and the ref lines `<local-ref> <local-oid> <remote-ref> <remote-oid>` on stdin. They are read whole before the first check runs, and the batch is given `/dev/null`, so no check can take a line the loop has not reached.
+- A line missing a field is refused with `ref-line-short`, exit 2: a line the lane cannot read may be depositing anything, and passing over it is the fail-open the lane exists to refuse.
+- A deletion (an all-zero local oid) is announced and skipped, and so is a line whose REMOTE ref is under `refs/tags/` or `refs/notes/`.
+- What a line deposits decides, so the classification reads the remote ref and never the left side. `git push origin HEAD`, `git push origin @:refs/heads/x` and `git push origin <sha>:refs/heads/x` all send something other than a branch name on the left while landing a branch on the right; `worktree push` sends the first of those after a restack. Every destination outside the tag and note namespaces is judged rather than guessed at.
+- A message names the branch, not the spelling: `HEAD` and `@` resolve through `git symbolic-ref --quiet HEAD`, and a detached HEAD keeps what git sent.
 - A branch whose local oid is not HEAD is refused with `not-head`, exit 2. Every lane but byte-ceiling reads the working tree or the index, and byte-ceiling's `--base` diffs `REF...HEAD`, so the batch judges this checkout and nothing else. The lane's own verdict line names the bypass, which costs every check in the batch.
 - The base is the remote oid where this repository has that commit; otherwise the first boundary commit of `git rev-list --boundary <local-oid> --not --remotes=<remote>`. With no boundary at all nothing on the branch has ever been vetted, so the whole tree is the scope, which is also where a remote spelled as a URL lands.
+- The remote reaches `--remotes=` and no message. `git push <url> <branch>` passes the URL as the remote, userinfo and token included; git strips userinfo from its own diagnostics, and a lane printing what git withholds would put a credential in scrollback and in every log that captures hook output.
 - The batch runs once per distinct scope: `commit-guards all --base REF`, or `commit-guards all` for the whole tree. A second ref line at the same scope is announced as `scope-repeat` rather than judged again.
 - Verdicts fold as the pre-commit chain's do: exit 2 if any scope could not be judged, else 1 if any found violations, else 0.
 - Tracked settings are read from the working tree, not the index: the lane judges the checkout, and a person running `commit-guards all --base REF` by hand has to get the same answer.

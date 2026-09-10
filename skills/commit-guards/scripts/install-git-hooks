@@ -8,7 +8,8 @@
 #   .git/hooks/pre-commit      one marked delegating line, created or inserted
 #   .git/hooks/commit-msg      same, passing git's message file through
 #   .git/hooks/pre-push        same, passing the remote name and URL through;
-#                              git's ref lines reach the lane on stdin
+#                              git's ref lines are staged and handed to the
+#                              lane, then on to the rest of the hook
 #
 # core.hooksPath is deliberately NOT used: it redirects the whole hooks
 # directory and would disable hooks the repo already has.
@@ -99,10 +100,11 @@ Installs (or repairs) the .git/hooks/pre-commit, .git/hooks/commit-msg and
 re-running is a no-op when the install is current. --repo defaults to the
 current directory.
 
-The pre-push shim reads git's ref lines from stdin, so a consumer's own
-pre-push content below the delegating line sees a stream that is already
-spent. Nothing short of buffering the whole stream and handing it back
-would change that, and the delegating line has to go first.
+git sends a pre-push hook its ref lines on stdin once. The pre-push
+delegating line stages that stream in a temporary file, runs the guard
+against it, and re-points the hook's own stdin at the same file, so a
+consumer's own pre-push content below the line reads exactly the lines git
+sent. A staging file that cannot be made or filled blocks the push.
 
 --uninstall drops the helper and our marked line from each hook, deleting a
 hook file this installer created outright and leaving every other line of a
@@ -331,14 +333,34 @@ gg_owned_lines_re() {
 }
 
 call_line() { # HOOK
-  local hook="$1" args="" blocked="commit"
+  local hook="$1" args="" blocked="commit" invoke=""
   [ "$hook" = "pre-commit" ] || args=' "$@"'
   # The verb the lane gates, so the missing-helper refusal names what git
   # actually stopped. The two commit lanes keep the word they have always
   # carried, which is what keeps their delegating lines byte-identical.
   [ "$hook" != "pre-push" ] || blocked="push"
+  # How the helper is called, which is where pre-push differs.
+  #
+  # git hands a pre-push hook its ref lines on stdin ONCE, and that stream is
+  # the only way any pre-push hook learns what is being pushed. Our line goes
+  # first, ahead of whatever the repository already had in that hook, and the
+  # lane it calls reads the stream to EOF — so a ref-aware hook below ours
+  # would read an empty stream, run its loop zero times and exit 0 having
+  # checked nothing. Ordinary hooks are ref-aware: git-lfs, a
+  # pre-commit-framework wrapper, husky, lefthook. A gate this installer made
+  # skip its own lane, silently, is the failure this package exists to refuse.
+  #
+  # So the stream is staged in a file, the lane reads the file, and `exec`
+  # then points the rest of the hook at that same file — POSIX, and the
+  # consumer's body reads exactly the lines git sent. The file is unlinked
+  # while the redirection still holds it open. A staging file that cannot be
+  # made or filled is a refusal, never a push that runs unread.
+  case "$hook" in
+    pre-push) invoke='kendex_gg_r="$(mktemp "${TMPDIR:-/tmp}/kendex-guards-refs.XXXXXX")" || { echo "commit-guards: hook-refs=stage" >&2; echo "  A temporary file for the ref lines git sent could not be made; push blocked." >&2; exit 2; }; cat >"$kendex_gg_r" || { rm -f "$kendex_gg_r"; echo "commit-guards: hook-refs=read" >&2; echo "  The ref lines git sent could not be read; push blocked." >&2; exit 2; }; "$kendex_gg_h" '"$hook$args"' <"$kendex_gg_r"; kendex_gg_c=$?; exec <"$kendex_gg_r"; rm -f "$kendex_gg_r"; [ "$kendex_gg_c" -eq 0 ] || exit "$kendex_gg_c"; ' ;;
+    *) invoke='"$kendex_gg_h" '"$hook$args"' || exit $?; ' ;;
+  esac
   # not-a-path: ends in `hooks`; also the grammar every armed hook matches.
-  printf '%s' 'kendex_gg_h="$(git rev-parse --git-path hooks 2>/dev/null)/'"$HELPER_NAME"'"; [ -x "$kendex_gg_h" ] || { printf "commit-guards: hook-helper=%s\\n  The helper is missing or not executable; '"$blocked"' blocked (reinstall: kendex guard install)\\n" "$(printf %s "$kendex_gg_h" | LC_ALL=C tr "\\001-\\037\\177" "?")" >&2; exit 2; }; "$kendex_gg_h" '"$hook$args"' || exit $?; '"$HOOK_SENTINEL"
+  printf '%s' 'kendex_gg_h="$(git rev-parse --git-path hooks 2>/dev/null)/'"$HELPER_NAME"'"; [ -x "$kendex_gg_h" ] || { printf "commit-guards: hook-helper=%s\\n  The helper is missing or not executable; '"$blocked"' blocked (reinstall: kendex guard install)\\n" "$(printf %s "$kendex_gg_h" | LC_ALL=C tr "\\001-\\037\\177" "?")" >&2; exit 2; }; '"$invoke$HOOK_SENTINEL"
 }
 
 # Line tools terminate their last line, which would permanently add a newline

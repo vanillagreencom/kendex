@@ -36,11 +36,13 @@ lanes. Git passes the remote name and its URL as arguments and the ref lines
 `<local-ref> <local-oid> <remote-ref> <remote-oid>` on stdin. Wire it through
 the installed shim: `install-git-hooks --repo <root>`.
 
-Per ref line: a deletion and a ref that is not refs/heads/* are announced and
-skipped. The base is the remote's oid when this repository has that commit,
-else the boundary of what the remote does not have yet; a branch with no
-boundary at all has never been vetted anywhere, so the whole tree is the
-honest scope.
+Per ref line: a deletion, and a line whose REMOTE ref is a tag or a note, are
+announced and skipped. What a line deposits on the remote decides that, never
+how its left side is spelled: `git push origin HEAD` lands a branch too. A
+line this lane cannot read is refused rather than skipped. The base is the
+remote's oid when this repository has that commit, else the boundary of what
+the remote does not have yet; a branch with no boundary at all has never been
+vetted anywhere, so the whole tree is the honest scope.
 
 Every lane but byte-ceiling reads the working tree or the index rather than a
 ref, so the batch judges THIS checkout. A branch whose tip is not HEAD is
@@ -62,6 +64,12 @@ case "${1-}" in
     ;;
 esac
 [ $# -eq 2 ] || gg_fail argument-count "$#" "takes the remote name and URL git passes to pre-push (see --help)"
+# The remote as git named it, which for `git push <url> <branch>` is the URL
+# itself, userinfo and any token in it included. It reaches `--remotes=` and
+# nowhere else: no message below interpolates it. git strips userinfo from its
+# own diagnostics, and a lane that printed what git withholds would put a
+# credential into terminal scrollback and into every log that captures hook
+# output. The ref name is what a reader needs from these messages anyway.
 REMOTE="$1"
 
 gg_repo_root_cd
@@ -70,9 +78,11 @@ gg_tmpdir
 BATCH="$SCRIPT_DIR/commit-guards"
 [ -x "$BATCH" ] || gg_fail lane-missing "$BATCH" "$BATCH is missing or not executable — reinstall the commit-guards skill"
 
-# Git streams the ref lines on stdin. They are read WHOLE before any check
-# runs: the batch and its checks inherit this process's stdin, and a child
-# reading from it would swallow the ref lines this loop has not reached yet.
+# Git streams the ref lines on stdin. They are read WHOLE here, and the loop
+# below reads them back from the file: a loop reading straight from git's
+# stream would hold it open across every check the batch runs, and any one of
+# them that touched stdin would take a line the loop has not reached. The
+# batch is handed /dev/null for the same reason from the other side.
 cat >"$GG_TMP/refs" || gg_fail stdin-read "$?" "could not read the ref lines git sends on stdin"
 
 # The commit this checkout is on, and the one thing the batch can judge. Empty
@@ -113,7 +123,7 @@ resolve_base() { # VAR LOCAL-OID REMOTE-OID — VAR gets the base; 1 when there 
   git rev-list --boundary "$local_oid" --not --remotes="$REMOTE" \
     >"$GG_TMP/boundary" 2>"$GG_TMP/boundary.err" || status=$?
   [ "$status" -eq 0 ] \
-    || gg_fail_cause boundary-collect "$status" "$GG_TMP/boundary.err" "git rev-list could not resolve what $(gg_shown "$local_oid") adds over remote $(gg_shown "$REMOTE") (exit $status)"
+    || gg_fail_cause boundary-collect "$status" "$GG_TMP/boundary.err" "git rev-list could not resolve what $(gg_shown "$local_oid") adds over the refs this remote is known to have (exit $status)"
   while IFS= read -r line; do
     case "$line" in
       -?*)
@@ -146,7 +156,10 @@ judge() { # SCOPE REF SCOPE-FLAGS... — run the batch once per distinct scope
   esac
   JUDGED="$JUDGED$scope$GG_NL"
   gg_message step "$scope" "=== pre-push: commit-guards all $*, for $ref"
-  "$BATCH" all "$@" || status=$?
+  # The batch reads no input, and is given none: a check that read stdin
+  # would take the ref lines this loop has not reached, and a line nobody
+  # reads is a branch nobody judges.
+  "$BATCH" all "$@" </dev/null || status=$?
   case "$status" in
     0) ;;
     1) had_violations=1 ;;
@@ -157,23 +170,62 @@ judge() { # SCOPE REF SCOPE-FLAGS... — run the batch once per distinct scope
   esac
 }
 
+# The ref a message names. Git sends the left side as the person spelled it:
+# `git push origin HEAD` and `git push origin @:refs/heads/x` both send HEAD,
+# and `git push origin <sha>:refs/heads/x` sends the raw oid. None of that
+# changes what leaves the machine — local_oid does — but a refusal naming HEAD
+# tells a reader less than one naming the branch they are standing on. A
+# detached HEAD has no branch name and keeps the spelling git sent.
+# The out-variable is never named `name`: a caller passing that name would
+# have this function's own local answered instead of its own.
+shown_ref() { # VAR LOCAL-REF — VAR gets the ref to name in a message
+  local __v="$1" name="$2" branch=""
+  case "$name" in
+    HEAD | @)
+      branch="$(git symbolic-ref --quiet HEAD 2>/dev/null)" || branch=""
+      [ -z "$branch" ] || name="$branch"
+      ;;
+  esac
+  eval "$__v=\$name"
+}
+
 lines=0
 while IFS=' ' read -r local_ref local_oid remote_ref remote_oid || [ -n "$local_ref" ]; do
   # git terminates every line, so a trailing empty read is the end of the
   # stream rather than a line with nothing on it.
   [ -n "$local_ref" ] || continue
   lines=$((lines + 1))
+  # A line missing a field is a line this lane cannot read, and one it cannot
+  # read may be depositing anything. Refused, never announced as carrying
+  # nothing: an unreadable line passed over is the fail-open this lane exists
+  # to refuse.
+  if [ -z "$local_oid" ] || [ -z "$remote_ref" ] || [ -z "$remote_oid" ]; then
+    had_errors=1
+    gg_message ref-line-short "$local_ref" "pre-push: git sent a ref line this lane could not read. A line is <local-ref> <local-oid> <remote-ref> <remote-oid>, and this one is short, so what it would deposit is unknown. The push is refused rather than passed over it."
+    continue
+  fi
   if zero_oid "$local_oid"; then
     gg_message deletion "$remote_ref" "=== pre-push: $remote_ref is being deleted — no branch state arrives, nothing to judge"
     continue
   fi
-  case "$local_ref" in
-    refs/heads/*) ;;
-    *)
-      gg_message non-branch "$local_ref" "=== pre-push: $local_ref is not a branch — skipped; a tag or a note carries no branch state to guard"
+  # What the line DEPOSITS decides, which is the remote ref. The left side is
+  # spelled however the push was typed — a branch, HEAD, @, a raw oid — and
+  # every one of those still lands a branch when the right side is one.
+  # Reading the left side instead let `git push origin HEAD` past the whole
+  # batch, which is the spelling `worktree push` uses after a restack.
+  #
+  # Tags and notes are the namespaces git keeps for what is not a line of
+  # development, and they are what the skip was written for. Every other
+  # destination is judged rather than guessed at: running the checks over one
+  # costs a verdict, and skipping it costs the guard.
+  case "$remote_ref" in
+    refs/tags/* | refs/notes/*)
+      gg_message non-branch "$remote_ref" "=== pre-push: $remote_ref is not a branch — skipped; a tag or a note carries no branch state to guard"
       continue
       ;;
   esac
+  ref=""
+  shown_ref ref "$local_ref"
   # Fail closed on a branch this checkout is not standing on. Every lane but
   # byte-ceiling reads the working tree or the index, and byte-ceiling's
   # --base diffs REF...HEAD — so the batch judges HEAD and its work tree, and
@@ -181,18 +233,18 @@ while IFS=' ' read -r local_ref local_oid remote_ref remote_oid || [ -n "$local_
   # Passing it silently is the one outcome this lane exists to refuse.
   if [ "$local_oid" != "$HEAD_OID" ]; then
     had_errors=1
-    gg_message not-head "$local_ref:$local_oid" "pre-push: $local_ref is at $(gg_shown "$local_oid") and this checkout is at $(gg_shown "${HEAD_OID:-<unborn HEAD>}"), so the guards — which read this work tree and this index — cannot judge it. Check the branch out and push again; the verdict line below names the way past this refusal."
+    gg_message not-head "$ref:$local_oid" "pre-push: $ref is at $(gg_shown "$local_oid") and this checkout is at $(gg_shown "${HEAD_OID:-<unborn HEAD>}"), so the guards — which read this work tree and this index — cannot judge it. Check the branch out and push again; the verdict line below names the way past this refusal."
     continue
   fi
   base=""
   if resolve_base base "$local_oid" "$remote_oid"; then
-    judge "base:$base" "$local_ref" --base "$base"
+    judge "base:$base" "$ref" --base "$base"
   else
     # No boundary at all: nothing on this branch has ever reached the remote,
     # so no commit on it has been vetted anywhere and the whole tree is the
     # only honest scope.
-    gg_message base-none "$local_ref" "=== pre-push: remote $REMOTE has nothing $local_ref builds on — judging the whole tree"
-    judge "all" "$local_ref"
+    gg_message base-none "$ref" "=== pre-push: nothing $ref builds on has reached this remote — judging the whole tree"
+    judge "all" "$ref"
   fi
 done <"$GG_TMP/refs"
 

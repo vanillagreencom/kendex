@@ -127,9 +127,9 @@ scenario() { # VAR NAME REBASE(0|1) [SKILL-SOURCE] — VAR gets the repo path
   eval "$__v=\$r"
 }
 
-push_topic() { # REPO -> the run's one line on stdout
+push_ref() { # REPO REFSPEC -> the run's one line on stdout
   local rc=0 out=""
-  out="$(git -C "$1" push origin topic 2>&1)" || rc=$?
+  out="$(git -C "$1" push origin "$2" 2>&1)" || rc=$?
   said "$rc" "$out"
 }
 
@@ -153,31 +153,52 @@ q git -C "$DIRECT" add big.md
 q git -C "$DIRECT" commit -q -m "feat: grow"
 TIP="$(git -C "$DIRECT" rev-parse HEAD)"
 q git -C "$DIRECT" branch elsewhere "$SEED"
+# What `git push <url> <branch>` hands the hook as its remote. Nothing
+# fetches from it; it only has to be a URL that matches no tracking ref.
+CREDENTIAL_SECRET=s3cret-token
+CREDENTIAL_URL="https://someone:$CREDENTIAL_SECRET@example.invalid/org/repo.git"
 
-direct() { # REF-LINES-JOINED-BY-@@ -> the run's one line on stdout
-  local rc=0 out="" text="" rest="$1" one=""
+# What one run printed, kept whole, so a row can also ask what is NOT in it.
+DIRECT_OUT=""
+direct() { # REMOTE REF-LINES-JOINED-BY-@@ -> the run's one line on stdout
+  local rc=0 text="" rest="$2" one=""
   while [ -n "$rest" ]; do
     one="${rest%%@@*}"
     if [ "$one" = "$rest" ]; then rest=""; else rest="${rest#*@@}"; fi
     text="$text$one
 "
   done
-  out="$(cd -- "$DIRECT" && printf '%s' "$text" \
-    | "$DIRECT/.agents/skills/commit-guards/scripts/pre-push" origin "$TMP/direct.git" 2>&1)" || rc=$?
-  said "$rc" "$out"
+  DIRECT_OUT="$(cd -- "$DIRECT" && printf '%s' "$text" \
+    | "$DIRECT/.agents/skills/commit-guards/scripts/pre-push" "$1" "$TMP/direct.git" 2>&1)" || rc=$?
+  said "$rc" "$DIRECT_OUT"
 }
 
-# label | ref lines | expected
+# label | remote | ref lines | expected
 for row in \
-  "a deletion carries no branch state and is skipped|refs/heads/topic $ZERO refs/heads/topic $SEED|rc=0 pre-push: deletion=refs/heads/topic;pre-push: result=0" \
-  "a tag is not a branch and is skipped|refs/tags/v1 $TIP refs/tags/v1 $ZERO|rc=0 pre-push: non-branch=refs/tags/v1;pre-push: result=0" \
-  "a branch this checkout is not on is refused, never passed|refs/heads/elsewhere $SEED refs/heads/elsewhere $ZERO|rc=2 pre-push: not-head=refs/heads/elsewhere:<oid>;pre-push: result=2" \
-  "the remote's own oid is the base when this repository has that commit|refs/heads/main $TIP refs/heads/main $SEED|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
-  "a second ref line at the same scope is not judged twice|refs/heads/main $TIP refs/heads/main $SEED@@refs/heads/main $TIP refs/heads/mirror $SEED|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: scope-repeat=base:<oid>;pre-push: result=0" \
-  "no ref lines at all is stated, not silently clean||rc=0 pre-push: no-refs=0;pre-push: result=0"; do
-  IFS='|' read -r label reflines expect <<<"$row"
-  assert_eq "$label" "$expect" "$(direct "$reflines")"
+  "a deletion carries no branch state and is skipped|origin|refs/heads/topic $ZERO refs/heads/topic $SEED|rc=0 pre-push: deletion=refs/heads/topic;pre-push: result=0" \
+  "a line landing on a tag is skipped, whatever its left side says|origin|HEAD $TIP refs/tags/v1 $ZERO|rc=0 pre-push: non-branch=refs/tags/v1;pre-push: result=0" \
+  "a line landing on a note is skipped too|origin|refs/notes/commits $TIP refs/notes/commits $ZERO|rc=0 pre-push: non-branch=refs/notes/commits;pre-push: result=0" \
+  "a branch this checkout is not on is refused, never passed|origin|refs/heads/elsewhere $SEED refs/heads/elsewhere $ZERO|rc=2 pre-push: not-head=refs/heads/elsewhere:<oid>;pre-push: result=2" \
+  "the remote's own oid is the base when this repository has that commit|origin|refs/heads/main $TIP refs/heads/main $SEED|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
+  "HEAD on the left still lands a branch, so it is judged|origin|HEAD $TIP refs/heads/main $SEED|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
+  "@ on the left is the same push under another spelling|origin|@ $TIP refs/heads/main $SEED|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
+  "a raw oid on the left still lands a branch, so it is judged|origin|$TIP $TIP refs/heads/main $SEED|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
+  "a ref line missing a field is refused, never announced as carrying nothing|origin|refs/heads/main $TIP refs/heads/main|rc=2 pre-push: ref-line-short=refs/heads/main;pre-push: result=2" \
+  "a second ref line at the same scope is not judged twice|origin|refs/heads/main $TIP refs/heads/main $SEED@@refs/heads/main $TIP refs/heads/mirror $SEED|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: scope-repeat=base:<oid>;pre-push: result=0" \
+  "a remote spelled as a URL matches no tracking ref, so the whole tree is the scope, and HEAD is named as the branch it resolves to|$CREDENTIAL_URL|HEAD $TIP refs/heads/main $ZERO|rc=0 pre-push: base-none=refs/heads/main;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0" \
+  "no ref lines at all is stated, not silently clean|origin||rc=0 pre-push: no-refs=0;pre-push: result=0"; do
+  IFS='|' read -r label remote reflines expect <<<"$row"
+  assert_eq "$label" "$expect" "$(direct "$remote" "$reflines")"
 done
+
+# The run above that was handed a credential-bearing URL, asked the other way
+# round: the row's equality says what the lane printed, and this says the
+# secret is not anywhere in it. git withholds userinfo from its own
+# diagnostics; a lane that printed it would put a token in scrollback and in
+# every log that captures hook output.
+direct "$CREDENTIAL_URL" "HEAD $TIP refs/heads/main $ZERO" >/dev/null
+assert_eq "the credential in the remote URL reaches no message" "absent" \
+  "$(case "$DIRECT_OUT" in *"$CREDENTIAL_SECRET"*) echo present ;; *) echo absent ;; esac)"
 
 # ------------------------------------------------------------------ the replay
 #
@@ -187,13 +208,18 @@ UNREBASED=""
 scenario UNREBASED unrebased 0
 assert_eq "the branch as authored is under the ceiling and pushes" \
   "rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
-  "$(push_topic "$UNREBASED")"
+  "$(push_ref "$UNREBASED" topic)"
 
 REBASED=""
 scenario REBASED rebased 1
+REFUSED="rc=1 pre-push: step=base:<oid>;byte-ceiling: oversized=big.md:1200:2:1;byte-ceiling: result=1:1:1:base:<oid>;pre-push: result=1"
 assert_eq "a branch rebased into a breach is refused before it leaves the machine" \
-  "rc=1 pre-push: step=base:<oid>;byte-ceiling: oversized=big.md:1200:2:1;byte-ceiling: result=1:1:1:base:<oid>;pre-push: result=1" \
-  "$(push_topic "$REBASED")"
+  "$REFUSED" "$(push_ref "$REBASED" topic)"
+# The same commit, the same remote ref, spelled the way `worktree push` spells
+# it after a restack — which is the spelling that reaches the lane as HEAD.
+# The refusal above was refused; nothing on the remote moved.
+assert_eq "and refused again when the push spells its left side HEAD" \
+  "$REFUSED" "$(push_ref "$REBASED" HEAD:refs/heads/topic)"
 
 # The must-fail control: the same rebased state, judged by a copy of the lane
 # whose batch call stands and whose verdict is thrown away. The breach is still
@@ -203,7 +229,7 @@ MUTANT="$TMP/.mutant/commit-guards"
 mkdir -p "$(dirname "$MUTANT")"
 cp -R "$SKILL_TEMPLATE" "$MUTANT"
 MUTANT_BEFORE="$(cat -- "$MUTANT/scripts/pre-push")"
-sed -i.bak 's# all "$@" || status=$?# all "$@" || status=0#' "$MUTANT/scripts/pre-push"
+sed -i.bak 's# all "$@" </dev/null || status=$?# all "$@" </dev/null || status=0#' "$MUTANT/scripts/pre-push"
 rm -f -- "$MUTANT/scripts/pre-push.bak"
 MUTANT_AFTER="$(cat -- "$MUTANT/scripts/pre-push")"
 assert_eq "the mutant edit took" "rewritten" \
@@ -213,7 +239,7 @@ MUTATED=""
 scenario MUTATED mutated 1 "$MUTANT"
 assert_eq "must-fail: with the batch's verdict dropped, the same breach pushes" \
   "rc=0 pre-push: step=base:<oid>;byte-ceiling: oversized=big.md:1200:2:1;byte-ceiling: result=1:1:1:base:<oid>;pre-push: result=0" \
-  "$(push_topic "$MUTATED")"
+  "$(push_ref "$MUTATED" topic)"
 
 printf '\n%s: %s passed, %s failed\n' "$gg_suite" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
