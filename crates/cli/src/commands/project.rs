@@ -58,21 +58,28 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
             template,
             yes,
         } => {
+            // The template is settled before the first write, not between
+            // the two: registering is itself a write, so a template
+            // nobody saved, one with an unreachable member, or a missing
+            // answer in a run with nobody to ask must refuse with the
+            // registry untouched. This crate's rule is that a verb
+            // needing input fails naming the flag before its first write.
+            let planned = match &template {
+                Some(name) => {
+                    let planned = super::template_cmd::plan_install(env, name, Some(&path))?;
+                    super::template_cmd::confirm_install(&planned, yes)?;
+                    Some(planned)
+                }
+                None => None,
+            };
             settings::register_project(env, &path)?;
             out(&format!("registered {}", path.display()));
             offer_to_manage(env, &path);
             // Registering and filling a project is one path, so the
             // template lands before the hook offer rather than as a
             // second command somebody has to know about.
-            if let Some(name) = template {
-                super::template_cmd::run(
-                    env,
-                    super::template_cmd::TemplateCommand::Install {
-                        name,
-                        project: Some(path.clone()),
-                        yes,
-                    },
-                )?;
+            if let Some(planned) = &planned {
+                super::template_cmd::run_install(env, planned)?;
             }
             match drift_hook {
                 true => {

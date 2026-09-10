@@ -274,7 +274,9 @@ fn members_deduplicate_by_identity_and_not_by_name() {
         &[MemberRef {
             kind: MemberKind::Skill,
             name: "code-quality".to_owned(),
-            repo: Some("vanillagreencom/kendex".to_owned()),
+            which: MemberWhich::Marketplace {
+                repo: "vanillagreencom/kendex".to_owned(),
+            },
         }],
     )
     .unwrap();
@@ -288,7 +290,7 @@ fn members_deduplicate_by_identity_and_not_by_name() {
         &[MemberRef {
             kind: MemberKind::Skill,
             name: "code-quality".to_owned(),
-            repo: None,
+            which: MemberWhich::Any,
         }],
     )
     .unwrap();
@@ -314,4 +316,143 @@ fn a_selection_with_nothing_in_it_is_refused_by_every_path() {
         Err(CoreError::TemplateEmpty)
     ));
     assert_eq!(get(&env, "Rust service").unwrap().members.len(), 1);
+}
+
+/// A template can hold one kind and name from a marketplace and as a copy
+/// of its own at once, so a reference has to be able to name which. With
+/// two states it could not: removing the copy took every marketplace
+/// member with it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_reference_names_which_of_three_members_it_means() {
+    let (_tmp, env) = home();
+    let named = |which: MemberWhich| MemberRef {
+        kind: MemberKind::Skill,
+        name: "code-quality".to_owned(),
+        which,
+    };
+    let both = || {
+        vec![
+            Member {
+                kind: MemberKind::Skill,
+                name: "code-quality".to_owned(),
+                enabled: true,
+                source: MemberSource::Marketplace {
+                    repo: "vanillagreencom/kendex".to_owned(),
+                    rev: None,
+                },
+            },
+            Member {
+                kind: MemberKind::Skill,
+                name: "code-quality".to_owned(),
+                enabled: true,
+                source: MemberSource::Copy {
+                    copy: "skills/code-quality".to_owned(),
+                    from: None,
+                },
+            },
+        ]
+    };
+    let held = |template: &Template| -> Vec<bool> {
+        template
+            .members
+            .iter()
+            .map(|member| matches!(member.source, MemberSource::Copy { .. }))
+            .collect()
+    };
+
+    // Removing the copy leaves the marketplace member.
+    let mut template = insert(
+        &env,
+        Template {
+            name: "Copy first".to_owned(),
+            id: String::new(),
+            members: both(),
+            customizations: Customizations::default(),
+        },
+    )
+    .unwrap();
+    template = remove_members(&env, &template.name, &[named(MemberWhich::Copy)]).unwrap();
+    assert_eq!(
+        held(&template),
+        [false],
+        "the marketplace member should stay"
+    );
+
+    // Removing the marketplace member leaves the copy.
+    let mut other = insert(
+        &env,
+        Template {
+            name: "Marketplace first".to_owned(),
+            id: String::new(),
+            members: both(),
+            customizations: Customizations::default(),
+        },
+    )
+    .unwrap();
+    other = remove_members(
+        &env,
+        &other.name,
+        &[named(MemberWhich::Marketplace {
+            repo: "vanillagreencom/kendex".to_owned(),
+        })],
+    )
+    .unwrap();
+    assert_eq!(held(&other), [true], "the copy should stay");
+
+    // And a caller that really means every one of them still has a way to
+    // say so.
+    let mut all = insert(
+        &env,
+        Template {
+            name: "Both gone".to_owned(),
+            id: String::new(),
+            members: both(),
+            customizations: Customizations::default(),
+        },
+    )
+    .unwrap();
+    all = remove_members(&env, &all.name, &[named(MemberWhich::Any)]).unwrap();
+    assert!(all.members.is_empty());
+}
+
+/// Admission is one rule set, so no entry point can admit a member
+/// another would refuse. Adding to an existing template used to accept a
+/// bare Pi extension that creating one refused.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn every_path_that_admits_a_member_refuses_the_same_ones() {
+    let (_tmp, env) = home();
+    saved(&env, "Rust service");
+    let pi = || {
+        vec![Member {
+            kind: MemberKind::PiExtension,
+            name: "pi-widgets".to_owned(),
+            enabled: true,
+            source: MemberSource::Marketplace {
+                repo: "a/b".to_owned(),
+                rev: None,
+            },
+        }]
+    };
+    // Creating one and adding to one answer alike, on both rules.
+    assert!(matches!(
+        create_from_selection(&env, "By hand", pi()),
+        Err(CoreError::TemplateMemberUnresolved { .. })
+    ));
+    assert!(matches!(
+        add_members(&env, "Rust service", pi()),
+        Err(CoreError::TemplateMemberUnresolved { .. })
+    ));
+    assert!(matches!(
+        create_from_selection(&env, "Empty", Vec::new()),
+        Err(CoreError::TemplateEmpty)
+    ));
+    assert!(matches!(
+        add_members(&env, "Rust service", Vec::new()),
+        Err(CoreError::TemplateEmpty)
+    ));
+    // Nothing was admitted by either path.
+    assert_eq!(get(&env, "Rust service").unwrap().members.len(), 1);
+    assert_eq!(list(&env).unwrap().len(), 1);
 }

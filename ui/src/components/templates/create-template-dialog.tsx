@@ -1,11 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type {
-  Chosen,
-  DraftMember,
-  DraftOrigin,
-  LicenseAnswer,
-  Side,
-} from "@/bindings";
+import type { Chosen, DraftMember, DraftOrigin, Side } from "@/bindings";
 import { SectionHeading } from "@/components/section";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -58,15 +52,19 @@ import {
  *  the first place a person hears about it. */
 function licenceAnswered(
   origin: Extract<DraftOrigin, { origin: "choice" }>,
-  answer: LicenseAnswer | undefined,
+  side: Side | undefined,
 ): boolean {
+  // Only the copy side copies a marketplace's bytes, so only it has a
+  // licence to answer for.
+  if (side?.side !== "copy") return true;
+  const answer = side.license;
   // The gate's own rule: a licence kendex recognizes takes the
   // confirmation and nothing else, because a stated basis is what stands
   // in for a licence it cannot judge.
   if (origin.license !== null && origin.licenseRecognized) {
-    return answer?.confirmed ?? false;
+    return answer.confirmed ?? false;
   }
-  return (answer?.basis ?? "").trim() !== "";
+  return (answer.basis ?? "").trim() !== "";
 }
 
 /** Where a template would take one member's content from, in one line. */
@@ -115,11 +113,11 @@ export function CreateTemplateDialog({
   const [name, setName] = useState("");
   const [dropped, setDropped] = useState<ReadonlySet<string>>(new Set());
   const [locals, setLocals] = useState<ReadonlySet<string>>(new Set());
+  // The side taken per member, and — where that side is the copy — the
+  // licence evidence it carries. One piece of state, because the type
+  // core takes carries them together: a copy cannot be asked for without
+  // its answer.
   const [sides, setSides] = useState<Record<string, Side>>({});
-  // The licence evidence for each member whose copy would come from a
-  // marketplace's bytes. Kept by member key like `sides`, because the
-  // answer is about one member's origin and not about the save.
-  const [licenses, setLicenses] = useState<Record<string, LicenseAnswer>>({});
   const [customizations, setCustomizations] = useState(false);
 
   // Read fresh every time it opens: what it offers is a reading of the
@@ -132,7 +130,6 @@ export function CreateTemplateDialog({
     setDropped(new Set());
     setLocals(new Set());
     setSides({});
-    setLicenses({});
     setCustomizations(false);
     clearRefusal();
     void templateDraft(project).then((answer) => {
@@ -165,8 +162,7 @@ export function CreateTemplateDialog({
       // judgement is core's; this only knows the save will refuse without
       // it, so the button says so before the press rather than after.
       (member.origin.origin === "choice" &&
-        sides[member.key] === "copy" &&
-        !licenceAnswered(member.origin, licenses[member.key])),
+        !licenceAnswered(member.origin, sides[member.key])),
   );
   const canSave =
     draft !== null &&
@@ -191,11 +187,6 @@ export function CreateTemplateDialog({
       members: kept.map((member) => member.key),
       locals: [...locals],
       sides,
-      // Only the members that take a copy carry one, so a licence
-      // answered and then switched away from is not sent.
-      licenses: Object.fromEntries(
-        Object.entries(licenses).filter(([key]) => sides[key] === "copy"),
-      ),
       customizations,
     };
     void createFromProject(project, chosen).then((ok) => {
@@ -266,10 +257,6 @@ export function CreateTemplateDialog({
                   onToggle={() => setDropped(toggle(dropped, member.key))}
                   side={sides[member.key]}
                   onSide={(side) => setSides({ ...sides, [member.key]: side })}
-                  license={licenses[member.key]}
-                  onLicense={(answer) =>
-                    setLicenses({ ...licenses, [member.key]: answer })
-                  }
                 />
               ))}
             </section>
@@ -377,16 +364,12 @@ function MemberChoice({
   onToggle,
   side,
   onSide,
-  license,
-  onLicense,
 }: {
   member: DraftMember;
   checked: boolean;
   onToggle: () => void;
   side: Side | undefined;
   onSide: (side: Side) => void;
-  license: LicenseAnswer | undefined;
-  onLicense: (answer: LicenseAnswer) => void;
 }) {
   const origin = member.origin;
   return (
@@ -417,16 +400,21 @@ function MemberChoice({
           <div className="flex gap-2">
             <Button
               size="sm"
-              variant={side === "marketplace" ? "default" : "outline"}
-              onClick={() => onSide("marketplace")}
+              variant={side?.side === "marketplace" ? "default" : "outline"}
+              onClick={() => onSide({ side: "marketplace" })}
             >
               {CHOICE_MARKETPLACE}
             </Button>
             <Button
               size="sm"
-              variant={side === "copy" ? "default" : "outline"}
+              variant={side?.side === "copy" ? "default" : "outline"}
               disabled={origin.hash === null}
-              onClick={() => onSide("copy")}
+              onClick={() =>
+                onSide({
+                  side: "copy",
+                  license: { confirmed: false, basis: null },
+                })
+              }
             >
               {CHOICE_LOCAL}
             </Button>
@@ -438,7 +426,7 @@ function MemberChoice({
               the terms are shown and answered here rather than refused at
               the save. A licence kendex does not recognize cannot be
               confirmed away — it takes a stated reason. */}
-          {side === "copy" ? (
+          {side?.side === "copy" ? (
             <div className="flex flex-col gap-1">
               <p className="text-[13px] text-muted-foreground">
                 {origin.license ? licenseUnder(origin.license) : LICENSE_NONE}
@@ -446,11 +434,14 @@ function MemberChoice({
               {origin.license && origin.licenseRecognized ? (
                 <Label className="flex items-start gap-2 font-normal">
                   <Checkbox
-                    checked={license?.confirmed ?? false}
+                    checked={side.license.confirmed ?? false}
                     onCheckedChange={() =>
-                      onLicense({
-                        confirmed: !(license?.confirmed ?? false),
-                        basis: license?.basis ?? null,
+                      onSide({
+                        side: "copy",
+                        license: {
+                          ...side.license,
+                          confirmed: !(side.license.confirmed ?? false),
+                        },
                       })
                     }
                     aria-label={LICENSE_CONFIRM}
@@ -469,11 +460,14 @@ function MemberChoice({
                     <span className="text-[13px]">{LICENSE_BASIS_LABEL}</span>
                     <Input
                       id={`license-basis-${member.key}`}
-                      value={license?.basis ?? ""}
+                      value={side.license.basis ?? ""}
                       onChange={(event) =>
-                        onLicense({
-                          confirmed: license?.confirmed ?? false,
-                          basis: event.target.value,
+                        onSide({
+                          side: "copy",
+                          license: {
+                            ...side.license,
+                            basis: event.target.value,
+                          },
                         })
                       }
                     />

@@ -560,3 +560,144 @@ fn installing_a_template_registers_the_project_it_went_into() {
         "a global install registered something"
     );
 }
+
+/// `project add --template` performs two writes and the registry entry is
+/// the first. A template nobody saved, or a missing answer in a run with
+/// nobody to ask, refuses with the registry untouched.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn project_add_with_a_template_settles_it_before_registering() {
+    let (_tmp, home) = world();
+    let app = home.join("app");
+    let fresh = home.join("fresh");
+    assert!(
+        kendex(
+            &home,
+            &home,
+            &[
+                "template",
+                "create",
+                "Rust service",
+                "--from-project",
+                app.to_str().unwrap(),
+                "--include-local",
+                "--yes",
+            ],
+        )
+        .status
+        .success()
+    );
+
+    // name, the flags after the path, whether the project ends up
+    // registered, and the word the run has to say.
+    type Row<'a> = (&'a str, Vec<&'a str>, bool, &'a str);
+    let rows: Vec<Row<'_>> = vec![
+        (
+            "a template nobody saved",
+            vec!["--template", "Never saved", "--yes"],
+            false,
+            "no template called",
+        ),
+        (
+            "no answer and nobody to ask",
+            vec!["--template", "Rust service"],
+            false,
+            "--yes",
+        ),
+        (
+            "a template and an answer",
+            vec!["--template", "Rust service", "--yes"],
+            true,
+            "registered",
+        ),
+    ];
+
+    for (row, flags, registered, says) in rows {
+        let mut args = vec!["project", "add", fresh.to_str().unwrap()];
+        args.extend(flags);
+        let run = kendex(&home, &home, &args);
+        let text = said(&run);
+        assert_eq!(run.status.success(), registered, "{row}: {text}");
+        assert!(text.contains(says), "{row} should say {says}: {text}");
+        let listed = said(&kendex(&home, &home, &["project", "list"]));
+        assert_eq!(
+            listed.contains("fresh"),
+            registered,
+            "{row}: the registry should {} the project: {listed}",
+            if registered { "hold" } else { "not hold" }
+        );
+        if registered {
+            // The install ran too, after the registration.
+            assert!(text.contains("installed"), "{row}: {text}");
+        }
+    }
+}
+
+/// `template add --from-project` takes a marketplace's bytes when it takes
+/// a project's edited copy, so it needs the same licence affordance
+/// `create` has. Without it the verb always refused at the gate with no
+/// way to answer.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn template_add_from_a_project_can_answer_for_the_licence() {
+    let (_tmp, home) = world();
+    let app = home.join("app");
+    let catalog = home.join("catalog");
+    // A template holding the marketplace's package, and a project whose
+    // installed copy has drifted from it.
+    assert!(
+        kendex(
+            &home,
+            &home,
+            &[
+                "template",
+                "create",
+                "Held",
+                "--source",
+                catalog.to_str().unwrap(),
+                "--skill",
+                "gh",
+            ],
+        )
+        .status
+        .success()
+    );
+    let installed = app.join(".claude/skills/gh");
+    fs::remove_dir_all(&installed)
+        .or_else(|_| fs::remove_file(&installed))
+        .unwrap();
+    skill(&app.join(".claude/skills"), "gh", "edited here");
+
+    let taking = |flags: Vec<&str>| {
+        let mut args = vec![
+            "template",
+            "add",
+            "Held",
+            "--from-project",
+            app.to_str().unwrap(),
+            "--skill",
+            "gh",
+        ];
+        args.extend(flags);
+        args.push("--yes");
+        kendex(&home, &home, &args)
+    };
+
+    // No answer: refused, and the flag that answers it is named.
+    let ungated = taking(vec![]);
+    let text = said(&ungated);
+    assert!(!ungated.status.success(), "{text}");
+    assert!(
+        text.contains("licence") || text.contains("license"),
+        "{text}"
+    );
+
+    // Answered: the copy is taken.
+    let confirmed = taking(vec!["--confirm-license"]);
+    assert!(confirmed.status.success(), "{}", said(&confirmed));
+    let shown = said(&kendex(&home, &home, &["template", "show", "Held"]));
+    assert!(
+        shown.contains("this template's own copies"),
+        "the member should now be a copy: {shown}"
+    );
+}

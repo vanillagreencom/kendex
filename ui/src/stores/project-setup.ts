@@ -34,8 +34,14 @@ interface ProjectSetupState {
   /** Read the machine again on this root's behalf, and record how it
    *  went. Not awaited by the registration that starts it: the project is
    *  a place the moment the registry says so, and the reader is taken
-   *  back to it while this runs. */
-  check: (root: string) => Promise<void>;
+   *  back to it while this runs.
+   *
+   *  `registered` says this read follows a registration, which is what
+   *  sets [`justAdded`]. The card's own Try again calls this too and does
+   *  not pass it: a retry of a failed scan on a project kendex already
+   *  tracks is not an addition, and treating it as one opened the
+   *  install-a-template offer on a project nobody had just added. */
+  check: (root: string, registered?: boolean) => Promise<void>;
   /** Drop what is held about one folder. A read still out for it answers
    *  about a place nothing tracks, and the card at the folder it moved to
    *  must not inherit "package check failed" from the path it left. */
@@ -78,12 +84,12 @@ export const useProjectSetupStore = create<ProjectSetupState>((set) => ({
     }));
   },
 
-  check: async (root) => {
+  check: async (root, registered = false) => {
     // Asking about a folder is what makes it a project again: the same
     // folder registered afresh reads here like any other.
     askingAgain([root]);
     set((state) => ({
-      justAdded: root,
+      ...(registered ? { justAdded: root } : {}),
       checking: with_(state.checking, root),
       unchecked: without(state.unchecked, root),
     }));

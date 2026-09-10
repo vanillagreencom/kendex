@@ -60,7 +60,16 @@ pub struct ResolvedGroup {
     pub items: Vec<ResolvedItem>,
     /// Curated sets installed whole. What each holds is the catalog's to
     /// say and derives at install time.
-    pub bundles: Vec<String>,
+    pub bundles: Vec<ResolvedSet>,
+}
+
+/// One curated set a group installs, and whether the template saved it
+/// switched on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedSet {
+    pub name: String,
+    pub enabled: bool,
 }
 
 /// One copy the template owns.
@@ -86,6 +95,11 @@ pub struct MissingMember {
     /// The marketplace the member names, for the row to keep saying where
     /// it came from.
     pub repo: Option<String>,
+    /// Which of the members wearing this kind and name this row is about,
+    /// so a surface acting on the row reaches only that one. Carried
+    /// rather than inferred from `repo`: a copy that came from a
+    /// marketplace names one too.
+    pub which: super::MemberWhich,
     pub why: String,
 }
 
@@ -176,20 +190,31 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
                         kind: member.kind,
                         name: member.name.clone(),
                         repo: Some(repo.clone()),
+                        which: which_of(member),
                         why: disagreeing_revs(repo, group.rev.as_deref(), rev.as_deref()),
                     });
                     continue;
                 }
                 match member.kind.item() {
-                    None => group.bundles.push(member.name.clone()),
+                    None => group.bundles.push(ResolvedSet {
+                        name: member.name.clone(),
+                        enabled: member.enabled,
+                    }),
                     // A plugin is its registry's own curated set, so it
                     // installs as one — the same reading every install
                     // path gives it.
-                    Some(ItemKind::Plugin) => group.bundles.push(member.name.clone()),
+                    // A plugin is its registry's own curated set, so it
+                    // installs as one — the same reading every install
+                    // path gives it.
+                    Some(ItemKind::Plugin) => group.bundles.push(ResolvedSet {
+                        name: member.name.clone(),
+                        enabled: member.enabled,
+                    }),
                     Some(ItemKind::PiExtension) => missing.push(MissingMember {
                         kind: member.kind,
                         name: member.name.clone(),
                         repo: Some(repo.clone()),
+                        which: which_of(member),
                         why: super::PI_EXTENSION_DIRECT.to_owned(),
                     }),
                     Some(kind) => group.items.push(ResolvedItem {
@@ -205,6 +230,7 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
                         kind: member.kind,
                         name: member.name.clone(),
                         repo: None,
+                        which: which_of(member),
                         why: "a curated set has no copy of its own".to_owned(),
                     });
                     continue;
@@ -221,6 +247,7 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
                         kind: member.kind,
                         name: member.name.clone(),
                         repo: from.clone(),
+                        which: which_of(member),
                         why: error.to_string(),
                     }),
                 }
@@ -243,6 +270,17 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
         copies,
         missing,
     })
+}
+
+/// Which of the members wearing one kind and name this one is, read off
+/// its own source so a surface acting on the row reaches only it.
+fn which_of(member: &super::Member) -> super::MemberWhich {
+    match &member.source {
+        MemberSource::Marketplace { repo, .. } => {
+            super::MemberWhich::Marketplace { repo: repo.clone() }
+        }
+        MemberSource::Copy { .. } => super::MemberWhich::Copy,
+    }
 }
 
 /// Two members of one repository asking for different revisions. The
@@ -365,7 +403,7 @@ pub fn install(
             source: Some(source.clone()),
             harnesses: harnesses.clone(),
             method,
-            bundles: group.bundles.clone(),
+            bundles: group.bundles.iter().map(|set| set.name.clone()).collect(),
             ..AddRequest::default()
         };
         for item in &group.items {
@@ -401,6 +439,11 @@ pub fn install(
         for bundle in &request.bundles {
             landed.declared.push(format!("bundle {bundle}"));
         }
+        // The saved switch, applied to the declarations the add just
+        // wrote. `AddRequest` carries no per-item flag, so the state is
+        // put on the declaration the way the copy path does — one pass
+        // over what this group declared rather than a guard at each site.
+        went!(landed, carry_saved_switches(env, destination, group));
     }
     if !resolution.copies.is_empty() {
         let copied = went!(
@@ -570,6 +613,49 @@ fn notice_ops(
         });
     }
     Ok(ops)
+}
+
+/// Put every member this group saved switched off back to switched off in
+/// the destination's manifest.
+///
+/// [`super::Member::enabled`] exists so a package a project had switched
+/// off is switched off here rather than being quietly enabled, which is
+/// what KEN-1293 requires of the disabled state. The copy path applies it
+/// on the declaration it writes; a marketplace member reaches the
+/// manifest through `AddRequest`, which carries no per-item flag, so it is
+/// applied here on the declarations that add has just written.
+fn carry_saved_switches(env: &Env, destination: &Scope, group: &ResolvedGroup) -> Result<()> {
+    let off_items: Vec<&ResolvedItem> = group.items.iter().filter(|item| !item.enabled).collect();
+    let off_sets: Vec<&ResolvedSet> = group.bundles.iter().filter(|set| !set.enabled).collect();
+    if off_items.is_empty() && off_sets.is_empty() {
+        return Ok(());
+    }
+    let mut manifest = engine_ops::manifest_for_mutation(env, destination)?;
+    let before = manifest.clone();
+    for item in off_items {
+        if let Some(decl) = manifest.declared_mut(item.kind).get_mut(&item.name) {
+            decl.enabled = false;
+        }
+    }
+    for set in off_sets {
+        if let Some(decl) = manifest.bundles.get_mut(&set.name) {
+            decl.enabled = false;
+        }
+    }
+    if manifest == before {
+        return Ok(());
+    }
+    let manifest_path = crate::manifest::manifest_path(env, destination);
+    let op = PlannedOp {
+        description: "keep the template's switched-off packages switched off".into(),
+        op: Op::WriteManifest {
+            pre: Pre::observed(&manifest_path)?,
+            path: manifest_path,
+            manifest: Box::new(manifest),
+        },
+    };
+    crate::apply::execute(env, &Plan::landed(destination.canonical(), vec![op])?)?;
+    Ok(())
 }
 
 /// Write the template's package customizations into the destination,

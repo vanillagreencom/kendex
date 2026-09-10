@@ -8,7 +8,8 @@ use clap::{Args, Subcommand};
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
 use kendex_core::template::{
-    self, Chosen, Member, MemberKind, MemberRef, MemberSource, Resolution,
+    self, Chosen, LicenseAnswer, Member, MemberKind, MemberRef, MemberSource, MemberWhich,
+    Resolution,
 };
 
 use super::engine_common::ask_before_writing;
@@ -67,12 +68,25 @@ pub enum TemplateCommand {
         /// template's own copy of it
         #[arg(long)]
         from_project: Option<PathBuf>,
+        /// Confirm the marketplace licence permits copying, where the
+        /// files taken are a marketplace's and kendex recognizes its
+        /// licence
+        #[arg(long, requires = "from_project")]
+        confirm_license: bool,
+        /// Your basis for copying, where kendex does not recognize the
+        /// licence those files came under
+        #[arg(long, requires = "from_project")]
+        license_basis: Option<String>,
         #[arg(short = 'y', long)]
         yes: bool,
     },
     /// Take packages out of a template
     Remove {
         name: String,
+        /// Take this template's own copy, rather than a marketplace's
+        /// package of the same name
+        #[arg(long)]
+        copy: bool,
         #[command(flatten)]
         picked: Picked,
     },
@@ -161,17 +175,29 @@ impl Picked {
             .collect())
     }
 
-    fn refs(&self) -> Result<Vec<MemberRef>, String> {
+    /// The members these names stand for, each carrying which of the
+    /// members wearing its kind and name is meant. `--source` names a
+    /// marketplace's, `copy` names the template's own, and neither means
+    /// every one of them — the three states a template can really hold.
+    fn refs(&self, copy: bool) -> Result<Vec<MemberRef>, String> {
         let named = self.named();
         if named.is_empty() {
             return Err(NOTHING_PICKED.to_owned());
         }
+        if copy && self.source.is_some() {
+            return Err(COPY_OR_SOURCE.to_owned());
+        }
+        let which = match (copy, &self.source) {
+            (true, _) => MemberWhich::Copy,
+            (false, Some(repo)) => MemberWhich::Marketplace { repo: repo.clone() },
+            (false, None) => MemberWhich::Any,
+        };
         Ok(named
             .into_iter()
             .map(|(kind, name)| MemberRef {
                 kind,
                 name,
-                repo: self.source.clone(),
+                which: which.clone(),
             })
             .collect())
     }
@@ -180,6 +206,8 @@ impl Picked {
 const NOTHING_PICKED: &str =
     "name at least one package: --skill, --agent, --hook, --command, --mcp-server or --bundle";
 const NO_SOURCE: &str = "--source names the marketplace these packages come from";
+const COPY_OR_SOURCE: &str =
+    "--copy names this template's own copy, so it cannot be given with --source";
 
 pub fn run(env: &Env, command: TemplateCommand) -> CliResult {
     match command {
@@ -217,10 +245,22 @@ pub fn run(env: &Env, command: TemplateCommand) -> CliResult {
             name,
             picked,
             from_project,
+            confirm_license,
+            license_basis,
             yes,
-        } => add(env, &name, picked, from_project, yes),
-        TemplateCommand::Remove { name, picked } => {
-            let after = template::remove_members(env, &name, &picked.refs()?)?;
+        } => add(
+            env,
+            &name,
+            picked,
+            from_project,
+            LicenseAnswer {
+                confirmed: confirm_license,
+                basis: license_basis,
+            },
+            yes,
+        ),
+        TemplateCommand::Remove { name, copy, picked } => {
+            let after = template::remove_members(env, &name, &picked.refs(copy)?)?;
             out(&format!(
                 "{} now installs {} package(s)",
                 after.name,
@@ -308,8 +348,12 @@ fn print_resolution(resolution: &Resolution) {
             };
             say(&format!("  {} {}{off}", item.kind.name(), item.name));
         }
-        for bundle in &group.bundles {
-            say(&format!("  set {bundle}"));
+        for set in &group.bundles {
+            let off = match set.enabled {
+                true => "",
+                false => "  (switched off)",
+            };
+            say(&format!("  set {}{off}", set.name));
         }
     }
     if !resolution.copies.is_empty() {
@@ -442,7 +486,7 @@ fn create(
             gone.why
         ));
     }
-    let (sides, licenses) = answered(&kept, &answers)?;
+    let sides = answered(&kept, &answers)?;
     note(COPIES_GO_INTO_THIS_TEMPLATE);
     ask_before_writing(&format!("save this as '{name}'?"), yes)?;
     let template = template::create_from_project(
@@ -453,7 +497,6 @@ fn create(
             members: kept.iter().map(|member| member.key.clone()).collect(),
             locals: locals.iter().map(|local| local.key.clone()).collect(),
             sides,
-            licenses,
             customizations: answers.include_customizations,
         },
     )?;
@@ -471,43 +514,35 @@ fn create(
 /// Asked before the first write, which is the contract this crate keeps
 /// for every verb: a run with nobody to ask must not stop half-way
 /// through a save.
-type Answers = (
-    BTreeMap<String, template::Side>,
-    BTreeMap<String, template::LicenseAnswer>,
-);
-
 fn answered(
     kept: &[&template::DraftMember],
     answers: &CreateAnswers,
-) -> Result<Answers, Box<dyn std::error::Error>> {
+) -> Result<BTreeMap<String, template::Side>, Box<dyn std::error::Error>> {
     let mut sides = BTreeMap::new();
-    let mut licenses = BTreeMap::new();
     for member in kept {
+        // The licence answer travels inside the copy side, so a copy
+        // cannot be asked for without it.
         let side = match (
             answers.use_marketplace.contains(&member.key),
             answers.use_project_copy.contains(&member.key),
         ) {
             (true, _) => Some(template::Side::Marketplace),
-            (_, true) => Some(template::Side::Copy),
-            _ => None,
-        };
-        if let Some(side) = side {
-            sides.insert(member.key.clone(), side);
-        }
-        if let Some(missing) = unanswered(member, side, answers) {
-            return Err(missing.into());
-        }
-        if side == Some(template::Side::Copy) {
-            licenses.insert(
-                member.key.clone(),
-                template::LicenseAnswer {
+            (_, true) => Some(template::Side::Copy {
+                license: LicenseAnswer {
                     confirmed: answers.confirm_license,
                     basis: answers.license_basis.clone(),
                 },
-            );
+            }),
+            _ => None,
+        };
+        if let Some(missing) = unanswered(member, side.as_ref(), answers) {
+            return Err(missing.into());
+        }
+        if let Some(side) = side {
+            sides.insert(member.key.clone(), side);
         }
     }
-    Ok((sides, licenses))
+    Ok(sides)
 }
 
 /// The flag this member still needs, or `None` where it is answered.
@@ -518,7 +553,7 @@ fn answered(
 /// until now.
 fn unanswered(
     member: &template::DraftMember,
-    side: Option<template::Side>,
+    side: Option<&template::Side>,
     answers: &CreateAnswers,
 ) -> Option<String> {
     match &member.origin {
@@ -541,7 +576,7 @@ fn unanswered(
                 member.key,
                 member.key
             )),
-            Some(template::Side::Copy) => {
+            Some(template::Side::Copy { .. }) => {
                 license_needed(member, license.as_deref(), *license_recognized, answers)
             }
             Some(template::Side::Marketplace) => None,
@@ -599,6 +634,7 @@ fn add(
     name: &str,
     picked: Picked,
     from_project: Option<PathBuf>,
+    license: LicenseAnswer,
     yes: bool,
 ) -> CliResult {
     let Some(project) = from_project else {
@@ -612,7 +648,10 @@ fn add(
     };
     let template = template::get(env, name)?;
     let draft = template::draft_from_project(env, &project)?;
-    let wanted = picked.refs()?;
+    // Taking a project's files replaces what the template held under
+    // that name, which is what the lines below promise, so the reference
+    // means every member wearing it.
+    let wanted = picked.refs(false)?;
     for want in &wanted {
         let key = template::member_key(want.kind, &want.name);
         let known = draft.members.iter().any(|member| member.key == key)
@@ -650,7 +689,7 @@ fn add(
     }
     note(COPIES_GO_INTO_THIS_TEMPLATE);
     ask_before_writing(&format!("take these files into '{}'?", template.name), yes)?;
-    let after = template::add_from_project(env, &template.name, &project, &wanted)?;
+    let after = template::add_from_project(env, &template.name, &project, &wanted, &license)?;
     out(&format!(
         "{} now installs {} package(s)",
         after.name,
@@ -659,26 +698,70 @@ fn add(
     Ok(())
 }
 
-fn install(env: &Env, name: &str, project: Option<PathBuf>, yes: bool) -> CliResult {
+/// Everything an install needs settled before its first write: the
+/// template, where it goes, and what it would install.
+///
+/// Split out because `project add --template` performs two writes — the
+/// registry entry and the install — and the registry entry is the first
+/// of them. Settling the template ahead of both is what keeps this
+/// crate's rule that a verb needing input fails before its first write.
+pub struct Planned {
+    template: template::Template,
+    destination: Scope,
+    resolution: Resolution,
+}
+
+/// Read the template and what it would install, refusing before anything
+/// is written: a template nobody saved, or one with a member nothing can
+/// reach.
+pub fn plan_install(
+    env: &Env,
+    name: &str,
+    project: Option<&std::path::Path>,
+) -> Result<Planned, Box<dyn std::error::Error>> {
     let template = template::get(env, name)?;
-    let destination = match &project {
+    let destination = match project {
         Some(root) => Scope::Project {
             root: kendex_core::paths::canonical(root)?,
         },
         None => Scope::Global,
     };
     let resolution = template::resolve(env, &template)?;
-    say(&format!(
-        "installing {} into {}",
-        template.name,
-        super::scope_label(&destination)
-    ));
-    print_resolution(&resolution);
     if !resolution.missing.is_empty() {
+        say(&format!(
+            "installing {} into {}",
+            template.name,
+            super::scope_label(&destination)
+        ));
+        print_resolution(&resolution);
         return Err("this template has members nothing can reach — remove them, choose a replacement, or try again once their marketplace reads".into());
     }
-    ask_before_writing(&format!("install {} package(s)?", resolution.count()), yes)?;
-    let landed = template::install(env, &template, &destination, None, None)?;
+    Ok(Planned {
+        template,
+        destination,
+        resolution,
+    })
+}
+
+/// Show what the install would do and take the answer. The one
+/// confirmation shape both callers use.
+pub fn confirm_install(planned: &Planned, yes: bool) -> CliResult {
+    say(&format!(
+        "installing {} into {}",
+        planned.template.name,
+        super::scope_label(&planned.destination)
+    ));
+    print_resolution(&planned.resolution);
+    ask_before_writing(
+        &format!("install {} package(s)?", planned.resolution.count()),
+        yes,
+    )
+}
+
+/// Install what was planned, report it, and leave the destination on the
+/// projects list.
+pub fn run_install(env: &Env, planned: &Planned) -> CliResult {
+    let landed = template::install(env, &planned.template, &planned.destination, None, None)?;
     for repo in &landed.subscribed {
         say(&format!("subscribed to {repo}"));
     }
@@ -690,13 +773,12 @@ fn install(env: &Env, name: &str, project: Option<PathBuf>, yes: bool) -> CliRes
     }
     // Unconditional on an answer, the way `add` is and for the same
     // reason: every path that answers here has written. An install with
-    // nothing to install refuses with `TemplateEmpty` above, and a run
-    // that stopped short only answers at all once something landed — so a
-    // branch for a destination nothing reached is a branch nothing
-    // reaches. A global destination registers nothing; that is
-    // `register_destination`'s own rule rather than a condition restated
-    // here.
-    let registered = super::project::register_destination(env, &destination);
+    // nothing to install refuses above, and a run that stopped short only
+    // answers at all once something landed — so a branch for a
+    // destination nothing reached is a branch nothing reaches. A global
+    // destination registers nothing; that is `register_destination`'s own
+    // rule rather than a condition restated here.
+    let registered = super::project::register_destination(env, &planned.destination);
     // The lines above are what is on disk. A run that stopped short says
     // so after them and exits non-zero: reporting the refusal alone would
     // deny the packages that are in, and reporting success would deny the
@@ -711,4 +793,10 @@ fn install(env: &Env, name: &str, project: Option<PathBuf>, yes: bool) -> CliRes
         }
         None => registered,
     }
+}
+
+fn install(env: &Env, name: &str, project: Option<PathBuf>, yes: bool) -> CliResult {
+    let planned = plan_install(env, name, project.as_deref())?;
+    confirm_install(&planned, yes)?;
+    run_install(env, &planned)
 }

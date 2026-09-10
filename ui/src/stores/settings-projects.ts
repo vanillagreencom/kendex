@@ -72,7 +72,7 @@ export function projectActions(ordered: {
         // canonical path, and two rows added together from Find existing
         // projects each see both new entries, so no set difference can say
         // which one is its own.
-        void useProjectSetupStore.getState().check(response.data.root);
+        void useProjectSetupStore.getState().check(response.data.root, true);
         return true;
       }
       useProblemsStore.getState().showError({

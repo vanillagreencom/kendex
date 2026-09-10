@@ -350,14 +350,15 @@ fn a_refused_replacement_leaves_the_template_as_it_was() {
             MemberRef {
                 kind: MemberKind::Skill,
                 name: "stray".to_owned(),
-                repo: None,
+                which: MemberWhich::Copy,
             },
             MemberRef {
                 kind: MemberKind::Skill,
                 name: "never-here".to_owned(),
-                repo: None,
+                which: MemberWhich::Copy,
             },
         ],
+        &LicenseAnswer::default(),
     );
     assert!(refused.is_err(), "{refused:?}");
     // The bytes the template held are the bytes it still holds.
@@ -365,5 +366,64 @@ fn a_refused_replacement_leaves_the_template_as_it_was() {
         fs::read_to_string(stored.join("SKILL.md")).unwrap(),
         before,
         "a refused replacement changed the template's own copy"
+    );
+}
+
+/// A package the project had switched off stays switched off where the
+/// template installs it. `Member::enabled`'s own doc says so, and the
+/// copy path honoured it while the marketplace path dropped it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_member_saved_switched_off_installs_switched_off() {
+    let project = seeded();
+    // The fixture project has `note` declared with enabled = false and
+    // `gh` enabled, both from the same marketplace.
+    let draft = draft_from_project(&project.env, &project.root).unwrap();
+    let template = create_from_project(
+        &project.env,
+        &project.root,
+        &Chosen {
+            name: "Mixed switches".to_owned(),
+            members: draft
+                .members
+                .iter()
+                .filter(|member| member.name == "gh" || member.name == "note")
+                .map(|member| member.key.clone())
+                .collect(),
+            ..Chosen::default()
+        },
+    )
+    .unwrap();
+    let off = template
+        .members
+        .iter()
+        .find(|member| member.name == "note")
+        .unwrap();
+    assert!(!off.enabled, "the saved switch should be off");
+
+    let target = destination(&project, "switches");
+    let Scope::Project { root } = &target else {
+        unreachable!("built as a project scope")
+    };
+    install(&project.env, &template, &target, None, None).unwrap();
+
+    let manifest = fs::read_to_string(root.join("kendex.toml")).unwrap();
+    let declared: toml::Table = toml::from_str(&manifest).unwrap();
+    let enabled = |table: &str, name: &str| -> bool {
+        declared
+            .get(table)
+            .and_then(|kind| kind.get(name))
+            .and_then(|decl| decl.get("enabled"))
+            .and_then(toml::Value::as_bool)
+            // Absent means enabled: that is the manifest's own default.
+            .unwrap_or(true)
+    };
+    assert!(
+        !enabled("commands", "note"),
+        "a member saved switched off installed enabled: {manifest}"
+    );
+    assert!(
+        enabled("skills", "gh"),
+        "a member saved switched on should install enabled: {manifest}"
     );
 }

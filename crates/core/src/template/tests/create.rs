@@ -403,24 +403,28 @@ fn an_edited_marketplace_package_requires_a_choice_and_licence_evidence() {
     assert_eq!(license.as_deref(), Some("MIT"));
     assert!(license_recognized);
 
-    let chosen = |name: &str,
-                  sides: BTreeMap<String, Side>,
-                  licenses: BTreeMap<String, LicenseAnswer>| Chosen {
+    let chosen = |name: &str, sides: BTreeMap<String, Side>| Chosen {
         name: name.to_owned(),
         members: vec!["skill:gh".to_owned()],
         sides,
-        licenses,
         ..Chosen::default()
     };
-    let taking_copy = || BTreeMap::from([("skill:gh".to_owned(), Side::Copy)]);
+    // The licence evidence travels inside the copy side, so a copy cannot
+    // be asked for without an answer of some shape — what the answer says
+    // is what the gate then judges.
+    let copy_with =
+        |license: LicenseAnswer| BTreeMap::from([("skill:gh".to_owned(), Side::Copy { license })]);
+    let no_evidence = || {
+        copy_with(LicenseAnswer {
+            confirmed: false,
+            basis: None,
+        })
+    };
     let confirmed = || {
-        BTreeMap::from([(
-            "skill:gh".to_owned(),
-            LicenseAnswer {
-                confirmed: true,
-                basis: None,
-            },
-        )])
+        copy_with(LicenseAnswer {
+            confirmed: true,
+            basis: None,
+        })
     };
 
     // Unanswered, the save refuses and says what has to be decided.
@@ -428,7 +432,7 @@ fn an_edited_marketplace_package_requires_a_choice_and_licence_evidence() {
         create_from_project(
             &project.env,
             &project.root,
-            &chosen("Unanswered", BTreeMap::new(), BTreeMap::new())
+            &chosen("Unanswered", BTreeMap::new())
         ),
         Err(CoreError::TemplateMemberUnresolved { .. })
     ));
@@ -438,7 +442,7 @@ fn an_edited_marketplace_package_requires_a_choice_and_licence_evidence() {
     let ungated = create_from_project(
         &project.env,
         &project.root,
-        &chosen("Ungated", taking_copy(), BTreeMap::new()),
+        &chosen("Ungated", no_evidence()),
     );
     assert!(
         matches!(ungated, Err(CoreError::Authoring { .. })),
@@ -448,12 +452,8 @@ fn an_edited_marketplace_package_requires_a_choice_and_licence_evidence() {
 
     // A confirmation kendex can accept, because it recognizes the
     // licence, and the bytes stored are the edited ones.
-    let mine = create_from_project(
-        &project.env,
-        &project.root,
-        &chosen("Mine", taking_copy(), confirmed()),
-    )
-    .unwrap();
+    let mine =
+        create_from_project(&project.env, &project.root, &chosen("Mine", confirmed())).unwrap();
     let MemberSource::Copy { copy, from } = &mine.members[0].source else {
         panic!("gh should be a copy: {:?}", mine.members[0].source);
     };
@@ -474,7 +474,6 @@ fn an_edited_marketplace_package_requires_a_choice_and_licence_evidence() {
         &chosen(
             "Upstream",
             BTreeMap::from([("skill:gh".to_owned(), Side::Marketplace)]),
-            BTreeMap::new(),
         ),
     )
     .unwrap();

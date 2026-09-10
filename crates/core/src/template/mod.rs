@@ -38,8 +38,8 @@ pub use draft::{
     member_key,
 };
 pub use install::{
-    MissingMember, Resolution, ResolvedCopy, ResolvedGroup, ResolvedItem, TemplateInstall, install,
-    install_local, resolve,
+    MissingMember, Resolution, ResolvedCopy, ResolvedGroup, ResolvedItem, ResolvedSet,
+    TemplateInstall, install, install_local, resolve,
 };
 pub use store::{copy_path, stored_file, stored_files};
 
@@ -168,13 +168,32 @@ impl Member {
 pub struct MemberRef {
     pub kind: MemberKind,
     pub name: String,
-    /// Which of the members wearing this kind and name is meant — the
-    /// same discriminator [`Member::identity`] tells them apart by, since
-    /// a template deliberately keeps one name from two marketplaces as two
-    /// members. Absent means every member of this kind and name, which is
-    /// what a caller with one of them in hand asks for.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repo: Option<String>,
+    /// Which of the members wearing this kind and name is meant.
+    pub which: MemberWhich,
+}
+
+/// Which member a reference means, where a template holds more than one
+/// under a kind and a name.
+///
+/// Three states, because the domain has three: a template may hold the
+/// same kind and name from two marketplaces and as a copy of its own, all
+/// at once — [`add_members`] permits it deliberately. A two-state
+/// reference could not tell "the copy" from "every one of them", so
+/// removing a copy took every marketplace member with it. The state is
+/// carried rather than inferred so a caller physically cannot ask for one
+/// and be given the other.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "of", rename_all = "kebab-case", rename_all_fields = "camelCase")]
+pub enum MemberWhich {
+    /// Every member of this kind and name, whatever it came from. What a
+    /// caller means when it has no way to tell them apart and wants them
+    /// all gone.
+    Any,
+    /// The one that came from this marketplace.
+    Marketplace { repo: String },
+    /// The copy this template owns, which came from no marketplace and so
+    /// cannot be named by one.
+    Copy,
 }
 
 impl MemberRef {
@@ -183,10 +202,15 @@ impl MemberRef {
         if self.kind != member.kind || self.name != member.name {
             return false;
         }
-        let (_, _, repo) = member.identity();
-        // A reference that names no marketplace is about the kind and the
-        // name alone, so it reaches every member wearing them.
-        self.repo.is_none() || self.repo.as_deref() == repo
+        match (&self.which, &member.source) {
+            (MemberWhich::Any, _) => true,
+            (MemberWhich::Copy, MemberSource::Copy { .. }) => true,
+            (MemberWhich::Marketplace { repo }, MemberSource::Marketplace { repo: held, .. }) => {
+                repo == held
+            }
+            (MemberWhich::Copy, MemberSource::Marketplace { .. })
+            | (MemberWhich::Marketplace { .. }, MemberSource::Copy { .. }) => false,
+        }
     }
 }
 
@@ -248,6 +272,36 @@ pub const PI_EXTENSION_DIRECT: &str =
 /// [`crate::names::shown`], the one place kendex makes an untrusted string
 /// safe to print, so nothing here re-judges them.
 const NAME_CEILING: usize = 80;
+
+/// Whether these members may join a template at all.
+///
+/// The one place the admission rules live, called by every path that puts
+/// members into a template — [`create::create_from_selection`],
+/// [`add_members`], [`create::create_from_project`] and
+/// [`create::add_from_project`]. Each of those used to decide for itself,
+/// which is how adding to an existing template came to accept a member
+/// creating one refused: a rule stated at three entry points is a rule
+/// the fourth does not have.
+///
+/// What is here is what holds for every path. A rule true of only one —
+/// that a selection picked in a marketplace holds no copies — stays with
+/// that path, where it is true.
+pub(crate) fn admit(members: &[Member]) -> Result<()> {
+    if members.is_empty() {
+        return Err(CoreError::TemplateEmpty);
+    }
+    for member in members {
+        // A Pi extension installs with the package that carries it, so a
+        // member of its own is a member no install could ever take.
+        if member.kind == MemberKind::PiExtension {
+            return Err(CoreError::TemplateMemberUnresolved {
+                member: member.name.clone(),
+                why: PI_EXTENSION_DIRECT.to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
 
 /// Every template on this machine, in the order they were created.
 pub fn list(env: &Env) -> Result<Vec<Template>> {
@@ -371,9 +425,7 @@ pub fn delete(env: &Env, name: &str) -> Result<()> {
 /// Add members to a template, deduplicating by identity. Returns the
 /// template as it now stands.
 pub fn add_members(env: &Env, name: &str, members: Vec<Member>) -> Result<Template> {
-    if members.is_empty() {
-        return Err(CoreError::TemplateEmpty);
-    }
+    admit(&members)?;
     change(env, name, |template| {
         for member in members {
             if !template

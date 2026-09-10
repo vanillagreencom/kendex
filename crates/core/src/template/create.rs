@@ -21,13 +21,21 @@ use super::{Customizations, Member, MemberSource, Template, store};
 
 /// Which side of a member offering both a marketplace package and an
 /// edited copy the person took.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(
+    tag = "side",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
 pub enum Side {
-    /// The package as its marketplace offers it.
+    /// The package as its marketplace offers it. No bytes are copied, so
+    /// there is no licence question to answer.
     Marketplace,
-    /// The edited copy on disk, taken into the template's store.
-    Copy,
+    /// The edited copy on disk, taken into the template's store. Those
+    /// bytes are the marketplace's, so the evidence its terms require
+    /// travels with the choice: a copy cannot be asked for without it, and
+    /// no entry point can reach the capture with the answer left behind.
+    Copy { license: LicenseAnswer },
 }
 
 /// What the person said about a licensed origin's terms before its bytes
@@ -51,16 +59,11 @@ pub struct Chosen {
     /// Managed members to keep, by [`super::DraftMember::key`]. Anything
     /// the draft listed and this omits is a deliberate exclusion.
     pub members: Vec<String>,
-    /// For a member the draft offered as a choice, the side taken. A
-    /// member left without one refuses the save.
+    /// For a member the draft offered as a choice, the side taken — and,
+    /// where that side is the copy, the licence evidence it carries. A
+    /// member left without a side refuses the save.
     #[serde(default)]
     pub sides: BTreeMap<String, Side>,
-    /// The licence evidence for each member whose copy comes from a
-    /// marketplace's bytes. Keyed like `sides`, and read only for the
-    /// members that take one — the person's own content and content
-    /// nothing manages carry no licence question.
-    #[serde(default)]
-    pub licenses: BTreeMap<String, LicenseAnswer>,
     /// Local packages to copy in, by [`super::DraftLocal::key`]. Empty is
     /// the opt-in left off.
     #[serde(default)]
@@ -98,6 +101,7 @@ pub fn create_from_project(env: &Env, root: &std::path::Path, chosen: &Chosen) -
         let bytes = import::resolve(env, std::slice::from_ref(&scope), &copy.selection)?;
         resolved.push((copy, bytes));
     }
+    super::admit(&members)?;
     let customizations = match chosen.customizations {
         true => super::draft::customizations_for(
             &project_manifest(env, &scope)?,
@@ -148,6 +152,7 @@ pub fn add_from_project(
     name: &str,
     root: &std::path::Path,
     wanted: &[super::MemberRef],
+    license: &LicenseAnswer,
 ) -> Result<Template> {
     let template = super::get(env, name)?;
     let draft = draft_from_project(env, root)?;
@@ -170,11 +175,20 @@ pub fn add_from_project(
     }
     // An edited package reached this way takes the project's own copy:
     // that is what "take this project's files" asked for, and it is the
-    // one reading of the verb that is not a guess.
+    // one reading of the verb that is not a guess. Those bytes are a
+    // marketplace's, so the side carries the evidence its terms need —
+    // the type is what makes that unforgettable, and it is why this
+    // operation asks its caller for the answer.
     for key in &chosen.members {
-        chosen.sides.insert(key.clone(), Side::Copy);
+        chosen.sides.insert(
+            key.clone(),
+            Side::Copy {
+                license: license.clone(),
+            },
+        );
     }
     let (members, copying, _) = self::wanted(&draft, &chosen)?;
+    super::admit(&members)?;
     let mut bytes = Vec::new();
     for copy in &copying {
         bytes.push((
@@ -219,6 +233,11 @@ pub fn add_from_project(
     }
     super::change(env, name, |template| {
         for member in members {
+            // Every member of that kind and name, deliberately: this verb
+            // promises to replace what the template held under the name,
+            // and the command line says so before it runs. A reference
+            // naming one of several is [`super::MemberWhich`]'s job, and
+            // removal is where it is asked.
             template
                 .members
                 .retain(|held| !(held.kind == member.kind && held.name == member.name));
@@ -232,9 +251,7 @@ pub fn add_from_project(
 /// table, a set's page. No bytes are copied: every member is a marketplace
 /// identity.
 pub fn create_from_selection(env: &Env, name: &str, members: Vec<Member>) -> Result<Template> {
-    if members.is_empty() {
-        return Err(CoreError::TemplateEmpty);
-    }
+    super::admit(&members)?;
     for member in &members {
         if let MemberSource::Copy { copy, .. } = &member.source {
             return Err(CoreError::TemplateCopyUnreadable {
@@ -245,14 +262,6 @@ pub fn create_from_selection(env: &Env, name: &str, members: Vec<Member>) -> Res
     }
     let mut kept: Vec<Member> = Vec::new();
     for member in members {
-        // The same refusal the draft applies: a member no install could
-        // ever take must not be saveable by any path.
-        if member.kind == super::MemberKind::PiExtension {
-            return Err(CoreError::TemplateMemberUnresolved {
-                member: member.name.clone(),
-                why: super::PI_EXTENSION_DIRECT.to_owned(),
-            });
-        }
         if !kept.iter().any(|held| held.identity() == member.identity()) {
             kept.push(member);
         }
@@ -282,12 +291,7 @@ fn wanted(draft: &Draft, chosen: &Chosen) -> Result<(Vec<Member>, Vec<Copying>, 
             .ok_or_else(|| CoreError::TemplateMemberUnknown {
                 member: wanted.clone(),
             })?;
-        let source = source_of(
-            member,
-            chosen.sides.get(wanted).copied(),
-            chosen.licenses.get(wanted),
-            &mut copying,
-        )?;
+        let source = source_of(member, chosen.sides.get(wanted), &mut copying)?;
         kept.push(member.name.clone());
         members.push(Member {
             kind: member.kind,
@@ -335,9 +339,6 @@ fn wanted(draft: &Draft, chosen: &Chosen) -> Result<(Vec<Member>, Vec<Copying>, 
             },
         });
     }
-    if members.is_empty() {
-        return Err(CoreError::TemplateEmpty);
-    }
     Ok((members, copying, kept))
 }
 
@@ -350,8 +351,7 @@ fn wanted(draft: &Draft, chosen: &Chosen) -> Result<(Vec<Member>, Vec<Copying>, 
 /// the modal asked for, and anything the template cannot record refuses.
 fn source_of(
     member: &super::DraftMember,
-    side: Option<Side>,
-    license: Option<&LicenseAnswer>,
+    side: Option<&Side>,
     copying: &mut Vec<Copying>,
 ) -> Result<MemberSource> {
     let key = &member.key;
@@ -367,7 +367,10 @@ fn source_of(
             .item()
             .ok_or_else(|| unresolved(NO_FILES_OF_ITS_OWN.to_owned()))
     };
-    let mut take_copy = |hash: &str, from: Option<String>| -> Result<MemberSource> {
+    let mut take_copy = |hash: &str,
+                         from: Option<String>,
+                         license: Option<&LicenseAnswer>|
+     -> Result<MemberSource> {
         let kind = copyable()?;
         copying.push(Copying {
             kind,
@@ -387,14 +390,15 @@ fn source_of(
                 rev: rev.clone(),
             })
         }
-        (DraftOrigin::Copy { hash, .. }, _) => take_copy(hash, None),
+        // The person's own content, which came under nobody's terms.
+        (DraftOrigin::Copy { hash, .. }, _) => take_copy(hash, None, None),
         (
             DraftOrigin::Choice {
                 hash, why, repo, ..
             },
-            Some(Side::Copy),
+            Some(Side::Copy { license }),
         ) => match hash {
-            Some(hash) => take_copy(hash, Some(repo.clone())),
+            Some(hash) => take_copy(hash, Some(repo.clone()), Some(license)),
             None => Err(unresolved(
                 why.clone()
                     .unwrap_or_else(|| UNSTORABLE_RENDERING.to_owned()),

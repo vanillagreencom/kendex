@@ -214,7 +214,6 @@ describe("creating a template from a project", () => {
         members: ["skill:gh"],
         locals: [],
         sides: {},
-        licenses: {},
         customizations: false,
       },
     );
@@ -257,7 +256,6 @@ describe("creating a template from a project", () => {
         members: ["skill:gh"],
         locals: ["skill:stray"],
         sides: {},
-        licenses: {},
         customizations: true,
       },
     );
@@ -523,8 +521,14 @@ describe("an edited marketplace package in the modal", () => {
         name: "acme",
         members: ["skill:gh"],
         locals: [],
-        sides: { "skill:gh": "copy" },
-        licenses: { "skill:gh": { confirmed: true, basis: null } },
+        // The answer travels inside the side: a copy cannot be asked
+        // for without it.
+        sides: {
+          "skill:gh": {
+            side: "copy",
+            license: { confirmed: true, basis: null },
+          },
+        },
         customizations: false,
       },
     );

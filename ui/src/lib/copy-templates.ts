@@ -88,6 +88,11 @@ export const COPIES_HEADING = "Copied into this template";
 export const MISSING_HEADING = "Not available";
 export const FILES_HEADING = "Files this template owns";
 export const NO_FILES = "This template holds no copies of its own.";
+/** Said instead of the no-copies sentence when the read failed: nothing
+ *  has answered, so no claim about what the template holds can be made. */
+export const FILES_UNREADABLE =
+  "The files this template owns could not be read.";
+export const FILES_READING = "Reading the files this template owns…";
 export const RESOLVE_READING = "Reading what this template installs…";
 export const RESOLVE_UNREADABLE =
   "What this template installs could not be read.";

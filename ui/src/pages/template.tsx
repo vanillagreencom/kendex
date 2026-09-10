@@ -16,6 +16,8 @@ import {
   COPIES_HEADING,
   DELETE_TEMPLATE_LABEL,
   FILES_HEADING,
+  FILES_READING,
+  FILES_UNREADABLE,
   lastKnownVersion,
   MISSING_HEADING,
   NO_FILES,
@@ -51,9 +53,16 @@ export function TemplatePage() {
   const openInstall = useInstallFlow((s) => s.open);
   const [resolution, setResolution] = useState<Resolution | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
-  const [files, setFiles] = useState<PackageFile[]>([]);
+  // Three states, not two: loaded, loaded-and-empty, and a read that
+  // failed. Collapsed to two, an unreadable store rendered as the
+  // no-copies empty state — a claim over a read that never answered.
+  const [files, setFiles] = useState<PackageFile[] | null>(null);
+  const [filesError, setFilesError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [content, setContent] = useState<string | null>(null);
+  // The file read's own failure, kept apart from its content so an error
+  // is never rendered into the pane as though it were the file.
+  const [contentError, setContentError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -73,8 +82,14 @@ export function TemplatePage() {
       return;
     }
     setResolution(answer.data);
+    setFilesError(null);
     const owned = await templateFiles(name);
-    setFiles(owned.status === "ok" ? owned.data : []);
+    if (owned.status === "error") {
+      setFiles(null);
+      setFilesError(owned.error);
+      return;
+    }
+    setFiles(owned.data);
   }, [name]);
 
   useEffect(() => {
@@ -84,11 +99,19 @@ export function TemplatePage() {
   useEffect(() => {
     if (!name || selected === null) {
       setContent(null);
+      setContentError(null);
       return;
     }
     let live = true;
+    setContentError(null);
     void templateFile(name, selected).then((answer) => {
-      if (live) setContent(answer.status === "ok" ? answer.data : answer.error);
+      if (!live) return;
+      if (answer.status === "error") {
+        setContent(null);
+        setContentError(answer.error);
+        return;
+      }
+      setContent(answer.data);
     });
     return () => {
       live = false;
@@ -184,10 +207,10 @@ export function TemplatePage() {
                   name: item.name,
                   off: !item.enabled,
                 })),
-                ...group.bundles.map((bundle) => ({
+                ...group.bundles.map((set) => ({
                   kind: "bundle" as MemberRef["kind"],
-                  name: bundle,
-                  off: false,
+                  name: set.name,
+                  off: !set.enabled,
                 })),
               ].map((row) => (
                 <MemberRow
@@ -198,12 +221,13 @@ export function TemplatePage() {
                   busy={busy}
                   // The repository this section is for, so removing one
                   // of two members sharing a kind and name leaves the
-                  // other where it is.
+                  // other where it is — and never reaches the template's
+                  // own copy of that name.
                   onRemove={() =>
                     remove({
                       kind: row.kind,
                       name: row.name,
-                      repo: group.repo,
+                      which: { of: "marketplace", repo: group.repo },
                     })
                   }
                 />
@@ -220,14 +244,14 @@ export function TemplatePage() {
                   name={copy.name}
                   detail={copy.from ? `edited copy of ${copy.from}` : null}
                   busy={busy}
-                  // A copy the template owns is not a marketplace's, so
-                  // there is no repository to tell it apart by: its kind
-                  // and name are its identity.
+                  // The copy this template owns, named as itself: it
+                  // came from no marketplace, and asking by kind and name
+                  // alone would take every marketplace member with it.
                   onRemove={() =>
                     remove({
                       kind: copy.kind as MemberRef["kind"],
                       name: copy.name,
-                      repo: null,
+                      which: { of: "copy" },
                     })
                   }
                 />
@@ -263,11 +287,14 @@ export function TemplatePage() {
                       size="sm"
                       variant="outline"
                       disabled={busy}
+                      // Which member this row is about travels with it
+                      // from the resolution, so removing an unavailable
+                      // one reaches only that one.
                       onClick={() =>
                         remove({
                           kind: member.kind,
                           name: member.name,
-                          repo: member.repo,
+                          which: member.which,
                         })
                       }
                     >
@@ -280,7 +307,27 @@ export function TemplatePage() {
           ) : null}
 
           <Section title={FILES_HEADING}>
-            {files.length === 0 ? (
+            {/* The no-copies sentence is a claim, so it is only made over
+                a read that answered. A read that failed says so and
+                offers itself again. */}
+            {filesError !== null ? (
+              <div className="flex items-center gap-3 py-2">
+                <p className="text-[13px] text-muted-foreground">
+                  {FILES_UNREADABLE}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void reread()}
+                >
+                  {TRY_AGAIN_LABEL}
+                </Button>
+              </div>
+            ) : files === null ? (
+              <p className="py-2 text-[13px] text-muted-foreground">
+                {FILES_READING}
+              </p>
+            ) : files.length === 0 ? (
               <p className="py-2 text-[13px] text-muted-foreground">
                 {NO_FILES}
               </p>
@@ -292,7 +339,11 @@ export function TemplatePage() {
                 label={FILES_HEADING}
                 className="pt-2"
               >
-                {selected && content !== null ? (
+                {/* A read that failed is an error, not the file. Rendered
+                    into the pane it read as the file's own contents. */}
+                {contentError !== null ? (
+                  <p className="text-[13px] text-critical">{contentError}</p>
+                ) : selected && content !== null ? (
                   <FilePane
                     path={selected}
                     content={content}

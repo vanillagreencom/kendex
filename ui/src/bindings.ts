@@ -593,7 +593,7 @@ export const commands = {
 	 */
 	templateCreateFromSelection: (name: string, members: Member_Deserialize[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_create_from_selection", { name, members })),
 	templateAddMembers: (name: string, members: Member_Deserialize[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_add_members", { name, members })),
-	templateRemoveMembers: (name: string, members: MemberRef_Deserialize[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_remove_members", { name, members })),
+	templateRemoveMembers: (name: string, members: MemberRef[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_remove_members", { name, members })),
 	templateRename: (name: string, to: string) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_rename", { name, to })),
 	templateDelete: (name: string) => typedError<null, string>(__TAURI_INVOKE("template_delete", { name })),
 	/**
@@ -1233,17 +1233,11 @@ export type Chosen = {
 	 */
 	members: string[],
 	/**
-	 *  For a member the draft offered as a choice, the side taken. A
-	 *  member left without one refuses the save.
+	 *  For a member the draft offered as a choice, the side taken — and,
+	 *  where that side is the copy, the licence evidence it carries. A
+	 *  member left without a side refuses the save.
 	 */
 	sides?: { [key in string]: Side },
-	/**
-	 *  The licence evidence for each member whose copy comes from a
-	 *  marketplace's bytes. Keyed like `sides`, and read only for the
-	 *  members that take one — the person's own content and content
-	 *  nothing manages carry no licence question.
-	 */
-	licenses?: { [key in string]: LicenseAnswer },
 	/**
 	 *  Local packages to copy in, by [`super::DraftLocal::key`]. Empty is
 	 *  the opt-in left off.
@@ -2989,34 +2983,11 @@ export type Member = Member_Serialize | Member_Deserialize;
 export type MemberKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension" | "bundle";
 
 /**  One member, named the way a caller outside core addresses it. */
-export type MemberRef = MemberRef_Serialize | MemberRef_Deserialize;
-
-/**  One member, named the way a caller outside core addresses it. */
-export type MemberRef_Deserialize = {
+export type MemberRef = {
 	kind: MemberKind,
 	name: string,
-	/**
-	 *  Which of the members wearing this kind and name is meant — the
-	 *  same discriminator [`Member::identity`] tells them apart by, since
-	 *  a template deliberately keeps one name from two marketplaces as two
-	 *  members. Absent means every member of this kind and name, which is
-	 *  what a caller with one of them in hand asks for.
-	 */
-	repo?: string | null,
-};
-
-/**  One member, named the way a caller outside core addresses it. */
-export type MemberRef_Serialize = {
-	kind: MemberKind,
-	name: string,
-	/**
-	 *  Which of the members wearing this kind and name is meant — the
-	 *  same discriminator [`Member::identity`] tells them apart by, since
-	 *  a template deliberately keeps one name from two marketplaces as two
-	 *  members. Absent means every member of this kind and name, which is
-	 *  what a caller with one of them in hand asks for.
-	 */
-	repo?: string | null,
+	/**  Which of the members wearing this kind and name is meant. */
+	which: MemberWhich,
 };
 
 /**  Where a member's content comes from when the template is installed. */
@@ -3079,6 +3050,33 @@ copy: string;
  *  from. Absent for the person's own content.
  */
 from?: string | null }) & { repo?: never; rev?: never };
+
+/**
+ *  Which member a reference means, where a template holds more than one
+ *  under a kind and a name.
+ * 
+ *  Three states, because the domain has three: a template may hold the
+ *  same kind and name from two marketplaces and as a copy of its own, all
+ *  at once — [`add_members`] permits it deliberately. A two-state
+ *  reference could not tell "the copy" from "every one of them", so
+ *  removing a copy took every marketplace member with it. The state is
+ *  carried rather than inferred so a caller physically cannot ask for one
+ *  and be given the other.
+ */
+export type MemberWhich = 
+/**
+ *  Every member of this kind and name, whatever it came from. What a
+ *  caller means when it has no way to tell them apart and wants them
+ *  all gone.
+ */
+{ of: "any" } | 
+/**  The one that came from this marketplace. */
+{ of: "marketplace"; repo: string } | 
+/**
+ *  The copy this template owns, which came from no marketplace and so
+ *  cannot be named by one.
+ */
+{ of: "copy" };
 
 /**  One package a template installs. */
 export type Member_Deserialize = {
@@ -3150,6 +3148,13 @@ export type MissingMember = {
 	 *  it came from.
 	 */
 	repo: string | null,
+	/**
+	 *  Which of the members wearing this kind and name this row is about,
+	 *  so a surface acting on the row reaches only that one. Carried
+	 *  rather than inferred from `repo`: a copy that came from a
+	 *  marketplace names one too.
+	 */
+	which: MemberWhich,
 	why: string,
 };
 
@@ -4036,12 +4041,21 @@ export type ResolvedGroup = {
 	 *  Curated sets installed whole. What each holds is the catalog's to
 	 *  say and derives at install time.
 	 */
-	bundles: string[],
+	bundles: ResolvedSet[],
 };
 
 /**  One package a resolved group installs. */
 export type ResolvedItem = {
 	kind: ItemKind,
+	name: string,
+	enabled: boolean,
+};
+
+/**
+ *  One curated set a group installs, and whether the template saved it
+ *  switched on.
+ */
+export type ResolvedSet = {
 	name: string,
 	enabled: boolean,
 };
@@ -4594,10 +4608,18 @@ export type Severity = "low" | "medium" | "high" | "critical";
  *  edited copy the person took.
  */
 export type Side = 
-/**  The package as its marketplace offers it. */
-"marketplace" | 
-/**  The edited copy on disk, taken into the template's store. */
-"copy";
+/**
+ *  The package as its marketplace offers it. No bytes are copied, so
+ *  there is no licence question to answer.
+ */
+{ side: "marketplace" } | 
+/**
+ *  The edited copy on disk, taken into the template's store. Those
+ *  bytes are the marketplace's, so the evidence its terms require
+ *  travels with the choice: a copy cannot be asked for without it, and
+ *  no entry point can reach the capture with the answer left behind.
+ */
+{ side: "copy"; license: LicenseAnswer };
 
 export type SkillSettings = {
 	skill: string,
