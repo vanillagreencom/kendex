@@ -1,1 +1,1 @@
-- `doc-drift-check` (Claude Code Stop) shows the user unchanged covering docs that may need an update. Every stop exits 0; repeated stops repeat the notice without session markers or retry requests.
+- `doc-drift-check` (Claude Code Stop) names the unchanged documents covering changed code to the agent and blocks that stop once per set; a stop whose set was already named passes.
