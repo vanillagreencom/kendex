@@ -432,6 +432,11 @@ source = "."
 harnesses = ["claude"]
 enabled = true
 
+[hooks.code-quality-load-check]
+source = "."
+harnesses = ["claude"]
+enabled = true
+
 [hooks.reviewer-read-only]
 source = "."
 harnesses = ["claude"]

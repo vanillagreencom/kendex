@@ -63,6 +63,7 @@ hooks = [
   "session-drift-check",
   "task-completed-check",
   "doc-drift-check",
+  "code-quality-load-check",
   "reviewer-read-only",
   "reviewer-stop-check",
 ]

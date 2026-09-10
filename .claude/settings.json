@@ -72,6 +72,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Edit|MultiEdit|NotebookEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/code-quality-load-check.sh\"",
+            "timeout": 15
+          }
+        ]
       }
     ],
     "TaskCompleted": [
