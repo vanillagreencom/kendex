@@ -92,9 +92,9 @@ export const ADDED_NOTE =
  *  to render, and kendex never undoes a commit of the file that asks for it.
  *  Saying the effect is a removal without saying this promises something
  *  that does not last. */
-export const RERENDERED_LABEL = "kendex writes these again";
+export const RERENDERED_LABEL = "kendex still renders these";
 export const RERENDERED_NOTE =
-  "kendex still renders these, so the next time it writes in this project they come back. Putting a file back changes the working tree; it does not change what kendex was asked to render. To stop kendex rendering one, change the package or the project's kendex.toml.";
+  "What stands at these paths is what the package asks for, and the next write keeps them in step: where putting a file back leaves it as the package renders it, that write leaves it alone; where it does not, that write puts the rendered version there. Either way, putting a file back changes the working tree, not what kendex was asked to render. To stop kendex rendering one, change the package or the project's kendex.toml.";
 export const DROPPED_LABEL = "Left out";
 export const DROPPED_NOTE =
   "These have changed back since kendex looked; there is nothing to put back.";

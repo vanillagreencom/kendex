@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
 import { identityCurrent } from "@/lib/package-identity";
 import { READ_LANDED } from "@/lib/read-state";
-import { rescanEverything } from "@/lib/rescan";
+import { rescanEverything, writingRepo } from "@/lib/rescan";
 import { useAuditStore } from "@/stores/audit";
 import { joinCurrent, useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
+import { useSettingsStore } from "@/stores/settings";
 
 vi.mock("@/bindings", () => ({
   commands: {
@@ -13,6 +14,8 @@ vi.mock("@/bindings", () => ({
     auditAll: vi.fn(),
     libraryProvenance: vi.fn(),
     projectChangesScan: vi.fn(),
+    commitOfferBaseline: vi.fn(),
+    commitOfferScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
   },
 }));
 
@@ -249,5 +252,35 @@ describe("the join behind one landed scan", () => {
       .getState()
       .ensureFor(useScanStore.getState().generation);
     expect(vi.mocked(commands.libraryProvenance)).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The reading before a write is a git call per project, and the controls
+// that started the action are live until something disables them. A second
+// action started inside that window writes against a reading taken for the
+// first, and its own files then read as work that was already there.
+describe("the window a write holds", () => {
+  it("opens before the reading, not after it", async () => {
+    let settle = (_: unknown): void => {};
+    vi.mocked(commands.commitOfferBaseline).mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve;
+      }) as never,
+    );
+    useSettingsStore.setState({
+      settings: { projects: ["/home/method/dev/site"] } as never,
+    });
+    const order: string[] = [];
+    const out = writingRepo(
+      async () => {
+        order.push("body");
+      },
+      () => order.push("busy"),
+    );
+    // The reading has not answered, and the window is already open.
+    expect(order).toEqual(["busy"]);
+    settle({ status: "ok", data: [] });
+    await out;
+    expect(order).toEqual(["busy", "body"]);
   });
 });

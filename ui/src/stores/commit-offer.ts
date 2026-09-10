@@ -15,6 +15,7 @@ import {
   pushedToast,
 } from "@/lib/copy-commit-offer";
 import { askingAgain, forgetRoot, isForgotten } from "@/lib/forgotten-roots";
+import { readOrder } from "@/lib/read-state";
 import { useProblemsStore } from "./problems";
 
 /** Which of the three the person picked. `leave` is not one: leaving is
@@ -247,6 +248,11 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
       ),
     });
   };
+
+  /** One ticket per manual open, so an older answer cannot take the head
+   *  from a newer one. Separate from the scan's ordering above: these are
+   *  reads a person started, and neither supersedes the other. */
+  const opens = readOrder();
 
   /** Drop one project's reading: its question has been answered, so a write
    *  that changes it again reads it afresh and what is pending then is that
@@ -482,7 +488,9 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
     },
 
     openFor: async (root) => {
+      const ticket = opens.begin();
       const response = await commands.commitOfferOpen(root);
+      const newest = opens.lands(ticket);
       if (response.status === "error") {
         return { at: "failed", error: response.error };
       }
@@ -490,6 +498,12 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
       if (response.data.kind === "blocked")
         return { at: "blocked", flag: response.data.flag };
       const offer = response.data.offer;
+      // Two opens can be out at once — a person opens one project's review,
+      // goes to another and opens that one — and the older answer must not
+      // take the head from the newer, which is the review on screen. The
+      // answer still travels back to the page that asked for it: it is
+      // about that project, and what to do with it is that page's own.
+      if (!newest) return { at: "offer" };
       // Ahead of whatever a write left behind: the reader asked for this
       // one, and it is the project they are looking at. A project already
       // in the line is not asked about twice, and the fresh reading — which

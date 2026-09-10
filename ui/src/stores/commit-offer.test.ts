@@ -715,6 +715,50 @@ describe("a review a person opened, against a scan already out", () => {
   });
 });
 
+// Two reviews opened in a row, the first answering last. The head is the
+// dialog on screen, so an older answer taking it shows the wrong project's
+// files under the question the reader just asked.
+describe("two reviews opened at once", () => {
+  it("leaves the head to the one opened last", async () => {
+    const first = "/home/method/dev/one";
+    const second = "/home/method/dev/two";
+    useCommitOfferStore.setState({
+      queue: [],
+      stage: { at: "offer" },
+      baselines: {},
+      asked: null,
+    });
+    const answers: ((value: unknown) => void)[] = [];
+    vi.mocked(commands.commitOfferOpen).mockImplementation(
+      (root: string) =>
+        new Promise((resolve) => {
+          answers.push((value) => resolve(value as never));
+          void root;
+        }) as never,
+    );
+
+    const out = [
+      useCommitOfferStore.getState().openFor(first),
+      useCommitOfferStore.getState().openFor(second),
+    ];
+    // The newer open answers first, then the older one.
+    answers[1]({
+      status: "ok",
+      data: { kind: "offer", offer: offer({ root: second, name: "two" }) },
+    });
+    answers[0]({
+      status: "ok",
+      data: { kind: "offer", offer: offer({ root: first, name: "one" }) },
+    });
+    await Promise.all(out);
+
+    expect(
+      useCommitOfferStore.getState().queue.map((one) => one.root),
+      "an older open took the head",
+    ).toEqual([second]);
+  });
+});
+
 // A scan behind a write reads several projects and answers later. In
 // between, a project can stop being one: reconnected to another folder,
 // or removed. The answer is about the folder it was started for, and

@@ -226,8 +226,19 @@ export function trackedProjects(): string[] {
  *  refusal beside the button, and holding that back through a forced audit
  *  would leave a destructive button live with nothing under it. So no hold
  *  covers the read, and every busy window stays where its caller had it.
- *  [`rescansSettled`] is how a test waits for what no caller waits for. */
-export async function writingRepo<R>(body: () => Promise<R>): Promise<R> {
+ *  [`rescansSettled`] is how a test waits for what no caller waits for.
+ *
+ *  `enter` is the caller's own busy window, opened before the reading and
+ *  closed by `body` where it always closed it. The reading is a git call
+ *  per project and the controls that started this action are live until
+ *  something disables them: without this the reader can start a second
+ *  action inside that window, whose write lands against a reading taken
+ *  for the first. Callers with no busy window of their own pass nothing. */
+export async function writingRepo<R>(
+  body: () => Promise<R>,
+  enter?: () => void,
+): Promise<R> {
+  enter?.();
   // Before the body, and awaited: the offer after the write is about what
   // the write did, and that is a comparison against how the projects stood
   // before it. [`beforeWriting`] says what this costs.

@@ -144,35 +144,41 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   // is why the outcome carries an account to say — so the machine is read
   // again behind it like any other write. `lib/rescan.ts` holds the rule.
   subscribe: (scope, reference, name) =>
-    writingRepo(async () => {
-      set({ busy: true });
-      let response: Awaited<ReturnType<typeof commands.marketplaceSubscribe>>;
-      try {
-        response = await commands.marketplaceSubscribe(scope, reference, name);
-      } finally {
-        set({ busy: false });
-      }
-      if (response.status === "error") {
-        // The dialog shows the refusal beside the input; no toast on top.
-        // The same words go back to the caller, which is the only way a
-        // caller may have them.
-        set({ error: response.error });
-        return { error: response.error };
-      }
-      set({ error: null });
-      toast.success(`Subscribed to '${response.data.name}'`);
-      for (const note of response.data.notes) toast.message(note);
-      sayUndone(response.data.undone);
-      // A repository page may now have a subscription to carry on as, under
-      // whatever spelling the dialog was submitted with; the dropped summaries
-      // re-read and the page picks it up.
-      dropCatalogCaches(set);
-      await get().load();
-      if (response.data.lead) {
-        await openLead(scope, response.data.name, response.data.lead);
-      }
-      return { name: response.data.name };
-    }),
+    writingRepo(
+      async () => {
+        let response: Awaited<ReturnType<typeof commands.marketplaceSubscribe>>;
+        try {
+          response = await commands.marketplaceSubscribe(
+            scope,
+            reference,
+            name,
+          );
+        } finally {
+          set({ busy: false });
+        }
+        if (response.status === "error") {
+          // The dialog shows the refusal beside the input; no toast on top.
+          // The same words go back to the caller, which is the only way a
+          // caller may have them.
+          set({ error: response.error });
+          return { error: response.error };
+        }
+        set({ error: null });
+        toast.success(`Subscribed to '${response.data.name}'`);
+        for (const note of response.data.notes) toast.message(note);
+        sayUndone(response.data.undone);
+        // A repository page may now have a subscription to carry on as, under
+        // whatever spelling the dialog was submitted with; the dropped summaries
+        // re-read and the page picks it up.
+        dropCatalogCaches(set);
+        await get().load();
+        if (response.data.lead) {
+          await openLead(scope, response.data.name, response.data.lead);
+        }
+        return { name: response.data.name };
+      },
+      () => set({ busy: true }),
+    ),
 
   subscribeForInstall: async (repo) => {
     // Personal, deliberately: a repository nobody subscribes to is not a
@@ -199,36 +205,40 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
   },
 
   unsubscribe: (scope, source, keep, discardEdits) =>
-    writingRepo(async () => {
-      set({ busy: true });
-      let response: Awaited<ReturnType<typeof commands.marketplaceUnsubscribe>>;
-      try {
-        response = await commands.marketplaceUnsubscribe(
-          scope,
-          source,
-          keep,
-          discardEdits,
+    writingRepo(
+      async () => {
+        let response: Awaited<
+          ReturnType<typeof commands.marketplaceUnsubscribe>
+        >;
+        try {
+          response = await commands.marketplaceUnsubscribe(
+            scope,
+            source,
+            keep,
+            discardEdits,
+          );
+        } finally {
+          set({ busy: false });
+        }
+        if (response.status === "error") {
+          set({ error: response.error });
+          return { error: response.error };
+        }
+        set({ error: null });
+        toast.success(
+          keep
+            ? `Unsubscribed from '${source}' — its packages are yours now`
+            : `Unsubscribed from '${source}'`,
         );
-      } finally {
-        set({ busy: false });
-      }
-      if (response.status === "error") {
-        set({ error: response.error });
-        return { error: response.error };
-      }
-      set({ error: null });
-      toast.success(
-        keep
-          ? `Unsubscribed from '${source}' — its packages are yours now`
-          : `Unsubscribed from '${source}'`,
-      );
-      saying(response);
-      // A page carried on as this subscription must stop pointing at it, and
-      // every other derived read goes with it.
-      dropCatalogCaches(set);
-      await get().load();
-      return { done: true };
-    }),
+        saying(response);
+        // A page carried on as this subscription must stop pointing at it, and
+        // every other derived read goes with it.
+        dropCatalogCaches(set);
+        await get().load();
+        return { done: true };
+      },
+      () => set({ busy: true }),
+    ),
 
   ...sourceActions(set, get),
   ...installActions(set, get),

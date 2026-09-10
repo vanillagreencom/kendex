@@ -243,41 +243,43 @@ export const useEditorStore = create<EditorState>((set, get) => {
     // A save reaches `repo_effects`, so the machine is read again whatever
     // it answered — `lib/rescan.ts` holds the rule and the reasons, the
     // provenance join it refreshes included.
-    await writingRepo(async () => {
-      set({ saving: true });
-      let response: Awaited<ReturnType<typeof commands.saveCustomize>>;
-      try {
-        response = await commands.saveCustomize(
-          scope,
-          manifestDirty ? { manifest: draft, base } : null,
-          settingsDraft(settingsEdits, settings),
-          secretsDraft(secretEdits, settings, secretFile),
-        );
-      } finally {
-        set({ saving: false });
-      }
-      if (response.status === "error") {
-        // Stale is a refusal, not a failure: the file changed outside this
-        // draft, and writing the draft would put the older file back. The
-        // draft cannot be merged, so the page offers the reload as a choice
-        // rather than taking the person's edits on its own. A refusal with
-        // something to say about the packages leaving answers `failed`
-        // instead, so nothing it said is dropped for the reload.
-        if (refusalKind(response.error) === "stale") {
-          set({ stale: true, error: null });
-        } else {
-          set({ error: refusalWords(response.error), stale: false });
+    await writingRepo(
+      async () => {
+        let response: Awaited<ReturnType<typeof commands.saveCustomize>>;
+        try {
+          response = await commands.saveCustomize(
+            scope,
+            manifestDirty ? { manifest: draft, base } : null,
+            settingsDraft(settingsEdits, settings),
+            secretsDraft(secretEdits, settings, secretFile),
+          );
+        } finally {
+          set({ saving: false });
         }
-        return;
-      }
-      set({ error: null, stale: false });
-      // Saving a manifest that takes a package away owes the same account a
-      // removal does. Wired here rather than by the write the update commands
-      // share: the editor answers a refusal shape of its own and never goes
-      // through it.
-      saying(response);
-      await load();
-    });
+        if (response.status === "error") {
+          // Stale is a refusal, not a failure: the file changed outside this
+          // draft, and writing the draft would put the older file back. The
+          // draft cannot be merged, so the page offers the reload as a choice
+          // rather than taking the person's edits on its own. A refusal with
+          // something to say about the packages leaving answers `failed`
+          // instead, so nothing it said is dropped for the reload.
+          if (refusalKind(response.error) === "stale") {
+            set({ stale: true, error: null });
+          } else {
+            set({ error: refusalWords(response.error), stale: false });
+          }
+          return;
+        }
+        set({ error: null, stale: false });
+        // Saving a manifest that takes a package away owes the same account a
+        // removal does. Wired here rather than by the write the update commands
+        // share: the editor answers a refusal shape of its own and never goes
+        // through it.
+        saying(response);
+        await load();
+      },
+      () => set({ saving: true }),
+    );
   };
 
   return {

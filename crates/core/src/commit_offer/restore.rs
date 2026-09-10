@@ -57,10 +57,17 @@ pub struct RestorePlan {
     /// asked to render, and it cannot undo a commit of the declaration that
     /// asks for it — kendex never moves a ref backwards. So a render taken
     /// away here comes back the next time kendex writes in this project,
-    /// and one put back to its committed bytes is written over. Naming them
-    /// is the whole of what kendex can do about it: the way to stop one is
-    /// to change the package or the project's manifest, which is a
-    /// different operation and says so.
+    /// and one put back to its committed bytes stands only as long as those
+    /// bytes are what the package asks for.
+    ///
+    /// Which of the two a path gets is not decided here: `engine::file_plan`
+    /// compares the rendered bytes against what is on disk, and a path whose
+    /// restored state already matches is planned `Clean` — the restore
+    /// settled it rather than the next write undoing it. This list says the
+    /// path is still rendered, which holds either way, and the confirmation
+    /// says no more than that. Naming them is the whole of what kendex can
+    /// do about it: the way to stop one is to change the package or the
+    /// project's manifest, which is a different operation and says so.
     pub rerendered: Vec<String>,
 }
 
@@ -119,8 +126,13 @@ pub fn restore_plan(
             .collect(),
     };
     let whole: BTreeSet<String> = taken.iter().chain(&added).cloned().collect();
-    // What this plan still renders. A path in it is one the next write puts
-    // back or writes over, whatever this restore does to the working tree.
+    // What this plan still renders. A path in it is one the next write keeps
+    // in step with the package, whatever this restore does to the working
+    // tree: it writes the rendered version where what stands there is not
+    // it, and leaves it alone where the restored version already is. Which
+    // of the two cannot be decided here — `engine::file_plan` compares the
+    // bytes, and this reads paths — so what travels is the fact that the
+    // path is still rendered, and the confirmation says only that.
     let rendered: BTreeSet<String> = generated
         .whole
         .iter()
