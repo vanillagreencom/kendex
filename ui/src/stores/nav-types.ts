@@ -26,6 +26,10 @@ export type Page =
   // Reached only by opening a package from a list — which package is open
   // lives in `packageRef`, so the page is never a sidebar destination.
   | "package"
+  // Reached only by opening a row on My Library's Templates tab — which
+  // template is open lives in `templateName`, so it is no more a sidebar
+  // destination than a package page is.
+  | "template"
   // Nested under Marketplaces, reached only by opening a row — the open
   // thing lives in its ref, same shape as the package page.
   | "marketplaceDetail"
@@ -34,6 +38,11 @@ export type Page =
 
 /** Which of the Marketplaces page's four tabs is showing. */
 export type MarketplacesTab = "subscribed" | "packages" | "community" | "mine";
+
+/** Which of My Library's tabs is showing. Installed is the default and
+ * keeps the location filter; Templates is the person's across projects and
+ * has no place to filter by. Bookmarks joins this list when it exists. */
+export type LibraryTab = "installed" | "templates";
 
 /** What a link into the Library is asking to see — every narrowing it wants,
  * where to look included. A link states the whole thing, so a field it leaves
@@ -98,6 +107,11 @@ export type PackageView =
 export interface HistoryEntry {
   page: Page;
   marketplacesTab: MarketplacesTab;
+  /** Which My Library tab was showing. Part of where the reader was: Back
+   *  out of a template lands on the tab its row was on, not on Installed. */
+  libraryTab: LibraryTab;
+  /** Which template a template page was showing, by name. */
+  templateName: string | null;
   packageRef: PackageRef | null;
   marketplaceRef: MarketplaceRef | null;
   bundleRef: BundleRef | null;

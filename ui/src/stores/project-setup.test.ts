@@ -202,3 +202,97 @@ describe("a read still out when the project stops being one", () => {
     expect(useProjectSetupStore.getState().unchecked).toEqual(["/work/vsys"]);
   });
 });
+
+// The offer to fill a freshly added project is about a registration, and
+// the card's Try again calls the same read. Set inside that read, a retry
+// of a failed scan on a project kendex already tracks opened the
+// install-a-template offer for a project nobody had just added.
+describe("which read counts as an addition", () => {
+  it("records the project only for a read that follows a registration", async () => {
+    useProjectSetupStore.setState({ justAdded: null });
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: emptyScan as never,
+    });
+    vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
+    vi.mocked(commands.libraryProvenance).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+
+    // The card's Try again: a read on its own behalf, no registration.
+    await useProjectSetupStore.getState().check("/work/acme");
+    expect(useProjectSetupStore.getState().justAdded).toBeNull();
+
+    // The registration path says so, and that is what the offer reads.
+    await useProjectSetupStore.getState().check("/work/acme", true);
+    expect(useProjectSetupStore.getState().justAdded).toBe("/work/acme");
+
+    // A later retry does not clear it either — answering the offer does.
+    await useProjectSetupStore.getState().check("/work/acme");
+    expect(useProjectSetupStore.getState().justAdded).toBe("/work/acme");
+    useProjectSetupStore.getState().clearJustAdded();
+    expect(useProjectSetupStore.getState().justAdded).toBeNull();
+  });
+
+  // The offer's own destinations come off the machine as the scan left it,
+  // so an offer opened while the scan was still out snapshots a list the
+  // new root is not in yet — and nothing recomputes it when the scan
+  // lands. The guided install then cannot install into the project it was
+  // opened for.
+  it("opens the offer only once the read that reaches the new root answers", async () => {
+    useProjectSetupStore.setState({ justAdded: null });
+    const land = heldScan();
+
+    const out = useProjectSetupStore.getState().check("/work/acme", true);
+    // The read is out, so there is nothing to offer against yet.
+    expect(useProjectSetupStore.getState().checking).toEqual(["/work/acme"]);
+    expect(useProjectSetupStore.getState().justAdded).toBeNull();
+
+    land();
+    await out;
+    expect(useProjectSetupStore.getState().justAdded).toBe("/work/acme");
+
+    // A read that failed offers nothing: there is no reachable place to
+    // install into, and the card says so with a way to try again.
+    useProjectSetupStore.setState({ justAdded: null });
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "error",
+      error: "the machine could not be read",
+    });
+    await useProjectSetupStore.getState().check("/work/beta", true);
+    expect(useProjectSetupStore.getState().justAdded).toBeNull();
+    expect(useProjectSetupStore.getState().unchecked).toEqual(["/work/beta"]);
+
+    // And neither does a folder that stopped being a project while the
+    // read was out.
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: emptyScan as never,
+    });
+    useAuditStore.setState({ backgroundFailureAnnounced: false });
+    const forgotten = useProjectSetupStore
+      .getState()
+      .check("/work/gamma", true);
+    useProjectSetupStore.getState().forget("/work/gamma");
+    await forgotten;
+    expect(useProjectSetupStore.getState().justAdded).toBeNull();
+  });
+
+  // A folder that stops being a project takes the offer about it with it:
+  // the offer names a root, and that root is what this verb is letting go
+  // of. Another project's offer is not its to clear.
+  it("lets go of the offer when the folder it names stops being a project", async () => {
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: emptyScan as never,
+    });
+
+    await useProjectSetupStore.getState().check("/work/acme", true);
+    useProjectSetupStore.getState().forget("/work/other");
+    expect(useProjectSetupStore.getState().justAdded).toBe("/work/acme");
+
+    useProjectSetupStore.getState().forget("/work/acme");
+    expect(useProjectSetupStore.getState().justAdded).toBeNull();
+  });
+});

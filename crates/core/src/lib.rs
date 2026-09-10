@@ -69,6 +69,7 @@ pub mod source_ops;
 pub mod source_read;
 pub mod source_ref;
 pub mod tags;
+pub mod template;
 pub mod update_channel;
 pub mod update_feed;
 pub mod vendor;

@@ -26,6 +26,7 @@ import { ProblemsPage } from "@/pages/problems";
 import { ProjectChangesPage } from "@/pages/project-changes";
 import { ProjectsPage } from "@/pages/projects";
 import { SettingsPage } from "@/pages/settings";
+import { TemplatePage } from "@/pages/template";
 import { UnmanagedPage } from "@/pages/unmanaged";
 import { UpdatesPage } from "@/pages/updates";
 import { useAccountStore } from "@/stores/account";
@@ -232,6 +233,9 @@ export default function App() {
   const packageKey = packageRef
     ? `${packageRef.kind}:${packageRef.name}:${packageRef.scope.scope === "global" ? "global" : packageRef.scope.root}`
     : "none";
+  // Keyed like the package page: opening another template remounts, so no
+  // read from the one before it can land on the one now open.
+  const templateName = useNavStore((s) => s.templateName) ?? "none";
   const appearance = useSettingsStore(
     (s) => s.settings?.appearance ?? "system",
   );
@@ -281,6 +285,7 @@ export default function App() {
                 {page === "home" && <OverviewPage />}
                 {page === "library" && <LibraryPage />}
                 {page === "package" && <PackagePage key={packageKey} />}
+                {page === "template" && <TemplatePage key={templateName} />}
                 {page === "marketplaces" && <MarketplacesPage />}
                 {page === "marketplaceDetail" && <MarketplaceDetailPage />}
                 {page === "bundleDetail" && <BundleDetailPage />}

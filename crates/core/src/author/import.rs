@@ -12,13 +12,13 @@
 //! selections — are refused before anything is written.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::env::Env;
-use crate::error::Result;
+use crate::error::{CoreError, Result};
 use crate::model::{ItemKind, Scope};
 
 /// One importable package, with every byte origin that offers it.
@@ -99,7 +99,7 @@ impl CandidateGroup {
 
     /// The licence question applies to marketplace bytes and to edited
     /// copies of them alike — editing does not launder provenance.
-    pub(super) fn licensed_source(&self) -> Option<(&str, Option<&str>, bool)> {
+    pub fn licensed_source(&self) -> Option<(&str, Option<&str>, bool)> {
         match self {
             CandidateGroup::Marketplace {
                 source,
@@ -330,10 +330,245 @@ pub fn license_recognized(license: &str) -> bool {
     REDISTRIBUTABLE.contains(&license)
 }
 
+/// Whether a copy of this kind is something a catalog-shaped tree can
+/// hold: a package with files of its own, at the slot
+/// [`crate::source::local_slot`] resolves for it. A plugin and a Pi
+/// extension are a registry's and a carrier's, installed with what brings
+/// them rather than copied on their own.
+///
+/// One judgement, because two copiers reach it — the import into an
+/// authored catalog, and the copy a template takes into its own store —
+/// and a kind one of them carried and the other refused would be bytes
+/// written into a slot nothing can read back.
+pub fn carries(kind: ItemKind) -> bool {
+    matches!(
+        kind,
+        ItemKind::Skill
+            | ItemKind::Agent
+            | ItemKind::Hook
+            | ItemKind::Command
+            | ItemKind::McpServer
+    )
+}
+
 mod apply;
 mod origins;
 pub use apply::apply;
 use origins::{origins_of, resolve_selection, unmanaged_paths};
+
+/// One previewed selection's bytes, re-read from the machine and
+/// revalidated against the hash the preview showed, with the licence
+/// notices a licensed origin travels with.
+///
+/// The same resolution an import into a catalog runs, offered to a caller
+/// that copies the bytes somewhere else — a template's own store. What
+/// counts as an origin, which bytes a catalog can hold, and what a stale
+/// preview refuses with are decided once, here, so a second copier cannot
+/// answer any of them differently.
+pub struct ResolvedBytes {
+    /// `(relative path, bytes)` pairs. A skill is its tree; every other
+    /// kind is the one file it keeps, under the leaf it was read as.
+    pub files: Vec<(PathBuf, Vec<u8>)>,
+    /// The licence and attribution files a licensed origin travels with,
+    /// at the `NOTICES/<source>/<file>` paths a catalog-shaped tree keeps
+    /// them under. Empty for content that is the person's own.
+    pub notices: Vec<(PathBuf, Vec<u8>)>,
+}
+
+/// Re-resolve one selection's bytes, past the same gates the import into
+/// a catalog passes.
+///
+/// The hash the preview showed is revalidated, so bytes that changed
+/// underneath refuse rather than copy; a name no harness could hold
+/// refuses; a kind with no package boundary of its own refuses; and
+/// licensed bytes refuse without the person's evidence. A caller that
+/// copies what this hands back does not repeat any of those questions,
+/// and cannot skip one by not knowing it existed.
+pub fn resolve(env: &Env, scopes: &[Scope], selection: &ImportSelection) -> Result<ResolvedBytes> {
+    if let Some(problem) = crate::names::item_problem(&selection.destination) {
+        return Err(CoreError::Authoring {
+            message: format!(
+                "'{}' cannot name a copied {} — {problem}",
+                crate::names::shown(&selection.destination),
+                selection.kind.name()
+            ),
+        });
+    }
+    if !carries(selection.kind) {
+        return Err(CoreError::Authoring {
+            message: format!(
+                "a {} is installed with the package that carries it, so it cannot be copied on its own",
+                selection.kind.name()
+            ),
+        });
+    }
+    let answer = resolve_selection(env, scopes, selection)?;
+    license_gate(selection, &answer.group)?;
+    let files = match answer.bytes {
+        Bytes::Tree(files) => files,
+        Bytes::File(bytes) => {
+            let leaf = answer
+                .read_from
+                .as_deref()
+                .and_then(std::path::Path::file_name)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(&selection.name));
+            vec![(leaf, bytes)]
+        }
+    };
+    // Laid out the way an authored catalog lays them out, so bytes that
+    // travel on carry their terms in the one place every reader of a
+    // catalog-shaped tree already looks.
+    let notices = match answer.group.licensed_source() {
+        Some((source, _, _)) => answer
+            .notices
+            .into_iter()
+            .map(|(name, bytes)| Ok((notice_path(source, &name)?, bytes)))
+            .collect::<Result<Vec<_>>>()?,
+        None => Vec::new(),
+    };
+    Ok(ResolvedBytes { files, notices })
+}
+
+/// Where licence and attribution files sit inside a catalog-shaped tree:
+/// `NOTICES/<source>/<file>`. One spelling, because the import writes it
+/// and the template store and every destination read it back.
+pub const NOTICES_DIR: &str = "NOTICES";
+
+/// The path one licensed origin's licence file sits at inside a
+/// catalog-shaped tree, refusing a source alias that could not be one
+/// directory name.
+///
+/// The alias is the person's, not kendex's: `kendex subscribe --name` and
+/// the app's subscribe field take it as typed, and a project's
+/// `kendex.toml` names a source by its table key. Joined unexamined it
+/// spells its own destination, so licence bytes would land outside the
+/// tree the caller passed — the template's store, or an authored catalog.
+/// [`crate::names::segment_problem`] is the judge, the rule this
+/// repository already keeps for what one name may be and what Windows will
+/// quietly make of one; a test against the literal `..` never sees
+/// `..\victim`, where the backslash is the separator.
+///
+/// The file's own name is not asked here: it is a directory entry's
+/// `file_name` read off the origin's catalog root, which no filesystem
+/// lets hold a separator. The write boundaries ask every segment again —
+/// `template::store::write` does — because they are what a path reaching
+/// them may not leave.
+pub fn notice_path(source: &str, name: &str) -> Result<PathBuf> {
+    if let Some(problem) = crate::names::segment_problem(source) {
+        return Err(CoreError::Authoring {
+            message: format!(
+                "'{}' cannot name the marketplace these terms came from — {problem}",
+                crate::names::shown(source)
+            ),
+        });
+    }
+    Ok(PathBuf::from(NOTICES_DIR).join(source).join(name))
+}
+
+/// How a licence file already at a destination stands against the bytes
+/// that want to be there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoticeStanding {
+    /// Nothing is there. The bytes are written.
+    Absent,
+    /// The same bytes are already there. Nothing to write, and nothing
+    /// wrong: one licence file reached through two origins is one file.
+    Same,
+    /// Different bytes are already there, or bytes that cannot be read
+    /// back to compare. The caller refuses.
+    Different,
+}
+
+/// The one rule for a licence file that is already where these bytes go.
+///
+/// Bytes that match are the same terms, so the write is dropped; bytes
+/// that differ are somebody else's terms under a name these bytes claim,
+/// so the caller refuses and says which file. Never an overwrite, which
+/// puts one origin's terms over another's, and never a silent skip, which
+/// leaves content associated with terms that are not its own — the two
+/// ways of getting this wrong, and the reason every site asks here rather
+/// than deciding for itself.
+///
+/// Bytes that will not read back are `Different` deliberately: bytes that
+/// cannot be compared cannot be confirmed as these.
+pub fn notice_standing(dest: &Path, bytes: &[u8]) -> NoticeStanding {
+    if dest.symlink_metadata().is_err() {
+        return NoticeStanding::Absent;
+    }
+    match std::fs::read(dest) {
+        Ok(existing) if existing == bytes => NoticeStanding::Same,
+        _ => NoticeStanding::Different,
+    }
+}
+
+/// Whether the evidence a person gave satisfies [`license_gate`] for
+/// bytes offered under `license`.
+///
+/// The gate's own rule, asked without a resolved origin in hand, so a
+/// surface can say which answer is still needed before the copy runs
+/// rather than restating the rule and drifting from it. The gate is still
+/// what refuses; this only decides whether it would.
+pub fn license_answered(
+    license: Option<&str>,
+    recognized: bool,
+    confirmed: bool,
+    basis: Option<&str>,
+) -> bool {
+    match license {
+        // A licence kendex recognizes takes the confirmation and nothing
+        // else: a stated basis is what stands in for one it cannot judge.
+        Some(_) if recognized => confirmed,
+        _ => basis_given(basis),
+    }
+}
+
+fn basis_given(basis: Option<&str>) -> bool {
+    basis.map(str::trim).is_some_and(|basis| !basis.is_empty())
+}
+
+/// Licensed-origin content copies only past licence evidence: a shown,
+/// *recognized* licence the person confirmed, or an explicit basis they
+/// stated. Confirmation never synthesizes permission — an unrecognized
+/// licence cannot be checkbox-approved.
+///
+/// Both copiers ask it: the import into an authored catalog, and the copy
+/// a template takes into its own store. It lives here rather than in
+/// either of them so a second copier cannot arrive without it.
+pub(super) fn license_gate(selection: &ImportSelection, group: &CandidateGroup) -> Result<()> {
+    let Some((source, license, recognized)) = group.licensed_source() else {
+        return Ok(());
+    };
+    let basis_given = basis_given(selection.license_basis.as_deref());
+    match license {
+        Some(license) if recognized => match selection.license_confirmed {
+            true => Ok(()),
+            false => Err(CoreError::Authoring {
+                message: format!(
+                    "'{}' comes from marketplace '{source}' under licence {license} — confirm the licence permits republishing, or pick another origin",
+                    selection.name
+                ),
+            }),
+        },
+        Some(license) if basis_given => {
+            let _ = license;
+            Ok(())
+        }
+        Some(license) => Err(CoreError::Authoring {
+            message: format!(
+                "'{}' comes from marketplace '{source}' under '{license}', which kendex does not recognize as redistributable — state your basis for copying it (--license-basis), or pick another origin",
+                selection.name
+            ),
+        }),
+        None if basis_given => Ok(()),
+        None => Err(CoreError::Authoring {
+            message: format!(
+                "'{}' comes from marketplace '{source}' with no detectable licence — state your basis for copying it (--license-basis), or pick another origin",
+                selection.name
+            ),
+        }),
+    }
+}
 
 #[cfg(test)]
 mod tests;

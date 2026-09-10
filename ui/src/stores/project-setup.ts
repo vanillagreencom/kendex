@@ -19,6 +19,13 @@ import { useAuditStore } from "./audit";
 import { useScanStore } from "./scan";
 
 interface ProjectSetupState {
+  /** The root of the project most recently registered, as the registry
+   *  recorded it. What "after choosing the folder, offer a template"
+   *  needs: the canonical root the write returned, never the string
+   *  somebody typed. Cleared once the offer it is for has been answered.
+   */
+  justAdded: string | null;
+  clearJustAdded: () => void;
   /** Roots whose read of the machine has not answered yet. */
   checking: readonly string[];
   /** Roots that were registered and whose read failed. Cleared when a
@@ -27,8 +34,14 @@ interface ProjectSetupState {
   /** Read the machine again on this root's behalf, and record how it
    *  went. Not awaited by the registration that starts it: the project is
    *  a place the moment the registry says so, and the reader is taken
-   *  back to it while this runs. */
-  check: (root: string) => Promise<void>;
+   *  back to it while this runs.
+   *
+   *  `registered` says this read follows a registration, which is what
+   *  sets [`justAdded`]. The card's own Try again calls this too and does
+   *  not pass it: a retry of a failed scan on a project kendex already
+   *  tracks is not an addition, and treating it as one opened the
+   *  install-a-template offer on a project nobody had just added. */
+  check: (root: string, registered?: boolean) => Promise<void>;
   /** Drop what is held about one folder. A read still out for it answers
    *  about a place nothing tracks, and the card at the folder it moved to
    *  must not inherit "package check failed" from the path it left. */
@@ -49,8 +62,11 @@ const readFailed = (): boolean =>
   useAuditStore.getState().read.status === "failed";
 
 export const useProjectSetupStore = create<ProjectSetupState>((set) => ({
+  justAdded: null,
   checking: [],
   unchecked: [],
+
+  clearJustAdded: () => set({ justAdded: null }),
 
   forget: (root) => {
     // Said where every store that holds something per project says it: the
@@ -60,10 +76,15 @@ export const useProjectSetupStore = create<ProjectSetupState>((set) => ({
     set((state) => ({
       checking: without(state.checking, root),
       unchecked: without(state.unchecked, root),
+      // The offer named this folder, and the folder is not a project any
+      // more: nothing here is left naming it, which is this verb's whole
+      // rule. An offer kept over it would ask to install into a place
+      // nothing tracks.
+      justAdded: state.justAdded === root ? null : state.justAdded,
     }));
   },
 
-  check: async (root) => {
+  check: async (root, registered = false) => {
     // Asking about a folder is what makes it a project again: the same
     // folder registered afresh reads here like any other.
     askingAgain([root]);
@@ -84,6 +105,14 @@ export const useProjectSetupStore = create<ProjectSetupState>((set) => ({
       // took off.
       const stale = isForgotten(root);
       set((state) => ({
+        // The offer waits for the read. Published here rather than beside
+        // the registration: the destinations it offers are taken from the
+        // machine as the scan left it, so an offer opened while the scan
+        // was still out snapshots a list the new root is not in yet, and
+        // nothing recomputes it when the scan lands. A read that failed
+        // and a folder that stopped being a project publish nothing —
+        // there is no place to install into either way.
+        ...(registered && !failed && !stale ? { justAdded: root } : {}),
         checking: without(state.checking, root),
         // A read that answered read the whole machine, not this root — so
         // it answers for every root a previous read failed on too. Clearing

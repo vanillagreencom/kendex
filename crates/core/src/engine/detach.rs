@@ -22,7 +22,8 @@ use super::planned::planned_declarations;
 
 mod capture;
 
-use capture::{capture_to_local, source_form};
+pub(crate) use capture::capture_to_local;
+use capture::source_form;
 
 /// One item that leaves with the source: its kind and name, the declaration it
 /// installs under, and whether it was derived (a bundle member or a dependency)

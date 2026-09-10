@@ -1,0 +1,214 @@
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { TRY_AGAIN_LABEL } from "@/lib/copy";
+import {
+  ADD_TO_TEMPLATE_HELP,
+  ADD_TO_TEMPLATE_TITLE,
+  addedToTemplate,
+  droppedFromTemplate,
+  NEW_TEMPLATE_OPTION,
+  PICK_TEMPLATE_LABEL,
+  TEMPLATE_NAME_LABEL,
+  TEMPLATES_LAST_KNOWN,
+  TEMPLATES_UNREADABLE,
+} from "@/lib/copy-templates";
+import type { Saveable } from "@/lib/template-members";
+import {
+  type Template,
+  useTemplatesAnswer,
+  useTemplatesStore,
+} from "@/stores/templates";
+
+/** The rows an answer with none has, as one value rather than a fresh
+ *  array per render. */
+const NO_TEMPLATES: Template[] = [];
+
+/** The value the picker holds while the answer is "a new one". Not a
+ *  template name: a template really called this would be picked by
+ *  accident, and the picker's own options are the only other values. */
+const NEW = " new";
+
+/** Save selected packages into a template — an existing one, or one named
+ *  here. Install stays the primary action wherever this is offered; this
+ *  is the selection's secondary one. */
+export function AddToTemplateDialog({
+  saveable,
+  open,
+  onOpenChange,
+}: {
+  /** The packages to save, and the ticked rows no template can record. */
+  saveable: Saveable;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { members, dropped } = saveable;
+  const answer = useTemplatesAnswer();
+  const load = useTemplatesStore((s) => s.load);
+  const addMembers = useTemplatesStore((s) => s.addMembers);
+  const createFromSelection = useTemplatesStore((s) => s.createFromSelection);
+  const busy = useTemplatesStore((s) => s.busy);
+  const refused = useTemplatesStore((s) => s.refused);
+  const clearRefusal = useTemplatesStore((s) => s.clearRefusal);
+  const [picked, setPicked] = useState<string>(NEW);
+  const [name, setName] = useState("");
+
+  // The templates this answer can offer. A wait and an unreadable index
+  // offer none — and say so rather than presenting a picker holding only
+  // "New template", which reads as a person who has never made one.
+  // Saving a new one is unaffected either way: it needs no list.
+  const templates =
+    answer.shown === "waiting" || answer.shown === "unreadable"
+      ? NO_TEMPLATES
+      : answer.templates;
+  const failure =
+    answer.shown === "unreadable"
+      ? TEMPLATES_UNREADABLE
+      : answer.shown === "lastKnown"
+        ? TEMPLATES_LAST_KNOWN
+        : null;
+
+  useEffect(() => {
+    if (!open) return;
+    clearRefusal();
+    setName("");
+    void load();
+  }, [open, load, clearRefusal]);
+
+  // Opening on the first template a person has is the answer they most
+  // often want; with none, the only answer is a new one.
+  // Which open this is. The picker is initialized for a new open and left
+  // alone by the refresh that open started: a dialog with rows already
+  // cached is one a person can choose in while that read is still out, and
+  // resetting on every change of the list replaced their choice with the
+  // first row the moment it landed — the save then went somewhere they had
+  // not picked, with nothing on screen saying it had moved.
+  //
+  // Not initialized until there is something to initialize from, so a
+  // dialog opened before the first read lands still takes the first row
+  // when the rows arrive. After that the choice is theirs, and only a
+  // refreshed list that no longer holds it takes it away.
+  const initialized = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      initialized.current = false;
+      return;
+    }
+    const first = templates[0]?.name ?? NEW;
+    if (!initialized.current) {
+      setPicked(first);
+      initialized.current = templates.length > 0;
+      return;
+    }
+    setPicked((current) =>
+      current === NEW || templates.some((one) => one.name === current)
+        ? current
+        : first,
+    );
+  }, [open, templates]);
+
+  const target = picked === NEW ? name.trim() : picked;
+  const submit = () => {
+    const saving =
+      picked === NEW
+        ? createFromSelection(target, members)
+        : addMembers(picked, members);
+    void saving.then((ok) => {
+      if (!ok) return;
+      onOpenChange(false);
+      toast.success(addedToTemplate(members.length, target));
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{ADD_TO_TEMPLATE_TITLE}</DialogTitle>
+          <DialogDescription>{ADD_TO_TEMPLATE_HELP}</DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="template-pick">{PICK_TEMPLATE_LABEL}</Label>
+            <Select
+              value={picked}
+              onValueChange={(value) => setPicked(value ?? NEW)}
+            >
+              <SelectTrigger id="template-pick">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {templates.map((template) => (
+                  <SelectItem key={template.name} value={template.name}>
+                    {template.name}
+                  </SelectItem>
+                ))}
+                <SelectItem value={NEW}>{NEW_TEMPLATE_OPTION}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {picked === NEW ? (
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="template-new-name">{TEMPLATE_NAME_LABEL}</Label>
+              <Input
+                id="template-new-name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </div>
+          ) : null}
+          {/* The rows that cannot be recorded, named before the save
+              rather than silently missing from the count afterwards. */}
+          {dropped.length > 0 ? (
+            <p className="text-[13px] text-muted-foreground">
+              {droppedFromTemplate(dropped)}
+            </p>
+          ) : null}
+          {/* What the read of the saved templates did, where it did not
+              answer: the picker below is short for a reason, and the
+              reason is offered again rather than left to be read as an
+              empty library. */}
+          {failure !== null ? (
+            <div className="flex items-center gap-3">
+              <p className="text-[13px] text-muted-foreground">{failure}</p>
+              <Button size="sm" variant="outline" onClick={() => void load()}>
+                {TRY_AGAIN_LABEL}
+              </Button>
+            </div>
+          ) : null}
+          {refused ? (
+            <p className="text-[13px] text-critical">{refused}</p>
+          ) : null}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            disabled={busy || target === "" || members.length === 0}
+            onClick={submit}
+          >
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

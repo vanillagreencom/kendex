@@ -159,6 +159,8 @@ describe("nav store", () => {
       {
         page: "home",
         marketplacesTab: "subscribed",
+        libraryTab: "installed",
+        templateName: null,
         packageRef: null,
         marketplaceRef: null,
         bundleRef: null,
@@ -225,6 +227,8 @@ describe("nav store", () => {
       {
         page: "home",
         marketplacesTab: "subscribed",
+        libraryTab: "installed",
+        templateName: null,
         packageRef: null,
         marketplaceRef: null,
         bundleRef: null,
@@ -321,5 +325,44 @@ describe("the place a browse is begun for", () => {
     useNavStore.getState().forward();
     expect(useNavStore.getState().page).toBe("marketplaces");
     expect(useNavStore.getState().installInto).toEqual(acme);
+  });
+});
+
+// A link into the Library that names a filter is asking for the Installed
+// table, which is the tab that has one. Persisting the tab meant every such
+// link opened Templates after a visit there and never showed the filter.
+describe("which Library tab a link opens", () => {
+  beforeEach(() => {
+    useNavStore.setState({
+      page: "library",
+      libraryTab: "templates",
+      templateName: null,
+      libraryFilter: null,
+      history: [],
+      future: [],
+    });
+  });
+
+  it("selects Installed for a filtered handoff and keeps the tab without one", () => {
+    // A filtered handoff: the tab the reader was on is not where the rows
+    // it asked for live.
+    useNavStore.getState().goToLibrary({ scope: { project: "/work/acme" } });
+    expect(useNavStore.getState().libraryTab).toBe("installed");
+    expect(useNavStore.getState().libraryFilter).toEqual({
+      scope: { project: "/work/acme" },
+    });
+
+    // A plain return to the Library, which is what leaving a template page
+    // is: the tab the reader was on stands.
+    useNavStore.setState({ libraryTab: "templates" });
+    useNavStore.getState().goToLibrary();
+    expect(useNavStore.getState().libraryTab).toBe("templates");
+  });
+
+  // A kind chip is a filtered handoff too, and the narrowing it carries is
+  // not a scope.
+  it("selects Installed for a filter that names only a kind", () => {
+    useNavStore.getState().goToLibrary({ kind: "skill" });
+    expect(useNavStore.getState().libraryTab).toBe("installed");
   });
 });

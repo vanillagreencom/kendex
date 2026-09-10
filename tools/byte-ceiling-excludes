@@ -25,3 +25,4 @@ pi-extensions/pi-tool-renderer/assets/edit-diff.png	extension screenshot — bin
 skills/iced-rs/examples/combo_box/combobox.gif	vendored upstream iced example recording — binary media
 skills/iced-rs/examples/custom_shader/textures/ice_cube_normal_map.png	vendored upstream iced example texture — binary media
 skills/iced-rs/examples/scrollable/screenshot.png	vendored upstream iced example screenshot — binary media
+ui/src/bindings.ts	specta output — regenerated from the Tauri command surface by `cargo test -p kendex-app -- --ignored regenerate_bindings`, so its size follows that surface and a reviewer reads the Rust commands instead

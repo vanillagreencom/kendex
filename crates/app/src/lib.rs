@@ -21,6 +21,7 @@ pub mod recovery;
 pub mod repo_effects;
 mod scopes;
 pub mod sources;
+mod templates;
 pub mod unsubscribe;
 pub mod update_check;
 mod whole_file;
@@ -211,6 +212,18 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         packages::package_file,
         packages::package_readme,
         packages::package_meta,
+        templates::templates_list,
+        templates::template_draft,
+        templates::template_create_from_project,
+        templates::template_create_from_selection,
+        templates::template_add_members,
+        templates::template_remove_members,
+        templates::template_rename,
+        templates::template_delete,
+        templates::template_resolve,
+        templates::template_install,
+        templates::template_files,
+        templates::template_file,
         update_check::updates_overview,
         update_check::updates_refresh,
         update_check::update_set_ignored,

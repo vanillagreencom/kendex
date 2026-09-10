@@ -571,6 +571,79 @@ pub enum CoreError {
     #[error("{message}")]
     Authoring { message: String },
 
+    /// A template name that is already a template's, so saving under it
+    /// would replace one. Creation never overwrites a template.
+    #[error("a template is already called '{}'", crate::names::shown(name))]
+    TemplateNameTaken { name: String },
+
+    /// A template name kendex will not save: `why` is the whole reason.
+    #[error("'{}' cannot name a template — {why}", crate::names::shown(name))]
+    TemplateNameUnusable { name: String, why: String },
+
+    #[error("there is no template called '{}'", crate::names::shown(name))]
+    NoSuchTemplate { name: String },
+
+    /// A template with nothing in it: a saved selection has to select
+    /// something.
+    #[error("a template needs at least one package")]
+    TemplateEmpty,
+
+    /// A choice naming something the draft does not list — a stale modal,
+    /// or a caller that made the key up.
+    #[error(
+        "'{}' is not one of this project's packages",
+        crate::names::shown(member)
+    )]
+    TemplateMemberUnknown { member: String },
+
+    /// A member the template cannot record as it stands. Never resolved
+    /// for the person: `why` says what has to be decided first.
+    #[error(
+        "'{}' cannot be saved into a template — {why}",
+        crate::names::shown(member)
+    )]
+    TemplateMemberUnresolved { member: String, why: String },
+
+    /// A member this machine cannot install. The install refuses whole
+    /// rather than writing the part of the template that still resolves.
+    #[error("{name} is not available — {why}")]
+    TemplateMemberUnavailable { name: String, why: String },
+
+    /// The saved-selection index names a template's store folder with
+    /// something that is not one path segment, or names one folder for two
+    /// templates. Refused whole rather than skipped: a skipped row is a
+    /// template that silently stops existing, the folder a bad value names
+    /// may be somewhere a delete must never reach, and one folder held by
+    /// two templates is each one's copies waiting to be replaced by the
+    /// other's.
+    #[error(
+        "{}: a template's store folder is named '{}' — {why}",
+        crate::names::shown(&path.display().to_string()),
+        crate::names::shown(id)
+    )]
+    TemplateIndexUnusable {
+        path: PathBuf,
+        id: String,
+        why: String,
+    },
+
+    /// The project changed between the reading a save's answers were made
+    /// against and the save's own reading of it. Refused rather than
+    /// saved: the answers describe packages that are no longer the ones
+    /// offered, and the save would capture bytes nobody looked at.
+    #[error(
+        "this project changed while the template was being set up — read it again and choose once more"
+    )]
+    TemplateDraftStale,
+
+    /// A copy the template's store no longer holds, or holds in a form
+    /// that cannot be read back.
+    #[error(
+        "the template's copy of '{}' cannot be read — {why}",
+        crate::names::shown(copy)
+    )]
+    TemplateCopyUnreadable { copy: String, why: String },
+
     /// No credential is stored on this machine — signing in is the fix.
     #[error("not signed in — run `kendex login` first")]
     NotSignedIn,

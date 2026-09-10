@@ -7,7 +7,7 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::{ItemKind, Scope};
 
-use super::{Bytes, CandidateGroup, ImportOutcome, ImportSelection, ResolvedSelection};
+use super::{Bytes, ImportOutcome, ImportSelection, ResolvedSelection};
 
 mod write;
 use write::write_all;
@@ -35,14 +35,7 @@ pub fn apply(
                 ),
             });
         }
-        if !matches!(
-            selection.kind,
-            ItemKind::Skill
-                | ItemKind::Agent
-                | ItemKind::Hook
-                | ItemKind::Command
-                | ItemKind::McpServer
-        ) {
+        if !super::carries(selection.kind) {
             return Err(CoreError::Authoring {
                 message: format!(
                     "a {} cannot be imported into a catalog directly",
@@ -51,7 +44,7 @@ pub fn apply(
             });
         }
         let mut answer = super::resolve_selection(env, scopes, selection)?;
-        license_gate(selection, &answer.group)?;
+        super::license_gate(selection, &answer.group)?;
         declare_destination(&mut answer, selection)?;
         let dest = crate::source::local_slot(&target, selection.kind, &selection.destination);
         occupies(&resolved, selections, &dest, &answer, selection)?;
@@ -317,47 +310,4 @@ fn origin_overlap(target: &Path, answer: &ResolvedSelection) -> Result<()> {
         });
     }
     Ok(())
-}
-
-/// Licensed-origin content copies only past licence evidence: a shown,
-/// *recognized* licence the person confirmed, or an explicit basis they
-/// stated. Confirmation never synthesizes permission — an unrecognized
-/// licence cannot be checkbox-approved.
-fn license_gate(selection: &ImportSelection, group: &CandidateGroup) -> Result<()> {
-    let Some((source, license, recognized)) = group.licensed_source() else {
-        return Ok(());
-    };
-    let basis_given = selection
-        .license_basis
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|basis| !basis.is_empty());
-    match license {
-        Some(license) if recognized => match selection.license_confirmed {
-            true => Ok(()),
-            false => Err(CoreError::Authoring {
-                message: format!(
-                    "'{}' comes from marketplace '{source}' under licence {license} — confirm the licence permits republishing, or pick another origin",
-                    selection.name
-                ),
-            }),
-        },
-        Some(license) if basis_given => {
-            let _ = license;
-            Ok(())
-        }
-        Some(license) => Err(CoreError::Authoring {
-            message: format!(
-                "'{}' comes from marketplace '{source}' under '{license}', which kendex does not recognize as redistributable — state your basis for copying it (--license-basis), or pick another origin",
-                selection.name
-            ),
-        }),
-        None if basis_given => Ok(()),
-        None => Err(CoreError::Authoring {
-            message: format!(
-                "'{}' comes from marketplace '{source}' with no detectable licence — state your basis for copying it (--license-basis), or pick another origin",
-                selection.name
-            ),
-        }),
-    }
 }

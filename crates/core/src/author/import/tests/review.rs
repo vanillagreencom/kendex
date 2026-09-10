@@ -166,6 +166,48 @@ fn licence_evidence_files_travel_with_the_copy() {
     assert_eq!(notice, "MIT text here\n");
 }
 
+/// The subscription alias in a notice's path is one directory name or the
+/// path is refused.
+///
+/// The alias is the person's, not kendex's: `kendex subscribe --name` takes
+/// it as typed, the app's subscribe field does the same, and a project's
+/// `kendex.toml` names a source by its table key, which nothing validates.
+/// Joined unexamined it spells its own destination, so licence bytes land
+/// outside the tree the caller passed — the authored catalog an import
+/// writes into, or a template's store.
+///
+/// Driven over the spellings directly rather than over a platform: the
+/// escapes a Windows host resolves are refused wherever kendex runs, and a
+/// row spelling only the host's own `..` could not fail here.
+#[test]
+fn a_source_alias_that_could_leave_the_notices_tree_is_refused() {
+    for alias in [
+        "../../victim",
+        r"..ictim",
+        "..",
+        ".",
+        ". ",
+        "",
+        "C:victim",
+        "/victim",
+        "NUL",
+    ] {
+        let refused = crate::author::import::notice_path(alias, "LICENSE");
+        assert!(
+            matches!(refused, Err(CoreError::Authoring { .. })),
+            "{alias:?} should be refused: {refused:?}"
+        );
+    }
+
+    // The inverse: the aliases people actually subscribe under still build
+    // the path a catalog-shaped tree keeps their terms at.
+    let built = crate::author::import::notice_path("cat", "LICENSE");
+    assert_eq!(
+        built.map(|path| crate::paths::slashed(&path)).ok(),
+        Some("NOTICES/cat/LICENSE".to_owned())
+    );
+}
+
 /// A catalog whose root will not be listed carries no evidence this can
 /// see, and a copy made anyway would take somebody's bytes and leave their
 /// licence behind. Every other listing answers an unreadable directory by

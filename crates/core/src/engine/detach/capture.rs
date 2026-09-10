@@ -88,7 +88,7 @@ pub(super) fn source_form(
 /// detach of the same kind and name) is a refusal naming it — detach never
 /// overwrites what is already local (invariants 4 and 6). A target already
 /// holding the same bytes needs no write.
-pub(super) fn capture_to_local(
+pub(crate) fn capture_to_local(
     kind: ItemKind,
     name: &str,
     target: &std::path::Path,

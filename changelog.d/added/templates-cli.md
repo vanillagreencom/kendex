@@ -1,0 +1,1 @@
+- `kendex template` lists, shows, creates, edits, installs and deletes saved package selections, and registering a project can fill it from one.

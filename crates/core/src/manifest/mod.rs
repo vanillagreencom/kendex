@@ -116,7 +116,7 @@ impl ItemDecl {
 }
 
 /// Typed `[agent-frontmatter.<harness>.<agent>]` overrides — v1's field set.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub struct FrontmatterOverrides {
     #[serde(skip_serializing_if = "Option::is_none")]

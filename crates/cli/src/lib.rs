@@ -117,6 +117,9 @@ enum Command {
     /// Register, list, and discover kendex-enabled projects
     #[command(subcommand)]
     Project(ProjectCommand),
+    /// Save a group of packages and install it into any project
+    #[command(subcommand)]
+    Template(commands::template_cmd::TemplateCommand),
     /// List everything observed on this machine
     #[command(alias = "ls")]
     List {
@@ -466,6 +469,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             commands::adopt::run(&env, kind, name, harness, filter)?;
         }
         Command::Project(cmd) => commands::project::run(&env, cmd)?,
+        Command::Template(cmd) => commands::template_cmd::run(&env, cmd)?,
         Command::List {
             global,
             scope,

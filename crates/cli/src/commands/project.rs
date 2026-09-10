@@ -17,7 +17,11 @@ pub enum ProjectCommand {
         /// Also install the session-start drift report hook there
         #[arg(long)]
         drift_hook: bool,
-        /// Skip confirmation prompts (with --drift-hook)
+        /// Install this saved template into the project once it is
+        /// registered
+        #[arg(long)]
+        template: Option<String>,
+        /// Skip confirmation prompts (with --drift-hook or --template)
         #[arg(short = 'y', long)]
         yes: bool,
     },
@@ -51,11 +55,32 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
         ProjectCommand::Add {
             path,
             drift_hook,
+            template,
             yes,
         } => {
+            // The template is settled before the first write, not between
+            // the two: registering is itself a write, so a template
+            // nobody saved, one with an unreachable member, or a missing
+            // answer in a run with nobody to ask must refuse with the
+            // registry untouched. This crate's rule is that a verb
+            // needing input fails naming the flag before its first write.
+            let planned = match &template {
+                Some(name) => {
+                    let planned = super::template_cmd::plan_install(env, name, Some(&path))?;
+                    super::template_cmd::confirm_install(&planned, yes)?;
+                    Some(planned)
+                }
+                None => None,
+            };
             settings::register_project(env, &path)?;
             out(&format!("registered {}", path.display()));
             offer_to_manage(env, &path);
+            // Registering and filling a project is one path, so the
+            // template lands before the hook offer rather than as a
+            // second command somebody has to know about.
+            if let Some(planned) = &planned {
+                super::template_cmd::run_install(env, planned)?;
+            }
             match drift_hook {
                 true => {
                     let scope = kendex_core::model::Scope::Project { root: path.clone() };

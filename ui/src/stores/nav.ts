@@ -6,6 +6,7 @@ import type {
   BundleRef,
   HistoryEntry,
   LibraryFilter,
+  LibraryTab,
   MarketplaceRef,
   MarketplacesTab,
   PackageRef,
@@ -20,7 +21,8 @@ export type * from "./nav-types";
 const HISTORY_CAP = 20;
 
 /** Whether the current page has a search box on screen right now — the
- * Library always does; the Marketplaces page only on its Packages tab. */
+ * Library always does, on either of its tabs; the Marketplaces page only
+ * on its Packages tab. */
 function searchBoxOnScreen(state: { page: Page; marketplacesTab: string }) {
   if (state.page === "library") return true;
   return state.page === "marketplaces" && state.marketplacesTab === "packages";
@@ -42,6 +44,12 @@ interface NavState {
    * search box is on screen. */
   searchFocus: number;
   marketplacesTab: MarketplacesTab;
+  /** Which My Library tab is showing. Kept here rather than in the page so
+   *  leaving for a template and coming back lands on the tab the row was
+   *  on. */
+  libraryTab: LibraryTab;
+  /** Which template the template page is showing; null anywhere else. */
+  templateName: string | null;
   /** Consumed once by the Library on mount, then cleared. */
   libraryFilter: LibraryFilter | null;
   /** Which package the package page shows; null anywhere else. */
@@ -75,6 +83,8 @@ interface NavState {
   future: HistoryEntry[];
   setPage: (page: Page) => void;
   setLibraryScope: (scope: ScopeSelection) => void;
+  setLibraryTab: (tab: LibraryTab) => void;
+  goToTemplate: (name: string) => void;
   setSearch: (search: string) => void;
   /** Focus the search box on screen, or the Library's if this page has none. */
   focusSearch: () => void;
@@ -120,6 +130,8 @@ export const useNavStore = create<NavState>((set) => ({
   search: "",
   searchFocus: 0,
   marketplacesTab: "subscribed",
+  libraryTab: "installed",
+  templateName: null,
   libraryFilter: null,
   packageRef: null,
   marketplaceRef: null,
@@ -147,8 +159,20 @@ export const useNavStore = create<NavState>((set) => ({
       unmanagedScope: null,
       changesRoot: null,
       installInto: null,
+      templateName: null,
     }),
   setLibraryScope: (libraryScope) => set({ libraryScope }),
+  // Switching tabs is not navigating: the page calls this to change its
+  // own tab, and a stack entry per tab would make Back a tab-undo.
+  setLibraryTab: (libraryTab) => set({ libraryTab }),
+  goToTemplate: (name) =>
+    set((state) => ({
+      page: "template",
+      templateName: name,
+      installInto: null,
+      history: pushHistory(state, "template"),
+      future: [],
+    })),
   projectMoved: (from) => {
     // Everything about where the reader has been, let go of at once.
     //
@@ -200,10 +224,21 @@ export const useNavStore = create<NavState>((set) => ({
   // Carried whole rather than field by field: a narrowing the filter gains
   // is one a badge already counts by, and a link that dropped it would open
   // a wider page than the number that was clicked.
-  goToLibrary: (filter = {}) =>
+  goToLibrary: (filter) =>
     set((state) => ({
       page: "library",
       libraryFilter: { ...filter },
+      // A link that asks for a narrowed list is asking for the list, and
+      // the Installed tab is the one that has it: left on Templates the
+      // reader would arrive at a tab with no table and never see the rows
+      // the link named. A call with no filter is a plain return to the
+      // Library and keeps the tab the reader was on, which is what brings
+      // them back to Templates from a template page.
+      //
+      // Decided here rather than at the callers because there are a dozen
+      // of them and any new one would have to remember: the argument they
+      // already pass is what says which of the two this is.
+      libraryTab: filter === undefined ? state.libraryTab : "installed",
       installInto: null,
       history: pushHistory(state, "library"),
       future: [],
@@ -323,6 +358,8 @@ function here(state: NavState): HistoryEntry {
   return {
     page: state.page,
     marketplacesTab: state.marketplacesTab,
+    libraryTab: state.libraryTab,
+    templateName: state.templateName,
     packageRef: state.packageRef,
     marketplaceRef: state.marketplaceRef,
     bundleRef: state.bundleRef,
