@@ -187,6 +187,18 @@ pub(crate) fn relay(output: &std::process::Output) -> GuardReport {
 
 /// Arm the shims: the package's own installer, in this repository.
 ///
+/// Where this package's arming record lives, asked of the one function
+/// that answers it.
+///
+/// The shims and the helper this package installs sit in the hooks
+/// directory under the common git directory, which every linked work tree
+/// of the repository commits through — so the effect reaches all of them
+/// and the record does too. [`locally_armed`] reads the helper from the
+/// same directory for the same reason.
+fn record_dir(repo: &Repo) -> &Path {
+    crate::repo_effects::armed::record_dir(repo, true)
+}
+
 /// A clean run records the arming the way the desktop's does, through
 /// `repo_effects::armed`. The two verbs mean one thing, so a repository
 /// armed at a terminal reports as armed on the package's page instead of
@@ -199,7 +211,7 @@ pub fn install(dir: &Path) -> Result<GuardReport> {
         // Bookkeeping, never the verb's verdict: the shims are armed, and
         // reporting a failed install over a record nobody reads for
         // correctness would send somebody to repeat work that landed.
-        let _ = crate::repo_effects::armed::arm(&repo.common_dir, SKILL);
+        let _ = crate::repo_effects::armed::arm(record_dir(&repo), SKILL);
     }
     Ok(report)
 }
@@ -216,7 +228,7 @@ pub fn uninstall(dir: &Path) -> Result<GuardReport> {
     if report.code == 0
         && let Ok(repo) = Repo::at(dir)
     {
-        let _ = crate::repo_effects::armed::disarm(&repo.common_dir, SKILL);
+        let _ = crate::repo_effects::armed::disarm(record_dir(&repo), SKILL);
     }
     Ok(report)
 }

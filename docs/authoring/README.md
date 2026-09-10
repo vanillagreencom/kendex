@@ -106,7 +106,7 @@ The exit status is the whole answer, and it is the same taxonomy the commit hook
 
 The script writes nothing and changes nothing. Whatever it prints on either stream reaches the person as the package's own words, so put the remedy there.
 
-Nothing the declaration says decides when the checker runs. Your script comes out of a checkout, and a checkout arrives with a fetch, so opening a package's page must not run it. What licenses a run is kendex's own record of having armed the effect in that repository: kendex writes it when your installer exits clean, keeps it in the common git directory, which git clones for nobody, and drops it when your uninstaller runs. A repository nothing here armed runs none of your code.
+Nothing the declaration says decides when the checker runs. Your script comes out of a checkout, and a checkout arrives with a fetch, so opening a package's page must not run it. What licenses a run is kendex's own record of having armed the effect in that repository: kendex writes it when your installer exits clean, keeps it in a git directory, which git clones for nobody, and drops it when your uninstaller runs. Which one is your effect's reach: an effect under `.git/` is the whole repository's, so one arming answers for every work tree; an effect elsewhere in the checkout is the work tree it was armed in and no other. A repository nothing here armed runs none of your code.
 
 That leaves a repository somebody armed by hand, which kendex has no record of. The person can ask for the status themselves — the package page offers it — and their asking is its own licence, so your checker still answers there.
 

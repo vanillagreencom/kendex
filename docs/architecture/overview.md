@@ -57,7 +57,7 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 - Hook events have one vocabulary, Claude Code's names in `crates/core/src/hook.rs::EVENTS`; every other harness maps from it.
 - Propagation into consuming repositories is local: kendex reports drift at session start and a local refresh brings the repo current; opening pull requests there is a permanent non-goal.
 - Commits walk through the commit-guards package's committed scripts whatever tool makes them; kendex implements no check of its own and `kendex check` relays the package's verdict.
-- A package's declared check runs only under a licence: kendex's arming record in the repository's common git directory, or a person pressing the control that asks.
+- A package's declared check runs only under a licence: kendex's arming record, in a git directory git clones for nobody, or a person pressing the control that asks.
 - kendex never emits a pasteable command line: errors, hints and recovery instructions present the verb and its parameters as data. The one exception is the session-start drift report, whose remedies come from a fixed template set with validated identifiers.
 - The default catalog is `vanillagreencom/kendex`; subscriptions are matched by what a declaration names, never by literal spelling.
 - The app decides its launch environment once, before its first spawn, by relaunching (`crates/app/src/launch_env.rs`): the Linux display, the macOS `PATH`. Setting it in place needs `unsafe`, which is banned.

@@ -12,23 +12,36 @@ import type { InstallSubject } from "@/stores/install-flow";
 
 /** The marketplaces this package's installed copies came from, in a stable
  *  order. A package can be installed from a different source in each
- *  place, and none of them need be the same subscription. */
+ *  place, and none of them need be the same subscription.
+ *
+ *  Both halves of the identity, because the alias alone is not one: it is
+ *  a name a scope chose, and a project may declare `cat` for one
+ *  repository while the global scope declares it for another. The
+ *  repository is `MarketplaceRow.provenance`, matched verbatim — the same
+ *  join `installed-places.ts` makes. */
 const sourcesOf = (
   provenance: ProvenanceRow[],
   kind: ItemKind,
   name: string,
-): string[] =>
+): { source: string; repo: string }[] =>
   [
-    ...new Set(
+    ...new Map(
       provenance.flatMap((row) =>
         row.kind === kind &&
         row.name === name &&
         row.origin.origin === "marketplace"
-          ? [row.origin.source]
+          ? ([
+              [
+                `${row.origin.source}\u0000${row.origin.repo}`,
+                { source: row.origin.source, repo: row.origin.repo },
+              ],
+            ] as const)
           : [],
       ),
-    ),
-  ].sort();
+    ).entries(),
+  ]
+    .sort(([one], [two]) => one.localeCompare(two))
+    .map(([, one]) => one);
 
 /** The ask that installs this package into a project the reader picks, or
  *  null where kendex cannot offer one.
@@ -53,13 +66,14 @@ export function installElsewhere(
 ): InstallSubject | null {
   const global = new Set(
     subscriptions
-      .filter((row) => row.scope.scope === "global")
-      .map((row) => row.name),
+      .filter((row) => row.scope.scope === "global" && row.provenance !== null)
+      .map((row) => `${row.name}\u0000${row.provenance}`),
   );
-  const source = sourcesOf(provenance, kind, name).find((one) =>
-    global.has(one),
+  const found = sourcesOf(provenance, kind, name).find((one) =>
+    global.has(`${one.source}\u0000${one.repo}`),
   );
-  if (source === undefined) return null;
+  if (found === undefined) return null;
+  const source = found.source;
   return {
     id: `${kind}:${name}`,
     label: shown,

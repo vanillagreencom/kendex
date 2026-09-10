@@ -170,8 +170,8 @@ pub fn status(scope: &Scope, declared: &DeclaredEffects, ask: Ask) -> SetupStatu
     // failure — there is nothing git-private to have recorded anything in,
     // so there is no standing licence and the honest state is the one a
     // person can act on.
-    let common_dir = match crate::guard::Repo::probe(root) {
-        Ok(Some(repo)) => Some(repo.common_dir),
+    let record_dir = match crate::guard::Repo::probe(root) {
+        Ok(Some(repo)) => Some(super::armed::record_dir(&repo, shared).to_path_buf()),
         Ok(None) => None,
         Err(error) => {
             return could_not_check(
@@ -182,7 +182,7 @@ pub fn status(scope: &Scope, declared: &DeclaredEffects, ask: Ask) -> SetupStatu
             );
         }
     };
-    let armed_here = match &common_dir {
+    let armed_here = match &record_dir {
         Some(dir) => super::armed::recorded(dir, &declared.name),
         None => Ok(false),
     };
@@ -284,8 +284,17 @@ fn could_not_check(
 /// Where a project's arming records live, for the callers that arm and
 /// disarm one: `None` outside a work tree, where there is nothing
 /// git-private to write into.
-pub(super) fn record_dir(root: &std::path::Path) -> crate::error::Result<Option<PathBuf>> {
-    Ok(crate::guard::Repo::probe(root)?.map(|repo| repo.common_dir))
+///
+/// `shared` is the effect's reach, which is what picks between the
+/// repository's two git directories — [`super::armed::record_dir`] holds
+/// that rule, so arming, disarming and reading cannot disagree about where
+/// one package's record is.
+pub(super) fn record_dir(
+    root: &std::path::Path,
+    shared: bool,
+) -> crate::error::Result<Option<PathBuf>> {
+    Ok(crate::guard::Repo::probe(root)?
+        .map(|repo| super::armed::record_dir(&repo, shared).to_path_buf()))
 }
 
 #[cfg(test)]

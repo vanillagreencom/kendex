@@ -155,8 +155,8 @@ pub fn arm(
     // failed arming would send somebody to undo work that landed. The
     // person loses the automatic check, not the effect, and the control
     // that asks the package directly still answers.
-    if let Ok(Some(common_dir)) = setup::record_dir(repo) {
-        let _ = armed::arm(&common_dir, &declared.name);
+    if let Ok(Some(record_dir)) = setup::record_dir(repo, touches_git(&declared.effects)) {
+        let _ = armed::arm(&record_dir, &declared.name);
     }
     Ok(report)
 }

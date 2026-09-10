@@ -172,8 +172,8 @@ pub fn undo(
         // Not an error either way: the effect is disarmed, and a removal
         // that reported failure over a bookkeeping file would send
         // somebody to repeat work that landed.
-        if let Ok(Some(common_dir)) = setup::record_dir(root) {
-            let _ = armed::disarm(&common_dir, &declared.name);
+        if let Ok(Some(record_dir)) = setup::record_dir(root, touches_git(&declared.effects)) {
+            let _ = armed::disarm(&record_dir, &declared.name);
         }
     }
     Ok(())

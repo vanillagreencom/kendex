@@ -17,6 +17,7 @@ import {
   CHECK_AGAIN_LABEL,
   REPAIR_LABEL,
   SETUP_ACTIVE,
+  SETUP_CHECKING,
   SETUP_NOT_ACTIVE,
   setupHeading,
 } from "@/lib/copy-setup";
@@ -259,6 +260,36 @@ describe("setup on the Projects tab", () => {
         (one) => one.textContent === ACTIVATE_LABEL,
       ),
     ).toHaveLength(1);
+  });
+
+  it("draws no setup row in a project whose own answer declares nothing", async () => {
+    // One place answering names the declaration for the tab, and copies of
+    // one package can come from different sources: the project that
+    // declares nothing has no setup to report, whatever its sibling says.
+    setupSays((scope) =>
+      scopeKey(scope) === scopeKey(VG)
+        ? answer("active")
+        : answer("notDeclared"),
+    );
+
+    const host = await openTab([VG, HYPR]);
+
+    expect(host.textContent).toContain(setupHeading("vg"));
+    expect(host.textContent).not.toContain(setupHeading("hyprtrade"));
+  });
+
+  it("keeps the row on screen while a re-check is in flight", async () => {
+    setupSays(() => answer("notActive"));
+    const host = await openTab([VG]);
+    // The second read never lands, which is the whole of the window this
+    // pins: the row a person pressed must spin rather than vanish.
+    vi.mocked(commands.packageSetup).mockReturnValue(new Promise(() => {}));
+
+    await userEvent.click(buttonNamed(host, CHECK_AGAIN_LABEL));
+    await settle();
+
+    expect(host.textContent).toContain(setupHeading("vg"));
+    expect(host.textContent).toContain(SETUP_CHECKING);
   });
 
   it("asks the repository-changes dialog for the yes, in the project pressed", async () => {

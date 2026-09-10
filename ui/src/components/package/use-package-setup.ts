@@ -42,9 +42,15 @@ export function usePackageSetup(
 } {
   const entries = usePackageSetupStore((s) => s.entries);
   const check = usePackageSetupStore((s) => s.check);
-  const answered = repositories(scopes)
-    .map((scope) => setupAt(entries, scope, name))
-    .filter((entry) => entry !== undefined && !entry.reading);
+  // A retained answer counts while a fresh read is in flight. `check`
+  // keeps the previous `setup` and raises `reading`, and dropping that
+  // entry here would pull the declaration out from under the row a
+  // re-check is meant to spin — on a one-project page the row unmounts
+  // and comes back. A place that has never answered still has no
+  // `setup`, which is what holds the rule below.
+  const answered = repositories(scopes).map((scope) =>
+    setupAt(entries, scope, name),
+  );
   return {
     // Undefined for the personal place, which draws no setup row: it was
     // never asked, and an entry it never had is what says so.

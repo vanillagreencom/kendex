@@ -16,8 +16,15 @@ const from = (origin: Origin): ProvenanceRow[] => [
   },
 ];
 
-const declared = (scope: Scope, name: string): MarketplaceRow =>
-  ({ scope, name }) as MarketplaceRow;
+/** A subscription as a scope declares it: the alias the person chose, and
+ *  the repository it resolved to. Both, because the alias is a name a
+ *  scope picked and two scopes may pick the same one for different
+ *  repositories. */
+const declared = (
+  scope: Scope,
+  name: string,
+  provenance = "o/r",
+): MarketplaceRow => ({ scope, name, provenance }) as MarketplaceRow;
 
 const MARKET: Origin = { origin: "marketplace", source: "cat", repo: "o/r" };
 const MINE: Origin = { origin: "own", forkedFrom: null, source: "local" };
@@ -46,6 +53,18 @@ describe("installing a package into a project that lacks it", () => {
       "a marketplace nothing declares",
       from(MARKET),
       [declared({ scope: "global" }, "other")],
+      false,
+    ],
+    [
+      "a global subscription under the same alias for another repository",
+      from(MARKET),
+      [declared({ scope: "global" }, "cat", "other/repo")],
+      false,
+    ],
+    [
+      "a global subscription whose catalog could not be read",
+      from(MARKET),
+      [{ scope: { scope: "global" }, name: "cat" } as MarketplaceRow],
       false,
     ],
     [

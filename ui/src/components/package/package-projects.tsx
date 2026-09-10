@@ -1,5 +1,6 @@
 import type { ItemKind, ObservedItem, Scope } from "@/bindings";
 import { ProjectCard } from "@/components/package/project-card";
+import { shownState } from "@/components/package/setup-row";
 import { usePackagePlaces } from "@/components/package/use-package-places";
 import { usePackageSetup } from "@/components/package/use-package-setup";
 import { Section } from "@/components/section";
@@ -169,8 +170,17 @@ export function PackageProjects({
                 focused={
                   focus !== null && scopeKey(focus) === scopeKey(place.scope)
                 }
+                // One place answering names the package's declaration for
+                // the tab, but each card reports its own place: copies can
+                // come from different sources, so a project whose own
+                // answer is `notDeclared` has no setup to report and gets
+                // no row. A place that has not answered keeps the
+                // placeholder — that is a read on its way, not a package
+                // that changes nothing here.
                 setup={
-                  reportsSetup && place.scope.scope === "project"
+                  reportsSetup &&
+                  place.scope.scope === "project" &&
+                  shownState(entry) !== "notDeclared"
                     ? (entry ?? { setup: null, refused: null, reading: true })
                     : null
                 }

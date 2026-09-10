@@ -334,6 +334,125 @@ fn the_personal_place_has_no_repository_to_set_up() {
     }
 }
 
+/// Which work tree an arming licenses is the effect's reach, not the
+/// repository's.
+///
+/// Linked work trees share one common git directory and nothing else. An
+/// effect that writes into `.git` is every tree's, so arming it in one
+/// answers for all of them. An effect that writes a checkout path is the
+/// tree it was armed in and no other — and a record the other tree could
+/// read would run that tree's own checker, out of a checkout that arrived
+/// with a fetch, which is the licence this module exists to withhold.
+#[test]
+#[allow(clippy::unwrap_used, reason = "fixture preconditions")]
+fn an_arming_reaches_the_work_trees_the_effect_does() {
+    for (writes, licensed) in [(".git/hooks/kendex-guards", true), ("tools/guard", false)] {
+        let pair = Linked::new();
+        let here = pair.declared(&pair.linked, writes);
+        crate::repo_effects::armed::arm(
+            crate::repo_effects::armed::record_dir(
+                &crate::guard::Repo::at(&pair.main).unwrap(),
+                crate::repo_effects::touches_git(&here.effects),
+            ),
+            "guards",
+        )
+        .unwrap();
+
+        let status = settled(
+            &crate::model::Scope::Project {
+                root: pair.linked.clone(),
+            },
+            &here,
+            Ask::Surface,
+        );
+
+        assert_eq!(
+            status.state,
+            match licensed {
+                true => SetupState::Active,
+                false => SetupState::NotActive,
+            },
+            "writes {writes}"
+        );
+    }
+}
+
+/// A repository with a second work tree linked to it, both carrying the
+/// package.
+struct Linked {
+    _tmp: tempfile::TempDir,
+    main: PathBuf,
+    linked: PathBuf,
+}
+
+impl Linked {
+    #[allow(clippy::unwrap_used, reason = "fixture preconditions")]
+    fn new() -> Linked {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = crate::paths::canonical(tmp.path()).unwrap();
+        let main = base.join("main");
+        fs::create_dir_all(&main).unwrap();
+        for argv in [
+            vec!["init", "--quiet", "-b", "main"],
+            vec!["commit", "--quiet", "--allow-empty", "-m", "root"],
+        ] {
+            let output = Hardened::git(&argv, Some(&main))
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
+                .run()
+                .unwrap();
+            assert!(output.status.success(), "git {argv:?}");
+        }
+        let linked = base.join("second");
+        let output = Hardened::git(
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                "second",
+                &linked.to_string_lossy(),
+            ],
+            Some(&main),
+        )
+        .run()
+        .unwrap();
+        assert!(output.status.success(), "git worktree add");
+        Linked {
+            _tmp: tmp,
+            main,
+            linked,
+        }
+    }
+
+    /// The package as this work tree carries it: its own copy of the
+    /// checker, which is the script a licence would let kendex run.
+    #[allow(clippy::unwrap_used, reason = "fixture preconditions")]
+    fn declared(&self, root: &Path, writes: &str) -> DeclaredEffects {
+        let package = root.join(".agents/skills/guards");
+        fs::create_dir_all(&package).unwrap();
+        let script = package.join("check");
+        fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        DeclaredEffects {
+            name: "guards".to_owned(),
+            root: package,
+            effects: RepoEffects {
+                summary: "arms hooks".to_owned(),
+                writes: vec![writes.to_owned()],
+                installer: Some("arm".to_owned()),
+                uninstaller: None,
+                checker: Some("check".to_owned()),
+                removal: None,
+                notes: Vec::new(),
+                companions: Vec::new(),
+            },
+        }
+    }
+}
+
 /// A project that is not a git work tree has nowhere git-private to record
 /// an arming, so there is no standing licence — and the state says what
 /// kendex knows rather than claiming the check failed.
