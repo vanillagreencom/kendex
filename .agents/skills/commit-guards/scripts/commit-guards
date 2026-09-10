@@ -9,10 +9,10 @@
 #                                  would do to REF's own tree
 #   commit-guards CHECK [ARGS..]   run one check, flags passed through
 #
-# --skip-unscoped withholds the checks the named scope leaves nothing for,
-# rather than folding a clean count over content they never opened. Which
-# checks those are depends on their configured scope, not on which library
-# they read it from.
+# --skip-unscoped withholds the checks the run's scope leaves nothing for,
+# rather than folding a clean count over content they never opened. A check is
+# that only when this run hands it no scope AND its own bare default would
+# open no file: a lane given --base or --against has a scope and runs.
 #
 # commit-msg reads a message, so it never runs in the batch — the commit-msg
 # hook invokes it directly. Batch aggregation fails closed: exit 2 if ANY
@@ -43,10 +43,18 @@ BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-
 # references. The rest read the index by design.
 STAGED_SCOPED_CHECKS="todo-ban byte-ceiling md-format md-refs comments"
 # byte-ceiling is the one batch lane whose bare default is the commit scope,
-# so the full batch names its scope outright: --all with no flag, --base REF
-# or --against REF when the batch is given one. A batch summary that listed it
-# clean over a scope it never read would be a verdict about nothing.
+# so the full batch names its scope outright: --all with no flag. A batch
+# summary that listed it clean over a scope it never read would be a verdict
+# about nothing.
 FULL_SCOPED_CHECKS="byte-ceiling"
+# The lanes a ref-range scope reaches. byte-ceiling is scoped to a range by
+# design; the markdown lanes take one so a document a replay carried in is
+# judged where nothing is staged — a push — and their bare touched scope
+# would open no file. The whole-tree scope deliberately does NOT reach them:
+# that sweep is absolute rather than ratcheted, so imposing it would refuse
+# every push in a repository holding markdown that predates the guard, and
+# choosing it is COMMIT_GUARDS_MD_SCOPE=all, the project's call.
+RANGE_SCOPED_CHECKS="byte-ceiling md-format md-refs"
 
 usage() {
   gg_message usage "$GG_CHECK" "Command usage follows."
@@ -59,14 +67,14 @@ Checks: $KNOWN_CHECKS
 With no argument (or 'all'), runs every check named by
 COMMIT_GUARDS_CHECKS (default: $BATCH_DEFAULT) over the whole tree:
 $FULL_SCOPED_CHECKS gets --all, the rest read the index by design.
---base REF hands $FULL_SCOPED_CHECKS --base REF instead (CI on a PR), and
+--base REF hands $RANGE_SCOPED_CHECKS --base REF instead (CI on a PR), and
 --against REF hands them --against REF (what the change does to REF's tree).
 --staged is passed to: $STAGED_SCOPED_CHECKS.
 --skip-unscoped is for a caller whose scope stages nothing: it withholds every
-check that would then open no file, naming each one. That is the checks whose
-configured scope selects from the staged diff; one configured to sweep the
-tree needs nothing staged and runs. It is a contradiction under --staged,
-which is the scope those checks read.
+check that would then open no file, naming each one. That is a check this run
+hands no scope whose configured scope selects from the staged diff; one given
+a range, and one configured to sweep the tree, opens files and runs. It is a
+contradiction under --staged, which is the scope those checks read.
 Those checks apply their own commit scope. md-refs checks all configured
 documents for broken references, including unchanged callers.
 commit-msg reads a message file/stdin and only runs by name.
@@ -161,14 +169,40 @@ done
 # stages nothing asks for those to be withheld; each is named here, and the
 # verdict record below lists only the checks that ran.
 #
-# Two questions, and neither answers the other. WHICH checks take their scope
-# from the shared markdown selector is asked of each check's own script,
-# rather than listed here, so a lane that starts deferring to it later cannot
-# rejoin the clean count in silence. WHAT that selector would resolve to is
-# asked of the selector itself, below, because deferring to it says where the
-# answer comes from and not what it is: configured to sweep the tree, such a
-# lane needs nothing staged and this caller reaches it.
+# Three questions, and none answers another. WHAT THIS RUN HANDS the check is
+# asked first, of scope_for below, because a lane given an explicit scope
+# opens files whatever its bare default would have done — that is what a
+# range scope is for. WHICH checks take their bare scope from the shared
+# markdown selector is asked of each check's own script, rather than listed
+# here, so a lane that starts deferring to it later cannot rejoin the clean
+# count in silence. WHAT that selector would resolve to is asked of the
+# selector itself, below, because deferring to it says where the answer comes
+# from and not what it is: configured to sweep the tree, such a lane needs
+# nothing staged and this caller reaches it.
 MD_SELECTOR="lib/md-scope.sh"
+
+# The scope this run hands ONE check, in SCOPE. Read by the withholding pass
+# and by the run loop, so the two cannot disagree about what a check was
+# given. Bash 3.2: an empty array expands guarded at every use.
+SCOPE=()
+scope_for() { # CHECK
+  SCOPE=()
+  case "$SCOPE_MODE" in
+    staged)
+      case " $STAGED_SCOPED_CHECKS " in *" $1 "*) SCOPE=(--staged) ;; esac
+      ;;
+    all)
+      case " $FULL_SCOPED_CHECKS " in *" $1 "*) SCOPE=(--all) ;; esac
+      ;;
+    base)
+      case " $RANGE_SCOPED_CHECKS " in *" $1 "*) SCOPE=(--base "$BASE_REF") ;; esac
+      ;;
+    against)
+      case " $RANGE_SCOPED_CHECKS " in *" $1 "*) SCOPE=(--against "$BASE_REF") ;; esac
+      ;;
+  esac
+}
+
 if [ "$SKIP_UNSCOPED" -eq 1 ]; then
   # What a bare run of such a lane would resolve to, asked once of the file
   # that owns the setting's meaning rather than inferred from the fact that a
@@ -185,6 +219,11 @@ if [ "$SKIP_UNSCOPED" -eq 1 ] && [ "$BARE_SCOPE" = touched ]; then
   KEPT=""
   WITHHELD=""
   for c in $CHECKS; do
+    scope_for "$c"
+    if [ "${#SCOPE[@]}" -ne 0 ]; then
+      KEPT="${KEPT:+$KEPT }$c"
+      continue
+    fi
     selector_status=0
     grep -q -- "$MD_SELECTOR" "$SCRIPT_DIR/$c" || selector_status=$?
     [ "$selector_status" -le 1 ] \
@@ -209,34 +248,12 @@ fi
 had_violations=0
 had_errors=0
 for c in $CHECKS; do
-  scope=()
   scope_desc=""
-  case "$SCOPE_MODE" in
-    staged)
-      case " $STAGED_SCOPED_CHECKS " in
-        *" $c "*) scope=(--staged) ;;
-      esac
-      ;;
-    all)
-      case " $FULL_SCOPED_CHECKS " in
-        *" $c "*) scope=(--all) ;;
-      esac
-      ;;
-    base)
-      case " $FULL_SCOPED_CHECKS " in
-        *" $c "*) scope=(--base "$BASE_REF") ;;
-      esac
-      ;;
-    against)
-      case " $FULL_SCOPED_CHECKS " in
-        *" $c "*) scope=(--against "$BASE_REF") ;;
-      esac
-      ;;
-  esac
-  [ "${#scope[@]}" -eq 0 ] || scope_desc=" ${scope[*]}"
+  scope_for "$c"
+  [ "${#SCOPE[@]}" -eq 0 ] || scope_desc=" ${SCOPE[*]}"
   gg_message step "$c$scope_desc" "Run the configured check."
   check_status=0
-  "$SCRIPT_DIR/$c" ${scope[@]+"${scope[@]}"} || check_status=$?
+  "$SCRIPT_DIR/$c" ${SCOPE[@]+"${SCOPE[@]}"} || check_status=$?
   case "$check_status" in
     0) ;;
     1) had_violations=1 ;;

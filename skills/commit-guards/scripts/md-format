@@ -7,9 +7,11 @@
 # remedy.
 #
 # Scopes: --staged judges every markdown file the staged diff adds or
-# changes, in full; --all judges every tracked markdown file the path globs
-# name; with neither, COMMIT_GUARDS_MD_SCOPE decides (lib/md-scope.sh).
-# Content comes from the index, like every scan in this family.
+# changes, in full; --base REF and --against REF judge the same over a commit
+# range, byte-ceiling's dots (three and two); --all judges every tracked
+# markdown file the path globs name; with neither, COMMIT_GUARDS_MD_SCOPE
+# decides (lib/md-scope.sh). Content comes from the index, like every scan in
+# this family.
 #
 # Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 set -euo pipefail
@@ -36,7 +38,7 @@ SHAPES_AWK="$SCRIPT_DIR/lib/md-shapes.awk"
 usage() {
   gg_message usage md-format "Command usage follows."
   cat <<EOF
-usage: md-format [--staged | --all]
+usage: md-format [--staged | --base REF | --against REF | --all]
 
 A markdown file is one paragraph per line and one list item per line, with
 blank lines between paragraphs, list blocks, headings and fences, and no
@@ -44,8 +46,11 @@ trailing-double-space line break. Fenced code, tables, HTML blocks, indented
 code and front matter are not judged. Reflow a file with md-reflow.
 
 --staged judges every markdown file the staged diff adds or changes, in
-full; --all judges every tracked markdown file the path globs name. With
-neither, COMMIT_GUARDS_MD_SCOPE decides: 'touched' (the default) is --staged
+full; --base REF judges the same over what this branch adds since the
+merge-base with REF (three dots) and --against REF over what the change
+would do to REF's own tree (two dots), which is the scope a push takes;
+--all judges every tracked markdown file the path globs name. With none of
+them, COMMIT_GUARDS_MD_SCOPE decides: 'touched' (the default) is --staged
 and judges nothing when nothing is staged; 'all' is --all.
 
 Configuration (env > .env.local > .kendex/settings.toml >
@@ -63,10 +68,32 @@ EOF
 
 STAGED=0
 ALL=0
+RANGE_KIND=""
+RANGE_REF=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --staged) STAGED=1 ;;
     --all) ALL=1 ;;
+    --base)
+      [ $# -ge 2 ] || gg_fail argument-missing "--base" "--base requires a ref"
+      shift
+      RANGE_KIND="base"
+      RANGE_REF="$1"
+      ;;
+    --base=*)
+      RANGE_KIND="base"
+      RANGE_REF="${1#--base=}"
+      ;;
+    --against)
+      [ $# -ge 2 ] || gg_fail argument-missing "--against" "--against requires a ref"
+      shift
+      RANGE_KIND="against"
+      RANGE_REF="$1"
+      ;;
+    --against=*)
+      RANGE_KIND="against"
+      RANGE_REF="${1#--against=}"
+      ;;
     -h | --help)
       usage
       exit 0
@@ -81,7 +108,7 @@ done
 
 gg_repo_root_cd
 gg_md_load_paths md-format COMMIT_GUARDS_MD_PATHS "$PATHS_DEFAULT"
-gg_md_scope md-format "$STAGED" "$ALL"
+gg_md_scope md-format "$STAGED" "$ALL" "$RANGE_KIND" "$RANGE_REF"
 [ "$GG_MD_MODE" != none ] || exit 0
 
 gg_tmpdir

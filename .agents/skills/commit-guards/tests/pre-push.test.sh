@@ -50,7 +50,12 @@ ZERO=0000000000000000000000000000000000000000
 # are dropped, so a row reads as the push does: what was judged, what was
 # found, and the verdict. todo-ban's per-hit lines quote the marker they found,
 # and this file carries no marker shape, so only its count is kept.
-KEEP='^(pre-push: |byte-ceiling: |todo-ban: index-count=|md-format: (staged-count|summary)=|commit-guards: (unscoped|withheld-all)=)'
+KEEP='^(pre-push: |byte-ceiling: |todo-ban: index-count=|md-format: (staged-count|summary)=|md-refs: link-target=|commit-guards: (unscoped|withheld-all)=)'
+# No fixture here carries a doc-limits sibling, so that lane states its skip on
+# every single run and would repeat one long line in every row below. It is
+# asserted once, directly, after the table; what the lane finds at push is
+# skills/doc-limits/tests/push-scope.test.sh's subject.
+DROP='^pre-push: lane-absent=doc-limits '
 
 # Assembled from split tokens, so this file never holds a marker shape itself:
 # the kendex repo runs todo-ban over its own tree, tests included.
@@ -61,7 +66,7 @@ TD="TO""DO"
 # run, and the claim is which scope was judged, not which hash it got.
 said() { # RC OUTPUT
   local out
-  out="$(printf '%s\n' "$2" | LC_ALL=C grep -E "$KEEP" || true)"
+  out="$(printf '%s\n' "$2" | LC_ALL=C grep -E "$KEEP" | LC_ALL=C grep -Ev "$DROP" || true)"
   out="$(printf '%s\n' "$out" | LC_ALL=C sed -E 's/[0-9a-f]{40}/<oid>/g')"
   printf 'rc=%s%s' "$1" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
@@ -214,6 +219,16 @@ case "$DIRECT_OUT" in
   *"$CREDENTIAL_SECRET"*) CREDENTIAL_SEEN=present ;;
 esac
 assert_eq "the credential in the remote URL reaches no message" "absent" "$CREDENTIAL_SEEN"
+
+# The doc-limits lane the rows above drop from their kept lines. These
+# fixtures carry no such sibling, and a lane that vanished in silence is what
+# this chain's announce-every-lane rule exists to refuse.
+DOC_LIMITS_SEEN=absent
+case "$DIRECT_OUT" in
+  *"pre-push: lane-absent=doc-limits "*) DOC_LIMITS_SEEN=announced ;;
+esac
+assert_eq "a doc-limits sibling the tree does not carry is announced as a skip, never lost" \
+  "announced" "$DOC_LIMITS_SEEN"
 
 # remote.<name>.url is not a scalar. A remote set up to push one branch to two
 # places carries two values, a fetch uses the first, and git runs this hook
@@ -411,14 +426,15 @@ assert_eq "must-fail: judged from the shared ancestor, that growth reads as a sh
   "rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
   "$(push_ref "$THREEDOTTED" topic --force-with-lease)"
 
-# ------------------------------------------------------- what is not judged
+# ------------------------------------------------ the markdown lanes at push
 #
 # The index-drift refusal above guarantees nothing is staged by the time the
-# batch runs, and the markdown lanes select their files from the staged diff.
-# They would open no file and report a clean count over a document nobody
-# read, so the batch withholds them and says which. A replayed malformed
-# document is not caught at push, and the push says so rather than implying
-# it was checked.
+# batch runs, so these lanes' bare scope would open no file. Where this lane
+# HAS a range to hand them they take it and judge what the branch changed,
+# which is how a document a replay carried in reaches a verdict at all. Where
+# it has none the whole tree is the scope, and imposing that absolute sweep on
+# them would refuse every push in a repository holding markdown that predates
+# the guard, so they are withheld and named instead.
 wrapped() { # VAR NAME [SKILL-SOURCE] [SETTINGS-LINE] — VAR gets a repo whose HEAD carries a hard-wrapped document
   local __v="$1" r=""
   new_repo r "$2" "${3:-}"
@@ -436,14 +452,78 @@ wrapped() { # VAR NAME [SKILL-SOURCE] [SETTINGS-LINE] — VAR gets a repo whose 
   eval "$__v=\$r"
 }
 
+# The same shape for md-refs, whose subject is a reference rather than a
+# shape: a document naming a file this repository does not track. The name is
+# AGENTS.md because that is what md-refs' default path globs select.
+dangling() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose HEAD carries a dead reference
+  local __v="$1" r=""
+  new_repo r "$2" "${3:-}"
+  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-refs"\n' >"$r/kendex.settings.toml"
+  q git -C "$r" add kendex.settings.toml
+  q git -C "$r" commit -q -m "feat: seed"
+  q git -C "$r" push -q origin main
+  q git -C "$r" checkout -q -b topic
+  printf '# Title\n\nSee [the guide](docs/gone.md).\n' >"$r/AGENTS.md"
+  q git -C "$r" add AGENTS.md
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: add the document"
+  eval "$__v=\$r"
+}
+
 WRAPPED=""
 wrapped WRAPPED wrapped
-assert_eq "a lane this scope leaves nothing for is named, not folded into a clean verdict" \
-  "rc=0 pre-push: step=base:<oid>;commit-guards: unscoped=md-format;commit-guards: withheld-all=md-format;pre-push: result=0" \
+assert_eq "a replayed malformed document is judged under the range scope the push hands the lane" \
+  "rc=1 pre-push: step=base:<oid>;md-format: summary=violations=1 files=1 scope=range skipped=0;pre-push: result=1" \
   "$(push_ref "$WRAPPED" topic)"
 
-# The must-fail control: the same push with the old batch call, which counts
-# that lane clean over a document it never opened.
+DANGLING=""
+dangling DANGLING dangling
+assert_eq "and a replayed dead reference is judged there too, across the configured documents" \
+  "rc=1 pre-push: step=base:<oid>;md-refs: link-target=AGENTS.md:3:](docs/gone.md):docs/gone.md;pre-push: result=1" \
+  "$(push_ref "$DANGLING" topic)"
+
+# The must-fail control for both: a copy of the batch that no longer hands
+# these lanes a range. They fall back to their bare scope, which stages
+# nothing here, so each is withheld again and the same replayed defect leaves
+# the machine under a clean verdict.
+NARROW="$TMP/.narrow/commit-guards"
+mkdir -p "$(dirname "$NARROW")"
+cp -R "$SKILL_TEMPLATE" "$NARROW"
+NARROW_BEFORE="$(cat -- "$NARROW/scripts/commit-guards")"
+sed -i.bak 's#^RANGE_SCOPED_CHECKS="byte-ceiling md-format md-refs"$#RANGE_SCOPED_CHECKS="byte-ceiling"#' \
+  "$NARROW/scripts/commit-guards"
+rm -f -- "$NARROW/scripts/commit-guards.bak"
+assert_eq "the narrowed edit took" "rewritten" \
+  "$(if [ "$NARROW_BEFORE" = "$(cat -- "$NARROW/scripts/commit-guards")" ]; then echo unchanged; else echo rewritten; fi)"
+
+NARROWED_FORMAT=""
+wrapped NARROWED_FORMAT narrowed-format "$NARROW"
+assert_eq "must-fail: with the range scope gone, md-format is withheld and the document pushes" \
+  "rc=0 pre-push: step=base:<oid>;commit-guards: unscoped=md-format;commit-guards: withheld-all=md-format;pre-push: result=0" \
+  "$(push_ref "$NARROWED_FORMAT" topic)"
+
+NARROWED_REFS=""
+dangling NARROWED_REFS narrowed-refs "$NARROW"
+assert_eq "must-fail: and md-refs likewise, so the dead reference pushes" \
+  "rc=0 pre-push: step=base:<oid>;commit-guards: unscoped=md-refs;commit-guards: withheld-all=md-refs;pre-push: result=0" \
+  "$(push_ref "$NARROWED_REFS" topic)"
+
+# Where no base can be vouched for the scope is the whole tree, which hands
+# these lanes nothing: the absolute sweep is the project's call, not this
+# lane's. A push spelled as a URL matches no tracking ref and lands there.
+push_url() { # REPO REFSPEC -> the run's one line on stdout
+  local rc=0 out=""
+  out="$(git -C "$1" push "$TMP/${1##*/}.git" "$2" 2>&1)" || rc=$?
+  said "$rc" "$out"
+}
+
+UNBASED=""
+wrapped UNBASED unbased
+assert_eq "with no base to vouch for, the lane is named rather than folded into a clean verdict" \
+  "rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;commit-guards: unscoped=md-format;commit-guards: withheld-all=md-format;pre-push: result=0" \
+  "$(push_url "$UNBASED" topic)"
+
+# The must-fail control for that: the same push with the old batch call, which
+# counts the lane clean over a document it never opened.
 FOLDED="$TMP/.folded/commit-guards"
 mkdir -p "$(dirname "$FOLDED")"
 cp -R "$SKILL_TEMPLATE" "$FOLDED"
@@ -456,16 +536,16 @@ assert_eq "the folded edit took" "rewritten" \
 FOLDED_REPO=""
 wrapped FOLDED_REPO folded "$FOLDED"
 assert_eq "must-fail: folded back in, the same push reports that document clean" \
-  "rc=0 pre-push: step=base:<oid>;md-format: staged-count=0;pre-push: result=0" \
-  "$(push_ref "$FOLDED_REPO" topic)"
+  "rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;md-format: staged-count=0;pre-push: result=0" \
+  "$(push_url "$FOLDED_REPO" topic)"
 
 # A project that configured those lanes to sweep the tree asked for the check
-# and gets it: that scope stages nothing either, so a push reaches it.
+# and gets it there too: that scope stages nothing either.
 SWEEPING=""
 wrapped SWEEPING sweeping "" 'COMMIT_GUARDS_MD_SCOPE = "all"\n'
-assert_eq "a lane configured to sweep the tree runs at push, and refuses the replayed document" \
-  "rc=1 pre-push: step=base:<oid>;md-format: summary=violations=1 files=1 scope=all skipped=0;pre-push: result=1" \
-  "$(push_ref "$SWEEPING" topic)"
+assert_eq "a lane configured to sweep the tree runs under the whole-tree scope, and refuses the replayed document" \
+  "rc=1 pre-push: base-none=refs/heads/topic;pre-push: step=all;md-format: summary=violations=1 files=1 scope=all skipped=0;pre-push: result=1" \
+  "$(push_url "$SWEEPING" topic)"
 
 printf '\n%s: %s passed, %s failed\n' "$gg_suite" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

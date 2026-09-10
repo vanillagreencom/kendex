@@ -3,7 +3,8 @@
 # the `<path>::<phrase>` content citations a markdown file carries, and the
 # `<path>.md § Heading` citations a source file carries in its COMMENT TEXT or
 # a TOML file in its string literals. Both callers and targets come from the
-# index. A staged change rechecks all configured documents and source files so
+# index. A change in scope — staged, or over the commit range --base and
+# --against name — rechecks all configured documents and source files so
 # target edits cannot leave unchanged callers broken. Fenced code is not read.
 # The grammar is in lib/md-refs.awk; comment text and TOML strings come from
 # the comments lane's extractor, lib/comment-text.sh.
@@ -60,7 +61,7 @@ DECISION_ID_WIDTH_DEFAULT="3"
 usage() {
   gg_message usage md-refs "Command usage follows."
   cat <<EOF
-usage: md-refs [--staged | --all]
+usage: md-refs [--staged | --base REF | --against REF | --all]
 
 A dead relative link, code-span section, anchor or content citation, or
 decision reference fails. A link followed by § must start with a heading from
@@ -78,9 +79,15 @@ code-span form is. A decision ID there is judged only where it carries a
 bare ID are prose.
 
 --staged and --all check every tracked matching document and source file.
-With neither, COMMIT_GUARDS_MD_SCOPE=touched checks that set when any change
-is staged, including a deletion; all checks it unconditionally. Callers and
-targets both resolve against the index. Exclusions apply to both sets.
+--base REF and --against REF check that same set when the commit range
+carries any change, and nothing when it carries none: three dots for what
+this branch adds since the merge-base with REF, two for what the change
+would do to REF's own tree, which is the scope a push takes. With no flag,
+COMMIT_GUARDS_MD_SCOPE=touched checks the set when any change is staged,
+including a deletion; all checks it unconditionally. Every scope that checks
+anything checks the whole set, because a removed target invalidates
+references in callers the change never touched. Callers and targets both
+resolve against the index. Exclusions apply to both sets.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -105,10 +112,32 @@ EOF
 
 STAGED=0
 ALL=0
+RANGE_KIND=""
+RANGE_REF=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --staged) STAGED=1 ;;
     --all) ALL=1 ;;
+    --base)
+      [ $# -ge 2 ] || gg_fail argument-missing "--base" "--base requires a ref"
+      shift
+      RANGE_KIND="base"
+      RANGE_REF="$1"
+      ;;
+    --base=*)
+      RANGE_KIND="base"
+      RANGE_REF="${1#--base=}"
+      ;;
+    --against)
+      [ $# -ge 2 ] || gg_fail argument-missing "--against" "--against requires a ref"
+      shift
+      RANGE_KIND="against"
+      RANGE_REF="$1"
+      ;;
+    --against=*)
+      RANGE_KIND="against"
+      RANGE_REF="${1#--against=}"
+      ;;
     -h | --help)
       usage
       exit 0
@@ -135,8 +164,23 @@ esac
 ID_WIDTH="$(gg_setting DECISION_ID_WIDTH "$DECISION_ID_WIDTH_DEFAULT")" || exit 2
 gg_positive_int "$ID_WIDTH" DECISION_ID_WIDTH
 
-# A removed target also invalidates references in unchanged documents.
-if [ "$STAGED" -eq 0 ] && [ "$ALL" -eq 0 ]; then
+# A removed target also invalidates references in unchanged documents, so this
+# lane is a pure trigger: a scope that changed ANYTHING widens to every
+# configured document, and one that changed nothing judges nothing. The range
+# scopes ask that same question over a commit range rather than the index,
+# which is what a push has to ask — nothing is staged by the time a push is
+# judged, and a replay that deleted a target left exactly the broken callers
+# this widening exists to find.
+if [ -n "$RANGE_KIND" ]; then
+  if gg_md_range_changed "$RANGE_KIND" "$RANGE_REF"; then
+    ALL=1
+    RANGE_KIND=""
+    RANGE_REF=""
+  else
+    gg_message range-count 0 "Nothing changed over $RANGE_REF for md-refs. Use --all to check the configured files."
+    exit 0
+  fi
+elif [ "$STAGED" -eq 0 ] && [ "$ALL" -eq 0 ]; then
   scope="$(gg_setting COMMIT_GUARDS_MD_SCOPE "$GG_MD_SCOPE_DEFAULT")" || exit 2
   if [ "$scope" = touched ]; then
     gg_require_merged_index
@@ -149,7 +193,7 @@ if [ "$STAGED" -eq 0 ] && [ "$ALL" -eq 0 ]; then
     esac
   fi
 fi
-gg_md_scope md-refs "$STAGED" "$ALL"
+gg_md_scope md-refs "$STAGED" "$ALL" "$RANGE_KIND" "$RANGE_REF"
 [ "$GG_MD_MODE" != none ] || exit 0
 # References are checked across the configured document set, including callers
 # the commit does not edit. Targets and callers both come from the index.
