@@ -441,9 +441,10 @@ fi
 # to accept it. --full and not the commit chain: the pass needs a real Bash
 # 3.2 — macOS's own /bin/bash, or the bash:3.2 image under a container
 # runtime — and refuses when it can reach neither, so in the chain a machine
-# without either could not commit at all. Completion and the guards shard are
-# both before the macOS CI leg, which is where this class was reported from
-# before the lane existed.
+# without either could not commit at all. This run is the early one: it
+# happens at development completion, before any CI leg. The guards shard runs
+# the same lane on both of its legs, which is where this class was reported
+# from before the lane existed.
 # One line on purpose, like the lane above it: the must-fail control in
 # tools/tests/guard-full.test.sh removes this lane by deleting it.
 [ "$FULL" -eq 0 ] || "$TOOLS_DIR/bash32-parse" || say bash32-parse "$?"

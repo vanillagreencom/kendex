@@ -224,6 +224,10 @@ fi
 #             `lint`    the file list comes back empty
 #             `silent`  the pass under 3.2 answers nothing at all
 #             `short`   the pass reports reading fewer files than it was given
+#             `clean-nonzero`
+#                       the pass reports every file parsed and exits nonzero
+#             `failed-zero`
+#                       the pass reports a file that did not parse and exits 0
 #             `-`       the shipped lane, unmodified
 #             `second`  the same, but the LAST runtime the lane names is a
 #                       stub that does deliver it — the row that proves a
@@ -246,11 +250,28 @@ stage_stub() { # stage_stub DIR NAME VERSION BODY — a fake interpreter
   chmod +x "$1/$2"
 }
 
+# The body of a stand-in that answers the check pass: the protocol, with the
+# count of files it was actually handed. Counted rather than written in, so a
+# row turns on the FAILED and STATUS it declares and not on a `short` refusal
+# reached first — and so the three stand-ins below carry one copy of it.
+pass_protocol() { # pass_protocol FAILED STATUS — shell text, on stdout
+  cat <<STUB
+n=0
+seen=0
+for a in "\$@"; do
+  [ "\$seen" = 1 ] && n=\$((n + 1))
+  [ "\$a" = --check ] && seen=1
+done
+printf 'bash32-parse: parsed=%s\n' "\$n"
+printf 'bash32-parse: failed=$1\n'
+exit $2
+STUB
+}
+
 # A stand-in container runtime. `refuse` is one that is installed and cannot
 # produce the image. `deliver` is one that can: the lane calls it twice, once
 # for the version probe, whose `-c` sits deep in the argv behind `run` and the
-# image, and once for the check pass, which it answers on the pass protocol
-# for however many files it was handed.
+# image, and once for the check pass, which it answers on the protocol above.
 stage_runtime() { # stage_runtime DIR NAME refuse|deliver
   mkdir -p "$1" || return 1
   if [ "$3" = refuse ]; then
@@ -258,23 +279,11 @@ stage_runtime() { # stage_runtime DIR NAME refuse|deliver
     chmod +x "$1/$2"
     return
   fi
-  cat >"$1/$2" <<'STUB' || return 1
-#!/bin/sh
-for a in "$@"; do
-  case "$a" in
-  -c) printf %s '3.2.57(1)-release'; exit 0 ;;
-  esac
-done
-n=0
-seen=0
-for a in "$@"; do
-  [ "$seen" = 1 ] && n=$((n + 1))
-  [ "$a" = --check ] && seen=1
-done
-printf 'bash32-parse: parsed=%s\n' "$n"
-printf 'bash32-parse: failed=0\n'
-exit 0
-STUB
+  {
+    printf '%s\n' '#!/bin/sh' 'for a in "$@"; do' '  case "$a" in' \
+      "  -c) printf %s '3.2.57(1)-release'; exit 0 ;;" '  esac' 'done'
+    pass_protocol 0 0
+  } >"$1/$2" || return 1
   chmod +x "$1/$2"
 }
 
@@ -317,6 +326,12 @@ mutate() { # mutate WORD — stage the row's world and the lane copy it runs
     ;;
   silent)
     stage_stub "$MW/bin" five '3.2.57(1)-release' 'exit 0' || return 1
+    ;;
+  clean-nonzero)
+    stage_stub "$MW/bin" five '3.2.57(1)-release' "$(pass_protocol 0 3)" || return 1
+    ;;
+  failed-zero)
+    stage_stub "$MW/bin" five '3.2.57(1)-release' "$(pass_protocol 1 0)" || return 1
     ;;
   short)
     stage_stub "$MW/bin" five '3.2.57(1)-release' \
@@ -367,7 +382,9 @@ a host with no Bash 3.2 and no container runtime refuses|bash5|world|2|no-bash32
 every container runtime the lane names failing to deliver the image refuses|runtime|world|2|no-bash32=runtimes
 an empty file list is not read as a clean tree|lint|world|2|no-files=0
 a pass that answers nothing reaches no verdict|silent|world|2|no-verdict=0
-a pass that read fewer files than it was given reaches no verdict|short|world|2|short=0"
+a pass that read fewer files than it was given reaches no verdict|short|world|2|short=0
+a pass reporting every file parsed and a nonzero exit reaches no verdict|clean-nonzero|world|2|no-verdict=3
+a pass reporting a file that did not parse and a zero exit reaches no verdict|failed-zero|world|2|no-verdict=0"
 
 asserted=0
 while IFS='|' read -r label mutation argv want first; do
