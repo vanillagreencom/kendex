@@ -1,6 +1,7 @@
 import { SaveBar } from "@/components/customize/save-bar";
 import { SaveConfirm } from "@/components/customize/save-confirm";
 import { saveGroups } from "@/lib/save-summary";
+import { answeredEdits } from "@/lib/secret-rows";
 import { useEditorStore } from "@/stores/editor";
 
 /**
@@ -30,6 +31,8 @@ export function CustomizeSaveBar({ busy = false }: { busy?: boolean }) {
     save,
   } = useEditorStore();
   if (!dirty) return null;
+  const answered = answeredEdits(secretEdits);
+
   return (
     <>
       <SaveBar
@@ -41,12 +44,16 @@ export function CustomizeSaveBar({ busy = false }: { busy?: boolean }) {
       <SaveConfirm
         open={confirming}
         saving={saving}
-        hasSecrets={secretEdits.length > 0}
+        // The same edits the save will carry, not every edit in hand: a
+        // field typed into and erased is no longer an answer, and a
+        // dialog counting one would name the private file and its key
+        // over a save that writes neither.
+        hasSecrets={answered.length > 0}
         groups={saveGroups({
           manifestDirty,
           manifestFile,
           settingsEdits,
-          secretEdits,
+          secretEdits: answered,
           pickedFile: secretFile,
           settings,
         })}

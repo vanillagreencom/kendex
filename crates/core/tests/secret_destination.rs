@@ -342,17 +342,23 @@ fn an_owed_ignore_rule_matches_the_file_it_names() {
 fn kendex_own_configuration_is_refused_with_no_repository() {
     let f = fixture(false);
     for named in [
+        // Every root file kendex writes itself, each named by the module
+        // that owns it.
+        "kendex.toml",
+        "kendex-local.toml",
+        ".kendex-lock.json",
         "kendex.settings.toml",
-        ".kendex/settings.toml",
         ".kendex-generated.json",
+        // And anything at all under a directory kendex writes in, which
+        // is what keeps this from being a list of leaves.
+        ".kendex/settings.toml",
+        ".kendex/anything-later.json",
+        ".kendex-local/catalog/skills/x/SKILL.md",
     ] {
         let settings = format!("[env]\nKENDEX_ENV_FILE = \"{named}\"\n");
         let state = state(&f, Some(&settings), None);
         let (problem, _) = refused(&state);
-        assert!(
-            problem.contains("kendex's own configuration"),
-            "{named}: {problem}"
-        );
+        assert!(problem.contains("is kendex's own"), "{named}: {problem}");
     }
 }
 
@@ -367,7 +373,7 @@ fn kendex_own_configuration_is_refused_even_where_git_ignores_it() {
     let settings = "[env]\nKENDEX_ENV_FILE = \"./kendex.settings.toml\"\n";
     let state = state(&f, Some(settings), None);
     let (problem, _) = refused(&state);
-    assert!(problem.contains("kendex's own configuration"), "{problem}");
+    assert!(problem.contains("is kendex's own"), "{problem}");
 }
 
 /// The owed rule going into the root `.gitignore` is not the same fact as

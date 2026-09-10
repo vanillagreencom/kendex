@@ -258,18 +258,56 @@ fn relative(file: &str) -> std::result::Result<(), DestinationState> {
 }
 
 /// The project files kendex writes itself, none of which is a place a
-/// credential may go.
+/// credential may go: a save would append env-file syntax to public
+/// kendex state, and the next kendex write would overwrite the credential.
 ///
-/// `kendex.settings.toml` is the public settings file this very save
-/// records the destination choice in, and `.kendex/settings.toml` is the
-/// layer read after it; both are configuration a project commits, and
-/// neither is env-file syntax to begin with. `.kendex-generated.json` is
-/// rewritten wholesale by every apply.
-const KENDEX_FILES: [&str; 3] = [
+/// Every name is read from the module that owns it, so there is no second
+/// spelling to drift. A new kendex-owned project file at the root joins
+/// this array and nothing else; a whole directory belongs in
+/// [`kendex_dirs`] instead.
+const KENDEX_FILES: [&str; 5] = [
+    crate::manifest::MANIFEST_FILE,
+    crate::manifest::LOCAL_MANIFEST_FILE,
+    crate::lock::LOCK_FILE,
     crate::settings_seed::SETTINGS_FILE,
-    NESTED_SETTINGS_FILE,
     crate::engine::generated_paths::INVENTORY,
 ];
+
+/// The project directories kendex writes inside. A whole directory rather
+/// than the files in it, because that is what stops this being a list to
+/// keep adding to: everything kendex ever puts under one of these is
+/// refused the day it is written, without anybody remembering to come
+/// back here.
+///
+/// `.kendex/` is named by the settings layer that lives in it, so the
+/// directory and the file cannot disagree about its spelling.
+fn kendex_dirs() -> [&'static str; 2] {
+    let nested = Path::new(NESTED_SETTINGS_FILE)
+        .components()
+        .next()
+        .and_then(|part| part.as_os_str().to_str())
+        .unwrap_or(".kendex");
+    [nested, crate::source::LOCAL_SOURCE_DIR]
+}
+
+/// What kendex owns at this path, or `None` where the path is the
+/// project's own. A directory match names the directory, so the refusal
+/// says the thing the person has to move away from.
+fn kendex_owns(file: &str) -> Option<String> {
+    let first = Path::new(file)
+        .components()
+        .find(|part| !matches!(part, std::path::Component::CurDir))
+        .and_then(|part| part.as_os_str().to_str());
+    if let Some(dir) = first
+        && let Some(owned) = kendex_dirs().into_iter().find(|owned| *owned == dir)
+    {
+        return Some(owned.to_owned());
+    }
+    KENDEX_FILES
+        .iter()
+        .find(|owned| same_file(file, owned))
+        .map(|owned| (*owned).to_owned())
+}
 
 /// Whether a credential may be written at this path: not a file kendex
 /// writes itself, inside the project through every link on the way, a
@@ -281,10 +319,10 @@ fn protection(root: &Path, file: &str) -> DestinationState {
     // otherwise take `kendex.settings.toml` as ready and append a
     // credential to the configuration kendex publishes — and a project
     // that becomes a repository later commits it.
-    if let Some(owned) = KENDEX_FILES.iter().find(|owned| same_file(file, owned)) {
+    if let Some(owned) = kendex_owns(file) {
         return refused(
             format!(
-                "{owned} is kendex's own configuration, not a private file — a secret written there would be published with the project's settings"
+                "{owned} is kendex's own, not a private file — a secret written there would be published with the project's kendex state, and overwritten the next time kendex writes it"
             ),
             format!(
                 "name another file for this project's secrets, or leave it on {DEFAULT_ENV_FILE}"
