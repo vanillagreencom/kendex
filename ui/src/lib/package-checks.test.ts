@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { AuditView, DriftRow, HarnessId, ObservedItem } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
+import type { OriginOf } from "@/lib/package-identity";
 import { observed } from "@/test/observed";
 import { CHECK_HOOK, checksStanding } from "./package-checks";
 
 const ROOT = "/work/acme";
 const TARGETS: HarnessId[] = ["claude", "pi"];
+
+/** What the join says about an installation kendex itself put there. */
+const OURS: OriginOf = () => ({
+  origin: "own",
+  forkedFrom: null,
+  source: "local",
+});
 
 const hook = (
   name: string,
@@ -64,6 +72,10 @@ describe("where a project's package checks stand", () => {
       view: AuditView | undefined;
       failure?: string;
       targets?: HarnessId[] | null;
+      /** Where the join says each observation came from. Absent means
+       *  kendex's own, which is what every row but the two about a
+       *  claimed name is about. */
+      origin?: OriginOf | null;
       expected: { state: string; running: HarnessId[]; waiting: HarnessId[] };
     }[] = [
       {
@@ -138,6 +150,32 @@ describe("where a project's package checks stand", () => {
         view: view([]),
         expected: { state: "off", running: [], waiting: TARGETS },
       },
+      {
+        // The name is a marketplace package's here. Reading it as the
+        // check would report somebody else's hook as ours.
+        case: "a hook of that name from a marketplace",
+        items: [rendered("claude"), rendered("pi")],
+        view: view([]),
+        origin: () => ({ origin: "marketplace", source: "cat", repo: "o/c" }),
+        expected: { state: "unknown", running: [], waiting: [] },
+      },
+      {
+        // A hook of that name, and no read yet says whose it is.
+        case: "a hook of that name nothing can attribute",
+        items: [rendered("claude"), rendered("pi")],
+        view: view([]),
+        origin: null,
+        expected: { state: "unknown", running: [], waiting: [] },
+      },
+      {
+        // Nothing wearing the name, so there is nothing to attribute and
+        // the missing join decides nothing.
+        case: "no hook of that name, and no join yet",
+        items: [],
+        view: view([]),
+        origin: null,
+        expected: { state: "off", running: [], waiting: TARGETS },
+      },
     ];
     expect(rows.length, "package checks state table is empty").toBeGreaterThan(
       0,
@@ -150,6 +188,7 @@ describe("where a project's package checks stand", () => {
           row.failure ?? null,
           ROOT,
           row.targets === undefined ? TARGETS : row.targets,
+          row.origin === undefined ? OURS : row.origin,
         ),
         row.case,
       ).toEqual(row.expected);

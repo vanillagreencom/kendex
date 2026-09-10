@@ -214,6 +214,32 @@ describe("package checks on a project's card", () => {
     });
   };
 
+  /** Tell the join that every hook the scan saw is kendex's own. The card
+   *  reads whose a hook is from the record of what installed it, never
+   *  from its name, so a scan alone establishes no On. */
+  const oursByRecord = () => {
+    const scanned = useScanStore.getState().result?.items ?? [];
+    useProvenanceStore.setState({
+      rows: scanned.map((item) => ({
+        scope: item.scope,
+        kind: item.kind,
+        name: item.name,
+        harness: item.harness,
+        at: item.at,
+        origin: {
+          origin: "own" as const,
+          forkedFrom: null,
+          source: "local",
+        },
+        summary: null,
+        package: { kind: item.kind, name: item.name },
+      })),
+      loaded: true,
+      answeredFor: useScanStore.getState().generation,
+      read: READ_LANDED,
+    });
+  };
+
   it("says On only once every supported tool runs the check", async () => {
     onProject();
     useScanStore.setState({
@@ -224,6 +250,7 @@ describe("package checks on a project's card", () => {
         items: PACKAGE_CHECK_HARNESSES.map((harness) => rendered(harness)),
       },
     });
+    oursByRecord();
     const host = mount(<ProjectList />);
     await settle();
     const cards = [...host.querySelectorAll<HTMLElement>('[data-slot="card"]')];
@@ -244,6 +271,7 @@ describe("package checks on a project's card", () => {
       error: null,
       result: { ...emptyScan, items: [rendered("claude")] },
     });
+    oursByRecord();
     useAuditStore.setState({ views: [view(ACME, [])] });
     const host = mount(<ProjectList />);
     await settle();
@@ -289,6 +317,46 @@ describe("package checks on a project's card", () => {
     await settle();
     expect(host.textContent).toContain(PACKAGE_CHECKS_LABEL);
     expect(host.textContent).toContain(STATE_UNKNOWN);
+    expect(button(host, ENABLE_CHECKS_LABEL)).toBeUndefined();
+  });
+
+  // A hook wearing the check's name that a marketplace package installed.
+  // The scan sees exactly what an On card sees; only the record of what
+  // put it there differs, and that is the whole of whose it is.
+  it("does not report a marketplace hook of the same name as On", async () => {
+    onProject();
+    useScanStore.setState({
+      scanning: false,
+      error: null,
+      result: {
+        ...emptyScan,
+        items: PACKAGE_CHECK_HARNESSES.map((harness) => rendered(harness)),
+      },
+    });
+    const scanned = useScanStore.getState().result?.items ?? [];
+    useProvenanceStore.setState({
+      rows: scanned.map((item) => ({
+        scope: item.scope,
+        kind: item.kind,
+        name: item.name,
+        harness: item.harness,
+        at: item.at,
+        origin: { origin: "marketplace" as const, source: "cat", repo: "o/c" },
+        summary: null,
+        package: { kind: item.kind, name: item.name },
+      })),
+      loaded: true,
+      answeredFor: useScanStore.getState().generation,
+      read: READ_LANDED,
+    });
+    useAuditStore.setState({ views: [view(ACME, [])] });
+    const host = mount(<ProjectList />);
+    await settle();
+    const acme = [...host.querySelectorAll<HTMLElement>('[data-slot="card"]')]
+      .filter((el) => el.textContent?.startsWith("acme"))
+      .at(0);
+    expect(acme?.textContent).toContain(STATE_UNKNOWN);
+    expect(acme?.textContent).not.toContain(ON_MEANS);
     expect(button(host, ENABLE_CHECKS_LABEL)).toBeUndefined();
   });
 

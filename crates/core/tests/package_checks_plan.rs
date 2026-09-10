@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use kendex_core::apply;
 use kendex_core::drift;
-use kendex_core::drift::setup::{FileChange, FileRole, SetupPlan};
+use kendex_core::drift::setup::{FileChange, FileRole, PlannedFile, SetupPlan};
 use kendex_core::engine;
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::error::CoreError;
@@ -622,7 +622,8 @@ fn a_held_setup_does_not_present_the_render_as_this_actions_writes() {
         // own source and its manifest land now. Everything the render
         // places — a tool's own copy of the script included — waits with
         // the changes this project already had.
-        let now = file.harness.is_none() && file.role != FileRole::InstallRecord;
+        let now = matches!(file.role, FileRole::CheckScript | FileRole::Declaration)
+            && file.harness.is_none();
         match now {
             true => assert!(
                 matches!(file.change, FileChange::Add | FileChange::Change),
@@ -687,4 +688,95 @@ fn a_rendered_script_is_disclosed_as_a_script_not_as_the_registration() {
         "no tool disclosed a script and a registration: {:?}",
         preview.files
     );
+}
+
+/// A declaration under the check's own name, from a marketplace source.
+///
+/// Nothing downstream tells it from ours: the declaration is found by
+/// name, widened and enabled, and the engine then renders that source's
+/// hook — while the confirmation showed this binary's script. Both the
+/// preview and the plan refuse instead, and neither touches the manifest.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_check_declared_from_a_marketplace_is_refused_rather_than_taken_over() {
+    let w = fresh_git_world();
+    declare(
+        &w,
+        "[hooks.kendex-drift]\nsource = \"cat\"\nenabled = false\nharnesses = [\"claude\"]\n",
+    );
+    let before = fs::read_to_string(manifest::manifest_path(&w.env, &w.scope)).unwrap();
+
+    // The preview discloses nothing for a declaration it will not render.
+    let refused = drift::setup::setup_plan(&w.env, &w.scope).unwrap_err();
+    assert!(
+        matches!(&refused, CoreError::SourceCollision { name, .. } if name == drift::hook::HOOK_NAME),
+        "{refused:?}"
+    );
+    // And the write refuses at its own moment.
+    let refused = drift::hook::install_plan(&w.env, &w.scope).unwrap_err();
+    assert!(
+        matches!(&refused, CoreError::SourceCollision { name, .. } if name == drift::hook::HOOK_NAME),
+        "{refused:?}"
+    );
+
+    // Nothing was widened, switched on, or otherwise touched.
+    assert_eq!(
+        fs::read_to_string(manifest::manifest_path(&w.env, &w.scope)).unwrap(),
+        before,
+        "the foreign declaration was edited"
+    );
+    assert!(
+        !w.root.join(".kendex-local/hooks").exists(),
+        "the refusal still wrote the script"
+    );
+}
+
+/// The same name from the local source is ours, and is not refused. The
+/// control above must fail because the source is foreign, not because the
+/// name is declared at all.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_check_declared_locally_is_ours_and_previews() {
+    let w = fresh_git_world();
+    declare(
+        &w,
+        "[hooks.kendex-drift]\nsource = \"local\"\nenabled = false\n",
+    );
+
+    let preview = drift::setup::setup_plan(&w.env, &w.scope).unwrap();
+    assert!(!preview.files.is_empty(), "{preview:?}");
+}
+
+/// The repository's own file, in a project that is a git checkout.
+///
+/// The ignore rule that keeps the install record out of the person's
+/// commits is not their pending work — kendex owes it for managing the
+/// project at all, and the count says so — and it IS a file this press
+/// writes. Both have to be true at once, and an earlier fix here made the
+/// first true by making the second false.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_repositorys_own_file_is_listed_and_is_still_not_pending_work() {
+    let w = fresh_git_world();
+    declare(&w, "");
+
+    let preview = drift::setup::setup_plan(&w.env, &w.scope).unwrap();
+    let shown: Vec<&PlannedFile> = preview
+        .files
+        .iter()
+        .filter(|file| file.role == FileRole::RepositoryFile)
+        .collect();
+    // A required member: a floor with nothing in it passes over a preview
+    // that lists nothing at all.
+    let ignore = shown
+        .iter()
+        .find(|file| file.path.ends_with(".gitignore"))
+        .unwrap_or_else(|| panic!("the disclosure omits the ignore rule: {:?}", preview.files));
+    assert!(
+        matches!(ignore.change, FileChange::Add | FileChange::Change),
+        "{ignore:?}"
+    );
+    assert!(ignore.no_preview.is_some(), "{ignore:?}");
+    // And the count is still about the person's own work alone.
+    assert_eq!(preview.other_pending, 0, "{preview:?}");
 }

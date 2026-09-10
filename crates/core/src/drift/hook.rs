@@ -155,6 +155,40 @@ pub(crate) fn script_path(env: &Env, scope: &Scope) -> std::path::PathBuf {
         .join(format!("{HOOK_NAME}.sh"))
 }
 
+/// Refuse a scope whose check declaration is not kendex's own.
+///
+/// The check is declared under one fixed name, so a manifest can carry
+/// that name from a marketplace source instead. Nothing downstream tells
+/// the two apart: [`declare`] finds the declaration by name and widens and
+/// enables it, and the engine then renders whatever source it points at.
+/// An action that previewed this binary's script would install and run
+/// somebody else's at the start of every coding session.
+///
+/// Refused rather than reserved, and reported as the collision it is:
+/// `engine::ops::add` makes a name already claimed elsewhere a hard error
+/// for the same reason (invariant 4), and both read alike.
+///
+/// The manifest is read here rather than taken from a caller, so each
+/// gate judges the file as it stands at its own moment — the preview
+/// before it discloses, the plan before it writes.
+pub(crate) fn refuse_foreign(env: &Env, scope: &Scope) -> Result<()> {
+    let path = crate::manifest::manifest_path(env, scope);
+    let crate::manifest::ManifestFile::Current(manifest) = crate::manifest::load(&path)? else {
+        return Ok(());
+    };
+    let Some(decl) = manifest.hooks.get(HOOK_NAME) else {
+        return Ok(());
+    };
+    if decl.source == LOCAL_SOURCE_NAME {
+        return Ok(());
+    }
+    Err(crate::error::CoreError::SourceCollision {
+        name: HOOK_NAME.to_owned(),
+        existing: crate::engine::ops::source_repo_label(&manifest, &decl.source),
+        requested: LOCAL_SOURCE_NAME.to_owned(),
+    })
+}
+
 /// Whether the scope's installed script is this binary's copy — `None`
 /// when the scope does not declare the hook or the script cannot be read.
 /// The session check reads this: nothing else ever compares disk to the
@@ -186,6 +220,9 @@ pub fn install_plan(env: &Env, scope: &Scope) -> Result<Plan> {
     if let Some(check) = folder_check(&scope) {
         check.check()?;
     }
+    // And a declaration under our name that is not ours: widening and
+    // enabling it would render a foreign script from this action.
+    refuse_foreign(env, &scope)?;
     let mut ops = Vec::new();
 
     let mut manifest = crate::engine::ops::manifest_for_mutation(env, &scope)?;

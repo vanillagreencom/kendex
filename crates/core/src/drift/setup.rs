@@ -37,6 +37,15 @@ pub enum FileRole {
     Declaration,
     /// kendex's record of what it installed here.
     InstallRecord,
+    /// kendex's own bookkeeping in the repository: the ignore rule that
+    /// keeps its records out of the person's commits, and the inventory
+    /// of what it generated. Written by this action, because this action
+    /// is what first makes this a project kendex manages.
+    ///
+    /// Not the person's pending work — the count says so — and still a
+    /// file this press writes. Both are true at once, which is why these
+    /// rows are read off the plan rather than described here.
+    RepositoryFile,
 }
 
 /// What this action does to the file, read from the operations it will
@@ -123,6 +132,11 @@ pub fn setup_plan(env: &Env, scope: &Scope) -> Result<SetupPlan> {
     if let Some(check) = super::hook::folder_check(&scope) {
         check.check()?;
     }
+    // A declaration under the check's name that came from somewhere else
+    // is refused before a single row is built: disclosing this binary's
+    // script for a declaration the render would take from a marketplace
+    // is the one thing this preview must never do.
+    super::hook::refuse_foreign(env, &scope)?;
     let root = project_root(&scope);
 
     // What this action will actually run, and what it will hold back.
@@ -134,7 +148,10 @@ pub fn setup_plan(env: &Env, scope: &Scope) -> Result<SetupPlan> {
     // record, and whether they run now is the same judgement the install
     // makes, that nothing unrelated is waiting.
     let unrelated = pending_without_checks(env, &scope)?;
+    let with_checks = plan_with_checks(env, &scope)?;
     let renders_now = unrelated.plan.is_empty();
+    let script = super::hook::script_path(env, &scope);
+    let declaration = crate::manifest::manifest_path(env, &scope);
     let mut writes = Writes {
         // The declaration step runs whatever else is waiting, and its plan
         // is the judge of what it writes: it omits the script when the
@@ -157,6 +174,46 @@ pub fn setup_plan(env: &Env, scope: &Scope) -> Result<SetupPlan> {
         harness: None,
         preview: None,
     });
+    // Everything else this action puts in the repository, read off the
+    // plan that has the check declared rather than named here: the ignore
+    // rule that keeps the install record out of the person's commits, and
+    // the inventory of generated paths. Each is decided by the pass that
+    // writes it — the ignore rule by `engine::posture`, the inventory by
+    // the render's own desired state — so neither can be asked for on its
+    // own, and a second notion of what kendex owes a repository is what
+    // reading the plan avoids.
+    //
+    // The person's own waiting work is taken out through the same judge
+    // the count uses, so a held press lists what the check's setup reaches
+    // and never somebody else's files. With nothing waiting that plan is
+    // empty and nothing is subtracted.
+    let theirs: BTreeSet<PathBuf> = unrelated
+        .plan
+        .ops
+        .iter()
+        .flat_map(|planned| planned.op.touched())
+        .collect();
+    let already: BTreeSet<PathBuf> = rendered
+        .iter()
+        .map(|row| row.path.clone())
+        .chain([script.clone(), declaration.clone()])
+        .collect();
+    for path in with_checks
+        .plan
+        .ops
+        .iter()
+        .flat_map(|planned| planned.op.touched())
+    {
+        if theirs.contains(&path) || already.contains(&path) {
+            continue;
+        }
+        rendered.push(Rendered {
+            path,
+            role: FileRole::RepositoryFile,
+            harness: None,
+            preview: None,
+        });
+    }
 
     // The render's own positions. Whether they are written by this press
     // is the same judgement the install makes — nothing unrelated waiting
@@ -169,7 +226,7 @@ pub fn setup_plan(env: &Env, scope: &Scope) -> Result<SetupPlan> {
 
     let mut files = vec![
         planned(
-            &super::hook::script_path(env, &scope),
+            &script,
             root,
             FileRole::CheckScript,
             None,
@@ -177,7 +234,7 @@ pub fn setup_plan(env: &Env, scope: &Scope) -> Result<SetupPlan> {
             &writes,
         ),
         planned(
-            &crate::manifest::manifest_path(env, &scope),
+            &declaration,
             root,
             FileRole::Declaration,
             None,
@@ -208,7 +265,7 @@ pub fn setup_plan(env: &Env, scope: &Scope) -> Result<SetupPlan> {
         // that strips it cannot hold a row about the check's own
         // positions — which is exactly where a conflict stops the
         // registration rather than something else's.
-        blocked: check_conflicts(&plan_with_checks(env, &scope)?),
+        blocked: check_conflicts(&with_checks),
     })
 }
 
@@ -327,6 +384,11 @@ fn plan_with_checks(env: &Env, scope: &Scope) -> Result<crate::engine::EngineRep
 /// what an apply would run: kendex's own housekeeping is taken out of it.
 pub fn pending_without_checks(env: &Env, scope: &Scope) -> Result<crate::engine::EngineReport> {
     let scope = scope.canonical();
+    // This strips the check's declaration to count what is left, so a
+    // foreign declaration under that name would be taken out of somebody
+    // else's count. Refused here too: the app asks this before it asks
+    // anything else.
+    super::hook::refuse_foreign(env, &scope)?;
     // The manifest as it sits, never a seeded one. Seeding a kendex.toml
     // for a scope that has none, and the bookkeeping the planner then
     // brings about around it, is what enabling the checks does here — not
@@ -522,6 +584,8 @@ fn planned(
     writes: &Writes,
 ) -> PlannedFile {
     let no_preview = match (&preview, role) {
+        // One line into a file that is otherwise the person's own.
+        (None, FileRole::RepositoryFile) => Some(NoPreview::SharedFile),
         (Some(_), _) => None,
         (None, FileRole::StartupRegistration) => Some(NoPreview::SharedFile),
         (None, _) => Some(NoPreview::Generated),

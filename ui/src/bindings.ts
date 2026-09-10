@@ -1813,7 +1813,18 @@ export type FileRole =
  */
 "declaration" | 
 /**  kendex's record of what it installed here. */
-"install-record";
+"install-record" | 
+/**
+ *  kendex's own bookkeeping in the repository: the ignore rule that
+ *  keeps its records out of the person's commits, and the inventory
+ *  of what it generated. Written by this action, because this action
+ *  is what first makes this a project kendex manages.
+ * 
+ *  Not the person's pending work — the count says so — and still a
+ *  file this press writes. Both are true at once, which is why these
+ *  rows are read off the plan rather than described here.
+ */
+"repository-file";
 
 /**
  *  How an observed item exists on disk. Kinds that live as entries inside a

@@ -90,6 +90,7 @@ export const ROLE_WORDS: Record<FileRole, string> = {
   "startup-registration": "Startup registration",
   declaration: "Declaration",
   "install-record": "Install record",
+  "repository-file": "Repository file",
 };
 
 export const roleMeans = (
@@ -111,6 +112,8 @@ export const roleMeans = (
       return "This project's kendex file, where the check is listed like any other installed package.";
     case "install-record":
       return "kendex's record of what it installed here.";
+    case "repository-file":
+      return "kendex's own bookkeeping in this repository, so its records are not committed with your work.";
   }
 };
 
@@ -118,7 +121,7 @@ export const roleMeans = (
  *  a list where some rows open and others do not is a list nobody trusts. */
 export const NO_PREVIEW_WORDS: Record<NoPreview, string> = {
   "shared-file":
-    "kendex adds one entry to a file this tool shares with your own settings. The rest of that file is yours and is left as it is, so there is no whole file to show before the write.",
+    "kendex adds one entry to a file that is otherwise yours. The rest of it is left exactly as it is, so there is no whole file to show before the write.",
   generated:
     "kendex writes this from what the install did, so there is nothing to show before the write.",
 };

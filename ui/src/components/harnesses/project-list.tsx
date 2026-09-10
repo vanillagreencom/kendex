@@ -51,6 +51,7 @@ import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { checksStanding } from "@/lib/package-checks";
 import {
   packagesUncounted,
+  useOriginIndex,
   usePackageIndex,
   usePackagesKnown,
   usePackagesRead,
@@ -241,6 +242,10 @@ export function ProjectList() {
   // result through a failure on purpose, so a reader that takes `result`
   // for this pass's observations is reading a read that did not happen.
   const scanFailure = useScanStore((s) => s.error);
+  // Which source each observed installation came from. A hook wearing the
+  // check's name is only the check where the record says it is kendex's
+  // own, and the checks line reads this rather than the name.
+  const originOf = useOriginIndex();
   const views = useAuditStore((s) => s.views);
   // The audit read's own outcome: a failed adopt is not a failed audit, and
   // says so through the problems dialog rather than this list.
@@ -295,6 +300,7 @@ export function ProjectList() {
             auditFailure,
             root,
             observations ? PACKAGE_CHECK_HARNESSES : null,
+            originOf,
           )}
           onOpenLibrary={() => goToLibrary({ ...place, kind: "hook" })}
         />

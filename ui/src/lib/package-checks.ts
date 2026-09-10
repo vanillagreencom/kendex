@@ -11,6 +11,7 @@ import type {
 import { commands } from "@/bindings";
 import { checksHeld, checksOn, ENABLE_FAILED } from "@/lib/copy-package-checks";
 import { hookDisplayName } from "@/lib/labels";
+import type { OriginOf } from "@/lib/package-identity";
 import { writingRepo } from "@/lib/rescan";
 import { sameScope } from "@/lib/scope";
 import { useProblemsStore } from "@/stores/problems";
@@ -50,13 +51,21 @@ const NOT_IN_PLACE = ["missing", "stale", "conflict"];
  *  be read from observations that did not land, and `unknown` is what
  *  says so. `failure` is the audit read's outcome, which decides only
  *  what the scan cannot — whether the rest are declared and waiting or
- *  were never asked for. */
+ *  were never asked for.
+ *
+ *  `origin` says where each observation came from, and a hook under the
+ *  check's name is only the check where it says kendex's own. The name
+ *  alone establishes nothing: a marketplace package can occupy it, and
+ *  core refuses to enable such a declaration for the same reason. Null
+ *  where no read can attribute this scan's observations, which is
+ *  `unknown` wherever there is an observation to attribute. */
 export function checksStanding(
   items: ObservedItem[],
   view: AuditView | undefined,
   failure: string | null,
   root: string,
   targets: readonly HarnessId[] | null,
+  origin: OriginOf | null,
 ): ChecksStanding {
   const unknown: ChecksStanding = {
     state: "unknown",
@@ -65,14 +74,22 @@ export function checksStanding(
   };
   if (targets === null) return unknown;
   const scope: Scope = { scope: "project", root };
+  // Every hook here wearing the check's name, whoever installed it.
+  const named = items.filter(
+    (item) =>
+      item.kind === "hook" &&
+      sameScope(item.scope, scope) &&
+      hookDisplayName(item.name) === CHECK_HOOK,
+  );
+  if (named.length > 0) {
+    // One of them not attributable, or attributable to somebody else, and
+    // nothing here is the check: the name is claimed and no reading of it
+    // is ours to report.
+    if (origin === null) return unknown;
+    if (!named.every((item) => origin(item)?.origin === "own")) return unknown;
+  }
   const running = targets.filter((harness) =>
-    items.some(
-      (item) =>
-        item.kind === "hook" &&
-        item.harness === harness &&
-        sameScope(item.scope, scope) &&
-        hookDisplayName(item.name) === CHECK_HOOK,
-    ),
+    named.some((item) => item.harness === harness),
   );
   const waiting = targets.filter((harness) => !running.includes(harness));
   if (waiting.length === 0 && targets.length > 0) {
