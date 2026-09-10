@@ -196,15 +196,15 @@ pub(super) fn applied(file: &File, account: PSID) -> io::Result<()> {
 
 /// One entry of an access-control list, as far as this module reads one.
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct Entry {
-    pub(super) allowed: bool,
-    pub(super) this_account: bool,
-    pub(super) mask: u32,
-    pub(super) inherited: bool,
+pub(crate) struct Entry {
+    pub(crate) allowed: bool,
+    pub(crate) this_account: bool,
+    pub(crate) mask: u32,
+    pub(crate) inherited: bool,
 }
 
 /// The one entry `create_owner_only` writes.
-pub(super) const OWNER_ONLY: Entry = Entry {
+pub(crate) const OWNER_ONLY: Entry = Entry {
     allowed: true,
     this_account: true,
     mask: FILE_ALL_ACCESS,

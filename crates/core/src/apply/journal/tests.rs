@@ -189,3 +189,24 @@ fn rollback_restores_files_dirs_symlinks_and_absence() {
     assert!(!absent.exists());
     assert!(!pending(&journal_dir));
 }
+
+/// A rollback that puts a private file's old bytes back leaves its list
+/// as it was: the file is rewritten in place, never replaced by a copy
+/// that would take the folder's list. Against a restore by remove and
+/// copy, the restored file carries the folder's entries and this is red.
+#[cfg(windows)]
+#[test]
+fn a_rolled_back_private_file_keeps_its_owner_only_list() {
+    use crate::fs::tests::acl;
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join(".env.local");
+    crate::fs::write_private(&path, b"TOKEN='old'\n").unwrap();
+    let journal_dir = tmp.path().join("journal/project");
+    write(&journal_dir, std::slice::from_ref(&path)).unwrap();
+    crate::fs::write_private(&path, b"TOKEN='new'\n").unwrap();
+
+    rollback_mutated(&journal_dir, std::slice::from_ref(&path)).unwrap();
+
+    assert_eq!(fs::read(&path).unwrap(), b"TOKEN='old'\n");
+    assert_eq!(acl::entries(&path), [acl::OWNER_ONLY]);
+}

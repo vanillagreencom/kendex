@@ -387,7 +387,7 @@ fn a_durable_file_copy_carries_the_mode_across() {
 /// through `GetNamedSecurityInfoW`, a path the create never touches; the
 /// walk over the list is the module's own.
 #[cfg(windows)]
-mod acl {
+pub(crate) mod acl {
     use std::os::windows::ffi::OsStrExt;
     use std::path::Path;
     use std::ptr;
@@ -396,14 +396,14 @@ mod acl {
     use windows_sys::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
     use windows_sys::Win32::Security::DACL_SECURITY_INFORMATION;
 
-    pub(super) use super::dacl::{Entry, OWNER_ONLY};
+    pub(crate) use super::dacl::{Entry, OWNER_ONLY};
 
     #[allow(clippy::unwrap_used)]
     #[allow(
         unsafe_code,
         reason = "Win32 has no safe binding; each site states its contract"
     )]
-    pub(super) fn entries(path: &Path) -> Vec<Entry> {
+    pub(crate) fn entries(path: &Path) -> Vec<Entry> {
         let user = super::dacl::current_user().unwrap();
         let wide: Vec<u16> = crate::paths::verbatim(path)
             .unwrap()

@@ -77,6 +77,21 @@ pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
         .map_err(|error| CoreError::io(path, error))
 }
 
+/// Replace a standing file's bytes with `from`'s through the file itself,
+/// so it keeps its access-control list; a file that is gone is an error,
+/// never created here with the folder's list.
+#[cfg(windows)]
+pub(crate) fn rewrite_in_place(from: &Path, to: &Path) -> Result<()> {
+    let bytes = fs::read(from).map_err(|error| CoreError::io(from, error))?;
+    fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(to)
+        .and_then(|mut file| file.write_all(&bytes))
+        .map_err(|error| CoreError::io(to, error))?;
+    sync_written_file(to)
+}
+
 /// Give a file the execute bit if its bytes open with a shebang. A tree
 /// carries bytes and not modes, so every path that writes one out asks this
 /// same question: a skill's helper that lands 644 fails its own hook the
@@ -470,4 +485,4 @@ pub(crate) fn make_symlink(target: &Path, link: &Path) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
