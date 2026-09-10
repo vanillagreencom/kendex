@@ -11,7 +11,8 @@
 # range, byte-ceiling's dots (three and two); --all judges every tracked
 # markdown file the path globs name; with neither, COMMIT_GUARDS_MD_SCOPE
 # decides (lib/md-scope.sh). Content comes from the index, like every scan in
-# this family.
+# this family, except under a range, which reads the HEAD-side blobs its diff
+# records.
 #
 # Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 set -euo pipefail
@@ -68,32 +69,30 @@ EOF
 
 STAGED=0
 ALL=0
-RANGE_KIND=""
-RANGE_REF=""
+# Every scope flag is recorded as it is read, not just applied: applying alone
+# loses the first of two, and the exclusivity check would then see one scope.
 while [ $# -gt 0 ]; do
   case "$1" in
-    --staged) STAGED=1 ;;
-    --all) ALL=1 ;;
+    --staged)
+      gg_md_name_scope --staged
+      STAGED=1
+      ;;
+    --all)
+      gg_md_name_scope --all
+      ALL=1
+      ;;
     --base)
       [ $# -ge 2 ] || gg_fail argument-missing "--base" "--base requires a ref"
       shift
-      RANGE_KIND="base"
-      RANGE_REF="$1"
+      gg_md_name_range base "$1"
       ;;
-    --base=*)
-      RANGE_KIND="base"
-      RANGE_REF="${1#--base=}"
-      ;;
+    --base=*) gg_md_name_range base "${1#--base=}" ;;
     --against)
       [ $# -ge 2 ] || gg_fail argument-missing "--against" "--against requires a ref"
       shift
-      RANGE_KIND="against"
-      RANGE_REF="$1"
+      gg_md_name_range against "$1"
       ;;
-    --against=*)
-      RANGE_KIND="against"
-      RANGE_REF="${1#--against=}"
-      ;;
+    --against=*) gg_md_name_range against "${1#--against=}" ;;
     -h | --help)
       usage
       exit 0
@@ -108,7 +107,7 @@ done
 
 gg_repo_root_cd
 gg_md_load_paths md-format COMMIT_GUARDS_MD_PATHS "$PATHS_DEFAULT"
-gg_md_scope md-format "$STAGED" "$ALL" "$RANGE_KIND" "$RANGE_REF"
+gg_md_scope md-format "$STAGED" "$ALL"
 [ "$GG_MD_MODE" != none ] || exit 0
 
 gg_tmpdir

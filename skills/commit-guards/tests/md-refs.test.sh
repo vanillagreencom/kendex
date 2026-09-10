@@ -351,6 +351,10 @@ run_rows \
 
 echo "=== refusals and unmeasured paths ==="
 fx_open_fence() { repo "$1"; put AGENTS.md 'Para\n\n```\nopen\n'; }
+# A committed document, so HEAD names a commit and a range flag resolves. The
+# range it names is empty, which is the state the trigger below used to exit
+# on before any scope flag was judged.
+fx_committed_ref() { repo "$1"; put AGENTS.md 'Clean.\n'; git -C "$R" commit -qm seed; }
 fx_awk_exit() {
   repo "$1"
   put AGENTS.md 'Clean.\n'
@@ -364,6 +368,9 @@ run_rows \
   "an AWK exit without a refusal record reports its status before the dependency cause|fx_awk_exit awk-exit|PATH=$TMP/awk-exit/shim:$PATH|--all|rc=2 ${ERR}block-exit=AGENTS.md:7;dependency-order-control: block-exit" \
   "a symlink at a scoped path is named as unmeasured|fx_symlink_doc||--all|rc=0 $(skip AGENTS.md symlink);md-refs: unmeasured-count=$(unmeasured 1)" \
   "--staged and --all are exclusive|fx_open_fence both-flags||--staged --all|rc=2 ${ERR}scope-flags=--staged,--all" \
+  "a range beside --all is refused before the range trigger can exit on an empty range|fx_committed_ref range-and-all||--all --base HEAD|rc=2 ${ERR}scope-flags=--all,--base HEAD" \
+  "two range flags name two scopes, so the contradiction is refused|fx_committed_ref two-ranges||--base HEAD --against HEAD|rc=2 ${ERR}scope-flags=--base HEAD,--against HEAD" \
+  "control: --all alone performs the scan those refusals protect|fx_committed_ref all-alone||--all|rc=0 $(clean 0 1)" \
   "an unknown flag is exit 2, quoting it|fx_open_fence unknown-flag||--no-such-flag|rc=2 ${ERR}argument=--no-such-flag" \
   "a scope outside touched and all is exit 2, quoting it|fx_open_fence bad-scope|COMMIT_GUARDS_MD_SCOPE=weird||rc=2 ${ERR}scope=weird"
 # The usage text carries a '|', which a row cannot: its first line and the

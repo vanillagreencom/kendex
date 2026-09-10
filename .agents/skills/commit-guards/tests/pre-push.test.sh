@@ -284,8 +284,8 @@ assert_eq "and refused again when the push spells its left side HEAD" \
 # ------------------------------------------------------------- the subject
 #
 # The not-head refusal settles which commit is leaving; it settles nothing
-# about what the lanes read. byte-ceiling is the only lane scoped to a commit
-# range; every other one scans the INDEX. So a violation committed and then
+# about what the lanes read. Every scan not handed a range reads the INDEX, and
+# every lane reads its tracked policy there. So a violation committed and then
 # staged away is uploaded while the batch reads clean bytes, which is a
 # fail-open in gate code.
 #
@@ -597,6 +597,108 @@ outdated SUBSTITUTED substituted "$SUBST"
 assert_eq "must-fail: with the range substituted for the configured sweep, that document reads clean and pushes" \
   "rc=0 pre-push: step=against:<oid>;md-format: no-match=range:*.md;pre-push: result=0" \
   "$(push_ref "$SUBSTITUTED" topic)"
+
+# ------------------------------------------------- two dots against three
+#
+# The markdown lanes take a range under their default scope, and a push asks
+# --against: two dots, REF's own tree against HEAD. Three dots would answer
+# what the branch adds over the ancestor the two share. On history that has
+# not diverged the two select the same files and no row can tell them apart,
+# so both fixtures below diverge on purpose, each in the shape where the
+# difference decides.
+
+# md-format's shape: the destination FIXED the document and this branch was
+# rewritten off the fork point, so it still carries the malformed one. Two
+# dots see DOC.md differ between the destination's tree and HEAD and judge it.
+# Three dots ask what the branch adds since the fork, where DOC.md is
+# untouched, and select nothing — so the force push would land the old
+# malformed document over the fix, unjudged.
+reverting() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose force push would undo a fix
+  local __v="$1" r="" fork=""
+  new_repo r "$2" "${3:-}"
+  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-format"\n' >"$r/kendex.settings.toml"
+  printf '# Title\n\nA paragraph that is hard\nwrapped over two lines.\n' >"$r/DOC.md"
+  q git -C "$r" add kendex.settings.toml DOC.md
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: seed with a malformed document"
+  fork="$(git -C "$r" rev-parse HEAD)"
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
+  # The destination's branch: the document reflowed, which md-format passes.
+  q git -C "$r" checkout -q -b topic
+  printf '# Title\n\nA paragraph that is hard wrapped over two lines.\n' >"$r/DOC.md"
+  q git -C "$r" add DOC.md
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: reflow the document"
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
+  # The rewrite: back to the fork point, where the document is still malformed,
+  # plus one commit touching no markdown. Only a force push can land it.
+  q git -C "$r" reset -q --hard "$fork"
+  printf 'unrelated\n' >"$r/other.txt"
+  q git -C "$r" add other.txt
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: a change touching no markdown"
+  eval "$__v=\$r"
+}
+
+REVERTING=""
+reverting REVERTING reverting
+assert_eq "a force push that would land a malformed document over the destination's fix is refused" \
+  "rc=1 pre-push: step=against:<oid>;md-format: summary=violations=1 files=1 scope=range skipped=0;pre-push: result=1" \
+  "$(push_ref "$REVERTING" topic --force-with-lease)"
+
+# md-refs' shape: the destination is AHEAD, so the force push rolls it back and
+# DELETES the file the remote added. Two dots see that deletion and widen the
+# check to every configured document, which is what a removed target is for.
+# Three dots take the merge base, which IS this HEAD, so they see an empty
+# range and judge nothing.
+rolling_back() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose force push would roll the remote back
+  local __v="$1" r="" fork=""
+  new_repo r "$2" "${3:-}"
+  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-refs"\n' >"$r/kendex.settings.toml"
+  printf '# Title\n\nSee [the guide](docs/gone.md).\n' >"$r/AGENTS.md"
+  q git -C "$r" add kendex.settings.toml AGENTS.md
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: seed with a dead reference"
+  fork="$(git -C "$r" rev-parse HEAD)"
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
+  q git -C "$r" checkout -q -b topic
+  printf 'somebody else\n' >"$r/theirs.txt"
+  q git -C "$r" add theirs.txt
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: a commit the remote has"
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
+  # Back to the fork point: HEAD is now an ancestor of the destination, so the
+  # push deletes what the destination added.
+  q git -C "$r" reset -q --hard "$fork"
+  eval "$__v=\$r"
+}
+
+ROLLING=""
+rolling_back ROLLING rolling
+assert_eq "a force push that deletes what the destination holds is a change in range, so the references are swept" \
+  "rc=1 pre-push: step=against:<oid>;md-refs: link-target=AGENTS.md:3:](docs/gone.md):docs/gone.md;pre-push: result=1" \
+  "$(push_ref "$ROLLING" topic --force-with-lease)"
+
+# The must-fail control for both: a copy whose --against range is spelled with
+# three dots. Each push then answers what the branch adds over the ancestor
+# instead of what it does to the destination, and both defects reach the
+# remote under a clean verdict.
+DOTS="$TMP/.dots/commit-guards"
+mkdir -p "$(dirname "$DOTS")"
+cp -R "$SKILL_TEMPLATE" "$DOTS"
+DOTS_LIB="$DOTS/scripts/lib/configured-paths.sh"
+DOTS_BEFORE="$(cat -- "$DOTS_LIB")"
+sed -i.bak 's#^    against) dots="\.\." ;;$#    against) dots="..." ;;#' "$DOTS_LIB"
+rm -f -- "$DOTS_LIB.bak"
+assert_eq "the two-dot edit took" "rewritten" \
+  "$(if [ "$DOTS_BEFORE" = "$(cat -- "$DOTS_LIB")" ]; then echo unchanged; else echo rewritten; fi)"
+
+DOTTED_FORMAT=""
+reverting DOTTED_FORMAT dotted-format "$DOTS"
+assert_eq "must-fail: with three dots, the reverted document is outside the range and pushes" \
+  "rc=0 pre-push: step=against:<oid>;md-format: no-match=range:*.md;pre-push: result=0" \
+  "$(push_ref "$DOTTED_FORMAT" topic --force-with-lease)"
+
+DOTTED_REFS=""
+rolling_back DOTTED_REFS dotted-refs "$DOTS"
+assert_eq "must-fail: with three dots, the rollback is an empty range and the references go unswept" \
+  "rc=0 pre-push: step=against:<oid>;pre-push: result=0" \
+  "$(push_ref "$DOTTED_REFS" topic --force-with-lease)"
 
 printf '\n%s: %s passed, %s failed\n' "$gg_suite" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

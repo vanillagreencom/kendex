@@ -112,32 +112,30 @@ EOF
 
 STAGED=0
 ALL=0
-RANGE_KIND=""
-RANGE_REF=""
+# Every scope flag is recorded as it is read, not just applied: applying alone
+# loses the first of two, and the exclusivity check would then see one scope.
 while [ $# -gt 0 ]; do
   case "$1" in
-    --staged) STAGED=1 ;;
-    --all) ALL=1 ;;
+    --staged)
+      gg_md_name_scope --staged
+      STAGED=1
+      ;;
+    --all)
+      gg_md_name_scope --all
+      ALL=1
+      ;;
     --base)
       [ $# -ge 2 ] || gg_fail argument-missing "--base" "--base requires a ref"
       shift
-      RANGE_KIND="base"
-      RANGE_REF="$1"
+      gg_md_name_range base "$1"
       ;;
-    --base=*)
-      RANGE_KIND="base"
-      RANGE_REF="${1#--base=}"
-      ;;
+    --base=*) gg_md_name_range base "${1#--base=}" ;;
     --against)
       [ $# -ge 2 ] || gg_fail argument-missing "--against" "--against requires a ref"
       shift
-      RANGE_KIND="against"
-      RANGE_REF="$1"
+      gg_md_name_range against "$1"
       ;;
-    --against=*)
-      RANGE_KIND="against"
-      RANGE_REF="${1#--against=}"
-      ;;
+    --against=*) gg_md_name_range against "${1#--against=}" ;;
     -h | --help)
       usage
       exit 0
@@ -171,13 +169,19 @@ gg_positive_int "$ID_WIDTH" DECISION_ID_WIDTH
 # which is what a push has to ask — nothing is staged by the time a push is
 # judged, and a replay that deleted a target left exactly the broken callers
 # this widening exists to find.
-if [ -n "$RANGE_KIND" ]; then
-  if gg_md_range_changed "$RANGE_KIND" "$RANGE_REF"; then
+#
+# The exclusivity check runs BEFORE that trigger. The empty-range branch below
+# returns without ever calling gg_md_scope, which is where the check otherwise
+# sits, so an invocation naming a second scope would exit 0 here and skip the
+# scan that flag asked for.
+gg_md_scope_exclusive
+if [ -n "$GG_MD_RANGE_KIND" ]; then
+  if gg_md_range_changed "$GG_MD_RANGE_KIND" "$GG_MD_RANGE_REF"; then
     ALL=1
-    RANGE_KIND=""
-    RANGE_REF=""
+    GG_MD_RANGE_KIND=""
+    GG_MD_RANGE_REF=""
   else
-    gg_message range-count 0 "Nothing changed over $RANGE_REF for md-refs. Use --all to check the configured files."
+    gg_message range-count 0 "Nothing changed over $GG_MD_RANGE_REF for md-refs. Use --all to check the configured files."
     exit 0
   fi
 elif [ "$STAGED" -eq 0 ] && [ "$ALL" -eq 0 ]; then
@@ -193,7 +197,7 @@ elif [ "$STAGED" -eq 0 ] && [ "$ALL" -eq 0 ]; then
     esac
   fi
 fi
-gg_md_scope md-refs "$STAGED" "$ALL" "$RANGE_KIND" "$RANGE_REF"
+gg_md_scope md-refs "$STAGED" "$ALL"
 [ "$GG_MD_MODE" != none ] || exit 0
 # References are checked across the configured document set, including callers
 # the commit does not edit. Targets and callers both come from the index.

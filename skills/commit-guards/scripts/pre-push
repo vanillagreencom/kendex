@@ -73,13 +73,14 @@ local dates them, so after a `git remote set-url` they still describe the
 previous repository and an oversized file can read there as pre-existing.
 With no base at all, the whole tree is the scope.
 
-Two refusals keep the verdict about the thing being pushed. A branch whose tip
-is not HEAD is refused: byte-ceiling is the only lane scoped to a commit range
-and every other one scans the index, so the batch answers about this checkout.
-The index having content HEAD does not is refused for the same reason — a
-verdict over staged bytes is a verdict about a tree nobody is pushing. Neither
-consults untracked files or unstaged edits, which no lane reads. The verdict
-line names the way past a refusal.
+Two refusals keep the verdict about the thing being pushed. Every range scope
+here ends at HEAD, byte-ceiling's and the markdown lanes' alike, so a branch
+whose tip is not HEAD is refused: this checkout cannot judge it. The index
+having content HEAD does not is refused too. Every scan not handed a range
+reads the index, as does the sweep a range triggers in md-refs, and every
+lane reads its tracked policy there, so a verdict over staged content is a
+verdict about a tree nobody is pushing. Neither consults untracked files or unstaged edits, which no lane
+reads. The verdict line names the way past a refusal.
 
 Configuration: every COMMIT_GUARDS_* key the batch reads applies here
 unchanged.
@@ -256,11 +257,13 @@ local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
 # Whether the index holds exactly the content the pushed commit does.
 #
 # The not-head refusal settles that the commit leaving the machine is HEAD's.
-# It settles nothing about what the lanes read: byte-ceiling is the only one
-# scoped to a commit range, and every other check in the family scans the
-# INDEX. So staged content makes the batch answer about a tree nobody is
-# pushing — and wrong in the direction that matters, since a violation
-# committed and then staged away reads clean while it is uploaded.
+# It settles nothing about what the lanes read. A range scope takes its blobs
+# from the diff's own records, but every scan not handed one reads the INDEX,
+# as does the sweep a range triggers in md-refs, and every lane reads its
+# tracked policy from the index. So staged content makes the batch answer
+# about a tree nobody is pushing — and wrong in the direction that matters,
+# since a violation committed and then staged away reads clean while it is
+# uploaded.
 #
 # The index, not the work tree: an unstaged edit changes nothing any lane
 # reads, and neither does an untracked file, so neither is consulted. Asked
@@ -292,7 +295,7 @@ index_is_head() { # -> 0 when the index holds exactly HEAD's tracked content
     gg_message index-path "$path" "This path is staged over HEAD."
     count=$((count + 1))
   done <"$GG_TMP/index.z"
-  gg_message index-drift "$count" "pre-push: the index holds content HEAD does not, and every lane but byte-ceiling reads the index — so a verdict here would be about a tree nobody is pushing. Commit the staged content or reset it, then push again. The verdict line below names the way past this refusal."
+  gg_message index-drift "$count" "pre-push: the index holds content HEAD does not, every scan not handed a range reads the index, and every lane reads its tracked policy there — so a verdict here would be about a tree nobody is pushing. Commit the staged content or reset it, then push again. The verdict line below names the way past this refusal."
   return 1
 }
 
