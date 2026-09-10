@@ -17,8 +17,9 @@
 #            first; then the sealed additions and branch moves `build` lists;
 #            `subdir` runs the hook from ui/; `break:<cmd>` puts a git whose
 #            <cmd> dies (or a dying sed, jq or cat) first on PATH; `nopath`
-#            runs with an empty PATH; `sealed-marker` leaves the marker's
-#            parent directory unwritable
+#            runs with an empty PATH, `payload-tools-only` with jq and cat
+#            alone and `shasum-only` with every command but sha256sum;
+#            `sealed-marker` leaves the marker's parent directory unwritable
 #   change   the row's edits in order, from the words `change` lists;
 #            `stage` and `commit` take everything; `stopped` runs one Stop
 #            first and `stopped-active` one with stop_hook_active; `-` for none
@@ -135,6 +136,19 @@ EOF
   printf '%s' "$dir"
 }
 
+# A PATH directory holding the named commands and nothing else, so a row can
+# ask what the hook does without one it does not name. A command this machine
+# lacks links to nothing and the hook reports it missing, which fails the row
+# rather than quietly skipping it.
+only_tools() { # COMMAND... — prints the directory
+  local dir="$REPO.only" cmd
+  mkdir -p "$dir"
+  for cmd in "$@"; do
+    ln -sf -- "$(command -v "$cmd")" "$dir/$cmd"
+  done
+  printf '%s' "$dir"
+}
+
 build() { # WORLD — the row's repository, its run directory and PATH
   local word
   ROW=$((ROW + 1))
@@ -184,10 +198,15 @@ build() { # WORLD — the row's repository, its run directory and PATH
       payload-tools-only)
         # The two commands the hook may call before it reads the payload, and
         # nothing else: the row asks what a discovery-only absence does.
-        mkdir -p "$REPO.only"
-        ln -sf -- "$(command -v jq)" "$REPO.only/jq"
-        ln -sf -- "$(command -v cat)" "$REPO.only/cat"
-        RUN_PATH="$REPO.only"
+        RUN_PATH="$(only_tools jq cat)"
+        ;;
+      shasum-only)
+        # A stock macOS: shasum and no sha256sum. Both CI legs carry GNU
+        # sha256sum — the macOS leg links it onto PATH itself
+        # (.github/workflows/skill-tests.yml, the supplied-utilities step) — so
+        # a PATH holding every command but that one is the only place the
+        # fallback runs.
+        RUN_PATH="$(only_tools jq cat git sed sort tr dirname grep mkdir shasum)"
         ;;
       break:*) RUN_PATH="$(broken "${word#break:}"):$PATH" ;;
       *) printf 'an unknown world word builds nothing: %s\n' "$word" >&2; exit 1 ;;
@@ -409,6 +428,11 @@ only the payload readers on PATH names the rest|repo payload-tools-only|code|sto
 run_table "which absence still refuses the retry stop_hook_active passes" "world change payload rc err" "\
 a discovery command missing on an active stop passes|repo payload-tools-only|code|active|0|-
 a payload reader missing refuses the active stop too, the flag being in the payload it cannot read|repo nopath|code|active|2|missing-tools=jq,cat
+"
+
+run_table "shasum names the set where a stock macOS has no sha256sum" "world change payload rc out" "\
+a set is named with shasum alone|repo shasum-only|code|stop|2|$CORE_DOCS
+the same set on a later stop passes, so shasum names it the same way twice|repo shasum-only|code stopped|stop|0|-
 "
 
 run_table "a state the hook cannot read is refused only where a set is named" "world change payload rc err" "\
