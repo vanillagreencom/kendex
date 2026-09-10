@@ -56,6 +56,7 @@ export function TemplatePage() {
   const removeMembers = useTemplatesStore((s) => s.removeMembers);
   const busy = useTemplatesStore((s) => s.busy);
   const refused = useTemplatesStore((s) => s.refused);
+  const clearRefusal = useTemplatesStore((s) => s.clearRefusal);
   const openInstall = useInstallFlow((s) => s.open);
   const [resolution, setResolution] = useState<Resolution | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
@@ -90,6 +91,18 @@ export function TemplatePage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // The refusal is one shared field on the store, set by whichever write
+  // last failed and cleared only when the next one starts — so a failed
+  // add, rename or delete anywhere would stand here, under the name of a
+  // template it was never about. Cleared on the way in to a named
+  // template, so arriving at another one clears it again, and only on the
+  // way in, so a refusal this page's own member removal raises afterwards
+  // stays on screen.
+  useEffect(() => {
+    if (!name) return;
+    clearRefusal();
+  }, [clearRefusal, name]);
 
   const reread = useCallback(async () => {
     if (!name) return;

@@ -183,6 +183,104 @@ fn a_licence_file_already_in_the_store_is_reused_or_refuses() {
     );
 }
 
+/// A template's store folder is a component the seal judges, so a link
+/// standing where one belongs — or anywhere below it — refuses at the
+/// writes and at the reads, and nothing passes through it.
+///
+/// The seal is the store DIRECTORY for exactly this: sealing a template's
+/// own root canonicalizes it, so a link there is followed and every path
+/// under the link's target then answers as contained. A recorded name
+/// cannot spell an escape, and this is the other half — a link nobody
+/// recorded, put where the folder goes.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_symlinked_store_folder_refuses_every_write_and_every_read() {
+    let files = vec![(std::path::PathBuf::from("SKILL.md"), b"body".to_vec())];
+    let notices = vec![(
+        std::path::PathBuf::from("NOTICES/cat/LICENSE"),
+        b"MIT License\n".to_vec(),
+    )];
+    // The link stands where the template's own folder belongs, and then one
+    // level below it: both are components on the way to every path this
+    // store resolves.
+    for linked in ["mine", "mine/skills"] {
+        let (tmp, env) = home();
+        // Somebody else's tree, holding the copy under both spellings so a
+        // read that followed the link would find something either way.
+        let theirs = tmp.path().join("theirs");
+        fs::create_dir_all(theirs.join("skills/gh")).unwrap();
+        fs::create_dir_all(theirs.join("gh")).unwrap();
+        fs::write(theirs.join("skills/gh/SKILL.md"), "their bytes").unwrap();
+        fs::write(theirs.join("gh/SKILL.md"), "their bytes").unwrap();
+        let link = env.template_store_dir().join(linked);
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&theirs, &link).unwrap();
+
+        // The write.
+        let refused =
+            super::super::store::write(&env, "mine", ItemKind::Skill, "gh", &files, &notices);
+        assert!(
+            matches!(refused, Err(CoreError::SourceEscape { .. })),
+            "a link at {linked} should refuse the write: {refused:?}"
+        );
+        for kept in ["skills/gh/SKILL.md", "gh/SKILL.md"] {
+            assert_eq!(
+                fs::read_to_string(theirs.join(kept)).unwrap(),
+                "their bytes",
+                "a link at {linked} let the write through to {kept}"
+            );
+        }
+        assert!(
+            !theirs.join("NOTICES").exists(),
+            "a link at {linked} let the licence write through"
+        );
+
+        // The read the file pane makes, which would have shown those bytes.
+        let template = Template {
+            members: vec![Member {
+                kind: MemberKind::Skill,
+                name: "gh".to_owned(),
+                enabled: true,
+                source: MemberSource::Copy {
+                    copy: "skills/gh".to_owned(),
+                    from: None,
+                    notices: Vec::new(),
+                },
+            }],
+            ..stored("mine")
+        };
+        let shown = stored_file(&env, &template, "skills/gh/SKILL.md");
+        assert!(
+            matches!(shown, Err(CoreError::SourceEscape { .. })),
+            "a link at {linked} should refuse the read: {shown:?}"
+        );
+    }
+
+    // The inverse: a folder that is a folder still writes and still reads,
+    // or the rows above would pass over a check that refuses everything.
+    let (_tmp, env) = home();
+    super::super::store::write(&env, "mine", ItemKind::Skill, "gh", &files, &notices).unwrap();
+    let template = Template {
+        members: vec![Member {
+            kind: MemberKind::Skill,
+            name: "gh".to_owned(),
+            enabled: true,
+            source: MemberSource::Copy {
+                copy: "skills/gh".to_owned(),
+                from: None,
+                notices: vec!["NOTICES/cat/LICENSE".to_owned()],
+            },
+        }],
+        ..stored("mine")
+    };
+    assert_eq!(
+        stored_file(&env, &template, "skills/gh/SKILL.md").unwrap(),
+        "body"
+    );
+    assert_eq!(stored_files(&env, &template).unwrap().len(), 2);
+}
+
 /// A licence file's path inside the store answers the same rule a copy's
 /// does, asked at the write before a byte of the copy moves.
 ///

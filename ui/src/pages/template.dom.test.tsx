@@ -191,6 +191,41 @@ describe("a member taken out of the template", () => {
     expect(host.textContent).not.toContain("my own bytes");
   });
 
+  it("drops a refusal another write left standing, and keeps its own", async () => {
+    // What a failed add, rename or delete elsewhere leaves on the store:
+    // one shared field, cleared only when the next write starts.
+    useTemplatesStore.setState({
+      refused: "Rust service could not be renamed",
+    });
+    vi.mocked(commands.templateResolve).mockResolvedValue({
+      status: "ok",
+      data: withCopy,
+    });
+    vi.mocked(commands.templateFiles).mockResolvedValue({
+      status: "ok",
+      data: [SKILL, KEPT],
+    });
+    vi.mocked(commands.templateRemoveMembers).mockResolvedValue({
+      status: "error",
+      error: "the member could not be removed",
+    });
+    const host = mount(<TemplatePage />);
+    await settle();
+
+    // Arriving at the page is not the failure's subject, so it is gone.
+    expect(host.textContent).not.toContain("Rust service could not be renamed");
+    expect(useTemplatesStore.getState().refused).toBe(null);
+
+    // And a refusal this page's own action raises afterwards is shown: the
+    // clearing is on the way in, not on every render.
+    const remove = removeButton(host);
+    if (!remove) throw new Error("no Remove control for the copied member");
+    await act(async () => remove.click());
+    await settle();
+
+    expect(host.textContent).toContain("the member could not be removed");
+  });
+
   it("names the member by the kind it was saved as", async () => {
     const plugged: Resolution = {
       groups: [

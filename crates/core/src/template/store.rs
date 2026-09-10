@@ -35,6 +35,34 @@ pub(super) fn root(env: &Env, id: &str) -> PathBuf {
     env.template_store_dir().join(id)
 }
 
+/// The sealed store, and one template's root inside it once the way to
+/// that root has been judged.
+///
+/// The seal is the store DIRECTORY, never the template's own root:
+/// [`SealedSource::open`] canonicalizes what it is given, so a root sealed
+/// as itself is a link followed, and every path below the link's target
+/// then answers as contained. Sealed one level up, a template's own folder
+/// is a component the containment walk judges like any other — and that
+/// walk is the judge this repository already keeps for a path outside a
+/// root and for a link anywhere below it. Nothing here spells a second one.
+///
+/// Every read and every write in this module goes through the pair, so a
+/// link standing where a template's folder belongs cannot redirect a slot
+/// write, a licence write, a delete, or the bytes a surface displays.
+///
+/// The store directory is made before it is sealed: a reader needs a
+/// directory, and the first write of the first template arrives before
+/// anything has made one — a check skipped for an absent store would be a
+/// check that write never gets.
+fn sealed_store(env: &Env, id: &str) -> Result<(SealedSource, PathBuf)> {
+    let store = env.template_store_dir();
+    std::fs::create_dir_all(&store).map_err(|e| CoreError::io(&store, e))?;
+    let sealed = SealedSource::open(&store)?;
+    let root = store.join(id);
+    sealed.contained(&root)?;
+    Ok((sealed, root))
+}
+
 /// Where a package of this kind and name sits inside a template's store,
 /// as the copy id records it: slash-separated and relative to the store,
 /// so the recorded value is one spelling on every platform.
@@ -155,7 +183,7 @@ pub(super) fn write(
             ),
         });
     }
-    let root = root(env, id);
+    let (sealed, root) = sealed_store(env, id)?;
     // Where a licence file is allowed to land, asked of every segment of
     // every one of them before any of them is written. The relative path
     // carries a subscription alias the person typed, and this is the
@@ -191,16 +219,14 @@ pub(super) fn write(
         }
     }
     let slot = local_slot(&root, kind, name);
-    if slot.exists() {
-        remove_path(&slot)?;
-    }
+    remove_inside(&sealed, &slot)?;
     match kind {
         // A skill is a tree; every other kind a copy carries is the one
         // file the slot names, and its read holds exactly one entry.
         ItemKind::Skill => {
             for (relative, bytes) in files {
                 let target = slot.join(relative);
-                write_file(&target, bytes)?;
+                write_file(&sealed, &target, bytes)?;
             }
         }
         _ => {
@@ -210,7 +236,7 @@ pub(super) fn write(
                     why: "nothing was read to copy".to_owned(),
                 });
             };
-            write_file(&slot, bytes)?;
+            write_file(&sealed, &slot, bytes)?;
         }
     }
     // The terms travel with the bytes. Written beside the copy, at the
@@ -223,7 +249,7 @@ pub(super) fn write(
         if crate::author::import::notice_standing(&target, bytes)
             == crate::author::import::NoticeStanding::Absent
         {
-            write_file(&target, bytes)?;
+            write_file(&sealed, &target, bytes)?;
         }
     }
     Ok(slot_id(kind, name))
@@ -238,12 +264,11 @@ pub(super) fn held(
     kind: ItemKind,
     name: &str,
 ) -> Result<Option<CopyFiles>> {
-    let root = root(env, &template.id);
-    let slot = local_slot(&root, kind, name);
+    let slot = local_slot(&root(env, &template.id), kind, name);
     if !slot.exists() {
         return Ok(None);
     }
-    let sealed = SealedSource::open(&root)?;
+    let (sealed, _) = sealed_store(env, &template.id)?;
     match kind {
         ItemKind::Skill => Ok(Some(sealed.collect_skill_tree(&slot)?)),
         _ => {
@@ -260,24 +285,22 @@ pub(super) fn held(
 /// emptied again, so a fresh copy a refused replacement wrote does not
 /// survive it.
 pub(super) fn restore(env: &Env, template: &Template, slots: &[PriorSlot]) -> Result<()> {
-    let root = root(env, &template.id);
+    let (sealed, root) = sealed_store(env, &template.id)?;
     for (kind, name, before) in slots {
         let slot = local_slot(&root, *kind, name);
-        if slot.exists() {
-            remove_path(&slot)?;
-        }
+        remove_inside(&sealed, &slot)?;
         let Some(files) = before else {
             continue;
         };
         match kind {
             ItemKind::Skill => {
                 for (relative, bytes) in files {
-                    write_file(&slot.join(relative), bytes)?;
+                    write_file(&sealed, &slot.join(relative), bytes)?;
                 }
             }
             _ => {
                 if let Some((_, bytes)) = files.first() {
-                    write_file(&slot, bytes)?;
+                    write_file(&sealed, &slot, bytes)?;
                 }
             }
         }
@@ -299,8 +322,7 @@ pub(super) fn notices(env: &Env, template: &Template) -> Result<Vec<(PathBuf, Ve
     if wanted.is_empty() {
         return Ok(Vec::new());
     }
-    let root = root(env, &template.id);
-    let sealed = SealedSource::open(&root)?;
+    let (sealed, _) = sealed_store(env, &template.id)?;
     let mut carried = Vec::new();
     for id in wanted {
         let path = copy_path(env, template, id)?;
@@ -309,11 +331,31 @@ pub(super) fn notices(env: &Env, template: &Template) -> Result<Vec<(PathBuf, Ve
     Ok(carried)
 }
 
-fn write_file(target: &Path, bytes: &[u8]) -> Result<()> {
+/// One file written inside the sealed store, asked of the seal before a
+/// byte moves.
+///
+/// `create_dir_all` and `write` both follow a link on the way to the
+/// target, so the question is asked here rather than at each caller: bytes
+/// placed past a link are bytes no later read of this store can reach, and
+/// the place they land is somebody else's.
+fn write_file(sealed: &SealedSource, target: &Path, bytes: &[u8]) -> Result<()> {
+    sealed.contained(target)?;
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
     }
     std::fs::write(target, bytes).map_err(|e| CoreError::io(target, e))
+}
+
+/// One path inside the sealed store removed, asked of the seal before the
+/// removal — a delete resolves what it is given, so a link on the way to it
+/// aims the removal at content this store does not own. Absent is nothing
+/// to do.
+fn remove_inside(sealed: &SealedSource, path: &Path) -> Result<()> {
+    sealed.contained(path)?;
+    match path.exists() {
+        true => remove_path(path),
+        false => Ok(()),
+    }
 }
 
 /// One copy's bytes, read back through the sealed reader: the tree for a
@@ -336,7 +378,7 @@ pub(super) fn read(
             "the template's store is not on this machine".to_owned(),
         ));
     }
-    let sealed = SealedSource::open(&root).map_err(|e| unreadable(e.to_string()))?;
+    let (sealed, _) = sealed_store(env, &template.id).map_err(|e| unreadable(e.to_string()))?;
     let kind = member
         .kind
         .item()
@@ -389,7 +431,7 @@ pub fn stored_files(env: &Env, template: &Template) -> Result<Vec<PackageFile>> 
     if !root.is_dir() {
         return Ok(Vec::new());
     }
-    let sealed = SealedSource::open(&root)?;
+    let (sealed, root) = sealed_store(env, &template.id)?;
     let mut files = Vec::new();
     for id in held_paths(template) {
         let path = copy_path(env, template, id)?;
@@ -442,8 +484,7 @@ fn entry_of(
 /// replacement characters.
 pub fn stored_file(env: &Env, template: &Template, path: &str) -> Result<String> {
     let target = copy_path(env, template, path)?;
-    let root = root(env, &template.id);
-    let sealed = SealedSource::open(&root)?;
+    let (sealed, _) = sealed_store(env, &template.id)?;
     let bytes = sealed.read(&target)?;
     String::from_utf8(bytes).map_err(|_| CoreError::TemplateCopyUnreadable {
         copy: path.to_owned(),
@@ -453,24 +494,20 @@ pub fn stored_file(env: &Env, template: &Template, path: &str) -> Result<String>
 
 /// Drop a template's whole store.
 pub(super) fn remove(env: &Env, template: &Template) -> Result<()> {
-    let root = root(env, &template.id);
-    match root.exists() {
-        true => remove_path(&root),
-        false => Ok(()),
-    }
+    let (sealed, root) = sealed_store(env, &template.id)?;
+    remove_inside(&sealed, &root)
 }
 
 /// Drop what a member removal left with nothing naming it: the copies, and
 /// the notices those copies came under. Only this template's own store is
 /// touched, and only what no remaining member accounts for.
 pub(super) fn prune(env: &Env, before: &Template, after: &Template) -> Result<()> {
-    let root = root(env, &before.id);
     // Nothing to prune, and nothing to open a reader on: a template whose
     // copies are gone, or which never had any, has no store on disk.
-    if !root.is_dir() {
+    if !root(env, &before.id).is_dir() {
         return Ok(());
     }
-    let sealed = SealedSource::open(&root)?;
+    let (sealed, _) = sealed_store(env, &before.id)?;
     let kept: BTreeSet<&str> = held_paths(after).collect();
     for id in held_paths(before).collect::<BTreeSet<&str>>() {
         if kept.contains(id) {
@@ -484,10 +521,7 @@ pub(super) fn prune(env: &Env, before: &Template, after: &Template) -> Result<()
         // into the store can still put a path inside it over content
         // outside — and this is a delete, so it is asked before the
         // removal rather than after it.
-        sealed.contained(&path)?;
-        if path.exists() {
-            remove_path(&path)?;
-        }
+        remove_inside(&sealed, &path)?;
     }
     Ok(())
 }
