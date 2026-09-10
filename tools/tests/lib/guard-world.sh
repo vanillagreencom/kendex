@@ -3,8 +3,9 @@
 # passes a guard run as it stands. It carries a demo skill with every render
 # in step, a demo agent rendered to all three harness directories, a demo hook
 # rendered to two of them (the real tree's hook sets differ), a hook test that
-# renders nowhere, a temporary-fixture test that predates rooted(), and the
-# directories tools/bash32-lint scans. A suite plants its own defects and comes
+# renders nowhere, a temporary-fixture test that predates rooted(), the
+# directories tools/bash32-lint scans and the tools/ tree tools/bash32-parse
+# adds to them. A suite plants its own defects and comes
 # back here with reset_world. Sourced after the suite's `set -euo pipefail`
 # and git-variable preamble; what a suite reads from here:
 #   R                        the world; GUARD, REPO, REAL_GIT, REAL_AWK, TMP
@@ -68,6 +69,9 @@ done < <(sed -nE 's#^NO_(SCAN|SHELL)="(.*)"$#\2#p' "$REPO/tools/bash32-lint" | t
 while IFS= read -r e; do
   mkdir -p "$R/$e" && printf '#!/usr/bin/env bash\necho rostered\n' >"$R/$e/rostered.sh"
 done < <(sed -n 's#^  set -- \(.*\)$#\1#p' "$REPO/tools/bash32-lint" | tr ' ' '\n' | grep -v '[*]')
+# tools/ is the covered set tools/bash32-parse adds to that roster, and a
+# covered directory holding no shell file is a refusal there as it is here.
+printf '#!/usr/bin/env bash\necho tooled\n' >"$R/tools/demo-tool.sh"
 mkdir -p "$R/skills/demo/scripts" "$R/skills/demo/tests" \
   "$R/.agents/skills/demo/scripts" "$R/.agents/skills/demo/tests" \
   "$R/agents" "$R/.claude/agents" "$R/.codex/agents" "$R/.pi/agents"
@@ -118,6 +122,7 @@ ln -s "$REPO/.agents" "$TMP/.agents"
 MUTANT_TOOLS="$TMP/mutant-tools"
 mkdir -p "$MUTANT_TOOLS"
 cp "$REPO/tools/bash32-lint" "$MUTANT_TOOLS/bash32-lint"
+cp "$REPO/tools/bash32-parse" "$MUTANT_TOOLS/bash32-parse"
 mutant_guard() { # SED-EXPR — stage a guard copy with that edit applied
   sed "$1" "$GUARD" >"$MUTANT_TOOLS/guard"
   chmod +x "$MUTANT_TOOLS/guard"

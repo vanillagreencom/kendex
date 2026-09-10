@@ -184,12 +184,39 @@ else
   fi
 fi
 
+# --- 3b. --files prints the walk's answer and scans nothing -------------
+# The list tools/bash32-parse hands to a real Bash 3.2 is this one, so what it
+# holds is this file's assertion: every shell file under the directory,
+# nested ones included, and nothing that is not shell. A planted construct
+# proves the other half — --files walks and does not judge, so a directory
+# the scan reds still lists clean.
+mkdir -p "$TMP/files/nested" || bad "could not stage the --files directory"
+printf '#!/usr/bin/env bash\n:\n' >"$TMP/files/top.sh"
+printf '#!/usr/bin/env bash\nlocal -A cache\n' >"$TMP/files/nested/planted.sh"
+printf '#!/usr/bin/env bash\n:\n' >"$TMP/files/entrypoint"
+printf '{"a":1}\n' >"$TMP/files/fixture.json"
+status=0
+listed="$("$LINT" --files "$TMP/files")" || status=$?
+want="$(printf '%s\n' "$TMP/files/entrypoint" "$TMP/files/nested/planted.sh" "$TMP/files/top.sh")"
+if [ "$status" -ne 0 ]; then
+  bad "--files refused a directory the scan would only red (exit $status)" "$listed"
+elif [ "$listed" = "$want" ]; then
+  ok "--files lists every shell file under the directory and nothing else"
+else
+  bad "--files listed something other than the shell files under the directory" \
+    "$(printf '%s' "$listed" | tr '\n' ';')"
+fi
+status=0
+"$LINT" "$TMP/files" >/dev/null 2>&1 || status=$?
+[ "$status" -eq 1 ] &&
+  ok "control: the same directory reds the scan, so --files judged nothing" ||
+  bad "control: the same directory reds the scan, so --files judged nothing" "exit $status"
+
 # --- 4. the lint's fail-closed paths, each proven red -------------------
 # A row is `label|world|cwd|argv|exit|first`:
 #   world  words for build, each staged fresh under the row's own directory
 #          W: `empty` a directory holding nothing; `nonshell` one holding
 #          only a JSON file; `populated` one holding a clean shell file;
-#          `syntax` one holding a shell file that does not parse;
 #          `unreadable-dir` a clean file beside a subdirectory nobody can
 #          read; `unreadable-file` a clean file beside an extensionless
 #          entry point nobody can read; `grep-stub` a grep on PATH that
@@ -305,10 +332,6 @@ word() { # word WORD — stage one world word under W
   populated)
     mkdir "$W/populated" &&
       printf '#!/usr/bin/env bash\n:\n' >"$W/populated/real.sh"
-    ;;
-  syntax)
-    mkdir "$W/syntax" &&
-      printf '#!/usr/bin/env bash\nif [ 1 -eq 1 ]; then\n' >"$W/syntax/broken.sh"
     ;;
   unreadable-dir)
     mkdir -p "$W/unreadable-dir/sub" &&
@@ -477,7 +500,6 @@ the NO_SCAN exception holds when its directory is named absolute|-|root|ROOT/NO_
 a run with no repository around it ends rather than scanning|populated|world|populated|2|not-in-repo=W
 an empty directory beside a populated one still ends the run|populated empty|root|W/populated W/empty|2|no-shell=W/empty
 a directory holding only non-shell files beside a populated one still ends the run|populated nonshell|root|W/populated W/nonshell|2|no-shell=W/nonshell
-a shell file that does not parse reds the lint|syntax|root|W/syntax|1|syntax=1
 a scan that could not run is not read as a clean tree|populated grep-stub|root|W/populated|2|scan=W/populated/real.sh
 a file list that could not be built is not read as a clean tree|unreadable-dir unless-root|root|W/unreadable-dir|2|listing=W/unreadable-dir
 a file that could not be classified ends the run rather than being dropped|unreadable-file unless-root|root|W/unreadable-file|2|unclassified=W/unreadable-file/entrypoint
