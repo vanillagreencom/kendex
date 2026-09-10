@@ -459,3 +459,57 @@ fn every_path_that_admits_a_member_refuses_the_same_ones() {
     assert_eq!(get(&env, "Rust service").unwrap().members.len(), 1);
     assert_eq!(list(&env).unwrap().len(), 1);
 }
+
+/// One marketplace is one marketplace however a caller spells it.
+///
+/// `owner/repo`, its HTTPS URL and its scp-style spelling are three
+/// strings and one repository, and the CLI accepts all three. Compared
+/// raw, admission kept a member per spelling while resolution folded them
+/// into one row — so the page showed one member and Remove could reach
+/// only the first.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn one_marketplace_spelled_three_ways_is_one_member() {
+    let (_tmp, env) = home();
+    let named = |repo: &str| Member {
+        kind: MemberKind::Skill,
+        name: "gh".to_owned(),
+        enabled: true,
+        source: MemberSource::Marketplace {
+            repo: repo.to_owned(),
+            rev: None,
+        },
+    };
+
+    let saved = create_from_selection(&env, "Spellings", vec![named("owner/repo")]).unwrap();
+    assert_eq!(saved.members.len(), 1);
+    // The same package again, under the two other spellings the same
+    // reference parser accepts.
+    let after = add_members(
+        &env,
+        "Spellings",
+        vec![
+            named("https://github.com/Owner/Repo.git"),
+            named("git@github.com:owner/repo"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(after.members.len(), 1, "{:?}", after.members);
+
+    // And a reference built from a row naming any of them reaches it: the
+    // stored spelling is the first one, and a surface acting on the row it
+    // is shown must still be able to remove it.
+    let emptied = remove_members(
+        &env,
+        "Spellings",
+        &[MemberRef {
+            kind: MemberKind::Skill,
+            name: "gh".to_owned(),
+            which: MemberWhich::Marketplace {
+                repo: "https://github.com/owner/repo".to_owned(),
+            },
+        }],
+    )
+    .unwrap();
+    assert_eq!(emptied.members, Vec::new());
+}

@@ -15,6 +15,7 @@ import {
   FILES_UNREADABLE,
   NO_FILES,
   REMOVE_MEMBER_LABEL,
+  RESOLVE_UNREADABLE,
 } from "@/lib/copy-templates";
 import { useNavStore } from "@/stores/nav";
 import { useTemplatesStore } from "@/stores/templates";
@@ -363,5 +364,65 @@ describe("reads of the page that overlap", () => {
     });
     await settle();
     expect(host.textContent).toContain("the second file's bytes");
+  });
+});
+
+// The two reads behind this page are independent, so a resolution that
+// would not read says nothing about whether the store lists. Returning on
+// that branch left the file half as a previous read had it and still
+// marked successful — after a removal that landed, files the template no
+// longer owns went on being presented as current.
+describe("a resolution that fails after a removal landed", () => {
+  it("does not go on showing the removed member's files as current", async () => {
+    const SKILL = {
+      path: "skills/house-style/SKILL.md",
+      size: 12,
+      isReadme: false,
+    };
+    const withCopy: Resolution = {
+      groups: [],
+      copies: [
+        {
+          kind: "skill",
+          name: "house-style",
+          enabled: true,
+          copy: "skills/house-style",
+          from: null,
+        },
+      ],
+      missing: [],
+    };
+    vi.mocked(commands.templateResolve)
+      .mockResolvedValueOnce({ status: "ok", data: withCopy })
+      // The reread the removal starts: this one will not read.
+      .mockResolvedValue({
+        status: "error",
+        error: "the template could not be read",
+      });
+    vi.mocked(commands.templateFiles)
+      .mockResolvedValueOnce({ status: "ok", data: [SKILL] })
+      // The store still lists, and what it lists no longer holds the file
+      // the removed member owned.
+      .mockResolvedValue({ status: "ok", data: [] });
+    vi.mocked(commands.templateRemoveMembers).mockResolvedValue({
+      status: "ok",
+      data: TEMPLATE,
+    });
+
+    const host = mount(<TemplatePage />);
+    await settle();
+    expect(host.textContent).toContain("SKILL.md");
+
+    const remove = [...host.querySelectorAll<HTMLElement>("button")].find(
+      (one) => one.textContent?.includes(REMOVE_MEMBER_LABEL),
+    );
+    if (!remove) throw new Error("no Remove control for the copied member");
+    await act(async () => remove.click());
+    await settle();
+
+    // The resolution half says it could not be read; the file half says
+    // what its own read found, which no longer holds that file.
+    expect(host.textContent).toContain(RESOLVE_UNREADABLE);
+    expect(host.textContent).not.toContain("SKILL.md");
   });
 });

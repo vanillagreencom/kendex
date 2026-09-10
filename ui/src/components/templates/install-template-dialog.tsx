@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Scope } from "@/bindings";
 import { templateSubject } from "@/components/templates/template-subject";
 import { Button } from "@/components/ui/button";
@@ -80,8 +80,32 @@ export function InstallTemplateDialog({
   useEffect(() => {
     if (open) void load();
   }, [open, load]);
+  // Which open this is. The picker is initialized for a new open and left
+  // alone by the refresh that open started: a dialog with rows already
+  // cached is one a person can choose in while that read is still out, and
+  // resetting on every change of the list replaced their choice with the
+  // first row the moment it landed — the save then went somewhere they had
+  // not picked, with nothing on screen saying it had moved.
+  //
+  // Not initialized until there is something to initialize from, so a
+  // dialog opened before the first read lands still takes the first row
+  // when the rows arrive. After that the choice is theirs, and only a
+  // refreshed list that no longer holds it takes it away.
+  const initialized = useRef(false);
   useEffect(() => {
-    if (open) setPicked(templates[0]?.name ?? "");
+    if (!open) {
+      initialized.current = false;
+      return;
+    }
+    const first = templates[0]?.name ?? "";
+    if (!initialized.current) {
+      setPicked(first);
+      initialized.current = templates.length > 0;
+      return;
+    }
+    setPicked((current) =>
+      templates.some((one) => one.name === current) ? current : first,
+    );
   }, [open, templates]);
 
   const chosen = templates.find((one) => one.name === picked) ?? null;

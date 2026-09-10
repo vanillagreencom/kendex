@@ -9,10 +9,16 @@
 //! deleting a template afterwards reaches nothing that was installed from
 //! it.
 //!
-//! The index lives in the settings file, through the settings writer every
-//! other machine-local preference goes through. The copies live in their
-//! own store under the app data root, because a template outlives the
-//! project its copies were taken from.
+//! The index lives in its own `templates.toml` beside the settings file,
+//! written through the same writer every other machine-local preference
+//! goes through — separate rather than a table inside `AppSettings`
+//! because a template carries package customizations whose shape is the
+//! manifest's, and folding that into the whole-file settings type split
+//! every settings type in the bindings and broke the UI's settings round
+//! trip. [`crate::env::Env::templates_file`] names it and [`index`] reads
+//! and writes it. The copies live in their own store under the app data
+//! root, because a template outlives the project its copies were taken
+//! from.
 
 use std::collections::BTreeMap;
 
@@ -164,9 +170,18 @@ impl Member {
     /// What tells one member from another: two packages of the same kind
     /// and name from two marketplaces are two members, and the same
     /// identity saved twice is one.
-    pub fn identity(&self) -> (MemberKind, &str, Option<&str>) {
+    ///
+    /// The repository is folded through [`crate::source_ref::repo_identity`],
+    /// which is this repository's one judge of whether two references name
+    /// one marketplace — the same value [`install::resolve`] groups by and
+    /// `subscription_for` matches a subscription on. A stored `repo` is a
+    /// reference to subscribe with and a spelling to show, never a value to
+    /// compare: `owner/repo` and its HTTPS spelling are one marketplace and
+    /// two strings, and comparing them raw admitted the same package twice
+    /// while the row a person could act on named only the first.
+    pub fn identity(&self) -> (MemberKind, &str, Option<String>) {
         let repo = match &self.source {
-            MemberSource::Marketplace { repo, .. } => Some(repo.as_str()),
+            MemberSource::Marketplace { repo, .. } => Some(crate::source_ref::repo_identity(repo)),
             MemberSource::Copy { .. } => None,
         };
         (self.kind, self.name.as_str(), repo)
@@ -216,8 +231,14 @@ impl MemberRef {
         match (&self.which, &member.source) {
             (MemberWhich::Any, _) => true,
             (MemberWhich::Copy, MemberSource::Copy { .. }) => true,
+            // One marketplace, however either side spells it: the
+            // reference a surface builds its row from is the member's own
+            // stored spelling, and a person may have added the same
+            // package under another. Folded through the same judge
+            // [`Member::identity`] uses, so admission, dedup, grouping and
+            // removal all read one value.
             (MemberWhich::Marketplace { repo }, MemberSource::Marketplace { repo: held, .. }) => {
-                repo == held
+                crate::source_ref::repo_identity(repo) == crate::source_ref::repo_identity(held)
             }
             (MemberWhich::Copy, MemberSource::Marketplace { .. })
             | (MemberWhich::Marketplace { .. }, MemberSource::Copy { .. }) => false,

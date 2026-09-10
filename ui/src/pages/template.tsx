@@ -111,9 +111,15 @@ export function TemplatePage() {
     if (answer.status === "error") {
       setResolution(null);
       setResolveError(answer.error);
-      return;
+    } else {
+      setResolution(answer.data);
     }
-    setResolution(answer.data);
+    // The two reads are independent, so the file half is read either way.
+    // Returning on a failed resolution left it as a previous read had it
+    // and still marked successful: after a removal that landed, the page
+    // went on presenting files the template no longer owns as current,
+    // with nothing saying they were stale. One story on the page means
+    // each half says what its own read found.
     setFilesError(null);
     const owned = await templateFiles(name);
     if (!newest()) return;

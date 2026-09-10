@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -721,5 +722,182 @@ describe("the search shortcut on the Templates tab", () => {
     });
     await settle();
     expect(document.activeElement).toBe(search);
+  });
+});
+
+// A pin is part of what was picked. The conversion wrote null, so a
+// template made from a pinned subscription lost the pin at the moment it
+// was saved and a later install could resolve a different revision.
+describe("the revision a marketplace selection is saved at", () => {
+  const ticked = (source: string) => [
+    {
+      catalog: {
+        by: "subscription" as const,
+        scope: { scope: "global" as const },
+        source,
+      },
+      row: { kind: "skill", name: "gh" } as never,
+      recordsUnreadable: false,
+    },
+  ];
+  const subscribed = (name: string, rev: string | null) =>
+    [
+      {
+        scope: { scope: "global" as const },
+        name,
+        repo: "vanillagreencom/kendex",
+        rev,
+      } as never,
+    ] as never;
+
+  it("keeps the pin the ticked row carries, and none where there is none", () => {
+    const pinned = membersFor(ticked("kendex"), subscribed("kendex", "v2.1.0"));
+    expect(pinned.members[0]?.source).toEqual({
+      held: "marketplace",
+      repo: "vanillagreencom/kendex",
+      rev: "v2.1.0",
+    });
+
+    // The inverse: an unpinned subscription saves no pin, so the row above
+    // cannot pass over a conversion that writes some revision regardless.
+    const following = membersFor(ticked("kendex"), subscribed("kendex", null));
+    expect(following.members[0]?.source).toEqual({
+      held: "marketplace",
+      repo: "vanillagreencom/kendex",
+      rev: null,
+    });
+  });
+});
+
+// Both dialogs reset their picker on every change of the list, not on
+// open, and each starts a refresh on open — so a choice made while that
+// read was in flight was silently replaced by the first row the moment it
+// landed, and the action then went somewhere nobody picked.
+describe("a choice made while the refresh behind an open is still out", () => {
+  const OTHER: Template_Serialize = {
+    name: "Node service",
+    id: "node-service",
+    members: [],
+    customizations: {},
+  };
+
+  /** Pick the option reading `text` from the one select on screen. */
+  const choose = async (text: string) => {
+    const trigger = document.querySelector<HTMLElement>(
+      '[data-slot="select-trigger"]',
+    );
+    if (!trigger) throw new Error("no picker rendered");
+    act(() => trigger.focus());
+    await userEvent.keyboard("{Enter}");
+    const option = [...document.querySelectorAll('[role="option"]')].find(
+      (one) => one.textContent === text,
+    );
+    if (!(option instanceof HTMLElement)) throw new Error(`no ${text} option`);
+    await userEvent.click(option);
+    await settle();
+  };
+
+  /** The refresh an open started, landing with the same rows in a new
+   *  array — which is what used to reset the picker. */
+  const refreshLands = async (data: Template_Serialize[]) => {
+    vi.mocked(commands.templatesList).mockResolvedValue({ status: "ok", data });
+    await act(async () => {
+      await useTemplatesStore.getState().load();
+    });
+    await settle();
+  };
+
+  beforeEach(() => {
+    // Rows already cached, which is what makes the window reachable: the
+    // picker is on screen before the read behind the open answers.
+    useTemplatesStore.setState({
+      templates: [RUST_SERVICE, OTHER],
+      everRead: true,
+      read: { status: "read" },
+    });
+    vi.mocked(commands.templatesList).mockResolvedValue({
+      status: "ok",
+      data: [RUST_SERVICE, OTHER],
+    });
+  });
+
+  it("installs the template that was picked, not the first row", async () => {
+    const acme = { scope: "project" as const, root: ACME_ROOT };
+    vi.mocked(commands.templateInstall).mockResolvedValue({
+      status: "ok",
+      data: {
+        subscribed: [],
+        declared: [],
+        copied: [],
+        notes: [],
+        stopped: null,
+      },
+    });
+    mount(<InstallTemplateDialog into={acme} open onOpenChange={() => {}} />);
+    await settle();
+
+    await choose(OTHER.name);
+    await refreshLands([RUST_SERVICE, OTHER]);
+
+    await act(async () => button(document, "Install").click());
+    expect(useInstallFlow.getState().ask?.subjects[0]?.template).toBe(
+      OTHER.name,
+    );
+  });
+
+  it("saves into the template that was picked, not the first row", async () => {
+    vi.mocked(commands.templateAddMembers).mockResolvedValue({
+      status: "ok",
+      data: OTHER,
+    });
+    const saveable = membersFor(
+      [
+        {
+          catalog: {
+            by: "subscription",
+            scope: { scope: "global" },
+            source: "kendex",
+          },
+          row: { kind: "skill", name: "gh" } as never,
+          recordsUnreadable: false,
+        },
+      ],
+      [
+        {
+          scope: { scope: "global" },
+          name: "kendex",
+          repo: "vanillagreencom/kendex",
+        } as never,
+      ],
+    );
+    mount(
+      <AddToTemplateDialog saveable={saveable} open onOpenChange={() => {}} />,
+    );
+    await settle();
+
+    await choose(OTHER.name);
+    await refreshLands([RUST_SERVICE, OTHER]);
+
+    await act(async () => button(document, "Save").click());
+    expect(commands.templateAddMembers).toHaveBeenCalledWith(
+      OTHER.name,
+      saveable.members,
+    );
+  });
+
+  // The inverse: a choice the refreshed list no longer holds falls back,
+  // so the rows above cannot pass over a picker that never moves at all.
+  it("falls back when the refreshed list no longer holds the choice", async () => {
+    const acme = { scope: "project" as const, root: ACME_ROOT };
+    mount(<InstallTemplateDialog into={acme} open onOpenChange={() => {}} />);
+    await settle();
+
+    await choose(OTHER.name);
+    await refreshLands([RUST_SERVICE]);
+
+    await act(async () => button(document, "Install").click());
+    expect(useInstallFlow.getState().ask?.subjects[0]?.template).toBe(
+      RUST_SERVICE.name,
+    );
   });
 });
