@@ -79,9 +79,12 @@ select accepts, BEFORE the min_state reduction, at the commit the gate
 RELIES ON — the head, and the carry base too once carry decided the evidence,
 since the carried row is the one whose body carries the block. Lines inside a
 fenced snippet are skipped, so the pasted code under an entry cannot end the
-block. It names the count and the file:line entries: the detail carries a bounded list (a status
-description holds 140 characters, so a truncated list says how many it
-dropped) and the full list goes to stderr. It has NO settings key and no
+block, while the heading itself is read WHATEVER the fence state says and
+closes any fence it finds open — no run of fence-looking lines earlier in the
+body can hide the block that follows. It names the count and the file:line
+entries: the detail carries a bounded list (a status description holds 140
+characters, so a truncated list says how many it dropped) and the full list
+goes to stderr. It has NO settings key and no
 disposition protocol: nothing in the PR clears it, only a review at a new
 head whose body carries no such block. Every shape it cannot read refuses
 too — a heading with no readable count, a count disagreeing with the entries
@@ -1764,12 +1767,25 @@ fi
 # The block ends at the next heading of any level or at `</details>`, so the
 # `- **Files reviewed:**` trailer Copilot writes after the entries is outside
 # it and the next review section cannot donate entries to it. Lines inside a
-# fenced snippet are skipped before either arm is considered: the offending
-# code a reviewer pastes under an entry is full of `#` comment lines, and one
-# of those read as a heading would end the block and drop every entry after
-# it from the list. A nested fence desyncs the toggle; both directions of a
-# desync end in a refusal, never an approval — a block read short disagrees
-# with its own declared count.
+# fenced snippet are skipped: the offending code a reviewer pastes under an
+# entry is full of `#` comment lines, and one of those read as a heading
+# would end the block and drop every entry after it from the list. The fence
+# records its opening delimiter's character and length and closes only on a
+# run of the same character at that length or longer with nothing after it,
+# per CommonMark, so a three-backtick fence inside a four-backtick one does
+# not end it.
+#
+# THE HEADING IS THE SENTINEL, and it is read whatever the fence state says.
+# Both heading arms run before the fence arm and close any fence they find
+# open, so no run of fence-looking lines EARLIER in the body can leave the
+# scan inside a fence and swallow the block that follows — that would be
+# declared=0 and a gate approving over a finding, which is the whole defect
+# this term exists to close. It errs toward finding a block, never toward
+# missing one, which is the same direction as the quoting limit below.
+#
+# `capture` emits NOTHING on a non-match, not null, and a reduce update that
+# emits nothing sets the accumulator to null — every later line would then
+# fail on a null state and the read would exit 2. Hence the `// null`.
 #
 # THE SCAN READS THE COMMIT THE GATE RELIES ON, not only the head. Carry
 # accepts a review row at an ANCESTOR when nothing reviewed the head, and the
@@ -1792,16 +1808,20 @@ supp_raw="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
         --arg errmarks "$ERROR_PATTERNS" "$ATTESTATION_DEF"'
   def suppressed_scan:
     reduce (((. // "") | gsub("\r"; "")) | split("\n"))[] as $l
-      ({declared: 0, entries: 0, unparsed: 0, inblock: false, fence: false, list: []};
-        if ($l | test("^[ \t]{0,3}(```|~~~)")) then
-          .fence = (.fence | not)
-        elif .fence then
-          .
-        elif ($l | test("^#{1,6}[ \t]+Suppressed comments[ \t]*\\([0-9]+\\)[ \t]*$")) then
+      ({declared: 0, entries: 0, unparsed: 0, inblock: false, fchar: "", flen: 0, list: []};
+        ($l | capture("^[ \t]{0,3}(?<f>`{3,}|~{3,})(?<rest>.*)$") // null) as $fx
+        | if ($l | test("^#{1,6}[ \t]+Suppressed comments[ \t]*\\([0-9]+\\)[ \t]*$")) then
           .declared += ($l | capture("\\((?<n>[0-9]+)\\)") | .n | tonumber)
-          | .inblock = true
+          | .inblock = true | .fchar = "" | .flen = 0
         elif ($l | test("^#{1,6}[ \t]+Suppressed comments([ \t]|$)")) then
-          .unparsed += 1 | .inblock = true
+          .unparsed += 1 | .inblock = true | .fchar = "" | .flen = 0
+        elif .fchar != "" then
+          if ($fx != null and ($fx.f[0:1] == .fchar)
+              and (($fx.f | length) >= .flen) and ($fx.rest | test("^[ \t]*$")))
+          then .fchar = "" | .flen = 0
+          else . end
+        elif $fx != null then
+          .fchar = ($fx.f[0:1]) | .flen = ($fx.f | length)
         elif ($l | test("^#{1,6}[ \t]") or ($l | test("^</details>"))) then
           .inblock = false
         elif .inblock and ($l | test("^\\*\\*[^*]+:[0-9]+\\*\\*[ \t]*$")) then

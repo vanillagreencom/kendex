@@ -172,3 +172,18 @@ supp_budget_case "$SUPP_LONG" "$SUPP_LONG" \
 supp_fits "the degenerate detail fits the description budget"
 supp_carries "the degenerate detail counts every finding" "+2 more" "$SUPP_DETAIL"
 supp_omits "the degenerate detail names no path" "predicate-suppressed.sh" "$SUPP_DETAIL"
+
+# Fence state ahead of the block must not be able to hide it. A reviewer
+# quoting this repository's own markdown wraps the snippet in four backticks
+# so three-backtick fences can sit inside, and an unbalanced-looking run of
+# fence lines before the heading is the ordinary result. The heading is the
+# sentinel: it is read whatever the fence state, and it closes any fence it
+# finds open, so nothing earlier in the body can mask the block that follows.
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_MIN_STATE=any
+CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(printf 'Review prose quoting a markdown file.\n\n````markdown\n```\n````\n\n### Suppressed comments (1)\n\n**%s**\n* Blocking: a real finding.\n' "$SUPP_FIRST")")"
+run "a fence run before the heading cannot hide the block" suppressed-findings
+supp_carries "the masked-block detail names the count" "detail=1 suppressed finding(s)" "$LAST_LINE"
+supp_carries "the masked-block detail names the file:line" "$SUPP_FIRST" "$LAST_LINE"
