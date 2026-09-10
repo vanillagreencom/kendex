@@ -1,0 +1,1 @@
+- Installing into a project from the command line adds that folder to your projects, so the app shows it and its packages without a second command.

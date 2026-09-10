@@ -23,6 +23,24 @@ interface SettingsState extends ZoomSlice, ProjectsSlice {
   base: string | null;
   capabilities: CapabilityRow[];
   load: () => Promise<void>;
+  /** The settings file alone, read again.
+   *
+   *  The file is machine-local and two programs write it: this window, and
+   *  the CLI, which registers the project a `kendex add` installed into.
+   *  So a window that has been away can be looking at a registry that has
+   *  since gained a project, and the Projects page would go on drawing the
+   *  old list until the app was restarted.
+   *
+   *  Only the file. [`load`] also reads the capability table and asks the
+   *  window what size it opened at, and it reports a launch that would not
+   *  take the saved zoom — a session-long fact, so running that again on
+   *  every focus would re-open a dialog about a launch the person has
+   *  already answered for.
+   *
+   *  Nothing unsaved is lost to it: the reply is held under the store's own
+   *  ticket order, so a write issued after this read landed first keeps the
+   *  file it wrote, and this reply is dropped as the older view it is. */
+  reload: () => Promise<void>;
   setAppearance: (appearance: Appearance) => Promise<void>;
   setCommitOffer: (commitOffer: CommitOffer) => Promise<void>;
   setHarnessRoot: (harness: string, root: string) => Promise<void>;
@@ -50,13 +68,51 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     set({ settings: read.settings, base: read.base });
   };
 
+  /** How many writes are still to answer.
+   *
+   *  The ticket order alone cannot place a read against a write: it orders
+   *  by when a request left, and a read that left later can still answer
+   *  first — the backend serializes writes under the settings lock, a read
+   *  waits on nothing. Its newer ticket then becomes the newest held, and
+   *  the write's own reply, carrying the file it had just made, is dropped
+   *  as an older view. The person's change is on disk and off the screen.
+   *
+   *  So a read only speaks for the file while no write happened around it.
+   *  Two values say that, and both are needed: `outstanding` catches a
+   *  write still to answer when the read replies, and `epoch` — moved at
+   *  both ends of every write — catches one that started, or finished,
+   *  while the read was out. Without the second, a write that began before
+   *  the read and landed during it would leave the count back at zero, and
+   *  the read's newer ticket would put the file from before that save back
+   *  on screen.
+   *
+   *  Every write of this file goes through here, the zoom save and the two
+   *  project-registry writes included; they are wrapped where the store is
+   *  built, so the slices that own them keep their signatures. */
+  let writesOutstanding = 0;
+  let writeEpoch = 0;
+  const writing = async <T>(run: () => Promise<T>): Promise<T> => {
+    writesOutstanding += 1;
+    writeEpoch += 1;
+    try {
+      return await run();
+    } finally {
+      writesOutstanding -= 1;
+      writeEpoch += 1;
+    }
+  };
+
   /** One change, written as the whole file with the base its copy was read
    *  from. A stale refusal means something else wrote the file since the
    *  copy was read — a resize, another window. The change is a field-level
    *  intent, so it is carried onto a freshly read copy and written once
    *  more; that reverts nothing, because the fresh copy holds everything
    *  the stale one predated. Only a second refusal reaches the person. */
-  const write = async (
+  const write = (
+    change: (current: AppSettings) => AppSettings,
+  ): Promise<WriteOutcome> => writing(() => writeOnce(change));
+
+  const writeOnce = async (
     change: (current: AppSettings) => AppSettings,
   ): Promise<WriteOutcome> => {
     const { settings, base } = get();
@@ -114,12 +170,24 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     };
   };
 
+  // Saving the size, and registering or dropping a project, are writes of
+  // this file like any other, so a read must not speak over one. Wrapped
+  // where the store is built rather than inside each slice: the count
+  // belongs to the store that owns the ticket order, and the slices keep
+  // their signatures.
+  const projects = projectActions({ ticket, hold });
+  const zoom = zoomActions(set, get);
+
   return {
     settings: null,
     base: null,
     capabilities: [],
-    ...zoomActions(set, get),
-    ...projectActions({ ticket, hold }),
+    ...zoom,
+    saveZoom: () => writing(() => zoom.saveZoom()),
+    ...projects,
+    registerProject: (path) => writing(() => projects.registerProject(path)),
+    unregisterProject: (path) =>
+      writing(() => projects.unregisterProject(path)),
 
     load: async () => {
       // The size comes from the window, not from the file: the file holds
@@ -167,6 +235,24 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
           ],
         });
       }
+    },
+
+    reload: async () => {
+      const at = ticket();
+      const epoch = writeEpoch;
+      const settings = await commands.getSettings();
+      // A read that failed answers for nothing: the rows in hand stay,
+      // and the next focus tries again. Nothing on screen is waiting on
+      // it, so there is no one to tell.
+      if (settings.status !== "ok") return;
+      // Nor does a read speak for a file a write touched around it. A read
+      // waits on nothing and a write waits on the settings lock, so this
+      // one can be a view from before a save the person has already made
+      // — and its newer ticket would put that older view back on screen,
+      // whether the save is still out or landed while this was reading.
+      // The write is what moves the store; the next focus reads again.
+      if (writesOutstanding > 0 || writeEpoch !== epoch) return;
+      hold(settings.data, at);
     },
 
     // Theme and tool folder saves are instant and their

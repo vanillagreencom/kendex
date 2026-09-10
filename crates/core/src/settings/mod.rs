@@ -244,10 +244,7 @@ pub fn replace(env: &Env, settings: &AppSettings, held: &Base) -> Result<Base> {
 /// uses this one. Working it out from the returned list is a guess: two
 /// registrations in flight together each see both new entries.
 pub fn register_project(env: &Env, path: &Path) -> Result<(AppSettings, Base, PathBuf)> {
-    let canonical = crate::paths::canonical(path).map_err(|e| CoreError::io(path, e))?;
-    if !canonical.is_dir() {
-        return Err(CoreError::NotADirectory { path: canonical });
-    }
+    let canonical = entry_for(path)?;
     let recorded = canonical.clone();
     let (settings, base) = mutate(env, |settings| {
         if settings.projects.contains(&canonical) {
@@ -258,6 +255,66 @@ pub fn register_project(env: &Env, path: &Path) -> Result<(AppSettings, Base, Pa
         Ok(())
     })?;
     Ok((settings, base, recorded))
+}
+
+/// The entry a path registers under: the one spelling every registry
+/// comparison is made in, refusing anything that is not a directory.
+///
+/// Shared by both registration doors so a project registered by an install
+/// and one registered by hand can never be two entries for one folder.
+fn entry_for(path: &Path) -> Result<PathBuf> {
+    let canonical = crate::paths::canonical(path).map_err(|e| CoreError::io(path, e))?;
+    match canonical.is_dir() {
+        true => Ok(canonical),
+        false => Err(CoreError::NotADirectory { path: canonical }),
+    }
+}
+
+/// What a registration wrote, and whether it had anything to write.
+#[derive(Debug)]
+pub struct Registration {
+    pub settings: AppSettings,
+    pub base: Base,
+    /// The entry the registry now holds for this request, in the registry's
+    /// own spelling — the root every surface keying off the project uses.
+    pub root: PathBuf,
+    /// False where the registry already held this root, which is a
+    /// registration that had nothing to do rather than one that failed.
+    pub added: bool,
+}
+
+/// Register a project the caller has just written into, answering with
+/// what the registry holds either way.
+///
+/// [`register_project`] is the door a person opens by naming a folder, and
+/// it refuses one that is already there: asking twice for the same thing is
+/// a mistake worth naming. This is the door a completed install opens, and
+/// there the same folder arriving twice is ordinary — a second install into
+/// a project kendex already tracks has the outcome the first one had, so it
+/// is a success with nothing to add rather than a refusal over a run that
+/// wrote files.
+///
+/// Same rule, same spelling, one registry: [`entry_for`] canonicalizes both
+/// doors, so a folder reached through a symlink on one and its real path on
+/// the other is one entry.
+pub fn ensure_project_registered(env: &Env, path: &Path) -> Result<Registration> {
+    let root = entry_for(path)?;
+    let mut added = false;
+    let entry = root.clone();
+    let (settings, base) = mutate(env, |settings| {
+        if !settings.projects.contains(&entry) {
+            settings.projects.push(entry.clone());
+            settings.projects.sort();
+            added = true;
+        }
+        Ok(())
+    })?;
+    Ok(Registration {
+        settings,
+        base,
+        root,
+        added,
+    })
 }
 
 /// Removes by canonical path when resolvable, else by the recorded path —
@@ -390,6 +447,88 @@ pub(crate) mod tests {
             unregister_project(&env, &project),
             Err(CoreError::ProjectNotRegistered { .. })
         ));
+    }
+
+    /// A registry holding one project, an unrelated one beside it and an
+    /// unrelated setting written over both — the ground the two cases
+    /// below stand on. Answers the project's canonical path.
+    fn a_registry_with_one_project_in_it(root: &Path) -> (Env, PathBuf) {
+        let env = env_in(root);
+        let project = root.join("proj");
+        std::fs::create_dir(&project).unwrap();
+        let elsewhere = root.join("other");
+        std::fs::create_dir(&elsewhere).unwrap();
+        register_project(&env, &elsewhere).unwrap();
+        mutate(&env, |settings| {
+            settings.appearance = Appearance::Dark;
+            Ok(())
+        })
+        .unwrap();
+
+        let first = ensure_project_registered(&env, &project).unwrap();
+        assert!(first.added);
+        assert_eq!(first.root, project);
+        (env, project)
+    }
+
+    /// The registration an install makes, asked twice for the same folder.
+    /// A second install into a project kendex already tracks is a success
+    /// with nothing to add — the registry holds one entry, and everything
+    /// else in the file is exactly where it was.
+    ///
+    /// Portable, and deliberately so: repeating an install is what a person
+    /// does on every platform.
+    #[test]
+    fn an_install_registration_adds_one_entry_however_often_it_is_asked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::paths::canonical(tmp.path()).unwrap();
+        let (env, project) = a_registry_with_one_project_in_it(&root);
+
+        let repeat = ensure_project_registered(&env, &project).unwrap();
+
+        assert!(!repeat.added, "the same path added a second entry");
+        assert_eq!(repeat.root, project);
+        let stored = load(&env).unwrap();
+        assert_eq!(stored.projects, [root.join("other"), project]);
+        // Every unrelated field the registrations were written over.
+        assert_eq!(stored.appearance, Appearance::Dark);
+    }
+
+    /// The same folder reached by a second spelling. Unix only: a symlink
+    /// is what makes one directory answer to two names here, and Windows
+    /// has no equivalent a fixture may create without a privilege the test
+    /// runner does not have.
+    #[cfg(unix)]
+    #[test]
+    fn an_install_registration_answers_one_entry_for_a_second_spelling() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::paths::canonical(tmp.path()).unwrap();
+        let (env, project) = a_registry_with_one_project_in_it(&root);
+        // A person can be standing in either when they install.
+        let through_a_link = root.join("link");
+        std::os::unix::fs::symlink(&project, &through_a_link).unwrap();
+
+        let repeat = ensure_project_registered(&env, &through_a_link).unwrap();
+
+        assert!(!repeat.added, "the link added a second entry");
+        assert_eq!(repeat.root, project);
+        assert_eq!(load(&env).unwrap().projects, [root.join("other"), project]);
+    }
+
+    /// A destination that is not a directory is refused before the registry
+    /// moves, on the install door as on the one a person opens.
+    #[test]
+    fn an_install_registration_refuses_a_destination_that_is_not_a_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_in(tmp.path());
+        let file = tmp.path().join("notes.md");
+        std::fs::write(&file, "").unwrap();
+
+        assert!(matches!(
+            ensure_project_registered(&env, &file),
+            Err(CoreError::NotADirectory { .. })
+        ));
+        assert!(load(&env).unwrap().projects.is_empty());
     }
 
     #[test]

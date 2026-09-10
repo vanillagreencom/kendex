@@ -132,6 +132,7 @@ export function useStartupLoads() {
   const auditRefresh = useAuditStore((s) => s.refresh);
   const updatesLoad = useUpdatesStore((s) => s.reload);
   const load = useSettingsStore((s) => s.load);
+  const reloadSettings = useSettingsStore((s) => s.reload);
   const noticeLoad = useNoticeStore((s) => s.load);
   const accountLoad = useAccountStore((s) => s.load);
   const scanGeneration = useScanStore((s) => s.generation);
@@ -167,6 +168,15 @@ export function useStartupLoads() {
       if (Date.now() - last < FOCUS_RESCAN_DEBOUNCE_MS) return;
       last = Date.now();
       void refresh();
+      // The settings file is machine-local and the CLI writes it too: a
+      // `kendex add` in a terminal registers the folder it installed
+      // into, and the scan behind `refresh` reads that registry itself.
+      // Without this the scan would find the new project's packages while
+      // the Projects page went on drawing the list from before it. The
+      // registry alone is re-read, and nothing here asks a project what
+      // to do with its uncommitted files: a command run in a terminal is
+      // not a reason to put a question on screen in the app.
+      void reloadSettings();
       // An update or edit could have landed while the window was away —
       // the badge should notice without a visit to the page. The audit is
       // forced along with it: an editor saving a skill while the app was
@@ -180,7 +190,15 @@ export function useStartupLoads() {
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [refresh, auditRefresh, updatesLoad, load, noticeLoad, accountLoad]);
+  }, [
+    refresh,
+    auditRefresh,
+    updatesLoad,
+    load,
+    reloadSettings,
+    noticeLoad,
+    accountLoad,
+  ]);
 }
 
 export default function App() {
