@@ -59,6 +59,7 @@ import {
 	type ClaudeAccountRoute,
 } from "./account-router.js";
 import { BRIDGE_ACCOUNT_HOST } from "./account-host.js";
+import { BRIDGE_BILLING_IDENTITY, CLAUDE_BILLING_IDENTITY_SYMBOL } from "./billing-identity.js";
 import { registerBridgeCommands } from "./bridge-commands.js";
 import { consumeQuery, emitRateLimitEvent, type ClaudeAttemptFailure } from "./consume-query.js";
 import { buildClaudeQueryOptions } from "./query-options.js";
@@ -446,6 +447,13 @@ function releaseProviderTokens(event: string): void {
 	const g = globalThis as Record<symbol, any>;
 	if (g[CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL] === BRIDGE_ACCOUNT_HOST) {
 		g[CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL] = undefined;
+	}
+	// The identity belongs to a child this instance ran. A reload re-probes on
+	// its first turn, so leaving the old answer standing would name a login the
+	// next instance has not confirmed.
+	if (g[CLAUDE_BILLING_IDENTITY_SYMBOL] === BRIDGE_BILLING_IDENTITY) {
+		BRIDGE_BILLING_IDENTITY.clear();
+		g[CLAUDE_BILLING_IDENTITY_SYMBOL] = undefined;
 	}
 	if (g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) {
 		debug(`${event}: clearing ACTIVE_STREAM_SIMPLE_KEY`);
@@ -1397,6 +1405,10 @@ export default function (pi: ExtensionAPI) {
 	if (claimPrimaryInstance()) {
 		const host = globalThis as Record<symbol, any>;
 		host[CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL] = BRIDGE_ACCOUNT_HOST;
+		// Published beside it so a reader finds a store that answers "no login
+		// confirmed yet" rather than nothing at all, and so both are owned by
+		// the same instance.
+		host[CLAUDE_BILLING_IDENTITY_SYMBOL] = BRIDGE_BILLING_IDENTITY;
 	}
 
 	// Reset shared (Claude) conversation state on pi session lifecycle events.

@@ -3,9 +3,8 @@ import { basename } from "node:path";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { subagentStatuslineMarker } from "./agent-statusline.js";
-import { CLAUDE_BRIDGE_PROVIDER, claudeAccountEmail } from "./account.js";
 import { stripAnsi } from "./ansi.js";
-import { readCavemanBridge } from "./bridges.js";
+import { readCavemanBridge, readClaudeBillingIdentityBridge } from "./bridges.js";
 import { glyphs } from "./glyphs.js";
 import { CAVEMAN_ICON_ACTIVE, CAVEMAN_ICON_INACTIVE } from "./constants.js";
 import { settingBoolean, settingNumber } from "./settings.js";
@@ -90,15 +89,14 @@ function statuslineContextInfo(ctx: ExtensionContext): { label: string; percent:
 	return { label: formatWindow(contextWindow), percent: 100 - usedPercent };
 }
 
-/** The account segment, or "" when there is nothing truthful to show. Only a
- *  Claude-bridge model bills a Claude subscription; a gateway, an API key or a
- *  local model authenticates as something the Claude config directory does not
- *  name, and showing that directory's email beside one would name the wrong
- *  payer. */
+/** The account segment, or "" when no login has been confirmed. The whole
+ *  judgement of what counts as a confirmed login belongs to the Claude bridge,
+ *  which owns the SDK; this reads its answer and displays it. Nothing shows
+ *  until the session's first turn has started a child, because that is when
+ *  the bridge learns the answer. */
 function accountLabel(ctx: ExtensionContext): string {
 	if (!settingBoolean("statusline.showAccount", true, ctx.cwd)) return "";
-	if (ctx.model?.provider !== CLAUDE_BRIDGE_PROVIDER) return "";
-	return claudeAccountEmail() ?? "";
+	return readClaudeBillingIdentityBridge()?.currentLoginEmail() ?? "";
 }
 
 function gitBadge(state: GitState, showDirtyMarker: boolean): string {
