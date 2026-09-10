@@ -39,11 +39,16 @@ the installed shim: `install-git-hooks --repo <root>`.
 Per ref line: a deletion, and a line whose REMOTE ref is a tag or a note, are
 announced and skipped. What a line deposits on the remote decides that, never
 how its left side is spelled: `git push origin HEAD` lands a branch too. A
-line this lane cannot read is refused rather than skipped. The base is the
-remote's oid when this repository has that commit, else the boundary of what
-the remote does not have yet — read off this repository's refs for the remote,
-and used only where git's own push URL says they describe the place the push
-is going. With no base to vouch for, the whole tree is the honest scope.
+line this lane cannot read is refused rather than skipped.
+
+The base is the remote's oid where this repository has that commit: git read
+that oid from the destination itself, and it is the only destination-bound
+evidence a pre-push hook is given. Otherwise the base is a best-effort LOCAL
+scope — what this branch adds over what this repository's refs for the remote
+last recorded — and not a claim about the destination. Those refs record a
+past fetch and nothing local dates them, so after a `git remote set-url` they
+still describe the previous repository and an oversized file can read there as
+pre-existing. With no base at all, the whole tree is the scope.
 
 Two refusals keep the verdict about the thing being pushed. A branch whose tip
 is not HEAD is refused: byte-ceiling is the only lane scoped to a commit range
@@ -115,14 +120,18 @@ zero_oid() { # OID — 0 when it is the all-zero oid
   return 0
 }
 
-# Whether this repository's refs for the remote describe where the push lands.
+# Whether the refs a boundary would come from are at least the ones kept for
+# the place this push is going.
 #
-# `refs/remotes/<name>/*` were fetched from remote.<name>.url. A push can go
-# somewhere else entirely — remote.<name>.pushurl, or an insteadOf rewrite —
-# and the fetch-upstream, push-to-a-fork triangle is an ordinary setup. A
-# boundary read off refs that describe another repository bounds the range by
-# what THAT repository holds, and byte-ceiling would then diff from a base the
-# destination never had and pass content that is in fact being uploaded.
+# Hygiene, not soundness: it cannot establish that those refs describe the
+# destination, because nothing local can — see above. What it does is stop a
+# boundary being read off refs that are plainly somebody else's.
+# `refs/remotes/<name>/*` were fetched from remote.<name>.url, while
+# remote.<name>.pushurl and insteadOf rewrites send a push to a repository
+# those refs have never described, and the fetch-upstream, push-to-a-fork
+# triangle is an ordinary setup. A boundary read off them bounds the range by
+# what THAT repository holds, and byte-ceiling would diff from a base the
+# destination never had.
 #
 # Every value, and exactly one of them, because remote.<name>.url is not a
 # scalar. A remote set up to push one branch to two places carries two, a
@@ -134,11 +143,11 @@ zero_oid() { # OID — 0 when it is the all-zero oid
 # elsewhere in this package and are right to be: those ask which value git
 # uses, and for a scalar that is the last one, which is what `--get` returns.
 #
-# Where the two are not established equal — a remote spelled as a URL with no
-# entry to read, several URLs, or the same repository under two spellings —
-# the caller falls to the whole tree. That is the wider scope, and a bound is
-# the one thing that must never be guessed narrow.
-tracking_describes_push() { # -> 0 when the tracking refs describe the push URL
+# Where the two are not equal — a remote spelled as a URL with no entry to
+# read, several URLs, or the same repository under two spellings — the caller
+# falls to the whole tree. That is the wider scope, and a bound is the one
+# thing that must never be guessed narrow.
+tracking_describes_push() { # -> 0 when the tracking refs are this push URL's
   local status=0 count=0 url="" only=""
   # 1 is the key being absent, which a remote spelled as a URL always is;
   # anything else is configuration that could not be read. Both are the same
@@ -154,22 +163,53 @@ tracking_describes_push() { # -> 0 when the tracking refs describe the push URL
   [ "$only" = "$PUSH_URL" ]
 }
 
-# What a pushed branch adds to the remote, as a ref the batch can diff from.
+# What a pushed branch adds, as a ref the batch can diff from — and how much
+# that ref is worth, which is less than it looks.
+#
+# One thing a pre-push hook is handed is bound to the destination: the remote
+# oid on the ref line, which git read from the destination's own advertisement
+# moments earlier. Where it is non-zero and this repository holds the object,
+# the range is exactly what the destination lacks and byte-ceiling's baseline
+# is the destination's own blob. There is no second source of that evidence
+# short of a network call.
+#
+# Everything below it is LOCAL. A zero remote oid says the destination has no
+# such ref, and nothing here can say what it does have, so the boundary is a
+# best-effort local scope — what this branch adds over what this repository's
+# refs for the remote last recorded — and not a claim about the destination.
+# It is taken because it is usually right and the alternatives are worse, not
+# because it is sound.
+#
+# The limitation that leaves, named here rather than left to be rediscovered:
+# those refs record a past fetch and nothing local dates them. After a
+# `git remote set-url` they still describe the previous repository while every
+# test below passes, so on a new destination branch byte-ceiling can treat an
+# oversized file as pre-existing and let it through. `git ls-remote` would
+# close it and is refused: a network round trip and an offline failure mode
+# inside a hook, buying back the new-branch case alone.
+#
+# Whole tree is not the fallback for the zero case, for a measured reason.
+# byte-ceiling's `--all` emits candidates with no source blob, so its
+# tighten-only ratchet never applies and every tracked file over the ceiling
+# fails; CHECKS.md § byte-ceiling states the scopes apart. Falling there would
+# permanently refuse every new-branch push in exactly the repositories that
+# ratchet was written to accommodate. Giving `--all` a ratchet is
+# byte-ceiling's to do, not this lane's.
 resolve_base() { # VAR LOCAL-OID REMOTE-OID — VAR gets the base; 1 when there is none
   local __v="$1" local_oid="$2" remote_oid="$3" status=0 line=""
-  # Git's own answer first: the commit the remote ref is at. It is usable only
-  # where this repository actually has that object — git sends the oid it
-  # learned from the remote, which a shallow or freshly cloned checkout may
-  # never have fetched.
+  # The destination's own answer first: the commit the remote ref is at. It is
+  # usable only where this repository actually has that object — git sends the
+  # oid it learned from the remote, which a shallow or freshly cloned checkout
+  # may never have fetched.
   if ! zero_oid "$remote_oid" \
     && git rev-parse --verify --quiet "$remote_oid^{commit}" >/dev/null 2>&1; then
     eval "$__v=\$remote_oid"
     return 0
   fi
-  # Otherwise: what this branch adds over everything the remote is known to
-  # have. The boundary commits of that range are the newest commits the remote
-  # already carries, and any of them is a base the branch's own changes hang
-  # off.
+  # Otherwise: what this branch adds over what those refs last recorded. The
+  # boundary commits of that range are the newest commits they carry, and any
+  # of them is a base the branch's own changes hang off — locally, on the
+  # terms set out above.
   #
   # A remote spelled as a URL rather than as a name (`git push https://... main`)
   # matches no tracking refs, so nothing is excluded, the walk reaches the
