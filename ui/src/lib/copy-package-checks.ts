@@ -36,8 +36,12 @@ export const ON_MEANS =
  *  tool where it does run. */
 export const INCOMPLETE_MEANS =
   "The check is set up in this project and does not yet run in every supported tool.";
+/** Said while a read is still out as well as after one failed: both leave
+ *  the same nothing to report, and the card does not need to tell them
+ *  apart. A sentence naming a failure is untrue for the seconds after
+ *  launch, when every read is simply still in flight. */
 export const UNKNOWN_MEANS =
-  "kendex could not read this project, so it cannot say whether the check runs here.";
+  "kendex cannot say yet whether the check runs here.";
 
 /** Which of the supported tools run the check now and which do not. An
  *  installer's answer cannot say this, so it is read back from the machine
@@ -153,8 +157,12 @@ export const BLOCKED_LABEL = "In the way of the check";
 
 export const checksOn = (project: string): string =>
   `Package checks are on in ${project}`;
+/** An incomplete setup covers some supported tools and not others, so
+ *  this says which claim is false — running everywhere — in the words
+ *  [INCOMPLETE_MEANS] uses for the same state on the row. Saying the
+ *  checks are not running is untrue of the tool where they are. */
 export const checksHeld = (project: string): string =>
-  `Package checks are set up in ${project} and not running yet`;
+  `Package checks are set up in ${project} and do not yet run in every supported tool`;
 export const ENABLE_FAILED = "Couldn't enable package checks";
 
 /** Why the setup stopped where it did. The card says which tools are

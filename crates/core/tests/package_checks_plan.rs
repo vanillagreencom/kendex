@@ -518,14 +518,22 @@ fn an_unrelated_conflict_is_named_and_does_not_hold_the_registration() {
     );
 }
 
-/// A conflict at the check's OWN destination. It stops the registration,
-/// unlike one anywhere else in the project, so the confirmation has to
-/// name it before the ask and the answer afterwards has to say it is what
-/// went wrong. Reading a plan with the check's declaration stripped — the
-/// one that counts the person's unrelated work — cannot see this at all.
+/// A conflict at the check's OWN destination, on a RE-ENABLE. It stops the
+/// registration, unlike one anywhere else in the project, so the
+/// confirmation names it before the ask and the answer afterwards says it
+/// is what went wrong. Reading a plan with the check's declaration
+/// stripped — the one that counts the person's unrelated work — cannot see
+/// this at all.
+///
+/// Re-enable only, and the `install` below is what makes it one. The
+/// preview can name this position because the check's script is already in
+/// the local source, so the planner derives the artifact and raises a row
+/// about it. A first enable has no such script yet and names nothing:
+/// [`a_first_enable_names_no_conflict_but_still_says_why_after`] is that
+/// world, and the two together are the whole of what this surface does.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_conflict_at_the_checks_own_target_is_named_and_is_the_reason() {
+fn a_conflict_at_the_checks_own_target_is_named_on_a_re_enable() {
     let w = fresh_git_world();
     declare(&w, "");
     // The checks already set up here, which is what puts the check's
@@ -779,4 +787,59 @@ fn the_repositorys_own_file_is_listed_and_is_still_not_pending_work() {
     assert!(ignore.no_preview.is_some(), "{ignore:?}");
     // And the count is still about the person's own work alone.
     assert_eq!(preview.other_pending, 0, "{preview:?}");
+}
+
+/// The same conflict on a FIRST enable, where the preview cannot see it.
+///
+/// Nothing of the check is on disk yet, so the planner derives no artifact
+/// for it and no drift row about its positions can exist — the preview
+/// names no conflict and the person is asked without being told. That is a
+/// gap this branch does not close: the preview would need a plan whose
+/// desired state carries an artifact restated from bytes rather than read
+/// from disk, which is the engine's to give and not drift's to invent.
+///
+/// What is closed, and what this case exists to hold: after the write the
+/// scope is read back, so the row still reports the setup incomplete AND
+/// names the position that stopped it. A person is never left with a state
+/// and no reason, whichever enable they are on.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_first_enable_names_no_conflict_but_still_says_why_after() {
+    let w = fresh_git_world();
+    declare(&w, "");
+    // A link kendex will not follow, exactly where the check's script
+    // renders — put there before anything of the check exists.
+    let target = w.root.join(".claude/hooks/kendex-drift.sh");
+    fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink("/dev/null", &target).unwrap();
+
+    // The ask says nothing about it. Recorded, not endorsed.
+    let preview = drift::setup::setup_plan(&w.env, &w.scope).unwrap();
+    assert!(
+        preview.blocked.is_empty(),
+        "a first enable cannot yet see its own positions: {:?}",
+        preview.blocked
+    );
+
+    // The write, as the command runs it.
+    let plan = drift::hook::install_plan(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &plan).unwrap();
+    let render = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default()).unwrap();
+    let _ = apply::execute(&w.env, &render.plan);
+
+    // Read back: incomplete, and able to say why.
+    let after = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default()).unwrap();
+    let waiting = drift::setup::targets_waiting(&w.env, &w.scope, &after).unwrap();
+    assert!(
+        waiting.contains(&HarnessId::Claude),
+        "the tool whose position is occupied is registered: {:?}",
+        after.drift
+    );
+    let said = drift::setup::check_conflicts(&after);
+    assert!(
+        said.iter().any(|one| one.contains("kendex-drift.sh")),
+        "an incomplete first enable with no reason to give: {:?}",
+        after.drift
+    );
+    assert!(target.is_symlink(), "the position was written over");
 }

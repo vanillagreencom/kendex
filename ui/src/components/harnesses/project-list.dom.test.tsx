@@ -30,6 +30,7 @@ import {
   PACKAGE_CHECKS_LABEL,
   runsIn,
   STATE_UNKNOWN,
+  UNKNOWN_MEANS,
 } from "@/lib/copy-package-checks";
 import {
   CHANGE_FOLDER_LABEL,
@@ -318,6 +319,10 @@ describe("package checks on a project's card", () => {
     expect(host.textContent).toContain(PACKAGE_CHECKS_LABEL);
     expect(host.textContent).toContain(STATE_UNKNOWN);
     expect(button(host, ENABLE_CHECKS_LABEL)).toBeUndefined();
+    // Nothing failed here — the reads are still out — so the line says
+    // what it does not know rather than reporting a failure.
+    expect(useScanStore.getState().error).toBeNull();
+    expect(host.textContent).toContain(UNKNOWN_MEANS);
   });
 
   // A hook wearing the check's name that a marketplace package installed.
