@@ -24,6 +24,7 @@ vi.mock("@/bindings", () => ({
     appVersion: vi.fn(),
     commitOfferScan: vi.fn(),
     relocateProject: vi.fn(),
+    projectChangesScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
   },
   ZOOM: { min: 50, max: 200, step: 10, default: 100 },
 }));
