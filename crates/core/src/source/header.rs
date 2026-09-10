@@ -49,16 +49,29 @@ pub(crate) fn header_of(kind: ItemKind, text: &str) -> Metadata {
 /// answer an item whose author wrote no header gives, and the one every
 /// blank-state rule downstream is written against.
 pub(crate) fn read(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Metadata {
+    try_read(sealed, kind, path).unwrap_or_default()
+}
+
+/// [`read`] for a caller that publishes what it reads and must not
+/// publish a row about a file it could not open. A header that is not
+/// there is still nothing rather than an error — that is the state an
+/// author who wrote none leaves — but a seal that refuses a file it just
+/// called a file is a failure of the read, and `kendex index` feeds the
+/// community directory, where a silently summary-less row is harder to
+/// notice than a run that stopped.
+pub(crate) fn try_read(
+    sealed: &SealedSource,
+    kind: ItemKind,
+    path: &Path,
+) -> crate::error::Result<Metadata> {
     let Some(file) = header_file(kind, path) else {
-        return Metadata::default();
+        return Ok(Metadata::default());
     };
     if !sealed.is_file(&file) {
-        return Metadata::default();
+        return Ok(Metadata::default());
     }
-    match sealed.read(&file) {
-        Ok(bytes) => header_of(kind, &String::from_utf8_lossy(&bytes)),
-        Err(_) => Metadata::default(),
-    }
+    let bytes = sealed.read(&file)?;
+    Ok(header_of(kind, &String::from_utf8_lossy(&bytes)))
 }
 
 /// The catalogs one scope's declarations resolve to, opened once each.
@@ -68,8 +81,18 @@ pub(crate) fn read(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Metada
 /// `kendex.toml` per package would pay for that once per row.
 #[derive(Default)]
 pub(crate) struct DeclaredHeaders {
-    opened: std::collections::HashMap<String, Option<(SealedSource, super::SourceConfig)>>,
+    opened: std::collections::HashMap<OpenedKey, Option<(SealedSource, super::SourceConfig)>>,
 }
+
+/// What decides which catalog a declaration opens: the scope whose
+/// manifest declared the source, the name it declared it under, and the
+/// hold the item takes on it.
+///
+/// The scope belongs in the key because the name alone does not name a
+/// catalog: `local` and `in-place` are per-scope roots, a `path =` is
+/// read against the scope's root, and a repo source is whatever the
+/// asking scope's own manifest declared. One string, two catalogs.
+type OpenedKey = (crate::model::Scope, String, Option<String>);
 
 impl DeclaredHeaders {
     /// What one declared package's own source says about it, at the
@@ -90,10 +113,11 @@ impl DeclaredHeaders {
         name: &str,
     ) -> Option<Metadata> {
         let decl = manifest.declared(kind).get(name)?;
-        // Keyed by what resolves the bytes — the source and the hold this
-        // item declares on it — so two items of one source pinned to
-        // different revisions never read each other's catalog.
-        let key = format!("{}\u{1f}{}", decl.source, decl.rev.as_deref().unwrap_or(""));
+        // Keyed by everything that resolves the bytes — the scope, the
+        // source and the hold this item declares on it — so two items of
+        // one source pinned to different revisions, and two scopes that
+        // declared one name differently, never read each other's catalog.
+        let key = (scope.clone(), decl.source.clone(), decl.rev.clone());
         let opened = self.opened.entry(key).or_insert_with(|| {
             let state =
                 super::resolve_at(env, scope, &decl.source, manifest, decl.rev.as_deref()).ok()?;
@@ -106,6 +130,10 @@ impl DeclaredHeaders {
         });
         let (sealed, config) = opened.as_ref()?;
         let path = super::find_item(sealed, config, kind, name)?;
+        // A kind that writes no header of its own has nothing to answer
+        // with: a plugin's words belong to the registry that lists it, and
+        // a blank reading here would stand in front of them.
+        header_file(kind, &path)?;
         Some(read(sealed, kind, &path))
     }
 }

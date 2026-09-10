@@ -62,12 +62,15 @@ pub struct ProvenanceRow {
     /// browsing — the one field every surface showing an installed
     /// package's own words reads.
     ///
-    /// The observation's own header where it has one, and the words the
-    /// declaration's source writes where it does not: an entry inside a
-    /// tool's config file records how to reach a server, never what the
-    /// server is for. `None` says the author wrote nothing reachable, and
-    /// that is a supported state — a command, a URL, a path or a script
-    /// body is never promoted into a sentence about the package.
+    /// The words the package's own declaration writes, and the
+    /// observation's own header where no declaration answers: a file a
+    /// tool holds is what that tool loads, not what the author wrote
+    /// about the package — an entry in a config file records how to reach
+    /// a server, an agent's frontmatter carries the line its harness
+    /// selects on, and a generated wrapper carries kendex's own. `None`
+    /// says the author wrote nothing reachable, and that is a supported
+    /// state — a command, a URL, a path, a script body or a line kendex
+    /// built is never promoted into a sentence about the package.
     pub summary: Option<String>,
     /// Which package this installation is, where the records establish
     /// one. `None` says they do not: the observation keeps its own
@@ -209,14 +212,24 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
 }
 
 /// What one observed installation's package says about itself: the words
-/// the observation itself carries, else the words the declaration it
-/// belongs to writes.
+/// the declaration it belongs to writes, else the words the observation
+/// itself carries.
 ///
-/// An MCP server is an entry in a tool's config file and a plugin is a
-/// folder of somebody else's code; neither holds words about the package,
-/// and the package they were installed from does. Asked of the package the
-/// records establish and never of the observed spelling — a name two
-/// packages share is no evidence that either wrote this one.
+/// The declaration's source is where the author wrote about the package;
+/// the file on disk is what a harness loads. They are not the same text
+/// and several kinds keep only the second: an MCP server is an entry in a
+/// tool's config file, a plugin is a folder of somebody else's code, an
+/// agent's rendered frontmatter carries the `description` its harness
+/// selects on, a Codex command is a wrapper kendex generated, and a
+/// Cursor hook is a rule file kendex titled. Reading the installed file
+/// first would answer for one package version in as many voices as there
+/// are tools holding it — and one of those voices is kendex's own.
+///
+/// Asked of the package the records establish and never of the observed
+/// spelling — a name two packages share is no evidence that either wrote
+/// this one. Where nothing declared answers — content nobody manages, an
+/// observation the records tie to no package, a source this machine
+/// cannot reach — the observation's own words stand.
 fn observed_summary(
     env: &Env,
     headers: &mut crate::source::header::DeclaredHeaders,
@@ -224,15 +237,27 @@ fn observed_summary(
     item: &crate::model::ObservedItem,
     package: Option<&PackageRef>,
 ) -> Option<String> {
-    if let Some(summary) = item.summary.clone() {
-        return Some(summary);
+    match declared_header(env, headers, records, item, package) {
+        Some(header) => header.summary_or_description().map(str::to_owned),
+        None => item.summary.clone(),
     }
+}
+
+/// The header of the package one observation belongs to, out of the
+/// source its scope declared it from. `None` where no declaration of it
+/// can be reached, which is not the same as a declaration that says
+/// nothing: an author who wrote no words leaves a blank row, and nothing
+/// downstream may fill that blank from the file a tool reads.
+fn declared_header(
+    env: &Env,
+    headers: &mut crate::source::header::DeclaredHeaders,
+    records: &crate::ownership::Records,
+    item: &crate::model::ObservedItem,
+    package: Option<&PackageRef>,
+) -> Option<crate::scan::metadata::Metadata> {
     let package = package?;
     let manifest = records.manifest.as_deref()?;
-    headers
-        .of(env, &item.scope, manifest, package.kind, &package.name)?
-        .summary_or_description()
-        .map(str::to_owned)
+    headers.of(env, &item.scope, manifest, package.kind, &package.name)
 }
 
 /// The words for every row the scan could not see.

@@ -17,10 +17,6 @@ pub struct HookSpec {
     /// Always in Claude's tool names, until a harness restates it.
     pub matcher: Option<String>,
     pub description: String,
-    /// What the author says the hook does, written for a person browsing.
-    /// `None` where none was written; [`HookSpec::human_summary`] is what
-    /// a reader is shown.
-    pub summary: Option<String>,
     /// Advisory prose, catalog hooks only.
     pub safety: Option<String>,
     /// Seconds; harnesses that count milliseconds convert on render.
@@ -42,7 +38,6 @@ pub enum HookBody {
 impl From<HookSource> for HookSpec {
     fn from(source: HookSource) -> HookSpec {
         HookSpec {
-            summary: source.human_summary(),
             name: source.name,
             event: source.event,
             matcher: source.matcher,
@@ -64,10 +59,6 @@ impl HookSpec {
             name,
             event: hook.event.clone(),
             matcher: hook.matcher.clone(),
-            summary: hook
-                .description
-                .clone()
-                .filter(|text| !text.trim().is_empty()),
             description: hook.description.clone().unwrap_or_default(),
             safety: None,
             timeout: hook.timeout,
@@ -75,13 +66,6 @@ impl HookSpec {
             agents: hook.agents.clone(),
             body: HookBody::Command(hook.command.clone()),
         }
-    }
-
-    /// What a person browsing is shown, or `None` where the author wrote
-    /// nothing. Never the command: the person's own command is what a
-    /// custom hook runs, not what it is for.
-    pub fn human_summary(&self) -> Option<&str> {
-        self.summary.as_deref()
     }
 
     pub fn applies_to(&self, harness: HarnessId) -> bool {

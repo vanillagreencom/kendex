@@ -3099,12 +3099,15 @@ export type ProvenanceRow = {
 	 *  browsing — the one field every surface showing an installed
 	 *  package's own words reads.
 	 * 
-	 *  The observation's own header where it has one, and the words the
-	 *  declaration's source writes where it does not: an entry inside a
-	 *  tool's config file records how to reach a server, never what the
-	 *  server is for. `None` says the author wrote nothing reachable, and
-	 *  that is a supported state — a command, a URL, a path or a script
-	 *  body is never promoted into a sentence about the package.
+	 *  The words the package's own declaration writes, and the
+	 *  observation's own header where no declaration answers: a file a
+	 *  tool holds is what that tool loads, not what the author wrote
+	 *  about the package — an entry in a config file records how to reach
+	 *  a server, an agent's frontmatter carries the line its harness
+	 *  selects on, and a generated wrapper carries kendex's own. `None`
+	 *  says the author wrote nothing reachable, and that is a supported
+	 *  state — a command, a URL, a path, a script body or a line kendex
+	 *  built is never promoted into a sentence about the package.
 	 */
 	summary: string | null,
 	/**

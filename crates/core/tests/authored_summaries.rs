@@ -36,6 +36,16 @@ const NOISE: &str = "#!/usr/bin/env bash\necho summary: not a header\nexit 0\n";
 
 const DB_MCP: &str = "command = \"db-mcp\"\nsummary = \"Reads and writes the project database.\"\n";
 
+/// An agent whose two lines differ: a harness selects on the description,
+/// and a person reads the summary. Neither rendered agent file carries the
+/// summary — it is not a rendering input — so the row that shows it has to
+/// read the declaration.
+const RUST_AGENT: &str = "---\nname: rust\ndescription: Use for hot paths and lock-free code.\nsummary: Tunes the slow parts of a Rust program.\n---\nBody.\n";
+
+/// A command Codex installs as a generated one-file skill, whose
+/// frontmatter kendex writes from the name and the description alone.
+const SCRUB_COMMAND: &str = "---\ndescription: Scrub the code\nsummary: Takes the secrets out of a file before you share it.\n---\nBody.\n";
+
 struct Fixture {
     _tmp: tempfile::TempDir,
     env: Env,
@@ -46,6 +56,15 @@ struct Fixture {
 
 #[allow(clippy::unwrap_used)]
 fn fixture(declarations: &str) -> Fixture {
+    fixture_for(&["claude"], declarations)
+}
+
+/// The same project, installing into the named tools. Which tool holds a
+/// package decides what the file on disk looks like — a Codex command is a
+/// generated skill, a Cursor hook is a rule file kendex titled — so a case
+/// about the words a row shows names the tools it means.
+#[allow(clippy::unwrap_used)]
+fn fixture_for(harnesses: &[&str], declarations: &str) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
@@ -53,17 +72,16 @@ fn fixture(declarations: &str) -> Fixture {
     fs::create_dir_all(project.join(".claude")).unwrap();
 
     let catalog = home.join("catalog");
-    fs::create_dir_all(catalog.join("hooks")).unwrap();
-    fs::create_dir_all(catalog.join("mcp")).unwrap();
-    fs::write(catalog.join("hooks/guard.sh"), GUARD).unwrap();
-    fs::write(catalog.join("hooks/plain.sh"), PLAIN).unwrap();
-    fs::write(catalog.join("hooks/noise.sh"), NOISE).unwrap();
-    fs::write(catalog.join("mcp/db.toml"), DB_MCP).unwrap();
-    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    write_catalog(&catalog);
+    let installed = harnesses
+        .iter()
+        .map(|harness| format!("\"{harness}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n{declarations}",
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{installed}]\nmethod = \"copy\"\n\n{declarations}",
             source_path(&catalog)
         ),
     )
@@ -78,6 +96,21 @@ fn fixture(declarations: &str) -> Fixture {
         catalog,
         _tmp: tmp,
     }
+}
+
+/// One catalog offering a package of every kind whose words are read.
+#[allow(clippy::unwrap_used)]
+fn write_catalog(catalog: &Path) {
+    for dir in ["hooks", "mcp", "agents", "commands"] {
+        fs::create_dir_all(catalog.join(dir)).unwrap();
+    }
+    fs::write(catalog.join("hooks/guard.sh"), GUARD).unwrap();
+    fs::write(catalog.join("hooks/plain.sh"), PLAIN).unwrap();
+    fs::write(catalog.join("hooks/noise.sh"), NOISE).unwrap();
+    fs::write(catalog.join("mcp/db.toml"), DB_MCP).unwrap();
+    fs::write(catalog.join("agents/rust.md"), RUST_AGENT).unwrap();
+    fs::write(catalog.join("commands/scrub.md"), SCRUB_COMMAND).unwrap();
+    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
 }
 
 #[allow(clippy::unwrap_used)]
@@ -100,6 +133,19 @@ fn scanned(f: &Fixture, kind: ItemKind) -> Vec<ObservedItem> {
         .collect();
     items.sort_by(|a, b| a.name.cmp(&b.name));
     items
+}
+
+/// One adopted agent, at the slot the reserved `local` source reads it
+/// from. Adoption writes no catalog manifest, so this is the whole of what
+/// a capture leaves behind.
+#[allow(clippy::unwrap_used)]
+fn capture(root: &Path, summary: &str) {
+    fs::create_dir_all(root.join("agents")).unwrap();
+    fs::write(
+        root.join("agents/notes.md"),
+        format!("---\nname: notes\ndescription: Use when writing notes.\nsummary: {summary}\n---\nBody.\n"),
+    )
+    .unwrap();
 }
 
 /// One more entry in a tool's hooks file, as a person adds one of their
@@ -283,5 +329,134 @@ fn an_mcp_servers_words_come_from_its_declaration() {
     assert_eq!(
         row.summary.as_deref(),
         Some("Reads and writes the project database.")
+    );
+}
+
+/// Every tool holding one package version says the same thing about it.
+///
+/// The file kendex renders is what a tool loads, not what the author
+/// wrote: an agent's frontmatter carries the `description` its harness
+/// selects on and no summary, a Codex command is a wrapper generated from
+/// the name and the description, and a Cursor hook is a rule file kendex
+/// titled after the hook. Reading the installed file would give one
+/// package three voices, one of them kendex's own.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn one_package_reads_the_same_in_every_tool_holding_it() {
+    let f = fixture_for(
+        &["claude", "codex", "cursor"],
+        "[agents.rust]\nsource = \"cat\"\n\n[commands.scrub]\nsource = \"cat\"\n\n[hooks.guard]\nsource = \"cat\"\n",
+    );
+    apply_now(&f);
+
+    let rows = kendex_core::library::provenance(&f.env, std::slice::from_ref(&f.scope)).unwrap();
+    let words = |kind: ItemKind, name: &str| {
+        let mut said: Vec<Option<String>> = rows
+            .iter()
+            .filter(|row| row.package_ref().kind == kind && row.package_ref().name == name)
+            .map(|row| row.summary.clone())
+            .collect();
+        assert!(!said.is_empty(), "{name} has no installed row");
+        said.sort();
+        said.dedup();
+        said
+    };
+    assert_eq!(
+        words(ItemKind::Agent, "rust"),
+        vec![Some("Tunes the slow parts of a Rust program.".to_owned())],
+        "an agent row reads the author's summary, never the line a harness selects on"
+    );
+    assert_eq!(
+        words(ItemKind::Command, "scrub"),
+        vec![Some(
+            "Takes the secrets out of a file before you share it.".to_owned()
+        )],
+        "a command reads the same in Codex, whose file kendex generated, as in Claude"
+    );
+    assert_eq!(
+        words(ItemKind::Hook, "guard"),
+        vec![Some(
+            "Stops shell commands your project has ruled out.".to_owned()
+        )],
+        "a hook reads the same in Cursor, whose rule file kendex titled, as in Claude"
+    );
+
+    // The marketplace row for the same version is that one line as well.
+    let offered = browse::packages(
+        &f.env,
+        &browse::Catalog::Subscription {
+            scope: f.scope.clone(),
+            source: "cat".to_owned(),
+        },
+    )
+    .unwrap();
+    for (kind, name) in [
+        (ItemKind::Agent, "rust"),
+        (ItemKind::Command, "scrub"),
+        (ItemKind::Hook, "guard"),
+    ] {
+        let catalog_row = offered
+            .iter()
+            .find(|row| row.kind == kind && row.name == name)
+            .unwrap_or_else(|| panic!("{name} not offered"));
+        assert_eq!(vec![catalog_row.summary.clone()], words(kind, name));
+    }
+}
+
+/// The reserved `local` source is a different catalog in every scope, and
+/// each row reads its own.
+///
+/// `local` is the name adoption writes: capturing a package globally puts
+/// it under the global local-source root, capturing one in a project puts
+/// it under that project's. Nobody declares the name, so nothing warns
+/// that two scopes are using it, and a person who adopted a package in
+/// both places has two catalogs offering one name. A reader that
+/// remembers a source name without the scope that spelled it hands the
+/// second scope the first scope's catalog and answers with somebody
+/// else's words.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_reserved_local_source_reads_each_scopes_own_capture() {
+    let f = fixture("[agents.notes]\nsource = \"local\"\n");
+    // What an adopt leaves behind in each scope: the package at the slot
+    // the reserved source reads it from.
+    capture(
+        &kendex_core::source::local_source_root(&f.env, &f.scope),
+        "Keeps this project's decisions where the team can find them.",
+    );
+    capture(
+        &kendex_core::source::local_source_root(&f.env, &Scope::Global),
+        "Keeps the notes you write for yourself.",
+    );
+    let global_manifest = kendex_core::manifest::manifest_path(&f.env, &Scope::Global);
+    fs::create_dir_all(global_manifest.parent().unwrap()).unwrap();
+    fs::write(
+        &global_manifest,
+        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[agents.notes]\nsource = \"local\"\n",
+    )
+    .unwrap();
+
+    apply_now(&f);
+    let report = audit(&f.env, &Scope::Global).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+
+    // Global first, as the app asks for every scope: the scope that asks
+    // first is the one that would freeze the catalog for the rest.
+    let scopes = [Scope::Global, f.scope.clone()];
+    let rows = kendex_core::library::provenance(&f.env, &scopes).unwrap();
+    let of = |scope: &Scope| {
+        rows.iter()
+            .find(|row| &row.scope == scope && row.package_ref().name == "notes")
+            .unwrap_or_else(|| panic!("no row for {}", scope.label()))
+            .summary
+            .clone()
+    };
+    assert_eq!(
+        of(&Scope::Global),
+        Some("Keeps the notes you write for yourself.".to_owned())
+    );
+    assert_eq!(
+        of(&f.scope),
+        Some("Keeps this project's decisions where the team can find them.".to_owned())
     );
 }

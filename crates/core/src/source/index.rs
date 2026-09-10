@@ -129,7 +129,10 @@ pub fn index(sealed: &SealedSource, display: &str) -> Result<MarketplaceIndex> {
     let mut packages = Vec::new();
     for item in &report.items {
         let path = sealed.root().join(&item.file);
-        let header = super::header::read(sealed, item.kind, &path);
+        // The directory publishes these rows: a header file the seal
+        // will not hand over stops the run rather than publishing a row
+        // that describes the package with nothing.
+        let header = super::header::try_read(sealed, item.kind, &path)?;
         packages.push(IndexPackage {
             kind: item.kind.name(),
             name: safe_text(&item.name, MAX_TEXT),
