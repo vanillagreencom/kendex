@@ -13,7 +13,7 @@ use kendex_core::source_ops::{self, SourceAction};
 use super::engine_common::{apply_report, ask_before_writing, print_report, print_safety};
 use super::ledger::{Wrote, say_ledger};
 use super::offers::Blocked;
-use super::{CliResult, say, scope_label};
+use super::{CliResult, say, scope_label, warn};
 
 pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -> CliResult {
     let collection = collections::resolve(&CurlFetch, id)?;
@@ -91,12 +91,24 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
         // wrote is reported before the error goes up, and the repository
         // account is not asked for on a run that is already failing.
         close();
+        // Registered all the same where packages landed: the folder holds
+        // installed packages whichever step the run stopped at, and a
+        // folder the app cannot see is the thing this registration exists
+        // to prevent. The step's failure is what the run reports, so a
+        // registry that also refused says so on its own line rather than
+        // displacing it. A run that wrote nothing registers nothing.
+        if closing.count.is_some_and(|changes| changes > 0)
+            && let Err(refused) = super::project::register_destination(env, scope)
+        {
+            warn(&format!("warning: {refused}"));
+        }
         return Err(error);
     }
     // Every member is installed by now, so the account and its separate
     // yes come last — and the close is handed over, so what the run wrote
     // is reported whatever the reader answers.
-    super::repo_effects::disclose_and_finish(env, scope, &closing.pending, allow_effects, close)
+    super::repo_effects::disclose_and_finish(env, scope, &closing.pending, allow_effects, close)?;
+    super::project::register_destination(env, scope)
 }
 
 /// Take the steps in order, stopping at the first failure, and reduce

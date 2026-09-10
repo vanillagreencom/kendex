@@ -23,6 +23,24 @@ interface SettingsState extends ZoomSlice, ProjectsSlice {
   base: string | null;
   capabilities: CapabilityRow[];
   load: () => Promise<void>;
+  /** The settings file alone, read again.
+   *
+   *  The file is machine-local and two programs write it: this window, and
+   *  the CLI, which registers the project a `kendex add` installed into.
+   *  So a window that has been away can be looking at a registry that has
+   *  since gained a project, and the Projects page would go on drawing the
+   *  old list until the app was restarted.
+   *
+   *  Only the file. [`load`] also reads the capability table and asks the
+   *  window what size it opened at, and it reports a launch that would not
+   *  take the saved zoom — a session-long fact, so running that again on
+   *  every focus would re-open a dialog about a launch the person has
+   *  already answered for.
+   *
+   *  Nothing unsaved is lost to it: the reply is held under the store's own
+   *  ticket order, so a write issued after this read landed first keeps the
+   *  file it wrote, and this reply is dropped as the older view it is. */
+  reload: () => Promise<void>;
   setAppearance: (appearance: Appearance) => Promise<void>;
   setCommitOffer: (commitOffer: CommitOffer) => Promise<void>;
   setHarnessRoot: (harness: string, root: string) => Promise<void>;
@@ -167,6 +185,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
           ],
         });
       }
+    },
+
+    reload: async () => {
+      const at = ticket();
+      const settings = await commands.getSettings();
+      // A read that failed answers for nothing: the rows in hand stay,
+      // and the next focus tries again. Nothing on screen is waiting on
+      // it, so there is no one to tell.
+      if (settings.status === "ok") hold(settings.data, at);
     },
 
     // Theme and tool folder saves are instant and their

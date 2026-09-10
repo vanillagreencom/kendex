@@ -84,3 +84,97 @@ fn current_project(env: &Env) -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok()?;
     discover::project_root_from(&cwd, env.real_home())
 }
+
+/// Where a project-scope install lands.
+///
+/// An established project answers for itself: the walk up from the working
+/// directory is unchanged, so a command typed inside one installs into it
+/// however deep the caller stands.
+///
+/// Where that walk answers with nothing, the destination is the folder the
+/// command was typed in. kendex used to refuse until a harness directory
+/// was created there by hand, which is a step nobody can guess at; and the
+/// walk's own answer is the only ancestor there is, so there is nothing to
+/// fall back to that the person named. A folder that becomes a project is
+/// a change worth asking about, so it is asked before anything is planned
+/// or written, and a session with nobody to ask refuses and names the flag
+/// that would have answered.
+pub fn install_destination(env: &Env, yes: bool) -> Result<Scope, Box<dyn std::error::Error>> {
+    let here = std::env::current_dir()
+        .and_then(|cwd| kendex_core::paths::canonical(&cwd))
+        .map_err(|e| format!("the current folder could not be read: {e}"))?;
+    destination(current_project(env), here, yes)
+}
+
+/// The choice itself, over the two answers it is made from: what the walk
+/// up found, and where the command was typed. Separated from the reads so
+/// the rule can be asked directly — a walk starts at a working directory
+/// this process cannot move.
+fn destination(
+    established: Option<PathBuf>,
+    here: PathBuf,
+    yes: bool,
+) -> Result<Scope, Box<dyn std::error::Error>> {
+    if let Some(root) = established {
+        return Ok(Scope::Project { root });
+    }
+    start_a_project_here(&here, yes)?;
+    Ok(Scope::Project { root: here })
+}
+
+/// The question a fresh destination is settled by. Asked before the plan,
+/// so a no costs nothing: no manifest, no lock and no harness directory
+/// exists in a folder that was never installed into.
+fn start_a_project_here(here: &std::path::Path, yes: bool) -> CliResult {
+    if yes {
+        return Ok(());
+    }
+    let here = here.display().to_string();
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return Err(format!(
+            "{here} is not a project yet — installing here makes it one; pass --yes to install into it, or --global for the personal scope"
+        )
+        .into());
+    }
+    say(&format!(
+        "{here} is not a project yet — installing here makes it one, and puts it on your projects list"
+    ));
+    match crate::ui::confirm("install into this folder?")? {
+        true => Ok(()),
+        false => Err("install cancelled".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The whole rule, over both answers the walk can give. An established
+    /// project is the destination however deep the command was typed; with
+    /// no project above it, the folder it was typed in is — and never an
+    /// ancestor, which is the one thing a person cannot see happening.
+    ///
+    /// A run with nobody to ask refuses rather than making a project out of
+    /// whatever directory a script happened to be in, and it names the two
+    /// flags that answer it. `cargo test` gives this no terminal, so the
+    /// unanswered row is the one that runs here.
+    #[test]
+    fn a_walk_that_found_nothing_settles_on_the_folder_the_command_was_typed_in() {
+        let here = PathBuf::from("/w/dev/vsys-view");
+        let above = PathBuf::from("/w/dev");
+
+        assert_eq!(
+            destination(Some(above.clone()), here.clone(), true).unwrap(),
+            Scope::Project { root: above }
+        );
+        assert_eq!(
+            destination(None, here.clone(), true).unwrap(),
+            Scope::Project { root: here.clone() }
+        );
+
+        let refused = destination(None, here, false).unwrap_err().to_string();
+        assert!(refused.contains("/w/dev/vsys-view"), "{refused}");
+        assert!(refused.contains("--yes"), "{refused}");
+        assert!(refused.contains("--global"), "{refused}");
+    }
+}

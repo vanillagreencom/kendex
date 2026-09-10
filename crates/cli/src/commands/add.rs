@@ -7,8 +7,7 @@ use kendex_core::manifest::Method;
 
 use super::engine_common::{confirm_and_apply, parse_harnesses, print_report};
 use super::ledger::{Wrote, say_ledger};
-use super::{CliResult, harness_picker, resolve_scopes, warn};
-use crate::scope::ScopeFilter;
+use super::{CliResult, harness_picker, install_destination, warn};
 use crate::ui;
 
 pub struct AddArgs {
@@ -81,12 +80,10 @@ fn split(values: &[String]) -> Vec<String> {
 
 pub fn run(env: &Env, mut args: AddArgs) -> CliResult {
     ui::intro("kendex add");
-    let filter = if args.global {
-        ScopeFilter::Global
-    } else {
-        ScopeFilter::Project
+    let scope = match args.global {
+        true => Scope::Global,
+        false => install_destination(env, args.yes)?,
     };
-    let scope = resolve_scopes(env, filter)?.remove(0);
 
     // A collection link is a whole install of its own: the set the link
     // resolves to, never mixed with item flags.
@@ -171,12 +168,21 @@ pub fn run(env: &Env, mut args: AddArgs) -> CliResult {
     write_and_close(env, &scope, &report, args.yes, args.allow_repo_effects)
 }
 
-/// The write, the repository-effects account, and the close.
+/// The write, the repository-effects account, the close, and the
+/// registration of the folder the packages landed in.
 ///
 /// Disclosed after the write, because the script an effect runs is the one
 /// this install just put on disk. That leaves a prompt between the write
 /// and the closing line, so the close is handed over rather than written
 /// under it: what the run wrote is reported whatever the reader answers.
+///
+/// The registration is last, and it is its own step. A cancelled apply
+/// returns above it, so nothing registers a folder no package reached; and
+/// a registry that refuses does so with the ledger already on screen, so
+/// the run's account of what it wrote stands whatever the registry did.
+/// Arming a repository's commit hooks is the separate yes above it and
+/// says nothing about this one: a tracked folder is a folder the app can
+/// show, not consent to change what happens on every commit.
 fn write_and_close(
     env: &Env,
     scope: &Scope,
@@ -207,5 +213,6 @@ fn write_and_close(
                 &report.safety,
             );
         },
-    )
+    )?;
+    super::project::register_destination(env, scope)
 }

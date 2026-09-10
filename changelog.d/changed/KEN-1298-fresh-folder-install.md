@@ -1,0 +1,1 @@
+- Installing into a folder that is not a project yet asks first and makes it one, instead of refusing until a tool directory is created by hand.

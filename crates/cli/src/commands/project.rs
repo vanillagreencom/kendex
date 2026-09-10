@@ -3,9 +3,11 @@ use std::path::PathBuf;
 use clap::Subcommand;
 use kendex_core::env::Env;
 use kendex_core::error::CoreError;
+use kendex_core::model::Scope;
 use kendex_core::{discover, settings};
 
 use super::{CliResult, out};
+use crate::ui::{Lines, escaped};
 
 #[derive(Subcommand)]
 pub enum ProjectCommand {
@@ -79,6 +81,52 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
         }
     }
     Ok(())
+}
+
+/// Put the folder an install has just written into on the list of projects
+/// the app and `project list` read.
+///
+/// Called after the write by every verb that installs into a project
+/// scope. Without it the CLI wrote packages into a folder the app had
+/// never heard of, and the only way to see them was a second command
+/// nobody was told about.
+///
+/// A global install reaches here and registers nothing: the personal scope
+/// is not a project, and the folder the command was typed in is not where
+/// the packages went.
+///
+/// A registry that refuses is not a failed install. The packages are on
+/// disk, the run has already reported them, and what this returns names
+/// the folder they are in — so the retry is the registration on its own.
+/// Running the install again to repair the registry would mutate packages
+/// a second time for a write that never touches them.
+pub fn register_destination(env: &Env, scope: &Scope) -> CliResult {
+    let Scope::Project { root } = scope else {
+        return Ok(());
+    };
+    match settings::ensure_project_registered(env, root) {
+        // Said only where there was something to say: a project kendex
+        // already tracks is the ordinary case, and a line about it under
+        // every install is a line nobody reads.
+        Ok(registered) if registered.added => {
+            out(&format!(
+                "added {} to your projects",
+                registered.root.display()
+            ));
+            Ok(())
+        }
+        Ok(_) => Ok(()),
+        // Two facts and one next step, and the packages are the fact that
+        // has to survive: a reader told only that something failed runs
+        // the install again. The breaks are this message's own, so both
+        // values are escaped where they are composed.
+        Err(error) => Err(Lines(format!(
+            "the packages are installed in {}, and the folder could not be put on your projects list: {}\nthe project add verb, given that path, is the retry — the packages are installed already, so do not run the install again",
+            escaped(&root.display().to_string()),
+            escaped(&error.to_string()),
+        ))
+        .into()),
+    }
 }
 
 /// What a freshly registered project already holds that nothing manages.
