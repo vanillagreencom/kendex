@@ -219,6 +219,9 @@ beforeEach(() => {
       harnesses: [],
       items: [install(VG), install(HYPR)],
       missingProjects: [],
+      // Both project folders were opened by this scan: the setup rows
+      // below are readings of what is in them.
+      readProjects: [VG.root, HYPR.root],
       warnings: [],
     },
   });
@@ -325,6 +328,7 @@ describe("setup on the Projects tab", () => {
         harnesses: [],
         items: [install(VG), install(PERSONAL)],
         missingProjects: [],
+        readProjects: [VG.root],
         warnings: [],
       },
     });
