@@ -63,8 +63,6 @@ export function usePackageData(ref: PackageRef | null): {
   readme: ItemSource | null;
   versions: VersionRow[];
   reads: PackageReads;
-  /** Which read of this package the page is on. See [generation] below. */
-  generation: number;
   load: () => void;
 } {
   const [meta, setMeta] = useState<PackageMeta_Serialize | null>(null);
@@ -90,12 +88,6 @@ export function usePackageData(ref: PackageRef | null): {
   // the order below: one ticket covers four answers, and `outstanding` flips
   // on the first of them to land, so it is not this order's question to ask.
   const [reading, setReading] = useState(true);
-  // How many times this package has been read. A surface below the page
-  // holding a read of its own takes this as its React key, so the page
-  // re-reading the package is what restarts it: the address alone cannot
-  // say, because an update, a version switch and a discarded edit all
-  // rewrite the installed copy without moving it.
-  const [generation, setGeneration] = useState(0);
   // One ticket per load, asked as each of its three answers arrives. Reads
   // of this package overlap on every ordinary path — a focus reload moving
   // the commit under a mount, a move to another package, the read-back
@@ -138,7 +130,6 @@ export function usePackageData(ref: PackageRef | null): {
     const ticket = order.current.begin();
     let left = 4;
     setReading(true);
-    setGeneration((before) => before + 1);
     // Whether this answer is the newest load's to write, and the last of its
     // four when it is. A superseded load never reaches its own count, so
     // the load on screen is the only one that can say it has finished.
@@ -192,7 +183,6 @@ export function usePackageData(ref: PackageRef | null): {
     files,
     readme,
     versions,
-    generation,
     reads: {
       record,
       timeline,

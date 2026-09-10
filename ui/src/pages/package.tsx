@@ -127,7 +127,6 @@ export function PackagePage() {
     readme,
     versions,
     reads,
-    generation,
     load: reload,
   } = usePackageData(ref);
   const diff = usePackageDiff(
@@ -332,17 +331,7 @@ export function PackagePage() {
         onDelete={declares ? () => setConfirmDelete(true) : undefined}
         overview={overview}
         files={
-          // Keyed on the page's read of this package, so anything the tab
-          // read for itself is asked again whenever the page asks again.
-          // The tab holds the only read on this page that is not the
-          // page's own — the file a person picked — and its address is the
-          // package, which an update does not move: without this the tree
-          // lists the new inventory beside the bytes of the copy that was
-          // replaced. A key rather than a second refresh mechanism beside
-          // the page's, and the tab is not mounted until it is opened, so
-          // the first read costs nothing here.
           <PackageFiles
-            key={generation}
             scope={ref.scope}
             kind={group.kind}
             name={group.name}

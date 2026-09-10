@@ -401,6 +401,13 @@ describe("the package page's file pane after an update", () => {
       update.click();
     });
     await settle();
+    // The write rescans, so the join answers for that new scan the way the
+    // app's own coordinator does. Until it does the page draws the note it
+    // shows while that read is behind, which is what takes the tab and its
+    // reads off screen across every write.
+    await act(async () => {
+      answerJoin();
+    });
 
     expect(host.textContent).not.toContain("PANE-BEFORE");
     expect(host.textContent).toContain("READS-AFTER");
