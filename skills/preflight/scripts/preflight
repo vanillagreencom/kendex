@@ -937,12 +937,108 @@ test_tree_role() { # PATH IS_SHELL(0|1)
   return 1
 }
 
+# Does a runner body invoke RUNNER over the whole of that runner's default
+# include? One tokenizer owns the answer, because a regex cannot: every
+# quoting shape it did not anticipate read as a terminator. Here a quote
+# opens a span inside the word it stands in and ends nothing, so a quoted
+# positional (bun test 'src/') and a quote inside a flag word
+# (--timeout='5000' src/) are ordinary tokens. A comment is recognised here
+# too, at a word boundary outside quotes, so a quoted hash
+# (--reporter='a # b' src/) truncates nothing and keeps its positional.
+#
+# FKIND names which fields of the file carry a command, because most do not.
+# Only a command-bearing value is judged, so a workflow step's `name: bun
+# test` and a manifest's description are text: shell files are commands
+# throughout; a workflow arms only a `run:` value and the block scalar it
+# opens; a manifest arms only a value inside its `scripts` object, tracked by
+# brace depth. Everything else is tokenized and dropped unjudged.
+#
+# Within an armed command, leading NAME=value assignments and manager or
+# exec-form words (npx pnpm yarn exec dlx) are stepped over, then the runner
+# word must stand there, then W2 when the runner names a subcommand of its
+# own (bun test), then any of SUBS, the subcommands that still mean the whole
+# default include (vitest run).
+#
+# Every remaining word must be a flag. A word that is not one is a positional
+# path or filter: it restricts the run to part of the tree, so the invocation
+# no longer stands for the whole default include, and the path token it
+# writes is its own wiring evidence. A flag's detached value (--timeout 5000)
+# is such a word too — telling one from a path filter needs each runner's own
+# flag arity, and guessing it is the fail-open direction this lane must not
+# take. references/lanes.md carries that rule for the people who hit it.
+invokes_default_include() { # BODY-FILE W1 W2 SUBS FKIND
+  LC_ALL=C awk -v W1="$2" -v W2="$3" -v SUBS="$4" -v FKIND="$5" '
+    BEGIN { nm = split("npx pnpm yarn exec dlx", mgr, " "); ns = split(SUBS, sb, " ") }
+    function flush_tok() { if (have) { c++; cmd[c] = tok } tok = ""; have = 0 }
+    function is_mgr(t,   j) { for (j = 1; j <= nm; j++) if (t == mgr[j]) return 1; return 0 }
+    function is_sub(t,   j) { for (j = 1; j <= ns; j++) if (t == sb[j]) return 1; return 0 }
+    function is_bare(   j) {
+      j = 1
+      while (j <= c && (cmd[j] ~ /^[A-Za-z_][A-Za-z0-9_]*=/ || is_mgr(cmd[j]))) j++
+      if (j > c || cmd[j] != W1) return 0
+      j++
+      if (W2 != "") { if (j > c || cmd[j] != W2) return 0; j++ }
+      while (j <= c && is_sub(cmd[j])) j++
+      for (; j <= c; j++) if (substr(cmd[j], 1, 1) != "-") return 0
+      return 1
+    }
+    function end_cmd() { flush_tok(); if (armed && c > 0 && is_bare()) found = 1; c = 0 }
+    {
+      L = length($0); i = 1; enc = ""; q = ""; tok = ""; have = 0; c = 0
+      if (FKIND == "shell") armed = 1
+      else if (FKIND == "yaml") {
+        if (blk && $0 !~ /^[[:space:]]*-?[[:space:]]*[A-Za-z_][A-Za-z0-9_.-]*:([[:space:]]|$)/) armed = 1
+        else { blk = 0; armed = 0 }
+      } else armed = 0
+      while (i <= L) {
+        ch = substr($0, i, 1)
+        if (q != "") {
+          if (ch == "\\" && q == "\"") { tok = tok substr($0, i + 1, 1); i += 2; continue }
+          if (ch == q) { q = ""; i++; continue }
+          tok = tok ch; i++; continue
+        }
+        if (enc != "" && ch == enc) { end_cmd(); enc = ""; armed = 0; i++; continue }
+        if (ch == "\\") { tok = tok substr($0, i + 1, 1); have = 1; i += 2; continue }
+        if (ch == "\"" || ch == "'"'"'") { q = ch; have = 1; i++; continue }
+        if (ch == "#" && have == 0 && FKIND != "json") break
+        if (ch == " " || ch == "\t") { flush_tok(); i++; continue }
+        if (ch == ";" || ch == "&" || ch == "|" || ch == "`" || ch == "(" || ch == ")") { end_cmd(); i++; continue }
+        if (FKIND == "json" && (ch == "{" || ch == "}")) {
+          flush_tok(); c = 0
+          if (ch == "{") { if (pend) { insc = 1; sd = 1; pend = 0 } else if (insc) sd++ }
+          else if (insc) { sd--; if (sd <= 0) insc = 0 }
+          i++; continue
+        }
+        if (ch == ":" && !armed) {
+          flush_tok()
+          key = (c > 0) ? cmd[c] : ""
+          c = 0
+          i++
+          while (i <= L && (substr($0, i, 1) == " " || substr($0, i, 1) == "\t")) i++
+          if (FKIND == "json") {
+            if (key == "scripts") { pend = 1; continue }
+            if (!insc) continue
+          } else if (key != "run") break
+          armed = 1
+          ch = substr($0, i, 1)
+          if (ch == "\"" || ch == "'"'"'") { enc = ch; i++ }
+          else if (FKIND == "yaml" && (ch == "|" || ch == ">")) { blk = 1; break }
+          continue
+        }
+        tok = tok ch; have = 1; i++
+      }
+      end_cmd()
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$1"
+}
+
 # The tracked runners and their path-shaped tokens, collected once. Read
 # through content_of, so staged scope judges the staged runner rather than a
 # worktree edit that is not part of this change.
 RUNNERS_READ_WHOLE=1
 build_runner_index() {
-  local r c k=0 status kind scope
+  local r c k=0 status kind w2 subs fkind scope
   [ ! -f "$TMP/runner.toks" ] || return 0
   # Untracked runners are in scope exactly when untracked suites are: a
   # workflow added beside its suite wires it before either is committed.
@@ -959,25 +1055,32 @@ build_runner_index() {
     content_of "r$k" "$r" || { RUNNERS_READ_WHOLE=0; continue; }
     c="$CONTENT"
     cat -- "$c" >>"$TMP/runner.bodies"
-    # A runner invoking bare vitest or jest runs that runner's own default
-    # include glob — no path in the runner ever names the suites it
-    # executes. Comment context is dropped first — whole-line comments and
-    # a trailing comment opened by whitespace-then-# — then the word must
-    # stand at a command position — after line-leading whitespace, a shell
-    # connector (; & | backtick paren), a directly preceding manager or
-    # exec-form word (npx pnpm yarn exec dlx), or a
-    # colon opening a manifest or workflow value with an optional quote —
-    # allowing NAME=value assignment words, their values plain or
-    # quoted, between that opener and the word — and end at whitespace,
-    # a quote, a connector, or the line end. A
-    # dependency key ("vitest": "^3"), a package path (@vitest/ui), a
-    # path-prefixed binary (node_modules/.bin/vitest), and a prose mention
-    # all fail that shape. Recorded as the directory the runner runs
-    # from: manifests run beside themselves; workflows and validate
-    # scripts run from the root of the tree that owns them.
-    sed -e '/^[[:space:]]*#/d' -e 's/[[:space:]]#.*//' -- "$c" >"$TMP/runner.body.one"
-    for kind in vitest jest; do
-      LC_ALL=C grep -qE "(^[[:space:]]*|[;\`(&|][[:space:]]*|(npx|pnpm|yarn|exec|dlx)[[:space:]]+|:[[:space:]]*[\"']?)([A-Za-z_][A-Za-z0-9_]*=([^[:space:]'\"]|'[^']*'|\"[^\"]*\")*[[:space:]]+)*$kind([[:space:]\"'\`&;|)]|\$)" "$TMP/runner.body.one" || continue
+    # A runner invoking one of these over its whole default include runs that
+    # runner's own include glob — no path in the runner ever names the suites
+    # it executes. invokes_default_include owns that grammar, including which
+    # fields of this file carry a command at all, so a dependency key
+    # ("vitest": "^3"), a package path (@vitest/ui), a path-prefixed binary
+    # (node_modules/.bin/vitest), a step name and a prose mention all fail it.
+    # Recorded as the directory the runner runs from: manifests run beside
+    # themselves; workflows and validate scripts run from the root of the tree
+    # that owns them.
+    #
+    # bun names its test runner in a second word: bun on its own is the
+    # package runner and `bun run test` re-enters the script table. vitest
+    # keeps the two subcommands that still run the whole include; jest has
+    # none, so every word after it is a path pattern.
+    case "$r" in
+      .github/workflows/*) fkind=yaml ;;
+      *package.json) fkind=json ;;
+      *) fkind=shell ;;
+    esac
+    for kind in vitest jest bun; do
+      case "$kind" in
+        vitest) w2=""; subs="run watch" ;;
+        jest) w2=""; subs="" ;;
+        bun) w2=test; subs="" ;;
+      esac
+      invokes_default_include "$c" "$kind" "$w2" "$subs" "$fkind" || continue
       scope=""
       case "$r" in
         .github/workflows/*) ;;
@@ -1020,12 +1123,13 @@ suite_is_wired() { # SUITE-PATH
     case "$r" in */*) ;; *) continue ;; esac
     case "$p" in "${r%/*}"/*) return 0 ;; esac
   done <"$TMP/runner.names"
-  # A recorded bare vitest/jest invocation wires every suite its runner's
-  # default include glob matches under the directory it runs from. Both
-  # defaults cover *.test.ts/js/mjs — vitest's include and Jest 30's
-  # testMatch (**/?(*.)+(spec|test).?([mc])[jt]s?(x)) alike. A config
-  # pinning an explicit include or testMatch is not evaluated — an
-  # unproven suite is not an unwired one.
+  # A recorded whole-default-include invocation wires every suite its
+  # runner's default include glob matches under the directory it runs from.
+  # All three defaults cover *.test.ts/js/mjs — vitest's include, Jest 30's
+  # testMatch (**/?(*.)+(spec|test).?([mc])[jt]s?(x)) and Bun's recursive
+  # *.test.{js,jsx,ts,tsx,mjs,cjs,mts,cts} discovery alike. A config pinning
+  # an explicit include or testMatch is not evaluated — an unproven suite is
+  # not an unwired one.
   while IFS= read -r scope; do
     case "$p" in
       *.test.ts | *.test.js | *.test.mjs) ;;

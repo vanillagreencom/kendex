@@ -34,7 +34,9 @@ seed() { # NAME — fixture in $R: one committed file, origin/main, feature bran
 # One runner file. The kind decides the frame; the row's remaining words are
 # the invocation text, joined by single spaces and written verbatim, because
 # what the lane reads is the byte sequence around the runner name and not any
-# quoting a shell might have removed. `dangling` is a runner this tool cannot
+# quoting a shell might have removed. `stepname` puts the text in a step's
+# name, a field carrying no command, and `workflowblock` puts it inside a
+# `run:` block scalar, which carries one. `dangling` is a runner this tool cannot
 # read: its text is the symlink target, which does not exist. A kind this
 # function does not know is refused, never written as something else.
 pf_runner() { # KIND [FILE] TEXT...
@@ -44,7 +46,7 @@ pf_runner() { # KIND [FILE] TEXT...
   shift
   case "$kind" in
     make) file=Makefile ;;
-    manifest | workflow | validate | dangling)
+    manifest | workflow | stepname | workflowblock | validate | dangling)
       [ $# -ge 1 ] || return 1
       file="$1"
       shift
@@ -57,6 +59,8 @@ pf_runner() { # KIND [FILE] TEXT...
   case "$kind" in
     manifest) printf '{\n  %s\n}\n' "$text" >"$R/$file" ;;
     workflow) printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: %s\n' "$text" >"$R/$file" ;;
+    stepname) printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - name: %s\n        run: echo nothing\n' "$text" >"$R/$file" ;;
+    workflowblock) printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          %s\n' "$text" >"$R/$file" ;;
     make) printf 'test:\n\t%s\n' "$text" >"$R/$file" ;;
     validate) printf '#!/usr/bin/env bash\nset -euo pipefail\n%s\n' "$text" >"$R/$file" ;;
     dangling) ln -s "$text" "$R/$file" ;;
@@ -127,6 +131,33 @@ pf_world() {
 # `far.test.ts` is the whole fired set, so `sub/app.test.ts` is wired by the
 # same row.
 #
+# The rows below `a sub-package vitest runner` read one clause each of the
+# tokenizer `invokes_default_include` owns. A runner word must stand at a
+# command position, after any leading assignments and manager words; `bun`
+# must be followed by `test`, so `bun` alone, `bun run test` and `bun test.ts`
+# record nothing; `vitest` keeps `run` and `watch`, the subcommands that still
+# mean the whole include.
+#
+# Every remaining word must be a flag, and the quoting rows are why the
+# tokenizer exists at all: `bun test 'src/'`, `bun test "src/"` and
+# `bun test --timeout='5000' src/` each carry a quote that three earlier
+# regex spellings read as the end of the invocation, wiring the whole scope
+# while the run reaches only `src/`. Their rows strand `far.test.ts` alone,
+# so each also carries the claim that the `src/` token still wires the suite
+# beside it. `bun test --timeout 5000` pins the other direction: a detached
+# flag value is a positional here, because separating one from a path filter
+# needs each runner's flag arity.
+#
+# `vitest 'src/'`, `vitest run src/` and `jest tests/` are the same clause on
+# the shared path, where a positional used to be ignored outright.
+#
+# The last four rows hold the two fields the tokenizer reads. A command lives
+# in a manifest's `scripts` value or a workflow's `run:` value, block scalar
+# included; a step's `name:` and a manifest's `description` are text, so a
+# runner word in them wires nothing. The quoted-hash row holds comment
+# recognition: a `#` inside quotes opens no comment, so the `src/` after it is
+# still a positional rather than text a line-wise strip threw away.
+#
 # The `make` world is the one runner kind here with no `fires` twin, and the
 # gap that leaves is deliberate. Its row is clean, so dropping `Makefile` from
 # the tool's runner name set empties the runner set, the lane goes silent for
@@ -158,6 +189,27 @@ a whole-line comment naming vitest wires nothing|validate tools/validate-js # a 
 a trailing comment naming vitest wires nothing|workflow .github/workflows/ci.yml echo ok # ; vitest -- t.test.ts|-|-|1|t.test.ts:0: [unwired-suite]|-
 manifest prose naming vitest and jest wires nothing|manifest package.json "description": "tested with vitest and jest", "keywords": ["vitest", "jest"], "scripts": { "test": "node run-tests.js" } -- k.test.ts|-|-|1|k.test.ts:0: [unwired-suite]|-
 a sub-package vitest runner wires nothing outside its subtree|manifest pkg/package.json "scripts": { "test": "vitest run" } -- far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
+a bare bun test run script wires the ts and mjs suites its default discovery matches|manifest package.json "scripts": { "test": "bun test" } -- src/__tests__/probe.test.ts src/__tests__/probe.test.mjs|-|-|0|-|preflight: clean=3
+bun's default discovery does not reach a shell suite|manifest package.json "scripts": { "test": "bun test" } -- src/__tests__/probe.test.ts tests/orphan.test.sh|-|-|1|tests/orphan.test.sh:0: [unwired-suite]|-
+a bun test script carrying flags only wires the suite|manifest package.json "scripts": { "test": "bun test --coverage" } -- bf.test.ts|-|-|0|-|preflight: clean=2
+a workflow invoking bun test wires a root-level suite|workflow .github/workflows/ci.yml bun test -- bw.test.ts|-|-|0|-|preflight: clean=2
+a script value of exactly bun is the package runner and wires nothing|manifest package.json "scripts": { "test": "bun" } -- ba.test.ts|-|-|1|ba.test.ts:0: [unwired-suite]|-
+bun run test re-enters the script table and wires nothing|manifest package.json "scripts": { "test": "bun run test" } -- br.test.ts|-|-|1|br.test.ts:0: [unwired-suite]|-
+bun running a file whose name opens with test wires nothing|manifest package.json "scripts": { "test": "bun test.ts" } -- bp.test.ts|-|-|1|bp.test.ts:0: [unwired-suite]|-
+a bun test naming a path wires that subtree and nothing outside it|manifest package.json "scripts": { "test": "bun test src/" } -- src/near.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
+a bun test naming a single-quoted path is that same positional|manifest package.json "scripts": { "test": "bun test 'src/'" } -- src/near.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
+a bun test naming a double-quoted path is that same positional|make bun test "src/" -- src/near.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
+a sub-package bun test runner wires nothing outside its subtree|manifest pkg/package.json "scripts": { "test": "bun test" } -- far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
+a quote inside a flag word does not end the bun invocation|manifest package.json "scripts": { "test": "bun test --timeout='5000' src/" } -- src/near.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
+a bun flag's detached value is read as a positional|manifest package.json "scripts": { "test": "bun test --timeout 5000" } -- bd.test.ts|-|-|1|bd.test.ts:0: [unwired-suite]|-
+a vitest watch script wires the suite|manifest package.json "scripts": { "test": "vitest watch" } -- vw.test.ts|-|-|0|-|preflight: clean=2
+a quoted vitest positional wires that subtree and nothing outside it|manifest package.json "scripts": { "test": "vitest 'src/'" } -- src/vq.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
+a vitest run naming a path wires that subtree and nothing outside it|manifest package.json "scripts": { "test": "vitest run src/" } -- src/vr.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
+a jest path pattern wires that subtree and nothing outside it|manifest package.json "scripts": { "test": "jest tests/" } -- tests/jp.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
+a workflow step name carries no command|stepname .github/workflows/ci.yml bun test -- sn.test.ts|-|-|1|sn.test.ts:0: [unwired-suite]|-
+a manifest description carries no command|manifest package.json "description": "bun test" -- md.test.ts|-|-|1|md.test.ts:0: [unwired-suite]|-
+a run block scalar carries commands|workflowblock .github/workflows/ci.yml bun test -- wb.test.ts|-|-|0|-|preflight: clean=2
+a quoted hash truncates nothing, so the positional after it still counts|manifest package.json "scripts": { "test": "bun test --reporter='a # b' src/" } -- src/qh.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
 ROWS
 pf_table "the runner grammar the unwired-suite lane reads" "$rows"
 

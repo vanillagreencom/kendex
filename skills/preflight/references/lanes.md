@@ -12,11 +12,19 @@ The default and `--base` scopes include every non-ignored untracked file as a ne
 
 Runners are `.github/workflows/*.yml`, `tools/validate*`, `scripts/validate*`, `package.json`, `Makefile`, `justfile`, and any `run-all.sh`. They are collected from tracked and untracked paths alike: an untracked runner is in scope exactly when an untracked suite is, so a workflow added beside its suite wires it before either is committed.
 
-Wiring is the suite named outright, a path-shaped glob its path satisfies, a directory it lives under, a manifest below the repo root whose subtree holds it, a runner beside it globbing its own directory, or a runner invoking bare `vitest`/`jest` at a command position whose default include glob covers the suite (`*.test.ts`/`js`/`mjs`) under the directory the runner runs from.
+Wiring is the suite named outright, a path-shaped glob its path satisfies, a directory it lives under, a manifest below the repo root whose subtree holds it, a runner beside it globbing its own directory, or a runner invoking `vitest`, `jest` or `bun test` over the whole of that runner's default include, which covers the suite (`*.test.ts`/`js`/`mjs`) under the directory the runner runs from.
 
-A command position means directly, chained after `;`/`&`/`|`, behind a directly preceding `npx`/`pnpm`/`yarn`/`exec`/`dlx`, with `NAME=value` assignment words (values plain or quoted) allowed before the runner word.
+The invocation is read by tokenizing the runner line, never by matching text around the runner word. Within a command a quote opens a span inside the word it stands in and ends nothing, so quoting changes no word boundary, and a `#` opens a comment only at a word boundary outside quotes: `bun test --reporter='a # b' src/` keeps its `src/`.
 
-A comment (full-line or trailing), dependency key, or package path is not an invocation, and neither is a prose mention, except a colon-opened value beginning with the runner word, accepted erring quiet. A path-prefixed binary (`node_modules/.bin/vitest`) is not recognized, and a pinned explicit `include`/`testMatch` is not evaluated.
+Only a field that carries a command is read as one. A shell runner (`Makefile`, `justfile`, `tools/validate*`, `run-all.sh`) is commands throughout. A workflow carries them in a `run:` value and in the block scalar a `run: |` opens, and nowhere else, so a step's `name: bun test` is text. A manifest carries them in a value inside its `scripts` object, tracked by brace depth, so a `description` or a dependency key is text. Everything else is read and dropped unjudged.
+
+A command splits at an unquoted `;`, `&`, `|`, backtick or parenthesis.
+
+A command position is the start of a command, past any leading `NAME=value` assignment words and any `npx`/`pnpm`/`yarn`/`exec`/`dlx`. `bun` must be followed by `test`, since `bun` alone is the package runner and `bun run test` re-enters the script table. `vitest` may be followed by `run` or `watch`, the two subcommands that still run the whole include. `jest` has none, so every word after it is a path pattern.
+
+Every remaining word must be a flag. A word that is not one is a positional path or filter that restricts the run to part of the tree, so no default include is recorded and the suite is wired, or left unwired, by the path token that word writes. `vitest run src/`, `jest tests/`, `bun test src/` and `bun test 'src/'` are all read that way. A flag's detached value is such a word too: `bun test --timeout 5000` records nothing where `bun test --timeout=5000` records. Separating a detached value from a path filter needs each runner's own flag arity, and guessing it would wire suites a restricted run never reaches.
+
+A comment (full-line or trailing), dependency key, or package path is not an invocation, and neither is a prose mention, whose following words are positionals. A path-prefixed binary (`node_modules/.bin/vitest`) is not recognized, and a pinned explicit `include`/`testMatch` is not evaluated.
 
 ## Glob semantics
 
