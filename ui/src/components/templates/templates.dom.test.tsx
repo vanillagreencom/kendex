@@ -51,12 +51,14 @@ vi.mock("@/bindings", () => ({
     scanMachine: vi.fn().mockResolvedValue({ status: "ok", data: null }),
     auditAll: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
-    // A scan that found nothing to offer, which is what the command
-    // answers with: `commitOfferScan` returns a reading, never null, and
-    // a stand-in that answered null would be a shape no producer emits.
-    commitOfferScan: vi
-      .fn()
-      .mockResolvedValue({ status: "ok", data: { offers: [], flagged: [] } }),
+    // The three reads a write runs around itself, each answering the list
+    // its command answers with, found empty. They are reached because these
+    // cases drive a real install: `writingRepo` takes a commit baseline
+    // before the write and reads the machine again behind it, and that read
+    // asks what every tracked project has waiting.
+    commitOfferBaseline: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
+    commitOfferScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
+    projectChangesScan: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
   },
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
