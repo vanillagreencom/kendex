@@ -153,6 +153,19 @@ describe("a project's setup row", () => {
     ).not.toContain(SETUP_SHARED_NOTE);
   });
 
+  it("offers no way to run what it has no block to authorize", () => {
+    // A project that is not a git work tree reports a state, while the
+    // disclosure of anything writing into `.git` is withheld there: kendex
+    // cannot say where those files would land. Set up with no block to
+    // show is a button that does nothing.
+    const blockless = setup("notActive", { said: [] });
+    blockless.disclosure = null;
+
+    const host = draw("notActive", blockless);
+
+    expect(buttons(host)).toEqual([CHECK_AGAIN_LABEL]);
+  });
+
   it("offers no way to run a package that declares nothing to run", () => {
     const host = draw(
       "notActive",

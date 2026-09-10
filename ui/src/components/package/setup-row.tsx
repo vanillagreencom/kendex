@@ -104,7 +104,13 @@ export function SetupRow({
   // Offered only where the package declares something to run. A button the
   // engine would refuse is worse than no button — the same rule the update
   // and removal controls on this card are held to.
-  const canApply = status?.canApply === true;
+  // The package declares an installer AND kendex has the block to show
+  // before running it. Those come apart: a project that is not a git work
+  // tree still reports a state, while `offers` withholds the disclosure of
+  // anything writing into `.git` there, because it cannot say where those
+  // files would land. Set up without a block to authorize is a button that
+  // does nothing.
+  const canApply = status?.canApply === true && setup?.disclosure != null;
   // Offered whenever the row is drawn at all, not only where a previous
   // answer said there was a check. A refused command leaves no answer to
   // read that from, and a row with no way to try again strands the reader
