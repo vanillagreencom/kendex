@@ -565,23 +565,50 @@ fn the_commit_takes_the_set_and_leaves_the_persons_changes_alone() {
 }
 
 /// A rendered path holding pathspec metacharacters names itself and no
-/// other file. The must-fail control is the entries' `:(literal)` prefix:
-/// without it `a[b].md` is a glob that matches `ab.md`, the person's file.
+/// other file. Each row is an owned path and the person's file the row
+/// would reach if the path were read as a pattern; an item name carries
+/// any of these, since the render validator rejects only `/`, `\\` and
+/// `..` in one.
+///
+/// The colon in the second row sits inside a segment. An entry never
+/// begins with one, because every render lands under a directory or a
+/// fixed top-level name, so what the row covers is a colon git reads as
+/// ordinary text rather than one opening a prefix.
+///
+/// The must-fail control is the entries' `:(literal)` prefix: without it
+/// `a[b].md` is a glob that matches `ab.md` and `:(glob)x*.md` one that
+/// matches `:(glob)xy.md`, and the person's file lands in the commit.
 #[test]
 fn a_path_with_metacharacters_commits_itself_and_nothing_it_would_match() {
     let repo = Repo::new(&[(OWNED[0], "one\n")]);
-    let generated = repo.generated(&["docs/a[b].md"], &[]);
-    repo.write("docs/a[b].md", "ours\n");
-    repo.write("docs/ab.md", "theirs\n");
+    let mut rows = vec![("docs/a[b].md", "docs/ab.md")];
+    // A `:` cannot be in a Windows filename, so the shape that opens a
+    // segment with pathspec magic is exercised where it can exist. The
+    // row above is its portable twin.
+    if cfg!(unix) {
+        rows.push(("docs/:(glob)x*.md", "docs/:(glob)xy.md"));
+    }
+    let owned: Vec<&str> = rows.iter().map(|(ours, _)| *ours).collect();
+    let generated = repo.generated(&owned, &[]);
+    for (ours, theirs) in &rows {
+        repo.write(ours, "ours\n");
+        repo.write(theirs, "theirs\n");
+    }
     let Committed::Made { files, .. } = commit(&repo.root, &generated, "m").unwrap() else {
         panic!("nothing was committed");
     };
-    assert_eq!(files, 1);
+    assert_eq!(files, rows.len());
     assert_eq!(
         repo.head_files(),
-        BTreeSet::from(["docs/a[b].md".to_owned()])
+        owned
+            .iter()
+            .map(|p| (*p).to_owned())
+            .collect::<BTreeSet<_>>()
     );
-    assert!(repo.status().contains("?? docs/ab.md"), "{}", repo.status());
+    let status = repo.status();
+    for (_, theirs) in &rows {
+        assert!(status.contains(&format!("?? {theirs}")), "{status}");
+    }
 }
 
 /// A hook reads the same git a plain `git commit` gives it. The selection

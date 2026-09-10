@@ -17,17 +17,27 @@ use std::process::{Command, Output};
 
 use kendex_core::process::Hardened;
 
-#[allow(clippy::expect_used)]
 fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_kendex"))
+    kendex_under(home, cwd, args, &[])
+}
+
+/// The same, with `ambient` added to the environment the binary starts
+/// under — for a case whose subject is what kendex does with a variable
+/// the shell it was launched from had set.
+#[allow(clippy::expect_used)]
+fn kendex_under(home: &Path, cwd: &Path, args: &[&str], ambient: &[(&str, &str)]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+    command
         .args(args)
         .current_dir(cwd)
         .env_clear()
         .envs(test_util::fixture_env(home))
         .env("KENDEX_BACKGROUND_REFRESH", "off")
-        .env("PATH", path_with_fake_gh(home))
-        .output()
-        .expect("kendex binary runs")
+        .env("PATH", path_with_fake_gh(home));
+    for (key, value) in ambient {
+        command.env(key, value);
+    }
+    command.output().expect("kendex binary runs")
 }
 
 fn said(output: &Output) -> String {
@@ -152,9 +162,19 @@ exit 1
 "#;
 
 fn apply(home: &Path, project: &Path, flags: &[&str]) -> (Output, String) {
+    apply_under(home, project, flags, &[])
+}
+
+/// The same, run under `ambient` in the binary's own environment.
+fn apply_under(
+    home: &Path,
+    project: &Path,
+    flags: &[&str],
+    ambient: &[(&str, &str)],
+) -> (Output, String) {
     let mut args = vec!["apply", "--yes"];
     args.extend_from_slice(flags);
-    let output = kendex(home, project, &args);
+    let output = kendex_under(home, project, &args, ambient);
     let text = said(&output);
     (output, text)
 }
@@ -227,6 +247,39 @@ fn the_commit_flag_commits_the_set_with_the_commands_message() {
     assert!(
         git(&project, &["status", "--porcelain"]).contains(" M AGENTS.md"),
         "the person's own change was swept into the commit"
+    );
+}
+
+/// The shell kendex was launched from decides nothing about which files
+/// the commit selects. Every entry in the pathspec file is written behind
+/// a `:(literal)` prefix, and `GIT_LITERAL_PATHSPECS=1` in the ambient
+/// environment would have git read that whole entry as a filename: the
+/// staging step exits 128 `did not match any files` and the commit is
+/// refused. `Hardened` drops the variable before it reaches git, so the
+/// run is the ordinary one.
+///
+/// The must-fail control is the entry in `GIT_REDIRECTS`: take
+/// `GIT_LITERAL_PATHSPECS` out of that list and this case reddens. Driven
+/// through the binary because the variable has to sit in a real process's
+/// environment, and the workspace forbids the `unsafe` that setting one on
+/// this process would need.
+#[test]
+fn an_ambient_pathspec_variable_does_not_reach_the_commits_git() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = project(&tmp);
+    let (output, text) = apply_under(
+        &home,
+        &project,
+        &["--commit"],
+        &[("GIT_LITERAL_PATHSPECS", "1")],
+    );
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("committed 2 files as "), "{text}");
+    let files = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
+    assert!(
+        files.contains("CLAUDE.md") && files.contains(".kendex-generated.json"),
+        "{files}"
     );
 }
 

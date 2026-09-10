@@ -55,6 +55,17 @@ const GROUP_GRACE: Duration = Duration::from_millis(100);
 /// below; on a read it would have `status` judge a working tree against
 /// some other commit's rules. The second is the worse of the two and only
 /// scrubbing everywhere prevents it.
+///
+/// The four `*_PATHSPECS` variables redirect which files a pathspec picks
+/// out rather than which repository it is read against, which is the same
+/// thing done to the other half of a git call. They belong here because
+/// the caller names its paths on the command line and nothing ambient may
+/// re-decide what those paths mean: the commit offer selects a rendered
+/// path behind a `:(literal)` prefix, and `GIT_LITERAL_PATHSPECS=1` makes
+/// git read that whole entry as a filename and match nothing, while
+/// `GIT_ICASE_PATHSPECS=1` case-folds the comparison the prefix asked to
+/// be exact. Scrubbed on every git call rather than at that one, because
+/// a redirect is answered where the process is built.
 const GIT_REDIRECTS: &[&str] = &[
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -64,6 +75,10 @@ const GIT_REDIRECTS: &[&str] = &[
     "GIT_COMMON_DIR",
     "GIT_NAMESPACE",
     "GIT_ATTR_SOURCE",
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
 ];
 
 /// Configuration every git call settles on its own command line, where no

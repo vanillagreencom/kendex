@@ -160,6 +160,8 @@ kendex writes the set to a file in the system temp directory, NUL-separated, and
 
 The prefix rather than git's `--literal-pathspecs`, which selects the same files: the git-wide option is one git re-exports as `GIT_LITERAL_PATHSPECS=1` to every process it starts, and `git commit` starts the repository's hooks. A hook is other people's code reading their own repository, and under that variable it reads a different git — a hook's own `git ls-files -- ':(glob)docs/**/*.md'` matches nothing, and its `git check-ignore` exits 128 on pathspec magic the hook never wrote. The prefix keeps the selection inside the file, where only the step that wrote it reads it.
 
+The four `GIT_*_PATHSPECS` variables are in `Hardened`'s `GIT_REDIRECTS`, so the shell kendex was launched from cannot re-decide what the entries mean. An inherited `GIT_LITERAL_PATHSPECS=1` would have git read a whole entry as a filename spelled `:(literal)<path>` and match nothing; an inherited `GIT_ICASE_PATHSPECS=1` would case-fold the comparison the prefix asked to be exact.
+
 ### What a refusal leaves behind
 
 The one mark the sequence leaves is the `git add` above: a path that was untracked stays staged. kendex unstages exactly the paths it staged, so the index ends as it began.
