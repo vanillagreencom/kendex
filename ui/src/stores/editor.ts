@@ -365,12 +365,23 @@ export const useEditorStore = create<EditorState>((set, get) => {
       // it holds: whether git carries it, whether saving has to make it,
       // and which credentials are already in it are all answers about
       // that file, and none of them can be guessed from its name.
+      const before = get().secretFile;
       set({ secretFile: file });
       const ask = asked();
       const settings = await commands.getScopeSettings(ask.scope, file);
       if (!ask.current()) return;
       if (settings.status === "error") {
-        set({ error: settings.error });
+        // The pick goes back. A file whose read failed was never chosen,
+        // and leaving it in hand would pair it with the settings of the
+        // destination before it — a mismatch `secretsDraft` reads as a
+        // choice, recording `KENDEX_ENV_FILE` for the previous file on
+        // the next unrelated save. Dirty is derived again for the same
+        // reason: it was raised by a pick that did not land.
+        set({
+          secretFile: before,
+          error: settings.error,
+          dirty: dirtyNow({ secretFile: before }),
+        });
         return;
       }
       set({

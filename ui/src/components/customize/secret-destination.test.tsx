@@ -171,4 +171,47 @@ describe("SecretDestination", () => {
       .filter((text) => text === DEFAULT_SECRET_FILE);
     expect(offered).toHaveLength(1);
   });
+
+  /// Picking the file already in use is not a choice. A higher settings
+  /// layer naming it leaves `chosen` false — the root file does not own
+  /// that decision — so a save would write `KENDEX_ENV_FILE` into the root
+  /// file for a choice the layer above it already made and overrides.
+  it("does not offer the file already in use as a choice", async () => {
+    const onPick = vi.fn();
+    const host = mount(
+      <SecretDestination
+        secrets={{
+          destination: {
+            file: ".env.local",
+            chosen: false,
+            state: { state: "ready" },
+          },
+          candidates: [".env.other"],
+          base: null,
+        }}
+        picked={null}
+        onPick={onPick}
+      />,
+    );
+    const change = [...host.querySelectorAll("button")].find(
+      (one) => one.textContent === SECRET_FILE_CHANGE,
+    );
+    if (!change) throw new Error("no control offered another file");
+    await userEvent.click(change);
+
+    const pills = [...host.querySelectorAll("button")];
+    const current = pills.find((one) => one.textContent === ".env.local");
+    const other = pills.find((one) => one.textContent === ".env.other");
+    if (!current || !other) throw new Error("the pills are not both offered");
+
+    await userEvent.click(current);
+    expect(onPick).not.toHaveBeenCalled();
+
+    // It is still a real control, announcing which file is in use, and
+    // every other pill still picks.
+    expect(current.getAttribute("aria-pressed")).toBe("true");
+    expect(current.disabled).toBe(false);
+    await userEvent.click(other);
+    expect(onPick).toHaveBeenCalledWith(".env.other");
+  });
 });

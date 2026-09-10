@@ -65,7 +65,18 @@ export function SecretDestination({
             <Pill
               key={file}
               selected={file === destination.file}
-              onClick={() => onPick(file)}
+              // Picking the file already in use is not a choice. It reads
+              // as one where a higher settings layer names it — the root
+              // file does not own that choice, so `chosen` is false — and
+              // a save would then write `KENDEX_ENV_FILE` into the root
+              // file for a decision the layer above it already made and
+              // overrides.
+              // The pill stays a real control — `Pill` keeps the selected
+              // one focusable and `aria-pressed`, which is how the choice
+              // is announced — so the click is what does nothing.
+              onClick={() => {
+                if (file !== destination.file) onPick(file);
+              }}
             >
               {file}
             </Pill>

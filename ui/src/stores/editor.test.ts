@@ -541,6 +541,39 @@ describe("editor store", () => {
     expect(commands.saveCustomize).not.toHaveBeenCalled();
   });
 
+  /// A pick whose read fails was never chosen. Left in hand it would be
+  /// paired with the settings of the destination before it, and
+  /// `secretsDraft` reads that mismatch as a choice — so the next
+  /// unrelated save would record `KENDEX_ENV_FILE` for the previous file,
+  /// which is nobody's decision.
+  it("puts a picked private file back when its read fails", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "ok",
+      data: {} as AuditView_Serialize,
+    });
+    await useEditorStore.getState().load();
+
+    // One pick that lands, so there is a prior choice to come back to.
+    await useEditorStore.getState().pickSecretFile(".env.secrets");
+    expect(useEditorStore.getState().secretFile).toBe(".env.secrets");
+
+    const held = useEditorStore.getState().settings;
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "error",
+      error: "unreadable",
+    } as Awaited<ReturnType<typeof commands.getScopeSettings>>);
+    await useEditorStore.getState().pickSecretFile(".env.unreadable");
+
+    expect(useEditorStore.getState().secretFile).toBe(".env.secrets");
+    expect(useEditorStore.getState().error).toBe("unreadable");
+    // The rows still describe the file they were read with.
+    expect(useEditorStore.getState().settings).toBe(held);
+  });
+
   /// Discard is this same reload, so it must come back to the project's
   /// own destination. A pick left in hand with nothing on screen saying so
   /// would be recorded by a later unrelated edit.
