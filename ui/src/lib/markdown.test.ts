@@ -95,4 +95,24 @@ describe("renderInlineMarkdown", () => {
     expect(html).not.toContain("<img");
     expect(html).toContain("&lt;img");
   });
+
+  // A description is drawn in a row, a page header and a hover card, none
+  // of which swallows a click the way the document preview does. An
+  // anchor there would move the app's own window, to wherever a catalog's
+  // author chose. Their words are kept; the destination is not.
+  it("draws a link as its own text, wherever the URL points", () => {
+    const rows = [
+      "[docs](https://example.test/page)",
+      "[mail](mailto:someone@example.test)",
+      "[here](#section)",
+      "[near](./README.md)",
+    ] as const;
+    expect(rows.length, "inline link table is empty").toBeGreaterThan(0);
+    for (const source of rows) {
+      const html = renderInlineMarkdown(source);
+      expect(html, source).not.toContain("<a ");
+      expect(html, source).not.toContain("href");
+    }
+    expect(renderInlineMarkdown(rows[0])).toContain("docs");
+  });
 });
