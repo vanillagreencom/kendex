@@ -63,6 +63,9 @@ vi.mock("@/bindings", () => ({
     capabilityTable: vi.fn(),
     updateSettings: vi.fn(),
     installDriftHook: vi.fn(),
+    // Read again on a registry write: update rows are keyed by the
+    // folder each one is at.
+    updatesOverview: vi.fn(),
     packageDiff: vi.fn().mockResolvedValue({
       status: "ok",
       data: {
