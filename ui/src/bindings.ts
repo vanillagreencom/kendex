@@ -3006,7 +3006,7 @@ export type MemberSource_Deserialize =
  *  The version choice saved with the member, when the selection
  *  carried one. Absent follows the source.
  */
-rev?: string | null }) & { copy?: never; from?: never } | 
+rev?: string | null }) & { copy?: never; from?: never; notices?: never } | 
 /**
  *  A copy this template owns, under its own store. The originating
  *  project may move or disappear without reaching it.
@@ -3020,7 +3020,19 @@ copy: string;
  *  saying so, because editing does not change where content came
  *  from. Absent for the person's own content.
  */
-from?: string | null }) & { repo?: never; rev?: never };
+from?: string | null; 
+/**
+ *  The licence and attribution files these bytes came under, at
+ *  their paths inside the store. Empty for content that came
+ *  under nobody's terms.
+ * 
+ *  The terms are the copy's own record rather than a tree beside
+ *  it, so what a read lists and what an install carries are the
+ *  union over the copies the template holds: taking a copy out
+ *  takes its terms with it, and a notice no copy requires cannot
+ *  be shown or written into anybody's project.
+ */
+notices?: string[] }) & { repo?: never; rev?: never };
 
 /**  Where a member's content comes from when the template is installed. */
 export type MemberSource_Serialize = 
@@ -3035,7 +3047,7 @@ export type MemberSource_Serialize =
  *  The version choice saved with the member, when the selection
  *  carried one. Absent follows the source.
  */
-rev?: string | null }) & { copy?: never; from?: never } | 
+rev?: string | null }) & { copy?: never; from?: never; notices?: never } | 
 /**
  *  A copy this template owns, under its own store. The originating
  *  project may move or disappear without reaching it.
@@ -3049,7 +3061,19 @@ copy: string;
  *  saying so, because editing does not change where content came
  *  from. Absent for the person's own content.
  */
-from?: string | null }) & { repo?: never; rev?: never };
+from?: string | null; 
+/**
+ *  The licence and attribution files these bytes came under, at
+ *  their paths inside the store. Empty for content that came
+ *  under nobody's terms.
+ * 
+ *  The terms are the copy's own record rather than a tree beside
+ *  it, so what a read lists and what an install carries are the
+ *  union over the copies the template holds: taking a copy out
+ *  takes its terms with it, and a notice no copy requires cannot
+ *  be shown or written into anybody's project.
+ */
+notices?: string[] }) & { repo?: never; rev?: never };
 
 /**
  *  Which member a reference means, where a template holds more than one
@@ -4058,6 +4082,14 @@ export type ResolvedItem = {
 export type ResolvedSet = {
 	name: string,
 	enabled: boolean,
+	/**
+	 *  What the member was saved as. A plugin is its registry's own
+	 *  curated set and installs as one, so it rides here beside a bundle
+	 *  — but the two are still two kinds, and a reference calling a plugin
+	 *  a bundle names no member at all: the row would remove nothing and
+	 *  say nothing.
+	 */
+	kind: MemberKind,
 };
 
 /**

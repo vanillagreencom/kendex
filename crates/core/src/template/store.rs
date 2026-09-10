@@ -9,6 +9,7 @@
 //! engine resolves a source tree with, so a link somebody dropped into the
 //! store is refused here exactly as it is everywhere else.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::env::Env;
@@ -39,6 +40,41 @@ pub(super) fn root(env: &Env, id: &str) -> PathBuf {
 /// so the recorded value is one spelling on every platform.
 pub(super) fn slot_id(kind: ItemKind, name: &str) -> String {
     crate::paths::slashed(&local_slot(Path::new(""), kind, name))
+}
+
+/// The ids a set of notice files is recorded under: their paths inside the
+/// store, spelled the one way [`slot_id`] spells a copy's.
+pub(super) fn notice_ids(notices: &[(PathBuf, Vec<u8>)]) -> Vec<String> {
+    notices
+        .iter()
+        .map(|(relative, _)| crate::paths::slashed(relative))
+        .collect()
+}
+
+/// Every copy the template holds: where its bytes are inside the store,
+/// and the notices they came under. The one reading of which members own
+/// bytes here; everything this module derives about the store derives
+/// from it.
+fn held_copies(template: &Template) -> impl Iterator<Item = (&str, &[String])> {
+    template
+        .members
+        .iter()
+        .filter_map(|member| match &member.source {
+            MemberSource::Copy { copy, notices, .. } => Some((copy.as_str(), notices.as_slice())),
+            MemberSource::Marketplace { .. } => None,
+        })
+}
+
+/// The notices the template's copies came under, by their store ids.
+fn held_notices(template: &Template) -> impl Iterator<Item = &str> {
+    held_copies(template).flat_map(|(_, notices)| notices.iter().map(String::as_str))
+}
+
+/// Every path inside the store the template's copies account for: each
+/// copy's own slot, and the notices its bytes came under.
+fn held_paths(template: &Template) -> impl Iterator<Item = &str> {
+    held_copies(template)
+        .flat_map(|(copy, notices)| std::iter::once(copy).chain(notices.iter().map(String::as_str)))
 }
 
 /// The absolute path a recorded copy id resolves to inside its template's
@@ -181,22 +217,26 @@ pub(super) fn restore(env: &Env, template: &Template, slots: &[PriorSlot]) -> Re
     Ok(())
 }
 
-/// The licence and attribution files this template's store holds, at
+/// The licence and attribution files this template's copies came under, at
 /// their paths relative to the store root. Empty where no member's bytes
 /// came under anybody's terms.
+///
+/// Derived from the copies the template holds, never from whatever sits
+/// under the store's notices directory: a notice belongs to the copy that
+/// required it, so a copy taken out takes its terms out of this set with
+/// it. Two copies from one marketplace name the same file, and it is read
+/// once.
 pub(super) fn notices(env: &Env, template: &Template) -> Result<Vec<(PathBuf, Vec<u8>)>> {
-    let root = root(env, &template.id);
-    let held = root.join(crate::author::import::NOTICES_DIR);
-    if !held.is_dir() {
+    let wanted: BTreeSet<&str> = held_notices(template).collect();
+    if wanted.is_empty() {
         return Ok(Vec::new());
     }
+    let root = root(env, &template.id);
     let sealed = SealedSource::open(&root)?;
-    let mut files = Vec::new();
     let mut carried = Vec::new();
-    walk(&sealed, &root, &held, &mut files)?;
-    for file in files {
-        let relative = PathBuf::from(&file.path);
-        carried.push((relative.clone(), sealed.read(&root.join(&relative))?));
+    for id in wanted {
+        let path = copy_path(env, template, id)?;
+        carried.push((PathBuf::from(id), sealed.read(&path)?));
     }
     Ok(carried)
 }
@@ -267,8 +307,15 @@ pub(super) fn read(
 }
 
 /// Every file a template owns, for the file tree that inspects it, in the
-/// shape every other file tree in kendex reads. A template with no copies
-/// has none, which is not a failure.
+/// shape every other file tree in kendex reads.
+///
+/// Read off the copies the template holds — each copy's own files, and the
+/// notices its bytes came under — rather than off whatever the store
+/// directory contains, so the tree lists what the template holds and never
+/// something a member that has gone left behind. A copy the store no
+/// longer holds contributes no rows: the resolution is what reports it as
+/// missing, and a tree cannot list a file that is not there. A template
+/// with no copies has none, which is not a failure.
 pub fn stored_files(env: &Env, template: &Template) -> Result<Vec<PackageFile>> {
     let root = root(env, &template.id);
     if !root.is_dir() {
@@ -276,8 +323,18 @@ pub fn stored_files(env: &Env, template: &Template) -> Result<Vec<PackageFile>> 
     }
     let sealed = SealedSource::open(&root)?;
     let mut files = Vec::new();
-    walk(&sealed, &root, &root, &mut files)?;
+    for id in held_paths(template) {
+        let path = copy_path(env, template, id)?;
+        if sealed.is_dir(&path) {
+            walk(&sealed, &root, &path, &mut files)?;
+        } else if sealed.is_file(&path) {
+            entry_of(&sealed, &root, &path, &mut files)?;
+        }
+    }
     files.sort_by(|a, b| a.path.cmp(&b.path));
+    // Two copies from one marketplace name the same licence file, and the
+    // tree shows it once.
+    files.dedup_by(|a, b| a.path == b.path);
     Ok(files)
 }
 
@@ -287,16 +344,28 @@ fn walk(sealed: &SealedSource, root: &Path, dir: &Path, into: &mut Vec<PackageFi
             walk(sealed, root, &entry, into)?;
             continue;
         }
-        let Ok(relative) = entry.strip_prefix(root) else {
-            continue;
-        };
-        let path = crate::paths::slashed(relative);
-        into.push(PackageFile {
-            is_readme: false,
-            size: sealed.read(&entry)?.len().min(u32::MAX as usize) as u32,
-            path,
-        });
+        entry_of(sealed, root, &entry, into)?;
     }
+    Ok(())
+}
+
+/// One file's row, positioned by where it sits under the store root. A
+/// path that is not under it is no file of this template's and is left
+/// out.
+fn entry_of(
+    sealed: &SealedSource,
+    root: &Path,
+    at: &Path,
+    into: &mut Vec<PackageFile>,
+) -> Result<()> {
+    let Ok(relative) = at.strip_prefix(root) else {
+        return Ok(());
+    };
+    into.push(PackageFile {
+        is_readme: false,
+        size: sealed.read(at)?.len().min(u32::MAX as usize) as u32,
+        path: crate::paths::slashed(relative),
+    });
     Ok(())
 }
 
@@ -323,20 +392,16 @@ pub(super) fn remove(env: &Env, template: &Template) -> Result<()> {
     }
 }
 
-/// Drop the copies a member removal left with nothing naming them. Only
-/// this template's own store is touched, and only the copies no remaining
-/// member records.
+/// Drop what a member removal left with nothing naming it: the copies, and
+/// the notices those copies came under. Only this template's own store is
+/// touched, and only what no remaining member accounts for.
 pub(super) fn prune(env: &Env, before: &Template, after: &Template) -> Result<()> {
-    for member in &before.members {
-        let MemberSource::Copy { copy, .. } = &member.source else {
-            continue;
-        };
-        if after.members.iter().any(
-            |held| matches!(&held.source, MemberSource::Copy { copy: kept, .. } if kept == copy),
-        ) {
+    let kept: BTreeSet<&str> = held_paths(after).collect();
+    for id in held_paths(before).collect::<BTreeSet<&str>>() {
+        if kept.contains(id) {
             continue;
         }
-        let path = copy_path(env, before, copy)?;
+        let path = copy_path(env, before, id)?;
         if path.exists() {
             remove_path(&path)?;
         }

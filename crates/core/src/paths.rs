@@ -79,11 +79,20 @@ pub fn expand_tilde(home: &Path, input: &str) -> PathBuf {
 /// value from here, the expectation has to be spelled here as well, or the
 /// two agree only on the host where the separator already matches.
 pub fn slashed(path: &Path) -> String {
-    let text = path.to_string_lossy();
-    let reduced = plain(&text);
+    slashed_over(&path.to_string_lossy(), std::path::MAIN_SEPARATOR)
+}
+
+/// [`slashed`], over a path that reaches kendex as text and the separator
+/// the machine that wrote it builds paths with.
+///
+/// The whole rule in the shape this module's doc describes: a
+/// Windows-shaped path can be spelled on any host, so a producer routed
+/// through it is provable where it runs rather than only where it breaks.
+pub(crate) fn slashed_over(text: &str, separator: char) -> String {
+    let reduced = plain(text);
     match reduced.starts_with(VERBATIM) {
         true => reduced.into_owned(),
-        false => spelled(&reduced, std::path::MAIN_SEPARATOR),
+        false => spelled(&reduced, separator),
     }
 }
 

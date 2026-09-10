@@ -61,48 +61,78 @@ interface TemplatesState {
   clearRefusal: () => void;
 }
 
-export const useTemplatesStore = create<TemplatesState>((set, get) => ({
-  templates: [],
-  everRead: false,
-  read: { status: "idle" },
-  busy: false,
-  refused: null,
+export const useTemplatesStore = create<TemplatesState>((set, get) => {
+  // The page and the dialogs start reads of their own, and every write
+  // starts another behind it; the replies arrive in any order. A ticket
+  // taken as each read leaves orders them again on arrival: a reply whose
+  // ticket predates the newest one held is a view of a list something newer
+  // has already replaced, and holding it would put a renamed template back
+  // under its old name or a deleted one back on the list.
+  let issued = 0;
+  let newest = 0;
+  const ticket = () => ++issued;
 
-  load: async () => {
-    set({ read: { status: "reading" } });
-    const answer = await settled(commands.templatesList());
-    if (answer.status === "error") {
-      // The rows that landed before stay, headed as the last answer that
-      // came back rather than thrown away over one read that did not.
-      set({ read: { status: "failed", error: answer.error } });
-      return;
-    }
-    set({ templates: answer.data, everRead: true, read: { status: "read" } });
-  },
+  /** Take one read's answer, held only while `at` is the newest ticket
+   *  seen. An older read's late reply is dropped, not applied — its
+   *  failure included, which would otherwise head a list a newer read had
+   *  just returned. */
+  const hold = (answer: Partial<TemplatesState>, at: number) => {
+    if (at < newest) return;
+    newest = at;
+    set(answer);
+  };
 
-  createFromSelection: (name, members) =>
-    write(set, get, () => commands.templateCreateFromSelection(name, members)),
-  createFromProject: (project, chosen) =>
-    write(set, get, () => commands.templateCreateFromProject(project, chosen)),
-  addMembers: (name, members) =>
-    write(set, get, () => commands.templateAddMembers(name, members)),
-  removeMembers: (name, members) =>
-    write(set, get, () => commands.templateRemoveMembers(name, members)),
-  rename: (name, to) =>
-    write(set, get, () => commands.templateRename(name, to)),
-  remove: (name) => write(set, get, () => commands.templateDelete(name)),
+  return {
+    templates: [],
+    everRead: false,
+    read: { status: "idle" },
+    busy: false,
+    refused: null,
 
-  // An install writes into a place, so the machine is read again behind it
-  // like every other write that reaches the engine.
-  install: (name, destination) =>
-    writingRepo(() =>
+    load: async () => {
+      const at = ticket();
+      set({ read: { status: "reading" } });
+      const answer = await settled(commands.templatesList());
+      if (answer.status === "error") {
+        // The rows that landed before stay, headed as the last answer that
+        // came back rather than thrown away over one read that did not.
+        hold({ read: { status: "failed", error: answer.error } }, at);
+        return;
+      }
+      hold(
+        { templates: answer.data, everRead: true, read: { status: "read" } },
+        at,
+      );
+    },
+
+    createFromSelection: (name, members) =>
       write(set, get, () =>
-        commands.templateInstall(name, destination, null, null),
+        commands.templateCreateFromSelection(name, members),
       ),
-    ),
+    createFromProject: (project, chosen) =>
+      write(set, get, () =>
+        commands.templateCreateFromProject(project, chosen),
+      ),
+    addMembers: (name, members) =>
+      write(set, get, () => commands.templateAddMembers(name, members)),
+    removeMembers: (name, members) =>
+      write(set, get, () => commands.templateRemoveMembers(name, members)),
+    rename: (name, to) =>
+      write(set, get, () => commands.templateRename(name, to)),
+    remove: (name) => write(set, get, () => commands.templateDelete(name)),
 
-  clearRefusal: () => set({ refused: null }),
-}));
+    // An install writes into a place, so the machine is read again behind it
+    // like every other write that reaches the engine.
+    install: (name, destination) =>
+      writingRepo(() =>
+        write(set, get, () =>
+          commands.templateInstall(name, destination, null, null),
+        ),
+      ),
+
+    clearRefusal: () => set({ refused: null }),
+  };
+});
 
 /** One write against the index: the refusal is kept where a surface can
  *  say it, and the list is read again whatever happened — a refusal is no

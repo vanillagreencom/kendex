@@ -39,7 +39,7 @@ pub use draft::{
 };
 pub use install::{
     MissingMember, Resolution, ResolvedCopy, ResolvedGroup, ResolvedItem, ResolvedSet,
-    TemplateInstall, install, install_local, resolve,
+    TemplateInstall, install, resolve,
 };
 pub use store::{copy_path, stored_file, stored_files};
 
@@ -124,6 +124,17 @@ pub enum MemberSource {
         /// from. Absent for the person's own content.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         from: Option<String>,
+        /// The licence and attribution files these bytes came under, at
+        /// their paths inside the store. Empty for content that came
+        /// under nobody's terms.
+        ///
+        /// The terms are the copy's own record rather than a tree beside
+        /// it, so what a read lists and what an install carries are the
+        /// union over the copies the template holds: taking a copy out
+        /// takes its terms with it, and a notice no copy requires cannot
+        /// be shown or written into anybody's project.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        notices: Vec<String>,
     },
 }
 

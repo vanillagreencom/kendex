@@ -454,7 +454,7 @@ fn an_edited_marketplace_package_requires_a_choice_and_licence_evidence() {
     // licence, and the bytes stored are the edited ones.
     let mine =
         create_from_project(&project.env, &project.root, &chosen("Mine", confirmed())).unwrap();
-    let MemberSource::Copy { copy, from } = &mine.members[0].source else {
+    let MemberSource::Copy { copy, from, .. } = &mine.members[0].source else {
         panic!("gh should be a copy: {:?}", mine.members[0].source);
     };
     let stored = copy_path(&project.env, &mine, copy).unwrap();
@@ -630,4 +630,77 @@ fn a_package_several_tools_read_is_counted_once() {
     assert_eq!(strays, 1, "{:?}", draft.locals);
     let gh = draft.members.iter().filter(|m| m.name == "gh").count();
     assert_eq!(gh, 1, "{:?}", draft.members);
+}
+
+/// A marketplace that is a folder is saved under one spelling, whatever
+/// separator the machine that declared it builds paths with.
+///
+/// Driven over the Windows separator directly rather than over the host's:
+/// on a `/` host a row spelled the platform's own way could not fail, and
+/// what this closes is a Windows defect — two spellings of one folder are
+/// two identities, so members saved under them group apart, subscribe
+/// twice, and read as two rows for one package set.
+#[test]
+fn a_folder_marketplace_is_saved_under_one_spelling() {
+    let folder = |path: &str| crate::manifest::SourceDecl {
+        repo: None,
+        path: Some(path.to_owned()),
+        rev: None,
+        enabled: true,
+    };
+    assert_eq!(
+        super::super::draft::saved_repo(&folder(r"C:\Users\me\catalog"), '\\').as_deref(),
+        Some("C:/Users/me/catalog")
+    );
+    // Both spellings of one root reach the template as one value, which is
+    // what makes them one member set rather than two.
+    assert_eq!(
+        super::super::draft::saved_repo(&folder(r"C:\Users\me\catalog"), '\\'),
+        super::super::draft::saved_repo(&folder("C:/Users/me/catalog"), '\\')
+    );
+}
+
+/// A create whose copy write fails and whose rollback then fails too
+/// reports both causes.
+///
+/// The rollback is a fallible write like any other. One that fails leaves
+/// a template a person can see and can never install, and dropping its
+/// reason left nothing anywhere to say why.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_create_whose_rollback_also_fails_reports_both_causes() {
+    use std::os::unix::fs::PermissionsExt;
+    let project = seeded();
+    // The store folder this create will take, holding something and
+    // refusing writes: the copy cannot be written into it and the
+    // rollback cannot remove it.
+    let store = project.env.template_store_dir().join("mine");
+    fs::create_dir_all(&store).unwrap();
+    fs::write(store.join("held"), "already here").unwrap();
+    fs::set_permissions(&store, fs::Permissions::from_mode(0o555)).unwrap();
+    // Root writes and removes whatever the mode says, so there neither
+    // refusal under test exists and the create simply succeeds.
+    let denied = !rustix::process::geteuid().is_root();
+
+    let refused = create_from_project(
+        &project.env,
+        &project.root,
+        &Chosen {
+            name: "Mine".to_owned(),
+            locals: vec!["skill:stray".to_owned()],
+            ..Chosen::default()
+        },
+    );
+    fs::set_permissions(&store, fs::Permissions::from_mode(0o755)).unwrap();
+
+    match denied {
+        true => {
+            let Err(CoreError::TemplateCopyUnreadable { why, .. }) = refused else {
+                panic!("both writes should have refused: {refused:?}");
+            };
+            assert!(why.contains("removing the template"), "{why}");
+        }
+        false => assert!(refused.is_ok(), "{refused:?}"),
+    }
 }

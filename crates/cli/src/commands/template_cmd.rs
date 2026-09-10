@@ -130,6 +130,9 @@ pub struct Picked {
     /// Whole sets the marketplace offers
     #[arg(short = 'b', long)]
     pub bundle: Vec<String>,
+    /// Plugins, which their registry offers as sets of its own
+    #[arg(long)]
+    pub plugin: Vec<String>,
 }
 
 impl Picked {
@@ -141,6 +144,7 @@ impl Picked {
             (MemberKind::Command, &self.command),
             (MemberKind::McpServer, &self.mcp_server),
             (MemberKind::Bundle, &self.bundle),
+            (MemberKind::Plugin, &self.plugin),
         ]
         .into_iter()
         .flat_map(|(kind, names)| names.iter().map(move |name| (kind, name.clone())))
@@ -203,8 +207,7 @@ impl Picked {
     }
 }
 
-const NOTHING_PICKED: &str =
-    "name at least one package: --skill, --agent, --hook, --command, --mcp-server or --bundle";
+const NOTHING_PICKED: &str = "name at least one package: --skill, --agent, --hook, --command, --mcp-server, --bundle or --plugin";
 const NO_SOURCE: &str = "--source names the marketplace these packages come from";
 const COPY_OR_SOURCE: &str =
     "--copy names this template's own copy, so it cannot be given with --source";
@@ -353,7 +356,10 @@ fn print_resolution(resolution: &Resolution) {
                 true => "",
                 false => "  (switched off)",
             };
-            say(&format!("  set {}{off}", set.name));
+            // Named by the kind it was saved as: a plugin installs whole
+            // the way a bundle does, and calling both "set" is what left a
+            // person no way to name the one they meant.
+            say(&format!("  {} {}{off}", set.kind.name(), set.name));
         }
     }
     if !resolution.copies.is_empty() {

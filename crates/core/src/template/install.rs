@@ -70,6 +70,12 @@ pub struct ResolvedGroup {
 pub struct ResolvedSet {
     pub name: String,
     pub enabled: bool,
+    /// What the member was saved as. A plugin is its registry's own
+    /// curated set and installs as one, so it rides here beside a bundle
+    /// — but the two are still two kinds, and a reference calling a plugin
+    /// a bundle names no member at all: the row would remove nothing and
+    /// say nothing.
+    pub kind: MemberKind,
 }
 
 /// One copy the template owns.
@@ -110,14 +116,6 @@ pub struct Resolution {
     pub groups: Vec<ResolvedGroup>,
     pub copies: Vec<ResolvedCopy>,
     pub missing: Vec<MissingMember>,
-}
-
-impl TemplateInstall {
-    /// Whether anything this run did is on disk. What decides between an
-    /// install that refused and one that stopped part-way.
-    fn anything_landed(&self) -> bool {
-        !self.subscribed.is_empty() || !self.declared.is_empty() || !self.copied.is_empty()
-    }
 }
 
 impl Resolution {
@@ -196,19 +194,14 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
                     continue;
                 }
                 match member.kind.item() {
-                    None => group.bundles.push(ResolvedSet {
-                        name: member.name.clone(),
-                        enabled: member.enabled,
-                    }),
                     // A plugin is its registry's own curated set, so it
                     // installs as one — the same reading every install
-                    // path gives it.
-                    // A plugin is its registry's own curated set, so it
-                    // installs as one — the same reading every install
-                    // path gives it.
-                    Some(ItemKind::Plugin) => group.bundles.push(ResolvedSet {
+                    // path gives it. It keeps its own kind on the row, so
+                    // a surface acting on that row can still name it.
+                    None | Some(ItemKind::Plugin) => group.bundles.push(ResolvedSet {
                         name: member.name.clone(),
                         enabled: member.enabled,
+                        kind: member.kind,
                     }),
                     Some(ItemKind::PiExtension) => missing.push(MissingMember {
                         kind: member.kind,
@@ -224,7 +217,7 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
                     }),
                 }
             }
-            MemberSource::Copy { copy, from } => {
+            MemberSource::Copy { copy, from, .. } => {
                 let Some(kind) = member.kind.item() else {
                     missing.push(MissingMember {
                         kind: member.kind,
@@ -316,6 +309,50 @@ fn subscription_for(personal: &Manifest, repo: &str) -> Option<String> {
         .map(|(name, _)| name.clone())
 }
 
+/// One install's record, and the only way it grows.
+///
+/// What a caller reads — what is on disk, and whether the run stopped
+/// part-way — is decided from writes that committed, never from the
+/// members that were asked for. Every write an install makes goes through
+/// [`Landing::commit`], and that is what keeps the account and the writes
+/// one fact: a step cannot describe a write it did not make, and no step
+/// holds a record of its own to drop when a later one refuses.
+#[derive(Default)]
+struct Landing {
+    install: TemplateInstall,
+    /// How many plans this run committed. A plan is one transaction — it
+    /// applies whole or rolls back — so this counts writes that are on
+    /// disk.
+    committed: usize,
+}
+
+impl Landing {
+    /// Execute one plan, and where it wrote, record what it wrote.
+    ///
+    /// The description travels with the plan rather than being pushed
+    /// beside it, so an entry in the record answers for an operation that
+    /// ran. A plan with nothing in it runs nothing and records nothing.
+    fn commit(
+        &mut self,
+        env: &Env,
+        plan: &Plan,
+        wrote: impl FnOnce(&mut TemplateInstall),
+    ) -> Result<()> {
+        if crate::apply::execute(env, plan)?.applied == 0 {
+            return Ok(());
+        }
+        self.committed += 1;
+        wrote(&mut self.install);
+        Ok(())
+    }
+
+    /// Whether anything this run did is on disk. What decides between an
+    /// install that refused and one that stopped part-way.
+    fn anything_landed(&self) -> bool {
+        self.committed > 0
+    }
+}
+
 /// What a failing step does to the run: nothing landed yet, so the
 /// failure is the whole answer; or something did, and the account of it
 /// travels back with the reason it stopped.
@@ -329,7 +366,7 @@ enum Stopped<T> {
     Short(CoreError),
 }
 
-fn step<T>(landed: &TemplateInstall, result: Result<T>) -> Result<Stopped<T>> {
+fn step<T>(landed: &Landing, result: Result<T>) -> Result<Stopped<T>> {
     match result {
         Ok(value) => Ok(Stopped::Went(value)),
         Err(error) if landed.anything_landed() => Ok(Stopped::Short(error)),
@@ -344,8 +381,8 @@ macro_rules! went {
         match step(&$landed, $result)? {
             Stopped::Went(value) => value,
             Stopped::Short(error) => {
-                $landed.stopped = Some(error.to_string());
-                return Ok($landed);
+                $landed.install.stopped = Some(error.to_string());
+                return Ok($landed.install);
             }
         }
     };
@@ -378,7 +415,7 @@ pub fn install(
     if resolution.count() == 0 {
         return Err(CoreError::TemplateEmpty);
     }
-    let mut landed = TemplateInstall::default();
+    let mut landed = Landing::default();
     for group in &resolution.groups {
         // A repository nothing subscribes to is subscribed personally
         // first, the same declaration any other install of it would make.
@@ -393,9 +430,11 @@ pub fn install(
                     landed,
                     crate::source_ops::subscribe(env, &Scope::Global, &reference, None)
                 );
-                let written = crate::apply::execute(env, &subscribed.report.plan);
+                let repo = group.repo.clone();
+                let written = landed.commit(env, &subscribed.report.plan, |install| {
+                    install.subscribed.push(repo);
+                });
                 went!(landed, written);
-                landed.subscribed.push(group.repo.clone());
                 subscribed.name
             }
         };
@@ -429,40 +468,47 @@ pub fn install(
                 _ => engine_ops::add(env, destination, &request),
             }
         );
-        went!(landed, crate::apply::execute(env, &report.plan));
-        landed.notes.extend(report.notes);
-        for item in &group.items {
-            landed
-                .declared
-                .push(format!("{} {}", item.kind.name(), item.name));
-        }
-        for bundle in &request.bundles {
-            landed.declared.push(format!("bundle {bundle}"));
-        }
+        let declared: Vec<String> = group
+            .items
+            .iter()
+            .map(|item| format!("{} {}", item.kind.name(), item.name))
+            .chain(
+                group
+                    .bundles
+                    .iter()
+                    .map(|set| format!("{} {}", set.kind.name(), set.name)),
+            )
+            .collect();
+        let written = landed.commit(env, &report.plan, |install| {
+            install.declared.extend(declared);
+        });
+        went!(landed, written);
+        // Notes are what a step said while it worked, not a claim about a
+        // write, so they travel whether or not the plan had anything in
+        // it.
+        landed.install.notes.extend(report.notes);
         // The saved switch, applied to the declarations the add just
         // wrote. `AddRequest` carries no per-item flag, so the state is
         // put on the declaration the way the copy path does — one pass
         // over what this group declared rather than a guard at each site.
-        went!(landed, carry_saved_switches(env, destination, group));
+        let switched = carry_saved_switches(env, destination, group, &mut landed);
+        went!(landed, switched);
     }
     if !resolution.copies.is_empty() {
-        let copied = went!(
-            landed,
-            install_local(
-                env,
-                template,
-                destination,
-                &resolution,
-                harnesses.clone(),
-                method
-            )
+        let copied = install_local(
+            env,
+            template,
+            destination,
+            &resolution,
+            harnesses.clone(),
+            method,
+            &mut landed,
         );
-        landed.copied.extend(copied.copied);
-        landed.declared.extend(copied.declared);
-        landed.notes.extend(copied.notes);
+        went!(landed, copied);
     }
-    went!(landed, carry_customizations(env, template, destination));
-    Ok(landed)
+    let carried = carry_customizations(env, template, destination, &mut landed);
+    went!(landed, carried);
+    Ok(landed.install)
 }
 
 /// Write the template's own copies into the destination's local packages
@@ -473,18 +519,24 @@ pub fn install(
 /// package the destination already holds under the same name with
 /// different bytes is a refusal naming it — this never writes over content
 /// somebody else owns.
-pub fn install_local(
+///
+/// The run's record is handed in rather than made here. What this commits
+/// is on disk whatever happens next, so a refusal in the rendering below
+/// cannot take the account of it away: there is one record for the
+/// install, and this step has no copy of its own to drop.
+fn install_local(
     env: &Env,
     template: &Template,
     destination: &Scope,
     resolution: &Resolution,
     harnesses: Option<Vec<HarnessId>>,
     method: Option<Method>,
-) -> Result<TemplateInstall> {
+    landed: &mut Landing,
+) -> Result<()> {
     let destination = &destination.canonical();
     let local_root = crate::source::local_source_root(env, destination);
     let mut ops = Vec::new();
-    let mut landed = TemplateInstall::default();
+    let mut copied = Vec::new();
     // Every copy read and every target checked before a byte moves.
     for copy in &resolution.copies {
         let member = template
@@ -503,9 +555,7 @@ pub fn install_local(
         let written =
             crate::engine::detach::capture_to_local(copy.kind, &copy.name, &target, files)?;
         if !written.is_empty() {
-            landed
-                .copied
-                .push(format!("{} {}", copy.kind.name(), copy.name));
+            copied.push(format!("{} {}", copy.kind.name(), copy.name));
         }
         ops.extend(written);
     }
@@ -513,6 +563,7 @@ pub fn install_local(
     // leaves the destination's manifest and its local packages alike
     // byte-identical.
     let mut manifest = engine_ops::manifest_for_mutation(env, destination)?;
+    let mut declared = Vec::new();
     for copy in &resolution.copies {
         let decl = ItemDecl {
             source: LOCAL_SOURCE_NAME.to_owned(),
@@ -524,9 +575,7 @@ pub fn install_local(
         manifest
             .declared_mut(copy.kind)
             .insert(copy.name.clone(), decl);
-        landed
-            .declared
-            .push(format!("{} {}", copy.kind.name(), copy.name));
+        declared.push(format!("{} {}", copy.kind.name(), copy.name));
     }
     ops.extend(notice_ops(env, template, &local_root)?);
     let manifest_path = crate::manifest::manifest_path(env, destination);
@@ -538,7 +587,11 @@ pub fn install_local(
             manifest: Box::new(manifest),
         },
     });
-    crate::apply::execute(env, &Plan::landed(destination.clone(), ops)?)?;
+    let plan = Plan::landed(destination.clone(), ops)?;
+    landed.commit(env, &plan, |install| {
+        install.copied.extend(copied);
+        install.declared.extend(declared);
+    })?;
     // The declarations are in; rendering them is the ordinary apply every
     // other install ends on.
     let report = engine_ops::add(
@@ -581,9 +634,9 @@ pub fn install_local(
             ..AddRequest::default()
         },
     )?;
-    crate::apply::execute(env, &report.plan)?;
-    landed.notes.extend(report.notes);
-    Ok(landed)
+    landed.commit(env, &report.plan, |_| {})?;
+    landed.install.notes.extend(report.notes);
+    Ok(())
 }
 
 /// The writes that carry the terms the copied bytes came under into the
@@ -624,7 +677,12 @@ fn notice_ops(
 /// on the declaration it writes; a marketplace member reaches the
 /// manifest through `AddRequest`, which carries no per-item flag, so it is
 /// applied here on the declarations that add has just written.
-fn carry_saved_switches(env: &Env, destination: &Scope, group: &ResolvedGroup) -> Result<()> {
+fn carry_saved_switches(
+    env: &Env,
+    destination: &Scope,
+    group: &ResolvedGroup,
+    landed: &mut Landing,
+) -> Result<()> {
     let off_items: Vec<&ResolvedItem> = group.items.iter().filter(|item| !item.enabled).collect();
     let off_sets: Vec<&ResolvedSet> = group.bundles.iter().filter(|set| !set.enabled).collect();
     if off_items.is_empty() && off_sets.is_empty() {
@@ -654,8 +712,8 @@ fn carry_saved_switches(env: &Env, destination: &Scope, group: &ResolvedGroup) -
             manifest: Box::new(manifest),
         },
     };
-    crate::apply::execute(env, &Plan::landed(destination.canonical(), vec![op])?)?;
-    Ok(())
+    let plan = Plan::landed(destination.canonical(), vec![op])?;
+    landed.commit(env, &plan, |_| {})
 }
 
 /// Write the template's package customizations into the destination,
@@ -664,7 +722,12 @@ fn carry_saved_switches(env: &Env, destination: &Scope, group: &ResolvedGroup) -
 /// Write-only-if-absent, because the destination's own choices outrank a
 /// template's: installing a template into a project that already
 /// customized a package must not silently replace what is there.
-fn carry_customizations(env: &Env, template: &Template, destination: &Scope) -> Result<()> {
+fn carry_customizations(
+    env: &Env,
+    template: &Template,
+    destination: &Scope,
+    landed: &mut Landing,
+) -> Result<()> {
     let carried = &template.customizations;
     if carried.is_empty() {
         return Ok(());
@@ -709,8 +772,8 @@ fn carry_customizations(env: &Env, template: &Template, destination: &Scope) -> 
             manifest: Box::new(manifest),
         },
     };
-    crate::apply::execute(env, &Plan::landed(destination.canonical(), vec![op])?)?;
-    Ok(())
+    let plan = Plan::landed(destination.canonical(), vec![op])?;
+    landed.commit(env, &plan, |_| {})
 }
 
 fn fill<V: Clone>(into: &mut BTreeMap<String, V>, from: &BTreeMap<String, V>) {

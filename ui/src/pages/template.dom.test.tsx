@@ -11,7 +11,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Resolution, Template_Serialize } from "@/bindings";
 import { commands } from "@/bindings";
 import { COPY_PATH_LABEL } from "@/lib/copy";
-import { FILES_UNREADABLE, NO_FILES } from "@/lib/copy-templates";
+import {
+  FILES_UNREADABLE,
+  NO_FILES,
+  REMOVE_MEMBER_LABEL,
+} from "@/lib/copy-templates";
 import { useNavStore } from "@/stores/nav";
 import { useTemplatesStore } from "@/stores/templates";
 import { mount, settle } from "@/test/dom";
@@ -110,5 +114,129 @@ describe("the files a template owns", () => {
       (one) => one.getAttribute("aria-label") === COPY_PATH_LABEL,
     );
     expect(pane).toBe(false);
+  });
+});
+
+describe("a member taken out of the template", () => {
+  /** The one file the copied member owns, and one another member keeps —
+   *  so the tree is still drawn after the removal and the pane's fate is
+   *  the selection's own, not the empty state's. */
+  const SKILL = {
+    path: "skills/house-style/SKILL.md",
+    size: 12,
+    isReadme: false,
+  };
+  const KEPT = { path: "commands/note.md", size: 8, isReadme: false };
+
+  /** A resolution holding that member as a copy of the template's own. */
+  const withCopy: Resolution = {
+    groups: [],
+    copies: [
+      {
+        kind: "skill",
+        name: "house-style",
+        enabled: true,
+        copy: "skills/house-style",
+        from: null,
+      },
+    ],
+    missing: [],
+  };
+
+  /** The one Remove control on screen. */
+  const removeButton = (host: HTMLElement) =>
+    [...host.querySelectorAll<HTMLElement>("button")].find((one) =>
+      one.textContent?.includes(REMOVE_MEMBER_LABEL),
+    );
+
+  it("empties the pane that was showing the file it owned", async () => {
+    vi.mocked(commands.templateResolve)
+      .mockResolvedValueOnce({ status: "ok", data: withCopy })
+      .mockResolvedValue({ status: "ok", data: RESOLVED });
+    vi.mocked(commands.templateFiles)
+      .mockResolvedValueOnce({ status: "ok", data: [SKILL, KEPT] })
+      .mockResolvedValue({ status: "ok", data: [KEPT] });
+    vi.mocked(commands.templateFile).mockResolvedValue({
+      status: "ok",
+      data: "my own bytes",
+    });
+    vi.mocked(commands.templateRemoveMembers).mockResolvedValue({
+      status: "ok",
+      data: TEMPLATE,
+    });
+    const host = mount(<TemplatePage />);
+    await settle();
+
+    const file = [...host.querySelectorAll<HTMLElement>("button")].find((one) =>
+      one.textContent?.includes("SKILL.md"),
+    );
+    if (!file) throw new Error("no file row in the tree");
+    await act(async () => file.click());
+    await settle();
+    // The pane is open over that file — its Copy path control is the tell.
+    const pane = () =>
+      [...host.querySelectorAll("button")].some(
+        (one) => one.getAttribute("aria-label") === COPY_PATH_LABEL,
+      );
+    expect(pane()).toBe(true);
+
+    const remove = removeButton(host);
+    if (!remove) throw new Error("no Remove control for the copied member");
+    await act(async () => remove.click());
+    await settle();
+
+    // The template no longer holds that file, so nothing draws it.
+    expect(pane()).toBe(false);
+    expect(host.textContent).not.toContain("my own bytes");
+  });
+
+  it("names the member by the kind it was saved as", async () => {
+    const plugged: Resolution = {
+      groups: [
+        {
+          repo: "owner/repo",
+          source: null,
+          rev: null,
+          version: null,
+          lastKnown: false,
+          items: [],
+          bundles: [{ name: "review", enabled: true, kind: "plugin" }],
+        },
+      ],
+      copies: [],
+      missing: [],
+    };
+    vi.mocked(commands.templateResolve).mockResolvedValue({
+      status: "ok",
+      data: plugged,
+    });
+    vi.mocked(commands.templateFiles).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+    vi.mocked(commands.templateRemoveMembers).mockResolvedValue({
+      status: "ok",
+      data: TEMPLATE,
+    });
+    const host = mount(<TemplatePage />);
+    await settle();
+
+    const remove = removeButton(host);
+    if (!remove) throw new Error("no Remove control for the plugin member");
+    await act(async () => remove.click());
+    await settle();
+
+    // A reference calling the plugin a bundle names no member the template
+    // holds: the row would remove nothing and say nothing.
+    expect(commands.templateRemoveMembers).toHaveBeenCalledWith(
+      "Rust service",
+      [
+        {
+          kind: "plugin",
+          name: "review",
+          which: { of: "marketplace", repo: "owner/repo" },
+        },
+      ],
+    );
   });
 });

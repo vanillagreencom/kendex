@@ -93,7 +93,7 @@ pub fn create_from_project(env: &Env, root: &std::path::Path, chosen: &Chosen) -
     let scope = Scope::Project {
         root: crate::paths::canonical(root).map_err(|e| CoreError::io(root, e))?,
     };
-    let (members, copying, kept) = wanted(&draft, chosen)?;
+    let (mut members, copying, kept) = wanted(&draft, chosen)?;
     // Every byte read and revalidated before the index moves: a stale hash
     // refuses here, with nothing saved and nothing copied.
     let mut resolved = Vec::new();
@@ -101,6 +101,7 @@ pub fn create_from_project(env: &Env, root: &std::path::Path, chosen: &Chosen) -
         let bytes = import::resolve(env, std::slice::from_ref(&scope), &copy.selection)?;
         resolved.push((copy, bytes));
     }
+    bind_notices(&mut members, &resolved);
     super::admit(&members)?;
     let customizations = match chosen.customizations {
         true => super::draft::customizations_for(
@@ -132,8 +133,19 @@ pub fn create_from_project(env: &Env, root: &std::path::Path, chosen: &Chosen) -
         ) {
             // The index names copies that are not there. Nothing has been
             // installed from it and nothing else points at it, so the
-            // entry goes and the refusal is the one the copy gave.
-            let _ = super::delete(env, &saved.name);
+            // entry goes and the refusal is the one the copy gave. The
+            // removal is a fallible write like any other, and one that
+            // fails leaves a template a person can see and can never
+            // install — said beside the copy's own reason rather than
+            // dropped, because nothing else would ever report it.
+            if let Err(removing) = super::delete(env, &saved.name) {
+                return Err(CoreError::TemplateCopyUnreadable {
+                    copy: copy.name.clone(),
+                    why: format!(
+                        "{error} — and removing the template this create had already saved failed too: {removing}"
+                    ),
+                });
+            }
             return Err(error);
         }
     }
@@ -187,8 +199,7 @@ pub fn add_from_project(
             },
         );
     }
-    let (members, copying, _) = self::wanted(&draft, &chosen)?;
-    super::admit(&members)?;
+    let (mut members, copying, _) = self::wanted(&draft, &chosen)?;
     let mut bytes = Vec::new();
     for copy in &copying {
         bytes.push((
@@ -196,6 +207,8 @@ pub fn add_from_project(
             import::resolve(env, std::slice::from_ref(&scope), &copy.selection)?,
         ));
     }
+    bind_notices(&mut members, &bytes);
+    super::admit(&members)?;
     // What each slot held before this write, so a refusal half-way puts
     // the template back the way the doc above says it does. Read before
     // the first write, because after it the bytes are already gone.
@@ -277,6 +290,32 @@ pub fn create_from_selection(env: &Env, name: &str, members: Vec<Member>) -> Res
     )
 }
 
+/// Record on each copied member the licence files its own bytes travel
+/// with, now that they have been read.
+///
+/// The one place a copy's terms are bound to the copy that requires them,
+/// so both save paths record the same thing and neither can save a copy
+/// whose terms belong to nothing. What a read lists and what an install
+/// carries is then the union over the copies the template holds.
+fn bind_notices(members: &mut [Member], taken: &[(&Copying, import::ResolvedBytes)]) {
+    let recorded: BTreeMap<String, Vec<String>> = taken
+        .iter()
+        .map(|(copy, bytes)| {
+            (
+                store::slot_id(copy.kind, &copy.name),
+                store::notice_ids(&bytes.notices),
+            )
+        })
+        .collect();
+    for member in members {
+        if let MemberSource::Copy { copy, notices, .. } = &mut member.source
+            && let Some(ids) = recorded.get(copy)
+        {
+            notices.clone_from(ids);
+        }
+    }
+}
+
 /// The members the answers keep, the copies they require, and the package
 /// names the customizations are read for.
 fn wanted(draft: &Draft, chosen: &Chosen) -> Result<(Vec<Member>, Vec<Copying>, Vec<String>)> {
@@ -336,6 +375,7 @@ fn wanted(draft: &Draft, chosen: &Chosen) -> Result<(Vec<Member>, Vec<Copying>, 
             source: MemberSource::Copy {
                 copy: store::slot_id(kind, &local.name),
                 from: None,
+                notices: Vec::new(),
             },
         });
     }
@@ -377,9 +417,13 @@ fn source_of(
             name: member.name.clone(),
             selection: selection_of(kind, &member.name, hash, license),
         });
+        // The terms these bytes come under are recorded on the member by
+        // [`bind_notices`], once the bytes have been read and there is an
+        // answer to record. Nothing is copied yet at this point.
         Ok(MemberSource::Copy {
             copy: store::slot_id(kind, &member.name),
             from,
+            notices: Vec::new(),
         })
     };
     match (&member.origin, side) {

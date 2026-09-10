@@ -393,7 +393,7 @@ fn origin_of(
             ),
         };
     };
-    let Some(repo) = source.repo.clone().or_else(|| source.path.clone()) else {
+    let Some(repo) = saved_repo(source, std::path::MAIN_SEPARATOR) else {
         return DraftOrigin::Unresolved {
             why: format!(
                 "the marketplace '{}' names neither a repository nor a folder",
@@ -423,6 +423,29 @@ fn origin_of(
             source: decl.source.clone(),
             rev,
         },
+    }
+}
+
+/// The one spelling a template saves a marketplace under, or `None` where
+/// the source names neither a repository nor a folder.
+///
+/// A repository reference is text and travels as it stands. A folder is a
+/// path, and a path a manifest declares carries whatever separator the
+/// machine that wrote it builds paths with — so it is spelled here the way
+/// kendex spells every path it hands out. That one spelling is what the
+/// member's identity, the grouping an install does over it, the
+/// subscription that install makes and the row a person reads all key off:
+/// on Windows two members of one folder marketplace saved under two
+/// spellings would group apart, subscribe twice and read as two.
+///
+/// `separator` is what the declaration's own machine builds paths with,
+/// passed in the way [`crate::paths`] passes it, so a Windows-shaped
+/// declaration is provable on any host.
+pub(super) fn saved_repo(source: &crate::manifest::SourceDecl, separator: char) -> Option<String> {
+    match (&source.repo, &source.path) {
+        (Some(repo), _) => Some(repo.clone()),
+        (None, Some(path)) => Some(crate::paths::slashed_over(path, separator)),
+        (None, None) => None,
     }
 }
 

@@ -427,3 +427,191 @@ fn a_member_saved_switched_off_installs_switched_off() {
         "a member saved switched on should install enabled: {manifest}"
     );
 }
+
+/// A plugin is its registry's own curated set, so it installs whole the
+/// way a bundle does — and the resolved row keeps saying it is a plugin,
+/// so a reference built from that row reaches the member rather than
+/// naming one the template does not hold.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_plugin_resolves_as_a_set_that_still_says_which_kind_it_is() {
+    let project = seeded();
+    let repo = crate::paths::slashed(&project.catalog);
+    let template = create_from_selection(
+        &project.env,
+        "Plugged",
+        vec![Member {
+            kind: MemberKind::Plugin,
+            name: "review".to_owned(),
+            enabled: true,
+            source: MemberSource::Marketplace {
+                repo: repo.clone(),
+                rev: None,
+            },
+        }],
+    )
+    .unwrap();
+
+    let resolution = resolve(&project.env, &template).unwrap();
+    assert_eq!(resolution.groups.len(), 1, "{:?}", resolution.groups);
+    let sets = &resolution.groups[0].bundles;
+    assert_eq!(sets.len(), 1, "{sets:?}");
+    assert_eq!(
+        (sets[0].name.as_str(), sets[0].kind),
+        ("review", MemberKind::Plugin)
+    );
+
+    // The reference a surface builds out of that row reaches the member.
+    let after = remove_members(
+        &project.env,
+        "Plugged",
+        &[MemberRef {
+            kind: sets[0].kind,
+            name: sets[0].name.clone(),
+            which: MemberWhich::Marketplace { repo },
+        }],
+    )
+    .unwrap();
+    assert_eq!(after.members, Vec::new());
+}
+
+/// A refusal in the rendering after the copies are on disk answers with
+/// the copies and the reason it stopped, never as a total refusal.
+///
+/// The copy and its declaration commit in one plan and the rendering is a
+/// second one. The account of the first belongs to the run, not to the
+/// step that made it, so a step that refuses afterwards cannot take it
+/// away — a person told nothing landed would go looking for bytes that
+/// are in their project.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_render_that_refuses_after_the_copy_committed_reports_the_copy() {
+    use std::os::unix::fs::PermissionsExt;
+    let project = seeded();
+    // Copies only: a marketplace group writes before them, and its own
+    // account would answer for the run before this refusal was reached.
+    let template = create_from_project(
+        &project.env,
+        &project.root,
+        &Chosen {
+            name: "Local only".to_owned(),
+            locals: vec!["skill:stray".to_owned()],
+            ..Chosen::default()
+        },
+    )
+    .unwrap();
+    let target = destination(&project, "unrenderable");
+    let Scope::Project { root } = &target else {
+        unreachable!("built as a project scope")
+    };
+    // The slot the render writes into, refusing writes. The harness root
+    // above it stays writable: a harness root nothing can write to is read
+    // as a scope that holds no skills at all, and then no render is
+    // planned and there is no refusal to observe.
+    let slot = root.join(".claude/skills");
+    fs::create_dir_all(&slot).unwrap();
+    fs::set_permissions(&slot, fs::Permissions::from_mode(0o555)).unwrap();
+    // Root writes into a directory whatever its mode, so there the
+    // refusal under test does not exist and the install simply finishes.
+    let denied = !rustix::process::geteuid().is_root();
+    let landed = install(
+        &project.env,
+        &template,
+        &target,
+        Some(vec![crate::model::HarnessId::Claude]),
+        None,
+    );
+    fs::set_permissions(&slot, fs::Permissions::from_mode(0o755)).unwrap();
+
+    match denied {
+        true => {
+            let landed = landed.unwrap();
+            assert_eq!(landed.copied, ["skill stray"], "{landed:?}");
+            assert!(landed.stopped.is_some(), "{landed:?}");
+            // And the bytes the account names are where it says they are.
+            let copied = root
+                .join(crate::source::LOCAL_SOURCE_DIR)
+                .join("skills/stray/SKILL.md");
+            assert!(copied.is_file(), "{}", copied.display());
+        }
+        false => assert!(landed.is_ok(), "{landed:?}"),
+    }
+}
+
+/// A notice belongs to the copy that required it. Taking the last copy
+/// from a licensed marketplace out takes its terms with it, so the
+/// template stops listing them and an install of what is left carries no
+/// licence file for content the template no longer holds.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removing_the_last_licensed_copy_takes_its_notices_with_it() {
+    let project = seeded();
+    // The installed copy drifts from the marketplace's bytes, so the
+    // project's own copy of it can be taken — which is what needs the
+    // marketplace's terms to travel along.
+    super::skill(
+        &project.root.join(".claude/skills"),
+        "gh",
+        "edited here, not upstream",
+    );
+    let template = create_from_project(
+        &project.env,
+        &project.root,
+        &Chosen {
+            name: "Licensed".to_owned(),
+            members: vec!["skill:gh".to_owned()],
+            sides: std::collections::BTreeMap::from([(
+                "skill:gh".to_owned(),
+                Side::Copy {
+                    license: LicenseAnswer {
+                        confirmed: true,
+                        basis: None,
+                    },
+                },
+            )]),
+            locals: vec!["skill:stray".to_owned()],
+            ..Chosen::default()
+        },
+    )
+    .unwrap();
+    let listed = |template: &Template| -> Vec<String> {
+        stored_files(&project.env, template)
+            .unwrap()
+            .into_iter()
+            .map(|file| file.path)
+            .filter(|path| path.starts_with("NOTICES/"))
+            .collect()
+    };
+    assert!(!listed(&template).is_empty(), "{:?}", listed(&template));
+    // The inverse, so the rows below cannot pass over a set that is always
+    // empty: while the template holds the copy, its terms travel with it
+    // into the project the template is installed into.
+    let carried_in = |name: &str, template: &Template| -> std::path::PathBuf {
+        let target = destination(&project, name);
+        install(&project.env, template, &target, None, None).unwrap();
+        let Scope::Project { root } = &target else {
+            unreachable!("built as a project scope")
+        };
+        root.join(crate::source::LOCAL_SOURCE_DIR)
+            .join(crate::author::import::NOTICES_DIR)
+            .join("cat/LICENSE")
+    };
+    let licensed = carried_in("licensed", &template);
+    assert!(licensed.is_file(), "{}", licensed.display());
+
+    let after = remove_members(
+        &project.env,
+        "Licensed",
+        &[MemberRef {
+            kind: MemberKind::Skill,
+            name: "gh".to_owned(),
+            which: MemberWhich::Copy,
+        }],
+    )
+    .unwrap();
+    assert_eq!(listed(&after), Vec::<String>::new());
+
+    let stale = carried_in("unlicensed", &after);
+    assert!(!stale.exists(), "{}", stale.display());
+}

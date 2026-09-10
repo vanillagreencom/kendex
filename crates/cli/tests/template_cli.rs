@@ -328,6 +328,50 @@ fn members_are_named_with_the_selectors_every_other_verb_takes() {
     );
 }
 
+/// A plugin is named by `--plugin`, listed as a plugin, and taken out by
+/// the same flag.
+///
+/// A plugin installs whole the way a bundle does, so it resolves as a set
+/// — but the two are two kinds, and with only `--bundle` on offer there
+/// was no way to name a plugin the template held: `remove` reached no
+/// member and left it in place.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_plugin_member_is_named_shown_and_removed_as_a_plugin() {
+    let (_tmp, home) = world();
+    let catalog = home.join("catalog");
+    let created = kendex(
+        &home,
+        &home,
+        &[
+            "template",
+            "create",
+            "Plugged",
+            "--source",
+            catalog.to_str().unwrap(),
+            "--plugin",
+            "review",
+        ],
+    );
+    assert!(created.status.success(), "{}", said(&created));
+
+    let shown = kendex(&home, &home, &["template", "show", "Plugged"]);
+    assert!(shown.status.success(), "{}", said(&shown));
+    assert!(said(&shown).contains("plugin review"), "{}", said(&shown));
+
+    let removed = kendex(
+        &home,
+        &home,
+        &["template", "remove", "Plugged", "--plugin", "review"],
+    );
+    assert!(removed.status.success(), "{}", said(&removed));
+    assert!(
+        said(&removed).contains("0 package(s)"),
+        "{}",
+        said(&removed)
+    );
+}
+
 /// The two answers core refuses without, and the flags that give them.
 ///
 /// Without them `create --from-project` refused whole on any project

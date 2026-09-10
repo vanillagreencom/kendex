@@ -90,6 +90,16 @@ export function TemplatePage() {
       return;
     }
     setFiles(owned.data);
+    // The pane cannot outlive its row. A file the refreshed list no longer
+    // holds is one this template has just lost, and a selection kept over
+    // it would go on drawing the removed member's contents as though the
+    // template still owned them. Clearing the selection is what empties
+    // the pane: the read below runs off it.
+    setSelected((current) =>
+      current !== null && !owned.data.some((file) => file.path === current)
+        ? null
+        : current,
+    );
   }, [name]);
 
   useEffect(() => {
@@ -207,8 +217,12 @@ export function TemplatePage() {
                   name: item.name,
                   off: !item.enabled,
                 })),
+                // A set's own kind, not "bundle" for both: a plugin
+                // installs whole the way a bundle does, and a reference
+                // calling it a bundle names no member — the row would
+                // remove nothing.
                 ...group.bundles.map((set) => ({
-                  kind: "bundle" as MemberRef["kind"],
+                  kind: set.kind as MemberRef["kind"],
                   name: set.name,
                   off: !set.enabled,
                 })),
