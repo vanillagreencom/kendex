@@ -2565,7 +2565,22 @@ export type ObservedItem = {
 	enabled: boolean | null,
 	/**  Best-effort provenance: git origin URL of the content's real location. */
 	origin: string | null,
-	description: string | null,
+	/**
+	 *  What the author says this package does, written for a person
+	 *  browsing: the header's `summary`, else the `description` it wrote
+	 *  instead. `None` where the author wrote neither — a supported state,
+	 *  never filled in from a command, a URL, a path or a script body.
+	 */
+	summary: string | null,
+	/**
+	 *  What an entry inside a shared config file names: the command a hook
+	 *  registration runs, the command or URL an MCP server is reached at,
+	 *  the spec a Pi extension is installed from. `None` for an item with a
+	 *  file of its own, whose path already says which one it is. Kept apart
+	 *  from [`ObservedItem::summary`] because it is a literal a person
+	 *  inspects, never a sentence about the package.
+	 */
+	action: string | null,
 	/**
 	 *  What this item says it is for. Empty when it says nothing — a tag is
 	 *  something an author writes down, never something inferred from a
@@ -2758,6 +2773,13 @@ export type PackagePreview = {
 	kind: ItemKind,
 	name: string,
 	description: string | null,
+	/**
+	 *  What the page shows under the name: the header's `summary`, else
+	 *  its `description`. The same field the Packages row reads, so a
+	 *  catalog row and the page it opens cannot describe one package
+	 *  differently.
+	 */
+	summary: string | null,
 	tags: Tag[],
 	/**
 	 *  The file a harness would load, capped for preview: a skill's
@@ -3072,6 +3094,26 @@ export type ProvenanceRow = {
 	 */
 	at: string | null,
 	origin: Origin,
+	/**
+	 *  What the author says this package does, written for a person
+	 *  browsing — the one field every surface showing an installed
+	 *  package's own words reads.
+	 * 
+	 *  The words the package's own declaration writes, and the
+	 *  observation's own header where no declaration answers: a file a
+	 *  tool holds is what that tool loads, not what the author wrote
+	 *  about the package — an entry in a config file records how to reach
+	 *  a server, an agent's frontmatter carries the line its harness
+	 *  selects on, and a generated wrapper carries kendex's own. `None`
+	 *  says the author wrote nothing reachable, and that is a supported
+	 *  state — a command, a URL, a path, a script body or a line kendex
+	 *  built is never promoted into a sentence about the package.
+	 * 
+	 *  Author text, so it arrives shown-safe: a control, invisible or
+	 *  direction-flipping character is here as its escape, never as
+	 *  itself.
+	 */
+	summary: string | null,
 	/**
 	 *  Which package this installation is, where the records establish
 	 *  one. `None` says they do not: the observation keeps its own

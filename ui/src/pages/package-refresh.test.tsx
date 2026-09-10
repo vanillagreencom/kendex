@@ -78,7 +78,8 @@ const INSTALLED: ObservedItem = observed({
   fileState: { state: "file" },
   enabled: true,
   origin: null,
-  description: "about gh",
+  summary: "about gh",
+  action: null,
   tags: [],
   modifiedAt: null,
   vendor: null,
@@ -195,6 +196,7 @@ const answerJoin = () =>
       harness: INSTALLED.harness,
       at: INSTALLED.path,
       origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+      summary: null,
       package: { kind: INSTALLED.kind, name: INSTALLED.name },
     },
   ]);

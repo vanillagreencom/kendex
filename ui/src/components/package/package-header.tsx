@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { ItemKind } from "@/bindings";
-import { InlineMarkdown } from "@/components/inline-markdown";
+import { SummaryText } from "@/components/package/summary-text";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -13,12 +13,12 @@ import type { PlaceMark } from "@/lib/place-marks";
 import { cn } from "@/lib/utils";
 
 /** The package page's title block: what this is, why it is here when
- *  nobody asked for it, what it says about itself, and the things you can
- *  do to it. */
+ *  nobody asked for it, what its author says it does, and the things you
+ *  can do to it. */
 export function PackageHeader({
   kind,
   displayName,
-  description,
+  summary,
   forked,
   forkEdited,
   mark,
@@ -27,7 +27,10 @@ export function PackageHeader({
 }: {
   kind: ItemKind;
   displayName: string;
-  description: string | null;
+  /** What the author says the package does, or null where they wrote
+   *  nothing reachable. Bounded here and opened in place: this page is
+   *  where a preview's More lands, so nothing is left unreachable. */
+  summary: string | null;
   forked: boolean;
   /** The fork's files carry the person's own edits. A second word on the
    *  same badge: a fork is already theirs, so an edit to one is what it
@@ -65,17 +68,17 @@ export function PackageHeader({
         </span>
       }
       subtitle={
-        mark || requiredBy.length > 0 || description ? (
+        mark || requiredBy.length > 0 || summary ? (
           <>
-            {/* Under the title and above the description, in words, the
-                way the Library row carries it — not a pill beside the
-                name. A badge there would read as a property of the title;
-                this is a sentence about the package. */}
+            {/* Under the title and above the summary, in words, the way
+                the Library row carries it — not a pill beside the name. A
+                badge there would read as a property of the title; this is
+                a sentence about the package. */}
             {mark ? <p className="mb-1 text-customized">{mark.label}</p> : null}
             {requiredBy.length > 0 ? (
               <p className="mb-1">{requiredByNote(requiredBy)}</p>
             ) : null}
-            {description ? <InlineMarkdown source={description} /> : null}
+            {summary ? <SummaryText summary={summary} /> : null}
           </>
         ) : undefined
       }

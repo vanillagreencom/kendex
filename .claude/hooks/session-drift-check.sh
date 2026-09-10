@@ -3,6 +3,7 @@
 # name: session-drift-check
 # event: SessionStart
 # description: On a fresh session start (not resume or compact), runs `kendex check --quiet` and surfaces kendex drift to the agent — outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`, `-g` in a global section), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Prints nothing when the install is current. KENDEX_DRIFT_HOOK=off disables it.
+# summary: Tells a coding agent at the start of a session which installed packages no longer match their source, and what to run about it. Says nothing when everything matches.
 # safety: Informational only — never installs or removes anything and never touches the project's git state. The check never waits on the network; the only thing it may write is kendex's own cache bookkeeping under ~/.kendex/cache (fetch stamps), and when a source cache there is older than its TTL, a detached background process refreshes it (git fetch + reset, confined to that cache) and this hook does not wait for it. Every suggestion requires user approval before acting. Every notice opens with `session-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key. `kendex check`'s own report is relayed on stdout under those lines, preserved exactly; which arm its exit code chose is a value on them, not a sentence in it.
 # timeout: 30
 # harnesses: [claude-code, codex]

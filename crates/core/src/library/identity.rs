@@ -222,7 +222,7 @@ impl Recorded {
             // command back, so those are what is compared.
             return held
                 .as_ref()
-                .filter(|held| item.description.as_deref() == Some(held.command.as_str()))
+                .filter(|held| item.action.as_deref() == Some(held.command.as_str()))
                 .map(|held| held.claim.clone());
         }
         self.named(item)

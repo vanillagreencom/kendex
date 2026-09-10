@@ -1,6 +1,7 @@
 import type { HarnessId, Origin, Scope } from "@/bindings";
 import { Ago } from "@/components/ago";
 import { HarnessBadge } from "@/components/harness-badge";
+import { PackageName } from "@/components/package/package-name";
 import { SharedFilesBadge } from "@/components/shared-files-badge";
 import { StatusDot } from "@/components/status-dot";
 import { TagBadges } from "@/components/tag-badge";
@@ -28,16 +29,10 @@ import {
   sharedFiles,
 } from "@/lib/derive";
 import { kindIcon } from "@/lib/kind-icon";
-import {
-  describesItself,
-  hookDisplayName,
-  kindLabel,
-  scopeName,
-} from "@/lib/labels";
+import { hookDisplayName, kindLabel, scopeName } from "@/lib/labels";
 import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
 import { scopeKey } from "@/lib/scope";
 import { placeName } from "@/lib/update-groups";
-import { cn } from "@/lib/utils";
 import { originLabel, originTitle } from "@/stores/provenance";
 
 const STATUS_TONES: Record<GroupStatus, "good" | "warning" | "critical"> = {
@@ -114,14 +109,13 @@ export function InstalledRow({
                   than an action, so the name stays a real button. No
                   selection guard here: a completed click on a button is
                   always intent, and the row's own guard declines the
-                  drags. */}
-              <button
-                type="button"
-                onClick={() => onOpen()}
-                className="block min-w-0 truncate text-left hover:underline"
-              >
-                {displayName}
-              </button>
+                  drags. Hovering or focusing it previews what the package
+                  is for, where its author said. */}
+              <PackageName
+                name={displayName}
+                summary={group.summary}
+                onOpen={() => onOpen()}
+              />
               {/* One badge per place. A single "Forked" over several tells
                   the reader it happened and not where, and leaves nothing
                   to open — a fork belongs to the place it was made in. */}
@@ -170,14 +164,14 @@ export function InstalledRow({
                 </Tooltip>
               ) : null}
             </span>
-            {group.description ? (
-              <span
-                className={cn(
-                  "line-clamp-2 text-xs font-normal text-muted-foreground",
-                  !describesItself(group.kind) && "font-mono text-[11px]",
-                )}
-              >
-                {group.description}
+            {/* The author's own words, in the same voice as every other
+                description on screen. A package whose author wrote none
+                gets no line: a command, a URL or a path is what the
+                package runs, not what it is for, and the technical view
+                is where those belong. */}
+            {group.summary ? (
+              <span className="line-clamp-2 text-xs font-normal text-muted-foreground">
+                {group.summary}
               </span>
             ) : null}
           </span>

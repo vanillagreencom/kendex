@@ -25,6 +25,7 @@ import {
   groupRef,
   groupScopes,
   installationAt,
+  summaryAt,
 } from "@/lib/derive";
 import { harnessName, packageDisplayName } from "@/lib/labels";
 import { PAGE_GUTTER } from "@/lib/layout";
@@ -32,6 +33,7 @@ import {
   addressesDeclaration,
   usePackageIndex,
   usePackagesKnown,
+  useSummaryIndex,
 } from "@/lib/package-identity";
 import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
@@ -102,6 +104,9 @@ export function PackagePage() {
   }, [ref, openScope]);
 
   const packageOf = usePackageIndex();
+  // The words the package's author wrote, from the same join the row and
+  // its preview read, so the page cannot describe it differently.
+  const summaryOf = useSummaryIndex();
   const packagesKnown = usePackagesKnown();
   // Found by the whole identity the link carried, not by what each tool
   // stores this package as: a tool that keeps a hook as a rule or a command
@@ -115,9 +120,9 @@ export function PackagePage() {
   const group = useMemo(
     () =>
       ref && result && packageOf
-        ? groupFor(groupItems(result.items, packageOf), ref)
+        ? groupFor(groupItems(result.items, packageOf, summaryOf), ref)
         : null,
-    [ref, result, packageOf],
+    [ref, result, packageOf, summaryOf],
   );
 
   const mutating = useManifestBusy(switching);
@@ -292,7 +297,7 @@ export function PackagePage() {
       <PackageHeader
         kind={group.kind}
         displayName={displayName}
-        description={group.description}
+        summary={summaryAt(group, ref.scope, summaryOf)}
         forked={meta?.fork != null}
         forkEdited={forkEdited}
         mark={mark}

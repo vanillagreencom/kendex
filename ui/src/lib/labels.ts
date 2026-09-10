@@ -37,18 +37,21 @@ export const kindLabel = (kind: ItemKind, count = 1): string =>
  *  is serialized. */
 export const KINDS = Object.keys(KIND_LABELS) as ItemKind[];
 
-// A hook and an MCP server have nowhere to write a description — no
-// frontmatter, just an entry in a config file — so what stands in for one is
-// the command they run. That is the only thing telling two of them apart, so
-// it stays on screen, but it is a literal and reads as one: set in mono, not
-// in the same voice as an author's sentence.
-const RUNS_A_COMMAND: ReadonlySet<ItemKind> = new Set<ItemKind>([
-  "hook",
-  "mcp-server",
-]);
+// A hook, an MCP server and a Pi extension live as an entry inside a
+// config file, and the entry names a command, a URL or a spec. That is
+// what a person inspecting execution reads, and it is what tells two
+// entries in one file apart — so it stays on screen, in the package's
+// details, under the words each kind uses for it. It is never the row's
+// description: a literal says how the thing is reached, not what it is
+// for. A kind with no such entry has no row.
+const ACTION_LABELS: Partial<Record<ItemKind, string>> = {
+  hook: "Runs",
+  "mcp-server": "Reached at",
+  "pi-extension": "Installed from",
+};
 
-export const describesItself = (kind: ItemKind): boolean =>
-  !RUNS_A_COMMAND.has(kind);
+export const actionLabel = (kind: ItemKind): string | undefined =>
+  ACTION_LABELS[kind];
 
 // What each tag is called on screen. The written form is lower-case (it is
 // what an author types into a file); the label is what a reader sees.

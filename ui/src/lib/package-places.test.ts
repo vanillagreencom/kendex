@@ -91,7 +91,8 @@ const install = (
     fileState: { state: "file" },
     enabled: true,
     origin: null,
-    description: null,
+    summary: null,
+    action: null,
     tags: [],
     modifiedAt: null,
     vendor,
@@ -110,6 +111,7 @@ const joined = (
   // The file the matching observation reads: the join answers per file.
   at: install(scope, harness).path,
   origin,
+  summary: null,
   package: { kind: "skill", name: "gh" },
 });
 
@@ -123,6 +125,7 @@ const owned = (scopes: Scope[], origin: Origin = OURS): ProvenanceRow[] =>
     harness: "claude",
     at: install(scope).path,
     origin,
+    summary: null,
     package: { kind: "skill", name: "gh" },
   }));
 

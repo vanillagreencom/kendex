@@ -60,9 +60,38 @@ Everything is optional. Without a `[marketplace]` table the directory listing fa
 - Hook: `hooks/<name>.sh` with a comment header naming `event`, an optional `matcher`, and a `description`.
 - Command: `commands/<name>.md` with frontmatter `description`.
 - MCP server: `mcp/<name>.toml` describing the invocation.
-- A skill, command or MCP server may add `summary`, the line a marketplace row shows and search reads; `description` is what an agent reads to decide whether to load the item, and stands in when there is no summary.
 
 A description is never guessed: an empty one stays empty and is a check finding. Tags come from `tags = [...]` in `[marketplace]` or per item in frontmatter, never inferred from names. A marketplace page renders the package's own body, the `SKILL.md` for a skill and the one file for every other kind; a `README.md` beside a skill ships with it and is listed, not rendered.
+
+## What a person reads
+
+Every surface that names a package — a marketplace row, its page, a My Library row, the preview on that row's name, and both searches — shows one line: the package's `summary`, or its `description` where no summary is written.
+
+Write the summary where the kind already keeps its metadata; kendex reads no second file.
+
+| Kind | Where the summary goes |
+|---|---|
+| Skill | `summary:` in `SKILL.md` frontmatter |
+| Agent | `summary:` in the agent file's frontmatter |
+| Command | `summary:` in the command file's frontmatter |
+| Hook | `# summary:` in the `# ---` comment header |
+| MCP server | `summary = "…"` in `mcp/<name>.toml` |
+| Pi extension | `description` in its `package.json` |
+
+```sh
+# ---
+# name: block-bare-cd
+# event: PreToolUse
+# description: Refuse a command with a line that is only a `cd`.
+# summary: Stops a command whose whole line is a `cd`. Where the shell stays open between tool calls, that moves every later command with it.
+# ---
+```
+
+`description` and `summary` are not the same job. A `description` is what an agent reads to decide whether to load the package, so it is written for the agent; a `summary` is what a person reads to decide whether they want it. Where a package writes only a description, that description is shown.
+
+Write a summary as one or two short sentences about what the package does and what it changes for the person using it. Leave the precise rules, flags and limits to the package's own documentation. A long summary is not refused — a row clamps it to two lines and a preview offers the package's page for the rest — but a short one is the one that reads well everywhere.
+
+A package that writes neither shows no line. That is a supported state: kendex never fills the gap with the command a hook runs, the URL an MCP server is reached at, the path a file sits at, or anything read out of a script. Those stay in the package's details, where someone inspecting execution looks for them.
 
 ## Settings
 

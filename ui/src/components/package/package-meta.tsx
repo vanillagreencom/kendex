@@ -18,7 +18,7 @@ import {
   type ItemGroup,
   sharedFiles,
 } from "@/lib/derive";
-import { kindLabel, scopeName } from "@/lib/labels";
+import { actionLabel, kindLabel, scopeName } from "@/lib/labels";
 import { versionLabel } from "@/lib/versions";
 import { subscription } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
@@ -117,6 +117,16 @@ export function PackageMetaBlock({
         ) : null}
         {meta?.catalog?.license ? (
           <Row label="License">{meta.catalog.license}</Row>
+        ) : null}
+        {/* What the entry in the tool's own file names. Kept here, where
+            someone inspecting execution looks, rather than under the
+            package's name where its author's words go. */}
+        {primary.action && actionLabel(group.kind) ? (
+          <Row label={actionLabel(group.kind) ?? ""}>
+            <span className="break-all font-mono text-xs">
+              {primary.action}
+            </span>
+          </Row>
         ) : null}
         <Row label="Path">
           <span className="break-all font-mono text-xs">{primary.path}</span>

@@ -1011,7 +1011,8 @@ describe("loadPlaces after a read stops working", () => {
     fileState: "file",
     enabled: true,
     origin: null,
-    description: "about gh",
+    summary: "about gh",
+    action: null,
     tags: [],
   });
   const group = groupItems([item(VG), item(HYPR)] as never, () => null)[0];

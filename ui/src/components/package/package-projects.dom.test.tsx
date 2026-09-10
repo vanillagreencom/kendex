@@ -63,6 +63,7 @@ const ownedBy = (...owned: [Scope, Origin][]): ProvenanceRow[] =>
     harness: "claude",
     at: install(scope).path,
     origin,
+    summary: null,
     package: { kind: "skill", name: "gh" },
   }));
 
@@ -78,7 +79,8 @@ const install = (scope: Scope, harness: HarnessId = "claude"): ObservedItem =>
     fileState: { state: "file" },
     enabled: true,
     origin: null,
-    description: null,
+    summary: null,
+    action: null,
     tags: [],
     modifiedAt: null,
     vendor: null,
@@ -588,6 +590,7 @@ describe("a place whose copy the tool stores as another kind", () => {
         harness: "cursor",
         at: mine.at,
         origin: UNMANAGED,
+        summary: null,
         package: null,
       },
       {
@@ -597,6 +600,7 @@ describe("a place whose copy the tool stores as another kind", () => {
         harness: "cursor",
         at: RULE.at,
         origin: OURS,
+        summary: null,
         package: { kind: "hook", name: "gh" },
       },
     ]);

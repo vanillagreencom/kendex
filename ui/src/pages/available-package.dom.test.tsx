@@ -45,6 +45,7 @@ const view: PackageView = {
     kind: "skill",
     name: "gh",
     description: "works a pull request",
+    summary: "works a pull request",
     tags: [],
     readme: "# gh",
     files: [{ path: "SKILL.md", size: 10, isReadme: true }],

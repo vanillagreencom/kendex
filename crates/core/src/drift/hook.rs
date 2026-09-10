@@ -21,6 +21,7 @@ pub const HOOK_SCRIPT: &str = r#"#!/bin/sh
 # name: kendex-drift
 # event: SessionStart
 # description: Prints a short drift report at session start, nothing when clean
+# summary: Leaves a coding agent a short note at the start of a session saying whether any installed file no longer matches its source. When everything matches, nothing is left.
 # timeout: 20
 # harnesses: [claude-code, pi]
 # ---

@@ -2,6 +2,7 @@ import { type ComponentProps, useEffect } from "react";
 import type { AvailablePackage, Catalog, Scope } from "@/bindings";
 import { Ago } from "@/components/ago";
 import { InstalledIn } from "@/components/marketplaces/installed-in";
+import { PackageName } from "@/components/package/package-name";
 import { ScoreTooltip } from "@/components/score-tooltip";
 import { StatusDot } from "@/components/status-dot";
 import { TagBadges } from "@/components/tag-badge";
@@ -157,14 +158,15 @@ export function PackageRow({
           <div className="min-w-0">
             {/* What a screen reader is told opens the package. The row
                 opens too, but a row announces its cells rather than an
-                action, so the name stays a real control. */}
-            <button
-              type="button"
-              onClick={openPackage}
-              className="block max-w-full truncate text-left font-medium hover:underline"
-            >
-              {packageDisplayName(row)}
-            </button>
+                action, so the name stays a real control. Hovering or
+                focusing it previews the author's words, the same way the
+                Library row does. */}
+            <PackageName
+              name={packageDisplayName(row)}
+              summary={row.summary}
+              onOpen={openPackage}
+              className="max-w-full font-medium"
+            />
             {row.summary ? (
               <div className="truncate text-xs text-muted-foreground">
                 {row.summary}

@@ -57,7 +57,8 @@ const install = (scope: Scope): ObservedItem =>
     fileState: { state: "file" },
     enabled: true,
     origin: null,
-    description: null,
+    summary: null,
+    action: null,
     tags: [],
     modifiedAt: null,
     vendor: null,
@@ -73,6 +74,7 @@ const owned = (scope: Scope): ProvenanceRow => ({
   harness: "claude",
   at: install(scope).path,
   origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+  summary: null,
   package: { kind: "skill", name: "commit-guards" },
 });
 

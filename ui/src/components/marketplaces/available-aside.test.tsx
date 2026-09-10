@@ -9,6 +9,7 @@ const checked: PackageView = {
     kind: "skill",
     name: "gh",
     description: null,
+    summary: null,
     tags: [],
     readme: null,
     files: [],

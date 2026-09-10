@@ -12,6 +12,7 @@ const from = (origin: Origin): ProvenanceRow[] => [
     harness: "claude",
     at: "/x/claude",
     origin,
+    summary: null,
     package: { kind: "skill", name: "gh" },
   },
 ];

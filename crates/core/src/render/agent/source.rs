@@ -73,6 +73,11 @@ pub fn parse_source_agent(text: &str) -> Result<SourceAgent, String> {
         match key {
             "name" => agent.name = scalar(value).unwrap_or_default(),
             "description" => agent.description = scalar(value).unwrap_or_default(),
+            // Browsing text, not a rendering input: `scan::metadata` reads
+            // it out of the same header for the catalog row, and a harness
+            // loads an agent on its `description`. Named here so an author
+            // who writes one is not told the key is unknown.
+            "summary" => {}
             "model" => {
                 if let Some(model) = scalar(value).filter(|m| !m.is_empty()) {
                     agent.model = model;
@@ -164,6 +169,25 @@ mod tests {
         assert_eq!(empty.permissions, PermissionIntent::allow_only(vec![]));
         let none = parse_source_agent("---\nname: a\n---\nB.\n").unwrap();
         assert_eq!(none.permissions, PermissionIntent::Unspecified);
+    }
+
+    /// An author writes the browsing line in the same header, and it is
+    /// not a rendering input: it must not be reported as a key nobody
+    /// knows, and it must not become the line a harness loads on.
+    #[test]
+    fn a_summary_is_a_known_key_that_changes_nothing_a_harness_reads() {
+        let agent = parse_source_agent(
+            "---\nname: rust\ndescription: Rust engineer\nsummary: Tunes hot paths.\n---\nBody.\n",
+        )
+        .unwrap();
+        assert!(agent.warnings.is_empty(), "{:?}", agent.warnings);
+        assert_eq!(agent.description, "Rust engineer");
+        // The catalog reads the same header for what it shows, so the two
+        // lines stay apart there as well.
+        let header = crate::scan::metadata::from_markdown(
+            "---\nname: rust\ndescription: Rust engineer\nsummary: Tunes hot paths.\n---\nBody.\n",
+        );
+        assert_eq!(header.summary_or_description(), Some("Tunes hot paths."));
     }
 
     #[test]

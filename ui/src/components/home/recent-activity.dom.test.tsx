@@ -19,7 +19,8 @@ const at = (scope: typeof SCOPE | { scope: "global" }, modifiedAt: number) =>
     fileState: "file",
     enabled: true,
     origin: null,
-    description: null,
+    summary: null,
+    action: null,
     tags: [],
     modifiedAt,
   }) as never;
@@ -32,7 +33,7 @@ const group = (installed: boolean): RecentGroup => ({
   kind: "skill",
   name: "gh",
   package: { kind: "skill", name: "gh" },
-  description: null,
+  summary: null,
   installations: installed
     ? ([
         {
@@ -44,7 +45,8 @@ const group = (installed: boolean): RecentGroup => ({
           fileState: "file",
           enabled: true,
           origin: null,
-          description: null,
+          summary: null,
+          action: null,
           tags: [],
         },
       ] as never)

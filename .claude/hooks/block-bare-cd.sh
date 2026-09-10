@@ -4,6 +4,7 @@
 # event: PreToolUse
 # matcher: Bash
 # description: Refuse a command with a line that is only a `cd`. Where the shell persists across tool calls (Claude Code) a bare cd re-roots every later command and every hook that judges the working directory, while instruction files and hook paths stay with the launch directory; a cd into a worktree inside the repository, Claude Code's default `.claude/worktrees/<name>/`, also loads that tree's instruction files a second time as files there are read. Names the scoped form, `(cd /path && command)`, and, where the harness has one (Claude Code's EnterWorktree), its worktree tool for a move.
+# summary: Stops a command whose whole line is a `cd`. Where the shell stays open between tool calls, that moves every later command with it. Names the scoped form to use instead.
 # safety: Reads the command text only. On a harness that runs each command in a fresh shell (Codex, the Pi carrier) a bare cd changes nothing and the refusal costs one rewrite; the scoped form is right on every harness. Every refusal opens with `block-bare-cd: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # ---
 

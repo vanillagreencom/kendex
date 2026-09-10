@@ -393,7 +393,8 @@ const installed = (overrides: Partial<ObservedItem>): ObservedItem =>
     fileState: { state: "dir" },
     enabled: true,
     origin: null,
-    description: null,
+    summary: null,
+    action: null,
     tags: [],
     modifiedAt: null,
     vendor: null,
@@ -465,6 +466,7 @@ describe("a place card's kind badge", () => {
         harness: item.harness,
         at: item.path,
         origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
+        summary: null,
         package: { kind: item.kind, name: item.name },
       })),
     );

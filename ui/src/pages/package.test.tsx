@@ -110,7 +110,8 @@ const installedAt = (scope: Project, kind: ItemKind = "skill"): ObservedItem =>
     fileState: { state: "file" },
     enabled: true,
     origin: null,
-    description: "about gh",
+    summary: "about gh",
+    action: null,
     tags: [],
     modifiedAt: null,
     vendor: null,
@@ -177,6 +178,7 @@ const openPage = async (
           source: "cat",
           repo: "o/r",
         },
+        summary: null,
         package: { kind, name: "gh" },
       };
     }),
@@ -333,6 +335,46 @@ const scoreTab = (host: HTMLElement) => {
 // string. The kind's own refusal outranks everything, because no check can
 // ever lift it; then how the read went, which the row cannot say; and only
 // a settled read may call this place one the check never covered.
+describe("the words the package page shows", () => {
+  /** The page is about one place, and its buttons work on that place's
+   *  copy, so the line beside the name has to be that place's too. The
+   *  group's own summary is the fold across every place — whichever
+   *  installation the scan listed first — and here that is the other
+   *  place, which installed a different version of the same package. */
+  it("reads this place's words, never another place's", async () => {
+    const host = await openPage(VG, [HYPR, VG], { [scopeKey(VG)]: PLAIN });
+    act(() => {
+      useProvenanceStore.setState({
+        rows: [HYPR, VG].map((scope) => {
+          const item = installedAt(scope);
+          return {
+            scope,
+            kind: "skill" as ItemKind,
+            name: "gh",
+            harness: item.harness,
+            at: item.at,
+            origin: {
+              origin: "marketplace" as const,
+              source: "cat",
+              repo: "o/r",
+            },
+            summary:
+              scopeKey(scope) === scopeKey(VG)
+                ? "What this project installed."
+                : "What the other project installed.",
+            package: { kind: "skill" as ItemKind, name: "gh" },
+          };
+        }),
+        loaded: true,
+        answeredFor: 0,
+      });
+    });
+
+    expect(header(host)).toContain("What this project installed.");
+    expect(header(host)).not.toContain("What the other project installed.");
+  });
+});
+
 describe("what the package page says instead of Update", () => {
   /** A refusal core sent on the row. Pass-through is the whole property,
    *  so this is a string core would never send: core's own wording here
@@ -929,6 +971,7 @@ describe("the package page's safety tab", () => {
           harness: "codex",
           at: installedAt(VG).at,
           origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+          summary: null,
           package: { kind: "skill", name: "gh" },
         },
       ],
@@ -1191,6 +1234,7 @@ describe("a package page opened on an installation nothing recorded", () => {
         harness: "claude",
         at: null,
         origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+        summary: null,
         package: { kind: "skill", name: "gh" },
       },
       {
@@ -1200,6 +1244,7 @@ describe("a package page opened on an installation nothing recorded", () => {
         harness: "cursor",
         at: null,
         origin: { origin: "unmanaged" },
+        summary: null,
         package: null,
       },
     ]);

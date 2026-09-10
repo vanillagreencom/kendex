@@ -11,7 +11,7 @@ describe("PackageHeader", () => {
       <PackageHeader
         kind="skill"
         displayName="gh"
-        description="about gh"
+        summary="about gh"
         forked={false}
         forkEdited={false}
         mark={mark}

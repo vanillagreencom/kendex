@@ -33,10 +33,14 @@ pub(super) fn pi_packages(path: &Path) -> Result<Vec<RawEntry>, super::ScanProbl
             RawEntry {
                 name: pi_package_name(&spec),
                 enabled: None,
-                description: local
+                // A package with a folder beside the settings file carries
+                // its own words in its `package.json`; one installed from a
+                // registry carries none here, and the spec that names it is
+                // not a sentence about it.
+                summary: local
                     .as_ref()
-                    .and_then(|(_, description)| description.clone())
-                    .or_else(|| Some(spec.clone())),
+                    .and_then(|(_, description)| description.clone()),
+                action: Some(spec.clone()),
                 source_path: local.map(|(dir, _)| dir),
             }
         })
@@ -89,6 +93,10 @@ fn pi_package_name(spec: &str) -> String {
 mod tests {
     use super::*;
 
+    /// One listed entry as this suite reads it: its name, the author's
+    /// words, the spec it was registered by, and its own directory.
+    type Listed<'a> = (&'a str, Option<&'a str>, Option<&'a str>, Option<&'a Path>);
+
     #[test]
     fn pi_package_names_cover_every_spec_shape() {
         assert_eq!(
@@ -104,11 +112,12 @@ mod tests {
 
     /// One row per spec shape a settings file can carry, and the entry
     /// it lists: a local package with a `package.json` beside it gets its
-    /// own description and directory; a relative spec with no folder
-    /// falls back to the spec; an npm spec is untouched by local
-    /// resolution.
+    /// own words, its spec and its directory; a relative spec with no
+    /// folder has no words to read and keeps its spec; an npm spec is
+    /// untouched by local resolution. The spec never stands in for the
+    /// words — a locator is not a sentence about the package.
     #[test]
-    fn a_settings_entry_lists_as_its_name_description_and_directory() {
+    fn a_settings_entry_lists_as_its_name_summary_spec_and_directory() {
         let rows = [
             (
                 "./packages/@vg/caveman",
@@ -117,13 +126,15 @@ mod tests {
                     r#"{"description": "Native Pi caveman communication mode"}"#,
                 )),
                 "caveman",
-                "Native Pi caveman communication mode",
+                Some("Native Pi caveman communication mode"),
+                "./packages/@vg/caveman",
                 Some("packages/@vg/caveman"),
             ),
             (
                 "./packages/pi-tmux",
                 None,
                 "pi-tmux",
+                None,
                 "./packages/pi-tmux",
                 None,
             ),
@@ -131,11 +142,12 @@ mod tests {
                 "npm:@vanillagreen/pi-hooks@1.2.0",
                 None,
                 "@vanillagreen/pi-hooks",
+                None,
                 "npm:@vanillagreen/pi-hooks@1.2.0",
                 None,
             ),
         ];
-        for (spec, folder, name, description, source_path) in rows {
+        for (spec, folder, name, summary, action, source_path) in rows {
             let tmp = tempfile::tempdir().unwrap();
             let settings = tmp.path().join("settings.json");
             if let Some((dir, package_json)) = folder {
@@ -145,12 +157,13 @@ mod tests {
             std::fs::write(&settings, format!(r#"{{"packages": ["{spec}"]}}"#)).unwrap();
 
             let entries = pi_packages(&settings).unwrap();
-            let listed: Vec<(&str, Option<&str>, Option<&Path>)> = entries
+            let listed: Vec<Listed<'_>> = entries
                 .iter()
                 .map(|entry| {
                     (
                         entry.name.as_str(),
-                        entry.description.as_deref(),
+                        entry.summary.as_deref(),
+                        entry.action.as_deref(),
                         entry.source_path.as_deref(),
                     )
                 })
@@ -158,7 +171,7 @@ mod tests {
             let source_path = source_path.map(|rel| tmp.path().join(rel));
             assert_eq!(
                 listed,
-                [(name, Some(description), source_path.as_deref())],
+                [(name, summary, Some(action), source_path.as_deref())],
                 "{spec}"
             );
         }

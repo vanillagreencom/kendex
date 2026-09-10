@@ -8,7 +8,7 @@ import type {
   Tag,
 } from "@/bindings";
 import { KINDS } from "@/lib/labels";
-import type { PackageOf } from "@/lib/package-identity";
+import type { PackageOf, SummaryOf } from "@/lib/package-identity";
 import { sameScope } from "@/lib/scope";
 
 export type ScopeSelection = "all" | "global" | { project: string };
@@ -38,7 +38,6 @@ interface ItemFilter {
   scope: ScopeSelection;
   harness?: string;
   tag?: Tag;
-  search?: string;
 }
 
 /** Narrowings that are true of one installation: where it is, which tool
@@ -49,17 +48,27 @@ export function filterItems(
   items: ObservedItem[],
   filter: ItemFilter,
 ): ObservedItem[] {
-  const needle = filter.search?.trim().toLowerCase();
   return items.filter((item) => {
     if (!scopeMatches(item, filter.scope)) return false;
     if (filter.harness && item.harness !== filter.harness) return false;
     if (filter.tag && !item.tags.includes(filter.tag)) return false;
-    if (needle) {
-      const haystack = `${item.name} ${item.description ?? ""}`.toLowerCase();
-      if (!haystack.includes(needle)) return false;
-    }
     return true;
   });
+}
+
+/** Whether a typed search matches this package: its name, and the words
+ *  its author wrote about it.
+ *
+ *  Asked of the group and not of each installation, because that is where
+ *  a package's own words are. An installation is a registration in a
+ *  tool's file or a copy of a tree; the summary belongs to the package the
+ *  records say those are, and the same text is what the marketplace search
+ *  reads — so one query cannot find a package in one list and miss it in
+ *  the other. A blank query matches everything. */
+export function groupMatches(group: ItemGroup, search: string): boolean {
+  const needle = search.trim().toLowerCase();
+  if (!needle) return true;
+  return `${group.name} ${group.summary ?? ""}`.toLowerCase().includes(needle);
 }
 
 /** The groups of one kind — the package's kind, which is what the filter
@@ -81,7 +90,10 @@ export interface ItemGroup {
    *  action of this group speaks. */
   kind: ItemKind;
   name: string;
-  description: string | null;
+  /** What the author says this package does, or null where they wrote
+   *  nothing reachable. Never a command, a URL or a path: a row with no
+   *  summary shows none. */
+  summary: string | null;
   installations: ObservedItem[];
   harnesses: string[];
   /** Every tag any installation of this item carries, deduped. One item can
@@ -163,6 +175,7 @@ export function sharedFiles(installations: ObservedItem[]): SharedFile[] {
 export function groupItems(
   items: ObservedItem[],
   packageOf: PackageOf,
+  summaryOf: SummaryOf = () => null,
 ): ItemGroup[] {
   const groups = new Map<string, ItemGroup>();
   for (const item of items) {
@@ -180,7 +193,7 @@ export function groupItems(
         package: identity,
         kind: identity?.kind ?? item.kind,
         name: identity?.name ?? item.name,
-        description: item.description,
+        summary: summaryOf(item),
         installations: [],
         harnesses: [],
         tags: [],
@@ -190,7 +203,10 @@ export function groupItems(
       groups.set(key, group);
     }
     group.installations.push(item);
-    group.description ??= item.description;
+    // A package installed for several tools is read from whichever of its
+    // copies has words: one tool storing a hook as a registration says
+    // nothing about it while another's copy of the same package does.
+    group.summary ??= summaryOf(item);
     if (!group.harnesses.includes(item.harness))
       group.harnesses.push(item.harness);
     for (const tag of item.tags) {
@@ -348,6 +364,33 @@ export function installationAt(
 ): ObservedItem | undefined {
   if (!group || !scope) return undefined;
   return group.installations.find((install) => sameScope(install.scope, scope));
+}
+
+/** What the author says this package does, as the scope a page is about
+ *  has it.
+ *
+ *  A page names one scope, and its buttons work on that scope's copy, so
+ *  the words beside the name are that scope's too. `ItemGroup.summary`
+ *  folds every scope together — whichever installation the scan reached
+ *  first — which on a project page can be another scope's line about a
+ *  package that scope installed from a different source or version.
+ *
+ *  Within the scope it keeps the group's own rule, because one tool's
+ *  copy can carry words where another's says nothing. Null where none of
+ *  that scope's installations has any: a blank is this scope's answer,
+ *  never a borrowed one. */
+export function summaryAt(
+  group: ItemGroup | null | undefined,
+  scope: Scope | null | undefined,
+  summaryOf: SummaryOf,
+): string | null {
+  if (!group || !scope) return null;
+  for (const install of group.installations) {
+    if (!sameScope(install.scope, scope)) continue;
+    const summary = summaryOf(install);
+    if (summary) return summary;
+  }
+  return null;
 }
 
 /** Who ships this item, when a tool ships it itself — the vendor named by

@@ -12,8 +12,6 @@ use serde::Serialize;
 
 use crate::check_catalog;
 use crate::error::Result;
-use crate::model::ItemKind;
-use crate::scan::metadata::Metadata;
 use crate::source_read::SealedSource;
 use crate::tags::Tag;
 
@@ -131,7 +129,10 @@ pub fn index(sealed: &SealedSource, display: &str) -> Result<MarketplaceIndex> {
     let mut packages = Vec::new();
     for item in &report.items {
         let path = sealed.root().join(&item.file);
-        let header = header(sealed, item.kind, &path)?;
+        // The directory publishes these rows: a header file the seal
+        // will not hand over stops the run rather than publishing a row
+        // that describes the package with nothing.
+        let header = super::header::try_read(sealed, item.kind, &path)?;
         packages.push(IndexPackage {
             kind: item.kind.name(),
             name: safe_text(&item.name, MAX_TEXT),
@@ -197,23 +198,4 @@ fn bundle_rows(sealed: &SealedSource, config: &super::SourceConfig) -> Result<Ve
                 .collect(),
         })
         .collect())
-}
-
-/// What the item says about itself in its own header. Read through the
-/// sealed source, decoded lossily — a header is worth reading even beside
-/// one bad byte, and the safety pass has already reported that byte.
-fn header(sealed: &SealedSource, kind: ItemKind, path: &std::path::Path) -> Result<Metadata> {
-    let file = match kind {
-        ItemKind::Skill => path.join("SKILL.md"),
-        ItemKind::Agent | ItemKind::Command | ItemKind::McpServer => path.to_path_buf(),
-        _ => return Ok(Metadata::default()),
-    };
-    if !sealed.is_file(&file) {
-        return Ok(Metadata::default());
-    }
-    let text = String::from_utf8_lossy(&sealed.read(&file)?).into_owned();
-    Ok(match kind {
-        ItemKind::McpServer => crate::scan::metadata::from_toml(&text),
-        _ => crate::scan::metadata::from_markdown(&text),
-    })
 }

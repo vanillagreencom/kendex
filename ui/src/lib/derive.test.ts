@@ -32,7 +32,8 @@ function item(overrides: Partial<ObservedItem>): ObservedItem {
     fileState: { state: "dir" },
     enabled: true,
     origin: null,
-    description: null,
+    summary: null,
+    action: null,
     tags: [],
     modifiedAt: null,
     vendor: null,
@@ -57,20 +58,15 @@ describe("filterItems", () => {
   const items = [
     item({ name: "deploy" }),
     item({ name: "review", kind: "agent", harness: "pi" }),
-    item({ name: "gh", description: "github helper" }),
+    item({ name: "gh", summary: "github helper" }),
   ];
 
-  it("filters by harness and search over name+description", () => {
+  it("filters by harness", () => {
     const rows = [
       {
         name: "harness",
         filter: { scope: "all", harness: "pi" },
         expected: ["review"],
-      },
-      {
-        name: "description",
-        filter: { scope: "all", search: "GITHUB" },
-        expected: ["gh"],
       },
       {
         name: "unfiltered",
@@ -115,10 +111,10 @@ describe("filterItems by where it lives", () => {
 
   it("combines where it lives with the other filters", () => {
     expect(
-      filterItems(items, { scope: { project: "/a" }, search: "b" }),
+      filterItems(items, { scope: { project: "/a" }, harness: "pi" }),
     ).toHaveLength(0);
     expect(
-      filterItems(items, { scope: { project: "/a" }, search: "a" }),
+      filterItems(items, { scope: { project: "/a" }, harness: "claude" }),
     ).toHaveLength(1);
   });
 });

@@ -21,6 +21,7 @@ import { TAGS_ROW_LABEL } from "@/lib/copy";
 import {
   filterItems,
   groupItems,
+  groupMatches,
   groupRef,
   groupScopes,
   groupsOfKind,
@@ -37,6 +38,7 @@ import {
   usePackagesEverKnown,
   usePackagesKnown,
   usePackagesRead,
+  useSummaryIndex,
 } from "@/lib/package-identity";
 import { everyPlace, scopeKey } from "@/lib/scope";
 import { cn } from "@/lib/utils";
@@ -85,6 +87,9 @@ export function InstalledView() {
   const provenance = useProvenanceStore((s) => s.rows);
   // Which observations are one package, from the one join that says so.
   const packageOf = usePackageIndex();
+  // The words each package's author wrote, from the same join, so the row,
+  // its preview and its page cannot describe one package differently.
+  const summaryOf = useSummaryIndex();
   const packagesKnown = usePackagesKnown();
   // Whether any answer was ever kept, which is what tells a failure with
   // rows behind it from one with nothing.
@@ -143,8 +148,9 @@ export function InstalledView() {
 
   // Every group the scan holds, before any narrowing.
   const everywhere = useMemo(
-    () => (result && packageOf ? groupItems(result.items, packageOf) : []),
-    [result, packageOf],
+    () =>
+      result && packageOf ? groupItems(result.items, packageOf, summaryOf) : [],
+    [result, packageOf, summaryOf],
   );
   // Read from those, never from the filtered set: a standing answers for
   // the package, so narrowing the table to one project must not change
@@ -162,9 +168,13 @@ export function InstalledView() {
       scope,
       harness: harness === "any" ? undefined : harness,
       tag: tag === "any" ? undefined : (tag as Tag),
-      search,
     });
-    let grouped = groupItems(filtered, packageOf);
+    // Searched after grouping, because what a search reads is the
+    // package's name and its author's words, and both belong to the
+    // package rather than to any one of its installations.
+    let grouped = groupItems(filtered, packageOf, summaryOf).filter((group) =>
+      groupMatches(group, search),
+    );
     // Narrowed after grouping: the kind on screen is the package's, and a
     // tool that stores a hook as a rule would otherwise drop out of its
     // own filter and turn up under the kind its file happens to be.
@@ -196,6 +206,7 @@ export function InstalledView() {
     search,
     provenance,
     packageOf,
+    summaryOf,
     packagesUnreadable,
     editedAnywhere,
   ]);
