@@ -1,0 +1,1 @@
+- Installing asks what and where in one place: which packages, then which places — personally, one project, several, or all projects. One Install per surface replaces the four pickers and buttons.

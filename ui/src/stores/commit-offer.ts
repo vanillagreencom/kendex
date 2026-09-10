@@ -78,7 +78,21 @@ interface CommitOfferState {
   stage: Stage;
   route: Route;
   message: string;
+  /** Why the scan behind a write could not say what this project holds, or
+   *  null. Held rather than shown: the scan runs inside the write's own
+   *  `finally`, so it can fail while the guided install is still reporting
+   *  where the packages went, and a problems dialog over that install is
+   *  the second unordered modal `lib/asks-first.ts` exists to stop. The
+   *  dialog says it when this question's turn comes. */
+  scanFailure: string | null;
+  /** Whether a scan a write started is still out. What one of them read is
+   *  not the last word on these projects while another is running, so the
+   *  question waits — `lib/asks-first.ts` holds that condition, like every
+   *  other one in the order. */
+  scanning: boolean;
   enqueue: (roots: string[]) => Promise<void>;
+  /** The held scan failure has been reported; drop it. */
+  scanFailureSaid: () => void;
   pick: (route: Route) => void;
   setMessage: (message: string) => void;
   run: () => Promise<void>;
@@ -124,6 +138,29 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
   };
 
   const head = () => get().queue[0];
+
+  // The scans overlap, so only the latest one that started may answer, and
+  // nothing is asked until the last of them has.
+  //
+  // `writingRepo` asks for this scan in a `finally` and does not wait on
+  // it, and one reader action runs `writingRepo` many times — the guided
+  // install writes once per place and once per marketplace inside each —
+  // so several scans are in flight at once and they can come back in any
+  // order. An older answer read the projects before the newer one's write,
+  // and putting its file lists back is the stale reading this queue must
+  // not carry: `commitOfferCommit` re-derives the generated paths when it
+  // runs, so a commit would take files the dialog never listed. It is
+  // dropped whole, failure included — every one of these scans is asked
+  // about the same roots, every project this machine tracks, so a later
+  // answer is an answer about all of them.
+  //
+  // Latest-wins alone would still leave the first answer on screen while a
+  // later write's scan is out: the reader would be offered a project's
+  // files as they stood one write ago, and the commit re-derives what is
+  // there when it runs. So `scanning` says a scan is still out and the
+  // question waits for it.
+  let started = 0;
+  let answered = 0;
 
   /** The last step of both pull-request routes. `moved` says whether the
    *  checkout is now on the branch, which the `pr` route does and the
@@ -178,29 +215,68 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
     stage: { at: "offer" },
     route: "commit",
     message: "",
+    scanFailure: null,
+    scanning: false,
 
     enqueue: async (roots) => {
       if (roots.length === 0) return;
+      const ticket = ++started;
+      set({ scanning: true });
       const response = await commands.commitOfferScan(roots);
+      // A scan that started before one already answered says nothing about
+      // what the projects hold now.
+      if (ticket < answered) return;
+      answered = ticket;
+      // Another write's scan started after this one and has not come back,
+      // so this answer is one write behind what the projects hold.
+      const scanning = started > answered;
       if (response.status === "error") {
         // The write itself landed and was reported by its own caller; a
-        // read behind it that failed is said here and nowhere else.
-        transport(response.error);
+        // read behind it that failed is said here and nowhere else — held
+        // until this question's turn, because this scan runs inside a
+        // write's `finally` and the install that started it may still be
+        // on screen saying what it did.
+        set({ scanFailure: response.error, scanning });
         return;
       }
       const found: CommitOfferScan = response.data;
-      const { queue } = get();
-      // A project already in the line keeps its place and its answer in
-      // progress: kendex asks at most once per project.
-      const waiting = new Set(queue.map((offer) => offer.root));
+      const { queue, stage } = get();
+      // A project already in the line keeps its PLACE, and takes the fresh
+      // reading of what it holds.
+      //
+      // Keeping the older reading is what lets a commit take files the
+      // dialog never listed: two writes can reach one project in quick
+      // succession — the guided install writes per place and per
+      // marketplace, each through its own `writingRepo` — and the commit
+      // re-derives the generated paths when it runs, so it takes what is
+      // there then, not what was listed when the first scan answered.
+      //
+      // The head is left alone while it is being answered: that answer is
+      // in flight against the offer on screen, and swapping it underneath
+      // would change what the running step is about. Its own next scan
+      // corrects it.
+      const fresh = new Map(found.offers.map((offer) => [offer.root, offer]));
+      const answering = stage.at !== "offer";
+      const kept = queue.map((offer, at) =>
+        at === 0 && answering ? offer : (fresh.get(offer.root) ?? offer),
+      );
+      const waiting = new Set(kept.map((offer) => offer.root));
       const added = found.offers.filter((offer) => !waiting.has(offer.root));
-      const next = [...queue, ...added];
+      const next = [...kept, ...added];
       set({
         queue: next,
         flagged: found.flagged,
+        // A read of these projects that did land is the answer about them,
+        // so an earlier scan's held failure has nothing left to report.
+        scanFailure: null,
+        scanning,
+        // The reader's own typing is theirs: a fresh reading of the files
+        // says nothing about the message they are part-way through.
         message: queue.length > 0 ? get().message : (next[0]?.message ?? ""),
       });
     },
+
+    scanFailureSaid: () => set({ scanFailure: null }),
 
     pick: (route) => set({ route }),
     setMessage: (message) => set({ message }),

@@ -1,0 +1,1 @@
+- "Scan a folder" is now "Find existing projects", and says before you choose a folder that it only searches for existing setup. Choosing a folder starts the search; a typed path has its own action.

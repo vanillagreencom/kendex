@@ -1,0 +1,1 @@
+- Adding a project says "Adding project…" while the write is out, refuses a second press, and closes as soon as the project is registered rather than waiting for the whole machine to be read.

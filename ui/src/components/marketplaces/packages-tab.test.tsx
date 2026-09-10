@@ -84,10 +84,14 @@ const listed = async (needle: string): Promise<string[]> => {
   );
   if (!input) throw new Error("no search input rendered");
   if (needle) await userEvent.type(input, needle);
-  return [...host.querySelectorAll("tbody tr")].map(
-    (row) => row.querySelector("td")?.textContent ?? "",
-  );
+  return [...host.querySelectorAll("tbody tr")].map((row) => nameCell(row));
 };
+
+/** What a row leads with, which is its name and the summary under it. The
+ *  first cell is the tick a selection is made in, so the name is the one
+ *  after it. */
+const nameCell = (row: Element): string =>
+  row.querySelectorAll("td")[1]?.textContent ?? "";
 
 // Popularity would lead this list if anything the app receives carried
 // one; nothing does, so name is the order, and it holds across
@@ -262,7 +266,7 @@ describe("the marketplace column's revision line", () => {
     });
     const host = mount(<PackagesTab />);
     return [...host.querySelectorAll("tbody tr")].map(
-      (row) => row.querySelectorAll("td")[3]?.textContent ?? "",
+      (row) => row.querySelectorAll("td")[4]?.textContent ?? "",
     );
   };
 
@@ -345,8 +349,11 @@ describe("two marketplaces of one name in the marketplace column", () => {
       readErrors: {},
     });
     const host = mount(<PackagesTab />);
+    // The Marketplace cell. The first cell is the tick a selection is made
+    // in, so every column sits one along — the same offset `nameCell` and
+    // `marketplaceCells` above account for.
     const cells = [...host.querySelectorAll("tbody tr")].map(
-      (row) => row.querySelectorAll("td")[3],
+      (row) => row.querySelectorAll("td")[4],
     );
 
     // One name, as the catalogue declares it, on both rows.

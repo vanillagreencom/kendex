@@ -1,0 +1,1 @@
+- Searching a folder kendex cannot read says so, with the reason, instead of reporting that the folder holds no projects.

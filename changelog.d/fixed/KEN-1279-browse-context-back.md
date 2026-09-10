@@ -1,0 +1,1 @@
+- Going back out of a browse begun for one project no longer leaves that project selected, so the next install does not quietly target it.

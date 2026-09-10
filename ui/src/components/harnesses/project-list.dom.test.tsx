@@ -14,6 +14,7 @@ import { InstalledView } from "@/components/library/installed-view";
 import { updateRow } from "@/components/updates-test-rows";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { unmanagedHereLabel } from "@/lib/copy";
+import { ADD_PACKAGES_LABEL } from "@/lib/copy-install";
 import {
   PLACE_MARKETPLACES_LABEL,
   placeMarketplacesTitle,
@@ -123,7 +124,10 @@ describe("a project added while the list is on screen", () => {
   it("counts what it holds, without a revisit", async () => {
     vi.mocked(commands.registerProject).mockResolvedValue({
       status: "ok",
-      data: { settings: { projects: ["/work/acme"] }, base: null } as never,
+      data: {
+        read: { settings: { projects: ["/work/acme"] }, base: null },
+        root: "/work/acme",
+      } as never,
     });
     // The audit the registration forces is the one that first sees the
     // project at all.
@@ -285,6 +289,7 @@ describe("a place card's actions", () => {
 
     await openActions(host, "acme");
     expect(menuItems()).toEqual([
+      ADD_PACKAGES_LABEL,
       PLACE_MARKETPLACES_LABEL,
       "Stop tracking acme…",
     ]);
@@ -304,7 +309,7 @@ describe("a place card's actions", () => {
     await settle();
 
     await openActions(host, "Personal");
-    expect(menuItems()).toEqual([PLACE_MARKETPLACES_LABEL]);
+    expect(menuItems()).toEqual([ADD_PACKAGES_LABEL, PLACE_MARKETPLACES_LABEL]);
   });
 
   // Stopping tracking moved off its own button and into this menu, and a
@@ -356,6 +361,7 @@ describe("a place card's actions", () => {
     // so the first one is /work/client, the order settings names them in.
     await openActions(host, "client");
     expect(menuItems()).toEqual([
+      ADD_PACKAGES_LABEL,
       PLACE_MARKETPLACES_LABEL,
       "Stop tracking /work/client…",
     ]);

@@ -149,7 +149,7 @@ export const commands = {
 	 *  file over whatever else has been saved since.
 	 */
 	acceptTerms: () => typedError<TermsState, string>(__TAURI_INVOKE("accept_terms")),
-	registerProject: (path: string) => typedError<SettingsRead, string>(__TAURI_INVOKE("register_project", { path })),
+	registerProject: (path: string) => typedError<RegisteredProject, string>(__TAURI_INVOKE("register_project", { path })),
 	unregisterProject: (path: string) => typedError<SettingsRead, string>(__TAURI_INVOKE("unregister_project", { path })),
 	/**
 	 *  What a project already holds that nothing manages, for the offer the
@@ -1901,6 +1901,13 @@ export type InstallTarget = {
  *  now, the repository effects the install brought — read and asked about
  *  in the window, because nothing here ran them — and what any package the
  *  plan took away had undone, which is not asked about at all.
+ * 
+ *  Both reads happen after the plan is committed, so neither can refuse
+ *  the install: the files are in whatever they answer. A failure travels
+ *  as `unread` instead, and the read that failed says nothing rather than
+ *  something wrong — no packages at all, which is the rows the caller
+ *  already had standing, and no offer, which is no claim that this install
+ *  brought none.
  */
 export type Installed = Installed_Serialize | Installed_Deserialize;
 
@@ -1909,11 +1916,29 @@ export type Installed = Installed_Serialize | Installed_Deserialize;
  *  now, the repository effects the install brought — read and asked about
  *  in the window, because nothing here ran them — and what any package the
  *  plan took away had undone, which is not asked about at all.
+ * 
+ *  Both reads happen after the plan is committed, so neither can refuse
+ *  the install: the files are in whatever they answer. A failure travels
+ *  as `unread` instead, and the read that failed says nothing rather than
+ *  something wrong — no packages at all, which is the rows the caller
+ *  already had standing, and no offer, which is no claim that this install
+ *  brought none.
  */
 export type Installed_Deserialize = {
-	packages: AvailablePackage[],
+	/**
+	 *  The subscription as it stands now, or null where reading it back
+	 *  failed. Absent is not empty: an empty list is a subscription with
+	 *  nothing in it.
+	 */
+	packages: AvailablePackage[] | null,
 	repoEffects: Offers,
 	undone: string[],
+	/**
+	 *  What a read behind the write could not answer, or null. The write
+	 *  landed either way — this is why the account of it is short, and
+	 *  never why an install is reported as refused.
+	 */
+	unread: string | null,
 };
 
 /**
@@ -1921,11 +1946,29 @@ export type Installed_Deserialize = {
  *  now, the repository effects the install brought — read and asked about
  *  in the window, because nothing here ran them — and what any package the
  *  plan took away had undone, which is not asked about at all.
+ * 
+ *  Both reads happen after the plan is committed, so neither can refuse
+ *  the install: the files are in whatever they answer. A failure travels
+ *  as `unread` instead, and the read that failed says nothing rather than
+ *  something wrong — no packages at all, which is the rows the caller
+ *  already had standing, and no offer, which is no claim that this install
+ *  brought none.
  */
 export type Installed_Serialize = {
-	packages: AvailablePackage[],
+	/**
+	 *  The subscription as it stands now, or null where reading it back
+	 *  failed. Absent is not empty: an empty list is a subscription with
+	 *  nothing in it.
+	 */
+	packages: AvailablePackage[] | null,
 	repoEffects: Offers,
 	undone?: string[],
+	/**
+	 *  What a read behind the write could not answer, or null. The write
+	 *  landed either way — this is why the account of it is short, and
+	 *  never why an install is reported as refused.
+	 */
+	unread: string | null,
 };
 
 /**  One declared item: `[agents.<name>]` / `[skills.<name>]`. */
@@ -2864,6 +2907,22 @@ export type Refused = {
 	seconds: number,
 	/**  Whether the words are `gh`'s rather than git's. */
 	gh: boolean,
+};
+
+/**
+ *  A registration's answer: the settings it wrote, and the root it
+ *  recorded for this request.
+ * 
+ *  The caller asked under whatever spelling the reader typed. The registry
+ *  stores the canonical path, and every surface that keys off the project
+ *  afterwards — the card's setup state included — matches that one, so the
+ *  write says which root it made rather than leaving the caller to pick it
+ *  out of the list. Two registrations in flight together each see both new
+ *  entries, so a set difference cannot tell them apart.
+ */
+export type RegisteredProject = {
+	read: SettingsRead,
+	root: string,
 };
 
 /**  A package's declared effects on the repository it installs into. */

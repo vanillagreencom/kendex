@@ -91,12 +91,6 @@ export const RECENT_ACTIVITY_EMPTY = "Nothing on this machine has changed yet.";
 
 export const TAGS_ROW_LABEL = "For";
 
-export const ADD_PROJECT_HELP =
-  "Point kendex at a repository and it keeps that project's harnesses in sync too.";
-export const SCAN_FOLDER_HELP =
-  "Look inside a folder for repositories, then add the ones you want.";
-export const NO_PROJECTS_FOUND = "Nothing that looks like a project in there.";
-
 // The one toggle on an item. A button reading "Turn off" would say what
 // the click does but never what the state is or what turning it off costs
 // you — a switch shows the state, and the sentence under it says the

@@ -1,5 +1,5 @@
 import { CheckIcon, CopyIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ProjectOffer, Refused } from "@/bindings";
 import { ExternalLink } from "@/components/external-link";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { useMayAsk } from "@/lib/asks-first";
 import {
   addsToPullRequest,
   BRANCH_REFUSED_LINE,
@@ -59,6 +60,8 @@ import {
   putBackRowLabel,
   remoteBranch,
   resetCommand,
+  SCAN_FAILED_STEPS,
+  SCAN_FAILED_TITLE,
   SHARED_LABEL,
   SHARED_NOTE,
   saidLabel,
@@ -74,6 +77,7 @@ import {
   type Stage,
   useCommitOfferStore,
 } from "@/stores/commit-offer";
+import { useProblemsStore } from "@/stores/problems";
 
 /** The question a kendex write leaves behind, rendered once in App.tsx:
  *  what to do with the files kendex wrote in this repository. One project
@@ -84,7 +88,30 @@ export function CommitOfferDialog() {
   const offer = useCommitOfferStore((s) => s.queue[0]);
   const stage = useCommitOfferStore((s) => s.stage);
   const leave = useCommitOfferStore((s) => s.leave);
-  if (!offer) return null;
+  // Last of the three questions a write leaves behind — `lib/asks-first.ts`
+  // holds the whole order, this question's own scan failure and the dialog
+  // that says it included. The line keeps what it is given, so waiting
+  // loses nothing.
+  const mayAsk = useMayAsk("commitOffer");
+  // The failure is its own question, ordered just before the offer: it is
+  // said once the install and the repository effects are done with, and
+  // the offer then waits for it to be dismissed.
+  const maySayFailure = useMayAsk("commitOfferFailure");
+  const scanFailure = useCommitOfferStore((s) => s.scanFailure);
+  const scanFailureSaid = useCommitOfferStore((s) => s.scanFailureSaid);
+  // The scan that would have found an offer failed instead. It is this
+  // question's own failure, so it waits its turn rather than opening the
+  // problems dialog over the install that started it.
+  useEffect(() => {
+    if (!maySayFailure || scanFailure === null) return;
+    useProblemsStore.getState().showError({
+      title: SCAN_FAILED_TITLE,
+      message: scanFailure,
+      steps: SCAN_FAILED_STEPS,
+    });
+    scanFailureSaid();
+  }, [maySayFailure, scanFailure, scanFailureSaid]);
+  if (!offer || !mayAsk) return null;
   const busy = stage.at === "busy";
   return (
     <Dialog

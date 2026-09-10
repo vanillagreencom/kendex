@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import type { ItemKind, Tag } from "@/bindings";
+import type { ItemKind, Scope, Tag } from "@/bindings";
 import { InstalledRow } from "@/components/library/installed-row";
 import { InstalledSkeleton } from "@/components/library/installed-skeleton";
 import { LibraryFilters } from "@/components/library/library-filters";
@@ -25,9 +25,11 @@ import {
   scopeChoices,
   selectionOf,
 } from "@/lib/derive";
+import { scopeNames } from "@/lib/labels";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
 import { useLibraryStandings } from "@/lib/library-standings";
+import { everyPlace, scopeKey } from "@/lib/scope";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
 import {
@@ -44,6 +46,8 @@ import {
   useProvenanceStore,
 } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
+import { useSettingsStore } from "@/stores/settings";
+import { projectsOf } from "@/stores/settings-projects";
 
 /** "Installed": everything on this machine, filterable. A row opens the
  *  package's own page; the filters and scroll position live in a store so
@@ -180,6 +184,26 @@ export function InstalledView() {
   const hasAnyItems = (result?.items.length ?? 0) > 0;
   const filters: FilterSelection = { kind, harness, tag, from, edited };
   const filtered = isNarrowed({ filters, search, scope });
+  // The one place this table is narrowed to, when the place is the whole
+  // narrowing. Narrowed by a kind or a search on top, an empty table is
+  // what those are hiding rather than an empty place, so the way out is to
+  // clear them — and the empty state says so instead.
+  const onePlace: Scope | null =
+    scope === "all" || isNarrowed({ filters, search, scope: "all" })
+      ? null
+      : scope === "global"
+        ? { scope: "global" }
+        : { scope: "project", root: scope.project };
+  // Named the way every other surface names it: two projects can end in
+  // the same folder, and the button this label is on is a promise about
+  // which one the install lands in.
+  const places = everyPlace(useSettingsStore(projectsOf));
+  const placeName =
+    onePlace === null
+      ? null
+      : (scopeNames(places)[
+          places.findIndex((one) => scopeKey(one) === scopeKey(onePlace))
+        ] ?? null);
 
   const clearFilters = () => applyLibraryView(UNFILTERED);
 
@@ -289,8 +313,15 @@ export function InstalledView() {
                 {!scanning && groups.length === 0 ? (
                   <TableEmptyRow
                     hasAnyItems={hasAnyItems}
+                    place={placeName}
                     onClearFilters={clearFilters}
                     onBrowse={() => goToMarketplaces()}
+                    // Browsing on this place's behalf, so the guided
+                    // install opens on it rather than asking again where
+                    // the reader already said.
+                    onAddPackages={() =>
+                      onePlace && goToMarketplaces("packages", onePlace)
+                    }
                   />
                 ) : null}
               </TableBody>

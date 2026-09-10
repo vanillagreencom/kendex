@@ -3,6 +3,7 @@ import { Toaster } from "sonner";
 import { commands } from "@/bindings";
 import { CommitOfferDialog } from "@/components/commit-offer-dialog";
 import { ErrorDialog } from "@/components/error-dialog";
+import { InstallDialog } from "@/components/install/install-dialog";
 import { RepoEffectsDialog } from "@/components/marketplaces/repo-effects-dialog";
 import { NavBar } from "@/components/nav-bar";
 import { Sidebar } from "@/components/sidebar";
@@ -201,6 +202,10 @@ export default function App() {
           }}
         />
         <ErrorDialog />
+        {/* The one guided install, opened by every Install in the app. It
+            lives here rather than on a page so the same flow answers a
+            package page, a set, a table row and a project's Add packages. */}
+        <InstallDialog />
         <RepoEffectsDialog />
         {/* The question a write leaves behind: what to do with the files
             kendex wrote in a git project. */}

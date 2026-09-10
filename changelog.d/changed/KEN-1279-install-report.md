@@ -1,0 +1,1 @@
+- After an install, kendex names every place the packages landed in, names any that refused, and offers the way to the place that now has them.

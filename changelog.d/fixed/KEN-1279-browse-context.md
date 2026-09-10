@@ -1,0 +1,1 @@
+- Switching tabs while browsing for a project keeps that project, so the install still opens on it.
