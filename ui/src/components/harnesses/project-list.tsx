@@ -237,6 +237,10 @@ function PlaceActions({
 export function ProjectList() {
   useAuditOnMount();
   const result = useScanStore((s) => s.result);
+  // Whether the last scan landed. `stores/scan.ts` keeps the previous
+  // result through a failure on purpose, so a reader that takes `result`
+  // for this pass's observations is reading a read that did not happen.
+  const scanFailure = useScanStore((s) => s.error);
   const views = useAuditStore((s) => s.views);
   // The audit read's own outcome: a failed adopt is not a failed audit, and
   // says so through the problems dialog rather than this list.
@@ -273,28 +277,35 @@ export function ProjectList() {
     name: string,
     place: ItemPlace,
     missing: MissingProject | undefined,
-  ) => (
-    <>
-      <div className="px-4">
-        <ChangesLine root={root} />
-      </div>
-      <PackageChecksRow
-        name={name}
-        root={root}
-        harnesses={PACKAGE_CHECK_HARNESSES}
-        folderMissing={missing !== undefined}
-        standing={checksStanding(
-          result?.items ?? [],
-          views.find((v) => sameScope(v.scope, { scope: "project", root })),
-          auditFailure,
-          root,
-          result ? PACKAGE_CHECK_HARNESSES : null,
-          missing !== undefined,
-        )}
-        onOpenLibrary={() => goToLibrary({ ...place, kind: "hook" })}
-      />
-    </>
-  );
+  ) => {
+    // What the scan observed this pass, which a failed scan is none of.
+    // Whether the folder is there is not read from them: that answer
+    // arrives as `missing`, it has its own copy and its own action, and
+    // it is the last thing kendex did establish about this project.
+    const observations = scanFailure === null ? result : null;
+    return (
+      <>
+        <div className="px-4">
+          <ChangesLine root={root} />
+        </div>
+        <PackageChecksRow
+          name={name}
+          root={root}
+          harnesses={PACKAGE_CHECK_HARNESSES}
+          folderMissing={missing !== undefined}
+          standing={checksStanding(
+            observations?.items ?? [],
+            views.find((v) => sameScope(v.scope, { scope: "project", root })),
+            auditFailure,
+            root,
+            observations ? PACKAGE_CHECK_HARNESSES : null,
+            missing !== undefined,
+          )}
+          onOpenLibrary={() => goToLibrary({ ...place, kind: "hook" })}
+        />
+      </>
+    );
+  };
   const { settings, registerProject, unregisterProject, discoverProjects } =
     useSettingsStore();
   // What each place's own packages are standing on. Only a landed read puts

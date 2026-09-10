@@ -291,6 +291,33 @@ describe("package checks on a project's card", () => {
     expect(host.textContent).toContain(STATE_UNKNOWN);
     expect(button(host, ENABLE_CHECKS_LABEL)).toBeUndefined();
   });
+
+  // The scan store keeps the last good result through a failure, which is
+  // right for the pages drawing figures off it. Read here as this pass's
+  // observations it is a read that did not happen: a card saying the check
+  // runs, with a button offering to install over it, on evidence nothing
+  // gathered.
+  it("says Unknown and offers nothing after a scan that failed", async () => {
+    onProject();
+    useScanStore.setState({
+      scanning: false,
+      error: "the machine could not be read",
+      // What a landed scan would have to say for the card to read On.
+      result: {
+        ...emptyScan,
+        items: PACKAGE_CHECK_HARNESSES.map((harness) => rendered(harness)),
+      },
+    });
+    useAuditStore.setState({ views: [view(ACME, [])] });
+    const host = mount(<ProjectList />);
+    await settle();
+    const acme = [...host.querySelectorAll<HTMLElement>('[data-slot="card"]')]
+      .filter((el) => el.textContent?.startsWith("acme"))
+      .at(0);
+    expect(acme?.textContent).toContain(STATE_UNKNOWN);
+    expect(acme?.textContent).not.toContain(ON_MEANS);
+    expect(button(host, ENABLE_CHECKS_LABEL)).toBeUndefined();
+  });
 });
 
 /** Open the actions menu on the card whose name starts with `name`. A

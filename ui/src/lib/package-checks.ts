@@ -43,6 +43,14 @@ export interface ChecksStanding {
 
 const NOT_IN_PLACE = ["missing", "stale", "conflict"];
 
+/** Where one project's checks stand.
+ *
+ *  `items` and `targets` are one landed scan's answer. A caller holding a
+ *  result from an earlier pass passes neither: nothing about a check can
+ *  be read from observations that did not land, and `unknown` is what
+ *  says so. `failure` is the audit read's outcome, which decides only
+ *  what the scan cannot — whether the rest are declared and waiting or
+ *  were never asked for. */
 export function checksStanding(
   items: ObservedItem[],
   view: AuditView | undefined,
