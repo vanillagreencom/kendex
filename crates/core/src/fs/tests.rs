@@ -436,7 +436,7 @@ mod acl {
         // documents `LocalFree` as its release, and nothing reads through
         // it after this.
         unsafe { LocalFree(descriptor) };
-        rows
+        rows.unwrap()
     }
 }
 
@@ -518,4 +518,39 @@ fn a_list_the_volume_did_not_keep_is_refused() {
     fs::write(&plain, "").unwrap();
     let refused = dacl::applied(&fs::File::open(&plain).unwrap(), user.sid()).unwrap_err();
     assert_eq!(refused.kind(), std::io::ErrorKind::Unsupported, "{refused}");
+}
+
+/// A refusal carries the code the failing call itself reported, not what
+/// an earlier call left on the thread: a handle opened without the right
+/// to read its security is refused by `GetSecurityInfo` in its return
+/// value, and that is the code the refusal names. Against a helper that
+/// reads the thread's last error, the code here is whatever the token
+/// sizing call left, not access denied.
+#[cfg(windows)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refusal_carries_the_code_of_the_call_that_failed() {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
+    use windows_sys::Win32::Storage::FileSystem::FILE_WRITE_DATA;
+    let tmp = tempfile::tempdir().unwrap();
+    let user = dacl::current_user().unwrap();
+    let path = tmp.path().join("plain");
+    fs::write(&path, "").unwrap();
+    let no_read_control = fs::OpenOptions::new()
+        .access_mode(FILE_WRITE_DATA)
+        .open(&path)
+        .unwrap();
+
+    let refused = dacl::applied(&no_read_control, user.sid()).unwrap_err();
+
+    let failed = refused
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<dacl::Failed>())
+        .unwrap();
+    assert_eq!(
+        (failed.step, failed.cause.raw_os_error()),
+        ("GetSecurityInfo", Some(ERROR_ACCESS_DENIED as i32)),
+        "{refused}"
+    );
 }

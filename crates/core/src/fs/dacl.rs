@@ -62,11 +62,11 @@ pub(super) fn create_owner_only(path: &Path) -> io::Result<File> {
     // SAFETY: `acl` holds `acl_len` writable bytes for the length of this
     // function, aligned for `ACL`, and `sid` is a valid SID (above).
     if unsafe { InitializeAcl(acl_ptr, acl_len as u32, ACL_REVISION) } == 0 {
-        return Err(failed("InitializeAcl"));
+        return Err(failed("InitializeAcl", io::Error::last_os_error()));
     }
     // SAFETY: as above; the ACL was sized for exactly this one entry.
     if unsafe { AddAccessAllowedAce(acl_ptr, ACL_REVISION, FILE_ALL_ACCESS, sid) } == 0 {
-        return Err(failed("AddAccessAllowedAce"));
+        return Err(failed("AddAccessAllowedAce", io::Error::last_os_error()));
     }
 
     let mut descriptor = SECURITY_DESCRIPTOR::default();
@@ -77,13 +77,22 @@ pub(super) fn create_owner_only(path: &Path) -> io::Result<File> {
     // kept alive through the `CreateFileW` call at the end.
     unsafe {
         if InitializeSecurityDescriptor(descriptor_ptr, SECURITY_DESCRIPTOR_REVISION) == 0 {
-            return Err(failed("InitializeSecurityDescriptor"));
+            return Err(failed(
+                "InitializeSecurityDescriptor",
+                io::Error::last_os_error(),
+            ));
         }
         if SetSecurityDescriptorDacl(descriptor_ptr, 1, acl_ptr, 0) == 0 {
-            return Err(failed("SetSecurityDescriptorDacl"));
+            return Err(failed(
+                "SetSecurityDescriptorDacl",
+                io::Error::last_os_error(),
+            ));
         }
         if SetSecurityDescriptorControl(descriptor_ptr, SE_DACL_PROTECTED, SE_DACL_PROTECTED) == 0 {
-            return Err(failed("SetSecurityDescriptorControl"));
+            return Err(failed(
+                "SetSecurityDescriptorControl",
+                io::Error::last_os_error(),
+            ));
         }
     }
 
@@ -115,7 +124,7 @@ pub(super) fn create_owner_only(path: &Path) -> io::Result<File> {
         )
     };
     if handle == INVALID_HANDLE_VALUE {
-        return Err(failed("CreateFileW"));
+        return Err(failed("CreateFileW", io::Error::last_os_error()));
     }
     // SAFETY: `handle` is a valid file handle this function owns, opened
     // just above and given to nothing else.
@@ -163,7 +172,12 @@ pub(super) fn applied(file: &File, account: PSID) -> io::Result<()> {
         )
     };
     if read != ERROR_SUCCESS {
-        return Err(failed("GetSecurityInfo"));
+        // The status is the return value; the thread's last error is
+        // whatever an earlier call left there.
+        return Err(failed(
+            "GetSecurityInfo",
+            io::Error::from_raw_os_error(read as i32),
+        ));
     }
     // SAFETY: `dacl` is the list `GetSecurityInfo` reported, null where
     // the file has none, alive until the free below; `account` is valid.
@@ -171,7 +185,7 @@ pub(super) fn applied(file: &File, account: PSID) -> io::Result<()> {
     // SAFETY: `descriptor` came from `GetSecurityInfo`, which documents
     // `LocalFree` as its release, and nothing reads through it after this.
     unsafe { LocalFree(descriptor) };
-    match found == [OWNER_ONLY] {
+    match found? == [OWNER_ONLY] {
         true => Ok(()),
         false => Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -198,7 +212,8 @@ pub(super) const OWNER_ONLY: Entry = Entry {
 };
 
 /// The entries of `dacl`, in order; a null list, which admits everyone,
-/// has none.
+/// has none. A list that cannot be read is a refusal naming the call,
+/// never an empty answer a caller would take for a list.
 ///
 /// # Safety
 ///
@@ -208,9 +223,9 @@ pub(super) const OWNER_ONLY: Entry = Entry {
     unsafe_code,
     reason = "Win32 has no safe binding; each site states its contract"
 )]
-pub(super) unsafe fn entries(dacl: *const ACL, account: PSID) -> Vec<Entry> {
+pub(super) unsafe fn entries(dacl: *const ACL, account: PSID) -> io::Result<Vec<Entry>> {
     if dacl.is_null() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let mut size = ACL_SIZE_INFORMATION {
         AceCount: 0,
@@ -228,10 +243,10 @@ pub(super) unsafe fn entries(dacl: *const ACL, account: PSID) -> Vec<Entry> {
         )
     };
     if sized == 0 {
-        return Vec::new();
+        return Err(failed("GetAclInformation", io::Error::last_os_error()));
     }
     (0..size.AceCount)
-        .filter_map(|index| {
+        .map(|index| {
             let mut ace = ptr::null_mut();
             // SAFETY: `index` is below the count the list reported, so
             // `GetAce` yields a pointer to an entry inside `dacl`, alive by
@@ -240,11 +255,11 @@ pub(super) unsafe fn entries(dacl: *const ACL, account: PSID) -> Vec<Entry> {
             // whose `SidStart` opens its SID.
             unsafe {
                 if GetAce(dacl, index, &mut ace) == 0 {
-                    return None;
+                    return Err(failed("GetAce", io::Error::last_os_error()));
                 }
                 let ace = &*ace.cast::<ACCESS_ALLOWED_ACE>();
                 let allowed = u32::from(ace.Header.AceType) == ACCESS_ALLOWED_ACE_TYPE;
-                Some(Entry {
+                Ok(Entry {
                     allowed,
                     this_account: allowed
                         && EqualSid(ptr::from_ref(&ace.SidStart).cast_mut().cast(), account) != 0,
@@ -284,7 +299,7 @@ pub(super) fn current_user() -> io::Result<CurrentUser> {
     // SAFETY: the pseudo-handle from `GetCurrentProcess` needs no closing,
     // and `raw` is a writable out-parameter.
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut raw) } == 0 {
-        return Err(failed("OpenProcessToken"));
+        return Err(failed("OpenProcessToken", io::Error::last_os_error()));
     }
     // SAFETY: `raw` is the token handle opened above and owned by nothing
     // else; `OwnedHandle` closes it on drop.
@@ -302,7 +317,7 @@ pub(super) fn current_user() -> io::Result<CurrentUser> {
         );
     }
     if len == 0 {
-        return Err(failed("GetTokenInformation"));
+        return Err(failed("GetTokenInformation", io::Error::last_os_error()));
     }
     let mut buffer = vec![0u64; (len as usize).div_ceil(size_of::<u64>())];
     // SAFETY: `buffer` holds at least `len` writable bytes, aligned for
@@ -317,19 +332,43 @@ pub(super) fn current_user() -> io::Result<CurrentUser> {
         )
     };
     if filled == 0 {
-        return Err(failed("GetTokenInformation"));
+        return Err(failed("GetTokenInformation", io::Error::last_os_error()));
     }
     Ok(CurrentUser(buffer))
 }
 
-/// The refusal for a Win32 step that reported failure: the step by name,
-/// with the system's own account of why, so the person saving a
-/// credential reads which part of giving the file an owner-only list
-/// could not be done rather than a bare create error.
-fn failed(step: &str) -> io::Error {
-    let cause = io::Error::last_os_error();
-    io::Error::new(
-        cause.kind(),
-        format!("could not give the new file an owner-only access-control list ({step}: {cause})"),
-    )
+/// A Win32 step that reported failure, with the system's own account of
+/// why, so the person saving a credential reads which part of giving the
+/// file an owner-only list could not be done rather than a bare create
+/// error. The cause is the caller's to supply, at the call, from wherever
+/// that API reports it: the thread's last error for most, the return
+/// value for the rest. Read in a helper instead, it would be whatever the
+/// previous call left behind.
+#[derive(Debug)]
+pub(super) struct Failed {
+    pub(super) step: &'static str,
+    pub(super) cause: io::Error,
+}
+
+impl std::fmt::Display for Failed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "could not give the new file an owner-only access-control list ({}: {})",
+            self.step, self.cause
+        )
+    }
+}
+
+impl std::error::Error for Failed {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.cause)
+    }
+}
+
+/// The refusal for a failed step, keeping the cause's kind so a caller
+/// matching on it, as `write_private` does for an existing file, still
+/// can.
+fn failed(step: &'static str, cause: io::Error) -> io::Error {
+    io::Error::new(cause.kind(), Failed { step, cause })
 }
