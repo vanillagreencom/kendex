@@ -73,13 +73,27 @@ pub struct InstallItem {
 /// now, the repository effects the install brought — read and asked about
 /// in the window, because nothing here ran them — and what any package the
 /// plan took away had undone, which is not asked about at all.
+///
+/// Both reads happen after the plan is committed, so neither can refuse
+/// the install: the files are in whatever they answer. A failure travels
+/// as `unread` instead, and the read that failed says nothing rather than
+/// something wrong — no packages at all, which is the rows the caller
+/// already had standing, and no offer, which is no claim that this install
+/// brought none.
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Installed {
-    pub packages: Vec<AvailablePackage>,
+    /// The subscription as it stands now, or null where reading it back
+    /// failed. Absent is not empty: an empty list is a subscription with
+    /// nothing in it.
+    pub packages: Option<Vec<AvailablePackage>>,
     pub repo_effects: Offers,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub undone: Vec<String>,
+    /// What a read behind the write could not answer, or null. The write
+    /// landed either way — this is why the account of it is short, and
+    /// never why an install is reported as refused.
+    pub unread: Option<String>,
 }
 
 /// Install packages or a curated set from one subscription. `destination`
@@ -190,29 +204,120 @@ pub fn install(
     let undone = crate::repo_effects::write(env, &report)?;
     // After the write, because the script an effect runs is the one this
     // install just put on disk.
-    // Both reads are enrichment past the write, so both carry the account
-    // on their failure rather than through it: the uninstallers have run
-    // and the plan is committed, and a listing error over a repository
-    // that was just disarmed would otherwise hide what ran.
-    let repo_effects = crate::repo_effects::after_writing(
-        &undone,
-        kendex_core::repo_effects::offers_for(env, &target, &report.repo_effects)
-            .map_err(|e| e.to_string()),
-    )?;
-    let packages = crate::repo_effects::after_writing(
-        &undone,
-        browse::packages(
-            env,
-            &Catalog::Subscription {
-                scope: target,
-                source,
-            },
-        )
-        .map_err(|e| e.to_string()),
-    )?;
-    Ok(Installed {
-        packages,
-        repo_effects,
+    //
+    // Both reads are enrichment past a committed plan: the uninstallers
+    // have run, the files are in, and nothing either of them answers can
+    // change that. So neither is a `?`. A refusal reaches the caller as
+    // this command's error and means the write did not happen — reporting
+    // "couldn't install" over an install that landed is the one account
+    // the person cannot act on, and it would take the repository effects
+    // this install brought down with it, leaving a package that arms a
+    // checkout installed and undisclosed.
+    let offers = kendex_core::repo_effects::offers_for(env, &target, &report.repo_effects)
+        .map_err(|e| e.to_string());
+    let listed = browse::packages(
+        env,
+        &Catalog::Subscription {
+            scope: target,
+            source,
+        },
+    )
+    .map_err(|e| e.to_string());
+    Ok(landed(undone, offers, listed))
+}
+
+/// The account of a write that has already happened, from what the two
+/// reads behind it answered.
+///
+/// Neither read can refuse the install, so this returns an `Installed`
+/// whatever they say. Both of their failures where both failed: they are
+/// two reads and either fails on its own. What the write left is not
+/// folded in the way `repo_effects::after_writing` folds it — `undone`
+/// rides back on this same answer and the caller says it, so repeating it
+/// here would say it twice.
+fn landed(
+    undone: Vec<String>,
+    offers: Result<Offers, String>,
+    listed: Result<Vec<AvailablePackage>, String>,
+) -> Installed {
+    let unread: Vec<String> = [offers.as_ref().err(), listed.as_ref().err()]
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect();
+    Installed {
+        packages: listed.ok(),
+        repo_effects: offers.unwrap_or_default(),
         undone,
-    })
+        unread: (!unread.is_empty()).then(|| unread.join("\n")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use kendex_core::repo_effects::Withheld;
+
+    use super::*;
+
+    /// A read behind a committed write is not the write: the files are in
+    /// whatever it answers. One row per way the pair can go, and each says
+    /// the same thing — the failure is named, the read that landed is kept
+    /// whole, and what the write undid rides back untouched.
+    ///
+    /// The catalogue row is the one a person sees: without it the install
+    /// reports "couldn't install" over packages that are on disk. The
+    /// effects row is the one they do not — a package that arms a checkout
+    /// would be installed with nothing disclosed.
+    #[test]
+    fn a_read_that_failed_after_the_write_is_never_a_refusal() {
+        let offers = || Offers {
+            shown: Vec::new(),
+            withheld: vec![Withheld {
+                name: "commit-guards".to_owned(),
+                reason: "this project is not a git repository".to_owned(),
+            }],
+        };
+        type Row<'a> = (
+            &'a str,
+            Result<Offers, String>,
+            Result<Vec<AvailablePackage>, String>,
+            bool,
+            Option<&'a str>,
+            usize,
+        );
+        let rows: [Row<'_>; 4] = [
+            ("both read", Ok(offers()), Ok(Vec::new()), true, None, 1),
+            (
+                "the catalogue would not read",
+                Ok(offers()),
+                Err("no catalogue".to_owned()),
+                false,
+                Some("no catalogue"),
+                1,
+            ),
+            (
+                "the effects would not read",
+                Err("no effects".to_owned()),
+                Ok(Vec::new()),
+                true,
+                Some("no effects"),
+                0,
+            ),
+            (
+                "neither read",
+                Err("no effects".to_owned()),
+                Err("no catalogue".to_owned()),
+                false,
+                Some("no effects\nno catalogue"),
+                0,
+            ),
+        ];
+        for (name, offers, listed, listed_kept, unread, withheld) in rows {
+            let answer = landed(vec!["took the hooks out".to_owned()], offers, listed);
+            assert_eq!(answer.packages.is_some(), listed_kept, "{name}");
+            assert_eq!(answer.unread.as_deref(), unread, "{name}");
+            assert_eq!(answer.repo_effects.withheld.len(), withheld, "{name}");
+            assert_eq!(answer.undone, ["took the hooks out"], "{name}");
+        }
+    }
 }

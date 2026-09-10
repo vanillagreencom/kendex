@@ -77,8 +77,16 @@ interface Installed {
 
 /** What one install answered: it wrote, or it refused and said why. The
  * reason travels with the answer rather than only through a toast, so a
- * caller reporting for itself can put it beside the place that refused. */
-export type InstallResult = { ok: true } | { ok: false; reason: string };
+ * caller reporting for itself can put it beside the place that refused.
+ *
+ * A write that landed can still carry `unread`: the command reads the
+ * subscription and the repository effects back once the plan is committed,
+ * and those reads can fail over files that are on disk. That is not a
+ * refusal — reporting it as one would deny the packages the person now
+ * has — so it rides on the landing answer and is said beside the place. */
+export type InstallResult =
+  | { ok: true; unread: string | null }
+  | { ok: false; reason: string };
 
 /** The install half of the marketplaces store: the write, and the second
  * question it can leave behind. */
@@ -160,10 +168,17 @@ export function installActions(set: Set, get: Get): InstallActions {
         const target = destination ?? scope;
         // The command answers with the refreshed package list for this
         // subscription, so the table flips to Installed without a second query.
+        // Null where reading it back failed, which is not an empty
+        // subscription: the rows already on screen are the last reading
+        // anything has, so they stay.
+        const listed = response.data.packages;
         const key = catalogKey(subscription(target, source));
         const { shown, withheld } = response.data.repoEffects;
         set((state) => ({
-          packages: { ...state.packages, [key]: response.data.packages },
+          packages:
+            listed === null
+              ? state.packages
+              : { ...state.packages, [key]: listed },
           // Member states in every set this install touched moved with it,
           // in the open set and in the list of sets alike.
           ...droppedSetCaches(),
@@ -194,7 +209,7 @@ export function installActions(set: Set, get: Get): InstallActions {
         for (const held of withheld) {
           toast.info(repoEffectsWithheldToast(held.name, held.reason));
         }
-        return { ok: true };
+        return { ok: true, unread: response.data.unread };
       }),
 
     /** Run the installer of the package at the head of the line, here and

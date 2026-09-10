@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::error::{CoreError, Result};
@@ -77,6 +78,13 @@ pub fn project_root_from(start: &Path, home: &Path) -> Option<PathBuf> {
 /// Failures deeper down stay silent. One unreadable directory among many
 /// is not a failed search of the folder that was chosen, and refusing the
 /// whole answer for it would report nothing over a tree that mostly read.
+///
+/// The listing fails in two places, and both are the chosen folder's own:
+/// opening it, and reading it out. A `ReadDir` opened over a directory
+/// that goes away, or over a mount that stops answering, hands its failure
+/// back part-way through the entries — so a partial listing is not the
+/// folder's contents either, and it is answered the same way the open's
+/// failure is.
 pub fn discover_projects(root: &Path) -> Result<Vec<PathBuf>> {
     let root = crate::paths::canonical(root).map_err(|e| CoreError::io(root, e))?;
     if !root.is_dir() {
@@ -88,7 +96,7 @@ pub fn discover_projects(root: &Path) -> Result<Vec<PathBuf>> {
         return Ok(found.into_iter().collect());
     }
     let entries = fs::read_dir(&root).map_err(|e| CoreError::io(&root, e))?;
-    descend(entries, 0, &mut found);
+    descend(entries, 0, &mut found).map_err(|e| CoreError::io(&root, e))?;
     Ok(found.into_iter().collect())
 }
 
@@ -109,15 +117,25 @@ fn walk(dir: &Path, depth: usize, found: &mut BTreeSet<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
-    descend(entries, depth, found);
+    // Dropped, like the open above it: a directory deeper in the tree that
+    // stops answering part-way through is the silent failure this walk is
+    // best-effort about.
+    let _ = descend(entries, depth, found);
 }
 
 /// The children of a directory already read, walked in turn. Shared so the
 /// root's listing and every deeper one are descended by one rule, and only
-/// how their read failures are answered differs.
-fn descend(entries: fs::ReadDir, depth: usize, found: &mut BTreeSet<PathBuf>) {
-    for entry in entries.flatten() {
-        let path = entry.path();
+/// how their read failures are answered differs: the entry that failed is
+/// handed back, and each caller decides what that means for its own
+/// directory. Stopping there rather than reading on is what keeps a
+/// listing kendex could not finish from being answered as a whole folder.
+fn descend(
+    entries: impl Iterator<Item = io::Result<fs::DirEntry>>,
+    depth: usize,
+    found: &mut BTreeSet<PathBuf>,
+) -> io::Result<()> {
+    for entry in entries {
+        let path = entry?.path();
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
@@ -131,6 +149,7 @@ fn descend(entries: fs::ReadDir, depth: usize, found: &mut BTreeSet<PathBuf>) {
             walk(&path, depth + 1, found);
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -183,6 +202,32 @@ mod tests {
             matches!(answer, Err(CoreError::Io { .. })),
             "an unreadable root answered {answer:?}"
         );
+    }
+
+    /// A listing can fail after it opened: the directory goes away, or the
+    /// mount under it stops answering, and the failure arrives as one of
+    /// the entries. The walk hands that back rather than reading past it,
+    /// so the root's caller answers the folder with the failure instead of
+    /// with however much of it had been read — which is the same claim the
+    /// unreadable root above refuses to make.
+    ///
+    /// Driven through `descend` because a real `ReadDir` cannot be made to
+    /// fail part-way on demand: the entries are the ones the directory
+    /// actually holds, with the failure among them.
+    #[test]
+    fn a_listing_that_fails_part_way_is_handed_back_and_not_read_past() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join("good/.claude")).unwrap();
+        let mut entries: Vec<io::Result<fs::DirEntry>> = fs::read_dir(root).unwrap().collect();
+        entries.insert(0, Err(io::Error::other("the listing stopped answering")));
+
+        let mut found = BTreeSet::new();
+        let answer = descend(entries.into_iter(), 0, &mut found);
+        assert!(answer.is_err(), "a failed entry answered {answer:?}");
+        // The project after it in the listing is what a partial answer
+        // would be made of.
+        assert!(found.is_empty(), "read past the failure: {found:?}");
     }
 
     /// One unreadable directory among many is not a failed search of the

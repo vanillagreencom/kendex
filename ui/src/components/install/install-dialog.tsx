@@ -38,6 +38,7 @@ import {
   packageCount,
   refusalLine,
   TOOLS_PER_PLACE,
+  unreadLine,
 } from "@/lib/copy-install";
 import { selectionOf } from "@/lib/derive";
 import { scopeName, scopeNames, scopePath } from "@/lib/labels";
@@ -143,6 +144,21 @@ function InstallFlow({ ask }: { ask: InstallAsk }) {
                 .map((one) => (
                   <li key={scopeKey(one.scope)}>
                     {refusalLine(nameOf(one.scope), one.refused ?? "")}
+                  </li>
+                ))}
+            </ul>
+          ) : null}
+          {/* A read behind the write, not the write: the packages are in
+              this place and what could not be read is the account of them.
+              Said apart from the refusals above, which are places that did
+              not take the install. */}
+          {outcome.places.some((one) => one.unread) ? (
+            <ul className="space-y-1 text-[13px] text-muted-foreground">
+              {outcome.places
+                .filter((one) => one.unread)
+                .map((one) => (
+                  <li key={scopeKey(one.scope)}>
+                    {unreadLine(nameOf(one.scope), one.unread ?? "")}
                   </li>
                 ))}
             </ul>

@@ -1,0 +1,1 @@
+- An install whose files landed says so even when kendex cannot read the place back afterwards, and names what it could not read beside that place, instead of reporting that the install failed.

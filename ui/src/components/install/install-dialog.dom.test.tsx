@@ -24,6 +24,7 @@ import {
   openPlaceLabel,
   refusalLine,
   TOOLS_PER_PLACE,
+  unreadLine,
 } from "@/lib/copy-install";
 import { harnessName } from "@/lib/labels";
 import {
@@ -89,7 +90,7 @@ beforeEach(() => {
       { harness: "codex", detected: true, sharesTheUniversalTree: true },
     ],
   });
-  install = vi.fn<Install>(async () => ({ ok: true }));
+  install = vi.fn<Install>(async () => ({ ok: true, unread: null }));
   useMarketplacesStore.setState({ busy: false, install });
   useSettingsStore.setState({
     settings: { projects: [ACME.root, BETA.root] } as AppSettings,
@@ -175,7 +176,7 @@ describe("the guided install", () => {
     expect(document.body.textContent).toContain(INSTALLING_LABEL);
     expect(button(INSTALLING_LABEL).disabled).toBe(true);
 
-    await act(async () => land({ ok: true }));
+    await act(async () => land({ ok: true, unread: null }));
     await settle();
     expect(document.body.textContent).toContain(
       installedIn("gh", ["Personal"]),
@@ -207,7 +208,7 @@ describe("the guided install", () => {
   it("names the places that refused beside the ones that landed", async () => {
     install.mockImplementation(async (request) =>
       request.destination === null
-        ? { ok: true }
+        ? { ok: true, unread: null }
         : { ok: false, reason: "no lock there" },
     );
     await open();
@@ -231,13 +232,38 @@ describe("the guided install", () => {
     );
   });
 
+  // The command reads the place back once the plan is committed, and that
+  // read can fail over files that are on disk. Reported as a refusal it
+  // becomes the one account the reader cannot act on: told the install
+  // failed, with the packages installed.
+  it("reports a place whose read behind the write failed as installed", async () => {
+    install.mockImplementation(async () => ({
+      ok: true,
+      unread: "the catalogue would not read",
+    }));
+    await open();
+
+    await userEvent.click(button(INSTALL_ACTION));
+    await settle();
+
+    expect(document.body.textContent).toContain(
+      installedIn("gh", ["Personal"]),
+    );
+    expect(document.body.textContent).not.toContain(
+      installFailedIn("gh", ["Personal"]),
+    );
+    expect(document.body.textContent).toContain(
+      unreadLine("Personal", "the catalogue would not read"),
+    );
+  });
+
   // A place two marketplaces reach can take one package and refuse the
   // other. Reporting only the refusal denies the files that are in;
   // reporting only the landing claims the ones that are not.
   it("says a place took only some of it", async () => {
     install.mockImplementation(async (request) =>
       request.source === "kit"
-        ? { ok: true }
+        ? { ok: true, unread: null }
         : { ok: false, reason: "no lock there" },
     );
     await open(

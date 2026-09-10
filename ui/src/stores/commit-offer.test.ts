@@ -69,6 +69,7 @@ describe("the line of projects to ask", () => {
       stage: { at: "offer" },
       route: "commit",
       message: "",
+      scanFailure: null,
     });
   });
 
@@ -139,6 +140,71 @@ describe("the line of projects to ask", () => {
     await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
 
     expect(useCommitOfferStore.getState().queue[0].files).toEqual(["one.md"]);
+  });
+
+  // The scans overlap and can answer in any order: `writingRepo` starts one
+  // per write without waiting on it, and one reader action writes many
+  // times. An older answer read the projects before the newer one's write,
+  // so it is dropped whole — the reading a commit would take files
+  // against, and the failure that is no account of a read landing after it.
+  //
+  // `outstanding` is the older scan, held until the newer one has answered.
+  type Answer = Awaited<ReturnType<typeof commands.commitOfferScan>>;
+  const olderScanOutstanding = async () => {
+    let answer = (_: Answer) => {};
+    const older = new Promise<Answer>((resolve) => {
+      answer = resolve;
+    });
+    vi.mocked(commands.commitOfferScan)
+      .mockReturnValueOnce(older)
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: { offers: [offer({ files: ["two.md"] })], flagged: [] },
+      });
+    const outstanding = useCommitOfferStore
+      .getState()
+      .enqueue(["/home/method/dev/site"]);
+    await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
+    expect(useCommitOfferStore.getState().queue[0].files).toEqual(["two.md"]);
+    return { outstanding, answer };
+  };
+
+  it("drops the stale reading an older scan answers with", async () => {
+    const { outstanding, answer } = await olderScanOutstanding();
+    answer({
+      status: "ok",
+      data: { offers: [offer({ files: ["one.md"] })], flagged: [] },
+    });
+    await outstanding;
+    expect(useCommitOfferStore.getState().queue[0].files).toEqual(["two.md"]);
+  });
+
+  it("drops the failure an older scan answers with", async () => {
+    const { outstanding, answer } = await olderScanOutstanding();
+    answer({ status: "error", error: "git is not on the path" });
+    await outstanding;
+    expect(useCommitOfferStore.getState().scanFailure).toBeNull();
+  });
+
+  // A failure is what one read of these projects answered, and a later read
+  // of the same projects answered them. Held past that, it would be said
+  // over a reading that had already replaced it.
+  it("clears a held failure once a later scan reads the projects", async () => {
+    vi.mocked(commands.commitOfferScan).mockResolvedValueOnce({
+      status: "error",
+      error: "git is not on the path",
+    });
+    await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
+    expect(useCommitOfferStore.getState().scanFailure).toBe(
+      "git is not on the path",
+    );
+
+    vi.mocked(commands.commitOfferScan).mockResolvedValueOnce({
+      status: "ok",
+      data: { offers: [offer()], flagged: [] },
+    });
+    await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
+    expect(useCommitOfferStore.getState().scanFailure).toBeNull();
   });
 
   it("asks nothing when the write could reach no project", async () => {

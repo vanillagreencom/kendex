@@ -78,6 +78,12 @@ export interface PlaceOutcome {
    *  reason, because it is the one the reader can act on and a list of
    *  them is not a sentence. */
   refused: string | null;
+  /** Why the account of what landed here is short, or null. The command
+   *  reads the place back once the plan is committed, and that read can
+   *  fail over files that are on disk — which is not a refusal and is not
+   *  what `refused` carries: the packages are in. The first reason, for
+   *  the reason above. */
+  unread: string | null;
 }
 
 /** What the run did, per place, in the order the places were picked. Kept
@@ -173,6 +179,7 @@ export const useInstallFlow = create<InstallFlowState>((set, get) => ({
       for (const place of places) {
         let wrote = false;
         let refused: string | null = null;
+        let unread: string | null = null;
         for (const group of subject.groups) {
           const destination = destinationFor(group, place, freeChoice);
           if (destination === undefined) continue;
@@ -188,13 +195,15 @@ export const useInstallFlow = create<InstallFlowState>((set, get) => ({
             delivery: places.length === 1 ? choice : undefined,
             quiet: true,
           });
-          if (result.ok) wrote = true;
-          else refused ??= result.reason;
+          if (result.ok) {
+            wrote = true;
+            unread ??= result.unread;
+          } else refused ??= result.reason;
         }
         // Both halves, because both can be true: a place several
         // marketplaces reach can take one package and refuse another, and
         // reporting only the refusal would deny the files that are in.
-        outcomes.push({ scope: place, wrote, refused });
+        outcomes.push({ scope: place, wrote, refused, unread });
       }
     } finally {
       set({

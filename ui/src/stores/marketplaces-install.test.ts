@@ -71,7 +71,7 @@ const declared = (name: string) =>
 
 const installed = (shown: Disclosure[], withheld = []) => ({
   status: "ok" as const,
-  data: { packages: [], repoEffects: { shown, withheld } },
+  data: { packages: [], repoEffects: { shown, withheld }, unread: null },
 });
 
 const install = (destination?: Scope) =>
@@ -150,7 +150,7 @@ describe("what an install leaves waiting", () => {
         items: [{ kind: "skill", name: "deploy" }],
         quiet: true,
       }),
-    ).toEqual({ ok: true });
+    ).toEqual({ ok: true, unread: null });
     expect(toast.success).not.toHaveBeenCalled();
   });
 
@@ -208,6 +208,34 @@ describe("what an install leaves waiting", () => {
       repoEffectsWithheldToast("guards", "no git directory"),
     );
     expect(useMarketplacesStore.getState().pendingEffects).toBeNull();
+  });
+});
+
+// The command reads the subscription back once the plan is committed, so
+// that read can fail over packages that are on disk. The write is not
+// undone by it and the answer says so — what it could not read rides back
+// beside the landing, and the rows the caller had stay put rather than
+// being replaced by an absence the reader would take for an empty place.
+describe("a read behind an install that did not land", () => {
+  it("keeps the rows it had and hands the failure back with the landing", async () => {
+    const catalog = subscription({ scope: "global" }, "cat");
+    const key = catalogKey(catalog);
+    const standing = [declared("guards")];
+    useMarketplacesStore.setState({ packages: { [key]: standing } as never });
+    vi.mocked(commands.marketplaceInstall).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...installed([]).data,
+        packages: null,
+        unread: "the catalogue would not read",
+      },
+    });
+
+    expect(await install()).toEqual({
+      ok: true,
+      unread: "the catalogue would not read",
+    });
+    expect(useMarketplacesStore.getState().packages[key]).toBe(standing);
   });
 });
 

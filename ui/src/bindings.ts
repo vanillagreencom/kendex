@@ -1901,6 +1901,13 @@ export type InstallTarget = {
  *  now, the repository effects the install brought — read and asked about
  *  in the window, because nothing here ran them — and what any package the
  *  plan took away had undone, which is not asked about at all.
+ * 
+ *  Both reads happen after the plan is committed, so neither can refuse
+ *  the install: the files are in whatever they answer. A failure travels
+ *  as `unread` instead, and the read that failed says nothing rather than
+ *  something wrong — no packages at all, which is the rows the caller
+ *  already had standing, and no offer, which is no claim that this install
+ *  brought none.
  */
 export type Installed = Installed_Serialize | Installed_Deserialize;
 
@@ -1909,11 +1916,29 @@ export type Installed = Installed_Serialize | Installed_Deserialize;
  *  now, the repository effects the install brought — read and asked about
  *  in the window, because nothing here ran them — and what any package the
  *  plan took away had undone, which is not asked about at all.
+ * 
+ *  Both reads happen after the plan is committed, so neither can refuse
+ *  the install: the files are in whatever they answer. A failure travels
+ *  as `unread` instead, and the read that failed says nothing rather than
+ *  something wrong — no packages at all, which is the rows the caller
+ *  already had standing, and no offer, which is no claim that this install
+ *  brought none.
  */
 export type Installed_Deserialize = {
-	packages: AvailablePackage[],
+	/**
+	 *  The subscription as it stands now, or null where reading it back
+	 *  failed. Absent is not empty: an empty list is a subscription with
+	 *  nothing in it.
+	 */
+	packages: AvailablePackage[] | null,
 	repoEffects: Offers,
 	undone: string[],
+	/**
+	 *  What a read behind the write could not answer, or null. The write
+	 *  landed either way — this is why the account of it is short, and
+	 *  never why an install is reported as refused.
+	 */
+	unread: string | null,
 };
 
 /**
@@ -1921,11 +1946,29 @@ export type Installed_Deserialize = {
  *  now, the repository effects the install brought — read and asked about
  *  in the window, because nothing here ran them — and what any package the
  *  plan took away had undone, which is not asked about at all.
+ * 
+ *  Both reads happen after the plan is committed, so neither can refuse
+ *  the install: the files are in whatever they answer. A failure travels
+ *  as `unread` instead, and the read that failed says nothing rather than
+ *  something wrong — no packages at all, which is the rows the caller
+ *  already had standing, and no offer, which is no claim that this install
+ *  brought none.
  */
 export type Installed_Serialize = {
-	packages: AvailablePackage[],
+	/**
+	 *  The subscription as it stands now, or null where reading it back
+	 *  failed. Absent is not empty: an empty list is a subscription with
+	 *  nothing in it.
+	 */
+	packages: AvailablePackage[] | null,
 	repoEffects: Offers,
 	undone?: string[],
+	/**
+	 *  What a read behind the write could not answer, or null. The write
+	 *  landed either way — this is why the account of it is short, and
+	 *  never why an install is reported as refused.
+	 */
+	unread: string | null,
 };
 
 /**  One declared item: `[agents.<name>]` / `[skills.<name>]`. */

@@ -1,0 +1,10 @@
+# The guided install, and what a write leaves behind
+
+The `ui/` rules for how an install is asked and where it lands, and for what runs behind a write that reaches a project. `AGENTS.md` points here.
+
+- One guided install, `src/stores/install-flow.ts` plus `src/components/install/install-dialog.tsx`, mounted once in `App.tsx`: every Install anywhere opens it with an ask, and nothing else builds a `marketplaceInstall` request. It asks what and where; the tools question is asked only for a single place, and only a personal subscription may be redirected into a project.
+- A place a browse was begun for travels as `nav.ts`'s `installInto`, stated by the caller and cleared by every navigation that is not a browse; the flow opens on it.
+- Registering a project and reading what it holds are separate answers: `settings-projects.ts` answers the registry write, `project-setup.ts` carries the read's checking and unchecked states, and no surface shows zero as a checked result before that read lands.
+- One reader action can run `writingRepo` many times — the guided install writes per place and per marketplace — so anything behind it appends, refreshes or reports once for the run, never assumes a single write. `src/lib/rescan.ts` holds that rule.
+- Every question a write leaves behind is asked in the order `src/lib/asks-first.ts` states, and that file is the only place stating it: a dialog that adds a condition of its own is how two modals end up on screen together. A question's own failure surface is part of it.
+- A read behind a committed write cannot refuse it. `marketplaceInstall` reads the subscription and the repository effects back after the plan lands, so a failure there answers as what could not be read, beside the place it is about, and the rows the caller had stay put.

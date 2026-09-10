@@ -134,6 +134,22 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
 
   const head = () => get().queue[0];
 
+  // The scans overlap, so only the latest one that started may answer.
+  //
+  // `writingRepo` asks for this scan in a `finally` and does not wait on
+  // it, and one reader action runs `writingRepo` many times — the guided
+  // install writes once per place and once per marketplace inside each —
+  // so several scans are in flight at once and they can come back in any
+  // order. An older answer read the projects before the newer one's write,
+  // and putting its file lists back is the stale reading this queue must
+  // not carry: `commitOfferCommit` re-derives the generated paths when it
+  // runs, so a commit would take files the dialog never listed. It is
+  // dropped whole, failure included — every one of these scans is asked
+  // about the same roots, every project this machine tracks, so a later
+  // answer is an answer about all of them.
+  let started = 0;
+  let answered = 0;
+
   /** The last step of both pull-request routes. `moved` says whether the
    *  checkout is now on the branch, which the `pr` route does and the
    *  refused-push recovery deliberately does not. */
@@ -191,7 +207,12 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
 
     enqueue: async (roots) => {
       if (roots.length === 0) return;
+      const ticket = ++started;
       const response = await commands.commitOfferScan(roots);
+      // A scan that started before one already answered says nothing about
+      // what the projects hold now.
+      if (ticket < answered) return;
+      answered = ticket;
       if (response.status === "error") {
         // The write itself landed and was reported by its own caller; a
         // read behind it that failed is said here and nowhere else — held
@@ -228,6 +249,9 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
       set({
         queue: next,
         flagged: found.flagged,
+        // A read of these projects that did land is the answer about them,
+        // so an earlier scan's held failure has nothing left to report.
+        scanFailure: null,
         // The reader's own typing is theirs: a fresh reading of the files
         // says nothing about the message they are part-way through.
         message: queue.length > 0 ? get().message : (next[0]?.message ?? ""),

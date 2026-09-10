@@ -146,7 +146,10 @@ fn an_inert_package_brings_no_offer() {
         "{:?}",
         installed.repo_effects
     );
-    assert!(installed.packages.iter().any(|p| p.name == "deploy"));
+    let Some(listed) = installed.packages else {
+        panic!("the subscription read back: {:?}", installed.unread);
+    };
+    assert!(listed.iter().any(|p| p.name == "deploy"));
 }
 
 /// Arm the repository from the window, the way an install's second yes

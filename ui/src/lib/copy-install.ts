@@ -84,6 +84,12 @@ export const installedPartlyIn = (what: string, places: string[]): string =>
  *  they are what the reader can act on. */
 export const refusalLine = (place: string, reason: string): string =>
   `${place} — ${reason}`;
+/** The packages are in this place and kendex could not read it back
+ *  afterwards, so the outcome above says less about it than about the
+ *  others. Said beside the place, and it says the install landed first:
+ *  the reader's question is whether the files are there. */
+export const unreadLine = (place: string, reason: string): string =>
+  `${place} — installed, and kendex couldn't read the place back afterwards: ${reason}`;
 /** The way to the place that now has the package, named so the click is
  *  predictable from the words alone. */
 export const openPlaceLabel = (place: string): string => `Open ${place}`;
