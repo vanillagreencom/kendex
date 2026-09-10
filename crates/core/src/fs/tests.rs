@@ -382,3 +382,158 @@ fn a_durable_file_copy_carries_the_mode_across() {
         0o644
     );
 }
+
+/// The access-control entries a Windows file carries, read back through
+/// `GetNamedSecurityInfoW`, a path the create never touches. A row is one
+/// entry: whether it names the account running the test, its access mask,
+/// and whether the folder handed it down.
+#[cfg(windows)]
+mod acl {
+    use std::mem::size_of;
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::Path;
+    use std::ptr;
+
+    use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
+    use windows_sys::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
+    use windows_sys::Win32::Security::{
+        ACCESS_ALLOWED_ACE, ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION,
+        EqualSid, GetAce, GetAclInformation, INHERITED_ACE,
+    };
+    use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) struct Entry {
+        pub(super) allowed: bool,
+        pub(super) this_account: bool,
+        pub(super) mask: u32,
+        pub(super) inherited: bool,
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[allow(
+        unsafe_code,
+        reason = "Win32 has no safe binding; each site states its contract"
+    )]
+    pub(super) fn entries(path: &Path) -> Vec<Entry> {
+        let user = super::dacl::current_user().unwrap();
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut dacl = ptr::null_mut();
+        let mut descriptor = ptr::null_mut();
+        // SAFETY: `wide` is NUL-terminated; the out-parameters are
+        // writable; the descriptor the system allocates is freed below
+        // after the last read through `dacl`, which points into it.
+        let read = unsafe {
+            GetNamedSecurityInfoW(
+                wide.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                &mut dacl,
+                ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        assert_eq!(read, ERROR_SUCCESS, "GetNamedSecurityInfoW");
+        assert!(
+            !dacl.is_null(),
+            "the file has no access-control list at all"
+        );
+        let mut size = ACL_SIZE_INFORMATION {
+            AceCount: 0,
+            AclBytesInUse: 0,
+            AclBytesFree: 0,
+        };
+        // SAFETY: `dacl` is the valid list read above and `size` a
+        // writable `ACL_SIZE_INFORMATION` of the length passed.
+        let sized = unsafe {
+            GetAclInformation(
+                dacl,
+                ptr::from_mut(&mut size).cast(),
+                size_of::<ACL_SIZE_INFORMATION>() as u32,
+                AclSizeInformation,
+            )
+        };
+        assert_ne!(sized, 0, "GetAclInformation");
+        let rows = (0..size.AceCount)
+            .map(|index| {
+                let mut ace = ptr::null_mut();
+                // SAFETY: `index` is below the count the list reported,
+                // so `GetAce` yields a pointer to an entry inside `dacl`,
+                // which is alive until the free below. Every entry starts
+                // with an `ACE_HEADER`, and an allowed entry is an
+                // `ACCESS_ALLOWED_ACE` whose `SidStart` opens its SID.
+                unsafe {
+                    assert_ne!(GetAce(dacl, index, &mut ace), 0, "GetAce {index}");
+                    let ace = &*ace.cast::<ACCESS_ALLOWED_ACE>();
+                    let allowed = u32::from(ace.Header.AceType) == ACCESS_ALLOWED_ACE_TYPE;
+                    Entry {
+                        allowed,
+                        this_account: allowed
+                            && EqualSid(ptr::from_ref(&ace.SidStart).cast_mut().cast(), user.sid())
+                                != 0,
+                        mask: ace.Mask,
+                        inherited: u32::from(ace.Header.AceFlags) & INHERITED_ACE != 0,
+                    }
+                }
+            })
+            .collect();
+        // SAFETY: `descriptor` came from `GetNamedSecurityInfoW`, which
+        // documents `LocalFree` as its release, and nothing reads through
+        // it after this.
+        unsafe { LocalFree(descriptor) };
+        rows
+    }
+}
+
+/// A file kendex makes to hold a credential names the account it runs as
+/// and nobody else: one entry, this account, full access, and nothing the
+/// folder handed down. The temporary folder does hand entries down — that
+/// is what the second case reads — so a plain create fails this by count.
+#[cfg(windows)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_created_private_file_names_this_account_alone() {
+    use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join(".env.local");
+
+    write_private(&path, b"TOKEN='secret'\n").unwrap();
+
+    assert_eq!(fs::read(&path).unwrap(), b"TOKEN='secret'\n");
+    assert_eq!(
+        acl::entries(&path),
+        vec![acl::Entry {
+            allowed: true,
+            this_account: true,
+            mask: FILE_ALL_ACCESS,
+            inherited: false,
+        }]
+    );
+}
+
+/// A file the person already has keeps the list they gave it: the file is
+/// theirs, and kendex is storing a value in it rather than taking it over.
+#[cfg(windows)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_existing_private_file_keeps_its_own_list() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join(".env.local");
+    fs::write(&path, "OTHER='kept'\n").unwrap();
+    let before = acl::entries(&path);
+    assert!(
+        before.iter().any(|entry| entry.inherited),
+        "the fixture folder handed nothing down, so this case reads nothing: {before:?}"
+    );
+
+    write_private(&path, b"OTHER='kept'\nTOKEN='secret'\n").unwrap();
+
+    assert_eq!(fs::read(&path).unwrap(), b"OTHER='kept'\nTOKEN='secret'\n");
+    assert_eq!(acl::entries(&path), before);
+}

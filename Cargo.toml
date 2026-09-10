@@ -40,6 +40,16 @@ fd-lock = "4"
 # for the effective uid, which is how a run learns it is privileged without
 # reading a variable whoever invoked it chose.
 rustix = { version = "1", features = ["fs", "process"] }
+# Already in the tree under rustix and tempfile; used directly for the
+# security descriptor a private credential file is created with on
+# Windows, which std exposes no way to pass.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
 unicode-normalization = "0.1"
 semver = "1"
 # The app already verifies its own downloads with these, through
@@ -56,8 +66,11 @@ base64 = "0.22"
 # default and neither is wanted, so both are off.
 pulldown-cmark = { version = "0.13", default-features = false }
 
+# Denied rather than forbidden so the Win32 calls that have no safe
+# binding, behind `crates/core/src/fs/dacl.rs`, can allow it per function
+# with a reason; everywhere else an `unsafe` block is still refused.
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 # A doc citation to a missing item sends a reader to a symbol that does not
 # exist. The

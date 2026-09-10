@@ -1,6 +1,6 @@
 # Engine
 
-Covers: crates/core/src/apply/, crates/core/src/engine/, crates/core/src/manifest/, crates/core/src/lock/, crates/core/src/hook/, crates/core/src/base.rs, crates/core/src/fs.rs
+Covers: crates/core/src/apply/, crates/core/src/engine/, crates/core/src/manifest/, crates/core/src/lock/, crates/core/src/hook/, crates/core/src/base.rs, crates/core/src/fs.rs, crates/core/src/fs/dacl.rs
 
 The engine turns a manifest into a plan and a plan into disk. Planning derives the closure of what a scope wants, compares it with what the scanner observed, and produces ops with preconditions; apply runs those ops as one journaled transaction under the scope lock.
 
@@ -37,4 +37,5 @@ The engine turns a manifest into a plan and a plan into disk. Planning derives t
 - A member the user removes from a bundle is a suppression: refresh honors it, declaring the item outranks it, and the audit reports the bundle with members held back. Enforced by `crates/core/tests/bundles/`.
 - A settings template applies once, when its skill's declaration arrives in `kendex.toml`, write-if-absent, and nothing else writes there but a save from the app; the authoring rules are in [../authoring/settings.md](../authoring/settings.md). Enforced by `crates/core/tests/settings_seed/`.
 - A credential a package declares under `[secrets]` is written only to the project's private env file, never to `kendex.settings.toml`, and only where the path stays inside the project, git does not track it, and git ignores it — the entry that makes git ignore it is written first. Enforced by `crates/core/tests/secret_storage.rs` and `crates/core/tests/secret_destination.rs`.
+- The private env file is created readable by its owner alone on every platform, at creation rather than after the write: mode 600 on macOS and Linux, and on Windows an access-control list naming the account kendex runs as, with the create refused and the failing step named when that list cannot be applied. An existing file keeps the mode or list its owner gave it. Enforced by `crates/core/tests/secret_storage.rs` on Unix and `crates/core/src/fs/tests.rs` on Windows.
 - One pass writes `.gitignore` per plan and it runs before the writes it protects: `engine/posture.rs` takes both lines it may add, because a second writer in one plan binds to bytes the first replaced. Whether a repository carries the project is git's answer, never a `.git` marker, so a project nested in a larger checkout is covered. Enforced by `crates/core/src/engine/posture.rs::tests` and `crates/core/tests/secret_storage.rs`.
