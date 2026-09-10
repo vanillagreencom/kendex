@@ -234,11 +234,24 @@ fn other_pending_counts_the_work_the_checks_did_not_ask_for() {
     );
     let waiting = drift::setup::setup_plan(&w.env, &w.scope).unwrap();
     assert!(waiting.other_pending > 0, "{waiting:?}");
-    assert_eq!(
-        positions(&waiting, &w.root),
-        positions(&clean, &w.root),
-        "the unrelated hook is counted, never listed as a file the checks write"
+    // The unrelated hook is counted and never listed. Its own rendered
+    // script is the position that would say otherwise: a list carrying it
+    // would be presenting the person's own waiting work as a file this
+    // press writes.
+    let shown = positions(&waiting, &w.root);
+    assert!(
+        !shown.iter().any(|path| path.ends_with("guard.sh")),
+        "the unrelated hook's own position is on the list: {shown:?}"
     );
+    // And nothing the checks disclose on a clean scope is dropped when
+    // something else is waiting.
+    for position in positions(&clean, &w.root) {
+        assert!(
+            shown.contains(&position),
+            "{} left the list once other work was waiting: {shown:?}",
+            position.display()
+        );
+    }
 }
 
 /// A registered project whose folder has moved: the read refuses in the
@@ -569,6 +582,19 @@ fn a_conflict_at_the_checks_own_target_is_named_on_a_re_enable() {
     // carries a sentence that says the check is unaffected.
     assert!(blocked.conflicts.is_empty(), "{:?}", blocked.conflicts);
 
+    // The same screen may not call that position a change. One list says
+    // kendex will not write over it; a row labelling it a write is the
+    // confirmation contradicting itself.
+    let row = blocked
+        .files
+        .iter()
+        .find(|file| target.ends_with(&file.path))
+        .unwrap_or_else(|| panic!("the blocked position left the list: {:?}", blocked.files));
+    assert!(
+        !matches!(row.change, FileChange::Add | FileChange::Change),
+        "a refused position is labelled a write: {row:?}"
+    );
+
     // And the scope read back is incomplete and able to say why, rather
     // than reporting a state with no reason at all.
     let after = engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default()).unwrap();
@@ -842,4 +868,55 @@ fn a_first_enable_names_no_conflict_but_still_says_why_after() {
         after.drift
     );
     assert!(target.is_symlink(), "the position was written over");
+}
+
+/// Re-enabling a project whose checks were switched off.
+///
+/// Nothing of the person's is waiting there, so the render runs and the
+/// setup completes. Counting kendex's own bookkeeping as their work is
+/// what held it back: taking the check's declaration out to measure what
+/// is unrelated is itself what makes this pass want to rewrite the
+/// inventory of rendered paths, so that op exists only because the
+/// question was asked.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_re_enable_has_nothing_of_the_persons_waiting() {
+    let w = fresh_git_world();
+    declare(&w, "");
+    install(&w);
+    // Switched off from the Library, which renders nothing and leaves the
+    // inventory holding paths the next pass will not want.
+    declare(
+        &w,
+        "[hooks.kendex-drift]\nsource = \"local\"\nenabled = false\n",
+    );
+    apply::execute(
+        &w.env,
+        &engine::plan_apply(&w.env, &w.scope, &engine::PlanOptions::default())
+            .unwrap()
+            .plan,
+    )
+    .unwrap();
+
+    let preview = drift::setup::setup_plan(&w.env, &w.scope).unwrap();
+    assert_eq!(
+        preview.other_pending,
+        0,
+        "kendex's own bookkeeping was counted as the person's work: {:?}",
+        drift::setup::pending_without_checks(&w.env, &w.scope)
+            .unwrap()
+            .plan
+            .ops
+            .iter()
+            .map(|op| op.line())
+            .collect::<Vec<_>>()
+    );
+
+    // And the render completes rather than being held.
+    let after = install(&w);
+    assert!(
+        drift::setup::every_target_registered(&w.env, &w.scope, &after).unwrap(),
+        "the re-enable was held: {:?}",
+        after.drift
+    );
 }

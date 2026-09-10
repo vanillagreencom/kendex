@@ -187,6 +187,15 @@ pub fn setup_plan(env: &Env, scope: &Scope) -> Result<SetupPlan> {
     // the count uses, so a held press lists what the check's setup reaches
     // and never somebody else's files. With nothing waiting that plan is
     // empty and nothing is subtracted.
+    // Every position the render actually acts on. One reading of the
+    // plan, used both to decide which destinations this press writes and
+    // to gather what else it puts in the repository.
+    let rendering: BTreeSet<PathBuf> = with_checks
+        .plan
+        .ops
+        .iter()
+        .flat_map(|planned| planned.op.touched())
+        .collect();
     let theirs: BTreeSet<PathBuf> = unrelated
         .plan
         .ops
@@ -198,17 +207,12 @@ pub fn setup_plan(env: &Env, scope: &Scope) -> Result<SetupPlan> {
         .map(|row| row.path.clone())
         .chain([script.clone(), declaration.clone()])
         .collect();
-    for path in with_checks
-        .plan
-        .ops
-        .iter()
-        .flat_map(|planned| planned.op.touched())
-    {
-        if theirs.contains(&path) || already.contains(&path) {
+    for path in &rendering {
+        if theirs.contains(path) || already.contains(path) {
             continue;
         }
         rendered.push(Rendered {
-            path,
+            path: path.clone(),
             role: FileRole::RepositoryFile,
             harness: None,
             preview: None,
@@ -218,9 +222,18 @@ pub fn setup_plan(env: &Env, scope: &Scope) -> Result<SetupPlan> {
     // The render's own positions. Whether they are written by this press
     // is the same judgement the install makes — nothing unrelated waiting
     // — so a held press names them without claiming to write them.
+    //
+    // Where it does render, the plan is still the judge of which of them
+    // it writes: a position the render refused carries no op, and calling
+    // it a change would contradict the very list naming it as one kendex
+    // will not write over. Asked of the plan's own ops rather than of a
+    // second idea here of what it does, so the row and the refusal cannot
+    // disagree.
     let destinations: BTreeSet<PathBuf> = rendered.iter().map(|row| row.path.clone()).collect();
     match renders_now {
-        true => writes.now.extend(destinations),
+        true => writes
+            .now
+            .extend(destinations.intersection(&rendering).cloned()),
         false => writes.later = destinations,
     }
 
@@ -419,6 +432,23 @@ pub fn pending_without_checks(env: &Env, scope: &Scope) -> Result<crate::engine:
     // Asked of the one function that adds it.
     let housekeeping = crate::engine::posture::planned(&scope)?;
     report.plan.ops.retain(|op| !housekeeping.contains(op));
+    // Nor is the inventory of what kendex renders here. It is written for
+    // CI and never read back by a plan, so it is never a change of the
+    // person's — and taking the check's declaration out above is itself
+    // what makes this pass want to rewrite it without the check's paths.
+    // Counting that told a project with nothing waiting that it had one
+    // change waiting, and held the render back over an op this question
+    // brought about.
+    //
+    // Which file that is belongs to the render's own bookkeeping, so it is
+    // asked of the owner rather than named here.
+    if let Some(root) = project_root(&scope) {
+        let companions = crate::engine::generated_paths::companions(root);
+        report
+            .plan
+            .ops
+            .retain(|op| !op.op.touched().iter().any(|path| companions.contains(path)));
+    }
     Ok(report)
 }
 
