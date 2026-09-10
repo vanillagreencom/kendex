@@ -197,6 +197,77 @@ pub fn sites(text: &str) -> Vec<Site> {
     out
 }
 
+/// Why the shipped loaders would refuse this whole settings file, or
+/// `None` where they would read it.
+///
+/// Per-key answers are not enough on their own. A loader that meets a
+/// malformed row stops before it sources anything, so a caller that
+/// resolved one key from a file the loaders reject would act on a value
+/// no package will ever see. Kept beside [`sites`], which already owns
+/// what the loaders read, so the two cannot come to disagree about the
+/// same grammar.
+///
+/// The four refusals are the ones every shipped loader enforces: a
+/// byte-order mark, a `[`-leading line that is not a lone `[name]`
+/// header, a key assigned twice inside `[env]`, and a value in `[env]`
+/// outside the single-line basic-string grammar. Read in file order, so
+/// the reason returned is the first one a loader would hit.
+pub fn loaders_refuse(text: &str) -> Option<String> {
+    if text.starts_with('\u{feff}') {
+        return Some("it starts with a byte-order mark, and no script reads past one".to_owned());
+    }
+    let mut seen: Vec<String> = Vec::new();
+    let mut in_env = false;
+    for row in crate::settings_toml::rows(text) {
+        if row.kind == Line::Table {
+            // A header the loaders cannot read stops them whatever it
+            // names, so this is asked before whether it opens `[env]`.
+            let Some(header) = crate::settings_toml::header_of(row.text) else {
+                return Some(format!(
+                    "line {} opens a table in a shape no script reads",
+                    row.line
+                ));
+            };
+            if !header.lone {
+                return Some(format!(
+                    "line {} is a table header with something else on the line, and no script reads past one",
+                    row.line
+                ));
+            }
+            in_env = loaders_read_env(row.text);
+            continue;
+        }
+        if !in_env {
+            continue;
+        }
+        let Some((key, _, _)) = row.assignment() else {
+            continue;
+        };
+        let Some(key) = key_of(key) else {
+            continue;
+        };
+        // The loaders check the duplicate before anything else about the
+        // line, so a file that is malformed twice over fails the same way
+        // whatever a caller's environment holds.
+        if seen.contains(&key.name) {
+            return Some(format!(
+                "{} is assigned more than once in [env], and each key is assigned once",
+                key.name
+            ));
+        }
+        seen.push(key.name);
+    }
+    for site in sites(text) {
+        if !site.in_env {
+            continue;
+        }
+        if let Err(problem) = readable(&site, &site.key) {
+            return Some(format!("{} cannot be read — {problem}", site.key));
+        }
+    }
+    None
+}
+
 /// Where one key stands, given the file's sites.
 pub fn current_of(sites: &[Site], key: &str) -> Current {
     let mine: Vec<&Site> = sites.iter().filter(|site| site.key == key).collect();

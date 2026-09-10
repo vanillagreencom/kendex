@@ -7,6 +7,7 @@ import { scopeKey } from "@/lib/scope";
 import { useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
+import { placeRead } from "@/test/settings-read";
 import { useCustomizedHere } from "./customized-here";
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
@@ -14,12 +15,14 @@ const VG: Scope = { scope: "project", root: "/work/vg" };
 /** gh declaring one key, standing at `value` in this place's file. */
 const place = (value: string): ScopeSettings => ({
   applies: true,
+  ...placeRead,
   base: "b1",
   skills: [
     {
       skill: "gh",
       template: {
         state: "rows",
+        secrets: [],
         rows: [
           {
             key: "GH_MODE",

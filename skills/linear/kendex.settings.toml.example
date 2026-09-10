@@ -33,3 +33,18 @@ LINEAR_FORMAT = "safe"
 # doubling on each further attempt. A whole number of seconds; 0 retries
 # without waiting at all.
 LINEAR_RETRY_BASE_DELAY = "1"
+
+[secrets]
+
+# The Linear API key every call to Linear authenticates with. Create one
+# at Linear → Settings → Security & access → Personal API keys. It reaches
+# every workspace it owns, so LINEAR_TEAM above is what keeps this
+# project's writes to one team. A 1Password reference — op://vault/item/field
+# — works in place of the key itself.
+#
+# A key set here wins over one exported in your shell, unlike every other
+# setting: a machine-wide key is the wrong workspace for every repository
+# but one, so this project's own key decides. LINEAR_API_KEY_OVERRIDE beats
+# both for a single call, and auth-check warns, by fingerprint alone, when
+# a key set here shadows a different inherited one.
+LINEAR_API_KEY = "" # required

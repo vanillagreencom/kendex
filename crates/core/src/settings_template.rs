@@ -16,11 +16,24 @@
 //! one double-quoted string free of `"` and `\`, and after that value
 //! nothing but the required marker. A line those loaders refuse or
 //! silently skip is a finding here, as are the rules only a template has —
-//! a comment block over every key, nothing assigned outside `[env]`, and
+//! a comment block over every key, nothing assigned outside the two
+//! tables it may declare, and
 //! that marker, whose spelling `crate::settings_seed::marks_required`
 //! decides for seeder and check alike. The corpus in
 //! `crates/core/tests/fixtures/settings-grammar.tsv` runs reader and
 //! loaders against the same samples, so the two cannot drift apart unseen.
+//!
+//! A template declares two tables and no third. `[env]` is the public
+//! one, whose entries seeding copies into the consumer's
+//! `kendex.settings.toml`. `[secrets]` declares the keys a package reads
+//! as credentials: a key name, the comment block explaining what it
+//! enables, and the `# required` marker where the package refuses to run
+//! without it. Its assignments carry the empty string and nothing else —
+//! a value there is a finding, so no template can ship a credential, a
+//! placeholder or a default that a public write route would then copy.
+//! Nothing under `[secrets]` is ever seeded: what a secret is worth is a
+//! value the consumer supplies to their own private env file, through
+//! [`crate::settings_secret`].
 //!
 //! The line walk that finds the defects is [`mod@scan`]; here are the types it
 //! reports in and the read that runs it. It is line-based because comments
@@ -80,13 +93,49 @@ pub struct TemplateEntry {
     pub line: u32,
 }
 
-/// What one template amounts to: every row that decoded, and every defect.
-/// A clean file has an empty `findings`; the two are reported together so a
-/// reader with one bad key still sees the others.
+/// One `[secrets]` row: a key the package reads as a credential, declared
+/// without one. A secret declaration carries metadata and nothing else —
+/// no default, no placeholder — so there is no value member here to
+/// publish a credential through.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretEntry {
+    pub key: String,
+    /// The comment block above the key, `#` markers stripped, in order.
+    pub comment: Vec<String>,
+    /// Whether the package refuses to run without the key. Read from the
+    /// same `# required` marker `[env]` uses, so an author spells one
+    /// rule in one way.
+    pub required: bool,
+    /// 1-based line the declaration sits on.
+    pub line: u32,
+}
+
+/// What one template amounts to: every row that decoded, every secret it
+/// declares, and every defect. A clean file has an empty `findings`; the
+/// three are reported together so a reader with one bad key still sees
+/// the others.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TemplateRead {
     pub entries: Vec<TemplateEntry>,
+    pub secrets: Vec<SecretEntry>,
     pub findings: Vec<TemplateFinding>,
+}
+
+/// Whether a shell can export this name.
+///
+/// One predicate for every reader of a key: the template check, which
+/// refuses a declaration nothing would read, and the private env file's
+/// reader ([`crate::settings_secret::env_file`]), which has to see every
+/// name a loader sees or it appends a second assignment of a key that is
+/// already there. The shell loaders match `^[A-Za-z_][A-Za-z0-9_]*$` and
+/// skip every other name in silence, so this is that rule and nothing
+/// else.
+pub fn is_env_name(key: &str) -> bool {
+    let mut chars = key.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// The default one assignment line carries, or `None` where the value is a

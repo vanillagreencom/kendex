@@ -1,0 +1,1 @@
+- Name another private env file on a package's Customize tab and saving records it as `KENDEX_ENV_FILE`, which both package loaders read. The choice saves on its own, with no key typed alongside it.

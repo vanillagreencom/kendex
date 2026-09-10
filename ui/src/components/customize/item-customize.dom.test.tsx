@@ -8,6 +8,7 @@ import { sameScope } from "@/lib/scope";
 import { useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
+import { placeRead } from "@/test/settings-read";
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
 const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
@@ -40,12 +41,14 @@ const rows = [VG, HYPR].map((scope) => ({
 /** gh declaring one key, standing at `value` in this place's file. */
 const declares = (value: string): ScopeSettings => ({
   applies: true,
+  ...placeRead,
   base: "b1",
   skills: [
     {
       skill: "gh",
       template: {
         state: "rows",
+        secrets: [],
         rows: [
           {
             key: "GH_MODE",

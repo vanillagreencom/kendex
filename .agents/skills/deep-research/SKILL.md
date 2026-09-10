@@ -34,7 +34,7 @@ In Pi with the `web_research` tool active, use that tool, passing `outputPath` w
 - Write `findings.md` to the path the caller requested, exactly.
 - Cite sources for material claims. Provider payloads go in the sidecar JSON (`findings.raw.json` beside the report by default), never inline. Sanitize evidence excerpts: source-page headings must not render as headings.
 - Once the report and its sidecar exist, run `validate` and stop. No local reproduction, benchmarks, tests, code inspection, or implementation unless the caller asked for it.
-- A missing `EXA_API_KEY` fails with setup instructions. The value may be a key or a 1Password `op://vault/item/field` reference when the `op` CLI is installed and signed in.
+- A missing `EXA_API_KEY` fails with setup instructions. Set it on this package's Customize tab in the kendex app, or by hand in the project's private env file — `.env.local` unless `KENDEX_ENV_FILE` names another. The value may be a key or a 1Password `op://vault/item/field` reference when the `op` CLI is installed and signed in.
 - Every mode uses the same findings sections. Record mode and source counts in `## Research Metadata`.
 
 ## Running

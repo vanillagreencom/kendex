@@ -281,6 +281,175 @@ assert_eq "$s9_code" "0" "scenario 9 loads without error"
 assert_eq "$s9_out" "7|v1|v2" "scenario 9: every kendex_trim call the loader makes is visible in its own shell, none lost to a command substitution"
 assert_eq "$(sort -u "$S9_LEVELS" | paste -sd, -)" "0" "scenario 9: every kendex_trim call runs at the loader's own subshell depth, none inside a fork"
 
+# Scenario 10: which private env file the loader reads. .env.local unless
+# KENDEX_ENV_FILE names another, and the named path never leaves the
+# project — a private env file is SOURCED, so a path the project did not
+# mean to name runs somebody else's file in this shell.
+#
+# The app writes the same key when a person names a private file, so this
+# is where the two sides meet: it also pins that a value the app writes,
+# single-quoted, comes back out byte for byte.
+PROJ10="$TMP_ROOT/proj10"
+mkdir -p "$PROJ10"
+printf '%s\n' "SECRET='kept-local'" > "$PROJ10/.env.local"
+# The second line is exactly what the app writes for a value carrying the
+# characters a shell would otherwise act on. Written through %s so this
+# file's own printf leaves the backslash alone.
+printf '%s\n' "SECRET='kept-chosen'" "LITERAL='a b#c\"d\\e'" > "$PROJ10/.env.secrets"
+
+s10_load() { # SETTINGS_BODY NAME -> the SECRET the loader exports
+  (
+    unset -v SECRET LITERAL KENDEX_ENV_FILE
+    printf '%s' "$1" > "$PROJ10/kendex.settings.toml"
+    # shellcheck source=/dev/null
+    source "$LIB"
+    kendex_load_project_env "$PROJ10" >/dev/null 2>&1 || { echo "REFUSED"; exit 0; }
+    printf '%s|%s\n' "${SECRET:-}" "${LITERAL:-}"
+  )
+}
+
+assert_eq "$(s10_load '')" "kept-local|" "scenario 10: no key names .env.local"
+assert_eq \
+  "$(s10_load '[env]
+KENDEX_ENV_FILE = ".env.secrets"
+')" \
+  'kept-chosen|a b#c"d\e' \
+  "scenario 10: KENDEX_ENV_FILE names the file, and a single-quoted value reads back byte for byte"
+
+# Every spelling that could reach outside the project fails the load loud
+# rather than resolving on the default: a source the project did not mean
+# to name is one this shell would run.
+s10_refuses() { # PATH NAME
+  local err code
+  set +e
+  err=$(
+    unset -v KENDEX_ENV_FILE
+    printf '[env]\nKENDEX_ENV_FILE = "%s"\n' "$1" > "$PROJ10/kendex.settings.toml"
+    # shellcheck source=/dev/null
+    source "$LIB"
+    kendex_load_project_env "$PROJ10" 2>&1 >/dev/null
+  )
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 && "$err" == *"kendex-env: private-env-path arg1=$1"* ]]; then
+    PASS=$((PASS + 1)); printf '  ok    scenario 10: %s fails the load and names the path\n' "$2"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 10: %s fails the load and names the path\n        code=%s stderr: %s\n' "$2" "$code" "$err"
+  fi
+}
+s10_refuses "/etc/passwd" "an ABSOLUTE path"
+s10_refuses "../outside.env" "a LEADING .. segment"
+s10_refuses "a/../../outside.env" "a NESTED .. segment"
+s10_refuses "C:keys.env" "a DRIVE COLON"
+
+# Spelling is only half the guarantee. A name with no `..` in it reads a
+# file anywhere at all when a directory on the way is a link out of the
+# project, and this loader SOURCES what it opens.
+s10_link_refuses() { # NAME REASON — plants the shape, then expects the named refusal
+  local err code
+  set +e
+  err=$(
+    unset -v KENDEX_ENV_FILE
+    printf '[env]\nKENDEX_ENV_FILE = "%s"\n' "$1" > "$PROJ10/kendex.settings.toml"
+    # shellcheck source=/dev/null
+    source "$LIB"
+    kendex_load_project_env "$PROJ10" 2>&1 >/dev/null
+  )
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 && "$err" == *"kendex-env: $2 arg1=$1"* ]]; then
+    PASS=$((PASS + 1)); printf '  ok    scenario 10: %s fails the load as %s\n' "$1" "$2"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 10: %s fails the load as %s\n        code=%s stderr: %s\n' "$1" "$2" "$code" "$err"
+  fi
+}
+
+OUTSIDE10="$TMP_ROOT/outside10"
+mkdir -p "$OUTSIDE10"
+printf '%s\n' "SECRET='not-this-project'" > "$OUTSIDE10/stolen.env"
+ln -s "$OUTSIDE10" "$PROJ10/linked"
+s10_link_refuses "linked/stolen.env" "private-env-outside"
+
+# The file ITSELF being a link is the project's own layout and still
+# loads: a git worktree links .env.local back to its main checkout so
+# every worktree shares one credential file, and refusing that would stop
+# every package in every worktree. The line the guard draws is the
+# configured NAME reaching out, not the directory's own contents.
+printf '%s\n' "SECRET='kept-through-link'" > "$OUTSIDE10/shared.env"
+ln -s "$OUTSIDE10/shared.env" "$PROJ10/linked.env"
+assert_eq \
+  "$(s10_load '[env]
+KENDEX_ENV_FILE = "linked.env"
+')" \
+  'kept-through-link|' \
+  "scenario 10: a LINKED private file is the project's own layout and loads"
+
+# A directory inside the project is not a way out, so a nested private
+# file still loads: the check refuses an escape, not a subdirectory.
+mkdir -p "$PROJ10/keys"
+printf '%s\n' "SECRET='kept-nested'" > "$PROJ10/keys/private.env"
+assert_eq \
+  "$(s10_load '[env]
+KENDEX_ENV_FILE = "keys/private.env"
+')" \
+  'kept-nested|' \
+  "scenario 10: a nested private file inside the project still loads"
+
+# A component that exists as a regular file blocks the path: nothing can
+# be created under it. Climbing past it would call the path contained and
+# then read as absent, so the credential would silently never load.
+printf 'X=1\n' > "$PROJ10/blocking"
+s10_link_refuses "blocking/private.env" "private-env-blocked"
+
+# The default is held to the same rule, in both directions: a linked
+# .env.local loads, and a .env.local reached through a linked directory
+# does not. The guard is about the path, never about which of the two
+# named the file.
+PROJ10B="$TMP_ROOT/proj10b"
+mkdir -p "$PROJ10B"
+ln -s "$OUTSIDE10/shared.env" "$PROJ10B/.env.local"
+s10b_default=$(
+  unset -v SECRET KENDEX_ENV_FILE
+  # shellcheck source=/dev/null
+  source "$LIB"
+  kendex_load_project_env "$PROJ10B" >/dev/null 2>&1
+  printf '%s\n' "${SECRET:-}"
+)
+assert_eq "$s10b_default" "kept-through-link" \
+  "scenario 10: a LINKED .env.local is the project's own layout and loads"
+
+# A backslash never reaches that check: the settings grammar refuses the
+# value first, and refusing it twice would say the grammar was optional.
+# Pinned here so the two refusals stay told apart.
+set +e
+s10_backslash=$(
+  unset -v KENDEX_ENV_FILE
+  printf '[env]\nKENDEX_ENV_FILE = "keys\\local.env"\n' > "$PROJ10/kendex.settings.toml"
+  # shellcheck source=/dev/null
+  source "$LIB"
+  kendex_load_project_env "$PROJ10" 2>&1 >/dev/null
+)
+set -e
+case "$s10_backslash" in
+  *"kendex-env: value-syntax"*"key=KENDEX_ENV_FILE"*)
+    PASS=$((PASS + 1)); printf '  ok    scenario 10: a BACKSLASH fails on the value grammar, before the path check\n' ;;
+  *)
+    FAIL=$((FAIL + 1)); printf '  FAIL  scenario 10: a BACKSLASH fails on the value grammar, before the path check\n        stderr: %s\n' "$s10_backslash" ;;
+esac
+
+# The caller's environment outranks the project's answer here as it does
+# everywhere else: an exported KENDEX_ENV_FILE decides which file loads.
+printf '[env]\nKENDEX_ENV_FILE = ".env.secrets"\n' > "$PROJ10/kendex.settings.toml"
+s10_parent=$(
+  unset -v SECRET
+  export KENDEX_ENV_FILE=.env.local
+  # shellcheck source=/dev/null
+  source "$LIB"
+  kendex_load_project_env "$PROJ10" >/dev/null 2>&1
+  printf '%s\n' "${SECRET:-}"
+)
+assert_eq "$s10_parent" "kept-local" "scenario 10: an exported KENDEX_ENV_FILE outranks the project's"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

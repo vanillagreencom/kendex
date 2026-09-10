@@ -284,13 +284,13 @@ fn a_toml_error_in_column_one_reports_its_own_line() {
     );
 }
 
-/// A template with no `[env]` table seeds nothing at all, whatever else it
-/// says. The corpus next door is the shell loaders' grammar, and they have
-/// no opinion here — a consumer's settings file without `[env]` simply
-/// resolves every key to its built-in default. This is the template's own
-/// rule, so it is pinned here rather than as a corpus row.
+/// A template declaring neither table declares nothing at all, whatever
+/// else it says. The corpus next door is the shell loaders' grammar, and
+/// they have no opinion here — a consumer's settings file without `[env]`
+/// simply resolves every key to its built-in default. This is the
+/// template's own rule, so it is pinned here rather than as a corpus row.
 #[test]
-fn a_template_with_no_env_table_is_located() {
+fn a_template_declaring_no_table_is_located() {
     let absent = [
         "",
         "# Just a preamble, and nothing under it.\n",
@@ -302,10 +302,107 @@ fn a_template_with_no_env_table_is_located() {
             located(text),
             [(
                 0,
-                "there is no [env] table, so this template seeds nothing".to_owned()
+                "there is neither an [env] table nor a [secrets] table, so this template declares nothing"
+                    .to_owned()
             )],
             "{text:?}"
         );
+    }
+}
+
+/// A package whose only declaration is a credential is a template in full
+/// standing: it declares a field for the app to render, and the absent
+/// `[env]` finding above must not fire on it.
+#[test]
+fn a_secret_only_template_declares_its_key_and_nothing_else() {
+    let read = read("[secrets]\n# The API key.\nAPI_KEY = \"\" # required\n");
+    assert_eq!(read.findings, [], "{:?}", read.findings);
+    assert_eq!(read.entries, []);
+    assert_eq!(read.secrets.len(), 1);
+    assert_eq!(read.secrets[0].key, "API_KEY");
+    assert_eq!(read.secrets[0].comment, ["The API key.".to_owned()]);
+    assert_eq!(read.secrets[0].line, 3);
+    assert!(read.secrets[0].required);
+}
+
+/// The marker is the same word under either table, and its absence is the
+/// same answer: the package runs without the key.
+#[test]
+fn an_unmarked_secret_is_not_required() {
+    let read = read("[secrets]\n# The API key.\nAPI_KEY = \"\"\n");
+    assert_eq!(read.findings, [], "{:?}", read.findings);
+    assert_eq!(read.secrets.len(), 1);
+    assert!(!read.secrets[0].required);
+}
+
+/// Every way a `[secrets]` declaration can be wrong, and what it is told.
+/// A value there is the one this table exists to refuse: it would ship a
+/// credential, a placeholder or a default in the catalog, and the app
+/// would offer it as the answer to write.
+#[test]
+fn every_secret_declaration_defect_is_located() {
+    let rows: Vec<(&str, Vec<(u32, String)>)> = vec![
+        (
+            "[secrets]\n# The API key.\nAPI_KEY = \"sk-live-1\"\n",
+            vec![(3, "API_KEY is declared under [secrets] with a value".to_owned())],
+        ),
+        (
+            "[secrets]\n# The API key.\nAPI_KEY = \"paste yours here\" # required\n",
+            vec![(3, "API_KEY is declared under [secrets] with a value".to_owned())],
+        ),
+        (
+            "[secrets]\nAPI_KEY = \"\"\n",
+            vec![(2, "API_KEY has no comment block above it".to_owned())],
+        ),
+        (
+            "[secrets]\n# The API key.\nAPI-KEY = \"\"\n",
+            vec![(
+                3,
+                "API-KEY is not a name a shell can export, so nothing reads it".to_owned(),
+            )],
+        ),
+        (
+            "[secrets]\n# One.\nA = \"\"\n\n[secrets]\n# Two.\nB = \"\"\n",
+            vec![(
+                5,
+                "a second [secrets] header; the first is on line 1".to_owned(),
+            )],
+        ),
+        (
+            "[secrets]\n# The API key.\nAPI_KEY = \"\" # optional\n",
+            vec![(
+                3,
+                "API_KEY carries `#optional` after its value, and the only marker a template writes there is `# required`"
+                    .to_owned(),
+            )],
+        ),
+    ];
+    for (text, findings) in rows {
+        assert_eq!(located(text), findings, "{text:?}");
+    }
+}
+
+/// One key declared public in one table and secret in the other says two
+/// different things about where its value may be written. Nothing
+/// downstream chooses between them: the template is refused, and neither
+/// declaration becomes a row.
+#[test]
+fn a_key_declared_both_public_and_secret_is_refused() {
+    for text in [
+        "[env]\n# Why.\nAPI_KEY = \"\"\n\n[secrets]\n# The API key.\nAPI_KEY = \"\"\n",
+        "[secrets]\n# The API key.\nAPI_KEY = \"\"\n\n[env]\n# Why.\nAPI_KEY = \"\"\n",
+    ] {
+        let read = read(text);
+        assert_eq!(read.findings.len(), 1, "{:?}", read.findings);
+        assert!(
+            read.findings[0]
+                .problem
+                .contains("so nothing can say whether it is a secret"),
+            "{:?}",
+            read.findings
+        );
+        assert_eq!(read.entries, [], "{text:?}");
+        assert_eq!(read.secrets, [], "{text:?}");
     }
 }
 
@@ -348,7 +445,10 @@ fn every_template_defect_is_located_with_nothing_else_said() {
     let rows: [(&str, Vec<(u32, String)>); 11] = [
         (
             "# Why.\nDEPTH = \"2\"\n\n[env]\n# Why.\nOTHER = \"1\"\n",
-            vec![(2, "DEPTH is assigned outside [env]".to_owned())],
+            vec![(
+                2,
+                "DEPTH is assigned outside [env] and [secrets]".to_owned(),
+            )],
         ),
         (
             "[env]\n# Why.\nA = \"1\"\n\n[env]\n# Why.\nB = \"2\"\n",
@@ -368,7 +468,7 @@ fn every_template_defect_is_located_with_nothing_else_said() {
         (
             "[other]\n# Why.\nA = \"1\"\n\n[env]\n# Why.\nA = \"2\"\n",
             vec![
-                (3, "A is assigned outside [env]".to_owned()),
+                (3, "A is assigned outside [env] and [secrets]".to_owned()),
                 (7, "A is assigned again; it is already on line 3".to_owned()),
             ],
         ),

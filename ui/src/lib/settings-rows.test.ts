@@ -5,6 +5,7 @@ import type {
   SettingsRow,
   SkillSettings,
 } from "@/bindings";
+import { placeRead } from "@/test/settings-read";
 import {
   differsFromDefault,
   editIn,
@@ -32,6 +33,7 @@ const set = (skill: string, key: string, value: string): SettingsEdit => ({
 
 const place = (skills: ScopeSettings["skills"]): ScopeSettings => ({
   applies: true,
+  ...placeRead,
   skills,
   base: "b1",
 });
@@ -111,7 +113,13 @@ describe("withEdit", () => {
 
 describe("skillIn", () => {
   it("has no entry where the place has no settings file", () => {
-    const global: ScopeSettings = { applies: false, skills: [], base: null };
+    const global: ScopeSettings = {
+      applies: false,
+      ...placeRead,
+      secrets: null,
+      skills: [],
+      base: null,
+    };
     expect(skillIn(global, "gh")).toBeNull();
     expect(skillIn(null, "gh")).toBeNull();
   });
@@ -134,12 +142,16 @@ describe("settingsValues", () => {
           skill: "gh",
           template: {
             state: "rows",
+            secrets: [],
             rows: [
               row({ current: { state: "value", value: "advise", line: 3 } }),
             ],
           },
         },
-        { skill: "zed", template: { state: "rows", rows: [row()] } },
+        {
+          skill: "zed",
+          template: { state: "rows", secrets: [], rows: [row()] },
+        },
       ]),
     });
     expect(values.get("/work/vg")).toEqual(
@@ -153,7 +165,13 @@ describe("settingsValues", () => {
 
   it("gives a place that installs nothing an empty answer, not none", () => {
     const values = settingsValues({
-      global: { applies: false, skills: [], base: null },
+      global: {
+        applies: false,
+        ...placeRead,
+        secrets: null,
+        skills: [],
+        base: null,
+      },
     });
     expect(values.get("global")).toEqual(new Map());
   });
@@ -196,11 +214,14 @@ describe("skillValues", () => {
   });
 
   it("answers off the rows it could read", () => {
-    expect(skillValues(gh({ state: "rows", rows: [row()] }), [])).toBe(false);
+    expect(
+      skillValues(gh({ state: "rows", secrets: [], rows: [row()] }), []),
+    ).toBe(false);
     expect(
       skillValues(
         gh({
           state: "rows",
+          secrets: [],
           rows: [
             row({ current: { state: "value", value: "advise", line: 3 } }),
           ],
@@ -216,14 +237,15 @@ describe("skillValues", () => {
     const ambiguous = row({
       current: { state: "ambiguous", problem: "twice", lines: [3, 9] },
     });
-    expect(skillValues(gh({ state: "rows", rows: [ambiguous] }), [])).toBe(
-      null,
-    );
+    expect(
+      skillValues(gh({ state: "rows", secrets: [], rows: [ambiguous] }), []),
+    ).toBe(null);
     // A row that definitely differs settles it whatever else is unread.
     expect(
       skillValues(
         gh({
           state: "rows",
+          secrets: [],
           rows: [
             ambiguous,
             row({ current: { state: "value", value: "advise", line: 4 } }),

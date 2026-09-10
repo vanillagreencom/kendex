@@ -2,9 +2,9 @@
 // Diagnostic protocol: command refusals write one JSON object to stderr with
 // {ok:false,key,value,error}. Validate keeps errors/warnings and adds problems
 // with {level,key,value}; English remains display text, not a test contract.
-import { existsSync, writeSync } from "node:fs";
+import { existsSync, realpathSync, statSync, writeSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, extname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const deepTypes = new Set(["deep-reasoning", "deep-lite", "deep"]);
@@ -105,8 +105,151 @@ async function loadEnvFile(path) {
   }
 }
 
+// The one setting this reads out of kendex.settings.toml: which file the
+// project keeps its secrets in. Not a settings loader — no key but this
+// one is read, and nothing is exported — because the choice has to be
+// known before the private file can be opened at all. kendex writes the
+// key when a person names a private file in the app, and the shared shell
+// loader in the kendex skills reads the same key the same way, so one
+// project names one file once.
+//
+// The grammar is the kendex settings contract: a lone [env] header, and a
+// single-line double-quoted value holding no " and no \, with an optional
+// trailing comment. A file that does not say it keeps its secrets
+// somewhere else means .env.local, which is what every project without
+// the key has always used.
+const PRIVATE_ENV_DEFAULT = ".env.local";
+
+// One settings file, read the way `skills/*/scripts/lib/kendex-env.sh`
+// reads it, for the one key that decides which private file this project
+// uses.
+//
+// The whole file is held to the loader's grammar, not just the row this
+// reader wants. That loader refuses the file outright over a header shape
+// it cannot parse, a duplicate key in [env], or a value outside the
+// contract, and every package in the project then refuses to start. A
+// reader that took its own row out of a file the others reject would have
+// this package running on configuration nothing else accepted.
+//
+// Returns "" where the file assigns nothing, and null where the file has
+// no assignment of the key at all — absent and empty are different
+// answers, because an empty assignment resolves to the default and still
+// stops the search.
+async function namedEnvFile(path) {
+  if (!existsSync(path)) return null;
+  const text = await readFile(path, "utf8");
+  if (text.startsWith("\ufeff")) {
+    fail("settings-byte-order-mark", path, `${path} starts with a UTF-8 byte-order mark; the loaders refuse it, so remove it.`);
+  }
+  let table = "";
+  let named = null;
+  const seen = new Set();
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    if (trimmed.startsWith("[")) {
+      // A `[`-leading line is a header or an error, never content: the
+      // loader refuses every other shape rather than reading past it.
+      const header = trimmed.match(/^\[([A-Za-z0-9_.-]+)\]$/);
+      if (!header) {
+        fail("settings-table-header", path, `${path}: unsupported table header shape (a header is a lone [name] on its own line): ${trimmed}`);
+      }
+      table = header[1];
+      continue;
+    }
+    if (table !== "env" || !trimmed.includes("=")) continue;
+    const key = trimmed.slice(0, trimmed.indexOf("=")).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    if (seen.has(key)) {
+      fail("settings-duplicate-key", path, `${path}: ${key} is assigned more than once in [env]; each key is assigned once.`);
+    }
+    seen.add(key);
+    const value = trimmed.slice(trimmed.indexOf("=") + 1).trim();
+    if (!/^"[^"\\]*"[ \t]*(?:#.*)?$/.test(value)) {
+      fail("settings-value-syntax", path, `${path}: unsupported syntax for ${key} (expected a single-line basic string with no '"' and no '\\').`);
+    }
+    if (key === "KENDEX_ENV_FILE") named = value.slice(1, value.indexOf('"', 1));
+  }
+  return named;
+}
+
+async function privateEnvFile(root) {
+  // The same precedence the shared shell loader uses, highest first: the
+  // process environment, then .kendex/settings.toml, then
+  // kendex.settings.toml. A project that names a file in the higher layer
+  // has every package reading that one, and this package has to agree.
+  // Absent and empty are different answers at every layer: an empty
+  // assignment has decided, on the default, and the search stops there.
+  // Both settings files are read whatever answers, because either one
+  // being outside the grammar refuses the whole project's configuration.
+  const nested = await namedEnvFile(resolve(root, ".kendex/settings.toml"));
+  const rooted = await namedEnvFile(resolve(root, "kendex.settings.toml"));
+  const named = process.env.KENDEX_ENV_FILE ?? nested ?? rooted ?? PRIVATE_ENV_DEFAULT;
+  if (!named) return PRIVATE_ENV_DEFAULT;
+  // A path that could reach outside the project is refused rather than
+  // read: this loader is handed a project's own configuration and must
+  // not be talked into opening a file somewhere else by it.
+  const parts = named.split("/");
+  if (named.startsWith("/") || named.includes("\\") || named.includes(":") || parts.includes("..")) {
+    fail("private-env-path", "KENDEX_ENV_FILE", `KENDEX_ENV_FILE is ${named}: it must name a file inside the project, written as a relative path with no '..' segment, no backslash and no colon.`);
+  }
+  // Spelling is only half the answer. `resolve` and `readFile` follow
+  // links, so `config/private.env` reads a file anywhere at all when
+  // `config` points out of the project — the name never said `..`. The
+  // default is checked on the same rule, so the guarantee is about the
+  // file this loader opens and not about which of the two named it.
+  insideProject(root, named);
+  return named;
+}
+
+// Whether the DIRECTORY the private env file sits in stays inside the
+// project once every link on the way is followed. The file may not exist
+// yet, so the deepest existing ancestor is resolved and the rest is
+// spelling, already judged above.
+//
+// The file ITSELF being a link is left alone on purpose, and this is the
+// line between the two. A directory link is the configured NAME reaching
+// somewhere the project never wrote down, which is what this guard is
+// against. A link at the private file is the project's own layout, put
+// there by whoever owns the directory: a git worktree links `.env.local`
+// back to its main checkout so every worktree shares one credential file,
+// and refusing that would stop every package in every worktree while
+// stopping nobody who can already write inside the project root. The
+// shared shell loader draws the same line, so one project reads one file
+// whichever package asks.
+function insideProject(root, named) {
+  const path = resolve(root, named);
+  const resolved = (at, what) => {
+    try {
+      return realpathSync(at);
+    } catch (error) {
+      fail("private-env-unresolved", what, `${what} could not be resolved (${error.code ?? error.message}), so nothing can say whether the private env file is inside the project.`);
+    }
+  };
+  const top = resolved(root, root);
+  // Climb only past components that are ABSENT. One that exists as
+  // something other than a directory blocks the path: no file can be
+  // created under it, so climbing past it would call the path contained
+  // and then read as absent, and the credential would silently never
+  // load.
+  let at = dirname(path);
+  while (!existsSync(at)) {
+    const up = dirname(at);
+    if (up === at) break;
+    at = up;
+  }
+  if (!statSync(at).isDirectory()) {
+    fail("private-env-blocked", named, `The private env file ${named} cannot exist: ${at} is a file, not a directory. Name a path whose parents are directories.`);
+  }
+  const here = resolved(at, at);
+  if (here !== top && !here.startsWith(top.endsWith(sep) ? top : top + sep)) {
+    fail("private-env-outside", named, `The private env file ${named} resolves outside the project through a link on the way to it. Name a file inside the project.`);
+  }
+}
+
 async function loadEnv() {
-  await loadEnvFile(resolve(process.cwd(), ".env.local"));
+  const root = process.cwd();
+  await loadEnvFile(resolve(root, await privateEnvFile(root)));
 }
 
 function resolveSecretRef(value, name) {
@@ -391,7 +534,13 @@ async function callExaBody(body, options, controller) {
   }
   if (typeof fetch !== "function") fail("runtime-fetch-missing", process.version, "This Node runtime does not provide fetch. Use Node 18+.");
   const key = resolveSecretRef(process.env.EXA_API_KEY, "EXA_API_KEY");
-  if (!key) fail("credential-missing", "EXA_API_KEY", "EXA_API_KEY is required for Exa deep research. Set EXA_API_KEY or add it to .env.local.");
+  // The file named is the one this project keeps its secrets in, resolved
+  // the same way the load at startup resolved it — a person told to write
+  // the key into .env.local while the project reads .env.secrets follows
+  // the message and the failure stands. Asking again rather than holding
+  // the answer: the same call on the same directory, so it cannot name a
+  // file the load did not read.
+  if (!key) fail("credential-missing", "EXA_API_KEY", `EXA_API_KEY is required for Exa deep research. Set EXA_API_KEY or add it to ${await privateEnvFile(process.cwd())}.`);
   const response = await fetch("https://api.exa.ai/search", { method: "POST", headers: { "content-type": "application/json", "x-api-key": key }, body: JSON.stringify(body), signal: controller.signal });
   if (!response.ok) fail("exa-request-failed", response.status, `Exa request failed (${response.status}): ${await response.text().catch(() => response.statusText)}`);
   return response.json();

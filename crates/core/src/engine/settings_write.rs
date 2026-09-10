@@ -74,8 +74,10 @@ pub(super) fn plan_settings_seed(
         }
         return Ok((Vec::new(), Vec::new()));
     };
-    if state.settings_env.is_empty() && edits.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
+    let (declared, edits, mut notes) = declarations(state, options, edits)?;
+    let edits = edits.as_slice();
+    if declared.is_empty() && edits.is_empty() {
+        return Ok((notes, Vec::new()));
     }
     // What this pass may put in the file: a template's required keys where
     // its skill is arriving, plus the keys a save names — a value has to
@@ -89,7 +91,7 @@ pub(super) fn plan_settings_seed(
     // what the notes below are then told. Nothing is written there either
     // way, so the required keys are reported as unanswered, which is the
     // true thing to say about a file kendex cannot see into.
-    let unread = crate::settings_seed::Answered::read(None, &state.settings_env);
+    let unread = crate::settings_seed::Answered::read(None, &declared);
     // And a pass that gives up writes nothing whatever it meant to write,
     // so the notes for one are built from a seeding that admits nothing.
     // Handed the pass's own, the notes speak for a write that is not going
@@ -115,7 +117,9 @@ pub(super) fn plan_settings_seed(
             file,
             format!("{} is not a regular file", path.display()),
         );
-        let notes = crate::settings_seed::seed_notes(&state.settings_env, &unread, &giving_up);
+        notes.extend(crate::settings_seed::seed_notes(
+            &declared, &unread, &giving_up,
+        ));
         return Ok((notes, vec![row]));
     }
     let current = crate::fs::read_if_exists(&path)?;
@@ -123,7 +127,7 @@ pub(super) fn plan_settings_seed(
     // Both views at once, because the two questions the notes ask take
     // different ones: whether a write can land on the name, and whether
     // any script would read what is there.
-    let answered = crate::settings_seed::Answered::read(current.as_deref(), &state.settings_env);
+    let answered = crate::settings_seed::Answered::read(current.as_deref(), &declared);
     // A file that already declares env — as an array of tables, or in a
     // top-level assignment — has nowhere a setting can go, and writing
     // around it would leave a document that does not load. Said the way
@@ -141,11 +145,15 @@ pub(super) fn plan_settings_seed(
             path.display(),
             env.problem()
         );
-        let notes = crate::settings_seed::seed_notes(&state.settings_env, &answered, &giving_up);
+        notes.extend(crate::settings_seed::seed_notes(
+            &declared, &answered, &giving_up,
+        ));
         return Ok((notes, vec![cannot_write(scope, file, problem)]));
     }
-    let notes = crate::settings_seed::seed_notes(&state.settings_env, &answered, &seeding);
-    let settled = settle(current.as_deref(), state, &seeding, edits, &path)?;
+    notes.extend(crate::settings_seed::seed_notes(
+        &declared, &answered, &seeding,
+    ));
+    let settled = settle(current.as_deref(), &declared, &seeding, edits, &path)?;
     // Nothing to write when the finished text is what the file already
     // holds — and, where there was no file, when there is nothing to make.
     match &current {
@@ -203,20 +211,126 @@ struct Settled {
 /// there is no such pass.
 fn settle(
     current: Option<&str>,
-    state: &DesiredState,
+    declared: &[crate::settings_seed::SeededEnv],
     seeding: &crate::settings_seed::Seeding,
     edits: &[crate::settings_file::SettingsEdit],
     path: &std::path::Path,
 ) -> Result<Settled> {
-    let (seeded, added) = match crate::settings_seed::merge(current, &state.settings_env, seeding) {
+    let (seeded, added) = match crate::settings_seed::merge(current, declared, seeding) {
         Some((text, added)) => (text, added),
         None => (current.unwrap_or_default().to_owned(), Vec::new()),
     };
-    let (text, edited) =
-        crate::settings_file::apply_edits(&seeded, edits, &state.settings_env, path)?;
+    let (text, edited) = crate::settings_file::apply_edits(&seeded, edits, declared, path)?;
     Ok(Settled {
         text,
         added,
         edited,
     })
+}
+
+/// What this pass may write, and what it may not.
+///
+/// A key one installed package declares a setting and another declares a
+/// credential has no destination anything here can choose: writing it as
+/// a setting could put a credential in a tracked file, and refusing it as
+/// a secret would leave the package unable to read it. So it is seeded by
+/// nothing, refused as an edit, and named in a note.
+///
+/// The private file a save names comes back as an edit of kendex's own
+/// key, on kendex's own declaration, so recording the choice is the same
+/// seed-and-set this file already does for every package key.
+fn declarations(
+    state: &DesiredState,
+    options: &crate::engine::PlanOptions,
+    edits: &[crate::settings_file::SettingsEdit],
+) -> Result<(
+    Vec<crate::settings_seed::SeededEnv>,
+    Vec<crate::settings_file::SettingsEdit>,
+    Vec<String>,
+)> {
+    let contested = crate::settings_secret::contested(&state.settings_templates);
+    if let Some(against) = contested
+        .iter()
+        .find(|against| edits.iter().any(|edit| edit.key == against.key))
+    {
+        return Err(crate::settings_secret::SecretRefusal::Sensitivity {
+            contested: Box::new(against.clone()),
+        }
+        .into());
+    }
+    let mut declared: Vec<crate::settings_seed::SeededEnv> = state
+        .settings_env
+        .iter()
+        .filter(|seeded| !contested.iter().any(|one| one.key == seeded.entry.key))
+        .cloned()
+        .collect();
+    let mut edits = edits.to_vec();
+    if let Some(file) = recorded_choice(options) {
+        declared.push(crate::settings_secret::env_file_declaration());
+        edits.push(crate::settings_file::SettingsEdit {
+            skill: crate::settings_secret::KENDEX_OWNER.to_owned(),
+            key: crate::settings_secret::ENV_FILE_KEY.to_owned(),
+            value: crate::settings_file::SettingsEditValue::Set { value: file },
+        });
+    }
+    let notes = contested
+        .iter()
+        .map(|against| against.problem.clone())
+        .collect();
+    Ok((declared, edits, notes))
+}
+
+/// Both halves of what a save writes into a project's own configuration:
+/// the tracked settings file, then the private file beside it. One entry
+/// point because the order between them is not the caller's to choose —
+/// naming a private file records the choice in the settings write, so
+/// that write has to be planned first.
+///
+/// Everything a pass writes into the project's own files, in the order it
+/// has to write them.
+///
+/// The git posture goes first. The one line it may add for this pass is
+/// the `.gitignore` entry that keeps git off the private env file the
+/// credential below is about to go into, and a plan runs in order: a line
+/// planned after that write is a line planned after the window it exists
+/// to close. Rolling both back on a refusal is not the same promise as
+/// never having written an unprotected credential at all.
+///
+/// Then the tracked settings file, then the private file beside it.
+/// Naming a private file records the choice in the settings write, so
+/// that write is planned before the private one — and the destination is
+/// resolved once, at the top, because all three steps read it.
+pub(super) fn plan_project_files(
+    scope: &Scope,
+    state: &DesiredState,
+    options: &crate::engine::PlanOptions,
+    ops: &mut Vec<PlannedOp>,
+) -> Result<(Vec<String>, Vec<DriftRow>)> {
+    let target = super::secrets_write::target(scope, options)?;
+    let mut notes = Vec::new();
+    super::posture::plan_posture(
+        scope,
+        super::secrets_write::owed_ignore(options, target.as_ref()),
+        ops,
+        &mut notes,
+    )?;
+    let (settings_notes, drift) = plan_settings_seed(scope, state, options, ops)?;
+    notes.extend(settings_notes);
+    notes.extend(super::secrets_write::plan_secrets(
+        scope,
+        state,
+        options,
+        target.as_ref(),
+        ops,
+    )?);
+    Ok((notes, drift))
+}
+
+/// The private file a save is recording as this project's, where it is
+/// recording one. A save that only stores a value into the file the
+/// project already uses records nothing: the key is only written when the
+/// person names a file the project does not already name.
+fn recorded_choice(options: &crate::engine::PlanOptions) -> Option<String> {
+    let draft = options.secrets_draft.as_ref()?;
+    draft.choose.then(|| draft.file.clone())
 }

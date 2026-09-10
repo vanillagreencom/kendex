@@ -1,0 +1,10 @@
+[secrets]
+
+# The Exa API key every research run authenticates with. Create one at
+# https://dashboard.exa.ai. Without it `deep-research report` stops before
+# it reaches the network. A 1Password reference — op://vault/item/field —
+# works in place of the key itself.
+#
+# A key already exported in your shell wins over one set here, so a run
+# under a key you passed in uses that one.
+EXA_API_KEY = "" # required

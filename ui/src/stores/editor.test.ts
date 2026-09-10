@@ -13,6 +13,7 @@ import { groupItems } from "@/lib/derive";
 import { emptyDraft, setInstruction } from "@/lib/editor-draft";
 import { markFor } from "@/lib/package-mark";
 import { scopeKey } from "@/lib/scope";
+import { placeRead } from "@/test/settings-read";
 import { openInventory, useEditorStore } from "./editor";
 
 // The real module comes through, with only the commands stubbed: the
@@ -50,11 +51,13 @@ const inventory = () => ({
 
 const settings = (base: string | null = "s1"): ScopeSettings => ({
   applies: true,
+  ...placeRead,
   skills: [
     {
       skill: "gh",
       template: {
         state: "rows",
+        secrets: [],
         rows: [
           {
             key: "GH_MODE",
@@ -78,6 +81,12 @@ const edit = {
   value: { kind: "set" as const, value: "advise" },
 };
 
+const secretEdit = {
+  skill: "linear",
+  key: "LINEAR_API_KEY",
+  value: { kind: "set" as const, value: "lin_api_dummy" },
+};
+
 describe("editor store", () => {
   beforeEach(() => {
     useEditorStore.setState({
@@ -88,6 +97,14 @@ describe("editor store", () => {
       inventories: {},
       settings: null,
       settingsEdits: [],
+      // Every field a case can leave behind. The store is one module-level
+      // value, so a field missing from this reset carries into the next
+      // case: a picked private file left here put a secret half on the
+      // settings-only save below.
+      secretEdits: [],
+      secretFile: null,
+      confirming: false,
+      manifestFile: null,
       savedSettings: {},
       dirty: false,
       manifestDirty: false,
@@ -110,7 +127,7 @@ describe("editor store", () => {
   it("holds the base it read and presents it with the save", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     await useEditorStore.getState().load();
     expect(useEditorStore.getState().base).toBe("b1");
@@ -129,6 +146,7 @@ describe("editor store", () => {
         manifest: setInstruction(emptyDraft(), "skill-instructions", "gh", "x"),
         base: "b1",
       },
+      null,
       null,
     );
   });
@@ -165,7 +183,7 @@ describe("editor store", () => {
       vi.mocked(toast.message).mockClear();
       vi.mocked(commands.getManifest).mockResolvedValue({
         status: "ok",
-        data: { manifest: null, base: "b1" },
+        data: { manifest: null, base: "b1", file: "kendex.toml" },
       });
       await useEditorStore.getState().load();
       vi.mocked(commands.saveCustomize).mockResolvedValue(
@@ -185,13 +203,487 @@ describe("editor store", () => {
     }
   });
 
+  /// A credential goes to the private file, so it travels as its own
+  /// draft with that file's own base — and it names the destination the
+  /// fields were read against, so a project pointed elsewhere in between
+  /// is refused rather than written.
+  it("carries a credential as its own draft, bound to the private file", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "ok",
+      data: {} as AuditView_Serialize,
+    });
+    await useEditorStore.getState().load();
+    useEditorStore.getState().editSecret(secretEdit);
+    expect(useEditorStore.getState().dirty).toBe(true);
+
+    await useEditorStore.getState().save();
+    expect(commands.saveCustomize).toHaveBeenCalledWith(
+      { scope: "global" },
+      null,
+      null,
+      { edits: [secretEdit], file: ".env.local", choose: false, base: "p1" },
+    );
+  });
+
+  /// Core refuses an empty value outright — an empty value is not a
+  /// credential, and clearing a key is the other action. So a field typed
+  /// into and then erased is not an answer: it raises no Save bar and
+  /// travels in no draft, or the page would offer a write certain to be
+  /// refused.
+  it("does not offer a save for a field typed into and erased", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "ok",
+      data: {} as AuditView_Serialize,
+    });
+    await useEditorStore.getState().load();
+
+    useEditorStore.getState().editSecret(secretEdit);
+    expect(useEditorStore.getState().dirty).toBe(true);
+
+    const erased = {
+      ...secretEdit,
+      value: { kind: "set" as const, value: "" },
+    };
+    useEditorStore.getState().editSecret(erased);
+    expect(useEditorStore.getState().dirty).toBe(false);
+    // The edit stays in hand — the box the person is typing in is theirs.
+    expect(useEditorStore.getState().secretEdits).toEqual([erased]);
+
+    // And a save made for some other reason carries no secret half.
+    useEditorStore.getState().editSetting(edit);
+    await useEditorStore.getState().save();
+    const sent = vi.mocked(commands.saveCustomize).mock.calls.at(-1);
+    expect(sent?.[3]).toBeNull();
+
+    // Typing again makes it an answer once more.
+    useEditorStore.getState().editSecret(secretEdit);
+    expect(useEditorStore.getState().dirty).toBe(true);
+  });
+
+  /// The private file holds one line per key, however many packages
+  /// declare it, and core allows two packages to declare one — while it
+  /// refuses a save carrying one key twice. The draft is scope-wide and
+  /// every package page in a scope edits the same one, so answering a
+  /// shared key on two pages has to leave one answer rather than two the
+  /// save is guaranteed to fail on.
+  it("keeps one answer per key when two packages declare it", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "ok",
+      data: {} as AuditView_Serialize,
+    });
+    await useEditorStore.getState().load();
+
+    // Typed on the package that declares it, then again on the other.
+    useEditorStore.getState().editSecret(secretEdit);
+    const shared = {
+      ...secretEdit,
+      skill: "deep-research",
+      value: { kind: "set" as const, value: "second" },
+    };
+    useEditorStore.getState().editSecret(shared);
+    expect(useEditorStore.getState().secretEdits).toEqual([shared]);
+
+    // A different key is a different line and still travels beside it:
+    // the rule folds one key's answers, not the whole draft.
+    const other = { ...secretEdit, key: "EXA_API_KEY" };
+    useEditorStore.getState().editSecret(other);
+    expect(useEditorStore.getState().secretEdits).toEqual([shared, other]);
+
+    await useEditorStore.getState().save();
+    expect(commands.saveCustomize).toHaveBeenCalledWith(
+      { scope: "global" },
+      null,
+      null,
+      {
+        edits: [shared, other],
+        file: ".env.local",
+        choose: false,
+        base: "p1",
+      },
+    );
+  });
+
+  /// Naming a private file is a save of its own. The choice is written
+  /// into the settings file as the key both package loaders read, so it
+  /// must not wait for somebody to also type a credential — the page has
+  /// already promised that saving records it.
+  it("saves a chosen private file with no credential typed", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "ok",
+      data: {} as AuditView_Serialize,
+    });
+    await useEditorStore.getState().load();
+    await useEditorStore.getState().pickSecretFile(".env.secrets");
+    expect(useEditorStore.getState().dirty).toBe(true);
+
+    await useEditorStore.getState().save();
+    expect(commands.saveCustomize).toHaveBeenCalledWith(
+      { scope: "global" },
+      null,
+      null,
+      { edits: [], file: ".env.local", choose: true, base: "p1" },
+    );
+  });
+
+  /// The inverse: picking the file the project already names changes
+  /// nothing, so the save carries no secret half at all rather than
+  /// re-writing a key that is already there.
+  it("sends no secret half for a pick the project already holds", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    const held = settings();
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...held,
+        secrets: {
+          destination: {
+            file: ".env.secrets",
+            chosen: true,
+            state: { state: "ready" },
+          },
+          candidates: [],
+          base: "p1",
+        },
+      },
+    });
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "ok",
+      data: {} as AuditView_Serialize,
+    });
+    await useEditorStore.getState().load();
+    await useEditorStore.getState().pickSecretFile(".env.secrets");
+    useEditorStore
+      .getState()
+      .edit((draft) => setInstruction(draft, "skill-instructions", "gh", "x"));
+
+    await useEditorStore.getState().save();
+    expect(commands.saveCustomize).toHaveBeenCalledWith(
+      { scope: "global" },
+      expect.anything(),
+      null,
+      null,
+    );
+  });
+
+  /// The edits in hand were made against the bases the fields were read
+  /// with, and those bases are what the save carries back so a file
+  /// something else has written is refused. Adopting the confirmation
+  /// read's bases would replace them after the fact and turn that refusal
+  /// into an overwrite of somebody's newer value.
+  it("offers the reload when a file moved between typing and Save", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    await useEditorStore.getState().load();
+    useEditorStore.getState().editSecret(secretEdit);
+
+    // Somebody else writes the private file between typing and Save.
+    const held = settings();
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...held,
+        secrets: { ...held.secrets, base: "p2" } as NonNullable<
+          ScopeSettings["secrets"]
+        >,
+      },
+    });
+
+    await useEditorStore.getState().requestSave();
+    expect(useEditorStore.getState().stale).toBe(true);
+    expect(useEditorStore.getState().confirming).toBe(false);
+    expect(commands.saveCustomize).not.toHaveBeenCalled();
+    // The draft is kept: the reload is a choice, not something taken.
+    expect(useEditorStore.getState().secretEdits).toEqual([secretEdit]);
+  });
+
+  /// One rule for every read this store sends, in one table.
+  ///
+  /// Each site used to decide for itself whether a landed answer still
+  /// belonged on screen, and each checked one half: the scope but not the
+  /// picked file. A settings read committed into a scope the editor had
+  /// left, and two quick picks resolving out of order left the rows
+  /// describing one file while the draft targeted another. The rule is one
+  /// helper now, so a site cannot hold half of it — these rows drive all
+  /// three sites through the same question.
+  it("refuses every read the page has stopped asking for", async () => {
+    const settle: Record<string, (value: unknown) => void> = {};
+    const readOf = (file: string | null) => ({
+      status: "ok" as const,
+      data: {
+        ...settings(),
+        secrets: {
+          destination: {
+            file: file ?? ".env.local",
+            chosen: false,
+            state: { state: "ready" as const },
+          },
+          candidates: [],
+          base: "p1",
+        },
+      },
+    });
+
+    const rows: {
+      name: string;
+      send: () => Promise<void>;
+      moveOn: () => void;
+      wanted: string;
+    }[] = [
+      {
+        name: "a pick overtaken by a later pick",
+        send: () => useEditorStore.getState().pickSecretFile(".env.a"),
+        moveOn: () => useEditorStore.setState({ secretFile: ".env.b" }),
+        wanted: ".env.b",
+      },
+      {
+        name: "a pick overtaken by a place change",
+        send: () => useEditorStore.getState().pickSecretFile(".env.a"),
+        moveOn: () => useEditorStore.setState({ scope: VG }),
+        wanted: ".env.a",
+      },
+      {
+        name: "a confirmation read overtaken by a pick",
+        send: () => useEditorStore.getState().requestSave(),
+        moveOn: () => useEditorStore.setState({ secretFile: ".env.b" }),
+        wanted: ".env.b",
+      },
+    ];
+
+    for (const row of rows) {
+      useEditorStore.setState({
+        scope: { scope: "global" },
+        settings: null,
+        secretFile: null,
+        confirming: false,
+      });
+      vi.mocked(commands.getScopeSettings).mockImplementation(
+        (_scope, file) =>
+          new Promise((resolve) => {
+            settle[row.name] = () => resolve(readOf(file));
+          }),
+      );
+      const sent = row.send();
+      row.moveOn();
+      settle[row.name]?.(null);
+      await sent;
+      // The answer to a question nobody is asking any more never lands.
+      expect(useEditorStore.getState().settings, row.name).toBeNull();
+      expect(useEditorStore.getState().secretFile, row.name).toBe(
+        row.wanted === ".env.a" ? ".env.a" : row.wanted,
+      );
+      expect(useEditorStore.getState().confirming, row.name).toBe(false);
+    }
+
+    // The control: the same read, with the page still asking, lands.
+    useEditorStore.setState({
+      scope: { scope: "global" },
+      settings: null,
+      secretFile: null,
+    });
+    vi.mocked(commands.getScopeSettings).mockResolvedValue(readOf(".env.a"));
+    await useEditorStore.getState().pickSecretFile(".env.a");
+    expect(useEditorStore.getState().settings).not.toBeNull();
+  });
+
+  /// A destination that changed name moves the place even when neither
+  /// file exists, so neither base moved. Saving then would put a
+  /// credential typed for one file into another.
+  it("treats a changed destination name as a file that moved", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    const absent = (file: string) => ({
+      status: "ok" as const,
+      data: {
+        ...settings(),
+        secrets: {
+          destination: {
+            file,
+            chosen: false,
+            state: { state: "missing" as const, ignore: null },
+          },
+          candidates: [],
+          base: null,
+        },
+      },
+    });
+    vi.mocked(commands.getScopeSettings).mockResolvedValue(absent(".env.one"));
+    await useEditorStore.getState().load();
+    useEditorStore.getState().editSecret(secretEdit);
+
+    // Both bases stay null; only the name moves.
+    vi.mocked(commands.getScopeSettings).mockResolvedValue(absent(".env.two"));
+    await useEditorStore.getState().requestSave();
+    expect(useEditorStore.getState().stale).toBe(true);
+    expect(useEditorStore.getState().confirming).toBe(false);
+    expect(commands.saveCustomize).not.toHaveBeenCalled();
+  });
+
+  /// A pick whose read fails was never chosen. Left in hand it would be
+  /// paired with the settings of the destination before it, and
+  /// `secretsDraft` reads that mismatch as a choice — so the next
+  /// unrelated save would record `KENDEX_ENV_FILE` for the previous file,
+  /// which is nobody's decision.
+  it("puts a picked private file back when its read fails", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "ok",
+      data: {} as AuditView_Serialize,
+    });
+    await useEditorStore.getState().load();
+
+    // One pick that lands, so there is a prior choice to come back to.
+    await useEditorStore.getState().pickSecretFile(".env.secrets");
+    expect(useEditorStore.getState().secretFile).toBe(".env.secrets");
+
+    const held = useEditorStore.getState().settings;
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "error",
+      error: "unreadable",
+    } as Awaited<ReturnType<typeof commands.getScopeSettings>>);
+    await useEditorStore.getState().pickSecretFile(".env.unreadable");
+
+    expect(useEditorStore.getState().secretFile).toBe(".env.secrets");
+    expect(useEditorStore.getState().error).toBe("unreadable");
+    // The rows still describe the file they were read with.
+    expect(useEditorStore.getState().settings).toBe(held);
+  });
+
+  /// Discard is this same reload, so it must come back to the project's
+  /// own destination. A pick left in hand with nothing on screen saying so
+  /// would be recorded by a later unrelated edit.
+  it("clears a picked private file on reload", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    await useEditorStore.getState().load();
+    await useEditorStore.getState().pickSecretFile(".env.secrets");
+    expect(useEditorStore.getState().secretFile).toBe(".env.secrets");
+
+    await useEditorStore.getState().load();
+    expect(useEditorStore.getState().secretFile).toBeNull();
+    expect(useEditorStore.getState().dirty).toBe(false);
+    // And the read that reload made asked for the project's own answer.
+    expect(commands.getScopeSettings).toHaveBeenLastCalledWith(
+      { scope: "global" },
+      null,
+    );
+  });
+
+  /// Dirty is derived from every draft rather than set where one changes.
+  /// Set by hand it survived the change that emptied it: taking back the
+  /// last credential answer left the Save bar up over nothing, and picking
+  /// the file a project already names raised it over no change at all.
+  it("derives dirty from what is actually unsaved", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    await useEditorStore.getState().load();
+
+    useEditorStore.getState().editSecret(secretEdit);
+    expect(useEditorStore.getState().dirty).toBe(true);
+    useEditorStore.getState().setSecretEdits([]);
+    expect(useEditorStore.getState().dirty).toBe(false);
+
+    // A pick the project already holds is not a change either.
+    const held = settings();
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...held,
+        secrets: {
+          destination: {
+            file: ".env.secrets",
+            chosen: true,
+            state: { state: "ready" },
+          },
+          candidates: [],
+          base: "p1",
+        },
+      },
+    });
+    await useEditorStore.getState().pickSecretFile(".env.secrets");
+    expect(useEditorStore.getState().dirty).toBe(false);
+  });
+
+  /// Pressing Save writes nothing. The summary is built from a read taken
+  /// as it opens, because a project pointed at another private file since
+  /// the fields were filled in would otherwise be confirmed against the
+  /// file it used to have.
+  it("reads the place again and opens the summary rather than saving", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    await useEditorStore.getState().load();
+    useEditorStore.getState().editSecret(secretEdit);
+    vi.mocked(commands.getScopeSettings).mockClear();
+
+    await useEditorStore.getState().requestSave();
+    expect(useEditorStore.getState().confirming).toBe(true);
+    expect(commands.getScopeSettings).toHaveBeenCalledTimes(1);
+    expect(commands.saveCustomize).not.toHaveBeenCalled();
+
+    // And cancelling writes nothing while the draft stands.
+    useEditorStore.getState().cancelSave();
+    expect(useEditorStore.getState().confirming).toBe(false);
+    expect(useEditorStore.getState().secretEdits).toEqual([secretEdit]);
+    expect(commands.saveCustomize).not.toHaveBeenCalled();
+  });
+
+  /// Picking another private file is a read, never an assumption: whether
+  /// git carries it and which credentials it already holds are answers
+  /// about that file, and neither can be guessed from its name.
+  it("reads the place against a picked private file", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    await useEditorStore.getState().load();
+    vi.mocked(commands.getScopeSettings).mockClear();
+
+    await useEditorStore.getState().pickSecretFile(".env.secrets");
+    expect(commands.getScopeSettings).toHaveBeenCalledWith(
+      { scope: "global" },
+      ".env.secrets",
+    );
+    expect(useEditorStore.getState().secretFile).toBe(".env.secrets");
+  });
+
   /// The manifest is not the settings file: a settings change reconciles
   /// the scope against the manifest on disk, and sending the copy on
   /// screen back would rewrite a kendex.toml nobody touched.
   it("carries no manifest for a save that only changes settings", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     vi.mocked(commands.saveCustomize).mockResolvedValue({
       status: "ok",
@@ -206,6 +698,7 @@ describe("editor store", () => {
       { scope: "global" },
       null,
       { edits: [edit], base: "s1" },
+      null,
     );
   });
 
@@ -215,7 +708,7 @@ describe("editor store", () => {
   it("presents the settings base its rows were read with", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     vi.mocked(commands.getScopeSettings).mockResolvedValue({
       status: "ok",
@@ -231,7 +724,7 @@ describe("editor store", () => {
   it("says so when the settings read fails", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     vi.mocked(commands.getScopeSettings).mockResolvedValue({
       status: "error",
@@ -250,7 +743,7 @@ describe("editor store", () => {
   it("unsays a settings answer whose next read failed", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     await useEditorStore.getState().load();
     expect(useEditorStore.getState().savedSettings.global).toBeDefined();
@@ -277,7 +770,7 @@ describe("editor store", () => {
   it("unsays it too when the manifest read is what failed", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     await useEditorStore.getState().load();
     expect(useEditorStore.getState().savedSettings.global).toBeDefined();
@@ -304,7 +797,11 @@ describe("editor store", () => {
     vi.mocked(commands.getManifest).mockImplementation((scope: Scope) =>
       Promise.resolve({
         status: "ok",
-        data: { manifest: null, base: `manifest-${scopeKey(scope)}` },
+        data: {
+          manifest: null,
+          base: `manifest-${scopeKey(scope)}`,
+          file: "kendex.toml",
+        },
       }),
     );
     vi.mocked(commands.getScopeSettings).mockImplementation(
@@ -345,7 +842,7 @@ describe("editor store", () => {
           })
         : Promise.resolve({
             status: "ok",
-            data: { manifest: null, base: "b1" },
+            data: { manifest: null, base: "b1", file: "kendex.toml" },
           }),
     );
 
@@ -367,7 +864,7 @@ describe("editor store", () => {
   it("drops a place the startup pass could not read", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     await useEditorStore.getState().load();
     expect(useEditorStore.getState().savedSettings.global).toBeDefined();
@@ -386,7 +883,7 @@ describe("editor store", () => {
   it("reopens a place whose settings read failed, and only that", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     vi.mocked(commands.getScopeSettings).mockResolvedValue({
       status: "error",
@@ -416,7 +913,7 @@ describe("editor store", () => {
   it("drops settings edits on a reload", async () => {
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b1" },
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
     });
     await useEditorStore.getState().load();
     useEditorStore.getState().editSetting(edit);
@@ -479,7 +976,7 @@ describe("editor store", () => {
     });
     vi.mocked(commands.getManifest).mockResolvedValue({
       status: "ok",
-      data: { manifest: null, base: "b2" },
+      data: { manifest: null, base: "b2", file: "kendex.toml" },
     });
 
     await useEditorStore.getState().load();
@@ -530,6 +1027,7 @@ describe("loadPlaces after a read stops working", () => {
                   ? CUSTOMIZED
                   : { schema: 1, install: {} }) as never,
                 base: null,
+                file: "kendex.toml",
               },
             }
           : { status: "error" as const, error: "permission denied" },
@@ -582,7 +1080,11 @@ describe("a place the editor switches to and cannot read", () => {
       ok
         ? {
             status: "ok",
-            data: { manifest: CUSTOMIZED as never, base: null },
+            data: {
+              manifest: CUSTOMIZED as never,
+              base: null,
+              file: "kendex.toml",
+            },
           }
         : { status: "error", error: "permission denied" },
     );

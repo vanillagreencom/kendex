@@ -1,0 +1,1 @@
+- Credentials saved in Customize go to the project's private env file — `.env.local` unless `KENDEX_ENV_FILE` names another, read from the same settings layers the packages read it from.

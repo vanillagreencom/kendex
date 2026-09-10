@@ -52,6 +52,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Which file this project keeps its secrets in, resolved through the one
+# owner of that question. Reading .env.local by name would source a file no
+# package loads once a project names another one: stale shell content runs
+# on this account, and both the provenance and the advice below would point
+# a person at a file that decides nothing. Unconditional, because common.sh
+# exits when no repository resolves, and a name this refuses is one no
+# package would load either.
+kendex_private_env_file private_env_file "$PROJECT_ROOT" || exit 1
+
 # Team declared by project files, read independently of the process environment
 # so a box-global export that shadows project config is visible here.
 project_declared_team=""
@@ -63,14 +72,14 @@ if [[ -n "$PROJECT_ROOT" ]]; then
     # would report provenance from a file the loader rejected.
     kendex_load_settings_file "$PROJECT_ROOT/kendex.settings.toml" || exit 1
     kendex_load_settings_file "$PROJECT_ROOT/.kendex/settings.toml" || exit 1
-    kendex_source_env_file "$PROJECT_ROOT/.env.local" || exit 1
+    kendex_source_env_file "$PROJECT_ROOT/$private_env_file" || exit 1
     printf '%s' "${LINEAR_TEAM:-}"
   )" || project_declared_team=""
 fi
 
 team_source_file=""
 if [[ -n "$PROJECT_ROOT" ]]; then
-  for candidate in kendex.settings.toml .kendex/settings.toml .env.local; do
+  for candidate in kendex.settings.toml .kendex/settings.toml "$private_env_file"; do
     [[ -f "$PROJECT_ROOT/$candidate" ]] || continue
     if grep -Eq '^[[:space:]]*(export[[:space:]]+)?LINEAR_TEAM[[:space:]]*=' "$PROJECT_ROOT/$candidate"; then
       team_source_file="$candidate"
@@ -83,7 +92,7 @@ warnings=()
 if [[ -z "$LINEAR_TEAM_TARGET" ]]; then
   # Nothing resolved, so no file is the source of the target.
   team_source_file=""
-  warnings+=("No LINEAR_TEAM configured: Linear writes are refused. Set LINEAR_TEAM in kendex.settings.toml [env] (committed, non-secret) or .env.local.")
+  warnings+=("No LINEAR_TEAM configured: Linear writes are refused. Set LINEAR_TEAM in kendex.settings.toml [env] (committed, non-secret) or $private_env_file.")
   if [[ "${LINEAR_TEAM_ENV_BLANK:-0}" == "1" && -n "$project_declared_team" ]]; then
     warnings+=("LINEAR_TEAM is exported as an empty value, which overrides the project value (\"$project_declared_team\"). Unset it in the environment to use project configuration.")
   fi

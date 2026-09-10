@@ -3,11 +3,21 @@
 #
 # Sources, lowest to highest precedence among project files:
 #   1. kendex.settings.toml, then .kendex/settings.toml ([env] table only)
-#   2. .env.local
+#   2. the project's private env file, .env.local unless KENDEX_ENV_FILE
+#      names another
 # The caller's own environment outranks every project file —
 # kendex_load_project_env snapshots and re-asserts it. A `.env` file is
 # never read; shared settings belong in kendex.settings.toml, personal and
-# secret overrides in .env.local.
+# secret overrides in the private env file.
+#
+# KENDEX_ENV_FILE is the one setting that decides which file is read
+# rather than what a value is, so it is resolved after the settings load
+# and before the private file. It is a path relative to the project root:
+# an absolute path, a `..` segment, a backslash or a colon fails the load
+# rather than reading a file outside the project. It is the same key the
+# app writes when a person names a private file, so one project names one
+# file once, and the app's own checks — that git does not track or carry
+# the file — are what make writing a credential there safe.
 #
 # The TOML reader accepts the kendex settings contract and nothing else:
 #
@@ -63,6 +73,22 @@ kendex_env_message() {
     duplicate-key)
       printf 'kendex-env: duplicate-key file=%s key=%s\n' "$file" "$key"
       printf '%s\n' "::error::$file: $key is assigned more than once in [env] (each key must be unique in the table)"
+      ;;
+    private-env-path)
+      printf 'kendex-env: private-env-path arg1=%s\n' "$1"
+      printf '%s\n' "::error::KENDEX_ENV_FILE is $1: it must name a file inside the project, written as a relative path with no '..' segment, no backslash and no colon"
+      ;;
+    private-env-blocked)
+      printf 'kendex-env: private-env-blocked arg1=%s\n' "$1"
+      printf '%s\n' "::error::the private env file $1 cannot exist: a component of its path is a file, not a directory; name a path whose parents are directories"
+      ;;
+    private-env-outside)
+      printf 'kendex-env: private-env-outside arg1=%s\n' "$1"
+      printf '%s\n' "::error::the private env file $1 resolves outside the project through a link on the way to it; a private env file is sourced, so it must stay inside the project it belongs to"
+      ;;
+    private-env-unresolved)
+      printf 'kendex-env: private-env-unresolved arg1=%s\n' "$1"
+      printf '%s\n' "::error::$1 could not be resolved, so nothing can say whether the private env file is inside the project; a source that cannot be placed is not sourced"
       ;;
     value-syntax)
       printf 'kendex-env: value-syntax file=%s key=%s\n' "$file" "$key"
@@ -206,6 +232,81 @@ kendex_load_settings_file() {
   done < "$file"
 }
 
+# Which file this project keeps its secrets in, relative to its root.
+# Read from KENDEX_ENV_FILE, which the settings load above has already
+# exported when the project sets it, and which the caller's environment
+# outranks like every other key.
+#
+# The path is refused rather than resolved when it could reach outside the
+# project: a private env file is sourced, so a path a project did not mean
+# to name runs somebody else's file in this shell.
+# Whether the DIRECTORY the private env file sits in stays inside the
+# project once every link on the way is followed. Spelling alone cannot
+# answer that: `config/priv.env` names nothing outside the project, and
+# reads a file anywhere at all when `config` points out of it. The file
+# may not exist yet, so the deepest existing ancestor is what is resolved
+# and the rest is spelling, which kendex_private_env_file has already
+# judged. `cd -P` + `pwd -P` is the resolution every supported bash has;
+# readlink -f and realpath are not.
+#
+# The file ITSELF being a link is left alone on purpose, and this is the
+# line between the two. A directory link is the configured NAME reaching
+# somewhere the project never wrote down, which is what this guard is
+# against. A link at the private file is the project's own layout, put
+# there by whoever owns the directory: a git worktree links `.env.local`
+# back to its main checkout so every worktree shares one credential file,
+# and refusing that would stop every package in every worktree while
+# stopping nobody who can already write inside the project root.
+kendex_inside_project() { # PROJECT_ROOT RELATIVE_FILE — 0 = the file's directory is inside; 1 + ::error otherwise
+  local _kendex_root="$1" _kendex_file="$2" _kendex_top _kendex_path _kendex_dir _kendex_at
+  _kendex_top=$(cd -P -- "$_kendex_root" 2>/dev/null && pwd -P) || {
+    kendex_env_message private-env-unresolved "$_kendex_root" >&2
+    return 1
+  }
+  _kendex_path="$_kendex_root/$_kendex_file"
+  # Climb only past components that are ABSENT. One that exists as
+  # something other than a directory blocks the path: no file can be
+  # created under it, so climbing past it would resolve the project root,
+  # call the path contained, and then read as absent — the credential
+  # silently never loads and nothing says why.
+  _kendex_dir="${_kendex_path%/*}"
+  while [[ -n "$_kendex_dir" && ! -e "$_kendex_dir" ]]; do
+    _kendex_dir="${_kendex_dir%/*}"
+  done
+  [[ -n "$_kendex_dir" ]] || _kendex_dir="/"
+  if [[ ! -d "$_kendex_dir" ]]; then
+    kendex_env_message private-env-blocked "$_kendex_file" >&2
+    return 1
+  fi
+  _kendex_at=$(cd -P -- "$_kendex_dir" 2>/dev/null && pwd -P) || {
+    kendex_env_message private-env-unresolved "$_kendex_dir" >&2
+    return 1
+  }
+  if [[ "$_kendex_at" != "$_kendex_top" && "$_kendex_at" != "$_kendex_top"/* ]]; then
+    kendex_env_message private-env-outside "$_kendex_file" >&2
+    return 1
+  fi
+}
+
+kendex_private_env_file() { # OUT_VAR PROJECT_ROOT — project-relative private env file, assigned to OUT_VAR
+  local _kendex_named="${KENDEX_ENV_FILE:-}"
+  if [[ -z "$_kendex_named" ]]; then
+    _kendex_named='.env.local'
+  else
+    case "$_kendex_named" in
+      /* | *:* | *\\* | .. | ../* | */../* | */..)
+        kendex_env_message private-env-path "$_kendex_named" >&2
+        return 1
+        ;;
+    esac
+  fi
+  # The default is checked too, so the guarantee is one rule rather than a
+  # rule about configured names: `.env.local` linked out of the project
+  # sources somebody else's file just as surely as a named path does.
+  kendex_inside_project "$2" "$_kendex_named" || return 1
+  printf -v "$1" '%s' "$_kendex_named"
+}
+
 kendex_load_project_env() {
   local project_root="$1"
   [[ -n "$project_root" ]] || return 0
@@ -225,15 +326,17 @@ kendex_load_project_env() {
     _KENDEX_PARENT_ENV_VALUES+=("${!_kendex_name-}")
   done < <(compgen -e)
 
-  # Load order (lowest to highest among project files): settings, then
-  # .env.local. kendex_load_settings_file skips parent keys directly; the
-  # env file is sourced wholesale, so its clobbers are undone below. A
-  # refused load — settings or a BOM-prefixed .env.local — fails the whole
-  # call: resolving on a partial or silently reinterpreted file would be
-  # worse than stopping.
+  # Load order (lowest to highest among project files): settings, then the
+  # private env file. kendex_load_settings_file skips parent keys directly;
+  # the env file is sourced wholesale, so its clobbers are undone below. A
+  # refused load — settings, a private path outside the project, or a
+  # BOM-prefixed env file — fails the whole call: resolving on a partial or
+  # silently reinterpreted file would be worse than stopping.
   kendex_load_settings_file "$project_root/kendex.settings.toml" || return 1
   kendex_load_settings_file "$project_root/.kendex/settings.toml" || return 1
-  kendex_source_env_file "$project_root/.env.local" || return 1
+  local _kendex_private_file
+  kendex_private_env_file _kendex_private_file "$project_root" || return 1
+  kendex_source_env_file "$project_root/$_kendex_private_file" || return 1
 
   # Re-assert parent values so parent env wins over every project file, while
   # the settings < .env.local order is preserved for non-parent keys.

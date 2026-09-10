@@ -219,8 +219,13 @@ fn a_first_save_creates_the_manifest_and_the_draft_schema_decides_it() {
         schema: MANIFEST_SCHEMA - 1,
         ..Manifest::default()
     };
-    let Err(refused) = write_customize(&env, scope.clone(), Some((stale, Base::absent())), None)
-    else {
+    let Err(refused) = write_customize(
+        &env,
+        scope.clone(),
+        Some((stale, Base::absent())),
+        None,
+        None,
+    ) else {
         panic!("a draft below this build's schema must not create a file");
     };
     let WriteRefused::Failed { .. } = &refused else {
@@ -232,7 +237,7 @@ fn a_first_save_creates_the_manifest_and_the_draft_schema_decides_it() {
         schema: MANIFEST_SCHEMA,
         ..Manifest::default()
     };
-    write_customize(&env, scope, Some((draft, Base::absent())), None).unwrap();
+    write_customize(&env, scope, Some((draft, Base::absent())), None, None).unwrap();
     let (created, _) = manifest::read_for_mutation(&path).unwrap();
     assert_eq!(created.unwrap().schema, MANIFEST_SCHEMA);
 }
@@ -247,7 +252,7 @@ fn a_save_carrying_the_base_of_the_file_it_read_lands() {
     edited
         .skill_instructions
         .insert("all".into(), "read the plan".into());
-    write_customize(&env, scope, Some((edited, base)), None).unwrap();
+    write_customize(&env, scope, Some((edited, base)), None, None).unwrap();
 
     let (saved, _) = manifest::read_for_mutation(&path).unwrap();
     assert_eq!(
@@ -281,7 +286,7 @@ fn a_save_from_a_stale_copy_is_refused_and_the_newer_file_stands() {
         .insert("all".into(), "kept".into());
     std::fs::write(&path, toml::to_string_pretty(&newer).unwrap()).unwrap();
 
-    let Err(refused) = write_customize(&env, scope, Some((stale, base)), None) else {
+    let Err(refused) = write_customize(&env, scope, Some((stale, base)), None, None) else {
         panic!("a stale save must be refused");
     };
 
@@ -306,7 +311,8 @@ fn a_copy_predating_the_first_save_is_refused_once_a_file_exists() {
         schema: MANIFEST_SCHEMA,
         ..Manifest::default()
     };
-    let Err(refused) = write_customize(&env, scope, Some((empty, Base::absent())), None) else {
+    let Err(refused) = write_customize(&env, scope, Some((empty, Base::absent())), None, None)
+    else {
         panic!("a no-file claim against an existing file must be refused");
     };
     assert!(matches!(refused, WriteRefused::Stale), "{refused:?}");
@@ -429,7 +435,7 @@ fn a_manifest_and_a_settings_draft_land_in_one_save() {
     let manifest_path = manifest::manifest_path(&env, &scope);
     // An install writes none of this template, so the save is the first
     // thing to reach the file: it holds no bytes, and the write makes it.
-    write_customize(&env, scope.clone(), None, None).unwrap();
+    write_customize(&env, scope.clone(), None, None, None).unwrap();
     assert!(!settings.exists(), "an install wrote nothing here");
     let held = Base::claimed(None);
 
@@ -446,6 +452,7 @@ fn a_manifest_and_a_settings_draft_land_in_one_save() {
             edits: vec![edit("REVIEWERS", "arch")],
             base: held,
         }),
+        None,
     )
     .unwrap();
 
@@ -480,6 +487,7 @@ fn a_stale_settings_copy_refuses_and_takes_the_manifest_edit_with_it() {
             edits: vec![edit("REVIEWERS", "arch,security")],
             base: Base::claimed(None),
         }),
+        None,
     )
     .unwrap();
     let held = Base::of(&std::fs::read_to_string(&settings).unwrap());
@@ -503,6 +511,7 @@ fn a_stale_settings_copy_refuses_and_takes_the_manifest_edit_with_it() {
             edits: vec![edit("REVIEWERS", "arch")],
             base: held,
         }),
+        None,
     ) else {
         panic!("a stale settings copy must be refused");
     };
@@ -518,7 +527,7 @@ fn a_stale_settings_copy_refuses_and_takes_the_manifest_edit_with_it() {
 fn a_settings_only_save_carries_no_manifest_draft() {
     let (tmp, env, scope) = scope_with_settings_skill();
     let settings = tmp.path().join("dev/app/kendex.settings.toml");
-    write_customize(&env, scope.clone(), None, None).unwrap();
+    write_customize(&env, scope.clone(), None, None, None).unwrap();
     assert!(!settings.exists(), "an install wrote nothing here");
     write_customize(
         &env,
@@ -528,6 +537,7 @@ fn a_settings_only_save_carries_no_manifest_draft() {
             edits: vec![edit("REVIEWERS", "arch")],
             base: Base::claimed(None),
         }),
+        None,
     )
     .unwrap();
     let written = std::fs::read_to_string(&settings).unwrap();
@@ -615,6 +625,7 @@ fn scope_carrying_a_declaring_package() -> (tempfile::TempDir, Env, Scope) {
         },
         None,
         None,
+        None,
     )
     .unwrap();
     assert!(
@@ -645,7 +656,7 @@ fn dropping_a_declaration_leaves_the_package_and_runs_nothing() {
     let mut edited = current.unwrap();
     edited.skills.remove("guards");
 
-    let view = write_customize(&env, scope, Some((edited, base)), None).unwrap();
+    let view = write_customize(&env, scope, Some((edited, base)), None, None).unwrap();
 
     assert!(
         view.undone.is_empty(),

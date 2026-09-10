@@ -62,7 +62,7 @@ describe("a command whose transport rejected", () => {
     rejectingWith({ kind: "stale" });
 
     await expect(
-      commands.saveCustomize({ scope: "global" }, null, null),
+      commands.saveCustomize({ scope: "global" }, null, null, null),
     ).resolves.toEqual({ status: "error", error: { kind: "stale" } });
   });
 });
@@ -118,6 +118,7 @@ describe("a command whose transport answered", () => {
         { scope: "global" },
         { manifest, base: null },
         null,
+        null,
       );
       expect({ answer, sent }, JSON.stringify(manifest)).toEqual({
         answer: { status: "ok", data: returned },
@@ -125,6 +126,7 @@ describe("a command whose transport answered", () => {
           scope: { scope: "global" },
           manifest: { manifest, base: null },
           settings: null,
+          secrets: null,
         },
       });
     }

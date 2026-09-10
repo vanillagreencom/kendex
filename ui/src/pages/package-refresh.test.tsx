@@ -34,6 +34,7 @@ import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
 import { joinAnswered } from "@/test/identity-join";
 import { observed } from "@/test/observed";
+import { placeRead } from "@/test/settings-read";
 import { PackagePage } from "./package";
 
 // The page is mounted against the real stores; only the backend is stubbed.
@@ -161,11 +162,15 @@ beforeEach(() => {
   vi.mocked(commands.packageDiff).mockResolvedValue(nothing);
   vi.mocked(commands.getManifest).mockResolvedValue({
     status: "ok",
-    data: { manifest: { schema: 1, install: {} }, base: null },
+    data: {
+      manifest: { schema: 1, install: {} },
+      base: null,
+      file: "kendex.toml",
+    },
   });
   vi.mocked(commands.getScopeSettings).mockResolvedValue({
     status: "ok",
-    data: { applies: true, skills: [], base: null },
+    data: { applies: true, ...placeRead, skills: [], base: null },
   });
   useAuditStore.setState({ views: [], auditedAt: null, read: READ_LANDED });
   // Reset with the rest: `checking` is what one case below turns on, and a

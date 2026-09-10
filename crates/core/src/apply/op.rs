@@ -7,7 +7,7 @@ use crate::error::{CoreError, Result};
 use crate::lock::Lock;
 use crate::manifest::Manifest;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Op {
     WriteFile {
         path: PathBuf,
@@ -80,6 +80,41 @@ pub enum Op {
         bytes: Vec<u8>,
         pre: Pre,
     },
+    /// A file holding credentials: created readable by its owner alone,
+    /// and left at whatever mode it already carries.
+    ///
+    /// Apart from `WriteFile` for the mode and nothing else. `fs::write`
+    /// creates at the process umask, which on a default account is
+    /// world-readable, so the first save of a secret would publish it to
+    /// every account on the machine. Creating through `OpenOptions` with
+    /// an explicit mode settles that at creation, where there is no
+    /// window between the file existing and being private — a chmod after
+    /// the write leaves one. An existing file keeps its own mode, which
+    /// is the person's choice about their own file.
+    ///
+    /// The journal's pre-image is `fs::copy`, which carries the mode
+    /// across on both platforms, so a recovery copy of a private file is
+    /// private too.
+    WritePrivateFile {
+        path: PathBuf,
+        bytes: Vec<u8>,
+        pre: Pre,
+        /// The work tree the file must be out of git's reach inside, or
+        /// `None` where the project is in no repository and there is
+        /// nothing to be carried by.
+        ///
+        /// Planning asks git whether the path is ignored and plans the
+        /// `.gitignore` line it owes, but neither answer survives to the
+        /// write: the line lands in the project's root `.gitignore`, and
+        /// whether git then honours it is a question only git can settle
+        /// — a nearer `.gitignore` may negate the rule, and a
+        /// `.gitignore` that is a symlink is one git does not read at all
+        /// while a write follows it. So the answer is taken again here,
+        /// after the ignore op has run and before a credential exists on
+        /// disk, rather than enumerating the layouts that would defeat
+        /// it.
+        ignored_under: Option<PathBuf>,
+    },
     /// Compare-and-swap one key in one git config file. `expected` is the
     /// current value the plan observed (None = unset); a config that moved
     /// since planning aborts, so a user's hand-set value is never
@@ -96,6 +131,118 @@ pub enum Op {
     },
 }
 
+/// Derived for every op but one.
+///
+/// `WritePrivateFile` carries a credential in `bytes`, and a derived
+/// `Debug` prints it. That is not a hypothetical: a `Plan` reaches an
+/// assertion message, a panic and anything that formats one, so a single
+/// `{plan:?}` anywhere would put a person's API key in a log. The bytes
+/// have to stay — they are what the write writes — so what changes is
+/// that they cannot be rendered. Their length is kept, which is what a
+/// reader debugging a write actually needs.
+///
+/// Written out rather than `#[derive]`d plus a redacting newtype so the
+/// redaction lives beside the variant it protects; a newtype could be
+/// unwrapped anywhere and the next reader would not know why it existed.
+impl std::fmt::Debug for Op {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Op::WritePrivateFile {
+                path,
+                bytes,
+                pre,
+                ignored_under,
+            } => f
+                .debug_struct("WritePrivateFile")
+                .field("path", path)
+                .field("bytes", &format_args!("<{} redacted bytes>", bytes.len()))
+                .field("pre", pre)
+                .field("ignored_under", ignored_under)
+                .finish(),
+            Op::WriteFile { path, bytes, pre } => f
+                .debug_struct("WriteFile")
+                .field("path", path)
+                .field("bytes", bytes)
+                .field("pre", pre)
+                .finish(),
+            Op::WriteTree { root, files, pre } => f
+                .debug_struct("WriteTree")
+                .field("root", root)
+                .field("files", files)
+                .field("pre", pre)
+                .finish(),
+            Op::Symlink { link, target, pre } => f
+                .debug_struct("Symlink")
+                .field("link", link)
+                .field("target", target)
+                .field("pre", pre)
+                .finish(),
+            Op::Rename {
+                from,
+                to,
+                from_pre,
+                to_pre,
+            } => f
+                .debug_struct("Rename")
+                .field("from", from)
+                .field("to", to)
+                .field("from_pre", from_pre)
+                .field("to_pre", to_pre)
+                .finish(),
+            Op::Trash {
+                path,
+                pre,
+                absent_is_done,
+            } => f
+                .debug_struct("Trash")
+                .field("path", path)
+                .field("pre", pre)
+                .field("absent_is_done", absent_is_done)
+                .finish(),
+            Op::EditFile { path, edits, pre } => f
+                .debug_struct("EditFile")
+                .field("path", path)
+                .field("edits", edits)
+                .field("pre", pre)
+                .finish(),
+            Op::WriteLock { path, lock, pre } => f
+                .debug_struct("WriteLock")
+                .field("path", path)
+                .field("lock", lock)
+                .field("pre", pre)
+                .finish(),
+            Op::WriteManifest {
+                path,
+                manifest,
+                pre,
+            } => f
+                .debug_struct("WriteManifest")
+                .field("path", path)
+                .field("manifest", manifest)
+                .field("pre", pre)
+                .finish(),
+            Op::WriteExecutable { path, bytes, pre } => f
+                .debug_struct("WriteExecutable")
+                .field("path", path)
+                .field("bytes", bytes)
+                .field("pre", pre)
+                .finish(),
+            Op::GitConfigSwap {
+                file,
+                key,
+                expected,
+                value,
+            } => f
+                .debug_struct("GitConfigSwap")
+                .field("file", file)
+                .field("key", key)
+                .field("expected", expected)
+                .field("value", value)
+                .finish(),
+        }
+    }
+}
+
 impl Op {
     /// Every path this op mutates — journaled before execution.
     pub(super) fn touched(&self) -> Vec<PathBuf> {
@@ -109,6 +256,7 @@ impl Op {
             Op::WriteLock { path, .. } => vec![path.clone()],
             Op::WriteManifest { path, .. } => vec![path.clone()],
             Op::WriteExecutable { path, .. } => vec![path.clone()],
+            Op::WritePrivateFile { path, .. } => vec![path.clone()],
             Op::GitConfigSwap { file, .. } => vec![file.clone()],
         }
     }
@@ -128,6 +276,7 @@ impl Op {
             Op::WriteLock { path, .. } => vec![path],
             Op::WriteManifest { path, .. } => vec![path],
             Op::WriteExecutable { path, .. } => vec![path],
+            Op::WritePrivateFile { path, .. } => vec![path],
             Op::GitConfigSwap { file, .. } => vec![file],
         }
     }
@@ -214,6 +363,21 @@ impl Op {
                 fs::write(path, bytes).map_err(|e| CoreError::io(path, e))?;
                 crate::fs::make_executable(path)
             }
+            Op::WritePrivateFile {
+                path,
+                bytes,
+                pre,
+                ignored_under,
+            } => {
+                pre.check(path)?;
+                // Before `ensure_parent`, so a refusal here has mutated
+                // nothing at all.
+                if let Some(root) = ignored_under {
+                    refuse_unless_ignored(root, path)?;
+                }
+                ensure_parent(path)?;
+                crate::fs::write_private(path, bytes)
+            }
             Op::GitConfigSwap {
                 file,
                 key,
@@ -221,6 +385,43 @@ impl Op {
                 value,
             } => git_config_swap(file, key, expected.as_deref(), value.as_deref()),
         }
+    }
+}
+
+/// Refuse unless git, asked now, ignores the path a credential is about
+/// to be written to.
+///
+/// `git check-ignore` is the only thing that knows the answer: it reads
+/// every `.gitignore` on the way down, the repository's exclude file and
+/// its core.excludesFile, and applies the precedence between them. Asking
+/// it here rather than trusting the plan's own earlier read is the point
+/// — the ignore line this plan owed has just been written, and this is
+/// where whether it worked stops being a guess.
+///
+/// It fails closed twice over: an exit status that is neither "ignored"
+/// nor "not ignored" is a check that could not be taken, and that refuses
+/// too.
+fn refuse_unless_ignored(root: &Path, path: &Path) -> Result<()> {
+    let named = path.display().to_string();
+    let output =
+        crate::process::Hardened::git(&["check-ignore", "-q", "--", &named], Some(root)).run()?;
+    // `-q` answers with its exit status alone: 0 ignored, 1 not, anything
+    // else a failure to answer.
+    match output.status.code() {
+        Some(0) => Ok(()),
+        Some(1) => Err(CoreError::GitFailed {
+            command: format!("git check-ignore -- {named}"),
+            stderr: format!(
+                "git does not ignore {named}, so a credential written there would be committed; nothing was written"
+            ),
+        }),
+        other => Err(CoreError::GitFailed {
+            command: format!("git check-ignore -- {named}"),
+            stderr: format!(
+                "git could not say whether it ignores {named} (exited {other:?}): {}; nothing was written",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        }),
     }
 }
 

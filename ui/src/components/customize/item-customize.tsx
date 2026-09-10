@@ -56,6 +56,8 @@ export function ItemCustomize({
     savedSettings,
     settings,
     settingsEdits,
+    secretEdits,
+    secretFile,
     dirty,
     error,
     stale,
@@ -63,6 +65,9 @@ export function ItemCustomize({
     load,
     edit,
     editSetting,
+    editSecret,
+    setSecretEdits,
+    pickSecretFile,
   } = useEditorStore();
   const inventory = useEditorStore(openInventory);
   const rows = useUpdatesStore((s) => s.rows);
@@ -195,7 +200,12 @@ export function ItemCustomize({
           skill={name}
           settings={settings}
           edits={settingsEdits}
+          secretEdits={secretEdits}
+          pickedFile={secretFile}
           onEdit={editSetting}
+          onSecretEdit={editSecret}
+          onSecretEdits={setSecretEdits}
+          onPickFile={(file) => void pickSecretFile(file)}
         />
       ) : null}
       {kind === "agent" ? (

@@ -3,6 +3,7 @@ import {
   type EditorInventory,
   type Scope,
   type ScopeSettings,
+  type SecretEdit,
   type SettingsEdit,
 } from "@/bindings";
 import { type Draft, emptyDraft, toDraft } from "@/lib/editor-draft";
@@ -45,11 +46,11 @@ const recorded = <T>(
 
 /** The three reads the editor opens one place on, made together so the
  *  page describes one moment rather than three. */
-export const readPlace = (scope: Scope) =>
+export const readPlace = (scope: Scope, secretFile: string | null = null) =>
   Promise.all([
     commands.getManifest(scope),
     commands.editorInventory(scope),
-    commands.getScopeSettings(scope),
+    commands.getScopeSettings(scope, secretFile),
   ]);
 
 /** The manifest a read hands the editor, or null where it could not be
@@ -103,7 +104,7 @@ const settingsOf = async (
   scopes: Scope[],
 ): Promise<Record<string, ScopeSettings>> => {
   const loaded = await Promise.all(
-    scopes.map((scope) => commands.getScopeSettings(scope)),
+    scopes.map((scope) => commands.getScopeSettings(scope, null)),
   );
   const read: Record<string, ScopeSettings> = {};
   for (const [index, response] of loaded.entries())
@@ -121,9 +122,15 @@ export const placesOf = (scopes: Scope[]) =>
  *  read went: no drafts in hand, nothing unsaved, no refusal standing. */
 export const opening = {
   settingsEdits: [] as SettingsEdit[],
+  secretEdits: [] as SecretEdit[],
+  /** The private file picked here is part of the draft: a fresh read is
+   *  the project's own answer, so a pick that survived one would be held
+   *  with nothing on screen saying so. */
+  secretFile: null as string | null,
   dirty: false,
   manifestDirty: false,
   stale: false,
+  confirming: false,
 };
 
 /** The scope-keyed caches the marks are drawn from. */

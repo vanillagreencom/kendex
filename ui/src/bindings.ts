@@ -188,10 +188,16 @@ export const commands = {
 	removeItem: (scope: Scope, kind: ItemKind, name: string) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("remove_item", { scope, kind, name })),
 	getManifest: (scope: Scope) => typedError<ManifestRead_Serialize, string>(__TAURI_INVOKE("get_manifest", { scope })).then((v) => ((v.status === "ok" ? { ...v, data: ({...v.data,manifest:v.data.manifest==null?v.data.manifest:v.data.manifest}) } : v) as typeof v)),
 	/**
-	 *  The Customize tab's settings half: what every installed skill declares
-	 *  and where this place's file stands on each key.
+	 *  The Customize tab's settings half: what every installed skill
+	 *  declares, where this place's file stands on each key, and where each
+	 *  declared credential stands in this project's private file.
+	 * 
+	 *  `secretFile` reads the same place against another private file
+	 *  instead. That is how a person sees what choosing one would mean —
+	 *  whether git carries it, and which credentials it already holds —
+	 *  before a save records the choice.
 	 */
-	getScopeSettings: (scope: Scope) => typedError<ScopeSettings, string>(__TAURI_INVOKE("get_scope_settings", { scope })),
+	getScopeSettings: (scope: Scope, secretFile: string | null) => typedError<ScopeSettings, string>(__TAURI_INVOKE("get_scope_settings", { scope, secretFile })),
 	/**
 	 *  Save the Customize tab and reconcile the scope to it.
 	 * 
@@ -213,7 +219,12 @@ export const commands = {
 } | null, settings: {
 	edits: SettingsEdit[],
 	base: string | null,
-} | null) => typedError<AuditView_Serialize, WriteRefused>(__TAURI_INVOKE("save_customize", { scope, manifest, settings })),
+} | null, secrets: {
+	edits: SecretEdit[],
+	file: string,
+	choose: boolean,
+	base: string | null,
+} | null) => typedError<AuditView_Serialize, WriteRefused>(__TAURI_INVOKE("save_customize", { scope, manifest, settings, secrets })),
 	editorInventory: (scope: Scope) => typedError<EditorInventory, string>(__TAURI_INVOKE("editor_inventory", { scope })),
 	/**
 	 *  Per-hook, per-harness delivery for the hooks as currently drafted in the
@@ -1143,6 +1154,26 @@ export type Comparison = {
 	differingTotal: number,
 };
 
+/**
+ *  A key two installed packages disagree about: one declares it public,
+ *  the other a credential.
+ */
+export type ContestedKey = {
+	key: string,
+	/**  Packages declaring it under `[env]`, in name order. */
+	public: string[],
+	/**  Packages declaring it under `[secrets]`, in name order. */
+	secret: string[],
+	/**
+	 *  The one sentence every surface says about this key. Composed here
+	 *  and carried, rather than left to each reader: the note on the page,
+	 *  the plan's note and the refusal all say the same thing about the
+	 *  same disagreement, and a second composition of it in another
+	 *  language is one that comes to say something else.
+	 */
+	problem: string,
+};
+
 export type CreateRequest = {
 	/**  Folder and repository name; must be a plain installable spelling. */
 	name: string,
@@ -1271,6 +1302,38 @@ export type DeepLink =
 
 /**  A URL the app was asked to open while the page was listening. */
 export type DeepLinkOpened = DeepLink;
+
+/**  Where this project's secrets go, and whether they may. */
+export type Destination = {
+	/**  Project-relative, as the person is shown it before Save. */
+	file: string,
+	/**
+	 *  Whether the project named this file itself. False means it is the
+	 *  default, which every project has without choosing it.
+	 */
+	chosen: boolean,
+	state: DestinationState,
+};
+
+/**
+ *  Whether a secret may be written to the destination, and what saving
+ *  has to do first.
+ */
+export type DestinationState = 
+/**  The file is there, git will not carry it, and kendex can write it. */
+{ state: "ready" } | 
+/**
+ *  Nothing is there yet. Saving makes it, readable by its owner
+ *  alone.
+ */
+{ state: "missing"; 
+/**
+ *  The line saving adds to the project's `.gitignore` first, or
+ *  `None` where git already ignores the path.
+ */
+ignore: string | null } | 
+/**  No secret may be written here, and why. */
+{ state: "refused"; problem: string; fix: string };
 
 /**  A harness found on this machine. */
 export type DetectedHarness = {
@@ -2201,6 +2264,14 @@ export type ManifestRead_Deserialize = {
 	manifest: Manifest_Deserialize | null,
 	/**  The file these bytes came from, read with them and never apart. */
 	base: Base,
+	/**
+	 *  What that file is called here. A source catalog keeps its install
+	 *  state in a sibling of the definition it publishes, so the name is
+	 *  core's answer rather than a constant the page could hold: a second
+	 *  copy of the rule is one that comes to name the wrong file in the
+	 *  sentence a person reads before saving.
+	 */
+	file: string,
 };
 
 /**
@@ -2216,6 +2287,14 @@ export type ManifestRead_Serialize = {
 	manifest: Manifest_Serialize | null,
 	/**  The file these bytes came from, read with them and never apart. */
 	base: Base,
+	/**
+	 *  What that file is called here. A source catalog keeps its install
+	 *  state in a sibling of the definition it publishes, so the name is
+	 *  core's answer rather than a constant the page could hold: a second
+	 *  copy of the rule is one that comes to name the wrong file in the
+	 *  sentence a person reads before saving.
+	 */
+	file: string,
 };
 
 export type Manifest_Deserialize = {
@@ -3216,7 +3295,114 @@ export type ScopeSettings = {
 	/**  One entry per skill this place installs, by name. */
 	skills: SkillSettings[],
 	/**
+	 *  What the settings file is called — the file every public value on
+	 *  this page is written to, named once here so a page saying where a
+	 *  value goes does not hold a second copy of the name.
+	 */
+	file: string,
+	/**
 	 *  The settings file as it was when these rows were read. An edit
+	 *  written from them carries it back, and a file that moved in
+	 *  between is refused rather than overwritten.
+	 */
+	base: Base,
+	/**
+	 *  Where this place keeps credentials, and what the private file was
+	 *  when the secret rows were read. `None` outside a project: a
+	 *  private file is a project's, and a global install has none — which
+	 *  is a different answer from a project whose file could not be
+	 *  written, and never reads as one.
+	 */
+	secrets: SecretsView | null,
+	/**
+	 *  Keys the installed packages disagree about, one declaring a
+	 *  setting where another declares a credential. Neither route offers
+	 *  them and both refuse them, so they are reported here rather than
+	 *  shown as a field with no safe destination.
+	 */
+	contested: ContestedKey[],
+};
+
+/**
+ *  One value a person set, bound to the package whose template declares
+ *  the key — the declaration is what core checks the edit against, so an
+ *  edit naming a package that does not declare the key is refused rather
+ *  than written under somebody else's name.
+ */
+export type SecretEdit = {
+	skill: string,
+	key: string,
+	value: SecretEditValue,
+};
+
+export type SecretEditValue = 
+/**  Write this value, over whatever the key holds. */
+{ kind: "set"; value: string } | 
+/**  Take the key out of the private file. */
+{ kind: "clear" };
+
+/**  One credential field, as the app shows it. */
+export type SecretRow = {
+	key: string,
+	/**
+	 *  The template's comment block, `#` markers stripped — what the
+	 *  author wrote to say what the key lets the package do.
+	 */
+	explainer: string[],
+	/**  Whether the package refuses to run without it. */
+	required: boolean,
+	current: SecretState,
+};
+
+/**
+ *  Where one key stands in this project's private file. Presence and
+ *  nothing else: a stored value says a person supplied one, never that a
+ *  provider accepted it, so nothing here is evidence of a working
+ *  credential.
+ */
+export type SecretState = 
+/**  The private file assigns no such key. */
+{ state: "not-set" } | 
+/**  The private file assigns it. */
+{ state: "set" } | 
+/**
+ *  Nothing here could say, and why. Never read as "not set": a person
+ *  told a key is missing sets it again, over whatever is there.
+ */
+{ state: "unknown"; reason: string };
+
+/**
+ *  Credentials a person typed and what the private file was when the
+ *  fields they typed into were read.
+ * 
+ *  `file` is the destination those fields named. `choose` is the person
+ *  naming a private file this project does not already use, which the
+ *  same save records in `kendex.settings.toml` so the packages read it
+ *  too; without it the save is bound to the file the project already
+ *  uses and is refused if that has moved.
+ */
+export type SecretsDraft = {
+	edits: SecretEdit[],
+	file: string,
+	choose: boolean,
+	base: string | null,
+};
+
+/**
+ *  Everything one project's secret fields need beside the rows: where a
+ *  value would go, what else it could go to, and what the private file
+ *  was when the rows were read.
+ */
+export type SecretsView = {
+	destination: Destination,
+	/**
+	 *  Other files in the project's root that already look like a private
+	 *  env file, project-relative and in name order. What a person picks
+	 *  from when the default is not the file this project uses.
+	 */
+	candidates: string[],
+	/**
+	 *  The private file as it was when these rows were read. An edit
 	 *  written from them carries it back, and a file that moved in
 	 *  between is refused rather than overwritten.
 	 */
@@ -3297,7 +3483,14 @@ export type SkillTemplate =
  *  lenient and may have seeded keys from it regardless, so this says
  *  nothing about what the settings file contains.
  */
-{ state: "invalid"; findings: TemplateFinding[] } | { state: "rows"; rows: SettingsRow[] };
+{ state: "invalid"; findings: TemplateFinding[] } | 
+/**
+ *  The template reads. Either list may be empty and both are shown:
+ *  a package declaring only credentials has settings to configure
+ *  here, and a section that appeared only for public keys would hide
+ *  it.
+ */
+{ state: "rows"; rows: SettingsRow[]; secrets: SecretRow[] };
 
 export type SkillsShHit = {
 	/**  The skill's directory name inside its repository. */

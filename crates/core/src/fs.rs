@@ -28,6 +28,44 @@ pub(crate) fn make_executable(_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Write bytes to a file only its owner may read.
+///
+/// The mode is set at creation rather than after the write, because a
+/// chmod that follows leaves a window in which the credentials are on
+/// disk and world-readable. `OpenOptions::mode` applies only when the call
+/// creates the file, so an existing one keeps whatever mode its owner
+/// gave it, which is the other half of the contract.
+#[cfg(unix)]
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|error| CoreError::io(path, error))?;
+    file.write_all(bytes)
+        .map_err(|error| CoreError::io(path, error))
+}
+
+/// Windows has no mode to set at creation: a new file inherits its parent
+/// directory's access-control list, and nothing here narrows it.
+///
+/// So the owner-only guarantee above does NOT hold on Windows, and this
+/// is the one place that says so rather than a caller assuming the name.
+/// A project directory anyone else can read hands them the credential
+/// too. Giving the file an owner-only DACL means building a SID and an
+/// ACL and creating through `CreateFileW` with a `SECURITY_ATTRIBUTES` —
+/// a Windows API dependency this crate does not have and more than a
+/// narrow fix; it is filed as follow-up work rather than half-done here.
+/// The copy a person reads promises only what both platforms deliver.
+#[cfg(not(unix))]
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    fs::write(path, bytes).map_err(|error| CoreError::io(path, error))
+}
+
 /// Give a file the execute bit if its bytes open with a shebang. A tree
 /// carries bytes and not modes, so every path that writes one out asks this
 /// same question: a skill's helper that lands 644 fails its own hook the

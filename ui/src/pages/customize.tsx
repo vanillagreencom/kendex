@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { CustomHooks } from "@/components/customize/custom-hooks";
+import { CustomizeSaveBar } from "@/components/customize/customize-save-bar";
 import { CustomizedIndex } from "@/components/customize/customized-index";
-import { SaveBar } from "@/components/customize/save-bar";
 import { SharedInstructions } from "@/components/customize/shared-instructions";
 import { StaleNote } from "@/components/customize/stale-note";
 import { DotSpinner } from "@/components/loading";
@@ -40,19 +40,8 @@ import { useUpdatesStore } from "@/stores/updates";
  *  agent and skill gets, hooks of your own, where a project keeps its
  *  skills — and the way in to everything that is. */
 export function CustomizePage() {
-  const {
-    scope,
-    draft,
-    dirty,
-    loading,
-    saving,
-    error,
-    stale,
-    setScope,
-    load,
-    edit,
-    save,
-  } = useEditorStore();
+  const { scope, draft, loading, error, stale, setScope, load, edit } =
+    useEditorStore();
   const inventory = useEditorStore(openInventory);
   const projects = useSettingsStore(projectsOf);
   const customized = useCustomizedHere(draft, scope);
@@ -151,13 +140,7 @@ export function CustomizePage() {
           ) : null}
         </div>
       </div>
-      {dirty ? (
-        <SaveBar
-          saving={saving}
-          onSave={() => void save()}
-          onDiscard={() => void load()}
-        />
-      ) : null}
+      <CustomizeSaveBar />
     </div>
   );
 }

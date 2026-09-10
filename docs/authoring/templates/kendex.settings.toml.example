@@ -40,3 +40,15 @@ MY_SKILL_TIMEOUT = "30"
 # marker puts it in their file when the skill arrives, with this comment
 # above it. The marker is the template's own word and is never written out.
 MY_SKILL_TEAM = "" # required
+
+[secrets]
+
+# A credential this skill reads. The declaration is the key name, these
+# lines, and the marker; the value is always empty, because a credential is
+# the consumer's and never yours to ship. Say what the key lets the skill do
+# and where somebody gets one — the app shows these lines beside the field.
+#
+# A consumer sets it in the app's Customize tab, and kendex writes it to
+# their project's private env file rather than to kendex.settings.toml. The
+# marker says the skill refuses to run without it.
+MY_SKILL_TOKEN = "" # required

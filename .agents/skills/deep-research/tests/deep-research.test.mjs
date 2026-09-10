@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -509,6 +509,222 @@ test("a key present only in .env is ignored; .env.local and process env keep the
   const repeated = spawnSync(process.execPath, [script, "report", "q", "--output", repeatedOut], { encoding: "utf8", env, cwd: dir });
   assert.equal(repeated.status, 0, repeated.stderr);
   assert.match(readFileSync(repeatedOut, "utf8"), /FromEnvLocal/);
+});
+
+// KENDEX_ENV_FILE is the one key this loader reads out of
+// kendex.settings.toml, and it decides WHICH private file is read. The app
+// writes that key when a person names a private file, so the two sides
+// meet here: a value the app wrote, single-quoted, has to come back out
+// byte for byte, and a path that could reach outside the project has to
+// stop the run rather than be opened.
+test("KENDEX_ENV_FILE names the private env file, and a quoted value reads back literally", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-envfile-"));
+  const chosenMock = join(dir, "chosen-mock.json");
+  const localMock = join(dir, "local-mock.json");
+  for (const [path, answer] of [[chosenMock, "FromChosen"], [localMock, "FromEnvLocal"]]) {
+    writeFileSync(path, JSON.stringify({ answer, results: [{ title: "Source", url: "https://example.com" }] }));
+  }
+  const env = { ...process.env };
+  delete env.EXA_API_KEY;
+  delete env.EXA_MOCK_RESPONSE_FILE;
+
+  // The default file is still the default: a project naming nothing reads
+  // .env.local exactly as it always has.
+  writeFileSync(join(dir, ".env.local"), `EXA_MOCK_RESPONSE_FILE=${localMock}\nEXA_API_KEY='k'\n`);
+  const local = join(dir, "local.md");
+  const byDefault = spawnSync(process.execPath, [script, "report", "q", "--output", local], { encoding: "utf8", env, cwd: dir });
+  assert.equal(byDefault.status, 0, byDefault.stderr);
+  assert.match(readFileSync(local, "utf8"), /FromEnvLocal/);
+
+  // Named, the chosen file answers instead — and the single-quoted value
+  // the app writes is stripped of exactly its quotes and nothing else.
+  writeFileSync(join(dir, "kendex.settings.toml"), '[env]\nKENDEX_ENV_FILE = ".env.secrets"\n');
+  writeFileSync(join(dir, ".env.secrets"), `EXA_MOCK_RESPONSE_FILE='${chosenMock}'\nEXA_API_KEY='k'\n`);
+  const chosen = join(dir, "chosen.md");
+  const byName = spawnSync(process.execPath, [script, "report", "q", "--output", chosen], { encoding: "utf8", env, cwd: dir });
+  assert.equal(byName.status, 0, byName.stderr);
+  assert.match(readFileSync(chosen, "utf8"), /FromChosen/);
+
+  // A missing credential names the file this project reads. Told to write
+  // the key into .env.local while the loader reads .env.secrets, a person
+  // follows the message and the failure stands. .env.local still holds a
+  // key here, so naming it would also be naming a file that is set.
+  writeFileSync(join(dir, ".env.secrets"), "");
+  const missing = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
+  const said = diagnostic(missing);
+  assert.equal(said.key, "credential-missing");
+  assert.match(said.error, /\.env\.secrets/);
+  assert.doesNotMatch(said.error, /\.env\.local/);
+});
+
+// The shared shell loader resolves KENDEX_ENV_FILE from the process
+// environment, then .kendex/settings.toml, then kendex.settings.toml. This
+// package has to agree, or it sources a different private file from every
+// other package in the same project.
+test("KENDEX_ENV_FILE keeps the same precedence the shell loader gives it", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-envlayers-"));
+  mkdirSync(join(dir, ".kendex"), { recursive: true });
+  const mock = (name, answer) => {
+    const path = join(dir, `${name}.json`);
+    writeFileSync(path, JSON.stringify({ answer, results: [{ title: "Source", url: "https://example.com" }] }));
+    return path;
+  };
+  const rootMock = mock("root", "FromRoot");
+  const nestedMock = mock("nested", "FromNested");
+  const processMock = mock("process", "FromProcess");
+  const env = { ...process.env };
+  delete env.EXA_API_KEY;
+  delete env.EXA_MOCK_RESPONSE_FILE;
+  delete env.KENDEX_ENV_FILE;
+
+  writeFileSync(join(dir, "kendex.settings.toml"), '[env]\nKENDEX_ENV_FILE = ".env.root"\n');
+  writeFileSync(join(dir, ".env.root"), `EXA_MOCK_RESPONSE_FILE='${rootMock}'\nEXA_API_KEY='k'\n`);
+  writeFileSync(join(dir, ".env.nested"), `EXA_MOCK_RESPONSE_FILE='${nestedMock}'\nEXA_API_KEY='k'\n`);
+  writeFileSync(join(dir, ".env.chosen"), `EXA_MOCK_RESPONSE_FILE='${processMock}'\nEXA_API_KEY='k'\n`);
+
+  const ran = (name, over = {}) => {
+    const out = join(dir, `${name}.md`);
+    const result = spawnSync(process.execPath, [script, "report", "q", "--output", out], {
+      encoding: "utf8",
+      env: { ...env, ...over },
+      cwd: dir,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return readFileSync(out, "utf8");
+  };
+
+  // The root file alone answers.
+  assert.match(ran("root"), /FromRoot/);
+  // .kendex/settings.toml is read after it and wins.
+  writeFileSync(join(dir, ".kendex/settings.toml"), '[env]\nKENDEX_ENV_FILE = ".env.nested"\n');
+  assert.match(ran("nested"), /FromNested/);
+  // And the process environment outranks both.
+  assert.match(ran("process", { KENDEX_ENV_FILE: ".env.chosen" }), /FromProcess/);
+});
+
+test("a settings file the shell loader would refuse stops the run", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-envdup-"));
+  const env = { ...process.env };
+  delete env.EXA_API_KEY;
+  delete env.EXA_MOCK_RESPONSE_FILE;
+  delete env.KENDEX_ENV_FILE;
+  // Every shape the shared shell loader refuses the whole file over. A
+  // reader that took its own row out of a file the other packages reject
+  // would run this package on configuration nothing else accepted.
+  const rows = [
+    ['[env]\nKENDEX_ENV_FILE = ".env.a"\nKENDEX_ENV_FILE = ".env.b"\n', "settings-duplicate-key"],
+    // A duplicate of an UNRELATED key refuses the file just the same.
+    ['[env]\nKENDEX_ENV_FILE = ".env.a"\nOTHER = "1"\nOTHER = "2"\n', "settings-duplicate-key"],
+    ['[env] # the table\nKENDEX_ENV_FILE = ".env.a"\n', "settings-table-header"],
+    ['[[env]]\nKENDEX_ENV_FILE = ".env.a"\n', "settings-table-header"],
+    // An unrelated value outside the contract refuses it too.
+    ['[env]\nKENDEX_ENV_FILE = ".env.a"\nOTHER = 900\n', "settings-value-syntax"],
+    ['\ufeff[env]\nKENDEX_ENV_FILE = ".env.a"\n', "settings-byte-order-mark"],
+  ];
+  for (const [body, key] of rows) {
+    writeFileSync(join(dir, "kendex.settings.toml"), body);
+    const result = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
+    assert.equal(diagnostic(result).key, key, body);
+  }
+  // The control: the same file without the defect is read, and the run
+  // gets as far as the missing credential rather than a settings refusal.
+  writeFileSync(join(dir, "kendex.settings.toml"), '[env]\nKENDEX_ENV_FILE = ".env.a"\nOTHER = "1"\n');
+  const clean = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
+  assert.equal(diagnostic(clean).key, "credential-missing");
+});
+
+test("a KENDEX_ENV_FILE that could reach outside the project stops the run", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-envpath-"));
+  const env = { ...process.env };
+  delete env.EXA_API_KEY;
+  delete env.EXA_MOCK_RESPONSE_FILE;
+  for (const named of ["/etc/passwd", "../outside.env", "a/../../outside.env", "C:keys.env"]) {
+    writeFileSync(join(dir, "kendex.settings.toml"), `[env]\nKENDEX_ENV_FILE = "${named}"\n`);
+    const result = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
+    const parsed = diagnostic(result);
+    assert.equal(parsed.key, "private-env-path", named);
+    assert.equal(parsed.value, "KENDEX_ENV_FILE", named);
+  }
+  // A value outside the settings contract is refused rather than read
+  // past: the shell loader fails the whole file over one, so reading past
+  // it here would have this package answer from .env.local while every
+  // other package refuses to start.
+  for (const line of ['KENDEX_ENV_FILE = "keys\\local.env"', "KENDEX_ENV_FILE = '.env.secrets'", "KENDEX_ENV_FILE = .env.secrets"]) {
+    writeFileSync(join(dir, "kendex.settings.toml"), `[env]\n${line}\n`);
+    const result = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
+    assert.equal(diagnostic(result).key, "settings-value-syntax", line);
+  }
+});
+
+// Spelling is only half the guarantee. A name carrying no `..` still
+// reads a file anywhere at all when a directory on the way out is a link,
+// and the credentials this loader is after are the whole point of the
+// containment claim.
+test("a KENDEX_ENV_FILE that escapes through a link stops the run", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-envlink-"));
+  const outside = mkdtempSync(join(tmpdir(), "deep-research-outside-"));
+  const stolen = join(outside, "stolen.env");
+  const outsideMock = join(outside, "mock.json");
+  writeFileSync(outsideMock, JSON.stringify({ answer: "FromOutside", results: [{ title: "S", url: "https://example.com" }] }));
+  writeFileSync(stolen, `EXA_MOCK_RESPONSE_FILE=${outsideMock}\nEXA_API_KEY='k'\n`);
+  const env = { ...process.env };
+  delete env.EXA_API_KEY;
+  delete env.EXA_MOCK_RESPONSE_FILE;
+
+  // A directory on the way out is a link: the name says nothing about it.
+  symlinkSync(outside, join(dir, "linked"));
+  writeFileSync(join(dir, "kendex.settings.toml"), '[env]\nKENDEX_ENV_FILE = "linked/stolen.env"\n');
+  const through = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
+  assert.equal(diagnostic(through).key, "private-env-outside");
+
+  // The file ITSELF being a link is the project's own layout and still
+  // loads: a git worktree links .env.local back to its main checkout so
+  // every worktree shares one credential file, and refusing that would
+  // stop every package in every worktree.
+  const shared = join(outside, "shared.env");
+  writeFileSync(shared, `EXA_MOCK_RESPONSE_FILE=${outsideMock}\nEXA_API_KEY='k'\n`);
+  symlinkSync(shared, join(dir, "linked.env"));
+  writeFileSync(join(dir, "kendex.settings.toml"), '[env]\nKENDEX_ENV_FILE = "linked.env"\n');
+  const directOut = join(dir, "direct.md");
+  const direct = spawnSync(process.execPath, [script, "report", "q", "--output", directOut], { encoding: "utf8", env, cwd: dir });
+  assert.equal(direct.status, 0, direct.stderr);
+  assert.match(readFileSync(directOut, "utf8"), /FromOutside/);
+
+  // The default is held to the same rule rather than to a rule about
+  // configured names.
+  const plain = mkdtempSync(join(tmpdir(), "deep-research-envlink-default-"));
+  symlinkSync(shared, join(plain, ".env.local"));
+  const plainOut = join(plain, "plain.md");
+  const byDefault = spawnSync(process.execPath, [script, "report", "q", "--output", plainOut], { encoding: "utf8", env, cwd: plain });
+  assert.equal(byDefault.status, 0, byDefault.stderr);
+  assert.match(readFileSync(plainOut, "utf8"), /FromOutside/);
+
+  // A subdirectory is not a way out: the check refuses an escape, not
+  // nesting.
+  const inside = mkdtempSync(join(tmpdir(), "deep-research-envlink-inside-"));
+  const insideMock = join(inside, "mock.json");
+  writeFileSync(insideMock, JSON.stringify({ answer: "FromNested", results: [{ title: "S", url: "https://example.com" }] }));
+  mkdirSync(join(inside, "keys"));
+  writeFileSync(join(inside, "keys/private.env"), `EXA_MOCK_RESPONSE_FILE=${insideMock}\nEXA_API_KEY='k'\n`);
+  writeFileSync(join(inside, "kendex.settings.toml"), '[env]\nKENDEX_ENV_FILE = "keys/private.env"\n');
+  const nestedOut = join(inside, "nested.md");
+  const nested = spawnSync(process.execPath, [script, "report", "q", "--output", nestedOut], { encoding: "utf8", env, cwd: inside });
+  assert.equal(nested.status, 0, nested.stderr);
+  assert.match(readFileSync(nestedOut, "utf8"), /FromNested/);
+});
+
+// A component that exists as a regular file blocks the path. Climbing
+// past it would call the path contained and then read as absent, so the
+// credential would silently never load and nothing would say why.
+test("a KENDEX_ENV_FILE blocked by a file in its path stops the run", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-blocked-"));
+  const env = { ...process.env };
+  delete env.EXA_API_KEY;
+  delete env.EXA_MOCK_RESPONSE_FILE;
+  writeFileSync(join(dir, "config"), "X=1\n");
+  writeFileSync(join(dir, "kendex.settings.toml"), '[env]\nKENDEX_ENV_FILE = "config/private.env"\n');
+  const result = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
+  assert.equal(diagnostic(result).key, "private-env-blocked");
 });
 
 test("resolves EXA_API_KEY op:// references with op CLI", () => {

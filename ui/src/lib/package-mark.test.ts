@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ObservedItem, Scope, ScopeSettings, UpdateRow } from "@/bindings";
 import { groupItems } from "@/lib/derive";
 import { observed } from "@/test/observed";
+import { placeRead } from "@/test/settings-read";
 import { markFor } from "./package-mark";
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
@@ -64,7 +65,12 @@ const saved = {
 
 // Both places read, neither holding a settings value off the default —
 // so the manifest is what decides the mark.
-const stock: ScopeSettings = { applies: true, skills: [], base: "b1" };
+const stock: ScopeSettings = {
+  applies: true,
+  ...placeRead,
+  skills: [],
+  base: "b1",
+};
 const settings = { "/work/vg": stock, "/work/hyprtrade": stock };
 
 describe("markFor", () => {

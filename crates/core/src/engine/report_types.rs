@@ -321,6 +321,12 @@ pub struct PlanOptions {
     /// plan rather than a second write after it: one `WriteFile` carries
     /// the seeds and these edits together, under one precondition.
     pub settings_draft: Option<crate::settings_file::SettingsDraft>,
+    /// Credentials a person typed, the private file they are destined
+    /// for, and the base of the copy that file was read as. A separate
+    /// draft from the settings one because the two write different files
+    /// under different rules: a secret never reaches the tracked settings
+    /// file, and the private file is never seeded.
+    pub secrets_draft: Option<crate::settings_secret::SecretsDraft>,
     /// Skills whose settings template this plan applies, by name.
     ///
     /// A template is applied once, when its skill arrives, and arrival is

@@ -9,6 +9,7 @@ import type {
 import { customizedLine } from "@/lib/copy-customize";
 import type { Draft } from "@/lib/editor-draft";
 import { packageMark } from "@/lib/place-marks";
+import { placeRead } from "@/test/settings-read";
 import {
   customizedHere,
   manifestsForEditing,
@@ -63,10 +64,11 @@ const key = (over: Partial<SettingsRow> = {}): SettingsRow => ({
  *  value is the package default unless the row says otherwise. */
 const read = (skills: Record<string, SettingsRow[]>): ScopeSettings => ({
   applies: true,
+  ...placeRead,
   base: "b1",
   skills: Object.entries(skills).map(([skill, rows]) => ({
     skill,
-    template: { state: "rows", rows },
+    template: { state: "rows", rows, secrets: [] },
   })),
 });
 
@@ -226,7 +228,15 @@ describe("placeStandings", () => {
     const s = source({
       manifests: { global: empty() },
       rows: [row(GLOBAL)],
-      settings: { global: { applies: false, skills: [], base: null } },
+      settings: {
+        global: {
+          applies: false,
+          ...placeRead,
+          secrets: null,
+          skills: [],
+          base: null,
+        },
+      },
     });
     const [only] = placeStandings(s, "skill", "gh", [GLOBAL]);
     expect(only.standing).toBe("stock");
@@ -286,6 +296,7 @@ describe("placeStandings", () => {
       settings: {
         "/work/vg": {
           applies: true,
+          ...placeRead,
           base: "b1",
           skills: [
             {

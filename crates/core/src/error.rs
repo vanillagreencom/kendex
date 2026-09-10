@@ -169,6 +169,13 @@ pub enum CoreError {
     #[error(transparent)]
     SettingsRefused(#[from] crate::settings_file::SettingsRefusal),
 
+    /// A credential that was not stored; the shapes are the module's.
+    /// Held apart from the settings refusal above because the two write
+    /// different files under different rules, and a reader that met one
+    /// shape for both would have to guess which file a refusal is about.
+    #[error(transparent)]
+    SecretRefused(#[from] crate::settings_secret::SecretRefusal),
+
     #[error("credential refresh is busy: another kendex process holds {lock}")]
     CredentialRefreshBusy { lock: PathBuf },
 

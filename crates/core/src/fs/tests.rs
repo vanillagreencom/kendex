@@ -338,3 +338,47 @@ fn a_move_that_fails_twice_names_both_failures() {
     assert!(error.contains("os error 18"), "no rename refusal: {error}");
     assert!(error.contains("os error 13"), "no copy failure: {error}");
 }
+
+/// A pre-image is a copy of somebody's file, so it carries what that file
+/// carried. The journal takes one of every path an apply is about to
+/// write, and the project's private env file is one of them: a copy made
+/// by reading the bytes and writing them again would leave a second,
+/// world-readable copy of a credential under the app's own directory.
+///
+/// The platform's own copy is what preserves the mode, which is why
+/// [`copy_file_durable`] uses it rather than a byte loop.
+#[cfg(unix)]
+#[test]
+fn a_durable_file_copy_carries_the_mode_across() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().expect("fixture dir");
+    let from = dir.path().join("private.env");
+    fs::write(&from, "TOKEN='secret'\n").expect("fixture file");
+    fs::set_permissions(&from, fs::Permissions::from_mode(0o600)).expect("fixture mode");
+
+    let to = dir.path().join("store/0");
+    fs::create_dir_all(dir.path().join("store")).expect("fixture store");
+    copy_file_durable(&from, &to).expect("the copy runs");
+
+    let mode = fs::metadata(&to)
+        .expect("the copy is there")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600, "{mode:o}");
+    // The control this reads against: an ordinary file's mode comes
+    // through too, so the assertion above is about what was carried and
+    // not about a mode this function imposes.
+    let open = dir.path().join("ordinary.txt");
+    fs::write(&open, "plain\n").expect("fixture file");
+    fs::set_permissions(&open, fs::Permissions::from_mode(0o644)).expect("fixture mode");
+    let copied = dir.path().join("store/1");
+    copy_file_durable(&open, &copied).expect("the copy runs");
+    assert_eq!(
+        fs::metadata(&copied)
+            .expect("the copy is there")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o644
+    );
+}

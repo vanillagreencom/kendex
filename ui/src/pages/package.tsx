@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { HarnessId, Scope, VersionRow } from "@/bindings";
-import { SaveBar } from "@/components/customize/save-bar";
+import { CustomizeSaveBar } from "@/components/customize/customize-save-bar";
 import { ChangesPanel } from "@/components/files/changes-panel";
 import { ChangesViewer } from "@/components/files/changes-viewer";
 import { DeleteDialog } from "@/components/package/delete-dialog";
@@ -65,7 +65,7 @@ export function PackagePage() {
   const back = useNavStore((s) => s.back);
   const result = useScanStore((s) => s.result);
   const toggle = useAuditStore((s) => s.toggle);
-  const { dirty, saving, openScope, load, save } = useEditorStore();
+  const { openScope } = useEditorStore();
 
   // What the slide-in panel is comparing, or null with nothing open. The
   // page opens on it when Updates sent the reader here to preview a
@@ -353,15 +353,10 @@ export function PackagePage() {
       {/* The editor's dirty state belongs to the last manifest it opened,
           and an observed page opens none — so a bar here would offer to
           save another package's settings from a page that is not about
-          it. On the same one decision as every other declaration write. */}
-      {declares && dirty ? (
-        <SaveBar
-          saving={saving}
-          busy={mutating}
-          onSave={() => void save()}
-          onDiscard={() => void load()}
-        />
-      ) : null}
+          it. On the same one decision as every other declaration write.
+          `CustomizeSaveBar` answers the dirty half itself, and carries the
+          destination summary a credential save has to show first. */}
+      {declares ? <CustomizeSaveBar busy={mutating} /> : null}
       <DeleteDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}

@@ -131,6 +131,44 @@ assert_eq "no .env key reaches the wire" "$(sent_key)" "$ENV_KEY"
 rm -f "$PROJECT/.env"
 mv "$PROJECT/.env.local.aside" "$PROJECT/.env.local"
 
+echo "=== the key is read from whichever private file the project names ==="
+
+# The app writes credentials to the project's private file, and writes
+# KENDEX_ENV_FILE when a person names one other than .env.local. Both keys
+# are the same channel as far as precedence goes: a key from the named file
+# is a project-file key, and the override still beats it.
+rm -f "$PROJECT/.env.local"
+printf '[env]\nKENDEX_ENV_FILE = ".env.secrets"\n' >"$PROJECT/kendex.settings.toml"
+# Single-quoted, which is the shape the app writes: the value has to reach
+# the wire byte for byte, quotes stripped and nothing else touched.
+printf "LINEAR_API_KEY='%s'\n" "$FILE_KEY" >"$PROJECT/.env.secrets"
+
+run_auth LINEAR_API_KEY="$ENV_KEY"
+assert_eq "auth-check exits zero with a named private file" "$RC" 0
+assert_source "a key in the named private file" "project-config"
+assert_eq "the named file's key reaches the wire, quotes stripped" "$(sent_key)" "$FILE_KEY"
+
+run_auth LINEAR_API_KEY="$ENV_KEY" LINEAR_API_KEY_OVERRIDE="$OVERRIDE_KEY"
+assert_source "the override still beats a named private file" "override"
+
+# And .env.local is no longer read at all once another file is named: a
+# key left there must not decide what authenticates, and auth-check's own
+# reads are part of that. It sources the private file to report where
+# LINEAR_TEAM came from, so a file named by hand there would execute stale
+# shell content on this account and report provenance from a file no loader
+# reads. The `touch` line is what a sourced file can do and a file left
+# alone cannot.
+SOURCED_MARKER="$TMP_ROOT/env-local-was-sourced"
+printf "LINEAR_API_KEY='%s'\nLINEAR_TEAM='%s'\n" "$FILE_KEY" "named-team" >"$PROJECT/.env.secrets"
+printf "LINEAR_API_KEY='%s'\nLINEAR_TEAM='%s'\ntouch '%s'\n" \
+  "stale-local-key" "stale-team" "$SOURCED_MARKER" >"$PROJECT/.env.local"
+run_auth
+assert_eq "the named file wins over a key left in .env.local" "$(sent_key)" "$FILE_KEY"
+assert_not ".env.local is not sourced once another private file is named" test -e "$SOURCED_MARKER"
+assert_jq "the team's provenance names the file the project reads" \
+  "$OUT" '.team_source_file == ".env.secrets"'
+rm -f "$PROJECT/.env.local" "$PROJECT/.env.secrets" "$PROJECT/kendex.settings.toml"
+
 echo "=== inherited env is used only when no file provides a key ==="
 
 rm -f "$PROJECT/.env.local"
