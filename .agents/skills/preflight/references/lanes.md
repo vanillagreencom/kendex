@@ -12,11 +12,13 @@ The default and `--base` scopes include every non-ignored untracked file as a ne
 
 Runners are `.github/workflows/*.yml`, `tools/validate*`, `scripts/validate*`, `package.json`, `Makefile`, `justfile`, and any `run-all.sh`. They are collected from tracked and untracked paths alike: an untracked runner is in scope exactly when an untracked suite is, so a workflow added beside its suite wires it before either is committed.
 
-Wiring is the suite named outright, a path-shaped glob its path satisfies, a directory it lives under, a manifest below the repo root whose subtree holds it, a runner beside it globbing its own directory, or a runner invoking bare `vitest`/`jest` at a command position whose default include glob covers the suite (`*.test.ts`/`js`/`mjs`) under the directory the runner runs from.
+Wiring is the suite named outright, a path-shaped glob its path satisfies, a directory it lives under, a manifest below the repo root whose subtree holds it, a runner beside it globbing its own directory, or a runner invoking bare `vitest`/`jest`, or the two-token `bun test`, at a command position whose default include glob covers the suite (`*.test.ts`/`js`/`mjs`) under the directory the runner runs from.
 
 A command position means directly, chained after `;`/`&`/`|`, behind a directly preceding `npx`/`pnpm`/`yarn`/`exec`/`dlx`, with `NAME=value` assignment words (values plain or quoted) allowed before the runner word.
 
 A comment (full-line or trailing), dependency key, or package path is not an invocation, and neither is a prose mention, except a colon-opened value beginning with the runner word, accepted erring quiet. A path-prefixed binary (`node_modules/.bin/vitest`) is not recognized, and a pinned explicit `include`/`testMatch` is not evaluated.
+
+`bun` on its own is the package runner and `bun run test` re-enters the script table, so neither records a default glob. Flags may follow `test`; a positional word may not, so `bun test src/` is wired by the `src/` token it writes rather than by the whole default glob.
 
 ## Glob semantics
 
