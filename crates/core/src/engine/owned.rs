@@ -109,6 +109,22 @@ pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
 /// the command this path spells, as it always was. Codex's feature flag
 /// stays on either way: other hooks may still rely on it, and it enables
 /// nothing by itself.
+/// The registry file one hook install writes its entry into, or `None`
+/// where this tool registers nothing. The same answer the install and the
+/// removal take, so what a record is credited with cannot drift from the
+/// file it actually wrote.
+pub(crate) fn hook_registry(
+    env: &Env,
+    scope: &Scope,
+    harness: crate::model::HarnessId,
+    name: &str,
+) -> Option<PathBuf> {
+    match hook_target(env, scope, harness, name) {
+        Some(HookTarget::Script { registry, .. }) => Some(registry),
+        _ => None,
+    }
+}
+
 fn hook_owned(
     env: &Env,
     scope: &Scope,

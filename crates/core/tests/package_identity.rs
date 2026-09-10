@@ -363,6 +363,50 @@ fn a_registration_running_another_script_is_not_this_package() {
     );
 }
 
+/// A tool scans more than one registry — a settings file and a local one
+/// beside it — and an entry is this package's only in the file the install
+/// wrote. The same event, matcher and command in the other file is
+/// somebody else's copy, and crediting it merges an unmanaged registration
+/// into the package's row.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_same_registration_in_another_scanned_file_is_not_this_package() {
+    let f = fixture_for(
+        "[hooks.block-worktree-refresh]\nsource = \"cat\"\n",
+        "copy",
+        "\"claude\"",
+    );
+    apply_now(&f);
+    // The entry kendex wrote, copied verbatim into the other file this
+    // tool reads. Same event, same matcher, same command, another file.
+    let settings = f.project.join(".claude/settings.json");
+    let document: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    fs::write(
+        f.project.join(".claude/settings.local.json"),
+        serde_json::to_string_pretty(&serde_json::json!({ "hooks": document["hooks"] })).unwrap(),
+    )
+    .unwrap();
+
+    let rows = observed(&rows(&f), &f);
+    let hook = package(ItemKind::Hook, "block-worktree-refresh").unwrap();
+    let credited: Vec<_> = rows
+        .iter()
+        .filter(|row| row.package.as_ref() == Some(&hook))
+        .collect();
+    assert_eq!(
+        credited.len(),
+        1,
+        "a copy in another scanned file was credited to the package: {rows:#?}"
+    );
+    let theirs: Vec<_> = rows
+        .iter()
+        .filter(|row| row.kind == ItemKind::Hook && row.package.is_none())
+        .collect();
+    assert_eq!(theirs.len(), 1, "{rows:#?}");
+    assert_eq!(theirs[0].origin, Origin::Unmanaged);
+}
+
 /// A rule nobody installed keeps its own identity. The name it carries is
 /// the one generated rules take, so a resolver reading names rather than
 /// records would hand it the package's identity and its marketplace.

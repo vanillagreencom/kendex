@@ -14,9 +14,11 @@ import type {
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import {
+  DISCARD_EDITS_LABEL,
   FORK_NOTICE_TITLE,
   FORKED_BADGE_LABEL,
   FORKED_EDITED_BADGE_LABEL,
+  KEEP_AS_FORK_LABEL,
   OPEN_IN_EDITOR_LABEL,
   OPEN_IN_FILE_BROWSER_LABEL,
   OPEN_IN_LABEL,
@@ -1160,6 +1162,14 @@ describe("a package page opened on an installation nothing recorded", () => {
     // own, so a save bar here would write them from a page about a file
     // the records know nothing about.
     useEditorStore.setState({ dirty: true });
+    // And the recorded gh, edited by hand in this very place: read by
+    // scope, kind and name — the address this observed file shares — its
+    // notice would offer to keep those edits as a fork or discard them,
+    // both writes to a declaration this page is not about.
+    useUpdatesStore.setState({
+      rows: [{ ...updateRow(VG), blockedByLocalEdit: true }],
+      read: READ_LANDED,
+    });
     const host = await openObserved();
 
     // The page stays: this installation is on the machine and is what the
@@ -1180,6 +1190,13 @@ describe("a package page opened on an installation nothing recorded", () => {
     expect(labels).not.toContain(DELETE_LABEL);
     expect(host.querySelector("#package-enabled")).toBeNull();
     expect(host.textContent).not.toContain(SAVE_NOTE);
+    // The body's own two: the hand-edit notice, whose Keep as fork and
+    // Discard write that declaration, and the file preview, which reads
+    // its bytes by the same address.
+    expect(host.textContent).not.toContain(FORK_NOTICE_TITLE);
+    expect(labels).not.toContain(KEEP_AS_FORK_LABEL);
+    expect(labels).not.toContain(DISCARD_EDITS_LABEL);
+    expect(vi.mocked(commands.packageReadme)).not.toHaveBeenCalled();
   });
 
   // Every surface that reads or writes a declaration, not only the

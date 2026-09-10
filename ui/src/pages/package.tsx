@@ -253,6 +253,7 @@ export function PackagePage() {
       diff={diff}
       busy={mutating}
       reading={reads.reading}
+      declares={declares}
       onToggle={
         declares
           ? (enable) =>

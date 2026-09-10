@@ -49,11 +49,16 @@ pub(super) struct Recorded {
     /// `None` where two records claim one position: the records do not say
     /// which package it is, and neither may speak for it.
     by_artifact: HashMap<PathBuf, Option<Claim>>,
-    /// The registry entry one hook install recorded writing, named the way
-    /// the scan names what it reads back, with the command it recorded.
-    /// The name reduces a command to its stem, which two different scripts
-    /// can share, so the whole command is kept and compared.
-    by_registration: HashMap<(HarnessId, String), Option<Registered>>,
+    /// The registry entry one hook install recorded writing, keyed by the
+    /// file it went into and the name the scan reads it back under, with
+    /// the command it recorded.
+    ///
+    /// The file is part of the key because a tool scans more than one
+    /// registry — a settings file and a local one beside it — and an entry
+    /// is only this package's in the file the install wrote. The name
+    /// reduces a command to its stem, which two different scripts can
+    /// share, so the whole command is kept and compared as well.
+    by_registration: HashMap<(HarnessId, PathBuf, String), Option<Registered>>,
     /// Every declared name recorded for a harness and kind, for the
     /// observations that have no artifact position of their own.
     declared: HashMap<(HarnessId, ItemKind), Vec<String>>,
@@ -103,7 +108,8 @@ fn resolved(path: &Path) -> PathBuf {
 /// with here is exactly what taking it back out would touch.
 pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
     let mut by_artifact = HashMap::new();
-    let mut by_registration: HashMap<(HarnessId, String), Option<Registered>> = HashMap::new();
+    let mut by_registration: HashMap<(HarnessId, PathBuf, String), Option<Registered>> =
+        HashMap::new();
     let mut declared: HashMap<(HarnessId, ItemKind), Vec<String>> = HashMap::new();
     for entry in lock.entries.values() {
         let held: Claim = (
@@ -134,9 +140,14 @@ pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
             // with somebody else's registration. Left unresolved, the
             // observation keeps its own identity and says so.
             && let Some(matcher) = &registration.matcher
+            // The registry this install writes into, read off the one
+            // helper the install and the removal take.
+            && let Some(registry) =
+                crate::engine::owned::hook_registry(env, scope, entry.harness, &entry.name)
         {
             let key = (
                 entry.harness,
+                resolved(&registry),
                 crate::scan::hooks::registration_name(
                     &registration.event,
                     matcher,
@@ -197,9 +208,13 @@ impl Recorded {
         }
         // An entry inside a config file is not named by the file holding
         // it — every entry of its kind shares that path — so a hook entry
-        // is matched by the registration it was read as.
+        // is matched by the registration it was read as, in the file it
+        // was read from: a tool scans more than one registry, and the same
+        // entry in another of them is another registration.
         if item.kind == ItemKind::Hook
-            && let Some(held) = self.by_registration.get(&(item.harness, item.name.clone()))
+            && let Some(held) =
+                self.by_registration
+                    .get(&(item.harness, resolved(&item.path), item.name.clone()))
         {
             // The name a registration is read under carries only the
             // command's stem, and two unrelated scripts can share one. The
