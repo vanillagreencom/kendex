@@ -92,9 +92,11 @@ pub enum Op {
     /// the write leaves one. An existing file keeps its own mode, which
     /// is the person's choice about their own file.
     ///
-    /// The journal's pre-image is `fs::copy`, which carries the mode
-    /// across on both platforms, so a recovery copy of a private file is
-    /// private too.
+    /// The journal's pre-image is `fs::copy`. On Unix it carries the mode
+    /// across, so a recovery copy of a private file is private too. On
+    /// Windows no copy carries an access-control list: the pre-image
+    /// takes the journal folder's, under the profile's application data,
+    /// rather than the file's own.
     WritePrivateFile {
         path: PathBuf,
         bytes: Vec<u8>,

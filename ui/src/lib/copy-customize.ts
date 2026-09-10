@@ -168,13 +168,12 @@ export const SECRET_FILE_RECORDED = (file: string): string =>
  *  a credential someone typed. So the promise is about saving a key, which
  *  is true whether or not this draft carries one.
  *
- *  It says nothing about who can read the file. kendex creates it
- *  owner-only on macOS and Linux, and on Windows a new file inherits the
- *  folder's access-control list, which kendex does not narrow — so a
- *  sentence promising otherwise would be false on one platform, and this
- *  page has no way to tell which one it is on. */
+ *  The second sentence is one promise on every platform: core creates the
+ *  file owner-only, as a mode on macOS and Linux and as an access-control
+ *  list on Windows, and refuses the create rather than make the file any
+ *  wider. */
 export const SECRET_FILE_WILL_CREATE = (file: string): string =>
-  `${file} doesn't exist yet. Saving a key creates it.`;
+  `${file} doesn't exist yet. Saving a key creates it, readable by your account only.`;
 export const SECRET_FILE_WILL_IGNORE = (entry: string, file: string): string =>
   `Saving also adds ${entry} to .gitignore first, so git never carries ${file}.`;
 export const SECRET_FILE_REFUSED = "Nothing can be saved here yet";

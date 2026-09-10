@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
 use crate::fs::{
-    copy_file_durable, copy_tree_durable, make_symlink, remove_any, sync_dir, sync_dir_durable,
+    copy_file_durable, copy_file_over_durable, copy_tree_durable, make_symlink, remove_any,
+    sync_dir, sync_dir_durable,
 };
 
 /// Pre-images of everything an apply is about to touch. Restore is
@@ -144,19 +145,14 @@ fn rollback_where(dir: &Path, restore: impl Fn(&Path) -> bool) -> Result<()> {
         if !restore(&entry.path) {
             continue;
         }
-        remove_any(&entry.path)?;
         match &entry.state {
-            PreState::Absent => {}
-            PreState::File { store: slot } => {
-                if let Some(parent) = entry.path.parent() {
-                    fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
-                }
-                copy_file_durable(&store.join(slot), &entry.path)?;
-            }
+            PreState::Absent => remove_any(&entry.path)?,
+            PreState::File { store: slot } => restore_file(&store.join(slot), &entry.path)?,
             PreState::Symlink {
                 target,
                 store: slot,
             } => {
+                remove_any(&entry.path)?;
                 if let Some(parent) = entry.path.parent() {
                     fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
                 }
@@ -169,11 +165,32 @@ fn rollback_where(dir: &Path, restore: impl Fn(&Path) -> bool) -> Result<()> {
                 }
             }
             PreState::Dir { store: slot } => {
+                remove_any(&entry.path)?;
                 copy_tree_durable(&store.join(slot), &entry.path)?;
             }
         }
     }
     clear(dir)
+}
+
+/// Put a file's pre-image back. A file still standing is copied over
+/// rather than removed and made again: a new file takes the folder's
+/// access-control list on Windows, and the private credential file, whose
+/// list is its own and which `write_private` truncates rather than
+/// replaces, would come back readable by whoever the folder admits, with
+/// the old credential in it. Copied over, its list is never touched at
+/// any instant, and the bytes, mode and attributes are the pre-image's on
+/// both platforms. A destination that is gone, or a link standing in the
+/// name's place, is made from the copy like any new file.
+fn restore_file(slot: &Path, path: &Path) -> Result<()> {
+    if crate::fs::entry(path)?.is_some_and(|meta| meta.is_file()) {
+        return copy_file_over_durable(slot, path);
+    }
+    remove_any(path)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
+    }
+    copy_file_durable(slot, path)
 }
 
 /// Spend a journal: meta.json first, on its own and made durable, then

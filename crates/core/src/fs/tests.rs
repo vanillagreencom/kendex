@@ -382,3 +382,197 @@ fn a_durable_file_copy_carries_the_mode_across() {
         0o644
     );
 }
+
+/// The access-control entries a Windows file carries, read back by name
+/// through `GetNamedSecurityInfoW`, a path the create never touches; the
+/// walk over the list is the module's own.
+#[cfg(windows)]
+pub(crate) mod acl {
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::Path;
+    use std::ptr;
+
+    use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
+    use windows_sys::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
+    use windows_sys::Win32::Security::DACL_SECURITY_INFORMATION;
+
+    pub(crate) use super::dacl::{Entry, OWNER_ONLY};
+
+    #[allow(clippy::unwrap_used)]
+    #[allow(
+        unsafe_code,
+        reason = "Win32 has no safe binding; each site states its contract"
+    )]
+    pub(crate) fn entries(path: &Path) -> Vec<Entry> {
+        let user = super::dacl::current_user().unwrap();
+        let wide: Vec<u16> = crate::paths::verbatim(path)
+            .unwrap()
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut dacl = ptr::null_mut();
+        let mut descriptor = ptr::null_mut();
+        // SAFETY: `wide` is NUL-terminated; the out-parameters are
+        // writable; the descriptor the system allocates is freed below
+        // after the last read through `dacl`, which points into it.
+        let read = unsafe {
+            GetNamedSecurityInfoW(
+                wide.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                &mut dacl,
+                ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        assert_eq!(read, ERROR_SUCCESS, "GetNamedSecurityInfoW");
+        // SAFETY: `dacl` is the list read above, null where the file has
+        // none, alive until the free below; the SID points into `user`.
+        let rows = unsafe { super::dacl::entries(dacl, user.sid()) };
+        // SAFETY: `descriptor` came from `GetNamedSecurityInfoW`, which
+        // documents `LocalFree` as its release, and nothing reads through
+        // it after this.
+        unsafe { LocalFree(descriptor) };
+        rows.unwrap()
+    }
+}
+
+/// A file kendex makes to hold a credential names the account it runs as
+/// and nobody else: one entry, this account, full access, and nothing the
+/// folder handed down. The temporary folder does hand entries down — that
+/// is what the second case reads — so a plain create fails this by count.
+#[cfg(windows)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_created_private_file_names_this_account_alone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join(".env.local");
+
+    write_private(&path, b"TOKEN='secret'\n").unwrap();
+
+    assert_eq!(fs::read(&path).unwrap(), b"TOKEN='secret'\n");
+    assert_eq!(acl::entries(&path), [acl::OWNER_ONLY]);
+}
+
+/// A file the person already has keeps the list they gave it: the file is
+/// theirs, and kendex is storing a value in it rather than taking it over.
+#[cfg(windows)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_existing_private_file_keeps_its_own_list() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join(".env.local");
+    fs::write(&path, "OTHER='kept'\n").unwrap();
+    let before = acl::entries(&path);
+    assert!(
+        before.iter().any(|entry| entry.inherited),
+        "the fixture folder handed nothing down, so this case reads nothing: {before:?}"
+    );
+
+    write_private(&path, b"OTHER='kept'\nTOKEN='secret'\n").unwrap();
+
+    assert_eq!(fs::read(&path).unwrap(), b"OTHER='kept'\nTOKEN='secret'\n");
+    assert_eq!(acl::entries(&path), before);
+}
+
+/// A private file whose plain spelling runs past the legacy path limit is
+/// still created, and still owner-only: the create hands Win32 the path
+/// itself, so it has to put the verbatim marker on the way `std` would.
+/// Against a create that encodes the path as given, `CreateFileW` refuses
+/// this one with "path not found" about a folder that exists.
+#[cfg(windows)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_private_file_past_the_legacy_path_limit_is_created_owner_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Longer than the limit on its own, and within the name length NTFS
+    // takes for one component.
+    let path = tmp.path().join("e".repeat(250));
+
+    write_private(&path, b"TOKEN='secret'\n").unwrap();
+
+    assert_eq!(fs::read(&path).unwrap(), b"TOKEN='secret'\n");
+    assert_eq!(acl::entries(&path), [acl::OWNER_ONLY]);
+}
+
+/// The list is read back through the handle before any byte is written,
+/// and a file carrying any other list is refused: a volume that keeps no
+/// lists creates the file open to everyone while reporting success. No
+/// runner has such a volume, so the other list here is the one a plain
+/// create takes from its folder, which is the same answer — not the one
+/// written — and the refusal it draws is the one a FAT volume draws.
+#[cfg(windows)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_list_the_volume_did_not_keep_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let user = dacl::current_user().unwrap();
+    let private = tmp.path().join(".env.local");
+    write_private(&private, b"TOKEN='secret'\n").unwrap();
+    dacl::applied(&fs::File::open(&private).unwrap(), user.sid()).unwrap();
+
+    let plain = tmp.path().join("plain");
+    fs::write(&plain, "").unwrap();
+    let refused = dacl::applied(&fs::File::open(&plain).unwrap(), user.sid()).unwrap_err();
+    assert_eq!(refused.kind(), std::io::ErrorKind::Unsupported, "{refused}");
+}
+
+/// A create that never confirms its list leaves nothing behind: the file
+/// is pending deletion from the moment it exists, and only `keep` after
+/// the read-back lets it stay. Against a create without that disposition,
+/// the unconfirmed file stands, and the next save takes it for a file the
+/// person owns.
+#[cfg(windows)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unconfirmed_create_takes_its_file_with_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let user = dacl::current_user().unwrap();
+    let unconfirmed = tmp.path().join("unconfirmed");
+    drop(dacl::create_pending(&unconfirmed, user.sid()).unwrap());
+    assert!(!unconfirmed.exists());
+
+    let kept = tmp.path().join("kept");
+    let file = dacl::create_pending(&kept, user.sid()).unwrap();
+    dacl::keep(&file).unwrap();
+    drop(file);
+    assert!(kept.exists());
+}
+
+/// A refusal carries the code the failing call itself reported, not what
+/// an earlier call left on the thread: a handle opened without the right
+/// to read its security is refused by `GetSecurityInfo` in its return
+/// value, and that is the code the refusal names. Against a helper that
+/// reads the thread's last error, the code here is whatever the token
+/// sizing call left, not access denied.
+#[cfg(windows)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refusal_carries_the_code_of_the_call_that_failed() {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
+    use windows_sys::Win32::Storage::FileSystem::FILE_WRITE_DATA;
+    let tmp = tempfile::tempdir().unwrap();
+    let user = dacl::current_user().unwrap();
+    let path = tmp.path().join("plain");
+    fs::write(&path, "").unwrap();
+    let no_read_control = fs::OpenOptions::new()
+        .access_mode(FILE_WRITE_DATA)
+        .open(&path)
+        .unwrap();
+
+    let refused = dacl::applied(&no_read_control, user.sid()).unwrap_err();
+
+    let failed = refused
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<dacl::Failed>())
+        .unwrap();
+    assert_eq!(
+        (failed.step, failed.cause.raw_os_error()),
+        ("GetSecurityInfo", Some(ERROR_ACCESS_DENIED as i32)),
+        "{refused}"
+    );
+}

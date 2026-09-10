@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::{CoreError, Result};
 
+#[cfg(windows)]
+mod dacl;
 mod links;
 mod lock;
 mod probe;
@@ -50,20 +52,29 @@ pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
         .map_err(|error| CoreError::io(path, error))
 }
 
-/// Windows has no mode to set at creation: a new file inherits its parent
-/// directory's access-control list, and nothing here narrows it.
-///
-/// So the owner-only guarantee above does NOT hold on Windows, and this
-/// is the one place that says so rather than a caller assuming the name.
-/// A project directory anyone else can read hands them the credential
-/// too. Giving the file an owner-only DACL means building a SID and an
-/// ACL and creating through `CreateFileW` with a `SECURITY_ATTRIBUTES` —
-/// a Windows API dependency this crate does not have and more than a
-/// narrow fix; it is filed as follow-up work rather than half-done here.
-/// The copy a person reads promises only what both platforms deliver.
-#[cfg(not(unix))]
+/// Windows has no mode to set at creation: a new file takes its parent
+/// directory's access-control list, so a file that does not exist yet is
+/// created through `dacl`, which hands `CreateFileW` a list naming this
+/// account alone. A list applied after the create would leave the same
+/// window as a chmod after the write. An existing file is opened and
+/// truncated the ordinary way and keeps the list its owner gave it, the
+/// other half of the contract above. When the owner-only list cannot be
+/// built or applied, or the volume did not keep it, the create is refused
+/// with the failing step named, never made with the directory's list
+/// instead.
+#[cfg(windows)]
 pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
-    fs::write(path, bytes).map_err(|error| CoreError::io(path, error))
+    let mut file = match dacl::create_owner_only(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == AlreadyExists => fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(path)
+            .map_err(|error| CoreError::io(path, error))?,
+        Err(error) => return Err(CoreError::io(path, error)),
+    };
+    file.write_all(bytes)
+        .map_err(|error| CoreError::io(path, error))
 }
 
 /// Give a file the execute bit if its bytes open with a shebang. A tree
@@ -208,6 +219,27 @@ pub fn read_if_exists(path: &Path) -> Result<Option<String>> {
 pub(crate) fn copy_file_durable(from: &Path, to: &Path) -> Result<()> {
     fs::copy(from, to).map_err(|e| CoreError::io(from, e))?;
     sync_written_file(to)
+}
+
+/// `copy_file_durable` onto a file that is standing, which keeps: the
+/// copy writes through the file rather than making a new one, so its
+/// access-control list stays as it is while the bytes, mode and
+/// attributes become the source's. A destination made read-only is
+/// opened for the copy the way `sync_written_file` opens for the flush,
+/// with the write bit relaxed first; the copy then sets the source's mode
+/// over it, and a copy that fails puts the destination's own back.
+pub(crate) fn copy_file_over_durable(from: &Path, to: &Path) -> Result<()> {
+    let mode = fs::metadata(to)
+        .map(|meta| meta.permissions())
+        .map_err(|e| CoreError::io(to, e))?;
+    if mode.readonly() {
+        fs::set_permissions(to, writable(&mode)).map_err(|e| CoreError::io(to, e))?;
+    }
+    let copied = copy_file_durable(from, to);
+    if copied.is_err() {
+        fs::set_permissions(to, mode).map_err(|e| CoreError::io(to, e))?;
+    }
+    copied
 }
 
 /// Flush a file this process has just written, leaving its mode on disk
@@ -459,4 +491,4 @@ pub(crate) fn make_symlink(target: &Path, link: &Path) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

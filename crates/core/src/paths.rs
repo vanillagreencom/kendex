@@ -31,7 +31,9 @@
 //! The length limit the prefix exists to lift is not given up with it:
 //! `std`'s Windows file layer puts the prefix back on any path it opens
 //! that runs past the legacy limit, so kendex's own reads and writes are
-//! unaffected by which spelling it holds.
+//! unaffected by which spelling it holds. The one write that hands a path
+//! to Win32 itself, the private credential file's create, puts it back
+//! through `verbatim`, the same rule in this crate's hands.
 //!
 //! **A leading `~` a shell would have expanded is expanded here**, because
 //! the GUI has no shell in front of it. [`expand_tilde`] is that rule.
@@ -293,6 +295,46 @@ fn drive_rooted(text: &str) -> Option<&str> {
     .then(|| &text[3..])
 }
 
+/// The spelling Win32 takes for a path of any length: [`plain`]'s inverse,
+/// for a path handed to `CreateFileW` directly rather than through `std`,
+/// which applies this same rule to every path it opens. Normalized first
+/// as `std` does, since a verbatim path reaches the object manager as
+/// written and a `.` or `..` in it would be taken as a name. A path under
+/// the legacy limit is returned plain, and one already verbatim, or whose
+/// root neither the drive nor the share form covers, as it is.
+#[cfg(windows)]
+pub(crate) fn verbatim(path: &Path) -> std::io::Result<PathBuf> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::path::Prefix;
+
+    let absolute = std::path::absolute(path)?;
+    let wide: Vec<u16> = absolute.as_os_str().encode_wide().collect();
+    // The unit `std` counts and the constant this file's reduction reads
+    // in bytes: the NUL that closes the string is the one added.
+    if wide.len() + 1 < LEGACY_MAX_PATH {
+        return Ok(absolute);
+    }
+    let Some(Component::Prefix(prefix)) = absolute.components().next() else {
+        return Ok(absolute);
+    };
+    let spelled = |head: &str, skip: usize| -> PathBuf {
+        let units: Vec<u16> = head
+            .encode_utf16()
+            .chain(wide[skip..].iter().copied())
+            .collect();
+        OsString::from_wide(&units).into()
+    };
+    Ok(match prefix.kind() {
+        Prefix::Verbatim(_) | Prefix::VerbatimUNC(..) | Prefix::VerbatimDisk(_) => absolute,
+        // `C:\x` is `\\?\C:\x`; `\\server\share\x` is `\\?\UNC\server\share\x`;
+        // a `\\.\` device path swaps its own marker for the verbatim one.
+        Prefix::Disk(_) => spelled(VERBATIM, 0),
+        Prefix::UNC(..) => spelled(r"\\?\UNC\", 2),
+        Prefix::DeviceNS(_) => spelled(VERBATIM, 4),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,6 +506,34 @@ mod tests {
         assert!(root.is_dir());
         assert_eq!(canonical(&root)?, root);
         assert_eq!(canonical(&root.join("sub").join(".."))?, root);
+        Ok(())
+    }
+
+    /// The spelling handed to Win32 raw: a path under the legacy limit
+    /// stays as it came, and one at or past it takes the verbatim marker
+    /// its root form calls for, or keeps the one it already has. Against
+    /// a create that encodes the path as given, the long rows are the
+    /// files `CreateFileW` refuses with "path not found".
+    #[cfg(windows)]
+    #[test]
+    fn a_path_past_the_legacy_limit_is_spelled_verbatim() -> std::io::Result<()> {
+        let long = "d".repeat(LEGACY_MAX_PATH);
+        for (given, expected) in [
+            (r"C:\short\file".to_string(), r"C:\short\file".to_string()),
+            (format!(r"C:\{long}"), format!(r"\\?\C:\{long}")),
+            (format!(r"C:\a\..\{long}"), format!(r"\\?\C:\{long}")),
+            (
+                format!(r"\\server\share\{long}"),
+                format!(r"\\?\UNC\server\share\{long}"),
+            ),
+            (format!(r"\\?\C:\{long}"), format!(r"\\?\C:\{long}")),
+        ] {
+            assert_eq!(
+                verbatim(Path::new(&given))?,
+                PathBuf::from(&expected),
+                "{given}"
+            );
+        }
         Ok(())
     }
 }
