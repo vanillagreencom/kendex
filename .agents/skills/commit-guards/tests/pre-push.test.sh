@@ -204,8 +204,16 @@ done
 # diagnostics; a lane that printed it would put a token in scrollback and in
 # every log that captures hook output.
 direct "$CREDENTIAL_URL" "HEAD $TIP refs/heads/main $ZERO" >/dev/null
-assert_eq "the credential in the remote URL reaches no message" "absent" \
-  "$(case "$DIRECT_OUT" in *"$CREDENTIAL_SECRET"*) echo present ;; *) echo absent ;; esac)"
+# The verdict is taken here rather than inside a command substitution. Bash
+# parses a substitution's body when it expands it, not when it reads the
+# file, and 3.2's parser refuses a `case` there whose patterns carry no
+# leading `(` — so `bash -n` over this file passes on every Bash and the
+# error arrives only when the line runs, on the macOS leg.
+CREDENTIAL_SEEN=absent
+case "$DIRECT_OUT" in
+  *"$CREDENTIAL_SECRET"*) CREDENTIAL_SEEN=present ;;
+esac
+assert_eq "the credential in the remote URL reaches no message" "absent" "$CREDENTIAL_SEEN"
 
 # remote.<name>.url is not a scalar. A remote set up to push one branch to two
 # places carries two values, a fetch uses the first, and git runs this hook
