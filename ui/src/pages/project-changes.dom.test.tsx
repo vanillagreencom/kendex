@@ -16,6 +16,8 @@ import {
   PARTIAL_NOTE,
   projectChangesTitle,
   REMOVED_LABEL,
+  RERENDERED_LABEL,
+  RERENDERED_NOTE,
   RESTORED_LABEL,
   REVERT_CONFIRM_LABEL,
   REVERT_LABEL,
@@ -205,6 +207,7 @@ describe("the review of one project's pending changes", () => {
           removed: [FILES[1]],
           dropped: [],
           added: [],
+          rerendered: [],
         },
       },
     });
@@ -217,6 +220,7 @@ describe("the review of one project's pending changes", () => {
           removed: [FILES[1]],
           dropped: [],
           added: [],
+          rerendered: [],
         },
       },
     });
@@ -244,7 +248,13 @@ describe("the review of one project's pending changes", () => {
       status: "ok",
       data: {
         kind: "effect",
-        effect: { restored: [FILES[0]], removed: [], dropped: [], added: [] },
+        effect: {
+          restored: [FILES[0]],
+          removed: [],
+          dropped: [],
+          added: [],
+          rerendered: [],
+        },
       },
     });
     mount(<ProjectChangesPage />);
@@ -264,7 +274,13 @@ describe("the review of one project's pending changes", () => {
       status: "ok",
       data: {
         kind: "effect",
-        effect: { restored: [FILES[0]], removed: [], dropped: [], added: [] },
+        effect: {
+          restored: [FILES[0]],
+          removed: [],
+          dropped: [],
+          added: [],
+          rerendered: [],
+        },
       },
     });
     vi.mocked(commands.projectChangesRestore).mockResolvedValue({
@@ -278,7 +294,13 @@ describe("the review of one project's pending changes", () => {
           seconds: 30,
           gh: false,
         },
-        done: { restored: [], removed: [], dropped: [], added: [] },
+        done: {
+          restored: [],
+          removed: [],
+          dropped: [],
+          added: [],
+          rerendered: [],
+        },
       },
     });
     mount(<ProjectChangesPage />);
@@ -311,6 +333,7 @@ describe("a restore that stopped part-way", () => {
         removed: [],
         dropped: [],
         added: [],
+        rerendered: [],
       },
     },
   };
@@ -325,6 +348,7 @@ describe("a restore that stopped part-way", () => {
           removed: [FILES[1]],
           dropped: [],
           added: [],
+          rerendered: [],
         },
       },
     });
@@ -374,7 +398,13 @@ describe("a restore that stopped part-way", () => {
       ...stopped,
       data: {
         ...stopped.data,
-        done: { restored: [], removed: [], dropped: [], added: [] },
+        done: {
+          restored: [],
+          removed: [],
+          dropped: [],
+          added: [],
+          rerendered: [],
+        },
       },
     });
     mount(<ProjectChangesPage />);
@@ -385,5 +415,32 @@ describe("a restore that stopped part-way", () => {
     await settle();
     expect(body()).not.toContain(PARTIAL_NOTE);
     expect(body()).toContain("error: unable to unlink");
+  });
+});
+
+// A restore moves the working tree; it does not change what kendex renders.
+// A removal the next write undoes is not the effect the other groups
+// describe, so the preview names it before the reader confirms.
+describe("a restore the next write would undo", () => {
+  it("names what kendex will write again", async () => {
+    vi.mocked(commands.projectChangesRestorePlan).mockResolvedValue({
+      status: "ok",
+      data: {
+        kind: "effect",
+        effect: {
+          restored: [],
+          removed: [FILES[0]],
+          dropped: [],
+          added: [],
+          rerendered: [FILES[0]],
+        },
+      },
+    });
+    mount(<ProjectChangesPage />);
+    await settle();
+    await userEvent.click(button(REVERT_LABEL));
+    await settle();
+    expect(body()).toContain(RERENDERED_LABEL);
+    expect(body()).toContain(RERENDERED_NOTE);
   });
 });

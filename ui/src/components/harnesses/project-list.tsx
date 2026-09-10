@@ -27,6 +27,7 @@ import {
 } from "@/lib/copy-commit-offer";
 import { ADD_PACKAGES_LABEL, addPackagesTo } from "@/lib/copy-install";
 import { PLACE_MARKETPLACES_LABEL } from "@/lib/copy-model";
+import { lastCouldCheck } from "@/lib/copy-project-changes";
 import {
   CHANGE_FOLDER_LABEL,
   missingBadge,
@@ -61,7 +62,12 @@ import { readUnsettled } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount, useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
-import { changesFor, useProjectChangesStore } from "@/stores/project-changes";
+import {
+  changesFor,
+  type Sureness,
+  surenessOf,
+  useProjectChangesStore,
+} from "@/stores/project-changes";
 import { useProjectSetupStore } from "@/stores/project-setup";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
@@ -82,29 +88,39 @@ const GLOBAL: Scope = { scope: "global" };
 function badgeFor(
   missing: MissingProject | undefined,
   state: ChangesState | null,
-  /** Whether a read of what projects hold has settled. Before one has, a
-   *  project with no row is one nothing has looked at yet and carries no
-   *  badge; after one has, it is a project the read did not cover, which is
-   *  not the same as a clean one and must not draw like one. */
-  asked: boolean,
+  /** How sure the read is about this project. All four states reach here,
+   *  because the card is where a person decides whether to look: `waiting`
+   *  carries no badge (the answer is coming), `unknown` says so whatever
+   *  produced it — a project the read skipped or one whose own read
+   *  refused — and `stale` marks a row a failed read could not confirm. */
+  sureness: Sureness,
 ):
   | { text: string; variant: "destructive" | "info"; title?: string }
   | undefined {
   if (missing)
     return { text: missingBadge(missing.why), variant: "destructive" };
-  if (state === null)
-    return asked
-      ? { text: NOT_CHECKED_BADGE, variant: "info", title: notChecked([]) }
-      : undefined;
+  if (sureness === "waiting") return undefined;
+  if (sureness === "unknown")
+    return {
+      text: NOT_CHECKED_BADGE,
+      variant: "info",
+      title: notChecked(
+        state !== null && state.kind === "unreadable" ? state.said : [],
+      ),
+    };
+  if (sureness === "stale")
+    return {
+      text: NOT_CHECKED_BADGE,
+      variant: "info",
+      title: lastCouldCheck(),
+    };
+  if (state === null) return undefined;
   switch (state.kind) {
     case "clean":
       return undefined;
+    // `unknown` above already answered this one.
     case "unreadable":
-      return {
-        text: NOT_CHECKED_BADGE,
-        variant: "info",
-        title: notChecked(state.said),
-      };
+      return undefined;
     case "pending": {
       const count = state.files.length;
       if (state.operation !== null)
@@ -320,11 +336,11 @@ export function ProjectList() {
   // The card draws two things from it: the quiet Review changes line, and
   // the badge for a checkout no commit could land in.
   const changes = useProjectChangesStore((s) => s.rows);
-  // Whether a read of them has settled — what tells a project nothing has
-  // looked at yet from one the read did not cover.
-  const changesAsked = useProjectChangesStore(
-    (s) => s.read.status !== "pending",
-  );
+  // Both halves of that read, selected as the store holds them. A selector
+  // returning a function built here would mint a new reference on every
+  // render and never settle, so the per-project answer is worked out below
+  // from these instead.
+  const changesRead = useProjectChangesStore((s) => s.read);
   const items = result?.items ?? [];
   const packageOf = usePackageIndex();
   // The badges count packages and their clicks open the Library on the same
@@ -429,7 +445,7 @@ export function ProjectList() {
                 badge={badgeFor(
                   missing,
                   changesFor(changes, root)?.state ?? null,
-                  changesAsked,
+                  surenessOf({ rows: changes, read: changesRead }, root),
                 )}
                 onOpen={() => goToLibrary(place)}
                 onKindClick={(kind) => goToLibrary({ ...place, kind })}

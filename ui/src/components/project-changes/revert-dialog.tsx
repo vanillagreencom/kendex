@@ -11,6 +11,8 @@ import {
   PARTIAL_REST_NOTE,
   REMOVED_LABEL,
   REMOVED_NOTE,
+  RERENDERED_LABEL,
+  RERENDERED_NOTE,
   RESTORED_LABEL,
   REVERT_CONFIRM_LABEL,
   REVERT_FAILED_TITLE,
@@ -174,6 +176,14 @@ export function RevertDialog({
               label={DROPPED_LABEL}
               paths={effect?.dropped ?? []}
               note={DROPPED_NOTE}
+            />
+            {/* Said with the rest of the effect rather than after the
+                confirmation: a removal the next write undoes is not the
+                effect the other groups describe. */}
+            <Group
+              label={RERENDERED_LABEL}
+              paths={effect?.rerendered ?? []}
+              note={RERENDERED_NOTE}
             />
             <p className="text-muted-foreground">{REVERT_NOT_REGENERATE}</p>
           </>

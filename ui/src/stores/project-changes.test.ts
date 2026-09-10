@@ -1,11 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, type ProjectChanges } from "@/bindings";
-import { READ_PENDING } from "@/lib/read-state";
+import {
+  READ_LANDED,
+  READ_PENDING,
+  type ReadState,
+  readFailed,
+} from "@/lib/read-state";
 import {
   changesFor,
   commitBlocked,
   pendingCount,
   pendingPaths,
+  type Sureness,
+  surenessOf,
   useProjectChangesStore,
 } from "./project-changes";
 
@@ -148,5 +155,69 @@ describe("what each project has waiting", () => {
     expect(rows.length).toBeGreaterThan(0);
     for (const one of rows)
       expect(commitBlocked(one.row), one.name).toBe(one.blocked);
+  });
+});
+
+// Four states, and drawing any two the same is how a project kendex could
+// not check comes to look like a clean one. Every surface reads them from
+// here, so the table is the contract.
+describe("how sure a surface may be about one project", () => {
+  const pending = row();
+  const clean = row({ state: { kind: "clean" } });
+  const unreadable = row({
+    state: { kind: "unreadable", said: ["fatal: bad object"] },
+  });
+
+  it("tells waiting, known, stale and unknown apart", () => {
+    const rows: {
+      name: string;
+      rows: ProjectChanges[];
+      read: ReadState;
+      is: Sureness;
+    }[] = [
+      { name: "no read yet", rows: [], read: READ_PENDING, is: "waiting" },
+      {
+        name: "no read yet, rows kept",
+        rows: [pending],
+        read: READ_PENDING,
+        is: "waiting",
+      },
+      {
+        name: "landed, pending",
+        rows: [pending],
+        read: READ_LANDED,
+        is: "known",
+      },
+      { name: "landed, clean", rows: [clean], read: READ_LANDED, is: "known" },
+      // The backend skipped it, so the landed read carries no row for it.
+      { name: "landed, no row", rows: [], read: READ_LANDED, is: "unknown" },
+      // Its own read refused, whatever the read as a whole did.
+      {
+        name: "landed, unreadable row",
+        rows: [unreadable],
+        read: READ_LANDED,
+        is: "unknown",
+      },
+      // A row from the last landed read, under a read that has since failed.
+      {
+        name: "failed over a prior row",
+        rows: [pending],
+        read: readFailed("git is not on the path"),
+        is: "stale",
+      },
+      // A failure with nothing behind it knows nothing at all.
+      {
+        name: "failed, no row",
+        rows: [],
+        read: readFailed("git is not on the path"),
+        is: "unknown",
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const one of rows)
+      expect(
+        surenessOf({ rows: one.rows, read: one.read }, ROOT),
+        one.name,
+      ).toBe(one.is);
   });
 });

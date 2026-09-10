@@ -717,7 +717,7 @@ kendex owns the manifest's FORMAT and not its bytes. `manifest::fold` edits the 
 
 `project_changes_scan` reads what each tracked project has waiting, on the ordinary refresh path — start-up, focus, an explicit scan, and behind every write. It opens nothing, and it runs whatever the offer setting says: that setting decides whether kendex asks a question, not whether a person may see their own project.
 
-`ui/src/stores/project-changes.ts` holds the answer. The project's card and the project's own view draw one line from it (`ChangesLine`), and `ui/src/pages/project-changes.tsx` is the review behind that line: the project, its branch, its folder, the changed files with the shared file/diff viewer, and the two actions. `commit_offer_open` opens the commit dialog from there, ignoring the offer setting because the reader is asking.
+`ui/src/stores/project-changes.ts` holds the answer, and `surenessOf` is the one place that tells its four states apart: no read has settled, the row is a fact, the row is the last kendex could check, and nothing is known about this project at all. Every surface reads them from there, because drawing any two the same is how a project kendex could not check comes to look like a clean one. The project's card and the project's own view draw one line from it (`ChangesLine`), and `ui/src/pages/project-changes.tsx` is the review behind that line: the project, its branch, its folder, the changed files with the shared file/diff viewer, and the two actions. `commit_offer_open` opens the commit dialog from there, ignoring the offer setting because the reader is asking.
 
 Dismissing an offer lasts. Nothing puts a project's changes back in front of a reader until a write changes them again or the reader opens the review.
 
@@ -726,6 +726,10 @@ Dismissing an offer lasts. Nothing puts a project's changes back in front of a r
 `commit_offer::restore` writes the working tree and nothing else. A path the last commit holds gets that version back; a path it does not hold — one kendex added — moves to the trash, because removal never deletes. `git restore --worktree` leaves the index alone, so a change the person staged survives. `.kendex-generated.json` travels with a restore that changes which paths exist, and the confirmation says its own uncommitted change goes back too.
 
 A failure part-way carries what it had already written. `git restore` lands whole or not at all; the removals are one path at a time, so a failure among them reports the restored paths and the removals already made rather than a bare refusal.
+
+Whether the repository has a commit is asked of git's exit status, not of whether a read printed anything: `git rev-parse --verify --quiet HEAD` exits 1 for an unborn `HEAD` and 128 for a repository git cannot read, and only the first answers the question. Taking every failure for an unborn `HEAD` would put every chosen path in the removal set and take away the files a person asked to put back.
+
+The plan also names the paths the next write into the project would write again. A restore moves the working tree; it does not change what kendex is asked to render, and kendex never undoes the commit of a declaration. So a render taken away comes back, and one put back to its committed bytes is written over — the plan says which, because the way to stop kendex rendering a path is to change the package or the manifest, which is a different operation.
 
 `project_changes_restore_plan` states the exact effect before anything runs, and `project_changes_restore` derives it again when it does.
 

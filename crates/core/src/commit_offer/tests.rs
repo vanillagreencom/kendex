@@ -1931,3 +1931,122 @@ fn failed_read() -> Failed {
         refusal: Refusal::Said(vec!["git said no".to_owned()]),
     }
 }
+
+/// The born question is asked of the exit status, and only git's own "no
+/// commit yet" exit answers it.
+///
+/// A read that took every non-zero exit for an unborn `HEAD` — which is what
+/// `git::read`, and so `previous_head`, does — would put every chosen path
+/// in `removed` and trash the files the person asked to put back. The three
+/// states are checked against real git rather than assumed: 0 where a commit
+/// resolves, 1 where the repository has none, and 128 with git's words where
+/// it is not a repository at all.
+#[test]
+fn only_gits_own_unborn_exit_answers_the_born_question() {
+    let repo = Repo::new(&[(OWNED[0], "one\n")]);
+    assert!(
+        git::born(&repo.root).unwrap(),
+        "a commit did not read as born"
+    );
+
+    let empty = Repo::empty();
+    assert!(
+        !git::born(&empty.root).unwrap(),
+        "an unborn HEAD did not read as unborn"
+    );
+
+    // Not a repository: git exits 128 and says so. Answering `false` here is
+    // the fail-open this rule exists to stop.
+    let tmp = tempfile::tempdir().unwrap();
+    let plain = crate::test_util::rooted(&tmp);
+    let failed = git::born(&plain).unwrap_err();
+    assert_eq!(failed.step, Step::Read);
+    assert!(!failed.said().is_empty(), "git said nothing");
+}
+
+/// A repository git cannot read refuses rather than taking the files away.
+/// The refusal here comes from the status read the plan is built from, which
+/// is the first thing to meet a broken `HEAD`; the rule that keeps the born
+/// read itself from answering for one is pinned above.
+#[test]
+fn a_repository_git_cannot_read_refuses_rather_than_trashing() {
+    let home = tempfile::tempdir().unwrap();
+    let env = env_in(&crate::test_util::rooted(&home));
+    let repo = Repo::new(&[(OWNED[0], "committed\n")]);
+    let generated = repo.generated(&[OWNED[0]], &[]);
+    repo.write(OWNED[0], "rewritten\n");
+    // A `HEAD` naming an object the store does not hold: git exits 128 on
+    // every read of it rather than 1, which is its "no commit yet" answer.
+    fs::write(repo.root.join(".git/HEAD"), format!("{}\n", "0".repeat(40))).unwrap();
+
+    let chosen: BTreeSet<String> = [OWNED[0].to_owned()].into_iter().collect();
+    let failure = restore(&env, &repo.scope(), &generated, &chosen).unwrap_err();
+    assert_eq!(failure.failed.step, Step::Read);
+    assert!(!failure.failed.said().is_empty(), "git said nothing");
+    assert!(failure.done.empty(), "{:?}", failure.done);
+    assert!(
+        !failure.failed.said().iter().any(|line| line.is_empty()),
+        "an empty line stood in for git's words"
+    );
+    // The file it was asked to put back is still there, unmoved.
+    assert_eq!(
+        fs::read_to_string(repo.root.join(OWNED[0])).unwrap(),
+        "rewritten\n"
+    );
+    let trash = env.trash_dir();
+    assert!(
+        !trash.exists() || fs::read_dir(&trash).unwrap().next().is_none(),
+        "a file was trashed"
+    );
+}
+
+/// An unborn `HEAD` is still an answer, not a failure: a first kendex write
+/// in a fresh `git init` reaches it, and everything pending there is a file
+/// the restore takes away.
+#[test]
+fn an_unborn_head_still_answers_and_the_restore_takes_the_files_away() {
+    let home = tempfile::tempdir().unwrap();
+    let env = env_in(&crate::test_util::rooted(&home));
+    let repo = Repo::empty();
+    repo.write(OWNED[0], "written by kendex\n");
+    let generated = repo.generated(&[OWNED[0]], &[]);
+
+    let chosen: BTreeSet<String> = [OWNED[0].to_owned()].into_iter().collect();
+    let done = restore(&env, &repo.scope(), &generated, &chosen).unwrap();
+    assert_eq!(done.removed, [OWNED[0].to_owned()]);
+    assert!(done.restored.is_empty(), "{:?}", done.restored);
+    assert!(!repo.root.join(OWNED[0]).exists());
+}
+
+/// A restore moves the working tree; it does not change what kendex is asked
+/// to render. A render taken away comes back the next time kendex writes
+/// here, so the plan names it rather than promising a removal that does not
+/// last. kendex cannot revert the commit of the declaration that asks for it.
+#[test]
+fn the_plan_names_what_the_next_write_would_put_back() {
+    let repo = Repo::new(&[(OWNED[0], "committed\n")]);
+    let generated = repo.generated(&[OWNED[0], OWNED[1]], &[]);
+    repo.write(OWNED[0], "rewritten\n");
+    repo.write(OWNED[1], "added\n");
+
+    let chosen: BTreeSet<String> = [OWNED[0].to_owned(), OWNED[1].to_owned()]
+        .into_iter()
+        .collect();
+    let plan = restore_plan(&repo.scope(), &generated, &chosen).unwrap();
+    // Both: the one being removed and the one being written back over.
+    assert_eq!(
+        plan.rerendered,
+        [OWNED[1].to_owned(), OWNED[0].to_owned()]
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+    );
+
+    // A path kendex has stopped rendering is not among them: nothing will
+    // write it again, so the removal lasts and the plan says nothing.
+    let dropped = repo.generated(&[OWNED[0]], &[]);
+    let only_gone: BTreeSet<String> = [OWNED[1].to_owned()].into_iter().collect();
+    let plan = restore_plan(&repo.scope(), &dropped, &only_gone).unwrap();
+    assert!(plan.rerendered.is_empty(), "{:?}", plan.rerendered);
+}

@@ -19,6 +19,14 @@ export const REVIEW_CHANGES_LABEL = "Review changes";
  *  nothing is known about this project — so the line says so and offers the
  *  read again. */
 export const COULD_NOT_CHECK = "Could not check for changes";
+/** A number from the last read that landed, sitting under a read that
+ *  failed. Said beside the number rather than instead of it: it is still the
+ *  best answer available, and it is not a confirmed one. */
+export const LAST_CHECKED_NOTE = "last kendex could check";
+/** The same fact on a card's badge, where there is no room beside a number
+ *  and the words go on hover instead. */
+export const lastCouldCheck = () =>
+  "kendex could not check this project just now. What the card shows is the last it could check.";
 
 export const projectChangesTitle = (project: string) => `Changes in ${project}`;
 export const PROJECT_CHANGES_STANDING =
@@ -80,6 +88,13 @@ export const REMOVED_NOTE =
 export const ADDED_LABEL = "Taken in as well";
 export const ADDED_NOTE =
   "This records what kendex renders here. Left out, the next write into this project would put the files you just restored straight back. Its own uncommitted change goes back with it.";
+/** A restore moves the working tree; it does not change what kendex is asked
+ *  to render, and kendex never undoes a commit of the file that asks for it.
+ *  Saying the effect is a removal without saying this promises something
+ *  that does not last. */
+export const RERENDERED_LABEL = "kendex writes these again";
+export const RERENDERED_NOTE =
+  "kendex still renders these, so the next time it writes in this project they come back. Putting a file back changes the working tree; it does not change what kendex was asked to render. To stop kendex rendering one, change the package or the project's kendex.toml.";
 export const DROPPED_LABEL = "Left out";
 export const DROPPED_NOTE =
   "These have changed back since kendex looked; there is nothing to put back.";

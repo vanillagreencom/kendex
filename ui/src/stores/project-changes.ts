@@ -93,6 +93,32 @@ export const changesFor = (
   root: string,
 ): ProjectChanges | null => rows.find((row) => row.root === root) ?? null;
 
+/** How sure a surface may be about one project.
+ *
+ *  Four states, and drawing any two of them the same is how a project kendex
+ *  could not check comes to look like a clean one:
+ *
+ *  - `waiting`: no read has settled. Nothing is drawn — a notice here would
+ *    flash on every start-up, and the answer is coming.
+ *  - `known`: the last landed read covered this project and its own read of
+ *    it ran. The row is a fact.
+ *  - `stale`: there is a row, and the read that would have confirmed it
+ *    failed. It is the last kendex could check, not what is there now.
+ *  - `unknown`: a read has settled and this project has no row it can
+ *    stand on — the read did not cover it, or its own read of the project
+ *    refused. Nothing may be claimed about it at all. */
+export type Sureness = "waiting" | "known" | "stale" | "unknown";
+
+export function surenessOf(
+  state: { rows: ProjectChanges[]; read: ReadState },
+  root: string,
+): Sureness {
+  if (state.read.status === "pending") return "waiting";
+  const row = changesFor(state.rows, root);
+  if (row === null || row.state.kind === "unreadable") return "unknown";
+  return state.read.status === "failed" ? "stale" : "known";
+}
+
 /** How many files kendex owns are waiting in this project, or null where
  *  no number can be given — the read has not covered it, or it failed. */
 export function pendingCount(row: ProjectChanges | null): number | null {

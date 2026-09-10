@@ -47,9 +47,21 @@ pub struct RestorePlan {
     /// or kendex no longer owns them.
     pub dropped: Vec<String>,
     /// Paths not named that were taken in anyway, because what is being
-    /// restored cannot stand without them: the inventory and the manifest
-    /// that declare which paths kendex renders here.
+    /// restored cannot stand without it: the inventory that records which
+    /// paths kendex renders here.
     pub added: Vec<String>,
+    /// Paths this restore changes that the next write into this project
+    /// would write again, because kendex still renders them.
+    ///
+    /// A restore moves the working tree. It does not change what kendex is
+    /// asked to render, and it cannot undo a commit of the declaration that
+    /// asks for it — kendex never moves a ref backwards. So a render taken
+    /// away here comes back the next time kendex writes in this project,
+    /// and one put back to its committed bytes is written over. Naming them
+    /// is the whole of what kendex can do about it: the way to stop one is
+    /// to change the package or the project's manifest, which is a
+    /// different operation and says so.
+    pub rerendered: Vec<String>,
 }
 
 impl RestorePlan {
@@ -107,10 +119,30 @@ pub fn restore_plan(
             .collect(),
     };
     let whole: BTreeSet<String> = taken.iter().chain(&added).cloned().collect();
-    let born = git::previous_head(&scan.root)?.is_some();
+    // What this plan still renders. A path in it is one the next write puts
+    // back or writes over, whatever this restore does to the working tree.
+    let rendered: BTreeSet<String> = generated
+        .whole
+        .iter()
+        .filter_map(|path| {
+            path.strip_prefix(&scan.root)
+                .ok()
+                .map(crate::paths::slashed)
+        })
+        .collect();
+    let rerendered: Vec<String> = whole
+        .iter()
+        .filter(|path| rendered.contains(*path))
+        .cloned()
+        .collect();
+    // Asked of the exit status, so a repository git could not read refuses
+    // rather than answering "no commit" — which would put every chosen path
+    // in `removed` and trash the files the person asked to put back.
+    let born = git::born(&scan.root)?;
     let mut plan = RestorePlan {
         dropped,
         added,
+        rerendered,
         ..RestorePlan::default()
     };
     for path in whole {
@@ -191,6 +223,7 @@ pub fn restore(
     // reports them alongside the removals that had already gone.
     let mut done = RestorePlan {
         restored: plan.restored.clone(),
+        rerendered: plan.rerendered.clone(),
         ..RestorePlan::default()
     };
     let stopped = |done: &RestorePlan, failed: Failed| {

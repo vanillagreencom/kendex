@@ -819,6 +819,12 @@ pub struct RestoreEffect {
     /// Paths not named that go with them anyway, because what is being put
     /// back cannot stand without them.
     pub added: Vec<String>,
+    /// Paths this changes that the next write into the project would write
+    /// again, because kendex still renders them. A restore moves the working
+    /// tree and does not change what kendex is asked to render, so saying
+    /// the effect is a removal without saying this would promise something
+    /// that does not last.
+    pub rerendered: Vec<String>,
 }
 
 impl From<RestorePlan> for RestoreEffect {
@@ -828,6 +834,7 @@ impl From<RestorePlan> for RestoreEffect {
             removed: plan.removed,
             dropped: plan.dropped,
             added: plan.added,
+            rerendered: plan.rerendered,
         }
     }
 }

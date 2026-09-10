@@ -6,6 +6,7 @@ import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
   COULD_NOT_CHECK,
   changesToReview,
+  LAST_CHECKED_NOTE,
   REVIEW_CHANGES_LABEL,
 } from "@/lib/copy-project-changes";
 import { READ_LANDED, READ_PENDING, readFailed } from "@/lib/read-state";
@@ -132,5 +133,21 @@ describe("a project the landed read did not cover", () => {
     await settle();
     expect(host.textContent).toContain(COULD_NOT_CHECK);
     expect(host.textContent).toContain(TRY_AGAIN_LABEL);
+  });
+});
+
+// A row from the last landed read, under a read that has since failed, is
+// the last kendex could check. Drawing the number bare would present it as
+// a fact; hiding it would lose the best answer there is.
+describe("a row a failed read could not confirm", () => {
+  it("keeps the number and heads it as unconfirmed", async () => {
+    useProjectChangesStore.setState({
+      rows: [pending(["a.md", "b.md"])],
+      read: readFailed("git is not on the path"),
+    });
+    const host = mount(<ChangesLine root={ROOT} />);
+    await settle();
+    expect(host.textContent).toContain(changesToReview(2));
+    expect(host.textContent).toContain(LAST_CHECKED_NOTE);
   });
 });

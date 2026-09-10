@@ -3495,6 +3495,14 @@ export type RestoreEffect = {
 	 *  back cannot stand without them.
 	 */
 	added: string[],
+	/**
+	 *  Paths this changes that the next write into the project would write
+	 *  again, because kendex still renders them. A restore moves the working
+	 *  tree and does not change what kendex is asked to render, so saying
+	 *  the effect is a removal without saying this would promise something
+	 *  that does not last.
+	 */
+	rerendered: string[],
 };
 
 /**
