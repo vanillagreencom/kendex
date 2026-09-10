@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Draft_Serialize, Template_Serialize } from "@/bindings";
+import type {
+  AppSettings,
+  Draft_Serialize,
+  Template_Serialize,
+} from "@/bindings";
 import { commands } from "@/bindings";
 import { AddToTemplateDialog } from "@/components/templates/add-to-template-dialog";
 import { CreateTemplateDialog } from "@/components/templates/create-template-dialog";
@@ -20,6 +24,8 @@ import {
 import { membersFor } from "@/lib/template-members";
 import { useInstallFlow } from "@/stores/install-flow";
 import { useNavStore } from "@/stores/nav";
+import { useScanStore } from "@/stores/scan";
+import { useSettingsStore } from "@/stores/settings";
 import { useTemplatesStore } from "@/stores/templates";
 import { mount, settle } from "@/test/dom";
 
@@ -37,10 +43,18 @@ vi.mock("@/bindings", () => ({
     scanMachine: vi.fn().mockResolvedValue({ status: "ok", data: null }),
     auditAll: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
-    commitOfferScan: vi.fn().mockResolvedValue({ status: "ok", data: null }),
+    // A scan that found nothing to offer, which is what the command
+    // answers with: `commitOfferScan` returns a reading, never null, and
+    // a stand-in that answered null would be a shape no producer emits.
+    commitOfferScan: vi
+      .fn()
+      .mockResolvedValue({ status: "ok", data: { offers: [], flagged: [] } }),
   },
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+
+/** The project every case here installs into or reads a draft from. */
+const ACME_ROOT = "/work/acme";
 
 const RUST_SERVICE: Template_Serialize = {
   name: "Rust service",
@@ -116,6 +130,25 @@ beforeEach(() => {
   });
   useNavStore.setState({ page: "library", templateName: null, history: [] });
   useInstallFlow.setState({ ask: null, outcome: null, running: false });
+  // A registered project whose folder a scan opened. Both halves are what
+  // makes a place a destination: an install is aimed only at a folder
+  // reading found, so a case that seeds the picked places and not the
+  // reading behind them asks to write somewhere this machine never
+  // confirmed, and the flow offers nothing.
+  useSettingsStore.setState({
+    settings: { projects: [ACME_ROOT] } as AppSettings,
+  });
+  useScanStore.setState({
+    scanning: false,
+    error: null,
+    result: {
+      harnesses: [],
+      items: [],
+      warnings: [],
+      missingProjects: [],
+      readProjects: [ACME_ROOT],
+    },
+  });
   vi.mocked(commands.templatesList).mockResolvedValue({
     status: "ok",
     data: [],
@@ -278,7 +311,7 @@ describe("installing a template into a place", () => {
         stopped: null,
       },
     });
-    const acme = { scope: "project" as const, root: "/work/acme" };
+    const acme = { scope: "project" as const, root: ACME_ROOT };
     mount(<InstallTemplateDialog into={acme} open onOpenChange={() => {}} />);
     await settle();
 
@@ -313,7 +346,7 @@ describe("installing a template into a place", () => {
       status: "error",
       error: "skill 'house-style' is not available",
     });
-    const acme = { scope: "project" as const, root: "/work/acme" };
+    const acme = { scope: "project" as const, root: ACME_ROOT };
     mount(<InstallTemplateDialog into={acme} open onOpenChange={() => {}} />);
     await settle();
     await act(async () => button(document, "Install").click());
@@ -405,7 +438,7 @@ describe("a template install that stopped part-way", () => {
         stopped: "skill 'house-style' is already here with different bytes",
       },
     });
-    const acme = { scope: "project" as const, root: "/work/acme" };
+    const acme = { scope: "project" as const, root: ACME_ROOT };
     mount(<InstallTemplateDialog into={acme} open onOpenChange={() => {}} />);
     await settle();
     await act(async () => button(document, "Install").click());
