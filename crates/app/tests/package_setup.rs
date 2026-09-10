@@ -111,18 +111,23 @@ fn the_setup_block_is_the_install_s_own_disclosure() {
 /// and no file the repository happens to hold may license one.
 ///
 /// The whole trust rule, planted rather than argued. Every path the
-/// package declares is on disk — its helper and all three hook files,
-/// exactly as a repository armed by another tool or by a hostile clone's
-/// own installer would carry them — and its `--check` is executable.
-/// kendex never armed this effect here, so nothing runs.
+/// package declares is on disk, exactly as a repository armed by another
+/// tool or by a hostile clone's own installer would carry them, and its
+/// `--check` is executable. kendex never armed this effect here, so
+/// nothing runs.
 ///
 /// The declared paths are planted because a licence read off one of them
-/// would pass here. Only a record kendex wrote itself is one.
+/// would pass here. Only a record kendex wrote itself is one. The set is
+/// read off the declaration the install loaded, so a path added to it is
+/// planted too, and the plant is checked against that declaration.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn no_file_the_repository_holds_licenses_the_checkout_s_scripts() {
     let f = fixture();
-    install_skills(&f, &["commit-guards"], None);
+    let installed = install_skills(&f, &["commit-guards"], None);
+    let [offer] = installed.repo_effects.shown.as_slice() else {
+        panic!("one offer: {:?}", installed.repo_effects);
+    };
     // The package's own checker, replaced with one that records having
     // run. A clone's scripts are whatever its author wrote.
     let checker = f
@@ -135,16 +140,26 @@ fn no_file_the_repository_holds_licenses_the_checkout_s_scripts() {
     )
     .unwrap();
     fs::set_permissions(&checker, fs::Permissions::from_mode(0o755)).unwrap();
-    // Every path the declaration lists, present and looking armed.
-    for written in [
-        HELPER,
-        ".git/hooks/pre-commit",
-        ".git/hooks/commit-msg",
-        ".git/hooks/pre-push",
-    ] {
+    // Every path the declaration lists, present and looking armed. The
+    // declaration's own repo-relative paths, under the project, rather
+    // than the disclosure's absolute lines: the claim is about what the
+    // package declares, and it must still name the helper, or the plant
+    // is empty and this proves nothing.
+    let declared = &offer.declared.effects.writes;
+    assert!(
+        declared.iter().any(|written| written == HELPER),
+        "the declaration no longer names the helper: {declared:?}"
+    );
+    for written in declared {
         let path = f.project.join(written);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "#!/bin/sh\n").unwrap();
+    }
+    for written in declared {
+        assert!(
+            f.project.join(written).is_file(),
+            "declared path not planted: {written}"
+        );
     }
 
     assert_eq!(
