@@ -36,7 +36,7 @@ The settings editor writes project values to `.pi/settings.json`. The default us
 Open `/extensions:settings`; settings appear under the **QOL** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted. `glyphStyle` picks `unicode` or `ascii` symbols, and `@vanillagreen/pi-tool-renderer`'s `globalGlyphStyleOverride` wins when set.
 
 - `enabled`: package toggle for everything below.
-- Statusline and editor: `statusline.enabled`, `replaceFooter`, `compactPrompt`, `showSessionNameTitle`, `showSessionNameWindow`, `inputBottomPaddingLines`, `gitRefreshTimeoutMs`, `showDirtyMarker`, `newlineOnShiftEnter`, `newlineFallbackKey`, `pendingQueue.asciiGreen`, `showImageChips`, `showAttachmentCountInStatus`.
+- Statusline and editor: `statusline.enabled`, `statusline.showAccount`, `replaceFooter`, `compactPrompt`, `showSessionNameTitle`, `showSessionNameWindow`, `inputBottomPaddingLines`, `gitRefreshTimeoutMs`, `showDirtyMarker`, `newlineOnShiftEnter`, `newlineFallbackKey`, `pendingQueue.asciiGreen`, `showImageChips`, `showAttachmentCountInStatus`.
 - Commands: `enableSessionNameCommand`, `enableHandoffCommand`, `enableScheduleCommand`, `enableContextCommand`, `handoffReviewPrompt`.
 - Session naming: `sessionAutoRename.*` (model, fallback model, deterministic fallback, prefix, prompt, limits, notify, debug).
 - Session search: `sessionSearch.*` (shortcut, result and row limits, snippets, overlay width, cache TTL, summary model and limits).

@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- The statusline can name the account a turn bills to. When the active model comes from the Claude bridge, the email signed in to the session's `CLAUDE_CONFIG_DIR` is appended to the row; a gateway, API-key or local model shows nothing, because the Claude directory does not name its payer. The new `statusline.showAccount` setting turns the segment off; it defaults to on.
+
 ### 2.0.1
 
 - Pi 0.85.1 parity: the shared summarizer rejects a summary whose generation stopped at the token cap, with the error "Summary generation hit the token cap and the summary is incomplete", as Pi's own compaction and branch-summary generators do. An incomplete summary no longer becomes the continuation checkpoint.
