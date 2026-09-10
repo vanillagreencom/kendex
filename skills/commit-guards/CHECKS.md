@@ -20,10 +20,11 @@ Comment leaders: `//`, `#`, `;`, `/*`, `<!--`. A marker immediately preceded by 
 A tracked file a change puts over `COMMIT_GUARDS_BYTE_CEILING_KB` (KB = 1024 bytes) fails; size is the blob's object size. An existing file already over the ceiling may stay the same size or shrink, but may not grow. Exempt by exact basename: `Cargo.lock`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `bun.lockb`, `flake.lock`, `poetry.lock`, `uv.lock`, `Pipfile.lock`, `Gemfile.lock`, `composer.lock`, `go.sum`, `gradle.lockfile`, `packages.lock.json`, `Package.resolved`. Asset trees go in `COMMIT_GUARDS_BYTE_EXCLUDES`, overridden by `--excludes FILE`.
 
 - `--staged` (default): files added, modified or type-changed in the staged diff, renames held to exact content.
-- `--base REF`: files added, modified or type-changed since the merge-base with REF.
-- `--all`: every tracked file.
+- `--base REF`: files added, modified or type-changed since the merge-base with REF — three dots, so the baseline is the blob REF and HEAD share.
+- `--against REF`: the same files between REF's own tree and HEAD — two dots, so the baseline is REF's own blob. Where REF is an ancestor of HEAD the two scopes agree. Where they have diverged they do not, and only this one measures what landing HEAD at REF would do to REF: a file over the ceiling at the shared ancestor, smaller at REF and larger at HEAD, is a shrink to `--base` and growth to `--against`.
+- `--all`: every tracked file. No source blob, so no tighten-only baseline: an existing oversized file fails this scope even where it holds or shrinks.
 
-The batch names the scope: `commit-guards all` hands the lane `--all`, `all --base REF` hands `--base REF`, `all --staged` hands `--staged`. A copy is an addition; symlinks and gitlinks are not sized.
+The batch names the scope: `commit-guards all` hands the lane `--all`, `all --base REF` hands `--base REF`, `all --against REF` hands `--against REF`, `all --staged` hands `--staged`. A copy is an addition; symlinks and gitlinks are not sized.
 
 ## suppression-ban
 

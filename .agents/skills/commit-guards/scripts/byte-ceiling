@@ -9,7 +9,13 @@
 #                       past the ceiling arrives the same way a new one does,
 #                       so the staged lane judges both.
 #   --base REF          files added, changed, or type-changed since the
-#                       merge-base with REF (CI on a PR)
+#                       merge-base with REF (CI on a PR): three dots, so it
+#                       answers what this branch ADDS over a shared ancestor
+#   --against REF       the same files between REF's own tree and HEAD: two
+#                       dots, so it answers what landing this WOULD DO TO
+#                       REF. Where REF is an ancestor of HEAD the two agree;
+#                       where the two have diverged they do not, and only
+#                       this one measures the effect on REF
 #   --all               every tracked file (full sweep)
 #
 # Sizes are OBJECT sizes (`git cat-file -s` of each diff blob): the bytes that
@@ -32,14 +38,22 @@ source "$SCRIPT_DIR/lib/settings.sh"
 usage() {
   gg_message usage "$GG_CHECK" "Command usage follows."
   cat <<'EOF'
-usage: byte-ceiling [--staged | --base REF | --all] [--excludes FILE]
+usage: byte-ceiling [--staged | --base REF | --against REF | --all] [--excludes FILE]
 
 Tracked files a change puts over the byte ceiling fail. An existing file
 already over the ceiling may stay the same size or shrink, but may not grow.
 --staged (default) checks the staged additions and changes; --base REF checks
-additions and changes since the merge-base with REF; --all sweeps every
-tracked file. Lockfiles are exempt built-in; declared asset trees live in the
-excludes list.
+additions and changes since the merge-base with REF; --against REF checks
+them between REF's own tree and HEAD; --all sweeps every tracked file.
+Lockfiles are exempt built-in; declared asset trees live in the excludes list.
+
+--base and --against differ only where REF and HEAD have diverged, and there
+the difference decides. --base asks what this branch adds over the ancestor
+the two share, which is the question CI asks of a pull request. --against
+asks what putting HEAD where REF is would do to REF, which is the question a
+push asks. A file already over the ceiling at the shared ancestor, smaller at
+REF and larger at HEAD, is a shrink to the first question and growth to the
+second.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
@@ -67,6 +81,16 @@ while [ $# -gt 0 ]; do
     --base=*)
       MODE="base"
       BASE_REF="${1#--base=}"
+      ;;
+    --against)
+      [ $# -ge 2 ] || gg_fail argument-missing "--against" "--against requires a ref"
+      shift
+      MODE="against"
+      BASE_REF="$1"
+      ;;
+    --against=*)
+      MODE="against"
+      BASE_REF="${1#--against=}"
       ;;
     --excludes)
       [ $# -ge 2 ] || gg_fail argument-missing "--excludes" "--excludes requires a path"
@@ -133,7 +157,19 @@ case "$MODE" in
     ;;
   base)
     git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null 2>"$GG_TMP/dependency.err" || gg_fail_cause base-ref "$BASE_REF" "$GG_TMP/dependency.err" "--base ref '$BASE_REF' does not name a commit"
+    # Three dots: the merge base, so the source blob is the one the two
+    # share. What this branch ADDS.
     git -c diff.renames=true diff --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT "$BASE_REF...HEAD" >"$GG_TMP/raw.z" 2>"$GG_TMP/dependency.err" || gg_fail_cause base-collect "$BASE_REF:$?" "$GG_TMP/dependency.err" "git diff $BASE_REF...HEAD failed collecting additions and changes (no merge base?)"
+    ;;
+  against)
+    git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null 2>"$GG_TMP/dependency.err" || gg_fail_cause against-ref "$BASE_REF" "$GG_TMP/dependency.err" "--against ref '$BASE_REF' does not name a commit"
+    # Two dots: REF's OWN tree, so the source blob is the one REF holds
+    # rather than the one it shares with HEAD. What landing this would DO to
+    # REF, which is the only reading under which the tighten-only baseline
+    # is REF's own file. Where the two have diverged, a file over the
+    # ceiling at the shared ancestor, smaller at REF and larger at HEAD, is
+    # a shrink to three dots and growth to this.
+    git -c diff.renames=true diff --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT "$BASE_REF..HEAD" >"$GG_TMP/raw.z" 2>"$GG_TMP/dependency.err" || gg_fail_cause against-collect "$BASE_REF:$?" "$GG_TMP/dependency.err" "git diff $BASE_REF..HEAD failed collecting additions and changes"
     ;;
   all)
     # ls-files -s emits one record per STAGE for an unmerged path, so the
@@ -207,6 +243,7 @@ done <"$GG_TMP/candidates.z"
 case "$MODE" in
   staged) SCOPE_DESC="staged file(s)" ;;
   base) SCOPE_DESC="file(s) added or changed since $BASE_REF" ;;
+  against) SCOPE_DESC="file(s) this change alters in $BASE_REF" ;;
   all) SCOPE_DESC="tracked file(s) (full sweep)" ;;
 esac
 

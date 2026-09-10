@@ -5,6 +5,8 @@
 #                                  over the whole tree
 #   commit-guards [all] --staged   the same batch at commit scope
 #   commit-guards [all] --base REF the same batch over the changes since REF
+#   commit-guards [all] --against REF   the same batch over what those changes
+#                                  would do to REF's own tree
 #   commit-guards CHECK [ARGS..]   run one check, flags passed through
 #
 # commit-msg reads a message, so it never runs in the batch — the commit-msg
@@ -32,21 +34,22 @@ BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-
 STAGED_SCOPED_CHECKS="todo-ban byte-ceiling md-format md-refs comments"
 # byte-ceiling is the one batch lane whose bare default is the commit scope,
 # so the full batch names its scope outright: --all with no flag, --base REF
-# when the batch is given one. A batch summary that listed it clean over a
-# scope it never read would be a verdict about nothing.
+# or --against REF when the batch is given one. A batch summary that listed it
+# clean over a scope it never read would be a verdict about nothing.
 FULL_SCOPED_CHECKS="byte-ceiling"
 
 usage() {
   gg_message usage "$GG_CHECK" "Command usage follows."
   cat <<EOF
-usage: commit-guards [all] [--staged | --base REF] | CHECK [ARGS...]
+usage: commit-guards [all] [--staged | --base REF | --against REF] | CHECK [ARGS...]
 
 Checks: $KNOWN_CHECKS
 
 With no argument (or 'all'), runs every check named by
 COMMIT_GUARDS_CHECKS (default: $BATCH_DEFAULT) over the whole tree:
 $FULL_SCOPED_CHECKS gets --all, the rest read the index by design.
---base REF hands $FULL_SCOPED_CHECKS --base REF instead (CI on a PR).
+--base REF hands $FULL_SCOPED_CHECKS --base REF instead (CI on a PR), and
+--against REF hands them --against REF (what the change does to REF's tree).
 --staged is passed to: $STAGED_SCOPED_CHECKS.
 Those checks apply their own commit scope. md-refs checks all configured
 documents for broken references, including unchanged callers.
@@ -65,7 +68,7 @@ if [ $# -ge 1 ]; then
       usage
       exit 0
       ;;
-    all | --staged | --base | --base=*) ;;
+    all | --staged | --base | --base=* | --against | --against=*) ;;
     *)
       CHECK="$1"
       shift
@@ -92,12 +95,22 @@ while [ $# -gt 0 ]; do
       SCOPE_MODE="base"
       BASE_REF="${1#--base=}"
       ;;
-    *) gg_fail argument-unknown "$1" "'all' takes only --staged or --base REF; invoke a single check to pass flags" ;;
+    --against)
+      [ $# -ge 2 ] || gg_fail argument-missing "--against" "--against requires a ref"
+      shift
+      SCOPE_MODE="against"
+      BASE_REF="$1"
+      ;;
+    --against=*)
+      SCOPE_MODE="against"
+      BASE_REF="${1#--against=}"
+      ;;
+    *) gg_fail argument-unknown "$1" "'all' takes only --staged, --base REF or --against REF; invoke a single check to pass flags" ;;
   esac
   SCOPE_FLAGS=$((SCOPE_FLAGS + 1))
   shift
 done
-[ "$SCOPE_FLAGS" -le 1 ] || gg_fail scope-conflict "$SCOPE_FLAGS" "--staged and --base name different scopes; pass one"
+[ "$SCOPE_FLAGS" -le 1 ] || gg_fail scope-conflict "$SCOPE_FLAGS" "--staged, --base and --against name different scopes; pass one"
 
 gg_repo_root_cd
 CHECKS="$(gg_setting COMMIT_GUARDS_CHECKS "$BATCH_DEFAULT")" || exit 2
@@ -134,6 +147,11 @@ for c in $CHECKS; do
     base)
       case " $FULL_SCOPED_CHECKS " in
         *" $c "*) scope=(--base "$BASE_REF") ;;
+      esac
+      ;;
+    against)
+      case " $FULL_SCOPED_CHECKS " in
+        *" $c "*) scope=(--against "$BASE_REF") ;;
       esac
       ;;
   esac

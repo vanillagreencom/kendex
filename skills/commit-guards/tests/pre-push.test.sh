@@ -132,9 +132,9 @@ scenario() { # VAR NAME REBASE(0|1) [SKILL-SOURCE] — VAR gets the repo path
   eval "$__v=\$r"
 }
 
-push_ref() { # REPO REFSPEC -> the run's one line on stdout
+push_ref() { # REPO REFSPEC [PUSH-FLAG] -> the run's one line on stdout
   local rc=0 out=""
-  out="$(git -C "$1" push origin "$2" 2>&1)" || rc=$?
+  out="$(git -C "$1" push ${3:+"$3"} origin "$2" 2>&1)" || rc=$?
   said "$rc" "$out"
 }
 
@@ -184,12 +184,12 @@ for row in \
   "a line landing on a tag is skipped, whatever its left side says|origin|HEAD $TIP refs/tags/v1 $ZERO|rc=0 pre-push: non-branch=refs/tags/v1;pre-push: result=0" \
   "a line landing on a note is skipped too|origin|refs/notes/commits $TIP refs/notes/commits $ZERO|rc=0 pre-push: non-branch=refs/notes/commits;pre-push: result=0" \
   "a branch this checkout is not on is refused, never passed|origin|refs/heads/elsewhere $SEED refs/heads/elsewhere $ZERO|rc=2 pre-push: not-head=refs/heads/elsewhere:<oid>;pre-push: result=2" \
-  "the remote's own oid is the base when this repository has that commit|origin|refs/heads/main $TIP refs/heads/main $SEED|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
-  "HEAD on the left still lands a branch, so it is judged|origin|HEAD $TIP refs/heads/main $SEED|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
-  "@ on the left is the same push under another spelling|origin|@ $TIP refs/heads/main $SEED|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
-  "a raw oid on the left still lands a branch, so it is judged|origin|$TIP $TIP refs/heads/main $SEED|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
+  "the remote's own oid is what the change is judged against|origin|refs/heads/main $TIP refs/heads/main $SEED|rc=0 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;pre-push: result=0" \
+  "HEAD on the left still lands a branch, so it is judged|origin|HEAD $TIP refs/heads/main $SEED|rc=0 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;pre-push: result=0" \
+  "@ on the left is the same push under another spelling|origin|@ $TIP refs/heads/main $SEED|rc=0 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;pre-push: result=0" \
+  "a raw oid on the left still lands a branch, so it is judged|origin|$TIP $TIP refs/heads/main $SEED|rc=0 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;pre-push: result=0" \
   "a ref line missing a field is refused, never announced as carrying nothing|origin|refs/heads/main $TIP refs/heads/main|rc=2 pre-push: ref-line-short=refs/heads/main;pre-push: result=2" \
-  "a second ref line at the same scope is not judged twice|origin|refs/heads/main $TIP refs/heads/main $SEED@@refs/heads/main $TIP refs/heads/mirror $SEED|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: scope-repeat=base:<oid>;pre-push: result=0" \
+  "a second ref line at the same scope is not judged twice|origin|refs/heads/main $TIP refs/heads/main $SEED@@refs/heads/main $TIP refs/heads/mirror $SEED|rc=0 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;pre-push: scope-repeat=against:<oid>;pre-push: result=0" \
   "a remote spelled as a URL matches no tracking ref, so the whole tree is the scope, and HEAD is named as the branch it resolves to|$CREDENTIAL_URL|HEAD $TIP refs/heads/main $ZERO|rc=0 pre-push: base-none=refs/heads/main;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0" \
   "no ref lines at all is stated, not silently clean|origin||rc=0 pre-push: no-refs=0;pre-push: result=0" \
   "the boundary stands where git pushes to the URL the tracking refs were fetched from|origin|refs/heads/main $TIP refs/heads/main $ZERO|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
@@ -342,6 +342,66 @@ scenario MUTATED mutated 1 "$MUTANT"
 assert_eq "must-fail: with the batch's verdict dropped, the same breach pushes" \
   "rc=0 pre-push: step=base:<oid>;byte-ceiling: oversized=big.md:1200:2:1;byte-ceiling: result=1:1:1:base:<oid>;pre-push: result=0" \
   "$(push_ref "$MUTATED" topic)"
+
+# ------------------------------------------------------ the destination
+#
+# A branch already on the remote, rewritten and force-pushed, which is how a
+# rebased branch reaches a remote and what `worktree push` does. The three
+# trees differ on purpose: the fork point carries the legacy file at 1800, the
+# destination shrank it to 1920, and the rewritten head carries 2040. Judged
+# from the ancestor the two share, 2160 to 2040 is a shrink and the ratchet
+# excuses it; judged against the destination's own tree, 1920 to 2040 is growth
+# and that is what the destination would receive.
+diverged() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose branch diverged from the remote's
+  local __v="$1" r="" fork=""
+  new_repo r "$2" "${3:-}"
+  # The legacy file predates the guard, so it is committed with none running.
+  block body 216 >"$r/big.md"
+  q git -C "$r" add kendex.settings.toml big.md
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: seed with a legacy oversized file"
+  fork="$(git -C "$r" rev-parse HEAD)"
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
+  # The destination's branch: shrunk, which the ratchet allows and the commit
+  # hook passes.
+  q git -C "$r" checkout -q -b topic
+  block body 192 >"$r/big.md"
+  q git -C "$r" add big.md
+  q git -C "$r" commit -q -m "feat: shrink it on the branch"
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
+  # The rewrite: back to the fork point and a different shrink, so the two have
+  # diverged and only a force push can land it.
+  q git -C "$r" reset -q --hard "$fork"
+  block body 204 >"$r/big.md"
+  q git -C "$r" add big.md
+  q git -C "$r" commit -q -m "feat: a different shrink on the rewritten branch"
+  eval "$__v=\$r"
+}
+
+DIVERGED=""
+diverged DIVERGED diverged
+assert_eq "a force push that would grow the destination's own file is refused" \
+  "rc=1 pre-push: step=against:<oid>;byte-ceiling: grew=big.md:1920:2040:2:1;byte-ceiling: result=1:1:1:against:<oid>;pre-push: result=1" \
+  "$(push_ref "$DIVERGED" topic --force-with-lease)"
+
+# The must-fail control: the same push judged from the ancestor the two share
+# rather than the destination's tree. 2160 to 2040 reads as a shrink, the
+# ratchet excuses it, and the destination's file grows from 1920 to 2040 under
+# a clean verdict.
+THREEDOT="$TMP/.threedot/commit-guards"
+mkdir -p "$(dirname "$THREEDOT")"
+cp -R "$SKILL_TEMPLATE" "$THREEDOT"
+THREEDOT_BEFORE="$(cat -- "$THREEDOT/scripts/pre-push")"
+sed -i.bak 's#judge "against:$remote_oid" "$ref" --against "$remote_oid"#judge "base:$remote_oid" "$ref" --base "$remote_oid"#' \
+  "$THREEDOT/scripts/pre-push"
+rm -f -- "$THREEDOT/scripts/pre-push.bak"
+assert_eq "the three-dot edit took" "rewritten" \
+  "$(if [ "$THREEDOT_BEFORE" = "$(cat -- "$THREEDOT/scripts/pre-push")" ]; then echo unchanged; else echo rewritten; fi)"
+
+THREEDOTTED=""
+diverged THREEDOTTED threedotted "$THREEDOT"
+assert_eq "must-fail: judged from the shared ancestor, that growth reads as a shrink and pushes" \
+  "rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
+  "$(push_ref "$THREEDOTTED" topic --force-with-lease)"
 
 printf '\n%s: %s passed, %s failed\n' "$gg_suite" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

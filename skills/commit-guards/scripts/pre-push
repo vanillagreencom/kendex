@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pre-push — the branch-scope guard chain, shaped for the git pre-push hook
-# (the installed .git/hooks/kendex-guards shim execs it): `commit-guards all
-# --base REF` over what each pushed branch adds to the remote.
+# (the installed .git/hooks/kendex-guards shim execs it): the commit-guards
+# batch over what each pushed branch would do to the remote.
 #
 # Why a lane here at all. Git runs no hook when it REPLAYS a commit — a
 # rebase, a cherry-pick, an autosquash — so a branch can arrive in a state no
@@ -30,9 +30,9 @@ usage() {
   cat <<'EOF'
 usage: pre-push REMOTE URL
 
-Runs the commit-guards batch over what each pushed branch adds to the remote:
-`commit-guards all --base REF`, so COMMIT_GUARDS_CHECKS still decides the
-lanes. Git passes the remote name and its URL as arguments and the ref lines
+Runs the commit-guards batch over what each pushed branch would do to the
+remote, so COMMIT_GUARDS_CHECKS still decides the lanes. Git passes the
+remote name and its URL as arguments and the ref lines
 `<local-ref> <local-oid> <remote-ref> <remote-oid>` on stdin. Wire it through
 the installed shim: `install-git-hooks --repo <root>`.
 
@@ -41,14 +41,19 @@ announced and skipped. What a line deposits on the remote decides that, never
 how its left side is spelled: `git push origin HEAD` lands a branch too. A
 line this lane cannot read is refused rather than skipped.
 
-The base is the remote's oid where this repository has that commit: git read
-that oid from the destination itself, and it is the only destination-bound
-evidence a pre-push hook is given. Otherwise the base is a best-effort LOCAL
-scope — what this branch adds over what this repository's refs for the remote
-last recorded — and not a claim about the destination. Those refs record a
-past fetch and nothing local dates them, so after a `git remote set-url` they
-still describe the previous repository and an oversized file can read there as
-pre-existing. With no base at all, the whole tree is the scope.
+Where the ref line carries a remote oid this repository holds, the batch is
+asked what landing HEAD there would DO to that tree: `--against`, two dots,
+against the oid git read from the destination's own advertisement. Three dots
+would answer what the branch adds over the ancestor the two share, which on a
+diverged or force-pushed branch excuses a file that in fact grows at the
+destination.
+
+Otherwise the scope is a best-effort LOCAL one — `--base`, what this branch
+adds over what this repository's refs for the remote last recorded — and not
+a claim about the destination. Those refs record a past fetch and nothing
+local dates them, so after a `git remote set-url` they still describe the
+previous repository and an oversized file can read there as pre-existing.
+With no base at all, the whole tree is the scope.
 
 Two refusals keep the verdict about the thing being pushed. A branch whose tip
 is not HEAD is refused: byte-ceiling is the only lane scoped to a commit range
@@ -163,22 +168,22 @@ tracking_describes_push() { # -> 0 when the tracking refs are this push URL's
   [ "$only" = "$PUSH_URL" ]
 }
 
-# What a pushed branch adds, as a ref the batch can diff from — and how much
-# that ref is worth, which is less than it looks.
+# The local boundary: what this branch adds over what this repository's refs
+# for the remote last recorded — and how much that is worth, which is less
+# than it looks.
 #
 # One thing a pre-push hook is handed is bound to the destination: the remote
 # oid on the ref line, which git read from the destination's own advertisement
-# moments earlier. Where it is non-zero and this repository holds the object,
-# the range is exactly what the destination lacks and byte-ceiling's baseline
-# is the destination's own blob. There is no second source of that evidence
-# short of a network call.
+# moments earlier. The caller uses that where it has it, and asks byte-ceiling
+# what landing HEAD there would DO to that tree. Nothing in this function is
+# that; there is no second source of destination evidence short of a network
+# call.
 #
-# Everything below it is LOCAL. A zero remote oid says the destination has no
-# such ref, and nothing here can say what it does have, so the boundary is a
-# best-effort local scope — what this branch adds over what this repository's
-# refs for the remote last recorded — and not a claim about the destination.
-# It is taken because it is usually right and the alternatives are worse, not
-# because it is sound.
+# So everything here is LOCAL, and reached only where the destination has no
+# such ref at all. Nothing here can say what it does have, so the boundary is
+# a best-effort local scope and not a claim about the destination. It is taken
+# because it is usually right and the alternatives are worse, not because it
+# is sound.
 #
 # The limitation that leaves, named here rather than left to be rediscovered:
 # those refs record a past fetch and nothing local dates them. After a
@@ -195,21 +200,12 @@ tracking_describes_push() { # -> 0 when the tracking refs are this push URL's
 # permanently refuse every new-branch push in exactly the repositories that
 # ratchet was written to accommodate. Giving `--all` a ratchet is
 # byte-ceiling's to do, not this lane's.
-resolve_base() { # VAR LOCAL-OID REMOTE-OID — VAR gets the base; 1 when there is none
-  local __v="$1" local_oid="$2" remote_oid="$3" status=0 line=""
-  # The destination's own answer first: the commit the remote ref is at. It is
-  # usable only where this repository actually has that object — git sends the
-  # oid it learned from the remote, which a shallow or freshly cloned checkout
-  # may never have fetched.
-  if ! zero_oid "$remote_oid" \
-    && git rev-parse --verify --quiet "$remote_oid^{commit}" >/dev/null 2>&1; then
-    eval "$__v=\$remote_oid"
-    return 0
-  fi
-  # Otherwise: what this branch adds over what those refs last recorded. The
-  # boundary commits of that range are the newest commits they carry, and any
-  # of them is a base the branch's own changes hang off — locally, on the
-  # terms set out above.
+local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
+  local __v="$1" local_oid="$2" status=0 line=""
+  # What this branch adds over what those refs last recorded. The boundary
+  # commits of that range are the newest commits they carry, and any of them
+  # is a base the branch's own changes hang off — locally, on the terms set
+  # out above.
   #
   # A remote spelled as a URL rather than as a name (`git push https://... main`)
   # matches no tracking refs, so nothing is excluded, the walk reaches the
@@ -366,8 +362,8 @@ while IFS=' ' read -r local_ref local_oid remote_ref remote_oid || [ -n "$local_
   ref=""
   shown_ref ref "$local_ref"
   # Fail closed on a branch this checkout is not standing on. Every lane but
-  # byte-ceiling reads the working tree or the index, and byte-ceiling's
-  # --base diffs REF...HEAD — so the batch judges HEAD and its work tree, and
+  # byte-ceiling reads the working tree or the index, and byte-ceiling's ref
+  # scopes end at HEAD — so the batch judges HEAD and its work tree, and
   # a verdict about them says nothing about a branch that is somewhere else.
   # Passing it silently is the one outcome this lane exists to refuse.
   if [ "$local_oid" != "$HEAD_OID" ]; then
@@ -379,8 +375,26 @@ while IFS=' ' read -r local_ref local_oid remote_ref remote_oid || [ -n "$local_
     had_errors=1
     continue
   fi
+  # The destination's own answer first: the commit the remote ref is at,
+  # usable only where this repository actually has that object — git sends the
+  # oid it learned from the remote, which a shallow or freshly cloned checkout
+  # may never have fetched.
+  #
+  # Asked with --against, two dots, because the question a push asks is what
+  # landing HEAD there would DO to that tree. Three dots would answer what
+  # this branch adds over the ancestor the two share, and on a branch that has
+  # diverged from the destination — every force push, which is how a rebased
+  # branch reaches a remote — those are different answers: a file over the
+  # ceiling at the ancestor, smaller at the destination and larger at HEAD,
+  # reads as a shrink to the first and as growth to the second, and the second
+  # is what the destination gets.
+  if ! zero_oid "$remote_oid" \
+    && git rev-parse --verify --quiet "$remote_oid^{commit}" >/dev/null 2>&1; then
+    judge "against:$remote_oid" "$ref" --against "$remote_oid"
+    continue
+  fi
   base=""
-  if resolve_base base "$local_oid" "$remote_oid"; then
+  if local_boundary base "$local_oid"; then
     judge "base:$base" "$ref" --base "$base"
   else
     # No base this lane can vouch for: either nothing on this branch has ever
