@@ -43,8 +43,6 @@ describe("the names in an available package's facts column", () => {
         marketplace="kit"
         repo={null}
         view={view(bundles)}
-        selectedFile={null}
-        onSelectFile={() => {}}
         onOpenMarketplace={onOpenMarketplace}
         onOpenBundle={onOpenBundle}
       />,

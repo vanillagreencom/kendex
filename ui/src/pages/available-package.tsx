@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { commands, type PackageView } from "@/bindings";
+import { FileBrowser } from "@/components/files/file-browser";
+import { packageFileEntries } from "@/components/files/package-file-rows";
 import { MarkdownView } from "@/components/markdown-view";
 import { AvailableAside } from "@/components/marketplaces/available-aside";
 import { CatalogFilePreview } from "@/components/marketplaces/catalog-file-preview";
@@ -8,8 +10,15 @@ import { RepoAction } from "@/components/marketplaces/repo-action";
 import { useCatalog } from "@/components/marketplaces/use-catalog";
 import { PageHeader } from "@/components/page-header";
 import { SafetyPanel } from "@/components/safety-panel";
+import { SectionHeading } from "@/components/section";
 import { TagBadges } from "@/components/tag-badge";
 import { Button } from "@/components/ui/button";
+import {
+  FILE_TREE_LABEL,
+  FILES_TAB,
+  NO_README_NOTE,
+  PICK_A_FILE_NOTE,
+} from "@/lib/copy-files";
 import { INSTALL_ACTION, justThisLabel } from "@/lib/copy-install";
 import { recordsUnreadable } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
@@ -88,6 +97,11 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   // meet that same record — so the page says why in place of the button
   // rather than letting a raw engine error stand in for the reason.
   const recordsUnknown = view !== null && recordsUnreadable(view.preview.state);
+
+  // The tree's rows say what the installed package's Files tab says about
+  // the same files, through the same mapper: each file's size, and the
+  // readme marker on the one the preview opens on.
+  const fileEntries = packageFileEntries(view?.preview.files ?? []);
 
   const doInstall = () => {
     if (catalog.by !== "subscription") return;
@@ -178,34 +192,50 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
               {view ? (
                 <SafetyPanel result={view.safety} notes={view.safety.notes} />
               ) : null}
-              {view && selectedFile ? (
-                <section>
-                  <CatalogFilePreview
-                    catalog={catalog}
-                    kind={kind}
-                    name={name}
-                    path={selectedFile}
-                  />
-                </section>
-              ) : view?.preview.readme ? (
+              {view?.preview.readme ? (
                 <section>
                   <MarkdownView source={view.preview.readme} />
                 </section>
               ) : view && !error ? (
                 <p className="text-sm text-muted-foreground">
-                  This package carries no README.
+                  {NO_README_NOTE}
                 </p>
+              ) : null}
+              {/* The same tree and preview the installed package page's
+                  Files tab draws, so what a package is made of reads the
+                  same before and after it lands. */}
+              {view && view.preview.files.length > 0 ? (
+                <section className="space-y-3">
+                  <SectionHeading>{FILES_TAB}</SectionHeading>
+                  <FileBrowser
+                    entries={fileEntries}
+                    selected={selectedFile}
+                    onSelect={selectFile}
+                    label={FILE_TREE_LABEL}
+                  >
+                    {selectedFile ? (
+                      <CatalogFilePreview
+                        catalog={catalog}
+                        kind={kind}
+                        name={name}
+                        path={selectedFile}
+                      />
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        {PICK_A_FILE_NOTE}
+                      </p>
+                    )}
+                  </FileBrowser>
+                </section>
               ) : null}
             </div>
             <AvailableAside
               marketplace={marketplace}
               repo={repo}
               view={view}
-              selectedFile={selectedFile}
-              onSelectFile={selectFile}
               onOpenMarketplace={() => goToMarketplace(catalog)}
               onOpenBundle={(bundle) => goToBundle({ catalog, bundle })}
-            />{" "}
+            />
           </div>
         </div>
       </div>

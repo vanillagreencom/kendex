@@ -29,8 +29,3 @@ export function lineNumberWidth(diff: PackageDiff): number {
   }
   return widest;
 }
-
-/** Small diffs open expanded — the reader came to see them; long ones
- *  start folded so the file list is scannable first. */
-export const openByDefault = (diff: PackageDiff): boolean =>
-  diff.files.length <= 3;

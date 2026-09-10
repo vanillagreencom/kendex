@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 // What an update started from the package page leaves behind. The Projects
 // tab's Update commits through the updates store, which refreshes the scan
-// and the audit and knows nothing about this page's own three reads: its
+// and the audit and knows nothing about this page's own four reads: its
 // card follows the landed commit, and the Overview and the header must not
-// go on describing the copy the update replaced.
+// go on describing the copy the update replaced — its README included,
+// which is the Overview.
 //
 // One control, and the fixture it needs. The page's other tests are
 // `package.test.tsx`'s.
@@ -22,6 +23,7 @@ import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { UPDATE_LABEL } from "@/lib/copy";
 import { OVERVIEW_TAB } from "@/lib/copy-customize";
+import { FILES_TAB } from "@/lib/copy-files";
 import { PROJECTS_TAB, updateInLabel } from "@/lib/copy-projects";
 import { UPDATES_CHECKING } from "@/lib/copy-updates";
 import { READ_LANDED } from "@/lib/read-state";
@@ -40,6 +42,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
   commands: {
     packageMeta: vi.fn(),
     packageFiles: vi.fn(),
+    packageFile: vi.fn(),
     packageVersions: vi.fn(),
     packageReadme: vi.fn(),
     getManifest: vi.fn(),
@@ -257,9 +260,9 @@ describe("the package page while a check is running", () => {
 });
 
 /** The engine before and after the apply lands: core stamps the whole
- *  installation when the source hash moves, so the record, the timeline and
- *  the files move together. The standing read behind the write is the
- *  caller's, since that is what the two cases differ on. */
+ *  installation when the source hash moves, so the record, the timeline,
+ *  the files and the README move together. The standing read behind the
+ *  write is the caller's, since that is what the two cases differ on. */
 const engineWrites = () => {
   const write = { landed: false };
   vi.mocked(commands.packageMeta).mockResolvedValue({
@@ -284,6 +287,26 @@ const engineWrites = () => {
           isReadme: false,
         },
       ],
+    }),
+  );
+  vi.mocked(commands.packageReadme).mockImplementation(() =>
+    Promise.resolve({
+      status: "ok",
+      data: {
+        path: "SKILL.md",
+        content: write.landed ? "READS-AFTER" : "READS-BEFORE",
+        truncated: false,
+      },
+    }),
+  );
+  vi.mocked(commands.packageFile).mockImplementation((_s, _k, _n, path) =>
+    Promise.resolve({
+      status: "ok",
+      data: {
+        path,
+        content: write.landed ? "PANE-AFTER" : "PANE-BEFORE",
+        truncated: false,
+      },
     }),
   );
   vi.mocked(commands.packageUpdate).mockImplementation(() => {
@@ -324,30 +347,97 @@ const pressUpdate = async (host: HTMLElement) => {
   await openTab(host, OVERVIEW_TAB);
 };
 
+/** What the page says across the two tabs these reads feed: the version and
+ *  the README on the Overview, the files on Files. One string, so a row
+ *  names what changed without having to name which tab said it. Leaves the
+ *  page back on the Overview, where it opened. */
+const readsOn = async (host: HTMLElement) => {
+  const overview = host.textContent ?? "";
+  await openTab(host, FILES_TAB);
+  const files = host.textContent ?? "";
+  await openTab(host, OVERVIEW_TAB);
+  return `${overview}\n${files}`;
+};
+
+// The Files tab holds the one read on this page that is not the page's own:
+// the file a person picked. Its address is the package, which an update does
+// not move, and the header's Update stays on screen while the tab is open —
+// so without the tab starting over, the tree lists the new inventory beside
+// the bytes of the copy that was replaced. The update is pressed from the
+// header here and the tab never left, which is the only way to reach that
+// state: moving to another tab and back unmounts the tab's content and
+// starts its reads over whatever the page does.
+describe("the package page's file pane after an update", () => {
+  it("does not keep the replaced copy's bytes under a file that was picked", async () => {
+    const write = engineWrites();
+    vi.mocked(commands.updatesOverview).mockImplementation(() =>
+      Promise.resolve({
+        status: "ok",
+        data: {
+          rows: [rowAt(write.landed ? NEW : OLD, !write.landed)],
+          warnings: [],
+          unreadable: [],
+          lastFetched: null,
+        },
+      }),
+    );
+    const host = await openPage();
+    await openTab(host, FILES_TAB);
+    const row = [...host.querySelectorAll("button")].find(
+      (one) => one.title === "BEFORE.md",
+    );
+    if (!row) throw new Error("no row for BEFORE.md");
+    await act(async () => {
+      row.click();
+    });
+    await settle();
+    expect(host.textContent).toContain("PANE-BEFORE");
+
+    const update = [
+      ...(host.querySelector("header")?.querySelectorAll("button") ?? []),
+    ].find((one) => one.textContent === UPDATE_LABEL);
+    if (!update) throw new Error("no Update in the header");
+    await act(async () => {
+      update.click();
+    });
+    await settle();
+    // The write rescans, so the join answers for that new scan the way the
+    // app's own coordinator does. Until it does the page draws the note it
+    // shows while that read is behind, which is what takes the tab and its
+    // reads off screen across every write.
+    await act(async () => {
+      answerJoin();
+    });
+
+    expect(host.textContent).not.toContain("PANE-BEFORE");
+    expect(host.textContent).toContain("READS-AFTER");
+  });
+});
+
 describe("the package page after an update started from its Projects tab", () => {
   const outcomes = [
     {
-      name: "re-reads its files, its version and its update offer",
+      name: "re-reads its files, its README, its version and its update offer",
       outcome: "ok",
-      before: ["BEFORE.md", "v1"],
-      after: ["AFTER.md", "v2"],
-      absent: ["BEFORE.md", "v1"],
+      before: ["BEFORE.md", "READS-BEFORE", "v1"],
+      after: ["AFTER.md", "READS-AFTER", "v2"],
+      absent: ["BEFORE.md", "READS-BEFORE", "v1"],
       update: true,
     },
     {
       name: "re-reads them when the write answers an error",
       outcome: "write-error",
-      before: ["BEFORE.md"],
-      after: ["AFTER.md", "v2"],
-      absent: ["BEFORE.md"],
+      before: ["BEFORE.md", "READS-BEFORE"],
+      after: ["AFTER.md", "READS-AFTER", "v2"],
+      absent: ["BEFORE.md", "READS-BEFORE"],
       update: false,
     },
     {
       name: "re-reads them when the read behind the write fails",
       outcome: "read-error",
-      before: ["BEFORE.md", "v1"],
-      after: ["AFTER.md", "v2"],
-      absent: ["BEFORE.md", "v1"],
+      before: ["BEFORE.md", "READS-BEFORE", "v1"],
+      after: ["AFTER.md", "READS-AFTER", "v2"],
+      absent: ["BEFORE.md", "READS-BEFORE", "v1"],
       update: false,
     },
   ];
@@ -386,10 +476,10 @@ describe("the package page after an update started from its Projects tab", () =>
       );
     }
     const host = await openPage();
-    const before = host.textContent ?? "";
+    const before = await readsOn(host);
     const updateBefore = header(host)?.includes(UPDATE_LABEL);
     await pressUpdate(host);
-    const after = host.textContent ?? "";
+    const after = await readsOn(host);
     expect(
       {
         before: row.before.filter((value) => before.includes(value)),

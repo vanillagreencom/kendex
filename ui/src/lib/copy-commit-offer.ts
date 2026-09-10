@@ -74,6 +74,28 @@ export function unavailableReason(why: Why): string {
   }
 }
 
+/** The two sides of what a file the offer covers is compared against, in
+ *  the changes panel's own bar. */
+export const LAST_COMMIT_SIDE = "the last commit";
+export const WORKING_TREE_SIDE = "this project now";
+export const CHANGES_READ_FAILED_TITLE = "Couldn't show what changed";
+/** git records a file's permissions beside its contents, and a commit
+ *  carries that record. The two are said separately because a commit can
+ *  carry both at once, and a comparison alone would show the half it can
+ *  draw and hide the half it cannot. */
+export const SAME_CONTENT_NOTE =
+  "Nothing inside this file changed. What the commit carries is the change below.";
+/** The mode pair in words. git spells a mode `100644` (an ordinary file),
+ *  `100755` (one that can be run) or `120000` (a link); the words say what
+ *  the change does rather than what git calls it. */
+export const modeChangeNote = (before: string, after: string): string => {
+  if (before === "100644" && after === "100755")
+    return "This file becomes one that can be run.";
+  if (before === "100755" && after === "100644")
+    return "This file stops being one that can be run.";
+  return `What git records about this file changes from ${before} to ${after}.`;
+};
+
 export const GIT_SAID_LABEL = "What git said";
 export const GH_SAID_LABEL = "What gh said";
 

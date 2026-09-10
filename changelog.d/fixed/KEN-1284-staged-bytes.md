@@ -1,0 +1,1 @@
+- The commit dialog compares the bytes git will commit, so a checkout that converts line endings no longer shows every line of a file as changed.

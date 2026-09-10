@@ -11,14 +11,15 @@ import { READ_LANDED, type ReadState, readFailed } from "@/lib/read-state";
 import { isShapedRefusal, refusalWords } from "@/lib/refusal";
 import { NO_REASON_GIVEN } from "@/lib/settled";
 
-/** How the page's own three reads went. The two that gate Update are kept
+/** How the page's own four reads went. The two that gate Update are kept
  *  apart rather than folded into one answer: either one failing is a
  *  package this page could not read, and the timeline's failing on its own
  *  is separately why "there is nothing newer to move to" cannot be read off
- *  an empty version list. The file list gates nothing — no Update ever
- *  turned on it, and folding it into the header would withhold the button
- *  over a read it does not depend on — but it is a read all the same, and a
- *  refusal there is not a package that ships no files. */
+ *  an empty version list. The file list and the README gate nothing — no
+ *  Update ever turned on them, and folding them into the header would
+ *  withhold the button over reads it does not depend on — but they are
+ *  reads all the same, and a refusal there is not a package that ships no
+ *  files or carries no README. */
 export interface PackageReads {
   /** The record that says held or following. */
   record: ReadState;
@@ -31,8 +32,10 @@ export interface PackageReads {
    *  neither a read that failed, which offers a re-read that answers the
    *  same, nor a package at its newest, which says nothing. */
   unfetched: string | null;
-  /** The files the Overview lists. */
+  /** The files the Files tab lists. */
   files: ReadState;
+  /** The README the Overview is. */
+  readme: ReadState;
   /** Whether the newest of these reads is still out. The last answer stays
    *  on screen while it runs — a failure that has not been disproved is
    *  still the truth about this package — so this is what says the reason
@@ -79,11 +82,15 @@ export const timelineOf = (
 export const unfetchedNote = (reads: PackageReads): string | null =>
   reads.unfetched === null ? null : sourceUnfetchedNote(reads.unfetched);
 
-/** What the Overview's file list says instead of files when its read did
- *  not land, or null while it is pending or once it landed. Its own note,
- *  not the header's: the header's says why there is no Update, and this read
- *  never withholds one. */
-export const packageFilesNote = ({ files }: PackageReads): string | null =>
+/** What the file list says instead of files when its read did not land, or
+ *  null while it is pending or once it landed. Its own note, not the
+ *  header's: the header's says why there is no Update, and this read never
+ *  withholds one.
+ *
+ *  Takes the read itself rather than the page's three, because null here
+ *  covers a read still on its way as well as one that landed, and the
+ *  surface needs the state to tell those apart. */
+export const packageFilesNote = (files: ReadState): string | null =>
   files.status === "failed" && files.error !== null
     ? packageFilesReadFailedNote(files.error)
     : null;

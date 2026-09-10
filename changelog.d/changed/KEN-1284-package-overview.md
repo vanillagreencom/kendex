@@ -1,0 +1,1 @@
+- A package's Overview reads top to bottom — where it came from, whether your harnesses load it, its version, then its README — and its files moved to a Files tab of their own.

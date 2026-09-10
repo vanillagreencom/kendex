@@ -328,6 +328,17 @@ export const commands = {
 	 *  there is an offer to make, a state to flag on its card, or nothing.
 	 */
 	commitOfferScan: (roots: string[]) => typedError<CommitOfferScan, string>(__TAURI_INVOKE("commit_offer_scan", { roots })),
+	/**
+	 *  What changed in one file the offer covers, for the viewer the window
+	 *  opens on it.
+	 * 
+	 *  The project is read again rather than trusting the path the window
+	 *  sends: the scan is what decides which files kendex may show, and a
+	 *  window that has been open a while is answering about a project that has
+	 *  moved on. A path the fresh scan does not cover is `Nothing`, whatever
+	 *  it names.
+	 */
+	commitOfferFileChanges: (root: string, path: string) => typedError<FileChanges, string>(__TAURI_INVOKE("commit_offer_file_changes", { root, path })),
 	commitOfferCommit: (root: string, message: string) => typedError<CommitStep, string>(__TAURI_INVOKE("commit_offer_commit", { root, message })),
 	commitOfferPush: (root: string, remote: string, branch: string, tracked: boolean) => typedError<StepResult, string>(__TAURI_INVOKE("commit_offer_push", { root, remote, branch, tracked })),
 	/**
@@ -1498,6 +1509,25 @@ export type Enforcement =
  */
 "not-applicable";
 
+/**  What the window has to show for one file the offer covers. */
+export type FileChanges = 
+/**
+ *  What the commit carries for this file: the two sides' contents
+ *  compared, and the mode change beside it where there is one. An
+ *  empty comparison with a mode change is a file whose text does not
+ *  move; an empty one with neither is a file that changed back since
+ *  the offer was read.
+ */
+{ kind: "shown"; diff: PackageDiff; mode: FileMode | null } | 
+/**
+ *  The offer no longer covers this path: the file has changed back, or
+ *  a sweep has taken it, since the offer was read. Nothing to show, and
+ *  nothing wrong.
+ */
+{ kind: "nothing" } | 
+/**  A read the comparison is built from would not run. */
+{ kind: "refused"; refused: Refused };
+
 export type FileDiff = {
 	/**  Forward-slash relative path, whatever the platform. */
 	path: string,
@@ -1507,6 +1537,15 @@ export type FileDiff = {
 	/**  One side was not valid UTF-8 and is shown lossily. */
 	lossy: boolean,
 	hunks: Hunk[],
+};
+
+/**
+ *  The file's mode on each side, in git's own spelling, where the commit
+ *  changes it.
+ */
+export type FileMode = {
+	before: string,
+	after: string,
 };
 
 /**

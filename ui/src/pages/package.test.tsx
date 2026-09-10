@@ -7,6 +7,7 @@ import type {
   ItemKind,
   Manifest_Serialize,
   ObservedItem,
+  PackageFile,
   Scope,
   UpdateRow,
   VersionRow,
@@ -15,6 +16,7 @@ import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import {
   DISCARD_EDITS_LABEL,
+  ENABLED_LABEL,
   FORK_NOTICE_TITLE,
   FORKED_BADGE_LABEL,
   FORKED_EDITED_BADGE_LABEL,
@@ -23,13 +25,21 @@ import {
   OPEN_IN_FILE_BROWSER_LABEL,
   OPEN_IN_LABEL,
   PACKAGE_FILES_READ_FAILED,
-  PACKAGE_FILES_TITLE,
   PACKAGES_CHECK_FAILED_TITLE,
   PLACE_COUNTING_LABEL,
+  README_TAG,
   TRY_AGAIN_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
 import { CUSTOMIZE_TAB, OVERVIEW_TAB, SAVE_NOTE } from "@/lib/copy-customize";
+import {
+  CHANGES_TITLE,
+  FILE_READ_FAILED_TITLE,
+  FILES_READING_NOTE,
+  FILES_TAB,
+  NO_FILES_NOTE,
+  NO_README_NOTE,
+} from "@/lib/copy-files";
 import { DELETE_LABEL, PROJECTS_TAB } from "@/lib/copy-projects";
 import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
 import {
@@ -70,6 +80,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
   commands: {
     packageMeta: vi.fn(),
     packageFiles: vi.fn(),
+    packageFile: vi.fn(),
     packageVersions: vi.fn(),
     packageReadme: vi.fn(),
     getManifest: vi.fn(),
@@ -227,6 +238,7 @@ beforeEach(() => {
   vi.mocked(commands.auditAll).mockResolvedValue({ status: "ok", data: [] });
   vi.mocked(commands.packageMeta).mockResolvedValue(nothing);
   vi.mocked(commands.packageFiles).mockResolvedValue(nothing);
+  vi.mocked(commands.packageFile).mockResolvedValue(nothing);
   vi.mocked(commands.packageVersions).mockResolvedValue(nothing);
   vi.mocked(commands.packageReadme).mockResolvedValue(nothing);
   vi.mocked(commands.editorInventory).mockResolvedValue(nothing);
@@ -567,7 +579,17 @@ describe("what the package page says instead of Update", () => {
 // land is not a package that ships no files: only a landed read may leave the
 // column empty. The read gates nothing, so it says so where the list would
 // be and offers the read again, while the header's Update stays put.
-describe("the package page's file list", () => {
+describe("the package page's Files tab", () => {
+  /** The tab the tree and preview live on. The Overview is what a page
+   *  opens on, so every reading of the files starts by opening this. */
+  const openFiles = async (host: HTMLElement) => {
+    const tab = Array.from(host.querySelectorAll('[role="tab"]')).find(
+      (one) => one.textContent === FILES_TAB,
+    );
+    await userEvent.click(tab as HTMLElement);
+    await settle();
+  };
+
   /** A timeline and a record that together earn an Update, so the header
    *  is what shows whether the file read withholds one. */
   const openWithUpdate = async () => {
@@ -619,6 +641,11 @@ describe("the package page's file list", () => {
         button.closest("header") === null,
     );
 
+  /** A tree row by the path it names; its text also carries what the row
+   *  says about the file. */
+  const rowFor = (host: HTMLElement, path: string) =>
+    [...host.querySelectorAll("button")].find((one) => one.title === path);
+
   /** A refusal core sent. Pass-through is the property, so the wording is
    *  one core never uses. */
   const REFUSED = "REFUSED-BY-CORE: the install directory is gone";
@@ -629,8 +656,8 @@ describe("the package page's file list", () => {
       error: REFUSED,
     });
     const host = await openWithUpdate();
+    await openFiles(host);
 
-    expect(host.textContent).toContain(PACKAGE_FILES_TITLE);
     expect(host.textContent).toContain(
       `${PACKAGE_FILES_READ_FAILED} — ${REFUSED}`,
     );
@@ -638,14 +665,22 @@ describe("the package page's file list", () => {
     expect(header(host)).toContain(UPDATE_LABEL);
     expect(header(host)).not.toContain(REFUSED);
 
-    // The read again lands, and the list takes the note's place.
+    // The read again lands, and the tree takes the note's place. The tab
+    // opens on the readme, so the row holding it carries the marker that
+    // says which file the pane is showing.
     vi.mocked(commands.packageFiles).mockResolvedValue({
       status: "ok",
-      data: [{ path: "SKILL.md", size: 10, isReadme: false }],
+      data: [
+        { path: "SKILL.md", size: 10, isReadme: true },
+        { path: "references/deep.md", size: 20, isReadme: false },
+      ],
     });
     await userEvent.click(filesRetry(host)[0] as HTMLElement);
     await settle();
-    expect(host.textContent).toContain("SKILL.md");
+    expect(rowFor(host, "SKILL.md")?.textContent).toContain(README_TAG);
+    expect(rowFor(host, "references/deep.md")?.textContent).not.toContain(
+      README_TAG,
+    );
     expect(host.textContent).not.toContain(PACKAGE_FILES_READ_FAILED);
     expect(filesRetry(host)).toHaveLength(0);
   });
@@ -658,6 +693,7 @@ describe("the package page's file list", () => {
       new Error("REJECTED-BY-TRANSPORT: bridge closed"),
     );
     const host = await openWithUpdate();
+    await openFiles(host);
 
     expect(host.textContent).toContain(
       `${PACKAGE_FILES_READ_FAILED} — REJECTED-BY-TRANSPORT: bridge closed`,
@@ -666,16 +702,41 @@ describe("the package page's file list", () => {
     expect(header(host)).toContain(UPDATE_LABEL);
   });
 
+  // A first read still on its way is not a package that ships no files:
+  // the tab says it is reading, and only the landing may make that claim.
+  it("says it is reading while the first read is out, then that there are no files", async () => {
+    let land: (files: PackageFile[]) => void = () => {};
+    vi.mocked(commands.packageFiles).mockReturnValue(
+      new Promise((resolve) => {
+        land = (data) => resolve({ status: "ok", data });
+      }),
+    );
+    const host = await openWithUpdate();
+    await openFiles(host);
+
+    expect(host.textContent).not.toContain(NO_FILES_NOTE);
+    expect(host.textContent).toContain(FILES_READING_NOTE);
+    expect(filesRetry(host)).toHaveLength(0);
+
+    await act(async () => {
+      land([]);
+    });
+    await settle();
+    expect(host.textContent).toContain(NO_FILES_NOTE);
+    expect(host.textContent).not.toContain(FILES_READING_NOTE);
+  });
+
   // The control: a landed read with nothing in it is the one answer that
-  // may leave the column empty, and it draws no heading and no retry.
-  it("draws nothing for a package that ships no files", async () => {
+  // says so plainly, with no failure claimed and nothing to try again.
+  it("says a package ships no files, without claiming a failed read", async () => {
     vi.mocked(commands.packageFiles).mockResolvedValue({
       status: "ok",
       data: [],
     });
     const host = await openWithUpdate();
+    await openFiles(host);
 
-    expect(host.textContent).not.toContain(PACKAGE_FILES_TITLE);
+    expect(host.textContent).toContain(NO_FILES_NOTE);
     expect(host.textContent).not.toContain(PACKAGE_FILES_READ_FAILED);
     expect(filesRetry(host)).toHaveLength(0);
   });
@@ -1030,14 +1091,14 @@ describe("the package page's tabs", () => {
 
   const kinds = [
     {
-      name: "puts Projects and the score between Overview and Customize",
+      name: "puts Files, Projects and the score between Overview and Customize",
       kind: "skill",
-      labels: ["Overview", "Projects", `${SAFETY_TAB}—`, "Customize"],
+      labels: ["Overview", "Files", "Projects", `${SAFETY_TAB}—`, "Customize"],
     },
     {
-      name: "keeps them both for a kind with nothing to customize",
+      name: "keeps them all for a kind with nothing to customize",
       kind: "mcp-server",
-      labels: ["Overview", "Projects", `${SAFETY_TAB}—`],
+      labels: ["Overview", "Files", "Projects", `${SAFETY_TAB}—`],
     },
   ] satisfies { name: string; kind: ItemKind; labels: string[] }[];
   expect(kinds).toHaveLength(2);
@@ -1309,5 +1370,171 @@ describe("a package page opened on an installation nothing recorded", () => {
   it("keeps the recorded package's own reads and controls", async () => {
     await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
     expect(vi.mocked(commands.packageMeta)).toHaveBeenCalled();
+  });
+});
+
+// What the Overview is: the facts about the package, then the package's own
+// words. The files are a tab of their own, so nothing on the Overview is a
+// column beside a pane.
+describe("the package page's Overview", () => {
+  it("reads the package's own readme under its details and version", async () => {
+    vi.mocked(commands.packageReadme).mockResolvedValue({
+      status: "ok",
+      data: {
+        path: "SKILL.md",
+        content: "THE-PACKAGE-README-LINE",
+        truncated: false,
+      },
+    });
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+
+    const text = host.textContent ?? "";
+    expect(text).toContain("THE-PACKAGE-README-LINE");
+    // Under, not beside: the enabled switch is what the details end on,
+    // and the readme follows it down the page.
+    expect(text.indexOf(ENABLED_LABEL)).toBeLessThan(
+      text.indexOf("THE-PACKAGE-README-LINE"),
+    );
+  });
+
+  // The Overview is the README, so a package that carries none says so.
+  // Falling back to whichever file happens to be first would put an
+  // arbitrary source file under the details, where a reader would take it
+  // for the package describing itself.
+  it("says a package carries no readme, and shows no file in its place", async () => {
+    vi.mocked(commands.packageReadme).mockResolvedValue({
+      status: "ok",
+      data: null,
+    });
+    vi.mocked(commands.packageFiles).mockResolvedValue({
+      status: "ok",
+      data: [{ path: "SKILL.md", size: 10, isReadme: false }],
+    });
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+
+    expect(host.textContent).toContain(NO_README_NOTE);
+    // The one read the Overview makes is the readme's. It never falls
+    // through to the package's files, which are the other tab's.
+    expect(commands.packageFile).not.toHaveBeenCalled();
+  });
+
+  // The control: the Overview reads one file and one only. A package whose
+  // readme read failed says so where the readme would be, and does not
+  // fall through to a tree of files that belongs on the other tab.
+  it("says a readme that could not be read could not be shown, and offers it again", async () => {
+    vi.mocked(commands.packageReadme).mockResolvedValue({
+      status: "error",
+      error: "REFUSED-BY-CORE: the install directory is gone",
+    });
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+
+    expect(host.textContent).toContain(FILE_READ_FAILED_TITLE);
+    expect(host.textContent).toContain(
+      "REFUSED-BY-CORE: the install directory is gone",
+    );
+
+    // A failed read is offered again where it failed, the way every other
+    // failed read on this page is: without it a transient refusal leaves
+    // the Overview holding an error until the page is left.
+    const retry = Array.from(host.querySelectorAll("button")).filter(
+      (button) =>
+        button.textContent === TRY_AGAIN_LABEL &&
+        button.closest("header") === null,
+    );
+    expect(retry).toHaveLength(1);
+
+    vi.mocked(commands.packageReadme).mockResolvedValue({
+      status: "ok",
+      data: {
+        path: "SKILL.md",
+        content: "THE-README-THE-RETRY-FOUND",
+        truncated: false,
+      },
+    });
+    await userEvent.click(retry[0] as HTMLElement);
+    await settle();
+    expect(host.textContent).toContain("THE-README-THE-RETRY-FOUND");
+    expect(host.textContent).not.toContain(FILE_READ_FAILED_TITLE);
+  });
+});
+
+// A comparison is a panel over the page, not a page of its own: an Updates
+// row's Preview opens it on top of whatever tab the package page is
+// showing, and closing it leaves that tab where it was.
+describe("the package page's changes panel", () => {
+  /** The panel is portalled out of the page's own tree. */
+  const panel = () => document.body.textContent ?? "";
+
+  const opened = async () => {
+    vi.mocked(commands.packageDiff).mockResolvedValue({
+      status: "ok",
+      data: {
+        files: [
+          {
+            path: "SKILL.md",
+            status: "modified",
+            additions: 1,
+            deletions: 0,
+            lossy: false,
+            hunks: [
+              {
+                header: "@@ -1 +1 @@",
+                lines: [
+                  {
+                    kind: "add",
+                    text: "A-LINE-THE-UPDATE-ADDS",
+                    oldNo: null,
+                    newNo: 1,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        totalAdditions: 1,
+        totalDeletions: 0,
+        truncated: false,
+      },
+    });
+    return openPage(
+      VG,
+      [VG],
+      { [scopeKey(VG)]: PLAIN },
+      {
+        mode: "diff",
+        from: "aaaaaaaaaaaa",
+        to: "bbbbbbbbbbbb",
+      },
+    );
+  };
+
+  it("opens on the comparison Updates sent it, with the tabs still there", async () => {
+    const host = await opened();
+
+    expect(commands.packageDiff).toHaveBeenCalledWith(
+      VG,
+      "skill",
+      "gh",
+      { at: "commit", commit: "aaaaaaaaaaaa" },
+      { at: "commit", commit: "bbbbbbbbbbbb" },
+      // The place this page names renders through Claude Code, and the
+      // installed side is read from that rendering.
+      "claude",
+    );
+    expect(panel()).toContain("A-LINE-THE-UPDATE-ADDS");
+    expect(panel()).toContain(CHANGES_TITLE);
+    // The page behind it is the package page, not a diff standing in for
+    // one: its tabs are still on screen.
+    expect(host.querySelectorAll('[role="tab"]').length).toBeGreaterThan(0);
+  });
+
+  // The control: with no comparison asked for, no panel is drawn and no
+  // comparison is read.
+  it("draws no panel and reads no diff when nothing is being compared", async () => {
+    vi.mocked(commands.packageDiff).mockResolvedValue(nothing);
+    await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+
+    expect(commands.packageDiff).not.toHaveBeenCalled();
+    expect(panel()).not.toContain(CHANGES_TITLE);
   });
 });

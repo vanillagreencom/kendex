@@ -78,6 +78,32 @@ function DialogContent({
   )
 }
 
+/** A dialog that takes the right edge of the window at full height and
+ *  slides in, for content read down the screen rather than answered in a
+ *  box: a diff, a file, a long list. The close control is the caller's, so
+ *  the panel's own bar can carry it beside a title. */
+function DialogPanel({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Popup>) {
+  return (
+    <DialogPortal data-slot="dialog-portal">
+      <DialogOverlay />
+      <DialogPrimitive.Popup
+        data-slot="dialog-panel"
+        className={cn(
+          "fixed inset-y-0 right-0 z-50 flex w-full max-w-[72rem] flex-col border-l bg-background shadow-lg outline-none transition-transform duration-200 data-starting-style:translate-x-full data-ending-style:translate-x-full",
+          className
+        )}
+        {...props}
+      >
+        {children}
+      </DialogPrimitive.Popup>
+    </DialogPortal>
+  )
+}
+
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -147,6 +173,7 @@ export {
   DialogFooter,
   DialogHeader,
   DialogOverlay,
+  DialogPanel,
   DialogPortal,
   DialogTitle,
   DialogTrigger,

@@ -154,6 +154,21 @@ impl Repo {
         repo
     }
 
+    /// A repository with no commit in it — the state a first kendex write
+    /// in a fresh `git init` meets, where `HEAD` names nothing.
+    fn empty() -> Repo {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("site");
+        fs::create_dir_all(&root).unwrap();
+        let repo = Repo { _tmp: tmp, root };
+        repo.git(&["init", "--quiet", "-b", "main"]);
+        repo.git(&["config", "user.email", "t@t"]);
+        repo.git(&["config", "user.name", "t"]);
+        repo.git(&["config", "commit.gpgsign", "false"]);
+        repo.git(&["config", "core.hooksPath", ".git/hooks"]);
+        repo
+    }
+
     fn git(&self, args: &[&str]) -> String {
         let output = Hardened::git(args, Some(&self.root)).run().unwrap();
         assert!(
@@ -741,4 +756,459 @@ fn the_previous_head_is_none_before_the_first_commit() {
         "kendex/renders"
     );
     assert!(git::committed_inventory(root).unwrap().is_empty());
+}
+
+// ---------------------------------------------------------------------
+// What one file the offer covers changed.
+
+/// What this path has to show, or the test fails naming what came back.
+fn shown(scan: &Scan, path: &str) -> Changed {
+    match file_changes(scan, path).unwrap() {
+        Changes::Shown(changed) => changed,
+        other => panic!("{path} answered {other:?} rather than a comparison"),
+    }
+}
+
+/// The viewer reads only what the scan covers. Every other path in the
+/// repository is the person's own — work in progress, an ignored file
+/// holding a secret — and a window that could name one could show it.
+#[test]
+fn only_a_path_the_scan_covers_has_changes_to_show() {
+    let repo = Repo::new(&[
+        (OWNED[0], "one\n"),
+        (".claude/settings.json", "{}\n"),
+        ("mine.md", "mine\n"),
+    ]);
+    let generated = repo.generated(OWNED, &[".claude/settings.json"]);
+    repo.write(OWNED[0], "two\n");
+    repo.write(".claude/settings.json", "{\"permissions\":{}}\n");
+    repo.write("mine.md", "a secret\n");
+    let found = repo.scan(&generated).unwrap();
+
+    let owned = shown(&found, OWNED[0]);
+    assert_eq!(
+        owned.diff.files.len(),
+        1,
+        "one file named, one file compared"
+    );
+    assert_eq!(owned.diff.files[0].path, OWNED[0]);
+    assert_eq!(
+        (owned.diff.total_additions, owned.diff.total_deletions),
+        (1, 1)
+    );
+
+    // A shared file is the person's own with one key of kendex's in it, so
+    // the rest of it — their environment values, their credentials — is
+    // theirs. The offer names such a file and commits nothing of it, and
+    // nothing here reads one.
+    assert_eq!(
+        file_changes(&found, ".claude/settings.json").unwrap(),
+        Changes::NotOffered,
+        "a shared configuration file was read"
+    );
+
+    for outside in [
+        // The person's own changed file, which the scan counts and never
+        // covers.
+        "mine.md",
+        // A path that was never changed at all.
+        ".claude/skills/dev/other.md",
+        // A path reaching out of the project, which no scan can name.
+        "../mine.md",
+        // The same, spelled absolutely.
+        "/etc/passwd",
+    ] {
+        assert_eq!(
+            file_changes(&found, outside).unwrap(),
+            Changes::NotOffered,
+            "{outside} was shown"
+        );
+    }
+}
+
+/// A file this change adds has nothing at `HEAD` to compare against, and a
+/// file it deletes has nothing in the working tree; both are a change to
+/// show rather than a read that failed.
+#[test]
+fn a_file_added_or_deleted_by_the_change_still_shows_what_it_is() {
+    const ADDED: &str = ".claude/skills/dev/NEW.md";
+    let repo = Repo::new(&[(OWNED[0], "one\n"), (OWNED[1], "two\n")]);
+    repo.write(ADDED, "brand new\n");
+    fs::remove_file(repo.root.join(OWNED[1])).unwrap();
+    let generated = repo.generated(&[OWNED[0], OWNED[1], ADDED], &[]);
+    let found = repo.scan(&generated).unwrap();
+
+    let added = shown(&found, ADDED);
+    assert_eq!(
+        added.diff.files[0].status,
+        crate::package::diff::FileStatus::Added
+    );
+    assert_eq!(added.diff.total_deletions, 0);
+    assert_eq!(added.mode, None, "a file arriving is not a mode change");
+
+    let removed = shown(&found, OWNED[1]);
+    assert_eq!(
+        removed.diff.files[0].status,
+        crate::package::diff::FileStatus::Removed
+    );
+    assert_eq!(removed.diff.total_additions, 0);
+    assert_eq!(removed.mode, None, "a file going is not a mode change");
+}
+
+/// A harness-native link is a path kendex writes and commits: what git
+/// stores for it is the link's own target text, so the viewer reads the
+/// link rather than following it. Reading through it, or refusing it, would
+/// tell a person the commit deletes a link it rewrites.
+#[cfg(unix)]
+#[test]
+fn a_link_kendex_owns_reads_as_its_target_text() {
+    const LINK: &str = ".claude/skills/dev";
+    let repo = Repo::new(&[(".agents/skills/dev/SKILL.md", "body\n")]);
+    fs::create_dir_all(repo.root.join(".claude/skills")).unwrap();
+    let at = repo.root.join(LINK);
+    std::os::unix::fs::symlink("../../.agents/skills/dev", &at).unwrap();
+    let generated = repo.generated(&[LINK], &[]);
+
+    // Untracked: the commit adds the link, and the row says so.
+    let added = shown(&repo.scan(&generated).unwrap(), LINK);
+    assert_eq!(
+        added.diff.files[0].status,
+        crate::package::diff::FileStatus::Added
+    );
+    assert_eq!(hunk_text(&added.diff), ["+../../.agents/skills/dev"]);
+
+    // Committed, then respelled the way one apply converges an absolute
+    // link to a relative one: one line replaced by another, never a
+    // deletion.
+    repo.git(&["add", "-A"]);
+    repo.git(&["commit", "--quiet", "-m", "link"]);
+    fs::remove_file(&at).unwrap();
+    std::os::unix::fs::symlink("../../../.agents/skills/dev", &at).unwrap();
+    let respelled = shown(&repo.scan(&generated).unwrap(), LINK);
+    assert_eq!(
+        respelled.diff.files[0].status,
+        crate::package::diff::FileStatus::Modified
+    );
+    assert_eq!(
+        hunk_text(&respelled.diff),
+        ["-../../.agents/skills/dev", "+../../../.agents/skills/dev"]
+    );
+    assert_eq!(
+        (
+            respelled.diff.total_additions,
+            respelled.diff.total_deletions
+        ),
+        (1, 1)
+    );
+    // A link is mode 120000 on both sides, so respelling one changes no
+    // mode; the comparison is the whole of the change.
+    assert_eq!(respelled.mode, None);
+}
+
+/// git carries changes the contents do not show — a registration script
+/// regaining its execute bit is one kendex itself makes. The offer covers
+/// the path, so the viewer says what the commit carries rather than
+/// drawing an empty comparison, which reads as nothing having changed.
+#[cfg(unix)]
+#[test]
+fn a_change_the_contents_do_not_show_is_not_an_empty_comparison() {
+    use std::os::unix::fs::PermissionsExt;
+    const SCRIPT: &str = ".claude/hooks/check.sh";
+    let repo = Repo::new(&[(SCRIPT, "#!/bin/sh\n")]);
+    let generated = repo.generated(&[SCRIPT], &[]);
+    let at = repo.root.join(SCRIPT);
+    fs::set_permissions(&at, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let found = repo.scan(&generated).unwrap();
+    assert_eq!(found.count(), 1, "the mode change left the offer's set");
+    let only_mode = shown(&found, SCRIPT);
+    assert!(
+        only_mode.diff.files.is_empty(),
+        "the contents were reported as changed"
+    );
+    assert_eq!(
+        only_mode.mode,
+        Some(ModeChange {
+            before: "100644".to_owned(),
+            after: "100755".to_owned()
+        })
+    );
+
+    // The same commit rewriting the script as well: the mode is read from
+    // git rather than inferred from an empty comparison, so both halves of
+    // a mixed change are reported.
+    repo.write(SCRIPT, "#!/bin/sh\necho hi\n");
+    fs::set_permissions(&at, fs::Permissions::from_mode(0o755)).unwrap();
+    let both = shown(&repo.scan(&generated).unwrap(), SCRIPT);
+    assert_eq!(both.diff.total_additions, 1, "the rewrite went unreported");
+    assert_eq!(
+        both.mode,
+        Some(ModeChange {
+            before: "100644".to_owned(),
+            after: "100755".to_owned()
+        }),
+        "the mode change was hidden by the content change"
+    );
+}
+
+/// Every line one comparison's hunks hold, with the sign the viewer draws.
+fn hunk_text(diff: &crate::package::diff::PackageDiff) -> Vec<String> {
+    diff.files
+        .iter()
+        .flat_map(|file| &file.hunks)
+        .flat_map(|hunk| &hunk.lines)
+        .map(|line| {
+            let sign = match line.kind {
+                crate::package::diff::LineKind::Add => "+",
+                crate::package::diff::LineKind::Remove => "-",
+                crate::package::diff::LineKind::Context => " ",
+            };
+            format!("{sign}{}", line.text)
+        })
+        .collect()
+}
+
+/// Absent and unreadable are different answers. A file this change deletes
+/// is absent; a read the machine refused is a step that failed, and the
+/// window is told so rather than shown a deletion nobody made.
+#[cfg(unix)]
+#[test]
+fn a_read_the_machine_refuses_is_a_failure_and_never_a_deletion() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new(&[(OWNED[0], "one\n")]);
+    let generated = repo.generated(&[OWNED[0]], &[]);
+    repo.write(OWNED[0], "two\n");
+    let found = repo.scan(&generated).unwrap();
+    let at = repo.root.join(OWNED[0]);
+
+    fs::set_permissions(&at, fs::Permissions::from_mode(0o000)).unwrap();
+    let refused = file_changes(&found, OWNED[0]);
+    // Running as root reads a mode-0 file anyway, so the property this
+    // asserts is not reachable there and the case says so instead of
+    // passing on a read that was never refused.
+    if fs::read(&at).is_ok() {
+        fs::set_permissions(&at, fs::Permissions::from_mode(0o644)).unwrap();
+        return;
+    }
+    let failed = refused.expect_err("an unreadable file read as a deletion");
+    assert!(
+        failed.said().iter().any(|line| line.contains(OWNED[0])),
+        "the failure did not name the file: {:?}",
+        failed.said()
+    );
+    fs::set_permissions(&at, fs::Permissions::from_mode(0o644)).unwrap();
+
+    // The control: the same path, gone, is the deletion it looks like.
+    fs::remove_file(&at).unwrap();
+    let gone = shown(&repo.scan(&generated).unwrap(), OWNED[0]);
+    assert_eq!(
+        gone.diff.files[0].status,
+        crate::package::diff::FileStatus::Removed
+    );
+}
+
+/// The leaf is not the only component that can be a link. An ancestor
+/// replaced by one carries an ordinary read out of the project, so the
+/// read is refused: the path the offer named no longer names a file inside
+/// this project, and the window shows no bytes from outside it.
+#[cfg(unix)]
+#[test]
+fn a_link_above_the_file_takes_the_read_out_of_the_project_and_is_refused() {
+    const INSIDE: &str = ".claude/skills/dev/SKILL.md";
+    let repo = Repo::new(&[(INSIDE, "ours\n")]);
+    let generated = repo.generated(&[INSIDE], &[]);
+    // Somewhere this project must never read from, holding a name the
+    // covered path would reach through a swapped ancestor.
+    let outside = repo.root.parent().unwrap().join("elsewhere");
+    fs::create_dir_all(outside.join("dev")).unwrap();
+    fs::write(outside.join("dev/SKILL.md"), "SECRET-FROM-OUTSIDE\n").unwrap();
+
+    fs::remove_dir_all(repo.root.join(".claude/skills")).unwrap();
+    std::os::unix::fs::symlink(&outside, repo.root.join(".claude/skills")).unwrap();
+
+    let found = repo.scan(&generated).unwrap();
+    assert!(
+        found.owned.iter().any(|owned| owned.path == INSIDE),
+        "the swapped ancestor left the covered path out of the scan, so this case proves nothing"
+    );
+    let failed = file_changes(&found, INSIDE).expect_err("the read followed the swapped ancestor");
+    let said = failed.said().join("\n");
+    assert!(
+        said.contains(".claude/skills"),
+        "the refusal did not name the link: {said}"
+    );
+    assert!(
+        !said.contains("SECRET-FROM-OUTSIDE"),
+        "bytes from outside the project reached the window"
+    );
+}
+
+/// A first kendex write in a fresh `git init` is a state the offer
+/// supports: `HEAD` names nothing, so every covered path is one this
+/// change adds. Every call that names `HEAD` asks whether there is one
+/// first, or opening a file there would answer with git's refusal instead
+/// of the file.
+#[test]
+fn the_first_commit_in_a_fresh_repository_reads_as_files_being_added() {
+    let repo = Repo::empty();
+    repo.write(OWNED[0], "one\n");
+    let generated = repo.generated(&[OWNED[0]], &[]);
+    let found = repo.scan(&generated).unwrap();
+    assert_eq!(found.count(), 1, "the write left the offer's set");
+
+    let added = shown(&found, OWNED[0]);
+    assert_eq!(
+        added.diff.files[0].status,
+        crate::package::diff::FileStatus::Added
+    );
+    assert_eq!(hunk_text(&added.diff), ["+one"]);
+    assert_eq!(added.mode, None, "a file arriving is not a mode change");
+}
+
+/// A package update can replace the file `foo` with the folder `foo/bar`,
+/// and the scan offers both. Neither side may read a directory as a file:
+/// `foo` is the removal it is, and `foo/bar` the addition it is, so both
+/// halves of the replacement can be opened.
+#[test]
+fn a_file_replaced_by_a_folder_of_the_same_name_shows_both_halves() {
+    const WAS_FILE: &str = ".claude/skills/dev";
+    const NOW_INSIDE: &str = ".claude/skills/dev/SKILL.md";
+    let repo = Repo::new(&[(WAS_FILE, "the whole skill\n")]);
+    fs::remove_file(repo.root.join(WAS_FILE)).unwrap();
+    repo.write(NOW_INSIDE, "the skill's body\n");
+    let generated = repo.generated(&[WAS_FILE, NOW_INSIDE], &[]);
+    let found = repo.scan(&generated).unwrap();
+
+    let gone = shown(&found, WAS_FILE);
+    assert_eq!(
+        gone.diff.files[0].status,
+        crate::package::diff::FileStatus::Removed,
+        "the folder standing where the file was read as something else"
+    );
+    assert_eq!(hunk_text(&gone.diff), ["-the whole skill"]);
+
+    let arrived = shown(&found, NOW_INSIDE);
+    assert_eq!(
+        arrived.diff.files[0].status,
+        crate::package::diff::FileStatus::Added
+    );
+    assert_eq!(hunk_text(&arrived.diff), ["+the skill's body"]);
+}
+
+/// The commit stages with `git add`, and staging is where a repository's
+/// attributes apply: a checkout with `core.autocrlf` on, or a
+/// `.gitattributes` naming end-of-line conversion, holds bytes on disk that
+/// are not the bytes committed. The after side is what git would stage, so
+/// the window shows the one line that changed and not every line in the
+/// file — which is what a person on Windows would otherwise be asked to
+/// approve.
+#[test]
+fn the_after_side_is_what_git_would_stage_and_not_the_bytes_on_disk() {
+    const ATTRIBUTES: &str = ".gitattributes";
+    let repo = Repo::new(&[
+        (ATTRIBUTES, "* text=auto eol=lf\n"),
+        (OWNED[0], "one\ntwo\n"),
+    ]);
+    // The same file with one line edited, written the way a checkout under
+    // `core.autocrlf` holds it.
+    repo.write(OWNED[0], "one\r\ntwo changed\r\n");
+    let generated = repo.generated(&[OWNED[0]], &[]);
+    let found = repo.scan(&generated).unwrap();
+
+    let opened = shown(&found, OWNED[0]);
+    assert_eq!(
+        opened.diff.files[0].status,
+        crate::package::diff::FileStatus::Modified
+    );
+    assert_eq!(
+        hunk_text(&opened.diff),
+        [" one", "-two", "+two changed"],
+        "the line endings on disk were compared against the blob git holds"
+    );
+}
+
+/// The replacement runs the other way too: an update can put the file `foo`
+/// back where the folder `foo/bar` stood. Then the covered path `foo/bar`
+/// has an ancestor that is a regular file, which no read can continue
+/// through — the walk has to answer that the leaf is gone, or the deletion
+/// draws as the machine's word for a path that stopped at a file.
+#[test]
+fn a_folder_replaced_by_a_file_of_the_same_name_shows_both_halves() {
+    const WAS_INSIDE: &str = ".claude/skills/dev/SKILL.md";
+    const NOW_FILE: &str = ".claude/skills/dev";
+    let repo = Repo::new(&[(WAS_INSIDE, "the skill's body\n")]);
+    fs::remove_dir_all(repo.root.join(NOW_FILE)).unwrap();
+    repo.write(NOW_FILE, "the whole skill\n");
+    let generated = repo.generated(&[WAS_INSIDE, NOW_FILE], &[]);
+    let found = repo.scan(&generated).unwrap();
+
+    let gone = shown(&found, WAS_INSIDE);
+    assert_eq!(
+        gone.diff.files[0].status,
+        crate::package::diff::FileStatus::Removed,
+        "the file standing where the folder was read as something else"
+    );
+    assert_eq!(hunk_text(&gone.diff), ["-the skill's body"]);
+
+    let arrived = shown(&found, NOW_FILE);
+    assert_eq!(
+        arrived.diff.files[0].status,
+        crate::package::diff::FileStatus::Added
+    );
+    assert_eq!(hunk_text(&arrived.diff), ["+the whole skill"]);
+}
+
+/// Both reads that name a covered path hand it to git in a pathspec
+/// position, so both carry `--literal-pathspecs`. A path opening with the
+/// `:` a pathspec magic prefix starts with is read as magic without it and
+/// matches nothing at all: `ls-tree` then reports no before side and the
+/// file draws as one this change adds, when it is one the change rewrites.
+#[cfg(unix)]
+#[test]
+fn a_path_git_would_read_as_pathspec_magic_is_taken_as_the_path_it_is() {
+    const OURS: &str = ":note.md";
+    let repo = Repo::new(&[(OURS, "ours\n")]);
+    repo.write(OURS, "ours changed\n");
+    let generated = repo.generated(&[OURS], &[]);
+    let found = repo.scan(&generated).unwrap();
+    assert_eq!(found.count(), 1, "the path left the offer's set");
+
+    let opened = shown(&found, OURS);
+    assert_eq!(
+        opened.diff.files[0].status,
+        crate::package::diff::FileStatus::Modified,
+        "the before side was lost, so a rewrite drew as an addition"
+    );
+    assert_eq!(hunk_text(&opened.diff), ["-ours", "+ours changed"]);
+}
+
+/// A rendered path can also hold `[`, `*` or `?`, and `git diff` globs a
+/// pathspec. Without the literal option the mode read gets a row per file
+/// the path's shape names, and it reads the first — so a changed file of
+/// the person's own that sorts ahead of the one they opened hands over its
+/// mode as though it were theirs.
+#[cfg(unix)]
+#[test]
+fn a_glob_shaped_path_reads_its_own_mode_and_not_a_neighbours() {
+    use std::os::unix::fs::PermissionsExt;
+    const OURS: &str = "docs/a[0].md";
+    // What `docs/a[0].md` globs to. It sorts ahead of the path itself,
+    // since `0` precedes `[`, so a globbing read lists it first.
+    const DECOY: &str = "docs/a0.md";
+    let repo = Repo::new(&[(OURS, "ours\n"), (DECOY, "theirs\n")]);
+    repo.write(OURS, "ours changed\n");
+    fs::set_permissions(repo.root.join(DECOY), fs::Permissions::from_mode(0o755)).unwrap();
+    let generated = repo.generated(&[OURS], &[]);
+    let found = repo.scan(&generated).unwrap();
+    assert_eq!(
+        found.others, 1,
+        "the decoy is the person's own changed file"
+    );
+
+    let opened = shown(&found, OURS);
+    assert_eq!(hunk_text(&opened.diff), ["-ours", "+ours changed"]);
+    assert_eq!(
+        opened.mode, None,
+        "the decoy's mode was reported as this file's"
+    );
 }

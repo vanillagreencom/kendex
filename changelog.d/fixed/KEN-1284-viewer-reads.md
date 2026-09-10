@@ -1,0 +1,1 @@
+- The commit dialog says when it could not read a file rather than drawing it as one the commit deletes, and it opens a file in a project with no commit yet.

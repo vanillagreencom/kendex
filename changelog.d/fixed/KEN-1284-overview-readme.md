@@ -1,0 +1,1 @@
+- A package with no README says so on its Overview instead of showing whichever of its files came first.
