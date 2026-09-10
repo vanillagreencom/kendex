@@ -27,7 +27,7 @@ Env (optional): PR_AUTHOR — resolved from the PR when empty.
 
 Output: one machine-readable line on stdout:
   verdict=approved|awaiting|threads-open|changes-requested|untracked-claim|
-          unreasoned-decline detail=<human text>
+          unreasoned-decline|suppressed-findings detail=<human text>
 (diagnostic detail also echoed for logs).
 
 Exit codes:
@@ -68,6 +68,32 @@ re-approval or dismissal, so that reduction is not scoped to the head;
 positive evidence stays exact-head) AND zero unresolved review threads.
 Changes-requested and unresolved threads always fail closed, even with
 evidence present.
+
+A REVIEW-BODY TERM fails closed on findings that never became threads.
+A reviewer that judges a finding to be in code the current diff did not
+change writes it into the review BODY, under a `### Suppressed comments (N)`
+heading, and no review comment is posted — so `unresolved` is 0 and the
+gate would approve over a finding the reviewer itself marked `Blocking:`.
+`suppressed-findings` counts those blocks across the rows the evidence
+select accepts, BEFORE the min_state reduction, at the commit the gate
+RELIES ON — the head, and the carry base too once carry decided the evidence,
+since the carried row is the one whose body carries the block. Lines inside a
+fenced snippet are skipped, so the pasted code under an entry cannot end the
+block, while the heading itself is read WHATEVER the fence state says and
+closes any fence it finds open — no run of fence-looking lines earlier in the
+body can hide the block that follows. It names the count and the file:line
+entries: the detail carries a bounded list (a status description holds 140
+characters, so a truncated list says how many it dropped) and the full list
+goes to stderr. It has NO DEDICATED settings key and no disposition
+protocol: nothing written in the PR clears it, and the only switch that
+reaches it is REVIEW_GATE_MODE=off, which answers approved for the whole gate
+without reading any evidence. It clears when the commit the gate relies on
+carries no such block — normally a fresh review at a new head, or the carry
+base once carry supplies the evidence. Every shape it cannot read refuses
+too — a heading with no readable count, a count disagreeing with the entries
+under it — and the KNOWN LIMIT is the mirror of the errored-attestation
+filter's: a body quoting the heading at the start of a line counts as a real
+block.
 
 TWO THREAD-CONTENT TERMS ride the same read, both failing closed. A thread's
 disposition is its newest non-bot reply that is a reply form or carries a
@@ -734,17 +760,34 @@ cr="$(jq '[.[] | select(.state != "DISMISSED" and .state != "PENDING") | select(
 # objection would be a fail-open lever, and an errored row can never block
 # anyway (it is not CHANGES_REQUESTED).
 #
-# Defined ONCE and concatenated in front of BOTH jq programs that accept
-# review rows — head evidence here, carry candidates below — because
-# attestation semantics must never drift between them, and two hand-kept
-# copies of the fragment would part ways silently. The body is bound BEFORE
-# testing containment: inside contains(.) the dot would rebind, the same trap
-# as the skip-pattern filter. $mk is the lowercased pattern list each program
-# builds from $errmarks.
-ATTESTATION_DEF='def not_errored_attestation($mk):
+# Defined ONCE and concatenated in front of EVERY jq program that accepts
+# review rows, because what the gate accepts as a review must never drift
+# between them and hand-kept copies of the chain would part ways silently.
+# Three programs call it: head evidence below, carry candidates, and the
+# suppressed-finding scan. What is shared is the whole accepted-row chain —
+# the state and author exclusions, the trust list, and this attestation — and
+# each program adds only what is genuinely its own: the commit predicate, and
+# min_state where it applies. The `cr` reduction above is NOT a fourth copy;
+# it is deliberately unfiltered by the trust list, for the reason stated
+# there.
+#
+# The body is bound BEFORE testing containment: inside contains(.) the dot
+# would rebind, the same trap as the skip-pattern filter. $mk is the
+# lowercased pattern list, $t the trust list, both built by the helpers here
+# from the $errmarks and $trusted each program passes.
+ACCEPTED_ROWS_DEF='def not_errored_attestation($mk):
   (((.body // "") | ascii_downcase
     | sub("^[\\s>]+"; "") | split("\n") | (.[0] // "")) as $b
-   | [ $mk[] | . as $p | select($b | contains($p)) ] | length) == 0;'
+   | [ $mk[] | . as $p | select($b | contains($p)) ] | length) == 0;
+def trust_list($trusted):
+  $trusted | split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0));
+def error_marks($errmarks):
+  $errmarks | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase);
+def accepted_rows($t; $mk; $author):
+  [ .[]
+    | select(.state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
+    | select(($t | length) == 0 or (.user.login as $l | ($t | index($l)) != null))
+    | select(not_errored_attestation($mk)) ];'
 
 # Review-object evidence. NOT a latest-review-per-reviewer reduction (see the
 # header): in "any" mode every accepted row counts; in "approved" mode a
@@ -753,14 +796,10 @@ ATTESTATION_DEF='def not_errored_attestation($mk):
 # never withdraws an approval.
 got="$(jq --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
         --arg trusted "$TRUSTED_LOGINS_N" --arg minstate "$MIN_STATE" \
-        --arg errmarks "$ERROR_PATTERNS" "$ATTESTATION_DEF"'
-  ($trusted | split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
-  | ($errmarks | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $mk
-  | [ .[]
-      | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
-      | select(($t | length) == 0 or (.user.login as $l | ($t | index($l)) != null))
-      | select(not_errored_attestation($mk))
-    ]
+        --arg errmarks "$ERROR_PATTERNS" "$ACCEPTED_ROWS_DEF"'
+  trust_list($trusted) as $t
+  | error_marks($errmarks) as $mk
+  | [ accepted_rows($t; $mk; $author)[] | select(.commit_id == $sha) ]
   | if $minstate == "approved" then
       group_by(.user.login)
       | map(sort_by(.submitted_at // ""))
@@ -1212,13 +1251,10 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
   # bounded so a force-push-heavy PR cannot turn the walk into an API storm.
   carry_candidates="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
       --arg trusted "$TRUSTED_LOGINS_N" --arg minstate "$MIN_STATE" \
-      --arg errmarks "$ERROR_PATTERNS" "$ATTESTATION_DEF"'
-    ($trusted | split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
-    | ($errmarks | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $mk
-    | [ .[]
-        | select(.state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
-        | select(($t | length) == 0 or (.user.login as $l | ($t | index($l)) != null))
-        | select(not_errored_attestation($mk))
+      --arg errmarks "$ERROR_PATTERNS" "$ACCEPTED_ROWS_DEF"'
+    trust_list($trusted) as $t
+    | error_marks($errmarks) as $mk
+    | [ accepted_rows($t; $mk; $author)[]
         | select($minstate != "approved" or .state == "APPROVED")
         | select((.commit_id // "") != "" and .commit_id != $sha)
       ]
@@ -1712,7 +1748,186 @@ while :; do
 done
 fi
 
-rg_message notice predicate-evaluated "$HEAD_SHA" "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok carried=$carried render-only=$render_only changes-requested=$cr unresolved-threads=$unresolved untracked-claims=$untracked unreasoned-declines=$unreasoned (threads=$THREADS_MODE)" >&2
+# Suppressed-finding evidence, the term with no off switch. A reviewer that
+# judges a finding to be in code the current diff did not change writes it
+# into the review BODY, under a `### Suppressed comments (N)` heading, rather
+# than posting it as a review comment. Such a finding creates NO review
+# thread: `unresolved` counts zero and the cascade would fall through to
+# approved with a finding the reviewer itself marked `Blocking:` standing in
+# the body. The term reads the body of every row the evidence
+# select accepts at head — the SAME chain as `got` above (exact head, not
+# DISMISSED, not PENDING, not the author, the trust list, not an errored
+# attestation), evaluated BEFORE the min_state reduction so the set is the
+# wider fail-closed one: a COMMENTED row carrying findings must be read
+# whatever min_state accepts as evidence.
+#
+# DELIBERATELY NO SETTING. Every other term carries a mode key; this one has
+# none, because the only thing an off switch would buy is merging past a
+# finding its own reviewer called blocking.
+#
+# The parse is line-anchored and refuses in every direction it cannot read:
+# a heading whose count is not a number ('unparsed'), a count disagreeing
+# with the entries extracted under it ('mismatch'), and a jq record bash
+# cannot read ('malformed'). Each of those REFUSES rather than degrading to
+# a number the detail would then understate, and each fails to the verdict
+# rather than to exit 2 — exit 2 tells the writer to take no action, which
+# would leave an earlier success standing over the very body it could not
+# read. Known limit, the mirror of the errored-attestation filter's: a body
+# that quotes the heading at the start of a line — a fenced example in a PR
+# about this term — counts as a real block. That direction is visible and
+# clears with the next review; the opposite is a silent merge.
+#
+# The block ends at the next heading of any level or at `</details>`, so the
+# `- **Files reviewed:**` trailer Copilot writes after the entries is outside
+# it and the next review section cannot donate entries to it. Lines inside a
+# fenced snippet are skipped: the offending code a reviewer pastes under an
+# entry is full of `#` comment lines, and one of those read as a heading
+# would end the block and drop every entry after it from the list. The fence
+# records its opening delimiter's character and length and closes only on a
+# run of the same character at that length or longer with nothing after it,
+# per CommonMark, so a three-backtick fence inside a four-backtick one does
+# not end it.
+#
+# THE HEADING IS THE SENTINEL, and it is read whatever the fence state says.
+# Both heading arms run before the fence arm and close any fence they find
+# open, so no run of fence-looking lines EARLIER in the body can leave the
+# scan inside a fence and swallow the block that follows — that would be
+# declared=0 and a gate approving over a finding, which is the whole defect
+# this term exists to close. It errs toward finding a block, never toward
+# missing one, which is the same direction as the quoting limit below.
+#
+# `capture` emits NOTHING on a non-match, not null, and a reduce update that
+# emits nothing sets the accumulator to null — every later line would then
+# fail on a null state and the read would exit 2. Hence the `// null`.
+#
+# THE SCAN READS THE COMMIT THE GATE RELIES ON, not only the head. Carry
+# accepts a review row at an ANCESTOR when nothing reviewed the head, and the
+# carry-candidate select is this one with `.commit_id != $sha` where this has
+# `== $sha` — so the row whose body carries the block is itself an eligible
+# carry candidate. Head-only would refuse at one commit and approve at the
+# next over the same body, with nothing reviewed at the new head: this term's
+# own fail-open on a second path, and the one refusal carry could erase (a
+# standing changes-requested is unscoped by sha and threads are PR-scoped).
+suppressed=0
+suppressed_state=ok
+supp_detail=""
+# `carry_base` is set only together with carried=1, and min_state is left off
+# both shas on purpose: the wider set is the fail-closed one, and a second
+# copy of the carry term's state filter here could drift from it.
+supp_carry_base=""
+[ "$carried" != "1" ] || supp_carry_base="$carry_base"
+supp_raw="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
+        --arg trusted "$TRUSTED_LOGINS_N" --arg carrybase "$supp_carry_base" \
+        --arg errmarks "$ERROR_PATTERNS" "$ACCEPTED_ROWS_DEF"'
+  def suppressed_scan:
+    reduce (((. // "") | gsub("\r"; "")) | split("\n"))[] as $l
+      ({declared: 0, entries: 0, unparsed: 0, inblock: false, fchar: "", flen: 0, list: []};
+        ($l | capture("^[ \t]{0,3}(?<f>`{3,}|~{3,})(?<rest>.*)$") // null) as $fx
+        | if ($l | test("^#{1,6}[ \t]+Suppressed comments[ \t]*\\([0-9]+\\)[ \t]*$")) then
+          .declared += ($l | capture("\\((?<n>[0-9]+)\\)") | .n | tonumber)
+          | .inblock = true | .fchar = "" | .flen = 0
+        elif ($l | test("^#{1,6}[ \t]+Suppressed comments([ \t]|$)")) then
+          .unparsed += 1 | .inblock = true | .fchar = "" | .flen = 0
+        elif .fchar != "" then
+          if ($fx != null and ($fx.f[0:1] == .fchar)
+              and (($fx.f | length) >= .flen) and ($fx.rest | test("^[ \t]*$")))
+          then .fchar = "" | .flen = 0
+          else . end
+        elif $fx != null then
+          .fchar = ($fx.f[0:1]) | .flen = ($fx.f | length)
+        elif ($l | test("^#{1,6}[ \t]") or ($l | test("^</details>"))) then
+          .inblock = false
+        elif .inblock and ($l | test("^\\*\\*[^*]+:[0-9]+\\*\\*[ \t]*$")) then
+          .entries += 1
+          | .list += [$l | capture("^\\*\\*(?<e>[^*]+:[0-9]+)\\*\\*") | .e]
+        else . end);
+  trust_list($trusted) as $t
+  | error_marks($errmarks) as $mk
+  | [ accepted_rows($t; $mk; $author)[]
+      | select(.commit_id == $sha or ($carrybase != "" and .commit_id == $carrybase))
+      | (.body // "") | suppressed_scan
+    ] as $rows
+  | (([$rows[] | .declared] | add) // 0) as $declared
+  | (([$rows[] | .entries] | add) // 0) as $entries
+  | (([$rows[] | .unparsed] | add) // 0) as $unparsed
+  | "\($declared) \($entries) \($unparsed)\n" + ([$rows[] | .list[]] | join("\n"))' <<<"$reviews")" || {
+  rg_message error predicate-suppressed-read "$PR_NUMBER" "::error::could not read suppressed-finding blocks from review bodies for PR #$PR_NUMBER" >&2
+  exit 2
+}
+supp_head="${supp_raw%%$'\n'*}"
+case "$supp_raw" in
+  *$'\n'*) supp_list="${supp_raw#*$'\n'}" ;;
+  *) supp_list="" ;;
+esac
+supp_declared="${supp_head%% *}"
+supp_rest="${supp_head#* }"
+supp_entries="${supp_rest%% *}"
+supp_unparsed="${supp_rest##* }"
+case "$supp_declared$supp_entries$supp_unparsed" in
+  '' | *[!0-9]*) suppressed_state=malformed ;;
+esac
+if [ "$suppressed_state" = "ok" ] && [ "$supp_unparsed" != "0" ]; then
+  suppressed_state=unparsed
+elif [ "$suppressed_state" = "ok" ] && [ "$supp_declared" != "$supp_entries" ]; then
+  suppressed_state=mismatch
+elif [ "$suppressed_state" = "ok" ]; then
+  suppressed="$supp_declared"
+fi
+# The evaluated line reports the number when the block was read whole, and
+# the refusal word when it was not — the shape `unresolved` uses for its own
+# overflow.
+supp_notice="$suppressed_state"
+[ "$suppressed_state" != "ok" ] || supp_notice="$suppressed"
+# The FULL list goes to the log, where a human reads it whole; the detail
+# below lands in a 140-character commit-status description and is bounded.
+if [ -n "$supp_list" ]; then
+  rg_message notice predicate-suppressed "$supp_notice" "PR #$PR_NUMBER head $HEAD_SHA: findings written into a review body, carried by no thread:
+$supp_list" >&2
+fi
+case "$suppressed_state" in
+  malformed) supp_detail="a Suppressed comments block could not be read (broken parse) — no finding count is provable" ;;
+  unparsed) supp_detail="a Suppressed comments heading names no readable count — read it in the review body" ;;
+  mismatch) supp_detail="Suppressed comments declares $supp_declared finding(s) but $supp_entries entry line(s) parsed — read the block in the review body" ;;
+  ok)
+    if [ "$suppressed" != "0" ]; then
+      # Names are added while the FINISHED detail stays inside the budget,
+      # then the remainder is COUNTED: a truncated list must never read as
+      # the whole one. Budgeting the bare name list instead would let the
+      # entry that crosses the line overshoot by its own whole length, and
+      # review-writer.sh's cut — 140 characters, the commit-status API's
+      # description limit, and that script owns the cut — would land on the
+      # ` +K more` and hand a reader a short list reading as a complete one.
+      # The projection is exact because the entry count is known before the
+      # loop: admitting an entry can only shrink the suffix the projection
+      # already paid for, so the string this test accepts is the string that
+      # ships.
+      supp_prefix="$suppressed suppressed finding(s) in a review body, carried by no thread: "
+      supp_names=""
+      supp_shown=0
+      while IFS= read -r supp_entry; do
+        [ -n "$supp_entry" ] || continue
+        if [ -z "$supp_names" ]; then supp_try="$supp_entry"; else supp_try="$supp_names, $supp_entry"; fi
+        supp_tail=""
+        [ "$((supp_entries - supp_shown - 1))" -le 0 ] || supp_tail=" +$((supp_entries - supp_shown - 1)) more"
+        [ "$((${#supp_prefix} + ${#supp_try} + ${#supp_tail}))" -le 140 ] || break
+        supp_names="$supp_try"
+        supp_shown=$((supp_shown + 1))
+      done <<<"$supp_list"
+      if [ "$supp_shown" -lt "$supp_entries" ]; then
+        # An empty name list is the degenerate case — not even the first
+        # entry fits. The count stands alone rather than half a path.
+        if [ -z "$supp_names" ]; then
+          supp_names="+$((supp_entries - supp_shown)) more"
+        else
+          supp_names="$supp_names +$((supp_entries - supp_shown)) more"
+        fi
+      fi
+      supp_detail="$supp_prefix$supp_names"
+    fi
+    ;;
+esac
+
+rg_message notice predicate-evaluated "$HEAD_SHA" "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok carried=$carried render-only=$render_only changes-requested=$cr unresolved-threads=$unresolved untracked-claims=$untracked unreasoned-declines=$unreasoned suppressed-findings=$supp_notice (threads=$THREADS_MODE)" >&2
 
 if [ "$cr" != "0" ]; then
   echo "verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"
@@ -1720,6 +1935,11 @@ elif [ "$untracked" != "0" ]; then
   echo "verdict=untracked-claim detail=$untracked tracking claim(s) name no issue — write Declined: <reason>, or add the tracker/#id"
 elif [ "$unreasoned" != "0" ]; then
   echo "verdict=unreasoned-decline detail=$unreasoned decline(s) name no mechanism — give a passing state, a false premise, or an excluded class with the fact that puts it there"
+elif [ -n "$supp_detail" ]; then
+  # Ahead of `awaiting`: a body carrying the block IS an accepted row by
+  # construction, so the no-evidence branch could never mask it, and the
+  # specific content refusal belongs in front of the generic thread count.
+  echo "verdict=suppressed-findings detail=$supp_detail"
 elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ] && [ "$render_only" = "0" ]; then
   # One line, no source list. Which sources could open the gate is the repo's
   # own settings (references/settings.md), not a status description GitHub

@@ -336,7 +336,7 @@ for selftest_table in \
   predicate-configuration.sh predicate-thread-mode.sh predicate-retries.sh \
   predicate-pagination.sh predicate-author.sh predicate-read-shapes.sh \
   predicate-snapshot.sh predicate-request-shape.sh predicate-mode.sh \
-  predicate-carry.sh predicate-configured.sh; do
+  predicate-carry.sh predicate-suppressed.sh predicate-configured.sh; do
   selftest_table_path="$here/../tests/lib/predicate-selftest/$selftest_table"
   if [ ! -r "$selftest_table_path" ]; then
     rg_message error selftest-table-load "$selftest_table_path" "Could not load predicate selftest table $selftest_table." >&2
