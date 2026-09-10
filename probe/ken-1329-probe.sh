@@ -10,4 +10,11 @@ probe_sum() {
   printf "%s\n" "$total"
 }
 
-probe_sum "$@"
+probe_mean() {
+  local count=$#
+  local sum
+  sum=$(probe_sum "$@")
+  printf "%s\n" $((sum / count))
+}
+
+probe_mean $@
