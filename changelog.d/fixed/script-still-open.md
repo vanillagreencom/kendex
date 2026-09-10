@@ -1,1 +1,1 @@
-- Start a package script even when another program start from the same moment still holds the file open, retrying within the call's time limit instead of failing with "Text file busy".
+- A package script kendex has just written now starts even while kendex itself still holds the file open: the start is retried within the call's time limit instead of failing with "Text file busy".

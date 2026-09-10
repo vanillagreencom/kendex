@@ -644,3 +644,43 @@ fn a_script_still_open_for_writing_is_retried_until_the_bound() {
         }
     }
 }
+
+/// The bound is the whole contract, so a start refused inside it is
+/// never made after it. The script marks its own run, which tells "never
+/// started" from "started and lost": the writer lets go after the bound
+/// but inside the poll the retry sleeps, the one window in which a retry
+/// that consulted the clock only on refusal would start it.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_start_refused_inside_the_bound_is_not_made_after_it() {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let script = tmp.path().join("script");
+    let marker = tmp.path().join("ran");
+    let mut writer = fs::File::create(&script).unwrap();
+    writeln!(writer, "#!/bin/sh\n: > {}", marker.display()).unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    let bound = POLL / 5;
+    let released_after = POLL * 4 / 5;
+    let hardened = Hardened::program(script.to_str().unwrap(), &[]).timeout(bound);
+
+    let started = Instant::now();
+    let releaser = std::thread::spawn(move || {
+        std::thread::sleep(released_after);
+        drop(writer);
+    });
+    let result = hardened.run();
+    let ended = started.elapsed();
+    releaser.join().unwrap();
+
+    let Err(CoreError::CommandNotStarted { .. }) = result else {
+        panic!("a start after the bound: {result:?}");
+    };
+    assert!(
+        ended < POLL,
+        "reported past the poll, not at the bound: {ended:?}"
+    );
+    assert!(!marker.exists(), "the script ran after the bound");
+}

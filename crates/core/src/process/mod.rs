@@ -190,15 +190,20 @@ impl Hardened {
         // disk, and the fixture scripts the test suites write. The handle
         // is gone the moment that other exec finishes, so the start is
         // retried until the bound, and only the last refusal is reported.
+        // The clock is read after every sleep and before every retry: a
+        // command is a side effect, and one started past the bound is a
+        // bound the caller never got, whatever the retry then reads.
         // Only a failed spawn never ran; missing pipes are a broken invariant.
         let mut child = loop {
             match self.command.spawn() {
                 Ok(child) => break child,
-                Err(error)
-                    if error.kind() == io::ErrorKind::ExecutableFileBusy
-                        && Instant::now() < deadline =>
-                {
-                    std::thread::sleep(POLL);
+                Err(error) if error.kind() == io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(
+                        POLL.min(deadline.saturating_duration_since(Instant::now())),
+                    );
+                    if Instant::now() >= deadline {
+                        return Err(CoreError::not_started(&self.label, error));
+                    }
                 }
                 Err(error) => return Err(CoreError::not_started(&self.label, error)),
             }
