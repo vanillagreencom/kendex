@@ -64,7 +64,6 @@ describe("where a project's package checks stand", () => {
       view: AuditView | undefined;
       failure?: string;
       targets?: HarnessId[] | null;
-      folderMissing?: boolean;
       expected: { state: string; running: HarnessId[]; waiting: HarnessId[] };
     }[] = [
       {
@@ -72,13 +71,6 @@ describe("where a project's package checks stand", () => {
         items: [],
         view: undefined,
         targets: null,
-        expected: { state: "unknown", running: [], waiting: [] },
-      },
-      {
-        case: "the registered folder is gone",
-        items: [rendered("claude"), rendered("pi")],
-        view: view([]),
-        folderMissing: true,
         expected: { state: "unknown", running: [], waiting: [] },
       },
       {
@@ -158,7 +150,6 @@ describe("where a project's package checks stand", () => {
           row.failure ?? null,
           ROOT,
           row.targets === undefined ? TARGETS : row.targets,
-          row.folderMissing ?? false,
         ),
         row.case,
       ).toEqual(row.expected);

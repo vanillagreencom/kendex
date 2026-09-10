@@ -38,11 +38,6 @@ export const INCOMPLETE_MEANS =
   "The check is set up in this project and does not yet run in every supported tool.";
 export const UNKNOWN_MEANS =
   "kendex could not read this project, so it cannot say whether the check runs here.";
-/** The registered folder is gone: the one state with an action of its own,
- *  and the reason nothing here may be installed. */
-export const FOLDER_MISSING_MEANS =
-  "kendex cannot find this project's folder, so it cannot say whether the check runs here.";
-export const LOCATE_FOLDER_FIRST = "Locate the project folder first.";
 
 /** Which of the supported tools run the check now and which do not. An
  *  installer's answer cannot say this, so it is read back from the machine

@@ -57,14 +57,13 @@ export function checksStanding(
   failure: string | null,
   root: string,
   targets: readonly HarnessId[] | null,
-  folderMissing: boolean,
 ): ChecksStanding {
   const unknown: ChecksStanding = {
     state: "unknown",
     running: [],
     waiting: [],
   };
-  if (folderMissing || targets === null) return unknown;
+  if (targets === null) return unknown;
   const scope: Scope = { scope: "project", root };
   const running = targets.filter((harness) =>
     items.some(

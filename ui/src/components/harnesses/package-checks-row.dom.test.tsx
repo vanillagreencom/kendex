@@ -100,7 +100,6 @@ const drivenRow = () => {
         root={ROOT}
         standing={current}
         harnesses={["claude", "pi"]}
-        folderMissing={false}
         onOpenLibrary={openLibrary}
       />
     );
@@ -122,7 +121,6 @@ const row = (over: Partial<ChecksStanding> = {}) =>
       root={ROOT}
       standing={standing(over)}
       harnesses={["claude", "pi"]}
-      folderMissing={false}
       onOpenLibrary={openLibrary}
     />,
   );

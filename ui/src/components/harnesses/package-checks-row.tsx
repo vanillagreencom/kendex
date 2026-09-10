@@ -5,10 +5,8 @@ import { PackageChecksHelp } from "@/components/harnesses/package-checks-help";
 import { Button } from "@/components/ui/button";
 import {
   ENABLE_CHECKS_LABEL,
-  FOLDER_MISSING_MEANS,
   heldBecause,
   INCOMPLETE_MEANS,
-  LOCATE_FOLDER_FIRST,
   notRunningIn,
   OFF_MEANS,
   ON_MEANS,
@@ -44,7 +42,6 @@ export function PackageChecksRow({
   root,
   standing,
   harnesses,
-  folderMissing,
   onOpenLibrary,
 }: {
   name: string;
@@ -54,7 +51,6 @@ export function PackageChecksRow({
    *  `PACKAGE_CHECK_HARNESSES` constant, so the row names no tool the
    *  install would skip. */
   harnesses: readonly HarnessId[];
-  folderMissing: boolean;
   /** Where the check is turned off, removed, or seen beside whatever else
    *  is waiting here: this project's Library, narrowed to its hooks. */
   onOpenLibrary: () => void;
@@ -86,13 +82,10 @@ export function PackageChecksRow({
           {STATE_WORDS[standing.state]}
         </p>
         <p className="text-[13px] text-muted-foreground">
-          {means(standing.state, folderMissing)}
+          {means(standing.state)}
           {standing.running.length > 0 ? ` ${runsIn(standing.running)}` : ""}
           {standing.state === "incomplete" && standing.waiting.length > 0
             ? ` ${notRunningIn(standing.waiting)}`
-            : ""}
-          {standing.state === "unknown" && folderMissing
-            ? ` ${LOCATE_FOLDER_FIRST}`
             : ""}
         </p>
         {/* The guard keeps the render that reaches "on" from painting the
@@ -145,7 +138,7 @@ export function PackageChecksRow({
   );
 }
 
-function means(state: ChecksStanding["state"], folderMissing: boolean): string {
+function means(state: ChecksStanding["state"]): string {
   switch (state) {
     case "off":
       return OFF_MEANS;
@@ -154,6 +147,6 @@ function means(state: ChecksStanding["state"], folderMissing: boolean): string {
     case "incomplete":
       return INCOMPLETE_MEANS;
     case "unknown":
-      return folderMissing ? FOLDER_MISSING_MEANS : UNKNOWN_MEANS;
+      return UNKNOWN_MEANS;
   }
 }

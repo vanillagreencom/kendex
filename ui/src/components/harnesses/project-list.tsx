@@ -269,19 +269,16 @@ export function ProjectList() {
       auditFailure,
     );
   // The lines under a project's counts: what kendex has waiting for a
-  // commit here, and the start-of-session note's standing. Both are about
-  // the place rather than about what is installed, which is why they sit
+  // commit here, and where its package checks stand. Both are about the
+  // place rather than about what is installed, which is why they sit
   // together below the counts.
-  const noteRow = (
-    root: string,
-    name: string,
-    place: ItemPlace,
-    missing: MissingProject | undefined,
-  ) => {
+  //
+  // Drawn only for a place whose folder was read. A card over a folder
+  // nothing was read from draws no note at all — it is replaced by what
+  // could not be read and the ways out of it, which is the card's own
+  // state and neither of these lines'.
+  const noteRow = (root: string, name: string, place: ItemPlace) => {
     // What the scan observed this pass, which a failed scan is none of.
-    // Whether the folder is there is not read from them: that answer
-    // arrives as `missing`, it has its own copy and its own action, and
-    // it is the last thing kendex did establish about this project.
     const observations = scanFailure === null ? result : null;
     return (
       <>
@@ -292,14 +289,12 @@ export function ProjectList() {
           name={name}
           root={root}
           harnesses={PACKAGE_CHECK_HARNESSES}
-          folderMissing={missing !== undefined}
           standing={checksStanding(
             observations?.items ?? [],
             views.find((v) => sameScope(v.scope, { scope: "project", root })),
             auditFailure,
             root,
             observations ? PACKAGE_CHECK_HARNESSES : null,
-            missing !== undefined,
           )}
           onOpenLibrary={() => goToLibrary({ ...place, kind: "hook" })}
         />
@@ -489,7 +484,7 @@ export function ProjectList() {
                     onRemove: () => setRemoveTarget(root),
                   }
                 }
-                note={noteRow(root, name, place, missing)}
+                note={noteRow(root, name, place)}
                 action={
                   <PlaceActions
                     scope={scope}
