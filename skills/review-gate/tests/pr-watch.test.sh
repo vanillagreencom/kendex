@@ -153,7 +153,8 @@ table \
   "a green gate over it is gate-stale and --heal dispatches the writer at it|--heal|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_UNREASONED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=unreasoned-decline,gate-stale,heal-dispatched dispatches=1" \
   "untracked-claim is its own kind and its own attention||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_UNTRACKED;STUB_GATE_HISTORY=$G_PENDING|rc=1 kinds=untracked-claim protocol=7~aaaaaaaa~untracked-claim~1+tracking+claim+naming+no+issue" \
   "a green gate over it is gate-stale and heals the same way|--heal|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_UNTRACKED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=untracked-claim,gate-stale,heal-dispatched dispatches=1" \
-  "suppressed-findings is its own kind, carrying the count and the file:line||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_SUPPRESSED;STUB_GATE_HISTORY=$G_PENDING|rc=1 kinds=suppressed-findings protocol=7~aaaaaaaa~suppressed-findings~2+suppressed+findings+in+a+review+body:+src/a.ts:106"
+  "suppressed-findings is its own kind, carrying the count and the file:line||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_SUPPRESSED;STUB_GATE_HISTORY=$G_PENDING|rc=1 kinds=suppressed-findings protocol=7~aaaaaaaa~suppressed-findings~2+suppressed+findings+in+a+review+body:+src/a.ts:106" \
+  "a green gate over a suppressed block is gate-stale and heals the same way|--heal|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_SUPPRESSED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=suppressed-findings,gate-stale,heal-dispatched dispatches=1"
 
 # The rows above read a kind column, and a column can be right for the wrong
 # reason: the predicate's verdict word is in the stubbed input, so a reducer

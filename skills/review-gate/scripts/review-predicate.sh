@@ -1860,24 +1860,39 @@ case "$suppressed_state" in
   mismatch) supp_detail="Suppressed comments declares $supp_declared finding(s) but $supp_entries entry line(s) parsed — read the block in the review body" ;;
   ok)
     if [ "$suppressed" != "0" ]; then
-      # Names are added while the list stays inside the description's budget,
+      # Names are added while the FINISHED detail stays inside the budget,
       # then the remainder is COUNTED: a truncated list must never read as
-      # the whole one.
+      # the whole one. Budgeting the bare name list instead would let the
+      # entry that crosses the line overshoot by its own whole length, and
+      # review-writer.sh's cut — 140 characters, the commit-status API's
+      # description limit, and that script owns the cut — would land on the
+      # ` +K more` and hand a reader a short list reading as a complete one.
+      # The projection is exact because the entry count is known before the
+      # loop: admitting an entry can only shrink the suffix the projection
+      # already paid for, so the string this test accepts is the string that
+      # ships.
+      supp_prefix="$suppressed suppressed finding(s) in a review body, carried by no thread: "
       supp_names=""
       supp_shown=0
-      supp_total=0
       while IFS= read -r supp_entry; do
         [ -n "$supp_entry" ] || continue
-        supp_total=$((supp_total + 1))
-        if [ "${#supp_names}" -lt 70 ]; then
-          if [ -z "$supp_names" ]; then supp_names="$supp_entry"; else supp_names="$supp_names, $supp_entry"; fi
-          supp_shown=$((supp_shown + 1))
-        fi
+        if [ -z "$supp_names" ]; then supp_try="$supp_entry"; else supp_try="$supp_names, $supp_entry"; fi
+        supp_tail=""
+        [ "$((supp_entries - supp_shown - 1))" -le 0 ] || supp_tail=" +$((supp_entries - supp_shown - 1)) more"
+        [ "$((${#supp_prefix} + ${#supp_try} + ${#supp_tail}))" -le 140 ] || break
+        supp_names="$supp_try"
+        supp_shown=$((supp_shown + 1))
       done <<<"$supp_list"
-      if [ "$supp_shown" -lt "$supp_total" ]; then
-        supp_names="$supp_names +$((supp_total - supp_shown)) more"
+      if [ "$supp_shown" -lt "$supp_entries" ]; then
+        # An empty name list is the degenerate case — not even the first
+        # entry fits. The count stands alone rather than half a path.
+        if [ -z "$supp_names" ]; then
+          supp_names="+$((supp_entries - supp_shown)) more"
+        else
+          supp_names="$supp_names +$((supp_entries - supp_shown)) more"
+        fi
       fi
-      supp_detail="$suppressed suppressed finding(s) in a review body, carried by no thread: $supp_names"
+      supp_detail="$supp_prefix$supp_names"
     fi
     ;;
 esac

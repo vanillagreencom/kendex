@@ -32,6 +32,16 @@ supp_carries() { # NAME, NEEDLE, HAYSTACK
       ;;
   esac
 }
+supp_omits() { # NAME, NEEDLE, HAYSTACK
+  cases=$((cases + 1))
+  case "$3" in
+    *"$2"*)
+      rg_message error selftest-suppressed-detail "$1" "FAIL  $1: '$2' present in: $3" >&2
+      failures=$((failures + 1))
+      ;;
+    *) echo "ok    $1" ;;
+  esac
+}
 
 # The deliverable: the count and the file:line list, in the status detail a
 # reader sees and in the log that holds the whole list.
@@ -119,3 +129,46 @@ supp_case '### Suppressed comments (2)' "$SUPP_FENCED_ENTRIES" any suppressed-fi
   "a fenced snippet between two entries hides neither of them"
 supp_carries "the fenced case counts both entries" "detail=2 suppressed finding(s)" "$LAST_LINE"
 supp_carries "the fenced case names the entry after the snippet" "$SUPP_SECOND" "$LAST_LINE"
+
+# The detail lands in a commit-status description review-writer.sh cuts at
+# its 140th character, and that cut would land on the tail — destroying the
+# very `+K more` that keeps a short list from reading as the whole one. Real
+# repository paths are long enough to reach it, so the budget is checked
+# against the finished string rather than the bare name list.
+SUPP_LONG='skills/review-gate/tests/lib/predicate-selftest/predicate-suppressed.sh:121'
+supp_budget_case() { # ENTRY_ONE, ENTRY_TWO, NAME
+  reset
+  CFG_TRUSTED_LOGINS=""
+  CFG_MIN_STATE=any
+  CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+  reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_body '### Suppressed comments (2)' "**$1**
+* Blocking: the first finding.
+**$2**
+* Blocking: the second finding.")")"
+  run "$3" suppressed-findings
+  SUPP_DETAIL="${LAST_LINE#verdict=* detail=}"
+}
+supp_fits() { # NAME
+  cases=$((cases + 1))
+  if [ "${#SUPP_DETAIL}" -le 140 ]; then
+    echo "ok    $1"
+  else
+    rg_message error selftest-suppressed-budget "$1" "FAIL  $1: detail is ${#SUPP_DETAIL} characters, past the description budget: $SUPP_DETAIL" >&2
+    failures=$((failures + 1))
+  fi
+}
+
+supp_budget_case "$SUPP_FIRST" "$SUPP_LONG" \
+  "an entry that would overshoot the description budget is counted, not named"
+supp_fits "the two-entry detail fits the description budget"
+supp_carries "it still names the entry that fits" "$SUPP_FIRST" "$SUPP_DETAIL"
+supp_carries "it counts the entry it dropped" "+1 more" "$SUPP_DETAIL"
+supp_omits "it does not name the entry it dropped" "$SUPP_LONG" "$SUPP_DETAIL"
+
+# The degenerate arm: not even the first entry fits, so the detail counts
+# every finding rather than showing half a path.
+supp_budget_case "$SUPP_LONG" "$SUPP_LONG" \
+  "a first entry too long to fit leaves a bare count, never half a path"
+supp_fits "the degenerate detail fits the description budget"
+supp_carries "the degenerate detail counts every finding" "+2 more" "$SUPP_DETAIL"
+supp_omits "the degenerate detail names no path" "predicate-suppressed.sh" "$SUPP_DETAIL"
