@@ -87,7 +87,8 @@ delegated set and authorized additions live in the round record, and omitting
 the flag would check neither. Implement rounds write no round record and stay
 flagless.
 An accepted round-mode implement receipt sets workflow state pr.baseline_lines
-only when that field is null. File mode: validates one explicit JSON file (round_id checked only when --round-id
+only when that field is null, recording pr.baseline_origin "implement" beside
+it. File mode: validates one explicit JSON file (round_id checked only when --round-id
 is supplied). It is a test/parity affordance — round-trip checks and known-path
 artifacts — with no production caller; the orch workflows always use round mode.
 There is one identity model (round id); the mtime freshness gate and the old
@@ -819,7 +820,8 @@ check_once() {
       if ! "$SCRIPT_DIR/workflow-state" update "$issue" --slurpfile receipt "$file" '
         .pr = (.pr // {})
         | if (.pr.baseline_lines // null) == null
-          then .pr.baseline_lines = $receipt[0].baseline_lines else . end
+          then .pr.baseline_lines = $receipt[0].baseline_lines
+             | .pr.baseline_origin = "implement" else . end
       '; then
         out="$(emit false "$file" invalid)"
         rc=1

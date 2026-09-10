@@ -2,7 +2,7 @@
 
 The on-disk record of a fix round's delegated items, starting commit, and allowed protected additions. The orchestrator writes it with `dev-round-write` immediately after minting the round token and before sending the delegation.
 
-Before writing the record, `dev-round-write` compares the branch with workflow state `pr.baseline_lines`; a null or invalid value refuses without writing it. A branch above twice the recorded line count exits 3 and must be cut before another fix round can start.
+Before writing the record, `dev-round-write` compares the branch with workflow state `pr.baseline_lines`. A null value on an ordinary round is a PR opened outside `orch start`, which never had an implementation receipt to set one: the round adopts the branch as it stands, records it with `pr.baseline_origin` `adopted`, reports that on stderr, and proceeds. Any other unreadable value refuses without writing the record. A branch above twice the recorded line count exits 3 and must be cut before another fix round can start.
 
 The cut is itself a round, and the only one that must run while the branch is over that cap — see [§ Declared cuts](#declared-cuts).
 
@@ -56,7 +56,7 @@ A cut is the round that brings an oversized branch back to the Done-when, so it 
 
 A cut round's items name work rather than a finding, so the `reach` row's definition reads differently for them: a cut item's reach is the branch this round shrinks. It is still required, and still refused when it is empty or one of the writer's listed shapes — `the finding` among them.
 
-`--cut` records `"cut": true` and skips the over-limit refusal. It skips nothing else — the branch is still measured, so an unreadable or non-positive `pr.baseline_lines` still refuses at stamp time, and the item set, the reach bar, the protected additions, and immutability all apply as on any other round. The over-limit check moves rather than disappearing: on a record carrying `"cut": true`, `dev-artifact-check` measures the branch again at acceptance and refuses the receipt with `cut_not_shrunk` when it is still above twice `pr.baseline_lines`, or `cut_unmeasurable` when that cap cannot be measured at all. So a round declared a cut that does not shrink the branch cannot be accepted, and the declaration is a way to run the cut, never a way past the tripwire.
+`--cut` records `"cut": true` and skips the over-limit refusal. It skips nothing else — the branch is still measured, so an unreadable, missing or non-positive `pr.baseline_lines` still refuses at stamp time, a cut adopting no baseline of its own because it exists only where a recorded one already refused this branch, and the item set, the reach bar, the protected additions, and immutability all apply as on any other round. The over-limit check moves rather than disappearing: on a record carrying `"cut": true`, `dev-artifact-check` measures the branch again at acceptance and refuses the receipt with `cut_not_shrunk` when it is still above twice `pr.baseline_lines`, or `cut_unmeasurable` when that cap cannot be measured at all. So a round declared a cut that does not shrink the branch cannot be accepted, and the declaration is a way to run the cut, never a way past the tripwire.
 
 ## Readers
 

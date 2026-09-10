@@ -267,7 +267,8 @@ cmd_init() {
         escalated_items: [],
         audit_issues_created: [],
         pr: {
-          baseline_lines: null
+          baseline_lines: null,
+          baseline_origin: null
         },
         pr_review_baseline: null,
         pr_comment_review: {

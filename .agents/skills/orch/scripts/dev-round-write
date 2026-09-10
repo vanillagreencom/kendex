@@ -52,10 +52,15 @@
 # round that must run while the branch is over its size tripwire — refusing to
 # record it is what left the cut with no record, and so no way to accept its
 # receipt. The declaration skips the OVER-LIMIT REFUSAL and nothing else: the
-# branch is still measured, an unreadable baseline still refuses, and the item
-# set is recorded and checked as on any other round. The over-limit check moves
-# to acceptance, where dev-artifact-check refuses the cut's receipt unless the
-# branch came back under the cap.
+# branch is still measured, an unreadable or missing baseline still refuses,
+# and the item set is recorded and checked as on any other round. The
+# over-limit check moves to acceptance, where dev-artifact-check refuses the
+# cut's receipt unless the branch came back under the cap.
+#
+# An ordinary round whose pr.baseline_lines is null adopts the branch as it
+# stands as the baseline and records the origin, because a PR opened outside
+# `orch start` never had an implementation receipt to set one. A cut adopts
+# nothing: it runs only after a recorded baseline refused this branch.
 #
 # Record schema — canonical source of truth: skills/orch/schemas/dev-round.md
 #   {
@@ -204,8 +209,16 @@ message() {
       printf '%s\n' "$BRANCH_GROWTH_ERROR"
       ;;
     growth-limit)
-      printf 'dev-round-write: growth-limit current=%s baseline=%s limit=%s\n' "$BRANCH_GROWTH_CURRENT" "$BRANCH_GROWTH_BASELINE" "$BRANCH_GROWTH_LIMIT"
+      printf 'dev-round-write: growth-limit current=%s baseline=%s limit=%s origin=%s\n' "$BRANCH_GROWTH_CURRENT" "$BRANCH_GROWTH_BASELINE" "$BRANCH_GROWTH_LIMIT" "$BRANCH_GROWTH_BASELINE_ORIGIN"
       printf 'Cut the branch to its size limit before starting another fix round.\n'
+      ;;
+    baseline-adopted)
+      printf 'dev-round-write: baseline-adopted issue=%s lines=%s origin=adopted\n' "$issue" "$adopted_lines"
+      printf '%s\n' "no implementation receipt recorded a baseline for '$issue', so this round adopts the branch as it stands and later rounds are held to twice it"
+      ;;
+    baseline-adopt-failed)
+      printf 'dev-round-write: baseline-adopt-failed issue=%s lines=%s\n' "$issue" "$adopted_lines"
+      printf '%s\n' "the adopted baseline for '$issue' could not be recorded in workflow state"
       ;;
   esac
 }
@@ -253,13 +266,20 @@ The record captures the worktree's current HEAD as base_sha; a worktree with
 no resolvable HEAD is rejected.
 Before the record is written, the branch's additions plus deletions must be
 at most twice workflow state pr.baseline_lines. Full implementation acceptance
-sets it; a null or invalid value refuses before the record is written.
+sets it, recording pr.baseline_origin "implement". A PR opened outside
+`orch start` never had one, so an ordinary round over a null pr.baseline_lines
+adopts the branch as it stands, records it with origin "adopted", says so on
+stderr, and proceeds; a non-null value that is not a positive integer, and a
+state file that cannot be read at all, still refuse before the record is
+written.
 An oversized branch exits 3 and must be cut before another fix round.
 --cut declares the round that cut: it skips the over-limit refusal and nothing
 else, so the cut gets a record like any other round. The branch is still
-measured, and an unreadable or non-positive pr.baseline_lines still exits 2 —
-that is an environment failure, not a verdict about the branch's size. The
-over-limit check moves to acceptance: dev-artifact-check refuses a cut round's
+measured, and an unreadable, missing or non-positive pr.baseline_lines still
+exits 2 — a cut exists because a recorded baseline refused this branch, so it
+adopts nothing; that is an environment failure, not a verdict about the
+branch's size. The over-limit check moves to acceptance: dev-artifact-check
+refuses a cut round's
 receipt unless the branch came back to the cap, so a round declared a cut that
 grows the branch cannot be accepted.
 --issue / --round-id must match
@@ -324,6 +344,24 @@ check_reach() {
   done
 }
 
+# A PR opened outside `orch start` — a baseline import, a hotfix branch, a
+# human's PR — reaches its first fix round with no recorded baseline, because
+# nothing ever accepted an implementation receipt for it. The branch as it
+# stands is what an accepted receipt would have carried, so it is measured by
+# the same helper and recorded with its origin.
+adopt_branch_baseline() {
+  local worktree="$1" issue="$2" adopted_lines=""
+  branch_baseline_lines "$worktree" "$SCRIPT_DIR/resolve-base-branch" HEAD adopted_lines || {
+    message growth-unmeasured >&2
+    exit 2
+  }
+  "$SCRIPT_DIR/workflow-state" update "$issue" --argjson lines "$adopted_lines" \
+    '.pr = (.pr // {}) | .pr.baseline_lines = $lines | .pr.baseline_origin = "adopted"' \
+    >/dev/null \
+    || die baseline-adopt-failed "$@"
+  message baseline-adopted >&2
+}
+
 run_size_tripwire() {
   # $3 is the declared-cut flag, so the call site reads as the gate it is.
   local worktree="$1" issue="$2" declared_cut="$3"
@@ -334,8 +372,23 @@ run_size_tripwire() {
   # after a whole round had been minted, delegated and worked against a record
   # that is immutable by then.
   if ! measure_size_tripwire "$worktree" "$issue" "$SCRIPT_DIR"; then
-    message growth-unmeasured >&2
-    exit 2
+    # `absent` is the null a fresh state file carries: no writer has recorded a
+    # baseline at all, which is ordinary on a PR orch did not implement. Every
+    # other outcome — an unreadable state file, a non-positive value, a branch
+    # git cannot diff — stays the environment failure it has always been. A
+    # declared cut adopts nothing either: a cut exists because a recorded
+    # baseline refused this branch, so a missing one there is that same failure.
+    if [[ "$BRANCH_GROWTH_BASELINE_STATE" != "absent" || "$declared_cut" == "true" ]]; then
+      message growth-unmeasured >&2
+      exit 2
+    fi
+    adopt_branch_baseline "$worktree" "$issue"
+    # Re-read rather than assume: the round is gated on what the state file
+    # now holds, not on what the adoption meant to put there.
+    measure_size_tripwire "$worktree" "$issue" "$SCRIPT_DIR" || {
+      message growth-unmeasured >&2
+      exit 2
+    }
   fi
 
   # The over-limit refusal is the whole of what a declared cut skips. A cut is
