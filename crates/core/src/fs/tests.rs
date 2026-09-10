@@ -383,32 +383,20 @@ fn a_durable_file_copy_carries_the_mode_across() {
     );
 }
 
-/// The access-control entries a Windows file carries, read back through
-/// `GetNamedSecurityInfoW`, a path the create never touches. A row is one
-/// entry: whether it names the account running the test, its access mask,
-/// and whether the folder handed it down.
+/// The access-control entries a Windows file carries, read back by name
+/// through `GetNamedSecurityInfoW`, a path the create never touches; the
+/// walk over the list is the module's own.
 #[cfg(windows)]
 mod acl {
-    use std::mem::size_of;
     use std::os::windows::ffi::OsStrExt;
     use std::path::Path;
     use std::ptr;
 
     use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
     use windows_sys::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
-    use windows_sys::Win32::Security::{
-        ACCESS_ALLOWED_ACE, ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION,
-        EqualSid, GetAce, GetAclInformation, INHERITED_ACE,
-    };
-    use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
+    use windows_sys::Win32::Security::DACL_SECURITY_INFORMATION;
 
-    #[derive(Debug, PartialEq, Eq)]
-    pub(super) struct Entry {
-        pub(super) allowed: bool,
-        pub(super) this_account: bool,
-        pub(super) mask: u32,
-        pub(super) inherited: bool,
-    }
+    pub(super) use super::dacl::{Entry, OWNER_ONLY};
 
     #[allow(clippy::unwrap_used)]
     #[allow(
@@ -441,49 +429,9 @@ mod acl {
             )
         };
         assert_eq!(read, ERROR_SUCCESS, "GetNamedSecurityInfoW");
-        assert!(
-            !dacl.is_null(),
-            "the file has no access-control list at all"
-        );
-        let mut size = ACL_SIZE_INFORMATION {
-            AceCount: 0,
-            AclBytesInUse: 0,
-            AclBytesFree: 0,
-        };
-        // SAFETY: `dacl` is the valid list read above and `size` a
-        // writable `ACL_SIZE_INFORMATION` of the length passed.
-        let sized = unsafe {
-            GetAclInformation(
-                dacl,
-                ptr::from_mut(&mut size).cast(),
-                size_of::<ACL_SIZE_INFORMATION>() as u32,
-                AclSizeInformation,
-            )
-        };
-        assert_ne!(sized, 0, "GetAclInformation");
-        let rows = (0..size.AceCount)
-            .map(|index| {
-                let mut ace = ptr::null_mut();
-                // SAFETY: `index` is below the count the list reported,
-                // so `GetAce` yields a pointer to an entry inside `dacl`,
-                // which is alive until the free below. Every entry starts
-                // with an `ACE_HEADER`, and an allowed entry is an
-                // `ACCESS_ALLOWED_ACE` whose `SidStart` opens its SID.
-                unsafe {
-                    assert_ne!(GetAce(dacl, index, &mut ace), 0, "GetAce {index}");
-                    let ace = &*ace.cast::<ACCESS_ALLOWED_ACE>();
-                    let allowed = u32::from(ace.Header.AceType) == ACCESS_ALLOWED_ACE_TYPE;
-                    Entry {
-                        allowed,
-                        this_account: allowed
-                            && EqualSid(ptr::from_ref(&ace.SidStart).cast_mut().cast(), user.sid())
-                                != 0,
-                        mask: ace.Mask,
-                        inherited: u32::from(ace.Header.AceFlags) & INHERITED_ACE != 0,
-                    }
-                }
-            })
-            .collect();
+        // SAFETY: `dacl` is the list read above, null where the file has
+        // none, alive until the free below; the SID points into `user`.
+        let rows = unsafe { super::dacl::entries(dacl, user.sid()) };
         // SAFETY: `descriptor` came from `GetNamedSecurityInfoW`, which
         // documents `LocalFree` as its release, and nothing reads through
         // it after this.
@@ -500,22 +448,13 @@ mod acl {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_created_private_file_names_this_account_alone() {
-    use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join(".env.local");
 
     write_private(&path, b"TOKEN='secret'\n").unwrap();
 
     assert_eq!(fs::read(&path).unwrap(), b"TOKEN='secret'\n");
-    assert_eq!(
-        acl::entries(&path),
-        vec![acl::Entry {
-            allowed: true,
-            this_account: true,
-            mask: FILE_ALL_ACCESS,
-            inherited: false,
-        }]
-    );
+    assert_eq!(acl::entries(&path), [acl::OWNER_ONLY]);
 }
 
 /// A file the person already has keeps the list they gave it: the file is
@@ -556,10 +495,27 @@ fn a_private_file_past_the_legacy_path_limit_is_created_owner_only() {
     write_private(&path, b"TOKEN='secret'\n").unwrap();
 
     assert_eq!(fs::read(&path).unwrap(), b"TOKEN='secret'\n");
-    let entries = acl::entries(&path);
-    assert_eq!(entries.len(), 1, "{entries:?}");
-    assert!(
-        entries[0].this_account && !entries[0].inherited,
-        "{entries:?}"
-    );
+    assert_eq!(acl::entries(&path), [acl::OWNER_ONLY]);
+}
+
+/// The list is read back through the handle before any byte is written,
+/// and a file carrying any other list is refused: a volume that keeps no
+/// lists creates the file open to everyone while reporting success. No
+/// runner has such a volume, so the other list here is the one a plain
+/// create takes from its folder, which is the same answer — not the one
+/// written — and the refusal it draws is the one a FAT volume draws.
+#[cfg(windows)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_list_the_volume_did_not_keep_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let user = dacl::current_user().unwrap();
+    let private = tmp.path().join(".env.local");
+    write_private(&private, b"TOKEN='secret'\n").unwrap();
+    dacl::applied(&fs::File::open(&private).unwrap(), user.sid()).unwrap();
+
+    let plain = tmp.path().join("plain");
+    fs::write(&plain, "").unwrap();
+    let refused = dacl::applied(&fs::File::open(&plain).unwrap(), user.sid()).unwrap_err();
+    assert_eq!(refused.kind(), std::io::ErrorKind::Unsupported, "{refused}");
 }

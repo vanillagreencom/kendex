@@ -16,22 +16,32 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::Path;
 use std::ptr;
 
-use windows_sys::Win32::Foundation::{GENERIC_WRITE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Foundation::{
+    ERROR_SUCCESS, GENERIC_WRITE, INVALID_HANDLE_VALUE, LocalFree,
+};
+use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
 use windows_sys::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, AddAccessAllowedAce, GetLengthSid, GetTokenInformation,
-    InitializeAcl, InitializeSecurityDescriptor, PSID, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES,
-    SECURITY_DESCRIPTOR, SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_QUERY,
-    TOKEN_USER, TokenUser,
+    ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, ACL_SIZE_INFORMATION, AclSizeInformation,
+    AddAccessAllowedAce, DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation,
+    GetLengthSid, GetTokenInformation, INHERITED_ACE, InitializeAcl, InitializeSecurityDescriptor,
+    PSID, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
+    SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{CREATE_NEW, CreateFileW, FILE_ALL_ACCESS};
-use windows_sys::Win32::System::SystemServices::SECURITY_DESCRIPTOR_REVISION;
+use windows_sys::Win32::System::SystemServices::{
+    ACCESS_ALLOWED_ACE_TYPE, SECURITY_DESCRIPTOR_REVISION,
+};
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 /// Create `path`, refusing if it exists, with an access-control list that
 /// names the current account and nobody else. The list is marked protected
-/// so the folder's inheritable entries are not merged in behind it. A step
-/// that fails refuses the create, naming the step: a file with the folder's
-/// list is the outcome this exists to prevent, not a fallback.
+/// so the folder's inheritable entries are not merged in behind it, and it
+/// is read back through the handle before the file is handed out: a
+/// volume that keeps no lists, FAT among them, accepts the descriptor and
+/// creates the file open to everyone, and that create is refused and the
+/// empty file removed. A step that fails refuses the create, naming the
+/// step: a file with the folder's list is the outcome this exists to
+/// prevent, not a fallback.
 #[allow(
     unsafe_code,
     reason = "Win32 has no safe binding; each site states its contract"
@@ -109,7 +119,141 @@ pub(super) fn create_owner_only(path: &Path) -> io::Result<File> {
     }
     // SAFETY: `handle` is a valid file handle this function owns, opened
     // just above and given to nothing else.
-    Ok(unsafe { File::from_raw_handle(handle) })
+    let file = unsafe { File::from_raw_handle(handle) };
+    if let Err(refused) = applied(&file, sid) {
+        // The handle's share mode kept every other open out, so the file
+        // is still empty; dropping the handle is what lets the remove in.
+        drop(file);
+        return Err(match std::fs::remove_file(path) {
+            Ok(()) => refused,
+            Err(left) => io::Error::new(
+                refused.kind(),
+                format!("{refused}; the empty file could not be removed either ({left})"),
+            ),
+        });
+    }
+    Ok(file)
+}
+
+/// Whether the list `file` carries is the one this module writes, read
+/// back through its handle: one entry, this account, full access, nothing
+/// handed down. The outcome is tested rather than a volume capability
+/// flag, so a volume that reports lists and keeps a different one is
+/// refused too.
+#[allow(
+    unsafe_code,
+    reason = "Win32 has no safe binding; each site states its contract"
+)]
+pub(super) fn applied(file: &File, account: PSID) -> io::Result<()> {
+    let mut dacl = ptr::null_mut();
+    let mut descriptor = ptr::null_mut();
+    // SAFETY: `file` holds an open handle; the out-parameters are
+    // writable; the descriptor the system allocates is freed below after
+    // the last read through `dacl`, which points into it.
+    let read = unsafe {
+        GetSecurityInfo(
+            file.as_raw_handle(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut dacl,
+            ptr::null_mut(),
+            &mut descriptor,
+        )
+    };
+    if read != ERROR_SUCCESS {
+        return Err(failed("GetSecurityInfo"));
+    }
+    // SAFETY: `dacl` is the list `GetSecurityInfo` reported, null where
+    // the file has none, alive until the free below; `account` is valid.
+    let found = unsafe { entries(dacl, account) };
+    // SAFETY: `descriptor` came from `GetSecurityInfo`, which documents
+    // `LocalFree` as its release, and nothing reads through it after this.
+    unsafe { LocalFree(descriptor) };
+    match found == [OWNER_ONLY] {
+        true => Ok(()),
+        false => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "could not give the new file an owner-only access-control list (the volume did not keep it)",
+        )),
+    }
+}
+
+/// One entry of an access-control list, as far as this module reads one.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct Entry {
+    pub(super) allowed: bool,
+    pub(super) this_account: bool,
+    pub(super) mask: u32,
+    pub(super) inherited: bool,
+}
+
+/// The one entry `create_owner_only` writes.
+pub(super) const OWNER_ONLY: Entry = Entry {
+    allowed: true,
+    this_account: true,
+    mask: FILE_ALL_ACCESS,
+    inherited: false,
+};
+
+/// The entries of `dacl`, in order; a null list, which admits everyone,
+/// has none.
+///
+/// # Safety
+///
+/// `dacl` is null or a valid access-control list alive for the call, and
+/// `account` a valid SID.
+#[allow(
+    unsafe_code,
+    reason = "Win32 has no safe binding; each site states its contract"
+)]
+pub(super) unsafe fn entries(dacl: *const ACL, account: PSID) -> Vec<Entry> {
+    if dacl.is_null() {
+        return Vec::new();
+    }
+    let mut size = ACL_SIZE_INFORMATION {
+        AceCount: 0,
+        AclBytesInUse: 0,
+        AclBytesFree: 0,
+    };
+    // SAFETY: `dacl` is valid by the caller's contract and `size` a
+    // writable `ACL_SIZE_INFORMATION` of the length passed.
+    let sized = unsafe {
+        GetAclInformation(
+            dacl,
+            ptr::from_mut(&mut size).cast(),
+            size_of::<ACL_SIZE_INFORMATION>() as u32,
+            AclSizeInformation,
+        )
+    };
+    if sized == 0 {
+        return Vec::new();
+    }
+    (0..size.AceCount)
+        .filter_map(|index| {
+            let mut ace = ptr::null_mut();
+            // SAFETY: `index` is below the count the list reported, so
+            // `GetAce` yields a pointer to an entry inside `dacl`, alive by
+            // the caller's contract. Every entry starts with an
+            // `ACE_HEADER`, and an allowed entry is an `ACCESS_ALLOWED_ACE`
+            // whose `SidStart` opens its SID.
+            unsafe {
+                if GetAce(dacl, index, &mut ace) == 0 {
+                    return None;
+                }
+                let ace = &*ace.cast::<ACCESS_ALLOWED_ACE>();
+                let allowed = u32::from(ace.Header.AceType) == ACCESS_ALLOWED_ACE_TYPE;
+                Some(Entry {
+                    allowed,
+                    this_account: allowed
+                        && EqualSid(ptr::from_ref(&ace.SidStart).cast_mut().cast(), account) != 0,
+                    mask: ace.Mask,
+                    inherited: u32::from(ace.Header.AceFlags) & INHERITED_ACE != 0,
+                })
+            }
+        })
+        .collect()
 }
 
 /// The account this process runs as: the `TOKEN_USER` of its own token,

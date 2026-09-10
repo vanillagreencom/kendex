@@ -59,8 +59,9 @@ pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
 /// window as a chmod after the write. An existing file is opened and
 /// truncated the ordinary way and keeps the list its owner gave it, the
 /// other half of the contract above. When the owner-only list cannot be
-/// built or applied the create is refused with the failing step named,
-/// never made with the directory's list instead.
+/// built or applied, or the volume did not keep it, the create is refused
+/// with the failing step named, never made with the directory's list
+/// instead.
 #[cfg(windows)]
 pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut file = match dacl::create_owner_only(path) {

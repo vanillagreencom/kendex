@@ -37,10 +37,5 @@ fd-lock.workspace = true
 # path is a grammar, not a substitution. Already in the tree under tauri.
 url = "2"
 
-# Reading a created file's access-control list back is the test's side
-# alone.
-[target.'cfg(windows)'.dev-dependencies]
-windows-sys = { workspace = true, features = ["Win32_Security_Authorization"] }
-
 [lints]
 workspace = true
