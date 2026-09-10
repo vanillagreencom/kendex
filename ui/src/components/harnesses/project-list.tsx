@@ -1,9 +1,10 @@
 import { MoreHorizontal } from "lucide-react";
 import { useState } from "react";
-import type { ProjectFlag, Scope } from "@/bindings";
+import type { MissingProject, ProjectFlag, Scope } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AddProjectDialog } from "@/components/harnesses/add-project-dialog";
 import { FindProjectsDialog } from "@/components/harnesses/find-projects-dialog";
+import { LocateFolderDialog } from "@/components/harnesses/locate-folder-dialog";
 import { PlaceMarketplacesDialog } from "@/components/harnesses/place-marketplaces-dialog";
 import { ProjectCard } from "@/components/harnesses/project-card";
 import { SessionNoteRow } from "@/components/harnesses/session-note-row";
@@ -26,6 +27,14 @@ import {
 import { ADD_PACKAGES_LABEL, addPackagesTo } from "@/lib/copy-install";
 import { PLACE_MARKETPLACES_LABEL } from "@/lib/copy-model";
 import {
+  CHANGE_FOLDER_LABEL,
+  missingBadge,
+  REMOVE_FROM_LIST_BODY,
+  REMOVE_FROM_LIST_LABEL,
+  removeFromList,
+  removeFromListTitle,
+} from "@/lib/copy-project-move";
+import {
   ADD_PROJECT_TITLE,
   FIND_PROJECTS_TITLE,
 } from "@/lib/copy-project-setup";
@@ -42,6 +51,7 @@ import {
   usePackagesKnown,
   usePackagesRead,
 } from "@/lib/package-identity";
+import { pickFolder } from "@/lib/pick-folder";
 import { everyPlace, sameScope } from "@/lib/scope";
 import { sessionNoteState } from "@/lib/session-note";
 import { availableUpdatesIn, outOfDateIn } from "@/lib/update-groups";
@@ -63,13 +73,13 @@ const GLOBAL: Scope = { scope: "global" };
  *  status word behind one. */
 function badgeFor(
   root: string,
-  missing: string[],
+  missing: MissingProject | undefined,
   flagged: ProjectFlag[],
 ):
   | { text: string; variant: "destructive" | "info"; title?: string }
   | undefined {
-  if (missing.includes(root))
-    return { text: "Folder not found", variant: "destructive" };
+  if (missing)
+    return { text: missingBadge(missing.why), variant: "destructive" };
   const flag = flagged.find((each) => each.root === root);
   if (!flag) return undefined;
   switch (flag.reason.kind) {
@@ -102,7 +112,8 @@ function PlaceActions({
   scope,
   place,
   onAddPackages,
-  onStopTracking,
+  onChangeFolder,
+  onRemove,
 }: {
   scope: Scope;
   /** What this place is called among the places drawn beside it, from
@@ -113,7 +124,11 @@ function PlaceActions({
    *  empty state, because a place that already has packages is where more
    *  are usually wanted. */
   onAddPackages: () => void;
-  onStopTracking?: () => void;
+  /** Point this project at another folder. Offered whatever the recorded
+   *  folder reads as: a folder that exists is not proof it is the project
+   *  — something else can have been created at the path since. */
+  onChangeFolder?: () => void;
+  onRemove?: () => void;
 }) {
   const [marketplacesOpen, setMarketplacesOpen] = useState(false);
   return (
@@ -137,12 +152,14 @@ function PlaceActions({
           <DropdownMenuItem onClick={() => setMarketplacesOpen(true)}>
             {PLACE_MARKETPLACES_LABEL}
           </DropdownMenuItem>
-          {onStopTracking ? (
-            <DropdownMenuItem
-              className="text-critical"
-              onClick={onStopTracking}
-            >
-              Stop tracking {place}…
+          {onChangeFolder ? (
+            <DropdownMenuItem onClick={onChangeFolder}>
+              {CHANGE_FOLDER_LABEL}
+            </DropdownMenuItem>
+          ) : null}
+          {onRemove ? (
+            <DropdownMenuItem className="text-critical" onClick={onRemove}>
+              {removeFromList(place)}
             </DropdownMenuItem>
           ) : null}
         </DropdownMenuContent>
@@ -230,6 +247,20 @@ export function ProjectList() {
     name: string;
   } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
+  // The project a folder is being picked for, with the folder the reader
+  // already chose. Held here rather than in the card, so the chooser is
+  // opened where the button was pressed and the dialog opens with an answer
+  // to give rather than an errand to start.
+  const [locating, setLocating] = useState<{
+    root: string;
+    name: string;
+    picked: string;
+  } | null>(null);
+  const locate = (root: string, name: string) => {
+    void pickFolder().then((picked) => {
+      if (picked) setLocating({ root, name, picked });
+    });
+  };
   const [adding, setAdding] = useState(false);
   const [scanning, setScanning] = useState(false);
 
@@ -306,6 +337,12 @@ export function ProjectList() {
             const name = root.split("/").pop() ?? root;
             const scope: Scope = { scope: "project", root };
             const place: ItemPlace = { scope: selectionOf(scope) };
+            // A folder the scan could not read as one. Everything the card
+            // would otherwise say about this place is read out of that
+            // folder, so the card says this instead.
+            const missing = (result?.missingProjects ?? []).find(
+              (one) => one.root === root,
+            );
             return (
               <ProjectCard
                 key={root}
@@ -325,7 +362,7 @@ export function ProjectList() {
                 }
                 uncounted={uncounted}
                 emptyLabel="Nothing from kendex yet."
-                badge={badgeFor(root, result?.missingProjects ?? [], flagged)}
+                badge={badgeFor(root, missing, flagged)}
                 onOpen={() => goToLibrary(place)}
                 onKindClick={(kind) => goToLibrary({ ...place, kind })}
                 unmanaged={notManaged(scope)}
@@ -339,6 +376,14 @@ export function ProjectList() {
                 onRecheck={() => void check(root)}
                 onAddPackages={() => addPackages(scope)}
                 addPackagesLabel={addPackagesTo(namedAlone(root))}
+                missing={
+                  missing && {
+                    why: missing.why,
+                    onLocate: () => locate(root, namedAlone(root)),
+                    onRecheck: () => void check(root),
+                    onRemove: () => setRemoveTarget(root),
+                  }
+                }
                 // Not drawn until the scan and the audit have answered for
                 // this place: a card saying the note is off before either
                 // was read would be claiming a state the app has not
@@ -349,7 +394,8 @@ export function ProjectList() {
                     scope={scope}
                     place={namedAlone(root)}
                     onAddPackages={() => addPackages(scope)}
-                    onStopTracking={() => setRemoveTarget(root)}
+                    onChangeFolder={() => locate(root, namedAlone(root))}
+                    onRemove={() => setRemoveTarget(root)}
                   />
                 }
               />
@@ -376,6 +422,14 @@ export function ProjectList() {
             void useUpdatesStore.getState().updateRows(rows);
           }}
         />
+        {locating ? (
+          <LocateFolderDialog
+            root={locating.root}
+            name={locating.name}
+            picked={locating.picked}
+            onClose={() => setLocating(null)}
+          />
+        ) : null}
         <AddProjectDialog
           open={adding}
           onOpenChange={setAdding}
@@ -393,9 +447,11 @@ export function ProjectList() {
           onOpenChange={(open) => {
             if (!open) setRemoveTarget(null);
           }}
-          title={`Stop tracking ${removeTarget ? namedAlone(removeTarget) : ""}?`}
-          description="kendex will stop managing this project. Nothing in the folder is deleted."
-          confirmLabel="Stop tracking"
+          title={removeFromListTitle(
+            removeTarget ? namedAlone(removeTarget) : "",
+          )}
+          description={REMOVE_FROM_LIST_BODY}
+          confirmLabel={REMOVE_FROM_LIST_LABEL}
           destructive
           onConfirm={() => {
             if (removeTarget) void unregisterProject(removeTarget);

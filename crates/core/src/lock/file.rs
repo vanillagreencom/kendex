@@ -2,7 +2,7 @@
 //! version shape that loads. Whose the paths in it are is
 //! [`super::roots`]'s question.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{CoreError, Result};
 use crate::fs::{atomic_write_no_follow, read_if_exists};
@@ -30,6 +30,34 @@ pub fn load_file(path: &Path) -> Result<LockFile> {
 /// preconditions to the exact bytes it classified, so it must classify the
 /// bytes it read rather than a later re-read.
 pub fn parse_text(path: &Path, text: &str) -> Result<LockFile> {
+    let mut lock = parse_unresolved(path, text)?;
+    read_against(path, &mut lock)?;
+    Ok(LockFile::Current(lock))
+}
+
+/// The root a record states, as written — before [`super::roots`] resolves
+/// it onto the root reading it. `None` where there is no record at the
+/// path.
+///
+/// Whose folder this is is exactly the difference the resolution removes:
+/// a record that travelled here states the root it was written under, and
+/// after the read every record names the root it was read from. So the
+/// stated root is taken before the resolution, and the resolution still
+/// runs — every refusal a read of this record would make is a refusal
+/// here, because it is the same read.
+pub fn stated_root(path: &Path) -> Result<Option<PathBuf>> {
+    let Some(text) = read_if_exists(path)? else {
+        return Ok(None);
+    };
+    let mut lock = parse_unresolved(path, &text)?;
+    let stated = lock.root.clone();
+    read_against(path, &mut lock)?;
+    Ok(stated)
+}
+
+/// The record as the file spells it, version-checked and parsed, with
+/// every path still stating the root it was written under.
+fn parse_unresolved(path: &Path, text: &str) -> Result<Lock> {
     let value: serde_json::Value =
         serde_json::from_str(text).map_err(|e| CoreError::LockCorrupt {
             path: path.to_path_buf(),
@@ -61,12 +89,10 @@ pub fn parse_text(path: &Path, text: &str) -> Result<LockFile> {
             },
         });
     }
-    let mut lock: Lock = serde_json::from_value(value).map_err(|e| CoreError::LockCorrupt {
+    serde_json::from_value(value).map_err(|e| CoreError::LockCorrupt {
         path: path.to_path_buf(),
         message: e.to_string(),
-    })?;
-    read_against(path, &mut lock)?;
-    Ok(LockFile::Current(lock))
+    })
 }
 
 /// Load the current lock for reads or mutations. An absent lock is an empty

@@ -66,7 +66,13 @@ fn scans_a_realistic_machine() {
     let result = scan(&env, &settings);
 
     assert_eq!(result.warnings, Vec::new());
-    assert_eq!(result.missing_projects, [home.join("dev/vanished")]);
+    assert_eq!(
+        result.missing_projects,
+        [MissingProject {
+            root: home.join("dev/vanished"),
+            why: MissingWhy::Gone
+        }]
+    );
 
     let detected: Vec<_> = result.harnesses.iter().map(|h| h.harness).collect();
     assert_eq!(
@@ -411,4 +417,32 @@ fn a_local_pi_package_reports_its_own_description_and_mtime() {
     let remote = find("@vg/remote");
     assert_eq!(remote.description.as_deref(), Some("npm:@vg/remote@1.0"));
     assert_eq!(remote.modified_at, None);
+}
+
+/// What stood in the way of reading a registered path as a folder, told
+/// apart: a folder that is gone is reconnected to wherever it moved, a
+/// path holding something else is neither, and a path the account cannot
+/// read is read again once it can. One empty reading, three remedies.
+#[test]
+fn a_path_that_is_not_a_readable_folder_says_which_it_is() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::test_util::rooted(&tmp);
+    fs::create_dir_all(home.join("dev")).unwrap();
+    fs::write(home.join("dev/file.txt"), "not a folder").unwrap();
+
+    assert_eq!(missing_why(&home.join("dev")), None);
+    assert_eq!(missing_why(&home.join("dev/gone")), Some(MissingWhy::Gone));
+    assert_eq!(
+        missing_why(&home.join("dev/file.txt")),
+        Some(MissingWhy::NotAFolder)
+    );
+    // A component of the path is a file, so the read fails as something
+    // other than "nothing is there".
+    assert!(
+        matches!(
+            missing_why(&home.join("dev/file.txt/inside")),
+            Some(MissingWhy::Unreadable { said }) if !said.is_empty()
+        ),
+        "a path that could not be read at all is neither gone nor a file"
+    );
 }

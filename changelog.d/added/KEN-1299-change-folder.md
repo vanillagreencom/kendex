@@ -1,0 +1,1 @@
+- Change folder… is on every project's menu, and `kendex project reconnect --from <old> --to <new>` does the same from the shell.

@@ -1,8 +1,15 @@
 // The project registry: the places kendex tracks beside the personal one,
 // and the actions that add, drop and find them.
 import { toast } from "sonner";
-import { type AppSettings, commands, type SettingsRead } from "@/bindings";
+import {
+  type AppSettings,
+  commands,
+  type Relocation,
+  type SettingsRead,
+} from "@/bindings";
 import { rescanEverything } from "@/lib/rescan";
+import { useCommitOfferStore } from "./commit-offer";
+import { useNavStore } from "./nav";
 import { useProblemsStore } from "./problems";
 import { useProjectSetupStore } from "./project-setup";
 
@@ -22,6 +29,17 @@ export interface ProjectsSlice {
   registerProject: (path: string) => Promise<boolean>;
   unregisterProject: (path: string) => Promise<void>;
   discoverProjects: (root: string) => Promise<Discovered>;
+  /** What reconnecting this project to that folder would mean, before
+   *  anything is written. Null where the question itself could not be
+   *  answered, which is reported where every other read failure is. */
+  projectRelocation: (from: string, to: string) => Promise<Relocation | null>;
+  /** Point the project at the folder it moved to. Answers with the folder
+   *  the entry now names, or null where the write was refused. */
+  relocateProject: (
+    from: string,
+    to: string,
+    consolidate: boolean,
+  ) => Promise<string | null>;
 }
 
 /** The project registry's actions. Registration and removal are targeted
@@ -79,6 +97,43 @@ export function projectActions(ordered: {
           steps: ["Try again"],
         });
       }
+    },
+
+    projectRelocation: async (from, to) => {
+      const response = await commands.projectRelocation(from, to);
+      if (response.status === "ok") return response.data;
+      useProblemsStore.getState().showError({
+        title: "Couldn't check that folder",
+        message: response.error,
+        steps: ["Try again", "Choose a different folder"],
+      });
+      return null;
+    },
+
+    // The registry write, and then everything the window was holding about
+    // the folder the project left. Those are answers about a path nothing
+    // tracks any more — a read still out for it, an offer waiting on files
+    // in it, a page the reader can go Back to — and none of them is
+    // corrected by reading the machine again, which answers about places
+    // rather than about what the window filed under a name.
+    relocateProject: async (from, to, consolidate) => {
+      const at = ordered.ticket();
+      const response = await commands.relocateProject(from, to, consolidate);
+      if (response.status !== "ok") {
+        useProblemsStore.getState().showError({
+          title: "Couldn't reconnect the project",
+          message: response.error,
+          steps: ["Choose the folder the project is in now"],
+        });
+        return null;
+      }
+      const { was, root } = response.data;
+      ordered.hold(response.data.read, at);
+      useProjectSetupStore.getState().forget(was);
+      useCommitOfferStore.getState().forget(was);
+      useNavStore.getState().projectMoved(was, root);
+      await rescanEverything();
+      return root;
     },
 
     // The refusal is handed back rather than only shown behind the dialog

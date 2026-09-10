@@ -28,6 +28,10 @@ interface ProjectSetupState {
    *  a place the moment the registry says so, and the reader is taken
    *  back to it while this runs. */
   check: (root: string) => Promise<void>;
+  /** Drop what is held about one folder. A read still out for it answers
+   *  about a place nothing tracks, and the card at the folder it moved to
+   *  must not inherit "package check failed" from the path it left. */
+  forget: (root: string) => void;
 }
 
 const without = (roots: readonly string[], root: string): string[] =>
@@ -46,6 +50,12 @@ const readFailed = (): boolean =>
 export const useProjectSetupStore = create<ProjectSetupState>((set) => ({
   checking: [],
   unchecked: [],
+
+  forget: (root) =>
+    set((state) => ({
+      checking: without(state.checking, root),
+      unchecked: without(state.unchecked, root),
+    })),
 
   check: async (root) => {
     set((state) => ({

@@ -18,6 +18,11 @@ import {
 } from "@/lib/copy";
 import { SEE_PROBLEMS_LABEL } from "@/lib/copy-marketplaces";
 import {
+  MISSING_PROJECTS_DETAIL,
+  missingProjectDetail,
+  missingProjectsTitle,
+} from "@/lib/copy-project-move";
+import {
   isActionable,
   unreadableFileDetail,
   unreadableFileTitle,
@@ -108,17 +113,15 @@ export function attentionRows(source: AttentionSource): AttentionRow[] {
     });
   }
   if (missing.length > 0) {
+    const first = missing[0];
     rows.push({
       key: "missing-projects",
       tone: "warning",
-      title:
-        missing.length === 1
-          ? "1 project folder can't be found"
-          : `${missing.length} project folders can't be found`,
+      title: missingProjectsTitle(missing.length),
       detail:
-        missing.length === 1
-          ? `We can't find ${missing[0]}. If you moved it, add it again.`
-          : "If you moved these, add them again from Harnesses & Projects.",
+        missing.length === 1 && first
+          ? missingProjectDetail(first)
+          : MISSING_PROJECTS_DETAIL,
       action: { label: "Projects", onClick: source.onProjects },
     });
   }

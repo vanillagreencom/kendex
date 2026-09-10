@@ -95,6 +95,11 @@ interface NavState {
   goToBundle: (ref: BundleRef) => void;
   goToAvailablePackage: (ref: AvailableRef) => void;
   goToUnmanaged: (scope: Scope) => void;
+  /** A project's folder changed, so every place this store names by that
+   *  folder names the new one. What the reader was looking at is still
+   *  what they were looking at — a Back that landed on the old path would
+   *  open a page about a project nothing tracks. */
+  projectMoved: (from: string, to: string) => void;
   clearLibraryFilter: () => void;
   clearPackageView: () => void;
   back: () => void;
@@ -134,6 +139,28 @@ export const useNavStore = create<NavState>((set) => ({
       installInto: null,
     }),
   setLibraryScope: (libraryScope) => set({ libraryScope }),
+  projectMoved: (from, to) => {
+    const moved = (scope: Scope | null): Scope | null =>
+      scope && scope.scope === "project" && scope.root === from
+        ? { scope: "project", root: to }
+        : scope;
+    const entry = (one: HistoryEntry): HistoryEntry => ({
+      ...one,
+      unmanagedScope: moved(one.unmanagedScope),
+      installInto: moved(one.installInto),
+    });
+    set((state) => ({
+      libraryScope:
+        typeof state.libraryScope === "object" &&
+        state.libraryScope.project === from
+          ? { project: to }
+          : state.libraryScope,
+      unmanagedScope: moved(state.unmanagedScope),
+      installInto: moved(state.installInto),
+      history: state.history.map(entry),
+      future: state.future.map(entry),
+    }));
+  },
   setSearch: (search) => set({ search }),
   // Asking to search means "find me this thing": the box on screen answers
   // where there is one, and the Library answers everywhere else.

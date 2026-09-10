@@ -8,11 +8,13 @@
 //! `update_settings`, which must present the base of the file its copy
 //! was read from.
 
+use std::path::Path;
+
 use kendex_core::base::Base;
 use kendex_core::discover;
 use kendex_core::engine::DriftRow;
 use kendex_core::env::Env;
-use kendex_core::settings::{self, AppSettings};
+use kendex_core::settings::{self, AppSettings, Relocation};
 use serde::Serialize;
 use specta::Type;
 
@@ -131,6 +133,69 @@ pub fn register_project(path: String) -> Result<RegisteredProject, String> {
     register_project_at(&env()?, &path)
 }
 
+/// A reconnection's answer: the settings it wrote, the entry it replaced
+/// and the folder that entry now names.
+///
+/// The entry it replaced is here rather than left to the caller's own copy
+/// of what it asked with: the registry stores one spelling and the caller
+/// asked under whatever the person picked, and every piece of state the
+/// window keys by folder — the reads out for a place, the offer waiting on
+/// one — has to be dropped by the spelling it was filed under.
+#[derive(Debug, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RelocatedProject {
+    pub read: SettingsRead,
+    pub was: String,
+    pub root: String,
+}
+
+fn project_relocation_at(env: &Env, from: &str, to: &str) -> Result<Relocation, String> {
+    settings::inspect(env, Path::new(from), &picked(env, to)).map_err(|e| e.to_string())
+}
+
+/// What reconnecting this project to that folder would mean, before
+/// anything is written. Reads and answers; the window puts what it says on
+/// screen and asks.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn project_relocation(from: String, to: String) -> Result<Relocation, String> {
+    project_relocation_at(&env()?, &from, &to)
+}
+
+fn relocate_project_at(
+    env: &Env,
+    from: &str,
+    to: &str,
+    consolidate: bool,
+) -> Result<RelocatedProject, String> {
+    let (plan, settings, base) =
+        settings::relocate_project(env, Path::new(from), &picked(env, to), consolidate)
+            .map_err(|e| e.to_string())?;
+    Ok(RelocatedProject {
+        read: SettingsRead::from((settings, base)),
+        was: plan.from.display().to_string(),
+        root: plan.to.display().to_string(),
+    })
+}
+
+/// Point one registered project at the folder it was moved to. Nothing in
+/// either folder is read for this, written, moved or removed.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn relocate_project(
+    from: String,
+    to: String,
+    consolidate: bool,
+) -> Result<RelocatedProject, String> {
+    relocate_project_at(&env()?, &from, &to, consolidate)
+}
+
+/// A folder the person named, read against the home they live in — a
+/// typed `~` is theirs, and a debug build's sandbox does not move it.
+fn picked(env: &Env, path: &str) -> std::path::PathBuf {
+    kendex_core::paths::expand_tilde(env.real_home(), path)
+}
+
 /// What a project already holds that nothing manages, for the offer the
 /// registration flow puts on screen. Read after the project is registered
 /// rather than folded into that call: registering must not fail because a
@@ -219,6 +284,28 @@ mod tests {
             registered.read.settings.projects,
             [kendex_core::paths::canonical(&tmp.path().join("dev/hyprtrade")).unwrap()]
         );
+    }
+
+    /// The one thing this layer decides: a `~` in the folder somebody
+    /// picked is where the person lives, not where a debug build keeps its
+    /// sandbox. Read against the wrong home it names a directory nobody
+    /// has, and the project never reconnects.
+    #[test]
+    fn reconnecting_reads_a_typed_tilde_against_the_real_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = sandboxed_env_in(tmp.path());
+        std::fs::create_dir_all(tmp.path().join("dev/vsys-view")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("dev/vsys")).unwrap();
+        let registered = register_project_at(&env, "~/dev/vsys-view").unwrap().root;
+
+        let checked = project_relocation_at(&env, &registered, "~/dev/vsys").unwrap();
+        let moved = relocate_project_at(&env, &registered, "~/dev/vsys", false).unwrap();
+
+        let destination = kendex_core::paths::canonical(&tmp.path().join("dev/vsys")).unwrap();
+        assert_eq!(checked.to, destination);
+        assert_eq!(moved.root, destination.display().to_string());
+        assert_eq!(moved.was, registered);
+        assert_eq!(moved.read.settings.projects, [destination]);
     }
 
     #[test]

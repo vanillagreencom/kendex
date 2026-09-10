@@ -20,6 +20,11 @@ import {
   placeMarketplacesTitle,
 } from "@/lib/copy-model";
 import {
+  CHANGE_FOLDER_LABEL,
+  REMOVE_FROM_LIST_LABEL,
+  removeFromList,
+} from "@/lib/copy-project-move";
+import {
   SESSION_NOTE_LABEL,
   SESSION_NOTE_ON,
   SESSION_NOTE_WAITING,
@@ -270,7 +275,7 @@ const menuItems = (): string[] =>
 // Every setting that decides what a place installs is reached from that
 // place's card — the marketplaces it installs from included, since the
 // marketplace's own page changes none of them. Personal is a place like any
-// other and has no tracking to stop.
+// other, and Personal has no folder to change and no entry to remove.
 describe("a place card's actions", () => {
   beforeEach(() => {
     useSettingsStore.setState({
@@ -293,7 +298,8 @@ describe("a place card's actions", () => {
     expect(menuItems()).toEqual([
       ADD_PACKAGES_LABEL,
       PLACE_MARKETPLACES_LABEL,
-      "Stop tracking acme…",
+      CHANGE_FOLDER_LABEL,
+      removeFromList("acme"),
     ]);
 
     const item = [...document.querySelectorAll('[role="menuitem"]')].find(
@@ -306,7 +312,7 @@ describe("a place card's actions", () => {
     expect(useNavStore.getState().page).toBe("projects");
   });
 
-  it("offers Personal its marketplaces and no tracking to stop", async () => {
+  it("offers Personal its marketplaces and nothing about a folder", async () => {
     const host = mount(<ProjectList />);
     await settle();
 
@@ -314,12 +320,12 @@ describe("a place card's actions", () => {
     expect(menuItems()).toEqual([ADD_PACKAGES_LABEL, PLACE_MARKETPLACES_LABEL]);
   });
 
-  // Stopping tracking moved off its own button and into this menu, and a
-  // menu item is the shape whose click the card used to answer. Rendering
-  // the item proves nothing about the path behind it: the removal has to
-  // reach the settings store with this card's own root, and the card must
-  // not navigate out from under the confirm.
-  it("stops tracking the project the card names, without leaving the page", async () => {
+  // Removal moved off its own button and into this menu, and a menu item
+  // is the shape whose click the card used to answer. Rendering the item
+  // proves nothing about the path behind it: the removal has to reach the
+  // settings store with this card's own root, and the card must not
+  // navigate out from under the confirm.
+  it("removes the project the card names, without leaving the page", async () => {
     vi.mocked(commands.unregisterProject).mockResolvedValue({
       status: "ok",
       data: { settings: { projects: [] }, base: null } as never,
@@ -329,16 +335,15 @@ describe("a place card's actions", () => {
 
     await openActions(host, "acme");
     const item = [...document.querySelectorAll('[role="menuitem"]')].find(
-      (el) => el.textContent === "Stop tracking acme…",
+      (el) => el.textContent === removeFromList("acme"),
     );
-    if (!(item instanceof HTMLElement))
-      throw new Error("no stop-tracking item");
+    if (!(item instanceof HTMLElement)) throw new Error("no removal item");
     await userEvent.click(item);
     await settle();
     expect(useNavStore.getState().page).toBe("projects");
 
     const confirm = [...document.querySelectorAll("button")].find(
-      (one) => one.textContent === "Stop tracking",
+      (one) => one.textContent === REMOVE_FROM_LIST_LABEL,
     );
     if (!confirm) throw new Error("no confirm");
     await userEvent.click(confirm);
@@ -365,7 +370,8 @@ describe("a place card's actions", () => {
     expect(menuItems()).toEqual([
       ADD_PACKAGES_LABEL,
       PLACE_MARKETPLACES_LABEL,
-      "Stop tracking /work/client…",
+      CHANGE_FOLDER_LABEL,
+      removeFromList("/work/client"),
     ]);
 
     const item = [...document.querySelectorAll('[role="menuitem"]')].find(

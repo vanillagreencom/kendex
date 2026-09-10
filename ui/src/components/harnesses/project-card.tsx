@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { ItemKind } from "@/bindings";
+import type { ItemKind, MissingWhy } from "@/bindings";
 import { Activity } from "@/components/activity";
 import { ShowEverythingButton } from "@/components/harnesses/show-everything-button";
 import { KindCountBadges } from "@/components/kind-count-badges";
@@ -11,6 +11,12 @@ import {
   TRY_AGAIN_LABEL,
   unmanagedHereLabel,
 } from "@/lib/copy";
+import {
+  LOCATE_FOLDER_LABEL,
+  missingLead,
+  missingSaid,
+  REMOVE_FROM_LIST_LABEL,
+} from "@/lib/copy-project-move";
 import { CHECK_FAILED, CHECKING_PACKAGES } from "@/lib/copy-project-setup";
 import { outOfDateHereLabel } from "@/lib/copy-updates";
 import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
@@ -42,6 +48,7 @@ export function ProjectCard({
   onRecheck,
   onAddPackages,
   addPackagesLabel,
+  missing,
   note,
 }: {
   name: string;
@@ -99,6 +106,22 @@ export function ProjectCard({
   /** What that button says — it names this place, because it is a promise
    *  about where the install lands. */
   addPackagesLabel?: string;
+  /** The folder this place is at could not be read. Nothing about what is
+   *  installed here can be drawn from a folder nothing was read from — not
+   *  a count, not an empty state, and not an offer to write into it — so
+   *  this replaces all of it with what could not be read and the ways out
+   *  of it. */
+  missing?: {
+    why: MissingWhy;
+    /** Point the project at the folder it moved to. */
+    onLocate: () => void;
+    /** Read the folder again — the answer changes on its own when a disk
+     *  comes back or a permission is granted. */
+    onRecheck: () => void;
+    /** Drop the registry entry. Only the entry: this is the one action
+     *  here whose wording has to say what it does not do. */
+    onRemove: () => void;
+  };
   /** A line about this place that is neither a count nor a fault: the
    *  start-of-session note's standing, with its one button. Under the
    *  counts because it is about the place, not about what is installed. */
@@ -129,78 +152,106 @@ export function ProjectCard({
         </div>
         {action ? <div className="shrink-0">{action}</div> : null}
       </div>
-      <div className="flex flex-wrap items-center gap-1.5 px-4">
-        {/* One line at a time, because the three are answers to the same
+      {missing ? (
+        <div className="flex flex-col gap-2 px-4">
+          <p className="text-[13px] text-muted-foreground">
+            {missingLead(missing.why)}
+          </p>
+          {/* The system's own words, where it had any: what a person acts
+              on is the reading itself, never kendex's paraphrase of it. */}
+          {missingSaid(missing.why) ? (
+            <p className="break-words font-mono text-xs text-muted-foreground">
+              {missingSaid(missing.why)}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={missing.onLocate}>
+              {LOCATE_FOLDER_LABEL}
+            </Button>
+            <Button size="sm" variant="outline" onClick={missing.onRecheck}>
+              {TRY_AGAIN_LABEL}
+            </Button>
+            <Button size="sm" variant="outline" onClick={missing.onRemove}>
+              {REMOVE_FROM_LIST_LABEL}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-1.5 px-4">
+          {/* One line at a time, because the three are answers to the same
             question: the read is out, the read failed, or here is what is
             installed. Counts drawn under the first two would be a figure
             for a place nothing has looked at yet, and so would a count of
             what has moved on at its source. */}
-        {checking ? (
-          <Activity label={CHECKING_PACKAGES} />
-        ) : checkFailed ? (
-          <>
-            <span className="text-[13px] text-muted-foreground">
-              {CHECK_FAILED}
-            </span>
-            {onRecheck ? (
-              <Button size="sm" variant="outline" onClick={onRecheck}>
-                {TRY_AGAIN_LABEL}
-              </Button>
-            ) : null}
-          </>
-        ) : (
-          <>
-            {/* With nothing installed, the way to install something is the
+          {checking ? (
+            <Activity label={CHECKING_PACKAGES} />
+          ) : checkFailed ? (
+            <>
+              <span className="text-[13px] text-muted-foreground">
+                {CHECK_FAILED}
+              </span>
+              {onRecheck ? (
+                <Button size="sm" variant="outline" onClick={onRecheck}>
+                  {TRY_AGAIN_LABEL}
+                </Button>
+              ) : null}
+            </>
+          ) : (
+            <>
+              {/* With nothing installed, the way to install something is the
                 empty state rather than a sentence with no way out of it. */}
-            {counts.length === 0 && onAddPackages && addPackagesLabel ? (
-              <Button size="sm" variant="outline" onClick={onAddPackages}>
-                {addPackagesLabel}
-              </Button>
-            ) : (
-              <KindCountBadges
-                counts={counts}
-                uncounted={uncounted}
-                onKindClick={onKindClick}
-                emptyLabel={emptyLabel}
-                emptyClassName="text-[13px] text-muted-foreground"
-              />
-            )}
-            {/* Sits with the counts because it is one: how much of what is
+              {counts.length === 0 && onAddPackages && addPackagesLabel ? (
+                <Button size="sm" variant="outline" onClick={onAddPackages}>
+                  {addPackagesLabel}
+                </Button>
+              ) : (
+                <KindCountBadges
+                  counts={counts}
+                  uncounted={uncounted}
+                  onKindClick={onKindClick}
+                  emptyLabel={emptyLabel}
+                  emptyClassName="text-[13px] text-muted-foreground"
+                />
+              )}
+              {/* Sits with the counts because it is one: how much of what is
                 at this place kendex is not looking after. The words say
                 what the click opens, so the pill is not a number nobody
                 can act on. A place that could not be read says so in the
                 same slot, as plain text — there is no number, and nothing
                 to open. */}
-            {unmanaged === null ? (
-              <span className="text-[13px] text-muted-foreground">
-                {PLACE_UNCHECKED_LABEL}
-              </span>
-            ) : unmanaged && onUnmanaged ? (
-              <button
-                type="button"
-                onClick={onUnmanaged}
-                className="text-[13px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
-              >
-                {unmanagedHereLabel(unmanaged)}
-              </button>
-            ) : null}
-            {/* In the same slot and for the same reason: how much of what
+              {unmanaged === null ? (
+                <span className="text-[13px] text-muted-foreground">
+                  {PLACE_UNCHECKED_LABEL}
+                </span>
+              ) : unmanaged && onUnmanaged ? (
+                <button
+                  type="button"
+                  onClick={onUnmanaged}
+                  className="text-[13px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                >
+                  {unmanagedHereLabel(unmanaged)}
+                </button>
+              ) : null}
+              {/* In the same slot and for the same reason: how much of what
                 is at this place has moved on at its source. The words say
                 what the click opens — the changes, before anything is
                 written. */}
-            {outOfDate && onOutOfDate ? (
-              <button
-                type="button"
-                onClick={onOutOfDate}
-                className="text-[13px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
-              >
-                {outOfDateHereLabel(outOfDate)}
-              </button>
-            ) : null}
-          </>
-        )}
-      </div>
-      {note}
+              {outOfDate && onOutOfDate ? (
+                <button
+                  type="button"
+                  onClick={onOutOfDate}
+                  className="text-[13px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                >
+                  {outOfDateHereLabel(outOfDate)}
+                </button>
+              ) : null}
+            </>
+          )}
+        </div>
+      )}
+      {/* Not drawn while the folder cannot be read: the note's standing is
+          read out of that folder, so there is nothing to say about it. */}
+      {missing ? null : note}
     </Card>
   );
 }

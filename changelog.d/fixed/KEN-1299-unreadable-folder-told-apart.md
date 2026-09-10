@@ -1,0 +1,1 @@
+- A project folder that could not be read is told apart from one that is gone, and neither is offered as a place to install packages into.

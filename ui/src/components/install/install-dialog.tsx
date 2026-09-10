@@ -42,6 +42,7 @@ import {
 } from "@/lib/copy-install";
 import { selectionOf } from "@/lib/derive";
 import { scopeName, scopeNames, scopePath } from "@/lib/labels";
+import { useReachableProjects } from "@/lib/reachable-projects";
 import { scopeKey } from "@/lib/scope";
 import {
   type InstallAsk,
@@ -52,8 +53,6 @@ import {
   useInstallFlow,
 } from "@/stores/install-flow";
 import { useNavStore } from "@/stores/nav";
-import { useSettingsStore } from "@/stores/settings";
-import { projectsOf } from "@/stores/settings-projects";
 
 /** The one guided install, rendered once in App.tsx and opened by every
  *  Install in the app.
@@ -80,7 +79,9 @@ function InstallFlow({ ask }: { ask: InstallAsk }) {
   const setChoice = useInstallFlow((s) => s.setChoice);
   const install = useInstallFlow((s) => s.install);
   const goToLibrary = useNavStore((s) => s.goToLibrary);
-  const projects = useSettingsStore(projectsOf);
+  // Only the places a write can reach: a project whose folder the scan
+  // could not read is not a destination, and its own card says why.
+  const projects = useReachableProjects();
 
   const subject =
     ask.subjects.find((one) => one.id === subjectId) ?? ask.subjects[0];

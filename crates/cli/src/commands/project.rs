@@ -23,6 +23,18 @@ pub enum ProjectCommand {
     },
     /// Drop a project from the registry (its files are untouched)
     Remove { path: PathBuf },
+    /// Point a registered project at the folder it was moved to
+    Reconnect {
+        /// The folder the registry has now
+        #[arg(long)]
+        from: PathBuf,
+        /// The folder the project is in
+        #[arg(long)]
+        to: PathBuf,
+        /// Join this entry with the one the destination already has
+        #[arg(long)]
+        consolidate: bool,
+    },
     /// List registered projects
     List,
     /// Walk a directory for harness-marked projects
@@ -58,10 +70,36 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
             settings::unregister_project(env, &path)?;
             out(&format!("removed {}", path.display()));
         }
+        ProjectCommand::Reconnect {
+            from,
+            to,
+            consolidate,
+        } => {
+            let (plan, _, _) = settings::relocate_project(env, &from, &to, consolidate)?;
+            out(&format!(
+                "{} is now at {}{}",
+                plan.from.display(),
+                plan.to.display(),
+                match plan.standing {
+                    settings::Standing::Registered => "  (joined with the entry already there)",
+                    settings::Standing::NoRecord => "  (no packages recorded there)",
+                    _ => "",
+                }
+            ));
+        }
         ProjectCommand::List => {
             for project in settings::load(env)?.projects {
-                let missing = if project.is_dir() { "" } else { "  (missing)" };
-                out(&format!("{}{missing}", project.display()));
+                out(&format!(
+                    "{}{}",
+                    project.display(),
+                    match kendex_core::scan::missing_why(&project) {
+                        None => "",
+                        Some(kendex_core::scan::MissingWhy::Gone) => "  (folder not found)",
+                        Some(kendex_core::scan::MissingWhy::NotAFolder) => "  (not a folder)",
+                        Some(kendex_core::scan::MissingWhy::Unreadable { .. }) =>
+                            "  (folder could not be read)",
+                    }
+                ));
             }
         }
         ProjectCommand::Discover { root, register } => {

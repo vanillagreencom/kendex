@@ -290,7 +290,7 @@ describe("the updates row", () => {
         result: {
           harnesses: [],
           items: [],
-          missingProjects: ["/work/gone"],
+          missingProjects: [{ root: "/work/gone", why: { kind: "gone" } }],
           warnings: [warning({ kind: "empty-file" })],
         },
       }),

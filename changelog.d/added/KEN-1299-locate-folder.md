@@ -1,0 +1,1 @@
+- A project whose folder moved offers Locate folder: point it at the folder it is in now, and it keeps the packages and files already there.

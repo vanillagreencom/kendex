@@ -19,11 +19,10 @@ import type {
   Scope,
 } from "@/bindings";
 import type { Choice } from "@/components/marketplaces/harness-select";
+import { reachableProjectsNow } from "@/lib/reachable-projects";
 import { everyPlace, sameScope, scopeKey } from "@/lib/scope";
 import { useMarketplacesStore } from "./marketplaces";
 import { useNavStore } from "./nav";
-import { useSettingsStore } from "./settings";
-import { projectsOf } from "./settings-projects";
 
 /** What one subscription contributes to an answer. A selection can span
  *  marketplaces — the cross-marketplace Packages tab lists them together —
@@ -264,10 +263,7 @@ export const placeIsAChoice = (subject: InstallSubject): boolean =>
 /** The places a freshly opened flow starts on: the one the reader came
  *  from where this answer can reach it, else everywhere it can only go. */
 function openingPlaces(subject: InstallSubject): Scope[] {
-  const offered = installablePlaces(
-    subject,
-    projectsOf(useSettingsStore.getState()),
-  );
+  const offered = installablePlaces(subject, reachableProjectsNow());
   if (!placeIsAChoice(subject)) return offered;
   const came = useNavStore.getState().installInto;
   const carried =

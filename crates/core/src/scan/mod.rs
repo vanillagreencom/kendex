@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -27,10 +27,53 @@ mod standing;
 pub struct ScanResult {
     pub harnesses: Vec<DetectedHarness>,
     pub items: Vec<ObservedItem>,
-    /// Registered projects whose directory is gone — flagged, never dropped.
-    pub missing_projects: Vec<PathBuf>,
+    /// Registered projects whose directory the scan could not read as one
+    /// — flagged, never dropped.
+    pub missing_projects: Vec<MissingProject>,
     /// Unreadable or unparsable surfaces; truth the scan could not reach.
     pub warnings: Vec<ScanWarning>,
+}
+
+/// A registered project the scan could not read at its recorded path,
+/// with what stood in the way. A folder that is gone and a folder the
+/// account may not read are one empty reading and two different remedies:
+/// one is reconnected to where it moved, the other is read again once the
+/// machine can reach it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct MissingProject {
+    pub root: PathBuf,
+    pub why: MissingWhy,
+}
+
+/// Why a recorded project path is not a folder this scan can read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum MissingWhy {
+    /// Nothing is at the path.
+    Gone,
+    /// Something is at the path and it is not a folder.
+    NotAFolder,
+    /// The path could not be read at all, in the words the system gave —
+    /// a permission the account lacks, a mount that is not there. Not a
+    /// claim that the project is gone, which is what a reading of "no
+    /// packages here" over one of these would be.
+    Unreadable { said: String },
+}
+
+/// Why a registered project's folder cannot be read as one, or `None`
+/// where it can. One judge for the whole product: the scan flags a place
+/// with it, the CLI's project list prints it, and the app's card offers
+/// the recovery it names.
+pub fn missing_why(root: &Path) -> Option<MissingWhy> {
+    match std::fs::metadata(root) {
+        Ok(found) if found.is_dir() => None,
+        Ok(_) => Some(MissingWhy::NotAFolder),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(MissingWhy::Gone),
+        Err(e) => Some(MissingWhy::Unreadable {
+            said: e.to_string(),
+        }),
+    }
 }
 
 /// One surface the scan could not read as the document it expects, with
@@ -258,8 +301,11 @@ fn scan_scope(
             }
         }
         Scope::Project { root: project } => {
-            if !project.is_dir() {
-                pass.result.missing_projects.push(project.clone());
+            if let Some(why) = missing_why(project) {
+                pass.result.missing_projects.push(MissingProject {
+                    root: project.clone(),
+                    why,
+                });
                 return;
             }
             for adapter in all_adapters() {
