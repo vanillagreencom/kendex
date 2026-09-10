@@ -63,6 +63,14 @@ A thread's disposition reply fails as `unreasoned-decline` when it declines and 
 
 A thread's disposition reply fails as `untracked-claim` when it carries a track-word (`track`, `tracked`, `tracking`, `tracks`) and names no issue. The match is lexical and anywhere in the reply, never a judgement of intent, so ordinary prose springs it: `the file is tracked by git` is a tracking claim, and an author means `committed` there. Bot comments are exempt because they quote each other, so the reply that counts is the last non-bot one matching either a reply form or a track-word: a later `Fixed in <sha>` or `Declined:` clears the verdict, and resolving the thread does not.
 
+## Suppressed-finding parsing
+
+A review fails as `suppressed-findings` when its body carries a heading whose text is `Suppressed comments (N)`. Copilot writes that block instead of posting comments when it judges a finding to be in code the current diff did not change, so no review thread exists and the unresolved-thread term reads zero. The term runs over the rows the evidence select accepts at head, before the `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` reduction, so a COMMENTED row carrying findings is read under `approved` too.
+
+The block ends at the next heading of any level or at `</details>`, and an entry inside it is a whole line of the form `**path:line**`. The heading's `N` is the count reported; the entries are the file:line list. A disagreement between the two, a heading whose count is not a number, and a parse bash cannot read all refuse instead of reporting a smaller number, and all refuse to the verdict rather than to exit 2, which would tell the writer to take no action and leave an earlier success standing. The verdict detail carries a bounded list because a commit-status description holds about 140 characters; when it drops entries it counts them, and the full list goes to stderr under `review-gate-notice=predicate-suppressed`.
+
+There is no settings key and no disposition protocol. Nothing written in the pull request clears the verdict — only a review at a new head whose body carries no such block. The known limit is the errored-attestation filter's mirror: a body quoting the heading at the start of a line counts as a real block.
+
 ## Predicate evidence and trust
 
 Evidence for the current head is any of:

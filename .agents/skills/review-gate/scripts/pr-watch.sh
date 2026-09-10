@@ -66,6 +66,15 @@ Attention kinds:
                      tracking and names no issue; only a later Fixed in
                      <sha>, Declined: <reason>, or Tracked: <issue> reply
                      clears it. Needs the predicate (evaluate mode only)
+  suppressed-findings a review body carrying a `Suppressed comments (N)`
+                     block at head: findings the reviewer wrote into its own
+                     body instead of posting as comments, so NO thread
+                     carries them and the thread count above reads zero. The
+                     line names the count and the file:line entries. Nothing
+                     in the PR clears it — only a review at a new head whose
+                     body carries no such block. Also fires when the block
+                     cannot be read whole, which fails closed the same way.
+                     Needs the predicate (evaluate mode only)
   unreasoned-decline a thread whose newest disposition reply declines and
                      names no mechanism — an empty reason, or nothing but
                      non-reason tokens (frozen, cap, round N, tests pass,
@@ -593,7 +602,7 @@ for number in $pr_numbers; do
     # The writer validates this same interface; an unknown or empty verdict
     # from a zero-exit predicate is a broken reducer, never a healthy PR.
     case "$verdict" in
-      approved|awaiting|threads-open|changes-requested|untracked-claim|unreasoned-decline) ;;
+      approved|awaiting|threads-open|changes-requested|untracked-claim|unreasoned-decline|suppressed-findings) ;;
       *)
         emit "$number" "$head" error "predicate produced no recognizable verdict (broken output)"
         errored=1
@@ -628,6 +637,14 @@ for number in $pr_numbers; do
       attention=1
       if [ "$gate_state" = "success" ]; then
         stale_gate "$number" "$head" "a decline naming no mechanism but the newest '$GATE_CONTEXT' row is success — the writer has not converged"
+      fi
+      continue
+      ;;
+    suppressed-findings)
+      emit "$number" "$head" suppressed-findings "$detail$queued"
+      attention=1
+      if [ "$gate_state" = "success" ]; then
+        stale_gate "$number" "$head" "findings written into a review body but the newest '$GATE_CONTEXT' row is success — the writer has not converged"
       fi
       continue
       ;;

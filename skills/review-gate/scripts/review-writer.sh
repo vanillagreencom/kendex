@@ -209,6 +209,7 @@ case "$verdict" in
   awaiting|threads-open) desired="pending" ;;
   untracked-claim)       desired="failure" ;;
   unreasoned-decline)    desired="failure" ;;
+  suppressed-findings)   desired="failure" ;;
   *)
     rg_message error writer-verdict-unknown "$verdict" "::error::unknown verdict '$verdict'"
     exit 1

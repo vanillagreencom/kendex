@@ -50,6 +50,7 @@ V_CHANGES='verdict=changes-requested detail=reviewer objects'
 V_OFF='verdict=approved detail=review gate disabled by settings (REVIEW_GATE_MODE=off)'
 V_UNTRACKED='verdict=untracked-claim detail=1 tracking claim naming no issue'
 V_UNREASONED='verdict=unreasoned-decline detail=1 decline naming no mechanism'
+V_SUPPRESSED='verdict=suppressed-findings detail=2 suppressed findings in a review body: src/a.ts:106'
 T_STUCK='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR1"},"nodes":[{"isResolved":false}]}}}}}'
 T_PAGE1='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR1"},"nodes":[{"isResolved":true},{"isResolved":true}]}}}}}'
 T_PAGE2_OPEN='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":false}]}}}}}'
@@ -139,8 +140,8 @@ table "must-fail: without the empty-branch guard a branchless lane's record is r
 WATCH_BIN="$LIVE_WATCH"
 
 echo "=== the predicate's disposition verdicts reach the reducer ==="
-# The two thread-disposition verdicts the predicate can return, driven through
-# the reducer arm that consumes each. unreasoned-decline.test.sh decides both
+# The disposition and review-body verdicts the predicate can return, driven
+# through the reducer arm that consumes each. unreasoned-decline.test.sh decides both
 # terms and stops at the count; these rows are the other half — the verdict
 # named in the kind column, the attention exit, the stale-green companion a
 # green gate over either verdict earns, and the writer dispatch --heal makes
@@ -151,7 +152,8 @@ table \
   "unreasoned-decline is its own kind and its own attention||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_UNREASONED;STUB_GATE_HISTORY=$G_PENDING|rc=1 kinds=unreasoned-decline protocol=7~aaaaaaaa~unreasoned-decline~1+decline+naming+no+mechanism" \
   "a green gate over it is gate-stale and --heal dispatches the writer at it|--heal|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_UNREASONED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=unreasoned-decline,gate-stale,heal-dispatched dispatches=1" \
   "untracked-claim is its own kind and its own attention||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_UNTRACKED;STUB_GATE_HISTORY=$G_PENDING|rc=1 kinds=untracked-claim protocol=7~aaaaaaaa~untracked-claim~1+tracking+claim+naming+no+issue" \
-  "a green gate over it is gate-stale and heals the same way|--heal|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_UNTRACKED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=untracked-claim,gate-stale,heal-dispatched dispatches=1"
+  "a green gate over it is gate-stale and heals the same way|--heal|STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_UNTRACKED;STUB_GATE_HISTORY=$G_OK|rc=1 kinds=untracked-claim,gate-stale,heal-dispatched dispatches=1" \
+  "suppressed-findings is its own kind, carrying the count and the file:line||STUB_OPEN_PRS=$P7;STUB_VERDICT_LINE=$V_SUPPRESSED;STUB_GATE_HISTORY=$G_PENDING|rc=1 kinds=suppressed-findings protocol=7~aaaaaaaa~suppressed-findings~2+suppressed+findings+in+a+review+body:+src/a.ts:106"
 
 # The rows above read a kind column, and a column can be right for the wrong
 # reason: the predicate's verdict word is in the stubbed input, so a reducer

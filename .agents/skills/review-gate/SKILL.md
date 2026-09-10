@@ -37,9 +37,10 @@ Two greens do NOT mean a review happened. Under `REVIEW_GATE_MODE = "off"` the p
 | `changes-requested` | `failure` | A reviewer objects. Red means objection, never a build failure. |
 | `untracked-claim` | `failure` | A disposition reply that claims tracking and names no issue fails the gate. |
 | `unreasoned-decline` | `failure` | A decline whose reason strips to nothing against the label vocabulary fails the gate. |
+| `suppressed-findings` | `failure` | A review body at head carries a `Suppressed comments (N)` block: findings that never became threads. The status names the count and the file:line list. No setting disables it, and nothing in the PR clears it — only a review at a new head whose body carries no such block. |
 | (exit 2, no verdict) | *unchanged* | A read failed or config is invalid. Take NO action; retry next pass. |
 
-Pending text names the head; which sources open the gate is [references/settings.md](references/settings.md) § Reading the pending status. How the two failure verdicts parse a reply is `DEVELOPMENT.md` § Tracking-claim parsing and § Decline parsing; what to write instead is orch's `references/finding-disposition.md`.
+Pending text names the head; which sources open the gate is [references/settings.md](references/settings.md) § Reading the pending status. How the reply-parsing failure verdicts read a reply is `DEVELOPMENT.md` § Tracking-claim parsing and § Decline parsing, and how `suppressed-findings` reads a body is § Suppressed-finding parsing; what to write instead is orch's `references/finding-disposition.md`.
 
 # Working in a consumer repo
 
