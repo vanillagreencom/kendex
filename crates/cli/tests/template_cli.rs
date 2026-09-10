@@ -485,3 +485,78 @@ fn removing_one_of_two_same_named_members_leaves_the_other() {
         said(&removed)
     );
 }
+
+/// An installing verb leaves its destination on the projects list, so the
+/// app sees the project without a second command.
+///
+/// `template install --project` is an installing verb like `add`, and the
+/// folder it is given may be one kendex has never heard of — the packages
+/// went in there either way.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn installing_a_template_registers_the_project_it_went_into() {
+    let (_tmp, home) = world();
+    let app = home.join("app");
+    let fresh = home.join("fresh");
+    assert!(
+        kendex(
+            &home,
+            &home,
+            &[
+                "template",
+                "create",
+                "Rust service",
+                "--from-project",
+                app.to_str().unwrap(),
+                "--include-local",
+                "--yes",
+            ],
+        )
+        .status
+        .success()
+    );
+    // The destination is not a project kendex tracks yet.
+    let before = said(&kendex(&home, &home, &["project", "list"]));
+    assert!(!before.contains("fresh"), "{before}");
+
+    let installed = kendex(
+        &home,
+        &home,
+        &[
+            "template",
+            "install",
+            "Rust service",
+            "--project",
+            fresh.to_str().unwrap(),
+            "--yes",
+        ],
+    );
+    let text = said(&installed);
+    assert!(installed.status.success(), "{text}");
+    // Said once, where there was something to say.
+    assert!(text.contains("added"), "{text}");
+
+    let after = said(&kendex(&home, &home, &["project", "list"]));
+    assert!(
+        after.contains("fresh"),
+        "the folder the packages went into should be on the projects list: {after}"
+    );
+
+    // The personal setup is not a project, so a global install registers
+    // nothing — the rule `register_destination` already keeps.
+    let listed_before = said(&kendex(&home, &home, &["project", "list"]));
+    assert!(
+        kendex(
+            &home,
+            &home,
+            &["template", "install", "Rust service", "--yes"],
+        )
+        .status
+        .success()
+    );
+    assert_eq!(
+        said(&kendex(&home, &home, &["project", "list"])),
+        listed_before,
+        "a global install registered something"
+    );
+}

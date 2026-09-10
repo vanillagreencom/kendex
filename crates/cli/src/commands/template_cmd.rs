@@ -12,7 +12,7 @@ use kendex_core::template::{
 };
 
 use super::engine_common::ask_before_writing;
-use super::{CliResult, note, out, say, warn};
+use super::{CliResult, fail_refusal, note, out, say, warn};
 
 #[derive(Subcommand)]
 pub enum TemplateCommand {
@@ -688,14 +688,27 @@ fn install(env: &Env, name: &str, project: Option<PathBuf>, yes: bool) -> CliRes
     for note_line in &landed.notes {
         note(note_line);
     }
+    // Unconditional on an answer, the way `add` is and for the same
+    // reason: every path that answers here has written. An install with
+    // nothing to install refuses with `TemplateEmpty` above, and a run
+    // that stopped short only answers at all once something landed — so a
+    // branch for a destination nothing reached is a branch nothing
+    // reaches. A global destination registers nothing; that is
+    // `register_destination`'s own rule rather than a condition restated
+    // here.
+    let registered = super::project::register_destination(env, &destination);
     // The lines above are what is on disk. A run that stopped short says
     // so after them and exits non-zero: reporting the refusal alone would
     // deny the packages that are in, and reporting success would deny the
-    // rest of the template that is not.
+    // rest of the template that is not. A registry that refused is a
+    // second fact and never replaces the first.
     match landed.stopped {
         Some(why) => {
+            if let Err(refused) = registered {
+                fail_refusal("warning: ", refused.as_ref());
+            }
             Err(format!("{why} — what is listed above is installed and stays installed").into())
         }
-        None => Ok(()),
+        None => registered,
     }
 }
