@@ -180,10 +180,28 @@ impl Hardened {
     }
 
     pub fn run(mut self) -> Result<Output> {
+        let deadline = Instant::now() + self.timeout;
+        // A script this process wrote a moment ago can refuse to start with
+        // `ETXTBSY`: a spawn on another thread that began while the writer
+        // was still open carries a copy of that handle until its own exec
+        // lands, and Linux will not run a file anybody holds open for
+        // writing. The producers are kendex's own write-then-run pairs: a
+        // package installer run right after `apply::execute` put it on
+        // disk, and the fixture scripts the test suites write. The handle
+        // is gone the moment that other exec finishes, so the start is
+        // retried until the bound, and only the last refusal is reported.
         // Only a failed spawn never ran; missing pipes are a broken invariant.
-        let mut child = match self.command.spawn() {
-            Ok(child) => child,
-            Err(error) => return Err(CoreError::not_started(&self.label, error)),
+        let mut child = loop {
+            match self.command.spawn() {
+                Ok(child) => break child,
+                Err(error)
+                    if error.kind() == io::ErrorKind::ExecutableFileBusy
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(POLL);
+                }
+                Err(error) => return Err(CoreError::not_started(&self.label, error)),
+            }
         };
         let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take())
         else {
@@ -198,7 +216,6 @@ impl Hardened {
         let reading_out = std::thread::spawn(move || read(&mut stdout, cap));
         let reading_err = std::thread::spawn(move || read(&mut stderr, cap));
 
-        let deadline = Instant::now() + self.timeout;
         // The deadline covers the READ, not only the wait: breaking on the
         // direct child's exit handed the pipes to `collect` with nothing
         // timing them, and a descendant that inherited them holds

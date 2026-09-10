@@ -589,3 +589,58 @@ fn a_program_that_cannot_be_spawned_says_it_never_started() {
     assert!(label.contains("kendex-not-a-program"), "{label}");
     assert!(!why.is_empty(), "the reason it could not start is empty");
 }
+
+/// A script somebody still holds open for writing cannot start — Linux
+/// answers `ETXTBSY`, macOS runs it — and the holder is usually another
+/// thread's spawn mid-exec, gone within the millisecond. Released inside
+/// the bound, the run goes through as if nothing happened; held past it,
+/// the refusal is the spawn's, reported at the bound rather than after a
+/// run that never was.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_script_still_open_for_writing_is_retried_until_the_bound() {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let rows = [
+        (
+            "released before the bound",
+            Some(Duration::from_millis(100)),
+        ),
+        ("held past the bound", None),
+    ];
+    for (label, released_after) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let script = tmp.path().join("script");
+        let mut writer = fs::File::create(&script).unwrap();
+        writer.write_all(b"#!/bin/sh\necho ran\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut writer = Some(writer);
+        let releaser = released_after.map(|after| {
+            let writer = writer.take();
+            std::thread::spawn(move || {
+                std::thread::sleep(after);
+                drop(writer);
+            })
+        });
+
+        let started = Instant::now();
+        let result = Hardened::program(script.to_str().unwrap(), &[])
+            .timeout(Duration::from_millis(500))
+            .run();
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{label}: the start was retried past the bound: {:?}",
+            started.elapsed()
+        );
+        match (released_after, result) {
+            (Some(_), Ok(output)) => assert_eq!(output.stdout, b"ran\n", "{label}"),
+            (None, Err(CoreError::CommandNotStarted { .. })) => {}
+            (_, result) => panic!("{label}: {result:?}"),
+        }
+        drop(writer);
+        if let Some(releaser) = releaser {
+            releaser.join().unwrap();
+        }
+    }
+}

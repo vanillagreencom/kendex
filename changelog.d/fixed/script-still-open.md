@@ -1,0 +1,1 @@
+- Start a package script even when another program start from the same moment still holds the file open, retrying within the call's time limit instead of failing with "Text file busy".
