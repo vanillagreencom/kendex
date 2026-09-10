@@ -71,27 +71,6 @@ pub struct ProvenanceRow {
 /// called it, and which tool holds it.
 type RowKey = (Scope, ItemKind, String, HarnessId, Option<String>);
 
-/// The separator between a shared file and the entry inside it, a
-/// character no path and no command can hold.
-const ENTRY: char = '\u{1f}';
-
-/// What tells one observation from another the scan saw alike. See
-/// [`ProvenanceRow::at`].
-fn observed_at(item: &crate::model::ObservedItem) -> String {
-    let at = crate::paths::slashed(
-        &crate::paths::canonical(&item.path).unwrap_or_else(|_| item.path.clone()),
-    );
-    match item.file_state {
-        crate::model::FileState::ConfigEntry => {
-            format!(
-                "{at}{ENTRY}{}",
-                item.description.as_deref().unwrap_or_default()
-            )
-        }
-        _ => at,
-    }
-}
-
 /// What is known about one such installation: where it came from, and
 /// which package it is when the records establish one.
 type RowFacts = (Origin, Option<PackageRef>);
@@ -149,7 +128,7 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
         // one root and one registry file holds every entry, so two things
         // it finds under one name are two installations rather than one
         // row that has to pick an origin between them.
-        let at = observed_at(&item);
+        let at = item.at.clone();
         rows.entry((item.scope, item.kind, item.name, item.harness, Some(at)))
             .or_insert((origin, package));
     }

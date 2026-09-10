@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ObservedItem, Origin, ProvenanceRow, Scope } from "@/bindings";
+import type {
+  HarnessId,
+  ItemKind,
+  ObservedItem,
+  Origin,
+  ProvenanceRow,
+  Scope,
+} from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
 import { openLibraryAt } from "@/components/library/use-filter-handoff";
 import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
@@ -27,6 +34,7 @@ import { useSettingsStore } from "@/stores/settings";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
 import { joinAnswered } from "@/test/identity-join";
+import { observed } from "@/test/observed";
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
 const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
@@ -532,12 +540,12 @@ describe("the Library narrowed to a place that has nothing", () => {
 // The join says which of those are one package, and the table shows that.
 describe("one package several tools store differently", () => {
   const at = (
-    harness: string,
-    kind: string,
+    harness: HarnessId,
+    kind: ItemKind,
     name: string,
     path: string,
   ): ObservedItem =>
-    ({
+    observed({
       kind,
       name,
       harness,
@@ -550,7 +558,7 @@ describe("one package several tools store differently", () => {
       tags: [],
       modifiedAt: null,
       vendor: null,
-    }) as unknown as ObservedItem;
+    });
 
   const items = [
     at(
@@ -583,7 +591,7 @@ describe("one package several tools store differently", () => {
     kind: item.kind,
     name: item.name,
     harness: item.harness,
-    at: item.path,
+    at: item.at,
     origin: { origin: "marketplace", source: "kendex", repo: "vg/kendex" },
     package: { kind: "hook", name: "block-bare-cd" },
   });
@@ -601,7 +609,7 @@ describe("one package several tools store differently", () => {
           kind: "agent",
           name: "safety-block-argv-kill",
           harness: "cursor",
-          at: items[2].path,
+          at: items[2].at,
           origin: { origin: "unmanaged" },
           package: null,
         },

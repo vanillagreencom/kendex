@@ -22,10 +22,12 @@ use offer::offered;
 /// The observed on-disk path of every installation — provenance rows carry
 /// no path, so the scan is asked once and joined here. Managed installs
 /// are included: their observed bytes are what an "edited copy" is.
-pub(super) fn unmanaged_paths(
-    env: &Env,
-    scopes: &[Scope],
-) -> BTreeMap<(Scope, ItemKind, String), PathBuf> {
+///
+/// Keyed by the observation, not by the name: a tool reads a shared root
+/// and one of its own, so one scope, kind and name can name two files.
+/// Keyed by the name, the second is offered the first's bytes and can
+/// never be imported as itself.
+pub(super) fn unmanaged_paths(env: &Env, scopes: &[Scope]) -> BTreeMap<String, PathBuf> {
     let Ok(settings) = crate::settings::load(env) else {
         return BTreeMap::new();
     };
@@ -36,11 +38,19 @@ pub(super) fn unmanaged_paths(
         if item.vendor.is_some() {
             continue;
         }
-        paths
-            .entry((item.scope, item.kind, item.name))
-            .or_insert(item.path);
+        paths.entry(item.at).or_insert(item.path);
     }
     paths
+}
+
+/// The bytes one provenance row was read from, or `None` where the row is
+/// a record's alone — an installation the scan did not see has no observed
+/// bytes to offer, and the file another row read is not this one's.
+fn observed_path<'a>(
+    observed: &'a BTreeMap<String, PathBuf>,
+    row: &crate::library::ProvenanceRow,
+) -> Option<&'a PathBuf> {
+    observed.get(row.at.as_ref()?)
 }
 
 /// One place a provenance row's bytes were found, as the wizard may offer
@@ -69,7 +79,7 @@ pub(super) struct OriginRead {
 pub(super) fn origins_of(
     env: &Env,
     row: &crate::library::ProvenanceRow,
-    observed: &BTreeMap<(Scope, ItemKind, String), PathBuf>,
+    observed: &BTreeMap<String, PathBuf>,
 ) -> Vec<OriginRead> {
     // Judged as the kind it IS, not as the kind a tool stores it under: a
     // hook's script read as agent markdown is refused as malformed for a
@@ -85,7 +95,7 @@ pub(super) fn origins_of(
 fn reads(
     env: &Env,
     row: &crate::library::ProvenanceRow,
-    observed: &BTreeMap<(Scope, ItemKind, String), PathBuf>,
+    observed: &BTreeMap<String, PathBuf>,
 ) -> Vec<OriginRead> {
     match &row.origin {
         Origin::Own { source, .. } => {
@@ -121,7 +131,7 @@ fn reads(
             ) {
                 return Vec::new();
             }
-            let Some(path) = observed.get(&(row.scope.clone(), row.kind, row.name.clone())) else {
+            let Some(path) = observed_path(observed, row) else {
                 return Vec::new();
             };
             let Some(bytes) = path
@@ -150,7 +160,7 @@ fn marketplace_origins(
     row: &crate::library::ProvenanceRow,
     source: &str,
     repo: &str,
-    observed: &BTreeMap<(Scope, ItemKind, String), PathBuf>,
+    observed: &BTreeMap<String, PathBuf>,
 ) -> Vec<OriginRead> {
     let manifest = scope_manifest(env, &row.scope);
     let unreachable = |license: Option<String>| {
@@ -212,7 +222,7 @@ fn marketplace_origins(
     // is not a source form of the package, and offering it as one would
     // put a `.mdc` into a catalog's hook slot.
     if package.kind == row.kind
-        && let Some(installed) = observed.get(&(row.scope.clone(), row.kind, row.name.clone()))
+        && let Some(installed) = observed_path(observed, row)
         && let Some(edited) = installed
             .parent()
             .and_then(|parent| SealedSource::open(parent).ok())

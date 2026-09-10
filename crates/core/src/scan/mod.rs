@@ -310,6 +310,11 @@ fn scan_surface(
                     scope: scope.clone(),
                     file_state: files::state_of(&found.path),
                     origin: provenance.origin_of(&found.path),
+                    at: crate::model::observed_at(
+                        &found.path,
+                        &files::state_of(&found.path),
+                        found.meta.description.as_deref(),
+                    ),
                     path: found.path,
                     enabled: Some(found.enabled),
                     tags: found.meta.tags,
@@ -329,6 +334,11 @@ fn scan_surface(
                     scope: scope.clone(),
                     file_state: files::state_of(&found.path),
                     origin: provenance.origin_of(&found.path),
+                    at: crate::model::observed_at(
+                        &found.path,
+                        &files::state_of(&found.path),
+                        found.meta.description.as_deref(),
+                    ),
                     path: found.path,
                     enabled: Some(found.enabled),
                     tags: found.meta.tags,
@@ -392,16 +402,23 @@ fn scan_structured_file(
                 let modified_at = entry.source_path.as_deref().and_then(files::mtime_unix);
                 let vendor =
                     crate::vendor::vendor_of(kind, &entry.name, adapter.id()).map(str::to_owned);
+                let file_state = match entry.source_path {
+                    Some(_) => FileState::Dir,
+                    None => FileState::ConfigEntry,
+                };
+                let at_path = entry.source_path.unwrap_or_else(|| path.to_path_buf());
                 pass.result.items.push(ObservedItem {
                     kind,
                     name: entry.name,
                     harness: adapter.id(),
                     scope: scope.clone(),
-                    file_state: match entry.source_path {
-                        Some(_) => FileState::Dir,
-                        None => FileState::ConfigEntry,
-                    },
-                    path: entry.source_path.unwrap_or_else(|| path.to_path_buf()),
+                    at: crate::model::observed_at(
+                        &at_path,
+                        &file_state,
+                        entry.description.as_deref(),
+                    ),
+                    file_state,
+                    path: at_path,
                     enabled: entry.enabled,
                     origin: None,
                     // Nothing to read: a structured reader hands back an

@@ -160,8 +160,14 @@ fn the_edited_copy_of_a_marketplace_agent_is_judged_by_the_same_rule() {
     let path = lock::lock_path(&env, &scope);
     let mut held = lock::load(&path).unwrap();
     held.entries.insert(
-        lock::entry_key(ItemKind::Agent, "agentic", HarnessId::Claude),
-        entry(ItemKind::Agent, "agentic", "cat", "cat"),
+        // Recorded for the tool that holds the file: the copy beside the
+        // marketplace's own bytes is this record's, and nothing but a
+        // record says so.
+        lock::entry_key(ItemKind::Agent, "agentic", HarnessId::Codex),
+        crate::lock::LockEntry {
+            harness: HarnessId::Codex,
+            ..entry(ItemKind::Agent, "agentic", "cat", "cat")
+        },
     );
     lock::save(&path, &held).unwrap();
 

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ObservedItem } from "@/bindings";
+import { observed } from "@/test/observed";
 import { groupItems, groupStatus } from "./derive";
 
 function item(overrides: Partial<ObservedItem>): ObservedItem {
-  return {
+  return observed({
     kind: "skill",
     name: "deploy",
     harness: "claude",
@@ -17,7 +18,7 @@ function item(overrides: Partial<ObservedItem>): ObservedItem {
     modifiedAt: null,
     vendor: null,
     ...overrides,
-  };
+  });
 }
 
 const status = (items: ObservedItem[]) =>

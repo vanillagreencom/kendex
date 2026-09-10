@@ -14,6 +14,7 @@ import {
   usePackageData,
   usePackageDiff,
 } from "@/components/package/use-package-data";
+import { PackagesNote } from "@/components/packages-note";
 import {
   groupFor,
   groupItems,
@@ -22,6 +23,7 @@ import {
   installationAt,
 } from "@/lib/derive";
 import { packageDisplayName } from "@/lib/labels";
+import { PAGE_GUTTER } from "@/lib/layout";
 import {
   addressesDeclaration,
   usePackageIndex,
@@ -40,6 +42,7 @@ import {
   packageUpdateNote,
   updatesReadNote,
 } from "@/lib/updates-read-state";
+import { cn } from "@/lib/utils";
 import {
   hasNewer,
   installedRow,
@@ -110,9 +113,9 @@ export function PackagePage() {
   const group = useMemo(
     () =>
       ref && result && packageOf
-        ? groupFor(groupItems(result.items, packageOf), ref, packagesKnown)
+        ? groupFor(groupItems(result.items, packageOf), ref)
         : null,
-    [ref, result, packageOf, packagesKnown],
+    [ref, result, packageOf],
   );
 
   const mutating = useManifestBusy(switching);
@@ -161,7 +164,21 @@ export function PackagePage() {
     if (ref && result && packagesKnown && !installedHere) back();
   }, [ref, result, packagesKnown, installedHere, back]);
 
-  if (!ref || !group) return null;
+  if (!ref) return null;
+  // The read that says which installations are one package has not
+  // answered for the scan on screen, so which row this link named cannot
+  // be said yet. The links that reach here — Updates, Customize, a
+  // marketplace — stay on screen through it, so the page says what it is
+  // waiting on, and offers the read again where that read failed, rather
+  // than going blank under a link that still works.
+  if (!packagesKnown) {
+    return (
+      <div className={cn("flex min-h-0 flex-1 flex-col pt-6", PAGE_GUTTER)}>
+        <PackagesNote counting />
+      </div>
+    );
+  }
+  if (!group) return null;
   // The installation this page is about. A package can be installed in
   // several places and the page names one of them, so the actions that
   // open files reach that place's copy. Falling back to another place's

@@ -188,6 +188,35 @@ fn the_inventory_lists_all_three_origins_with_their_groups() {
     assert!(matches!(stray.origins[0].group, CandidateGroup::Unmanaged));
 }
 
+/// One tool reads a shared root and one of its own, so a scope, kind and
+/// name can name two files. Each is its own candidate origin and each has
+/// to read its own bytes: keyed by the name, the second is offered the
+/// first's and can never be imported as itself.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn two_files_one_tool_reads_under_one_name_each_offer_their_own_bytes() {
+    let (_tmp, env, scope) = seeded();
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    // The same name in the tool's own root and in the shared one it also
+    // reads, with different bytes, neither recorded.
+    skill(&root.join(".claude/skills"), "twin", "private bytes");
+    skill(&root.join(".agents/skills"), "twin", "shared bytes");
+    let scopes = [scope.clone()];
+    let candidates = inventory(&env, &scopes).unwrap();
+
+    let twin = find(&candidates, "twin");
+    let mut hashes: Vec<_> = twin
+        .origins
+        .iter()
+        .map(|origin| origin.hash.clone())
+        .collect();
+    hashes.sort();
+    hashes.dedup();
+    assert_eq!(hashes.len(), 2, "{:?}", twin.origins);
+}
+
 #[allow(clippy::unwrap_used)]
 fn selection(candidate: &ImportCandidate, confirmed: bool) -> ImportSelection {
     ImportSelection {

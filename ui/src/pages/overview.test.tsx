@@ -18,6 +18,7 @@ import {
   type ReadState,
   readFailed,
 } from "@/lib/read-state";
+import { observed } from "@/test/observed";
 import { OverviewPage } from "./overview";
 
 // Static markup escapes apostrophes, so a pinned copy token must be
@@ -115,21 +116,22 @@ const scanned: ScanResult = {
   warnings: [],
 };
 
-const installed = (overrides: Partial<ObservedItem>): ObservedItem => ({
-  kind: "skill",
-  name: "deploy",
-  harness: "claude",
-  scope: { scope: "global" },
-  path: "/h/.claude/skills/deploy",
-  fileState: { state: "dir" },
-  enabled: true,
-  origin: null,
-  description: null,
-  tags: [],
-  modifiedAt: null,
-  vendor: null,
-  ...overrides,
-});
+const installed = (overrides: Partial<ObservedItem>): ObservedItem =>
+  observed({
+    kind: "skill",
+    name: "deploy",
+    harness: "claude",
+    scope: { scope: "global" },
+    path: "/h/.claude/skills/deploy",
+    fileState: { state: "dir" },
+    enabled: true,
+    origin: null,
+    description: null,
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+    ...overrides,
+  });
 
 beforeEach(() => {
   // The join has answered and recorded nothing: these fixtures group as

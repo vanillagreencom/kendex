@@ -1,25 +1,27 @@
 import { describe, expect, it } from "vitest";
 import type { ObservedItem, Scope, ScopeSettings, UpdateRow } from "@/bindings";
 import { groupItems } from "@/lib/derive";
+import { observed } from "@/test/observed";
 import { markFor } from "./package-mark";
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
 const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
 
-const item = (scope: Scope): ObservedItem => ({
-  kind: "skill",
-  name: "gh",
-  scope,
-  harness: "claude",
-  path: `${scope.scope === "project" ? scope.root : ""}/.claude/skills/gh`,
-  fileState: { state: "file" },
-  enabled: true,
-  origin: null,
-  description: "about gh",
-  tags: [],
-  modifiedAt: null,
-  vendor: null,
-});
+const item = (scope: Scope): ObservedItem =>
+  observed({
+    kind: "skill",
+    name: "gh",
+    scope,
+    harness: "claude",
+    path: `${scope.scope === "project" ? scope.root : ""}/.claude/skills/gh`,
+    fileState: { state: "file" },
+    enabled: true,
+    origin: null,
+    description: "about gh",
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+  });
 
 // One recorded package in two places, which is what a mark counting
 // places is about. Two copies wearing a name establish nothing on their

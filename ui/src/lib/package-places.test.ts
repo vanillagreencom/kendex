@@ -18,6 +18,7 @@ import {
 } from "@/lib/package-places";
 import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
+import { observed } from "@/test/observed";
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
 const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
@@ -80,20 +81,21 @@ const install = (
   scope: Scope,
   harness: HarnessId = "claude",
   vendor: string | null = null,
-): ObservedItem => ({
-  kind: "skill",
-  name: "gh",
-  harness,
-  scope,
-  path: `/x/${harness}`,
-  fileState: { state: "file" },
-  enabled: true,
-  origin: null,
-  description: null,
-  tags: [],
-  modifiedAt: null,
-  vendor,
-});
+): ObservedItem =>
+  observed({
+    kind: "skill",
+    name: "gh",
+    harness,
+    scope,
+    path: `/x/${harness}`,
+    fileState: { state: "file" },
+    enabled: true,
+    origin: null,
+    description: null,
+    tags: [],
+    modifiedAt: null,
+    vendor,
+  });
 
 /** One provenance row, which the join keys per harness the same way. */
 const joined = (

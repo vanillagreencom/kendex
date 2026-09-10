@@ -117,26 +117,18 @@ export function bytesAt(install: ObservedItem): string {
     : install.path;
 }
 
-/** The separator between a shared file and the entry inside it — a
- *  character no path and no command can hold. Written as an escape, never
- *  as the byte: a control character typed into a source file makes Git
- *  call the file binary. */
-const ENTRY = "\u001f";
-
 /** What tells this observation from another the scan saw under the same
  *  kind, name and tool — because it does see two: a tool reads both a
  *  shared root and one of its own, and one registry file holds every hook
  *  entry a tool runs.
  *
- *  For an artifact of its own that is where it sits; for an entry inside a
- *  shared file it is that file and the action the entry runs, since the
- *  file is every entry's. The same spelling core keys its rows by, so the
- *  two sides of the join meet. Compared, never parsed. */
-export function observedAt(item: ObservedItem): string {
-  return item.fileState.state === "config-entry"
-    ? `${item.path}${ENTRY}${item.description ?? ""}`
-    : bytesAt(item);
-}
+ *  Read off the scan, never rebuilt here. It is a canonical path in one
+ *  spelling, which nothing above the filesystem can resolve, and core
+ *  keys its provenance rows by the same value — a second derivation would
+ *  be a second answer to one question, and the two would part company the
+ *  moment a path went through a link or a platform spelled a separator
+ *  its own way. Compared, never parsed. */
+export const observedAt = (item: ObservedItem): string => item.at;
 
 /** The paths more than one harness reads, out of one item's installations.
  *
@@ -270,28 +262,26 @@ export const groupRef = (group: ItemGroup): PackageIdentityRef =>
  *  near miss. A package the link named that is no longer installed is
  *  nothing here, which is what sends the page back.
  *
- *  `known` is whether that read has answered. Before it has, every row
- *  reads as unrecorded whatever it is, so a recorded link would match
- *  nothing; the only row wearing this kind and name opens instead, and the
- *  page draws rather than bouncing off a state that is about to change. */
+ *  There is no grouping to search before that read answers — every row
+ *  would read as unrecorded whatever it is — so a caller has the groups
+ *  the read produced or has none, and this is only ever asked of the
+ *  former. */
 export function groupFor(
   groups: ItemGroup[],
   ref: PackageIdentityRef,
-  known: boolean,
 ): ItemGroup | null {
-  const named = groups.filter(
-    (group) => group.kind === ref.kind && group.name === ref.name,
-  );
   // A recorded link is answered by the identity alone; an unrecorded one
   // also has to name the file, because two rows can wear one kind and name
   // and neither is the other's stand-in.
-  const exact = named.find(
-    (group) =>
-      identityOf(group) === ref.identity &&
-      (ref.identity === "recorded" || groupRef(group).at === ref.at),
+  return (
+    groups.find(
+      (group) =>
+        group.kind === ref.kind &&
+        group.name === ref.name &&
+        identityOf(group) === ref.identity &&
+        (ref.identity === "recorded" || groupRef(group).at === ref.at),
+    ) ?? null
   );
-  if (exact || known) return exact ?? null;
-  return named.length === 1 ? named[0] : null;
 }
 
 /** How many packages a grouped scan holds — one per kind+name group, the

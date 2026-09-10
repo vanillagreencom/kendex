@@ -22,6 +22,8 @@ import {
   OPEN_IN_LABEL,
   PACKAGE_FILES_READ_FAILED,
   PACKAGE_FILES_TITLE,
+  PACKAGES_CHECK_FAILED_TITLE,
+  PLACE_COUNTING_LABEL,
   TRY_AGAIN_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
@@ -55,6 +57,7 @@ import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
 import { joinAnswered } from "@/test/identity-join";
+import { observed } from "@/test/observed";
 import { PackagePage } from "./package";
 
 // The page is mounted against the real stores; only the backend is
@@ -83,23 +86,21 @@ type Project = Extract<Scope, { scope: "project" }>;
 const VG: Project = { scope: "project", root: "/work/vg" };
 const HYPR: Project = { scope: "project", root: "/work/hyprtrade" };
 
-const installedAt = (
-  scope: Project,
-  kind: ItemKind = "skill",
-): ObservedItem => ({
-  kind,
-  name: "gh",
-  scope,
-  harness: "claude",
-  path: `${scope.root}/.claude/skills/gh`,
-  fileState: { state: "file" },
-  enabled: true,
-  origin: null,
-  description: "about gh",
-  tags: [],
-  modifiedAt: null,
-  vendor: null,
-});
+const installedAt = (scope: Project, kind: ItemKind = "skill"): ObservedItem =>
+  observed({
+    kind,
+    name: "gh",
+    scope,
+    harness: "claude",
+    path: `${scope.root}/.claude/skills/gh`,
+    fileState: { state: "file" },
+    enabled: true,
+    origin: null,
+    description: "about gh",
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+  });
 
 const PLAIN: Manifest_Serialize = { schema: 1, install: {} };
 const CUSTOMIZED: Manifest_Serialize = {
@@ -152,7 +153,7 @@ const openPage = async (
         harness: item.harness,
         // The join answers per file, so a fixture naming a different one
         // would be about a different installation.
-        at: item.path,
+        at: item.at,
         origin: {
           origin: "marketplace" as const,
           source: "cat",
@@ -858,7 +859,7 @@ describe("the package page's safety tab", () => {
           kind: "skill",
           name: "gh",
           harness: "codex",
-          at: installedAt(VG).path,
+          at: installedAt(VG).at,
           origin: { origin: "marketplace", source: "cat", repo: "o/r" },
           package: { kind: "skill", name: "gh" },
         },
@@ -1093,11 +1094,12 @@ describe("the package page's delete action", () => {
 // second must issue none of them — it would be reading and changing the
 // first while describing the second.
 describe("a package page opened on an installation nothing recorded", () => {
-  const stray = (): ObservedItem => ({
-    ...installedAt(VG),
-    harness: "cursor",
-    path: `${VG.root}/.cursor/skills/gh`,
-  });
+  const stray = (): ObservedItem =>
+    observed({
+      ...installedAt(VG),
+      harness: "cursor",
+      path: `${VG.root}/.cursor/skills/gh`,
+    });
 
   let opened: ReturnType<typeof vi.fn>;
 
@@ -1141,7 +1143,7 @@ describe("a package page opened on an installation nothing recorded", () => {
         scope: VG,
         identity: "observed",
         // A row nothing recorded is named by the file it reads.
-        at: stray().path,
+        at: stray().at,
       },
       packageView: null,
     });
@@ -1233,6 +1235,57 @@ describe("a package page opened on an installation nothing recorded", () => {
     expect(
       Array.from(host.querySelectorAll("button")).map((one) => one.textContent),
     ).toContain(OPEN_IN_LABEL);
+  });
+
+  // The links that reach this page — Updates, Customize, a marketplace —
+  // stay on screen while the read that says which installations are one
+  // package is out, and after it fails. A blank page under a working link
+  // is a dead end; the page says what it is waiting on, and offers the
+  // read again where there is one to offer.
+  it("says what it is waiting on rather than going blank", async () => {
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [installedAt(VG)],
+        missingProjects: [],
+        warnings: [],
+      },
+    });
+    useNavStore.setState({
+      page: "package",
+      packageRef: {
+        kind: "skill",
+        name: "gh",
+        scope: VG,
+        identity: "recorded",
+      },
+      packageView: null,
+    });
+
+    useProvenanceStore.setState({
+      rows: [],
+      loaded: false,
+      answeredFor: null,
+      read: READ_PENDING,
+    });
+    const waiting = mount(<PackagePage />);
+    await settle();
+    expect(waiting.textContent).toContain(PLACE_COUNTING_LABEL);
+
+    useProvenanceStore.setState({
+      rows: [],
+      loaded: false,
+      answeredFor: null,
+      read: readFailed("the join did not read"),
+    });
+    const failed = mount(<PackagePage />);
+    await settle();
+    expect(failed.textContent).toContain(PACKAGES_CHECK_FAILED_TITLE);
+    expect(
+      Array.from(failed.querySelectorAll("button")).map((one) =>
+        one.textContent?.trim(),
+      ),
+    ).toContain(TRY_AGAIN_LABEL);
   });
 
   // The same page opened on the recorded package keeps everything.

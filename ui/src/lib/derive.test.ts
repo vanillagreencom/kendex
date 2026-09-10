@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ObservedItem } from "@/bindings";
 import { KINDS } from "@/lib/labels";
 import type { PackageOf } from "@/lib/package-identity";
+import { observed } from "@/test/observed";
 import {
   filterItems,
   groupFor,
@@ -22,7 +23,7 @@ import {
 const unrecorded: PackageOf = () => null;
 
 function item(overrides: Partial<ObservedItem>): ObservedItem {
-  return {
+  return observed({
     kind: "skill",
     name: "deploy",
     harness: "claude",
@@ -36,7 +37,7 @@ function item(overrides: Partial<ObservedItem>): ObservedItem {
     modifiedAt: null,
     vendor: null,
     ...overrides,
-  };
+  });
 }
 
 describe("scopeMatches", () => {
@@ -333,6 +334,26 @@ describe("groupItems where nothing is recorded", () => {
     expect(groups[0].shared).toBe(true);
   });
 
+  // The scan resolves a path before it names an observation, and nothing
+  // above the filesystem can do that: two tools whose own paths differ can
+  // be reading one file, and on Windows the same file is spelled two ways.
+  // So the row is the identity the scan stamped, never one rebuilt here
+  // out of the path the tool asked for.
+  it("groups by the identity the scan stamped, not by the path", () => {
+    const groups = groupItems(
+      [
+        {
+          ...at("/h/.claude/skills/deploy", { harness: "claude" }),
+          at: "/one",
+        },
+        { ...at("/h/.codex/skills/deploy", { harness: "codex" }), at: "/one" },
+      ],
+      unrecorded,
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].harnesses).toEqual(["claude", "codex"]);
+  });
+
   // A row nothing recorded is named by the file it reads, so a link to one
   // of two same-named rows opens that one and not its neighbour.
   it("opens the row whose file the link named", () => {
@@ -346,7 +367,7 @@ describe("groupItems where nothing is recorded", () => {
       );
       expect(ref.at, one.path).toBe(one.path);
       expect(
-        groupFor(groups, ref, true)?.installations.map((i) => i.harness),
+        groupFor(groups, ref)?.installations.map((i) => i.harness),
         one.path,
       ).toEqual([one.harness]);
     }
@@ -392,33 +413,20 @@ describe("groupFor", () => {
     for (const row of rows) {
       const groups = groupItems([...row.items], recordedOnly);
       expect(
-        groupFor(
-          groups,
-          { ...gh, identity: "recorded" },
-          true,
-        )?.installations.map((one) => one.harness),
+        groupFor(groups, { ...gh, identity: "recorded" })?.installations.map(
+          (one) => one.harness,
+        ),
         row.name,
       ).toEqual(["claude"]);
       expect(
-        groupFor(
-          groups,
-          { ...gh, identity: "observed", at: row.at },
-          true,
-        )?.installations.map((one) => one.harness),
+        groupFor(groups, {
+          ...gh,
+          identity: "observed",
+          at: row.at,
+        })?.installations.map((one) => one.harness),
         row.name,
       ).toEqual(["cursor"]);
     }
-  });
-
-  it("opens the only thing wearing that name whichever it is", () => {
-    const only = groupItems([mine], recordedOnly);
-    expect(groupFor(only, { ...gh, identity: "recorded" }, false)).toBe(
-      only[0],
-    );
-    const one = groupItems([managed], recordedOnly);
-    expect(
-      groupFor(one, { ...gh, identity: "observed", at: managed.path }, false),
-    ).toBe(one[0]);
   });
 
   // A link the reader kept after its package was removed, with only a
@@ -426,21 +434,17 @@ describe("groupFor", () => {
   // thing under the other's name and suppress the page's own way out.
   it("opens nothing for a stale link once the read has answered", () => {
     const left = groupItems([mine], recordedOnly);
-    expect(groupFor(left, { ...gh, identity: "recorded" }, true)).toBeNull();
+    expect(groupFor(left, { ...gh, identity: "recorded" })).toBeNull();
   });
 
   it("opens nothing it was not asked for", () => {
     const groups = groupItems([managed, mine], recordedOnly);
     expect(
-      groupFor(
-        groups,
-        { kind: "agent", name: "gh", identity: "recorded" },
-        true,
-      ),
+      groupFor(groups, { kind: "agent", name: "gh", identity: "recorded" }),
     ).toBeNull();
-    expect(
-      groupFor(groups, { ...gh, identity: "recorded" }, true)?.package,
-    ).toEqual(gh);
+    expect(groupFor(groups, { ...gh, identity: "recorded" })?.package).toEqual(
+      gh,
+    );
   });
 });
 

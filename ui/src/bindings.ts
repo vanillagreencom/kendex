@@ -2448,6 +2448,20 @@ export type ObservedItem = {
 	 *  [`crate::vendor`]. `None` is the common case: the user's own.
 	 */
 	vendor: string | null,
+	/**
+	 *  What tells this observation from another the scan saw under the
+	 *  same kind, name and tool — because it does see two: a tool reads a
+	 *  shared root and one of its own, and one registry file holds every
+	 *  hook entry a tool runs.
+	 * 
+	 *  Carried rather than derived by each reader. It is a canonical path
+	 *  in one spelling, which nothing above the filesystem can rebuild:
+	 *  deriving it again anywhere — in another crate, in the UI — is a
+	 *  second answer to one question, and the two disagree the moment a
+	 *  path resolves through a link or a platform spells a separator its
+	 *  own way. Compared, never parsed.
+	 */
+	at: string,
 };
 
 /**

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -206,6 +206,34 @@ pub struct ObservedItem {
     /// Who ships this content, when a tool ships it itself — see
     /// [`crate::vendor`]. `None` is the common case: the user's own.
     pub vendor: Option<String>,
+    /// What tells this observation from another the scan saw under the
+    /// same kind, name and tool — because it does see two: a tool reads a
+    /// shared root and one of its own, and one registry file holds every
+    /// hook entry a tool runs.
+    ///
+    /// Carried rather than derived by each reader. It is a canonical path
+    /// in one spelling, which nothing above the filesystem can rebuild:
+    /// deriving it again anywhere — in another crate, in the UI — is a
+    /// second answer to one question, and the two disagree the moment a
+    /// path resolves through a link or a platform spells a separator its
+    /// own way. Compared, never parsed.
+    pub at: String,
+}
+
+/// The separator between a shared file and the entry inside it, a
+/// character no path and no command can hold.
+pub const ENTRY: char = '\u{1f}';
+
+/// [`ObservedItem::at`] for one observation, out of what the scan read.
+/// The one producer: everything else carries the value.
+pub fn observed_at(path: &Path, file_state: &FileState, description: Option<&str>) -> String {
+    let at = crate::paths::slashed(&crate::paths::canonical(path).unwrap_or_else(|_| path.into()));
+    match file_state {
+        // Every entry of its kind shares the file holding it, so the file
+        // alone names none of them; what the entry runs is the rest of it.
+        FileState::ConfigEntry => format!("{at}{ENTRY}{}", description.unwrap_or_default()),
+        _ => at,
+    }
 }
 
 /// A harness found on this machine.

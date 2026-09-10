@@ -1,22 +1,25 @@
 import { describe, expect, it } from "vitest";
 import type { ObservedItem, ScanResult } from "@/bindings";
+import { observed } from "@/test/observed";
 import { scopeChoices } from "./derive";
 
 function result(roots: string[]): ScanResult {
-  const items: ObservedItem[] = roots.map((root) => ({
-    kind: "skill",
-    name: "deploy",
-    harness: "claude",
-    scope: { scope: "project", root },
-    path: `${root}/.claude/skills/deploy`,
-    fileState: { state: "dir" },
-    enabled: true,
-    origin: null,
-    description: null,
-    tags: [],
-    modifiedAt: null,
-    vendor: null,
-  }));
+  const items: ObservedItem[] = roots.map((root) =>
+    observed({
+      kind: "skill",
+      name: "deploy",
+      harness: "claude",
+      scope: { scope: "project", root },
+      path: `${root}/.claude/skills/deploy`,
+      fileState: { state: "dir" },
+      enabled: true,
+      origin: null,
+      description: null,
+      tags: [],
+      modifiedAt: null,
+      vendor: null,
+    }),
+  );
   return { harnesses: [], items, missingProjects: [], warnings: [] };
 }
 

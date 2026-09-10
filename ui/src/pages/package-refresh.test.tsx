@@ -31,6 +31,7 @@ import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
 import { joinAnswered } from "@/test/identity-join";
+import { observed } from "@/test/observed";
 import { PackagePage } from "./package";
 
 // The page is mounted against the real stores; only the backend is stubbed.
@@ -64,7 +65,7 @@ const NEW = "b".repeat(40);
 const nothing = { status: "error" as const, error: "not in this test" };
 
 /** gh as the scan found it, in the one place this page is about. */
-const INSTALLED: ObservedItem = {
+const INSTALLED: ObservedItem = observed({
   kind: "skill",
   name: "gh",
   scope: VG,
@@ -77,7 +78,7 @@ const INSTALLED: ObservedItem = {
   tags: [],
   modifiedAt: null,
   vendor: null,
-};
+});
 
 /** This place's row: the commit installed there, and whether the check found
  *  something newer waiting for it. */

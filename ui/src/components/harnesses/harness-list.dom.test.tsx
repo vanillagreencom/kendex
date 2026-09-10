@@ -14,25 +14,27 @@ import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
+import { observed } from "@/test/observed";
 import { HarnessList } from "./harness-list";
 
 const ACME: Scope = { scope: "project", root: "/work/acme" };
 
-const installed = (overrides: Partial<ObservedItem>): ObservedItem => ({
-  kind: "skill",
-  name: "deploy",
-  harness: "claude",
-  scope: { scope: "global" },
-  path: "/h/.claude/skills/deploy",
-  fileState: { state: "dir" },
-  enabled: true,
-  origin: null,
-  description: null,
-  tags: [],
-  modifiedAt: null,
-  vendor: null,
-  ...overrides,
-});
+const installed = (overrides: Partial<ObservedItem>): ObservedItem =>
+  observed({
+    kind: "skill",
+    name: "deploy",
+    harness: "claude",
+    scope: { scope: "global" },
+    path: "/h/.claude/skills/deploy",
+    fileState: { state: "dir" },
+    enabled: true,
+    origin: null,
+    description: null,
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+    ...overrides,
+  });
 
 // Claude carries two skills over three installations: one of them lives
 // globally and in a project both. Counting installations puts 3 on the badge
@@ -177,10 +179,25 @@ describe("a harness row's badges before the identity read answers", () => {
       said: PLACE_UNCHECKED_LABEL,
       absent: PLACE_COUNTING_LABEL,
     },
+    {
+      // The re-read a write asks for, failing with no scan behind it: the
+      // last answer is still about the scan on screen, so a rule reading
+      // that number alone would go on printing a definite count for a
+      // machine nothing has been able to check since.
+      name: "failed over the answer it had for this scan",
+      provenance: {
+        rows: [],
+        loaded: true,
+        answeredFor: useScanStore.getState().generation,
+        read: readFailed("no lock"),
+      },
+      said: PLACE_UNCHECKED_LABEL,
+      absent: PLACE_COUNTING_LABEL,
+    },
   ];
 
   it("says why there is no count, and which of the two it is", () => {
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
     for (const row of rows) {
       useProvenanceStore.setState(row.provenance);
       const host = mount(<HarnessList />);

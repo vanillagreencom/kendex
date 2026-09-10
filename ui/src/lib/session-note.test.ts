@@ -1,24 +1,26 @@
 import { describe, expect, it } from "vitest";
 import type { AuditView, DriftRow, ObservedItem } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
+import { observed } from "@/test/observed";
 import { SESSION_NOTE_HOOK, sessionNoteState } from "./session-note";
 
 const ROOT = "/work/acme";
 
-const hook = (name: string, root = ROOT): ObservedItem => ({
-  kind: "hook",
-  name,
-  harness: "claude",
-  scope: { scope: "project", root },
-  path: `${root}/.claude/settings.json`,
-  fileState: { state: "file" },
-  enabled: null,
-  origin: null,
-  description: null,
-  tags: [],
-  modifiedAt: null,
-  vendor: null,
-});
+const hook = (name: string, root = ROOT): ObservedItem =>
+  observed({
+    kind: "hook",
+    name,
+    harness: "claude",
+    scope: { scope: "project", root },
+    path: `${root}/.claude/settings.json`,
+    fileState: { state: "file" },
+    enabled: null,
+    origin: null,
+    description: null,
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+  });
 
 const view = (drift: DriftRow[], root = ROOT): AuditView => ({
   scope: { scope: "project", root },

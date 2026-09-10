@@ -38,6 +38,7 @@ import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
+import { observed } from "@/test/observed";
 import { PackageProjects } from "./package-projects";
 
 vi.mock("@/bindings", async (importOriginal) => ({
@@ -67,23 +68,21 @@ const ownedBy = (...owned: [Scope, Origin][]): ProvenanceRow[] =>
 
 /** One installation as the scan found it: a place holds one per harness,
  *  and removability is decided over all of them. */
-const install = (
-  scope: Scope,
-  harness: HarnessId = "claude",
-): ObservedItem => ({
-  kind: "skill",
-  name: "gh",
-  harness,
-  scope,
-  path: `/x/${harness}`,
-  fileState: { state: "file" },
-  enabled: true,
-  origin: null,
-  description: null,
-  tags: [],
-  modifiedAt: null,
-  vendor: null,
-});
+const install = (scope: Scope, harness: HarnessId = "claude"): ObservedItem =>
+  observed({
+    kind: "skill",
+    name: "gh",
+    harness,
+    scope,
+    path: `/x/${harness}`,
+    fileState: { state: "file" },
+    enabled: true,
+    origin: null,
+    description: null,
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+  });
 
 /** What the scan found in these places. */
 const scanFound = (...items: ObservedItem[]) =>
@@ -561,31 +560,31 @@ describe("what a card's buttons are called", () => {
 // not found, the place reads as one kendex does not own, and its Remove
 // goes: kendex's own file, offered as a stranger's.
 describe("a place whose copy the tool stores as another kind", () => {
-  const RULE: ObservedItem = {
+  const RULE: ObservedItem = observed({
     ...install(VG, "cursor"),
     kind: "agent",
     name: "safety-gh",
     path: "/p/.cursor/rules/safety-gh.mdc",
-  };
+  });
 
   it("still offers Remove for the copy kendex wrote", async () => {
     // One tool, one place, two files under one kind and name: the rule
     // kendex wrote, and somebody's own beside it. The unmanaged row sorts
     // first, so a join that did not name the file would pick it and take
     // the package's Remove away.
-    const mine: ObservedItem = {
+    const mine: ObservedItem = observed({
       ...install(VG, "cursor"),
       kind: "agent",
       name: "safety-gh",
       path: "/p/.agents/safety-gh.mdc",
-    };
+    });
     joinSays([
       {
         scope: VG,
         kind: "agent",
         name: "safety-gh",
         harness: "cursor",
-        at: mine.path,
+        at: mine.at,
         origin: UNMANAGED,
         package: null,
       },
@@ -594,7 +593,7 @@ describe("a place whose copy the tool stores as another kind", () => {
         kind: "agent",
         name: "safety-gh",
         harness: "cursor",
-        at: RULE.path,
+        at: RULE.at,
         origin: OURS,
         package: { kind: "hook", name: "gh" },
       },

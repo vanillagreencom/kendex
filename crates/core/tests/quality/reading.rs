@@ -143,6 +143,11 @@ fn an_observed_mcp_server_is_read_from_the_config_that_holds_it() {
         name: "files".into(),
         harness: kendex_core::model::HarnessId::Claude,
         scope: kendex_core::model::Scope::Global,
+        at: kendex_core::model::observed_at(
+            &config,
+            &kendex_core::model::FileState::ConfigEntry,
+            None,
+        ),
         path: config,
         file_state: kendex_core::model::FileState::ConfigEntry,
         enabled: None,
@@ -177,6 +182,11 @@ fn an_mcp_server_with_no_readable_entry_reports_its_rules_as_skipped() {
         name: "files".into(),
         harness: kendex_core::model::HarnessId::Claude,
         scope: kendex_core::model::Scope::Global,
+        at: kendex_core::model::observed_at(
+            &config,
+            &kendex_core::model::FileState::ConfigEntry,
+            None,
+        ),
         path: config,
         file_state: kendex_core::model::FileState::ConfigEntry,
         enabled: None,

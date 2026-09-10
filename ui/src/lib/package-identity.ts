@@ -90,13 +90,15 @@ export function usePackageIndex(): PackageOf | null {
  *  question is whether the rows on hand answer about the scan on hand, and
  *  the two stores carry the one number that settles it.
  *
- *  A read that failed after one landed leaves this false, with the failure
- *  in {@link usePackagesRead} — the rows are last-known rather than an
- *  answer about now, which is exactly what a reader must be told.
+ *  Only that: a re-read can fail with the last answer still about this
+ *  scan, and this stays true, because the rows do answer about what is on
+ *  screen. Whether they may be shown as facts is a second question — the
+ *  re-read was asked because something may have changed under them — and
+ *  {@link packagesUncounted} is where it is answered.
  *
- *  Every surface counting in the package unit asks this one, so no two of
- *  them can draw a number the other would not. {@link identityCurrent} is
- *  the comparison itself, for anything holding the two numbers rather than
+ *  Every surface grouping in the package unit asks this one, so no two of
+ *  them can draw a set the other would not. {@link identityCurrent} is the
+ *  comparison itself, for anything holding the two numbers rather than
  *  subscribing to them. */
 export const identityCurrent = (
   answeredFor: number | null,
@@ -137,10 +139,12 @@ export function packagesUncounted(
   known: boolean,
   read: ReadState,
 ): string | null {
-  if (known) return null;
-  return read.status === "failed"
-    ? PLACE_UNCHECKED_LABEL
-    : PLACE_COUNTING_LABEL;
+  // The failure outranks the number, whichever scan the rows answer about.
+  // A re-read is asked when something may have changed under them, so one
+  // that failed leaves a count nothing on the machine now supports — and a
+  // definite figure is exactly what must not stand in its place.
+  if (read.status === "failed") return PLACE_UNCHECKED_LABEL;
+  return known ? null : PLACE_COUNTING_LABEL;
 }
 
 /** Whether a page opened on this reference may address a declaration.

@@ -9,8 +9,7 @@ import {
   openLibraryAt,
   useFilterHandoff,
 } from "@/components/library/use-filter-handoff";
-import { StatusNote } from "@/components/status-note";
-import { Button } from "@/components/ui/button";
+import { PackagesNote } from "@/components/packages-note";
 import {
   Table,
   TableBody,
@@ -18,12 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  PACKAGES_CHECK_FAILED_TITLE,
-  PACKAGES_UNCONFIRMED_TITLE,
-  TAGS_ROW_LABEL,
-  TRY_AGAIN_LABEL,
-} from "@/lib/copy";
+import { TAGS_ROW_LABEL } from "@/lib/copy";
 import {
   filterItems,
   groupItems,
@@ -43,7 +37,6 @@ import {
   usePackagesEverKnown,
   usePackagesKnown,
   usePackagesRead,
-  useReloadPackages,
 } from "@/lib/package-identity";
 import { everyPlace, scopeKey } from "@/lib/scope";
 import { cn } from "@/lib/utils";
@@ -99,7 +92,6 @@ export function InstalledView() {
   // The read's own outcome, so a first read still on its way and one that
   // failed are not both drawn as waiting.
   const packagesRead = usePackagesRead();
-  const reloadPackages = useReloadPackages();
   // The join failed and left nothing behind: there is no row to draw and no
   // wait to draw either, so the table says what happened and offers the
   // read again. A failure after one landed keeps its rows, headed below as
@@ -294,27 +286,9 @@ export function InstalledView() {
             they stay — headed as the last answer that landed, not as
             confirmed ones. Neither reading turns unavailable evidence into
             a claim that a package is managed or that it is not. */}
-        {packagesRead.status === "failed" || packagesStale ? (
+        {packagesRead.status === "failed" ? (
           <div className={cn("pb-4", WIDE_CONTENT_WIDTH)}>
-            <StatusNote
-              tone={packagesUnreadable ? "critical" : "warning"}
-              title={
-                packagesUnreadable
-                  ? PACKAGES_CHECK_FAILED_TITLE
-                  : PACKAGES_UNCONFIRMED_TITLE
-              }
-              action={
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void reloadPackages()}
-                >
-                  {TRY_AGAIN_LABEL}
-                </Button>
-              }
-            >
-              {packagesRead.error}
-            </StatusNote>
+            <PackagesNote />
           </div>
         ) : null}
         <div className={cn("flex min-h-0 flex-1", WIDE_CONTENT_WIDTH)}>
