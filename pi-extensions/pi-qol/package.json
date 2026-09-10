@@ -57,6 +57,15 @@
           "requiresReload": true
         },
         {
+          "key": "statusline.showAccount",
+          "label": "Show account email",
+          "description": "Append the signed-in Claude email to the statusline, read from the CLAUDE_CONFIG_DIR this session routes to. Shown only while the active model comes from the Claude bridge, because a gateway, API-key or local model bills a different account.",
+          "type": "boolean",
+          "default": true,
+          "category": "Statusline",
+          "apply": "live"
+        },
+        {
           "key": "replaceFooter",
           "label": "Replace built-in footer",
           "description": "Hide Pi default footer while the compact QOL statusline is enabled.",

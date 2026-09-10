@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { subagentStatuslineMarker } from "./agent-statusline.js";
+import { CLAUDE_BRIDGE_PROVIDER, claudeAccountEmail } from "./account.js";
 import { stripAnsi } from "./ansi.js";
 import { readCavemanBridge } from "./bridges.js";
 import { glyphs } from "./glyphs.js";
@@ -87,6 +88,17 @@ function statuslineContextInfo(ctx: ExtensionContext): { label: string; percent:
 	if (typeof usage?.percent !== "number") return { label: formatWindow(contextWindow), percent: null };
 	const usedPercent = Math.max(0, Math.min(100, Math.round(usage.percent)));
 	return { label: formatWindow(contextWindow), percent: 100 - usedPercent };
+}
+
+/** The account segment, or "" when there is nothing truthful to show. Only a
+ *  Claude-bridge model bills a Claude subscription; a gateway, an API key or a
+ *  local model authenticates as something the Claude config directory does not
+ *  name, and showing that directory's email beside one would name the wrong
+ *  payer. */
+function accountLabel(ctx: ExtensionContext): string {
+	if (!settingBoolean("statusline.showAccount", true, ctx.cwd)) return "";
+	if (ctx.model?.provider !== CLAUDE_BRIDGE_PROVIDER) return "";
+	return claudeAccountEmail() ?? "";
 }
 
 function gitBadge(state: GitState, showDirtyMarker: boolean): string {
@@ -200,6 +212,8 @@ export function renderStatusLine(width: number, ctx: ExtensionContext, git: GitS
 	const thinkingLevel = normalizeThinkingLevel(pi.getThinkingLevel());
 	const thinkingChunk = thinkingLevel;
 	const contextChunk = ` ${contextLabel}`;
+	const account = accountLabel(ctx);
+	const accountSegment = account ? `${statusSeparator}${account}` : "";
 	const cavemanBridge = readCavemanBridge();
 	const cavemanVisible = !!cavemanBridge && (cavemanBridge.isStatusBadgeEnabled?.(ctx.cwd) ?? true);
 	const caveman = cavemanVisible ? cavemanBridge : undefined;
@@ -208,16 +222,17 @@ export function renderStatusLine(width: number, ctx: ExtensionContext, git: GitS
 	const cavemanTone = cavemanIconTone(caveman?.getMode() ?? "off", cavemanActive);
 	const cavemanSegment = caveman ? `${statusSeparator}${cavemanGlyph}` : "";
 	const contextSeparator = caveman ? ` ${statusSeparator}` : "";
-	const leftPlain = `${projectChunk}${statusSeparator}${thinkingChunk}${cavemanSegment}${contextSeparator}${contextChunk.trimStart()}`;
+	const leftPlain = `${projectChunk}${statusSeparator}${thinkingChunk}${cavemanSegment}${contextSeparator}${contextChunk.trimStart()}${accountSegment}`;
 	const percentPlain = percent === null ? `${glyphs(ctx.cwd).ellipsis}%` : `${percent}%`;
 	const subagentMarker = subagentStatuslineMarker(ctx.cwd);
 	const rightPlain = subagentMarker ? `${percentPlain} ${subagentMarker.plain}` : percentPlain;
 	const percentColor = percent === null ? "muted" : percent <= 15 ? "error" : percent <= 30 ? "warning" : "success";
 	const separatorColored = theme.fg("muted", statusSeparator);
 	const thinkingToken = thinkingThemeToken(thinkingLevel) as Parameters<Theme["fg"]>[0];
+	const accountColored = account ? `${separatorColored}${theme.fg("muted", account)}` : "";
 	const leftColored = caveman
-		? `${theme.fg("accent", projectChunk)}${separatorColored}${theme.fg(thinkingToken, thinkingChunk)}${separatorColored}${theme.fg(cavemanTone, cavemanGlyph)}${theme.fg("muted", contextSeparator)}${theme.fg("accent", contextChunk.trimStart())}`
-		: `${theme.fg("accent", projectChunk)}${separatorColored}${theme.fg(thinkingToken, thinkingChunk)}${theme.fg("accent", contextChunk)}`;
+		? `${theme.fg("accent", projectChunk)}${separatorColored}${theme.fg(thinkingToken, thinkingChunk)}${separatorColored}${theme.fg(cavemanTone, cavemanGlyph)}${theme.fg("muted", contextSeparator)}${theme.fg("accent", contextChunk.trimStart())}${accountColored}`
+		: `${theme.fg("accent", projectChunk)}${separatorColored}${theme.fg(thinkingToken, thinkingChunk)}${theme.fg("accent", contextChunk)}${accountColored}`;
 	const right = subagentMarker ? `${theme.fg(percentColor, percentPlain)} ${subagentMarker.styled}` : theme.fg(percentColor, percentPlain);
 	const minimumGap = 1;
 	const gapWidth = Math.max(minimumGap, width - visibleWidth(leftPlain) - visibleWidth(rightPlain) - 2);
