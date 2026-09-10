@@ -5,8 +5,7 @@
 //! built here and passed at creation: an owner-only list applied a moment
 //! later would leave a window in which anyone the folder admits can open
 //! the file, and a handle opened in that window keeps reading after the
-//! list narrows. Win32 has no safe binding for any of this, which is why
-//! the functions here alone in the workspace carry `unsafe`; every call
+//! list narrows. Win32 has no safe binding for any of this; every call
 //! site states the contract it upholds.
 
 use std::fs::File;
@@ -106,7 +105,7 @@ pub(super) fn create_owner_only(path: &Path) -> io::Result<File> {
         )
     };
     if handle == INVALID_HANDLE_VALUE {
-        return Err(io::Error::last_os_error());
+        return Err(failed("CreateFileW"));
     }
     // SAFETY: `handle` is a valid file handle this function owns, opened
     // just above and given to nothing else.

@@ -66,9 +66,10 @@ base64 = "0.22"
 # default and neither is wanted, so both are off.
 pulldown-cmark = { version = "0.13", default-features = false }
 
-# Denied rather than forbidden so the Win32 calls that have no safe
-# binding, behind `crates/core/src/fs/dacl.rs`, can allow it per function
-# with a reason; everywhere else an `unsafe` block is still refused.
+# Denied rather than forbidden so a Win32 call that has no safe binding
+# can allow it per function with a reason; everywhere else an `unsafe`
+# block is still refused. Where that boundary sits is recorded in
+# `crates/core/AGENTS.md`, not here.
 [workspace.lints.rust]
 unsafe_code = "deny"
 
