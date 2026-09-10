@@ -1,0 +1,1 @@
+- Picking the folder a project already points at says what is recorded there when something else owns it, instead of only that the project already points there.

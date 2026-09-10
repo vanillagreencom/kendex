@@ -253,14 +253,18 @@ fn standing_at(env: &Env, settings: &AppSettings, from: &Path, to: &Path) -> Sta
             root: to.to_path_buf(),
         },
     ));
-    if to == from {
-        return Standing::Unchanged;
-    }
     match record {
         Err(e) => Standing::RecordUnreadable {
             said: e.to_string(),
         },
         Ok(Some(root)) if root != from && root != to => Standing::RecordElsewhere { root },
+        // Asked after the record, not before it: the recorded path
+        // existing is not proof it is still the project, so the folder the
+        // entry already names can be the one holding another project's
+        // record or one nothing can read. Answered first, that folder
+        // would be sent away with "it already points here" and the
+        // mismatch never said.
+        _ if to == from => Standing::Unchanged,
         Ok(_) if settings.projects.contains(&to.to_path_buf()) => Standing::Registered,
         Ok(None) => Standing::NoRecord,
         Ok(Some(root)) if root == from => Standing::Moved,

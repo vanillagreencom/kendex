@@ -1,0 +1,1 @@
+- A project card whose folder could not be read no longer opens that place, so the Library cannot draw it as an empty project and offer to install into it.

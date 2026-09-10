@@ -20,6 +20,7 @@ import {
 import { CHECK_FAILED, CHECKING_PACKAGES } from "@/lib/copy-project-setup";
 import { outOfDateHereLabel } from "@/lib/copy-updates";
 import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
+import { cn } from "@/lib/utils";
 
 /**
  * One place a setup applies — Personal, or a project folder. Personal and a
@@ -133,13 +134,30 @@ export function ProjectCard({
       // name's own button: the card reads as one target, so clicking its
       // empty space — or pressing Enter on the card — does what the card
       // is for.
-      {...opensOnActivate(onOpen, opensLabel(name))}
-      className="cursor-pointer gap-3 py-4 hover:bg-accent/40"
+      //
+      // Withheld where the folder could not be read, along with the
+      // name's own button below. What both open is everything at this
+      // place, drawn from a reading of the folder; with no reading there
+      // is the empty place a stale scan leaves behind and an offer to
+      // install into it, which is the view this card exists to replace.
+      // The three controls in it are the routes a place in this state
+      // has, and they stay.
+      {...(missing ? {} : opensOnActivate(onOpen, opensLabel(name)))}
+      className={cn(
+        "gap-3 py-4",
+        missing ? undefined : "cursor-pointer hover:bg-accent/40",
+      )}
     >
       <div className="flex items-start justify-between gap-3 px-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <ShowEverythingButton name={name} path={path} onOpen={onOpen} />
+            {missing ? (
+              <p className="truncate text-sm font-medium" title={path}>
+                {name}
+              </p>
+            ) : (
+              <ShowEverythingButton name={name} path={path} onOpen={onOpen} />
+            )}
             {badge ? (
               <Badge variant={badge.variant} title={badge.title}>
                 {badge.text}

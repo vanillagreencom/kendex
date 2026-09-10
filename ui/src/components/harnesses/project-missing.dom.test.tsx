@@ -22,6 +22,7 @@ import {
 } from "@/lib/copy-project-move";
 import { SESSION_NOTE_LABEL } from "@/lib/copy-session-note";
 import { READ_LANDED } from "@/lib/read-state";
+import { showEverythingLabel } from "@/lib/show-everything-label";
 import { useAuditStore } from "@/stores/audit";
 import { useCommitOfferStore } from "@/stores/commit-offer";
 import { useNavStore } from "@/stores/nav";
@@ -173,6 +174,34 @@ describe("a project whose folder the scan could not read", () => {
     expect(project?.textContent).not.toContain("Nothing from kendex yet.");
     expect(project?.textContent).not.toContain("Add packages to");
     expect(project?.textContent).not.toContain(SESSION_NOTE_LABEL);
+  });
+
+  // The card body is replaced, and so are the two ways into the place it
+  // names: the card's own activation and its name. Both open everything
+  // at this place, which is a reading of the folder — with none, the
+  // Library draws the empty place a stale scan leaves behind and offers
+  // to install into it, which is the view this card exists to replace.
+  it("is not a way into a place nothing was read from", async () => {
+    const host = mount(<ProjectList />);
+    await settle();
+
+    const project = card(host);
+    if (!project) throw new Error("no card for the missing project");
+    expect(project.getAttribute("tabindex")).toBeNull();
+    expect(project.getAttribute("aria-keyshortcuts")).toBeNull();
+    // The name is still there and still says which place this is; it is
+    // simply not a control any more.
+    expect(project.textContent).toContain("vsys-view");
+    expect(
+      [...project.querySelectorAll("button")].map((one) =>
+        one.getAttribute("aria-label"),
+      ),
+    ).not.toContain(showEverythingLabel("vsys-view", OLD));
+
+    useNavStore.setState({ page: "projects" });
+    await userEvent.click(project);
+    await settle();
+    expect(useNavStore.getState().page).toBe("projects");
   });
 
   // A folder that may come back — a disk not mounted yet, a permission
@@ -437,6 +466,32 @@ describe("what a folder leaving the list leaves behind", () => {
     // What a package's source has moved on to is a fourth read, keyed by
     // the place each row is at and not covered by the rescan.
     expect(commands.updatesOverview).toHaveBeenCalled();
+  });
+
+  // The reconnect's own read goes through the project-setup owner, the
+  // way a registration's does: a read that fails leaves the new root
+  // marked unchecked, and the card says it could not check rather than
+  // drawing an empty place. A bare rescan leaves the root in neither
+  // list — the kept scan has no missing entry for it and no evidence it
+  // read one — and the card falls through to "Nothing from kendex yet".
+  it("marks the new folder unchecked when the read after the reconnect fails", async () => {
+    vi.mocked(commands.relocateProject).mockResolvedValue({
+      status: "ok",
+      data: {
+        read: { settings: { projects: [NEW] }, base: null },
+        was: OLD,
+        root: NEW,
+      },
+    } as never);
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "error",
+      error: "the machine could not be read",
+    } as never);
+
+    await useSettingsStore.getState().relocateProject(OLD, NEW, false);
+
+    expect(useProjectSetupStore.getState().unchecked).toContain(NEW);
+    expect(useProjectSetupStore.getState().checking).not.toContain(NEW);
   });
 
   it("drops them for a project removed from the list too", async () => {

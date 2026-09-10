@@ -140,7 +140,16 @@ export function projectActions(ordered: {
       useProjectSetupStore.getState().forget(was);
       useCommitOfferStore.getState().forget(was);
       useNavStore.getState().projectMoved(was);
-      await Promise.all([rescanEverything(), updatesAgain()]);
+      // Through the project-setup owner, the way a registration's read
+      // goes: it marks the new root checking and, where the read fails,
+      // unchecked. A bare rescan leaves the card with neither — the kept
+      // scan has no missing entry for the new root and no evidence it
+      // read one either — and the card falls through to "Nothing from
+      // kendex yet" over a folder nothing answered for.
+      await Promise.all([
+        useProjectSetupStore.getState().check(root),
+        updatesAgain(),
+      ]);
       return root;
     },
 

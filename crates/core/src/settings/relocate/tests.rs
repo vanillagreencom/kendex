@@ -314,6 +314,75 @@ fn the_folder_the_entry_already_names_is_refused() {
     );
 }
 
+/// The recorded path with another project's record standing at it now —
+/// the case `Change folder` exists for, where something else was created
+/// where the project was. Picking that very folder is not "it already
+/// points here": the record says whose folder it is, and answering
+/// `Unchanged` first would send the person away with the mismatch unsaid.
+#[test]
+fn the_recorded_folder_holding_another_projects_record_says_so() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::test_util::rooted(&tmp);
+    let env = env_in(&home);
+    let root = home.join("proj");
+    std::fs::create_dir_all(&root).unwrap();
+    let registered = crate::settings::register_project(&env, &root).unwrap().2;
+    let third = crate::paths::canonical(&home).unwrap().join("other");
+    record_at(&registered, &third);
+
+    let plan = inspect(&env, &registered, &registered).unwrap();
+
+    assert_eq!(plan.standing, Standing::RecordElsewhere { root: third });
+    assert_eq!(plan.confirm, Confirm::None);
+}
+
+/// And a record there this build cannot read is said too, for the same
+/// reason: it supports no claim about whose folder this is.
+#[test]
+fn the_recorded_folder_holding_an_unreadable_record_says_so() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::test_util::rooted(&tmp);
+    let env = env_in(&home);
+    let root = home.join("proj");
+    std::fs::create_dir_all(&root).unwrap();
+    let registered = crate::settings::register_project(&env, &root).unwrap().2;
+    let lock = crate::lock::lock_path(
+        &env,
+        &Scope::Project {
+            root: registered.clone(),
+        },
+    );
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    std::fs::write(&lock, "not a lock this build can read").unwrap();
+
+    let plan = inspect(&env, &registered, &registered).unwrap();
+
+    assert!(
+        matches!(plan.standing, Standing::RecordUnreadable { ref said } if !said.is_empty()),
+        "{:?}",
+        plan.standing
+    );
+    assert_eq!(plan.confirm, Confirm::None);
+}
+
+/// The folder the entry names with nothing else standing there is still
+/// the plain "it already points here" — the reordering above narrows that
+/// answer rather than replacing it.
+#[test]
+fn the_recorded_folder_with_nothing_else_in_it_is_unchanged() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::test_util::rooted(&tmp);
+    let env = env_in(&home);
+    let root = home.join("proj");
+    std::fs::create_dir_all(&root).unwrap();
+    let registered = crate::settings::register_project(&env, &root).unwrap().2;
+
+    let plan = inspect(&env, &registered, &registered).unwrap();
+
+    assert_eq!(plan.standing, Standing::Unchanged);
+    assert_eq!(plan.confirm, Confirm::None);
+}
+
 /// A destination this machine already tracks joins two entries into one.
 /// It takes the person's own answer, and without it the move is refused
 /// and both entries stand.
