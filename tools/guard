@@ -77,7 +77,9 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
     unrooted-fixture)
       echo "temporary fixture bypasses rooted(): import crates/test_util.rs and bind the canonical root on the next source line." ;;
     bash32-lint)
-      echo "tools/bash32-lint refused the tree — a Bash 4+ construct, a file that does not parse, or a scan that could not run; its own first line above names which." ;;
+      echo "tools/bash32-lint refused the tree — a Bash 4+ construct, or a scan that could not run; its own first line above names which." ;;
+    bash32-parse)
+      echo "tools/bash32-parse refused the tree — a file that does not parse under Bash 3.2, or a pass that could not run; its own first line above names which." ;;
     render-changed-set)
       echo "the changed-file set for the render rule could not be read." ;;
     render-tracked-set)
@@ -434,6 +436,17 @@ fi
 # run, and neither is a pass. One line on purpose: the must-fail control in
 # tools/tests/guard.test.sh removes this lane by deleting it.
 "$TOOLS_DIR/bash32-lint" || say bash32-lint "$?"
+
+# What the scan above reads as text, this one parses with the shell that has
+# to accept it. --full and not the commit chain: the pass needs a real Bash
+# 3.2 — macOS's own /bin/bash, or the bash:3.2 image under a container
+# runtime — and refuses when it can reach neither, so in the chain a machine
+# without either could not commit at all. Completion and the guards shard are
+# both before the macOS CI leg, which is where this class was reported from
+# before the lane existed.
+# One line on purpose, like the lane above it: the must-fail control in
+# tools/tests/guard-full.test.sh removes this lane by deleting it.
+[ "$FULL" -eq 0 ] || "$TOOLS_DIR/bash32-parse" || say bash32-parse "$?"
 
 # A render source lands its renders in the same change: skills/<x>/<p>
 # renders to .agents/skills/<x>/<p>, an agent definition to one file per

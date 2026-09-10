@@ -1,0 +1,332 @@
+#!/usr/bin/env bash
+# The one parse pass under a real Bash 3.2 over the shell this repository
+# ships.
+#
+# tools/bash32-lint reads text and names the Bash 4+ constructs it knows.
+# What a text scan cannot name is placement: a `case` inside a command
+# substitution whose patterns carry no leading `(` parses under Bash 5 and is
+# a syntax error under 3.2. One reached main in tools/guard, and the first
+# report was the macOS leg of the skill suites shard, after it had taken
+# three tool suites with it. The judge for "does this file parse under Bash
+# 3.2" is Bash 3.2, so this lane runs one.
+#
+# Usage: tools/bash32-parse [--list] [DIR...]
+#   no argument   parse the covered set below
+#   DIR...        parse those directories instead, each inside this repository
+#   --list        print the covered set the discovery resolved to
+#   --check FILE...
+#                 parse those files with the shell running this script, and
+#                 answer on the protocol below. This is the mode the resolved
+#                 Bash 3.2 re-enters this file in, never one to run by hand:
+#                 under any other shell it answers for that shell, which is
+#                 the gap this lane closes.
+# Exit: 0 clean, 1 a file does not parse, 2 the pass could not run — and a
+# pass that did not run is never read as a clean tree.
+#
+# tools/tests/bash32-parse.test.sh proves the teeth and every refusal.
+set -euo pipefail
+
+# --- the covered set ----------------------------------------------------
+# Every tree whose shell must START under Bash 3.2:
+#
+#   the roster tools/bash32-lint discovers — skills/*/scripts, skills/*/tests
+#   and hooks/ — asked of the lint rather than restated here, so one roster
+#   serves both passes and neither can go stale against the other; and
+#
+#   tools/, which that roster leaves out. The lint's reason for leaving it
+#   out is about text: the lint defines its pattern set in string literals
+#   that live under tools/, so its own scan reds on the definition it judges
+#   by. A parse pass reads no patterns, so that reason does not reach it —
+#   and tools/ is where the failure this lane answers actually happened.
+#
+# Each directory is read recursively, so hooks/tests, hooks/tests/lib,
+# skills/*/tests/lib and tools/tests come with their parents.
+#
+# What is outside it, and why: install.sh is `#!/bin/sh` and answers to a
+# POSIX shell rather than to bash; docs/authoring/templates/hook.sh is copied
+# into hooks/ and judged there, never run where it sits;
+# pi-extensions/*/tests runs on the node shard, which no macOS leg of
+# .github/workflows/skill-tests.yml carries; crates/*/tests fixtures are read
+# by cargo tests, which run on no 3.2 host. .agents/ and the harness render
+# directories hold copies of files this set already judges at their source.
+COVERED_EXTRA="tools"
+
+# --- the interpreter ----------------------------------------------------
+# A real Bash 3.2, reached one of two ways and in this order: one already on
+# the host, then the official image under a container runtime. macOS ships
+# 3.2 as /bin/bash and the macOS CI leg puts a link to it first on PATH, so
+# that leg needs no container; a Linux host needs one.
+#
+# There is no third way and no skip. A machine with neither is told so and
+# the run ends at 2, because a parse pass that did not run says nothing about
+# the tree and reading it as a clean one is the fail-open shape this
+# repository refuses. On a developer machine that means `tools/guard --full`
+# cannot complete without a container runtime — which is why tools/guard
+# takes this lane in --full and not in the commit chain, where a machine
+# without one would be unable to commit at all.
+#
+# The three lines below are configuration this file declares in one place;
+# tools/tests/bash32-parse.test.sh stages copies of this script that name
+# stubs in their place, which is how the refusals above are proven red.
+CANDIDATES="bash /bin/bash"
+RUNTIME_CMD="docker"
+IMAGE="bash:3.2"
+
+# Every line this pass says for itself opens with `bash32-parse: <key>=<value>`
+# — the key names the condition and the value is the path, the count or the
+# short enum the reader acts on — and explains itself on the lines under it.
+# message_text below is the only place a key's English lives. Where a failing
+# command has words of its own — git's, the lint's, the runtime's, bash -n's
+# — they are captured and replayed under the keyed line, so the keyed line is
+# the first line and the cause is still there.
+message_text() { # KEY VALUE [EXTRA...] — the English for one key, and all of it
+  case "$1" in
+  not-in-repo)
+    echo "no git repository around that directory, so there is no tree to parse and no root to read the covered set from." ;;
+  unenterable)
+    echo "the repository toplevel could not be entered." ;;
+  unresolvable)
+    echo "that directory could not be resolved to a physical path." ;;
+  outside-repo)
+    echo "that directory is outside the repository this pass reads, and the pass reaches nothing outside it." ;;
+  listing)
+    echo "tools/bash32-lint could not list the files to parse; it exited with that status and its own words follow." ;;
+  no-files)
+    echo "the file list came back empty, so nothing would have been parsed." ;;
+  no-bash32)
+    echo "no real Bash 3.2 could be reached: 'absent' is a host without one and without a container runtime, and a runtime name is one that could not deliver ${IMAGE}. Install a container runtime, or run this on a host whose bash is 3.2." ;;
+  short)
+    printf 'the pass reported parsing %s of the %s files it was handed, so the rest went unread.\n' "$2" "$3" ;;
+  no-verdict)
+    echo "the pass under Bash 3.2 exited with that status and answered with nothing this run can read, so it reached no verdict; its own output follows." ;;
+  syntax)
+    echo "shell files that do not parse under Bash 3.2; that shell names each below." ;;
+  clean)
+    printf '%s shell file(s), each parsed by Bash %s via %s.\n' "$2" "$3" "$4" ;;
+  *)
+    echo "no explanation is defined for this key: tools/bash32-parse is broken." ;;
+  esac
+}
+note() { # KEY VALUE [EXTRA...] — a verdict this run reached, on stdout
+  printf 'bash32-parse: %s=%s\n' "$1" "$2"
+  message_text "$@"
+}
+say() { # KEY VALUE [EXTRA...] — a refusal, on stderr
+  printf 'bash32-parse: %s=%s\n' "$1" "$2" >&2
+  message_text "$@" >&2
+}
+die() { # KEY VALUE [EXTRA...] — a pass that could not run, never a clean tree
+  say "$@"
+  exit 2
+}
+die_cause() { # KEY VALUE CAUSE — CAUSE is the failing command's own words
+  # Captured and replayed under the keyed line rather than left to reach the
+  # stream first: the refusal's first line has to be the keyed one, and the
+  # dependency's own words are still what name the cause.
+  say "$1" "$2"
+  [ -z "$3" ] || printf '%s\n' "$3" >&2
+  exit 2
+}
+
+# --- the inner pass -----------------------------------------------------
+# THE PROTOCOL between the two passes, which the outer one holds this pass to:
+# two lines on stdout, in this order, whatever the outcome —
+#
+#   bash32-parse: parsed=<files this pass ran bash -n over>
+#   bash32-parse: failed=<how many of them did not parse>
+#
+# with the shell's own complaint about each failure on stderr, and the exit
+# status 0 when failed is 0 and 1 when it is not. Anything else — silence, a
+# short count, a status that disagrees with the count — is a pass that
+# reached no verdict, and the outer pass refuses rather than reading it as a
+# clean tree.
+#
+# `$BASH` and not `bash`: this pass is entered under a Bash 3.2 that PATH may
+# not lead back to, and asking PATH for a second shell here would parse the
+# tree with whatever the host has, which is the whole defect.
+if [ "${1-}" = "--check" ]; then
+  shift
+  parsed=0
+  failed=0
+  for f in "$@"; do
+    parsed=$((parsed + 1))
+    "$BASH" -n -- "$f" || failed=$((failed + 1))
+  done
+  printf 'bash32-parse: parsed=%s\n' "$parsed"
+  printf 'bash32-parse: failed=%s\n' "$failed"
+  [ "$failed" -eq 0 ] || exit 1
+  exit 0
+fi
+
+LIST_ONLY=no
+if [ "${1-}" = "--list" ]; then
+  LIST_ONLY=yes
+  shift
+fi
+
+# git's own diagnostic is asked for only once this has failed, so the happy
+# path runs it once and the refusal path replays what it said.
+ROOT=""
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" ||
+  die_cause not-in-repo "$PWD" "$(git rev-parse --show-toplevel 2>&1 >/dev/null)"
+ROOT="$(cd -- "$ROOT" >/dev/null 2>&1 && pwd -P)" || die unenterable "$ROOT"
+
+# This file's own physical path: the container mounts it by name, and the
+# host pass execs it. It is NOT required to sit inside the repository — the
+# guard suites run a copy of tools/ against a fixture repository elsewhere —
+# so it is mounted on its own rather than reached through the tree's mount.
+SELF="${BASH_SOURCE[0]}"
+case "$SELF" in
+*/*) SELF_DIR="${SELF%/*}" ;;
+*) SELF_DIR="." ;;
+esac
+SELF_DIR="$(cd -- "$SELF_DIR" >/dev/null 2>&1 && pwd -P)" || die unresolvable "$SELF_DIR"
+SELF="$SELF_DIR/${SELF##*/}"
+LINT="$SELF_DIR/bash32-lint"
+
+# A DIR the caller named is theirs and is resolved from where they stand,
+# then carried as a path under the toplevel: the pass reads the tree through
+# one mount rooted there, so a directory outside it is one this pass cannot
+# reach and says so.
+REL=""
+rel_of() { # rel_of DIR — sets REL to DIR as a path under the toplevel
+  local abs=""
+  abs="$(cd -- "$1" >/dev/null 2>&1 && pwd -P)" || die unresolvable "$1"
+  case "$abs" in
+  "$ROOT") REL="." ;;
+  "$ROOT"/*) REL="${abs#"$ROOT"/}" ;;
+  *) die outside-repo "$1" ;;
+  esac
+}
+dirs=""
+for d in "$@"; do
+  rel_of "$d"
+  dirs="$dirs $REL"
+done
+
+cd -- "$ROOT" || die unenterable "$ROOT"
+
+if [ -z "$dirs" ]; then
+  roster=""
+  status=0
+  roster="$("$LINT" --list 2>/dev/null)" || status=$?
+  if [ "$status" -ne 0 ]; then
+    die_cause listing "$status" "$("$LINT" --list 2>&1 >/dev/null)"
+  fi
+  dirs="$roster $COVERED_EXTRA"
+fi
+
+if [ "$LIST_ONLY" = yes ]; then
+  for d in $dirs; do
+    printf '%s\n' "$d"
+  done
+  exit 0
+fi
+
+# The file list is the lint's answer, never a second walk of the same trees:
+# which files under a directory are shell, and which directories are excepted
+# from the roster, are its decisions and there is one of each.
+#
+# Its stderr is suppressed on the way in and asked for again on the way out,
+# the way the lint asks git: a refusal's first line has to be this pass's
+# keyed one, and the lint's own words reaching the stream ahead of it would
+# take that line away.
+listing=""
+status=0
+# shellcheck disable=SC2086 # the roster carries one directory per word
+listing="$("$LINT" --files $dirs 2>/dev/null)" || status=$?
+if [ "$status" -ne 0 ]; then
+  # shellcheck disable=SC2086 # the roster carries one directory per word
+  die_cause listing "$status" "$("$LINT" --files $dirs 2>&1 >/dev/null)"
+fi
+
+count=0
+files=()
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  files[$count]="$f"
+  count=$((count + 1))
+done <<EOF
+$listing
+EOF
+[ "$count" -gt 0 ] || die no-files 0
+
+WORK=""
+WORK="$(mktemp -d)" || die no-verdict mktemp
+trap 'rm -rf -- "${WORK:?}"' EXIT
+
+is32() { # is32 VERSION — the one place a version string is judged
+  case "$1" in
+  3.2.*) return 0 ;;
+  esac
+  return 1
+}
+
+MODE=""
+VIA=""
+VERSION=""
+BASH32=""
+RUNTIME=""
+for c in $CANDIDATES; do
+  cand=""
+  cand="$(command -v "$c" 2>/dev/null)" || continue
+  got=""
+  got="$("$cand" -c 'printf %s "${BASH_VERSION-}"' 2>/dev/null)" || continue
+  if is32 "$got"; then
+    MODE=host
+    BASH32="$cand"
+    VERSION="$got"
+    VIA="$cand"
+    break
+  fi
+done
+if [ -z "$MODE" ]; then
+  RUNTIME="$(command -v "$RUNTIME_CMD" 2>/dev/null)" || die no-bash32 absent
+  got=""
+  # The image is asked for its version before the tree is handed to it, so a
+  # runtime that cannot deliver it is named as that, and never as a pass that
+  # answered strangely.
+  got="$("$RUNTIME" run --rm --network=none "$IMAGE" \
+    bash -c 'printf %s "${BASH_VERSION-}"' 2>"$WORK/probe")" || got=""
+  is32 "$got" || die_cause no-bash32 "$RUNTIME_CMD" "$(cat "$WORK/probe")"
+  MODE=container
+  VERSION="$got"
+  VIA="$RUNTIME_CMD $IMAGE"
+fi
+
+run32() { # run32 ARG... — this file, entered with ARG... under that Bash 3.2
+  case "$MODE" in
+  host) "$BASH32" "$SELF" "$@" ;;
+  container)
+    "$RUNTIME" run --rm --network=none \
+      --volume "$ROOT:/repo:ro" --volume "$SELF:/bash32-parse:ro" \
+      --workdir /repo "$IMAGE" bash /bash32-parse "$@"
+    ;;
+  esac
+}
+
+out=""
+status=0
+out="$(run32 --check "${files[@]}" 2>"$WORK/err")" || status=$?
+
+parsed=""
+failed=""
+parsed="$(printf '%s\n' "$out" | sed -n '1s/^bash32-parse: parsed=//p')" || parsed=""
+failed="$(printf '%s\n' "$out" | sed -n '2s/^bash32-parse: failed=//p')" || failed=""
+for n in "$parsed" "$failed"; do
+  case "$n" in
+  '' | *[!0-9]*) die_cause no-verdict "$status" "$out
+$(cat "$WORK/err")" ;;
+  esac
+done
+[ "$parsed" -eq "$count" ] || die short "$parsed" "$count"
+
+if [ "$failed" -eq 0 ]; then
+  [ "$status" -eq 0 ] || die_cause no-verdict "$status" "$(cat "$WORK/err")"
+  note clean "$count" "$VERSION" "$VIA"
+  exit 0
+fi
+[ "$status" -eq 1 ] || die_cause no-verdict "$status" "$(cat "$WORK/err")"
+say syntax "$failed"
+cat "$WORK/err" >&2
+exit 1

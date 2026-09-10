@@ -7,10 +7,13 @@
 # consuming repos can drop tracked vendoring. The judge belongs where the
 # proving happens, and there is one of it.
 #
-# Usage: tools/bash32-lint [--list | --pattern] [DIR...]
+# Usage: tools/bash32-lint [--list | --files | --pattern] [DIR...]
 #   no argument   scan the roster below
 #   DIR...        scan those directories instead
 #   --list        print the roster the discovery resolved to
+#   --files       print the shell files under it, one per line, and scan
+#                 nothing; this is where tools/bash32-parse reads the set it
+#                 hands to a real Bash 3.2, so one walk answers for both
 #   --pattern     print the pattern set this scan runs
 # Exit: 0 clean, 1 a construct was found, 2 the scan could not run — and a
 # scan that did not run is never read as a clean tree.
@@ -133,12 +136,17 @@ PATTERN="$PATTERN"'|\$('"$BASH4_VARS"')([^A-Za-z0-9_]|$)|\$\{('"$BASH4_VARS"')\}
 #     skills/commit-guards/tests/bsd-argv-install.test.sh executes the real
 #     installer under a BSD chmod shim. `dirname --` and `basename --` have
 #     neither a rule here nor a shim there, and are live in shipped scripts.
-#   - whether a script RUNS under Bash 3.2. Nothing here does; `bash -n` is
-#     the host's shell. A clean scan says the source carries no construct
-#     named above, and says nothing further. The macOS leg of the skill
-#     suites shard in .github/workflows/skill-tests.yml runs every shell
-#     suite but linear's on /bin/bash 3.2.57, asserting the version it got,
-#     and is what reaches the misses above.
+#   - whether a file PARSES under Bash 3.2, which is placement rather than
+#     spelling and is tools/bash32-parse's question: it runs `bash -n` under
+#     a real 3.2 over these directories and tools/ as well, and this scan
+#     runs none, because a `bash -n` on the host's shell answers for the
+#     host's shell.
+#   - whether a script RUNS under Bash 3.2. Nothing here does, and parsing is
+#     not running. A clean scan says the source carries no construct named
+#     above, and says nothing further. The macOS leg of the skill suites
+#     shard in .github/workflows/skill-tests.yml runs every shell suite but
+#     linear's on /bin/bash 3.2.57, asserting the version it got, and is what
+#     reaches the misses above.
 
 # Every line this lint says for itself opens with `bash32-lint: <key>=<value>`
 # — the key names the condition and the value is the path, the count or the
@@ -177,8 +185,6 @@ message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
       echo "that file could not be read, so it was never classified as shell or not." ;;
     constructs)
       echo "Bash 4+ constructs in shell that must run under Bash 3.2; every hit follows." ;;
-    syntax)
-      echo "shell files that do not parse; bash -n names each below." ;;
     clean)
       printf '%s shell file(s) across %s director(ies), and no Bash 4+ construct in any of them.\n' "$2" "$3" ;;
     *)
@@ -226,11 +232,17 @@ if [ "${1-}" = "--pattern" ]; then
   exit 0
 fi
 
-LIST_ONLY=no
-if [ "${1-}" = "--list" ]; then
-  LIST_ONLY=yes
+MODE=scan
+case "${1-}" in
+--list)
+  MODE=list
   shift
-fi
+  ;;
+--files)
+  MODE=files
+  shift
+  ;;
+esac
 
 # The toplevel is resolved whatever the arguments are, because the exception
 # entries below are roster paths and mean the same directory from any cwd. A
@@ -288,7 +300,7 @@ done
 
 # --list prints what the roster resolved to, one directory per line, so a
 # proof can plant a construct in each rather than repeating the roster.
-if [ "$LIST_ONLY" = yes ]; then
+if [ "$MODE" = list ]; then
   for d in $dirs; do
     excepted "$d" "$NO_SHELL" && continue
     printf '%s\n' "$d"
@@ -331,9 +343,15 @@ EOF
 done
 [ "$scanned" -gt 0 ] || die scanned 0
 
+# --files prints the walk's answer and scans nothing: tools/bash32-parse
+# hands that list to a real Bash 3.2, and a second walk there would be a
+# second answer to which files under these directories are shell.
+if [ "$MODE" = files ]; then
+  printf '%s' "$files"
+  exit 0
+fi
+
 violations=""
-syntax_fail=0
-syntax_text=""
 violation_count=0
 count=0
 for f in $files; do
@@ -361,15 +379,6 @@ for f in $files; do
 $hits
 EOF
   fi
-  # A construct this set does not name still has to be syntax. bash's own
-  # complaint is collected rather than printed where it falls: it belongs
-  # under this run's keyed line, not before it.
-  parse=""
-  parse="$(bash -n -- "$f" 2>&1)" || {
-    syntax_fail=$((syntax_fail + 1))
-    syntax_text="$syntax_text$parse
-"
-  }
 done
 
 if [ -n "$violations" ]; then
@@ -377,10 +386,4 @@ if [ -n "$violations" ]; then
   printf '%s' "$violations" >&2
   exit 1
 fi
-if [ "$syntax_fail" -gt 0 ]; then
-  say syntax "$syntax_fail"
-  printf '%s' "$syntax_text" >&2
-  exit 1
-fi
-
 note clean "$count" "$scanned"

@@ -42,6 +42,41 @@ run_guard
 git -C "$R" reset -q --hard HEAD
 rm -rf -- "$R/.github"
 
+echo "=== a file Bash 3.2 cannot parse reds full validation, and only full validation ==="
+# The shape from the failure the lane answers: a `case` inside a command
+# substitution whose patterns carry no leading `(`. Bash 5 parses it, so no
+# host shell and no text scan reports it, and before this lane the first
+# report was the macOS CI leg.
+printf '%s\n' '#!/usr/bin/env bash' \
+  'verdicts=$(for v in a b; do' \
+  '  case "$v" in' \
+  '    a) echo one ;;' \
+  '  esac' \
+  'done)' \
+  'printf "%s\\n" "$verdicts"' >"$R/tools/planted.sh"
+FULL_GUARD=0
+run_guard
+[ "$RC" -eq 0 ] \
+  && ok "the commit chain passes it: the lane is full validation's, so a commit needs no Bash 3.2" \
+  || bad "the commit chain passes it: the lane is full validation's, so a commit needs no Bash 3.2" "rc=$RC out=$OUT"
+FULL_GUARD=1
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: bash32-parse=1"* ]] \
+  && [[ "$OUT" == *"bash32-parse: syntax=1"* ]] && [[ "$OUT" == *"tools/planted.sh"* ]] \
+  && ok "full validation reds through the parse lane, naming the file" \
+  || bad "full validation reds through the parse lane, naming the file" "rc=$RC out=$OUT"
+if mutant_guard '/TOOLS_DIR\/bash32-parse/d'; then
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the parse lane deleted the same file passes" \
+    || bad "control: with the parse lane deleted the same file passes" "rc=$RC out=$OUT"
+else
+  bad "control: the parse lane could not be deleted from a guard copy"
+fi
+rm -f "$R/tools/planted.sh"
+
 FULL_GUARD=1
 echo "=== full validation compiles every cross target ==="
 mkdir -p "$R/fake-bin"
