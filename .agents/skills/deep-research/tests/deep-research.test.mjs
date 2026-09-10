@@ -544,6 +544,17 @@ test("KENDEX_ENV_FILE names the private env file, and a quoted value reads back 
   const byName = spawnSync(process.execPath, [script, "report", "q", "--output", chosen], { encoding: "utf8", env, cwd: dir });
   assert.equal(byName.status, 0, byName.stderr);
   assert.match(readFileSync(chosen, "utf8"), /FromChosen/);
+
+  // A missing credential names the file this project reads. Told to write
+  // the key into .env.local while the loader reads .env.secrets, a person
+  // follows the message and the failure stands. .env.local still holds a
+  // key here, so naming it would also be naming a file that is set.
+  writeFileSync(join(dir, ".env.secrets"), "");
+  const missing = spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", env, cwd: dir });
+  const said = diagnostic(missing);
+  assert.equal(said.key, "credential-missing");
+  assert.match(said.error, /\.env\.secrets/);
+  assert.doesNotMatch(said.error, /\.env\.local/);
 });
 
 // The shared shell loader resolves KENDEX_ENV_FILE from the process

@@ -65,10 +65,26 @@ pub struct Assignment {
     pub line: u32,
     /// Byte range of the whole line, its terminator included.
     pub span: Range<usize>,
-    /// Whether kendex may write over this line. False for every shape it
-    /// does not itself write: replacing one would change what the shell
-    /// does with the line, not only what the value is.
-    pub writable: bool,
+    /// What kendex may do with this line.
+    pub shape: Shape,
+}
+
+/// What one assignment line is, to kendex.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shape {
+    /// A single-quoted value kendex may write over.
+    Holds,
+    /// A single-quoted empty value kendex may write over. No loader ends
+    /// with a credential: Deep Research assigns the empty string and
+    /// takes it as missing, the shell leaves the name holding nothing,
+    /// and [`check_value`] refuses writing one. So the key stands where a
+    /// key no line assigns stands.
+    Empty,
+    /// A shape kendex does not itself write — an `export`, an expansion,
+    /// a double-quoted or bare value, a trailing comment. Replacing one
+    /// would change what the shell does with the line, not only what the
+    /// value is.
+    Foreign,
 }
 
 /// Every assignment the file makes, in file order.
@@ -93,7 +109,7 @@ pub fn assignments(text: &str) -> Vec<Assignment> {
             key: key.to_owned(),
             line: u32::try_from(index + 1).unwrap_or(u32::MAX),
             span,
-            writable: plain && value_is_plain(rest),
+            shape: shape_of(plain, rest),
         });
     }
     out
@@ -122,17 +138,30 @@ fn split_assignment(content: &str) -> Option<(&str, &str, bool)> {
     Some((named, value, plain && named.len() == key.len()))
 }
 
-/// Whether the text after the `=` is one this module could have written:
-/// a single-quoted string holding no quote of its own, and nothing after
-/// it. Every other shape — an expansion, a double-quoted string, a bare
-/// word, a trailing comment — is something the shell acts on, and
-/// replacing it with a quoted literal would change the line's meaning
-/// rather than its value.
-fn value_is_plain(value: &str) -> bool {
+/// What one line is, given whether the line around the `=` is one this
+/// module writes and the text after it.
+fn shape_of(plain: bool, value: &str) -> Shape {
+    if !plain {
+        return Shape::Foreign;
+    }
+    match single_quoted(value) {
+        Some("") => Shape::Empty,
+        Some(_) => Shape::Holds,
+        None => Shape::Foreign,
+    }
+}
+
+/// The text a single-quoted value holds, where the text after the `=` is
+/// one this module could have written: a single-quoted string holding no
+/// quote of its own, and nothing after it. Every other shape — an
+/// expansion, a double-quoted string, a bare word, a trailing comment —
+/// is something the shell acts on, and replacing it with a quoted literal
+/// would change the line's meaning rather than its value.
+fn single_quoted(value: &str) -> Option<&str> {
     value
         .strip_prefix('\'')
         .and_then(|rest| rest.strip_suffix('\''))
-        .is_some_and(|inside| !inside.contains('\''))
+        .filter(|inside| !inside.contains('\''))
 }
 
 /// Where one key stands in the file.
@@ -140,12 +169,30 @@ fn value_is_plain(value: &str) -> bool {
 pub enum Standing {
     /// No line assigns it.
     Absent,
-    /// One line assigns it, in a shape kendex may write over.
+    /// One line assigns it a value, in a shape kendex may write over.
     At(Assignment),
+    /// One line assigns it nothing, in a shape kendex may write over. No
+    /// loader reads a credential out of it, so presence is answered as it
+    /// is for a key no line assigns; the line is still carried, so a write
+    /// replaces it rather than appending a second assignment under it.
+    Empty(Assignment),
     /// Something assigns it and kendex cannot write it: more than one
     /// line, or one shape it does not write. The lines are what a person
     /// has to look at to settle it.
     Blocked { problem: String, lines: Vec<u32> },
+}
+
+impl Standing {
+    /// The line kendex may write over, where there is one. Both shapes it
+    /// writes answer here: a write over an empty assignment replaces that
+    /// line, rather than appending a second one the loaders would then
+    /// disagree about.
+    pub fn writable_line(&self) -> Option<&Assignment> {
+        match self {
+            Standing::At(at) | Standing::Empty(at) => Some(at),
+            Standing::Absent | Standing::Blocked { .. } => None,
+        }
+    }
 }
 
 /// Where one key stands, given the file's assignments.
@@ -157,10 +204,13 @@ pub fn standing(assignments: &[Assignment], key: &str) -> Standing {
         // decides what loads and a third could be added under it forever.
         // Reported instead, with every line, so the person deletes the
         // ones they did not mean.
-        [one] if one.writable => Standing::At((*one).clone()),
-        [one] => Standing::Blocked {
-            problem: "it is assigned in a shape kendex does not write, and rewriting the line would change what the shell does with it".to_owned(),
-            lines: vec![one.line],
+        [one] => match one.shape {
+            Shape::Holds => Standing::At((*one).clone()),
+            Shape::Empty => Standing::Empty((*one).clone()),
+            Shape::Foreign => Standing::Blocked {
+                problem: "it is assigned in a shape kendex does not write, and rewriting the line would change what the shell does with it".to_owned(),
+                lines: vec![one.line],
+            },
         },
         many => Standing::Blocked {
             problem: "it is assigned more than once, and the last assignment is the one that loads"
@@ -180,7 +230,8 @@ pub fn standing(assignments: &[Assignment], key: &str) -> Standing {
 pub fn with_value(text: &str, key: &str, value: &str) -> String {
     let line = assignment(key, value);
     let assignments = assignments(text);
-    if let Standing::At(at) = standing(&assignments, key) {
+    let standing = standing(&assignments, key);
+    if let Some(at) = standing.writable_line() {
         let terminator = terminator_of(&text[at.span.clone()]);
         let mut out = String::with_capacity(text.len() + line.len());
         out.push_str(&text[..at.span.start]);
@@ -204,7 +255,8 @@ pub fn with_value(text: &str, key: &str, value: &str) -> String {
 /// was.
 pub fn without_key(text: &str, key: &str) -> String {
     let assignments = assignments(text);
-    let Standing::At(at) = standing(&assignments, key) else {
+    let standing = standing(&assignments, key);
+    let Some(at) = standing.writable_line() else {
         return text.to_owned();
     };
     let mut out = String::with_capacity(text.len());

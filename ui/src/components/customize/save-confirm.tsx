@@ -9,7 +9,7 @@ import {
 import type { SaveGroup } from "@/lib/save-summary";
 
 /**
- * Every file a save is about to write, before it writes one.
+ * Where the edits on this page land, before the save writes one.
  *
  * The list is built from the reads the fields came from, and it is
  * refreshed as this opens: a project pointed at another private file

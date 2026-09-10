@@ -94,8 +94,9 @@ fn every_assignment_either_loader_reads_is_seen() {
 /// drop, so the key is reported with its line and left alone.
 #[test]
 fn a_line_kendex_did_not_write_is_reported_rather_than_rewritten() {
-    let rows: [(&str, &str); 5] = [
+    let rows: [(&str, &str); 6] = [
         ("K='a'\n", "writable"),
+        ("K=''\n", "empty"),
         ("K=\"a\"\n", "shape kendex does not write"),
         ("K=$OTHER\n", "shape kendex does not write"),
         ("export K='a'\n", "shape kendex does not write"),
@@ -105,6 +106,7 @@ fn a_line_kendex_did_not_write_is_reported_rather_than_rewritten() {
         let standing = env_file::standing(&env_file::assignments(text), "K");
         match (said, &standing) {
             ("writable", env_file::Standing::At(_)) => {}
+            ("empty", env_file::Standing::Empty(_)) => {}
             (_, env_file::Standing::Blocked { problem, .. }) => {
                 assert!(problem.contains(said), "{text:?}: {problem}");
             }
@@ -432,6 +434,54 @@ fn two_packages_declaring_one_secret_do_not_contest_it() {
         contested(&[shared("one"), shared("two")].into_iter().collect()),
         []
     );
+}
+
+/// A key assigned nothing is a key no loader reads a credential out of:
+/// the shell leaves the name holding an empty string, Deep Research takes
+/// an empty value as missing, and the write path refuses one outright. So
+/// the row says what a person would find if they ran the package. The
+/// line is still kendex's to write over, which is the half a save needs.
+#[test]
+fn an_empty_assignment_is_not_a_credential() {
+    assert_eq!(
+        read_of(Some("LINEAR_API_KEY=''\n")).state_of("LINEAR_API_KEY"),
+        SecretState::NotSet
+    );
+    assert_eq!(
+        read_of(Some("LINEAR_API_KEY='sk-live-secret'\n")).state_of("LINEAR_API_KEY"),
+        SecretState::Set
+    );
+    assert_eq!(
+        write(
+            "LINEAR_API_KEY=''\n",
+            &[set("linear", "LINEAR_API_KEY", "sk-live-1")]
+        ),
+        "LINEAR_API_KEY='sk-live-1'\n"
+    );
+}
+
+/// A credential reaches an assertion message, a panic and anything that
+/// formats one, so `Debug` on the value type redacts. The containers
+/// derive theirs and nest it, which is the point: pinning them is what
+/// says the leaf's redaction is what closes the class.
+#[test]
+fn debug_of_anything_holding_a_secret_redacts_it() {
+    let secret = "sk-live-must-not-appear";
+    let draft = SecretsDraft {
+        edits: vec![set("linear", "LINEAR_API_KEY", secret)],
+        file: DEFAULT_ENV_FILE.to_owned(),
+        choose: false,
+        base: Base::absent(),
+    };
+    let options = crate::engine::PlanOptions {
+        secrets_draft: Some(draft.clone()),
+        ..Default::default()
+    };
+    for shown in [format!("{draft:?}"), format!("{options:?}")] {
+        assert!(!shown.contains(secret), "{shown}");
+        // The key name is not the credential and a reader needs it.
+        assert!(shown.contains("LINEAR_API_KEY"), "{shown}");
+    }
 }
 
 /// The read says a key is set and never what it is set to, and the whole

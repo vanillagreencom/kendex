@@ -195,7 +195,9 @@ impl SecretsRead {
             };
         }
         match env_file::standing(&self.assignments, key) {
-            env_file::Standing::Absent => SecretState::NotSet,
+            // An empty assignment is a line no loader reads a credential
+            // out of, so it stands where no line at all stands.
+            env_file::Standing::Absent | env_file::Standing::Empty(_) => SecretState::NotSet,
             env_file::Standing::At(_) => SecretState::Set,
             env_file::Standing::Blocked { problem, lines } => SecretState::Unknown {
                 reason: format!(
@@ -411,13 +413,37 @@ pub struct SecretEdit {
     pub value: SecretEditValue,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum SecretEditValue {
     /// Write this value, over whatever the key holds.
     Set { value: String },
     /// Take the key out of the private file.
     Clear,
+}
+
+/// Written out rather than derived, and written here rather than on the
+/// types that hold it.
+///
+/// `Set` carries a credential, and a derived `Debug` prints it. Every
+/// type carrying an edit nests this one — [`SecretEdit`],
+/// [`SecretsDraft`], [`crate::engine::PlanOptions`] — so a single
+/// `{draft:?}` in an assertion message, a panic or a log would put a
+/// person's API key in it. Redacting the leaf is what closes the class:
+/// redacting the containers would be one impl each and the next
+/// container added would reopen it. The length is kept, which is what a
+/// reader debugging a save actually needs. Same shape, one level down,
+/// as [`crate::apply::Op`].
+impl std::fmt::Debug for SecretEditValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SecretEditValue::Set { value } => f
+                .debug_struct("Set")
+                .field("value", &format_args!("<{} redacted bytes>", value.len()))
+                .finish(),
+            SecretEditValue::Clear => f.write_str("Clear"),
+        }
+    }
 }
 
 impl SecretEdit {

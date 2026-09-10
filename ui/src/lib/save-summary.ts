@@ -9,7 +9,7 @@ export interface SaveGroup {
 }
 
 /**
- * What a save is about to write, grouped by the file it lands in.
+ * Where the edits on this page land, grouped by the file each goes to.
  *
  * Every file name here comes from the read that produced the fields: the
  * manifest names its own file, because a source catalog keeps its install
@@ -60,9 +60,9 @@ export function saveGroups({
   const destination = settings?.secrets?.destination;
   if (destination) {
     // The line that keeps git off a file this save is about to create is
-    // written first, and this dialog says it lists every file the save
-    // writes. Leaving it out would make that claim false on exactly the
-    // save it matters most on.
+    // written first, and it is written because of an edit on this page.
+    // Leaving it out would understate where those edits reach on exactly
+    // the save it matters most on.
     const state = destination.state;
     const owed =
       state.state === "missing" && state.ignore !== null ? state.ignore : null;
