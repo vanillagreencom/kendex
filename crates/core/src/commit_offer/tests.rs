@@ -1247,8 +1247,9 @@ fn a_folder_replaced_by_a_file_of_the_same_name_shows_both_halves() {
 }
 
 /// Both reads that name a covered path hand it to git in a pathspec
-/// position, so both carry `--literal-pathspecs`. A path opening with the
-/// `:` a pathspec magic prefix starts with is read as magic without it and
+/// position, so both go through `pathspec::literal`. A path opening with
+/// the `:` a pathspec magic prefix starts with is read as magic without it
+/// and
 /// matches nothing at all: `ls-tree` then reports no before side and the
 /// file draws as one this change adds, when it is one the change rewrites.
 #[cfg(unix)]
@@ -1271,7 +1272,7 @@ fn a_path_git_would_read_as_pathspec_magic_is_taken_as_the_path_it_is() {
 }
 
 /// A rendered path can also hold `[`, `*` or `?`, and `git diff` globs a
-/// pathspec. Without the literal option the mode read gets a row per file
+/// pathspec. Without the literal prefix the mode read gets a row per file
 /// the path's shape names, and it reads the first — so a changed file of
 /// the person's own that sorts ahead of the one they opened hands over its
 /// mode as though it were theirs.

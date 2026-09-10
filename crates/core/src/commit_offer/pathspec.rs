@@ -59,7 +59,8 @@ impl Spec {
         ]
     }
 
-    /// The magic prefix every entry in the file is written behind.
+    /// The magic prefix every pathspec this module hands git is written
+    /// behind, whether it goes in the file or in argv.
     ///
     /// `--pathspec-file-nul` fixes the separator, not the matching: git
     /// still reads each entry as a pathspec, so a rendered path holding
@@ -69,6 +70,16 @@ impl Spec {
     /// start of an entry, so a `:` inside a path is a character like any
     /// other rather than the opening of a second prefix.
     const LITERAL: &'static str = ":(literal)";
+}
+
+/// One path as a pathspec on a command line, for a read that names a
+/// single path in argv rather than through the file above.
+///
+/// The same prefix and the same guarantee as an entry in that file, so the
+/// crate has one spelling of "this text is a path" rather than a file-only
+/// one and an argv-only one that could drift apart.
+pub fn literal(path: &str) -> String {
+    format!("{}{path}", Spec::LITERAL)
 }
 
 impl Drop for Spec {
