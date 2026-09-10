@@ -22,25 +22,21 @@ pub const INVENTORY: &str = ".kendex-generated.json";
 /// The file that travels with a commit that adds or takes away a render:
 /// the inventory recording which paths kendex owns here.
 ///
-/// Not because a render needs it to stand. The engine never reads it back —
-/// it writes it for CI — and a later apply judges the tree by the manifest
-/// and the lock. It travels because the commit offer itself reads the
-/// committed copy: `crate::commit_offer` asks `HEAD`'s inventory whether a
-/// path that is deleted and gone from the render set was one kendex wrote,
-/// which is how a sweep's removal is told from the person's own deletion. A
-/// commit that adds or takes away a render without it leaves that read
-/// answering about a tree the commit no longer holds.
+/// Not because a render depends on it. The engine never reads it back, and
+/// what a later apply sweeps is judged by the written lock rather than by
+/// this file — `crate::engine::removal` and `crate::engine::stale` both say
+/// so. It travels because two readers of the committed copy exist: CI,
+/// which is what the inventory is written for, and this crate's own commit
+/// offer, which asks `HEAD`'s copy whether a deleted path was one kendex
+/// wrote and so tells a sweep's removal from the person's own deletion.
 ///
 /// The manifest is deliberately not here. kendex writes keys in it and folds
 /// them into the document the person wrote — `crate::manifest::fold` keeps
 /// their comments, key order and every value it did not touch — so kendex
 /// does not own its bytes and may neither commit nor restore it whole. A
 /// source catalog moves the declaration to a sibling file besides
-/// (`crate::manifest::project_manifest_path`), so a fixed name here would
-/// name the wrong file in this very repository. The declaration a render
-/// does need to survive a later apply is that manifest, and the offer names
-/// it to the person rather than committing it:
-/// [`crate::commit_offer::Pending::manifest_not_carried`].
+/// (`crate::manifest::file::manifest_path`), so a fixed name here would name
+/// the wrong file in this very repository.
 pub fn companions(root: &Path) -> [PathBuf; 1] {
     [root.join(INVENTORY)]
 }
@@ -82,8 +78,7 @@ impl GeneratedPaths {
 
     /// The files kendex owns whole, the inventory file among them — what
     /// the commit offer covers. The inventory is kendex's own file end to
-    /// end, so a commit may take it; [`companions`] says why one that adds
-    /// or takes away a render does.
+    /// end, so it is committed with the renders it records.
     ///
     /// Owning the FORMAT is not owning the bytes, so the project's manifest
     /// is not here: `crate::manifest::fold` exists because kendex edits the

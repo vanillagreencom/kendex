@@ -1350,13 +1350,7 @@ fn what_the_action_did_is_read_from_the_content_and_not_from_the_names() {
     repo.write(OWNED[0], "one, edited by hand\n");
     repo.write("docs/left.md", "left, edited by hand\n");
     let before = baseline(&repo.scope(), &generated).unwrap();
-    // The two paths that were already pending, and the manifest, whose
-    // reading is taken whether it is pending or not. The owned file that
-    // was clean has no row: a path with no reading was clean before.
-    assert_eq!(
-        before.held.keys().map(String::as_str).collect::<Vec<_>>(),
-        [OWNED[0], "docs/left.md", "kendex.toml"]
-    );
+    assert_eq!(before.held.len(), 2, "the pending paths were not read");
 
     // The action rewrites one clean file, rewrites one already-pending file
     // again, and leaves the third alone.
@@ -1511,84 +1505,6 @@ fn the_manifest_is_never_one_of_the_files_the_offer_covers() {
         // Counted as the person's own changed files, which is what they are.
         assert_eq!(scan.others, 2, "{name}");
     }
-}
-
-/// kendex commits the renders an action wrote and cannot commit the file
-/// that declares them, so the offer says which file is left behind. The
-/// person commits it; kendex folds keys into that document and owns none
-/// of its bytes.
-///
-/// Both spellings, because a source catalog declares its installs in the
-/// sibling file: naming the published catalogue instead would send the
-/// person to commit a file this action never wrote.
-#[test]
-fn an_action_that_wrote_the_declaration_says_the_commit_does_not_carry_it() {
-    for (name, catalog) in [("an ordinary project", false), ("a source catalog", true)] {
-        let declared = match catalog {
-            true => "kendex-local.toml",
-            false => "kendex.toml",
-        };
-        let repo = Repo::new(&[
-            (OWNED[0], "one\n"),
-            (
-                "kendex.toml",
-                match catalog {
-                    true => "is_source_catalog = true\nschema = 6\n",
-                    false => "schema = 6\n",
-                },
-            ),
-            ("kendex-local.toml", "schema = 6\n"),
-        ]);
-        let generated = repo.generated(&[OWNED[0], OWNED[1]], &[]);
-        let before = baseline(&repo.scope(), &generated).unwrap();
-
-        // The action declares a skill and renders it.
-        repo.write(declared, "schema = 6\n[skills]\ngh = \"kit\"\n");
-        repo.write(OWNED[1], "written by kendex\n");
-        repo.write(INVENTORY, "[\"a\",\"b\"]");
-
-        let scan = repo.scan(&generated).unwrap();
-        let pending = pending(&scan, &before);
-        assert_eq!(pending.manifest_not_carried(), Some(declared), "{name}");
-        // What the notice asserts: neither commit on offer carries it.
-        assert!(!pending.action_set().contains(declared), "{name}");
-        assert!(!pending.every_path().contains(declared), "{name}");
-    }
-}
-
-/// The offer says nothing about a declaration this action did not write.
-/// Two ways that happens, and each has to be told apart from the case
-/// above by a reading rather than by the file's name: the change in it is
-/// somebody else's, or there is no change in it left to commit.
-#[test]
-fn a_declaration_this_action_did_not_write_is_not_named() {
-    // The person edited their manifest and left it; the action renders.
-    let repo = Repo::new(&[(OWNED[0], "one\n"), ("kendex.toml", "schema = 6\n")]);
-    let generated = repo.generated(&[OWNED[0]], &[]);
-    repo.write("kendex.toml", "schema = 6\n# a note the person left\n");
-    let before = baseline(&repo.scope(), &generated).unwrap();
-    repo.write(OWNED[0], "one, written by kendex\n");
-
-    let scan = repo.scan(&generated).unwrap();
-    assert_eq!(
-        scan.manifest.as_deref(),
-        Some("kendex.toml"),
-        "git reports the manifest changed, so the silence is the reading's"
-    );
-    assert_eq!(pending(&scan, &before).manifest_not_carried(), None);
-
-    // The action wrote the declaration back to what the last commit
-    // already holds, so there is nothing about it to commit.
-    let repo = Repo::new(&[(OWNED[0], "one\n"), ("kendex.toml", "schema = 6\n")]);
-    let generated = repo.generated(&[OWNED[0]], &[]);
-    repo.write("kendex.toml", "# the key taken out by hand\n");
-    let before = baseline(&repo.scope(), &generated).unwrap();
-    repo.write("kendex.toml", "schema = 6\n");
-    repo.write(OWNED[0], "one, written by kendex\n");
-
-    let scan = repo.scan(&generated).unwrap();
-    assert_eq!(scan.manifest, None, "git reports the manifest unchanged");
-    assert_eq!(pending(&scan, &before).manifest_not_carried(), None);
 }
 
 /// The restore writes `HEAD` over what it is given, so a hand-authored file

@@ -42,21 +42,10 @@ pub fn is_source_catalog(root: &Path) -> bool {
 pub fn manifest_path(env: &Env, scope: &Scope) -> std::path::PathBuf {
     match &scope.canonical() {
         Scope::Global => env.global_manifest_file(),
-        Scope::Project { root } => project_manifest_path(root),
-    }
-}
-
-/// Where one project's manifest lives, off a root that is already
-/// canonical. A source catalog's own kendex.toml is the definition it
-/// publishes, so its install state goes to the sibling file.
-///
-/// Separate from [`manifest_path`] for the readers that hold a root and no
-/// scope: the answer to which file a project declares in is decided here,
-/// once.
-pub fn project_manifest_path(root: &Path) -> std::path::PathBuf {
-    match is_source_catalog(root) {
-        true => root.join(super::LOCAL_MANIFEST_FILE),
-        false => Env::project_manifest_file(root),
+        // A source catalog's own kendex.toml is the definition it
+        // publishes; its install state goes to the sibling file.
+        Scope::Project { root } if is_source_catalog(root) => root.join(super::LOCAL_MANIFEST_FILE),
+        Scope::Project { root } => Env::project_manifest_file(root),
     }
 }
 

@@ -707,17 +707,13 @@ git commits whole files, so two cases have no separable commit. `commit_offer::P
 - a file the action changed that was already changed before it;
 - `.kendex-generated.json`, which records what kendex renders here, where its own pending change is not the action's and the action adds or removes a render.
 
-### The manifest stays out of the set, and the offer names it
+### The manifest stays out of the set
 
 `GeneratedPaths::owned` is unchanged, and `generated_paths::companions` names `.kendex-generated.json` alone.
 
-kendex owns the manifest's FORMAT and not its bytes. `manifest::fold` edits the keys kendex holds and leaves the rest of the document as the person wrote it — comments, blank lines, key order, a note inside a declaration — which is the `shared` group's definition rather than the owned one. `owned` is also the set a restore writes `HEAD` over, so a file kendex only edits keys in can never be in it. A source catalog declares its own installs in `kendex-local.toml` (`manifest::project_manifest_path`), so a fixed manifest name would name the wrong file in this repository.
+kendex owns the manifest's FORMAT and not its bytes. `manifest::fold` edits the keys kendex holds and leaves the rest of the document as the person wrote it — comments, blank lines, key order, a note inside a declaration — which is the `shared` group's definition rather than the owned one. `owned` is also the set a restore writes `HEAD` over, so a file kendex only edits keys in can never be in it. A source catalog moves the declaration that drives renders to `kendex-local.toml` (`manifest::file::manifest_path`), so a fixed manifest name would name the wrong file in this repository.
 
-The inventory travels for its own reason, and it is not that a render needs it. The engine writes `.kendex-generated.json` for CI and never reads it back: a later apply takes its desired state from the manifest (`crates/core/src/engine/settings_scan.rs`, `crates/core/src/engine/ops.rs`) and judges what is on disk by the written lock (`crates/core/src/engine/removal.rs::orphans`, `crates/core/src/engine/stale.rs`). The inventory travels because this offer reads the committed copy — `commit_offer::git::committed_inventory`, called from `commit_offer::paths::scan` — to tell a sweep's removal from the person's own deletion.
-
-So a commit of renders whose declaration is still only in the working tree is coherent for a reader and not for a later apply. Nothing is broken by it: this repository gitignores the lock deliberately, and the committed trees are what a clone works from without kendex. It is the next apply in such a checkout that reads the older declaration and sweeps those renders or leaves them unmanaged.
-
-kendex cannot stage part of a file, so naming it is the whole answer. `commit_offer::Pending::manifest_not_carried` reports the manifest where this action wrote it and git still reports it changed, decided by the same content comparison every path gets: an action that left the file alone, and a file already back to what the last commit holds, are both silence. The dialog draws it as **This commit leaves out your declaration** and tells the person to commit that file themselves.
+Nor does the manifest travel to keep a commit coherent, and the premise that it must is false: no sweep removes a render because its declaration is uncommitted. Both sweeps judge by the written lock — `crates/core/src/engine/removal.rs::orphans` iterates `lock.entries`, and `crates/core/src/engine/stale.rs` states it in its own header — so a fresh checkout, whose lock is absent, holds renders that nothing manages rather than renders that something removes. That is the model this repository states for itself at `.gitignore:30`: the trees are committed so a clone works without kendex. The inventory travels for a reason of its own, and it is not that one: CI reads the committed inventory (`docs/architecture/engine.md`), and this offer reads `HEAD`'s copy to tell a sweep's removal from the person's own deletion.
 
 ### Pending changes have a place in the project UI
 
