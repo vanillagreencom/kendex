@@ -95,11 +95,13 @@ interface NavState {
   goToBundle: (ref: BundleRef) => void;
   goToAvailablePackage: (ref: AvailableRef) => void;
   goToUnmanaged: (scope: Scope) => void;
-  /** A project's folder changed, so every place this store names by that
-   *  folder names the new one. What the reader was looking at is still
-   *  what they were looking at — a Back that landed on the old path would
-   *  open a page about a project nothing tracks. */
-  projectMoved: (from: string, to: string) => void;
+  /** A project's folder changed, so nothing this store holds about where
+   *  the reader has been is about that project any more: a page, a ref or
+   *  a trail entry naming the old folder opens a place nothing tracks.
+   *  They are let go of rather than rewritten — a ref carries a scope, a
+   *  catalogue and a recorded path, and a rewrite has to know every field
+   *  that can hold one. */
+  projectMoved: (from: string) => void;
   clearLibraryFilter: () => void;
   clearPackageView: () => void;
   back: () => void;
@@ -139,36 +141,35 @@ export const useNavStore = create<NavState>((set) => ({
       installInto: null,
     }),
   setLibraryScope: (libraryScope) => set({ libraryScope }),
-  projectMoved: (from, to) => {
-    const moved = (scope: Scope | null): Scope | null =>
-      scope && scope.scope === "project" && scope.root === from
-        ? { scope: "project", root: to }
-        : scope;
-    // A package is addressed by the place its copy sits in, so a package
-    // ref is a scope like the two above: left naming the old folder, Back
-    // reopens the package page on a copy the machine has no record of and
-    // it reads as gone.
-    const movedPackage = (ref: PackageRef | null): PackageRef | null => {
-      const scope = moved(ref?.scope ?? null);
-      return ref && scope ? { ...ref, scope } : ref;
-    };
-    const entry = (one: HistoryEntry): HistoryEntry => ({
-      ...one,
-      packageRef: movedPackage(one.packageRef),
-      unmanagedScope: moved(one.unmanagedScope),
-      installInto: moved(one.installInto),
-    });
+  projectMoved: (from) => {
+    // Everything about where the reader has been, let go of at once.
+    //
+    // Rewriting each field that can name a folder was the shape this took
+    // first, and it was wrong twice over: a ref carries a scope, a
+    // catalogue, a recorded path, and each new one is another field to
+    // keep in step, found one review round at a time. Nothing here has to
+    // follow the folder — the reader is on the Projects page, looking at
+    // the card they just reconnected — so nothing does. The refs go, the
+    // trail goes, and no field is left naming a folder that moved.
+    //
+    // `to` is unused for the same reason: there is nothing to point at
+    // the new folder, only things to stop pointing at the old one.
     set((state) => ({
       libraryScope:
         typeof state.libraryScope === "object" &&
         state.libraryScope.project === from
-          ? { project: to }
+          ? "all"
           : state.libraryScope,
-      packageRef: movedPackage(state.packageRef),
-      unmanagedScope: moved(state.unmanagedScope),
-      installInto: moved(state.installInto),
-      history: state.history.map(entry),
-      future: state.future.map(entry),
+      packageRef: null,
+      marketplaceRef: null,
+      bundleRef: null,
+      availableRef: null,
+      unmanagedScope: null,
+      installInto: null,
+      packageView: null,
+      libraryFilter: null,
+      history: [],
+      future: [],
     }));
   },
   setSearch: (search) => set({ search }),

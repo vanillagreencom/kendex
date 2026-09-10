@@ -160,3 +160,38 @@ describe("adding a project", () => {
     expect(useProjectSetupStore.getState().unchecked).toEqual([]);
   });
 });
+
+// The read is not awaited by whoever starts it, so it can land after the
+// project it was started for has stopped being one. Its failure is about
+// a folder nothing tracks, and putting it back is the mark the forget
+// took off — the card at the folder the project moved to would inherit
+// "package check failed" from the path it left.
+describe("a read still out when the project stops being one", () => {
+  it("lands nothing back onto a forgotten folder", async () => {
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "error",
+      error: "the machine could not be read",
+    });
+
+    const out = useProjectSetupStore.getState().check("/work/vsys-view");
+    useProjectSetupStore.getState().forget("/work/vsys-view");
+    await out;
+
+    expect(useProjectSetupStore.getState().unchecked).toEqual([]);
+    expect(useProjectSetupStore.getState().checking).toEqual([]);
+  });
+
+  // The same folder registered afresh is a project again, and the read
+  // that names it says so.
+  it("records a failure again once the folder is asked about again", async () => {
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "error",
+      error: "the machine could not be read",
+    });
+    useProjectSetupStore.getState().forget("/work/vsys");
+
+    await useProjectSetupStore.getState().check("/work/vsys");
+
+    expect(useProjectSetupStore.getState().unchecked).toEqual(["/work/vsys"]);
+  });
+});

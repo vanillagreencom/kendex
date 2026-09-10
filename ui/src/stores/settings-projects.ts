@@ -139,7 +139,7 @@ export function projectActions(ordered: {
       ordered.hold(response.data.read, at);
       useProjectSetupStore.getState().forget(was);
       useCommitOfferStore.getState().forget(was);
-      useNavStore.getState().projectMoved(was, root);
+      useNavStore.getState().projectMoved(was);
       await Promise.all([rescanEverything(), updatesAgain()]);
       return root;
     },

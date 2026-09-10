@@ -356,12 +356,14 @@ describe("what a folder leaving the list leaves behind", () => {
     });
     useNavStore.setState({
       unmanagedScope: { scope: "project", root: OLD },
+      libraryScope: { project: OLD },
       packageRef: {
         kind: "skill",
         name: "gh",
         identity: "recorded",
         scope: { scope: "project", root: OLD },
       },
+      history: [{ page: "package" } as never],
     });
 
     await useSettingsStore.getState().relocateProject(OLD, NEW, false);
@@ -370,19 +372,14 @@ describe("what a folder leaving the list leaves behind", () => {
     expect(useProjectSetupStore.getState().unchecked).toEqual([]);
     expect(useCommitOfferStore.getState().queue).toEqual([]);
     expect(useCommitOfferStore.getState().flagged).toEqual([]);
-    expect(useNavStore.getState().unmanagedScope).toEqual({
-      scope: "project",
-      root: NEW,
-    });
-    // A package is addressed by the place its copy sits in, so a package
-    // ref is one more scope: left naming the old folder, Back reopens the
-    // package page on a copy the machine has no record of.
-    expect(useNavStore.getState().packageRef).toEqual({
-      kind: "skill",
-      name: "gh",
-      identity: "recorded",
-      scope: { scope: "project", root: NEW },
-    });
+    // Nothing is left naming the folder the project came from, and
+    // nothing is rewritten to name the new one either: a ref carries a
+    // scope, a catalogue and a recorded path, so where the reader has
+    // been is let go of rather than followed field by field.
+    expect(useNavStore.getState().unmanagedScope).toBeNull();
+    expect(useNavStore.getState().packageRef).toBeNull();
+    expect(useNavStore.getState().history).toEqual([]);
+    expect(useNavStore.getState().libraryScope).toBe("all");
     // What a package's source has moved on to is a fourth read, keyed by
     // the place each row is at and not covered by the rescan.
     expect(commands.updatesOverview).toHaveBeenCalled();
