@@ -4,6 +4,7 @@ import { Pill } from "@/components/pill";
 import { StatusLine, StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
 import {
+  DEFAULT_SECRET_FILE,
   SECRET_FILE_CANCEL,
   SECRET_FILE_CHANGE,
   SECRET_FILE_DEFAULT_NOTE,
@@ -37,7 +38,13 @@ export function SecretDestination({
 }) {
   const [choosing, setChoosing] = useState(false);
   const { destination, candidates } = secrets;
-  const others = candidates.filter((file) => file !== destination.file);
+  // The default is prepended below whether or not this project uses it,
+  // so a candidate list still holding it would render it twice — two
+  // identical pills under one React key. `candidates` drops only the file
+  // in use, which is a different file whenever the project named another.
+  const others = candidates.filter(
+    (file) => file !== destination.file && file !== DEFAULT_SECRET_FILE,
+  );
 
   return (
     <div className="flex flex-col gap-2 pb-3.5">
@@ -54,7 +61,7 @@ export function SecretDestination({
       </div>
       {choosing ? (
         <div className="flex flex-wrap items-center gap-1.5">
-          {[".env.local", ...others].map((file) => (
+          {[DEFAULT_SECRET_FILE, ...others].map((file) => (
             <Pill
               key={file}
               selected={file === destination.file}

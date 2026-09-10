@@ -51,6 +51,20 @@ export function withoutSecretEdit(
   return edits.filter((edit) => edit.key !== key);
 }
 
+/** The edits a save would actually carry.
+ *
+ *  A field typed into and then erased leaves `{ kind: "set", value: "" }`
+ *  behind, and core refuses an empty value outright — an empty value is
+ *  not a credential, and clearing a key is the other action. Counting one
+ *  would raise Save over a write certain to be refused. The edit itself
+ *  stays in the draft, because the box the person is still typing in is
+ *  theirs; it just is not an answer yet. */
+export function answeredEdits(edits: SecretEdit[]): SecretEdit[] {
+  return edits.filter(
+    (edit) => edit.value.kind !== "set" || edit.value.value !== "",
+  );
+}
+
 /** Whether picking this file is a change the project does not already
  *  hold and a save could actually make.
  *
@@ -93,9 +107,10 @@ export function secretsDraft(
   const secrets = read?.secrets;
   if (!secrets) return null;
   const choose = choosesFile(read, picked);
-  if (edits.length === 0 && !choose) return null;
+  const answered = answeredEdits(edits);
+  if (answered.length === 0 && !choose) return null;
   return {
-    edits,
+    edits: answered,
     file: secrets.destination.file,
     choose,
     base: secrets.base,

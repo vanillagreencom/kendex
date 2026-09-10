@@ -152,6 +152,10 @@ export const secretFieldHelp = (file: string, writable = true): string =>
     : `This is a secret. It is never written into your project's committed configuration. It would go to ${file}, which can't be saved to yet.`;
 
 // Where secrets go, and choosing somewhere else.
+/** The file every project keeps its secrets in unless it names another —
+ *  core's `DEFAULT_ENV_FILE`, which this page offers as a choice whether
+ *  or not the project is on it. */
+export const DEFAULT_SECRET_FILE = ".env.local";
 export const SECRET_FILE_LABEL = "Kept in";
 export const SECRET_FILE_CHANGE = "Use another file";
 export const SECRET_FILE_CANCEL = "Keep this one";
@@ -181,7 +185,18 @@ export const CONTESTED_KEYS = "Two packages disagree about a key";
 
 // What a save is about to write, before it writes it.
 export const SAVE_CONFIRM_TITLE = "Save these changes";
-export const SAVE_CONFIRM_DESCRIPTION = "Here's every file this writes to.";
+/** Where the changes on this page land — the manifest, the settings file
+ *  and the private file, each named by the read the fields came from.
+ *
+ *  Not every file the apply touches, and it does not claim to be: the
+ *  same apply reconciles the install, so it may also write the lock, a
+ *  rendered harness file, or the `.gitignore` line a new private file is
+ *  owed. Those are kendex's own bookkeeping rather than anything typed
+ *  here, and the dialog would have to preview the whole plan to list
+ *  them. What it does promise is exact: the edits on this page go to
+ *  these files and nowhere else. */
+export const SAVE_CONFIRM_DESCRIPTION =
+  "Here's where your changes land. Saving also reconciles the install, which may write kendex's own lock, rendered and .gitignore entries.";
 export const SAVE_CONFIRM_ACTION = "Save and apply";
 export const SAVE_CONFIRM_EMPTY = "Nothing to write.";
 /** Secret fields are named and never shown. The dialog exists to say

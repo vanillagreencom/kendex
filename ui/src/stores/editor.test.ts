@@ -229,6 +229,45 @@ describe("editor store", () => {
     );
   });
 
+  /// Core refuses an empty value outright — an empty value is not a
+  /// credential, and clearing a key is the other action. So a field typed
+  /// into and then erased is not an answer: it raises no Save bar and
+  /// travels in no draft, or the page would offer a write certain to be
+  /// refused.
+  it("does not offer a save for a field typed into and erased", async () => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    vi.mocked(commands.saveCustomize).mockResolvedValue({
+      status: "ok",
+      data: {} as AuditView_Serialize,
+    });
+    await useEditorStore.getState().load();
+
+    useEditorStore.getState().editSecret(secretEdit);
+    expect(useEditorStore.getState().dirty).toBe(true);
+
+    const erased = {
+      ...secretEdit,
+      value: { kind: "set" as const, value: "" },
+    };
+    useEditorStore.getState().editSecret(erased);
+    expect(useEditorStore.getState().dirty).toBe(false);
+    // The edit stays in hand — the box the person is typing in is theirs.
+    expect(useEditorStore.getState().secretEdits).toEqual([erased]);
+
+    // And a save made for some other reason carries no secret half.
+    useEditorStore.getState().editSetting(edit);
+    await useEditorStore.getState().save();
+    const sent = vi.mocked(commands.saveCustomize).mock.calls.at(-1);
+    expect(sent?.[3]).toBeNull();
+
+    // Typing again makes it an answer once more.
+    useEditorStore.getState().editSecret(secretEdit);
+    expect(useEditorStore.getState().dirty).toBe(true);
+  });
+
   /// The private file holds one line per key, however many packages
   /// declare it, and core allows two packages to declare one — while it
   /// refuses a save carrying one key twice. The draft is scope-wide and

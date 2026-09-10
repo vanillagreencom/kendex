@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { SecretsView } from "@/bindings";
 import {
+  DEFAULT_SECRET_FILE,
   SECRET_FILE_CHANGE,
   SECRET_FILE_RECORDED,
   SECRET_FILE_REFUSED,
@@ -138,5 +139,36 @@ describe("SecretDestination", () => {
     expect(host.textContent).not.toContain(
       SECRET_FILE_RECORDED(".env.secrets"),
     );
+  });
+
+  /// The default is offered whether or not the project is on it, and
+  /// `candidates` drops only the file in use — so a project that named
+  /// another file while `.env.local` still sits in the folder had the
+  /// default arrive twice: two identical pills under one React key.
+  it("offers the default once when the project names another file", async () => {
+    const host = mount(
+      <SecretDestination
+        secrets={{
+          destination: {
+            file: ".env.secrets",
+            chosen: true,
+            state: { state: "ready" },
+          },
+          candidates: [".env.local", ".env.other"],
+          base: null,
+        }}
+        picked={null}
+        onPick={() => {}}
+      />,
+    );
+    const change = [...host.querySelectorAll("button")].find(
+      (one) => one.textContent === SECRET_FILE_CHANGE,
+    );
+    if (!change) throw new Error("no control offered another file");
+    await userEvent.click(change);
+    const offered = [...host.querySelectorAll("button")]
+      .map((one) => one.textContent)
+      .filter((text) => text === DEFAULT_SECRET_FILE);
+    expect(offered).toHaveLength(1);
   });
 });

@@ -12,7 +12,12 @@ import { refusalKind, refusalWords } from "@/lib/refusal";
 
 import { writingRepo } from "@/lib/rescan";
 import { everyPlace, sameScope } from "@/lib/scope";
-import { choosesFile, secretsDraft, withSecretEdit } from "@/lib/secret-rows";
+import {
+  answeredEdits,
+  choosesFile,
+  secretsDraft,
+  withSecretEdit,
+} from "@/lib/secret-rows";
 import { settingsDraft, withEdit } from "@/lib/settings-rows";
 import { saying } from "@/lib/undone";
 import {
@@ -220,7 +225,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     return (
       state.manifestDirty ||
       state.settingsEdits.length > 0 ||
-      state.secretEdits.length > 0 ||
+      answeredEdits(state.secretEdits).length > 0 ||
       choosesFile(state.settings, state.secretFile)
     );
   };
