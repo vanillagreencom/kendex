@@ -10,3 +10,4 @@ Pure domain logic over the filesystem and git: no Tauri, no IPC, no UI concern, 
 - A test's temporary root takes its canonical spelling on the next source line through `rooted()` in `crates/test_util.rs`; a `tools/guard` lane checks new fixtures.
 - A test that hands the binary a fixture `HOME` sets `KENDEX_REAL_HOME=1` on the next line, or the command runs in the dev sandbox; a `tools/guard` lane checks it.
 - A test that shells out to git clears `GIT_DIR`, `GIT_COMMON_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE` together.
+- `Op` writes its own `Debug` (`src/apply/op.rs`) so `WritePrivateFile` renders a byte count instead of the credential it carries; a `Plan` reaches assertion messages and panics, so restoring `#[derive(Debug)]` would put a person's API key in whatever formats one. Enforced by `tests/secret_storage.rs::a_plan_carrying_a_credential_never_renders_it`.

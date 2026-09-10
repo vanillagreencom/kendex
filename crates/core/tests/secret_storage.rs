@@ -677,3 +677,36 @@ fn every_template_this_repository_ships_holds_to_the_contract() {
     }
     assert!(read >= 2, "the sweep read {read} templates");
 }
+
+/// A `Plan` reaches assertion messages, panics and anything else that
+/// formats one, so a derived `Debug` on the op that carries a credential
+/// would put the value in whatever read it. The bytes stay — they are what
+/// the write writes — but they cannot be rendered.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_plan_carrying_a_credential_never_renders_it() {
+    let f = fixture(TEMPLATE);
+    let manifest = kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(
+        &f.env, &f.scope,
+    ))
+    .unwrap()
+    .unwrap();
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
+    let options = PlanOptions {
+        secrets_draft: Some(SecretsDraft {
+            edits: vec![set("LINEAR_API_KEY", DUMMY)],
+            file: ".env.local".to_owned(),
+            choose: false,
+            base: Base::absent(),
+        }),
+        ..PlanOptions::default()
+    };
+    let report = plan_scope(&f.env, &f.scope, &manifest, &lock, &options).unwrap();
+
+    let shown = format!("{:?}", report.plan);
+    assert!(!shown.contains(DUMMY), "{shown}");
+    // The op is still there and still says what it writes, so the
+    // redaction did not cost a reader the thing they debug with.
+    assert!(shown.contains("WritePrivateFile"), "{shown}");
+    assert!(shown.contains("redacted bytes"), "{shown}");
+}

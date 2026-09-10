@@ -7,7 +7,7 @@ use crate::error::{CoreError, Result};
 use crate::lock::Lock;
 use crate::manifest::Manifest;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Op {
     WriteFile {
         path: PathBuf,
@@ -129,6 +129,118 @@ pub enum Op {
         /// None unsets the key.
         value: Option<String>,
     },
+}
+
+/// Derived for every op but one.
+///
+/// `WritePrivateFile` carries a credential in `bytes`, and a derived
+/// `Debug` prints it. That is not a hypothetical: a `Plan` reaches an
+/// assertion message, a panic and anything that formats one, so a single
+/// `{plan:?}` anywhere would put a person's API key in a log. The bytes
+/// have to stay — they are what the write writes — so what changes is
+/// that they cannot be rendered. Their length is kept, which is what a
+/// reader debugging a write actually needs.
+///
+/// Written out rather than `#[derive]`d plus a redacting newtype so the
+/// redaction lives beside the variant it protects; a newtype could be
+/// unwrapped anywhere and the next reader would not know why it existed.
+impl std::fmt::Debug for Op {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Op::WritePrivateFile {
+                path,
+                bytes,
+                pre,
+                ignored_under,
+            } => f
+                .debug_struct("WritePrivateFile")
+                .field("path", path)
+                .field("bytes", &format_args!("<{} redacted bytes>", bytes.len()))
+                .field("pre", pre)
+                .field("ignored_under", ignored_under)
+                .finish(),
+            Op::WriteFile { path, bytes, pre } => f
+                .debug_struct("WriteFile")
+                .field("path", path)
+                .field("bytes", bytes)
+                .field("pre", pre)
+                .finish(),
+            Op::WriteTree { root, files, pre } => f
+                .debug_struct("WriteTree")
+                .field("root", root)
+                .field("files", files)
+                .field("pre", pre)
+                .finish(),
+            Op::Symlink { link, target, pre } => f
+                .debug_struct("Symlink")
+                .field("link", link)
+                .field("target", target)
+                .field("pre", pre)
+                .finish(),
+            Op::Rename {
+                from,
+                to,
+                from_pre,
+                to_pre,
+            } => f
+                .debug_struct("Rename")
+                .field("from", from)
+                .field("to", to)
+                .field("from_pre", from_pre)
+                .field("to_pre", to_pre)
+                .finish(),
+            Op::Trash {
+                path,
+                pre,
+                absent_is_done,
+            } => f
+                .debug_struct("Trash")
+                .field("path", path)
+                .field("pre", pre)
+                .field("absent_is_done", absent_is_done)
+                .finish(),
+            Op::EditFile { path, edits, pre } => f
+                .debug_struct("EditFile")
+                .field("path", path)
+                .field("edits", edits)
+                .field("pre", pre)
+                .finish(),
+            Op::WriteLock { path, lock, pre } => f
+                .debug_struct("WriteLock")
+                .field("path", path)
+                .field("lock", lock)
+                .field("pre", pre)
+                .finish(),
+            Op::WriteManifest {
+                path,
+                manifest,
+                pre,
+            } => f
+                .debug_struct("WriteManifest")
+                .field("path", path)
+                .field("manifest", manifest)
+                .field("pre", pre)
+                .finish(),
+            Op::WriteExecutable { path, bytes, pre } => f
+                .debug_struct("WriteExecutable")
+                .field("path", path)
+                .field("bytes", bytes)
+                .field("pre", pre)
+                .finish(),
+            Op::GitConfigSwap {
+                file,
+                key,
+                expected,
+                value,
+            } => f
+                .debug_struct("GitConfigSwap")
+                .field("file", file)
+                .field("key", key)
+                .field("expected", expected)
+                .field("value", value)
+                .finish(),
+        }
+    }
 }
 
 impl Op {
