@@ -111,10 +111,10 @@ fn the_setup_block_is_the_install_s_own_disclosure() {
 /// and no file the repository happens to hold may license one.
 ///
 /// The whole trust rule, planted rather than argued. Every path the
-/// package declares is on disk — its helper and both hook files, exactly
-/// as a repository armed by another tool or by a hostile clone's own
-/// installer would carry them — and its `--check` is executable. kendex
-/// never armed this effect here, so nothing runs.
+/// package declares is on disk — its helper and all three hook files,
+/// exactly as a repository armed by another tool or by a hostile clone's
+/// own installer would carry them — and its `--check` is executable.
+/// kendex never armed this effect here, so nothing runs.
 ///
 /// The declared paths are planted because a licence read off one of them
 /// would pass here. Only a record kendex wrote itself is one.
@@ -136,7 +136,12 @@ fn no_file_the_repository_holds_licenses_the_checkout_s_scripts() {
     .unwrap();
     fs::set_permissions(&checker, fs::Permissions::from_mode(0o755)).unwrap();
     // Every path the declaration lists, present and looking armed.
-    for written in [HELPER, ".git/hooks/pre-commit", ".git/hooks/commit-msg"] {
+    for written in [
+        HELPER,
+        ".git/hooks/pre-commit",
+        ".git/hooks/commit-msg",
+        ".git/hooks/pre-push",
+    ] {
         let path = f.project.join(written);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "#!/bin/sh\n").unwrap();
