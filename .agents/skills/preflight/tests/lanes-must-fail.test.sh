@@ -71,6 +71,18 @@ pf_world() {
     # fixture pushes several hundred KB before it blocks, so it passes
     # either way.
     earlyclose) printf '#!/usr/bin/env bash\nset -euo pipefail\nif echo "$1" | grep -q x; then echo hit; fi\n' >"$R/scripts/existing.sh" ;;
+    # The same lane inside the test tree, on the mid-pipeline shape: the
+    # reader is two stages down and another stage runs after it, and the
+    # suite's own pipefail is what turns the writer's SIGPIPE into the 141
+    # that ends the run mid-section. The pipeline is halved across two
+    # variables so this suite's own committed line does not carry the shape.
+    # The suite is the one the seeded workflow names, so it is wired.
+    earlyclosesuite)
+      seed_runner
+      ec_writer='n=$(printf "%s\n" "$1" '
+      ec_reader='| grep -n x | head -1 | cut -d: -f1)'
+      printf '#!/usr/bin/env bash\nset -euo pipefail\n%s%s\necho "$n"\n' "$ec_writer" "$ec_reader" >"$R/tests/known.test.sh"
+      ;;
     # The guard sits at the far edge of the look-ahead window: the
     # assignment is on line 3 and the test of $ROOT on line 7, four lines
     # below it. A narrower window stops finding this. The assignment is bare
@@ -170,6 +182,7 @@ a new script that never sets -e/-u/pipefail fails as fail-open|strict|-|-|1|scri
 a grep whose status or-true drops fails as fail-open, naming the command|swallow|-|-|1|scripts/existing.sh:4: [fail-open]|grep || true swallows exit 2
 the shape is caught inside a command substitution too|swallowsubst|-|-|1|scripts/existing.sh:4: [fail-open]|git || true swallows exit 2
 a condition piping echo into grep -q fails as early-close-pipe|earlyclose|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
+a suite that sets pipefail is judged too, mid-pipeline reader included|earlyclosesuite|-|-|1|tests/known.test.sh:3: [early-close-pipe]|-
 an assignment whose guard errexit kills first fails as fail-open|bareassign|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
 an operator inside the substitution does not exempt the assignment|bareinner|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
 a new script with mktemp and no EXIT trap fails as mktemp-trap|scratch|-|-|1|scripts/scratch.sh:3: [mktemp-trap]|mktemp without an EXIT trap
