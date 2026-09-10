@@ -111,6 +111,7 @@ function badgeFor(
 function PlaceActions({
   scope,
   place,
+  reachable,
   onAddPackages,
   onChangeFolder,
   onRemove,
@@ -120,6 +121,13 @@ function PlaceActions({
    *  [scopeNames] — the dialogs this menu opens name the place whose files
    *  they rewrite, and two projects can end in the same folder. */
   place: string;
+  /** Whether this place can be written to at all. Everything that decides
+   *  what a place installs writes that place's own files, so a folder
+   *  kendex could not read is offered none of it: the browse would open on
+   *  a place the install cannot reach, and the read behind the
+   *  marketplaces it uses has nothing to read. What is left is the two
+   *  actions about the entry itself. */
+  reachable: boolean;
   /** Browse packages on this place's behalf. On the menu as well as in the
    *  empty state, because a place that already has packages is where more
    *  are usually wanted. */
@@ -146,12 +154,16 @@ function PlaceActions({
           }
         />
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={onAddPackages}>
-            {ADD_PACKAGES_LABEL}
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setMarketplacesOpen(true)}>
-            {PLACE_MARKETPLACES_LABEL}
-          </DropdownMenuItem>
+          {reachable ? (
+            <>
+              <DropdownMenuItem onClick={onAddPackages}>
+                {ADD_PACKAGES_LABEL}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setMarketplacesOpen(true)}>
+                {PLACE_MARKETPLACES_LABEL}
+              </DropdownMenuItem>
+            </>
+          ) : null}
           {onChangeFolder ? (
             <DropdownMenuItem onClick={onChangeFolder}>
               {CHANGE_FOLDER_LABEL}
@@ -323,6 +335,7 @@ export function ProjectList() {
             <PlaceActions
               scope={GLOBAL}
               place="Personal"
+              reachable
               onAddPackages={() => addPackages(GLOBAL)}
             />
           }
@@ -393,6 +406,7 @@ export function ProjectList() {
                   <PlaceActions
                     scope={scope}
                     place={namedAlone(root)}
+                    reachable={missing === undefined}
                     onAddPackages={() => addPackages(scope)}
                     onChangeFolder={() => locate(root, namedAlone(root))}
                     onRemove={() => setRemoveTarget(root)}

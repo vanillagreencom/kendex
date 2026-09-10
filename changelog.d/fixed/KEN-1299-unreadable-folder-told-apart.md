@@ -1,1 +1,1 @@
-- A project folder that could not be read is told apart from one that is gone, and neither is offered as a place to install packages into.
+- A project folder that could not be read is told apart from one that is gone, and a place kendex cannot reach is offered no install and no change to what it installs from.

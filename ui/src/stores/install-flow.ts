@@ -261,14 +261,23 @@ export const placeIsAChoice = (subject: InstallSubject): boolean =>
   subject.groups.every((group) => group.browsing.scope === "global");
 
 /** The places a freshly opened flow starts on: the one the reader came
- *  from where this answer can reach it, else everywhere it can only go. */
+ *  from where this answer can reach it, else everywhere it can only go.
+ *
+ *  A reader who named a place and a reader who named none are two
+ *  different questions. With none named, the first place offered is where
+ *  an install lands unless the reader says otherwise. With one named that
+ *  this answer cannot reach — a project whose folder the scan could not
+ *  read — nothing is picked: the errand was for that place, and swapping
+ *  another one in would write the packages somewhere nobody asked for.
+ *  The dialog holds its own action back on an empty list and says why. */
 function openingPlaces(subject: InstallSubject): Scope[] {
   const offered = installablePlaces(subject, reachableProjectsNow());
   if (!placeIsAChoice(subject)) return offered;
   const came = useNavStore.getState().installInto;
-  const carried =
-    came && offered.find((place) => sameScope(place, came)) ? came : offered[0];
-  return carried ? [carried] : [];
+  const opening = came
+    ? offered.find((place) => sameScope(place, came))
+    : offered[0];
+  return opening ? [opening] : [];
 }
 
 /** Whether this place is among those picked. */

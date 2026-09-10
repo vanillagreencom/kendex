@@ -84,11 +84,18 @@ export function projectActions(ordered: {
       return false;
     },
 
+    // The registry write, then what the window filed under that folder —
+    // the same drop the reconnect makes, for the same reason: a read still
+    // out for it and an offer waiting on files in it are questions about a
+    // place nothing tracks now, and reading the machine again answers
+    // about places rather than about what the window filed under a name.
     unregisterProject: async (path) => {
       const at = ordered.ticket();
       const response = await commands.unregisterProject(path);
       if (response.status === "ok") {
         ordered.hold(response.data, at);
+        useProjectSetupStore.getState().forget(path);
+        useCommitOfferStore.getState().forget(path);
         await rescanEverything();
       } else {
         useProblemsStore.getState().showError({

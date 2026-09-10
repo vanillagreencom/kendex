@@ -35,6 +35,7 @@ import {
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import type { InstallResult } from "@/stores/marketplaces-install";
 import { useNavStore } from "@/stores/nav";
+import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { mount, settle } from "@/test/dom";
 import { InstallDialog } from "./install-dialog";
@@ -96,6 +97,7 @@ beforeEach(() => {
     settings: { projects: [ACME.root, BETA.root] } as AppSettings,
   });
   useNavStore.setState({ installInto: null, page: "marketplaces" });
+  useScanStore.setState({ scanning: false, error: null, result: null });
   useInstallFlow.setState({ ask: null, outcome: null, running: false });
 });
 
@@ -310,6 +312,29 @@ describe("the guided install", () => {
     await settle();
     expect(install).toHaveBeenCalledTimes(1);
     expect(install.mock.calls[0][0].destination).toEqual(BETA);
+  });
+
+  // The errand was for that project. A folder the scan could not read
+  // takes no install, and the place the reader named is not quietly
+  // swapped for another one: the packages would land somewhere nobody
+  // asked for, under a button that says Install.
+  it("picks nowhere when the place it came from cannot be reached", async () => {
+    useScanStore.setState({
+      scanning: false,
+      error: null,
+      result: {
+        harnesses: [],
+        items: [],
+        warnings: [],
+        missingProjects: [{ root: BETA.root, why: { kind: "gone" } }],
+      },
+    });
+    useNavStore.setState({ installInto: BETA });
+    await open();
+
+    expect(button(INSTALL_ACTION).disabled).toBe(true);
+    expect(document.body.textContent).toContain(INSTALL_NO_PLACE);
+    expect(install).not.toHaveBeenCalled();
   });
 
   // Nowhere to install is not an install: the button is off and says why

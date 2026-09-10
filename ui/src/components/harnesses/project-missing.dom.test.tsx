@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
+import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Relocation, ScanResult, Scope } from "@/bindings";
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
+  CHANGE_FOLDER_LABEL,
   LOCATE_CONFIRM,
   LOCATE_FOLDER_LABEL,
   LOCATE_JOIN,
@@ -14,6 +16,7 @@ import {
   RECONNECT_CLEAN,
   REMOVE_FROM_LIST_LABEL,
   reconnected,
+  removeFromList,
   standingSaid,
 } from "@/lib/copy-project-move";
 import { SESSION_NOTE_LABEL } from "@/lib/copy-session-note";
@@ -87,6 +90,23 @@ const button = (label: string): HTMLButtonElement => {
   return found;
 };
 
+const openActions = async (host: HTMLElement) => {
+  const project = card(host);
+  if (!project) throw new Error("no card for the missing project");
+  const trigger = [
+    ...project.querySelectorAll<HTMLButtonElement>("button"),
+  ].find((one) => one.getAttribute("aria-label")?.startsWith("More actions"));
+  if (!trigger) throw new Error("no actions trigger");
+  act(() => trigger.focus());
+  await userEvent.keyboard("{Enter}");
+  await settle();
+};
+
+const menuItems = (): string[] =>
+  [...document.querySelectorAll('[role="menuitem"]')].map(
+    (el) => el.textContent ?? "",
+  );
+
 const press = async (label: string) => {
   await userEvent.click(button(label));
   await settle();
@@ -152,6 +172,23 @@ describe("a project whose folder the scan could not read", () => {
     expect(vi.mocked(commands.scanMachine).mock.calls.length).toBeGreaterThan(
       before,
     );
+  });
+
+  // The card body withholds the install, and the menu behind the same card
+  // is the other way to the same errand: browsing on this place's behalf
+  // opens the guided install for a place it cannot reach, and what a place
+  // installs from is a write into the folder that is not there. What is
+  // left is the two actions about the entry itself.
+  it("offers nothing that writes to the folder", async () => {
+    const host = mount(<ProjectList />);
+    await settle();
+
+    await openActions(host);
+
+    expect(menuItems()).toEqual([
+      CHANGE_FOLDER_LABEL,
+      removeFromList("vsys-view"),
+    ]);
   });
 
   it("says what the system said, where it could not read the folder", async () => {
@@ -274,10 +311,11 @@ describe("locating the folder a project moved to", () => {
   });
 });
 
-// Everything the window filed under the folder the project left. None of
-// it is corrected by reading the machine again: these are answers about a
-// path, and the path is not a project any more.
-describe("what the reconnect leaves behind", () => {
+// Everything the window filed under a folder that has stopped being a
+// project — reconnected somewhere else, or removed. None of it is
+// corrected by reading the machine again: these are answers about a path,
+// and the path is not a project any more.
+describe("what a folder leaving the list leaves behind", () => {
   it("drops the old folder's held reads, offer and navigation", async () => {
     vi.mocked(commands.relocateProject).mockResolvedValue({
       status: "ok",
@@ -304,5 +342,24 @@ describe("what the reconnect leaves behind", () => {
       scope: "project",
       root: NEW,
     });
+  });
+
+  it("drops them for a project removed from the list too", async () => {
+    vi.mocked(commands.unregisterProject).mockResolvedValue({
+      status: "ok",
+      data: { settings: { projects: [] }, base: null },
+    } as never);
+    useProjectSetupStore.setState({ checking: [OLD], unchecked: [OLD] });
+    useCommitOfferStore.setState({
+      queue: [{ root: OLD, message: "" }] as never,
+      flagged: [{ root: OLD }] as never,
+    });
+
+    await useSettingsStore.getState().unregisterProject(OLD);
+
+    expect(useProjectSetupStore.getState().checking).toEqual([]);
+    expect(useProjectSetupStore.getState().unchecked).toEqual([]);
+    expect(useCommitOfferStore.getState().queue).toEqual([]);
+    expect(useCommitOfferStore.getState().flagged).toEqual([]);
   });
 });
