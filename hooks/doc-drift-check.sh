@@ -4,7 +4,7 @@
 # event: Stop
 # matcher:
 # description: Blocks a stop once per set of stale documents — the documents covering changed code that did not change — so the agent, the only party that can update them, is the one given the list. The refusal opens with `doc-drift-check: stale=<count>` and `doc-drift-check: base=<ref>` — the ref it compared against, or `default-branch`, `none` or `unrelated` — and names each document under them; stdout carries nothing and no user-facing notice is written. The set is recorded as `<git common dir>/kendex/doc-drift/<session_id>-<digest of the sorted set>`, so a later stop naming that same set passes and an agent that read the list and changed nothing is not asked again; a set that gains or loses a document is a different set and blocks once. `stop_hook_active` true passes. Uses the nearest tracked non-root AGENTS.md and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Claude Code only.
-# safety: Reads the payload, git state and the topic files; the only write is the per-set marker under the repository's git common dir. Exit 2 names the documents and asks for each to be confirmed or updated, never bypassed. jq reads the payload and a sha256 tool names the set; every command the hook runs is checked before anything is judged, and a payload, git state or marker it cannot read or write is refused, never passed. Every refusal opens with `doc-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the payload, git state and the topic files; the only write is the per-set marker under the repository's git common dir. Exit 2 names the documents and asks for each to be confirmed or updated, never bypassed. jq reads the payload and a sha256 tool names the set; every command the hook runs is checked before it is called, the payload readers ahead of the payload and the rest after `stop_hook_active` has been read, so a discovery command's absence costs one retry rather than refusing the retry too; only a missing payload reader refuses that as well, the flag being in the payload it cannot read. A payload, git state or marker the hook cannot read or write is refused, never passed. Every refusal opens with `doc-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
 # harnesses: [claude-code]
 # ---
@@ -88,32 +88,24 @@ refuse() { # KEY VALUE [DETAIL]
 # were not captured at the site.
 trap 'status=$?; if [ "$status" -ne 0 ] && [ "$REFUSED" -eq 0 ]; then refuse exit "$status"; fi' EXIT
 
-# Every external command this hook runs, checked before anything is judged: an
+# Every external command this hook runs is checked before it is called: an
 # absence the shell reports for itself writes "command not found" ahead of the
 # keyed line and leaves a status the harness reads as a plain error rather than
-# a refusal. The value names every one PATH is missing, in the order checked.
+# a refusal. Each value names every command PATH is missing, in the order
+# checked.
+#
+# The two commands that read the payload come first and alone. The flag that
+# ends a stop hook's retry is in that payload, so a refusal for any other
+# absence has to wait until the flag has been read; refusing ahead of it would
+# refuse the retry as well, which is the loop the flag exists to end. These two
+# refuse that retry because without them the flag cannot be read at all, and a
+# hook that passes what it cannot read is the defect this one is not allowed to
+# have.
 MISSING=""
-for dependency in jq git cat sed sort tr dirname grep mkdir; do
+for dependency in jq cat; do
   command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
-# macOS ships shasum and no sha256sum; either one names the set.
-HASH_TOOL=""
-if command -v sha256sum >/dev/null 2>&1; then
-  HASH_TOOL=sha256sum
-elif command -v shasum >/dev/null 2>&1; then
-  HASH_TOOL=shasum
-else
-  MISSING="$MISSING,sha256sum"
-fi
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
-
-hash_set() { # the set on stdin; its digest and the reader's own trailing word
-  if [ "$HASH_TOOL" = sha256sum ]; then
-    sha256sum
-  else
-    shasum -a 256
-  fi
-}
 
 # cat's words are captured, not left to precede the refusal: on failure the
 # substitution holds what it wrote, and the refusal replays it under the keyed
@@ -139,6 +131,32 @@ ACTIVE=${FIELDS#*"$TAB"}
 if [ "$ACTIVE" = "true" ]; then
   exit 0
 fi
+
+# The rest of what the hook runs: the commands that read what changed and
+# record the set. An absence here refuses this stop, and the retry it costs
+# passes at the flag above.
+MISSING=""
+for dependency in git sed sort tr dirname grep mkdir; do
+  command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
+done
+# macOS ships shasum and no sha256sum; either one names the set.
+HASH_TOOL=""
+if command -v sha256sum >/dev/null 2>&1; then
+  HASH_TOOL=sha256sum
+elif command -v shasum >/dev/null 2>&1; then
+  HASH_TOOL=shasum
+else
+  MISSING="$MISSING,sha256sum"
+fi
+[ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
+
+hash_set() { # the set on stdin; its digest and the reader's own trailing word
+  if [ "$HASH_TOOL" = sha256sum ]; then
+    sha256sum
+  else
+    shasum -a 256
+  fi
+}
 
 # Git cannot distinguish an absent repository from unreadable metadata here.
 REPO_ROOT=$(git rev-parse --show-toplevel 2>&1) || refuse git 'rev-parse' "$REPO_ROOT"

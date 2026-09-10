@@ -181,6 +181,14 @@ build() { # WORLD — the row's repository, its run directory and PATH
       badconfig) printf 'this is not a config line\n' >"$REPO/.git/config" ;;
       sealed-marker) mkdir -p "$REPO/.git/kendex"; chmod 500 "$REPO/.git/kendex" ;;
       nopath) mkdir -p "$REPO.empty"; RUN_PATH="$REPO.empty" ;;
+      payload-tools-only)
+        # The two commands the hook may call before it reads the payload, and
+        # nothing else: the row asks what a discovery-only absence does.
+        mkdir -p "$REPO.only"
+        ln -sf -- "$(command -v jq)" "$REPO.only/jq"
+        ln -sf -- "$(command -v cat)" "$REPO.only/cat"
+        RUN_PATH="$REPO.only"
+        ;;
       break:*) RUN_PATH="$(broken "${word#break:}"):$PATH" ;;
       *) printf 'an unknown world word builds nothing: %s\n' "$word" >&2; exit 1 ;;
     esac
@@ -394,7 +402,13 @@ a payload that is not JSON|repo|code|raw|2|-|payload=invalid-json
 a jq that cannot answer for the payload, with its own words below|repo break:jq|code|stop|2|-|payload=invalid-json;fixture: jq failed
 a payload carrying no session id|repo|code|noid|2|-|session-id=invalid
 a marker that cannot be recorded|repo sealed-marker|code|stop|2|-|marker=<path>
-no command the hook runs on PATH|repo nopath|code|stop|2|-|missing-tools=jq,git,cat,sed,sort,tr,dirname,grep,mkdir,sha256sum
+no command the hook runs on PATH names the payload readers alone|repo nopath|code|stop|2|-|missing-tools=jq,cat
+only the payload readers on PATH names the rest|repo payload-tools-only|code|stop|2|-|missing-tools=git,sed,sort,tr,dirname,grep,mkdir,sha256sum
+"
+
+run_table "which absence still refuses the retry stop_hook_active passes" "world change payload rc err" "\
+a discovery command missing on an active stop passes|repo payload-tools-only|code|active|0|-
+a payload reader missing refuses the active stop too, the flag being in the payload it cannot read|repo nopath|code|active|2|missing-tools=jq,cat
 "
 
 run_table "a state the hook cannot read is refused only where a set is named" "world change payload rc err" "\
