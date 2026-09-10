@@ -24,6 +24,7 @@ export function NavBar() {
   const marketplaceRef = useNavStore((s) => s.marketplaceRef);
   const bundleRef = useNavStore((s) => s.bundleRef);
   const availableRef = useNavStore((s) => s.availableRef);
+  const templateName = useNavStore((s) => s.templateName);
   const hasHistory = useNavStore((s) => s.history.length > 0);
   const back = useNavStore((s) => s.back);
   // The subscription rows, so the crumb names a marketplace the way its card
@@ -79,6 +80,7 @@ export function NavBar() {
               directory,
             ),
             bundleName: bundleRef?.bundle ?? null,
+            templateName,
           })}
         </span>
       </div>

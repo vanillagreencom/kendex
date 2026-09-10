@@ -162,6 +162,14 @@ impl Env {
         self.app_config_dir().join("settings.toml")
     }
 
+    /// The template index — saved package selections, the person's and
+    /// machine-local, beside the settings file the rest of their
+    /// preferences live in. The copies a template owns are not here; they
+    /// live under [`Env::template_store_dir`].
+    pub fn templates_file(&self) -> PathBuf {
+        self.app_config_dir().join("templates.toml")
+    }
+
     pub fn global_manifest_file(&self) -> PathBuf {
         self.app_config_dir().join(crate::manifest::MANIFEST_FILE)
     }
@@ -227,6 +235,15 @@ impl Env {
 
     pub fn global_local_source_dir(&self) -> PathBuf {
         self.data_dir.join(APP_DIR).join("local-source")
+    }
+
+    /// Where a template keeps the package copies it owns — one
+    /// catalog-shaped tree per template, under the app data root like
+    /// every other store kendex writes. A template outlives the project
+    /// its copies were taken from, so the bytes cannot live under that
+    /// project's root.
+    pub fn template_store_dir(&self) -> PathBuf {
+        self.data_dir.join(APP_DIR).join("templates")
     }
 
     /// The shared skills tree at global scope — `.agents/skills` under the

@@ -6,6 +6,7 @@ import type {
   BundleRef,
   HistoryEntry,
   LibraryFilter,
+  LibraryTab,
   MarketplaceRef,
   MarketplacesTab,
   PackageRef,
@@ -42,6 +43,12 @@ interface NavState {
    * search box is on screen. */
   searchFocus: number;
   marketplacesTab: MarketplacesTab;
+  /** Which My Library tab is showing. Kept here rather than in the page so
+   *  leaving for a template and coming back lands on the tab the row was
+   *  on. */
+  libraryTab: LibraryTab;
+  /** Which template the template page is showing; null anywhere else. */
+  templateName: string | null;
   /** Consumed once by the Library on mount, then cleared. */
   libraryFilter: LibraryFilter | null;
   /** Which package the package page shows; null anywhere else. */
@@ -75,6 +82,8 @@ interface NavState {
   future: HistoryEntry[];
   setPage: (page: Page) => void;
   setLibraryScope: (scope: ScopeSelection) => void;
+  setLibraryTab: (tab: LibraryTab) => void;
+  goToTemplate: (name: string) => void;
   setSearch: (search: string) => void;
   /** Focus the search box on screen, or the Library's if this page has none. */
   focusSearch: () => void;
@@ -120,6 +129,8 @@ export const useNavStore = create<NavState>((set) => ({
   search: "",
   searchFocus: 0,
   marketplacesTab: "subscribed",
+  libraryTab: "installed",
+  templateName: null,
   libraryFilter: null,
   packageRef: null,
   marketplaceRef: null,
@@ -147,8 +158,20 @@ export const useNavStore = create<NavState>((set) => ({
       unmanagedScope: null,
       changesRoot: null,
       installInto: null,
+      templateName: null,
     }),
   setLibraryScope: (libraryScope) => set({ libraryScope }),
+  // Switching tabs is not navigating: the page calls this to change its
+  // own tab, and a stack entry per tab would make Back a tab-undo.
+  setLibraryTab: (libraryTab) => set({ libraryTab }),
+  goToTemplate: (name) =>
+    set((state) => ({
+      page: "template",
+      templateName: name,
+      installInto: null,
+      history: pushHistory(state, "template"),
+      future: [],
+    })),
   projectMoved: (from) => {
     // Everything about where the reader has been, let go of at once.
     //
@@ -323,6 +346,8 @@ function here(state: NavState): HistoryEntry {
   return {
     page: state.page,
     marketplacesTab: state.marketplacesTab,
+    libraryTab: state.libraryTab,
+    templateName: state.templateName,
     packageRef: state.packageRef,
     marketplaceRef: state.marketplaceRef,
     bundleRef: state.bundleRef,

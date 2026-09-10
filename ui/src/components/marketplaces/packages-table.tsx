@@ -13,6 +13,7 @@ import {
   PackageRow,
 } from "@/components/marketplaces/package-row";
 import { useBrowsedRepo } from "@/components/marketplaces/repo-action";
+import { AddToTemplateDialog } from "@/components/templates/add-to-template-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -34,6 +35,7 @@ import {
   INSTALLED_IN_HEADING,
   SUBSCRIBE_TO_INSTALL_MEANS,
 } from "@/lib/copy-marketplaces";
+import { ADD_TO_TEMPLATE_LABEL } from "@/lib/copy-templates";
 import {
   countIn,
   groupsFor,
@@ -50,6 +52,7 @@ import {
   type PackageSort,
   type SortKey,
 } from "@/lib/package-order";
+import { membersFor } from "@/lib/template-members";
 import { cn } from "@/lib/utils";
 import { type InstallSubject, useInstallFlow } from "@/stores/install-flow";
 import {
@@ -241,6 +244,7 @@ export function PackagesTable({
   // re-filters under a selection, and a set of indexes would follow the
   // rows that happened to be in those positions afterwards.
   const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
+  const [addingToTemplate, setAddingToTemplate] = useState(false);
   const showPlaces = places !== undefined;
 
   // The room the table has is the room the page gives it, which no column
@@ -374,16 +378,30 @@ export function PackagesTable({
           {SUBSCRIBE_TO_INSTALL_MEANS}
         </p>
       ) : null}
-      {/* The selection's one action. It appears with the selection rather
+      {/* The selection's actions. They appear with the selection rather
           than sitting disabled above an untouched table, and the count is
-          on the button because that is what pressing it installs. */}
+          on the button because that is what pressing it installs. Install
+          stays primary; saving the selection into a template is the
+          secondary action beside it. */}
       {chosen.length > 0 ? (
-        <div className="mb-3 flex items-center justify-end">
+        <div className="mb-3 flex items-center justify-end gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setAddingToTemplate(true)}
+          >
+            {ADD_TO_TEMPLATE_LABEL}
+          </Button>
           <Button size="sm" onClick={() => askFor()}>
             {installSelectedLabel(chosen.length)}
           </Button>
         </div>
       ) : null}
+      <AddToTemplateDialog
+        members={membersFor(chosen, rows)}
+        open={addingToTemplate}
+        onOpenChange={setAddingToTemplate}
+      />
       <Table>
         <TableHeader>
           <TableRow>

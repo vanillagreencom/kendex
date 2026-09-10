@@ -159,6 +159,8 @@ describe("nav store", () => {
       {
         page: "home",
         marketplacesTab: "subscribed",
+        libraryTab: "installed",
+        templateName: null,
         packageRef: null,
         marketplaceRef: null,
         bundleRef: null,
@@ -225,6 +227,8 @@ describe("nav store", () => {
       {
         page: "home",
         marketplacesTab: "subscribed",
+        libraryTab: "installed",
+        templateName: null,
         packageRef: null,
         marketplaceRef: null,
         bundleRef: null,

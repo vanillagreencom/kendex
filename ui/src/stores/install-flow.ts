@@ -23,6 +23,7 @@ import { reachableProjectsNow } from "@/lib/reachable-projects";
 import { everyPlace, sameScope, scopeKey } from "@/lib/scope";
 import { useMarketplacesStore } from "./marketplaces";
 import { useNavStore } from "./nav";
+import { installTemplate } from "./templates";
 
 /** What one subscription contributes to an answer. A selection can span
  *  marketplaces — the cross-marketplace Packages tab lists them together —
@@ -59,6 +60,11 @@ export interface InstallSubject {
   kinds: ItemKind[];
   /** What one package says it needs, when the answer is one package. */
   dependencies?: PackageDependencies | null;
+  /** The saved selection this answer installs, where it is one. A template
+   *  is one core operation over its whole membership — it subscribes to
+   *  what it needs and copies what it owns — so the flow asks the same what
+   *  and where questions and sends this instead of walking `groups`. */
+  template?: string | null;
 }
 
 /** What a surface hands the flow when it opens it. */
@@ -181,6 +187,24 @@ export const useInstallFlow = create<InstallFlowState>((set, get) => ({
         let wrote = false;
         let refused: string | null = null;
         let unread: string | null = null;
+        // One saved selection is one write per place. Its members can
+        // span marketplaces and its own copies, which is more than a
+        // single `marketplaceInstall` carries, so the whole thing goes
+        // through the template operation core owns.
+        if (subject.template) {
+          const answer = await installTemplate(
+            subject.template,
+            place,
+            places.length === 1 ? choice : undefined,
+          );
+          outcomes.push({
+            scope: place,
+            wrote: answer.ok,
+            refused: answer.reason,
+            unread: null,
+          });
+          continue;
+        }
         for (const group of subject.groups) {
           const destination = destinationFor(group, place, freeChoice);
           if (destination === undefined) continue;

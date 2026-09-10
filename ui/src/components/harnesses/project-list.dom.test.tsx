@@ -38,6 +38,10 @@ import {
   removeFromList,
 } from "@/lib/copy-project-move";
 import {
+  CREATE_FROM_PROJECT_LABEL,
+  INSTALL_TEMPLATE_LABEL,
+} from "@/lib/copy-templates";
+import {
   outOfDateHereLabel,
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATE_REVIEW_CONFIRM,
@@ -56,6 +60,7 @@ import { useLibraryViewStore } from "@/stores/library-view";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import { useProjectChangesStore } from "@/stores/project-changes";
+import { useProjectSetupStore } from "@/stores/project-setup";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
@@ -68,6 +73,7 @@ import { ProjectList } from "./project-list";
 vi.mock("@/bindings", () => ({
   PACKAGE_CHECK_HARNESSES: ["claude", "pi"] as const,
   commands: {
+    templatesList: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     auditAll: vi.fn(),
     libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
     scanMachine: vi.fn(),
@@ -137,6 +143,10 @@ const byHand = (name: string): DriftRow => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The offer to fill a freshly added project outlives the write that
+  // raised it, by design: it is a dialog somebody answers. Cleared here so
+  // one case's registration does not leave it open over the next.
+  useProjectSetupStore.setState({ justAdded: null });
   vi.mocked(commands.scanMachine).mockResolvedValue({
     status: "ok",
     data: emptyScan as never,
@@ -438,6 +448,8 @@ describe("a place card's actions", () => {
     await openActions(host, "acme");
     expect(menuItems()).toEqual([
       ADD_PACKAGES_LABEL,
+      INSTALL_TEMPLATE_LABEL,
+      CREATE_FROM_PROJECT_LABEL,
       PLACE_MARKETPLACES_LABEL,
       CHANGE_FOLDER_LABEL,
       removeFromList("acme"),
@@ -495,7 +507,14 @@ describe("a place card's actions", () => {
     await settle();
 
     await openActions(host, "Personal");
-    expect(menuItems()).toEqual([ADD_PACKAGES_LABEL, PLACE_MARKETPLACES_LABEL]);
+    // Personal is a place, so it takes a template like any other; it is
+    // not a project, so there is nothing to create one from and nothing to
+    // stop tracking.
+    expect(menuItems()).toEqual([
+      ADD_PACKAGES_LABEL,
+      INSTALL_TEMPLATE_LABEL,
+      PLACE_MARKETPLACES_LABEL,
+    ]);
   });
 
   // Removal moved off its own button and into this menu, and a menu item
@@ -547,6 +566,8 @@ describe("a place card's actions", () => {
     await openActions(host, "client");
     expect(menuItems()).toEqual([
       ADD_PACKAGES_LABEL,
+      INSTALL_TEMPLATE_LABEL,
+      CREATE_FROM_PROJECT_LABEL,
       PLACE_MARKETPLACES_LABEL,
       CHANGE_FOLDER_LABEL,
       removeFromList("/work/client"),

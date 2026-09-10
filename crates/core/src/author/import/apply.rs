@@ -35,14 +35,7 @@ pub fn apply(
                 ),
             });
         }
-        if !matches!(
-            selection.kind,
-            ItemKind::Skill
-                | ItemKind::Agent
-                | ItemKind::Hook
-                | ItemKind::Command
-                | ItemKind::McpServer
-        ) {
+        if !super::carries(selection.kind) {
             return Err(CoreError::Authoring {
                 message: format!(
                     "a {} cannot be imported into a catalog directly",

@@ -19,6 +19,13 @@ import { useAuditStore } from "./audit";
 import { useScanStore } from "./scan";
 
 interface ProjectSetupState {
+  /** The root of the project most recently registered, as the registry
+   *  recorded it. What "after choosing the folder, offer a template"
+   *  needs: the canonical root the write returned, never the string
+   *  somebody typed. Cleared once the offer it is for has been answered.
+   */
+  justAdded: string | null;
+  clearJustAdded: () => void;
   /** Roots whose read of the machine has not answered yet. */
   checking: readonly string[];
   /** Roots that were registered and whose read failed. Cleared when a
@@ -49,8 +56,11 @@ const readFailed = (): boolean =>
   useAuditStore.getState().read.status === "failed";
 
 export const useProjectSetupStore = create<ProjectSetupState>((set) => ({
+  justAdded: null,
   checking: [],
   unchecked: [],
+
+  clearJustAdded: () => set({ justAdded: null }),
 
   forget: (root) => {
     // Said where every store that holds something per project says it: the
@@ -60,6 +70,11 @@ export const useProjectSetupStore = create<ProjectSetupState>((set) => ({
     set((state) => ({
       checking: without(state.checking, root),
       unchecked: without(state.unchecked, root),
+      // The offer named this folder, and the folder is not a project any
+      // more: nothing here is left naming it, which is this verb's whole
+      // rule. An offer kept over it would ask to install into a place
+      // nothing tracks.
+      justAdded: state.justAdded === root ? null : state.justAdded,
     }));
   },
 
@@ -68,6 +83,7 @@ export const useProjectSetupStore = create<ProjectSetupState>((set) => ({
     // folder registered afresh reads here like any other.
     askingAgain([root]);
     set((state) => ({
+      justAdded: root,
       checking: with_(state.checking, root),
       unchecked: without(state.unchecked, root),
     }));

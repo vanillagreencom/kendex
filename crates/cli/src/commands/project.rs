@@ -17,7 +17,11 @@ pub enum ProjectCommand {
         /// Also install the session-start drift report hook there
         #[arg(long)]
         drift_hook: bool,
-        /// Skip confirmation prompts (with --drift-hook)
+        /// Install this saved template into the project once it is
+        /// registered
+        #[arg(long)]
+        template: Option<String>,
+        /// Skip confirmation prompts (with --drift-hook or --template)
         #[arg(short = 'y', long)]
         yes: bool,
     },
@@ -51,11 +55,25 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
         ProjectCommand::Add {
             path,
             drift_hook,
+            template,
             yes,
         } => {
             settings::register_project(env, &path)?;
             out(&format!("registered {}", path.display()));
             offer_to_manage(env, &path);
+            // Registering and filling a project is one path, so the
+            // template lands before the hook offer rather than as a
+            // second command somebody has to know about.
+            if let Some(name) = template {
+                super::template_cmd::run(
+                    env,
+                    super::template_cmd::TemplateCommand::Install {
+                        name,
+                        project: Some(path.clone()),
+                        yes,
+                    },
+                )?;
+            }
             match drift_hook {
                 true => {
                     let scope = kendex_core::model::Scope::Project { root: path.clone() };

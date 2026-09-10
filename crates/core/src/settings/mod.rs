@@ -172,12 +172,19 @@ const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 /// between the two. Distinct fds conflict under the OS lock, so it
 /// serializes this process's threads as well as other processes.
 fn write_lock(env: &Env) -> Result<crate::fs::LockedFile> {
-    let settings = env.settings_file();
-    let parent = settings
+    file_lock(&env.settings_file())
+}
+
+/// The same one-writer-at-a-time discipline over any personal file kendex
+/// keeps beside the settings, so a second such file cannot grow a second
+/// spelling of the lock, the wait or the refusal. [`crate::template`]'s
+/// index is the other caller.
+pub(crate) fn file_lock(file: &Path) -> Result<crate::fs::LockedFile> {
+    let parent = file
         .parent()
-        .ok_or_else(|| CoreError::io(&settings, std::io::Error::other("path has no parent")))?;
+        .ok_or_else(|| CoreError::io(file, std::io::Error::other("path has no parent")))?;
     std::fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
-    let mut path = settings.into_os_string();
+    let mut path = file.to_path_buf().into_os_string();
     path.push(".lock");
     let path = PathBuf::from(path);
     let deadline = std::time::Instant::now() + LOCK_WAIT;

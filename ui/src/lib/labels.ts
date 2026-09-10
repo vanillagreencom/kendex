@@ -159,6 +159,7 @@ const PAGE_LABELS: Record<Page, string> = {
   settings: "Settings",
   problems: "Problems",
   package: "Package",
+  template: "Template",
   marketplaceDetail: "Marketplace",
   bundleDetail: "Bundle",
   availablePackage: "Package",
@@ -174,9 +175,14 @@ export function breadcrumbLabel(nav: {
   marketplaceName?: string | null;
   /** The open bundle's name, on the bundle page. */
   bundleName?: string | null;
+  /** The open template's name, on the template page. */
+  templateName?: string | null;
 }): string {
   if (nav.page === "package" && nav.packageName) {
     return `${PAGE_LABELS.library} / ${nav.packageName}`;
+  }
+  if (nav.page === "template" && nav.templateName) {
+    return `${PAGE_LABELS.library} / ${nav.templateName}`;
   }
   if (nav.page === "marketplaceDetail" && nav.marketplaceName) {
     return `${PAGE_LABELS.marketplaces} / ${nav.marketplaceName}`;

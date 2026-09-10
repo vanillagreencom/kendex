@@ -10,6 +10,8 @@ import { PackageChecksRow } from "@/components/harnesses/package-checks-row";
 import { PlaceMarketplacesDialog } from "@/components/harnesses/place-marketplaces-dialog";
 import { ProjectCard } from "@/components/harnesses/project-card";
 import { ChangesLine } from "@/components/project-changes/changes-line";
+import { CreateTemplateDialog } from "@/components/templates/create-template-dialog";
+import { InstallTemplateDialog } from "@/components/templates/install-template-dialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -41,6 +43,10 @@ import {
   ADD_PROJECT_TITLE,
   FIND_PROJECTS_TITLE,
 } from "@/lib/copy-project-setup";
+import {
+  CREATE_FROM_PROJECT_LABEL,
+  INSTALL_TEMPLATE_LABEL,
+} from "@/lib/copy-templates";
 import {
   type ItemPlace,
   installedCountByKind,
@@ -177,15 +183,24 @@ function PlaceActions({
   onRemove?: () => void;
 }) {
   const [marketplacesOpen, setMarketplacesOpen] = useState(false);
-  // A folder can stop being readable while this dialog stands open — a
-  // rescan on focus, a disk unmounted, the folder renamed from a
-  // terminal. Its controls write this place's own manifest, which is
-  // exactly what the menu behind it withholds once the place cannot be
-  // read; leaving it open leaves those writes reachable, and one of them
-  // would seed a manifest and recreate the folder that went away. So the
-  // dialog goes when the place does, on the same one bit.
+  const [creatingTemplate, setCreatingTemplate] = useState(false);
+  const [installingTemplate, setInstallingTemplate] = useState(false);
+  // A template is made from a project's packages, and the personal setup
+  // is not a project: the offer is on the cards it can act on.
+  const root = scope.scope === "project" ? scope.root : null;
+  // A folder can stop being readable while one of these dialogs stands
+  // open — a rescan on focus, a disk unmounted, the folder renamed from a
+  // terminal. Their controls write this place's own manifest or read its
+  // own files, which is exactly what the menu behind them withholds once
+  // the place cannot be read; leaving one open leaves those reads and
+  // writes reachable, and one of them would seed a manifest and recreate
+  // the folder that went away. So they go when the place does, on the
+  // same one bit.
   useEffect(() => {
-    if (!reachable) setMarketplacesOpen(false);
+    if (reachable) return;
+    setMarketplacesOpen(false);
+    setInstallingTemplate(false);
+    setCreatingTemplate(false);
   }, [reachable]);
   return (
     <>
@@ -207,6 +222,14 @@ function PlaceActions({
               <DropdownMenuItem onClick={onAddPackages}>
                 {ADD_PACKAGES_LABEL}
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setInstallingTemplate(true)}>
+                {INSTALL_TEMPLATE_LABEL}
+              </DropdownMenuItem>
+              {root ? (
+                <DropdownMenuItem onClick={() => setCreatingTemplate(true)}>
+                  {CREATE_FROM_PROJECT_LABEL}
+                </DropdownMenuItem>
+              ) : null}
               <DropdownMenuItem onClick={() => setMarketplacesOpen(true)}>
                 {PLACE_MARKETPLACES_LABEL}
               </DropdownMenuItem>
@@ -230,6 +253,19 @@ function PlaceActions({
         scope={scope}
         place={place}
       />
+      <InstallTemplateDialog
+        into={scope}
+        open={installingTemplate}
+        onOpenChange={setInstallingTemplate}
+      />
+      {root ? (
+        <CreateTemplateDialog
+          project={root}
+          place={place}
+          open={creatingTemplate}
+          onOpenChange={setCreatingTemplate}
+        />
+      ) : null}
     </>
   );
 }
@@ -257,6 +293,10 @@ export function ProjectList() {
   // those reads failed. Registration and this are separate answers — see
   // `stores/project-setup.ts`.
   const checking = useProjectSetupStore((s) => s.checking);
+  // The project the registry recorded most recently, and the way to say
+  // the offer about it has been answered.
+  const justAdded = useProjectSetupStore((s) => s.justAdded);
+  const clearJustAdded = useProjectSetupStore((s) => s.clearJustAdded);
   const unchecked = useProjectSetupStore((s) => s.unchecked);
   const check = useProjectSetupStore((s) => s.check);
   // Browsing on a place's behalf: the Packages tab, told which place asked.
@@ -538,6 +578,19 @@ export function ProjectList() {
           onOpenChange={setAdding}
           registerProject={registerProject}
         />
+        {/* Adding a project and filling it are one path: the folder is
+            registered, and the offer to install a saved selection into it
+            follows straight away. The root is the one the registry
+            recorded, not the string that was typed. */}
+        {justAdded ? (
+          <InstallTemplateDialog
+            into={{ scope: "project", root: justAdded }}
+            open
+            onOpenChange={(open) => {
+              if (!open) clearJustAdded();
+            }}
+          />
+        ) : null}
         <FindProjectsDialog
           open={scanning}
           onOpenChange={setScanning}

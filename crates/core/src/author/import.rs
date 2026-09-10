@@ -330,10 +330,71 @@ pub fn license_recognized(license: &str) -> bool {
     REDISTRIBUTABLE.contains(&license)
 }
 
+/// Whether a copy of this kind is something a catalog-shaped tree can
+/// hold: a package with files of its own, at the slot
+/// [`crate::source::local_slot`] resolves for it. A plugin and a Pi
+/// extension are a registry's and a carrier's, installed with what brings
+/// them rather than copied on their own.
+///
+/// One judgement, because two copiers reach it — the import into an
+/// authored catalog, and the copy a template takes into its own store —
+/// and a kind one of them carried and the other refused would be bytes
+/// written into a slot nothing can read back.
+pub fn carries(kind: ItemKind) -> bool {
+    matches!(
+        kind,
+        ItemKind::Skill
+            | ItemKind::Agent
+            | ItemKind::Hook
+            | ItemKind::Command
+            | ItemKind::McpServer
+    )
+}
+
 mod apply;
 mod origins;
 pub use apply::apply;
 use origins::{origins_of, resolve_selection, unmanaged_paths};
+
+/// One previewed selection's bytes, re-read from the machine and
+/// revalidated against the hash the preview showed, with the licence
+/// notices a licensed origin travels with.
+///
+/// The same resolution an import into a catalog runs, offered to a caller
+/// that copies the bytes somewhere else — a template's own store. What
+/// counts as an origin, which bytes a catalog can hold, and what a stale
+/// preview refuses with are decided once, here, so a second copier cannot
+/// answer any of them differently.
+pub struct ResolvedBytes {
+    /// `(relative path, bytes)` pairs. A skill is its tree; every other
+    /// kind is the one file it keeps, under the leaf it was read as.
+    pub files: Vec<(PathBuf, Vec<u8>)>,
+    /// Root-level LICENSE/NOTICE/COPYING files of a licensed origin's
+    /// catalog, so bytes copied out of one keep the terms they came under.
+    pub notices: Vec<(String, Vec<u8>)>,
+}
+
+/// Re-resolve one selection's bytes. The hash the preview showed is
+/// revalidated, so bytes that changed underneath refuse rather than copy.
+pub fn resolve(env: &Env, scopes: &[Scope], selection: &ImportSelection) -> Result<ResolvedBytes> {
+    let answer = resolve_selection(env, scopes, selection)?;
+    let files = match answer.bytes {
+        Bytes::Tree(files) => files,
+        Bytes::File(bytes) => {
+            let leaf = answer
+                .read_from
+                .as_deref()
+                .and_then(std::path::Path::file_name)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(&selection.name));
+            vec![(leaf, bytes)]
+        }
+    };
+    Ok(ResolvedBytes {
+        files,
+        notices: answer.notices,
+    })
+}
 
 #[cfg(test)]
 mod tests;

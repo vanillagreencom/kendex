@@ -580,6 +580,32 @@ export const commands = {
 	fork: ForkProvenance_Serialize | null,
 	catalog: CatalogGroupMeta | null,
 } | null, string>(__TAURI_INVOKE("package_meta", { scope, kind, name })),
+	templatesList: () => typedError<Template_Serialize[], string>(__TAURI_INVOKE("templates_list")),
+	/**
+	 *  Everything the create-from-project modal draws, read fresh. Nothing is
+	 *  saved and the project is not touched.
+	 */
+	templateDraft: (project: string) => typedError<Draft_Serialize, string>(__TAURI_INVOKE("template_draft", { project })),
+	templateCreateFromProject: (project: string, chosen: Chosen) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_create_from_project", { project, chosen })),
+	/**
+	 *  Save a template from packages picked in a marketplace. Every member is
+	 *  a marketplace identity; no bytes are copied.
+	 */
+	templateCreateFromSelection: (name: string, members: Member_Deserialize[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_create_from_selection", { name, members })),
+	templateAddMembers: (name: string, members: Member_Deserialize[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_add_members", { name, members })),
+	templateRemoveMembers: (name: string, members: MemberRef[]) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_remove_members", { name, members })),
+	templateRename: (name: string, to: string) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_rename", { name, to })),
+	templateDelete: (name: string) => typedError<null, string>(__TAURI_INVOKE("template_delete", { name })),
+	/**
+	 *  What this template installs as it stands on this machine: the
+	 *  repositories its marketplace members come from with the version each
+	 *  resolves to, the copies it owns, and the members nothing can reach.
+	 */
+	templateResolve: (name: string) => typedError<Resolution, string>(__TAURI_INVOKE("template_resolve", { name })),
+	templateInstall: (name: string, destination: Scope, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null) => typedError<TemplateInstall, string>(__TAURI_INVOKE("template_install", { name, destination, harnesses, method })),
+	/**  The files a template owns, for the tree that inspects its copies. */
+	templateFiles: (name: string) => typedError<PackageFile[], string>(__TAURI_INVOKE("template_files", { name })),
+	templateFile: (name: string, path: string) => typedError<string, string>(__TAURI_INVOKE("template_file", { name, path })),
 	/**
 	 *  Every scope's update standing in one query — the sidebar badge, the
 	 *  Updates page, and the Library's fork/edited flags all read this. Rows
@@ -1198,6 +1224,31 @@ operation: string | null } |
  */
 { kind: "unreadable"; said: string[] };
 
+/**  The modal's answers. */
+export type Chosen = {
+	name: string,
+	/**
+	 *  Managed members to keep, by [`super::DraftMember::key`]. Anything
+	 *  the draft listed and this omits is a deliberate exclusion.
+	 */
+	members: string[],
+	/**
+	 *  For a member the draft offered as a choice, the side taken. A
+	 *  member left without one refuses the save.
+	 */
+	sides?: { [key in string]: Side },
+	/**
+	 *  Local packages to copy in, by [`super::DraftLocal::key`]. Empty is
+	 *  the opt-in left off.
+	 */
+	locals?: string[],
+	/**
+	 *  Whether the project's package customizations travel with the
+	 *  selection.
+	 */
+	customizations?: boolean,
+};
+
 /**
  *  What the sidebar card says about the `kendex` command beside the app.
  *  Read before Update now is pressed, and read again after an install that
@@ -1398,6 +1449,46 @@ export type CustomHook_Serialize = {
 };
 
 /**
+ *  Package customizations a template carries, keyed the way the manifest
+ *  keys them: by the package's own name. Project settings that are not
+ *  about a package — the review-bot table, custom hooks, install
+ *  defaults — are not customizations and are never part of a template.
+ */
+export type Customizations = Customizations_Serialize | Customizations_Deserialize;
+
+/**
+ *  Package customizations a template carries, keyed the way the manifest
+ *  keys them: by the package's own name. Project settings that are not
+ *  about a package — the review-bot table, custom hooks, install
+ *  defaults — are not customizations and are never part of a template.
+ */
+export type Customizations_Deserialize = {
+	"optional-dependencies"?: { [key in string]: string[] },
+	"agent-skills"?: { [key in string]: string[] },
+	"agent-launch-instructions"?: { [key in string]: string },
+	"agent-additional-instructions"?: { [key in string]: string },
+	"skill-instructions"?: { [key in string]: string },
+	/**  `[agent-frontmatter.<harness>.<agent>]`, as the manifest stores it. */
+	"agent-frontmatter"?: { [key in string]: { [key in string]: FrontmatterOverrides_Deserialize } },
+};
+
+/**
+ *  Package customizations a template carries, keyed the way the manifest
+ *  keys them: by the package's own name. Project settings that are not
+ *  about a package — the review-bot table, custom hooks, install
+ *  defaults — are not customizations and are never part of a template.
+ */
+export type Customizations_Serialize = {
+	"optional-dependencies"?: { [key in string]: string[] },
+	"agent-skills"?: { [key in string]: string[] },
+	"agent-launch-instructions"?: { [key in string]: string },
+	"agent-additional-instructions"?: { [key in string]: string },
+	"skill-instructions"?: { [key in string]: string },
+	/**  `[agent-frontmatter.<harness>.<agent>]`, as the manifest stores it. */
+	"agent-frontmatter"?: { [key in string]: { [key in string]: FrontmatterOverrides_Serialize } },
+};
+
+/**
  *  One package's declaration, with the package it came from — what a plan
  *  carries out to the surfaces that disclose it.
  */
@@ -1587,6 +1678,135 @@ export type Disclosure = {
 	undo: string | null,
 };
 
+/**  Everything the create-from-project modal draws. */
+export type Draft = Draft_Serialize | Draft_Deserialize;
+
+/**
+ *  Why the managed inventory is not the whole story. Present is not an
+ *  empty project: the modal shows it and the rows it did reach.
+ */
+export type DraftError = {
+	why: string,
+};
+
+/**  One unmanaged package the person may opt into copying. */
+export type DraftLocal = {
+	/**  Keyed the way a managed member is — see [`member_key`]. */
+	key: string,
+	kind: MemberKind,
+	name: string,
+	/**  Where the bytes are. */
+	at: string,
+	hash: string,
+};
+
+/**  One managed package, as the modal lists it. */
+export type DraftMember = {
+	/**
+	 *  What identifies this member inside one draft: the person's choices
+	 *  come back keyed by it. Carried on the row rather than derived by
+	 *  each caller, so the modal, the command line and the save all key
+	 *  the same way.
+	 */
+	key: string,
+	kind: MemberKind,
+	name: string,
+	/**
+	 *  Whether the project has this package switched on. A package
+	 *  switched off stays switched off in the template.
+	 */
+	enabled: boolean,
+	/**
+	 *  Whether the project declared this package itself, or it arrived
+	 *  with a set or as something else's dependency.
+	 */
+	derived: boolean,
+	/**  The installed packages that require this one, in name order. */
+	requiredBy: string[],
+	origin: DraftOrigin,
+};
+
+/**  What a template would record for one managed package. */
+export type DraftOrigin = 
+/**
+ *  A marketplace, by the repository or folder its source declares.
+ *  Saving records the identity; the bytes come from the marketplace at
+ *  install time.
+ */
+{ origin: "marketplace"; repo: string; 
+/**
+ *  The subscription alias the project declared, for the row to
+ *  name a marketplace the person recognizes.
+ */
+source: string; rev: string | null } | 
+/**  The project's own content, which the template copies into its store. */
+{ origin: "copy"; 
+/**  Where the bytes are read from, as kendex spells a path. */
+at: string; 
+/**
+ *  The content identity the copy is taken at, revalidated when the
+ *  template is saved.
+ */
+hash: string } | 
+/**
+ *  Both are on offer and neither may be picked for the person: the
+ *  marketplace package this was installed from, and the edited copy on
+ *  disk. Saving requires the choice.
+ */
+{ origin: "choice"; repo: string; source: string; rev: string | null; 
+/**
+ *  Where the edited copy is, or null where its current rendering
+ *  is not something a template can store.
+ */
+at: string | null; hash: string | null; 
+/**  Why the edited copy cannot be stored, when it cannot. */
+why: string | null } | 
+/**
+ *  Nothing a template can record. The member stays visible and the
+ *  save refuses until it is resolved or excluded.
+ */
+{ origin: "unresolved"; why: string };
+
+/**  Everything the create-from-project modal draws. */
+export type Draft_Deserialize = {
+	/**  The project this reads. */
+	project: string,
+	/**  A name the person can accept or replace: the project's folder. */
+	suggestedName: string,
+	/**  Managed packages, every one included to start with. */
+	members: DraftMember[],
+	/**  Unmanaged packages, none of them included to start with. */
+	locals: DraftLocal[],
+	excluded: Excluded[],
+	/**
+	 *  The package customizations the project's manifest carries for the
+	 *  packages above — what "Include package customizations" would save.
+	 */
+	customizations: Customizations_Deserialize,
+	/**  Why the managed reading is short, when it is. */
+	incomplete: DraftError | null,
+};
+
+/**  Everything the create-from-project modal draws. */
+export type Draft_Serialize = {
+	/**  The project this reads. */
+	project: string,
+	/**  A name the person can accept or replace: the project's folder. */
+	suggestedName: string,
+	/**  Managed packages, every one included to start with. */
+	members: DraftMember[],
+	/**  Unmanaged packages, none of them included to start with. */
+	locals: DraftLocal[],
+	excluded: Excluded[],
+	/**
+	 *  The package customizations the project's manifest carries for the
+	 *  packages above — what "Include package customizations" would save.
+	 */
+	customizations: Customizations_Serialize,
+	/**  Why the managed reading is short, when it is. */
+	incomplete: DraftError | null,
+};
+
 /**
  *  Why an installation diverged, when the plan can tell. `LocalEdit` and
  *  `Both`, and the three that say files kendex did not write are on disk,
@@ -1737,6 +1957,13 @@ export type Enforcement =
  *  declares no hook surface for.
  */
 "not-applicable";
+
+/**  Something the project holds that a template cannot carry, and why. */
+export type Excluded = {
+	kind: MemberKind,
+	name: string,
+	why: string,
+};
 
 /**
  *  What this action does to the file, read from the operations it will
@@ -2721,6 +2948,109 @@ export type MarketplaceRow = {
 	recordsUnreadable: boolean,
 };
 
+/**  One package a template installs. */
+export type Member = Member_Serialize | Member_Deserialize;
+
+/**
+ *  What a template member is. A curated set is not a kind of package —
+ *  the catalog offers it under one name and installs it whole — so it
+ *  stands beside the kinds rather than inside them.
+ */
+export type MemberKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension" | "bundle";
+
+/**  One member, named the way a caller outside core addresses it. */
+export type MemberRef = {
+	kind: MemberKind,
+	name: string,
+};
+
+/**  Where a member's content comes from when the template is installed. */
+export type MemberSource = MemberSource_Serialize | MemberSource_Deserialize;
+
+/**  Where a member's content comes from when the template is installed. */
+export type MemberSource_Deserialize = 
+/**
+ *  A marketplace, named the way a source declaration names it: the
+ *  repository, or the folder a path source points at. Saved rather
+ *  than the subscription's alias, because an alias is a per-place
+ *  manifest key and a template belongs to no place.
+ */
+({ held: "marketplace"; repo: string; 
+/**
+ *  The version choice saved with the member, when the selection
+ *  carried one. Absent follows the source.
+ */
+rev?: string | null }) & { copy?: never; from?: never } | 
+/**
+ *  A copy this template owns, under its own store. The originating
+ *  project may move or disappear without reaching it.
+ */
+({ held: "copy"; 
+/**  The copy's path inside the template's store, slash-separated. */
+copy: string; 
+/**
+ *  The marketplace the copied bytes came from, where they came
+ *  from one — an edited copy of a marketplace package keeps
+ *  saying so, because editing does not change where content came
+ *  from. Absent for the person's own content.
+ */
+from?: string | null }) & { repo?: never; rev?: never };
+
+/**  Where a member's content comes from when the template is installed. */
+export type MemberSource_Serialize = 
+/**
+ *  A marketplace, named the way a source declaration names it: the
+ *  repository, or the folder a path source points at. Saved rather
+ *  than the subscription's alias, because an alias is a per-place
+ *  manifest key and a template belongs to no place.
+ */
+({ held: "marketplace"; repo: string; 
+/**
+ *  The version choice saved with the member, when the selection
+ *  carried one. Absent follows the source.
+ */
+rev?: string | null }) & { copy?: never; from?: never } | 
+/**
+ *  A copy this template owns, under its own store. The originating
+ *  project may move or disappear without reaching it.
+ */
+({ held: "copy"; 
+/**  The copy's path inside the template's store, slash-separated. */
+copy: string; 
+/**
+ *  The marketplace the copied bytes came from, where they came
+ *  from one — an edited copy of a marketplace package keeps
+ *  saying so, because editing does not change where content came
+ *  from. Absent for the person's own content.
+ */
+from?: string | null }) & { repo?: never; rev?: never };
+
+/**  One package a template installs. */
+export type Member_Deserialize = {
+	kind: MemberKind,
+	name: string,
+	/**
+	 *  Whether the destination installs this member switched on. A
+	 *  package the originating project had switched off stays switched
+	 *  off here rather than being quietly enabled.
+	 */
+	enabled?: boolean,
+	source: MemberSource_Deserialize,
+};
+
+/**  One package a template installs. */
+export type Member_Serialize = {
+	kind: MemberKind,
+	name: string,
+	/**
+	 *  Whether the destination installs this member switched on. A
+	 *  package the originating project had switched off stays switched
+	 *  off here rather than being quietly enabled.
+	 */
+	enabled?: boolean,
+	source: MemberSource_Serialize,
+};
+
 export type Method = "symlink" | "copy";
 
 /**
@@ -2751,6 +3081,21 @@ export type MineRow = {
 	/**  Every check finding, file-first, so the app can open each one. */
 	findings: StatusFinding[],
 	git: GitReadiness,
+};
+
+/**
+ *  A member this machine cannot install, and why. A template carrying one
+ *  still lists and still opens; installing it refuses.
+ */
+export type MissingMember = {
+	kind: MemberKind,
+	name: string,
+	/**
+	 *  The marketplace the member names, for the row to keep saying where
+	 *  it came from.
+	 */
+	repo: string | null,
+	why: string,
 };
 
 /**
@@ -3581,6 +3926,63 @@ export type ReportRouteView = {
 	warnings: string[],
 };
 
+/**  What a template installs, as it stands on this machine now. */
+export type Resolution = {
+	groups: ResolvedGroup[],
+	copies: ResolvedCopy[],
+	missing: MissingMember[],
+};
+
+/**  One copy the template owns. */
+export type ResolvedCopy = {
+	kind: ItemKind,
+	name: string,
+	enabled: boolean,
+	/**  The copy's path inside the template's store. */
+	copy: string,
+	/**  The marketplace the bytes came from, where they came from one. */
+	from: string | null,
+};
+
+/**
+ *  The marketplace members of one repository, and how this machine reaches
+ *  it right now.
+ */
+export type ResolvedGroup = {
+	/**  The repository or folder, as the template saved it. */
+	repo: string,
+	/**
+	 *  The personal subscription that already carries it, or null where
+	 *  installing would subscribe first.
+	 */
+	source: string | null,
+	/**  The version choice saved with these members, when there was one. */
+	rev: string | null,
+	/**
+	 *  The commit this repository resolves to, from what is on this
+	 *  machine. Null where nothing has been fetched.
+	 */
+	version: string | null,
+	/**
+	 *  Whether `version` is what a cached read last saw rather than a
+	 *  fresh one. A row shows it as last-known.
+	 */
+	lastKnown: boolean,
+	items: ResolvedItem[],
+	/**
+	 *  Curated sets installed whole. What each holds is the catalog's to
+	 *  say and derives at install time.
+	 */
+	bundles: string[],
+};
+
+/**  One package a resolved group installs. */
+export type ResolvedItem = {
+	kind: ItemKind,
+	name: string,
+	enabled: boolean,
+};
+
 /**
  *  What putting the named paths back to what the last commit holds would
  *  do, path by path.
@@ -4124,6 +4526,16 @@ export type SetupStatus = {
 
 export type Severity = "low" | "medium" | "high" | "critical";
 
+/**
+ *  Which side of a member offering both a marketplace package and an
+ *  edited copy the person took.
+ */
+export type Side = 
+/**  The package as its marketplace offers it. */
+"marketplace" | 
+/**  The edited copy on disk, taken into the template's store. */
+"copy";
+
 export type SkillSettings = {
 	skill: string,
 	template: SkillTemplate,
@@ -4440,12 +4852,57 @@ export type TangledFile = {
 	reason: TangleReason,
 };
 
+/**  One saved selection. */
+export type Template = Template_Serialize | Template_Deserialize;
+
 /**  A defect at a place in the template, with what to do about it. */
 export type TemplateFinding = {
 	/**  1-based line; 0 where the whole file is the subject. */
 	line: number,
 	problem: string,
 	fix: string,
+};
+
+/**
+ *  What one template install did. Read after the write: the parts are
+ *  what landed, not what was asked for.
+ */
+export type TemplateInstall = {
+	/**
+	 *  The repositories subscribed to along the way, in the order they
+	 *  were.
+	 */
+	subscribed: string[],
+	/**  Packages declared, by kind and name. */
+	declared: string[],
+	/**  Copies written into the destination's own local packages. */
+	copied: string[],
+	/**  What a step said while it worked. */
+	notes: string[],
+};
+
+/**  One saved selection. */
+export type Template_Deserialize = {
+	name: string,
+	/**
+	 *  The folder this template's copies live in, under the store root.
+	 *  Kept apart from the name so a rename never moves a byte.
+	 */
+	id: string,
+	members?: Member_Deserialize[],
+	customizations?: Customizations_Deserialize,
+};
+
+/**  One saved selection. */
+export type Template_Serialize = {
+	name: string,
+	/**
+	 *  The folder this template's copies live in, under the store root.
+	 *  Kept apart from the name so a rename never moves a byte.
+	 */
+	id: string,
+	members?: Member_Serialize[],
+	customizations?: Customizations_Serialize,
 };
 
 /**
