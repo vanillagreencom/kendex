@@ -359,6 +359,7 @@ describe("what a folder leaving the list leaves behind", () => {
       packageRef: {
         kind: "skill",
         name: "gh",
+        identity: "recorded",
         scope: { scope: "project", root: OLD },
       },
     });
@@ -379,6 +380,7 @@ describe("what a folder leaving the list leaves behind", () => {
     expect(useNavStore.getState().packageRef).toEqual({
       kind: "skill",
       name: "gh",
+      identity: "recorded",
       scope: { scope: "project", root: NEW },
     });
     // What a package's source has moved on to is a fourth read, keyed by
