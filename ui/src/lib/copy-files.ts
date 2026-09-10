@@ -7,6 +7,8 @@ export const FILES_TAB = "Files";
 export const FILE_TREE_LABEL = "Files in this package";
 export const CHANGED_FILES_TREE_LABEL = "Changed files";
 export const FILE_TRUNCATED_NOTE = "Showing first 64 KB";
+export const DIFF_LOSSY_NOTE =
+  "Part of this file isn't text; what's shown stands in for those bytes.";
 export const FILE_READ_FAILED_TITLE = "This file couldn't be shown";
 export const FILES_READING_NOTE = "Reading this package's files…";
 export const NO_FILES_NOTE = "This package ships no files.";

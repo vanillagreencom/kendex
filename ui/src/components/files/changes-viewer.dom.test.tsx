@@ -2,7 +2,7 @@
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { FileDiff, PackageDiff } from "@/bindings";
-import { NO_CHANGES_NOTE } from "@/lib/copy-files";
+import { DIFF_LOSSY_NOTE, NO_CHANGES_NOTE } from "@/lib/copy-files";
 import { mount, settle } from "@/test/dom";
 import { ChangesViewer } from "./changes-viewer";
 
@@ -63,5 +63,20 @@ describe("the changes viewer", () => {
   it("says two sides are identical when nothing changed", () => {
     const host = mount(<ChangesViewer diff={diff([])} />);
     expect(host.textContent).toBe(NO_CHANGES_NOTE);
+  });
+
+  // A file with bytes that are not text is decoded lossily to be compared,
+  // so the lines carry a replacement character where the file carries
+  // something else. This is the window a commit is approved from, so what
+  // is drawn must not pass for the file's own bytes.
+  it("says when a file's bytes were decoded lossily, and not when they were not", () => {
+    const bytes = file("src/one.md", "REPLACED\u{FFFD}HERE");
+    const shown = mount(
+      <ChangesViewer diff={diff([{ ...bytes, lossy: true }])} />,
+    );
+    expect(shown.textContent).toContain(DIFF_LOSSY_NOTE);
+
+    const text = mount(<ChangesViewer diff={diff([bytes])} />);
+    expect(text.textContent).not.toContain(DIFF_LOSSY_NOTE);
   });
 });

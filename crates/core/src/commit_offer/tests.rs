@@ -1095,6 +1095,37 @@ fn a_file_replaced_by_a_folder_of_the_same_name_shows_both_halves() {
     assert_eq!(hunk_text(&arrived.diff), ["+the skill's body"]);
 }
 
+/// The replacement runs the other way too: an update can put the file `foo`
+/// back where the folder `foo/bar` stood. Then the covered path `foo/bar`
+/// has an ancestor that is a regular file, which no read can continue
+/// through — the walk has to answer that the leaf is gone, or the deletion
+/// draws as the machine's word for a path that stopped at a file.
+#[test]
+fn a_folder_replaced_by_a_file_of_the_same_name_shows_both_halves() {
+    const WAS_INSIDE: &str = ".claude/skills/dev/SKILL.md";
+    const NOW_FILE: &str = ".claude/skills/dev";
+    let repo = Repo::new(&[(WAS_INSIDE, "the skill's body\n")]);
+    fs::remove_dir_all(repo.root.join(NOW_FILE)).unwrap();
+    repo.write(NOW_FILE, "the whole skill\n");
+    let generated = repo.generated(&[WAS_INSIDE, NOW_FILE], &[]);
+    let found = repo.scan(&generated).unwrap();
+
+    let gone = shown(&found, WAS_INSIDE);
+    assert_eq!(
+        gone.diff.files[0].status,
+        crate::package::diff::FileStatus::Removed,
+        "the file standing where the folder was read as something else"
+    );
+    assert_eq!(hunk_text(&gone.diff), ["-the skill's body"]);
+
+    let arrived = shown(&found, NOW_FILE);
+    assert_eq!(
+        arrived.diff.files[0].status,
+        crate::package::diff::FileStatus::Added
+    );
+    assert_eq!(hunk_text(&arrived.diff), ["+the whole skill"]);
+}
+
 /// Both reads that name a covered path hand it to git in a pathspec
 /// position, so both carry `--literal-pathspecs`. A path opening with the
 /// `:` a pathspec magic prefix starts with is read as magic without it and

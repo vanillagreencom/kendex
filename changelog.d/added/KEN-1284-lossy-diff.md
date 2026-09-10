@@ -1,0 +1,1 @@
+- A diff of a file whose bytes are not all text says so, so nothing is approved that was never shown.

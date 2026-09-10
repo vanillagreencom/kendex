@@ -1,4 +1,6 @@
+import { TriangleAlert } from "lucide-react";
 import type { FileDiff } from "@/bindings";
+import { DIFF_LOSSY_NOTE } from "@/lib/copy-files";
 import { additionsLabel, DIFF_STATUS_LABELS, deletionsLabel } from "@/lib/diff";
 import { cn } from "@/lib/utils";
 
@@ -9,7 +11,13 @@ import { cn } from "@/lib/utils";
  *
  *  It sits where the file preview sits, on the right of the tree, so
  *  reading a package's files and reading what changed in them are the same
- *  movement. */
+ *  movement.
+ *
+ *  A file whose bytes are not all text is decoded lossily to be compared at
+ *  all, and the pane says so: the lines below hold a replacement character
+ *  where the file holds bytes nobody can read as text, and this window is
+ *  the one a person approves a commit from. Text they were never shown must
+ *  not pass for the file. */
 export function DiffPane({
   file,
   gutterCh,
@@ -49,6 +57,12 @@ export function DiffPane({
           ) : null}
         </span>
       </div>
+      {file.lossy ? (
+        <p className="flex items-center gap-2 border-b border-warning/30 bg-warning/5 px-3 py-1.5 text-warning text-xs">
+          <TriangleAlert className="size-3.5 shrink-0" />
+          {DIFF_LOSSY_NOTE}
+        </p>
+      ) : null}
       <div className="overflow-x-auto">
         {file.hunks.map((hunk) => (
           <div key={hunk.header}>

@@ -192,17 +192,22 @@ fn entry_kind(entry: &str) -> Option<&str> {
 /// names a file inside this project, and no bytes from outside it may
 /// reach the window.
 ///
-/// A directory at the leaf is no file, so this side holds nothing: an
-/// update that replaces the file `foo` with the folder `foo/bar` puts both
-/// in the scan, and `foo` has to read as the removal it is rather than as
-/// a read that failed.
+/// A replacement reads as one in both directions. An update that swaps the
+/// file `foo` for the folder `foo/bar` puts both in the scan, and so does
+/// the swap back: `foo` has to read as the removal it is where a directory
+/// now stands there, and `foo/bar` has to read as the removal it is where a
+/// file now stands at `foo`. Neither is a read that failed.
 fn working(root: &Path, path: &str) -> Result<Option<Vec<u8>>, Failed> {
     let whole = root.join(path);
-    if let Some(link) = ancestor_link(root, path)? {
-        return Err(refused(format!(
-            "{} is a symbolic link, so {path} is no longer a file inside this project",
-            crate::paths::slashed(&link)
-        )));
+    match ancestors(root, path)? {
+        Ancestors::Link(link) => {
+            return Err(refused(format!(
+                "{} is a symbolic link, so {path} is no longer a file inside this project",
+                crate::paths::slashed(&link)
+            )));
+        }
+        Ancestors::NoLeaf => return Ok(None),
+        Ancestors::Directories => {}
     }
     let Some(kind) = absent_or(whole.symlink_metadata(), &whole)? else {
         return Ok(None);
@@ -217,13 +222,31 @@ fn working(root: &Path, path: &str) -> Result<Option<Vec<u8>>, Failed> {
     absent_or(std::fs::read(&whole), &whole)
 }
 
-/// The first component below `root` that is a symbolic link, or `None`
-/// where the whole of the path but its leaf is ordinary directories.
+/// What the walk from `root` down to `path`'s leaf found standing in place
+/// of a directory.
 ///
-/// A component that is not there is not a link: the path is simply gone,
-/// which is what a deletion looks like and what [`working`] answers `None`
-/// for.
-fn ancestor_link(root: &Path, path: &str) -> Result<Option<PathBuf>, Failed> {
+/// Asked of what each component *is*, never of the one kind that needs
+/// refusing: a component that is not a directory cannot be walked through
+/// whatever it is, and reading the leaf under it would answer with the
+/// machine's word for that rather than with the change.
+enum Ancestors {
+    /// Every component below `root` but the leaf is an ordinary directory,
+    /// so the leaf's own metadata answers whether it is there.
+    Directories,
+    /// A symbolic link stands where a directory should. Reading through it
+    /// would carry the read out of the project, so it is refused rather
+    /// than answered.
+    Link(PathBuf),
+    /// A component below `root` is missing, or is something a path cannot
+    /// continue through — a regular file where the working tree replaced a
+    /// folder. Either way no file stands at the leaf, which is the deletion
+    /// this offer is showing.
+    NoLeaf,
+}
+
+/// Walk `path`'s components below `root`, stopping at the first that is not
+/// an ordinary directory.
+fn ancestors(root: &Path, path: &str) -> Result<Ancestors, Failed> {
     let mut at = root.to_path_buf();
     let relative = Path::new(path);
     let mut components = relative.components().peekable();
@@ -239,13 +262,14 @@ fn ancestor_link(root: &Path, path: &str) -> Result<Option<PathBuf>, Failed> {
         };
         at.push(name);
         match at.symlink_metadata() {
-            Ok(found) if found.is_symlink() => return Ok(Some(at)),
-            Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Ok(found) if found.is_symlink() => return Ok(Ancestors::Link(at)),
+            Ok(found) if found.is_dir() => {}
+            Ok(_) => return Ok(Ancestors::NoLeaf),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Ancestors::NoLeaf),
             Err(error) => return Err(io_refused(&at, &error)),
         }
     }
-    Ok(None)
+    Ok(Ancestors::Directories)
 }
 
 /// A read whose answer is `None` only where the path is not there, and a
