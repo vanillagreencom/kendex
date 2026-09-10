@@ -85,6 +85,13 @@ world_numbered() { repo "$1"; put guide.md '# Guide\n\n## 1. Install\n\n### 1.1.
 world_parens() { repo "$1"; put guide.md '# Guide\n\n## 1\n\n## Install\n'; put 'guide(foo).md' '# Guide\n\n## Install\n'; }
 world_text() { repo "$1"; put guide.md '# Guide\n\n## snake_case\n\n## Install\n\n## 2.\n\n## 3)\n\n## 4.1.\n\n## Use *tools*\n'; }
 world_code() { repo "$1"; put guide.md '# Guide\n\n## `snake_case`\n'; }
+# The content-citation world: one tracked source file carrying a test name,
+# and a binary one at a path a citation can name.
+world_content() {
+  repo "$1"
+  put src/ui/home.test.ts 'test("checks the footer", () => {});\ntest("ranks the ladder", () => {});\n'
+  put assets/pic.png '\001\0000\002 checks the footer\n'
+}
 # The source-carrier world: two documents to cite into, no source file yet.
 world_src() { repo "$1"; put docs/architecture/plugins.md '# Plugins\n\n## Invariants\n'; put AGENTS.md '# A\n\n## Rules\n'; }
 world_src_dec() { world_src "$1"; put docs/decisions/D008-scope.md '# D008\n\n## Scope\n'; }
@@ -105,6 +112,7 @@ untracked() { printf 'link-target=%s:%s' "$1" "$2"; } # RAW TARGET
 noslug() { printf 'anchor-missing=%s:%s:%s' "$1" "$2" "$3"; } # RAW TARGET ANCHOR
 notext() { printf 'heading-missing=%s:%s:%s' "$1" "$2" "$3"; } # SPAN TARGET HEADING
 nocite() { printf 'citation-target=%s:%s:%s' "$1" "$2" "$3"; } # SPAN PATH SRC
+nophrase() { printf 'phrase-missing=%s:%s:%s' "$1" "$2" "$3"; } # SPAN TARGET PHRASE
 noprefix() { printf 'heading-prefix=%s:%s:%s' "$1" "$2" "$3"; } # RAW TARGET VALUE
 climbs() { printf 'link-escape=%s' "$1"; } # RAW
 nodecision() { printf 'decision-missing=%s:docs/decisions/%s-*.md' "$1" "$1"; } # ID
@@ -161,6 +169,20 @@ cite_rows \
   "a root-relative citation resolves at the root|refs||See \`docs/guide.md § Guide\`.\n|rc=0 $(clean 1 3)" \
   "a code span that is not a path shape is not a citation|refs||Run \`md-format --all\`, see \`*.md\`, \`changelog.d/<section>/<name>.md\`, \`foo.md:12\`.\n|rc=0 $(clean 0 3)" \
   "a citation in a fence is not read|refs||\`\`\`\n\`docs/nope.md § X\`\n\`\`\`\n|rc=0 $(clean 0 3)"
+
+echo "=== content citations: <path>::<phrase>, the file holds the phrase ==="
+cite_rows \
+  "a content citation whose file holds the phrase resolves, and the verdict counts it|content||See \`src/ui/home.test.ts::checks the footer\`.\n|rc=0 $(clean 1 1 1)" \
+  "control: the same citation fails once the phrase is not in the file|content||See \`src/ui/home.test.ts::checks the header\`.\n|rc=1 $(dead AGENTS.md 1 "$(nophrase 'src/ui/home.test.ts::checks the header' src/ui/home.test.ts 'checks the header')");$(failed 1 1 1 1)" \
+  "a content citation whose path is not tracked fails, naming the path and where it looked|content||See \`src/ui/overview.test.ts::checks the footer\`.\n|rc=1 $(dead AGENTS.md 1 "$(nocite 'src/ui/overview.test.ts::checks the footer' src/ui/overview.test.ts AGENTS.md)");$(failed 1 1 1 1)" \
+  "a phrase is a literal substring, punctuation and spacing included|content||See \`src/ui/home.test.ts::test(\"ranks the ladder\"\`.\n|rc=0 $(clean 1 1 1)" \
+  "a module path is not a content citation: the text before :: carries no /|content||\`Command::new\`, \`process::Hardened\` and \`ui::intro\` name no file.\n|rc=0 $(clean 0 1 1)" \
+  "a leading :: is a continuation, not a citation|content||See \`src/ui/home.test.ts::checks the footer\` and \`::ranks the ladder\`.\n|rc=0 $(clean 1 1 1)" \
+  "an empty phrase is prose|content||The suffix is \`src/ui/home.test.ts::\`.\n|rc=0 $(clean 0 1 1)" \
+  "a bare path beside a content citation stays a name|content||\`src/ui/gone.test.ts\` moved; see \`src/ui/home.test.ts::checks the footer\`.\n|rc=0 $(clean 1 1 1)" \
+  "a content citation in fenced code is not read|content||\`\`\`\n\`src/ui/home.test.ts::checks the header\`\n\`\`\`\n|rc=0 $(clean 0 1 1)" \
+  "a content citation resolves beside the citing file before the root|content||See \`ui/home.test.ts::checks the footer\`.\n|rc=1 $(dead AGENTS.md 1 "$(nocite 'ui/home.test.ts::checks the footer' ui/home.test.ts AGENTS.md)");$(failed 1 1 1 1)" \
+  "a content citation into binary content is exit 2, naming the target|content||See \`assets/pic.png::checks the footer\`.\n|rc=2 ${ERR}target-binary=assets/pic.png"
 
 echo "=== decision IDs: judged only where the decisions directory is tracked ==="
 cite_rows \
@@ -349,13 +371,16 @@ run_rows \
 assert_eq "--help prints usage at exit 0" "rc=0 md-refs: usage=md-refs" "$(run '' --help | sed -n 1p | LC_ALL=C cut -d';' -f1)"
 
 echo "=== the skill's own shipped markdown resolves ==="
-fx_shipped() { # the four shipped documents beside the consumer files they cite by directory
+fx_shipped() { # the four shipped documents beside what they cite: consumer files by directory, and the one script a `::` citation reads for its phrase
   local doc
   repo "$1"
-  mkdir -p "$R/skills/commit-guards"
+  mkdir -p "$R/skills/commit-guards/scripts/lib"
   for doc in SKILL.md README.md CHECKS.md DEVELOPMENT.md; do
     cp "$SKILL_DIR/$doc" "$R/skills/commit-guards/$doc"
   done
+  # A content citation is answered by the file's bytes, so this is the real
+  # script, not a shim: a stand-in would hold no phrase to find.
+  cp "$SKILL_DIR/scripts/lib/commit-changes.sh" "$R/skills/commit-guards/scripts/lib/commit-changes.sh"
   put changelog.d/README.md '# changelog.d\n'
   put .claude/CLAUDE.md '@AGENTS.md\n'
 }
@@ -363,12 +388,12 @@ fx_shipped() { # the four shipped documents beside the consumer files they cite 
 # the verdict over the two, then the four, files read, with N for that count.
 counted() { LC_ALL=C sed 's/references=[0-9][0-9]*/references=N/'; }
 fx_shipped shipped
-assert_eq "the shipped SKILL.md's references resolve (beside the fixture's CLAUDE.md shim)" "rc=0 $(clean N 2)" "$(run '' --all | counted)"
-assert_eq "and so do README.md, CHECKS.md and DEVELOPMENT.md when named" "rc=0 $(clean N 4)" "$(run 'COMMIT_GUARDS_MD_REFS_PATHS=*/commit-guards/*.md' --all | counted)"
+assert_eq "the shipped SKILL.md's references resolve (beside the fixture's CLAUDE.md shim)" "rc=0 $(clean N 2 1)" "$(run '' --all | counted)"
+assert_eq "and so do README.md, CHECKS.md and DEVELOPMENT.md when named, the content citation among them" "rc=0 $(clean N 4 1)" "$(run 'COMMIT_GUARDS_MD_REFS_PATHS=*/commit-guards/*.md' --all | counted)"
 fx_shipped shipped-planted
 put skills/commit-guards/SKILL.md "$(cat "$SKILL_DIR/SKILL.md")"'\n\nSee [gone](nowhere.md).\n'
 assert_eq "control: a planted dead link in the shipped SKILL.md fails, at the line it was planted on" \
-  "rc=1 $(dead skills/commit-guards/SKILL.md "$(($(wc -l <"$SKILL_DIR/SKILL.md") + 2))" "$(untracked '](nowhere.md)' skills/commit-guards/nowhere.md)");$(failed 1 N 2)" "$(run '' --all | counted)"
+  "rc=1 $(dead skills/commit-guards/SKILL.md "$(($(wc -l <"$SKILL_DIR/SKILL.md") + 2))" "$(untracked '](nowhere.md)' skills/commit-guards/nowhere.md)");$(failed 1 N 2 1)" "$(run '' --all | counted)"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

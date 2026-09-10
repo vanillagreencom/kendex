@@ -12,7 +12,8 @@
 #   -v mode=refs -v src=PATH [-v id_prefix=D -v id_width=3]
 #       L<TAB>src<TAB>line<TAB>destination<TAB>raw   a link or reference definition
 #       C<TAB>src<TAB>line<TAB>path<TAB>kind<TAB>value<TAB>raw   a code-span citation;
-#                                        kind is path, section or anchor
+#                                        kind is section, anchor, prefix-section
+#                                        or content
 #       D<TAB>src<TAB>line<TAB>id<TAB>section   a decision ID, with the heading
 #                                        the citation names after § or empty
 #   -v mode=refs -v grammar=text -v src=PATH [-v id_prefix=D -v id_width=3]
@@ -22,12 +23,16 @@
 #       `<path>.md § Heading` citation and a decision ID carrying one:
 #       outside markdown a link, a bare path and a bare ID are prose, and a
 #       heading with prose after it is the § rule's.
-#   -v mode=resolve -v phase=targets|verdict -v tracked=FILE
-#         [-v headings=FILE -v dec_dir=DIR -v dec_judge=0|1 -v id_prefix=D]
+#   -v mode=resolve -v phase=targets|contents|verdict -v tracked=FILE
+#         [-v headings=FILE -v contents=FILE -v dec_dir=DIR -v dec_judge=0|1
+#          -v id_prefix=D]
 #       reads the refs records; `targets` prints each tracked markdown path a
-#       heading citation needs indexed, `verdict` prints
-#       V<TAB>src<TAB>line<TAB>rule<TAB>value per dead reference and a final
-#       N<TAB>count of references judged
+#       heading citation needs indexed, `contents` prints
+#       target<TAB>phrase for each content citation whose path resolves, and
+#       `verdict` prints V<TAB>src<TAB>line<TAB>rule<TAB>value per dead
+#       reference and a final N<TAB>count of references judged. The caller
+#       answers the `contents` pairs with P<TAB>target<TAB>phrase records for
+#       the phrases it found, which `verdict` reads back from `contents`.
 #
 # Loaded beside md-slug.awk, which holds the text reductions this file calls
 # (split_spans, slugify) and reads PRINTABLE, CONTROLS and ESCAPABLE from the
@@ -145,8 +150,8 @@ function emit_links(s, original,   i, j, k, dest, raw, tail, path) {
 }
 
 # A path alone in a code span is a file being named, not cited: a default
-# value, a file a skill writes, a convention. Only the § and # forms point a
-# reader at a place in a file, so only they are judged.
+# value, a file a skill writes, a convention. Only the §, :: and # forms point
+# a reader at a place in a file, so only they are judged.
 function emit_citation(span,   path, rest, i) {
   i = index(span, SECTION_SEP)
   if (i > 0) {
@@ -154,6 +159,15 @@ function emit_citation(span,   path, rest, i) {
     rest = rtrim(substr(span, i + length(SECTION_SEP)))
     if (path ~ /^[A-Za-z0-9._\/-]*\.md$/ && rest != "") printf "C\t%s\t%d\t%s\tsection\t%s\t%s\n", src, line_no, path, rest, span
     return
+  }
+  i = index(span, "::")
+  if (i > 1) {
+    path = substr(span, 1, i - 1)
+    rest = substr(span, i + 2)
+    if (path ~ /^[A-Za-z0-9._\/-]+$/ && index(path, "/") > 0 && rest != "") {
+      printf "C\t%s\t%d\t%s\tcontent\t%s\t%s\n", src, line_no, path, rest, span
+      return
+    }
   }
   i = index(span, "#")
   if (i > 0) {
@@ -283,6 +297,21 @@ function load_tracked(   line, d, rec, id) {
   close(tracked)
 }
 
+# The phrases the caller found, keyed target+phrase. A pair absent here is a
+# phrase its cited file does not hold.
+function load_contents(   line, i, rest, t) {
+  if (contents == "") return
+  while ((getline line < contents) > 0) {
+    if (substr(line, 1, 2) != "P\t") continue
+    rest = substr(line, 3)
+    i = index(rest, "\t")
+    if (i == 0) continue
+    t = substr(rest, 1, i - 1)
+    found[t SUBSEP substr(rest, i + 1)] = 1
+  }
+  close(contents)
+}
+
 function load_headings(   line, f) {
   if (headings == "") return
   while ((getline line < headings) > 0) {
@@ -320,6 +349,11 @@ function fail(rule, value) { if (phase == "verdict") printf "V\t%s\t%d\t%s\t%s\n
 
 function want_target(t) { if (phase == "targets" && !(t in wanted)) { wanted[t] = 1; print t } }
 
+function want_content(t, phrase,   key) {
+  key = t SUBSEP phrase
+  if (phase == "contents" && !(key in asked)) { asked[key] = 1; printf "%s\t%s\n", t, phrase }
+}
+
 BEGIN {
   SECTION_SEP = " § "
   for (i = 32; i <= 126; i++) {
@@ -330,12 +364,12 @@ BEGIN {
   for (i = 1; i <= 31; i++) CONTROLS = CONTROLS sprintf("%c", i)
   CONTROLS = CONTROLS sprintf("%c", 127)
   if (mode == "resolve") {
-    if (phase != "targets" && phase != "verdict") {
-      printf "md-refs: phase=%s\n  Expected targets or verdict.\n", phase > "/dev/stderr"
+    if (phase != "targets" && phase != "contents" && phase != "verdict") {
+      printf "md-refs: phase=%s\n  Expected targets, contents or verdict.\n", phase > "/dev/stderr"
       exit 2
     }
     load_tracked()
-    if (phase == "verdict") load_headings()
+    if (phase == "verdict") { load_headings(); load_contents() }
     judged = 0
   } else if (mode == "index") {
     printf "F\t%s\n", src
@@ -420,6 +454,11 @@ mode == "resolve" {
         fail("citation-target", raw ":" path ":" src_path)
         next
       }
+    }
+    if (ckind == "content") {
+      want_content(target, value)
+      if (!((target SUBSEP value) in found)) fail("phrase-missing", raw ":" target ":" value)
+      next
     }
     want_target(target)
     if (ckind == "section") {

@@ -1,0 +1,1 @@
+- commit-guards' `md-refs` lane fails a `<path>::<phrase>` citation in Markdown unless the path names a tracked file whose bytes hold the phrase.
