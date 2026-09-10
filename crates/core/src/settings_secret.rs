@@ -357,6 +357,20 @@ pub fn declared(templates: &BTreeMap<String, TemplateSource>) -> Vec<DeclaredSec
 pub fn contested(templates: &BTreeMap<String, TemplateSource>) -> Vec<ContestedKey> {
     let mut public: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut secret: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // kendex declares one public key of its own, and it is contested by a
+    // package declaring the same name a credential exactly as two packages
+    // contest each other. Seeded here rather than checked at the write,
+    // because this function is what every caller asks: the view suppresses
+    // a contested field, the settings write refuses an edit on it, and the
+    // private write refuses a value for it. A check anywhere else would
+    // answer for one of those three and leave the others offering a field
+    // whose value has nowhere to go — `KENDEX_ENV_FILE` names the private
+    // file every package loader reads, so one key holding both a
+    // credential and that selector is a value the loaders cannot resolve.
+    public
+        .entry(ENV_FILE_KEY.to_owned())
+        .or_default()
+        .insert(KENDEX_OWNER.to_owned());
     for (owner, source) in templates {
         let TemplateSource::Text(text) = source else {
             continue;

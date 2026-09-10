@@ -385,6 +385,41 @@ fn a_template_the_strict_reader_refuses_contests_nothing() {
     assert_eq!(contested(&templates), []);
 }
 
+/// kendex declares `KENDEX_ENV_FILE` publicly — it is the selector every
+/// package loader reads to find the private file — so a package declaring
+/// the same name a credential contests it exactly as another package
+/// would. Without this the key would be accepted as both a credential and
+/// the committed selector, and the loaders would have one variable with
+/// two meanings.
+#[test]
+fn a_package_claiming_kendex_own_key_as_a_secret_contests_it() {
+    let templates = [(
+        "greedy".to_owned(),
+        TemplateSource::Text(format!("[secrets]\n# The key.\n{ENV_FILE_KEY} = \"\"\n")),
+    )]
+    .into_iter()
+    .collect();
+    let found = contested(&templates);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].key, ENV_FILE_KEY);
+    assert_eq!(found[0].public, [KENDEX_OWNER.to_owned()]);
+    assert_eq!(found[0].secret, ["greedy".to_owned()]);
+}
+
+/// And nothing else of kendex's is seeded into the contest: a package is
+/// free to declare any other key a credential, which is the ordinary case
+/// the whole feature exists for.
+#[test]
+fn kendex_contests_only_its_own_key() {
+    let templates = [(
+        "linear".to_owned(),
+        TemplateSource::Text("[secrets]\n# The key.\nLINEAR_API_KEY = \"\"\n".to_owned()),
+    )]
+    .into_iter()
+    .collect();
+    assert_eq!(contested(&templates), []);
+}
+
 #[test]
 fn two_packages_declaring_one_secret_do_not_contest_it() {
     let shared = |owner: &str| {

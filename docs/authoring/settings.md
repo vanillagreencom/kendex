@@ -58,7 +58,13 @@ MY_SKILL_TOKEN = "" # required
 
 A `[secrets]` declaration is a key name, the comment block above it, and `# required` where the skill refuses to run without the key. Its value is the empty string and nothing else: a value there is a check finding, so no template can ship a credential, a placeholder or a default.
 
-The consumer sets one in the app's Customize tab. kendex writes it to the project's private env file — `.env.local`, or the file `KENDEX_ENV_FILE` names — after confirming the file is not one kendex writes itself — kendex's own project state — `kendex.toml`, `kendex-local.toml`, `.kendex-lock.json`, `kendex.settings.toml`, `.kendex-generated.json`, and anything under `.kendex/` or `.kendex-local/` — is refused as a destination whatever git says about it — and that git does not track it and does ignore it, adding the ignore entry first where one is owed and then asking git, once that entry has landed, whether it actually ignores the file — a nearer `.gitignore` can negate the root rule and a symlinked `.gitignore` is one git never reads, so the write is refused rather than made unless git says the file is out of its reach. Nothing under `[secrets]` is ever seeded into `kendex.settings.toml`, and no value reaches a plan, a diff, an error or a commit offer.
+The consumer sets one in the app's Customize tab, and kendex writes it to the project's private env file — `.env.local`, or the file `KENDEX_ENV_FILE` names. Three checks stand between the two.
+
+- The destination is not a file kendex writes itself. `kendex.toml`, `kendex-local.toml`, `.kendex-lock.json`, `kendex.settings.toml`, `.kendex-generated.json` and anything under `.kendex/` or `.kendex-local/` are refused whatever git says about them.
+- Git does not track it, and does ignore it. The ignore entry goes in first where one is owed.
+- Git itself confirms that entry worked, once it has landed and before the credential is written. A nearer `.gitignore` can negate a root rule and a symlinked `.gitignore` is one git never reads, so the write is refused rather than made unless git says the file is out of its reach.
+
+Nothing under `[secrets]` is ever seeded into `kendex.settings.toml`. No value reaches a plan description, a displayed diff, an error, a log or a commit offer; the bytes exist only in the write op that carries them and in the apply journal's pre-image, both of which are written with the file's own private permissions.
 
 Declare a key under one table. A key declared under both, in one template or across two installed skills, has no destination anything can choose: the app offers no field for it and both write routes refuse it.
 
