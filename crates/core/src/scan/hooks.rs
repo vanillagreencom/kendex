@@ -2,7 +2,10 @@ use std::path::Path;
 
 use super::RawEntry;
 use super::readers::read_json;
+use crate::engine::targets::{HookTarget, hook_target};
+use crate::env::Env;
 use crate::hook::command_stem;
+use crate::model::{HarnessId, Scope};
 
 /// How a registry spells "every operation": the matcher an entry with
 /// none is named by, and the one spelling anything comparing a recorded
@@ -91,10 +94,45 @@ fn rows(registrations: Vec<Registration>) -> Vec<RawEntry> {
         .map(|registration| RawEntry {
             name: registration.name(),
             enabled: None,
-            description: Some(registration.command),
+            // Filled in by the scan, which knows the tool and the scope
+            // the registration was read at and can ask the renderer which
+            // script it registered.
+            summary: None,
+            action: Some(registration.command),
             source_path: None,
         })
         .collect()
+}
+
+/// What the script behind one registration says about itself, or `None`
+/// where nothing authored can be reached from it.
+///
+/// The command is never taken apart to find a file. A candidate name comes
+/// from [`command_stem`], the one reader of a command line this crate has,
+/// and the renderer that places hook scripts is then asked what it would
+/// register for a hook of that name here. Only when that command is the
+/// one observed is the script it names this registration's — so a command
+/// kendex did not write resolves to nothing rather than to a guess about
+/// somebody else's file. Nothing is executed and nothing is expanded.
+pub(crate) fn authored_summary(
+    env: &Env,
+    scope: &Scope,
+    harness: HarnessId,
+    command: &str,
+) -> Option<String> {
+    let HookTarget::Script {
+        path,
+        command: registered,
+        ..
+    } = hook_target(env, scope, harness, &command_stem(command))?
+    else {
+        return None;
+    };
+    if registered != command {
+        return None;
+    }
+    let text = crate::fs::read_if_exists(&path).ok()??;
+    crate::hook::parse_hook(&text).ok()?.human_summary()
 }
 
 fn registrations(value: serde_json::Value) -> Vec<Registration> {

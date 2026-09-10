@@ -25,7 +25,8 @@ const installed = (scope: Scope) => ({
   fileState: "file",
   enabled: true,
   origin: null,
-  description: "about gh",
+  summary: "about gh",
+  action: null,
   tags: [],
 });
 

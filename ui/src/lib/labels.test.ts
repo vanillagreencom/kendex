@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  actionLabel,
   breadcrumbLabel,
-  describesItself,
   harnessName,
   hookDisplayName,
   kindLabel,
@@ -73,18 +73,19 @@ describe("breadcrumbLabel for nested pages", () => {
   });
 });
 
-describe("describesItself", () => {
-  it("separates what an author writes from what a config runs", () => {
+describe("actionLabel", () => {
+  it("names what a config entry runs, and nothing for a kind with none", () => {
     const rows = [
-      { kind: "skill", expected: true },
-      { kind: "agent", expected: true },
-      { kind: "command", expected: true },
-      { kind: "pi-extension", expected: true },
-      { kind: "hook", expected: false },
-      { kind: "mcp-server", expected: false },
+      { kind: "hook", expected: "Runs" },
+      { kind: "mcp-server", expected: "Reached at" },
+      { kind: "pi-extension", expected: "Installed from" },
+      { kind: "skill", expected: undefined },
+      { kind: "agent", expected: undefined },
+      { kind: "command", expected: undefined },
+      { kind: "plugin", expected: undefined },
     ] as const;
-    expect(rows.length, "description source table is empty").toBeGreaterThan(0);
+    expect(rows.length, "action label table is empty").toBeGreaterThan(0);
     for (const row of rows)
-      expect(describesItself(row.kind), row.kind).toBe(row.expected);
+      expect(actionLabel(row.kind), row.kind).toBe(row.expected);
   });
 });

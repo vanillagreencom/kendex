@@ -191,7 +191,18 @@ pub struct ObservedItem {
     pub enabled: Option<bool>,
     /// Best-effort provenance: git origin URL of the content's real location.
     pub origin: Option<String>,
-    pub description: Option<String>,
+    /// What the author says this package does, written for a person
+    /// browsing: the header's `summary`, else the `description` it wrote
+    /// instead. `None` where the author wrote neither — a supported state,
+    /// never filled in from a command, a URL, a path or a script body.
+    pub summary: Option<String>,
+    /// What an entry inside a shared config file names: the command a hook
+    /// registration runs, the command or URL an MCP server is reached at,
+    /// the spec a Pi extension is installed from. `None` for an item with a
+    /// file of its own, whose path already says which one it is. Kept apart
+    /// from [`ObservedItem::summary`] because it is a literal a person
+    /// inspects, never a sentence about the package.
+    pub action: Option<String>,
     /// What this item says it is for. Empty when it says nothing — a tag is
     /// something an author writes down, never something inferred from a
     /// name, because a wrong guess is worse than no answer.
@@ -226,12 +237,12 @@ pub const ENTRY: char = '\u{1f}';
 
 /// [`ObservedItem::at`] for one observation, out of what the scan read.
 /// The one producer: everything else carries the value.
-pub fn observed_at(path: &Path, file_state: &FileState, description: Option<&str>) -> String {
+pub fn observed_at(path: &Path, file_state: &FileState, action: Option<&str>) -> String {
     let at = crate::paths::slashed(&crate::paths::canonical(path).unwrap_or_else(|_| path.into()));
     match file_state {
         // Every entry of its kind shares the file holding it, so the file
         // alone names none of them; what the entry runs is the rest of it.
-        FileState::ConfigEntry => format!("{at}{ENTRY}{}", description.unwrap_or_default()),
+        FileState::ConfigEntry => format!("{at}{ENTRY}{}", action.unwrap_or_default()),
         _ => at,
     }
 }

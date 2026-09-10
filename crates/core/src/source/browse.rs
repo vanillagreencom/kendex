@@ -277,27 +277,16 @@ fn detail(
 /// location: resolving is that same walk, and this is not the only caller
 /// that needs it.
 fn item_text(browsed: &Browsed, kind: ItemKind, path: Option<&Path>) -> Option<String> {
-    let path = path?;
-    match kind {
-        ItemKind::Skill => browsed.sealed.read_to_string(&path.join("SKILL.md")),
-        _ => browsed.sealed.read_to_string(path),
-    }
-    .ok()
+    let file = super::header::header_file(kind, path?)?;
+    browsed.sealed.read_to_string(&file).ok()
 }
 
 /// The description, summary and tags an item writes in its own header,
-/// read with the same vocabulary the scanner reads.
+/// read through the one reader every catalog surface takes.
 fn header_of(kind: ItemKind, text: Option<&str>) -> crate::scan::metadata::Metadata {
-    let Some(text) = text else {
-        return Default::default();
-    };
-    match kind {
-        ItemKind::Skill | ItemKind::Agent | ItemKind::Command => {
-            crate::scan::metadata::from_markdown(text)
-        }
-        ItemKind::McpServer => crate::scan::metadata::from_toml(text),
-        // A hook script carries no header to read.
-        _ => Default::default(),
+    match text {
+        Some(text) => super::header::header_of(kind, text),
+        None => Default::default(),
     }
 }
 

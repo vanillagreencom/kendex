@@ -101,6 +101,15 @@ export const RECENT_ACTIVITY_EMPTY = "Nothing on this machine has changed yet.";
 
 export const TAGS_ROW_LABEL = "For";
 
+/** The way out of a preview that could not fit the whole summary: the
+ *  package's own page, which shows all of it. */
+export const MORE_ABOUT_PACKAGE_LABEL = "More";
+
+/** Opening and closing the rest of a long summary, in place, on the page
+ *  that More sends a reader to. */
+export const SHOW_MORE_LABEL = "Show more";
+export const SHOW_LESS_LABEL = "Show less";
+
 // The one toggle on an item. A button reading "Turn off" would say what
 // the click does but never what the state is or what turning it off costs
 // you — a switch shows the state, and the sentence under it says the

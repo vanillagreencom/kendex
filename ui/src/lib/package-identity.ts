@@ -25,6 +25,17 @@ import { useScanStore } from "@/stores/scan";
  *  off a name. */
 export type PackageOf = (item: ObservedItem) => PackageRef | null;
 
+/** What the author says one observed installation's package does, or null
+ *  where they wrote nothing reachable.
+ *
+ *  Read off the same join that says which package the installation is, and
+ *  keyed by the same installation. A hook is a command in a tool's config
+ *  file and an MCP server is a command or a URL: neither says what its
+ *  package is for, and core resolves the words from the package the
+ *  records establish rather than from the entry on screen. Never derived
+ *  here, and never from a name. */
+export type SummaryOf = (item: ObservedItem) => string | null;
+
 /** The separator the join key is built from: a character a project root, a
  *  harness id, an item kind and a name all cannot hold, so no two
  *  installations run their parts together onto one key. Written as an
@@ -61,6 +72,28 @@ export function packageIndex(rows: ProvenanceRow[]): PackageOf {
   return (item) =>
     byInstallation.get(installationKey({ ...item, at: observedAt(item) })) ??
     null;
+}
+
+/** The words every surface shows about an installed package, out of the
+ *  same join its identity comes from — so a row, its preview and its page
+ *  cannot describe one package version differently. */
+export function summaryIndex(rows: ProvenanceRow[]): SummaryOf {
+  const byInstallation = new Map<string, string>();
+  for (const row of rows) {
+    if (row.summary) byInstallation.set(installationKey(row), row.summary);
+  }
+  return (item) =>
+    byInstallation.get(installationKey({ ...item, at: observedAt(item) })) ??
+    null;
+}
+
+/** The summary lookup for a component, rebuilt only when the join changes.
+ *  Unlike the identity, an answer that is not yet current is not a wrong
+ *  row — it is one line of text that may be a moment stale — so this
+ *  answers whatever the last read holds and never null. */
+export function useSummaryIndex(): SummaryOf {
+  const rows = useProvenanceStore((s) => s.rows);
+  return useMemo(() => summaryIndex(rows), [rows]);
 }
 
 /** The same index for a component, rebuilt only when the join changes:

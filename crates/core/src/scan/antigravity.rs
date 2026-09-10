@@ -28,7 +28,8 @@ pub fn read(path: &Path) -> Result<Vec<RawEntry>, super::ScanProblem> {
             entries.push(RawEntry {
                 name: registration.name(),
                 enabled: Some(enabled),
-                description: Some(registration.command),
+                summary: None,
+                action: Some(registration.command),
                 source_path: None,
             });
         }

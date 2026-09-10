@@ -89,13 +89,13 @@ fn scans_a_realistic_machine() {
 
     let agent = find(ItemKind::Agent, "orch");
     assert_eq!(agent.len(), 1);
-    assert_eq!(agent[0].description.as_deref(), Some("boss"));
+    assert_eq!(agent[0].summary.as_deref(), Some("boss"));
 
     assert_eq!(find(ItemKind::Skill, "github").len(), 1);
     assert_eq!(find(ItemKind::Hook, "PreToolUse:Bash:guard").len(), 1);
     assert_eq!(find(ItemKind::McpServer, "github").len(), 1);
     assert_eq!(
-        find(ItemKind::Agent, "rust")[0].description.as_deref(),
+        find(ItemKind::Agent, "rust")[0].summary.as_deref(),
         Some("rust dev")
     );
     // Codex removed custom prompts in 0.118; the file is nobody's command.
@@ -376,7 +376,7 @@ fn a_file_two_surfaces_read_is_warned_about_once() {
 /// can say what it is and when it changed. One registered by name is only a
 /// line in a shared config file, and has neither.
 #[test]
-fn a_local_pi_package_reports_its_own_description_and_mtime() {
+fn a_local_pi_package_reports_its_own_summary_and_mtime() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let env = Env::fake(home, FakeOs::Linux);
@@ -404,11 +404,15 @@ fn a_local_pi_package_reports_its_own_description_and_mtime() {
     };
 
     let local = find("caveman");
-    assert_eq!(local.description.as_deref(), Some("Caveman mode"));
+    assert_eq!(local.summary.as_deref(), Some("Caveman mode"));
+    assert_eq!(local.action.as_deref(), Some("./packages/@vg/caveman"));
     assert_eq!(local.path, package);
     assert!(local.modified_at.is_some(), "no mtime for a real folder");
 
+    // A registry spec is where the package comes from, not a sentence
+    // about it: the row says nothing rather than showing the locator.
     let remote = find("@vg/remote");
-    assert_eq!(remote.description.as_deref(), Some("npm:@vg/remote@1.0"));
+    assert_eq!(remote.summary, None);
+    assert_eq!(remote.action.as_deref(), Some("npm:@vg/remote@1.0"));
     assert_eq!(remote.modified_at, None);
 }

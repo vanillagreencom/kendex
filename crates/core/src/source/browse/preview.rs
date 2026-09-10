@@ -22,6 +22,11 @@ pub struct PackagePreview {
     pub kind: ItemKind,
     pub name: String,
     pub description: Option<String>,
+    /// What the page shows under the name: the header's `summary`, else
+    /// its `description`. The same field the Packages row reads, so a
+    /// catalog row and the page it opens cannot describe one package
+    /// differently.
+    pub summary: Option<String>,
     pub tags: Vec<Tag>,
     /// The file a harness would load, capped for preview: a skill's
     /// SKILL.md body, a command's or agent's body, a hook's script, an MCP
@@ -101,6 +106,7 @@ pub fn package_preview(
         kind,
         name: name.to_owned(),
         description: header.description.as_deref().map(names::shown),
+        summary: header.summary_or_description().map(names::shown),
         tags: header.tags,
         readme: readme.map(|text| shown_text(&capped(text))),
         files,

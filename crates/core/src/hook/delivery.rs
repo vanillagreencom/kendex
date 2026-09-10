@@ -136,6 +136,7 @@ mod tests {
             event: event.to_owned(),
             matcher: None,
             description: String::new(),
+            summary: None,
             safety: None,
             timeout: None,
             harnesses: None,

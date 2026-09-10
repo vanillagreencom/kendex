@@ -26,6 +26,7 @@ const installed = (
   // is about installations a marketplace put there.
   at: `${scope.scope === "project" ? scope.root : ""}/.${harness}/skills/${name}`,
   origin: { origin: "marketplace", source, repo },
+  summary: null,
   package: { kind: "skill", name },
 });
 

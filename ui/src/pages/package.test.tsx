@@ -110,7 +110,8 @@ const installedAt = (scope: Project, kind: ItemKind = "skill"): ObservedItem =>
     fileState: { state: "file" },
     enabled: true,
     origin: null,
-    description: "about gh",
+    summary: "about gh",
+    action: null,
     tags: [],
     modifiedAt: null,
     vendor: null,
@@ -177,6 +178,7 @@ const openPage = async (
           source: "cat",
           repo: "o/r",
         },
+        summary: null,
         package: { kind, name: "gh" },
       };
     }),
@@ -929,6 +931,7 @@ describe("the package page's safety tab", () => {
           harness: "codex",
           at: installedAt(VG).at,
           origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+          summary: null,
           package: { kind: "skill", name: "gh" },
         },
       ],
@@ -1191,6 +1194,7 @@ describe("a package page opened on an installation nothing recorded", () => {
         harness: "claude",
         at: null,
         origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+        summary: null,
         package: { kind: "skill", name: "gh" },
       },
       {
@@ -1200,6 +1204,7 @@ describe("a package page opened on an installation nothing recorded", () => {
         harness: "cursor",
         at: null,
         origin: { origin: "unmanaged" },
+        summary: null,
         package: null,
       },
     ]);

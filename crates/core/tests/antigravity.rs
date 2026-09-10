@@ -404,7 +404,7 @@ fn a_server_is_declared_in_mcp_config_json_and_toggles_on_the_entry() {
         .items
         .iter()
         .filter(|item| item.kind == kendex_core::model::ItemKind::McpServer)
-        .map(|item| (item.name.as_str(), item.description.as_deref()))
+        .map(|item| (item.name.as_str(), item.action.as_deref()))
         .collect();
     servers.sort();
     assert_eq!(

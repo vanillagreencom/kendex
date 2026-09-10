@@ -310,15 +310,12 @@ fn scan_surface(
                     scope: scope.clone(),
                     file_state: files::state_of(&found.path),
                     origin: provenance.origin_of(&found.path),
-                    at: crate::model::observed_at(
-                        &found.path,
-                        &files::state_of(&found.path),
-                        found.meta.description.as_deref(),
-                    ),
+                    at: crate::model::observed_at(&found.path, &files::state_of(&found.path), None),
                     path: found.path,
                     enabled: Some(found.enabled),
+                    summary: found.meta.summary_or_description().map(str::to_owned),
                     tags: found.meta.tags,
-                    description: found.meta.description,
+                    action: None,
                     modified_at: found.modified_at,
                     vendor: None,
                 });
@@ -334,15 +331,12 @@ fn scan_surface(
                     scope: scope.clone(),
                     file_state: files::state_of(&found.path),
                     origin: provenance.origin_of(&found.path),
-                    at: crate::model::observed_at(
-                        &found.path,
-                        &files::state_of(&found.path),
-                        found.meta.description.as_deref(),
-                    ),
+                    at: crate::model::observed_at(&found.path, &files::state_of(&found.path), None),
                     path: found.path,
                     enabled: Some(found.enabled),
+                    summary: found.meta.summary_or_description().map(str::to_owned),
                     tags: found.meta.tags,
-                    description: found.meta.description,
+                    action: None,
                     modified_at: found.modified_at,
                     vendor: None,
                 });
@@ -394,7 +388,16 @@ fn scan_structured_file(
         .read(resolved(path), owner.harness, kind, scope);
     match readers::read_structured(path, reader, env) {
         Ok(entries) => {
-            for entry in entries {
+            for mut entry in entries {
+                // A hook registration is a command in a shared file and
+                // says nothing about the package it belongs to. What the
+                // script it runs says about itself does, and only the tool
+                // and scope the registration was read at can reach it.
+                if kind == ItemKind::Hook
+                    && let Some(command) = entry.action.as_deref()
+                {
+                    entry.summary = hooks::authored_summary(env, scope, adapter.id(), command);
+                }
                 // An entry that resolved to its own directory has an mtime
                 // that describes only itself. One that did not lives inside
                 // a config file shared with every other entry of its kind,
@@ -412,11 +415,7 @@ fn scan_structured_file(
                     name: entry.name,
                     harness: adapter.id(),
                     scope: scope.clone(),
-                    at: crate::model::observed_at(
-                        &at_path,
-                        &file_state,
-                        entry.description.as_deref(),
-                    ),
+                    at: crate::model::observed_at(&at_path, &file_state, entry.action.as_deref()),
                     file_state,
                     path: at_path,
                     enabled: entry.enabled,
@@ -425,7 +424,8 @@ fn scan_structured_file(
                     // entry, not a document, and the entry's own files (a
                     // plugin's directory) are not in a format with a header.
                     tags: Vec::new(),
-                    description: entry.description,
+                    summary: entry.summary,
+                    action: entry.action,
                     modified_at,
                     vendor,
                 });
@@ -446,7 +446,14 @@ fn scan_structured_file(
 pub struct RawEntry {
     pub name: String,
     pub enabled: Option<bool>,
-    pub description: Option<String>,
+    /// What the author says this entry's package does, where the surface's
+    /// own format carries such a field. `None` otherwise — a command, a
+    /// URL or a spec is never promoted into one.
+    pub summary: Option<String>,
+    /// What the entry names: the command it runs, the URL it is reached
+    /// at, the spec it is installed from. What tells two entries in one
+    /// shared file apart, and what a person inspecting execution reads.
+    pub action: Option<String>,
     /// Where this entry's own files live, when the reader knows and that is
     /// somewhere other than the file it was read from. A plugin cache lists
     /// every plugin in one place but each one has a directory of its own,

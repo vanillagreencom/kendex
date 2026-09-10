@@ -164,6 +164,45 @@ pub fn from_markdown(text: &str) -> Metadata {
     )
 }
 
+/// The header of a hook script: shell with YAML-in-comments frontmatter,
+/// read through [`crate::hook::parse_hook`] — the one reader of that
+/// format, so what a catalog row shows and what an install registers can
+/// never come from two different readings of one file. A script whose
+/// header will not parse describes itself with nothing, the same answer a
+/// markdown file with no frontmatter gives.
+///
+/// A hook declares no tags: its header vocabulary is fixed by
+/// `hooks/AGENTS.md`, and a word it does not name is not read.
+pub fn from_hook_script(text: &str) -> Metadata {
+    let Ok(source) = crate::hook::parse_hook(text) else {
+        return Metadata::default();
+    };
+    Metadata {
+        description: prose(&source.description),
+        summary: source.summary,
+        tags: Vec::new(),
+        unknown_tags: Vec::new(),
+    }
+}
+
+/// The header of a package with a `package.json` — a Pi extension. npm's
+/// own `description` field is the declaration home the format already
+/// gives an author, so nothing here asks for a second one.
+pub fn from_package_json(text: &str) -> Metadata {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+        return Metadata::default();
+    };
+    Metadata {
+        description: value
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            .and_then(prose),
+        summary: None,
+        tags: Vec::new(),
+        unknown_tags: Vec::new(),
+    }
+}
+
 /// Like [`from_markdown`], for the TOML kinds.
 pub fn from_toml(text: &str) -> Metadata {
     let Ok(table) = text.parse::<toml::Table>() else {

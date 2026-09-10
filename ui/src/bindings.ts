@@ -2565,7 +2565,22 @@ export type ObservedItem = {
 	enabled: boolean | null,
 	/**  Best-effort provenance: git origin URL of the content's real location. */
 	origin: string | null,
-	description: string | null,
+	/**
+	 *  What the author says this package does, written for a person
+	 *  browsing: the header's `summary`, else the `description` it wrote
+	 *  instead. `None` where the author wrote neither — a supported state,
+	 *  never filled in from a command, a URL, a path or a script body.
+	 */
+	summary: string | null,
+	/**
+	 *  What an entry inside a shared config file names: the command a hook
+	 *  registration runs, the command or URL an MCP server is reached at,
+	 *  the spec a Pi extension is installed from. `None` for an item with a
+	 *  file of its own, whose path already says which one it is. Kept apart
+	 *  from [`ObservedItem::summary`] because it is a literal a person
+	 *  inspects, never a sentence about the package.
+	 */
+	action: string | null,
 	/**
 	 *  What this item says it is for. Empty when it says nothing — a tag is
 	 *  something an author writes down, never something inferred from a
@@ -2758,6 +2773,13 @@ export type PackagePreview = {
 	kind: ItemKind,
 	name: string,
 	description: string | null,
+	/**
+	 *  What the page shows under the name: the header's `summary`, else
+	 *  its `description`. The same field the Packages row reads, so a
+	 *  catalog row and the page it opens cannot describe one package
+	 *  differently.
+	 */
+	summary: string | null,
 	tags: Tag[],
 	/**
 	 *  The file a harness would load, capped for preview: a skill's
@@ -3072,6 +3094,19 @@ export type ProvenanceRow = {
 	 */
 	at: string | null,
 	origin: Origin,
+	/**
+	 *  What the author says this package does, written for a person
+	 *  browsing — the one field every surface showing an installed
+	 *  package's own words reads.
+	 * 
+	 *  The observation's own header where it has one, and the words the
+	 *  declaration's source writes where it does not: an entry inside a
+	 *  tool's config file records how to reach a server, never what the
+	 *  server is for. `None` says the author wrote nothing reachable, and
+	 *  that is a supported state — a command, a URL, a path or a script
+	 *  body is never promoted into a sentence about the package.
+	 */
+	summary: string | null,
 	/**
 	 *  Which package this installation is, where the records establish
 	 *  one. `None` says they do not: the observation keeps its own

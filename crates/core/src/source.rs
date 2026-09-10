@@ -9,6 +9,7 @@ pub mod browse;
 pub mod bundles;
 mod catalog;
 pub mod discover;
+pub(crate) mod header;
 pub mod index;
 mod layout;
 mod meta;

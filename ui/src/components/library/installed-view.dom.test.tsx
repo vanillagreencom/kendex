@@ -49,7 +49,8 @@ const installed = (scope: Scope): ObservedItem =>
     fileState: { state: "file" },
     enabled: true,
     origin: null,
-    description: "about gh",
+    summary: "about gh",
+    action: null,
     tags: [],
     modifiedAt: null,
     vendor: null,
@@ -84,6 +85,7 @@ describe("a customized package in the Library list", () => {
         harness: "claude" as const,
         at: installed(scope).path,
         origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
+        summary: null,
         package: { kind: "skill" as const, name: "gh" },
       })),
       loaded: true,
@@ -405,6 +407,7 @@ describe("the marketplace a Library row came from", () => {
     name: item.name,
     harness: item.harness,
     at: observedAt(item),
+    summary: null,
     package: { kind: "skill", name: "gh" },
     origin,
   });
@@ -557,7 +560,8 @@ describe("one package several tools store differently", () => {
       fileState: { state: "file" },
       enabled: true,
       origin: null,
-      description: null,
+      summary: null,
+      action: null,
       tags: [],
       modifiedAt: null,
       vendor: null,
@@ -596,6 +600,7 @@ describe("one package several tools store differently", () => {
     harness: item.harness,
     at: item.at,
     origin: { origin: "marketplace", source: "kendex", repo: "vg/kendex" },
+    summary: null,
     package: { kind: "hook", name: "block-bare-cd" },
   });
 
@@ -614,6 +619,7 @@ describe("one package several tools store differently", () => {
           harness: "cursor",
           at: items[2].at,
           origin: { origin: "unmanaged" },
+          summary: null,
           package: null,
         },
       ] as never,
@@ -691,6 +697,96 @@ describe("one package several tools store differently", () => {
         at: "/work/vg/.cursor/rules/safety-block-argv-kill.mdc",
       },
     ]);
+  });
+});
+
+// A hook is a command in a tool's settings file. What the row says about it
+// is the words its author wrote, which the join carries; the command is not
+// a description of anything and never stands in for one.
+describe("what a Library row says a package is for", () => {
+  const WORDS = "Stops a command whose whole line is a cd.";
+  const COMMAND = 'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/block-bare-cd.sh"';
+
+  const item = observed({
+    kind: "hook",
+    name: "PreToolUse:Bash:block-bare-cd",
+    harness: "claude",
+    scope: VG,
+    path: "/work/vg/.claude/settings.json",
+    fileState: { state: "config-entry" },
+    enabled: true,
+    origin: null,
+    // The scan reads a registration, not a package: the words reach the
+    // row through the join, which asked the package the records name.
+    summary: null,
+    action: COMMAND,
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+  });
+
+  beforeEach(() => {
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED });
+    useProvenanceStore.setState({
+      rows: [
+        {
+          scope: VG,
+          kind: item.kind,
+          name: item.name,
+          harness: item.harness,
+          at: item.at,
+          origin: {
+            origin: "marketplace",
+            source: "kendex",
+            repo: "vg/kendex",
+          },
+          summary: WORDS,
+          package: { kind: "hook", name: "block-bare-cd" },
+        },
+      ] as never,
+      loaded: true,
+      answeredFor: 0,
+      read: READ_LANDED,
+    });
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [item],
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    useLibraryViewStore.setState({ ...NO_FILTERS });
+    useNavStore.setState({ libraryScope: "all", search: "" });
+  });
+
+  it("shows the author's words and never the command", () => {
+    const host = mount(<InstalledView />);
+    const name = host.querySelector("tbody tr td:first-child");
+    expect(name?.textContent).toContain(WORDS);
+    expect(host.textContent, "a command is not a description").not.toContain(
+      COMMAND,
+    );
+  });
+
+  /** The packages a search left on screen. An empty table still draws a
+   *  row, carrying the way out of the narrowing rather than a package. */
+  const named = (search: string) => {
+    useNavStore.setState({ libraryScope: "all", search });
+    const host = mount(<InstalledView />);
+    return [...host.querySelectorAll("tbody tr")]
+      .filter((row) => row.querySelectorAll("td").length > 1)
+      .map((row) => row.querySelector("td button")?.textContent);
+  };
+
+  it("is found by searching those words, as the marketplace finds it", () => {
+    expect(named("whole line")).toEqual(["block-bare-cd"]);
+    expect(
+      named("block-bare-cd.sh"),
+      "the command is not searchable text about the package",
+    ).toEqual([]);
   });
 });
 

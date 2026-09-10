@@ -1,0 +1,1 @@
+- Hovering or focusing a package name shows its summary, with More opening the package page when the author wrote more than fits.

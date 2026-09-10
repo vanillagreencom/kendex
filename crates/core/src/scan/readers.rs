@@ -75,14 +75,19 @@ fn mcp_object(servers: Option<&serde_json::Value>) -> Vec<RawEntry> {
                 .get("disabled")
                 .and_then(serde_json::Value::as_bool)
                 .map(|disabled| !disabled),
-            description: mcp_summary(entry),
+            // A harness config records how to reach a server, never what
+            // its author says it does; the words come from the package's
+            // own declaration, through the records.
+            summary: None,
+            action: mcp_endpoint(entry),
             source_path: None,
         })
         .collect()
 }
 
-/// The command or URL — how a list view tells servers apart.
-fn mcp_summary(entry: &serde_json::Value) -> Option<String> {
+/// The command or URL a server is reached at — what tells two entries in
+/// one file apart, and what a person inspecting execution reads.
+fn mcp_endpoint(entry: &serde_json::Value) -> Option<String> {
     for key in ["command", "url", "serverUrl"] {
         if let Some(value) = entry.get(key).and_then(|v| v.as_str()) {
             return Some(value.to_owned());
@@ -160,7 +165,8 @@ fn mcp_toml(path: &Path) -> Result<Vec<RawEntry>, ScanProblem> {
                     .and_then(toml::Value::as_bool)
                     .unwrap_or(true),
             ),
-            description: entry
+            summary: None,
+            action: entry
                 .get("command")
                 .or_else(|| entry.get("url"))
                 .and_then(|v| v.as_str())
@@ -185,7 +191,8 @@ fn opencode_mcp(path: &Path) -> Result<Vec<RawEntry>, ScanProblem> {
                     .and_then(|e| e.as_bool())
                     .unwrap_or(true),
             ),
-            description: mcp_summary(entry),
+            summary: None,
+            action: mcp_endpoint(entry),
             source_path: None,
         })
         .collect())
@@ -202,7 +209,11 @@ fn opencode_plugin_refs(path: &Path) -> Result<Vec<RawEntry>, ScanProblem> {
         .map(|spec| RawEntry {
             name: spec.to_owned(),
             enabled: None,
-            description: Some("npm plugin ref".to_owned()),
+            // The name is the spec: repeating it under the name says
+            // nothing, and "npm plugin ref" is filler, not the author's
+            // words.
+            summary: None,
+            action: None,
             source_path: None,
         })
         .collect())
@@ -224,7 +235,7 @@ mod tests {
         let mut entries = mcp_toml(&path).unwrap();
         entries.sort_by(|a, b| a.name.cmp(&b.name));
         assert_eq!(entries[0].name, "db");
-        assert_eq!(entries[1].description.as_deref(), Some("gh-mcp"));
+        assert_eq!(entries[1].action.as_deref(), Some("gh-mcp"));
     }
 
     /// A project can declare a Gemini server, but whether it is switched on
@@ -260,7 +271,7 @@ mod tests {
                 ("old", Some(false))
             ]
         );
-        assert_eq!(entries[1].description.as_deref(), Some("gh-mcp"));
+        assert_eq!(entries[1].action.as_deref(), Some("gh-mcp"));
     }
 
     #[test]
@@ -287,6 +298,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             [("off", Some(false)), ("on", Some(true))]
         );
-        assert_eq!(entries[0].description.as_deref(), Some("db run"));
+        assert_eq!(entries[0].action.as_deref(), Some("db run"));
     }
 }

@@ -14,7 +14,12 @@ pub struct HookSource {
     pub name: String,
     pub event: String,
     pub matcher: Option<String>,
+    /// The line an agent reads; for a hook, what the constraint is.
     pub description: String,
+    /// What the author says the hook does, written for a person browsing.
+    /// Optional: a hook that writes none is shown its description, which
+    /// says less than a summary would and more than a blank row.
+    pub summary: Option<String>,
     pub safety: Option<String>,
     pub timeout: Option<u32>,
     /// Harness allowlist; `None` = every harness.
@@ -30,6 +35,7 @@ pub fn parse_hook(text: &str) -> Result<HookSource, String> {
         event: String::new(),
         matcher: None,
         description: String::new(),
+        summary: None,
         safety: None,
         timeout: None,
         harnesses: None,
@@ -60,6 +66,7 @@ pub fn parse_hook(text: &str) -> Result<HookSource, String> {
             "event" => hook.event = value.to_owned(),
             "matcher" => hook.matcher = Some(value.to_owned()),
             "description" => hook.description = value.to_owned(),
+            "summary" => hook.summary = prose(value),
             "safety" => hook.safety = Some(value.to_owned()),
             "timeout" => hook.timeout = value.parse().ok(),
             "harnesses" => {
@@ -84,6 +91,23 @@ pub fn parse_hook(text: &str) -> Result<HookSource, String> {
         return Err("hook frontmatter needs at least name and event".to_owned());
     }
     Ok(hook)
+}
+
+/// One prose field of a hook header, trimmed; blank is the same as absent,
+/// the same rule [`crate::scan::metadata`] holds every other header to.
+fn prose(text: &str) -> Option<String> {
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_owned())
+}
+
+impl HookSource {
+    /// What a person browsing is shown: the `summary`, else the
+    /// `description` written instead, else nothing. The same precedence
+    /// [`crate::scan::metadata::Metadata::summary_or_description`] holds
+    /// every other kind to.
+    pub fn human_summary(&self) -> Option<String> {
+        self.summary.clone().or_else(|| prose(&self.description))
+    }
 }
 
 /// The event vocabulary a hook is written against: Claude Code's names,

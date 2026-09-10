@@ -39,7 +39,8 @@ pub fn read(path: &Path) -> Result<Vec<RawEntry>, super::ScanProblem> {
             entries.push(RawEntry {
                 name: super::hooks::registration_name(event, matcher, &action),
                 enabled: Some(enabled),
-                description: Some(action),
+                summary: None,
+                action: Some(action),
                 source_path: None,
             });
         }
@@ -103,7 +104,10 @@ pub fn plugins(path: &Path) -> Result<Vec<RawEntry>, super::ScanProblem> {
         .map(|(key, enabled)| RawEntry {
             name: key.clone(),
             enabled: enabled.as_bool(),
-            description: key.split_once('@').map(|(_, market)| market.to_owned()),
+            // The key already names the marketplace this plugin comes
+            // from, and a plugin's own words are not in this file.
+            summary: None,
+            action: None,
             source_path: None,
         })
         .collect())
@@ -169,11 +173,11 @@ mod tests {
         assert_eq!(
             entries
                 .iter()
-                .map(|e| (e.name.as_str(), e.enabled, e.description.as_deref()))
+                .map(|e| (e.name.as_str(), e.enabled, e.action.as_deref()))
                 .collect::<Vec<_>>(),
             [
-                ("fmt@copilot-plugins", Some(true), Some("copilot-plugins")),
-                ("lint@awesome-copilot", Some(false), Some("awesome-copilot")),
+                ("fmt@copilot-plugins", Some(true), None),
+                ("lint@awesome-copilot", Some(false), None),
             ]
         );
     }

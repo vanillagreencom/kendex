@@ -11,7 +11,7 @@ const group: RecentGroup = {
   package: { kind: "skill", name: "gh" },
   kind: "skill",
   name: "gh",
-  description: null,
+  summary: null,
   installations: [],
   harnesses: ["claude"],
   tags: [],

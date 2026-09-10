@@ -21,8 +21,8 @@ pub fn claude_registry(path: &Path, env: &Env) -> Result<Vec<RawEntry>, super::S
             enabled: enabled_map
                 .as_ref()
                 .and_then(|m| m.get(name).and_then(|v| v.as_bool())),
-            // A version is not a description: see the note below.
-            description: None,
+            summary: None,
+            action: None,
             source_path: None,
         })
         .collect())
@@ -44,7 +44,8 @@ pub fn claude_settings(path: &Path) -> Result<Vec<RawEntry>, super::ScanProblem>
         .map(|(name, enabled)| RawEntry {
             name: name.clone(),
             enabled: enabled.as_bool(),
-            description: None,
+            summary: None,
+            action: None,
             source_path: None,
         })
         .collect())
@@ -81,9 +82,10 @@ pub fn codex_cache(plugins_dir: &Path) -> Result<Vec<RawEntry>, super::ScanProbl
                 source_path: Some(plugin.join(&newest)),
                 // A version folder name is not a description of anything.
                 // Nobody recognises a plugin by "1.2.0", and putting it where
-                // a description goes makes a list of plugins read as a list
-                // of numbers.
-                description: None,
+                // a summary goes makes a list of plugins read as a list of
+                // numbers.
+                summary: None,
+                action: None,
             });
         }
     }
@@ -123,7 +125,8 @@ pub fn cursor_dirs(plugins_dir: &Path) -> Vec<RawEntry> {
             entries.push(RawEntry {
                 name,
                 enabled: Some(true),
-                description: None,
+                summary: None,
+                action: None,
                 source_path: Some(plugin.clone()),
             });
         }
@@ -137,7 +140,8 @@ pub fn cursor_dirs(plugins_dir: &Path) -> Vec<RawEntry> {
                 entries.push(RawEntry {
                     name: format!("{name}@{marketplace_name}"),
                     enabled: None,
-                    description: None,
+                    summary: None,
+                    action: None,
                     source_path: Some(plugin.clone()),
                 });
             }
@@ -208,7 +212,7 @@ mod tests {
         assert_eq!(entries[0].enabled, Some(false));
         // The version identifies a build, not the plugin — it belongs in the
         // path below, never in the line a person reads to tell plugins apart.
-        assert_eq!(entries[0].description, None);
+        assert_eq!(entries[0].summary, None);
         // Its own version directory, not the shared cache the entry was
         // read from — every plugin in that cache would otherwise be scored
         // on every other plugin's files.
@@ -262,7 +266,7 @@ mod tests {
         entries.sort_by(|a, b| a.name.cmp(&b.name));
         assert_eq!(entries[0].name, "fmt@main");
         assert_eq!(entries[0].enabled, Some(false));
-        assert_eq!(entries[0].description, None);
+        assert_eq!(entries[0].summary, None);
         assert_eq!(entries[1].enabled, None);
     }
 }

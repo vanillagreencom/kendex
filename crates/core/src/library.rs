@@ -58,6 +58,17 @@ pub struct ProvenanceRow {
     /// a record seeded for an installation the scan did not see.
     pub at: Option<String>,
     pub origin: Origin,
+    /// What the author says this package does, written for a person
+    /// browsing — the one field every surface showing an installed
+    /// package's own words reads.
+    ///
+    /// The observation's own header where it has one, and the words the
+    /// declaration's source writes where it does not: an entry inside a
+    /// tool's config file records how to reach a server, never what the
+    /// server is for. `None` says the author wrote nothing reachable, and
+    /// that is a supported state — a command, a URL, a path or a script
+    /// body is never promoted into a sentence about the package.
+    pub summary: Option<String>,
     /// Which package this installation is, where the records establish
     /// one. `None` says they do not: the observation keeps its own
     /// identity and stays distinct from every other, because a name two
@@ -71,9 +82,14 @@ pub struct ProvenanceRow {
 /// called it, and which tool holds it.
 type RowKey = (Scope, ItemKind, String, HarnessId, Option<String>);
 
-/// What is known about one such installation: where it came from, and
-/// which package it is when the records establish one.
-type RowFacts = (Origin, Option<PackageRef>);
+/// What is known about one such installation: where it came from, which
+/// package it is when the records establish one, and what that package
+/// says about itself.
+struct RowFacts {
+    origin: Origin,
+    package: Option<PackageRef>,
+    summary: Option<String>,
+}
 
 impl ProvenanceRow {
     /// The package this row is about: the one the records establish, or
@@ -108,6 +124,7 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
     }
     let settings = crate::settings::load(env)?;
     let observed = crate::scan::scan_scopes(env, &settings.harness_roots, &scopes);
+    let mut headers = crate::source::header::DeclaredHeaders::default();
     for item in observed.items {
         // Vendor-shipped content belongs to the tool, is already labelled
         // with who ships it, and is nobody's to manage — calling it
@@ -124,13 +141,18 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
         let claimed = index.of(&item);
         let package = claimed.as_ref().map(|(package, _)| package.clone());
         let origin = observed_origin(env, records, &item, claimed.as_ref());
+        let summary = observed_summary(env, &mut headers, records, &item, package.as_ref());
         // Keyed by which observation it is as well: a tool reads more than
         // one root and one registry file holds every entry, so two things
         // it finds under one name are two installations rather than one
         // row that has to pick an origin between them.
         let at = item.at.clone();
         rows.entry((item.scope, item.kind, item.name, item.harness, Some(at)))
-            .or_insert((origin, package));
+            .or_insert(RowFacts {
+                origin,
+                package,
+                summary,
+            });
     }
     // A record seeded a row for every installation it holds, so that one
     // the scan cannot see is still visible. Where the scan DID see it, that
@@ -139,8 +161,9 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
     let observed_packages: std::collections::BTreeSet<_> = rows
         .iter()
         .filter(|((.., at), _)| at.is_some())
-        .filter_map(|((scope, .., harness, _), (_, package))| {
-            package
+        .filter_map(|((scope, .., harness, _), facts)| {
+            facts
+                .package
                 .as_ref()
                 .map(|package| (scope.clone(), package.clone(), *harness))
         })
@@ -156,10 +179,11 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
                 *harness,
             ))
     });
+    seeded_summaries(env, &mut headers, &records_by_scope, &mut rows);
     for (scope, records) in &records_by_scope {
         if let Some(problem) = &records.record_problem {
-            let recovered = rows.iter().any(|((row_scope, ..), (origin, _))| {
-                row_scope == scope && *origin != Origin::Unmanaged
+            let recovered = rows.iter().any(|((row_scope, ..), facts)| {
+                row_scope == scope && facts.origin != Origin::Unmanaged
             });
             if !recovered {
                 return Err(crate::error::CoreError::LockCorrupt {
@@ -171,18 +195,74 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
     }
     Ok(rows
         .into_iter()
-        .map(
-            |((scope, kind, name, harness, at), (origin, package))| ProvenanceRow {
-                scope,
-                kind,
-                name,
-                harness,
-                at,
-                origin,
-                package,
-            },
-        )
+        .map(|((scope, kind, name, harness, at), facts)| ProvenanceRow {
+            scope,
+            kind,
+            name,
+            harness,
+            at,
+            origin: facts.origin,
+            summary: facts.summary,
+            package: facts.package,
+        })
         .collect())
+}
+
+/// What one observed installation's package says about itself: the words
+/// the observation itself carries, else the words the declaration it
+/// belongs to writes.
+///
+/// An MCP server is an entry in a tool's config file and a plugin is a
+/// folder of somebody else's code; neither holds words about the package,
+/// and the package they were installed from does. Asked of the package the
+/// records establish and never of the observed spelling — a name two
+/// packages share is no evidence that either wrote this one.
+fn observed_summary(
+    env: &Env,
+    headers: &mut crate::source::header::DeclaredHeaders,
+    records: &crate::ownership::Records,
+    item: &crate::model::ObservedItem,
+    package: Option<&PackageRef>,
+) -> Option<String> {
+    if let Some(summary) = item.summary.clone() {
+        return Some(summary);
+    }
+    let package = package?;
+    let manifest = records.manifest.as_deref()?;
+    headers
+        .of(env, &item.scope, manifest, package.kind, &package.name)?
+        .summary_or_description()
+        .map(str::to_owned)
+}
+
+/// The words for every row the scan could not see.
+///
+/// Only a seeded row, whose name IS the declared one: an observed row is
+/// named however its tool stores the package, and looking a declaration up
+/// under that spelling is the mistake the identity join exists to stop —
+/// its own words were settled in [`observed_summary`], through the package
+/// the records established. Run after the sweep that drops the seeded rows
+/// the scan also saw, so a catalog is read only for a row that survived.
+fn seeded_summaries(
+    env: &Env,
+    headers: &mut crate::source::header::DeclaredHeaders,
+    records_by_scope: &BTreeMap<Scope, crate::ownership::Records>,
+    rows: &mut BTreeMap<RowKey, RowFacts>,
+) {
+    for ((scope, kind, name, _, at), facts) in rows {
+        if at.is_some() || facts.summary.is_some() {
+            continue;
+        }
+        let Some(manifest) = records_by_scope
+            .get(scope)
+            .and_then(|records| records.manifest.as_deref())
+        else {
+            continue;
+        };
+        facts.summary = headers
+            .of(env, scope, manifest, *kind, name)
+            .and_then(|header| header.summary_or_description().map(str::to_owned));
+    }
 }
 
 /// A row for every installation this scope's record holds, under the
@@ -204,19 +284,24 @@ fn recorded(
                 entry.harness,
                 None,
             ),
-            (
-                origin_of(
+            RowFacts {
+                origin: origin_of(
                     manifest,
                     entry.kind,
                     &entry.name,
                     &entry.source,
                     &entry.source_repo,
                 ),
-                Some(PackageRef {
+                package: Some(PackageRef {
                     kind: entry.kind,
                     name: entry.name.clone(),
                 }),
-            ),
+                // Filled after the sweep below drops the seeded rows the
+                // scan also saw: only an installation nothing observed
+                // keeps one, and reading a catalog for the rest would pay
+                // for every row twice.
+                summary: None,
+            },
         );
     }
 }

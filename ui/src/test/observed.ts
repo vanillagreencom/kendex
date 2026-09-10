@@ -22,7 +22,7 @@ export const observed = (item: Omit<ObservedItem, "at">): ObservedItem => ({
 
 const identityOf = (item: Omit<ObservedItem, "at">): string => {
   if (item.fileState.state === "config-entry") {
-    return `${item.path}${ENTRY}${item.description ?? ""}`;
+    return `${item.path}${ENTRY}${item.action ?? ""}`;
   }
   return item.fileState.state === "symlink" && !item.fileState.broken
     ? item.fileState.target

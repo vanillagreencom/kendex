@@ -63,7 +63,7 @@ pub(super) fn unmanaged_rows(
         let ours = match item.kind {
             ItemKind::Agent | ItemKind::Skill => owned.contains(&item.path),
             ItemKind::Hook => item
-                .description
+                .action
                 .as_ref()
                 .is_none_or(|command| registered.contains(command)),
             _ => continue,

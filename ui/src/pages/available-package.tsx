@@ -8,6 +8,7 @@ import { CatalogFilePreview } from "@/components/marketplaces/catalog-file-previ
 import { RecordsUnreadableNote } from "@/components/marketplaces/packages-trouble";
 import { RepoAction } from "@/components/marketplaces/repo-action";
 import { useCatalog } from "@/components/marketplaces/use-catalog";
+import { SummaryText } from "@/components/package/summary-text";
 import { PageHeader } from "@/components/page-header";
 import { SafetyPanel } from "@/components/safety-panel";
 import { SectionHeading } from "@/components/section";
@@ -140,8 +141,11 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
         }
         subtitle={
           <>
-            {view?.preview.description ? (
-              <p>{view.preview.description}</p>
+            {/* The same words the catalogue row shows and the Library
+                row will show once it is installed: one package version,
+                one description of it. */}
+            {view?.preview.summary ? (
+              <SummaryText summary={view.preview.summary} />
             ) : null}
             <span className="mt-1 flex items-center gap-2">
               <span className="text-xs">{kindLabel(kind)}</span>
