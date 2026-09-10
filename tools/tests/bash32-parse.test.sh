@@ -228,6 +228,9 @@ fi
 #                       the pass reports every file parsed and exits nonzero
 #             `failed-zero`
 #                       the pass reports a file that did not parse and exits 0
+#             `trailing`
+#                       the pass reports a whole correct verdict and then a
+#                       line after it
 #             `-`       the shipped lane, unmodified
 #             `second`  the same, but the LAST runtime the lane names is a
 #                       stub that does deliver it — the row that proves a
@@ -254,7 +257,7 @@ stage_stub() { # stage_stub DIR NAME VERSION BODY — a fake interpreter
 # count of files it was actually handed. Counted rather than written in, so a
 # row turns on the FAILED and STATUS it declares and not on a `short` refusal
 # reached first — and so the three stand-ins below carry one copy of it.
-pass_protocol() { # pass_protocol FAILED STATUS — shell text, on stdout
+pass_protocol() { # pass_protocol FAILED STATUS [TRAILING] — shell text, on stdout
   cat <<STUB
 n=0
 seen=0
@@ -264,8 +267,9 @@ for a in "\$@"; do
 done
 printf 'bash32-parse: parsed=%s\n' "\$n"
 printf 'bash32-parse: failed=$1\n'
-exit $2
 STUB
+  [ -z "${3-}" ] || printf "printf '%%s\\\\n' '%s'\n" "$3"
+  printf 'exit %s\n' "$2"
 }
 
 # A stand-in container runtime. `refuse` is one that is installed and cannot
@@ -333,6 +337,12 @@ mutate() { # mutate WORD — stage the row's world and the lane copy it runs
   failed-zero)
     stage_stub "$MW/bin" five '3.2.57(1)-release' "$(pass_protocol 1 0)" || return 1
     ;;
+  trailing)
+    # A well-formed verdict with a second one appended: the shape a check on
+    # the first two lines alone reads as a clean tree.
+    stage_stub "$MW/bin" five '3.2.57(1)-release' \
+      "$(pass_protocol 0 0 'bash32-parse: parsed=99')" || return 1
+    ;;
   short)
     stage_stub "$MW/bin" five '3.2.57(1)-release' \
       'printf "bash32-parse: parsed=0\nbash32-parse: failed=0\n"; exit 0' || return 1
@@ -384,7 +394,8 @@ an empty file list is not read as a clean tree|lint|world|2|no-files=0
 a pass that answers nothing reaches no verdict|silent|world|2|no-verdict=0
 a pass that read fewer files than it was given reaches no verdict|short|world|2|short=0
 a pass reporting every file parsed and a nonzero exit reaches no verdict|clean-nonzero|world|2|no-verdict=3
-a pass reporting a file that did not parse and a zero exit reaches no verdict|failed-zero|world|2|no-verdict=0"
+a pass reporting a file that did not parse and a zero exit reaches no verdict|failed-zero|world|2|no-verdict=0
+a correct verdict with a line after it reaches no verdict|trailing|world|2|no-verdict=0"
 
 asserted=0
 while IFS='|' read -r label mutation argv want first; do

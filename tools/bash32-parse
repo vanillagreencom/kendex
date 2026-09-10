@@ -151,10 +151,11 @@ die_cause() { # KEY VALUE CAUSE — CAUSE is the failing command's own words
 #   bash32-parse: failed=<how many of them did not parse>
 #
 # with the shell's own complaint about each failure on stderr, and the exit
-# status 0 when failed is 0 and 1 when it is not. Anything else — silence, a
-# short count, a status that disagrees with the count — is a pass that
-# reached no verdict, and the outer pass refuses rather than reading it as a
-# clean tree.
+# status 0 when failed is 0 and 1 when it is not. Those two lines are the
+# WHOLE of stdout, and the outer pass holds this one to that: anything else —
+# silence, noise before them, anything after them, a short count, a status
+# that disagrees with the count — is a pass that reached no verdict, and the
+# outer pass refuses rather than reading it as a clean tree.
 #
 # `$BASH` and not `bash`: this pass is entered under a Bash 3.2 that PATH may
 # not lead back to, and asking PATH for a second shell here would parse the
@@ -348,6 +349,18 @@ for n in "$parsed" "$failed"; do
 $(cat "$WORK/err")" ;;
   esac
 done
+# The response is judged WHOLE. Reading two lines out of an unbounded stream
+# accepts a superset of the protocol: a correct verdict with anything after it
+# would be believed, and that is the one direction a malformed one gets read
+# as a clean tree. Leading noise already fails above, the first line then not
+# being a count. The text compared against is REBUILT from the counts just
+# extracted rather than matched against a second pattern, so there is one
+# statement of what --check prints and no pattern to drift from it. `$(...)`
+# stripped the trailing newline, so a well-formed response is these two lines
+# exactly.
+[ "$out" = "bash32-parse: parsed=$parsed
+bash32-parse: failed=$failed" ] || die_cause no-verdict "$status" "$out
+$(cat "$WORK/err")"
 [ "$parsed" -eq "$count" ] || die short "$parsed" "$count"
 
 if [ "$failed" -eq 0 ]; then
