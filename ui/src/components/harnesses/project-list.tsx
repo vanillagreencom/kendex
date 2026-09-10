@@ -82,12 +82,20 @@ const GLOBAL: Scope = { scope: "global" };
 function badgeFor(
   missing: MissingProject | undefined,
   state: ChangesState | null,
+  /** Whether a read of what projects hold has settled. Before one has, a
+   *  project with no row is one nothing has looked at yet and carries no
+   *  badge; after one has, it is a project the read did not cover, which is
+   *  not the same as a clean one and must not draw like one. */
+  asked: boolean,
 ):
   | { text: string; variant: "destructive" | "info"; title?: string }
   | undefined {
   if (missing)
     return { text: missingBadge(missing.why), variant: "destructive" };
-  if (state === null) return undefined;
+  if (state === null)
+    return asked
+      ? { text: NOT_CHECKED_BADGE, variant: "info", title: notChecked([]) }
+      : undefined;
   switch (state.kind) {
     case "clean":
       return undefined;
@@ -312,6 +320,11 @@ export function ProjectList() {
   // The card draws two things from it: the quiet Review changes line, and
   // the badge for a checkout no commit could land in.
   const changes = useProjectChangesStore((s) => s.rows);
+  // Whether a read of them has settled — what tells a project nothing has
+  // looked at yet from one the read did not cover.
+  const changesAsked = useProjectChangesStore(
+    (s) => s.read.status !== "pending",
+  );
   const items = result?.items ?? [];
   const packageOf = usePackageIndex();
   // The badges count packages and their clicks open the Library on the same
@@ -416,6 +429,7 @@ export function ProjectList() {
                 badge={badgeFor(
                   missing,
                   changesFor(changes, root)?.state ?? null,
+                  changesAsked,
                 )}
                 onOpen={() => goToLibrary(place)}
                 onKindClick={(kind) => goToLibrary({ ...place, kind })}

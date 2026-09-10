@@ -502,6 +502,106 @@ describe("answering an offer", () => {
   });
 });
 
+// An offer with no choice to make holds nothing back. `choice` is false where
+// the action's own work and everything pending are the same commit, and the
+// controls that could answer a tangle live inside the choice — so a gate that
+// held there would disable the only primary action with no way to free it.
+describe("an offer with no choice to make", () => {
+  it("runs even with files that carry earlier changes", () => {
+    const both = offer({
+      choice: false,
+      tangled: [{ path: "one.md", reason: "carriesEarlier" }],
+    });
+    expect(ready({ queue: [both], scoped: "action", accepted: false })).toBe(
+      true,
+    );
+    // And the choice still gates where there IS a choice, so the fix does not
+    // reach the case the gate exists for.
+    const choosable = offer({
+      choice: true,
+      actionPaths: ["one.md"],
+      tangled: [{ path: "one.md", reason: "carriesEarlier" }],
+    });
+    expect(
+      ready({ queue: [choosable], scoped: "action", accepted: false }),
+    ).toBe(false);
+  });
+
+  // With no choice on screen the two labels name the same commit, so the set
+  // sent is the whole pending one either way.
+  it("sends the same set whichever label is picked", () => {
+    const both = offer({ choice: false });
+    expect(selectionOf({ queue: [both], scoped: "all" })).toEqual({
+      kind: "all",
+    });
+    expect(selectionOf({ queue: [both], scoped: "action" })).toEqual({
+      kind: "only",
+      paths: both.actionPaths,
+    });
+  });
+});
+
+// The root travels as a KEY, not as something to print. A backend that
+// re-spelled it — slashes for the platform separator — would miss every
+// lookup, and a missing baseline makes every pending path read as this
+// action's, which is the outcome the issue forbids.
+describe("the root a project is looked up by", () => {
+  const WINDOWS = "C:\\Users\\me\\dev\\site";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useCommitOfferStore.setState({
+      queue: [],
+      stage: { at: "offer" },
+      route: "commit",
+      scoped: "action",
+      accepted: false,
+      message: "",
+      scanFailure: null,
+      baselines: {},
+    });
+  });
+
+  it("sends back the spelling it was given", async () => {
+    vi.mocked(commands.commitOfferBaseline).mockResolvedValue({
+      status: "ok",
+      data: [{ root: WINDOWS, held: [] }],
+    });
+    vi.mocked(commands.commitOfferScan).mockResolvedValue({
+      status: "ok",
+      data: [offer({ root: WINDOWS })],
+    });
+    await useCommitOfferStore.getState().noteBaseline([WINDOWS]);
+    await useCommitOfferStore.getState().enqueue([WINDOWS]);
+    // The reading reached the scan, which is what makes attribution work.
+    expect(commands.commitOfferScan).toHaveBeenCalledWith(
+      [WINDOWS],
+      [{ root: WINDOWS, held: [] }],
+    );
+    // And the queue is keyed by the same spelling, so leaving answers it.
+    expect(useCommitOfferStore.getState().queue[0].root).toBe(WINDOWS);
+    useCommitOfferStore.getState().leave();
+    expect(useCommitOfferStore.getState().queue).toEqual([]);
+  });
+
+  // The must-fail direction of the same rule: a backend that answered under
+  // a different spelling sends no reading, and the offer then attributes
+  // every pending path to this action.
+  it("sends no reading when the answer comes back re-spelled", async () => {
+    vi.mocked(commands.commitOfferBaseline).mockResolvedValue({
+      status: "ok",
+      data: [{ root: "C:/Users/me/dev/site", held: [] }],
+    });
+    vi.mocked(commands.commitOfferScan).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+    await useCommitOfferStore.getState().noteBaseline([WINDOWS]);
+    await useCommitOfferStore.getState().enqueue([WINDOWS]);
+    expect(commands.commitOfferScan).toHaveBeenCalledWith([WINDOWS], []);
+  });
+});
+
 // A scan behind a write reads several projects and answers later. In
 // between, a project can stop being one: reconnected to another folder,
 // or removed. The answer is about the folder it was started for, and

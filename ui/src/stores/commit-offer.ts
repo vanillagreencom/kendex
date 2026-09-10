@@ -195,14 +195,21 @@ export function selectionOf(state: {
 
 /** Whether the primary action may run: a commit labelled as one action's
  *  work never carries an earlier change the reader has not said yes to.
- *  Every other state is free to run. */
+ *  Every other state is free to run.
+ *
+ *  An offer with no choice to make is one of those. `choice` is false where
+ *  the action's own work and everything pending are the same commit, so
+ *  neither label claims anything the other does not, and there is nothing
+ *  for a yes to be about. The tangled files are still named — the dialog
+ *  draws them either way — but the answer cannot be asked for, because the
+ *  control that would take it belongs to a choice that is not on screen. */
 export function ready(state: {
   queue: ProjectOffer[];
   scoped: Scoped;
   accepted: boolean;
 }): boolean {
   const offer = state.queue[0];
-  if (!offer || state.scoped === "all") return true;
+  if (!offer || state.scoped === "all" || !offer.choice) return true;
   return offer.tangled.length === 0 || state.accepted;
 }
 

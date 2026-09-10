@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectOffer, Refused } from "@/bindings";
+import { COMMIT_LABEL, TANGLED_LABEL } from "@/lib/copy-commit-offer";
 import { useCommitOfferStore } from "@/stores/commit-offer";
 import { mount, settle } from "@/test/dom";
 import { CommitOfferDialog } from "./commit-offer-dialog";
@@ -169,5 +170,33 @@ describe("the commit refused where the checkout could not be put back", () => {
       "This checkout is back on main and kendex/renders is gone.",
     );
     expect(buttons()).toContain("Commit again");
+  });
+});
+
+// The state item 2 named: every pending path is one the action touched, so
+// there is no choice to draw — and the controls that could answer a tangle
+// live inside that choice. The primary action has to stay reachable.
+describe("an offer whose files all carry earlier changes", () => {
+  const both: ProjectOffer = {
+    ...offer,
+    choice: false,
+    files: [
+      { path: ".claude/CLAUDE.md", did: "both", added: false, removed: false },
+    ],
+    tangled: [{ path: ".claude/CLAUDE.md", reason: "carriesEarlier" }],
+  };
+
+  it("keeps the commit reachable and still names the files", async () => {
+    useCommitOfferStore.setState({ queue: [both], scoped: "action" });
+    const host = mount(<CommitOfferDialog />);
+    await settle();
+    const primary = [...host.ownerDocument.body.querySelectorAll("button")]
+      .filter((one) => one.textContent === COMMIT_LABEL)
+      .at(-1);
+    expect(primary, buttons().join(" | ")).toBeDefined();
+    expect((primary as HTMLButtonElement).disabled).toBe(false);
+    // The reader is still told what the commit carries.
+    expect(host.ownerDocument.body.textContent).toContain(TANGLED_LABEL);
+    expect(host.ownerDocument.body.textContent).toContain(".claude/CLAUDE.md");
   });
 });

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectChanges } from "@/bindings";
 import { commands } from "@/bindings";
@@ -12,6 +13,7 @@ import {
   NO_BRANCH_HELD,
   NOTHING_PENDING,
   PACKAGE_EDITS_LABEL,
+  PARTIAL_NOTE,
   projectChangesTitle,
   REMOVED_LABEL,
   RESTORED_LABEL,
@@ -22,6 +24,7 @@ import { READ_LANDED } from "@/lib/read-state";
 import { useCommitOfferStore } from "@/stores/commit-offer";
 import { useNavStore } from "@/stores/nav";
 import { useProjectChangesStore } from "@/stores/project-changes";
+import { useSettingsStore } from "@/stores/settings";
 import { mount, settle } from "@/test/dom";
 import { ProjectChangesPage } from "./project-changes";
 
@@ -275,6 +278,7 @@ describe("the review of one project's pending changes", () => {
           seconds: 30,
           gh: false,
         },
+        done: { restored: [], removed: [], dropped: [], added: [] },
       },
     });
     mount(<ProjectChangesPage />);
@@ -283,6 +287,103 @@ describe("the review of one project's pending changes", () => {
     await settle();
     await userEvent.click(button(REVERT_CONFIRM_LABEL));
     await settle();
+    expect(body()).toContain("error: unable to unlink");
+  });
+});
+
+// A restore writes in two passes, and a failure in the second leaves the
+// first standing. Reporting that as a bare refusal tells a reader nothing
+// happened while their files have already moved.
+describe("a restore that stopped part-way", () => {
+  const stopped = {
+    status: "ok" as const,
+    data: {
+      kind: "refused" as const,
+      refused: {
+        step: "the restore",
+        said: ["error: unable to unlink"],
+        timedOut: false,
+        seconds: 30,
+        gh: false,
+      },
+      done: {
+        restored: [FILES[0]],
+        removed: [],
+        dropped: [],
+        added: [],
+      },
+    },
+  };
+
+  beforeEach(() => {
+    vi.mocked(commands.projectChangesRestorePlan).mockResolvedValue({
+      status: "ok",
+      data: {
+        kind: "effect",
+        effect: {
+          restored: [FILES[0]],
+          removed: [FILES[1]],
+          dropped: [],
+          added: [],
+        },
+      },
+    });
+    vi.mocked(commands.projectChangesRestore).mockResolvedValue(stopped);
+    // The re-read is the real one, so the project has to be tracked and the
+    // whole-machine reads have to answer.
+    useSettingsStore.setState({ settings: { projects: [ROOT] } as never });
+    for (const read of [
+      commands.scanMachine,
+      commands.auditAll,
+      commands.libraryProvenance,
+    ] as const) {
+      vi.mocked(read).mockResolvedValue({ status: "ok", data: [] as never });
+    }
+  });
+
+  it("says what already went back, above git's words", async () => {
+    mount(<ProjectChangesPage />);
+    await settle();
+    await userEvent.click(button(REVERT_LABEL));
+    await settle();
+    await userEvent.click(button(REVERT_CONFIRM_LABEL));
+    await settle();
+    expect(body()).toContain(PARTIAL_NOTE);
+    expect(body()).toContain(FILES[0]);
+    expect(body()).toContain("error: unable to unlink");
+    // Never worded as a success, and the toast that would say so is not sent.
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+  });
+
+  // The page draws a set the run has already changed, so it is read again
+  // even though nothing succeeded.
+  it("reads the project again even though nothing succeeded", async () => {
+    mount(<ProjectChangesPage />);
+    await settle();
+    await userEvent.click(button(REVERT_LABEL));
+    await settle();
+    await userEvent.click(button(REVERT_CONFIRM_LABEL));
+    await settle();
+    expect(commands.projectChangesScan).toHaveBeenCalled();
+  });
+
+  // A run that wrote nothing before it stopped has nothing to account for,
+  // and claiming otherwise would be an empty list under a heading.
+  it("accounts for nothing where the run wrote nothing", async () => {
+    vi.mocked(commands.projectChangesRestore).mockResolvedValue({
+      ...stopped,
+      data: {
+        ...stopped.data,
+        done: { restored: [], removed: [], dropped: [], added: [] },
+      },
+    });
+    mount(<ProjectChangesPage />);
+    await settle();
+    await userEvent.click(button(REVERT_LABEL));
+    await settle();
+    await userEvent.click(button(REVERT_CONFIRM_LABEL));
+    await settle();
+    expect(body()).not.toContain(PARTIAL_NOTE);
     expect(body()).toContain("error: unable to unlink");
   });
 });

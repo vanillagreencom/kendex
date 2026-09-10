@@ -91,10 +91,10 @@ pub fn restore_plan(
         })
         .collect();
     // A restore that changes which paths exist is a restore of what kendex
-    // renders here, and the files that declare it have to go back with it —
-    // otherwise the next apply reads a declaration that still asks for the
-    // render and writes it again, which would make the restore look like it
-    // never happened.
+    // renders here, and the file that records what it renders has to go back
+    // with it — otherwise the inventory names a set the tree no longer
+    // holds. It is kendex's own file end to end, which is what makes writing
+    // over it whole allowed; the manifest is not, and is not among them.
     let structural = taken
         .iter()
         .any(|path| !declarations.contains(path) && changes_existence(&scan, path));
@@ -124,24 +124,59 @@ pub fn restore_plan(
     Ok(plan)
 }
 
+/// A restore that stopped part-way, and what it had already written.
+///
+/// Returned boxed: it carries a whole plan, which is four path lists, and an
+/// error that large on every `Ok` is what `clippy::result_large_err` names.
+///
+/// A restore writes the working tree in two passes, and a failure in the
+/// second one leaves the first standing. Reporting that as a bare refusal
+/// would tell a person nothing happened while their files had already moved,
+/// so what did happen travels with the failure — the same shape
+/// [`super::CommitFailure`] uses for the paths a refused commit left staged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoreFailure {
+    pub failed: Failed,
+    /// What had already been written when the failure came: the paths whose
+    /// committed content is back, and the paths already moved to the trash.
+    /// Empty where the restore stopped before writing anything.
+    pub done: RestorePlan,
+}
+
+impl From<Failed> for Box<RestoreFailure> {
+    fn from(failed: Failed) -> Box<RestoreFailure> {
+        Box::new(RestoreFailure {
+            failed,
+            done: RestorePlan::default(),
+        })
+    }
+}
+
 /// Run the plan and hand back what it did.
 ///
 /// The plan is derived here rather than taken from the caller: a preview a
 /// person read a moment ago describes a project that may have moved on, and
 /// the one thing a restore may never do is take a path the offer has
 /// stopped covering.
+///
+/// A failure carries what was already written. The `git restore` pass is one
+/// call and lands whole or not at all; the removals are one path at a time,
+/// so a failure among them names the ones already gone.
 pub fn restore(
     env: &Env,
     scope: &Scope,
     generated: &GeneratedPaths,
     chosen: &BTreeSet<String>,
-) -> Result<RestorePlan, Failed> {
-    let plan = restore_plan(scope, generated, chosen)?;
+) -> Result<RestorePlan, Box<RestoreFailure>> {
+    let plan = restore_plan(scope, generated, chosen).map_err(Box::<RestoreFailure>::from)?;
     let Scope::Project { root } = scope else {
         return Ok(plan);
     };
+    // Nothing has been written yet, so a failure in this pass carries an
+    // empty account: `git restore` writes every named path or none.
     if !plan.restored.is_empty() {
-        let spec = Spec::write(&plan.restored, Step::Restore)?;
+        let spec =
+            Spec::write(&plan.restored, Step::Restore).map_err(Box::<RestoreFailure>::from)?;
         let mut args = vec![
             "restore".to_owned(),
             "--source=HEAD".to_owned(),
@@ -149,8 +184,21 @@ pub fn restore(
         ];
         args.extend(spec.args());
         let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
-        git::run(Hardened::git(&borrowed, Some(root)), Step::Restore)?;
+        git::run(Hardened::git(&borrowed, Some(root)), Step::Restore)
+            .map_err(Box::<RestoreFailure>::from)?;
     }
+    // Past this point the restored paths are on disk, so every failure below
+    // reports them alongside the removals that had already gone.
+    let mut done = RestorePlan {
+        restored: plan.restored.clone(),
+        ..RestorePlan::default()
+    };
+    let stopped = |done: &RestorePlan, failed: Failed| {
+        Box::new(RestoreFailure {
+            failed,
+            done: done.clone(),
+        })
+    };
     for path in &plan.removed {
         // The path is one git itself reported inside this project and the
         // set was re-read a moment ago, so it names a file here and not a
@@ -159,13 +207,19 @@ pub fn restore(
         let whole = root.join(path);
         match std::fs::symlink_metadata(&whole) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(io_refused(&whole, &error)),
+            Err(error) => return Err(stopped(&done, io_refused(&whole, &error))),
             Ok(_) => {}
         }
-        crate::fs::move_to_trash(env, &whole).map_err(|error| Failed {
-            step: Step::Restore,
-            refusal: Refusal::Said(vec![error.to_string()]),
-        })?;
+        if let Err(error) = crate::fs::move_to_trash(env, &whole) {
+            return Err(stopped(
+                &done,
+                Failed {
+                    step: Step::Restore,
+                    refusal: Refusal::Said(vec![error.to_string()]),
+                },
+            ));
+        }
+        done.removed.push(path.clone());
     }
     Ok(plan)
 }

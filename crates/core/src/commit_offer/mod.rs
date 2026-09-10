@@ -54,7 +54,7 @@ pub use pending::{
     Attribution, Baseline, Held, Pending, PendingFile, Selection, Tangle, Tangled, baseline,
     pending,
 };
-pub use restore::{RestorePlan, restore, restore_plan};
+pub use restore::{RestoreFailure, RestorePlan, restore, restore_plan};
 pub use run::{
     CommitFailure, Committed, Opened, Pushed, abandon_branch, body, commit, open_pull_request,
     push, push_head, start_branch,

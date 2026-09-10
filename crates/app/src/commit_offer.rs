@@ -284,9 +284,16 @@ impl From<Result<(), Failed>> for StepResult {
     }
 }
 
+/// `key` is the root exactly as the caller spelled it. Every field a surface
+/// matches on carries it back unchanged: the window looks an answer up under
+/// the string it sent, and `shown` is a DISPLAY spelling — on Windows
+/// `paths::slashed` swaps the separator, so a key built from it never
+/// compares equal to the registered path the window holds. `RegisteredProject`
+/// in `app_settings.rs` keeps the same rule with `display()`.
 fn read(
     env: &Env,
     root: &Path,
+    key: &str,
     since: Option<&Baseline>,
 ) -> Result<Option<Result<ProjectOffer, ProjectFlag>>, String> {
     let scope = Scope::Project {
@@ -297,7 +304,7 @@ fn read(
         Ok(Some(scan)) => scan,
         Err(failed) => {
             return Ok(Some(Err(ProjectFlag {
-                root: shown(root),
+                root: key.to_owned(),
                 count: 0,
                 reason: FlagReason::Unreadable {
                     said: failed.said().to_vec(),
@@ -306,7 +313,7 @@ fn read(
         }
     };
     let flag = |reason: FlagReason| ProjectFlag {
-        root: shown(root),
+        root: key.to_owned(),
         count: counted(scan.count()),
         reason,
     };
@@ -325,9 +332,9 @@ fn read(
     // The window's write is not a typed command, so the message names the
     // shell the person is in rather than a verb they typed.
     match commit_offer::offer(scan, COMMAND, Probe::Gh) {
-        Ok(offer) => Ok(Some(Ok(drawn(root, offer, pending.as_ref())))),
+        Ok(offer) => Ok(Some(Ok(drawn(root, key, offer, pending.as_ref())))),
         Err(failed) => Ok(Some(Err(ProjectFlag {
-            root: shown(root),
+            root: key.to_owned(),
             count: 0,
             reason: FlagReason::Unreadable {
                 said: failed.said().to_vec(),
@@ -340,7 +347,7 @@ fn read(
 /// The rule is the command, and in the app the command is the app.
 const COMMAND: &str = "app";
 
-fn drawn(root: &Path, offer: Offer, pending: Option<&Pending>) -> ProjectOffer {
+fn drawn(root: &Path, key: &str, offer: Offer, pending: Option<&Pending>) -> ProjectOffer {
     let did: BTreeMap<&str, &kendex_core::commit_offer::PendingFile> = pending
         .map(|pending| {
             pending
@@ -351,7 +358,7 @@ fn drawn(root: &Path, offer: Offer, pending: Option<&Pending>) -> ProjectOffer {
         })
         .unwrap_or_default();
     ProjectOffer {
-        root: shown(root),
+        root: key.to_owned(),
         name: named(root),
         files: offer
             .scan
@@ -480,9 +487,9 @@ impl ProjectBaseline {
     }
 }
 
-fn baseline_of(root: &Path, baseline: &Baseline) -> ProjectBaseline {
+fn baseline_of(key: &str, baseline: &Baseline) -> ProjectBaseline {
     ProjectBaseline {
-        root: shown(root),
+        root: key.to_owned(),
         held: baseline
             .held
             .iter()
@@ -511,14 +518,15 @@ fn baseline_of(root: &Path, baseline: &Baseline) -> ProjectBaseline {
 pub fn commit_offer_baseline(roots: Vec<String>) -> Result<Vec<ProjectBaseline>, String> {
     let env = env()?;
     let mut taken = Vec::new();
-    for root in roots {
-        let root = PathBuf::from(root);
-        let scope = Scope::Project { root: root.clone() };
+    for key in roots {
+        let scope = Scope::Project {
+            root: PathBuf::from(&key),
+        };
         let Ok(generated) = generated(&env, &scope) else {
             continue;
         };
         if let Ok(baseline) = commit_offer::baseline(&scope, &generated) {
-            taken.push(baseline_of(&root, &baseline));
+            taken.push(baseline_of(&key, &baseline));
         }
     }
     Ok(taken)
@@ -556,7 +564,7 @@ pub fn commit_offer_scan(
         // claim anything about, and it is not a failure of the write that
         // reached it either: the read is skipped and nothing is said.
         let before = taken.remove(&root).unwrap_or_default();
-        match read(&env, &PathBuf::from(root), Some(&before)) {
+        match read(&env, &PathBuf::from(&root), &root, Some(&before)) {
             Ok(None) | Err(_) => {}
             // An offer is made about what the write did. A project where it
             // did nothing is left alone: its pending changes are on the
@@ -586,7 +594,7 @@ pub fn commit_offer_scan(
 #[specta::specta]
 pub fn commit_offer_open(root: String) -> Result<OpenOffer, String> {
     let env = env()?;
-    Ok(match read(&env, &PathBuf::from(root), None)? {
+    Ok(match read(&env, &PathBuf::from(&root), &root, None)? {
         Some(Ok(offer)) => OpenOffer::Offer {
             offer: Box::new(offer),
         },
@@ -753,16 +761,26 @@ pub enum ChangesState {
 pub fn project_changes_scan(roots: Vec<String>) -> Result<Vec<ProjectChanges>, String> {
     let env = env()?;
     let mut found = Vec::new();
-    for root in roots {
-        let root = PathBuf::from(root);
+    for key in roots {
+        let root = PathBuf::from(&key);
         let scope = Scope::Project { root: root.clone() };
         // A project whose plan will not derive is one this read can claim
-        // nothing about, and saying "no changes" over it would be the claim.
-        let Ok(generated) = generated(&env, &scope) else {
-            continue;
+        // nothing about, and dropping it would leave the window with no row
+        // — which every surface draws exactly as it draws a clean project.
+        // It gets a row saying it could not be read, carrying the reason.
+        let generated = match generated(&env, &scope) {
+            Ok(generated) => generated,
+            Err(error) => {
+                found.push(ProjectChanges {
+                    root: key,
+                    name: named(&root),
+                    state: ChangesState::Unreadable { said: vec![error] },
+                });
+                continue;
+            }
         };
         found.push(ProjectChanges {
-            root: shown(&root),
+            root: key,
             name: named(&root),
             state: match commit_offer::scan(&scope, &generated) {
                 Ok(None) => ChangesState::Clean,
@@ -787,7 +805,7 @@ pub fn project_changes_scan(roots: Vec<String>) -> Result<Vec<ProjectChanges>, S
 
 /// What putting the named paths back to what the last commit holds would
 /// do, path by path.
-#[derive(Debug, Clone, Serialize, Type)]
+#[derive(Debug, Clone, Default, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RestoreEffect {
     /// Paths whose committed content comes back over what stands there now.
@@ -819,8 +837,19 @@ impl From<RestorePlan> for RestoreEffect {
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum RestoreResult {
-    Effect { effect: RestoreEffect },
-    Refused { refused: Refused },
+    Effect {
+        effect: RestoreEffect,
+    },
+    /// The words of a step that would not run, beside what had already been
+    /// written when it stopped. A restore writes in two passes and a failure
+    /// in the second leaves the first standing, so saying only that it
+    /// refused would tell a person nothing happened while their files had
+    /// already moved. Every list in `done` is empty where it stopped before
+    /// writing anything.
+    Refused {
+        refused: Refused,
+        done: RestoreEffect,
+    },
 }
 
 /// The exact effect of putting these paths back, without putting any of
@@ -842,8 +871,10 @@ pub fn project_changes_restore_plan(
             Ok(plan) => RestoreResult::Effect {
                 effect: plan.into(),
             },
+            // The preview writes nothing, so it has nothing to account for.
             Err(failed) => RestoreResult::Refused {
                 refused: Refused::from(&failed),
+                done: RestoreEffect::default(),
             },
         },
     )
@@ -868,8 +899,11 @@ pub fn project_changes_restore(root: String, paths: Vec<String>) -> Result<Resto
             Ok(plan) => RestoreResult::Effect {
                 effect: plan.into(),
             },
-            Err(failed) => RestoreResult::Refused {
-                refused: Refused::from(&failed),
+            // What the run had already written travels with the refusal: a
+            // failure among the removals leaves every restored path on disk.
+            Err(failure) => RestoreResult::Refused {
+                refused: Refused::from(&failure.failed),
+                done: failure.done.into(),
             },
         },
     )
@@ -951,6 +985,28 @@ pub fn commit_offer_open_pull_request(
 mod tests {
     use super::*;
     use kendex_core::commit_offer::Refusal;
+
+    /// The root a surface matches on is the string the caller sent, never a
+    /// display spelling of it. The window looks every answer up under the
+    /// string it holds — `settings.projects` — so a key put through
+    /// `shown` would compare equal to nothing: no reading would reach the
+    /// scan, every pending path would read as this action's, and "Only this
+    /// action" would commit the lot.
+    ///
+    /// A verbatim path proves it on any platform: `paths::slashed` strips
+    /// the `\\?\` prefix, which is pure string work rather than a
+    /// separator swap, so the two spellings differ here as they do on
+    /// Windows.
+    #[test]
+    fn a_root_travels_back_in_the_spelling_it_arrived_in() {
+        const KEY: &str = r"\\?\C:\Users\me\dev\site";
+        assert_ne!(
+            shown(&PathBuf::from(KEY)),
+            KEY,
+            "the display spelling matches the key, so this proves nothing"
+        );
+        assert_eq!(baseline_of(KEY, &Baseline::default()).root, KEY);
+    }
 
     /// Every way a step can fail travels whole: the program's words in
     /// order, or the bound it ran past with no words at all. Nothing is

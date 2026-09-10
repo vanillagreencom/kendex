@@ -79,10 +79,17 @@ export const REMOVED_NOTE =
   "Your last commit holds no version of these, so putting them back means taking them away. kendex never deletes: they move to the trash.";
 export const ADDED_LABEL = "Taken in as well";
 export const ADDED_NOTE =
-  "These record what kendex renders here. Left out, the next write into this project would put the files you just restored straight back.";
+  "This records what kendex renders here. Left out, the next write into this project would put the files you just restored straight back. Its own uncommitted change goes back with it.";
 export const DROPPED_LABEL = "Left out";
 export const DROPPED_NOTE =
   "These have changed back since kendex looked; there is nothing to put back.";
+/** The run stopped part-way. What did move is stated before git's words:
+ *  being told it failed while the files moved anyway is the one reading this
+ *  must not leave. */
+export const PARTIAL_NOTE =
+  "kendex stopped part-way. These files were already put back before it stopped:";
+export const PARTIAL_REST_NOTE =
+  "Everything else is where it was. Read what git said below, then check again.";
 export const revertedToast = (restored: number, removed: number) => {
   if (removed === 0) return `Put ${restored} file${plural(restored)} back`;
   if (restored === 0)

@@ -19,15 +19,19 @@ use super::instruction_shims::{ShimStanding, ShimState};
 /// The name of the inventory CI reads, at a project root.
 pub const INVENTORY: &str = ".kendex-generated.json";
 
-/// The two files every render in a project depends on: the inventory that
-/// records which paths kendex owns here, and the manifest that declares
-/// what is installed. A commit that adds or removes a render without them
-/// is one the next apply undoes.
-pub fn companions(root: &Path) -> [PathBuf; 2] {
-    [
-        root.join(INVENTORY),
-        root.join(crate::manifest::MANIFEST_FILE),
-    ]
+/// The file every render in a project depends on: the inventory that records
+/// which paths kendex owns here. A commit that adds or removes a render
+/// without it records a set that no longer matches the tree.
+///
+/// The manifest is deliberately not here. kendex writes keys in it and folds
+/// them into the document the person wrote — `crate::manifest::fold` keeps
+/// their comments, key order and every value it did not touch — so kendex
+/// does not own its bytes and may neither commit nor restore it whole. A
+/// source catalog moves the declaration to a sibling file besides
+/// (`crate::manifest::file::manifest_path`), so a fixed name here would name
+/// the wrong file in this very repository.
+pub fn companions(root: &Path) -> [PathBuf; 1] {
+    [root.join(INVENTORY)]
 }
 
 /// What kendex renders in one project, split by whether it owns the whole
@@ -69,11 +73,11 @@ impl GeneratedPaths {
     /// the commit offer covers. The inventory is kendex's own file end to
     /// end, so it is committed with the renders it records.
     ///
-    /// The project's manifest is here for the same reason and no other: a
-    /// commit carrying a render whose declaration stays behind is a
-    /// checkout the next `kendex apply` sweeps the render back out of. It
-    /// is kendex's own format end to end — every key in it is an
-    /// instruction to kendex — which a shared configuration file is not.
+    /// Owning the FORMAT is not owning the bytes, so the project's manifest
+    /// is not here: `crate::manifest::fold` exists because kendex edits the
+    /// keys it holds and leaves the rest of that document alone. This set is
+    /// what a restore writes over, and nothing kendex only edits keys in may
+    /// be written over whole.
     pub fn owned(&self, root: &Path) -> BTreeSet<PathBuf> {
         self.whole.iter().cloned().chain(companions(root)).collect()
     }

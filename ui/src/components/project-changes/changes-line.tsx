@@ -28,15 +28,17 @@ import {
  *  not check, and offers the read again. */
 export function ChangesLine({ root }: { root: string }) {
   const row = useProjectChangesStore((s) => changesFor(s.rows, root));
-  const failed = useProjectChangesStore((s) => s.read.status === "failed");
+  // Whether any read has answered yet. A first read still on its way says
+  // nothing at all — it will answer on its own, and a notice meanwhile would
+  // flash on every start-up. Once one has settled, no row for this project
+  // is not "no changes": it is a project the read did not cover, and drawing
+  // nothing there is the claim `stores/project-changes.ts` refuses to make.
+  const asked = useProjectChangesStore((s) => s.read.status !== "pending");
   const goToProjectChanges = useNavStore((s) => s.goToProjectChanges);
   const count = pendingCount(row);
 
-  // Unknown, and a read that failed is why. A first read still on its way
-  // says nothing at all: it will answer on its own, and a notice in the
-  // meantime would flash on every start-up.
   if (count === null) {
-    if (!failed && row === null) return null;
+    if (!asked) return null;
     return (
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[13px] text-muted-foreground">

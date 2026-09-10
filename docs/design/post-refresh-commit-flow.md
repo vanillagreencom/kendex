@@ -44,7 +44,7 @@ That one call answers three questions at once.
 
 The set is re-derived immediately before the commit runs. A path that no longer differs is dropped. When none is left, the action reports that nothing was committed and the run ends without a commit. On the `pr` route the checkout has already moved to the new branch by then, so kendex clears that leftover the way it does after a refused commit there: `git switch -` back and `git branch -d <branch>`, and both surfaces say so with the line the refused commit uses.
 
-`.kendex-lock.json` is this machine's install ledger. It is not in the collection, so it is never in the set. `kendex.toml` was not in the set either until KEN-1297 added it; see § What KEN-1297 changed.
+`kendex.toml` is the person's file and `.kendex-lock.json` is this machine's install ledger. Neither is in the collection, so neither is ever in the set.
 
 ## Where the offer runs
 
@@ -705,11 +705,13 @@ Where the action's own work and everything pending would make different commits,
 git commits whole files, so two cases have no separable commit. `commit_offer::Pending::tangled` names them, and the app holds the primary action until the reader says yes:
 
 - a file the action changed that was already changed before it;
-- a file that records what kendex renders here — `.kendex-generated.json` or `kendex.toml` — whose own pending change is not the action's, where the action adds or removes a render.
+- `.kendex-generated.json`, which records what kendex renders here, where its own pending change is not the action's and the action adds or removes a render.
 
-### The manifest is in the set
+### The manifest stays out of the set
 
-`GeneratedPaths::owned` now includes the project's `kendex.toml` beside `.kendex-generated.json`. A commit carrying a render whose declaration stayed behind is a checkout the next write sweeps that render out of.
+`GeneratedPaths::owned` is unchanged, and `generated_paths::companions` names `.kendex-generated.json` alone.
+
+kendex owns the manifest's FORMAT and not its bytes. `manifest::fold` edits the keys kendex holds and leaves the rest of the document as the person wrote it — comments, blank lines, key order, a note inside a declaration — which is the `shared` group's definition rather than the owned one. `owned` is also the set a restore writes `HEAD` over, so a file kendex only edits keys in can never be in it. A source catalog moves the declaration that drives renders to `kendex-local.toml` (`manifest::file::manifest_path`), so a fixed manifest name would name the wrong file in this repository.
 
 ### Pending changes have a place in the project UI
 
@@ -721,7 +723,9 @@ Dismissing an offer lasts. Nothing puts a project's changes back in front of a r
 
 ### Putting files back
 
-`commit_offer::restore` writes the working tree and nothing else. A path the last commit holds gets that version back; a path it does not hold — one kendex added — moves to the trash, because removal never deletes. `git restore --worktree` leaves the index alone, so a change the person staged survives. The files that record what kendex renders here travel with a restore that changes which paths exist.
+`commit_offer::restore` writes the working tree and nothing else. A path the last commit holds gets that version back; a path it does not hold — one kendex added — moves to the trash, because removal never deletes. `git restore --worktree` leaves the index alone, so a change the person staged survives. `.kendex-generated.json` travels with a restore that changes which paths exist, and the confirmation says its own uncommitted change goes back too.
+
+A failure part-way carries what it had already written. `git restore` lands whole or not at all; the removals are one path at a time, so a failure among them reports the restored paths and the removals already made rather than a bare refusal.
 
 `project_changes_restore_plan` states the exact effect before anything runs, and `project_changes_restore` derives it again when it does.
 

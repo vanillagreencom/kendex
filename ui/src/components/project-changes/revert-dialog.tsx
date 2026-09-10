@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { commands, type Refused, type RestoreEffect } from "@/bindings";
+import { commands, type RestoreEffect, type RestoreResult } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { didNotFinish } from "@/lib/copy-commit-offer";
 import {
@@ -7,6 +7,8 @@ import {
   ADDED_NOTE,
   DROPPED_LABEL,
   DROPPED_NOTE,
+  PARTIAL_NOTE,
+  PARTIAL_REST_NOTE,
   REMOVED_LABEL,
   REMOVED_NOTE,
   RESTORED_LABEL,
@@ -20,11 +22,14 @@ import {
 } from "@/lib/copy-project-changes";
 import { readOrder } from "@/lib/read-state";
 
-/** What the preview read came back with. */
+/** What the preview read, or the run, came back with. A refusal carries what
+ *  had already been written when it stopped: a restore writes in two passes
+ *  and a failure in the second leaves the first standing, so a bare refusal
+ *  would tell a person nothing happened while their files had moved. */
 type Read =
   | { at: "reading" }
   | { at: "effect"; effect: RestoreEffect }
-  | { at: "refused"; said: string[] };
+  | { at: "refused"; said: string[]; done: RestoreEffect | null };
 
 /** Putting chosen files back to what the last commit holds, with the exact
  *  effect stated before anything runs.
@@ -45,6 +50,7 @@ export function RevertDialog({
   root,
   paths,
   onDone,
+  onPartial,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -53,6 +59,10 @@ export function RevertDialog({
   paths: string[];
   /** What the run did, for the surface that opened this. */
   onDone: (effect: RestoreEffect) => void;
+  /** The run stopped part-way and left work on disk. The surface refreshes
+   *  what it draws without claiming the restore succeeded — this dialog
+   *  stays open with git's words and the account of what did move. */
+  onPartial: (done: RestoreEffect) => void;
 }) {
   const [read, setRead] = useState<Read>({ at: "reading" });
   const [running, setRunning] = useState(false);
@@ -84,11 +94,16 @@ export function RevertDialog({
     setRunning(false);
     const answer = answerOf(response);
     // A refusal keeps the dialog open with git's own words in it: closing
-    // over it would leave the reader believing the files went back.
-    if (answer.at !== "effect") {
+    // over it would leave the reader believing the files went back. Where it
+    // stopped part-way, what did move is on screen above those words AND the
+    // surface behind is told to read the project again, so the page never
+    // draws a set the run has already changed.
+    if (answer.at === "refused") {
       setRead(answer);
+      if (answer.done !== null && !empty(answer.done)) onPartial(answer.done);
       return;
     }
+    if (answer.at !== "effect") return;
     onOpenChange(false);
     onDone(answer.effect);
   };
@@ -110,8 +125,28 @@ export function RevertDialog({
         {read.at === "reading" ? (
           <p className="text-muted-foreground">{REVERT_READING}</p>
         ) : read.at === "refused" ? (
-          <div className="space-y-1">
+          <div className="space-y-3">
             <p className="font-medium text-critical">{REVERT_FAILED_TITLE}</p>
+            {/* What did move, before git's words rather than after them: a
+                reader who has just been told the restore failed needs to
+                know their files moved anyway. Nothing is drawn where the
+                run stopped before writing. */}
+            {read.done && !empty(read.done) ? (
+              <div className="space-y-3">
+                <p>{PARTIAL_NOTE}</p>
+                <Group
+                  label={RESTORED_LABEL}
+                  paths={read.done.restored}
+                  note={null}
+                />
+                <Group
+                  label={REMOVED_LABEL}
+                  paths={read.done.removed}
+                  note={null}
+                />
+                <p className="text-muted-foreground">{PARTIAL_REST_NOTE}</p>
+              </div>
+            ) : null}
             <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">
               {read.said.join("\n")}
             </pre>
@@ -182,21 +217,23 @@ function Group({
  *  dialog able to state an effect. */
 function answerOf(
   response:
-    | {
-        status: "ok";
-        data:
-          | { kind: "effect"; effect: RestoreEffect }
-          | { kind: "refused"; refused: Refused };
-      }
+    | { status: "ok"; data: RestoreResult }
     | { status: "error"; error: string },
 ): Read {
+  // A transport failure is not an account of the repository: it says nothing
+  // about what was written, so it carries no `done` rather than an empty one.
   if (response.status === "error")
-    return { at: "refused", said: [response.error] };
+    return { at: "refused", said: [response.error], done: null };
   if (response.data.kind === "effect")
     return { at: "effect", effect: response.data.effect };
   const refused = response.data.refused;
   return {
     at: "refused",
     said: refused.timedOut ? [didNotFinish(refused.seconds)] : refused.said,
+    done: response.data.done,
   };
 }
+
+/** Whether an effect changed nothing on disk. */
+const empty = (effect: RestoreEffect): boolean =>
+  effect.restored.length === 0 && effect.removed.length === 0;

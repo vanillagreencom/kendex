@@ -8,7 +8,7 @@ import {
   changesToReview,
   REVIEW_CHANGES_LABEL,
 } from "@/lib/copy-project-changes";
-import { READ_LANDED, readFailed } from "@/lib/read-state";
+import { READ_LANDED, READ_PENDING, readFailed } from "@/lib/read-state";
 import { useNavStore } from "@/stores/nav";
 import { useProjectChangesStore } from "@/stores/project-changes";
 import { mount, settle } from "@/test/dom";
@@ -71,8 +71,11 @@ describe("a project's line about what is waiting", () => {
   });
 
   // A first read still on its way says nothing at all: it will answer on
-  // its own, and a notice meanwhile would flash on every start-up.
+  // its own, and a notice meanwhile would flash on every start-up. The read
+  // state is what says so — an empty row list under a LANDED read is a
+  // project the read did not cover, which is a different answer.
   it("says nothing while the first read is still on its way", async () => {
+    useProjectChangesStore.setState({ rows: [], read: READ_PENDING });
     const host = mount(<ChangesLine root={ROOT} />);
     await settle();
     expect(host.textContent).toBe("");
@@ -107,5 +110,27 @@ describe("a project's line about what is waiting", () => {
     const host = mount(<ChangesLine root={ROOT} />);
     await settle();
     expect(host.textContent).toContain(COULD_NOT_CHECK);
+  });
+});
+
+// A landed read that covers no row for this project is not a clean project.
+// The store keeps no row precisely because nothing is known, and drawing
+// nothing there would be the claim it refuses to make.
+describe("a project the landed read did not cover", () => {
+  it("says the check failed rather than nothing", async () => {
+    useProjectChangesStore.setState({
+      rows: [
+        {
+          root: "/home/method/dev/other",
+          name: "other",
+          state: { kind: "clean" },
+        },
+      ],
+      read: READ_LANDED,
+    });
+    const host = mount(<ChangesLine root={ROOT} />);
+    await settle();
+    expect(host.textContent).toContain(COULD_NOT_CHECK);
+    expect(host.textContent).toContain(TRY_AGAIN_LABEL);
   });
 });

@@ -3501,7 +3501,16 @@ export type RestoreEffect = {
  *  What a restore answered with: the exact effect, or the words of a step
  *  that would not run.
  */
-export type RestoreResult = { kind: "effect"; effect: RestoreEffect } | { kind: "refused"; refused: Refused };
+export type RestoreResult = { kind: "effect"; effect: RestoreEffect } | 
+/**
+ *  The words of a step that would not run, beside what had already been
+ *  written when it stopped. A restore writes in two passes and a failure
+ *  in the second leaves the first standing, so saying only that it
+ *  refused would tell a person nothing happened while their files had
+ *  already moved. Every list in `done` is empty where it stopped before
+ *  writing anything.
+ */
+{ kind: "refused"; refused: Refused; done: RestoreEffect };
 
 /**
  *  What one installation of an item is waiting on, and what may be done

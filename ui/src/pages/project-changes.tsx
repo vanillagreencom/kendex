@@ -95,6 +95,13 @@ export function ProjectChangesPage() {
   const paths = pendingPaths(row);
   const state = row?.state ?? null;
 
+  // The files moved, so every read that answers for them is asked again —
+  // this page's own row among them, on `rescan.ts`'s rule.
+  const reread = () => {
+    void rescanEverything();
+    void useProjectChangesStore.getState().refresh(trackedProjects());
+  };
+
   const commit = async () => {
     const answer = await openFor(root);
     if (answer.at === "offer") return;
@@ -273,11 +280,13 @@ export function ProjectChangesPage() {
           toast.success(
             revertedToast(effect.restored.length, effect.removed.length),
           );
-          // The files moved, so every read that answers for them is asked
-          // again — this page's own row among them, on `rescan.ts`'s rule.
-          void rescanEverything();
-          void useProjectChangesStore.getState().refresh(trackedProjects());
+          reread();
         }}
+        // A run that stopped part-way moved files too, so the page is read
+        // again for exactly the same reason — without a toast, because
+        // nothing here succeeded. The dialog stays open with git's words and
+        // the account of what did move.
+        onPartial={reread}
       />
     </div>
   );

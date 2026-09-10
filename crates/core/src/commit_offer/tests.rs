@@ -1466,20 +1466,74 @@ fn a_render_the_action_only_rewrites_leaves_the_declarations_alone() {
     assert!(pending.tangled().is_empty(), "{:?}", pending.tangled());
 }
 
-/// The project's own manifest is committed with the renders it declares. A
-/// commit carrying a render whose declaration stayed behind is a checkout
-/// the next write sweeps that render back out of.
+/// The manifest is not a file kendex owns whole. `manifest::fold` edits the
+/// keys kendex holds and leaves the rest of the document — comments, key
+/// order, a note inside a declaration — exactly as the person wrote it, so
+/// neither a commit nor the restore that writes over this set may take it.
+///
+/// Both spellings are checked. A source catalog moves the declaration that
+/// drives renders to a sibling file, so a fixed name here would claim the
+/// maintainer's published catalogue and miss the file that actually matters.
 #[test]
-fn the_manifest_is_one_of_the_files_the_offer_covers() {
-    let repo = Repo::new(&[(OWNED[0], "one\n"), ("kendex.toml", "schema = 6\n")]);
-    let generated = repo.generated(&[OWNED[0]], &[]);
-    repo.write("kendex.toml", "schema = 6\n[skills]\ngh = \"kit\"\n");
-    let scan = repo.scan(&generated).unwrap();
-    assert!(
-        scan.owned.iter().any(|owned| owned.path == "kendex.toml"),
-        "{:?}",
-        scan.owned
+fn the_manifest_is_never_one_of_the_files_the_offer_covers() {
+    for (name, catalog) in [("an ordinary project", false), ("a source catalog", true)] {
+        let repo = Repo::new(&[
+            (OWNED[0], "one\n"),
+            ("kendex.toml", "# a note the person wrote\n"),
+            ("kendex-local.toml", "schema = 6\n"),
+        ]);
+        let generated = repo.generated(&[OWNED[0]], &[]);
+        repo.write(
+            "kendex.toml",
+            match catalog {
+                true => "is_source_catalog = true\n# the person edited their note\n",
+                false => "# the person edited their note\n",
+            },
+        );
+        repo.write("kendex-local.toml", "schema = 6\n[skills]\ngh = \"kit\"\n");
+        repo.write(OWNED[0], "one, written by kendex\n");
+
+        let scan = repo.scan(&generated).unwrap();
+        let covered: Vec<&str> = scan.owned.iter().map(|one| one.path.as_str()).collect();
+        assert!(!covered.contains(&"kendex.toml"), "{name}: {covered:?}");
+        assert!(
+            !covered.contains(&"kendex-local.toml"),
+            "{name}: {covered:?}"
+        );
+        // Counted as the person's own changed files, which is what they are.
+        assert_eq!(scan.others, 2, "{name}");
+    }
+}
+
+/// The restore writes `HEAD` over what it is given, so a hand-authored file
+/// must never reach it — not as a chosen path, and not as a companion the
+/// plan adds on the reader's behalf.
+#[test]
+fn putting_a_render_back_never_writes_over_the_manifest() {
+    let home = tempfile::tempdir().unwrap();
+    let env = env_in(&crate::test_util::rooted(&home));
+    let repo = Repo::new(&[(OWNED[0], "one\n"), ("kendex.toml", "# committed\n")]);
+    let generated = repo.generated(&[OWNED[0], OWNED[1]], &[]);
+    // The action adds a render, and the person has edited their manifest.
+    repo.write(OWNED[1], "added\n");
+    repo.write(INVENTORY, "[\"a\",\"b\"]");
+    repo.write("kendex.toml", "# an uncommitted note\n");
+
+    let chosen: BTreeSet<String> = [OWNED[1].to_owned(), "kendex.toml".to_owned()]
+        .into_iter()
+        .collect();
+    let done = restore(&env, &repo.scope(), &generated, &chosen).unwrap();
+    // Named and refused rather than silently taken.
+    assert_eq!(done.dropped, ["kendex.toml".to_owned()]);
+    assert!(!done.restored.contains(&"kendex.toml".to_owned()));
+    assert!(!done.added.contains(&"kendex.toml".to_owned()));
+    assert_eq!(
+        fs::read_to_string(repo.root.join("kendex.toml")).unwrap(),
+        "# an uncommitted note\n",
+        "the person's uncommitted note was written over"
     );
+    // The inventory still travels, because kendex owns that one end to end.
+    assert_eq!(done.added, [INVENTORY.to_owned()]);
 }
 
 // ---------------------------------------------------------------------
@@ -1809,4 +1863,71 @@ fn putting_files_back_touches_nothing_the_offer_does_not_cover() {
         fs::read_to_string(repo.root.join("mine.md")).unwrap(),
         "changed\n"
     );
+}
+
+/// A restore writes in two passes, and a failure among the removals leaves
+/// the first pass standing. Reporting that as a bare refusal tells a person
+/// nothing happened while their files have already moved, so what was
+/// written travels with the failure.
+#[cfg(unix)]
+#[test]
+fn a_restore_that_stops_part_way_reports_what_it_already_wrote() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = tempfile::tempdir().unwrap();
+    let env = env_in(&crate::test_util::rooted(&home));
+    let repo = Repo::new(&[(OWNED[0], "committed\n")]);
+    let generated = repo.generated(&[OWNED[0], OWNED[1]], &[]);
+    repo.write(OWNED[0], "rewritten\n");
+    repo.write(OWNED[1], "added\n");
+
+    // The trash cannot be written, so moving the added file there fails —
+    // after the restore pass has already put the rewritten one back.
+    let trash = env.trash_dir();
+    fs::create_dir_all(&trash).unwrap();
+    fs::set_permissions(&trash, fs::Permissions::from_mode(0o500)).unwrap();
+
+    let chosen: BTreeSet<String> = [OWNED[0].to_owned(), OWNED[1].to_owned()]
+        .into_iter()
+        .collect();
+    let failure = restore(&env, &repo.scope(), &generated, &chosen).unwrap_err();
+    fs::set_permissions(&trash, fs::Permissions::from_mode(0o700)).unwrap();
+
+    assert_eq!(failure.failed.step, Step::Restore);
+    assert!(!failure.failed.said().is_empty());
+    // The account names the pass that landed and claims no removal.
+    assert_eq!(failure.done.restored, [OWNED[0].to_owned()]);
+    assert!(
+        failure.done.removed.is_empty(),
+        "{:?}",
+        failure.done.removed
+    );
+    // And it is true: that file really is back, and the other is still there.
+    assert_eq!(
+        fs::read_to_string(repo.root.join(OWNED[0])).unwrap(),
+        "committed\n"
+    );
+    assert!(repo.root.join(OWNED[1]).exists());
+}
+
+/// A restore that stops before writing anything has nothing to account for,
+/// so it reports an empty one rather than claiming work it never did.
+#[test]
+fn a_restore_that_writes_nothing_accounts_for_nothing() {
+    let home = tempfile::tempdir().unwrap();
+    let env = env_in(&crate::test_util::rooted(&home));
+    let repo = Repo::new(&[(OWNED[0], "one\n")]);
+    let generated = repo.generated(&[OWNED[0]], &[]);
+    // Nothing is pending, so the plan is empty and the run writes nothing.
+    let done = restore(&env, &repo.scope(), &generated, &BTreeSet::new()).unwrap();
+    assert!(done.empty(), "{done:?}");
+    let straight: Box<RestoreFailure> = failed_read().into();
+    assert_eq!(straight.done, RestorePlan::default());
+}
+
+/// A read that would not run, for the conversion above.
+fn failed_read() -> Failed {
+    Failed {
+        step: Step::Restore,
+        refusal: Refusal::Said(vec!["git said no".to_owned()]),
+    }
 }

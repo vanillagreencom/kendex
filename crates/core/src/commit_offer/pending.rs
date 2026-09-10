@@ -128,9 +128,9 @@ pub enum Tangled {
     /// the action. Committing the file commits both.
     CarriesEarlier,
     /// The action adds or takes away a path kendex renders, and the file
-    /// that declares what kendex renders here carries a change of its own
-    /// that the action did not make. Leaving it out commits a render
-    /// nothing declares; taking it in commits that earlier change.
+    /// that records what kendex renders here carries a change of its own
+    /// that the action did not make. Leaving it out commits a set that no
+    /// longer matches the tree; taking it in commits that earlier change.
     DeclaresWhatChanged,
 }
 
@@ -139,9 +139,12 @@ pub enum Tangled {
 pub struct Pending {
     /// Every changed path kendex owns, in the scan's order.
     pub files: Vec<PendingFile>,
-    /// The paths that declare what kendex renders here — the inventory and
-    /// the manifest — as the scan spells them. A commit that adds or takes
-    /// away a render carries these with it.
+    /// The path that records what kendex renders here — the inventory — as
+    /// the scan spells it. A commit that adds or takes away a render carries
+    /// it too. The manifest is not among them: kendex edits keys in it and
+    /// owns none of its bytes, so it is neither committed nor restored
+    /// whole. `crate::engine::generated_paths::companions` is the one place
+    /// that decides this.
     declarations: BTreeSet<String>,
 }
 
