@@ -156,6 +156,13 @@ fn inside(root: &Path, relative: &str) -> std::result::Result<PathBuf, String> {
 /// copy id the member records. The store is the template's alone, so a
 /// name already there is this template's own earlier copy of the same
 /// package and is replaced whole.
+///
+/// `introduced` collects the licence files this write puts in the store
+/// that were not there before it — what a rollback may remove, since a
+/// notice that was already there is one an earlier copy still owns. A sink
+/// rather than part of the answer because a write that refuses part-way
+/// has already put some of them there, and a caller undoing the run needs
+/// those too.
 pub(super) fn write(
     env: &Env,
     id: &str,
@@ -163,6 +170,7 @@ pub(super) fn write(
     name: &str,
     files: &[(PathBuf, Vec<u8>)],
     notices: &[(PathBuf, Vec<u8>)],
+    introduced: &mut Vec<PathBuf>,
 ) -> Result<String> {
     // The name is joined into a path here and into the destination's
     // manifest at install. Asked again rather than trusted from the
@@ -250,6 +258,7 @@ pub(super) fn write(
             == crate::author::import::NoticeStanding::Absent
         {
             write_file(&sealed, &target, bytes)?;
+            introduced.push(relative.clone());
         }
     }
     Ok(slot_id(kind, name))
@@ -281,10 +290,22 @@ pub(super) fn held(
     }
 }
 
-/// Put back what [`held`] read, slot by slot. A slot that held nothing is
-/// emptied again, so a fresh copy a refused replacement wrote does not
-/// survive it.
-pub(super) fn restore(env: &Env, template: &Template, slots: &[PriorSlot]) -> Result<()> {
+/// Put back what [`held`] read, slot by slot, and take out the licence
+/// files the run introduced. A slot that held nothing is emptied again, so
+/// a fresh copy a refused replacement wrote does not survive it.
+///
+/// `introduced` is what [`write()`] reported putting there — never a notice
+/// that was already in the store, which an earlier copy came under and
+/// still owns. Nothing else sweeps one: [`prune`] removes only what a
+/// member no longer names, and a file no member ever named is not that, so
+/// one left here would sit where the terms comparison looks and refuse the
+/// next legitimate copy whose licence text differs from it.
+pub(super) fn restore(
+    env: &Env,
+    template: &Template,
+    slots: &[PriorSlot],
+    introduced: &[PathBuf],
+) -> Result<()> {
     let (sealed, root) = sealed_store(env, &template.id)?;
     for (kind, name, before) in slots {
         let slot = local_slot(&root, *kind, name);
@@ -304,6 +325,11 @@ pub(super) fn restore(env: &Env, template: &Template, slots: &[PriorSlot]) -> Re
                 }
             }
         }
+    }
+    // Through the same judge the deletes in this module go through: a
+    // relative path is not proof of where it lands.
+    for relative in introduced {
+        remove_inside(&sealed, &root.join(relative))?;
     }
     Ok(())
 }

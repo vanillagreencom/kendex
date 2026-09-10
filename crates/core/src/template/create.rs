@@ -136,6 +136,10 @@ pub fn create_from_project(env: &Env, root: &std::path::Path, chosen: &Chosen) -
             customizations,
         },
     )?;
+    // A refusal here takes the whole template, store and all, so what the
+    // writes put there is accounted for by the removal below rather than
+    // by a rollback of its own.
+    let mut introduced = Vec::new();
     for (copy, bytes) in resolved {
         if let Err(error) = store::write(
             env,
@@ -144,6 +148,7 @@ pub fn create_from_project(env: &Env, root: &std::path::Path, chosen: &Chosen) -
             &copy.name,
             &bytes.files,
             &bytes.notices,
+            &mut introduced,
         ) {
             // The index names copies that are not there. Nothing has been
             // installed from it and nothing else points at it, so the
@@ -237,6 +242,12 @@ pub fn add_from_project(
             store::held(env, &template, copy.kind, &copy.name)?,
         ));
     }
+    // The licence files these writes introduce, which the template did not
+    // hold before this run. Recorded as they land, because a write that
+    // refuses part-way has already put some of them there, and the
+    // rollback below removes exactly these — never a notice an earlier
+    // copy came under, which is still that copy's.
+    let mut introduced = Vec::new();
     for (copy, resolved) in bytes {
         if let Err(error) = store::write(
             env,
@@ -245,12 +256,13 @@ pub fn add_from_project(
             &copy.name,
             &resolved.files,
             &resolved.notices,
+            &mut introduced,
         ) {
             // The index still names the old copies, so the store is put
             // back to match it. A restore that itself fails is said out
             // loud rather than folded into the write's own reason: the
             // template is then neither what it was nor what was asked for.
-            if let Err(restoring) = store::restore(env, &template, &replaced) {
+            if let Err(restoring) = store::restore(env, &template, &replaced, &introduced) {
                 return Err(CoreError::TemplateCopyUnreadable {
                     copy: copy.name.clone(),
                     why: format!(

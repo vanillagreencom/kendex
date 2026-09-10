@@ -748,6 +748,164 @@ fn a_folder_marketplace_is_saved_under_one_spelling() {
     );
 }
 
+/// A refused replacement puts back the slots AND takes out the licence
+/// files the run introduced, leaving the ones an earlier copy came under
+/// where they are.
+///
+/// Nothing else sweeps an introduced notice: prune removes only what a
+/// member no longer names, and a file no member ever named is not that. One
+/// left behind sits exactly where the terms comparison looks, so the next
+/// legitimate copy whose licence text differs from it refuses — the store
+/// would hold terms no copy in it came under until the template was
+/// deleted.
+/// The fixture's marketplace declared under a second alias as well, with a
+/// package of its own, and both installed copies drifted.
+///
+/// Two aliases because the terms of a copy land under the alias it came
+/// from: two copies in one run then write to two different notice paths,
+/// which is what lets one of them introduce a notice while the other
+/// refuses against terms already stored. Drifted because a copy takes the
+/// project's own bytes, and those bytes are the marketplace's — which is
+/// what makes its terms travel with them.
+#[allow(clippy::unwrap_used)]
+fn under_a_second_alias(project: &Project) {
+    skill(&project.catalog.join("skills"), "hound", "market bytes");
+    let declared = project.root.join("kendex.toml");
+    let manifest = fs::read_to_string(&declared).unwrap();
+    fs::write(
+        &declared,
+        format!(
+            "{manifest}[sources.feline]\n{}\n[skills.hound]\nsource = \"feline\"\n",
+            crate::test_util::source_path(&project.catalog)
+        ),
+    )
+    .unwrap();
+    let scope = Scope::Project {
+        root: project.root.clone(),
+    };
+    let lock_path = crate::lock::lock_path(&project.env, &scope);
+    let mut lock = match crate::lock::load_file(&lock_path).unwrap() {
+        crate::lock::LockFile::Current(lock) => lock,
+        other => panic!("the fixture writes a current lock: {other:?}"),
+    };
+    lock.entries.insert(
+        crate::lock::entry_key(ItemKind::Skill, "hound", HarnessId::Claude),
+        lock_entry(ItemKind::Skill, "hound", "feline"),
+    );
+    crate::lock::save(&lock_path, &lock).unwrap();
+    skill(&project.root.join(".claude/skills"), "gh", "edited gh here");
+    skill(
+        &project.root.join(".claude/skills"),
+        "hound",
+        "edited hound here",
+    );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refused_replacement_takes_out_the_terms_the_run_introduced() {
+    let project = seeded();
+    under_a_second_alias(&project);
+    let confirmed = || LicenseAnswer {
+        confirmed: true,
+        basis: None,
+    };
+
+    // The template holds hound already, under the terms feline offered.
+    let draft = draft_from_project(&project.env, &project.root).unwrap();
+    let template = create_from_project(
+        &project.env,
+        &project.root,
+        &Chosen {
+            name: "Licensed".to_owned(),
+            fingerprint: draft.fingerprint,
+            members: vec!["skill:hound".to_owned()],
+            sides: BTreeMap::from([(
+                "skill:hound".to_owned(),
+                Side::Copy {
+                    license: confirmed(),
+                },
+            )]),
+            ..Chosen::default()
+        },
+    )
+    .unwrap();
+    let stored = |path: &str| copy_path(&project.env, &template, path).unwrap();
+    assert_eq!(
+        fs::read_to_string(stored("NOTICES/feline/LICENSE")).unwrap(),
+        "MIT License\n"
+    );
+
+    // Upstream amends its licence text. A copy from `cat` now introduces
+    // NOTICES/cat/LICENSE, and a copy from `feline` refuses against the
+    // text already stored under its own alias.
+    fs::write(project.catalog.join("LICENSE"), "MIT License, amended\n").unwrap();
+    let refused = add_from_project(
+        &project.env,
+        "Licensed",
+        &project.root,
+        &[
+            MemberRef {
+                kind: MemberKind::Skill,
+                name: "gh".to_owned(),
+                which: MemberWhich::Any,
+            },
+            MemberRef {
+                kind: MemberKind::Skill,
+                name: "hound".to_owned(),
+                which: MemberWhich::Any,
+            },
+        ],
+        &confirmed(),
+    );
+    let Err(CoreError::TemplateCopyUnreadable { why, .. }) = refused else {
+        panic!("the second copy should refuse against the stored terms: {refused:?}");
+    };
+    assert!(why.contains("already holds different terms"), "{why}");
+
+    // The terms this run introduced are gone.
+    assert!(
+        !stored("NOTICES/cat/LICENSE").exists(),
+        "the terms the refused run introduced were left in the store"
+    );
+    // The terms an earlier copy came under are untouched: one licence file
+    // two copies came under is one file, and that copy still owns it.
+    assert_eq!(
+        fs::read_to_string(stored("NOTICES/feline/LICENSE")).unwrap(),
+        "MIT License\n"
+    );
+    // And the slots are as they were: the one the run added is gone, and
+    // the one it was replacing still holds the bytes it held.
+    assert!(
+        !stored("skills/gh").exists(),
+        "the slot the refused run added survived it"
+    );
+    assert!(
+        fs::read_to_string(stored("skills/hound/SKILL.md"))
+            .unwrap()
+            .contains("edited hound here")
+    );
+    // The store is then in the state the next legitimate copy needs: the
+    // amended terms are what a fresh copy from `cat` writes, with nothing
+    // in the way.
+    add_from_project(
+        &project.env,
+        "Licensed",
+        &project.root,
+        &[MemberRef {
+            kind: MemberKind::Skill,
+            name: "gh".to_owned(),
+            which: MemberWhich::Any,
+        }],
+        &confirmed(),
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read_to_string(stored("NOTICES/cat/LICENSE")).unwrap(),
+        "MIT License, amended\n"
+    );
+}
+
 /// A create whose copy write fails and whose rollback then fails too
 /// reports both causes.
 ///

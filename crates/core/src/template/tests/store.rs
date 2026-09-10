@@ -144,6 +144,7 @@ fn a_licence_file_already_in_the_store_is_reused_or_refuses() {
         "gh",
         &files,
         &notice("MIT License\n"),
+        &mut Vec::new(),
     )
     .unwrap();
     let written = root.join("NOTICES/cat/LICENSE");
@@ -157,6 +158,7 @@ fn a_licence_file_already_in_the_store_is_reused_or_refuses() {
         "note",
         &files,
         &notice("MIT License\n"),
+        &mut Vec::new(),
     )
     .unwrap();
     assert_eq!(fs::read_to_string(&written).unwrap(), "MIT License\n");
@@ -169,6 +171,7 @@ fn a_licence_file_already_in_the_store_is_reused_or_refuses() {
         "gh",
         &files,
         &notice("MIT License, amended\n"),
+        &mut Vec::new(),
     );
     let Err(CoreError::TemplateCopyUnreadable { why, .. }) = refused else {
         panic!("differing terms should refuse: {refused:?}");
@@ -218,8 +221,15 @@ fn a_symlinked_store_folder_refuses_every_write_and_every_read() {
         std::os::unix::fs::symlink(&theirs, &link).unwrap();
 
         // The write.
-        let refused =
-            super::super::store::write(&env, "mine", ItemKind::Skill, "gh", &files, &notices);
+        let refused = super::super::store::write(
+            &env,
+            "mine",
+            ItemKind::Skill,
+            "gh",
+            &files,
+            &notices,
+            &mut Vec::new(),
+        );
         assert!(
             matches!(refused, Err(CoreError::SourceEscape { .. })),
             "a link at {linked} should refuse the write: {refused:?}"
@@ -260,7 +270,16 @@ fn a_symlinked_store_folder_refuses_every_write_and_every_read() {
     // The inverse: a folder that is a folder still writes and still reads,
     // or the rows above would pass over a check that refuses everything.
     let (_tmp, env) = home();
-    super::super::store::write(&env, "mine", ItemKind::Skill, "gh", &files, &notices).unwrap();
+    super::super::store::write(
+        &env,
+        "mine",
+        ItemKind::Skill,
+        "gh",
+        &files,
+        &notices,
+        &mut Vec::new(),
+    )
+    .unwrap();
     let template = Template {
         members: vec![Member {
             kind: MemberKind::Skill,
@@ -313,8 +332,15 @@ fn a_notice_path_that_would_leave_the_store_is_refused_before_the_copy_moves() {
             std::path::PathBuf::from(spelling),
             b"MIT License\n".to_vec(),
         )];
-        let refused =
-            super::super::store::write(&env, "mine", ItemKind::Skill, "gh", &files, &notices);
+        let refused = super::super::store::write(
+            &env,
+            "mine",
+            ItemKind::Skill,
+            "gh",
+            &files,
+            &notices,
+            &mut Vec::new(),
+        );
         assert!(
             matches!(refused, Err(CoreError::TemplateCopyUnreadable { .. })),
             "{spelling:?} should be refused: {refused:?}"
@@ -336,7 +362,16 @@ fn a_notice_path_that_would_leave_the_store_is_refused_before_the_copy_moves() {
         std::path::PathBuf::from("NOTICES/cat/LICENSE"),
         b"MIT License\n".to_vec(),
     )];
-    super::super::store::write(&env, "mine", ItemKind::Skill, "gh", &files, &notices).unwrap();
+    super::super::store::write(
+        &env,
+        "mine",
+        ItemKind::Skill,
+        "gh",
+        &files,
+        &notices,
+        &mut Vec::new(),
+    )
+    .unwrap();
     assert_eq!(
         fs::read_to_string(store.join("mine/NOTICES/cat/LICENSE")).unwrap(),
         "MIT License\n"

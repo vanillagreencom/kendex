@@ -161,8 +161,15 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
             .unwrap_or_default();
     let mut groups: BTreeMap<String, ResolvedGroup> = BTreeMap::new();
     let mut copies = Vec::new();
-    let mut missing = Vec::new();
+    // A name two members claim is not installable however either half
+    // reached the template, so it is answered before anything else is
+    // gathered and neither claimant is offered below.
+    let contested = contested(&template.members);
+    let mut missing: Vec<MissingMember> = contested.values().cloned().collect();
     for member in &template.members {
+        if contested.contains_key(&(member.kind, member.name.clone())) {
+            continue;
+        }
         match &member.source {
             MemberSource::Marketplace { repo, rev } => {
                 let identity = crate::source_ref::repo_identity(repo);
@@ -468,6 +475,71 @@ fn no_longer_offered(repo: &str) -> String {
 
 /// Which of the members wearing one kind and name this one is, read off
 /// its own source so a surface acting on the row reaches only it.
+/// The destination names more than one member claims, each with the
+/// refusal that names both claimants.
+///
+/// A template may hold one kind and name twice on purpose — from two
+/// marketplaces, and as a copy of its own beside a marketplace's:
+/// [`super::MemberWhich`] carries three states for exactly that shape and
+/// `add_members` permits it deliberately. A place declares one package
+/// under one name, so the selection is not installable anywhere, and the
+/// seam is resolution rather than admission: refusing at admission would
+/// retire a storage shape the type documents, while a preview that offers
+/// both claimants is a preview that lies — the second group's add refuses
+/// with the first group's writes already on disk, and a copy taken after a
+/// marketplace member of the same name replaces the declaration this run
+/// had just written.
+fn contested(members: &[super::Member]) -> BTreeMap<(MemberKind, String), MissingMember> {
+    let mut claimed: BTreeMap<(MemberKind, String), Vec<&super::Member>> = BTreeMap::new();
+    for member in members {
+        claimed
+            .entry((member.kind, member.name.clone()))
+            .or_default()
+            .push(member);
+    }
+    claimed
+        .into_iter()
+        .filter(|(_, claimants)| claimants.len() > 1)
+        .map(|((kind, name), claimants)| {
+            let row = MissingMember {
+                kind,
+                name: name.clone(),
+                // Neither claimant's repository, because the row is about
+                // the name rather than about one of them — and a surface
+                // acting on it means every member wearing that kind and
+                // name, which is what [`super::MemberWhich::Any`] says.
+                repo: None,
+                which: super::MemberWhich::Any,
+                why: two_claims(kind, &name, &claimants),
+            };
+            ((kind, name), row)
+        })
+        .collect()
+}
+
+/// Said for a name two members claim, naming where each of them came from.
+fn two_claims(kind: MemberKind, name: &str, claimants: &[&super::Member]) -> String {
+    let came_from = |member: &super::Member| match &member.source {
+        MemberSource::Marketplace { repo, .. } => {
+            format!("from {}", crate::names::shown(repo))
+        }
+        MemberSource::Copy {
+            from: Some(repo), ..
+        } => format!(
+            "as this template's own copy of {}'s",
+            crate::names::shown(repo)
+        ),
+        MemberSource::Copy { from: None, .. } => "as this template's own copy".to_owned(),
+    };
+    let each: Vec<String> = claimants.iter().map(|member| came_from(member)).collect();
+    format!(
+        "this template holds {} '{}' {} — a place declares one package under a name, so remove one of them or save them in two templates",
+        kind.name(),
+        crate::names::shown(name),
+        each.join(" and ")
+    )
+}
+
 fn which_of(member: &super::Member) -> super::MemberWhich {
     match &member.source {
         MemberSource::Marketplace { repo, .. } => {
@@ -551,6 +623,21 @@ impl Landing {
     /// install that refused and one that stopped part-way.
     fn anything_landed(&self) -> bool {
         self.committed > 0
+    }
+
+    /// Whether this run has already declared that package.
+    ///
+    /// Read off the record's own spelling of a declaration, which is where
+    /// this run's account of what it declared lives. What it is for: the
+    /// manifest a later step reads back is the one an earlier step wrote,
+    /// so an insert into it would replace another member's declaration
+    /// with no word about it. [`resolve`] refuses a name two members claim
+    /// before the first write; this is the door that would let one through
+    /// if anything ever reached here with one.
+    fn declared_already(&self, kind: ItemKind, name: &str) -> bool {
+        self.install
+            .declared
+            .contains(&format!("{} {}", kind.name(), name))
     }
 }
 
@@ -740,6 +827,16 @@ fn install_local(
     let mut copied = Vec::new();
     // Every copy read and every target checked before a byte moves.
     for copy in &resolution.copies {
+        // A declaration another member of this same run wrote is not this
+        // copy's to replace. Asked before a byte moves and before the
+        // manifest is read, so the refusal is the whole answer for this
+        // step rather than a manifest quietly rewritten.
+        if landed.declared_already(copy.kind, &copy.name) {
+            return Err(CoreError::TemplateMemberUnavailable {
+                name: format!("{} '{}'", copy.kind.name(), copy.name),
+                why: "this install already declared that package for another member of the same template, and a copy does not replace what another member just wrote".to_owned(),
+            });
+        }
         let member = template
             .members
             .iter()

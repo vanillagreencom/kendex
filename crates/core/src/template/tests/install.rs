@@ -576,6 +576,117 @@ fn removing_a_member_takes_its_customizations_out_of_the_template() {
     assert!(!written.contains("read this first"), "{written}");
 }
 
+/// One kind and name claimed by two members is not installable anywhere,
+/// so the resolution says so and the install writes nothing.
+///
+/// The storage model allows the shape on purpose — a template may hold one
+/// package from two marketplaces, and as a copy of its own beside a
+/// marketplace's, which is what MemberWhich carries three states for — but
+/// a place declares one package under one name. Unanswered, the preview
+/// claimed the whole template installs and the run proved otherwise
+/// half-way through: the second group's add refused with the first group's
+/// writes on disk, and a copy taken after a marketplace member of the same
+/// name replaced the declaration the same run had just written.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn one_name_claimed_by_two_members_refuses_before_anything_is_written() {
+    let project = seeded();
+    let market = |repo: &str| Member {
+        kind: MemberKind::Skill,
+        name: "gh".to_owned(),
+        enabled: true,
+        source: MemberSource::Marketplace {
+            repo: repo.to_owned(),
+            rev: None,
+        },
+    };
+
+    // Two marketplaces offering one name.
+    let twins = create_from_selection(
+        &project.env,
+        "Twins",
+        vec![market("owner/first"), market("owner/second")],
+    )
+    .unwrap();
+
+    // A marketplace member beside this template's own copy of that name.
+    skill(
+        &project.root.join(".claude/skills"),
+        "gh",
+        "edited here, not upstream",
+    );
+    let draft = draft_from_project(&project.env, &project.root).unwrap();
+    create_from_project(
+        &project.env,
+        &project.root,
+        &Chosen {
+            name: "Both ways".to_owned(),
+            fingerprint: draft.fingerprint,
+            members: vec!["skill:gh".to_owned()],
+            sides: std::collections::BTreeMap::from([(
+                "skill:gh".to_owned(),
+                Side::Copy {
+                    license: LicenseAnswer {
+                        confirmed: true,
+                        basis: None,
+                    },
+                },
+            )]),
+            ..Chosen::default()
+        },
+    )
+    .unwrap();
+    let both = add_members(&project.env, "Both ways", vec![market("owner/first")]).unwrap();
+    assert_eq!(both.members.len(), 2, "{:?}", both.members);
+
+    for (template, claimants) in [
+        (&twins, vec!["owner/first", "owner/second"]),
+        (&both, vec!["owner/first", "own copy"]),
+    ] {
+        let resolution = resolve(&project.env, template).unwrap();
+        // One row, about the name rather than about either claimant, naming
+        // both of them.
+        assert_eq!(resolution.missing.len(), 1, "{:?}", resolution.missing);
+        let row = &resolution.missing[0];
+        assert_eq!(
+            (row.kind, row.name.as_str(), &row.which),
+            (MemberKind::Skill, "gh", &MemberWhich::Any)
+        );
+        for claimant in &claimants {
+            assert!(row.why.contains(claimant), "{}", row.why);
+        }
+        // And neither claimant is offered as installable, or the preview
+        // would say the template installs and refuse in the same breath.
+        assert_eq!(resolution.groups, Vec::new());
+        assert_eq!(resolution.copies, Vec::new());
+
+        // Nothing is written: not a subscription, not a declaration, not a
+        // byte of a copy.
+        let target = destination(&project, &format!("into-{}", template.id));
+        let Scope::Project { root } = &target else {
+            unreachable!("built as a project scope")
+        };
+        let before = snapshot(root);
+        let refused = install(
+            &project.env,
+            template,
+            &target,
+            Some(vec![HarnessId::Claude]),
+            None,
+        );
+        let Err(CoreError::TemplateMemberUnavailable { why, .. }) = refused else {
+            panic!("a contested name should refuse the install: {refused:?}");
+        };
+        assert!(why.contains("declares one package under a name"), "{why}");
+        assert_eq!(
+            snapshot(root),
+            before,
+            "the refused install wrote into {}",
+            root.display()
+        );
+    }
+}
+
 /// A plugin is its registry's own curated set, so it installs whole the
 /// way a bundle does — and the resolved row keeps saying it is a plugin,
 /// so a reference built from that row reaches the member rather than
