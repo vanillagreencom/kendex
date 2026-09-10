@@ -84,9 +84,12 @@ closes any fence it finds open — no run of fence-looking lines earlier in the
 body can hide the block that follows. It names the count and the file:line
 entries: the detail carries a bounded list (a status description holds 140
 characters, so a truncated list says how many it dropped) and the full list
-goes to stderr. It has NO settings key and no
-disposition protocol: nothing in the PR clears it, only a review at a new
-head whose body carries no such block. Every shape it cannot read refuses
+goes to stderr. It has NO DEDICATED settings key and no disposition
+protocol: nothing written in the PR clears it, and the only switch that
+reaches it is REVIEW_GATE_MODE=off, which answers approved for the whole gate
+without reading any evidence. It clears when the commit the gate relies on
+carries no such block — normally a fresh review at a new head, or the carry
+base once carry supplies the evidence. Every shape it cannot read refuses
 too — a heading with no readable count, a count disagreeing with the entries
 under it — and the KNOWN LIMIT is the mirror of the errored-attestation
 filter's: a body quoting the heading at the start of a line counts as a real
@@ -757,17 +760,34 @@ cr="$(jq '[.[] | select(.state != "DISMISSED" and .state != "PENDING") | select(
 # objection would be a fail-open lever, and an errored row can never block
 # anyway (it is not CHANGES_REQUESTED).
 #
-# Defined ONCE and concatenated in front of BOTH jq programs that accept
-# review rows — head evidence here, carry candidates below — because
-# attestation semantics must never drift between them, and two hand-kept
-# copies of the fragment would part ways silently. The body is bound BEFORE
-# testing containment: inside contains(.) the dot would rebind, the same trap
-# as the skip-pattern filter. $mk is the lowercased pattern list each program
-# builds from $errmarks.
-ATTESTATION_DEF='def not_errored_attestation($mk):
+# Defined ONCE and concatenated in front of EVERY jq program that accepts
+# review rows, because what the gate accepts as a review must never drift
+# between them and hand-kept copies of the chain would part ways silently.
+# Three programs call it: head evidence below, carry candidates, and the
+# suppressed-finding scan. What is shared is the whole accepted-row chain —
+# the state and author exclusions, the trust list, and this attestation — and
+# each program adds only what is genuinely its own: the commit predicate, and
+# min_state where it applies. The `cr` reduction above is NOT a fourth copy;
+# it is deliberately unfiltered by the trust list, for the reason stated
+# there.
+#
+# The body is bound BEFORE testing containment: inside contains(.) the dot
+# would rebind, the same trap as the skip-pattern filter. $mk is the
+# lowercased pattern list, $t the trust list, both built by the helpers here
+# from the $errmarks and $trusted each program passes.
+ACCEPTED_ROWS_DEF='def not_errored_attestation($mk):
   (((.body // "") | ascii_downcase
     | sub("^[\\s>]+"; "") | split("\n") | (.[0] // "")) as $b
-   | [ $mk[] | . as $p | select($b | contains($p)) ] | length) == 0;'
+   | [ $mk[] | . as $p | select($b | contains($p)) ] | length) == 0;
+def trust_list($trusted):
+  $trusted | split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0));
+def error_marks($errmarks):
+  $errmarks | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase);
+def accepted_rows($t; $mk; $author):
+  [ .[]
+    | select(.state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
+    | select(($t | length) == 0 or (.user.login as $l | ($t | index($l)) != null))
+    | select(not_errored_attestation($mk)) ];'
 
 # Review-object evidence. NOT a latest-review-per-reviewer reduction (see the
 # header): in "any" mode every accepted row counts; in "approved" mode a
@@ -776,14 +796,10 @@ ATTESTATION_DEF='def not_errored_attestation($mk):
 # never withdraws an approval.
 got="$(jq --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
         --arg trusted "$TRUSTED_LOGINS_N" --arg minstate "$MIN_STATE" \
-        --arg errmarks "$ERROR_PATTERNS" "$ATTESTATION_DEF"'
-  ($trusted | split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
-  | ($errmarks | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $mk
-  | [ .[]
-      | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
-      | select(($t | length) == 0 or (.user.login as $l | ($t | index($l)) != null))
-      | select(not_errored_attestation($mk))
-    ]
+        --arg errmarks "$ERROR_PATTERNS" "$ACCEPTED_ROWS_DEF"'
+  trust_list($trusted) as $t
+  | error_marks($errmarks) as $mk
+  | [ accepted_rows($t; $mk; $author)[] | select(.commit_id == $sha) ]
   | if $minstate == "approved" then
       group_by(.user.login)
       | map(sort_by(.submitted_at // ""))
@@ -1235,13 +1251,10 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
   # bounded so a force-push-heavy PR cannot turn the walk into an API storm.
   carry_candidates="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
       --arg trusted "$TRUSTED_LOGINS_N" --arg minstate "$MIN_STATE" \
-      --arg errmarks "$ERROR_PATTERNS" "$ATTESTATION_DEF"'
-    ($trusted | split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
-    | ($errmarks | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $mk
-    | [ .[]
-        | select(.state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
-        | select(($t | length) == 0 or (.user.login as $l | ($t | index($l)) != null))
-        | select(not_errored_attestation($mk))
+      --arg errmarks "$ERROR_PATTERNS" "$ACCEPTED_ROWS_DEF"'
+    trust_list($trusted) as $t
+    | error_marks($errmarks) as $mk
+    | [ accepted_rows($t; $mk; $author)[]
         | select($minstate != "approved" or .state == "APPROVED")
         | select((.commit_id // "") != "" and .commit_id != $sha)
       ]
@@ -1805,7 +1818,7 @@ supp_carry_base=""
 [ "$carried" != "1" ] || supp_carry_base="$carry_base"
 supp_raw="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
         --arg trusted "$TRUSTED_LOGINS_N" --arg carrybase "$supp_carry_base" \
-        --arg errmarks "$ERROR_PATTERNS" "$ATTESTATION_DEF"'
+        --arg errmarks "$ERROR_PATTERNS" "$ACCEPTED_ROWS_DEF"'
   def suppressed_scan:
     reduce (((. // "") | gsub("\r"; "")) | split("\n"))[] as $l
       ({declared: 0, entries: 0, unparsed: 0, inblock: false, fchar: "", flen: 0, list: []};
@@ -1828,13 +1841,10 @@ supp_raw="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
           .entries += 1
           | .list += [$l | capture("^\\*\\*(?<e>[^*]+:[0-9]+)\\*\\*") | .e]
         else . end);
-  ($trusted | split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
-  | ($errmarks | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $mk
-  | [ .[]
+  trust_list($trusted) as $t
+  | error_marks($errmarks) as $mk
+  | [ accepted_rows($t; $mk; $author)[]
       | select(.commit_id == $sha or ($carrybase != "" and .commit_id == $carrybase))
-      | select(.state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
-      | select(($t | length) == 0 or (.user.login as $l | ($t | index($l)) != null))
-      | select(not_errored_attestation($mk))
       | (.body // "") | suppressed_scan
     ] as $rows
   | (([$rows[] | .declared] | add) // 0) as $declared
