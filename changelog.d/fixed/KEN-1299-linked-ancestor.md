@@ -1,0 +1,1 @@
+- A project reached through a linked folder reconnects under the name you type for it, and the line after a reconnect says a folder is clean only where a read actually covered it.

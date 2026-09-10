@@ -49,6 +49,21 @@ describe("what the read after a reconnect says about the new folder", () => {
     ).toEqual({ state: "problems", count: 1 });
   });
 
+  // The paths are serialized `PathBuf`s, so on Windows they are spelled
+  // with the separator that machine uses. A containment test for one
+  // separator reports every project there clean.
+  it("counts them whichever separator the machine spells paths with", () => {
+    const warning = (path: string) => ({ path }) as never;
+    expect(
+      afterReconnect(
+        [],
+        [],
+        [warning(String.raw`C:\work\app\.claude\settings.json`)],
+        String.raw`C:\work\app`,
+      ),
+    ).toEqual({ state: "problems", count: 1 });
+  });
+
   // The one claim this must never make: a place kendex could not read is
   // not a place kendex found nothing wrong with.
   it("claims nothing where the read could not answer", () => {
@@ -56,8 +71,11 @@ describe("what the read after a reconnect says about the new folder", () => {
     expect(afterReconnect([problem(here)], [], [], ROOT)).toEqual({
       state: "unchecked",
     });
+    // A scan that could not finish is a problem about the machine, and
+    // the read that would have covered this folder is the one that
+    // failed: nothing here may be called clean on it.
     expect(afterReconnect([problem(null)], [], [], ROOT)).toEqual({
-      state: "clean",
+      state: "unchecked",
     });
   });
 });

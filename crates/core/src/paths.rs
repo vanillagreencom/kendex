@@ -120,7 +120,44 @@ pub fn absolute(path: &Path) -> PathBuf {
             Err(_) => return path.to_path_buf(),
         },
     };
-    folded(&joined)
+    resolving_what_is_there(&joined)
+}
+
+/// `path` with its longest existing ancestor resolved and the rest left as
+/// spelled.
+///
+/// The whole path failing to resolve says nothing about its ancestors: a
+/// project registered as `link/app`, where `link` is a symlink, is stored
+/// under the directory `link` resolves to, and after `app` is renamed the
+/// same spelling resolves nothing at all. Left unresolved it names a
+/// directory the registry has never heard of, and the entry it is asking
+/// about is refused as unregistered.
+///
+/// So what is there is resolved and what is not there is folded onto it.
+/// Nothing in the remainder can be a link, since a link resolves and a
+/// path that resolves never reaches here.
+fn resolving_what_is_there(path: &Path) -> PathBuf {
+    let mut walk = path;
+    let mut remainder: Vec<&std::ffi::OsStr> = Vec::new();
+    loop {
+        if let Ok(base) = canonical(walk) {
+            let mut out = base;
+            for name in remainder.iter().rev() {
+                out.push(name);
+            }
+            return folded(&out);
+        }
+        match (walk.parent(), walk.file_name()) {
+            (Some(parent), Some(name)) => {
+                remainder.push(name);
+                walk = parent;
+            }
+            // A path with no resolvable ancestor at all, or one ending in a
+            // component `file_name` does not answer for: nothing here can
+            // be resolved, so it is folded as spelled.
+            _ => return folded(path),
+        }
+    }
 }
 
 /// `path` with `.` dropped and each `..` taking the component before it.

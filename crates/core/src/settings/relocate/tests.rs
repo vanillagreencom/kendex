@@ -489,6 +489,36 @@ fn an_entry_named_through_a_sibling_directory_is_matched() {
     assert_eq!(plan.from, registered);
 }
 
+/// A project reached through a symlinked ancestor. The registry stores the
+/// directory the link resolves to, and once the folder inside it is
+/// renamed nothing in that spelling resolves — so what is still there is
+/// resolved and the rest is folded onto it, or the entry is refused as one
+/// nobody registered.
+#[cfg(unix)]
+#[test]
+fn an_entry_reached_through_a_linked_ancestor_is_matched() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::test_util::rooted(&tmp);
+    let env = env_in(&home);
+    std::fs::create_dir_all(home.join("real")).unwrap();
+    std::fs::create_dir_all(home.join("real/app")).unwrap();
+    std::os::unix::fs::symlink(home.join("real"), home.join("link")).unwrap();
+    let registered = crate::settings::register_project(&env, &home.join("link/app"))
+        .unwrap()
+        .2;
+    assert_eq!(
+        registered,
+        crate::paths::canonical(&home.join("real/app")).unwrap(),
+        "the registry stores what the link resolves to"
+    );
+    let new = home.join("real/renamed");
+    std::fs::rename(home.join("real/app"), &new).unwrap();
+
+    let (plan, _, _) = relocate_project(&env, &home.join("link/app"), &new, false).unwrap();
+
+    assert_eq!(plan.from, registered);
+}
+
 /// The reconnect answers under the spelling the registry stores, whatever
 /// spelling the caller asked under.
 #[test]
