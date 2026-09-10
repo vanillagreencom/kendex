@@ -176,13 +176,19 @@ pub fn run(env: &Env, mut args: AddArgs) -> CliResult {
 /// and the closing line, so the close is handed over rather than written
 /// under it: what the run wrote is reported whatever the reader answers.
 ///
-/// The registration is last, and it is its own step. A cancelled apply
-/// returns above it, so nothing registers a folder no package reached; and
-/// a registry that refuses does so with the ledger already on screen, so
-/// the run's account of what it wrote stands whatever the registry did.
-/// Arming a repository's commit hooks is the separate yes above it and
-/// says nothing about this one: a tracked folder is a folder the app can
-/// show, not consent to change what happens on every commit.
+/// The registration is last, and it is its own step, reached on every arm
+/// the write itself survived. A cancelled apply returns above it, so
+/// nothing registers a folder no package reached — but a package's
+/// installer that exits nonzero, or a cancel at the repository-effects
+/// prompt, is not that: the packages are on disk by then, and a folder the
+/// app cannot see is what this registration exists to prevent. So the
+/// effects step's answer is held rather than propagated through it, and a
+/// registry that refuses says so beside that answer rather than displacing
+/// it.
+///
+/// Arming a repository's commit hooks is the separate yes above, and says
+/// nothing about this one: a tracked folder is a folder the app can show,
+/// not consent to change what happens on every commit.
 fn write_and_close(
     env: &Env,
     scope: &Scope,
@@ -192,7 +198,7 @@ fn write_and_close(
 ) -> CliResult {
     let blocked = print_report(env, report);
     let applied = confirm_and_apply(env, report, yes)?;
-    super::repo_effects::disclose_and_finish(
+    let walked = super::repo_effects::disclose_and_finish(
         env,
         scope,
         &report.repo_effects,
@@ -213,6 +219,22 @@ fn write_and_close(
                 &report.safety,
             );
         },
-    )?;
-    super::project::register_destination(env, scope)
+    );
+    // Unconditional here, where the collection close reads its own count
+    // first: a collection can refuse its first step having written
+    // nothing, and `add` cannot. `ops::add` puts the manifest save in
+    // every plan it returns (`ensure_manifest_persisted`), and a declined
+    // or failed apply returns above this line — so a run that reaches here
+    // has written, and a branch for one that had not is a branch nothing
+    // reaches. Registration is not the effects step's to skip either way.
+    let registered = super::project::register_destination(env, scope);
+    match walked {
+        Ok(()) => registered,
+        Err(error) => {
+            if let Err(refused) = registered {
+                warn(&format!("warning: {refused}"));
+            }
+            Err(error)
+        }
+    }
 }

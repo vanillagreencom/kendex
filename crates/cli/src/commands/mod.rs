@@ -103,20 +103,34 @@ pub fn install_destination(env: &Env, yes: bool) -> Result<Scope, Box<dyn std::e
     let here = std::env::current_dir()
         .and_then(|cwd| kendex_core::paths::canonical(&cwd))
         .map_err(|e| format!("the current folder could not be read: {e}"))?;
-    destination(current_project(env), here, yes)
+    destination(current_project(env), here, env.real_home(), yes)
 }
 
-/// The choice itself, over the two answers it is made from: what the walk
-/// up found, and where the command was typed. Separated from the reads so
-/// the rule can be asked directly — a walk starts at a working directory
-/// this process cannot move.
+/// The choice itself, over the answers it is made from: what the walk up
+/// found, where the command was typed, and where the person lives.
+/// Separated from the reads so the rule can be asked directly — a walk
+/// starts at a working directory this process cannot move.
+///
+/// The home directory is refused before the question is asked, so `--yes`
+/// cannot answer past it either. `discover::may_be_a_project_root` is the
+/// rule, the same one the walk above refuses a marker at home under: a home
+/// made into a project would resolve every folder below it, and its
+/// project scope would manage the personal scope's own directories.
 fn destination(
     established: Option<PathBuf>,
     here: PathBuf,
+    home: &std::path::Path,
     yes: bool,
 ) -> Result<Scope, Box<dyn std::error::Error>> {
     if let Some(root) = established {
         return Ok(Scope::Project { root });
+    }
+    if !discover::may_be_a_project_root(&here, home) {
+        return Err(format!(
+            "{} is your home directory, and kendex does not make it a project — everything below it would install into it; pass --global for your personal setup, or run this inside the project you mean",
+            here.display()
+        )
+        .into());
     }
     start_a_project_here(&here, yes)?;
     Ok(Scope::Project { root: here })
@@ -160,21 +174,54 @@ mod tests {
     /// unanswered row is the one that runs here.
     #[test]
     fn a_walk_that_found_nothing_settles_on_the_folder_the_command_was_typed_in() {
+        let home = PathBuf::from("/w");
         let here = PathBuf::from("/w/dev/vsys-view");
         let above = PathBuf::from("/w/dev");
 
         assert_eq!(
-            destination(Some(above.clone()), here.clone(), true).unwrap(),
+            destination(Some(above.clone()), here.clone(), &home, true).unwrap(),
             Scope::Project { root: above }
         );
         assert_eq!(
-            destination(None, here.clone(), true).unwrap(),
+            destination(None, here.clone(), &home, true).unwrap(),
             Scope::Project { root: here.clone() }
         );
 
-        let refused = destination(None, here, false).unwrap_err().to_string();
+        let refused = destination(None, here, &home, false)
+            .unwrap_err()
+            .to_string();
         assert!(refused.contains("/w/dev/vsys-view"), "{refused}");
         assert!(refused.contains("--yes"), "{refused}");
         assert!(refused.contains("--global"), "{refused}");
+    }
+
+    /// The home directory is not a folder kendex may make a project of.
+    /// Refused before the question, so `--yes` — what a scripted run passes
+    /// — cannot answer past it, and the refusal names the scope that folder
+    /// actually stands for.
+    ///
+    /// Left standing, one `kendex add --yes` typed at home would give the
+    /// project scope the same `.claude` directory the personal scope has,
+    /// and write a lock at home that every later walk resolves to.
+    #[test]
+    fn the_home_directory_is_refused_however_the_run_would_have_answered() {
+        let home = PathBuf::from("/w");
+
+        for yes in [true, false] {
+            let refused = destination(None, home.clone(), &home, yes)
+                .unwrap_err()
+                .to_string();
+            assert!(refused.contains("/w"), "{yes}: {refused}");
+            assert!(refused.contains("home directory"), "{yes}: {refused}");
+            assert!(refused.contains("--global"), "{yes}: {refused}");
+        }
+
+        // A project the walk found at home is the walk's answer, not this
+        // rule's business: `.kendex-lock.json` there is a state a person
+        // can already be in, and refusing it would strand them.
+        assert_eq!(
+            destination(Some(home.clone()), home.clone(), &home, true).unwrap(),
+            Scope::Project { root: home }
+        );
     }
 }

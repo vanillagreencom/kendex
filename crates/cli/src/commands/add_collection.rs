@@ -86,20 +86,23 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
             &closing.scored,
         );
     };
+    // Registered on the strength of what landed, whichever way the run
+    // ends: the folder holds installed packages whether a step failed, a
+    // package's installer did, or nothing did at all, and a folder the app
+    // cannot see is the thing this registration exists to prevent. A run
+    // that wrote nothing installed into nowhere and registers nothing.
+    let register = || match closing.count.is_some_and(|changes| changes > 0) {
+        true => super::project::register_destination(env, scope),
+        false => Ok(()),
+    };
     if let Some(error) = failed {
         // A step failed with earlier steps already installed. What they
         // wrote is reported before the error goes up, and the repository
         // account is not asked for on a run that is already failing.
         close();
-        // Registered all the same where packages landed: the folder holds
-        // installed packages whichever step the run stopped at, and a
-        // folder the app cannot see is the thing this registration exists
-        // to prevent. The step's failure is what the run reports, so a
-        // registry that also refused says so on its own line rather than
-        // displacing it. A run that wrote nothing registers nothing.
-        if closing.count.is_some_and(|changes| changes > 0)
-            && let Err(refused) = super::project::register_destination(env, scope)
-        {
+        // The step's failure is what the run reports, so a registry that
+        // also refused says so on its own line rather than displacing it.
+        if let Err(refused) = register() {
             warn(&format!("warning: {refused}"));
         }
         return Err(error);
@@ -107,8 +110,23 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     // Every member is installed by now, so the account and its separate
     // yes come last — and the close is handed over, so what the run wrote
     // is reported whatever the reader answers.
-    super::repo_effects::disclose_and_finish(env, scope, &closing.pending, allow_effects, close)?;
-    super::project::register_destination(env, scope)
+    let walked = super::repo_effects::disclose_and_finish(
+        env,
+        scope,
+        &closing.pending,
+        allow_effects,
+        close,
+    );
+    let registered = register();
+    match walked {
+        Ok(()) => registered,
+        Err(error) => {
+            if let Err(refused) = registered {
+                warn(&format!("warning: {refused}"));
+            }
+            Err(error)
+        }
+    }
 }
 
 /// Take the steps in order, stopping at the first failure, and reduce

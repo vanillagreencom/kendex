@@ -77,6 +77,28 @@ fn write(path: &Path, text: &str) {
     fs::write(path, text).unwrap();
 }
 
+/// git with the caller's environment dropped: run from a commit hook, the
+/// inherited `GIT_DIR` would send every command at the repository being
+/// committed to instead of the fixture.
+#[allow(clippy::unwrap_used)]
+fn git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+        .args(args)
+        .current_dir(dir)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// A fixture home with one tool on the machine and a catalog offering one
 /// skill and one set. Nothing under it is a project yet.
 #[allow(clippy::unwrap_used)]
@@ -100,6 +122,13 @@ fn world() -> (tempfile::TempDir, PathBuf, PathBuf) {
     (tmp, home, catalog)
 }
 
+/// Why a case ended without asserting anything. The one place a `#[test]`
+/// body's skip line is printed, so the lint is allowed once.
+#[allow(clippy::print_stderr)]
+fn skipped(reason: &str) {
+    eprintln!("skipped: {reason}");
+}
+
 /// A folder under the fixture with no project anywhere above it, or
 /// nothing where this machine cannot offer one.
 ///
@@ -115,7 +144,17 @@ fn fresh_folder(home: &Path, rel: &str) -> Option<PathBuf> {
     fs::create_dir_all(&folder).unwrap();
     match kendex_core::discover::project_root_from(&folder, home) {
         None => Some(folder),
-        Some(_) => None,
+        // Said where it happens: a case that ended here asserted nothing,
+        // and a silent pass reads exactly like one that ran.
+        Some(above) => {
+            skipped(&format!(
+                "{} resolves the project {} above the fixture, so an install here would write \
+                 into it — re-run with `env -u TMPDIR`",
+                folder.display(),
+                above.display()
+            ));
+            None
+        }
     }
 }
 
@@ -358,4 +397,103 @@ fn a_registry_that_refuses_after_the_files_landed_names_both_and_the_retry() {
     assert!(text.contains("project add"), "{text}");
     assert!(text.contains("do not run the install again"), "{text}");
     assert!(registered(&home).is_empty(), "{text}");
+}
+
+/// The home directory is not a folder kendex may make a project of, and
+/// `--yes` does not answer past that: the project scope there manages the
+/// same `.claude` the personal scope does, and the lock it would write is
+/// one every later walk below home resolves to.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_install_typed_at_home_is_refused_and_leaves_home_alone() {
+    let (_tmp, home, catalog) = world();
+    // Home carries a harness directory, which is the ordinary state and
+    // the one the walk above refuses as a project root.
+    assert!(home.join(".claude").is_dir());
+    // Asked of the ground above the fixture, never of home itself: the
+    // home rule is what this case is about, so a guard that consulted it
+    // would end the case exactly where the rule had gone missing.
+    let above = home.parent().unwrap();
+    if let Some(found) = kendex_core::discover::project_root_from(above, &home) {
+        skipped(&format!(
+            "the project {} sits above the fixture home — re-run with `env -u TMPDIR`",
+            found.display()
+        ));
+        return;
+    }
+
+    let refused = install(&home, &home, &catalog);
+    let text = said(&refused);
+
+    assert!(!refused.status.success(), "{text}");
+    assert!(text.contains("home directory"), "{text}");
+    assert!(text.contains("--global"), "{text}");
+    assert!(registered(&home).is_empty(), "{text}");
+    assert!(!home.join("kendex.toml").exists(), "{text}");
+    assert!(!home.join(".kendex-lock.json").exists(), "{text}");
+    // The one file that would make every later walk below home resolve
+    // home, whatever a later run intended.
+    assert!(!home.join(".agents").exists(), "{text}");
+}
+
+/// A package's declared installer that exits nonzero. The packages are on
+/// disk by then, so the folder is a project whatever the installer did —
+/// the run reports the installer's failure, and the registration is not
+/// the effects step's to skip.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_installer_that_fails_still_leaves_the_folder_on_the_projects_list() {
+    let (_tmp, home, catalog) = world();
+    let Some(fresh) = fresh_folder(&home, "dev/fresh") else {
+        return;
+    };
+    // A repository effect names what it writes under `.git`, so the
+    // disclosure resolves a git directory before it offers anything.
+    git(&fresh, &["init", "--quiet", "-b", "main"]);
+    declare_a_failing_installer(&catalog);
+
+    let output = kendex(
+        &home,
+        &fresh,
+        &[
+            "add",
+            catalog.to_str().unwrap(),
+            "--skill",
+            "wobble",
+            "--harness",
+            "claude",
+            "-y",
+            "--allow-repo-effects",
+        ],
+    );
+    let text = said(&output);
+
+    // The installer's failure is what the run reports.
+    assert!(!output.status.success(), "{text}");
+    assert!(text.contains("scripts/arm"), "{text}");
+    // The packages landed, so the folder is a project and the app can
+    // see it.
+    assert!(
+        fresh.join(".agents/skills/wobble/SKILL.md").is_file(),
+        "{text}"
+    );
+    assert_eq!(registered(&home), std::slice::from_ref(&fresh), "{text}");
+}
+
+/// A package that declares a repository effect whose installer exits
+/// nonzero — the shape a shipped package reaches on an ordinary checkout
+/// when the hooks it finds are not ones it vouches for.
+#[allow(clippy::unwrap_used)]
+fn declare_a_failing_installer(catalog: &Path) {
+    write(
+        &catalog.join("skills/wobble/SKILL.md"),
+        "---\nname: wobble\ndescription: the wobble skill\nrepo-effects:\n  \
+         summary: \"Arms a hook that refuses to arm.\"\n  writes:\n    - \".git/hooks/pre-commit\"\n  \
+         installer: \"scripts/arm\"\n---\nBody.\n",
+    );
+    let arm = catalog.join("skills/wobble/scripts/arm");
+    write(&arm, "#!/bin/sh\necho 'arm: refusing' >&2\nexit 1\n");
+    let mut mode = fs::metadata(&arm).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o755);
+    fs::set_permissions(&arm, mode).unwrap();
 }

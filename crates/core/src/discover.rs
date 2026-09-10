@@ -40,6 +40,22 @@ pub fn is_project(dir: &Path) -> bool {
         || MARKER_FILES.iter().any(|m| dir.join(m).is_file())
 }
 
+/// Whether `dir` may stand as a project root.
+///
+/// The home directory may not. Most people have a harness marker there,
+/// and a home taken as a project makes the whole machine one: everything
+/// below it resolves to it, and its project scope manages the very
+/// directories the personal scope does — `$HOME/.claude` is both.
+///
+/// Asked by every place that settles a project root, so the rule and the
+/// spelling it is compared in are stated once: [`project_root_from`]'s
+/// walk, and the CLI choosing a folder to install into. `dir` is
+/// canonical; `home` is canonicalized here, and a home that cannot be
+/// resolved is compared as it was given, which is the honest answer left.
+pub fn may_be_a_project_root(dir: &Path, home: &Path) -> bool {
+    dir != home.canonicalize().unwrap_or_else(|_| home.to_path_buf())
+}
+
 /// Current-project resolution: walk up from `start`; a `.kendex-lock.json`
 /// wins even at the home directory, otherwise the first directory carrying
 /// a harness marker — refusing home itself.
@@ -58,7 +74,7 @@ pub fn project_root_from(start: &Path, home: &Path) -> Option<PathBuf> {
         if dir.join(crate::lock::LOCK_FILE).is_file() {
             return Some(crate::paths::reduced(dir));
         }
-        if dir != home && MARKER_DIRS.iter().any(|m| dir.join(m).is_dir()) {
+        if may_be_a_project_root(dir, &home) && MARKER_DIRS.iter().any(|m| dir.join(m).is_dir()) {
             return Some(crate::paths::reduced(dir));
         }
         current = dir.parent();
