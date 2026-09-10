@@ -18,6 +18,10 @@ use kendex_core::manifest;
 use kendex_core::model::Scope;
 use kendex_core::process::Hardened;
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::rooted;
+
 const REPO: &str = "owner/catalog";
 
 struct World {
@@ -35,7 +39,7 @@ fn git(dir: &Path, args: &[&str]) {
 #[allow(clippy::unwrap_used)]
 fn world() -> World {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    let home = rooted(&tmp);
     let upstream: PathBuf = home.join("git").join(REPO);
     fs::create_dir_all(&upstream).unwrap();
     git(&upstream, &["init", "--quiet", "-b", "main"]);
