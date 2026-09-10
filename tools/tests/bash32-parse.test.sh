@@ -4,8 +4,10 @@
 # Two things are proven here and nothing else is: the covered set is the one
 # the lane declares, and a file Bash 3.2 refuses at parse time reds — while
 # the host shell and tools/bash32-lint both read it as clean, which is why
-# this lane exists. Under it, every way the pass can fail to run, each proven
-# red, because a pass that did not run must never be read as a clean tree.
+# this lane exists. Around them, how the lane reaches a shell at all: the
+# image it runs is pinned, a runtime that cannot deliver that image does not
+# shadow one that can, and every way the pass can fail to run is proven red,
+# because a pass that did not run must never be read as a clean tree.
 #
 # The workspace is inside the repository on purpose: a directory the lane is
 # handed is read through the tree's own mount, and one outside it is a
@@ -19,6 +21,14 @@ cd "$ROOT" || exit 2
 
 PARSE="$ROOT/tools/bash32-parse"
 LINT="$ROOT/tools/bash32-lint"
+
+# The lane's runtime candidates and its image reference, read out of the lane
+# rather than restated: the rows below stage a stub per candidate, and a
+# second copy of either list here would go stale against the file it judges.
+RUNTIMES=""
+RUNTIMES="$(sed -n 's#^RUNTIMES="\(.*\)"$#\1#p' "$PARSE")" || RUNTIMES=""
+IMAGE_REF=""
+IMAGE_REF="$(sed -n 's#^IMAGE="\(.*\)"$#\1#p' "$PARSE")" || IMAGE_REF=""
 
 mkdir -p "$ROOT/tmp" || exit 2
 W="$(mktemp -d "$ROOT/tmp/bash32-parse.XXXXXX")" || exit 2
@@ -113,6 +123,19 @@ else
   done
 fi
 
+# --- 1b. the image the pass runs is pinned ------------------------------
+# A bare tag is whatever the registry serves and whatever a daemon already
+# cached under that name, and this image's stdout is the verdict the lane
+# believes, so the reference is what binds that verdict to reviewed content.
+if [ -z "$IMAGE_REF" ]; then
+  bad "the lane declares no image, so nothing pins the shell that judges the tree"
+else
+  case "$IMAGE_REF" in
+  *@sha256:*) ok "the image the pass runs is pinned by a digest" ;;
+  *) bad "the image reference carries no digest, so a moved tag changes which shell judges the tree" "$IMAGE_REF" ;;
+  esac
+fi
+
 # --- 2. the tree parses, which is the assertion the lane exists to make ---
 run "$PARSE"
 if [ "$RC" -eq 0 ]; then
@@ -194,13 +217,17 @@ fi
 #             replaced, staged under the row's own directory beside a copy of
 #             the lint the copy resolves as its sibling:
 #             `bash5`   the host candidate answers Bash 5, and the runtime
-#                       name is one no machine has — a host with neither
-#             `runtime` the host candidate answers Bash 5, and `docker` on
-#                       PATH is a stub that cannot deliver the image
+#                       names are ones no machine has — a host with neither
+#             `runtime` the host candidate answers Bash 5, and every runtime
+#                       the lane names is a stub on PATH that cannot deliver
+#                       the image
 #             `lint`    the file list comes back empty
 #             `silent`  the pass under 3.2 answers nothing at all
 #             `short`   the pass reports reading fewer files than it was given
 #             `-`       the shipped lane, unmodified
+#             `second`  the same, but the LAST runtime the lane names is a
+#                       stub that does deliver it — the row that proves a
+#                       broken first candidate does not shadow it
 #   argv      `world` a staged directory holding one clean shell file;
 #             `outside` a directory outside this repository; `empty` a
 #             directory holding nothing; `file` a path that is a file rather
@@ -219,6 +246,38 @@ stage_stub() { # stage_stub DIR NAME VERSION BODY — a fake interpreter
   chmod +x "$1/$2"
 }
 
+# A stand-in container runtime. `refuse` is one that is installed and cannot
+# produce the image. `deliver` is one that can: the lane calls it twice, once
+# for the version probe, whose `-c` sits deep in the argv behind `run` and the
+# image, and once for the check pass, which it answers on the pass protocol
+# for however many files it was handed.
+stage_runtime() { # stage_runtime DIR NAME refuse|deliver
+  mkdir -p "$1" || return 1
+  if [ "$3" = refuse ]; then
+    printf '%s\n' '#!/bin/sh' 'echo "no such image" >&2' 'exit 125' >"$1/$2" || return 1
+    chmod +x "$1/$2"
+    return
+  fi
+  cat >"$1/$2" <<'STUB' || return 1
+#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+  -c) printf %s '3.2.57(1)-release'; exit 0 ;;
+  esac
+done
+n=0
+seen=0
+for a in "$@"; do
+  [ "$seen" = 1 ] && n=$((n + 1))
+  [ "$a" = --check ] && seen=1
+done
+printf 'bash32-parse: parsed=%s\n' "$n"
+printf 'bash32-parse: failed=0\n'
+exit 0
+STUB
+  chmod +x "$1/$2"
+}
+
 MW=""
 MPATH=""
 MUTANT=""
@@ -231,15 +290,23 @@ mutate() { # mutate WORD — stage the row's world and the lane copy it runs
   [ "$1" = - ] && return 0
   cp "$LINT" "$MW/tools/bash32-lint" || return 1
   MUTANT="$MW/tools/bash32-parse"
-  local candidates="CANDIDATES=\"$MW/bin/five\"" runtime='RUNTIME_CMD="docker"' lint=""
+  local candidates="CANDIDATES=\"$MW/bin/five\"" runtime="RUNTIMES=\"$RUNTIMES\"" lint="" r=""
   case "$1" in
   bash5)
     stage_stub "$MW/bin" five '5.0.0(1)-release' 'exit 0' || return 1
-    runtime='RUNTIME_CMD="bash32-parse-no-such-runtime"'
+    runtime='RUNTIMES="bash32-parse-no-such-runtime"'
     ;;
-  runtime)
+  runtime | second)
     stage_stub "$MW/bin" five '5.0.0(1)-release' 'exit 0' || return 1
-    stage_stub "$MW/bin" docker '' 'echo "no such image" >&2; exit 125' || return 1
+    for r in $RUNTIMES; do
+      stage_runtime "$MW/bin" "$r" refuse || return 1
+    done
+    # The LAST name the lane will try is the one that answers, so the row
+    # turns on the lane reaching past the refusing ones before it rather than
+    # on any stub being present at all.
+    if [ "$1" = second ]; then
+      stage_runtime "$MW/bin" "${RUNTIMES##* }" deliver || return 1
+    fi
     MPATH="$MW/bin:$PATH"
     ;;
   lint)
@@ -261,14 +328,19 @@ mutate() { # mutate WORD — stage the row's world and the lane copy it runs
     ;;
   esac
   # Each replacement is asserted to have landed: an edit that matched nothing
-  # would run the shipped lane and score the row it was meant to force.
-  local expr="" line=""
+  # would run the shipped lane and score the row it was meant to force. The
+  # program is built as argv rather than as one string: a declaration whose
+  # value carries a space is one sed expression, and splitting it on the
+  # space hands sed two broken halves.
+  local line=""
+  local -a expr=()
   for line in "$candidates" "$runtime" "$lint"; do
     [ -n "$line" ] || continue
-    expr="$expr -e s|^${line%%=*}=.*|$line|"
+    expr[${#expr[@]}]=-e
+    expr[${#expr[@]}]="s|^${line%%=*}=.*|$line|"
   done
-  # shellcheck disable=SC2086 # each -e and its expression is one word
-  sed $expr "$PARSE" >"$MUTANT" || return 1
+  [ "${#expr[@]}" -gt 0 ] || return 1
+  sed "${expr[@]}" "$PARSE" >"$MUTANT" || return 1
   chmod +x "$MUTANT" || return 1
   for line in "$candidates" "$runtime" "$lint"; do
     [ -n "$line" ] || continue
@@ -281,6 +353,7 @@ row_argv() { # row_argv TOKEN
   world) printf '%s' "$MW/world" ;;
   outside) printf '%s' "$OUTSIDE" ;;
   empty) printf '%s' "$MW/empty" ;;
+  runtimes) printf '%s' "$RUNTIMES" | tr ' ' ',' ;;
   file) printf '%s' "$MW/world/real.sh" ;;
   *) printf '%s' "$1" ;;
   esac
@@ -291,7 +364,7 @@ a directory outside the repository is refused rather than reached|-|outside|2|ou
 a path that is not a directory ends the run|-|file|2|unresolvable=file
 a file list that could not be built is not read as a clean tree|-|empty|2|listing=2
 a host with no Bash 3.2 and no container runtime refuses|bash5|world|2|no-bash32=absent
-a container runtime that cannot deliver the image refuses|runtime|world|2|no-bash32=docker
+every container runtime the lane names failing to deliver the image refuses|runtime|world|2|no-bash32=runtimes
 an empty file list is not read as a clean tree|lint|world|2|no-files=0
 a pass that answers nothing reaches no verdict|silent|world|2|no-verdict=0
 a pass that read fewer files than it was given reaches no verdict|short|world|2|short=0"
@@ -326,5 +399,31 @@ EOF
   printf 'no fail-closed row was asserted\n' >&2
   exit 2
 }
+
+# --- 5. a runtime that cannot deliver does not shadow one that can -------
+# The lane names more than one, and what a candidate ANSWERS decides it, not
+# that its name resolved: every name but the last refuses here, the last
+# delivers, and the verdict must come from that one and say which it was.
+case "$RUNTIMES" in
+*' '*)
+  if ! mutate second; then
+    bad "the second-runtime world could not be staged"
+  else
+    RC=0
+    (PATH="$MPATH" "$MUTANT" "$MW/world" >"$W/stdout" 2>"$W/stderr") || RC=$?
+    got="$(sed -n '1s/^bash32-parse: //p' "$W/stdout")"
+    if [ "$RC" -eq 0 ] && [ "$got" = "clean=1" ] &&
+      grep -q "via ${RUNTIMES##* } " "$W/stdout"; then
+      ok "a runtime that cannot deliver the image is passed over for one that can, and the verdict names it"
+    else
+      bad "a runtime that cannot deliver the image is passed over for one that can, and the verdict names it" \
+        "rc=$RC first=${got:--} $(tr '\n' ';' <"$W/stdout")$(tr '\n' ';' <"$W/stderr")"
+    fi
+  fi
+  ;;
+*)
+  bad "the lane names one container runtime, so no row proves a second is reached" "$RUNTIMES"
+  ;;
+esac
 
 verdict

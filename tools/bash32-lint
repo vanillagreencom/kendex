@@ -136,11 +136,16 @@ PATTERN="$PATTERN"'|\$('"$BASH4_VARS"')([^A-Za-z0-9_]|$)|\$\{('"$BASH4_VARS"')\}
 #     skills/commit-guards/tests/bsd-argv-install.test.sh executes the real
 #     installer under a BSD chmod shim. `dirname --` and `basename --` have
 #     neither a rule here nor a shim there, and are live in shipped scripts.
-#   - whether a file PARSES under Bash 3.2, which is placement rather than
-#     spelling and is tools/bash32-parse's question: it runs `bash -n` under
-#     a real 3.2 over these directories and tools/ as well, and this scan
-#     runs none, because a `bash -n` on the host's shell answers for the
-#     host's shell.
+#   - whether a file PARSES, under Bash 3.2 or under any other bash. This
+#     scan runs no `bash -n` at all: parsing is placement rather than
+#     spelling, and one run on the host's shell answers for the host's shell,
+#     which is the defect that split the question off. tools/bash32-parse is
+#     the parse judge, over these directories and tools/ as well, and it runs
+#     from `tools/guard --full` and the guards shard of
+#     .github/workflows/skill-tests.yml — not from the commit chain, which
+#     therefore parses no shell. That costs local latency and opens no hole:
+#     the shard's step carries no path filter and the required aggregator
+#     asserts it, so an unparsable file does not reach main.
 #   - whether a script RUNS under Bash 3.2. Nothing here does, and parsing is
 #     not running. A clean scan says the source carries no construct named
 #     above, and says nothing further. The macOS leg of the skill suites

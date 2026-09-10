@@ -63,14 +63,29 @@ COVERED_EXTRA="tools"
 # repository refuses. On a developer machine that means `tools/guard --full`
 # cannot complete without a container runtime — which is why tools/guard
 # takes this lane in --full and not in the commit chain, where a machine
-# without one would be unable to commit at all.
+# without one would be unable to commit at all. docs/DEVELOPMENT.md § The
+# commit chain names that prerequisite where a contributor reads it.
+#
+# Each list is tried in order, and what a candidate ANSWERS decides it, never
+# that the name resolved: a runtime that is installed but cannot deliver the
+# image below is passed over for the next one, so having docker installed and
+# broken does not hide a working podman.
 #
 # The three lines below are configuration this file declares in one place;
 # tools/tests/bash32-parse.test.sh stages copies of this script that name
 # stubs in their place, which is how the refusals above are proven red.
 CANDIDATES="bash /bin/bash"
-RUNTIME_CMD="docker"
-IMAGE="bash:3.2"
+RUNTIMES="docker podman"
+# Pinned by the MANIFEST LIST digest, which is the index carrying every
+# architecture's image — what `docker buildx imagetools inspect bash:3.2`
+# reports for the index itself, NOT one of the per-platform image digests
+# under it, which would resolve on one architecture and fail on every other.
+# The tag stays in the reference for a reader; the digest is what resolves.
+# A bare tag is whatever the registry serves and whatever a daemon already
+# cached under that name, and this image's stdout is the verdict the outer
+# pass believes, so the reference is what binds that verdict to the content
+# that was reviewed.
+IMAGE="bash:3.2@sha256:3a13e5da38baa575985778cd09ce8ac736d4b4dafc91a430e71271f6e5311b89"
 
 # Every line this pass says for itself opens with `bash32-parse: <key>=<value>`
 # — the key names the condition and the value is the path, the count or the
@@ -94,7 +109,7 @@ message_text() { # KEY VALUE [EXTRA...] — the English for one key, and all of 
   no-files)
     echo "the file list came back empty, so nothing would have been parsed." ;;
   no-bash32)
-    echo "no real Bash 3.2 could be reached: 'absent' is a host without one and without a container runtime, and a runtime name is one that could not deliver ${IMAGE}. Install a container runtime, or run this on a host whose bash is 3.2." ;;
+    echo "no real Bash 3.2 could be reached: 'absent' is a host with neither a Bash 3.2 nor any of the container runtimes this file names, and a list of names is the runtimes that are installed and did not deliver ${IMAGE}, each with its own words below. Install one of those runtimes, or run this on a host whose bash is 3.2." ;;
   short)
     printf 'the pass reported parsing %s of the %s files it was handed, so the rest went unread.\n' "$2" "$3" ;;
   no-verdict)
@@ -281,17 +296,31 @@ for c in $CANDIDATES; do
   fi
 done
 if [ -z "$MODE" ]; then
-  RUNTIME="$(command -v "$RUNTIME_CMD" 2>/dev/null)" || die no-bash32 absent
-  got=""
-  # The image is asked for its version before the tree is handed to it, so a
-  # runtime that cannot deliver it is named as that, and never as a pass that
-  # answered strangely.
-  got="$("$RUNTIME" run --rm --network=none "$IMAGE" \
-    bash -c 'printf %s "${BASH_VERSION-}"' 2>"$WORK/probe")" || got=""
-  is32 "$got" || die_cause no-bash32 "$RUNTIME_CMD" "$(cat "$WORK/probe")"
-  MODE=container
-  VERSION="$got"
-  VIA="$RUNTIME_CMD $IMAGE"
+  # Each runtime that resolves is asked for the image's version before the
+  # tree is handed to it, so one that cannot deliver it is named as that
+  # rather than as a pass that answered strangely — and is passed over, not
+  # taken, so a broken first candidate cannot shadow a working second.
+  tried=""
+  causes=""
+  for r in $RUNTIMES; do
+    found=""
+    found="$(command -v "$r" 2>/dev/null)" || continue
+    tried="${tried:+$tried,}$r"
+    got=""
+    got="$("$found" run --rm --network=none "$IMAGE" \
+      bash -c 'printf %s "${BASH_VERSION-}"' 2>"$WORK/probe")" || got=""
+    if is32 "$got"; then
+      MODE=container
+      RUNTIME="$found"
+      VERSION="$got"
+      VIA="$r $IMAGE"
+      break
+    fi
+    causes="$causes$r:
+$(cat "$WORK/probe")
+"
+  done
+  [ -n "$MODE" ] || die_cause no-bash32 "${tried:-absent}" "$causes"
 fi
 
 run32() { # run32 ARG... — this file, entered with ARG... under that Bash 3.2
