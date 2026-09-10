@@ -519,6 +519,38 @@ fn an_entry_reached_through_a_linked_ancestor_is_matched() {
     assert_eq!(plan.from, registered);
 }
 
+/// A `..` crossing a link names the folder above what the link resolves
+/// to, never the folder above the link. Folding it by spelling before
+/// anything is resolved hands back a sibling of the link — which can be
+/// another project's entry, and reconnecting it would move the project
+/// nobody named.
+#[cfg(unix)]
+#[test]
+fn an_entry_named_through_a_link_is_not_folded_onto_its_sibling() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::test_util::rooted(&tmp);
+    let env = env_in(&home);
+    std::fs::create_dir_all(home.join("real/dir")).unwrap();
+    std::fs::create_dir_all(home.join("real/app")).unwrap();
+    std::fs::create_dir_all(home.join("lex")).unwrap();
+    std::os::unix::fs::symlink(home.join("real/dir"), home.join("lex/link")).unwrap();
+    // The sibling the fold would land on, registered in its own right.
+    std::fs::create_dir_all(home.join("lex/app")).unwrap();
+    let sibling = crate::settings::register_project(&env, &home.join("lex/app"))
+        .unwrap()
+        .2;
+    let through_the_link = crate::settings::register_project(&env, &home.join("real/app"))
+        .unwrap()
+        .2;
+    let new = home.join("real/moved");
+    std::fs::rename(home.join("real/app"), &new).unwrap();
+
+    let (plan, _, _) = relocate_project(&env, &home.join("lex/link/../app"), &new, false).unwrap();
+
+    assert_eq!(plan.from, through_the_link);
+    assert_ne!(plan.from, sibling);
+}
+
 /// A symlink standing at the recorded path now. Resolution answers about
 /// what is there today, and what is there today is the folder the project
 /// moved to — so an entry looked for by resolving first is looked for

@@ -119,8 +119,8 @@ pub fn absolute(path: &Path) -> PathBuf {
     }
 }
 
-/// `path` as an absolute path by spelling alone: nothing resolved, `.`
-/// dropped and each `..` taking the component before it.
+/// `path` as an absolute path by spelling alone, exactly as it was
+/// written: nothing resolved and nothing folded.
 ///
 /// The spelling a path was written in, which is what a stored one has to
 /// be looked for under first. [`absolute`] resolves, and resolution
@@ -128,11 +128,17 @@ pub fn absolute(path: &Path) -> PathBuf {
 /// `/work/app` and since replaced by a symlink to somewhere else resolves
 /// to that somewhere else, so the entry the registry holds under its own
 /// recorded spelling is no longer reachable by naming it.
+///
+/// **A `..` is left standing here.** Folding one is a claim about the
+/// directory above, and where the component before it is a link that
+/// claim is wrong: `/lex/link/../app` with `link` resolving to
+/// `/real/dir` names `/real/app`, and a fold hands back `/lex/app` —
+/// another folder, which can be another project's entry. So an alias
+/// spelled through `..` is not answered here at all; it goes to
+/// [`absolute`], which resolves what is there before it folds what is
+/// left, and only that fold has no link left to cross.
 pub fn as_written(path: &Path) -> PathBuf {
-    match joined(path) {
-        Some(joined) => folded(&joined),
-        None => path.to_path_buf(),
-    }
+    joined(path).unwrap_or_else(|| path.to_path_buf())
 }
 
 /// `path` joined onto the directory the process is in where it is
