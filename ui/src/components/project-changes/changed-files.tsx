@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FileChanges, FileMode, PackageDiff, Refused } from "@/bindings";
 import { commands } from "@/bindings";
 import { ChangesPanel } from "@/components/files/changes-panel";
@@ -67,6 +67,19 @@ export function ChangedFiles({
   // one landing last would put a scan the project has moved past under the
   // newer one's name.
   const order = useRef(readOrder());
+
+  // The rows can be read again out from under an open panel: putting a
+  // file back takes it to what the last commit holds, and the next read
+  // carries no row for it. Nothing stands under the panel then, so it
+  // closes — and the caller's own record of what is open closes with it,
+  // because one selection has one owner. The button that acts on the open
+  // file goes back to acting on all of them, rather than on a path this
+  // project no longer holds a change for.
+  useEffect(() => {
+    if (open === null || entries.some((entry) => entry.path === open)) return;
+    setOpen(null);
+    onOpen?.(null);
+  }, [entries, open, onOpen]);
 
   const show = (path: string) => {
     const ticket = order.current.begin();

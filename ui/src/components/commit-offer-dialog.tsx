@@ -2,7 +2,7 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ProjectOffer, Refused, TangledFile } from "@/bindings";
 import { ExternalLink } from "@/components/external-link";
-import { changeEntries } from "@/components/project-changes/change-rows";
+import { offerEntries } from "@/components/project-changes/change-rows";
 import { ChangedFiles } from "@/components/project-changes/changed-files";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -292,10 +292,7 @@ function OfferState({
       </DialogHeader>
       <div className="space-y-4 text-sm">
         <Section title={FILES_LABEL}>
-          <ChangedFiles
-            root={offer.root}
-            entries={changeEntries(offer.files)}
-          />
+          <ChangedFiles root={offer.root} entries={offerEntries(offer)} />
         </Section>
         <Scope offer={offer} busy={busy} />
         {offer.manifest === null ? null : (
@@ -584,10 +581,7 @@ function CommitRefusedState({
         {/* The files the commit covers stay on screen, so the person can
             still see what they are answering about. */}
         <Section title={FILES_LABEL}>
-          <ChangedFiles
-            root={offer.root}
-            entries={changeEntries(offer.files)}
-          />
+          <ChangedFiles root={offer.root} entries={offerEntries(offer)} />
         </Section>
         {offer.others > 0 ? (
           <Section title={OTHER_LABEL}>

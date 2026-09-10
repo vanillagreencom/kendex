@@ -2,6 +2,7 @@
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectOffer, Refused } from "@/bindings";
+import { EARLIER_WORD } from "@/components/project-changes/change-rows";
 import {
   ACCEPT_EARLIER_LABEL,
   ACCEPT_EARLIER_ONLY,
@@ -186,6 +187,41 @@ describe("the commit refused where the checkout could not be put back", () => {
 // draw — and the one commit on offer still carries changes the reader did
 // not make. The answer that frees it has to be on screen, or the primary
 // action is a dead end.
+// An offer a person opened themselves has no action behind it. The backend
+// spells that as `older` on every file, which through the words would badge
+// every row of their own review "Earlier" — their pending work reported as
+// some write they cannot see.
+describe("a review nobody's write opened", () => {
+  const opened: ProjectOffer = {
+    ...offer,
+    actionPaths: [],
+    files: [
+      { path: ".claude/CLAUDE.md", did: "older", added: false, removed: false },
+    ],
+  };
+
+  it("puts no word about an action on any row", async () => {
+    useCommitOfferStore.setState({ queue: [opened], scoped: "all" });
+    const host = mount(<CommitOfferDialog />);
+    await settle();
+    // The tree draws a path as its segments, so the file is named by its
+    // last one.
+    expect(host.ownerDocument.body.textContent).toContain("CLAUDE.md");
+    expect(host.ownerDocument.body.textContent).not.toContain(EARLIER_WORD);
+  });
+
+  // And a write that did reach the project still says what it did.
+  it("keeps the words where a write is behind the offer", async () => {
+    useCommitOfferStore.setState({
+      queue: [{ ...opened, actionPaths: [".claude/CLAUDE.md"] }],
+      scoped: "all",
+    });
+    const host = mount(<CommitOfferDialog />);
+    await settle();
+    expect(host.ownerDocument.body.textContent).toContain(EARLIER_WORD);
+  });
+});
+
 // The segments are buttons that hold a selection, so which one is chosen
 // has to reach a screen reader. Drawn state alone says it to sighted
 // readers only, and the repo draws its other choice controls this way.

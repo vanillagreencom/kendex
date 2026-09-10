@@ -154,7 +154,18 @@ export function RevertDialog({
             </pre>
           </div>
         ) : nothing ? (
-          <p className="text-muted-foreground">{REVERT_NOTHING}</p>
+          // Nothing would be written, and the names still belong on screen:
+          // the reader picked these files, and a preview of the exact effect
+          // that hides which ones changed back leaves them to guess. The
+          // confirmation stays disabled — there is nothing to confirm.
+          <div className="space-y-3">
+            <Group
+              label={DROPPED_LABEL}
+              paths={effect?.dropped ?? []}
+              note={DROPPED_NOTE}
+            />
+            <p className="text-muted-foreground">{REVERT_NOTHING}</p>
+          </div>
         ) : (
           <>
             <Group

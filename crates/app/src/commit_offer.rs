@@ -157,6 +157,16 @@ pub struct ProjectOffer {
     pub tracked: bool,
 }
 
+impl ProjectOffer {
+    /// Whether this write can be shown to have done anything in this
+    /// project. Every file reading as older work means one of two things,
+    /// and both end the same way: the write changed nothing here, or no
+    /// reading was taken before it and nothing may be attributed to it.
+    fn acted(&self) -> bool {
+        self.files.iter().any(|file| file.did != DidWhat::Older)
+    }
+}
+
 /// A project where kendex owns changed files and the offer cannot be made.
 /// The window flags it on the project's card rather than opening a dialog
 /// that offers nothing.
@@ -573,14 +583,25 @@ pub fn commit_offer_scan(
         // A project whose plan will not derive is not one this offer can
         // claim anything about, and it is not a failure of the write that
         // reached it either: the read is skipped and nothing is said.
-        let before = taken.remove(&root).unwrap_or_default();
-        match read(&env, &PathBuf::from(&root), &root, Some(&before)) {
+        //
+        // A missing reading is NOT an empty one. Where no reading of this
+        // project was taken before the write — its own read refused, or the
+        // plan would not derive then either — an empty baseline would
+        // report every pending change as this action's, putting somebody
+        // else's work in a dialog headed by this write and committing it
+        // under that label. Passed on as `None`, nothing is attributed to
+        // an action, and the filter below then makes no offer at all: a
+        // write that cannot be shown to have done anything here says
+        // nothing. What is waiting still reaches the person through
+        // `project_changes_scan` and the review page.
+        let before = taken.remove(&root);
+        match read(&env, &PathBuf::from(&root), &root, before.as_ref()) {
             Ok(None) | Err(_) => {}
             // An offer is made about what the write did. A project where it
             // did nothing is left alone: its pending changes are on the
             // project's card and in its own review, which is where deferred
             // work belongs.
-            Ok(Some(Ok(offer))) if !offer.files.iter().any(|file| file.did != DidWhat::Older) => {}
+            Ok(Some(Ok(offer))) if !offer.acted() => {}
             Ok(Some(Ok(offer))) => offers.push(offer),
             // A project whose state allows no offer is not flagged from
             // here. `project_changes_scan` reads that state on the ordinary
@@ -1001,7 +1022,7 @@ pub fn commit_offer_open_pull_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kendex_core::commit_offer::Refusal;
+    use kendex_core::commit_offer::{Branch, Offer, Owned, Refusal, Scan};
 
     /// The root a surface matches on is the string the caller sent, never a
     /// display spelling of it. The window looks every answer up under the
@@ -1023,6 +1044,62 @@ mod tests {
             "the display spelling matches the key, so this proves nothing"
         );
         assert_eq!(baseline_of(KEY, &Baseline::default()).root, KEY);
+    }
+
+    /// With no reading taken before the write, nothing is attributed to it:
+    /// every pending change reads as older work and [`ProjectOffer::acted`]
+    /// is false, which is what `commit_offer_scan` filters on to make no
+    /// offer about that project. An empty baseline in its place would do
+    /// the opposite — every pending change would read as this action's, and
+    /// "Only this action" would commit somebody else's work under this
+    /// write's label.
+    ///
+    /// What this pins is the attribution and the filter it feeds. The one
+    /// line joining them, `taken.remove(&root)` passed on as it is rather
+    /// than defaulted, is not covered: `commit_offer_scan` reads the
+    /// machine through `Env::detect`, and no test in this crate can hand it
+    /// one.
+    #[test]
+    fn a_write_no_reading_was_taken_for_is_credited_with_nothing() {
+        let root = PathBuf::from("/home/method/dev/site");
+        let unattributed = drawn(
+            &root,
+            "/home/method/dev/site",
+            Offer {
+                scan: Scan {
+                    root: root.clone(),
+                    owned: vec![Owned {
+                        path: ".claude/CLAUDE.md".to_owned(),
+                        untracked: false,
+                    }],
+                    shared: Vec::new(),
+                    manifest: None,
+                    others: 0,
+                    branch: Branch::On("main".to_owned()),
+                },
+                branch: "main".to_owned(),
+                remote: None,
+                push: Ok(()),
+                pull_request: Ok(()),
+                open: None,
+                message: "chore: kendex refresh".to_owned(),
+                new_branch: "kendex/renders".to_owned(),
+            },
+            // No reading was taken before the write.
+            None,
+        );
+        assert!(
+            !unattributed.acted(),
+            "a write with no reading behind it was reported as having acted"
+        );
+        assert!(unattributed.action_paths.is_empty());
+        assert!(
+            unattributed
+                .files
+                .iter()
+                .all(|file| file.did == DidWhat::Older),
+            "pending changes were attributed to a write nothing was read for"
+        );
     }
 
     /// Every way a step can fail travels whole: the program's words in

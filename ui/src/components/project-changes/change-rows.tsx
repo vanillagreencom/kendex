@@ -51,3 +51,20 @@ export function changeEntries(files: ChangedFile[]): FileEntry[] {
  *  and no word tells one from another. */
 export const pathEntries = (paths: string[]): FileEntry[] =>
   paths.map((path) => ({ path }));
+
+/** One offer's files as rows: worded where an action wrote and plain where
+ *  none did.
+ *
+ *  An offer a person opened themselves has no action to attribute anything
+ *  to, and the backend spells that as `older` on every file. Drawn through
+ *  the words, every row of a review somebody asked for would read "Earlier"
+ *  — telling them their own pending work belongs to some write they cannot
+ *  see. `actionPaths` is empty exactly in that case, and it is the offer's
+ *  own record of whether an action opened it. */
+export const offerEntries = (offer: {
+  files: ChangedFile[];
+  actionPaths: string[];
+}): FileEntry[] =>
+  offer.actionPaths.length === 0
+    ? pathEntries(offer.files.map((file) => file.path))
+    : changeEntries(offer.files);

@@ -10,6 +10,7 @@ import {
   CHANGES_UNAVAILABLE_TITLE,
   COMMIT_CHANGES_LABEL,
   COULD_NOT_CHECK,
+  DROPPED_LABEL,
   inProgressHeld,
   LAST_CHECKED_NOTE,
   NO_BRANCH_HELD,
@@ -23,6 +24,7 @@ import {
   RESTORED_LABEL,
   REVERT_CONFIRM_LABEL,
   REVERT_LABEL,
+  REVERT_NOTHING,
 } from "@/lib/copy-project-changes";
 import { READ_LANDED, readFailed } from "@/lib/read-state";
 import { useCommitOfferStore } from "@/stores/commit-offer";
@@ -276,6 +278,37 @@ describe("the review of one project's pending changes", () => {
     await userEvent.click(button(REVERT_CONFIRM_LABEL));
     await settle();
     expect(commands.projectChangesRestore).toHaveBeenCalledWith(ROOT, FILES);
+  });
+
+  // Every path changed back between the page's read and the preview, so
+  // nothing would be written. The names are still the effect: the reader
+  // picked these files, and a preview that hides which ones changed back
+  // leaves them to work it out.
+  it("names the files that changed back when none is left to put back", async () => {
+    vi.mocked(commands.projectChangesRestorePlan).mockResolvedValue({
+      status: "ok",
+      data: {
+        kind: "effect",
+        effect: {
+          restored: [],
+          removed: [],
+          dropped: FILES,
+          added: [],
+          rerendered: [],
+        },
+      },
+    });
+    mount(<ProjectChangesPage />);
+    await settle();
+    await userEvent.click(button(REVERT_LABEL));
+    await settle();
+    expect(body()).toContain(DROPPED_LABEL);
+    expect(body()).toContain(FILES[0]);
+    expect(body()).toContain(REVERT_NOTHING);
+    // Nothing to confirm, and the button says so.
+    expect((button(REVERT_CONFIRM_LABEL) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
   });
 
   // Cancelling runs nothing. The preview is a read; the run is a second,
