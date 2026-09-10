@@ -207,6 +207,36 @@ direct "$CREDENTIAL_URL" "HEAD $TIP refs/heads/main $ZERO" >/dev/null
 assert_eq "the credential in the remote URL reaches no message" "absent" \
   "$(case "$DIRECT_OUT" in *"$CREDENTIAL_SECRET"*) echo present ;; *) echo absent ;; esac)"
 
+# remote.<name>.url is not a scalar. A remote set up to push one branch to two
+# places carries two values, a fetch uses the first, and git runs this hook
+# once per URL — so no single URL is the one the tracking refs describe, under
+# either invocation, and there is no boundary to vouch for.
+MULTI_LINE="refs/heads/main $TIP refs/heads/main $ZERO"
+MULTI_WHOLE="rc=0 pre-push: base-none=refs/heads/main;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0"
+MULTI_BOUNDED="rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0"
+q git -C "$DIRECT" remote set-url --add origin "$TMP/second.git"
+assert_eq "a remote carrying two URLs takes no boundary, under the one its refs came from" \
+  "$MULTI_WHOLE" "$(direct origin "$MULTI_LINE" "$TMP/direct.git")"
+assert_eq "nor under the other one git pushes to" \
+  "$MULTI_WHOLE" "$(direct origin "$MULTI_LINE" "$TMP/second.git")"
+
+# The must-fail control: the same two-URL remote judged by a copy of the lane
+# that accepts one value instead of exactly one. `--get` answers with the LAST
+# value while the fetch used the FIRST, so a lane reading one takes a boundary
+# from refs that describe the other repository — narrow, against the wrong
+# place, which is the direction a bound must never be guessed in.
+MULTI_LANE="$DIRECT/.agents/skills/commit-guards/scripts/pre-push"
+MULTI_KEPT="$TMP/pre-push.kept"
+cp -- "$MULTI_LANE" "$MULTI_KEPT"
+sed -i.bak 's#-eq 1 \] || return 1#-ge 1 ] || return 1#' "$MULTI_LANE"
+rm -f -- "$MULTI_LANE.bak"
+assert_eq "the one-value edit took" "rewritten" \
+  "$(if cmp -s "$MULTI_KEPT" "$MULTI_LANE"; then echo unchanged; else echo rewritten; fi)"
+assert_eq "must-fail: accepting one of the URLs bounds the range by the other repository" \
+  "$MULTI_BOUNDED" "$(direct origin "$MULTI_LINE" "$TMP/second.git")"
+cp -- "$MULTI_KEPT" "$MULTI_LANE"
+q git -C "$DIRECT" remote set-url --delete origin "$TMP/second.git"
+
 # ------------------------------------------------------------------ the replay
 #
 # The whole path, through `git push`: the installed shim, the helper's pre-push

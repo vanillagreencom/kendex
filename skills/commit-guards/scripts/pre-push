@@ -124,15 +124,34 @@ zero_oid() { # OID — 0 when it is the all-zero oid
 # what THAT repository holds, and byte-ceiling would then diff from a base the
 # destination never had and pass content that is in fact being uploaded.
 #
+# Every value, and exactly one of them, because remote.<name>.url is not a
+# scalar. A remote set up to push one branch to two places carries two, a
+# fetch uses the FIRST, and git runs this hook once per URL — so `--get`,
+# which exits 0 and answers with the LAST, would compare against a URL the
+# tracking refs never came from. With more than one there is no single URL
+# those refs describe, so the question has no answer and the wider scope is
+# the only one left. `core.hooksPath` and `core.bare` are read with `--get`
+# elsewhere in this package and are right to be: those ask which value git
+# uses, and for a scalar that is the last one, which is what `--get` returns.
+#
 # Where the two are not established equal — a remote spelled as a URL with no
-# entry to read, several fetch URLs, or the same repository under two
-# spellings — the caller falls to the whole tree. That is the wider scope, and
-# a bound is the one thing that must never be guessed narrow.
+# entry to read, several URLs, or the same repository under two spellings —
+# the caller falls to the whole tree. That is the wider scope, and a bound is
+# the one thing that must never be guessed narrow.
 tracking_describes_push() { # -> 0 when the tracking refs describe the push URL
-  local fetch=""
-  gg_path fetch git config --get "remote.$REMOTE.url" || return 1
-  [ -n "$fetch" ] || return 1
-  [ "$fetch" = "$PUSH_URL" ]
+  local status=0 count=0 url="" only=""
+  # 1 is the key being absent, which a remote spelled as a URL always is;
+  # anything else is configuration that could not be read. Both are the same
+  # answer here: not established.
+  git config --get-all "remote.$REMOTE.url" >"$GG_TMP/urls" 2>/dev/null || status=$?
+  [ "$status" -eq 0 ] || return 1
+  while IFS= read -r url; do
+    count=$((count + 1))
+    only="$url"
+  done <"$GG_TMP/urls"
+  [ "$count" -eq 1 ] || return 1
+  [ -n "$only" ] || return 1
+  [ "$only" = "$PUSH_URL" ]
 }
 
 # What a pushed branch adds to the remote, as a ref the batch can diff from.
