@@ -15,6 +15,26 @@
 # PROJECT_REL, and by lib/hook-check.sh, which compares against it.
 set -euo pipefail
 
+# The hook lanes this package owns, and what each of them gates.
+#
+# One definition. The installer writes a shim per lane and stamps each
+# delegating line with the verb that lane blocks; --check reports a broken
+# lane by naming the same verb; and the helper below carries the same
+# mapping in its own `case`, because a file in .git/hooks can source
+# nothing. Two of those three read it from here, and the third is the one
+# that cannot.
+#
+# The verb doubles as the git subcommand a person types, which is what lets
+# a refusal name the way past itself without a second table.
+GG_LANES="pre-commit commit-msg pre-push"
+gg_lane_verb() { # LANE — the verb it gates, on stdout; 1 when it is not ours
+  case "$1" in
+    pre-commit | commit-msg) printf '%s' commit ;;
+    pre-push) printf '%s' push ;;
+    *) return 1 ;;
+  esac
+}
+
 # One value, quoted so the helper reads it as data.
 #
 # Everything baked into the helper is a shell assignment inside single quotes, and a

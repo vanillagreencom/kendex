@@ -45,11 +45,16 @@ q() { # COMMAND [ARGS...]
 
 ZERO=0000000000000000000000000000000000000000
 
-# The lines this lane and the check that finds the breach put in front of a
+# The lines this lane and the checks that find a breach put in front of a
 # person. The batch's own step and verdict lines are dispatcher's contract and
 # are dropped, so a row reads as the push does: what was judged, what was
-# found, and the verdict.
-KEEP='^(pre-push|byte-ceiling): '
+# found, and the verdict. todo-ban's per-hit lines quote the marker they found,
+# and this file carries no marker shape, so only its count is kept.
+KEEP='^(pre-push: |byte-ceiling: |todo-ban: index-count=)'
+
+# Assembled from split tokens, so this file never holds a marker shape itself:
+# the kendex repo runs todo-ban over its own tree, tests included.
+TD="TO""DO"
 
 # One line for a run: the exit status, then every kept line in order joined by
 # ';', with object ids reduced to <oid> — a fixture's commits are new every
@@ -160,8 +165,8 @@ CREDENTIAL_URL="https://someone:$CREDENTIAL_SECRET@example.invalid/org/repo.git"
 
 # What one run printed, kept whole, so a row can also ask what is NOT in it.
 DIRECT_OUT=""
-direct() { # REMOTE REF-LINES-JOINED-BY-@@ -> the run's one line on stdout
-  local rc=0 text="" rest="$2" one=""
+direct() { # REMOTE REF-LINES-JOINED-BY-@@ [URL] -> the run's one line on stdout
+  local rc=0 text="" rest="$2" one="" url="${3:-$TMP/direct.git}"
   while [ -n "$rest" ]; do
     one="${rest%%@@*}"
     if [ "$one" = "$rest" ]; then rest=""; else rest="${rest#*@@}"; fi
@@ -169,11 +174,11 @@ direct() { # REMOTE REF-LINES-JOINED-BY-@@ -> the run's one line on stdout
 "
   done
   DIRECT_OUT="$(cd -- "$DIRECT" && printf '%s' "$text" \
-    | "$DIRECT/.agents/skills/commit-guards/scripts/pre-push" "$1" "$TMP/direct.git" 2>&1)" || rc=$?
+    | "$DIRECT/.agents/skills/commit-guards/scripts/pre-push" "$1" "$url" 2>&1)" || rc=$?
   said "$rc" "$DIRECT_OUT"
 }
 
-# label | remote | ref lines | expected
+# label | remote | ref lines | expected | the URL git hands the hook (optional)
 for row in \
   "a deletion carries no branch state and is skipped|origin|refs/heads/topic $ZERO refs/heads/topic $SEED|rc=0 pre-push: deletion=refs/heads/topic;pre-push: result=0" \
   "a line landing on a tag is skipped, whatever its left side says|origin|HEAD $TIP refs/tags/v1 $ZERO|rc=0 pre-push: non-branch=refs/tags/v1;pre-push: result=0" \
@@ -186,9 +191,11 @@ for row in \
   "a ref line missing a field is refused, never announced as carrying nothing|origin|refs/heads/main $TIP refs/heads/main|rc=2 pre-push: ref-line-short=refs/heads/main;pre-push: result=2" \
   "a second ref line at the same scope is not judged twice|origin|refs/heads/main $TIP refs/heads/main $SEED@@refs/heads/main $TIP refs/heads/mirror $SEED|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: scope-repeat=base:<oid>;pre-push: result=0" \
   "a remote spelled as a URL matches no tracking ref, so the whole tree is the scope, and HEAD is named as the branch it resolves to|$CREDENTIAL_URL|HEAD $TIP refs/heads/main $ZERO|rc=0 pre-push: base-none=refs/heads/main;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0" \
-  "no ref lines at all is stated, not silently clean|origin||rc=0 pre-push: no-refs=0;pre-push: result=0"; do
-  IFS='|' read -r label remote reflines expect <<<"$row"
-  assert_eq "$label" "$expect" "$(direct "$remote" "$reflines")"
+  "no ref lines at all is stated, not silently clean|origin||rc=0 pre-push: no-refs=0;pre-push: result=0" \
+  "the boundary stands where git pushes to the URL the tracking refs were fetched from|origin|refs/heads/main $TIP refs/heads/main $ZERO|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
+  "and falls to the whole tree where git is pushing somewhere those refs do not describe|origin|refs/heads/main $TIP refs/heads/main $ZERO|rc=0 pre-push: base-none=refs/heads/main;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0|$TMP/fork.git"; do
+  IFS='|' read -r label remote reflines expect url <<<"$row"
+  assert_eq "$label" "$expect" "$(direct "$remote" "$reflines" "$url")"
 done
 
 # The run above that was handed a credential-bearing URL, asked the other way
@@ -220,6 +227,71 @@ assert_eq "a branch rebased into a breach is refused before it leaves the machin
 # The refusal above was refused; nothing on the remote moved.
 assert_eq "and refused again when the push spells its left side HEAD" \
   "$REFUSED" "$(push_ref "$REBASED" HEAD:refs/heads/topic)"
+
+# ------------------------------------------------------------- the subject
+#
+# The not-head refusal settles which commit is leaving; it settles nothing
+# about what the lanes read. byte-ceiling is the only lane scoped to a commit
+# range; every other one scans the INDEX. So a violation committed and then
+# staged away is uploaded while the batch reads clean bytes, which is a
+# fail-open in gate code.
+#
+# One repository, three states, one lane: todo-ban, which reads the index.
+drift_repo() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose HEAD carries a marker
+  local __v="$1" r=""
+  new_repo r "$2" "${3:-}"
+  printf '[env]\nCOMMIT_GUARDS_CHECKS = "todo-ban"\n' >"$r/kendex.settings.toml"
+  q git -C "$r" add kendex.settings.toml
+  q git -C "$r" commit -q -m "feat: seed"
+  q git -C "$r" push -q origin main
+  q git -C "$r" checkout -q -b topic
+  printf '# %s: finish this\n' "$TD" >"$r/marked.py"
+  q git -C "$r" add marked.py
+  # Committed with no hook running, which is the state this whole lane exists
+  # for: a replay puts a commit on a branch that no guard has ever judged.
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: add the marked file"
+  eval "$__v=\$r"
+}
+
+DRIFT=""
+drift_repo DRIFT drift
+# The index still holds what HEAD holds, and the work tree is cleaned without
+# staging: nothing any lane reads has moved, and the batch finds the marker the
+# push is carrying. This is why the refusal below tests the index and not the
+# work tree.
+printf 'clean\n' >"$DRIFT/marked.py"
+assert_eq "an unstaged edit changes nothing the lanes read, and the marker is still found" \
+  "rc=1 pre-push: step=base:<oid>;todo-ban: index-count=1:0:tools/todo-ban-excludes;pre-push: result=1" \
+  "$(push_ref "$DRIFT" topic)"
+
+# Staged, and now the index says clean while HEAD carries the marker that is
+# being uploaded. A verdict here would be about a tree nobody is pushing.
+q git -C "$DRIFT" add marked.py
+# git answers 1 for any hook that refused, whatever the hook exited with; the
+# lane's own 2 is the line it printed, and the table above pins that exit
+# status where the lane is run directly.
+assert_eq "content staged over HEAD is refused, never judged" \
+  "rc=1 pre-push: index-path=marked.py;pre-push: index-drift=1;pre-push: result=2" \
+  "$(push_ref "$DRIFT" topic)"
+
+# The must-fail control for that refusal: a copy of the lane whose index test
+# is gone. The same staged cleanup then pushes, clean, over the marker.
+BLIND="$TMP/.blind/commit-guards"
+mkdir -p "$(dirname "$BLIND")"
+cp -R "$SKILL_TEMPLATE" "$BLIND"
+BLIND_BEFORE="$(cat -- "$BLIND/scripts/pre-push")"
+sed -i.bak 's#if ! index_is_head; then#if false; then#' "$BLIND/scripts/pre-push"
+rm -f -- "$BLIND/scripts/pre-push.bak"
+assert_eq "the blind edit took" "rewritten" \
+  "$(if [ "$BLIND_BEFORE" = "$(cat -- "$BLIND/scripts/pre-push")" ]; then echo unchanged; else echo rewritten; fi)"
+
+BLINDED=""
+drift_repo BLINDED blinded "$BLIND"
+printf 'clean\n' >"$BLINDED/marked.py"
+q git -C "$BLINDED" add marked.py
+assert_eq "must-fail: with the index test gone, the marker is pushed under a clean verdict" \
+  "rc=0 pre-push: step=base:<oid>;todo-ban: index-count=0:0:tools/todo-ban-excludes;pre-push: result=0" \
+  "$(push_ref "$BLINDED" topic)"
 
 # The must-fail control: the same rebased state, judged by a copy of the lane
 # whose batch call stands and whose verdict is thrown away. The breach is still

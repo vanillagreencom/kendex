@@ -181,6 +181,37 @@ run_rows \
   "a consumer's ref-aware pre-push hook still reads the lines git sent|fx_push_consumer||push-hook|refs/heads/main 0000000000000000000000000000000000000000 refs/heads/main 0000000000000000000000000000000000000000|rc=0 pre-push: result=0;foreign: ref-lines=1|" \
   "must-fail: with the handback removed from our line, that hook reads an empty stream|fx_push_consumer_spent||push-hook|refs/heads/main 0000000000000000000000000000000000000000 refs/heads/main 0000000000000000000000000000000000000000|rc=0 pre-push: result=0;foreign: ref-lines=0|"
 
+echo "=== the staged ref lines outlive no interrupt ==="
+# The window is the batch, which is the slow part of a push, and a person who
+# aborts one there would otherwise leave a staging file behind for every
+# attempt. The interrupt is deterministic here: git signals the whole
+# foreground group, and a lane that signals the hook shell is that, exactly.
+refs_left() { # NAME [LINE-EDIT] -> the staging files the run left behind
+  local dir="" n=0 f=""
+  R="$(new_repo "$1")"
+  printf '#!/bin/sh\nkill -TERM "$PPID"\nsleep 1\n' \
+    >"$R/.agents/skills/commit-guards/scripts/pre-push"
+  chmod +x "$R/.agents/skills/commit-guards/scripts/pre-push"
+  "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true
+  [ -z "${2:-}" ] || edit "$R/.git/hooks/pre-push" "$2"
+  # Its own TMPDIR, so the count is this run's and not the suite's.
+  dir="$TMP/refs-$1"
+  mkdir -p "$dir"
+  (cd -- "$R" && printf 'refs/heads/main 0000000000000000000000000000000000000000 refs/heads/main 0000000000000000000000000000000000000000\n' \
+    | env TMPDIR="$dir" .git/hooks/pre-push origin "$R" >/dev/null 2>&1) || true
+  for f in "$dir"/kendex-guards-refs.*; do
+    [ -e "$f" ] && n=$((n + 1))
+  done
+  printf '%s' "$n"
+}
+assert_eq "an interrupted push leaves no staged ref file behind" "0" \
+  "$(refs_left refs-trapped)"
+# Both traps, because a shell that reaps the signal after the batch returns
+# exits through its EXIT trap and cleans up on that one alone; the signal trap
+# is what covers a shell that does not get that far.
+assert_eq "must-fail: with the traps cut from our line, the file survives" "1" \
+  "$(refs_left refs-untrapped '2s|trap .rm -f "$kendex_gg_r". EXIT; ||; 2s|trap .rm -f "$kendex_gg_r"; exit 2. INT HUP TERM; ||')"
+
 echo "=== hooks the installer must not touch ==="
 fx_symlinked() { R="$(new_repo symlinked)"; mkdir -p "$TMP/elsewhere"; printf '#!/bin/sh\nexit 0\n' >"$TMP/elsewhere/shared-pre-commit"; chmod +x "$TMP/elsewhere/shared-pre-commit"; ln -s "$TMP/elsewhere/shared-pre-commit" "$R/.git/hooks/pre-commit"; }
 fx_disabled() { R="$(new_repo disabled)"; printf '#!/bin/sh\nexit 0\n' >"$R/.git/hooks/pre-commit"; }

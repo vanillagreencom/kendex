@@ -76,7 +76,7 @@ gg_checkout_place() { # COMMONVAR RELVAR DIR -> 0 when both answers are had
 gg_same_project_elsewhere() { # DIR -> 0 when it is this project's, elsewhere
   local dir="$1" lane="" there_common="" there_rel="" here_common="" here_rel=""
   [ -d "$dir" ] || return 1
-  for lane in pre-commit commit-msg pre-push; do
+  for lane in $GG_LANES; do
     [ -x "$dir/$lane" ] || return 1
   done
   gg_checkout_place there_common there_rel "$dir" || return 1
@@ -182,24 +182,33 @@ check_helper() { # -> 0 armed, 1 not armed, 3 unverifiable
 # anything.
 #
 # It execs one program per lane and exits 2 where the program is missing or
-# carries no execute bit, so an install that lost either one refuses every
-# commit, or every push. Calling that armed describes a repository whose
-# commits are BLOCKED as one whose commits are checked, which is the more
+# carries no execute bit, so an install that lost one refuses everything
+# that lane gates. Calling that armed describes a repository whose commits
+# or pushes are BLOCKED as one where they are checked, which is the more
 # expensive way round to be wrong: the person is told nothing is wrong
-# while nothing can be committed.
+# while nothing gets through.
+#
+# Each lane's own verb, because a broken push lane blocks pushes while
+# commits carry on, and a report that said otherwise would state a
+# consequence that does not happen. The verb comes from the one place that
+# defines it, so this cannot drift from what the shims say.
 #
 # Asked here, once, so the answer cannot differ between the check that
 # reports and the engine that reads the report.
-check_delegated_lanes() { # -> 0 both lanes runnable, 1 not
-  local lane="" program=""
-  for lane in pre-commit commit-msg pre-push; do
+check_delegated_lanes() { # -> 0 every lane runnable, 1 not
+  local lane="" program="" verb=""
+  for lane in $GG_LANES; do
     program="$SCRIPT_DIR/$lane"
+    if ! verb="$(gg_lane_verb "$lane")"; then
+      add_reason lane-unknown "$lane" "$lane is not a lane this package defines, so what it gates cannot be named"
+      return 1
+    fi
     if [ ! -f "$program" ]; then
-      add_reason lane-missing "$(gg_shown "$SCRIPT_DIR")/$lane" "$lane is missing from $(gg_shown "$SCRIPT_DIR"), so every commit is blocked rather than guarded"
+      add_reason lane-missing "$(gg_shown "$SCRIPT_DIR")/$lane" "$lane is missing from $(gg_shown "$SCRIPT_DIR"), so every $verb is blocked rather than guarded"
       return 1
     fi
     if [ ! -x "$program" ]; then
-      add_reason lane-disabled "$(gg_shown "$SCRIPT_DIR")/$lane" "$lane in $(gg_shown "$SCRIPT_DIR") is not executable, so every commit is blocked rather than guarded"
+      add_reason lane-disabled "$(gg_shown "$SCRIPT_DIR")/$lane" "$lane in $(gg_shown "$SCRIPT_DIR") is not executable, so every $verb is blocked rather than guarded"
       return 1
     fi
   done
@@ -287,15 +296,12 @@ check_hooks_dir() { # -> 0 armed, 1 not armed, 2 could not determine
   status=0
   check_helper || status=$?
   case "$status" in 1) drifted=1 ;; 2 | 3) unknown=1 ;; esac
-  status=0
-  check_hook pre-commit || status=$?
-  case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
-  status=0
-  check_hook commit-msg || status=$?
-  case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
-  status=0
-  check_hook pre-push || status=$?
-  case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
+  local lane=""
+  for lane in $GG_LANES; do
+    status=0
+    check_hook "$lane" || status=$?
+    case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
+  done
   [ "$drifted" -eq 0 ] || return 1
   [ "$unknown" -eq 0 ] || return 2
   return 0

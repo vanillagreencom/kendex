@@ -104,7 +104,9 @@ git sends a pre-push hook its ref lines on stdin once. The pre-push
 delegating line stages that stream in a temporary file, runs the guard
 against it, and re-points the hook's own stdin at the same file, so a
 consumer's own pre-push content below the line reads exactly the lines git
-sent. A staging file that cannot be made or filled blocks the push.
+sent. The file is held under a cleanup trap until it is unlinked, so an
+interrupted push leaves nothing behind. A staging file that cannot be made
+or filled blocks the push.
 
 --uninstall drops the helper and our marked line from each hook, deleting a
 hook file this installer created outright and leaving every other line of a
@@ -333,12 +335,13 @@ gg_owned_lines_re() {
 }
 
 call_line() { # HOOK
-  local hook="$1" args="" blocked="commit" invoke=""
+  local hook="$1" args="" blocked="" invoke=""
   [ "$hook" = "pre-commit" ] || args=' "$@"'
   # The verb the lane gates, so the missing-helper refusal names what git
   # actually stopped. The two commit lanes keep the word they have always
   # carried, which is what keeps their delegating lines byte-identical.
-  [ "$hook" != "pre-push" ] || blocked="push"
+  blocked="$(gg_lane_verb "$hook")" \
+    || gg_fail lane-unknown "$hook" "that is not a lane this package defines; it gates $GG_LANES"
   # How the helper is called, which is where pre-push differs.
   #
   # git hands a pre-push hook its ref lines on stdin ONCE, and that stream is
@@ -355,8 +358,14 @@ call_line() { # HOOK
   # consumer's body reads exactly the lines git sent. The file is unlinked
   # while the redirection still holds it open. A staging file that cannot be
   # made or filled is a refusal, never a push that runs unread.
+  #
+  # A trap goes on the moment the file exists, because the slow part is the
+  # batch and a person interrupting a push during it would otherwise leave
+  # the file behind, one per aborted push. It comes off again once the file
+  # is unlinked: below this line the hook is the consumer's, and its traps
+  # are theirs to set.
   case "$hook" in
-    pre-push) invoke='kendex_gg_r="$(mktemp "${TMPDIR:-/tmp}/kendex-guards-refs.XXXXXX")" || { echo "commit-guards: hook-refs=stage" >&2; echo "  A temporary file for the ref lines git sent could not be made; push blocked." >&2; exit 2; }; cat >"$kendex_gg_r" || { rm -f "$kendex_gg_r"; echo "commit-guards: hook-refs=read" >&2; echo "  The ref lines git sent could not be read; push blocked." >&2; exit 2; }; "$kendex_gg_h" '"$hook$args"' <"$kendex_gg_r"; kendex_gg_c=$?; exec <"$kendex_gg_r"; rm -f "$kendex_gg_r"; [ "$kendex_gg_c" -eq 0 ] || exit "$kendex_gg_c"; ' ;;
+    pre-push) invoke='kendex_gg_r="$(mktemp "${TMPDIR:-/tmp}/kendex-guards-refs.XXXXXX")" || { echo "commit-guards: hook-refs=stage" >&2; echo "  A temporary file for the ref lines git sent could not be made; push blocked." >&2; exit 2; }; trap '\''rm -f "$kendex_gg_r"'\'' EXIT; trap '\''rm -f "$kendex_gg_r"; exit 2'\'' INT HUP TERM; cat >"$kendex_gg_r" || { echo "commit-guards: hook-refs=read" >&2; echo "  The ref lines git sent could not be read; push blocked." >&2; exit 2; }; "$kendex_gg_h" '"$hook$args"' <"$kendex_gg_r"; kendex_gg_c=$?; exec <"$kendex_gg_r"; rm -f "$kendex_gg_r"; trap - EXIT INT HUP TERM; [ "$kendex_gg_c" -eq 0 ] || exit "$kendex_gg_c"; ' ;;
     *) invoke='"$kendex_gg_h" '"$hook$args"' || exit $?; ' ;;
   esac
   # not-a-path: ends in `hooks`; also the grammar every armed hook matches.
@@ -600,7 +609,7 @@ if [ "$MODE" = "check" ]; then
   fi
   check_hooks_dir || VERDICT=$?
   case "$VERDICT" in
-    0) summary armed "$(gg_shown "$HOOKS_DIR")" "armed — pre-commit, commit-msg and pre-push gate this repository in $(gg_shown "$HOOKS_DIR")" ;;
+    0) summary armed "$(gg_shown "$HOOKS_DIR")" "armed — $GG_LANES gate this repository in $(gg_shown "$HOOKS_DIR")" ;;
     1) summary not-armed "$CHECK_REASONS" "NOT armed — $CHECK_EXPLANATIONS ($(gg_shown "$HOOKS_DIR")); run 'kendex guard install' (or this installer)$REARM_WHERE to re-arm" ;;
     *) summary unknown "$CHECK_REASONS" "could not determine whether the shims are armed — $CHECK_EXPLANATIONS" ;;
   esac
@@ -621,9 +630,9 @@ fi
 # uninstaller is what disarms them, for the repository, whoever runs it.
 if [ "$MODE" = "uninstall" ]; then
   REMOVED=""
-  uninstall_hook pre-commit
-  uninstall_hook commit-msg
-  uninstall_hook pre-push
+  for lane in $GG_LANES; do
+    uninstall_hook "$lane"
+  done
   helper="$HOOKS_DIR/$HELPER_NAME"
   # The helper stays while any of our lines could not go: a delegate left
   # pointing at a missing helper blocks every commit.
@@ -649,12 +658,12 @@ if ! write_helper "$HOOKS_DIR/$HELPER_NAME"; then
   summary not-installed "$(gg_shown "$HOOKS_DIR")/$HELPER_NAME" "NOT installed — could not write $(gg_shown "$HOOKS_DIR")/$HELPER_NAME"
   exit 1
 fi
-install_hook pre-commit
-install_hook commit-msg
-install_hook pre-push
+for lane in $GG_LANES; do
+  install_hook "$lane"
+done
 
 if [ "$FAILED" -eq 1 ]; then
   summary incomplete "$(gg_shown "$HOOKS_DIR")" "incomplete — see the warnings above ($(gg_shown "$HOOKS_DIR"))"
   exit 1
 fi
-summary installed "$(gg_shown "$HOOKS_DIR")" "pre-commit, commit-msg and pre-push armed in $(gg_shown "$HOOKS_DIR")"
+summary installed "$(gg_shown "$HOOKS_DIR")" "$GG_LANES armed in $(gg_shown "$HOOKS_DIR")"

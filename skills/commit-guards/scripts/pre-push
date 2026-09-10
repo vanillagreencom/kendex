@@ -41,13 +41,17 @@ announced and skipped. What a line deposits on the remote decides that, never
 how its left side is spelled: `git push origin HEAD` lands a branch too. A
 line this lane cannot read is refused rather than skipped. The base is the
 remote's oid when this repository has that commit, else the boundary of what
-the remote does not have yet; a branch with no boundary at all has never been
-vetted anywhere, so the whole tree is the honest scope.
+the remote does not have yet — read off this repository's refs for the remote,
+and used only where git's own push URL says they describe the place the push
+is going. With no base to vouch for, the whole tree is the honest scope.
 
-Every lane but byte-ceiling reads the working tree or the index rather than a
-ref, so the batch judges THIS checkout. A branch whose tip is not HEAD is
-refused rather than passed silently: check it out and push again. The
-verdict line names the way past a refusal.
+Two refusals keep the verdict about the thing being pushed. A branch whose tip
+is not HEAD is refused: byte-ceiling is the only lane scoped to a commit range
+and every other one scans the index, so the batch answers about this checkout.
+The index having content HEAD does not is refused for the same reason — a
+verdict over staged bytes is a verdict about a tree nobody is pushing. Neither
+consults untracked files or unstaged edits, which no lane reads. The verdict
+line names the way past a refusal.
 
 Configuration: every COMMIT_GUARDS_* key the batch reads applies here
 unchanged.
@@ -71,8 +75,20 @@ esac
 # credential into terminal scrollback and into every log that captures hook
 # output. The ref name is what a reader needs from these messages anyway.
 REMOTE="$1"
+# The URL git is actually pushing to, which is the one thing that says where
+# this push lands. git resolves remote.<name>.pushurl and every insteadOf
+# rewrite before choosing it, so asking git beats reading the configuration
+# back: one judge, and it is the one that already decided.
+PUSH_URL="$2"
 
 gg_repo_root_cd
+# The policy a push is measured against is HEAD's, like the content: the
+# refusals below hold the index to HEAD, and tracked settings resolve from the
+# index while this is on, so an unstaged edit to a committed settings file
+# cannot drop a lane from the batch that judges the commit. Untracked sources —
+# .env.local, .kendex/settings.toml, the environment — are local override by
+# design and are untouched by it.
+gg_settings_index_mode
 gg_tmpdir
 
 BATCH="$SCRIPT_DIR/commit-guards"
@@ -99,6 +115,26 @@ zero_oid() { # OID — 0 when it is the all-zero oid
   return 0
 }
 
+# Whether this repository's refs for the remote describe where the push lands.
+#
+# `refs/remotes/<name>/*` were fetched from remote.<name>.url. A push can go
+# somewhere else entirely — remote.<name>.pushurl, or an insteadOf rewrite —
+# and the fetch-upstream, push-to-a-fork triangle is an ordinary setup. A
+# boundary read off refs that describe another repository bounds the range by
+# what THAT repository holds, and byte-ceiling would then diff from a base the
+# destination never had and pass content that is in fact being uploaded.
+#
+# Where the two are not established equal — a remote spelled as a URL with no
+# entry to read, several fetch URLs, or the same repository under two
+# spellings — the caller falls to the whole tree. That is the wider scope, and
+# a bound is the one thing that must never be guessed narrow.
+tracking_describes_push() { # -> 0 when the tracking refs describe the push URL
+  local fetch=""
+  gg_path fetch git config --get "remote.$REMOTE.url" || return 1
+  [ -n "$fetch" ] || return 1
+  [ "$fetch" = "$PUSH_URL" ]
+}
+
 # What a pushed branch adds to the remote, as a ref the batch can diff from.
 resolve_base() { # VAR LOCAL-OID REMOTE-OID — VAR gets the base; 1 when there is none
   local __v="$1" local_oid="$2" remote_oid="$3" status=0 line=""
@@ -120,6 +156,7 @@ resolve_base() { # VAR LOCAL-OID REMOTE-OID — VAR gets the base; 1 when there 
   # matches no tracking refs, so nothing is excluded, the walk reaches the
   # root, and there is no boundary — which falls through to the whole tree
   # below. Wider, never narrower.
+  tracking_describes_push || return 1
   git rev-list --boundary "$local_oid" --not --remotes="$REMOTE" \
     >"$GG_TMP/boundary" 2>"$GG_TMP/boundary.err" || status=$?
   [ "$status" -eq 0 ] \
@@ -133,6 +170,49 @@ resolve_base() { # VAR LOCAL-OID REMOTE-OID — VAR gets the base; 1 when there 
     esac
   done <"$GG_TMP/boundary"
   eval "$__v=''"
+  return 1
+}
+
+# Whether the index holds exactly the content the pushed commit does.
+#
+# The not-head refusal settles that the commit leaving the machine is HEAD's.
+# It settles nothing about what the lanes read: byte-ceiling is the only one
+# scoped to a commit range, and every other check in the family scans the
+# INDEX. So staged content makes the batch answer about a tree nobody is
+# pushing — and wrong in the direction that matters, since a violation
+# committed and then staged away reads clean while it is uploaded.
+#
+# The index, not the work tree: an unstaged edit changes nothing any lane
+# reads, and neither does an untracked file, so neither is consulted. Asked
+# once, at the first line that would be judged, so a push carrying nothing but
+# deletions and tags is never held for it.
+INDEX_STATE=unasked
+index_is_head() { # -> 0 when the index holds exactly HEAD's tracked content
+  local status=0 count=0 path=""
+  case "$INDEX_STATE" in
+    yes) return 0 ;;
+    no) return 1 ;;
+  esac
+  git diff --cached --quiet HEAD -- 2>"$GG_TMP/index.err" || status=$?
+  case "$status" in
+    0)
+      INDEX_STATE=yes
+      return 0
+      ;;
+    1) ;;
+    *) gg_fail_cause index-read "$status" "$GG_TMP/index.err" "git diff could not compare the index with HEAD (exit $status)" ;;
+  esac
+  INDEX_STATE=no
+  # NUL-delimited, since these are somebody's tracked names and the list is the
+  # evidence for the refusal below.
+  git diff --cached --name-only -z HEAD -- >"$GG_TMP/index.z" 2>"$GG_TMP/index.err" \
+    || gg_fail_cause index-read "$?" "$GG_TMP/index.err" "git diff could not list what the index holds over HEAD"
+  while IFS= read -r -d '' path; do
+    [ -n "$path" ] || continue
+    gg_message index-path "$path" "This path is staged over HEAD."
+    count=$((count + 1))
+  done <"$GG_TMP/index.z"
+  gg_message index-drift "$count" "pre-push: the index holds content HEAD does not, and every lane but byte-ceiling reads the index — so a verdict here would be about a tree nobody is pushing. Commit the staged content or reset it, then push again. The verdict line below names the way past this refusal."
   return 1
 }
 
@@ -236,14 +316,20 @@ while IFS=' ' read -r local_ref local_oid remote_ref remote_oid || [ -n "$local_
     gg_message not-head "$ref:$local_oid" "pre-push: $ref is at $(gg_shown "$local_oid") and this checkout is at $(gg_shown "${HEAD_OID:-<unborn HEAD>}"), so the guards — which read this work tree and this index — cannot judge it. Check the branch out and push again; the verdict line below names the way past this refusal."
     continue
   fi
+  if ! index_is_head; then
+    had_errors=1
+    continue
+  fi
   base=""
   if resolve_base base "$local_oid" "$remote_oid"; then
     judge "base:$base" "$ref" --base "$base"
   else
-    # No boundary at all: nothing on this branch has ever reached the remote,
-    # so no commit on it has been vetted anywhere and the whole tree is the
-    # only honest scope.
-    gg_message base-none "$ref" "=== pre-push: nothing $ref builds on has reached this remote — judging the whole tree"
+    # No base this lane can vouch for: either nothing on this branch has ever
+    # reached the remote, or the refs this repository holds for the remote
+    # describe somewhere other than where the push is going. Either way no
+    # commit on it has been vetted against the destination, and the whole tree
+    # is the only honest scope.
+    gg_message base-none "$ref" "=== pre-push: no base to vouch for — either nothing $ref builds on has reached this remote, or this repository's refs for the remote describe somewhere else. Judging the whole tree."
     judge "all" "$ref"
   fi
 done <"$GG_TMP/refs"

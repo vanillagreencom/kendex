@@ -155,6 +155,7 @@ fx_wt_unarmed() { worktree_of wt-unarmed; rm "$R/.git/hooks/pre-commit"; }
 # reads the worktree's own render, the checkout --check was asked about.
 fx_wt_lane_gone() { worktree_of wt-lane-gone; rm "$W/.agents/skills/commit-guards/scripts/pre-commit"; }
 fx_wt_lane_noexec() { worktree_of wt-lane-noexec; chmod -x "$W/.agents/skills/commit-guards/scripts/commit-msg"; }
+fx_wt_push_gone() { worktree_of wt-push-gone; rm "$W/.agents/skills/commit-guards/scripts/pre-push"; }
 LANES="/.agents/skills/commit-guards/scripts"
 fx_two_projects() { armed two-projects; mkdir "$R/sub"; cp -R "$R/.agents" "$R/sub/.agents"; W="$R/sub"; }
 NOTOURS=""
@@ -163,8 +164,25 @@ run_rows \
   "an unarmed verdict from a linked worktree sends the reader to the main checkout, where the installer does not refuse|fx_wt_unarmed||check-wt||rc=1 ${NA}hook-missing=pre-commit$REARM_WT|" \
   "a worktree whose pre-commit program is gone is not armed: every commit would be blocked|fx_wt_lane_gone||check-wt||rc=1 ${NA}lane-missing=<repo>-wt$LANES/pre-commit$REARM_WT|" \
   "a worktree whose commit-msg program lost its execute bit is not armed either|fx_wt_lane_noexec||check-wt||rc=1 ${NA}lane-disabled=<repo>-wt$LANES/commit-msg$REARM_WT|" \
+  "a worktree whose pre-push program is gone is not armed either|fx_wt_push_gone||check-wt||rc=1 ${NA}lane-missing=<repo>-wt$LANES/pre-push$REARM_WT|" \
   "project B does not read project A's helper as its own consent|fx_two_projects||check-wt||rc=2 $CND$UNVERIFIED|" \
   "the same layout in another repository is not this project's|fx_other_repo||check||rc=2 $CND$UNVERIFIED|"
+
+# The rows above pin the key and the path. The explanation is the finding
+# here — kendex check is where a person reads what stopped working — and the
+# table strips indented lines, so it is read directly. A lost push lane blocks
+# pushes while commits carry on, and a report saying otherwise states a
+# consequence that does not happen.
+verb_said() { # LANE -> the verb the explanation names, on stdout
+  worktree_of "verb-$1"
+  rm -f "$W/.agents/skills/commit-guards/scripts/$1"
+  check_in "$W"
+  printf '%s\n' "$OUT" | LC_ALL=C sed -n 's/.*so every \([a-z]*\) is blocked.*/\1/p'
+}
+assert_eq "a worktree whose push lane is gone says pushes are blocked" \
+  "push" "$(verb_said pre-push)"
+assert_eq "control: one whose commit lane is gone still says commits are blocked" \
+  "commit" "$(verb_said pre-commit)"
 
 echo "=== the helper's head: one per-checkout value, held to the quoter that wrote it ==="
 # The head is compared around the one value that may differ between
