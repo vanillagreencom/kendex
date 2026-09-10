@@ -100,6 +100,28 @@ pub fn canonical(path: &Path) -> std::io::Result<PathBuf> {
     Ok(reduced(&path.canonicalize()?))
 }
 
+/// `path` as an absolute path, without requiring it to exist.
+///
+/// [`canonical`] where it resolves, which is the one spelling everything
+/// compares against (invariant 17). Where it does not — a folder that was
+/// renamed or removed, which is exactly when a person names one — a
+/// relative path is joined onto the directory the process is in, because
+/// that is what the person typing it meant. A path that is already
+/// absolute is handed back as it came: nothing here invents a resolution
+/// the filesystem would not give.
+pub fn absolute(path: &Path) -> PathBuf {
+    if let Ok(resolved) = canonical(path) {
+        return resolved;
+    }
+    match path.is_absolute() {
+        true => path.to_path_buf(),
+        false => match std::env::current_dir() {
+            Ok(here) => here.join(path),
+            Err(_) => path.to_path_buf(),
+        },
+    }
+}
+
 /// An already-resolved `path` in the spelling kendex hands out —
 /// [`canonical`] without the resolving step.
 ///

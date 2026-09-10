@@ -158,11 +158,13 @@ export const useInstallFlow = create<InstallFlowState>((set, get) => ({
   setChoice: (choice) => set({ choice }),
 
   install: async () => {
-    const { ask, subjectId, places, choice, running } = get();
-    if (!ask || running || places.length === 0) return;
+    const { ask, subjectId, choice, running } = get();
+    if (!ask || running) return;
     const subject =
       ask.subjects.find((one) => one.id === subjectId) ?? ask.subjects[0];
     if (!subject) return;
+    const places = placesToWrite(subject, get().places);
+    if (places.length === 0) return;
     set({ running: true, outcome: null });
     const outcomes: PlaceOutcome[] = [];
     // Whether the reader was offered the where question at all. It decides
@@ -253,8 +255,33 @@ export function installablePlaces(
   const seen = new Map<string, Scope>();
   for (const group of subject.groups)
     seen.set(scopeKey(group.browsing), group.browsing);
-  return [...seen.values()];
+  // A subscription that lives in a project installs where it lives, and
+  // that place is a folder like any other: one no scan found takes no
+  // write, whichever door the install came through. `projects` is what
+  // reading found, so the rule is the same one the personal arm above
+  // applies — stated once, over both.
+  return [...seen.values()].filter(
+    (place) => place.scope === "global" || projects.includes(place.root),
+  );
 }
+
+/** The picked places this install may still write to.
+ *
+ *  Which places the reader chose is theirs; whether a place can take a
+ *  write is the machine's, and the second can change while the dialog is
+ *  open — a scan landing behind it takes a renamed folder away, and the
+ *  selection made before it still names that folder. So the answer is
+ *  taken again where it is acted on: the button that says Install reads
+ *  it, and so does the write. */
+export const placesToWrite = (
+  subject: InstallSubject | undefined,
+  places: Scope[],
+): Scope[] =>
+  subject
+    ? places.filter((one) =>
+        picked(installablePlaces(subject, reachableProjectsNow()), one),
+      )
+    : [];
 
 /** Whether the where question has an answer for the reader to give. */
 export const placeIsAChoice = (subject: InstallSubject): boolean =>

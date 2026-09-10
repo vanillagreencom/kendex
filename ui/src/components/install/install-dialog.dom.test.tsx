@@ -484,4 +484,58 @@ describe("the guided install", () => {
       destination: null,
     });
   });
+
+  // The place a project's own marketplace installs into is that project,
+  // and it is a folder like any other: one no scan found takes no write,
+  // whichever door the install came through.
+  it("holds a project marketplace's own install when its folder is gone", async () => {
+    useScanStore.setState({
+      scanning: false,
+      error: null,
+      result: {
+        harnesses: [],
+        items: [],
+        warnings: [],
+        missingProjects: [{ root: ACME.root, why: { kind: "gone" } }],
+      },
+    });
+
+    await open(
+      askFor({
+        ...gh,
+        groups: [{ ...gh.groups[0], browsing: ACME }],
+      }),
+    );
+
+    expect(button(INSTALL_ACTION).disabled).toBe(true);
+    expect(document.body.textContent).toContain(INSTALL_NO_PLACE);
+    expect(install).not.toHaveBeenCalled();
+  });
+
+  // The selection is made before the write, and a scan landing in between
+  // can take the folder away: what the button acts on is asked again where
+  // it is acted on, not held from when the dialog opened.
+  it("holds a place its folder left while the dialog was open", async () => {
+    useNavStore.setState({ installInto: BETA });
+    await open();
+    expect(button(INSTALL_ACTION).disabled).toBe(false);
+
+    await act(async () => {
+      useScanStore.setState({
+        scanning: false,
+        error: null,
+        result: {
+          harnesses: [],
+          items: [],
+          warnings: [],
+          missingProjects: [{ root: BETA.root, why: { kind: "gone" } }],
+        },
+      });
+    });
+    await settle();
+
+    expect(button(INSTALL_ACTION).disabled).toBe(true);
+    expect(document.body.textContent).toContain(INSTALL_NO_PLACE);
+    expect(install).not.toHaveBeenCalled();
+  });
 });

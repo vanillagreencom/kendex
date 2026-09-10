@@ -320,13 +320,15 @@ pub fn ensure_project_registered(env: &Env, path: &Path) -> Result<Registration>
     })
 }
 
-/// Removes by canonical path when resolvable, else by the recorded path —
-/// a registered project whose directory vanished must still be removable.
+/// Removes by canonical path when resolvable, else by the absolute
+/// spelling of what was asked — a registered project whose directory
+/// vanished must still be removable, and a shell names one relatively just
+/// as readily as it names a folder that is there.
 ///
 /// By the rule [`register_project`] wrote the entry under, since this is a
 /// comparison against what that stored.
 pub fn unregister_project(env: &Env, path: &Path) -> Result<(AppSettings, Base)> {
-    let target = crate::paths::canonical(path).unwrap_or_else(|_| path.to_path_buf());
+    let target = crate::paths::absolute(path);
     mutate(env, |settings| {
         let before = settings.projects.len();
         settings.projects.retain(|p| *p != target);
