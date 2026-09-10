@@ -94,11 +94,12 @@ helper_program() { # -> the part of the helper every checkout writes alike
 # rewritten on every install — do not edit.
 #
 # usage: kendex-guards pre-commit | kendex-guards commit-msg MSGFILE
+#        kendex-guards pre-push REMOTE URL
 #
 # Blocks whenever the guard it should run cannot be reached: a gate that
 # cannot run is never a pass.
 # Exit 2 is the family's "could not complete", distinct from a check's
-# exit 1 verdict. Both block the commit.
+# exit 1 verdict. Both block whatever the lane gates, a commit or a push.
 fail() { # KEY VALUE EXPLANATION
   value="$(printf '%s' "$2" | LC_ALL=C tr '\001-\037\177' '?')" || exit 2
   printf 'kendex-guards: %s=%s\n' "$1" "$value" >&2
@@ -107,15 +108,28 @@ fail() { # KEY VALUE EXPLANATION
   done <<HELPER_EXPLANATION
 $3
 HELPER_EXPLANATION
-  echo "  The commit is blocked because a guard could not run. Re-arm the shims with 'kendex guard install', or bypass this commit with 'git commit --no-verify'." >&2
+  echo "  The $what is blocked because a guard could not run. Re-arm the shims with 'kendex guard install', or bypass this $what with 'git $what --no-verify'." >&2
   exit 2
 }
 
+# The verb the lane gates. It is what a refusal above names as blocked, and
+# also the git subcommand the refusal's own remedy is spelled against. An
+# invalid mode is a hand-edited shim rather than anything git asked for, and
+# a shim is edited from the commit side, so that is the verb it is told
+# about.
 mode="${1-}"
 case "$mode" in
-  pre-commit | commit-msg) shift ;;
+  pre-commit | commit-msg)
+    what=commit
+    shift
+    ;;
+  pre-push)
+    what=push
+    shift
+    ;;
   *)
-    fail mode-invalid "$mode" "Use pre-commit or commit-msg MSGFILE."
+    what=commit
+    fail mode-invalid "$mode" "Use pre-commit, commit-msg MSGFILE, or pre-push REMOTE URL."
     ;;
 esac
 

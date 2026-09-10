@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# install-git-hooks — real git pre-commit / commit-msg shims, so the guard
-# chain runs for every tool that commits, not only the ones with their own
-# hook system.
+# install-git-hooks — real git pre-commit / commit-msg / pre-push shims, so
+# the guard chain runs for every tool that commits or pushes, not only the
+# ones with their own hook system.
 #
 #   .git/hooks/kendex-guards   helper this installer owns outright and
 #                              rewrites atomically on every run
 #   .git/hooks/pre-commit      one marked delegating line, created or inserted
 #   .git/hooks/commit-msg      same, passing git's message file through
+#   .git/hooks/pre-push        same, passing the remote name and URL through;
+#                              git's ref lines reach the lane on stdin
 #
 # core.hooksPath is deliberately NOT used: it redirects the whole hooks
 # directory and would disable hooks the repo already has.
@@ -92,9 +94,15 @@ usage() {
   cat <<'EOF'
 usage: install-git-hooks [--repo PATH] [--uninstall | --check]
 
-Installs (or repairs) the .git/hooks/pre-commit and .git/hooks/commit-msg
-shims that run the commit-guards chain. Idempotent: re-running is a no-op
-when the install is current. --repo defaults to the current directory.
+Installs (or repairs) the .git/hooks/pre-commit, .git/hooks/commit-msg and
+.git/hooks/pre-push shims that run the commit-guards chains. Idempotent:
+re-running is a no-op when the install is current. --repo defaults to the
+current directory.
+
+The pre-push shim reads git's ref lines from stdin, so a consumer's own
+pre-push content below the delegating line sees a stream that is already
+spent. Nothing short of buffering the whole stream and handing it back
+would change that, and the delegating line has to go first.
 
 --uninstall drops the helper and our marked line from each hook, deleting a
 hook file this installer created outright and leaving every other line of a
@@ -323,10 +331,14 @@ gg_owned_lines_re() {
 }
 
 call_line() { # HOOK
-  local hook="$1" args=""
+  local hook="$1" args="" blocked="commit"
   [ "$hook" = "pre-commit" ] || args=' "$@"'
+  # The verb the lane gates, so the missing-helper refusal names what git
+  # actually stopped. The two commit lanes keep the word they have always
+  # carried, which is what keeps their delegating lines byte-identical.
+  [ "$hook" != "pre-push" ] || blocked="push"
   # not-a-path: ends in `hooks`; also the grammar every armed hook matches.
-  printf '%s' 'kendex_gg_h="$(git rev-parse --git-path hooks 2>/dev/null)/'"$HELPER_NAME"'"; [ -x "$kendex_gg_h" ] || { printf "commit-guards: hook-helper=%s\\n  The helper is missing or not executable; commit blocked (reinstall: kendex guard install)\\n" "$(printf %s "$kendex_gg_h" | LC_ALL=C tr "\\001-\\037\\177" "?")" >&2; exit 2; }; "$kendex_gg_h" '"$hook$args"' || exit $?; '"$HOOK_SENTINEL"
+  printf '%s' 'kendex_gg_h="$(git rev-parse --git-path hooks 2>/dev/null)/'"$HELPER_NAME"'"; [ -x "$kendex_gg_h" ] || { printf "commit-guards: hook-helper=%s\\n  The helper is missing or not executable; '"$blocked"' blocked (reinstall: kendex guard install)\\n" "$(printf %s "$kendex_gg_h" | LC_ALL=C tr "\\001-\\037\\177" "?")" >&2; exit 2; }; "$kendex_gg_h" '"$hook$args"' || exit $?; '"$HOOK_SENTINEL"
 }
 
 # Line tools terminate their last line, which would permanently add a newline
@@ -566,7 +578,7 @@ if [ "$MODE" = "check" ]; then
   fi
   check_hooks_dir || VERDICT=$?
   case "$VERDICT" in
-    0) summary armed "$(gg_shown "$HOOKS_DIR")" "armed — pre-commit and commit-msg gate commits in $(gg_shown "$HOOKS_DIR")" ;;
+    0) summary armed "$(gg_shown "$HOOKS_DIR")" "armed — pre-commit, commit-msg and pre-push gate this repository in $(gg_shown "$HOOKS_DIR")" ;;
     1) summary not-armed "$CHECK_REASONS" "NOT armed — $CHECK_EXPLANATIONS ($(gg_shown "$HOOKS_DIR")); run 'kendex guard install' (or this installer)$REARM_WHERE to re-arm" ;;
     *) summary unknown "$CHECK_REASONS" "could not determine whether the shims are armed — $CHECK_EXPLANATIONS" ;;
   esac
@@ -589,6 +601,7 @@ if [ "$MODE" = "uninstall" ]; then
   REMOVED=""
   uninstall_hook pre-commit
   uninstall_hook commit-msg
+  uninstall_hook pre-push
   helper="$HOOKS_DIR/$HELPER_NAME"
   # The helper stays while any of our lines could not go: a delegate left
   # pointing at a missing helper blocks every commit.
@@ -616,9 +629,10 @@ if ! write_helper "$HOOKS_DIR/$HELPER_NAME"; then
 fi
 install_hook pre-commit
 install_hook commit-msg
+install_hook pre-push
 
 if [ "$FAILED" -eq 1 ]; then
   summary incomplete "$(gg_shown "$HOOKS_DIR")" "incomplete — see the warnings above ($(gg_shown "$HOOKS_DIR"))"
   exit 1
 fi
-summary installed "$(gg_shown "$HOOKS_DIR")" "pre-commit and commit-msg armed in $(gg_shown "$HOOKS_DIR")"
+summary installed "$(gg_shown "$HOOKS_DIR")" "pre-commit, commit-msg and pre-push armed in $(gg_shown "$HOOKS_DIR")"

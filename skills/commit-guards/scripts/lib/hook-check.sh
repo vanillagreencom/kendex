@@ -76,7 +76,7 @@ gg_checkout_place() { # COMMONVAR RELVAR DIR -> 0 when both answers are had
 gg_same_project_elsewhere() { # DIR -> 0 when it is this project's, elsewhere
   local dir="$1" lane="" there_common="" there_rel="" here_common="" here_rel=""
   [ -d "$dir" ] || return 1
-  for lane in pre-commit commit-msg; do
+  for lane in pre-commit commit-msg pre-push; do
     [ -x "$dir/$lane" ] || return 1
   done
   gg_checkout_place there_common there_rel "$dir" || return 1
@@ -183,16 +183,16 @@ check_helper() { # -> 0 armed, 1 not armed, 3 unverifiable
 #
 # It execs one program per lane and exits 2 where the program is missing or
 # carries no execute bit, so an install that lost either one refuses every
-# commit. Calling that armed describes a repository whose commits are
-# BLOCKED as one whose commits are checked, which is the more expensive way
-# round to be wrong: the person is told nothing is wrong while nothing can
-# be committed.
+# commit, or every push. Calling that armed describes a repository whose
+# commits are BLOCKED as one whose commits are checked, which is the more
+# expensive way round to be wrong: the person is told nothing is wrong
+# while nothing can be committed.
 #
 # Asked here, once, so the answer cannot differ between the check that
 # reports and the engine that reads the report.
 check_delegated_lanes() { # -> 0 both lanes runnable, 1 not
   local lane="" program=""
-  for lane in pre-commit commit-msg; do
+  for lane in pre-commit commit-msg pre-push; do
     program="$SCRIPT_DIR/$lane"
     if [ ! -f "$program" ]; then
       add_reason lane-missing "$(gg_shown "$SCRIPT_DIR")/$lane" "$lane is missing from $(gg_shown "$SCRIPT_DIR"), so every commit is blocked rather than guarded"
@@ -292,6 +292,9 @@ check_hooks_dir() { # -> 0 armed, 1 not armed, 2 could not determine
   case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
   status=0
   check_hook commit-msg || status=$?
+  case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
+  status=0
+  check_hook pre-push || status=$?
   case "$status" in 1) drifted=1 ;; 2) unknown=1 ;; esac
   [ "$drifted" -eq 0 ] || return 1
   [ "$unknown" -eq 0 ] || return 2

@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+# pre-push — the branch-scope guard chain, shaped for the git pre-push hook
+# (the installed .git/hooks/kendex-guards shim execs it): `commit-guards all
+# --base REF` over what each pushed branch adds to the remote.
+#
+# Why a lane here at all. Git runs no hook when it REPLAYS a commit — a
+# rebase, a cherry-pick, an autosquash — so a branch can arrive in a state no
+# guard has ever judged: two commits that each passed at authoring time
+# combine into one that breaches a ceiling, and nothing reports it until
+# somebody happens to author the next commit on that branch. Push is where the
+# branch leaves the machine, whatever produced its state, and the last moment
+# a guard can still refuse.
+#
+# Every lane announces itself, a skipped one included. Aggregation fails
+# CLOSED: exit 2 if any scope could not be judged, else 1 if any found
+# violations, else 0. Both nonzero verdicts block the push.
+set -euo pipefail
+
+GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
+GG_BOOT="${GG_BOOT%x}"
+# The trailing newline from `pwd` terminates its output; anything before it is the path.
+SCRIPT_DIR="${GG_BOOT%$'\n'}"
+GG_CHECK="pre-push"
+# shellcheck source=lib/paths.sh
+source "$SCRIPT_DIR/lib/paths.sh"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+
+usage() {
+  cat <<'EOF'
+usage: pre-push REMOTE URL
+
+Runs the commit-guards batch over what each pushed branch adds to the remote:
+`commit-guards all --base REF`, so COMMIT_GUARDS_CHECKS still decides the
+lanes. Git passes the remote name and its URL as arguments and the ref lines
+`<local-ref> <local-oid> <remote-ref> <remote-oid>` on stdin. Wire it through
+the installed shim: `install-git-hooks --repo <root>`.
+
+Per ref line: a deletion and a ref that is not refs/heads/* are announced and
+skipped. The base is the remote's oid when this repository has that commit,
+else the boundary of what the remote does not have yet; a branch with no
+boundary at all has never been vetted anywhere, so the whole tree is the
+honest scope.
+
+Every lane but byte-ceiling reads the working tree or the index rather than a
+ref, so the batch judges THIS checkout. A branch whose tip is not HEAD is
+refused rather than passed silently: check it out and push again. The
+verdict line names the way past a refusal.
+
+Configuration: every COMMIT_GUARDS_* key the batch reads applies here
+unchanged.
+
+Exit codes: 0 clean; 1 violations; 2 usage/config/collection error, or a scope
+that could not be judged. Both nonzero codes block the push.
+EOF
+}
+
+case "${1-}" in
+  -h | --help)
+    usage
+    exit 0
+    ;;
+esac
+[ $# -eq 2 ] || gg_fail argument-count "$#" "takes the remote name and URL git passes to pre-push (see --help)"
+REMOTE="$1"
+
+gg_repo_root_cd
+gg_tmpdir
+
+BATCH="$SCRIPT_DIR/commit-guards"
+[ -x "$BATCH" ] || gg_fail lane-missing "$BATCH" "$BATCH is missing or not executable — reinstall the commit-guards skill"
+
+# Git streams the ref lines on stdin. They are read WHOLE before any check
+# runs: the batch and its checks inherit this process's stdin, and a child
+# reading from it would swallow the ref lines this loop has not reached yet.
+cat >"$GG_TMP/refs" || gg_fail stdin-read "$?" "could not read the ref lines git sends on stdin"
+
+# The commit this checkout is on, and the one thing the batch can judge. Empty
+# on an unborn HEAD, which every branch line below is then refused against.
+HEAD_OID=""
+HEAD_OID="$(git rev-parse --verify --quiet HEAD 2>/dev/null)" || HEAD_OID=""
+
+# Git's "no such object" oid: all zeros, at whatever width the repository's
+# hash is. An empty value is not one — it is a malformed line.
+zero_oid() { # OID — 0 when it is the all-zero oid
+  case "$1" in
+    "" | *[!0]*) return 1 ;;
+  esac
+  return 0
+}
+
+# What a pushed branch adds to the remote, as a ref the batch can diff from.
+resolve_base() { # VAR LOCAL-OID REMOTE-OID — VAR gets the base; 1 when there is none
+  local __v="$1" local_oid="$2" remote_oid="$3" status=0 line=""
+  # Git's own answer first: the commit the remote ref is at. It is usable only
+  # where this repository actually has that object — git sends the oid it
+  # learned from the remote, which a shallow or freshly cloned checkout may
+  # never have fetched.
+  if ! zero_oid "$remote_oid" \
+    && git rev-parse --verify --quiet "$remote_oid^{commit}" >/dev/null 2>&1; then
+    eval "$__v=\$remote_oid"
+    return 0
+  fi
+  # Otherwise: what this branch adds over everything the remote is known to
+  # have. The boundary commits of that range are the newest commits the remote
+  # already carries, and any of them is a base the branch's own changes hang
+  # off.
+  #
+  # A remote spelled as a URL rather than as a name (`git push https://... main`)
+  # matches no tracking refs, so nothing is excluded, the walk reaches the
+  # root, and there is no boundary — which falls through to the whole tree
+  # below. Wider, never narrower.
+  git rev-list --boundary "$local_oid" --not --remotes="$REMOTE" \
+    >"$GG_TMP/boundary" 2>"$GG_TMP/boundary.err" || status=$?
+  [ "$status" -eq 0 ] \
+    || gg_fail_cause boundary-collect "$status" "$GG_TMP/boundary.err" "git rev-list could not resolve what $(gg_shown "$local_oid") adds over remote $(gg_shown "$REMOTE") (exit $status)"
+  while IFS= read -r line; do
+    case "$line" in
+      -?*)
+        eval "$__v=\${line#-}"
+        return 0
+        ;;
+    esac
+  done <"$GG_TMP/boundary"
+  eval "$__v=''"
+  return 1
+}
+
+had_violations=0
+had_errors=0
+# The scopes already judged, newline-delimited. One push can name the same
+# commit under several remote refs, and the batch reads this checkout, so a
+# second run over the same base would repeat the first one's verdict word for
+# word. Bash 3.2 has no associative array; membership is a `case` over the
+# set, the way todo-ban's commit lane does it.
+JUDGED=""
+
+judge() { # SCOPE REF SCOPE-FLAGS... — run the batch once per distinct scope
+  local scope="$1" ref="$2" status=0
+  shift 2
+  case "$GG_NL$JUDGED" in
+    *"$GG_NL$scope$GG_NL"*)
+      gg_message scope-repeat "$scope" "=== pre-push: $ref is already covered by the batch run over $scope"
+      return 0
+      ;;
+  esac
+  JUDGED="$JUDGED$scope$GG_NL"
+  gg_message step "$scope" "=== pre-push: commit-guards all $*, for $ref"
+  "$BATCH" all "$@" || status=$?
+  case "$status" in
+    0) ;;
+    1) had_violations=1 ;;
+    *)
+      had_errors=1
+      gg_message step-incomplete "$scope:$status" "pre-push: the batch did not complete over $scope (exit $status)"
+      ;;
+  esac
+}
+
+lines=0
+while IFS=' ' read -r local_ref local_oid remote_ref remote_oid || [ -n "$local_ref" ]; do
+  # git terminates every line, so a trailing empty read is the end of the
+  # stream rather than a line with nothing on it.
+  [ -n "$local_ref" ] || continue
+  lines=$((lines + 1))
+  if zero_oid "$local_oid"; then
+    gg_message deletion "$remote_ref" "=== pre-push: $remote_ref is being deleted — no branch state arrives, nothing to judge"
+    continue
+  fi
+  case "$local_ref" in
+    refs/heads/*) ;;
+    *)
+      gg_message non-branch "$local_ref" "=== pre-push: $local_ref is not a branch — skipped; a tag or a note carries no branch state to guard"
+      continue
+      ;;
+  esac
+  # Fail closed on a branch this checkout is not standing on. Every lane but
+  # byte-ceiling reads the working tree or the index, and byte-ceiling's
+  # --base diffs REF...HEAD — so the batch judges HEAD and its work tree, and
+  # a verdict about them says nothing about a branch that is somewhere else.
+  # Passing it silently is the one outcome this lane exists to refuse.
+  if [ "$local_oid" != "$HEAD_OID" ]; then
+    had_errors=1
+    gg_message not-head "$local_ref:$local_oid" "pre-push: $local_ref is at $(gg_shown "$local_oid") and this checkout is at $(gg_shown "${HEAD_OID:-<unborn HEAD>}"), so the guards — which read this work tree and this index — cannot judge it. Check the branch out and push again; the verdict line below names the way past this refusal."
+    continue
+  fi
+  base=""
+  if resolve_base base "$local_oid" "$remote_oid"; then
+    judge "base:$base" "$local_ref" --base "$base"
+  else
+    # No boundary at all: nothing on this branch has ever reached the remote,
+    # so no commit on it has been vetted anywhere and the whole tree is the
+    # only honest scope.
+    gg_message base-none "$local_ref" "=== pre-push: remote $REMOTE has nothing $local_ref builds on — judging the whole tree"
+    judge "all" "$local_ref"
+  fi
+done <"$GG_TMP/refs"
+
+[ "$lines" -gt 0 ] || gg_message no-refs 0 "=== pre-push: git sent no ref lines — nothing to judge"
+
+if [ "$had_errors" -eq 1 ]; then
+  gg_message result 2 "pre-push: a guard could not complete — push blocked; fix the errors above (bypass only with git push --no-verify)"
+  exit 2
+fi
+if [ "$had_violations" -eq 1 ]; then
+  gg_message result 1 "pre-push: violations — push blocked; see the failures above"
+  exit 1
+fi
+gg_message result 0 "pre-push: OK — branch guard chain clean"

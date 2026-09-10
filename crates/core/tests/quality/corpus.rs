@@ -72,24 +72,27 @@ fn found(result: &AuditResult) -> Vec<(&str, Severity, &str)> {
 /// SKILL.md, every one of them inside a code span — and was rated Critical
 /// for each. Those three are gone.
 ///
-/// What is left is what the switch is written as code: the two messages
-/// its hooks print. A shell string is a switch written into a file a
-/// harness loads, and the rule counts it there.
+/// What is left is what the switch is written as code: one verdict message
+/// per lane the package ships — the helper's, the commit chain's and the
+/// push lane's. A shell string is a switch written into a file a harness
+/// loads, and the rule counts it there.
 #[test]
 fn commit_guards_is_flagged_where_the_switch_stands_as_code() {
     let result = shipped("commit-guards");
     let helper = "skills/commit-guards/scripts/lib/helper-body.sh";
-    let hook = "skills/commit-guards/scripts/pre-commit";
+    let commit = "skills/commit-guards/scripts/pre-commit";
+    let push = "skills/commit-guards/scripts/pre-push";
     assert_eq!(
         found(&result),
         vec![
             ("safety-bypass", Severity::Critical, helper),
-            ("safety-bypass", Severity::Critical, hook),
+            ("safety-bypass", Severity::Critical, commit),
+            ("safety-bypass", Severity::Critical, push),
         ],
         "{:#?}",
         result.findings
     );
-    assert_eq!(result.safety.score, 74);
+    assert_eq!(result.safety.score, 73);
 }
 
 /// Six lines of this skill's tests spell `--dangerously-skip-permissions`

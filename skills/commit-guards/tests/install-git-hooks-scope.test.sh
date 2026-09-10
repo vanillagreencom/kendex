@@ -169,11 +169,11 @@ fx_shebang_only_commit() { installed_over shebang-only-commit '#!/bin/sh'; stage
 fx_shebang_nl_uninstall() { installed_over shebang-nl-uninstall '#!/bin/sh\n'; }
 fx_mode_kept() { over mode-kept '#!/bin/sh\necho mine\n' 0700; }
 run_rows \
-  "uninstall restores a hook with no final newline byte for byte|fx_noeol_uninstall||uninstall||rc=0 $REMOVED_BOTH|helper=absent pre-commit=$X:#!/bin/sh~echo mine<noeol> commit-msg=absent hooksPath=<unset>" \
-  "a hook that is only a newline-less shebang takes the delegate on its own line|fx_shebang_only||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@ commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "uninstall restores a hook with no final newline byte for byte|fx_noeol_uninstall||uninstall||rc=0 $REMOVED_ALL|helper=absent pre-commit=$X:#!/bin/sh~echo mine<noeol> commit-msg=absent pre-push=absent hooksPath=<unset>" \
+  "a hook that is only a newline-less shebang takes the delegate on its own line|fx_shebang_only||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@ commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "control: that hook runs the chain|fx_shebang_only_commit|$ONE|commit|feat: add a|rc=0 $CLEAN;${MSG_OK}feat: add a|" \
-  "a consumer's shebang-only hook is restored, not deleted, while the hook we created goes|fx_shebang_nl_uninstall||uninstall||rc=0 $REMOVED_BOTH|helper=absent pre-commit=$X:#!/bin/sh commit-msg=absent hooksPath=<unset>" \
-  "a rewritten hook keeps its own mode and content|fx_mode_kept||install||rc=0 $ARMED|helper=$OURS pre-commit=rwx------:#!/bin/sh~@PRE@~echo mine commit-msg=$SHIM_MSG hooksPath=<unset>"
+  "a consumer's shebang-only hook is restored, not deleted, while the hook we created goes|fx_shebang_nl_uninstall||uninstall||rc=0 $REMOVED_ALL|helper=absent pre-commit=$X:#!/bin/sh commit-msg=absent pre-push=absent hooksPath=<unset>" \
+  "a rewritten hook keeps its own mode and content|fx_mode_kept||install||rc=0 $ARMED|helper=$OURS pre-commit=rwx------:#!/bin/sh~@PRE@~echo mine commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>"
 
 echo "=== usage ==="
 fx_nope() { R="$TMP/nope"; }
@@ -276,7 +276,7 @@ run_rows \
   "a project named with every awkward class arms|fx_nasty_install||install||rc=0 $ARMED|" \
   "and --check recognises the helper it wrote|fx_nasty_check||check||rc=0 commit-guards git hooks: armed=<repo>/.git/hooks|" \
   "and the helper rediscovers the package under that project name, whose chain blocks|fx_nasty_commit|$ONE|commit|feat: add b|rc=1 $NASTY_LANES;$BLOCKED|" \
-  "and the project can disarm again|fx_nasty_uninstall||uninstall||rc=0 $REMOVED_BOTH|helper=absent pre-commit=absent commit-msg=absent hooksPath=<unset>"
+  "and the project can disarm again|fx_nasty_uninstall||uninstall||rc=0 $REMOVED_ALL|helper=absent pre-commit=absent commit-msg=absent pre-push=absent hooksPath=<unset>"
 
 assert_eq "every seeded fixture landed its seed commit" "" "$SEEDS_FAILED"
 

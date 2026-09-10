@@ -41,14 +41,14 @@ fx_pre_python() { armed pre-python; foreign pre-commit '#!/usr/bin/env python3\n
 fx_pre_cr() { armed pre-cr; edit "$R/.git/hooks/pre-commit" $'1s|.*|#!/bin/sh\r|'; }
 run_rows \
   "a fresh install is armed|fx_armed||check||rc=0 $ARMED_CHECK|$FRESH" \
-  "a missing pre-commit is not armed, and is not written back|fx_pre_missing||check||rc=1 ${NA}hook-missing=pre-commit$REARM|helper=$OURS pre-commit=absent commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "a missing commit-msg is not armed|fx_msg_missing||check||rc=1 ${NA}hook-missing=commit-msg$REARM|helper=$OURS pre-commit=$SHIM_PRE commit-msg=absent hooksPath=<unset>" \
-  "a hook without the guard line is not armed, and is not repaired|fx_pre_stripped||check||rc=1 ${NA}hook-line=pre-commit$REARM|helper=$OURS pre-commit=$X:#!/bin/sh~exit 0 commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "a cleared execute bit is not armed: git ignores the hook|fx_pre_noexec||check||rc=1 ${NA}hook-disabled=pre-commit$REARM|helper=$OURS pre-commit=$RW:#!/bin/sh~@PRE@~@CREATED@ commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "a directory at the hook path is not a file git can run|fx_pre_dir||check||rc=1 ${NA}hook-not-file=pre-commit$REARM|helper=$OURS pre-commit=dir commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "a dangling symlink at the hook path is not a file git can run|fx_pre_dangling||check||rc=1 ${NA}hook-not-file=pre-commit$REARM|helper=$OURS pre-commit=symlink-><root>/nowhere[dangling] commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "control: a symlink to a well-formed shim is armed, because git runs what it resolves to|fx_pre_linked||check||rc=0 $ARMED_CHECK|helper=$OURS pre-commit=symlink-><root>/linked-shim[#!/bin/sh~@PRE@~@CREATED@] commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "a hook under a non-shell interpreter cannot run the guard line|fx_pre_python||check||rc=1 ${NA}hook-shell=pre-commit$REARM|helper=$OURS pre-commit=$X:#!/usr/bin/env python3~raise SystemExit(0) commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a missing pre-commit is not armed, and is not written back|fx_pre_missing||check||rc=1 ${NA}hook-missing=pre-commit$REARM|helper=$OURS pre-commit=absent commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a missing commit-msg is not armed|fx_msg_missing||check||rc=1 ${NA}hook-missing=commit-msg$REARM|helper=$OURS pre-commit=$SHIM_PRE commit-msg=absent pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a hook without the guard line is not armed, and is not repaired|fx_pre_stripped||check||rc=1 ${NA}hook-line=pre-commit$REARM|helper=$OURS pre-commit=$X:#!/bin/sh~exit 0 commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a cleared execute bit is not armed: git ignores the hook|fx_pre_noexec||check||rc=1 ${NA}hook-disabled=pre-commit$REARM|helper=$OURS pre-commit=$RW:#!/bin/sh~@PRE@~@CREATED@ commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a directory at the hook path is not a file git can run|fx_pre_dir||check||rc=1 ${NA}hook-not-file=pre-commit$REARM|helper=$OURS pre-commit=dir commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a dangling symlink at the hook path is not a file git can run|fx_pre_dangling||check||rc=1 ${NA}hook-not-file=pre-commit$REARM|helper=$OURS pre-commit=symlink-><root>/nowhere[dangling] commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "control: a symlink to a well-formed shim is armed, because git runs what it resolves to|fx_pre_linked||check||rc=0 $ARMED_CHECK|helper=$OURS pre-commit=symlink-><root>/linked-shim[#!/bin/sh~@PRE@~@CREATED@] commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a hook under a non-shell interpreter cannot run the guard line|fx_pre_python||check||rc=1 ${NA}hook-shell=pre-commit$REARM|helper=$OURS pre-commit=$X:#!/usr/bin/env python3~raise SystemExit(0) commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "a control character in the shebang means git cannot exec the hook|fx_pre_cr||check||rc=1 ${NA}hook-shebang-control=pre-commit$REARM|"
 
 echo "=== the helper is ours by its bytes, and what it would run has to be runnable ==="
@@ -66,12 +66,12 @@ fx_helper_stub_commit() { armed helper-stub-commit; foreign kendex-guards "$STUB
 fx_lane_missing() { armed lane-missing; rm "$R/.agents/skills/commit-guards/scripts/pre-commit"; }
 fx_drift_and_unknown() { armed drift-and-unknown; foreign kendex-guards "$STUB"; rm "$R/.git/hooks/pre-commit"; }
 run_rows \
-  "a missing helper is not armed|fx_helper_missing||check||rc=1 ${NA}helper-missing=kendex-guards$REARM|helper=absent pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "a directory at the helper path is not a regular file|fx_helper_dir||check||rc=1 ${NA}helper-not-file=kendex-guards$REARM|helper=dir pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "a symlink at the helper path is not a regular file, whatever it points at|fx_helper_symlink||check||rc=1 ${NA}helper-not-file=kendex-guards$REARM|helper=symlink-><root>/helper-target[ours['<repo>/.agents/skills/commit-guards/scripts']] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "a file without the marker was not written by this installer|fx_helper_foreign||check||rc=1 ${NA}helper-foreign=kendex-guards$REARM|helper=$X:#!/bin/sh~exit 0 pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "a helper without its execute bit blocks every commit, so it is not armed|fx_helper_noexec||check||rc=1 ${NA}helper-disabled=kendex-guards$REARM|helper=$HELPER_NOEXEC pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "a marker-carrying stub in place of the helper is unverifiable, not armed|fx_helper_stub||check||rc=2 $CND$UNVERIFIED|helper=$X:#!/bin/sh~# kendex commit-guards git hooks~exit 0 pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a missing helper is not armed|fx_helper_missing||check||rc=1 ${NA}helper-missing=kendex-guards$REARM|helper=absent pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a directory at the helper path is not a regular file|fx_helper_dir||check||rc=1 ${NA}helper-not-file=kendex-guards$REARM|helper=dir pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a symlink at the helper path is not a regular file, whatever it points at|fx_helper_symlink||check||rc=1 ${NA}helper-not-file=kendex-guards$REARM|helper=symlink-><root>/helper-target[ours['<repo>/.agents/skills/commit-guards/scripts']] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a file without the marker was not written by this installer|fx_helper_foreign||check||rc=1 ${NA}helper-foreign=kendex-guards$REARM|helper=$X:#!/bin/sh~exit 0 pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a helper without its execute bit blocks every commit, so it is not armed|fx_helper_noexec||check||rc=1 ${NA}helper-disabled=kendex-guards$REARM|helper=$HELPER_NOEXEC pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a marker-carrying stub in place of the helper is unverifiable, not armed|fx_helper_stub||check||rc=2 $CND$UNVERIFIED|helper=$X:#!/bin/sh~# kendex commit-guards git hooks~exit 0 pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "and that stub really does let a violation through every guard|fx_helper_stub_commit|$ONE|commit|feat: add b|rc=0|" \
   "from the arming checkout, a scripts directory whose pre-commit program is gone is unverifiable|fx_lane_missing||check||rc=2 $CND$UNVERIFIED|" \
   "a provably missing shim outranks an unverifiable helper, and both are named|fx_drift_and_unknown||check||rc=1 $NA$UNVERIFIED; hook-missing=pre-commit$REARM|"
@@ -80,7 +80,7 @@ echo "=== the hooks directory itself ==="
 fx_hooks_gone() { armed hooks-gone; rm -rf -- "${R:?}/.git/hooks"; }
 fx_hooks_file() { armed hooks-file; rm -rf -- "${R:?}/.git/hooks"; : >"$R/.git/hooks"; }
 run_rows \
-  "no hooks directory is not armed|fx_hooks_gone||check||rc=1 ${NA}hooks-missing=<repo>/.git/hooks$REARM|helper=absent pre-commit=absent commit-msg=absent hooksPath=<unset>" \
+  "no hooks directory is not armed|fx_hooks_gone||check||rc=1 ${NA}hooks-missing=<repo>/.git/hooks$REARM|helper=absent pre-commit=absent commit-msg=absent pre-push=absent hooksPath=<unset>" \
   "a file where the hooks directory belongs is not armed|fx_hooks_file||check||rc=1 ${NA}hooks-not-directory=<repo>/.git/hooks$REARM|"
 
 echo "=== what cannot be read is could-not-determine, never a pass ==="
@@ -91,8 +91,8 @@ fx_pre_unreadable() { armed pre-unreadable; chmod 0300 "$R/.git/hooks/pre-commit
 if [ "$(id -u)" != "0" ]; then
   run_rows \
     "an unreadable hooks directory is could-not-determine|fx_hooks_unreadable||check||rc=2 ${CND}hooks-unreadable=<repo>/.git/hooks|" \
-    "an unreadable helper is could-not-determine|fx_helper_unreadable||check||rc=2 ${CND}helper-read=kendex-guards|helper=-wx------:unreadable pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
-    "an unreadable hook is could-not-determine|fx_pre_unreadable||check||rc=2 ${CND}hook-read=pre-commit|helper=$OURS pre-commit=-wx------:unreadable commit-msg=$SHIM_MSG hooksPath=<unset>"
+    "an unreadable helper is could-not-determine|fx_helper_unreadable||check||rc=2 ${CND}helper-read=kendex-guards|helper=-wx------:unreadable pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+    "an unreadable hook is could-not-determine|fx_pre_unreadable||check||rc=2 ${CND}hook-read=pre-commit|helper=$OURS pre-commit=-wx------:unreadable commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>"
 else
   # One line per assertion the rows would have made, so the tally is the
   # same under every user.
@@ -115,9 +115,9 @@ fx_sh_n() { reshebanged sh-n '#!/bin/sh -n'; }
 fx_sh_n_commit() { reshebanged sh-n-commit '#!/bin/sh -n'; stage_marker; }
 fx_nonexistent() { reshebanged nonexistent '#!/nonexistent/sh'; }
 run_rows \
-  "install leaves a consumer's env-bash hook alone and says why|fx_env_bash||install||rc=1 $WARN hook-interpreter=<repo>/.git/hooks/pre-commit;$INCOMPLETE|helper=$OURS pre-commit=$X:#!/usr/bin/env bash~echo existing commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "install leaves a consumer's env-bash hook alone and says why|fx_env_bash||install||rc=1 $WARN hook-interpreter=<repo>/.git/hooks/pre-commit;$INCOMPLETE|helper=$OURS pre-commit=$X:#!/usr/bin/env bash~echo existing commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "and --check agrees rather than contradicting the install|fx_env_bash_check||check||rc=2 ${CND}hook-interpreter=pre-commit interpreter=\\#\\!/usr/bin/env\\ bash|" \
-  "install refuses a shim of ours under an untrusted interpreter and leaves it byte for byte|fx_our_shim_reshebanged||install||rc=1 $WARN hook-interpreter=<repo>/.git/hooks/pre-commit;$INCOMPLETE|helper=$OURS pre-commit=$X:#!/usr/local/bin/bash~@PRE@~@CREATED@ commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "install refuses a shim of ours under an untrusted interpreter and leaves it byte for byte|fx_our_shim_reshebanged||install||rc=1 $WARN hook-interpreter=<repo>/.git/hooks/pre-commit;$INCOMPLETE|helper=$OURS pre-commit=$X:#!/usr/local/bin/bash~@PRE@~@CREATED@ commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "and --check calls it unverifiable, not merely not armed|fx_our_shim_reshebanged_check||check||rc=2 ${CND}hook-interpreter=pre-commit interpreter=\\#\\!/usr/local/bin/bash|" \
   "a shebang option that stops the body running is unverifiable|fx_sh_n||check||rc=2 ${CND}hook-interpreter=pre-commit interpreter=\\#\\!/bin/sh\\ -n|" \
   "and that shim really does let a violation through: the chain never runs|fx_sh_n_commit|$ONE|commit|feat: add b|rc=0 ${MSG_OK}feat: add b|" \
@@ -131,7 +131,7 @@ line_moved() { armed "$1"; edit "$R/.git/hooks/pre-commit" $'1a\\\n# a comment s
 fx_line_moved() { line_moved line-moved; }
 fx_line_moved_commit() { line_moved line-moved-commit; stage_marker; }
 run_rows \
-  "the guard line below a comment is unverifiable|fx_line_moved||check||rc=2 ${CND}hook-position=pre-commit|helper=$OURS pre-commit=$X:#!/bin/sh~# a comment someone added~@PRE@~@CREATED@ commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "the guard line below a comment is unverifiable|fx_line_moved||check||rc=2 ${CND}hook-position=pre-commit|helper=$OURS pre-commit=$X:#!/bin/sh~# a comment someone added~@PRE@~@CREATED@ commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "and that shim really does still gate, so 2 is not ungated|fx_line_moved_commit|$ONE|commit|feat: add b|rc=1 $BLOCKED|"
 
 echo "=== one repository, one helper: another checkout of this project reads it, another project does not ==="
@@ -192,7 +192,7 @@ run_rows \
   "a changed skill_roots is unverifiable|fx_skill_roots_changed||check||rc=2 $CND$UNVERIFIED|" \
   "a changed line of the program is unverifiable|fx_program_changed||check||rc=2 $CND$UNVERIFIED|" \
   "a helper missing a baked line is unverifiable|fx_baked_line_missing||check||rc=2 $CND$UNVERIFIED|" \
-  "a checkout path carrying an apostrophe is armed through the escape the quoter writes|fx_apostrophe||check||rc=0 commit-guards git hooks: armed=<root>/check\\ o\\'brien/.git/hooks|helper=$X:ours['<root>/check o'\\''brien/.agents/skills/commit-guards/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a checkout path carrying an apostrophe is armed through the escape the quoter writes|fx_apostrophe||check||rc=0 commit-guards git hooks: armed=<root>/check\\ o\\'brien/.git/hooks|helper=$X:ours['<root>/check o'\\''brien/.agents/skills/commit-guards/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "a bare apostrophe where the escape belongs is unverifiable|fx_apostrophe_bare||check||rc=2 $CND$UNVERIFIED|"
 
 echo "=== usage ==="
