@@ -235,6 +235,50 @@ describe("which read counts as an addition", () => {
     expect(useProjectSetupStore.getState().justAdded).toBeNull();
   });
 
+  // The offer's own destinations come off the machine as the scan left it,
+  // so an offer opened while the scan was still out snapshots a list the
+  // new root is not in yet — and nothing recomputes it when the scan
+  // lands. The guided install then cannot install into the project it was
+  // opened for.
+  it("opens the offer only once the read that reaches the new root answers", async () => {
+    useProjectSetupStore.setState({ justAdded: null });
+    const land = heldScan();
+
+    const out = useProjectSetupStore.getState().check("/work/acme", true);
+    // The read is out, so there is nothing to offer against yet.
+    expect(useProjectSetupStore.getState().checking).toEqual(["/work/acme"]);
+    expect(useProjectSetupStore.getState().justAdded).toBeNull();
+
+    land();
+    await out;
+    expect(useProjectSetupStore.getState().justAdded).toBe("/work/acme");
+
+    // A read that failed offers nothing: there is no reachable place to
+    // install into, and the card says so with a way to try again.
+    useProjectSetupStore.setState({ justAdded: null });
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "error",
+      error: "the machine could not be read",
+    });
+    await useProjectSetupStore.getState().check("/work/beta", true);
+    expect(useProjectSetupStore.getState().justAdded).toBeNull();
+    expect(useProjectSetupStore.getState().unchecked).toEqual(["/work/beta"]);
+
+    // And neither does a folder that stopped being a project while the
+    // read was out.
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: emptyScan as never,
+    });
+    useAuditStore.setState({ backgroundFailureAnnounced: false });
+    const forgotten = useProjectSetupStore
+      .getState()
+      .check("/work/gamma", true);
+    useProjectSetupStore.getState().forget("/work/gamma");
+    await forgotten;
+    expect(useProjectSetupStore.getState().justAdded).toBeNull();
+  });
+
   // A folder that stops being a project takes the offer about it with it:
   // the offer names a root, and that root is what this verb is letting go
   // of. Another project's offer is not its to clear.

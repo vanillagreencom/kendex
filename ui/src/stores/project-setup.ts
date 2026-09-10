@@ -89,7 +89,6 @@ export const useProjectSetupStore = create<ProjectSetupState>((set) => ({
     // folder registered afresh reads here like any other.
     askingAgain([root]);
     set((state) => ({
-      ...(registered ? { justAdded: root } : {}),
       checking: with_(state.checking, root),
       unchecked: without(state.unchecked, root),
     }));
@@ -106,6 +105,14 @@ export const useProjectSetupStore = create<ProjectSetupState>((set) => ({
       // took off.
       const stale = isForgotten(root);
       set((state) => ({
+        // The offer waits for the read. Published here rather than beside
+        // the registration: the destinations it offers are taken from the
+        // machine as the scan left it, so an offer opened while the scan
+        // was still out snapshots a list the new root is not in yet, and
+        // nothing recomputes it when the scan lands. A read that failed
+        // and a folder that stopped being a project publish nothing —
+        // there is no place to install into either way.
+        ...(registered && !failed && !stale ? { justAdded: root } : {}),
         checking: without(state.checking, root),
         // A read that answered read the whole machine, not this root — so
         // it answers for every root a previous read failed on too. Clearing

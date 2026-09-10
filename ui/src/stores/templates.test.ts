@@ -23,6 +23,20 @@ const TEMPLATE: Template_Serialize = {
   customizations: {},
 };
 
+/** A template the person deletes below. Not among the rows the app has:
+ *  the read that would have put it there is the one still in flight. */
+const DOOMED: Template_Serialize = {
+  name: "Doomed",
+  id: "doomed",
+  members: [],
+  customizations: {},
+};
+
+/** What a list read answers with, either way. */
+type Listed =
+  | { status: "ok"; data: Template_Serialize[] }
+  | { status: "error"; error: string };
+
 beforeEach(() => {
   vi.clearAllMocks();
   useTemplatesStore.setState({
@@ -65,5 +79,58 @@ describe("overlapping reads of the list", () => {
     answerTheFirstRead({ status: "ok", data: [TEMPLATE] });
     await page;
     expect(useTemplatesStore.getState().templates).toEqual([]);
+  });
+
+  // The other order, which is the one a guard measured against the last
+  // reply HELD lets through: the read that crossed the write answers while
+  // the write's own read is still out, so nothing newer has landed to
+  // compare it against. A write supersedes the reads that crossed it the
+  // moment it starts its own, whichever reply arrives first.
+  it("drops a read a write superseded while the newer read is still out", async () => {
+    let answerTheSupersededRead: (answer: Listed) => void = () => {};
+    const crossedTheWrite = new Promise<Listed>((resolve) => {
+      answerTheSupersededRead = resolve;
+    });
+    let failTheReload: (answer: Listed) => void = () => {};
+    const behindTheDelete = new Promise<Listed>((resolve) => {
+      failTheReload = resolve;
+    });
+    vi.mocked(commands.templatesList)
+      // The read a surface started before the delete.
+      .mockReturnValueOnce(crossedTheWrite as never)
+      // The one the delete starts behind itself.
+      .mockReturnValueOnce(behindTheDelete as never);
+    vi.mocked(commands.templateDelete).mockResolvedValue({
+      status: "ok",
+      data: null,
+    });
+
+    const superseded = useTemplatesStore.getState().load();
+    const removing = useTemplatesStore.getState().remove("Doomed");
+    await vi.waitFor(() =>
+      expect(commands.templatesList).toHaveBeenCalledTimes(2),
+    );
+
+    // It answers with the list as it stood before the delete, naming the
+    // template the delete has just taken out.
+    answerTheSupersededRead({ status: "ok", data: [TEMPLATE, DOOMED] });
+    await superseded;
+    expect(useTemplatesStore.getState().templates).toEqual([TEMPLATE]);
+    // And it does not head the list either: the read that is going to
+    // answer for it is still out.
+    expect(useTemplatesStore.getState().read).toEqual({ status: "reading" });
+
+    // The newer read then fails. The rows it keeps are the ones it had, not
+    // the ones that superseded reply carried.
+    failTheReload({
+      status: "error",
+      error: "the templates could not be read",
+    });
+    await removing;
+    expect(useTemplatesStore.getState().templates).toEqual([TEMPLATE]);
+    expect(useTemplatesStore.getState().read).toEqual({
+      status: "failed",
+      error: "the templates could not be read",
+    });
   });
 });

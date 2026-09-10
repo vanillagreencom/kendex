@@ -69,21 +69,25 @@ interface TemplatesState {
 export const useTemplatesStore = create<TemplatesState>((set, get) => {
   // The page and the dialogs start reads of their own, and every write
   // starts another behind it; the replies arrive in any order. A ticket
-  // taken as each read leaves orders them again on arrival: a reply whose
-  // ticket predates the newest one held is a view of a list something newer
-  // has already replaced, and holding it would put a renamed template back
-  // under its old name or a deleted one back on the list.
+  // taken as each read leaves orders them again on arrival: a reply from
+  // any read but the newest one issued is a view of a list something newer
+  // has already replaced or is replacing, and holding it would put a
+  // renamed template back under its old name or a deleted one back on the
+  // list.
   let issued = 0;
-  let newest = 0;
   const ticket = () => ++issued;
 
-  /** Take one read's answer, held only while `at` is the newest ticket
-   *  seen. An older read's late reply is dropped, not applied — its
-   *  failure included, which would otherwise head a list a newer read had
-   *  just returned. */
+  /** Take one read's answer, held only while its ticket is the newest one
+   *  ISSUED — the rule [`pages/template.tsx`]'s own reread keeps.
+   *
+   *  Measured against what has been asked for rather than against what has
+   *  come back: a read that crossed a write is superseded the moment that
+   *  write starts its own read, whichever of the two replies arrives first,
+   *  and against the last reply held it would still land while the newer
+   *  one was out. Its failure is dropped the same way, which would
+   *  otherwise head a list a newer read is about to return. */
   const hold = (answer: Partial<TemplatesState>, at: number) => {
-    if (at < newest) return;
-    newest = at;
+    if (at !== issued) return;
     set(answer);
   };
 
