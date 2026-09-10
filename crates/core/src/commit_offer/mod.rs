@@ -189,6 +189,16 @@ pub struct Owned {
     /// track, so these are staged first; a path the person already staged
     /// is not one of them and is neither added nor unstaged.
     pub untracked: bool,
+    /// The last commit holds nothing at this path: git has never seen it,
+    /// or it is staged as an addition.
+    ///
+    /// Separate from [`Owned::untracked`] because the two answer different
+    /// questions, and one of them decides whether a commit or a restore
+    /// carries the file recording what kendex renders here. A person who
+    /// staged kendex's new render themselves leaves it tracked and still
+    /// new to the last commit; reading that off `untracked` would leave
+    /// the inventory behind on a commit that adds a render.
+    pub added: bool,
 }
 
 /// Where the checkout stands. Two of the three are states the offer cannot

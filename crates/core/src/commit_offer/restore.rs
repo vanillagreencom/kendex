@@ -267,7 +267,7 @@ fn changes_existence(scan: &super::Scan, path: &str) -> bool {
     scan.owned
         .iter()
         .find(|owned| owned.path == path)
-        .is_some_and(|owned| owned.untracked || gone(&scan.root.join(path)))
+        .is_some_and(|owned| owned.added || gone(&scan.root.join(path)))
 }
 
 /// Whether nothing stands at this path. A read the machine refused is not

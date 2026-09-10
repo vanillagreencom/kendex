@@ -121,8 +121,10 @@ pub enum Attribution {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingFile {
     pub path: String,
-    /// git reports this path as untracked: the change is that it now
-    /// exists.
+    /// The last commit holds nothing at this path: the change is that it
+    /// now exists. True for a path git has never seen and for one staged
+    /// as an addition, because a person staging kendex's new render does
+    /// not make it older than the commit.
     pub untracked: bool,
     /// Nothing stands at this path now: the change is that it is gone.
     pub gone: bool,
@@ -176,7 +178,7 @@ pub fn pending(scan: &Scan, since: &Baseline) -> Pending {
             let now = held(&scan.root, &owned.path);
             PendingFile {
                 path: owned.path.clone(),
-                untracked: owned.untracked,
+                untracked: owned.added,
                 gone: now == Held::Gone,
                 attribution: attribute(since.held.get(&owned.path), &now),
             }

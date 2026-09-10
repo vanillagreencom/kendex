@@ -16,6 +16,7 @@ vi.mock("@/bindings", () => ({
     commitOfferBaseline: vi.fn(),
     commitOfferCommit: vi.fn(),
     commitOfferPreviousHead: vi.fn(),
+    commitOfferOpen: vi.fn(),
     projectChangesScan: vi.fn(),
   },
 }));
@@ -655,6 +656,62 @@ describe("the root a project is looked up by", () => {
     await useCommitOfferStore.getState().noteBaseline([WINDOWS]);
     await useCommitOfferStore.getState().enqueue([WINDOWS]);
     expect(commands.commitOfferScan).toHaveBeenCalledWith([WINDOWS], []);
+  });
+});
+
+// A person opens a project's review while a scan an earlier write started
+// is still out. That scan answers about the write, with its scope and its
+// attribution; landing it over the offer they asked for answers a question
+// nobody put.
+describe("a review a person opened, against a scan already out", () => {
+  beforeEach(() => {
+    useCommitOfferStore.setState({
+      queue: [],
+      stage: { at: "offer" },
+      route: "commit",
+      scoped: "action",
+      accepted: false,
+      message: "",
+      scanFailure: null,
+      scanning: false,
+      baselines: {},
+      asked: null,
+    });
+  });
+
+  it("keeps what the reader asked for when the late scan lands", async () => {
+    const root = "/home/method/dev/site";
+    let answer = (_: unknown): void => {};
+    vi.mocked(commands.commitOfferScan).mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }) as never,
+    );
+    const out = useCommitOfferStore.getState().enqueue([root]);
+
+    // Opened by the reader: nothing attributed, everything pending.
+    vi.mocked(commands.commitOfferOpen).mockResolvedValue({
+      status: "ok",
+      data: {
+        kind: "offer",
+        offer: offer({ actionPaths: [], choice: false }),
+      },
+    });
+    await useCommitOfferStore.getState().openFor(root);
+    expect(useCommitOfferStore.getState().scoped).toBe("all");
+
+    // The earlier write's scan answers now, attributing files to it.
+    answer({
+      status: "ok",
+      data: [offer({ actionPaths: ["one.md"], choice: true })],
+    });
+    await out;
+
+    const head = useCommitOfferStore.getState().queue[0];
+    expect(head.actionPaths, "the write's scope replaced the reader's").toEqual(
+      [],
+    );
+    expect(head.choice).toBe(false);
   });
 });
 

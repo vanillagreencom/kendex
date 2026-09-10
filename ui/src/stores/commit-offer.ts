@@ -122,6 +122,12 @@ interface CommitOfferState {
    *  No view draws this. It is here rather than in a closure so that it is
    *  one thing the store owns, reset with the rest of the store. */
   baselines: Record<string, ProjectBaseline>;
+  /** The project whose offer a person opened themselves, while that offer
+   *  is still on screen. A scan started by an earlier write can answer
+   *  after they open it, and its reading is attributed to that write — put
+   *  in front of them it would answer a question they did not ask, with a
+   *  scope they did not choose. `null` once that offer is answered. */
+  asked: string | null;
   /** Read what each of these projects holds now, before a write. Kept per
    *  project until that project's question has been answered, so the offer
    *  at the end of a guided install is about the install rather than about
@@ -267,6 +273,8 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
       scoped: "action",
       accepted: false,
       message: queue[0]?.message ?? "",
+      // Answered, so the next reading of this project stands.
+      ...(gone && gone.root === get().asked ? { asked: null } : {}),
     });
   };
 
@@ -364,6 +372,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
     scanFailure: null,
     scanning: false,
     baselines: {},
+    asked: null,
 
     noteBaseline: async (roots) => {
       const held = get().baselines;
@@ -441,12 +450,20 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
       // corrects it.
       const fresh = new Map(found.map((offer) => [offer.root, offer]));
       const answering = stage.at !== "offer";
+      // The offer a person opened themselves is theirs: it attributes
+      // nothing to an action and covers everything pending, which is what
+      // they asked to see. A scan an earlier write started answers about
+      // that write, and swapping it in would put its scope under their
+      // question. Their own next write reads the project afresh.
+      const opened = get().asked;
       // A project already in the line takes the fresh reading, which is the
       // new write's: its files, and its own account of what that write did
       // against what was already pending. A queued offer left alone would
       // still name the earlier write's work as "this action".
       const kept = queue.map((offer, at) =>
-        at === 0 && answering ? offer : (fresh.get(offer.root) ?? offer),
+        at === 0 && (answering || offer.root === opened)
+          ? offer
+          : (fresh.get(offer.root) ?? offer),
       );
       const waiting = new Set(kept.map((offer) => offer.root));
       const added = found.filter((offer) => !waiting.has(offer.root));
@@ -488,6 +505,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
         scoped: "all",
         accepted: false,
         message: offer.message,
+        asked: root,
       });
       return { at: "offer" };
     },

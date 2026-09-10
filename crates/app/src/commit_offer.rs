@@ -1071,6 +1071,7 @@ mod tests {
                     owned: vec![Owned {
                         path: ".claude/CLAUDE.md".to_owned(),
                         untracked: false,
+                        added: false,
                     }],
                     shared: Vec::new(),
                     manifest: None,

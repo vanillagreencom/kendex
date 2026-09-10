@@ -318,11 +318,13 @@ fn the_set_is_the_changed_owned_paths_and_the_rest_is_counted_or_named() {
         [
             Owned {
                 path: OWNED[1].to_owned(),
-                untracked: true
+                untracked: true,
+                added: true
             },
             Owned {
                 path: OWNED[0].to_owned(),
-                untracked: false
+                untracked: false,
+                added: false
             },
         ]
     );
@@ -360,7 +362,10 @@ fn a_sweeps_removal_joins_the_set_and_a_surviving_path_does_not() {
         found.owned,
         [Owned {
             path: ".claude/skills/old/SKILL.md".to_owned(),
-            untracked: false
+            untracked: false,
+            // A sweep's removal: the last commit holds it, and this row is
+            // its deletion.
+            added: false
         }]
     );
     assert_eq!(found.others, 1, "the surviving path was not the person's");
@@ -387,7 +392,10 @@ fn a_renames_origin_is_a_removal() {
         renamed.owned,
         [Owned {
             path: ".claude/skills/old/SKILL.md".to_owned(),
-            untracked: false
+            untracked: false,
+            // A sweep's removal: the last commit holds it, and this row is
+            // its deletion.
+            added: false
         }]
     );
     assert_eq!(renamed.others, 1, "the moved-to path was not the person's");
@@ -1436,6 +1444,58 @@ fn a_reading_that_could_not_be_taken_never_compares_as_unchanged() {
         attributed(&scan, &before),
         [(OWNED[0].to_owned(), Attribution::Both)]
     );
+}
+
+/// Whether a render is new is asked of the last commit, not of `git add`.
+/// A person who stages kendex's new file themselves leaves it tracked and
+/// still absent from `HEAD`; reading that off the untracked flag would drop
+/// the inventory from a commit that adds a render, and from the restore
+/// that takes one away.
+///
+/// The inventory's own pending change is older work here, so the only thing
+/// that can put it in either set is the rule about a path the last commit
+/// does not hold.
+#[test]
+fn a_render_staged_by_hand_is_still_one_the_commit_adds() {
+    let repo = Repo::new(&[(OWNED[0], "one\n")]);
+    let generated = repo.generated(&[OWNED[0], OWNED[1]], &[]);
+    // Left as a diff before the action ran.
+    repo.write(INVENTORY, "[\"changed by hand\"]");
+    let before = baseline(&repo.scope(), &generated).unwrap();
+
+    // The action adds a render; the person stages it before answering.
+    repo.write(OWNED[1], "added\n");
+    repo.git(&["add", "--", OWNED[1]]);
+
+    let scan = repo.scan(&generated).unwrap();
+    let staged = scan
+        .owned
+        .iter()
+        .find(|owned| owned.path == OWNED[1])
+        .expect("the staged render left the set");
+    assert!(!staged.untracked, "git still reports it as untracked");
+    assert!(staged.added, "a staged addition read as older than HEAD");
+
+    // The commit of only this action's work carries the inventory, and says
+    // so before it does: the file's own pending change is not the action's.
+    let pending = pending(&scan, &before);
+    assert!(pending.action_set().contains(INVENTORY));
+    assert_eq!(
+        pending
+            .tangled()
+            .iter()
+            .map(|tangle| (tangle.path.clone(), tangle.reason))
+            .collect::<Vec<_>>(),
+        [(INVENTORY.to_owned(), Tangled::DeclaresWhatChanged)]
+    );
+
+    // And the restore of that render takes the inventory with it, for the
+    // same reason: putting a path the last commit does not hold back means
+    // taking it away, which changes what this project renders.
+    let chosen: BTreeSet<String> = [OWNED[1].to_owned()].into_iter().collect();
+    let plan = restore_plan(&repo.scope(), &generated, &chosen).unwrap();
+    assert_eq!(plan.removed, [OWNED[1].to_owned()]);
+    assert_eq!(plan.added, [INVENTORY.to_owned()]);
 }
 
 /// A commit that adds or takes away a rendered path carries the files that

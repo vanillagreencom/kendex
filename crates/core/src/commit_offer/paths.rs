@@ -24,6 +24,14 @@ impl Row<'_> {
         self.x == b'?' && self.y == b'?'
     }
 
+    /// This path is not in the last commit: git has never seen it, or it
+    /// is staged as an addition. A different question from [`untracked`],
+    /// which is about what `git add` still has to do; a person who staged
+    /// kendex's new file themselves changed that answer and not this one.
+    fn added(&self) -> bool {
+        self.untracked() || self.x == b'A'
+    }
+
     fn deleted(&self) -> bool {
         self.x == b'D' || self.y == b'D'
     }
@@ -62,6 +70,7 @@ pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Fai
         if owned.contains(&path) {
             ours.push(Owned {
                 untracked: row.untracked(),
+                added: row.added(),
                 path,
             });
             continue;
@@ -92,6 +101,10 @@ pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Fai
             if inventory.contains(&path) {
                 ours.push(Owned {
                     untracked: row.untracked(),
+                    // A path the committed inventory holds is one the last
+                    // commit has, whatever git says about it now: this row
+                    // is its deletion, not an addition.
+                    added: false,
                     path,
                 });
                 continue;
