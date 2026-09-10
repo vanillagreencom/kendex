@@ -84,8 +84,24 @@ pub(crate) struct DeclaredHeaders {
     opened: std::collections::HashMap<OpenedKey, Option<(SealedSource, super::SourceConfig)>>,
 }
 
-/// What decides which catalog a declaration opens: the scope whose
-/// manifest declared the source, the name it declared it under, and the
+/// What one installation's own record says it came from.
+///
+/// A declaration is what a scope asks for now; this is what the
+/// installation on disk actually is. They part company the moment
+/// somebody edits the manifest, and every question about the bytes
+/// already installed is answered from here.
+pub(crate) struct InstalledFrom {
+    /// The source name this installation was declared under.
+    pub(crate) source: String,
+    /// What that source resolved to when it was installed, verbatim as
+    /// the record kept it. Compared whole, never folded.
+    pub(crate) repo: String,
+    /// The commit the bytes came out of, for a source that has one.
+    pub(crate) commit: Option<String>,
+}
+
+/// Everything that decides which catalog a read opens: the scope, the
+/// source name, what that name is required to resolve to, and the
 /// revision the read is held at.
 ///
 /// The scope belongs in the key because the name alone does not name a
@@ -93,10 +109,12 @@ pub(crate) struct DeclaredHeaders {
 /// read against the scope's root, and a repo source is whatever the
 /// asking scope's own manifest declared. One string, two catalogs.
 ///
-/// The revision belongs in it because one source serves several
-/// revisions: two items pinned differently, and two installations of one
-/// package recorded at different commits, each read their own.
-type OpenedKey = (crate::model::Scope, String, Option<String>);
+/// The provenance belongs in it because one name serves several
+/// repositories over its life, and the revision because one repository
+/// serves several commits: two installations of one name from different
+/// repositories, and two of one repository at different commits, each
+/// read their own.
+type OpenedKey = (crate::model::Scope, String, Option<String>, Option<String>);
 
 impl DeclaredHeaders {
     /// What one declared package's own source says about it, at the
@@ -105,14 +123,20 @@ impl DeclaredHeaders {
     /// describes a package with nothing, never with a borrowed or stale
     /// reading of a same-named package somewhere else.
     ///
-    /// `installed` is the commit the record kept for this installation,
-    /// and it outranks the declaration's own `rev`. A declaration naming
-    /// a branch or a tag names a selector, re-resolved every refresh, so
-    /// resolving through it would read whatever the cache holds now — and
-    /// a stale-source refresh moves that ahead of the bytes on disk. The
-    /// newer upstream's words about an older installed version are
-    /// borrowed words. `None` where the record kept no commit, which is
-    /// every source that has none: the declaration's hold answers then.
+    /// `installed` is what the installation's own record says it came
+    /// from, and it outranks the current declaration in full — the source
+    /// name, what that name has to resolve to, and the revision. A
+    /// declaration is what the scope asks for now: its `source` can be
+    /// re-pointed at another catalog, and a `rev` naming a branch or a
+    /// tag is a selector the stale-source refresh re-resolves on its own.
+    /// Read through either, this would answer for a package the scope
+    /// has not installed. `None` where no record claims the
+    /// installation; the declaration is all there is to go on then.
+    ///
+    /// A declaration that no longer reads where the record says this
+    /// installation came from answers nothing rather than answering with
+    /// the new catalog's words: a name two catalogs share is no evidence
+    /// that either wrote these bytes.
     ///
     /// Nothing here fetches. [`super::resolve_at`] answers out of the cache
     /// a previous install filled and reports the source pending otherwise,
@@ -124,21 +148,38 @@ impl DeclaredHeaders {
         manifest: &crate::manifest::Manifest,
         kind: ItemKind,
         name: &str,
-        installed: Option<&str>,
+        installed: Option<&InstalledFrom>,
     ) -> Option<Metadata> {
-        let decl = manifest.declared(kind).get(name)?;
-        let hold = installed.map(str::to_owned).or_else(|| decl.rev.clone());
-        // Keyed by everything that resolves the bytes — the scope, the
-        // source and the revision this read is held at — so two items of
-        // one source at different revisions, and two scopes that declared
-        // one name differently, never read each other's catalog.
-        let key = (scope.clone(), decl.source.clone(), hold.clone());
+        let (source, repo, hold) = match installed {
+            Some(installed) => (
+                installed.source.clone(),
+                Some(installed.repo.clone()),
+                installed.commit.clone(),
+            ),
+            None => {
+                let decl = manifest.declared(kind).get(name)?;
+                (decl.source.clone(), None, decl.rev.clone())
+            }
+        };
+        // Keyed by everything that decides the bytes — the scope, the
+        // source name, what it must resolve to, and the revision — so no
+        // two installations that differ in any of them read each other's
+        // catalog.
+        let key = (scope.clone(), source.clone(), repo.clone(), hold.clone());
         let opened = self.opened.entry(key).or_insert_with(|| {
-            let state =
-                super::resolve_at(env, scope, &decl.source, manifest, hold.as_deref()).ok()?;
+            let state = super::resolve_at(env, scope, &source, manifest, hold.as_deref()).ok()?;
             let super::SourceState::Ready(ready) = state else {
                 return None;
             };
+            // The record names the catalog these bytes came out of. Where
+            // the declaration now reads somewhere else, that is a
+            // different catalog under one name and its words are about a
+            // different package.
+            if let Some(repo) = &repo
+                && &ready.provenance != repo
+            {
+                return None;
+            }
             let sealed = SealedSource::open(&ready.root).ok()?;
             let config = super::source_config(&sealed, super::repo_leaf(&ready.provenance)).ok()?;
             Some((sealed, config))

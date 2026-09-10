@@ -257,32 +257,36 @@ fn declared_header(
 ) -> Option<crate::scan::metadata::Metadata> {
     let package = package?;
     let manifest = records.manifest.as_deref()?;
-    let installed = recorded_commit(records, package.kind, &package.name, item.harness);
+    let installed = installed_from(records, package.kind, &package.name, item.harness);
     headers.of(
         env,
         &item.scope,
         manifest,
         package.kind,
         &package.name,
-        installed.as_deref(),
+        installed.as_ref(),
     )
 }
 
-/// The source commit one installation was written from, as its own record
-/// kept it. `None` for a source that has no commit to keep — a folder, a
-/// local capture — and for a record written before the field existed.
-fn recorded_commit(
+/// What one installation's own record says it came from. `None` where no
+/// record claims it — content nobody installed, or one this build wrote
+/// before the field existed — and the current declaration answers then,
+/// because it is all there is to go on.
+fn installed_from(
     records: &crate::ownership::Records,
     kind: ItemKind,
     name: &str,
     harness: HarnessId,
-) -> Option<String> {
-    records
+) -> Option<crate::source::header::InstalledFrom> {
+    let entry = records
         .lock
         .entries
-        .get(&crate::lock::entry_key(kind, name, harness))?
-        .source_commit
-        .clone()
+        .get(&crate::lock::entry_key(kind, name, harness))?;
+    Some(crate::source::header::InstalledFrom {
+        source: entry.source.clone(),
+        repo: entry.source_repo.clone(),
+        commit: entry.source_commit.clone(),
+    })
 }
 
 /// The words for every row the scan could not see.
@@ -309,9 +313,9 @@ fn seeded_summaries(
         let Some(manifest) = records.manifest.as_deref() else {
             continue;
         };
-        let installed = recorded_commit(records, *kind, name, *harness);
+        let installed = installed_from(records, *kind, name, *harness);
         facts.summary = headers
-            .of(env, scope, manifest, *kind, name, installed.as_deref())
+            .of(env, scope, manifest, *kind, name, installed.as_ref())
             .and_then(|header| header.summary_or_description().map(str::to_owned));
     }
 }

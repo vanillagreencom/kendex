@@ -551,3 +551,89 @@ fn git(dir: &Path, args: &[&str]) {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// A rebound manifest does not rewrite what is already installed, and the
+/// row goes on describing what is.
+///
+/// A declaration is what a scope asks for now. Editing an item's `source`,
+/// or re-pointing a source at another repository, is a request for
+/// different bytes; until an apply fetches them the bytes on disk are the
+/// ones the record names. A reader that took the identity from the
+/// declaration would answer with the new catalog's account of a package
+/// that catalog did not write — the same borrowed reading the scope key
+/// and the recorded commit already close, arriving through the source.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_rebound_declaration_does_not_relabel_what_is_installed() {
+    // Both rebinds, as a person writes them: the item pointed at another
+    // declared source, and the source itself pointed at another folder.
+    let rebinds = [
+        (
+            "the item now names another source",
+            "[sources.up]\n{up}\n\n[sources.other]\n{other}\n\n[skills.gh]\nsource = \"other\"\n",
+        ),
+        (
+            "the source now reads another folder",
+            "[sources.up]\n{other}\n\n[skills.gh]\nsource = \"up\"\n",
+        ),
+    ];
+    for (rebind, declarations) in rebinds {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        let project = home.join("dev/app");
+        fs::create_dir_all(project.join(".claude")).unwrap();
+
+        let up = home.join("up");
+        let other = home.join("other");
+        write_gh(&up, "Reads the repositories you work in.");
+        write_gh(&other, "A different catalog's idea of what gh is.");
+        let manifest = |declarations: &str| {
+            format!(
+                "schema = 6\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n{}",
+                declarations
+                    .replace("{up}", &source_path(&up))
+                    .replace("{other}", &source_path(&other))
+            )
+        };
+        fs::write(
+            project.join("kendex.toml"),
+            manifest("[sources.up]\n{up}\n\n[skills.gh]\nsource = \"up\"\n"),
+        )
+        .unwrap();
+        let scope = Scope::Project {
+            root: project.clone(),
+        };
+        let report = audit(&env, &scope).unwrap();
+        apply::execute(&env, &report.plan).unwrap();
+
+        // The edit, with no apply behind it: the files on disk are still
+        // the ones the first install wrote.
+        fs::write(project.join("kendex.toml"), manifest(declarations)).unwrap();
+
+        let rows = kendex_core::library::provenance(&env, std::slice::from_ref(&scope)).unwrap();
+        let row = rows
+            .iter()
+            .find(|row| row.package_ref().name == "gh")
+            .unwrap_or_else(|| panic!("{rebind}: the skill has no provenance row"));
+        assert_eq!(
+            row.summary.as_deref(),
+            Some("Reads the repositories you work in."),
+            "{rebind}"
+        );
+    }
+}
+
+/// One catalog offering `gh`, at one account of what it is.
+#[allow(clippy::unwrap_used)]
+fn write_gh(catalog: &Path, summary: &str) {
+    fs::create_dir_all(catalog.join("skills/gh")).unwrap();
+    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    fs::write(
+        catalog.join("skills/gh/SKILL.md"),
+        format!(
+            "---\nname: gh\ndescription: Use for GitHub work.\nsummary: {summary}\n---\nBody.\n"
+        ),
+    )
+    .unwrap();
+}
