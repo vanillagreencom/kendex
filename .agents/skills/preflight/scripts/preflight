@@ -135,9 +135,11 @@ Scope rules:
   any lane; the whole-file lanes still see its path. A deleted path leaves the
   change set, and applied-migration-edited reads it from the diff instead.
   The test tree sets its own rules: a tests/ or fixtures/ tree, and a suite
-  as unwired-suite defines one, wherever it lives. early-close-pipe,
-  mktemp-trap, the source-file direction of docs-cited-paths, and the
-  strict-mode and swallowed-status shapes of fail-open stand down there. In a
+  as unwired-suite defines one, wherever it lives. mktemp-trap, the
+  source-file direction of docs-cited-paths, and the strict-mode and
+  swallowed-status shapes of fail-open stand down there. early-close-pipe is
+  judged there like anywhere else: a suite that sets pipefail dies of the
+  same 141, and its own rules are about observing a status, not SIGPIPE. In a
   test-named source file (tests.rs, *_test.*, *_tests.*, *.test.*, *.spec.*,
   test_*) only the swallowed-status shape and that same docs-cited-paths
   direction stand down. The mktemp assignment shape of fail-open is judged in
@@ -1397,7 +1399,11 @@ while IFS= read -r f; do
       esac
     fi
 
-    if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$has_pf" = 1 ]; then
+    # The test tree is judged here, unlike in the lanes above: its own rules
+    # buy a suite the right to observe a status errexit would abort on, which
+    # is no licence to take a 141 that ends the run in the middle of a
+    # section. The file's own pipefail is already the condition above.
+    if [ "$is_sh" = 1 ] && [ "$vendored_mirror" = 0 ] && [ "$has_pf" = 1 ]; then
       case "$content" in
         *"|"*)
           if ! is_comment_line "$content" && grep -Eq -- "$EARLY_CLOSE_RE" <<<"$content"; then
