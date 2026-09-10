@@ -79,6 +79,7 @@ beforeEach(() => {
     route: "commit",
     message: "",
     scanFailure: null,
+    scanning: false,
   });
   useProblemsStore.getState().closeError();
 });
@@ -148,6 +149,96 @@ describe("the questions a write leaves behind", () => {
     expect(host.ownerDocument.body.textContent).not.toContain("acme");
 
     useProblemsStore.getState().closeError();
+    await settle();
+    expect(host.ownerDocument.body.textContent).toContain("acme");
+  });
+
+  // The problems dialog is one modal for the whole app. An installer that
+  // failed says so there and the line moves on, so the next package's
+  // block would be drawn over the account of the repository that failed.
+  it("holds the next repository effect behind an open error", async () => {
+    useMarketplacesStore.setState({
+      pendingEffects: { queue: [{ scope: PROJECT, disclosure: guards }] },
+    });
+    const host = mount(<RepoEffectsDialog />);
+    await settle();
+    expect(host.ownerDocument.body.textContent).toContain(
+      repoEffectsTitle("guards"),
+    );
+
+    useProblemsStore.getState().showError({
+      title: "guards couldn't arm this repository",
+      message: "scripts/arm exited 1",
+    });
+    await settle();
+    expect(host.ownerDocument.body.textContent).not.toContain(
+      repoEffectsTitle("guards"),
+    );
+
+    useProblemsStore.getState().closeError();
+    await settle();
+    expect(host.ownerDocument.body.textContent).toContain(
+      repoEffectsTitle("guards"),
+    );
+  });
+
+  // Said over the account already on screen, the scan failure would not be
+  // a second modal but a worse thing: the first account gone, with nothing
+  // left saying what the installer did to that repository.
+  it("holds a scan failure behind an error already being read", async () => {
+    vi.mocked(commands.commitOfferScan).mockResolvedValue({
+      status: "error",
+      error: "git is not on the path",
+    });
+    mount(<CommitOfferDialog />);
+    useProblemsStore.getState().showError({
+      title: "guards couldn't arm this repository",
+      message: "scripts/arm exited 1",
+    });
+
+    await useCommitOfferStore.getState().enqueue(["/work/acme"]);
+    await settle();
+    expect(useProblemsStore.getState().dialog.message).toBe(
+      "scripts/arm exited 1",
+    );
+    expect(useCommitOfferStore.getState().scanFailure).toBe(
+      "git is not on the path",
+    );
+
+    useProblemsStore.getState().closeError();
+    await settle();
+    expect(useProblemsStore.getState().dialog.message).toBe(
+      "git is not on the path",
+    );
+  });
+
+  // One reader action runs `writingRepo` many times, so a scan can answer
+  // with a project's files as they stood one write ago while the next
+  // write's scan is still out. Answered then, the commit re-derives the
+  // generated paths and takes the files that offer never listed.
+  it("holds the offer while a later write's scan is still out", async () => {
+    type Answer = Awaited<ReturnType<typeof commands.commitOfferScan>>;
+    let answerTheLater = (_: Answer) => {};
+    vi.mocked(commands.commitOfferScan)
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: { offers: [offer], flagged: [] },
+      })
+      .mockReturnValueOnce(
+        new Promise<Answer>((resolve) => {
+          answerTheLater = resolve;
+        }),
+      );
+    const host = mount(<CommitOfferDialog />);
+
+    await useCommitOfferStore.getState().enqueue(["/work/acme"]);
+    const later = useCommitOfferStore.getState().enqueue(["/work/acme"]);
+    await settle();
+    expect(useCommitOfferStore.getState().queue).toHaveLength(1);
+    expect(host.ownerDocument.body.textContent).not.toContain("acme");
+
+    answerTheLater({ status: "ok", data: { offers: [offer], flagged: [] } });
+    await later;
     await settle();
     expect(host.ownerDocument.body.textContent).toContain("acme");
   });

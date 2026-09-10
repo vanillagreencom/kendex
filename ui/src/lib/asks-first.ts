@@ -18,6 +18,17 @@
 // for its own failure to be said and dismissed. A dialog adding a
 // condition of its own instead is how this came back twice — the order is
 // whole here or it is not an order.
+//
+// The problems dialog is one modal for the whole app, so every question
+// behind it waits: a repository effect whose installer failed says so
+// there and the line moves on, and the next package's block drawn over
+// that account is the pair this order exists to stop — as is a scan
+// failure written over it, which loses the first account outright.
+//
+// A question also waits for its own answer to be finished. The commit
+// offer's is read by a scan per write, and one reader action writes many
+// times, so an offer drawn while another scan is out states a project's
+// files as they stood one write ago.
 import { useCommitOfferStore } from "@/stores/commit-offer";
 import { useInstallFlow } from "@/stores/install-flow";
 import { useMarketplacesStore } from "@/stores/marketplaces";
@@ -46,15 +57,16 @@ export function useMayAsk(question: Question): boolean {
   // offer and a failure together, and drawing both is the pair this order
   // exists to stop.
   const scanFailure = useCommitOfferStore((s) => s.scanFailure !== null);
+  const scanning = useCommitOfferStore((s) => s.scanning);
   const problems = useProblemsStore((s) => s.dialog.open);
   switch (question) {
     case "install":
       return true;
     case "repoEffects":
-      return !installing;
+      return !installing && !problems;
     case "commitOfferFailure":
-      return !installing && !effects;
+      return !installing && !effects && !problems && !scanning;
     case "commitOffer":
-      return !installing && !effects && !scanFailure && !problems;
+      return !installing && !effects && !scanFailure && !problems && !scanning;
   }
 }

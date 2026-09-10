@@ -85,6 +85,11 @@ interface CommitOfferState {
    *  the second unordered modal `lib/asks-first.ts` exists to stop. The
    *  dialog says it when this question's turn comes. */
   scanFailure: string | null;
+  /** Whether a scan a write started is still out. What one of them read is
+   *  not the last word on these projects while another is running, so the
+   *  question waits — `lib/asks-first.ts` holds that condition, like every
+   *  other one in the order. */
+  scanning: boolean;
   enqueue: (roots: string[]) => Promise<void>;
   /** The held scan failure has been reported; drop it. */
   scanFailureSaid: () => void;
@@ -134,7 +139,8 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
 
   const head = () => get().queue[0];
 
-  // The scans overlap, so only the latest one that started may answer.
+  // The scans overlap, so only the latest one that started may answer, and
+  // nothing is asked until the last of them has.
   //
   // `writingRepo` asks for this scan in a `finally` and does not wait on
   // it, and one reader action runs `writingRepo` many times — the guided
@@ -147,6 +153,12 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
   // dropped whole, failure included — every one of these scans is asked
   // about the same roots, every project this machine tracks, so a later
   // answer is an answer about all of them.
+  //
+  // Latest-wins alone would still leave the first answer on screen while a
+  // later write's scan is out: the reader would be offered a project's
+  // files as they stood one write ago, and the commit re-derives what is
+  // there when it runs. So `scanning` says a scan is still out and the
+  // question waits for it.
   let started = 0;
   let answered = 0;
 
@@ -204,22 +216,27 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
     route: "commit",
     message: "",
     scanFailure: null,
+    scanning: false,
 
     enqueue: async (roots) => {
       if (roots.length === 0) return;
       const ticket = ++started;
+      set({ scanning: true });
       const response = await commands.commitOfferScan(roots);
       // A scan that started before one already answered says nothing about
       // what the projects hold now.
       if (ticket < answered) return;
       answered = ticket;
+      // Another write's scan started after this one and has not come back,
+      // so this answer is one write behind what the projects hold.
+      const scanning = started > answered;
       if (response.status === "error") {
         // The write itself landed and was reported by its own caller; a
         // read behind it that failed is said here and nowhere else — held
         // until this question's turn, because this scan runs inside a
         // write's `finally` and the install that started it may still be
         // on screen saying what it did.
-        set({ scanFailure: response.error });
+        set({ scanFailure: response.error, scanning });
         return;
       }
       const found: CommitOfferScan = response.data;
@@ -252,6 +269,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get) => {
         // A read of these projects that did land is the answer about them,
         // so an earlier scan's held failure has nothing left to report.
         scanFailure: null,
+        scanning,
         // The reader's own typing is theirs: a fresh reading of the files
         // says nothing about the message they are part-way through.
         message: queue.length > 0 ? get().message : (next[0]?.message ?? ""),
