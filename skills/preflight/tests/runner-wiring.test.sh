@@ -127,17 +127,25 @@ pf_world() {
 # `far.test.ts` is the whole fired set, so `sub/app.test.ts` is wired by the
 # same row.
 #
-# The eleven `bun` rows are one clause of the two-token rule each: the bare
-# invocation and its flags-only form wire, the shell suite and the two
-# subtree rows bound what the default glob reaches, and `bun` alone, `bun run
-# test`, `bun test.ts` and the three `src/` spellings record no default glob
-# at all -- those three still wired by the `src/` token they write, which is
-# why their rows strand only `far.test.ts`. `bun` alone is the row that holds
-# the second token: without it a rule reading the word as optional passes the
-# whole table. The two quoted `src/` rows hold the other half of the tail: a
-# quote ends the invocation only against the last word, so a rule accepting
-# any quote after whitespace reads a quoted positional as a bare run and
-# wires the whole scope.
+# The rows below `a sub-package vitest runner` read one clause each of the
+# tokenizer `invokes_default_include` owns. A runner word must stand at a
+# command position, after any leading assignments and manager words; `bun`
+# must be followed by `test`, so `bun` alone, `bun run test` and `bun test.ts`
+# record nothing; `vitest` keeps `run` and `watch`, the subcommands that still
+# mean the whole include.
+#
+# Every remaining word must be a flag, and the quoting rows are why the
+# tokenizer exists at all: `bun test 'src/'`, `bun test "src/"` and
+# `bun test --timeout='5000' src/` each carry a quote that three earlier
+# regex spellings read as the end of the invocation, wiring the whole scope
+# while the run reaches only `src/`. Their rows strand `far.test.ts` alone,
+# so each also carries the claim that the `src/` token still wires the suite
+# beside it. `bun test --timeout 5000` pins the other direction: a detached
+# flag value is a positional here, because separating one from a path filter
+# needs each runner's flag arity.
+#
+# `vitest 'src/'`, `vitest run src/` and `jest tests/` are the same clause on
+# the shared path, where a positional used to be ignored outright.
 #
 # The `make` world is the one runner kind here with no `fires` twin, and the
 # gap that leaves is deliberate. Its row is clean, so dropping `Makefile` from
@@ -181,6 +189,12 @@ a bun test naming a path wires that subtree and nothing outside it|manifest pack
 a bun test naming a single-quoted path is that same positional|manifest package.json "scripts": { "test": "bun test 'src/'" } -- src/near.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
 a bun test naming a double-quoted path is that same positional|make bun test "src/" -- src/near.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
 a sub-package bun test runner wires nothing outside its subtree|manifest pkg/package.json "scripts": { "test": "bun test" } -- far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
+a quote inside a flag word does not end the bun invocation|manifest package.json "scripts": { "test": "bun test --timeout='5000' src/" } -- src/near.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
+a bun flag's detached value is read as a positional|manifest package.json "scripts": { "test": "bun test --timeout 5000" } -- bd.test.ts|-|-|1|bd.test.ts:0: [unwired-suite]|-
+a vitest watch script wires the suite|manifest package.json "scripts": { "test": "vitest watch" } -- vw.test.ts|-|-|0|-|preflight: clean=2
+a quoted vitest positional wires that subtree and nothing outside it|manifest package.json "scripts": { "test": "vitest 'src/'" } -- src/vq.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
+a vitest run naming a path wires that subtree and nothing outside it|manifest package.json "scripts": { "test": "vitest run src/" } -- src/vr.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
+a jest path pattern wires that subtree and nothing outside it|manifest package.json "scripts": { "test": "jest tests/" } -- tests/jp.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
 ROWS
 pf_table "the runner grammar the unwired-suite lane reads" "$rows"
 
