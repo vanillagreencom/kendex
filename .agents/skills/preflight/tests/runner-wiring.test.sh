@@ -34,7 +34,9 @@ seed() { # NAME — fixture in $R: one committed file, origin/main, feature bran
 # One runner file. The kind decides the frame; the row's remaining words are
 # the invocation text, joined by single spaces and written verbatim, because
 # what the lane reads is the byte sequence around the runner name and not any
-# quoting a shell might have removed. `dangling` is a runner this tool cannot
+# quoting a shell might have removed. `stepname` puts the text in a step's
+# name, a field carrying no command, and `workflowblock` puts it inside a
+# `run:` block scalar, which carries one. `dangling` is a runner this tool cannot
 # read: its text is the symlink target, which does not exist. A kind this
 # function does not know is refused, never written as something else.
 pf_runner() { # KIND [FILE] TEXT...
@@ -44,7 +46,7 @@ pf_runner() { # KIND [FILE] TEXT...
   shift
   case "$kind" in
     make) file=Makefile ;;
-    manifest | workflow | validate | dangling)
+    manifest | workflow | stepname | workflowblock | validate | dangling)
       [ $# -ge 1 ] || return 1
       file="$1"
       shift
@@ -57,6 +59,8 @@ pf_runner() { # KIND [FILE] TEXT...
   case "$kind" in
     manifest) printf '{\n  %s\n}\n' "$text" >"$R/$file" ;;
     workflow) printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: %s\n' "$text" >"$R/$file" ;;
+    stepname) printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - name: %s\n        run: echo nothing\n' "$text" >"$R/$file" ;;
+    workflowblock) printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          %s\n' "$text" >"$R/$file" ;;
     make) printf 'test:\n\t%s\n' "$text" >"$R/$file" ;;
     validate) printf '#!/usr/bin/env bash\nset -euo pipefail\n%s\n' "$text" >"$R/$file" ;;
     dangling) ln -s "$text" "$R/$file" ;;
@@ -147,6 +151,13 @@ pf_world() {
 # `vitest 'src/'`, `vitest run src/` and `jest tests/` are the same clause on
 # the shared path, where a positional used to be ignored outright.
 #
+# The last four rows hold the two fields the tokenizer reads. A command lives
+# in a manifest's `scripts` value or a workflow's `run:` value, block scalar
+# included; a step's `name:` and a manifest's `description` are text, so a
+# runner word in them wires nothing. The quoted-hash row holds comment
+# recognition: a `#` inside quotes opens no comment, so the `src/` after it is
+# still a positional rather than text a line-wise strip threw away.
+#
 # The `make` world is the one runner kind here with no `fires` twin, and the
 # gap that leaves is deliberate. Its row is clean, so dropping `Makefile` from
 # the tool's runner name set empties the runner set, the lane goes silent for
@@ -195,6 +206,10 @@ a vitest watch script wires the suite|manifest package.json "scripts": { "test":
 a quoted vitest positional wires that subtree and nothing outside it|manifest package.json "scripts": { "test": "vitest 'src/'" } -- src/vq.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
 a vitest run naming a path wires that subtree and nothing outside it|manifest package.json "scripts": { "test": "vitest run src/" } -- src/vr.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
 a jest path pattern wires that subtree and nothing outside it|manifest package.json "scripts": { "test": "jest tests/" } -- tests/jp.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
+a workflow step name carries no command|stepname .github/workflows/ci.yml bun test -- sn.test.ts|-|-|1|sn.test.ts:0: [unwired-suite]|-
+a manifest description carries no command|manifest package.json "description": "bun test" -- md.test.ts|-|-|1|md.test.ts:0: [unwired-suite]|-
+a run block scalar carries commands|workflowblock .github/workflows/ci.yml bun test -- wb.test.ts|-|-|0|-|preflight: clean=2
+a quoted hash truncates nothing, so the positional after it still counts|manifest package.json "scripts": { "test": "bun test --reporter='a # b' src/" } -- src/qh.test.ts far.test.ts|-|-|1|far.test.ts:0: [unwired-suite]|-
 ROWS
 pf_table "the runner grammar the unwired-suite lane reads" "$rows"
 
