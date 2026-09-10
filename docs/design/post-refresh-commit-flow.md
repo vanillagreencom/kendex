@@ -156,9 +156,11 @@ The set runs to a thousand paths in a large project, about 58 KB of path text in
 
 kendex writes the set to a file in the system temp directory, NUL-separated, and passes `--pathspec-from-file=<file> --pathspec-file-nul` to `git add`, `git commit` and `git reset`. All three take it. The file is removed when the step ends. It is outside the checkout, so it is never a path the offer could then find.
 
-`--pathspec-file-nul` fixes the separator, not the matching: git still reads each entry as a pathspec, so a rendered path holding `[`, `*` or `?` would match a different file and put a path in the commit that was never in the set. Every one of those three calls therefore runs as `git --literal-pathspecs <subcommand> …`, the git-wide option placed before the subcommand, which takes every entry as the path it is. One option rather than a `:(literal)` prefix per entry, because a path that itself begins with `:` cannot defeat it.
+`--pathspec-file-nul` fixes the separator, not the matching: git still reads each entry as a pathspec, so a rendered path holding `[`, `*` or `?` would match a different file and put a path in the commit that was never in the set. Every entry is therefore written behind a `:(literal)` prefix, which takes the rest of the entry as the path it is.
 
-`git status` takes no such option, which is why the status call is unscoped and filtered in kendex instead.
+The prefix rather than git's `--literal-pathspecs`, which selects the same files: the git-wide option is one git re-exports as `GIT_LITERAL_PATHSPECS=1` to every process it starts, and `git commit` starts the repository's hooks. A hook is other people's code reading their own repository, and under that variable it reads a different git — a hook's own `git ls-files -- ':(glob)docs/**/*.md'` matches nothing, and its `git check-ignore` exits 128 on pathspec magic the hook never wrote. The prefix keeps the selection inside the file, where only the step that wrote it reads it.
+
+The four `GIT_*_PATHSPECS` variables are in `Hardened`'s `GIT_REDIRECTS`, so the shell kendex was launched from cannot re-decide what the entries mean. An inherited `GIT_LITERAL_PATHSPECS=1` would have git read a whole entry as a filename spelled `:(literal)<path>` and match nothing; an inherited `GIT_ICASE_PATHSPECS=1` would case-fold the comparison the prefix asked to be exact.
 
 ### What a refusal leaves behind
 

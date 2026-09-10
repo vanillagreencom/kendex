@@ -27,6 +27,10 @@ fn git_runs_without_redirecting_environment_and_without_prompts() {
         "GIT_COMMON_DIR",
         "GIT_NAMESPACE",
         "GIT_ATTR_SOURCE",
+        "GIT_LITERAL_PATHSPECS",
+        "GIT_ICASE_PATHSPECS",
+        "GIT_GLOB_PATHSPECS",
+        "GIT_NOGLOB_PATHSPECS",
     ] {
         assert_eq!(
             env.get(OsStr::new(variable)),
