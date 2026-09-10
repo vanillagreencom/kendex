@@ -663,7 +663,9 @@ fn a_hook_reads_the_git_a_plain_commit_would_give_it() {
         0,
     );
 
-    let Committed::Made { files, .. } = commit(&repo.root, &generated, "m").unwrap() else {
+    let Committed::Made { files, .. } =
+        commit(&repo.root, &generated, "m", &Selection::All).unwrap()
+    else {
         panic!("nothing was committed");
     };
     assert_eq!(files, 2);
