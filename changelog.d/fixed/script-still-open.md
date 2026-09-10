@@ -1,0 +1,1 @@
+- A package script kendex has just written now starts even while kendex itself still holds the file open: the start is retried within the call's time limit instead of failing with "Text file busy".

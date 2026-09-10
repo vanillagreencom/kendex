@@ -155,6 +155,12 @@ pub struct Hardened {
     /// service rather than a local tool — a hostile server must not be
     /// able to stream the process out of memory. None = uncapped.
     max_output: Option<usize>,
+    /// Test seam: told once per start refused with `ETXTBSY`, so a test
+    /// holding a script open for writing lets go only after the retry
+    /// path has been taken, synchronised on the run rather than on a
+    /// clock.
+    #[cfg(test)]
+    refused: Option<std::sync::mpsc::Sender<()>>,
 }
 
 impl Hardened {
@@ -180,10 +186,39 @@ impl Hardened {
     }
 
     pub fn run(mut self) -> Result<Output> {
+        let deadline = Instant::now() + self.timeout;
+        // A script this process wrote a moment ago can refuse to start with
+        // `ETXTBSY`: a spawn on another thread that began while the writer
+        // was still open carries a copy of that handle until its own exec
+        // lands, and Linux will not run a file anybody holds open for
+        // writing. The producers are kendex's own write-then-run pairs: a
+        // package installer run right after `apply::execute` put it on
+        // disk, and the fixture scripts the test suites write. The handle
+        // is gone the moment that other exec finishes, so the start is
+        // retried until the bound, and only the last refusal is reported.
+        // The clock is read after every sleep and before every retry: a
+        // command is a side effect, and one started past the bound is a
+        // bound the caller never got, whatever the retry then reads.
         // Only a failed spawn never ran; missing pipes are a broken invariant.
-        let mut child = match self.command.spawn() {
-            Ok(child) => child,
-            Err(error) => return Err(CoreError::not_started(&self.label, error)),
+        let mut child = loop {
+            match self.command.spawn() {
+                Ok(child) => break child,
+                Err(error) if error.kind() == io::ErrorKind::ExecutableFileBusy => {
+                    #[cfg(test)]
+                    if let Some(refused) = &self.refused {
+                        // A test that has heard what it waited for may
+                        // have hung up; that is its business, not a fault.
+                        let _ = refused.send(());
+                    }
+                    std::thread::sleep(
+                        POLL.min(deadline.saturating_duration_since(Instant::now())),
+                    );
+                    if Instant::now() >= deadline {
+                        return Err(CoreError::not_started(&self.label, error));
+                    }
+                }
+                Err(error) => return Err(CoreError::not_started(&self.label, error)),
+            }
         };
         let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take())
         else {
@@ -198,7 +233,6 @@ impl Hardened {
         let reading_out = std::thread::spawn(move || read(&mut stdout, cap));
         let reading_err = std::thread::spawn(move || read(&mut stderr, cap));
 
-        let deadline = Instant::now() + self.timeout;
         // The deadline covers the READ, not only the wait: breaking on the
         // direct child's exit handed the pipes to `collect` with nothing
         // timing them, and a descendant that inherited them holds
@@ -307,12 +341,20 @@ impl Hardened {
             label,
             timeout: DEFAULT_TIMEOUT,
             max_output: None,
+            #[cfg(test)]
+            refused: None,
         }
     }
 
     #[cfg(test)]
     fn program(program: &str, args: &[&str]) -> Hardened {
         Hardened::new(program, owned(args))
+    }
+
+    #[cfg(test)]
+    fn refused_to(mut self, refused: std::sync::mpsc::Sender<()>) -> Hardened {
+        self.refused = Some(refused);
+        self
     }
 }
 
