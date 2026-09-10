@@ -5,7 +5,14 @@
 #                                  over the whole tree
 #   commit-guards [all] --staged   the same batch at commit scope
 #   commit-guards [all] --base REF the same batch over the changes since REF
+#   commit-guards [all] --against REF   the same batch over what those changes
+#                                  would do to REF's own tree
 #   commit-guards CHECK [ARGS..]   run one check, flags passed through
+#
+# --skip-unscoped withholds the checks the named scope leaves nothing for,
+# rather than folding a clean count over content they never opened. Which
+# checks those are depends on their configured scope, not on which library
+# they read it from.
 #
 # commit-msg reads a message, so it never runs in the batch — the commit-msg
 # hook invokes it directly. Batch aggregation fails closed: exit 2 if ANY
@@ -21,6 +28,11 @@ GG_CHECK="commit-guards"
 source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/settings.sh
 source "$SCRIPT_DIR/lib/settings.sh"
+# The owner of COMMIT_GUARDS_MD_SCOPE's meaning, for --skip-unscoped below.
+# Sourcing it defines gg_md_bare_scope and two constants and does nothing
+# else; the selecting helpers it also defines go unused here.
+# shellcheck source=lib/md-scope.sh
+source "$SCRIPT_DIR/lib/md-scope.sh"
 
 KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs comments commit-msg"
 BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs"
@@ -32,22 +44,29 @@ BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-
 STAGED_SCOPED_CHECKS="todo-ban byte-ceiling md-format md-refs comments"
 # byte-ceiling is the one batch lane whose bare default is the commit scope,
 # so the full batch names its scope outright: --all with no flag, --base REF
-# when the batch is given one. A batch summary that listed it clean over a
-# scope it never read would be a verdict about nothing.
+# or --against REF when the batch is given one. A batch summary that listed it
+# clean over a scope it never read would be a verdict about nothing.
 FULL_SCOPED_CHECKS="byte-ceiling"
 
 usage() {
   gg_message usage "$GG_CHECK" "Command usage follows."
   cat <<EOF
-usage: commit-guards [all] [--staged | --base REF] | CHECK [ARGS...]
+usage: commit-guards [all] [--staged | --base REF | --against REF]
+                     [--skip-unscoped] | CHECK [ARGS...]
 
 Checks: $KNOWN_CHECKS
 
 With no argument (or 'all'), runs every check named by
 COMMIT_GUARDS_CHECKS (default: $BATCH_DEFAULT) over the whole tree:
 $FULL_SCOPED_CHECKS gets --all, the rest read the index by design.
---base REF hands $FULL_SCOPED_CHECKS --base REF instead (CI on a PR).
+--base REF hands $FULL_SCOPED_CHECKS --base REF instead (CI on a PR), and
+--against REF hands them --against REF (what the change does to REF's tree).
 --staged is passed to: $STAGED_SCOPED_CHECKS.
+--skip-unscoped is for a caller whose scope stages nothing: it withholds every
+check that would then open no file, naming each one. That is the checks whose
+configured scope selects from the staged diff; one configured to sweep the
+tree needs nothing staged and runs. It is a contradiction under --staged,
+which is the scope those checks read.
 Those checks apply their own commit scope. md-refs checks all configured
 documents for broken references, including unchanged callers.
 commit-msg reads a message file/stdin and only runs by name.
@@ -59,13 +78,14 @@ EOF
 
 SCOPE_MODE="all"
 BASE_REF=""
+SKIP_UNSCOPED=0
 if [ $# -ge 1 ]; then
   case "$1" in
     -h | --help)
       usage
       exit 0
       ;;
-    all | --staged | --base | --base=*) ;;
+    all | --staged | --base | --base=* | --against | --against=* | --skip-unscoped) ;;
     *)
       CHECK="$1"
       shift
@@ -81,6 +101,13 @@ if [ "${1-}" = all ]; then shift; fi
 SCOPE_FLAGS=0
 while [ $# -gt 0 ]; do
   case "$1" in
+    # Not a scope: it says which checks the scope can reach, so it does not
+    # count toward the one-scope rule below.
+    --skip-unscoped)
+      SKIP_UNSCOPED=1
+      shift
+      continue
+      ;;
     --staged) SCOPE_MODE="staged" ;;
     --base)
       [ $# -ge 2 ] || gg_fail argument-missing "--base" "--base requires a ref"
@@ -92,12 +119,24 @@ while [ $# -gt 0 ]; do
       SCOPE_MODE="base"
       BASE_REF="${1#--base=}"
       ;;
-    *) gg_fail argument-unknown "$1" "'all' takes only --staged or --base REF; invoke a single check to pass flags" ;;
+    --against)
+      [ $# -ge 2 ] || gg_fail argument-missing "--against" "--against requires a ref"
+      shift
+      SCOPE_MODE="against"
+      BASE_REF="$1"
+      ;;
+    --against=*)
+      SCOPE_MODE="against"
+      BASE_REF="${1#--against=}"
+      ;;
+    *) gg_fail argument-unknown "$1" "'all' takes only --staged, --base REF, --against REF or --skip-unscoped; invoke a single check to pass flags" ;;
   esac
   SCOPE_FLAGS=$((SCOPE_FLAGS + 1))
   shift
 done
-[ "$SCOPE_FLAGS" -le 1 ] || gg_fail scope-conflict "$SCOPE_FLAGS" "--staged and --base name different scopes; pass one"
+[ "$SCOPE_FLAGS" -le 1 ] || gg_fail scope-conflict "$SCOPE_FLAGS" "--staged, --base and --against name different scopes; pass one"
+[ "$SKIP_UNSCOPED" -eq 0 ] || [ "$SCOPE_MODE" != "staged" ] \
+  || gg_fail scope-contradiction "--staged,--skip-unscoped" "--staged IS the scope those checks read, so nothing is unscoped under it"
 
 gg_repo_root_cd
 CHECKS="$(gg_setting COMMIT_GUARDS_CHECKS "$BATCH_DEFAULT")" || exit 2
@@ -114,6 +153,58 @@ for c in $CHECKS; do
     *) gg_fail check-unknown "$c" "COMMIT_GUARDS_CHECKS names unknown check '$c' (known: $KNOWN_CHECKS)" ;;
   esac
 done
+
+# A check whose CONFIGURED scope selects from the staged diff reads nothing
+# at all under a caller that stages nothing: it reports a count of zero and a
+# clean verdict over content it never opened, which is the verdict about
+# nothing this dispatcher exists not to give. A caller that knows its scope
+# stages nothing asks for those to be withheld; each is named here, and the
+# verdict record below lists only the checks that ran.
+#
+# Two questions, and neither answers the other. WHICH checks take their scope
+# from the shared markdown selector is asked of each check's own script,
+# rather than listed here, so a lane that starts deferring to it later cannot
+# rejoin the clean count in silence. WHAT that selector would resolve to is
+# asked of the selector itself, below, because deferring to it says where the
+# answer comes from and not what it is: configured to sweep the tree, such a
+# lane needs nothing staged and this caller reaches it.
+MD_SELECTOR="lib/md-scope.sh"
+if [ "$SKIP_UNSCOPED" -eq 1 ]; then
+  # What a bare run of such a lane would resolve to, asked once of the file
+  # that owns the setting's meaning rather than inferred from the fact that a
+  # lane defers to it. Deferring says where the answer comes from, not what
+  # it is: under `all` the lane sweeps the tree and needs nothing staged, so
+  # this scope reaches it perfectly well and withholding it would drop a
+  # check the project explicitly asked for. An invalid value is refused
+  # there, which is also why it is asked here at all: withholding a lane
+  # before it runs means its own validation never fires.
+  BARE_SCOPE=""
+  gg_md_bare_scope BARE_SCOPE
+fi
+if [ "$SKIP_UNSCOPED" -eq 1 ] && [ "$BARE_SCOPE" = touched ]; then
+  KEPT=""
+  WITHHELD=""
+  for c in $CHECKS; do
+    selector_status=0
+    grep -q -- "$MD_SELECTOR" "$SCRIPT_DIR/$c" || selector_status=$?
+    [ "$selector_status" -le 1 ] \
+      || gg_fail selector-read "$c:$selector_status" "could not read $c to see how it resolves its scope; refusing to guess"
+    if [ "$selector_status" -eq 0 ]; then
+      WITHHELD="${WITHHELD:+$WITHHELD }$c"
+      gg_message unscoped "$c" "This check selects its files from the staged diff under the configured scope, and this run was told nothing is staged, so it would open no file. Withheld rather than counted clean."
+      continue
+    fi
+    KEPT="${KEPT:+$KEPT }$c"
+  done
+  CHECKS="$KEPT"
+  case "$CHECKS" in
+    *[!\ ]*) ;;
+    *)
+      gg_message withheld-all "$WITHHELD" "Every enabled check selects its files from the staged diff under the configured scope, so this run has nothing for any of them to open."
+      exit 0
+      ;;
+  esac
+fi
 
 had_violations=0
 had_errors=0
@@ -134,6 +225,11 @@ for c in $CHECKS; do
     base)
       case " $FULL_SCOPED_CHECKS " in
         *" $c "*) scope=(--base "$BASE_REF") ;;
+      esac
+      ;;
+    against)
+      case " $FULL_SCOPED_CHECKS " in
+        *" $c "*) scope=(--against "$BASE_REF") ;;
       esac
       ;;
   esac

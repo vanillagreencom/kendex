@@ -91,7 +91,8 @@ wire_hooks_dir() { # REPO DIR
   mkdir -p "$2"
   printf '#!/bin/sh\nexec %s/pre-commit "$@"\n' "$scripts" >"$2/pre-commit"
   printf '#!/bin/sh\nexec %s/commit-msg "$1"\n' "$scripts" >"$2/commit-msg"
-  chmod +x "$2/pre-commit" "$2/commit-msg"
+  printf '#!/bin/sh\nexec %s/pre-push "$@"\n' "$scripts" >"$2/pre-push"
+  chmod +x "$2/pre-commit" "$2/commit-msg" "$2/pre-push"
 }
 
 # The table the reshaped suites share: a row builds its own repository, runs
@@ -147,7 +148,7 @@ aliased() { # TEXT -> the text with the row's repository and the scratch root al
 # print. The lanes' own lines — the step announcements, each check's
 # findings, the sibling gates' reports — are their suites' contract and are
 # dropped here.
-KEEP='^(commit-guards git hooks: |install-git-hooks: |::error::|kendex-guards: |commit-guards: hook-helper=|pre-commit: (result|lane-missing|local-missing|path-escape)=|commit-msg: |foreign: |local: |fatal: |error: )'
+KEEP='^(commit-guards git hooks: |install-git-hooks: |::error::|kendex-guards: |commit-guards: hook-helper=|commit-guards: hook-refs=|pre-commit: (result|lane-missing|local-missing|path-escape)=|pre-push: (result|lane-missing)=|commit-msg: |foreign: |local: |fatal: |error: )'
 
 # One line for a run inside the row's repository: the exit status, then
 # every kept line in order joined by ';'. ENVS is a comma-separated list of
@@ -155,10 +156,11 @@ KEEP='^(commit-guards git hooks: |install-git-hooks: |::error::|kendex-guards: |
 # repository carries, every line kept; ARG carries any further installer
 # arguments, word-split), commit (a real `git commit -m ARG` from the checkout's physical path, the
 # kept lines only), commit-here (the same from the path as the fixture
-# spelled it) or hook (the pre-commit shim run from the repository root,
-# the way git runs it, the kept lines only). A fixture that keeps its render
-# somewhere other than the checkout root names that directory in
-# INSTALLER_DIR.
+# spelled it), hook (the pre-commit shim run from the repository root,
+# the way git runs it, the kept lines only) or push-hook (the pre-push shim
+# run the way git runs it, with ARG as the one ref line on its stdin). A
+# fixture that keeps its render somewhere other than the checkout root names
+# that directory in INSTALLER_DIR.
 run() { # ENVS ACTION ARG
   local envs=() rc=0 out="" installer="" filtered=1 dir="" target="$R"
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
@@ -198,6 +200,13 @@ run() { # ENVS ACTION ARG
       ;;
     hook)
       out="$(cd -- "$dir" && env ${envs[@]+"${envs[@]}"} .git/hooks/pre-commit 2>&1)" || rc=$?
+      ;;
+    push-hook)
+      # git hands a pre-push hook the remote's name and URL as arguments and
+      # its ref lines on stdin; ARG is that one line.
+      # shellcheck disable=SC2086
+      out="$(cd -- "$dir" && printf '%s\n' "$3" \
+        | env ${envs[@]+"${envs[@]}"} .git/hooks/pre-push origin "$R" 2>&1)" || rc=$?
       ;;
     *)
       echo "harness: unknown action $2" >&2
@@ -244,6 +253,7 @@ content() { # FILE
   esac
   raw="${raw//"$PRE_LINE"/@PRE@}"
   raw="${raw//"$MSG_LINE"/@MSG@}"
+  raw="${raw//"$PUSH_LINE"/@PUSH@}"
   raw="${raw//"$CREATED"/@CREATED@}"
   # Injective: a backslash and the join character in the file are escaped
   # before newlines become the join character, so a line holding one cannot
@@ -269,18 +279,19 @@ shape() { # PATH
   printf '%s:%s' "${mode:1:9}" "$(content "$p")"
 }
 
-# The hooks directory as one line: the helper, the two shims, every other
+# The hooks directory as one line: the helper, the three shims, every other
 # entry git did not put there (a consumer's hook, or a temporary file an
 # install left behind), and core.hooksPath.
 state() {
   local f="" name="" hp="" hooks="$R/.git/hooks"
   [ -d "$R/.git" ] || hooks="$R/hooks"
-  printf 'helper=%s pre-commit=%s commit-msg=%s' \
-    "$(shape "$hooks/kendex-guards")" "$(shape "$hooks/pre-commit")" "$(shape "$hooks/commit-msg")"
+  printf 'helper=%s pre-commit=%s commit-msg=%s pre-push=%s' \
+    "$(shape "$hooks/kendex-guards")" "$(shape "$hooks/pre-commit")" \
+    "$(shape "$hooks/commit-msg")" "$(shape "$hooks/pre-push")"
   for f in "$hooks"/*; do
     [ -e "$f" ] || [ -L "$f" ] || continue
     name="${f##*/}"
-    case "$name" in *.sample | kendex-guards | pre-commit | commit-msg) continue ;; esac
+    case "$name" in *.sample | kendex-guards | pre-commit | commit-msg | pre-push) continue ;; esac
     printf ' +%s=%s' "$name" "$(shape "$f")"
   done
   if hp="$(git -C "$R" config --get core.hooksPath 2>/dev/null && printf x)"; then
@@ -321,6 +332,7 @@ armed reference
 R_PHYS="$(cd -- "$R" && pwd -P)"
 PRE_LINE="$(sed -n 2p "$R/.git/hooks/pre-commit")"
 MSG_LINE="$(sed -n 2p "$R/.git/hooks/commit-msg")"
+PUSH_LINE="$(sed -n 2p "$R/.git/hooks/pre-push")"
 CREATED="# kendex-guards-hook created this file"
 REF_HELPER="$(sed 3d "$R/.git/hooks/kendex-guards")"
 
@@ -328,7 +340,7 @@ ARMED="commit-guards git hooks: installed=<repo>/.git/hooks"
 INCOMPLETE="commit-guards git hooks: incomplete=<repo>/.git/hooks"
 REMOVAL_INCOMPLETE="commit-guards git hooks: removal-incomplete=<repo>/.git/hooks"
 NOT_INSTALLED="commit-guards git hooks: not-installed=<repo>/.git/hooks/kendex-guards"
-REMOVED_BOTH="commit-guards git hooks: removed=pre-commit commit-msg path=<repo>/.git/hooks"
+REMOVED_ALL="commit-guards git hooks: removed=pre-commit commit-msg pre-push path=<repo>/.git/hooks"
 NOTHING="commit-guards git hooks: nothing-to-remove=<repo>/.git/hooks"
 WARN="install-git-hooks:"
 X=rwxr-xr-x
@@ -336,7 +348,8 @@ RW=rw-r--r--
 OURS="$X:ours['<repo>/.agents/skills/commit-guards/scripts']"
 SHIM_PRE="$X:#!/bin/sh~@PRE@~@CREATED@"
 SHIM_MSG="$X:#!/bin/sh~@MSG@~@CREATED@"
-FRESH="helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>"
+SHIM_PUSH="$X:#!/bin/sh~@PUSH@~@CREATED@"
+FRESH="helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>"
 CHAIN_OK="pre-commit: result=0"
 MSG_OK="commit-msg: header-valid="
 BLOCKED="pre-commit: result=1"

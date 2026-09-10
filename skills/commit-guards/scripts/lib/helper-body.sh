@@ -15,6 +15,26 @@
 # PROJECT_REL, and by lib/hook-check.sh, which compares against it.
 set -euo pipefail
 
+# The hook lanes this package owns, and what each of them gates.
+#
+# One definition. The installer writes a shim per lane and stamps each
+# delegating line with the verb that lane blocks; --check reports a broken
+# lane by naming the same verb; and the helper below carries the same
+# mapping in its own `case`, because a file in .git/hooks can source
+# nothing. Two of those three read it from here, and the third is the one
+# that cannot.
+#
+# The verb doubles as the git subcommand a person types, which is what lets
+# a refusal name the way past itself without a second table.
+GG_LANES="pre-commit commit-msg pre-push"
+gg_lane_verb() { # LANE — the verb it gates, on stdout; 1 when it is not ours
+  case "$1" in
+    pre-commit | commit-msg) printf '%s' commit ;;
+    pre-push) printf '%s' push ;;
+    *) return 1 ;;
+  esac
+}
+
 # One value, quoted so the helper reads it as data.
 #
 # Everything baked into the helper is a shell assignment inside single quotes, and a
@@ -94,11 +114,12 @@ helper_program() { # -> the part of the helper every checkout writes alike
 # rewritten on every install — do not edit.
 #
 # usage: kendex-guards pre-commit | kendex-guards commit-msg MSGFILE
+#        kendex-guards pre-push REMOTE URL
 #
 # Blocks whenever the guard it should run cannot be reached: a gate that
 # cannot run is never a pass.
 # Exit 2 is the family's "could not complete", distinct from a check's
-# exit 1 verdict. Both block the commit.
+# exit 1 verdict. Both block whatever the lane gates, a commit or a push.
 fail() { # KEY VALUE EXPLANATION
   value="$(printf '%s' "$2" | LC_ALL=C tr '\001-\037\177' '?')" || exit 2
   printf 'kendex-guards: %s=%s\n' "$1" "$value" >&2
@@ -107,15 +128,28 @@ fail() { # KEY VALUE EXPLANATION
   done <<HELPER_EXPLANATION
 $3
 HELPER_EXPLANATION
-  echo "  The commit is blocked because a guard could not run. Re-arm the shims with 'kendex guard install', or bypass this commit with 'git commit --no-verify'." >&2
+  echo "  The $what is blocked because a guard could not run. Re-arm the shims with 'kendex guard install', or bypass this $what with 'git $what --no-verify'." >&2
   exit 2
 }
 
+# The verb the lane gates. It is what a refusal above names as blocked, and
+# also the git subcommand the refusal's own remedy is spelled against. An
+# invalid mode is a hand-edited shim rather than anything git asked for, and
+# a shim is edited from the commit side, so that is the verb it is told
+# about.
 mode="${1-}"
 case "$mode" in
-  pre-commit | commit-msg) shift ;;
+  pre-commit | commit-msg)
+    what=commit
+    shift
+    ;;
+  pre-push)
+    what=push
+    shift
+    ;;
   *)
-    fail mode-invalid "$mode" "Use pre-commit or commit-msg MSGFILE."
+    what=commit
+    fail mode-invalid "$mode" "Use pre-commit, commit-msg MSGFILE, or pre-push REMOTE URL."
     ;;
 esac
 

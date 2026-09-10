@@ -12,7 +12,7 @@
 # One table: PACKAGE is the shipped skill or a copy with one wrong order
 # restored; the installer runs with ARGS in a fresh repository, and the row
 # pins the exit status with every line printed and the mode of each of the
-# three hook files, so the installer's verdict and the bits git will read
+# four hook files, so the installer's verdict and the bits git will read
 # are one pin. Every row runs under both shims; a package that calls
 # neither utility with a `--` operand never meets them.
 set -euo pipefail
@@ -98,14 +98,15 @@ assert_eq "control: sed over stdin runs the real sed" "c" "$(sed -n '3p' <"$TMP/
 
 # One line for a run: the exit status, every line printed with the
 # repository path aliased (the installer prints it resolved, so a symlinked
-# TMPDIR is aliased under both spellings), then the three hook files' modes.
+# TMPDIR is aliased under both spellings), then the four hook files' modes.
 R=""
 run() { # ARGS...
   local rc=0 out="" real
   real="$(cd "$R" && pwd -P)"
   out="$("$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" "$@" 2>&1)" || rc=$?
-  printf 'rc=%s%s modes=%s,%s,%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C sed "/^  /d; s#$real#<repo>#g; s#$R#<repo>#g" | LC_ALL=C paste -sd ';' -)}" \
-    "$(mode "$R/.git/hooks/pre-commit")" "$(mode "$R/.git/hooks/commit-msg")" "$(mode "$R/.git/hooks/kendex-guards")"
+  printf 'rc=%s%s modes=%s,%s,%s,%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C sed "/^  /d; s#$real#<repo>#g; s#$R#<repo>#g" | LC_ALL=C paste -sd ';' -)}" \
+    "$(mode "$R/.git/hooks/pre-commit")" "$(mode "$R/.git/hooks/commit-msg")" \
+    "$(mode "$R/.git/hooks/pre-push")" "$(mode "$R/.git/hooks/kendex-guards")"
 }
 
 # Fixture vocabulary: a fresh repository with the package copied in as a
@@ -164,13 +165,13 @@ X="-rwxr-xr-x"
 ARMED="commit-guards git hooks: installed=<repo>/.git/hooks"
 NOT_INSTALLED="commit-guards git hooks: not-installed=<repo>/.git/hooks/kendex-guards"
 run_rows \
-  "the shipped package arms both hooks and the helper, every file executable|real install||rc=0 $ARMED modes=$X,$X,$X" \
-  "--check reads the same repository as armed|installed check|--check|rc=0 commit-guards git hooks: armed=<repo>/.git/hooks modes=$X,$X,$X" \
-  "control: chmod's wrong order writes nothing under BSD rules, and the installer says so|broken_chmod broken-install||rc=1 $NOT_INSTALLED modes=absent,absent,absent" \
-  "control: --check over the repository that install left reads it as not armed|broken_chmod_installed broken-check|--check|rc=1 commit-guards git hooks: not-armed=helper-missing=kendex-guards; hook-missing=pre-commit; hook-missing=commit-msg modes=absent,absent,absent" \
-  "a helper whose scripts directory is gone is recognised from its line 3 and replaced|dangling_real dangling||rc=0 install-git-hooks: helper-replacing-dangling=<repo>/.git/hooks/kendex-guards;$ARMED modes=$X,$X,$X" \
-  "control: reading line 3 with a -- operand fails under BSD sed, so the helper reads as somebody else's and the install stops|dangling_broken_sed dangling-broken||rc=1 install-git-hooks: helper-foreign=<repo>/.git/hooks/kendex-guards;$NOT_INSTALLED modes=absent,absent,-rw-r--r--" \
-  "control: a helper whose scripts directory still exists is another install's, and is refused|live_real live||rc=1 install-git-hooks: helper-foreign=<repo>/.git/hooks/kendex-guards;$NOT_INSTALLED modes=absent,absent,-rw-r--r--"
+  "the shipped package arms all three hooks and the helper, every file executable|real install||rc=0 $ARMED modes=$X,$X,$X,$X" \
+  "--check reads the same repository as armed|installed check|--check|rc=0 commit-guards git hooks: armed=<repo>/.git/hooks modes=$X,$X,$X,$X" \
+  "control: chmod's wrong order writes nothing under BSD rules, and the installer says so|broken_chmod broken-install||rc=1 $NOT_INSTALLED modes=absent,absent,absent,absent" \
+  "control: --check over the repository that install left reads it as not armed|broken_chmod_installed broken-check|--check|rc=1 commit-guards git hooks: not-armed=helper-missing=kendex-guards; hook-missing=pre-commit; hook-missing=commit-msg; hook-missing=pre-push modes=absent,absent,absent,absent" \
+  "a helper whose scripts directory is gone is recognised from its line 3 and replaced|dangling_real dangling||rc=0 install-git-hooks: helper-replacing-dangling=<repo>/.git/hooks/kendex-guards;$ARMED modes=$X,$X,$X,$X" \
+  "control: reading line 3 with a -- operand fails under BSD sed, so the helper reads as somebody else's and the install stops|dangling_broken_sed dangling-broken||rc=1 install-git-hooks: helper-foreign=<repo>/.git/hooks/kendex-guards;$NOT_INSTALLED modes=absent,absent,absent,-rw-r--r--" \
+  "control: a helper whose scripts directory still exists is another install's, and is refused|live_real live||rc=1 install-git-hooks: helper-foreign=<repo>/.git/hooks/kendex-guards;$NOT_INSTALLED modes=absent,absent,absent,-rw-r--r--"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

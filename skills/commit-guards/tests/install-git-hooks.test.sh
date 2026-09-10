@@ -126,9 +126,9 @@ run_rows \
   "an unreachable script is exit 2 from the hook itself|fx_no_skill_hook|$ONE|hook||rc=2 $NO_SCRIPT|" \
   "a newline in a searched checkout cannot create another stable record|fx_no_skill_newline|$ONE|hook||rc=2 $NO_SCRIPT|" \
   "control: the hook exits 0 once the guard can run|fx_armed_hook|$ONE|hook||rc=0 $CHAIN_OK|" \
-  "a stale baked path is rediscovered under .agents/skills|fx_stale_path|$ONE|commit|feat: add a|rc=0 $CHAIN_OK;${MSG_OK}feat: add a|helper=$X:ours['<repo>/gone/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a stale baked path is rediscovered under .agents/skills|fx_stale_path|$ONE|commit|feat: add a|rc=0 $CHAIN_OK;${MSG_OK}feat: add a|helper=$X:ours['<repo>/gone/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "control: the rediscovered chain still blocks|fx_stale_path_marker|$ONE|commit|feat: add b|rc=1 $BLOCKED|" \
-  "the baked scripts directory is run before any rediscovery, lane by lane|fx_baked_first|$ONE|commit|feat: add a|rc=0 foreign: baked ran;${MSG_OK}feat: add a|helper=$X:ours['<repo>/baked'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>"
+  "the baked scripts directory is run before any rediscovery, lane by lane|fx_baked_first|$ONE|commit|feat: add a|rc=0 foreign: baked ran;${MSG_OK}feat: add a|helper=$X:ours['<repo>/baked'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>"
 
 echo "=== existing hooks survive the install, and ours runs first ==="
 fx_compose() {
@@ -149,16 +149,68 @@ fx_refuses() { install_over refuses '#!/bin/sh\necho "foreign: says no" >&2\nexi
 fx_refuses_hook() { install_over refuses-hook '#!/bin/sh\necho "foreign: says no" >&2\nexit 3\n'; stage a.txt 'hello\n'; }
 fx_mentions_helper() { R="$(new_repo mentions-helper)"; foreign pre-commit '#!/bin/sh\n# see .git/hooks/kendex-guards for the shared guard\nexit 0\n'; }
 fx_bash_consumer() { R="$(new_repo bash-consumer)"; foreign pre-commit '#!/bin/bash\nm=(state)\necho "consumer ${m[0]}"\n'; }
+# git sends a pre-push hook its ref lines on stdin ONCE, and a ref-aware
+# consumer hook below our delegating line has no other way to learn what is
+# being pushed. This one counts what it reads, so a row can say whether the
+# stream reached it; git-lfs, husky, lefthook and a pre-commit-framework
+# wrapper all have a loop of this shape.
+COUNTER='#!/bin/sh\nn=0\nwhile IFS=" " read -r a b c d; do n=$((n + 1)); done\necho "foreign: ref-lines=$n"\n'
+push_consumer() { # NAME — a ref-counting pre-push hook, then the install over it
+  R="$(new_repo "$1")"
+  foreign pre-push "$COUNTER"
+  "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true
+}
+fx_push_consumer() { push_consumer push-consumer; }
+# The must-fail control: the same composed hook with the handback taken out of
+# our own delegating line, which is what the lane read before it gave the
+# stream back. The edit is asserted to have matched.
+fx_push_consumer_spent() {
+  push_consumer push-consumer-spent
+  edit "$R/.git/hooks/pre-push" '2s|exec <"$kendex_gg_r"; ||'
+}
 run_rows \
-  "a consumer's hooks are kept: one delegate at line 2, the body and its missing final newline as they were, an unrelated hook untouched|fx_compose||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@~echo foreign: pre-commit<noeol> commit-msg=$SHIM_MSG +post-checkout=$X:#!/bin/sh~echo foreign: post-checkout hooksPath=<unset>" \
+  "a consumer's hooks are kept: one delegate at line 2, the body and its missing final newline as they were, an unrelated hook untouched|fx_compose||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@~echo foreign: pre-commit<noeol> commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH +post-checkout=$X:#!/bin/sh~echo foreign: post-checkout hooksPath=<unset>" \
   "control: the composed hook commits clean content and the foreign part runs after ours|fx_compose_clean|$ONE|commit|feat: add a|rc=0 $CHAIN_OK;foreign: pre-commit;${MSG_OK}feat: add a|" \
   "our part still blocks inside a composed hook, before the foreign part runs|fx_compose_marker|$ONE|commit|feat: add b|rc=1 $BLOCKED|" \
   "a foreign hook ending in exit 0 cannot skip the guard|fx_terminal_marker|$ONE|commit|feat: add b|rc=1 $BLOCKED|" \
   "control: clean content commits through it and the foreign hook still runs|fx_terminal_clean|$ONE|commit|feat: add a|rc=0 $CHAIN_OK;foreign: ran;${MSG_OK}feat: add a|" \
   "a foreign hook's own refusal is preserved after ours passes|fx_refuses|$ONE|commit|feat: add a|rc=1 $CHAIN_OK;foreign: says no|" \
   "and its own exit status is the hook's|fx_refuses_hook|$ONE|hook||rc=3 $CHAIN_OK;foreign: says no|" \
-  "a hook that merely mentions the helper by name still gets the guard|fx_mentions_helper||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@~# see .git/hooks/kendex-guards for the shared guard~exit 0 commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "a consumer's bash shebang and bash-only body survive the rewrite|fx_bash_consumer||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/bash~@PRE@~m=(state)~echo \"consumer \${m[0]}\" commit-msg=$SHIM_MSG hooksPath=<unset>"
+  "a hook that merely mentions the helper by name still gets the guard|fx_mentions_helper||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@~# see .git/hooks/kendex-guards for the shared guard~exit 0 commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a consumer's bash shebang and bash-only body survive the rewrite|fx_bash_consumer||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/bash~@PRE@~m=(state)~echo \"consumer \${m[0]}\" commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a consumer's ref-aware pre-push hook still reads the lines git sent|fx_push_consumer||push-hook|refs/heads/main 0000000000000000000000000000000000000000 refs/heads/main 0000000000000000000000000000000000000000|rc=0 pre-push: result=0;foreign: ref-lines=1|" \
+  "must-fail: with the handback removed from our line, that hook reads an empty stream|fx_push_consumer_spent||push-hook|refs/heads/main 0000000000000000000000000000000000000000 refs/heads/main 0000000000000000000000000000000000000000|rc=0 pre-push: result=0;foreign: ref-lines=0|"
+
+echo "=== the staged ref lines outlive no interrupt ==="
+# The window is the batch, which is the slow part of a push, and a person who
+# aborts one there would otherwise leave a staging file behind for every
+# attempt. The interrupt is deterministic here: git signals the whole
+# foreground group, and a lane that signals the hook shell is that, exactly.
+refs_left() { # NAME [LINE-EDIT] -> the staging files the run left behind
+  local dir="" n=0 f=""
+  R="$(new_repo "$1")"
+  printf '#!/bin/sh\nkill -TERM "$PPID"\nsleep 1\n' \
+    >"$R/.agents/skills/commit-guards/scripts/pre-push"
+  chmod +x "$R/.agents/skills/commit-guards/scripts/pre-push"
+  "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true
+  [ -z "${2:-}" ] || edit "$R/.git/hooks/pre-push" "$2"
+  # Its own TMPDIR, so the count is this run's and not the suite's.
+  dir="$TMP/refs-$1"
+  mkdir -p "$dir"
+  (cd -- "$R" && printf 'refs/heads/main 0000000000000000000000000000000000000000 refs/heads/main 0000000000000000000000000000000000000000\n' \
+    | env TMPDIR="$dir" .git/hooks/pre-push origin "$R" >/dev/null 2>&1) || true
+  for f in "$dir"/kendex-guards-refs.*; do
+    [ -e "$f" ] && n=$((n + 1))
+  done
+  printf '%s' "$n"
+}
+assert_eq "an interrupted push leaves no staged ref file behind" "0" \
+  "$(refs_left refs-trapped)"
+# Both traps, because a shell that reaps the signal after the batch returns
+# exits through its EXIT trap and cleans up on that one alone; the signal trap
+# is what covers a shell that does not get that far.
+assert_eq "must-fail: with the traps cut from our line, the file survives" "1" \
+  "$(refs_left refs-untrapped '2s|trap .rm -f "$kendex_gg_r". EXIT; ||; 2s|trap .rm -f "$kendex_gg_r"; exit 2. INT HUP TERM; ||')"
 
 echo "=== hooks the installer must not touch ==="
 fx_symlinked() { R="$(new_repo symlinked)"; mkdir -p "$TMP/elsewhere"; printf '#!/bin/sh\nexit 0\n' >"$TMP/elsewhere/shared-pre-commit"; chmod +x "$TMP/elsewhere/shared-pre-commit"; ln -s "$TMP/elsewhere/shared-pre-commit" "$R/.git/hooks/pre-commit"; }
@@ -167,11 +219,11 @@ fx_python() { R="$(new_repo python)"; foreign pre-commit '#!/usr/bin/env python3
 fx_fish() { R="$(new_repo fish)"; foreign pre-commit '#!/usr/bin/fish\necho hi\n'; }
 fx_swapped() { armed swapped; edit "$R/.git/hooks/pre-commit" '1s|.*|#!/usr/bin/fish|'; }
 run_rows \
-  "a symlinked hook makes the install incomplete and its target is not written through|fx_symlinked||install||rc=1 $WARN hook-symlink=<repo>/.git/hooks/pre-commit;$INCOMPLETE|helper=$OURS pre-commit=symlink-><root>/elsewhere/shared-pre-commit[#!/bin/sh~exit 0] commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "a disabled (non-executable) hook is not appended to|fx_disabled||install||rc=1 $WARN hook-disabled=<repo>/.git/hooks/pre-commit;$INCOMPLETE|helper=$OURS pre-commit=$RW:#!/bin/sh~exit 0 commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "a non-shell hook is not appended to|fx_python||install||rc=1 $WARN hook-shell=<repo>/.git/hooks/pre-commit;$INCOMPLETE|helper=$OURS pre-commit=$X:#!/usr/bin/env python3~raise SystemExit(0) commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "a fish hook is not a shell hook, whatever its name ends in|fx_fish||install||rc=1 $WARN hook-shell=<repo>/.git/hooks/pre-commit;$INCOMPLETE|helper=$OURS pre-commit=$X:#!/usr/bin/fish~echo hi commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "our line under an interpreter that cannot run it is not armed|fx_swapped||install||rc=1 $WARN hook-shell=<repo>/.git/hooks/pre-commit;$INCOMPLETE|helper=$OURS pre-commit=$X:#!/usr/bin/fish~@PRE@~@CREATED@ commit-msg=$SHIM_MSG hooksPath=<unset>"
+  "a symlinked hook makes the install incomplete and its target is not written through|fx_symlinked||install||rc=1 $WARN hook-symlink=<repo>/.git/hooks/pre-commit;$INCOMPLETE|helper=$OURS pre-commit=symlink-><root>/elsewhere/shared-pre-commit[#!/bin/sh~exit 0] commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a disabled (non-executable) hook is not appended to|fx_disabled||install||rc=1 $WARN hook-disabled=<repo>/.git/hooks/pre-commit;$INCOMPLETE|helper=$OURS pre-commit=$RW:#!/bin/sh~exit 0 commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a non-shell hook is not appended to|fx_python||install||rc=1 $WARN hook-shell=<repo>/.git/hooks/pre-commit;$INCOMPLETE|helper=$OURS pre-commit=$X:#!/usr/bin/env python3~raise SystemExit(0) commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a fish hook is not a shell hook, whatever its name ends in|fx_fish||install||rc=1 $WARN hook-shell=<repo>/.git/hooks/pre-commit;$INCOMPLETE|helper=$OURS pre-commit=$X:#!/usr/bin/fish~echo hi commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "our line under an interpreter that cannot run it is not armed|fx_swapped||install||rc=1 $WARN hook-shell=<repo>/.git/hooks/pre-commit;$INCOMPLETE|helper=$OURS pre-commit=$X:#!/usr/bin/fish~@PRE@~@CREATED@ commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>"
 
 echo "=== the helper is owned, repaired, and never stolen ==="
 # A helper an earlier install wrote names that install's scripts directory
@@ -186,10 +238,10 @@ fx_present_dir_helper() { armed present-dir-helper; mkdir -p "$STAYED_DIR"; prin
 fx_dir_helper() { R="$(new_repo dir-helper)"; mkdir -p "$R/.git/hooks/kendex-guards"; }
 run_rows \
   "a stale helper of ours is rewritten|fx_stale_helper||install||rc=0 $ARMED|$FRESH" \
-  "a foreign file at the helper path aborts the install and is left untouched|fx_foreign_helper||install||rc=1 $WARN helper-foreign=<repo>/.git/hooks/kendex-guards;$NOT_INSTALLED|helper=$X:#!/bin/sh~exit 0 pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a foreign file at the helper path aborts the install and is left untouched|fx_foreign_helper||install||rc=1 $WARN helper-foreign=<repo>/.git/hooks/kendex-guards;$NOT_INSTALLED|helper=$X:#!/bin/sh~exit 0 pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "a helper whose baked install directory is gone is replaced|fx_dangling_helper||install||rc=0 $WARN helper-replacing-dangling=<repo>/.git/hooks/kendex-guards;$ARMED|$FRESH" \
-  "control: an unrecognised helper whose install directory exists is refused|fx_present_dir_helper||install||rc=1 $WARN helper-foreign=<repo>/.git/hooks/kendex-guards;$NOT_INSTALLED|helper=$X:#!/bin/sh~# Scripts directory of the install that wrote this file.~installed_scripts='<root>/install-that-stayed/scripts'~# kendex earlier-package git hooks.~exit 0 pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "a directory at the helper path aborts the install before any shim|fx_dir_helper||install||rc=1 $WARN helper-not-file=<repo>/.git/hooks/kendex-guards;$NOT_INSTALLED|helper=dir pre-commit=absent commit-msg=absent hooksPath=<unset>"
+  "control: an unrecognised helper whose install directory exists is refused|fx_present_dir_helper||install||rc=1 $WARN helper-foreign=<repo>/.git/hooks/kendex-guards;$NOT_INSTALLED|helper=$X:#!/bin/sh~# Scripts directory of the install that wrote this file.~installed_scripts='<root>/install-that-stayed/scripts'~# kendex earlier-package git hooks.~exit 0 pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a directory at the helper path aborts the install before any shim|fx_dir_helper||install||rc=1 $WARN helper-not-file=<repo>/.git/hooks/kendex-guards;$NOT_INSTALLED|helper=dir pre-commit=absent commit-msg=absent pre-push=absent hooksPath=<unset>"
 
 echo "=== a disabled or displaced delegate is not an install ==="
 fx_commented() {
@@ -204,8 +256,8 @@ fx_moved_marker() { armed moved-marker; printf '#!/bin/sh\necho foreign: mine\ne
 run_rows \
   "a commented-out delegate is restored, not trusted|fx_commented||install||rc=0 $ARMED|$FRESH" \
   "control: the restored delegate blocks again|fx_commented_marker|$ONE|commit|feat: add b|rc=1 $BLOCKED|" \
-  "a delegate in an older spelling is replaced, not duplicated, and the rest of the hook survives|fx_stale_delegate||install||rc=0 $ARMED|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$X:#!/bin/sh~@MSG@~echo foreign: mine hooksPath=<unset>" \
-  "a delegate moved below a terminal command is repositioned, not duplicated|fx_moved_delegate||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@~echo foreign: mine~exit 0 commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "a delegate in an older spelling is replaced, not duplicated, and the rest of the hook survives|fx_stale_delegate||install||rc=0 $ARMED|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$X:#!/bin/sh~@MSG@~echo foreign: mine pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a delegate moved below a terminal command is repositioned, not duplicated|fx_moved_delegate||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@~echo foreign: mine~exit 0 commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "control: the repositioned delegate blocks again|fx_moved_marker|$ONE|commit|feat: add b|rc=1 $BLOCKED|"
 
 echo "=== linked worktrees share the install ==="
@@ -244,15 +296,15 @@ fx_bare_host() {
   cp -R "$GG_SKILL_TEMPLATE" "$W/.agents/skills/commit-guards"
   ln -s "$SKILL_DIR/../doc-limits" "$W/.agents/skills/doc-limits"
 }
-DRIFTED="helper=$OURS pre-commit=$X:#!/bin/sh~#@PRE@~@CREATED@ commit-msg=$X:#!/bin/sh~#@MSG@~@CREATED@"
+DRIFTED="helper=$OURS pre-commit=$X:#!/bin/sh~#@PRE@~@CREATED@ commit-msg=$X:#!/bin/sh~#@MSG@~@CREATED@ pre-push=$SHIM_PUSH"
 run_rows \
   "control: a clean commit from a linked worktree passes through the shared shims|fx_wt_clean|$ONE|commit|feat: from the worktree|rc=0 $CHAIN_OK;${MSG_OK}feat: from the worktree|" \
   "a linked worktree gets the guard chain too|fx_wt_marker|$ONE|commit|feat: from the worktree|rc=1 $BLOCKED|" \
   "arming from a linked worktree is refused, and the shared hooks are left as they were|fx_wt_install||install-wt||rc=2 install-git-hooks: linked-worktree=<repo>/.git/hooks|$DRIFTED hooksPath=<unset>" \
   "control: the main checkout arms and repairs the drift the refused run left|fx_wt_install_main||install||rc=0 $ARMED|$FRESH" \
   "control: --check answers from the linked worktree|fx_wt_check||check-wt||rc=0 commit-guards git hooks: armed=<repo>/.git/hooks|" \
-  "a configured hooks path reports itself before the refusal|fx_wt_hookspath||install-wt||rc=0 install-git-hooks: hooks-path-configured=<root>/wt-elsewhere;install-git-hooks: hooks-path-set=core.hooksPath;install-git-hooks: hooks-path-origin=\$'local\\tfile:<repo>/.git/config\\t<root>/wt-elsewhere';commit-guards git hooks: skipped-hooks-path=<root>/wt-elsewhere|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath='<root>/wt-elsewhere'" \
-  "a work tree of a bare repository has no main checkout, and arms into the bare hooks directory|fx_bare_host||install-wt||rc=0 commit-guards git hooks: installed=<repo>/hooks|helper=$X:ours['<root>/bare-host-wt/.agents/skills/commit-guards/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=<unset>"
+  "a configured hooks path reports itself before the refusal|fx_wt_hookspath||install-wt||rc=0 install-git-hooks: hooks-path-configured=<root>/wt-elsewhere;install-git-hooks: hooks-path-set=core.hooksPath;install-git-hooks: hooks-path-origin=\$'local\\tfile:<repo>/.git/config\\t<root>/wt-elsewhere';commit-guards git hooks: skipped-hooks-path=<root>/wt-elsewhere|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath='<root>/wt-elsewhere'" \
+  "a work tree of a bare repository has no main checkout, and arms into the bare hooks directory|fx_bare_host||install-wt||rc=0 commit-guards git hooks: installed=<repo>/hooks|helper=$X:ours['<root>/bare-host-wt/.agents/skills/commit-guards/scripts'] pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>"
 
 echo "=== uninstall gives the repository back ==="
 uninstalled() { install_over "$1" '#!/bin/sh\necho foreign: mine\nexit 0\n'; "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" --uninstall >/dev/null 2>&1 || true; }
@@ -268,17 +320,17 @@ fx_linked_shim() { armed linked-shim; mv "$R/.git/hooks/pre-commit" "$TMP/linked
 fx_dangling_shim() { armed dangling-shim; rm "$R/.git/hooks/pre-commit"; ln -s "$TMP/dangling-target" "$R/.git/hooks/pre-commit"; }
 fx_unreadable_shim() { armed unreadable-shim; chmod 0300 "$R/.git/hooks/pre-commit"; }
 run_rows \
-  "uninstall removes the helper and the shim it created, and gives a consumer's hook back byte for byte|fx_uninstall||uninstall||rc=0 $REMOVED_BOTH|helper=absent pre-commit=$X:#!/bin/sh~echo foreign: mine~exit 0 commit-msg=absent hooksPath=<unset>" \
+  "uninstall removes the helper and the shim it created, and gives a consumer's hook back byte for byte|fx_uninstall||uninstall||rc=0 $REMOVED_ALL|helper=absent pre-commit=$X:#!/bin/sh~echo foreign: mine~exit 0 commit-msg=absent pre-push=absent hooksPath=<unset>" \
   "commits are unguarded after the uninstall and the consumer's hook runs alone|fx_uninstalled_marker|$ONE|commit|feat: add b|rc=0 foreign: mine|" \
-  "a repeat uninstall has nothing to remove and changes nothing|fx_uninstalled_again||uninstall||rc=0 $NOTHING|helper=absent pre-commit=$X:#!/bin/sh~echo foreign: mine~exit 0 commit-msg=absent hooksPath=<unset>" \
-  "uninstall never deletes a helper it did not write|fx_foreign_helper_only||uninstall||rc=0 $NOTHING|helper=$RW:#!/bin/sh~exit 0 pre-commit=absent commit-msg=absent hooksPath=<unset>" \
-  "uninstall still removes the shims when git is reading hooks elsewhere|fx_uninstall_hookspath||uninstall||rc=0 $REMOVED_BOTH|helper=absent pre-commit=absent commit-msg=absent hooksPath='myhooks'" \
-  "a line that only mentions the marker mid-sentence is the consumer's, and the removal restores the hook byte for byte|fx_mention_marker||uninstall||rc=0 $REMOVED_BOTH|helper=absent pre-commit=$X:#!/bin/sh~echo \"see # kendex-guards-hook for details\"~echo foreign: mine commit-msg=absent hooksPath=<unset>" \
-  "and a repair keeps that line too|fx_mention_marker_repair||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@~echo \"see # kendex-guards-hook for details\"~echo foreign: mine commit-msg=$SHIM_MSG hooksPath=<unset>" \
-  "a symlink to a hook that only quotes the marker is not claimed, and the removal completes beside it|fx_quoter_symlink||uninstall||rc=0 commit-guards git hooks: removed=pre-commit path=<repo>/.git/hooks|helper=absent pre-commit=absent commit-msg=symlink-><root>/quoter-target[#!/bin/sh~# ours end in # kendex-guards-hook, this one does not~echo foreign: mine] hooksPath=<unset>" \
-  "must-fail: a symlink to a target carrying our line is claimed, refused, and the helper kept for it|fx_linked_shim||uninstall||rc=1 $WARN hook-symlink-managed=<repo>/.git/hooks/pre-commit;$REMOVAL_INCOMPLETE|helper=$OURS pre-commit=symlink-><root>/linked-target[#!/bin/sh~@PRE@~@CREATED@] commit-msg=absent hooksPath=<unset>" \
-  "a symlinked hook whose target cannot be read fails the uninstall and keeps the helper|fx_dangling_shim||uninstall||rc=1 $WARN hook-symlink-unreadable=<repo>/.git/hooks/pre-commit;$REMOVAL_INCOMPLETE|helper=$OURS pre-commit=symlink-><root>/dangling-target[dangling] commit-msg=absent hooksPath=<unset>" \
-  "an unreadable managed hook fails the uninstall and keeps the helper|fx_unreadable_shim||uninstall||rc=1 $WARN hook-read=<repo>/.git/hooks/pre-commit;$REMOVAL_INCOMPLETE|helper=$OURS pre-commit=-wx------:unreadable commit-msg=absent hooksPath=<unset>"
+  "a repeat uninstall has nothing to remove and changes nothing|fx_uninstalled_again||uninstall||rc=0 $NOTHING|helper=absent pre-commit=$X:#!/bin/sh~echo foreign: mine~exit 0 commit-msg=absent pre-push=absent hooksPath=<unset>" \
+  "uninstall never deletes a helper it did not write|fx_foreign_helper_only||uninstall||rc=0 $NOTHING|helper=$RW:#!/bin/sh~exit 0 pre-commit=absent commit-msg=absent pre-push=absent hooksPath=<unset>" \
+  "uninstall still removes the shims when git is reading hooks elsewhere|fx_uninstall_hookspath||uninstall||rc=0 $REMOVED_ALL|helper=absent pre-commit=absent commit-msg=absent pre-push=absent hooksPath='myhooks'" \
+  "a line that only mentions the marker mid-sentence is the consumer's, and the removal restores the hook byte for byte|fx_mention_marker||uninstall||rc=0 $REMOVED_ALL|helper=absent pre-commit=$X:#!/bin/sh~echo \"see # kendex-guards-hook for details\"~echo foreign: mine commit-msg=absent pre-push=absent hooksPath=<unset>" \
+  "and a repair keeps that line too|fx_mention_marker_repair||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@~echo \"see # kendex-guards-hook for details\"~echo foreign: mine commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
+  "a symlink to a hook that only quotes the marker is not claimed, and the removal completes beside it|fx_quoter_symlink||uninstall||rc=0 commit-guards git hooks: removed=pre-commit pre-push path=<repo>/.git/hooks|helper=absent pre-commit=absent commit-msg=symlink-><root>/quoter-target[#!/bin/sh~# ours end in # kendex-guards-hook, this one does not~echo foreign: mine] pre-push=absent hooksPath=<unset>" \
+  "must-fail: a symlink to a target carrying our line is claimed, refused, and the helper kept for it|fx_linked_shim||uninstall||rc=1 $WARN hook-symlink-managed=<repo>/.git/hooks/pre-commit;$REMOVAL_INCOMPLETE|helper=$OURS pre-commit=symlink-><root>/linked-target[#!/bin/sh~@PRE@~@CREATED@] commit-msg=absent pre-push=absent hooksPath=<unset>" \
+  "a symlinked hook whose target cannot be read fails the uninstall and keeps the helper|fx_dangling_shim||uninstall||rc=1 $WARN hook-symlink-unreadable=<repo>/.git/hooks/pre-commit;$REMOVAL_INCOMPLETE|helper=$OURS pre-commit=symlink-><root>/dangling-target[dangling] commit-msg=absent pre-push=absent hooksPath=<unset>" \
+  "an unreadable managed hook fails the uninstall and keeps the helper|fx_unreadable_shim||uninstall||rc=1 $WARN hook-read=<repo>/.git/hooks/pre-commit;$REMOVAL_INCOMPLETE|helper=$OURS pre-commit=-wx------:unreadable commit-msg=absent pre-push=absent hooksPath=<unset>"
 
 assert_eq "every seeded fixture landed its seed commit" "" "$SEEDS_FAILED"
 

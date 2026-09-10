@@ -3,7 +3,8 @@
 # fails naming the file, its bytes and the ceiling, an existing oversized
 # file may hold or shrink but not grow, a pure rename is no addition while a
 # copy and a moved-and-grown file are, a symlink or gitlink is not sized
-# content, --base judges the branch since its merge-base and --all sweeps
+# content, --base judges the branch since its merge-base, --against judges
+# what it would do to another tree, and --all sweeps
 # every tracked file, lockfiles and declared asset trees are exempt, the
 # ceiling resolves through the settings ladder and is validated, and a
 # measurement that breaks is a collection error, never a pass. One table:
@@ -82,6 +83,7 @@ grew() { printf 'byte-ceiling: grew=%s:%s:%s:%s:%s' "$1" "$2" "$3" "$4" "$5"; } 
 STAGED="staged:"
 SWEEP="all:"
 since() { printf 'base:%s' "$1"; } # REF
+onto() { printf 'against:%s' "$1"; } # REF
 ok() { printf 'byte-ceiling: result=0:%s:%s:%s' "$1" "${3:-1}" "${2:-$STAGED}"; } # CHECKED [SCOPE] [CEILING]
 failed() { printf 'byte-ceiling: result=%s:%s:%s:%s' "$1" "$2" "${3:-1}" "${4:-$STAGED}"; } # VIOLATIONS CHECKED [CEILING] [SCOPE]
 C=COMMIT_GUARDS_BYTE_CEILING_KB
@@ -168,6 +170,11 @@ run_rows \
   "--base main fails on the branch's added file|feature base-add add|$C=1|--base main|rc=1 $(over feat.bin 2048 2 1);$(failed 1 1 1 "$(since main)")" \
   "--base=REF is the same mode|feature base-eq add|$C=1|--base=main|rc=1 $(over feat.bin 2048 2 1);$(failed 1 1 1 "$(since main)")" \
   "--base judges from the merge-base: a legacy file main shrank after the branch point is not the branch's growth|feature base-main-moves main-moves|$C=1|--base main|rc=0 $(ok 1 "$(since main)")" \
+  "--against judges the same shape against main's OWN tree, where that shrink is growth main would receive|feature against-main-moves main-moves|$C=1|--against main|rc=1 $(grew old.bin 3072 4096 4 1);$(failed 1 2 1 "$(onto main)")" \
+  "the two agree where the ref is an ancestor: a shrink is a shrink either way|feature against-shrink shrink|$C=1|--against main|rc=0 $(ok 1 "$(onto main)")" \
+  "--against=REF is the same mode|feature against-eq shrink|$C=1|--against=main|rc=0 $(ok 1 "$(onto main)")" \
+  "an unknown --against ref is exit 2, naming it|legacy against-unknown|$C=1|--against no-such-ref|rc=2 ${ERR}against-ref=no-such-ref" \
+  "--against without a ref is exit 2|legacy against-bare|$C=1|--against|rc=2 ${ERR}argument-missing=--against" \
   "--all does not size a tracked symlink: one file checked beside it|fx_all_symlink|$C=1|--all|rc=0 $(ok 1 "$SWEEP")" \
   "--all does not size a committed gitlink either: it carries a commit id, not content|gitlink gitlink-all committed|$C=1|--all|rc=0 $(ok 1 "$SWEEP")" \
   "a staged gitlink is not sized content|gitlink gitlink-staged staged|$C=1||rc=0 $(ok 0)" \

@@ -29,7 +29,7 @@ skipped() { printf 'install-git-hooks: hooks-path-configured=%s;%s;commit-guards
 undetermined() { printf '%s;commit-guards git hooks: unknown=hooks-path-configured=%s' "$2" "$1"; } # VALUE BLOCK
 OFF_WARN="install-git-hooks: hooks-path-disabled=''"
 OFF_CHECK="commit-guards git hooks: not-armed=hooks-path-disabled=''"
-NONE="helper=absent pre-commit=absent commit-msg=absent"
+NONE="helper=absent pre-commit=absent commit-msg=absent pre-push=absent"
 set_value() { git -C "$R" config core.hooksPath "$1"; } # VALUE
 
 echo "=== an empty value switches git hooks off, and neither mode reads the repository root instead ==="
@@ -41,9 +41,9 @@ fx_off_check() { armed off-check; copies_at_root; set_value ""; }
 fx_off_install() { R="$(new_repo off-install)"; set_value ""; }
 fx_off_install_armed() { armed off-install-armed; copies_at_root; set_value ""; }
 run_rows \
-  "the empty value is NOT armed, never armed at the root|fx_off_check||check||rc=1 $(block "$(local_origin '')");$OFF_CHECK|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=''" \
+  "the empty value is NOT armed, never armed at the root|fx_off_check||check||rc=1 $(block "$(local_origin '')");$OFF_CHECK|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=''" \
   "the install says the same rather than writing|fx_off_install||install||rc=0 $OFF_WARN;$(block "$(local_origin '')");commit-guards git hooks: skipped-hooks-path=''|$NONE hooksPath=''" \
-  "and leaves an earlier arming as it was|fx_off_install_armed||install||rc=0 $OFF_WARN;$(block "$(local_origin '')");commit-guards git hooks: skipped-hooks-path=''|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath=''"
+  "and leaves an earlier arming as it was|fx_off_install_armed||install||rc=0 $OFF_WARN;$(block "$(local_origin '')");commit-guards git hooks: skipped-hooks-path=''|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=''"
 
 echo "=== set at all stands the install down, whatever the spelling ==="
 # Whether the configured directory is in fact this repository's own would be
@@ -72,7 +72,7 @@ fx_wired() { wired wired; }
 fx_wired_commit() { wired wired-commit; stage_marker; }
 fx_default_spelling() { armed default-spelling; set_value .git/hooks; }
 run_rows \
-  "a hand-wired directory is could-not-determine|fx_wired||check||rc=2 $(undetermined customhooks "$(block "$(local_origin customhooks)")")|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath='customhooks'" \
+  "a hand-wired directory is could-not-determine|fx_wired||check||rc=2 $(undetermined customhooks "$(block "$(local_origin customhooks)")")|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath='customhooks'" \
   "and the wiring it will not judge really does gate|fx_wired_commit|$ONE|commit|feat: add b|rc=1 $BLOCKED|" \
   "a value naming the default directory stands down too: git reads exactly the directory this package writes, and the verdict says nothing that spelling makes false|fx_default_spelling||check||rc=2 $(undetermined .git/hooks "$(block "$(local_origin .git/hooks)")")|"
 
@@ -95,7 +95,7 @@ INCLUDED_ORIGIN="install-git-hooks: hooks-path-origin=\$'local\\tfile:<repo>/ext
 COMMAND_ORIGIN="install-git-hooks: hooks-path-origin=\$'command\\tcommand line:\\t<repo>/envhooks'"
 run_rows \
   "a global value: the scope and the origin as git spells them|fx_global||check||rc=2 $(undetermined '<repo>/globalhooks' "$(block "$GLOBAL_ORIGIN")")|" \
-  "and the install lane prints the same block|fx_global_install||install||rc=0 $(skipped '<repo>/globalhooks' "$(block "$GLOBAL_ORIGIN")")|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG hooksPath='<repo>/globalhooks'" \
+  "and the install lane prints the same block|fx_global_install||install||rc=0 $(skipped '<repo>/globalhooks' "$(block "$GLOBAL_ORIGIN")")|helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath='<repo>/globalhooks'" \
   "an included file is named under the including scope, as git names it|fx_included||check||rc=2 $(undetermined '<repo>/includedhooks' "$(block "$INCLUDED_ORIGIN")")|" \
   "a value from the environment is reported as the command line, not a file|fx_command_line|GIT_CONFIG_COUNT=1,GIT_CONFIG_KEY_0=core.hooksPath,GIT_CONFIG_VALUE_0=$TMP/command-line/envhooks|check||rc=2 $(undetermined '<repo>/envhooks' "$(block "$COMMAND_ORIGIN")")|" \
   "a global value shadowed by a local one lists both sources, nothing dropped or reordered|fx_shadowed||check||rc=2 $(undetermined '<repo>/localhooks' "$SET_LINE;$GLOBAL_ORIGIN;$(local_origin '<repo>/localhooks')")|"
