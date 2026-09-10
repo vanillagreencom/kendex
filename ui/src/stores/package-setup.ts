@@ -25,9 +25,11 @@ import { placeKey } from "@/lib/package-places";
 /** One place's last answer, or the fact that its read is out.
  *
  *  `reading` rides beside the answer rather than replacing it: a re-check
- *  after an operation keeps the previous state on screen with the spinner
- *  over it, and blanking it would flash "Not active" over a project that
- *  is about to report Active.
+ *  keeps the last answer's own words — the package's summary and whatever
+ *  its check said — so the row does not empty under the reader while a
+ *  script runs. The state word is `Checking` for as long as the read is
+ *  out (`setup-row.tsx` `shownState`): a state nobody is measuring any
+ *  more is not one to keep showing.
  *
  *  `refused` is why the command could not answer, kept rather than folded
  *  into a bare null. It is the cause the row prints: a project whose
