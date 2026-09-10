@@ -64,10 +64,27 @@ export const missingProjectsTitle = (count: number): string =>
   count === 1
     ? "1 project folder can't be read"
     : `${count} project folders can't be read`;
+/** What to do about it, which the three readings do not share: a folder
+ *  that is gone or that something else took is pointed somewhere else,
+ *  and one this machine cannot read is read again once it can be reached.
+ *  Sending a permission or an unmounted disk down the reconnect is the
+ *  wrong repair — the folder never moved. */
+const missingRemedy = (why: MissingWhy): string => {
+  switch (why.kind) {
+    case "gone":
+    case "not-a-folder":
+      return "Open Projects to point it at the folder it is in now.";
+    case "unreadable":
+      return "Open Projects to read it again once it can be reached.";
+  }
+};
+
 export const missingProjectDetail = (missing: MissingProject): string =>
-  `${missingBadge(missing.why)}: ${missing.root}. Open Projects to point it at the folder it is in now.`;
+  `${missingBadge(missing.why)}: ${missing.root}. ${missingRemedy(missing.why)}`;
+/** The line for a list, which can hold all three readings at once: it
+ *  names the page each one is answered on and no single repair. */
 export const MISSING_PROJECTS_DETAIL =
-  "Open Projects to point each one at the folder it is in now.";
+  "Open Projects to see what each one needs.";
 
 export const LOCATE_TITLE = "Locate folder";
 export const locateHelp = (name: string): string =>
@@ -91,7 +108,7 @@ export const standingSaid = (standing: Standing, name: string): string => {
     case "settled":
       return `This folder holds a kendex setup of its own. Reconnecting points ${name} at it and keeps everything in it.`;
     case "no-record":
-      return "kendex has installed nothing in this folder. Reconnecting moves the project's entry and nothing else.";
+      return `This folder holds no kendex record, so nothing in it says whether it is ${name}'s. Reconnecting moves the project's entry and nothing else.`;
     case "registered":
       return "kendex already tracks this folder as a project of its own. Joining the two leaves one project here; no folder and no file is deleted.";
     case "unchanged":
