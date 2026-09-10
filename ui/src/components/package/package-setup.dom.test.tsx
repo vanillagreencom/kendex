@@ -28,6 +28,7 @@ import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
+import { observed } from "@/test/observed";
 import { PackageProjects } from "./package-projects";
 import { usePackageSetupRead } from "./use-package-setup";
 
@@ -44,27 +45,33 @@ const VG: Scope = { scope: "project", root: "/work/vg" };
 const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
 const PERSONAL: Scope = { scope: "global" };
 
-const install = (scope: Scope): ObservedItem => ({
-  kind: "skill",
-  name: "commit-guards",
-  harness: "claude",
-  scope,
-  path: "/x/claude",
-  fileState: { state: "file" },
-  enabled: true,
-  origin: null,
-  description: null,
-  tags: [],
-  modifiedAt: null,
-  vendor: null,
-});
+const install = (scope: Scope): ObservedItem =>
+  observed({
+    kind: "skill",
+    name: "commit-guards",
+    harness: "claude",
+    scope,
+    path: "/x/claude",
+    fileState: { state: "file" },
+    enabled: true,
+    origin: null,
+    description: null,
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+  });
 
+// One row per observation, naming the file it was read from: the join
+// answers per file, so a row naming none is about no installation the tab
+// can match.
 const owned = (scope: Scope): ProvenanceRow => ({
   scope,
   kind: "skill",
   name: "commit-guards",
   harness: "claude",
+  at: install(scope).path,
   origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+  package: { kind: "skill", name: "commit-guards" },
 });
 
 const META: PackageMeta_Serialize = {
@@ -145,6 +152,7 @@ function Page({ scopes }: { scopes: Scope[] }) {
       kind="skill"
       name="commit-guards"
       scopes={scopes}
+      installations={scopes.map(install)}
       busy={false}
       focus={null}
       onDelete={() => {}}

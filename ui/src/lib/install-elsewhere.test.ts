@@ -5,7 +5,15 @@ import { installElsewhere } from "@/lib/install-elsewhere";
 const VG: Scope = { scope: "project", root: "/work/vg" };
 
 const from = (origin: Origin): ProvenanceRow[] => [
-  { scope: VG, kind: "skill", name: "gh", harness: "claude", origin },
+  {
+    scope: VG,
+    kind: "skill",
+    name: "gh",
+    harness: "claude",
+    at: "/x/claude",
+    origin,
+    package: { kind: "skill", name: "gh" },
+  },
 ];
 
 const declared = (scope: Scope, name: string): MarketplaceRow =>

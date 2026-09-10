@@ -119,13 +119,13 @@ export function usePackageSetupRead(
       shown.current = subject;
       forget();
     }
-    void checkAll(asked, name);
+    if (name !== null) void checkAll(asked, name);
   }, [subject, checkAll, forget, name]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the closing of the line is the signal, not the places
   useEffect(() => {
     const closed = wasAsking.current && !asking;
     wasAsking.current = asking;
-    if (closed) void checkAll(asked, name);
+    if (closed && name !== null) void checkAll(asked, name);
   }, [asking, checkAll, name]);
 }
