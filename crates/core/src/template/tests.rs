@@ -11,6 +11,7 @@ use crate::test_util::rooted;
 
 mod create;
 mod install;
+mod store;
 
 /// A skill tree, the shape every kind that is a tree takes.
 #[allow(clippy::unwrap_used)]

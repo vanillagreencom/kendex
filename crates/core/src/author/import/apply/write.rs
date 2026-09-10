@@ -103,14 +103,12 @@ fn plan_notices<'a>(
         if planned.iter().any(|held| held.dest == dest) {
             continue;
         }
-        if dest.symlink_metadata().is_ok() {
-            let same = std::fs::read(&dest)
-                .map(|existing| existing == *bytes)
-                .unwrap_or(false);
-            if !same {
+        match crate::author::import::notice_standing(&dest, bytes) {
+            crate::author::import::NoticeStanding::Absent => {}
+            crate::author::import::NoticeStanding::Same => continue,
+            crate::author::import::NoticeStanding::Different => {
                 return Err(occupied(&dest, name));
             }
-            continue;
         }
         let label = rel_name(target, &dest);
         planned.push(Write::new(dest, bytes, &label));

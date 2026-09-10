@@ -80,16 +80,31 @@ fn held_paths(template: &Template) -> impl Iterator<Item = &str> {
 /// The absolute path a recorded copy id resolves to inside its template's
 /// store, refusing an id that would leave the store. A copy id is written
 /// by [`slot_id`] and read back here; an id that escapes is a store
-/// somebody edited, and reading through it would read a file the template
-/// never captured.
+/// somebody edited, and resolving one would reach a file the template
+/// never captured — a file this module then reads, and prunes.
+///
+/// Every segment answers to [`crate::names::segment_problem`], the rule
+/// this repository already keeps for what a name may be and what Windows
+/// will quietly make of one, applied the way `pi_ext::files::inside`
+/// applies it. That is the judge on purpose: a test against the literal
+/// `.` and `..` is a second, weaker rule that never sees `..\victim`,
+/// where the backslash is the separator; nor `C:..`, where the colon opens
+/// a drive; nor `.. `, which Windows trims back to `..` after any
+/// comparison has passed it. The path is built from the segments checked
+/// here rather than by joining the recorded string, so nothing unexamined
+/// reaches the filesystem.
+///
+/// A segment naming nothing — an empty one from a leading or doubled
+/// separator, or `.` — is refused rather than skipped. `slot_id` writes
+/// neither, so an id carrying one is an index somebody edited, and the
+/// rule already says so.
 pub fn copy_path(env: &Env, template: &Template, copy: &str) -> Result<PathBuf> {
-    let root = root(env, &template.id);
-    let mut path = root.clone();
+    let mut path = root(env, &template.id);
     for segment in copy.split('/') {
-        if segment.is_empty() || segment == "." || segment == ".." {
+        if let Some(problem) = crate::names::segment_problem(segment) {
             return Err(CoreError::TemplateCopyUnreadable {
                 copy: copy.to_owned(),
-                why: "the copy is recorded at a path that leaves the template's store".to_owned(),
+                why: format!("the copy is recorded at a path this store cannot hold: {problem}"),
             });
         }
         path.push(segment);
@@ -129,6 +144,26 @@ pub(super) fn write(
         });
     }
     let root = root(env, id);
+    // The terms first, before a byte of the copy moves: a licence file
+    // already there under different bytes refuses, and a refusal that
+    // arrived after the slot had been replaced would have taken the copy
+    // this template held with it.
+    for (relative, bytes) in notices {
+        let target = root.join(relative);
+        match crate::author::import::notice_standing(&target, bytes) {
+            crate::author::import::NoticeStanding::Absent
+            | crate::author::import::NoticeStanding::Same => {}
+            crate::author::import::NoticeStanding::Different => {
+                return Err(CoreError::TemplateCopyUnreadable {
+                    copy: slot_id(kind, name),
+                    why: format!(
+                        "this template already holds different terms at {} — the licence text changed, so remove that file or save this copy in another template",
+                        crate::paths::slashed(relative)
+                    ),
+                });
+            }
+        }
+    }
     let slot = local_slot(&root, kind, name);
     if slot.exists() {
         remove_path(&slot)?;
@@ -154,9 +189,16 @@ pub(super) fn write(
     }
     // The terms travel with the bytes. Written beside the copy, at the
     // paths a catalog-shaped tree keeps them under, so an install reads
-    // them back without knowing which origin they came from.
+    // them back without knowing which origin they came from. Bytes
+    // already there are the same bytes — the loop above refused anything
+    // else — so one licence file two copies came under is written once.
     for (relative, bytes) in notices {
-        write_file(&root.join(relative), bytes)?;
+        let target = root.join(relative);
+        if crate::author::import::notice_standing(&target, bytes)
+            == crate::author::import::NoticeStanding::Absent
+        {
+            write_file(&target, bytes)?;
+        }
     }
     Ok(slot_id(kind, name))
 }
@@ -396,12 +438,27 @@ pub(super) fn remove(env: &Env, template: &Template) -> Result<()> {
 /// the notices those copies came under. Only this template's own store is
 /// touched, and only what no remaining member accounts for.
 pub(super) fn prune(env: &Env, before: &Template, after: &Template) -> Result<()> {
+    let root = root(env, &before.id);
+    // Nothing to prune, and nothing to open a reader on: a template whose
+    // copies are gone, or which never had any, has no store on disk.
+    if !root.is_dir() {
+        return Ok(());
+    }
+    let sealed = SealedSource::open(&root)?;
     let kept: BTreeSet<&str> = held_paths(after).collect();
     for id in held_paths(before).collect::<BTreeSet<&str>>() {
         if kept.contains(id) {
             continue;
         }
         let path = copy_path(env, before, id)?;
+        // Where the delete would actually land, asked of the same reader
+        // every read of this store goes through: it refuses a path outside
+        // the root, and any symlink on the way to one. A recorded id
+        // cannot spell an escape past [`copy_path`], but a link dropped
+        // into the store can still put a path inside it over content
+        // outside — and this is a delete, so it is asked before the
+        // removal rather than after it.
+        sealed.contained(&path)?;
         if path.exists() {
             remove_path(&path)?;
         }

@@ -248,7 +248,31 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
         }
     }
     let mut groups: Vec<ResolvedGroup> = groups.into_values().collect();
-    for group in &mut groups {
+    read_against_machine(env, &personal, &mut groups, &mut missing);
+    Ok(Resolution {
+        groups,
+        copies,
+        missing,
+    })
+}
+
+/// What this machine can add to each group once its members are gathered:
+/// the version its cache last saw, and whether the marketplace still
+/// offers what the template names.
+///
+/// The second half is why this runs before the first write rather than at
+/// the add. A template records identities, not content: the marketplace
+/// can drop or rename a package after the template was saved, and an add
+/// meets that only after an earlier group has been committed. Asked here,
+/// where an unreachable copy is already answered, so the page and the
+/// install read one judgement.
+fn read_against_machine(
+    env: &Env,
+    personal: &Manifest,
+    groups: &mut [ResolvedGroup],
+    missing: &mut Vec<MissingMember>,
+) {
+    for group in groups {
         // What this machine already has. A read that finds nothing is not
         // a failure: the repository is fetched when the install runs.
         // Reported as last-known because it is a cache, not a fresh look.
@@ -257,56 +281,92 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
             group.version = Some(resolution.commit);
             group.last_known = true;
         }
-        // And what it still offers. A template records identities, not
-        // content: the marketplace can drop or rename a package after the
-        // template was saved, and nothing used to notice until an add
-        // refused — after any earlier group had already been written.
-        // Asked here, where an unreachable copy is already answered, so
-        // both the page and the install read one judgement made before
-        // the first write.
-        match offered_by(env, &personal, group) {
-            None => {}
-            Some(Ok((sealed, config))) => keep_offered(&sealed, &config, group, &mut missing),
-            // The marketplace is there and will not read. No member of it
-            // can be confirmed, which is what its rows have to say — the
-            // answer an unreadable copy already gets.
-            Some(Err(error)) => drop_unconfirmed(group, &mut missing, &error.to_string()),
+        match standing_of(env, personal, group) {
+            Standing::Unsubscribed => {}
+            Standing::Readable(opened) => {
+                let (sealed, config) = opened.as_ref();
+                keep_offered(sealed, config, group, missing);
+            }
+            // No member of this group can be confirmed, and the reason is
+            // about the marketplace rather than about any member.
+            Standing::Unserviceable(why) => drop_unconfirmed(group, missing, &why),
         }
     }
-    Ok(Resolution {
-        groups,
-        copies,
-        missing,
-    })
 }
 
-/// The catalog a group's marketplace resolves to on this machine, or
-/// `None` where nothing here can read it yet and so nothing can be said
-/// about its members.
+/// What this machine can say about a group's marketplace before anything
+/// is written.
+enum Standing {
+    /// Nothing subscribes to it here, so there is nothing to judge.
+    Unsubscribed,
+    /// The subscription is here and its catalog reads. Boxed because it
+    /// dwarfs the other two, which are what most groups answer.
+    Readable(
+        Box<(
+            crate::source_read::SealedSource,
+            crate::source::SourceConfig,
+        )>,
+    ),
+    /// The subscription is here and cannot serve its catalog, for a reason
+    /// this machine already holds. Every member of the group is reported
+    /// with it.
+    Unserviceable(String),
+}
+
+/// Where a group's marketplace stands on this machine, asked before the
+/// first write.
 ///
-/// Only a marketplace a personal subscription already carries is asked.
-/// One nothing subscribes to, and one whose cache cannot serve it yet, are
-/// fetched when the install runs: a member is not absent from a catalog
-/// that has never been read, and claiming otherwise would refuse every
-/// template a person saved before subscribing.
-fn offered_by(
-    env: &Env,
-    personal: &Manifest,
-    group: &ResolvedGroup,
-) -> Option<
-    Result<(
-        crate::source_read::SealedSource,
-        crate::source::SourceConfig,
-    )>,
-> {
-    let alias = group.source.as_deref()?;
+/// Which states are answered here, and which are deliberately left to the
+/// install, is the whole of this function:
+///
+/// - **Pending, disabled, missing, and a catalog that opens unusable** are
+///   answered here. Every one of them is knowable with no network read —
+///   [`crate::source::resolve`] and the opened config say so — and leaving
+///   them to the add that meets them was an ordering defect, not a
+///   deferral: that add runs after an earlier group has been committed, so
+///   the run wrote half a template before reporting a state it could have
+///   named first.
+/// - **A marketplace nothing subscribes to** is deliberately not answered.
+///   Installing a template may create the subscription, and that is the
+///   ordinary path for a template saved before subscribing; refusing here
+///   would break it.
+/// - **A repository this machine has never fetched** is deliberately not
+///   answered either. Judging one needs a network read, and the template
+///   page calls `resolve` on every open.
+fn standing_of(env: &Env, personal: &Manifest, group: &ResolvedGroup) -> Standing {
+    let Some(alias) = group.source.as_deref() else {
+        return Standing::Unsubscribed;
+    };
+    let repo = crate::names::shown(&group.repo);
     match crate::source::resolve(env, &Scope::Global, alias, personal) {
-        Ok(crate::source::SourceState::Ready(source)) => Some(read_catalog(&source)),
-        // Pending, disabled or missing. Each is a fact about the
-        // subscription rather than about a member, and each is reported by
-        // the add that meets it.
-        Ok(_) => None,
-        Err(error) => Some(Err(error)),
+        Ok(crate::source::SourceState::Ready(source)) => match read_catalog(&source) {
+            // A catalog kendex cannot read as a catalog says nothing about
+            // any name in it: every lookup would answer not-offered, and
+            // the person would be told their whole template had gone when
+            // the marketplace is what is wrong. Reported as the state it
+            // is instead.
+            Ok((_, config)) if config.mode == crate::source::CatalogMode::Unusable => {
+                Standing::Unserviceable(format!(
+                    "{repo} is on this machine but kendex cannot read it as a marketplace, so what it offers is unknown"
+                ))
+            }
+            Ok(opened) => Standing::Readable(Box::new(opened)),
+            Err(error) => Standing::Unserviceable(error.to_string()),
+        },
+        // Said as the state the subscription is in rather than as a
+        // missing member: the package may well still be there, and the
+        // way out is about the marketplace.
+        Ok(crate::source::SourceState::Pending { .. }) => Standing::Unserviceable(format!(
+            "{repo} is not on this machine yet — refresh it, then install"
+        )),
+        Ok(crate::source::SourceState::Disabled { .. }) => Standing::Unserviceable(format!(
+            "{repo} is switched off in your personal setup — switch it back on, then install"
+        )),
+        Ok(crate::source::SourceState::Missing { path, .. }) => Standing::Unserviceable(format!(
+            "{repo} is declared at {}, and there is nothing there — repair the subscription, then install",
+            crate::paths::slashed(&path)
+        )),
+        Err(error) => Standing::Unserviceable(error.to_string()),
     }
 }
 
@@ -321,21 +381,16 @@ fn read_catalog(
     Ok((sealed, config))
 }
 
-/// Keep the members this catalog still offers, and report the rest.
-///
-/// A catalog kendex cannot read as a catalog at all says nothing about any
-/// name in it: every lookup below would answer "not offered" and the
-/// person would be told their whole template had gone, when what is wrong
-/// is the marketplace.
+/// Keep the members this catalog still offers, and report the rest. Only
+/// a catalog [`standing_of`] read as serviceable reaches here, so a
+/// lookup that answers "not offered" is about the name and not about the
+/// marketplace.
 fn keep_offered(
     sealed: &crate::source_read::SealedSource,
     config: &crate::source::SourceConfig,
     group: &mut ResolvedGroup,
     missing: &mut Vec<MissingMember>,
 ) {
-    if config.mode == crate::source::CatalogMode::Unusable {
-        return;
-    }
     let repo = group.repo.clone();
     let mut gone: Vec<(MemberKind, String, String)> = Vec::new();
     group.items.retain(|item| {
@@ -789,8 +844,12 @@ fn install_local(
 /// destination, at the same `NOTICES/<source>/` the store keeps them in
 /// and an authored catalog writes them to.
 ///
-/// Bytes already there under one of these names are left alone: identical
-/// ones need no write, and different ones are somebody else's.
+/// A file already there answers to the one rule this repository keeps for
+/// it: identical bytes are the same terms and need no write, different
+/// bytes are somebody else's terms under a name these bytes claim and the
+/// install refuses. Skipping a differing file instead would leave the
+/// copies this install writes sitting beside licence text that is not
+/// theirs.
 fn notice_ops(
     env: &Env,
     template: &Template,
@@ -799,8 +858,18 @@ fn notice_ops(
     let mut ops = Vec::new();
     for (relative, bytes) in store::notices(env, template)? {
         let target = local_root.join(&relative);
-        if crate::fs::read_if_exists(&target)?.is_some() {
-            continue;
+        match crate::author::import::notice_standing(&target, &bytes) {
+            crate::author::import::NoticeStanding::Absent => {}
+            crate::author::import::NoticeStanding::Same => continue,
+            crate::author::import::NoticeStanding::Different => {
+                return Err(CoreError::TemplateMemberUnavailable {
+                    name: crate::paths::slashed(&relative),
+                    why: format!(
+                        "{} already holds different terms under this name — the licence text there is not the one this template's copies came under, so remove that file or install into another place",
+                        crate::paths::slashed(&target)
+                    ),
+                });
+            }
         }
         ops.push(PlannedOp {
             description: "copy the licence the template's packages came under".into(),

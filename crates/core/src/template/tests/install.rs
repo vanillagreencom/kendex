@@ -668,3 +668,145 @@ fn a_member_the_marketplace_no_longer_offers_is_reported_before_any_write() {
     ));
     assert_eq!(snapshot(root), before, "the refusal wrote into the project");
 }
+
+/// Terms already at the destination answer the same rule the store does:
+/// the same bytes are reused, different bytes refuse rather than being
+/// skipped. Skipping left this template's copies sitting beside licence
+/// text that is not theirs.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_destination_holding_different_terms_refuses_rather_than_skipping() {
+    let project = seeded();
+    super::skill(
+        &project.root.join(".claude/skills"),
+        "gh",
+        "edited here, not upstream",
+    );
+    let template = create_from_project(
+        &project.env,
+        &project.root,
+        &Chosen {
+            name: "Licensed".to_owned(),
+            members: vec!["skill:gh".to_owned()],
+            sides: std::collections::BTreeMap::from([(
+                "skill:gh".to_owned(),
+                Side::Copy {
+                    license: LicenseAnswer {
+                        confirmed: true,
+                        basis: None,
+                    },
+                },
+            )]),
+            ..Chosen::default()
+        },
+    )
+    .unwrap();
+
+    let target = destination(&project, "opinionated");
+    let Scope::Project { root } = &target else {
+        unreachable!("built as a project scope")
+    };
+    // The destination already holds terms of its own under that name.
+    let held = root
+        .join(crate::source::LOCAL_SOURCE_DIR)
+        .join(crate::author::import::NOTICES_DIR)
+        .join("cat/LICENSE");
+    fs::create_dir_all(held.parent().unwrap()).unwrap();
+    fs::write(&held, "Someone else's terms\n").unwrap();
+
+    let refused = install(&project.env, &template, &target, None, None);
+    let Err(CoreError::TemplateMemberUnavailable { why, .. }) = refused else {
+        panic!("differing terms should refuse: {refused:?}");
+    };
+    assert!(why.contains("already holds different terms"), "{why}");
+    assert_eq!(
+        fs::read_to_string(&held).unwrap(),
+        "Someone else's terms\n",
+        "the refusal wrote over the terms it refused"
+    );
+
+    // The inverse: the same terms are the same terms, and the install goes
+    // through — so the row above cannot pass over a path that always
+    // refuses.
+    fs::write(&held, "MIT License\n").unwrap();
+    install(&project.env, &template, &target, None, None).unwrap();
+}
+
+/// A subscription state this machine already knows is reported before the
+/// first write, not by the add that meets it after a group has landed.
+///
+/// Each of these is answerable with no network read, and each used to be
+/// left to the add — which runs after an earlier group is committed, so a
+/// run wrote half a template before naming a state it could have named
+/// first. The reason names the subscription rather than the member,
+/// because the package may well still be there.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_subscription_state_this_machine_knows_is_reported_before_any_write() {
+    let project = seeded();
+    let template = template_of(&project, "Rust service");
+    let personal = crate::manifest::manifest_path(&project.env, &Scope::Global);
+
+    // Nothing subscribes to the marketplace yet, and that arm is
+    // deliberate: installing a template may create the subscription, which
+    // is the ordinary path for one saved before subscribing.
+    let first = destination(&project, "fresh");
+    let landed = install(&project.env, &template, &first, None, None).unwrap();
+    assert_eq!(landed.subscribed.len(), 1, "{landed:?}");
+    assert!(landed.stopped.is_none(), "{landed:?}");
+
+    // Switched off in the personal setup: the marketplace is there and
+    // will serve nothing. Written through the manifest's own writer, so
+    // the fixture cannot put the flag in a table it did not mean.
+    let switched_off = |off: bool| {
+        let mut manifest = crate::manifest::load_current(&personal).unwrap().unwrap();
+        for decl in manifest.sources.values_mut() {
+            decl.enabled = off;
+        }
+        crate::manifest::save(&personal, &manifest).unwrap();
+    };
+    switched_off(false);
+
+    let target = destination(&project, "second");
+    let Scope::Project { root } = &target else {
+        unreachable!("built as a project scope")
+    };
+    let before = snapshot(root);
+    let resolution = resolve(&project.env, &template).unwrap();
+    let why = &resolution
+        .missing
+        .first()
+        .unwrap_or_else(|| {
+            panic!("the switched-off marketplace should be reported: {resolution:?}")
+        })
+        .why;
+    assert!(why.contains("switched off"), "{why}");
+    assert!(
+        matches!(
+            install(&project.env, &template, &target, None, None),
+            Err(CoreError::TemplateMemberUnavailable { .. })
+        ),
+        "a switched-off marketplace must refuse before it writes"
+    );
+    assert_eq!(snapshot(root), before, "the refusal wrote into the project");
+
+    // A catalog kendex cannot read as a marketplace is the same class of
+    // answer, and says so rather than calling every member absent.
+    switched_off(true);
+    fs::write(project.catalog.join("kendex.toml"), "not = [valid toml\n").unwrap();
+    let unusable = resolve(&project.env, &template).unwrap();
+    let why = &unusable
+        .missing
+        .first()
+        .unwrap_or_else(|| panic!("an unreadable marketplace should be reported: {unusable:?}"))
+        .why;
+    assert!(why.contains("cannot read it as a marketplace"), "{why}");
+    assert!(
+        matches!(
+            install(&project.env, &template, &target, None, None),
+            Err(CoreError::TemplateMemberUnavailable { .. })
+        ),
+        "an unreadable marketplace must refuse before it writes"
+    );
+    assert_eq!(snapshot(root), before, "the refusal wrote into the project");
+}

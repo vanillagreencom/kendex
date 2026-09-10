@@ -12,7 +12,7 @@
 //! selections — are refused before anything is written.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -434,6 +434,42 @@ pub fn resolve(env: &Env, scopes: &[Scope], selection: &ImportSelection) -> Resu
 /// `NOTICES/<source>/<file>`. One spelling, because the import writes it
 /// and the template store and every destination read it back.
 pub const NOTICES_DIR: &str = "NOTICES";
+
+/// How a licence file already at a destination stands against the bytes
+/// that want to be there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoticeStanding {
+    /// Nothing is there. The bytes are written.
+    Absent,
+    /// The same bytes are already there. Nothing to write, and nothing
+    /// wrong: one licence file reached through two origins is one file.
+    Same,
+    /// Different bytes are already there, or bytes that cannot be read
+    /// back to compare. The caller refuses.
+    Different,
+}
+
+/// The one rule for a licence file that is already where these bytes go.
+///
+/// Bytes that match are the same terms, so the write is dropped; bytes
+/// that differ are somebody else's terms under a name these bytes claim,
+/// so the caller refuses and says which file. Never an overwrite, which
+/// puts one origin's terms over another's, and never a silent skip, which
+/// leaves content associated with terms that are not its own — the two
+/// ways of getting this wrong, and the reason every site asks here rather
+/// than deciding for itself.
+///
+/// Bytes that will not read back are `Different` deliberately: bytes that
+/// cannot be compared cannot be confirmed as these.
+pub fn notice_standing(dest: &Path, bytes: &[u8]) -> NoticeStanding {
+    if dest.symlink_metadata().is_err() {
+        return NoticeStanding::Absent;
+    }
+    match std::fs::read(dest) {
+        Ok(existing) if existing == bytes => NoticeStanding::Same,
+        _ => NoticeStanding::Different,
+    }
+}
 
 /// Whether the evidence a person gave satisfies [`license_gate`] for
 /// bytes offered under `license`.
