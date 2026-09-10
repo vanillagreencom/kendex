@@ -1,0 +1,1 @@
+- A place's marketplaces dialog closes when its folder stops being readable, instead of leaving writes aimed at a folder kendex can no longer open.

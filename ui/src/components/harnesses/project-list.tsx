@@ -1,5 +1,5 @@
 import { MoreHorizontal } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { MissingProject, ProjectFlag, Scope } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AddProjectDialog } from "@/components/harnesses/add-project-dialog";
@@ -140,6 +140,16 @@ function PlaceActions({
   onRemove?: () => void;
 }) {
   const [marketplacesOpen, setMarketplacesOpen] = useState(false);
+  // A folder can stop being readable while this dialog stands open — a
+  // rescan on focus, a disk unmounted, the folder renamed from a
+  // terminal. Its controls write this place's own manifest, which is
+  // exactly what the menu behind it withholds once the place cannot be
+  // read; leaving it open leaves those writes reachable, and one of them
+  // would seed a manifest and recreate the folder that went away. So the
+  // dialog goes when the place does, on the same one bit.
+  useEffect(() => {
+    if (!reachable) setMarketplacesOpen(false);
+  }, [reachable]);
   return (
     <>
       <DropdownMenu>

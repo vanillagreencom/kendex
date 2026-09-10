@@ -318,6 +318,43 @@ describe("a place card's actions", () => {
     expect(useNavStore.getState().page).toBe("projects");
   });
 
+  // The menu withholds every write once the folder cannot be read, and a
+  // dialog already open is the same write one step past the menu: its
+  // controls rewrite this place's manifest, and a write aimed at a folder
+  // nothing was read from is what the guard exists to stop. A folder goes
+  // unreadable while a window is open — a rescan on focus, an unmounted
+  // disk — so the dialog closes on the same bit the menu reads.
+  it("closes an open marketplaces dialog when the folder stops being readable", async () => {
+    const host = mount(<ProjectList />);
+    await settle();
+
+    await openActions(host, "acme");
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (el) => el.textContent === PLACE_MARKETPLACES_LABEL,
+    );
+    if (!(item instanceof HTMLElement)) throw new Error("no marketplaces item");
+    await userEvent.click(item);
+    await settle();
+    expect(document.body.textContent).toContain(placeMarketplacesTitle("acme"));
+
+    await act(async () => {
+      useScanStore.setState({
+        result: {
+          ...emptyScan,
+          readProjects: ["/work/client"],
+          missingProjects: [
+            { root: "/work/acme", why: { kind: "gone" } },
+          ] as never,
+        },
+      });
+    });
+    await settle();
+
+    expect(document.body.textContent).not.toContain(
+      placeMarketplacesTitle("acme"),
+    );
+  });
+
   it("offers Personal its marketplaces and nothing about a folder", async () => {
     const host = mount(<ProjectList />);
     await settle();

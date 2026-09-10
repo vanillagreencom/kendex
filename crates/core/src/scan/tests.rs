@@ -440,14 +440,25 @@ fn a_path_that_is_not_a_readable_folder_says_which_it_is() {
         missing_why(&home.join("dev/file.txt")),
         Some(MissingWhy::NotAFolder)
     );
-    // A component of the path is a file, so the read fails as something
-    // other than "nothing is there".
+    // A component of the path is a file, so nothing can be opened at it.
+    // Which of the three readings that is belongs to the platform, and
+    // both are the system's own words: Unix fails the stat as "not a
+    // directory", and Windows resolves the path first, so a file in the
+    // way makes the path itself not found — which is what it is there.
+    // Neither says a file stands at this path, and the card offers the
+    // reading's own remedy either way.
+    #[cfg(unix)]
     assert!(
         matches!(
             missing_why(&home.join("dev/file.txt/inside")),
             Some(MissingWhy::Unreadable { said }) if !said.is_empty()
         ),
         "a path that could not be read at all is neither gone nor a file"
+    );
+    #[cfg(windows)]
+    assert_eq!(
+        missing_why(&home.join("dev/file.txt/inside")),
+        Some(MissingWhy::Gone)
     );
 
     // A folder the account may not open. It stats like any other, so a
