@@ -1,11 +1,25 @@
 #!/usr/bin/env bash
 # md-refs checks links, section routes, and decision references in markdown,
-# and the `<path>.md § Heading` citations a source file carries in its
-# COMMENT TEXT or a TOML file in its string literals. Both callers and targets
-# come from the index. A staged change rechecks all configured documents and
-# source files so target edits cannot leave unchanged callers broken. Fenced
-# code is not read. The grammar is in lib/md-refs.awk; comment text and TOML
-# strings come from the comments lane's extractor, lib/comment-text.sh.
+# the `<path>::<phrase>` content citations a markdown file carries, and the
+# `<path>.md § Heading` citations a source file carries in its COMMENT TEXT or
+# a TOML file in its string literals. Both callers and targets come from the
+# index. A staged change rechecks all configured documents and source files so
+# target edits cannot leave unchanged callers broken. Fenced code is not read.
+# The grammar is in lib/md-refs.awk; comment text and TOML strings come from
+# the comments lane's extractor, lib/comment-text.sh.
+#
+# A content citation is a markdown code span whose text before the first `::`
+# holds a `/` and is spelled from path characters only, with a non-empty
+# phrase after it: `crates/core/src/x.rs::the_test_name`. The path must name a
+# tracked file and that file must hold the phrase, byte for byte. That is the
+# whole claim: the phrase is a literal substring, not a parsed test name, so
+# the citation proves the file still carries the text the sentence quotes and
+# proves nothing about what the text means. A path in a code span WITHOUT the
+# `::` phrase stays a name, not a citation — a default value, a file a skill
+# writes at run time, a path in another repository — and judging those would
+# refuse prose this catalog's own documents are full of. The form is read in
+# markdown only, never in comment text, where the section sign pre-filter that
+# keeps the source pass cheap has no counterpart for `::`.
 #
 # Exit codes: 0 clean; 1 dead references; 2 usage/config/collection error.
 set -euo pipefail
@@ -48,12 +62,14 @@ usage() {
   cat <<EOF
 usage: md-refs [--staged | --all]
 
-A dead relative link, code-span section or anchor citation, or decision
-reference fails. A link followed by § must start with a heading from its
-target; prose may follow that heading. Fenced code is not read. A path alone
-in a code span is not a citation. Decision IDs are judged only where
-DECISIONS_DIR is tracked, and one carrying '§ Heading' is judged against
-that decision's headings too.
+A dead relative link, code-span section, anchor or content citation, or
+decision reference fails. A link followed by § must start with a heading from
+its target; prose may follow that heading. Fenced code is not read. A path
+alone in a code span is not a citation; one holding '<path>::<phrase>', the
+path spelled with a '/' from path characters, is one, and fails unless that
+path names a tracked file holding the phrase byte for byte. Decision IDs are
+judged only where DECISIONS_DIR is tracked, and one carrying '§ Heading' is
+judged against that decision's headings too.
 
 A source file is read for the same '<path>.md § Heading' citation in its
 COMMENT TEXT, and a TOML file in its string literals as well, resolved as the
@@ -318,12 +334,43 @@ while IFS= read -r target; do
     || gg_fail headings-exit "$target:$?" "The heading parser failed."
 done <"$GG_TMP/targets"
 
+# Pass two, continued: the phrases each content citation claims its file holds.
+# The pairs are sorted so every phrase for one target is contiguous and the
+# blob behind them is read once.
+LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=contents -v tracked="$GG_TMP/tracked" \
+  -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/wanted" \
+  || gg_fail contents-exit "$?" "The citation content resolver failed."
+LC_ALL=C sort -- "$GG_TMP/wanted" >"$GG_TMP/wanted.sorted" \
+  || gg_fail contents-sort "$?" "The citation phrase list could not be sorted."
+: >"$GG_TMP/contents.tsv"
+cited=""
+while IFS="$GG_TAB" read -r target phrase; do
+  [ -n "$target" ] || continue
+  if [ "$target" != "$cited" ]; then
+    gg_read_blob ":0:$target" "$target" "cited file"
+    if gg_blob_is_binary "$GG_TMP/blob" "$target"; then
+      gg_fail target-binary "$target" "A citation cannot target binary content."
+    fi
+    cited="$target"
+  fi
+  grep_status=0
+  LC_ALL=C grep -q -F -e "$phrase" -- "$GG_TMP/blob" || grep_status=$?
+  case "$grep_status" in
+    0) printf 'P\t%s\t%s\n' "$target" "$phrase" >>"$GG_TMP/contents.tsv" ;;
+    1) ;;
+    # Anything else is an unread file, not an absent phrase: naming the
+    # citation dead there would blame the document for a tool failure.
+    *) gg_fail content-search "$target:$grep_status" "The cited file could not be searched." ;;
+  esac
+done <"$GG_TMP/wanted.sorted"
+
 # Pass three: the verdict.
 LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=verdict -v tracked="$GG_TMP/tracked" -v headings="$GG_TMP/headings.tsv" \
+  -v contents="$GG_TMP/contents.tsv" \
   -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/verdict" \
   || gg_fail references-exit "$?" "The reference resolver failed."
 
-REMEDY="point the reference at a tracked file, a heading it has, or a recorded decision, or delete it"
+REMEDY="point the reference at a tracked file, a heading or phrase it has, or a recorded decision, or delete it"
 violations=0
 judged=""
 while IFS="$GG_TAB" read -r kind a b c detail; do
