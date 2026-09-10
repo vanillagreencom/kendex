@@ -42,6 +42,8 @@ import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
+import { joinAnswered } from "@/test/identity-join";
+import { observed } from "@/test/observed";
 import { ProjectList } from "./project-list";
 
 vi.mock("@/bindings", () => ({
@@ -381,21 +383,22 @@ describe("a place card's actions", () => {
   });
 });
 
-const installed = (overrides: Partial<ObservedItem>): ObservedItem => ({
-  kind: "skill",
-  name: "deploy",
-  harness: "claude",
-  scope: { scope: "global" },
-  path: "/h/.claude/skills/deploy",
-  fileState: { state: "dir" },
-  enabled: true,
-  origin: null,
-  description: null,
-  tags: [],
-  modifiedAt: null,
-  vendor: null,
-  ...overrides,
-});
+const installed = (overrides: Partial<ObservedItem>): ObservedItem =>
+  observed({
+    kind: "skill",
+    name: "deploy",
+    harness: "claude",
+    scope: { scope: "global" },
+    path: "/h/.claude/skills/deploy",
+    fileState: { state: "dir" },
+    enabled: true,
+    origin: null,
+    description: null,
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+    ...overrides,
+  });
 
 // Personal holds two skills over three installations: one of them is applied
 // to two harnesses. Counting installations puts 3 on the card's badge over a
@@ -450,6 +453,21 @@ describe("a place card's kind badge", () => {
     vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
     useUpdatesStore.setState({ rows: [], read: READ_LANDED });
     useScanStore.setState({ scanning: false, result: machine, error: null });
+    // What the fixture means by a package held in two places: each name is
+    // one recorded package, whichever place or tool holds a copy. Said to
+    // the join, because that is what establishes it — two files wearing
+    // one name establish nothing on their own.
+    joinAnswered(
+      (useScanStore.getState().result?.items ?? []).map((item) => ({
+        scope: item.scope,
+        kind: item.kind,
+        name: item.name,
+        harness: item.harness,
+        at: item.path,
+        origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
+        package: { kind: item.kind, name: item.name },
+      })),
+    );
     useSettingsStore.setState({
       settings: { projects: ["/work/acme"] } as never,
     });

@@ -26,6 +26,7 @@ import { canUpdatePlace, placeName, updateWithheld } from "@/lib/update-groups";
 import { readUnsettled } from "@/lib/updates-read-state";
 import { versionLabel } from "@/lib/versions";
 import { useNavStore } from "@/stores/nav";
+import type { PackageRef } from "@/stores/nav-types";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
 
@@ -66,7 +67,14 @@ export function PlaceCells({
   // What stands in the way of this row's update, if anything — one
   // reading, the same the dialog's own offer acts on.
   const withheld = updateWithheld(row);
-  const ref = { kind: row.kind, name: row.name, scope: row.scope };
+  // An update row comes from the install records, so it names a package
+  // they account for.
+  const ref: PackageRef = {
+    kind: row.kind,
+    name: row.name,
+    scope: row.scope,
+    identity: "recorded",
+  };
 
   return (
     <>

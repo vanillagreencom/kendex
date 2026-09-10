@@ -55,7 +55,9 @@ export function PackageSidebar({
    *  run — it is still the last answer — so the button is what says the
    *  page is doing something about it. */
   retryRunning: boolean;
-  onToggle: (scope: Scope, enable: boolean) => void;
+  /** Absent where this page addresses no declaration — the switch writes
+   *  one, and there is none behind an installation nothing recorded. */
+  onToggle?: (scope: Scope, enable: boolean) => void;
   onSwitchVersion: (row: VersionRow) => void;
   onCompare: (row: VersionRow) => void;
   onFollow: () => void;
@@ -63,7 +65,10 @@ export function PackageSidebar({
   /** Read this package again, offered beside the note above. */
   onRetryFiles: () => void;
 }) {
-  const managed = group.kind === "agent" || group.kind === "skill";
+  // A switch needs a declaration to write, and a kind that has one.
+  const managed =
+    onToggle !== undefined &&
+    (group.kind === "agent" || group.kind === "skill");
   const anyDisabled = group.installations.some((i) => i.enabled === false);
   return (
     <div className="w-full shrink-0 space-y-7 lg:w-[24rem]">
@@ -79,7 +84,7 @@ export function PackageSidebar({
             id="package-enabled"
             checked={!anyDisabled}
             disabled={busy}
-            onCheckedChange={() => onToggle(primary.scope, anyDisabled)}
+            onCheckedChange={() => onToggle?.(primary.scope, anyDisabled)}
           />
         </SettingRow>
       ) : null}

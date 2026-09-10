@@ -249,21 +249,31 @@ mod tests {
         }
     }
 
-    /// One kind stored as another is the whole of the cross-kind mapping:
-    /// a renderer exists for exactly this pair, so any further entry in
-    /// the table must arrive with the renderer that serves it.
+    /// Every kind stored as another, and no others: a renderer exists for
+    /// exactly these pairs, so a further entry in the table must arrive
+    /// with the renderer that serves it — and a pair the renderer takes
+    /// that the table does not name leaves every reader of the table
+    /// looking for the artifact under the kind it was declared as.
     #[test]
-    fn the_only_kind_stored_as_another_is_a_codex_command() {
-        for harness in HarnessId::ALL {
-            for kind in ItemKind::ALL {
-                if let Some(emitted) = capabilities(harness, kind).installs_as {
-                    assert_eq!(
-                        (harness, kind, emitted),
-                        (HarnessId::Codex, ItemKind::Command, ItemKind::Skill)
-                    );
-                }
-            }
-        }
+    fn every_kind_stored_as_another_is_one_the_renderer_takes() {
+        let stored: Vec<_> = HarnessId::ALL
+            .into_iter()
+            .flat_map(|harness| ItemKind::ALL.map(|kind| (harness, kind)))
+            .filter_map(|(harness, kind)| {
+                capabilities(harness, kind)
+                    .installs_as
+                    .map(|emitted| (harness, kind, emitted))
+            })
+            .collect();
+        assert_eq!(
+            stored,
+            [
+                // `engine::desired_command::as_skill`.
+                (HarnessId::Codex, ItemKind::Command, ItemKind::Skill),
+                // `engine::targets::hook_target`'s cursor arm.
+                (HarnessId::Cursor, ItemKind::Hook, ItemKind::Agent),
+            ]
+        );
     }
 
     /// A hook the tool merely reads must never be presented as one it runs.

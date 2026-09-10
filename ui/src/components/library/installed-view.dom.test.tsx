@@ -1,11 +1,24 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ObservedItem, Scope } from "@/bindings";
+import type {
+  HarnessId,
+  ItemKind,
+  ObservedItem,
+  Origin,
+  ProvenanceRow,
+  Scope,
+} from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
 import { openLibraryAt } from "@/components/library/use-filter-handoff";
+import {
+  PACKAGES_CHECK_FAILED_TITLE,
+  PACKAGES_UNCONFIRMED_TITLE,
+  TRY_AGAIN_LABEL,
+} from "@/lib/copy";
 import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
 import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
+import { observedAt } from "@/lib/derive";
 import {
   READ_LANDED,
   READ_PENDING,
@@ -20,6 +33,8 @@ import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
+import { joinAnswered } from "@/test/identity-join";
+import { observed } from "@/test/observed";
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
 const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
@@ -58,6 +73,23 @@ describe("a customized package in the Library list", () => {
   beforeEach(() => {
     vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
     vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    // One package customized in two places, which is what the fixture is
+    // about — so the join says it is one, since two copies wearing a name
+    // establish nothing on their own.
+    useProvenanceStore.setState({
+      rows: [VG, HYPR].map((scope) => ({
+        scope,
+        kind: "skill" as const,
+        name: "gh",
+        harness: "claude" as const,
+        at: installed(scope).path,
+        origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
+        package: { kind: "skill" as const, name: "gh" },
+      })),
+      loaded: true,
+      answeredFor: 0,
+      read: READ_LANDED,
+    });
     useEditorStore.setState({
       saved: { "/work/vg": mine as never, "/work/hyprtrade": mine as never },
     });
@@ -125,6 +157,14 @@ describe("the Library narrowed to packages edited on disk", () => {
   beforeEach(() => {
     vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
     vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    // The join has answered and found nothing recorded: these packages
+    // are grouped as the scan saw them, which is what the fixture means.
+    useProvenanceStore.setState({
+      rows: [],
+      loaded: true,
+      answeredFor: 0,
+      read: READ_LANDED,
+    });
     useEditorStore.setState({ saved: {} });
     useUpdatesStore.setState({ rows: rows as never, read: READ_LANDED });
     useScanStore.setState({
@@ -356,6 +396,19 @@ describe("the marketplace a Library row came from", () => {
     path: "/work/vg/.claude/skills/gh",
   } as unknown as ObservedItem;
 
+  // What the records say about one of those copies. Both places record the
+  // same package, which is what puts the two copies on one row; the alias
+  // below is declared at hyprtrade and nowhere else.
+  const recorded = (item: ObservedItem, origin: Origin): ProvenanceRow => ({
+    scope: item.scope,
+    kind: item.kind,
+    name: item.name,
+    harness: item.harness,
+    at: observedAt(item),
+    package: { kind: "skill", name: "gh" },
+    origin,
+  });
+
   beforeEach(() => {
     vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
     vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
@@ -372,19 +425,16 @@ describe("the marketplace a Library row came from", () => {
       } as never,
     });
     // Provenance answers in its own order, and the row it answers with is
-    // hyprtrade's: the alias below is declared there and nowhere else.
-    useProvenanceStore.setState({
-      rows: [
-        {
-          scope: HYPR,
-          kind: "skill",
-          name: "gh",
-          harness: "claude",
-          origin: { origin: "marketplace", source: "kit", repo: "vg/kit" },
-        },
-      ] as never,
-      loaded: true,
-    });
+    // hyprtrade's: the alias is declared there and nowhere else, while the
+    // group's first installation is vg's.
+    joinAnswered([
+      recorded(fromKit, {
+        origin: "marketplace",
+        source: "kit",
+        repo: "vg/kit",
+      }),
+      recorded(fromOther, { origin: "own", forkedFrom: null, source: "local" }),
+    ]);
     useLibraryViewStore.setState({ ...NO_FILTERS });
     useNavStore.setState({
       page: "library",
@@ -415,18 +465,10 @@ describe("the marketplace a Library row came from", () => {
   // The control: a package the reader wrote names no marketplace, so the
   // cell stays text and there is nothing to open.
   it("leaves a row with no marketplace unopenable", () => {
-    useProvenanceStore.setState({
-      rows: [
-        {
-          scope: HYPR,
-          kind: "skill",
-          name: "gh",
-          harness: "claude",
-          origin: { origin: "own", forkedFrom: null },
-        },
-      ] as never,
-      loaded: true,
-    });
+    joinAnswered([
+      recorded(fromKit, { origin: "own", forkedFrom: null, source: "local" }),
+      recorded(fromOther, { origin: "own", forkedFrom: null, source: "local" }),
+    ]);
     const host = mount(<InstalledView />);
     const from = [...host.querySelectorAll("button")].find(
       (button) => button.textContent === "Your own",
@@ -493,5 +535,275 @@ describe("the Library narrowed to a place that has nothing", () => {
 
     expect(host.textContent).not.toContain(nothingInstalledIn("hyprtrade"));
     expect(host.textContent).toContain("Clear filters");
+  });
+});
+
+// The reported defect: one hook installed for several tools stood as a
+// row per tool, because each tool stores it under a spelling of its own.
+// The join says which of those are one package, and the table shows that.
+describe("one package several tools store differently", () => {
+  const at = (
+    harness: HarnessId,
+    kind: ItemKind,
+    name: string,
+    path: string,
+  ): ObservedItem =>
+    observed({
+      kind,
+      name,
+      harness,
+      scope: VG,
+      path,
+      fileState: { state: "file" },
+      enabled: true,
+      origin: null,
+      description: null,
+      tags: [],
+      modifiedAt: null,
+      vendor: null,
+    });
+
+  const items = [
+    at(
+      "claude",
+      "hook",
+      "PreToolUse:Bash:block-bare-cd",
+      "/work/vg/.claude/settings.json",
+    ),
+    at(
+      "cursor",
+      "agent",
+      "safety-block-bare-cd",
+      "/work/vg/.cursor/rules/safety-block-bare-cd.mdc",
+    ),
+    // Nobody's record accounts for this one, and it carries the name a
+    // generated rule takes: it is a row of its own or the table is
+    // claiming an owner it has no evidence for.
+    at(
+      "cursor",
+      "agent",
+      "safety-block-argv-kill",
+      "/work/vg/.cursor/rules/safety-block-argv-kill.mdc",
+    ),
+  ];
+
+  // One row per observation, each naming the file it was read from — the
+  // join answers per file, as the scan sees them.
+  const row = (item: ObservedItem) => ({
+    scope: item.scope,
+    kind: item.kind,
+    name: item.name,
+    harness: item.harness,
+    at: item.at,
+    origin: { origin: "marketplace", source: "kendex", repo: "vg/kendex" },
+    package: { kind: "hook", name: "block-bare-cd" },
+  });
+
+  beforeEach(() => {
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED });
+    useProvenanceStore.setState({
+      rows: [
+        row(items[0]),
+        row(items[1]),
+        {
+          scope: VG,
+          kind: "agent",
+          name: "safety-block-argv-kill",
+          harness: "cursor",
+          at: items[2].at,
+          origin: { origin: "unmanaged" },
+          package: null,
+        },
+      ] as never,
+      loaded: true,
+      answeredFor: 0,
+      read: READ_LANDED,
+    });
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items,
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    useLibraryViewStore.setState({ ...NO_FILTERS });
+    useNavStore.setState({ libraryScope: "all", search: "" });
+  });
+
+  const harnessesOf = (host: HTMLElement, row: number) =>
+    [
+      ...(host
+        .querySelectorAll("tbody tr")
+        [row].querySelectorAll("td")[3]
+        ?.querySelectorAll("[aria-label]") ?? []),
+    ].map((mark) => mark.getAttribute("aria-label"));
+
+  const cells = (host: HTMLElement) =>
+    [...host.querySelectorAll("tbody tr")].map((tr) =>
+      [...tr.querySelectorAll("td")].map((td) => td.textContent?.trim() ?? ""),
+    );
+
+  it("shows the package once, under its own name, kind and marketplace", () => {
+    const host = mount(<InstalledView />);
+    const rows = cells(host);
+    expect(rows).toHaveLength(2);
+    // Sorted on the group key, which puts an observation before a package.
+    const [stray, managed] = rows;
+    expect(managed[0]).toContain("block-bare-cd");
+    expect(managed[1]).toBe("Hook");
+    expect(managed[5]).toBe("kendex");
+    // Both tools on the one row, each mark once. A mark is a logo, so the
+    // tool it stands for is read off the label it carries.
+    expect(harnessesOf(host, 1)).toEqual(["Claude Code", "Cursor"]);
+    // The rule nobody recorded keeps its own row and its own answer.
+    expect(stray[0]).toContain("safety-block-argv-kill");
+    expect(stray[1]).toBe("Agent");
+    expect(stray[5]).toBe("Not managed");
+  });
+
+  it("counts the package once and opens it by the identity it shows", () => {
+    const opened: unknown[] = [];
+    useNavStore.setState({
+      libraryScope: "all",
+      search: "",
+      goToPackage: ((ref: unknown) => opened.push(ref)) as never,
+    });
+    const host = mount(<InstalledView />);
+    expect(host.textContent).toContain("2 items");
+    const names = [...host.querySelectorAll("tbody tr td:first-child button")];
+    (names[1] as HTMLButtonElement).click();
+    // ...and the row nothing recorded opens as itself.
+    (names[0] as HTMLButtonElement).click();
+    // The link states which of the two things wearing this kind and name
+    // it meant, so the page cannot open the other one.
+    expect(opened).toEqual([
+      { kind: "hook", name: "block-bare-cd", scope: VG, identity: "recorded" },
+      {
+        kind: "agent",
+        name: "safety-block-argv-kill",
+        scope: VG,
+        identity: "observed",
+        // A row nothing recorded is named by the file it reads: its kind
+        // and name are not its identity.
+        at: "/work/vg/.cursor/rules/safety-block-argv-kill.mdc",
+      },
+    ]);
+  });
+});
+
+// The read that says which installations are one package answers on its own.
+// A first read still on its way, a read that failed with nothing kept, and a
+// read that failed over rows it had are three answers, and only the last has
+// anything to draw.
+describe("the Library while the identity read has not answered", () => {
+  const items = [installed(VG)];
+
+  const arrange = (provenance: {
+    rows: never[];
+    loaded: boolean;
+    /** Which scan the rows answer about, null where none has been
+     *  answered for. The fixtures set the scan store directly, which
+     *  leaves its generation at 0. */
+    answeredFor: number | null;
+    read: ReadState;
+    reload?: () => Promise<void>;
+  }) => {
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED });
+    useProvenanceStore.setState(provenance as never);
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items,
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    useLibraryViewStore.setState({ ...NO_FILTERS });
+    useNavStore.setState({ libraryScope: "all", search: "" });
+    return mount(<InstalledView />);
+  };
+
+  const skeleton = (host: HTMLElement) =>
+    host.querySelector('[data-slot="skeleton"]') !== null;
+  /** Package rows, not the skeleton's placeholder rows: only a real row
+   *  carries the button that opens its package. */
+  const rows = (host: HTMLElement) =>
+    host.querySelectorAll("tbody tr td:first-child button").length;
+
+  // Not merely a skeleton alongside the rows: grouped with an empty index
+  // every row is an installation wearing a package's clothes, which is the
+  // duplication this page exists to stop.
+  it("draws no rows at all while the first read is on its way", () => {
+    const host = arrange({
+      rows: [],
+      loaded: false,
+      answeredFor: null,
+      read: READ_PENDING,
+    });
+    expect(skeleton(host)).toBe(true);
+    expect(rows(host)).toBe(0);
+    expect(host.textContent).not.toContain(PACKAGES_CHECK_FAILED_TITLE);
+  });
+
+  // A skeleton here would say "still checking" for the rest of the session:
+  // nothing re-triggers the read but another scan.
+  it("says the read failed, offers it again, and counts nothing", () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    const host = arrange({
+      rows: [],
+      loaded: false,
+      answeredFor: null,
+      read: readFailed("no lock"),
+      reload,
+    });
+    expect(skeleton(host)).toBe(false);
+    expect(host.textContent).toContain(PACKAGES_CHECK_FAILED_TITLE);
+    expect(host.textContent).toContain("no lock");
+    // Not one row: every row drawn now would be an installation under a
+    // heading that says package.
+    expect(rows(host)).toBe(0);
+    expect(host.textContent).toContain("—");
+    const retry = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === TRY_AGAIN_LABEL,
+    );
+    if (!retry) throw new Error("no Try again button");
+    retry.click();
+    expect(reload).toHaveBeenCalled();
+  });
+
+  it("keeps the last answer it had, headed as unconfirmed", () => {
+    const host = arrange({
+      rows: [],
+      loaded: true,
+      answeredFor: 0,
+      read: readFailed("no lock"),
+    });
+    expect(rows(host)).toBe(1);
+    expect(host.textContent).toContain(PACKAGES_UNCONFIRMED_TITLE);
+    expect(host.textContent).not.toContain(PACKAGES_CHECK_FAILED_TITLE);
+  });
+
+  // A read that failed after a scan has settled: it will not answer for
+  // that scan on its own. Its rows answer about an EARLIER scan, though,
+  // so they are not drawn beside the observations now on screen — grouping
+  // the two would show a state that never existed and call it the last
+  // kendex could check. The failure is said instead, with its retry.
+  it("says so rather than mixing an older answer with this scan", () => {
+    const host = arrange({
+      rows: [],
+      loaded: true,
+      // Answered about the scan before the one on screen.
+      answeredFor: -1,
+      read: readFailed("no lock"),
+    });
+    expect(skeleton(host)).toBe(false);
+    expect(rows(host)).toBe(0);
+    expect(host.textContent).toContain("no lock");
+    expect(host.textContent).toContain("—");
   });
 });

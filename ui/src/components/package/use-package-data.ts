@@ -7,9 +7,11 @@ import {
   type PackageMeta_Serialize,
   type VersionRow,
 } from "@/bindings";
+import { addressesDeclaration } from "@/lib/package-identity";
 import { installedCommits, landedWrites } from "@/lib/package-places";
 import { type PackageReads, timelineOf } from "@/lib/package-read-state";
 import {
+  READ_LANDED,
   READ_PENDING,
   type ReadState,
   readOf,
@@ -98,6 +100,24 @@ export function usePackageData(ref: PackageRef | null): {
 
   const load = useCallback(() => {
     if (!ref) return;
+    // A page about an installation nothing recorded has no declaration to
+    // read. Its address — this scope, kind and name — may belong to a
+    // package that IS recorded, and asking these three for it would put
+    // that package's record, files and version history under this one's
+    // name. The reads are not merely hidden: they are never issued, so
+    // there is nothing on hand for a later surface to draw from.
+    if (!addressesDeclaration(ref)) {
+      order.current.begin();
+      setMeta(null);
+      setFiles([]);
+      setVersions([]);
+      setRecord(READ_LANDED);
+      setFilesRead(READ_LANDED);
+      setTimeline(READ_LANDED);
+      setUnfetched(null);
+      setReading(false);
+      return;
+    }
     const ticket = order.current.begin();
     let left = 3;
     setReading(true);
@@ -162,7 +182,7 @@ export function usePackageDiff(
   const [diff, setDiff] = useState<PackageDiff | null>(null);
 
   useEffect(() => {
-    if (!ref || view.mode !== "diff") {
+    if (!ref || view.mode !== "diff" || !addressesDeclaration(ref)) {
       setDiff(null);
       return;
     }

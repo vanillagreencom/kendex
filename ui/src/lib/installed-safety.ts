@@ -55,10 +55,14 @@ export interface InstalledSafety extends AuditResult {
  *  return first would decide which findings a reader ever sees. */
 export function installedSafety(
   views: AuditView[],
-  kind: ItemKind,
+  /** Null asks nothing: the audit answers by scope, kind and name, which
+   *  a same-named recorded package shares, so a caller with no declaration
+   *  behind it has nothing to look up. */
+  kind: ItemKind | null,
   name: string,
   scopes: Scope[],
 ): InstalledSafety | null {
+  if (kind === null) return null;
   // The place is the view's, not the row's: the view is what was matched
   // against the places asked about, so it is the place this reading answers
   // for.
@@ -148,7 +152,10 @@ export function safetyStanding(
   views: AuditView[],
   auditFailure: string | null,
   answered: boolean,
-  kind: ItemKind,
+  /** Null asks nothing, per [installedSafety]: with no declaration behind
+   *  the caller there is no row to look up, so the standing is whatever the
+   *  audit's own state says and never another package's reading. */
+  kind: ItemKind | null,
   name: string,
   scopes: Scope[],
 ): SafetyStanding {

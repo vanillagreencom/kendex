@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { HarnessId, ItemKind, Scope } from "@/bindings";
+import type { HarnessId, ItemKind, ObservedItem, Scope } from "@/bindings";
 import { ItemCustomize } from "@/components/customize/item-customize";
 import { PackageProjects } from "@/components/package/package-projects";
 import {
@@ -23,6 +23,8 @@ import { cn } from "@/lib/utils";
 export function PackageTabs({
   kind,
   name,
+  installations,
+  declares,
   scope,
   scopes,
   harnesses,
@@ -38,6 +40,12 @@ export function PackageTabs({
    *  installed there, which is the copy the rest of the page describes. */
   scope: Scope;
   scopes: Scope[];
+  /** This package's installations, as the Library grouped them — what each
+   *  tool stores it as is an installation detail, not a second identity. */
+  installations: ObservedItem[];
+  /** Whether this page has a declaration behind it. The tabs that read or
+   *  write one are absent where it has not. */
+  declares: boolean;
   harnesses: HarnessId[];
   /** Who ships the copy at `scope`, when a tool ships it itself. The audit
    *  never reads such a package, so its tab says so instead of offering a
@@ -52,20 +60,30 @@ export function PackageTabs({
   /** Opens the dialog that deletes every copy — the Projects tab offers
    *  the whole-package deletion beside its per-place removals, and one
    *  dialog confirms it wherever it was asked for. */
-  onDelete: () => void;
+  /** Absent where this page addresses no declaration. */
+  onDelete?: () => void;
   body: ReactNode;
 }) {
   // Read once here rather than in each of the two places it shows: the tab
   // and its panel are one claim, and two readings could disagree.
-  const safety = usePackageSafety(kind, name, scope);
-  const customizable = canCustomize(kind);
+  // Keyed by scope, kind and name like the rest: asked for a page with no
+  // declaration behind it, it would report the other package's score.
+  const safety = usePackageSafety(declares ? kind : null, name, scope);
+  // Only a page with a declaration behind it has these. Projects reads
+  // each place's record and offers that declaration's update and removal;
+  // Customize edits its manifest. On a page about an installation nothing
+  // recorded, the same scope, kind and name may belong to a package that
+  // IS recorded, so both would read and write that one.
+  const customizable = declares && canCustomize(kind);
   return (
     <div className={cn("min-h-0 flex-1 overflow-y-auto", PAGE_GUTTER)}>
       <div className={cn("pb-8", WIDE_CONTENT_WIDTH)}>
         <Tabs defaultValue={openOn}>
           <TabsList>
             <TabsTrigger value="overview">{OVERVIEW_TAB}</TabsTrigger>
-            <TabsTrigger value="projects">{PROJECTS_TAB}</TabsTrigger>
+            {declares ? (
+              <TabsTrigger value="projects">{PROJECTS_TAB}</TabsTrigger>
+            ) : null}
             <TabsTrigger value="safety">
               <SafetyScoreLabel reading={safety} vendor={vendor} />
             </TabsTrigger>
@@ -76,15 +94,18 @@ export function PackageTabs({
           <TabsContent value="overview" className="pt-6">
             {body}
           </TabsContent>
-          <TabsContent value="projects" className="pt-6">
-            <PackageProjects
-              kind={kind}
-              name={name}
-              scopes={scopes}
-              busy={busy}
-              onDelete={onDelete}
-            />
-          </TabsContent>
+          {declares ? (
+            <TabsContent value="projects" className="pt-6">
+              <PackageProjects
+                kind={kind}
+                name={name}
+                scopes={scopes}
+                installations={installations}
+                busy={busy}
+                onDelete={onDelete}
+              />
+            </TabsContent>
+          ) : null}
           <TabsContent value="safety" className="pt-6">
             <PackageSafety reading={safety} vendor={vendor} />
           </TabsContent>

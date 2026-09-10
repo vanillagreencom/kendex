@@ -9,6 +9,7 @@ import {
   openLibraryAt,
   useFilterHandoff,
 } from "@/components/library/use-filter-handoff";
+import { PackagesNote } from "@/components/packages-note";
 import {
   Table,
   TableBody,
@@ -20,7 +21,9 @@ import { TAGS_ROW_LABEL } from "@/lib/copy";
 import {
   filterItems,
   groupItems,
+  groupRef,
   groupScopes,
+  groupsOfKind,
   installedCount,
   scopeChoices,
   selectionOf,
@@ -29,6 +32,12 @@ import { scopeNames } from "@/lib/labels";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
 import { useLibraryStandings } from "@/lib/library-standings";
+import {
+  usePackageIndex,
+  usePackagesEverKnown,
+  usePackagesKnown,
+  usePackagesRead,
+} from "@/lib/package-identity";
 import { everyPlace, scopeKey } from "@/lib/scope";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
@@ -74,7 +83,30 @@ export function InstalledView() {
   } = useLibraryViewStore();
 
   const provenance = useProvenanceStore((s) => s.rows);
-  const loadProvenance = useProvenanceStore((s) => s.load);
+  // Which observations are one package, from the one join that says so.
+  const packageOf = usePackageIndex();
+  const packagesKnown = usePackagesKnown();
+  // Whether any answer was ever kept, which is what tells a failure with
+  // rows behind it from one with nothing.
+  const packagesEverKnown = usePackagesEverKnown();
+  // The read's own outcome, so a first read still on its way and one that
+  // failed are not both drawn as waiting.
+  const packagesRead = usePackagesRead();
+  // The join failed and left nothing behind: there is no row to draw and no
+  // wait to draw either, so the table says what happened and offers the
+  // read again. A failure after one landed keeps its rows, headed below as
+  // last-known.
+  const packagesUnreadable =
+    !packagesEverKnown && packagesRead.status === "failed"
+      ? packagesRead
+      : null;
+  // A read that failed has settled: it is not coming back on its own, so
+  // the table says so rather than holding a skeleton for ever. It does NOT
+  // draw rows from an answer about another scan — grouping the scan on
+  // screen against an older index is the duplication this page exists to
+  // remove, and calling the result "the last kendex could check" would be
+  // describing a state that never existed.
+  const packagesStale = !packagesKnown && packagesRead.status === "failed";
   // Kept in nav rather than here so leaving for a package page and coming
   // back lands on the same narrowed table.
   const search = useNavStore((s) => s.search);
@@ -87,14 +119,6 @@ export function InstalledView() {
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
-  // Re-joined whenever a scan lands, so an install or unsubscribe made
-  // elsewhere shows its changed origin without a manual refresh. Before
-  // the first scan there are no rows to label, so there is nothing to join.
-  useEffect(() => {
-    if (!result) return;
-    void loadProvenance();
-  }, [loadProvenance, result]);
-
   const replaced = useFilterHandoff();
 
   // A chip or a place on a row asks for the same view a link from another
@@ -119,8 +143,8 @@ export function InstalledView() {
 
   // Every group the scan holds, before any narrowing.
   const everywhere = useMemo(
-    () => (result ? groupItems(result.items) : []),
-    [result],
+    () => (result && packageOf ? groupItems(result.items, packageOf) : []),
+    [result, packageOf],
   );
   // Read from those, never from the filtered set: a standing answers for
   // the package, so narrowing the table to one project must not change
@@ -128,20 +152,28 @@ export function InstalledView() {
   const { standingsFor, editedAnywhere, outOfDateAnywhere } =
     useLibraryStandings(everywhere);
   const groups = useMemo(() => {
-    if (!result) return [];
+    // Nothing may be drawn until the read that says which observations are
+    // one package has answered: grouped with an empty index every row is an
+    // installation wearing a package's clothes, which is the duplication
+    // this page exists to stop. With the read failed and nothing retained
+    // the note above stands in their place instead.
+    if (!result || !packageOf || packagesUnreadable) return [];
     const filtered = filterItems(result.items, {
       scope,
-      kind: kind === "any" ? undefined : (kind as ItemKind),
       harness: harness === "any" ? undefined : harness,
       tag: tag === "any" ? undefined : (tag as Tag),
       search,
     });
-    let grouped = groupItems(filtered);
+    let grouped = groupItems(filtered, packageOf);
+    // Narrowed after grouping: the kind on screen is the package's, and a
+    // tool that stores a hook as a rule would otherwise drop out of its
+    // own filter and turn up under the kind its file happens to be.
+    if (kind !== "any") grouped = groupsOfKind(grouped, kind as ItemKind);
     if (from !== "any") {
       grouped = grouped.filter(
         (group) =>
           originLabel(
-            originFor(provenance, group.kind, group.name, groupScopes(group)),
+            originFor(provenance, groupRef(group), groupScopes(group)),
           ) === from,
       );
     }
@@ -163,24 +195,38 @@ export function InstalledView() {
     edited,
     search,
     provenance,
+    packageOf,
+    packagesUnreadable,
     editedAnywhere,
   ]);
 
   // The count the filtered total is measured against: every row the table
   // could show, not the ones left after the current narrowing. Shared with
   // Home's Installed tile so the two can never disagree.
-  const total = useMemo(() => installedCount(everywhere), [everywhere]);
+  // No number where the identity does not answer for this scan: a total
+  // counted from an older answer is not the last-known total.
+  const total = useMemo(
+    () => (packageOf ? installedCount(everywhere) : null),
+    [everywhere, packageOf],
+  );
   // The filter's vocabulary is what the join actually says, so a value
   // is never offered that no row carries.
   const fromOptions = useMemo(
     () => [...new Set(provenance.map((row) => originLabel(row.origin)))].sort(),
     [provenance],
   );
-  // Nothing has been counted yet — distinct from "counted, found nothing".
-  // Narrowed to edited packages, the count also waits on the updates read
-  // that says which are edited.
+  // Nothing has been counted yet — distinct from "counted, found nothing"
+  // and from "counting failed". The join is waited on with the scan: until
+  // it answers nothing knows which observations are one package, and a
+  // total taken then would count installations. Narrowed to edited
+  // packages, the count also waits on the updates read that says which are
+  // edited.
   const scanning =
-    result === null || (edited === "edited" && editedAnywhere === null);
+    packagesUnreadable === null &&
+    !packagesStale &&
+    (result === null ||
+      !packageOf ||
+      (edited === "edited" && editedAnywhere === null));
   const hasAnyItems = (result?.items.length ?? 0) > 0;
   const filters: FilterSelection = { kind, harness, tag, from, edited };
   const filtered = isNarrowed({ filters, search, scope });
@@ -233,6 +279,18 @@ export function InstalledView() {
         onClear={clearFilters}
       />
       <div className={cn("flex min-h-0 flex-1 flex-col pt-6", PAGE_GUTTER)}>
+        {/* The read that says which installations are one package failed.
+            With nothing kept from an earlier answer there is no table to
+            draw, so the page says so and offers the read again rather than
+            holding a skeleton nothing will ever replace. With rows kept,
+            they stay — headed as the last answer that landed, not as
+            confirmed ones. Neither reading turns unavailable evidence into
+            a claim that a package is managed or that it is not. */}
+        {packagesRead.status === "failed" ? (
+          <div className={cn("pb-4", WIDE_CONTENT_WIDTH)}>
+            <PackagesNote />
+          </div>
+        ) : null}
         <div className={cn("flex min-h-0 flex-1", WIDE_CONTENT_WIDTH)}>
           <div
             ref={scroller}
@@ -260,8 +318,7 @@ export function InstalledView() {
                   // scope can address a subscription that exists at neither.
                   const record = provenanceFor(
                     provenance,
-                    group.kind,
-                    group.name,
+                    groupRef(group),
                     groupScopes(group),
                   );
                   const origin = record?.origin ?? null;
@@ -284,8 +341,7 @@ export function InstalledView() {
                         const where = scope ?? primary?.scope;
                         if (!where) return;
                         goToPackage({
-                          kind: group.kind,
-                          name: group.name,
+                          ...groupRef(group),
                           scope: where,
                         });
                       }}
@@ -310,7 +366,10 @@ export function InstalledView() {
                   );
                 })}
                 {scanning ? <InstalledSkeleton /> : null}
-                {!scanning && groups.length === 0 ? (
+                {!scanning &&
+                !packagesUnreadable &&
+                !packagesStale &&
+                groups.length === 0 ? (
                   <TableEmptyRow
                     hasAnyItems={hasAnyItems}
                     place={placeName}

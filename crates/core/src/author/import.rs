@@ -189,7 +189,11 @@ pub fn inventory(env: &Env, scopes: &[Scope]) -> Result<Vec<ImportCandidate>> {
     for row in crate::library::provenance(env, scopes)? {
         for read in origins_of(env, &row, &unmanaged) {
             let hash = read.bytes.map(|bytes| bytes.hash()).unwrap_or_default();
-            let origins = candidates.entry((row.kind, row.name.clone())).or_default();
+            // Grouped by the package, not by what a tool stores it as: a
+            // Cursor hook is observed as an agent named `safety-…`, and
+            // keying that would offer a candidate no catalog has.
+            let package = row.package_ref();
+            let origins = candidates.entry((package.kind, package.name)).or_default();
             // Identical bytes are one origin whatever offered them; the
             // strictest provenance among the claimants governs it. With no
             // bytes there is no hash to match on, so the same place

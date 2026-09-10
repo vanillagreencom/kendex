@@ -80,7 +80,10 @@ export function CustomizedIndex({
             item.name === name &&
             sameScope(item.scope, scope),
         );
-        const open = () => goToPackage({ kind, name, scope });
+        // A customization exists only for a declared package, so the row
+        // opens the one the records account for.
+        const open = () =>
+          goToPackage({ kind, name, scope, identity: "recorded" });
         return (
           // The row is the way into the package, so it carries no Open
           // button. A row for something not installed here has no page to

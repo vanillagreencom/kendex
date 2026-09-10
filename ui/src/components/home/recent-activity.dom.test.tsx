@@ -24,10 +24,14 @@ const at = (scope: typeof SCOPE | { scope: "global" }, modifiedAt: number) =>
     modifiedAt,
   }) as never;
 
+// A package the records account for, which is what Home lists once the
+// identity read has landed: the row opens the declaration, not whatever
+// else on the machine wears the same kind and name.
 const group = (installed: boolean): RecentGroup => ({
-  key: "skill:gh",
+  key: "package:skill:gh",
   kind: "skill",
   name: "gh",
+  package: { kind: "skill", name: "gh" },
   description: null,
   installations: installed
     ? ([
@@ -65,7 +69,12 @@ describe("a row on Home's recent list", () => {
     await userEvent.click(row);
     const nav = useNavStore.getState();
     expect(nav.page).toBe("package");
-    expect(nav.packageRef).toEqual({ kind: "skill", name: "gh", scope: SCOPE });
+    expect(nav.packageRef).toEqual({
+      kind: "skill",
+      name: "gh",
+      identity: "recorded",
+      scope: SCOPE,
+    });
   });
 
   // The control: with no installation there is no place to open the
@@ -105,6 +114,7 @@ describe("a package whose copies changed at different times", () => {
     expect(useNavStore.getState().packageRef).toEqual({
       kind: "skill",
       name: "gh",
+      identity: "recorded",
       scope: SCOPE,
     });
   });

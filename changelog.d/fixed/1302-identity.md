@@ -1,0 +1,1 @@
+- Keep a package and a same-named file nobody installed apart: each opens its own page and carries its own origin. A copy a tool stores as another kind keeps its Remove.

@@ -135,7 +135,14 @@ describe("a package installed just now", () => {
     });
 
     const host = mount(
-      <SafetyTab reference={{ kind: "skill", name: "gh", scope: GLOBAL }} />,
+      <SafetyTab
+        reference={{
+          kind: "skill",
+          name: "gh",
+          scope: GLOBAL,
+          identity: "recorded",
+        }}
+      />,
     );
     await settle();
     expect(host.textContent).not.toContain("58/100");
@@ -170,7 +177,14 @@ describe("when the check could not run", () => {
       .mockResolvedValue({ status: "ok", data: [view([gh])] });
 
     const host = mount(
-      <SafetyTab reference={{ kind: "skill", name: "gh", scope: GLOBAL }} />,
+      <SafetyTab
+        reference={{
+          kind: "skill",
+          name: "gh",
+          scope: GLOBAL,
+          identity: "recorded",
+        }}
+      />,
     );
     await settle();
 
@@ -209,7 +223,14 @@ describe("when the check could not run", () => {
     });
 
     const host = mount(
-      <SafetyTab reference={{ kind: "skill", name: "gh", scope: GLOBAL }} />,
+      <SafetyTab
+        reference={{
+          kind: "skill",
+          name: "gh",
+          scope: GLOBAL,
+          identity: "recorded",
+        }}
+      />,
     );
     await settle();
 
@@ -239,7 +260,14 @@ describe("when only this package's place could not be read", () => {
     });
 
     const host = mount(
-      <SafetyTab reference={{ kind: "skill", name: "gh", scope: GLOBAL }} />,
+      <SafetyTab
+        reference={{
+          kind: "skill",
+          name: "gh",
+          scope: GLOBAL,
+          identity: "recorded",
+        }}
+      />,
     );
     await settle();
 
@@ -261,7 +289,14 @@ describe("when only this package's place could not be read", () => {
     });
 
     const host = mount(
-      <SafetyTab reference={{ kind: "skill", name: "gh", scope: GLOBAL }} />,
+      <SafetyTab
+        reference={{
+          kind: "skill",
+          name: "gh",
+          scope: GLOBAL,
+          identity: "recorded",
+        }}
+      />,
     );
     await settle();
 
@@ -280,7 +315,14 @@ describe("when the audit answered with no reading for this package", () => {
       .mockResolvedValue({ status: "ok", data: [view([gh])] });
 
     const host = mount(
-      <SafetyTab reference={{ kind: "skill", name: "gh", scope: GLOBAL }} />,
+      <SafetyTab
+        reference={{
+          kind: "skill",
+          name: "gh",
+          scope: GLOBAL,
+          identity: "recorded",
+        }}
+      />,
     );
     await settle();
 
@@ -320,7 +362,14 @@ describe("the label when the check could not run again", () => {
     });
 
     const host = mount(
-      <SafetyTab reference={{ kind: "skill", name: "gh", scope: GLOBAL }} />,
+      <SafetyTab
+        reference={{
+          kind: "skill",
+          name: "gh",
+          scope: GLOBAL,
+          identity: "recorded",
+        }}
+      />,
     );
     await settle();
 
@@ -340,7 +389,12 @@ describe("a package the harness ships itself", () => {
 
     const host = mount(
       <SafetyTab
-        reference={{ kind: "skill", name: "gh", scope: GLOBAL }}
+        reference={{
+          kind: "skill",
+          name: "gh",
+          scope: GLOBAL,
+          identity: "recorded",
+        }}
         vendor="OpenAI"
       />,
     );

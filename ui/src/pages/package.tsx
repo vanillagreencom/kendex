@@ -14,8 +14,21 @@ import {
   usePackageData,
   usePackageDiff,
 } from "@/components/package/use-package-data";
-import { groupItems, groupScopes, installationAt } from "@/lib/derive";
+import { PackagesNote } from "@/components/packages-note";
+import {
+  groupFor,
+  groupItems,
+  groupRef,
+  groupScopes,
+  installationAt,
+} from "@/lib/derive";
 import { packageDisplayName } from "@/lib/labels";
+import { PAGE_GUTTER } from "@/lib/layout";
+import {
+  addressesDeclaration,
+  usePackageIndex,
+  usePackagesKnown,
+} from "@/lib/package-identity";
 import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
 import {
@@ -29,6 +42,7 @@ import {
   packageUpdateNote,
   updatesReadNote,
 } from "@/lib/updates-read-state";
+import { cn } from "@/lib/utils";
 import {
   hasNewer,
   installedRow,
@@ -79,16 +93,30 @@ export function PackagePage() {
   // The manifest this package's own edits live in, loaded up front so the
   // header can say whether there are any before the tab is opened.
   useEffect(() => {
-    if (ref) void openScope(ref.scope);
+    // Only where a declaration is what this page is about: the editor
+    // opens a place's manifest, and on an observed row that manifest
+    // belongs to whatever package shares its name.
+    if (ref && addressesDeclaration(ref)) void openScope(ref.scope);
   }, [ref, openScope]);
 
-  const group = useMemo(() => {
-    if (!ref || !result) return null;
-    const matching = result.items.filter(
-      (item) => item.kind === ref.kind && item.name === ref.name,
-    );
-    return groupItems(matching)[0] ?? null;
-  }, [ref, result]);
+  const packageOf = usePackageIndex();
+  const packagesKnown = usePackagesKnown();
+  // Found by the whole identity the link carried, not by what each tool
+  // stores this package as: a tool that keeps a hook as a rule or a command
+  // as a skill would otherwise leave the page with nothing to show, and a
+  // package and an installation nothing recorded can wear one kind and name
+  // and would otherwise open each other's page — its files, chips and diff
+  // target from one of them, its meta, versions and Delete from the other.
+  // Nothing to find until the identity answers for the scan on screen:
+  // grouping it against an older answer would open a row that is not the
+  // one the link named.
+  const group = useMemo(
+    () =>
+      ref && result && packageOf
+        ? groupFor(groupItems(result.items, packageOf), ref)
+        : null,
+    [ref, result, packageOf],
+  );
 
   const mutating = useManifestBusy(switching);
   const { meta, files, versions, reads, load: reload } = usePackageData(ref);
@@ -100,32 +128,57 @@ export function PackagePage() {
   // Why this place has no Update, or null when nothing withholds one. A
   // string, so this selector answers the same value on every render that
   // changes nothing.
-  const withheld = useUpdatesStore((s) => packageUpdateNote(s, ref));
+  // Every value below is read out of the records by scope, kind and name —
+  // the declaration's address, which an installation nothing recorded
+  // shares with whatever package IS recorded under it. So each is asked
+  // only for a page that speaks for a declaration; `declaring` is the one
+  // decision, and a page without one shows none of them rather than the
+  // other package's.
+  const declaring = ref !== null && addressesDeclaration(ref);
+  const asked = declaring ? ref : null;
+  const withheld = useUpdatesStore((s) => packageUpdateNote(s, asked));
   // How the update read itself is standing, which is about the machine rather
   // than about this package, and silent where it has a row for this place. A
   // string, for the same reason.
-  const standing = useUpdatesStore((s) => updatesReadNote(s, ref));
+  const standing = useUpdatesStore((s) => updatesReadNote(s, asked));
   // Why this package is installed when nobody asked for it: the package
   // that requires it, named. A string, so this selector answers the same
   // value on every render that changes nothing.
-  const requiredBy = useUpdatesStore((s) => packageRequiredBy(s, ref));
+  const requiredBy = useUpdatesStore((s) => packageRequiredBy(s, asked));
   // A fork the person has since edited by hand: part of what the package
   // is, said beside the fork badge rather than as something to settle.
-  const forkEdited = useUpdatesStore((s) => packageForkEdited(s, ref));
+  const forkEdited = useUpdatesStore((s) => packageForkEdited(s, asked));
 
-  const mark = usePackageMark(group);
+  const mark = usePackageMark(declaring ? group : null);
   // The package can still be installed elsewhere while this place has no
   // copy of it — a page about a place that does not have it has nothing
   // to show and no actions that would land anywhere.
   const installedHere = installationAt(group, ref?.scope) !== undefined;
 
   // The scan has lost this package (removed, renamed): leave the way the
-  // user came.
+  // user came. Only once the join has said which observations are this
+  // package — before that a package a tool stores under another identity
+  // is not lost, it is not yet resolved, and leaving would throw the
+  // reader off a page that was about to draw.
   useEffect(() => {
-    if (ref && result && !installedHere) back();
-  }, [ref, result, installedHere, back]);
+    if (ref && result && packagesKnown && !installedHere) back();
+  }, [ref, result, packagesKnown, installedHere, back]);
 
-  if (!ref || !group) return null;
+  if (!ref) return null;
+  // The read that says which installations are one package has not
+  // answered for the scan on screen, so which row this link named cannot
+  // be said yet. The links that reach here — Updates, Customize, a
+  // marketplace — stay on screen through it, so the page says what it is
+  // waiting on, and offers the read again where that read failed, rather
+  // than going blank under a link that still works.
+  if (!packagesKnown) {
+    return (
+      <div className={cn("flex min-h-0 flex-1 flex-col pt-6", PAGE_GUTTER)}>
+        <PackagesNote counting />
+      </div>
+    );
+  }
+  if (!group) return null;
   // The installation this page is about. A package can be installed in
   // several places and the page names one of them, so the actions that
   // open files reach that place's copy. Falling back to another place's
@@ -133,6 +186,15 @@ export function PackagePage() {
   // another.
   const primary = installationAt(group, ref.scope);
   if (!primary) return null;
+  // Whether this page has a declaration behind it. Asked once, and the
+  // controls that write one are simply not handed a handler: an
+  // installation nothing recorded shares its scope, kind and name with
+  // whatever package may be recorded under them, and every one of those
+  // writes would land on that package instead. What stays is the
+  // installation itself — its files, its places, its details — and taking
+  // it off the machine remains the Not-managed path's, which addresses the
+  // file rather than a declaration.
+  const declares = declaring;
 
   const displayName = packageDisplayName(ref);
   const installed = installedRow(versions);
@@ -191,10 +253,14 @@ export function PackagePage() {
       diff={diff}
       busy={mutating}
       reading={reads.reading}
-      onToggle={(enable) =>
-        void inEveryScope((scope) =>
-          toggle(scope, group.kind, group.name, enable),
-        )
+      declares={declares}
+      onToggle={
+        declares
+          ? (enable) =>
+              void inEveryScope((scope) =>
+                toggle(scope, group.kind, group.name, enable),
+              )
+          : undefined
       }
       onSwitchVersion={switchTo}
       onCompare={compare}
@@ -225,9 +291,11 @@ export function PackagePage() {
             onRetryRead={offer.retry ? reload : undefined}
             retryRunning={reads.reading}
             busy={mutating}
-            onUpdate={() => latest && updateToLatest(latest)}
-            onPreview={() => latest && compare(latest)}
-            onDelete={() => setConfirmDelete(true)}
+            onUpdate={
+              declares ? () => latest && updateToLatest(latest) : undefined
+            }
+            onPreview={declares ? () => latest && compare(latest) : undefined}
+            onDelete={declares ? () => setConfirmDelete(true) : undefined}
           />
         }
       />
@@ -236,14 +304,20 @@ export function PackagePage() {
         name={group.name}
         scope={ref.scope}
         scopes={groupScopes(group)}
+        installations={group.installations}
+        declares={declares}
         vendor={vendorAt(group.installations, ref.scope)}
         harnesses={group.harnesses as HarnessId[]}
         busy={mutating}
         openOn={openOn}
-        onDelete={() => setConfirmDelete(true)}
+        onDelete={declares ? () => setConfirmDelete(true) : undefined}
         body={body}
       />
-      {dirty ? (
+      {/* The editor's dirty state belongs to the last manifest it opened,
+          and an observed page opens none — so a bar here would offer to
+          save another package's settings from a page that is not about
+          it. On the same one decision as every other declaration write. */}
+      {declares && dirty ? (
         <SaveBar
           saving={saving}
           busy={mutating}
@@ -254,8 +328,7 @@ export function PackagePage() {
       <DeleteDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
-        kind={group.kind}
-        name={group.name}
+        reference={groupRef(group)}
         scopes={groupScopes(group)}
       />
     </div>

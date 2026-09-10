@@ -1,0 +1,1 @@
+- Keep a package installed for several tools at once one package, and keep an unrecorded file's page from saving another package's settings.

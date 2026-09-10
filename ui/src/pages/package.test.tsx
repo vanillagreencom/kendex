@@ -14,17 +14,23 @@ import type {
 import { commands } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import {
+  DISCARD_EDITS_LABEL,
   FORK_NOTICE_TITLE,
   FORKED_BADGE_LABEL,
   FORKED_EDITED_BADGE_LABEL,
+  KEEP_AS_FORK_LABEL,
   OPEN_IN_EDITOR_LABEL,
   OPEN_IN_FILE_BROWSER_LABEL,
   OPEN_IN_LABEL,
   PACKAGE_FILES_READ_FAILED,
   PACKAGE_FILES_TITLE,
+  PACKAGES_CHECK_FAILED_TITLE,
+  PLACE_COUNTING_LABEL,
   TRY_AGAIN_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
+import { CUSTOMIZE_TAB, OVERVIEW_TAB, SAVE_NOTE } from "@/lib/copy-customize";
+import { DELETE_LABEL, PROJECTS_TAB } from "@/lib/copy-projects";
 import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
 import {
   EDITED_CANT_UPDATE_NOTE,
@@ -48,9 +54,12 @@ import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
 import { useNavStore } from "@/stores/nav";
 import type { PackageView } from "@/stores/nav-types";
+import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
+import { joinAnswered } from "@/test/identity-join";
+import { observed } from "@/test/observed";
 import { PackagePage } from "./package";
 
 // The page is mounted against the real stores; only the backend is
@@ -79,23 +88,21 @@ type Project = Extract<Scope, { scope: "project" }>;
 const VG: Project = { scope: "project", root: "/work/vg" };
 const HYPR: Project = { scope: "project", root: "/work/hyprtrade" };
 
-const installedAt = (
-  scope: Project,
-  kind: ItemKind = "skill",
-): ObservedItem => ({
-  kind,
-  name: "gh",
-  scope,
-  harness: "claude",
-  path: `${scope.root}/.claude/skills/gh`,
-  fileState: { state: "file" },
-  enabled: true,
-  origin: null,
-  description: "about gh",
-  tags: [],
-  modifiedAt: null,
-  vendor: null,
-});
+const installedAt = (scope: Project, kind: ItemKind = "skill"): ObservedItem =>
+  observed({
+    kind,
+    name: "gh",
+    scope,
+    harness: "claude",
+    path: `${scope.root}/.claude/skills/gh`,
+    fileState: { state: "file" },
+    enabled: true,
+    origin: null,
+    description: "about gh",
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+  });
 
 const PLAIN: Manifest_Serialize = { schema: 1, install: {} };
 const CUSTOMIZED: Manifest_Serialize = {
@@ -133,9 +140,36 @@ const openPage = async (
       warnings: [],
     },
   });
+  // The join has answered and these installations are the declared
+  // package, which is the identity the nav ref below carries. A page about
+  // a marketplace skill with a manifest, versions and a fork is not an
+  // installation nothing recorded, and a fixture saying so would be
+  // describing a different thing.
+  useProvenanceStore.setState({
+    rows: installed.map((scope) => {
+      const item = installedAt(scope, kind);
+      return {
+        scope,
+        kind,
+        name: "gh",
+        harness: item.harness,
+        // The join answers per file, so a fixture naming a different one
+        // would be about a different installation.
+        at: item.at,
+        origin: {
+          origin: "marketplace" as const,
+          source: "cat",
+          repo: "o/r",
+        },
+        package: { kind, name: "gh" },
+      };
+    }),
+    loaded: true,
+    answeredFor: 0,
+  });
   useNavStore.setState({
     page: "package",
-    packageRef: { kind, name: "gh", scope: here },
+    packageRef: { kind, name: "gh", scope: here, identity: "recorded" },
     packageView,
   });
   const host = mount(<PackagePage />);
@@ -817,9 +851,32 @@ describe("the package page's safety tab", () => {
         warnings: [],
       },
     });
+    // The join answers for the copy kendex installed. Vendor content
+    // carries no row by design, so the bundled copy is absent from it and
+    // the package is still the one the codex row records.
+    useProvenanceStore.setState({
+      rows: [
+        {
+          scope: VG,
+          kind: "skill",
+          name: "gh",
+          harness: "codex",
+          at: installedAt(VG).at,
+          origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+          package: { kind: "skill", name: "gh" },
+        },
+      ],
+      loaded: true,
+      answeredFor: 0,
+    });
     useNavStore.setState({
       page: "package",
-      packageRef: { kind: "skill", name: "gh", scope: VG },
+      packageRef: {
+        kind: "skill",
+        name: "gh",
+        scope: VG,
+        identity: "recorded",
+      },
       packageView: null,
     });
     const host = mount(<PackagePage />);
@@ -1030,5 +1087,227 @@ describe("the package page's delete action", () => {
     expect(said).toContain("Delete gh?");
     expect(said).toContain("/work/vg");
     expect(said).toContain("/work/hyprtrade");
+  });
+});
+
+// Two things can wear one scope, kind and name: a package the records
+// account for and a file nothing recorded. Every read and every write on
+// this page addresses a declaration by those three, so a page opened on the
+// second must issue none of them — it would be reading and changing the
+// first while describing the second.
+describe("a package page opened on an installation nothing recorded", () => {
+  const stray = (): ObservedItem =>
+    observed({
+      ...installedAt(VG),
+      harness: "cursor",
+      path: `${VG.root}/.cursor/skills/gh`,
+    });
+
+  let opened: ReturnType<typeof vi.fn>;
+
+  const openObserved = async () => {
+    opened = vi.fn().mockResolvedValue(undefined);
+    useEditorStore.setState({ openScope: opened as never });
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [installedAt(VG), stray()],
+        missingProjects: [],
+        warnings: [],
+      },
+    });
+    // The claude copy is the recorded package; the cursor one is nobody's.
+    joinAnswered([
+      {
+        scope: VG,
+        kind: "skill",
+        name: "gh",
+        harness: "claude",
+        at: null,
+        origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+        package: { kind: "skill", name: "gh" },
+      },
+      {
+        scope: VG,
+        kind: "skill",
+        name: "gh",
+        harness: "cursor",
+        at: null,
+        origin: { origin: "unmanaged" },
+        package: null,
+      },
+    ]);
+    useNavStore.setState({
+      page: "package",
+      packageRef: {
+        kind: "skill",
+        name: "gh",
+        scope: VG,
+        identity: "observed",
+        // A row nothing recorded is named by the file it reads.
+        at: stray().at,
+      },
+      packageView: null,
+    });
+    const host = mount(<PackagePage />);
+    await settle();
+    return host;
+  };
+
+  it("reads no declaration and offers no write that would land on one", async () => {
+    const back = vi.fn();
+    useNavStore.setState({ back });
+    // Edits left in the editor from the package opened before this one.
+    // They belong to that manifest, and this page never opens one of its
+    // own, so a save bar here would write them from a page about a file
+    // the records know nothing about.
+    useEditorStore.setState({ dirty: true });
+    // And the recorded gh, edited by hand in this very place: read by
+    // scope, kind and name — the address this observed file shares — its
+    // notice would offer to keep those edits as a fork or discard them,
+    // both writes to a declaration this page is not about.
+    useUpdatesStore.setState({
+      rows: [{ ...updateRow(VG), blockedByLocalEdit: true }],
+      read: READ_LANDED,
+    });
+    const host = await openObserved();
+
+    // The page stays: this installation is on the machine and is what the
+    // link named.
+    expect(back).not.toHaveBeenCalled();
+    // None of the three declaration reads was issued for it.
+    for (const read of [
+      commands.packageMeta,
+      commands.packageVersions,
+      commands.packageFiles,
+    ]) {
+      expect(vi.mocked(read)).not.toHaveBeenCalled();
+    }
+    // And no control that writes one is drawn.
+    const labels = Array.from(host.querySelectorAll("button")).map(
+      (one) => one.textContent,
+    );
+    expect(labels).not.toContain(DELETE_LABEL);
+    expect(host.querySelector("#package-enabled")).toBeNull();
+    expect(host.textContent).not.toContain(SAVE_NOTE);
+    // The body's own two: the hand-edit notice, whose Keep as fork and
+    // Discard write that declaration, and the file preview, which reads
+    // its bytes by the same address.
+    expect(host.textContent).not.toContain(FORK_NOTICE_TITLE);
+    expect(labels).not.toContain(KEEP_AS_FORK_LABEL);
+    expect(labels).not.toContain(DISCARD_EDITS_LABEL);
+    expect(vi.mocked(commands.packageReadme)).not.toHaveBeenCalled();
+  });
+
+  // Every surface that reads or writes a declaration, not only the
+  // overview's buttons: Projects reads each place's record and offers that
+  // declaration's update and removal, and Customize edits its manifest.
+  it("offers no tab that would read or write the other package", async () => {
+    const host = await openObserved();
+    const tabs = Array.from(host.querySelectorAll('[role="tab"]')).map(
+      (one) => one.textContent,
+    );
+    expect(tabs).not.toContain(PROJECTS_TAB);
+    expect(tabs).not.toContain(CUSTOMIZE_TAB);
+    expect(tabs).toContain(OVERVIEW_TAB);
+    // And the editor was never pointed at this place's manifest, which is
+    // the other package's wherever one shares the name.
+    expect(opened).not.toHaveBeenCalled();
+  });
+
+  // The row it IS about stays inspectable: what the tool holds, where, and
+  // how to open it. Taking it off the machine is the Not-managed path's.
+  // Not only the tabs and the buttons: every value the header and the
+  // strip draw is read out of the records by scope, kind and name, which
+  // the recorded package shares. None of them may be that package's.
+  it("shows no state read out of the other package's records", async () => {
+    // The recorded gh is customized in this very place. Read by scope,
+    // kind and name — the address this observed file shares — that mark
+    // would sit on the header of a page about a file the records know
+    // nothing about.
+    useEditorStore.setState({
+      saved: { [scopeKey(VG)]: CUSTOMIZED as never },
+    });
+    useUpdatesStore.setState({ rows: [updateRow(VG)], read: READ_LANDED });
+    const host = await openObserved();
+    const text = host.textContent ?? "";
+    // None of the recorded package's state belongs to this page.
+    expect(text).not.toContain("Customized");
+    expect(text).not.toContain(UPDATE_LABEL);
+    expect(
+      Array.from(host.querySelectorAll('[role="tab"]')).map(
+        (one) => one.textContent,
+      ),
+    ).toEqual([
+      OVERVIEW_TAB,
+      // The safety tab keeps its place; what it must not carry is the
+      // other package's reading.
+      expect.stringContaining(SAFETY_TAB),
+    ]);
+  });
+
+  it("still shows the installation itself", async () => {
+    const host = await openObserved();
+    expect(host.textContent).toContain("gh");
+    expect(
+      Array.from(host.querySelectorAll("button")).map((one) => one.textContent),
+    ).toContain(OPEN_IN_LABEL);
+  });
+
+  // The links that reach this page — Updates, Customize, a marketplace —
+  // stay on screen while the read that says which installations are one
+  // package is out, and after it fails. A blank page under a working link
+  // is a dead end; the page says what it is waiting on, and offers the
+  // read again where there is one to offer.
+  it("says what it is waiting on rather than going blank", async () => {
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [installedAt(VG)],
+        missingProjects: [],
+        warnings: [],
+      },
+    });
+    useNavStore.setState({
+      page: "package",
+      packageRef: {
+        kind: "skill",
+        name: "gh",
+        scope: VG,
+        identity: "recorded",
+      },
+      packageView: null,
+    });
+
+    useProvenanceStore.setState({
+      rows: [],
+      loaded: false,
+      answeredFor: null,
+      read: READ_PENDING,
+    });
+    const waiting = mount(<PackagePage />);
+    await settle();
+    expect(waiting.textContent).toContain(PLACE_COUNTING_LABEL);
+
+    useProvenanceStore.setState({
+      rows: [],
+      loaded: false,
+      answeredFor: null,
+      read: readFailed("the join did not read"),
+    });
+    const failed = mount(<PackagePage />);
+    await settle();
+    expect(failed.textContent).toContain(PACKAGES_CHECK_FAILED_TITLE);
+    expect(
+      Array.from(failed.querySelectorAll("button")).map((one) =>
+        one.textContent?.trim(),
+      ),
+    ).toContain(TRY_AGAIN_LABEL);
+  });
+
+  // The same page opened on the recorded package keeps everything.
+  it("keeps the recorded package's own reads and controls", async () => {
+    await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+    expect(vi.mocked(commands.packageMeta)).toHaveBeenCalled();
   });
 });

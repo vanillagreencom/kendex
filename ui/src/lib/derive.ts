@@ -2,11 +2,13 @@ import type {
   HarnessId,
   ItemKind,
   ObservedItem,
+  PackageRef,
   ScanResult,
   Scope,
   Tag,
 } from "@/bindings";
 import { KINDS } from "@/lib/labels";
+import type { PackageOf } from "@/lib/package-identity";
 import { sameScope } from "@/lib/scope";
 
 export type ScopeSelection = "all" | "global" | { project: string };
@@ -34,12 +36,15 @@ export function scopeMatches(
 
 interface ItemFilter {
   scope: ScopeSelection;
-  kind?: ItemKind;
   harness?: string;
   tag?: Tag;
   search?: string;
 }
 
+/** Narrowings that are true of one installation: where it is, which tool
+ *  reads it, what its author said it is for. Which kind of package it is
+ *  is not one of them — a tool stores a package under whatever kind it can
+ *  load, so that question is answered of the group, in {@link groupsOfKind}. */
 export function filterItems(
   items: ObservedItem[],
   filter: ItemFilter,
@@ -47,7 +52,6 @@ export function filterItems(
   const needle = filter.search?.trim().toLowerCase();
   return items.filter((item) => {
     if (!scopeMatches(item, filter.scope)) return false;
-    if (filter.kind && item.kind !== filter.kind) return false;
     if (filter.harness && item.harness !== filter.harness) return false;
     if (filter.tag && !item.tags.includes(filter.tag)) return false;
     if (needle) {
@@ -58,9 +62,23 @@ export function filterItems(
   });
 }
 
-/** One logical item (kind + name) with every installation observed for it. */
+/** The groups of one kind — the package's kind, which is what the filter
+ *  beside it names and what the row shows. */
+export const groupsOfKind = (
+  groups: ItemGroup[],
+  kind: ItemKind,
+): ItemGroup[] => groups.filter((group) => group.kind === kind);
+
+/** One package with every installation observed for it. */
 export interface ItemGroup {
   key: string;
+  /** The package these installations are, where the records establish
+   *  one, and null where they do not. Null is not "unmanaged": it says
+   *  nothing recorded writing this, so it answers only for itself. */
+  package: PackageRef | null;
+  /** The package's kind and name where one was established, and what the
+   *  scan saw where none was — the identity every reader, count, link and
+   *  action of this group speaks. */
   kind: ItemKind;
   name: string;
   description: string | null;
@@ -83,20 +101,44 @@ export interface SharedFile {
   harnesses: string[];
 }
 
+/** Where one installation's bytes actually are, rather than where its tool
+ *  looks for them: two tools linking to one shared folder read one file,
+ *  though each has a path of its own pointing at it. A broken link has
+ *  nothing to resolve and keeps the text it was given, which is what names
+ *  the problem.
+ *
+ *  The one answer to "is this the same file": the Shared files chip reads
+ *  it, and so does the row an installation nothing recorded belongs to, so
+ *  a chip can never say two tools share a file that the table has already
+ *  put on separate rows. */
+export function bytesAt(install: ObservedItem): string {
+  return install.fileState.state === "symlink" && !install.fileState.broken
+    ? install.fileState.target
+    : install.path;
+}
+
+/** What tells this observation from another the scan saw under the same
+ *  kind, name and tool — because it does see two: a tool reads both a
+ *  shared root and one of its own, and one registry file holds every hook
+ *  entry a tool runs.
+ *
+ *  Read off the scan, never rebuilt here. It is a canonical path in one
+ *  spelling, which nothing above the filesystem can resolve, and core
+ *  keys its provenance rows by the same value — a second derivation would
+ *  be a second answer to one question, and the two would part company the
+ *  moment a path went through a link or a platform spelled a separator
+ *  its own way. Compared, never parsed. */
+export const observedAt = (item: ObservedItem): string => item.at;
+
 /** The paths more than one harness reads, out of one item's installations.
  *
- * Where the bytes actually are, not where the harness looks for them: two
- * harnesses linking to one shared folder are sharing a file, even though each
- * has a path of its own pointing at it. The badge that says a package is
- * shared and the flyout that says which files reads this one answer, so the
- * badge can never stand over a list that disagrees with it. */
+ * The badge that says a package is shared and the flyout that says which
+ * files reads this one answer, so the badge can never stand over a list
+ * that disagrees with it. */
 export function sharedFiles(installations: ObservedItem[]): SharedFile[] {
   const byPath = new Map<string, string[]>();
   for (const install of installations) {
-    const real =
-      install.fileState.state === "symlink" && !install.fileState.broken
-        ? install.fileState.target
-        : install.path;
+    const real = bytesAt(install);
     const harnesses = byPath.get(real) ?? [];
     if (!harnesses.includes(install.harness)) harnesses.push(install.harness);
     byPath.set(real, harnesses);
@@ -106,16 +148,38 @@ export function sharedFiles(installations: ObservedItem[]): SharedFile[] {
     .map(([path, harnesses]) => ({ path, harnesses }));
 }
 
-export function groupItems(items: ObservedItem[]): ItemGroup[] {
+/** Every installation on screen, gathered under the package it is.
+ *
+ *  A tool storing a package as another kind, or under a name of its own,
+ *  is an installation detail: the row is the package, and the tools it is
+ *  installed on sit on that row.
+ *
+ *  Where nothing establishes which package an installation is, the file it
+ *  reads is all there is to go on, so that is what gathers it. Several
+ *  tools reading one file are one row — the shared tree, and the links
+ *  into it — while two files that merely happen to share a kind and a name
+ *  are two, because nothing says they are the same thing and a name is not
+ *  evidence. */
+export function groupItems(
+  items: ObservedItem[],
+  packageOf: PackageOf,
+): ItemGroup[] {
   const groups = new Map<string, ItemGroup>();
   for (const item of items) {
-    const key = `${item.kind}:${item.name}`;
+    const identity = packageOf(item);
+    // Prefixed apart: a package and an observation are different claims
+    // about what a row is, and a package named for what some unrecorded
+    // file happens to be called must not join that file's row.
+    const key = identity
+      ? `package:${identity.kind}:${identity.name}`
+      : `observed:${item.kind}:${item.name}:${observedAt(item)}`;
     let group = groups.get(key);
     if (!group) {
       group = {
         key,
-        kind: item.kind,
-        name: item.name,
+        package: identity,
+        kind: identity?.kind ?? item.kind,
+        name: identity?.name ?? item.name,
         description: item.description,
         installations: [],
         harnesses: [],
@@ -140,7 +204,84 @@ export function groupItems(items: ObservedItem[]): ItemGroup[] {
       .filter((t): t is number => t != null);
     group.modifiedAt = times.length > 0 ? Math.max(...times) : null;
   }
-  return [...groups.values()].sort((a, b) => a.key.localeCompare(b.key));
+  // Ordered by what the table shows — its type column, then its name — so
+  // rows of one type stay adjacent. Whether a row is a package the records
+  // account for is identity, not an order a reader can see, so the key only
+  // settles two rows the displayed columns cannot.
+  return [...groups.values()].sort(
+    (a, b) =>
+      a.kind.localeCompare(b.kind) ||
+      a.name.localeCompare(b.name) ||
+      a.key.localeCompare(b.key),
+  );
+}
+
+/** Which of the two things a row can be. A package the records account for
+ *  and an installation nothing recorded can wear the same kind and name and
+ *  are not the same thing, so every link to a row states which it meant
+ *  rather than leaving the page to pick. */
+export type PackageIdentity = "recorded" | "observed";
+
+export const identityOf = (group: ItemGroup): PackageIdentity =>
+  group.package ? "recorded" : "observed";
+
+/** What a package is called and which of the two things wearing that kind
+ *  and name it is — the shape every join, link and page selection takes,
+ *  so none of them can key on half of it. */
+export interface PackageIdentityRef {
+  kind: ItemKind;
+  name: string;
+  identity: PackageIdentity;
+  /** Which file, for a row nothing recorded. Its kind and name are not its
+   *  identity — another file can wear both — so the file it reads is what
+   *  tells one such row from another, and a link without it would open
+   *  whichever came first. Absent on a recorded row, whose declaration is
+   *  its identity wherever its copies sit. */
+  at?: string;
+}
+
+/** How a group names itself to every join and every link. */
+export const groupRef = (group: ItemGroup): PackageIdentityRef =>
+  group.package
+    ? { kind: group.kind, name: group.name, identity: "recorded" }
+    : {
+        kind: group.kind,
+        name: group.name,
+        identity: "observed",
+        // Every installation on an unrecorded row reads one file — that is
+        // what gathered them — so the first speaks for the row.
+        at: group.installations[0] && observedAt(group.installations[0]),
+      };
+
+/** The row a link opens, out of the rows on this machine.
+ *
+ *  What the link stated is what opens, and once the identity read has
+ *  answered nothing else may: their files, tools and comparison come from
+ *  one row and their versions, update note and Delete from the other, so a
+ *  row that merely shares a kind and a name is a different thing, not a
+ *  near miss. A package the link named that is no longer installed is
+ *  nothing here, which is what sends the page back.
+ *
+ *  There is no grouping to search before that read answers — every row
+ *  would read as unrecorded whatever it is — so a caller has the groups
+ *  the read produced or has none, and this is only ever asked of the
+ *  former. */
+export function groupFor(
+  groups: ItemGroup[],
+  ref: PackageIdentityRef,
+): ItemGroup | null {
+  // A recorded link is answered by the identity alone; an unrecorded one
+  // also has to name the file, because two rows can wear one kind and name
+  // and neither is the other's stand-in.
+  return (
+    groups.find(
+      (group) =>
+        group.kind === ref.kind &&
+        group.name === ref.name &&
+        identityOf(group) === ref.identity &&
+        (ref.identity === "recorded" || groupRef(group).at === ref.at),
+    ) ?? null
+  );
 }
 
 /** How many packages a grouped scan holds — one per kind+name group, the
@@ -173,19 +314,20 @@ export interface ItemPlace {
 export function installedCountByKind(
   items: ObservedItem[],
   place: ItemPlace,
+  packageOf: PackageOf,
 ): Map<ItemKind, number> {
   const tally = new Map<ItemKind, number>();
   const here = filterItems(items, {
     scope: place.scope ?? "all",
     harness: place.harness,
   });
-  for (const group of groupItems(here)) {
+  for (const group of groupItems(here, packageOf)) {
     tally.set(group.kind, (tally.get(group.kind) ?? 0) + 1);
   }
   // Handed back in the app's kind order, not the grouping's: the badges sit
   // beside the Library's own kind filter, and a reader must meet one order.
-  // `groupItems` sorts on the group key, which puts kinds in the wire order
-  // {@link KINDS} exists to keep off screen.
+  // `groupItems` orders by kind, which is the wire order {@link KINDS}
+  // exists to keep off screen.
   const counts = new Map<ItemKind, number>();
   for (const kind of KINDS) {
     const count = tally.get(kind);

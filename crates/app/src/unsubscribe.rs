@@ -4,20 +4,13 @@
 use kendex_core::apply;
 use kendex_core::engine::ops as engine_ops;
 use kendex_core::env::Env;
+use kendex_core::library::PackageRef;
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::source_ops;
 use serde::Serialize;
 use specta::Type;
 
 use crate::scopes::env;
-
-/// One package named in an unsubscribe preview.
-#[derive(Debug, Clone, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct PackageRef {
-    pub kind: ItemKind,
-    pub name: String,
-}
 
 /// What unsubscribing from a marketplace would do: the packages that can be
 /// removed or kept as-is, the ones the user edited (which must be forked or

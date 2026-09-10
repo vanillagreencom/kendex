@@ -1,7 +1,7 @@
 // The vocabulary of places: every page id, the refs that address what a
 // nested page is showing, and the snapshot the back stack keeps.
 import type { Catalog, ItemKind, Scope } from "@/bindings";
-import type { ItemPlace } from "@/lib/derive";
+import type { ItemPlace, PackageIdentity } from "@/lib/derive";
 
 export type Page =
   | "home"
@@ -43,11 +43,23 @@ export interface LibraryFilter extends ItemPlace {
 }
 
 /** The package a package page is showing — everything a backend query
- * needs to address it. */
+ * needs to address it, plus which of the two things wearing this kind and
+ * name the link meant. */
 export interface PackageRef {
   kind: ItemKind;
   name: string;
   scope: Scope;
+  /** `recorded` for a package the install records account for, `observed`
+   * for an installation nothing recorded, which is a different thing under
+   * the same label. Stated by every link rather than defaulted: the page
+   * holds one of them, and picking for the reader is how one row opens the
+   * other's page. A link built from a record is `recorded` by
+   * construction. */
+  identity: PackageIdentity;
+  /** Which file, where the link names a row nothing recorded — its kind
+   * and name are not its identity, and another file can wear both. Absent
+   * on a recorded link, whose declaration is its identity. */
+  at?: string;
 }
 
 /** One catalog, addressed the way every marketplace query is: a

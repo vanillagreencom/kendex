@@ -1,7 +1,7 @@
 import type { HarnessId } from "@/bindings";
 import { Ago } from "@/components/ago";
 import { RECENT_ACTIVITY_EMPTY } from "@/lib/copy";
-import type { RecentGroup } from "@/lib/derive";
+import { groupRef, type RecentGroup } from "@/lib/derive";
 import { kindIcon } from "@/lib/kind-icon";
 import { harnessName, hookDisplayName, kindLabel } from "@/lib/labels";
 import { useNavStore } from "@/stores/nav";
@@ -31,7 +31,9 @@ export function RecentActivity({ groups }: { groups: RecentGroup[] }) {
         // place whose copy the time beside it is the time of. The group's
         // stamp is the newest of its installations, so opening the first
         // one would show a reader files that did not change when the row
-        // says they did.
+        // says they did. It opens on the group's own identity, so a
+        // recorded package and a stranger under its name stay two rows
+        // that open two pages.
         const changed =
           group.installations.find(
             (one) => one.modifiedAt === group.modifiedAt,
@@ -43,8 +45,7 @@ export function RecentActivity({ groups }: { groups: RecentGroup[] }) {
             type="button"
             className="-mx-2 flex w-full items-center gap-3 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent"
             onClick={() =>
-              where &&
-              goToPackage({ kind: group.kind, name: group.name, scope: where })
+              where && goToPackage({ ...groupRef(group), scope: where })
             }
           >
             <Icon className="size-4 shrink-0 text-muted-foreground" />

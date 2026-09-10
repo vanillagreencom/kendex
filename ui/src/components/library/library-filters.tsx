@@ -74,7 +74,10 @@ export function LibraryFilters({
   projects: string[];
   /** Rows the table is showing, against every row it could show. */
   shown: number;
-  total: number;
+  /** Every row the table could show, or null where the read that says which
+   *  installations are one package could not answer — there is no total
+   *  then, and a number would be a count of something else. */
+  total: number | null;
   /** The first scan hasn't landed, so there is no count to state yet. */
   counting: boolean;
   filtered: boolean;
@@ -176,6 +179,10 @@ export function LibraryFilters({
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
             {counting ? (
               <Skeleton className="h-3 w-16" />
+            ) : total === null ? (
+              // Not still counting and not a number: the count is
+              // unavailable, and the note above says why.
+              <span className="tabular-nums">—</span>
             ) : (
               <span className="tabular-nums">
                 {shown === total ? `${total} items` : `${shown} of ${total}`}

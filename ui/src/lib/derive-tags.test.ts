@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ObservedItem } from "@/bindings";
+import { observed } from "@/test/observed";
 import { filterItems, groupItems } from "./derive";
 
 function item(overrides: Partial<ObservedItem>): ObservedItem {
-  return {
+  return observed({
     kind: "skill",
     name: "deploy",
     harness: "claude",
@@ -17,7 +18,7 @@ function item(overrides: Partial<ObservedItem>): ObservedItem {
     modifiedAt: null,
     vendor: null,
     ...overrides,
-  };
+  });
 }
 
 describe("filterItems by tag", () => {
@@ -70,6 +71,8 @@ describe("groupItems tags", () => {
     ];
     expect(rows.length, "grouped tag table is empty").toBeGreaterThan(0);
     for (const row of rows)
-      expect(groupItems(row.items)[0].tags, row.name).toEqual(row.expected);
+      expect(groupItems(row.items, () => null)[0].tags, row.name).toEqual(
+        row.expected,
+      );
   });
 });

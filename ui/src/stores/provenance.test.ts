@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { commands, type ProvenanceRow } from "@/bindings";
+import { commands, type ItemKind, type ProvenanceRow } from "@/bindings";
 import { READ_PENDING } from "@/lib/read-state";
 import { NO_REASON_GIVEN } from "@/lib/settled";
+import { useScanStore } from "@/stores/scan";
 import {
   joinCurrent,
   originFor,
@@ -22,23 +23,32 @@ const ROWS: ProvenanceRow[] = [
     kind: "skill",
     name: "gh",
     harness: "claude",
+    at: null,
     origin: { origin: "marketplace", source: "kendex", repo: "acme/kendex" },
+    package: { kind: "skill", name: "gh" },
   },
   {
     scope: { scope: "project", root: "/work/app" },
     kind: "skill",
     name: "gh",
     harness: "claude",
+    at: null,
     origin: { origin: "own", forkedFrom: "kendex", source: "local" },
+    package: { kind: "skill", name: "gh" },
   },
   {
     scope: { scope: "global" },
     kind: "agent",
     name: "gh",
     harness: "claude",
+    at: null,
     origin: { origin: "unmanaged" },
+    package: null,
   },
 ];
+
+const recorded = (kind: ItemKind) =>
+  ({ kind, name: "gh", identity: "recorded" }) as const;
 
 describe("the From column's join", () => {
   it("matches the origin by kind, name and scope", () => {
@@ -68,9 +78,54 @@ describe("the From column's join", () => {
     ];
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows)
-      expect(originFor(ROWS, row.kind, "gh", row.scopes), row.name).toEqual(
+      expect(originFor(ROWS, recorded(row.kind), row.scopes), row.name).toEqual(
         row.expected,
       );
+  });
+
+  // Two things can wear one kind, name and place: a package the records
+  // account for and a file nothing recorded. Matched on the name alone the
+  // unmanaged one reads as the marketplace package, and the package reads
+  // as Not managed.
+  it("keeps a package and a same-named file nobody installed apart", () => {
+    const here = { scope: "project" as const, root: "/p" };
+    const both: ProvenanceRow[] = [
+      {
+        scope: here,
+        kind: "skill",
+        name: "gh",
+        harness: "claude",
+        at: "/p/.claude/skills/gh",
+        origin: { origin: "marketplace", source: "kendex", repo: "a/k" },
+        package: { kind: "skill", name: "gh" },
+      },
+      {
+        scope: here,
+        kind: "skill",
+        name: "gh",
+        harness: "cursor",
+        at: "/p/.cursor/skills/gh",
+        origin: { origin: "unmanaged" },
+        package: null,
+      },
+    ];
+    expect(originFor(both, recorded("skill"), [here])).toEqual({
+      origin: "marketplace",
+      source: "kendex",
+      repo: "a/k",
+    });
+    expect(
+      originFor(
+        both,
+        {
+          kind: "skill",
+          name: "gh",
+          identity: "observed",
+          at: "/p/.cursor/skills/gh",
+        },
+        [here],
+      ),
+    ).toEqual({ origin: "unmanaged" });
   });
 
   it("carries the source, category and hover detail for each origin", () => {
@@ -288,5 +343,61 @@ describe("overlapping reads of the join", () => {
     await store().reload();
 
     expect(store().read).toEqual({ status: "failed", error: NO_REASON_GIVEN });
+  });
+});
+
+// `ensureFor` is asked to make the join answer for one scan. Whether a read
+// is running says nothing about which machine it will describe: one that
+// began before this scan landed answers about the scan before it, and no
+// state change asks again — the identity index and every count under it
+// then stay unavailable until something else scans.
+describe("the join asked to answer for one scan", () => {
+  beforeEach(() => {
+    useProvenanceStore.setState({
+      rows: [],
+      loaded: false,
+      answeredFor: null,
+      read: READ_PENDING,
+      reading: false,
+    });
+    vi.clearAllMocks();
+  });
+
+  it("takes a re-read when the read out began before that scan", async () => {
+    const running = park();
+    vi.mocked(commands.libraryProvenance)
+      .mockReturnValueOnce(running.promise)
+      .mockResolvedValue({ status: "ok", data: AFTER });
+
+    useScanStore.setState({ generation: 1 });
+    const out = store().reload();
+    // The scan lands while that read is still out.
+    useScanStore.setState({ generation: 2 });
+    const asked = store().ensureFor(2);
+
+    running.land({ status: "ok", data: BEFORE });
+    await out;
+    await asked;
+
+    expect(store().answeredFor).toBe(2);
+    expect(commands.libraryProvenance).toHaveBeenCalledTimes(2);
+  });
+
+  // The inverse: a read that began after this scan is already its answer,
+  // so asking again costs a second whole-machine read for nothing.
+  it("adds no read when the one out already began after that scan", async () => {
+    const running = park();
+    vi.mocked(commands.libraryProvenance).mockReturnValueOnce(running.promise);
+
+    useScanStore.setState({ generation: 3 });
+    const out = store().reload();
+    const asked = store().ensureFor(3);
+
+    running.land({ status: "ok", data: AFTER });
+    await out;
+    await asked;
+
+    expect(store().answeredFor).toBe(3);
+    expect(commands.libraryProvenance).toHaveBeenCalledTimes(1);
   });
 });

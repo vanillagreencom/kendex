@@ -29,6 +29,7 @@ const ref = {
   scope: { scope: "global" } as const,
   kind: "skill" as const,
   name: "gh",
+  identity: "recorded" as const,
 };
 
 const version = (id: string): VersionRow => ({

@@ -27,14 +27,14 @@ pub(super) fn paths(env: &Env, scope: &Scope, lock: &Lock) -> BTreeSet<PathBuf> 
         .collect()
 }
 
-pub(super) struct Owned {
-    pub(super) files: Vec<PathBuf>,
+pub(crate) struct Owned {
+    pub(crate) files: Vec<PathBuf>,
     pub(super) edits: Vec<(PathBuf, ConfigEdit)>,
 }
 
 /// What one installation put on this machine: files it wrote, and the
 /// structured edit that takes its registration back out.
-pub(super) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
+pub(crate) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
     let mut files: Vec<PathBuf> = Vec::new();
     let mut edits: Vec<(PathBuf, ConfigEdit)> = Vec::new();
     match (&entry.emitted, entry.kind) {
@@ -109,6 +109,22 @@ pub(super) fn installed(env: &Env, scope: &Scope, entry: &LockEntry) -> Owned {
 /// the command this path spells, as it always was. Codex's feature flag
 /// stays on either way: other hooks may still rely on it, and it enables
 /// nothing by itself.
+/// The registry file one hook install writes its entry into, or `None`
+/// where this tool registers nothing. The same answer the install and the
+/// removal take, so what a record is credited with cannot drift from the
+/// file it actually wrote.
+pub(crate) fn hook_registry(
+    env: &Env,
+    scope: &Scope,
+    harness: crate::model::HarnessId,
+    name: &str,
+) -> Option<PathBuf> {
+    match hook_target(env, scope, harness, name) {
+        Some(HookTarget::Script { registry, .. }) => Some(registry),
+        _ => None,
+    }
+}
+
 fn hook_owned(
     env: &Env,
     scope: &Scope,

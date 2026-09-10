@@ -1,27 +1,35 @@
 import { describe, expect, it } from "vitest";
 import type { ObservedItem, Scope, ScopeSettings, UpdateRow } from "@/bindings";
 import { groupItems } from "@/lib/derive";
+import { observed } from "@/test/observed";
 import { markFor } from "./package-mark";
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
 const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
 
-const item = (scope: Scope): ObservedItem => ({
+const item = (scope: Scope): ObservedItem =>
+  observed({
+    kind: "skill",
+    name: "gh",
+    scope,
+    harness: "claude",
+    path: `${scope.scope === "project" ? scope.root : ""}/.claude/skills/gh`,
+    fileState: { state: "file" },
+    enabled: true,
+    origin: null,
+    description: "about gh",
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+  });
+
+// One recorded package in two places, which is what a mark counting
+// places is about. Two copies wearing a name establish nothing on their
+// own, so the fixture says what the records say.
+const group = groupItems([item(VG), item(HYPR)], () => ({
   kind: "skill",
   name: "gh",
-  scope,
-  harness: "claude",
-  path: `${scope.scope === "project" ? scope.root : ""}/.claude/skills/gh`,
-  fileState: { state: "file" },
-  enabled: true,
-  origin: null,
-  description: "about gh",
-  tags: [],
-  modifiedAt: null,
-  vendor: null,
-});
-
-const group = groupItems([item(VG), item(HYPR)])[0];
+}))[0];
 
 // Both places have been read for hand edits and forks, so a count over
 // them is a count over places somebody looked at.

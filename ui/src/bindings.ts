@@ -2448,6 +2448,20 @@ export type ObservedItem = {
 	 *  [`crate::vendor`]. `None` is the common case: the user's own.
 	 */
 	vendor: string | null,
+	/**
+	 *  What tells this observation from another the scan saw under the
+	 *  same kind, name and tool — because it does see two: a tool reads a
+	 *  shared root and one of its own, and one registry file holds every
+	 *  hook entry a tool runs.
+	 * 
+	 *  Carried rather than derived by each reader. It is a canonical path
+	 *  in one spelling, which nothing above the filesystem can rebuild:
+	 *  deriving it again anywhere — in another crate, in the UI — is a
+	 *  second answer to one question, and the two disagree the moment a
+	 *  path resolves through a link or a platform spells a separator its
+	 *  own way. Compared, never parsed.
+	 */
+	at: string,
 };
 
 /**
@@ -2631,7 +2645,11 @@ export type PackagePreview = {
 	collision: string | null,
 };
 
-/**  One package named in an unsubscribe preview. */
+/**
+ *  The package one installation belongs to: the kind and name its
+ *  declaration carries, which is the identity the manifest, the records
+ *  and every mutation speak.
+ */
 export type PackageRef = {
 	kind: ItemKind,
 	name: string,
@@ -2872,13 +2890,38 @@ export type ProjectOffer = {
 	tracked: boolean,
 };
 
-/**  One installation's origin, keyed the way the Library table joins it. */
+/**
+ *  One installation's origin and identity, keyed the way the Library table
+ *  joins it: by what the scan observed, which is what a reader has in hand.
+ */
 export type ProvenanceRow = {
 	scope: Scope,
 	kind: ItemKind,
 	name: string,
 	harness: HarnessId,
+	/**
+	 *  What tells this observation from another the scan saw under the
+	 *  same scope, kind, name and tool — because it does see two: a tool
+	 *  reads both a shared skill root and one of its own, and one registry
+	 *  file holds every hook entry a tool runs.
+	 * 
+	 *  For an artifact of its own that is where it sits. For an entry
+	 *  inside a shared file it is that file and the action the entry runs,
+	 *  since the file is every entry's. Compared, never parsed: it is one
+	 *  opaque spelling of "which observation is this", and `None` on a row
+	 *  a record seeded for an installation the scan did not see.
+	 */
+	at: string | null,
 	origin: Origin,
+	/**
+	 *  Which package this installation is, where the records establish
+	 *  one. `None` says they do not: the observation keeps its own
+	 *  identity and stays distinct from every other, because a name two
+	 *  things share is no evidence that either wrote the file. Nothing may
+	 *  read the absence as unmanaged content — that is what [`Origin`]
+	 *  answers.
+	 */
+	package: PackageRef | null,
 };
 
 export type QualityScore = {

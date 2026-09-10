@@ -13,6 +13,7 @@ vi.mock("@/bindings", () => ({
     capabilityTable: vi.fn(),
     windowZoomState: vi.fn(),
     scanMachine: vi.fn(),
+    libraryProvenance: vi.fn(),
     auditAll: vi.fn(),
     updatesOverview: vi.fn(),
     appUpdateCheck: vi.fn(),

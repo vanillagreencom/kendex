@@ -70,9 +70,13 @@ export function PackageActions({
    *  doing something about it. */
   retryRunning?: boolean;
   busy: boolean;
-  onUpdate: () => void;
-  onPreview: () => void;
-  onDelete: () => void;
+  /** Absent where this page addresses no declaration: an installation
+   *  nothing recorded has none, and the same scope, kind and name may
+   *  belong to a package that does. A control with nothing to act on is
+   *  not drawn rather than drawn and refused. */
+  onUpdate?: () => void;
+  onPreview?: () => void;
+  onDelete?: () => void;
 }) {
   const showError = useProblemsStore((s) => s.showError);
   // Update commits through the updates store, so it also waits on a check;
@@ -104,7 +108,7 @@ export function PackageActions({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {updateAvailable ? (
+      {updateAvailable && onUpdate ? (
         <Button
           size="sm"
           disabled={updating}
@@ -114,7 +118,7 @@ export function PackageActions({
           {UPDATE_LABEL}
         </Button>
       ) : null}
-      {previewAvailable ? (
+      {previewAvailable && onPreview ? (
         <Button size="sm" variant="outline" onClick={onPreview}>
           {PREVIEW_CHANGES_LABEL}
         </Button>
@@ -156,10 +160,15 @@ export function PackageActions({
       </DropdownMenu>
       {/* Named for what it does: this takes every copy of the package,
           in every place, not the one place the page names. */}
-      <Button size="sm" variant="outline" disabled={busy} onClick={onDelete}>
-        {DELETE_LABEL}
-      </Button>
-      <ReportDialog scope={scope} name={name} kind={kind} />
+      {onDelete ? (
+        <Button size="sm" variant="outline" disabled={busy} onClick={onDelete}>
+          {DELETE_LABEL}
+        </Button>
+      ) : null}
+      {/* Reporting routes by scope, kind and name to the package's own
+          source; an installation nothing recorded has no source to route
+          to, and the address would reach the other package's. */}
+      {onDelete ? <ReportDialog scope={scope} name={name} kind={kind} /> : null}
     </div>
   );
 }

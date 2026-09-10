@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AuditView, DriftRow, ObservedItem, Scope } from "@/bindings";
+import type { AuditView, DriftRow, Scope } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
 import {
   ALL_MANAGED_TITLE,
@@ -14,6 +14,7 @@ import { useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
 import { mount, settle } from "@/test/dom";
+import { observed } from "@/test/observed";
 import { UnmanagedPage } from "./unmanaged";
 
 vi.mock("@/bindings", () => ({ commands: { auditAll: vi.fn() } }));
@@ -45,7 +46,7 @@ const view = (drift: DriftRow[]): AuditView => ({
 const SHARED = "/work/acme/team-skills/gh";
 
 /** Claude's shortcut at it, in the shape `sharedLinkOf` reads the scan in. */
-const LINKED = {
+const LINKED = observed({
   kind: "skill",
   name: "gh",
   harness: "claude",
@@ -58,7 +59,7 @@ const LINKED = {
   tags: [],
   modifiedAt: null,
   vendor: null,
-} satisfies ObservedItem;
+});
 
 const button = (host: HTMLElement, label: string) =>
   [...host.querySelectorAll("button")].find(

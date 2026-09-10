@@ -1,0 +1,1 @@
+- Open the row you clicked: a package and a same-named file nobody installed no longer open each other's page. Counts wait for the check behind them, and say so when it fails.

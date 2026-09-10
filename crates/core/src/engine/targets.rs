@@ -443,7 +443,7 @@ pub(super) fn plugin_settings(env: &Env, scope: &Scope, harness: HarnessId) -> O
     }
 }
 
-pub(super) fn disabled_name(path: &std::path::Path) -> PathBuf {
+pub(crate) fn disabled_name(path: &std::path::Path) -> PathBuf {
     PathBuf::from(format!("{}.disabled", path.display()))
 }
 

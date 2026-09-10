@@ -38,6 +38,7 @@ import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
+import { observed } from "@/test/observed";
 import { PackageProjects } from "./package-projects";
 
 vi.mock("@/bindings", async (importOriginal) => ({
@@ -46,38 +47,42 @@ vi.mock("@/bindings", async (importOriginal) => ({
 }));
 
 const OURS: Origin = { origin: "marketplace", source: "cat", repo: "o/r" };
+const UNMANAGED: Origin = { origin: "unmanaged" };
 
 /** The join as the tab reads it: a row per place kendex owns. Vendor
  *  content carries no row at all, so a place left out here is one the
  *  tool ships. */
+// One row per observation, naming the file it was read from — the join
+// answers per file, so a fixture that named none would be about no
+// installation the tab can match.
 const ownedBy = (...owned: [Scope, Origin][]): ProvenanceRow[] =>
   owned.map(([scope, origin]) => ({
     scope,
     kind: "skill",
     name: "gh",
     harness: "claude",
+    at: install(scope).path,
     origin,
+    package: { kind: "skill", name: "gh" },
   }));
 
 /** One installation as the scan found it: a place holds one per harness,
  *  and removability is decided over all of them. */
-const install = (
-  scope: Scope,
-  harness: HarnessId = "claude",
-): ObservedItem => ({
-  kind: "skill",
-  name: "gh",
-  harness,
-  scope,
-  path: `/x/${harness}`,
-  fileState: { state: "file" },
-  enabled: true,
-  origin: null,
-  description: null,
-  tags: [],
-  modifiedAt: null,
-  vendor: null,
-});
+const install = (scope: Scope, harness: HarnessId = "claude"): ObservedItem =>
+  observed({
+    kind: "skill",
+    name: "gh",
+    harness,
+    scope,
+    path: `/x/${harness}`,
+    fileState: { state: "file" },
+    enabled: true,
+    origin: null,
+    description: null,
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+  });
 
 /** What the scan found in these places. */
 const scanFound = (...items: ObservedItem[]) =>
@@ -203,12 +208,16 @@ afterEach(() => {
 });
 
 /** The tab about `gh`, installed in `scopes`, with its places read. */
-const openTab = async (scopes: Scope[]) => {
+const openTab = async (
+  scopes: Scope[],
+  installations: ObservedItem[] = scopes.map((scope) => install(scope)),
+) => {
   const host = mount(
     <PackageProjects
       kind="skill"
       name="gh"
       scopes={scopes}
+      installations={installations}
       busy={false}
       onDelete={onDelete}
     />,
@@ -252,6 +261,7 @@ describe("the Projects tab", () => {
         kind="skill"
         name="gh"
         scopes={[VG]}
+        installations={[install(VG)]}
         busy={false}
         onDelete={onDelete}
       />,
@@ -458,6 +468,7 @@ describe("removing a package from one place", () => {
     useProvenanceStore.setState({
       rows: ownedBy([VG, OURS], [HYPR, OURS]),
       loaded: true,
+      answeredFor: 0,
     });
     vi.mocked(commands.libraryProvenance).mockResolvedValue({
       status: "error",
@@ -540,5 +551,54 @@ describe("what a card's buttons are called", () => {
         new RegExp(`^${one.textContent} `),
       );
     }
+  });
+});
+
+// A tool that keeps a package in a shape of its own has an installation
+// under a name of its own — a Cursor hook is an advisory rule the rules
+// surface reads as an agent. Asked for by the declared name, that copy is
+// not found, the place reads as one kendex does not own, and its Remove
+// goes: kendex's own file, offered as a stranger's.
+describe("a place whose copy the tool stores as another kind", () => {
+  const RULE: ObservedItem = observed({
+    ...install(VG, "cursor"),
+    kind: "agent",
+    name: "safety-gh",
+    path: "/p/.cursor/rules/safety-gh.mdc",
+  });
+
+  it("still offers Remove for the copy kendex wrote", async () => {
+    // One tool, one place, two files under one kind and name: the rule
+    // kendex wrote, and somebody's own beside it. The unmanaged row sorts
+    // first, so a join that did not name the file would pick it and take
+    // the package's Remove away.
+    const mine: ObservedItem = observed({
+      ...install(VG, "cursor"),
+      kind: "agent",
+      name: "safety-gh",
+      path: "/p/.agents/safety-gh.mdc",
+    });
+    joinSays([
+      {
+        scope: VG,
+        kind: "agent",
+        name: "safety-gh",
+        harness: "cursor",
+        at: mine.at,
+        origin: UNMANAGED,
+        package: null,
+      },
+      {
+        scope: VG,
+        kind: "agent",
+        name: "safety-gh",
+        harness: "cursor",
+        at: RULE.at,
+        origin: OURS,
+        package: { kind: "hook", name: "gh" },
+      },
+    ]);
+    const host = await openTab([VG], [RULE]);
+    expect(removals(host).length).toBeGreaterThan(0);
   });
 });

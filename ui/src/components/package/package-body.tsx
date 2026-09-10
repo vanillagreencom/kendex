@@ -34,6 +34,7 @@ export function PackageBody({
   diff,
   busy,
   reading,
+  declares,
   onToggle,
   onSwitchVersion,
   onCompare,
@@ -55,7 +56,15 @@ export function PackageBody({
   busy: boolean;
   /** Whether the page's own reads are out. */
   reading: boolean;
-  onToggle: (enable: boolean) => void;
+  /** Whether this page addresses a declaration. The same one decision the
+   *  header's controls take: everything below that reads or writes by
+   *  scope, kind and name speaks to whatever package the records hold
+   *  under that address, which on an observed row is a different thing
+   *  than the page describes. */
+  declares: boolean;
+  /** Absent where this page addresses no declaration — the switch writes
+   *  one, and there is none behind an installation nothing recorded. */
+  onToggle?: (enable: boolean) => void;
   onSwitchVersion: (row: VersionRow) => void;
   onCompare: (row: VersionRow) => void;
   onFollow: () => void;
@@ -63,26 +72,31 @@ export function PackageBody({
 }) {
   return (
     <>
-      <EditedNotice
-        scope={reference.scope}
-        kind={reference.kind}
-        name={reference.name}
-        alreadyForked={meta?.fork != null}
-        onViewChanges={(harness) => {
-          if (!installed) return;
-          setView({
-            mode: "diff",
-            from: installed.id,
-            to: "installed",
-            fromLabel: versionRowLabel(installed),
-            toLabel: harness
-              ? `your edits in ${harnessName(harness)}`
-              : "your edits",
-            harness,
-          });
-        }}
-        onResolved={onReload}
-      />
+      {/* A hand edit is an edit to a declared package's copy, and the
+          notice offers to keep it as a fork or discard it — both writes to
+          that declaration. There is none behind an observed row. */}
+      {declares ? (
+        <EditedNotice
+          scope={reference.scope}
+          kind={reference.kind}
+          name={reference.name}
+          alreadyForked={meta?.fork != null}
+          onViewChanges={(harness) => {
+            if (!installed) return;
+            setView({
+              mode: "diff",
+              from: installed.id,
+              to: "installed",
+              fromLabel: versionRowLabel(installed),
+              toLabel: harness
+                ? `your edits in ${harnessName(harness)}`
+                : "your edits",
+              harness,
+            });
+          }}
+          onResolved={onReload}
+        />
+      ) : null}
       <div className="flex flex-col gap-8">
         {view.mode === "diff" ? (
           diff ? (
@@ -110,21 +124,27 @@ export function PackageBody({
               selectedFile={view.file}
               busy={busy}
               retryRunning={reading}
-              onToggle={(_, enable) => onToggle(enable)}
+              onToggle={onToggle && ((_, enable) => onToggle(enable))}
               onSwitchVersion={onSwitchVersion}
               onCompare={onCompare}
               onFollow={onFollow}
               onSelectFile={(file) => setView({ mode: "files", file })}
               onRetryFiles={onReload}
             />
-            <div className="min-w-0 flex-1">
-              <FilePreview
-                scope={reference.scope}
-                kind={reference.kind}
-                name={reference.name}
-                path={view.file}
-              />
-            </div>
+            {/* The preview reads a package's files by scope, kind and
+                name — the declaration's address. An observed row has no
+                declaration to read, and asking anyway would show the
+                other package's bytes under this one's name. */}
+            {declares ? (
+              <div className="min-w-0 flex-1">
+                <FilePreview
+                  scope={reference.scope}
+                  kind={reference.kind}
+                  name={reference.name}
+                  path={view.file}
+                />
+              </div>
+            ) : null}
           </div>
         )}
       </div>

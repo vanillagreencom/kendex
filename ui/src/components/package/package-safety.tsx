@@ -29,7 +29,10 @@ import { useAuditOnMount } from "@/stores/audit";
  *  fresh audit as the page comes up; the store's freshness window decides
  *  whether that costs anything. */
 export function usePackageSafety(
-  kind: ItemKind,
+  /** Null where the page has no declaration behind it: the audit answers
+   *  by scope, kind and name, which a same-named recorded package shares,
+   *  so there is nothing this page may ask it for. */
+  kind: ItemKind | null,
   name: string,
   scope: Scope,
 ): InstalledReading {

@@ -18,6 +18,7 @@ import {
   type ReadState,
   readFailed,
 } from "@/lib/read-state";
+import { observed } from "@/test/observed";
 import { OverviewPage } from "./overview";
 
 // Static markup escapes apostrophes, so a pinned copy token must be
@@ -43,6 +44,11 @@ const { stub, wrap } = vi.hoisted(() => {
     audit: {
       auditedAt: null as number | null,
       read: { status: "landed", error: null } as ReadState,
+    },
+    provenance: {
+      rows: [] as unknown[],
+      loaded: true,
+      answeredFor: 0 as number | null,
     },
   };
   const wrap = <M extends object>(
@@ -85,6 +91,10 @@ vi.mock("@/stores/audit", async (importOriginal) => {
     refresh: async () => {},
   }));
 });
+vi.mock("@/stores/provenance", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/stores/provenance")>();
+  return wrap(mod, "useProvenanceStore", () => stub.provenance);
+});
 
 /** Read the count from the named tile, so another tile cannot supply it. */
 const tileValue = (html: string, label: string): string | null | undefined => {
@@ -106,23 +116,27 @@ const scanned: ScanResult = {
   warnings: [],
 };
 
-const installed = (overrides: Partial<ObservedItem>): ObservedItem => ({
-  kind: "skill",
-  name: "deploy",
-  harness: "claude",
-  scope: { scope: "global" },
-  path: "/h/.claude/skills/deploy",
-  fileState: { state: "dir" },
-  enabled: true,
-  origin: null,
-  description: null,
-  tags: [],
-  modifiedAt: null,
-  vendor: null,
-  ...overrides,
-});
+const installed = (overrides: Partial<ObservedItem>): ObservedItem =>
+  observed({
+    kind: "skill",
+    name: "deploy",
+    harness: "claude",
+    scope: { scope: "global" },
+    path: "/h/.claude/skills/deploy",
+    fileState: { state: "dir" },
+    enabled: true,
+    origin: null,
+    description: null,
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+    ...overrides,
+  });
 
 beforeEach(() => {
+  // The join has answered and recorded nothing: these fixtures group as
+  // the scan saw them, and the tile may count.
+  stub.provenance = { rows: [], loaded: true, answeredFor: 0 };
   stub.scan = { result: null, error: null, scanning: false };
   stub.updates = { read: READ_LANDED, unreadable: [] };
   stub.market = { read: READ_LANDED };
@@ -354,6 +368,26 @@ describe("the Installed tile", () => {
     };
     const html = renderToStaticMarkup(<OverviewPage />);
     expect(tileValue(html, "Installed")).toBe("1");
+  });
+
+  // Which observations are one package is a read of its own. Counted
+  // before it answers, the tile would report the installations it can see
+  // under a label that says packages — and land on a shorter table.
+  it("waits for the read that says which installations are one package", () => {
+    stub.provenance = { rows: [], loaded: false, answeredFor: null };
+    stub.scan = {
+      result: {
+        ...scanned,
+        items: [
+          installed({ harness: "claude" }),
+          installed({ harness: "codex" }),
+        ],
+      },
+      error: null,
+      scanning: false,
+    };
+    const html = renderToStaticMarkup(<OverviewPage />);
+    expect(tileValue(html, "Installed")).toBe("—");
   });
 });
 

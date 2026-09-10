@@ -10,6 +10,12 @@ interface ScanState {
   /** When the last successful scan finished, for the status footer's
    * "scanned Nm ago" — null until the first scan completes. */
   lastScanAt: number | null;
+  /** Which scan `result` is. Bumped once per landed scan, so anything that
+   *  answers ABOUT a scan can say which one it answered about — a reader
+   *  holding an answer for an older number is holding a stale one, and a
+   *  timestamp cannot say that without a comparison every reader would
+   *  have to spell for itself. Zero before the first scan lands. */
+  generation: number;
   /** A background scan (startup, focus) has already toasted its failure —
    * suppresses repeat toasts on every silent retry until one succeeds. A
    * press of "Scan again" re-opens it, so its window is said once. */
@@ -36,12 +42,13 @@ export const useScanStore = create<ScanState>((set, get) => {
       // good result stays kept either way.
       const response = await settled(commands.scanMachine());
       if (response.status === "ok") {
-        set({
+        set((state) => ({
           result: response.data,
           error: null,
           lastScanAt: Date.now(),
+          generation: state.generation + 1,
           backgroundFailureAnnounced: false,
-        });
+        }));
       } else {
         set({ error: response.error });
         if (opts?.announce || !get().backgroundFailureAnnounced) {
@@ -67,6 +74,7 @@ export const useScanStore = create<ScanState>((set, get) => {
     scanning: false,
     error: null,
     lastScanAt: null,
+    generation: 0,
     backgroundFailureAnnounced: false,
 
     // A scan already out cannot answer for what has happened since it began

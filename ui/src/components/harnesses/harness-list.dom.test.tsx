@@ -3,8 +3,9 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ObservedItem, ScanResult, Scope } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
+import { PLACE_COUNTING_LABEL, PLACE_UNCHECKED_LABEL } from "@/lib/copy";
 import { kindLabel } from "@/lib/labels";
-import { READ_LANDED } from "@/lib/read-state";
+import { READ_LANDED, READ_PENDING, readFailed } from "@/lib/read-state";
 import { useEditorStore } from "@/stores/editor";
 import { useLibraryViewStore } from "@/stores/library-view";
 import { useNavStore } from "@/stores/nav";
@@ -13,25 +14,27 @@ import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
+import { observed } from "@/test/observed";
 import { HarnessList } from "./harness-list";
 
 const ACME: Scope = { scope: "project", root: "/work/acme" };
 
-const installed = (overrides: Partial<ObservedItem>): ObservedItem => ({
-  kind: "skill",
-  name: "deploy",
-  harness: "claude",
-  scope: { scope: "global" },
-  path: "/h/.claude/skills/deploy",
-  fileState: { state: "dir" },
-  enabled: true,
-  origin: null,
-  description: null,
-  tags: [],
-  modifiedAt: null,
-  vendor: null,
-  ...overrides,
-});
+const installed = (overrides: Partial<ObservedItem>): ObservedItem =>
+  observed({
+    kind: "skill",
+    name: "deploy",
+    harness: "claude",
+    scope: { scope: "global" },
+    path: "/h/.claude/skills/deploy",
+    fileState: { state: "dir" },
+    enabled: true,
+    origin: null,
+    description: null,
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+    ...overrides,
+  });
 
 // Claude carries two skills over three installations: one of them lives
 // globally and in a project both. Counting installations puts 3 on the badge
@@ -57,15 +60,27 @@ const SKILL_BADGE = new RegExp(
   `^(\\d+) (${kindLabel("skill", 1)}|${kindLabel("skill", 2)})$`,
 );
 
-/** The skills badge on the row for one harness. */
-function skillBadge(host: HTMLElement, harness: string): HTMLButtonElement {
+/** The skills badge on the row for one harness, or null where the row draws
+ *  none. One place finds it, so what a test says is missing is what another
+ *  says is there. */
+function findSkillBadge(
+  host: HTMLElement,
+  harness: string,
+): HTMLButtonElement | null {
   const row = [...host.querySelectorAll<HTMLElement>("div.group")].find((el) =>
     el.textContent?.startsWith(harness),
   );
   if (!row) throw new Error(`no row for ${harness}`);
-  const badge = [...row.querySelectorAll<HTMLButtonElement>("button")].find(
-    (b) => SKILL_BADGE.test(b.textContent ?? ""),
+  return (
+    [...row.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      SKILL_BADGE.test(b.textContent ?? ""),
+    ) ?? null
   );
+}
+
+/** The skills badge on the row for one harness. */
+function skillBadge(host: HTMLElement, harness: string): HTMLButtonElement {
+  const badge = findSkillBadge(host, harness);
   if (!badge) throw new Error(`no skills badge on the ${harness} row`);
   return badge;
 }
@@ -78,8 +93,27 @@ const destinationRows = (): number =>
   mount(<InstalledView />).querySelectorAll("tbody tr").length;
 
 beforeEach(() => {
-  vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
   vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+  // The join has answered and recorded nothing: these packages group as
+  // the scan saw them, which is what the fixture means.
+  // What the fixture means by "two skills over three installations": each
+  // is one recorded package, whichever place or tool holds a copy. Said to
+  // the join, because that is what establishes it — two files wearing one
+  // name establish nothing on their own.
+  useProvenanceStore.setState({
+    rows: scanned.items.map((item) => ({
+      scope: item.scope,
+      kind: item.kind,
+      name: item.name,
+      harness: item.harness,
+      at: item.path,
+      origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
+      package: { kind: item.kind, name: item.name },
+    })),
+    loaded: true,
+    answeredFor: 0,
+    read: READ_LANDED,
+  });
   useUpdatesStore.setState({ rows: [], read: READ_LANDED });
   useScanStore.setState({ scanning: false, result: scanned, error: null });
   useSettingsStore.setState({ settings: { projects: [] } as never });
@@ -113,5 +147,65 @@ describe("a harness row's kind badge", () => {
       kind: "skill",
     });
     expect(badge).toBe(destinationRows());
+  });
+});
+
+// A badge counts packages and its click opens the Library on the same
+// narrowing. Until the read that says which installations are one package
+// answers, there is no number: counted anyway, a hook installed for several
+// tools reads as several entries under whichever kinds its files happen to
+// be, and the click lands on a shorter, differently-kinded list.
+describe("a harness row's badges before the identity read answers", () => {
+  const rows = [
+    {
+      name: "still on its way",
+      provenance: {
+        rows: [],
+        loaded: false,
+        answeredFor: null,
+        read: READ_PENDING,
+      },
+      said: PLACE_COUNTING_LABEL,
+      absent: PLACE_UNCHECKED_LABEL,
+    },
+    {
+      name: "failed with nothing kept",
+      provenance: {
+        rows: [],
+        loaded: false,
+        answeredFor: null,
+        read: readFailed("no lock"),
+      },
+      said: PLACE_UNCHECKED_LABEL,
+      absent: PLACE_COUNTING_LABEL,
+    },
+    {
+      // The re-read a write asks for, failing with no scan behind it: the
+      // last answer is still about the scan on screen, so a rule reading
+      // that number alone would go on printing a definite count for a
+      // machine nothing has been able to check since.
+      name: "failed over the answer it had for this scan",
+      provenance: {
+        rows: [],
+        loaded: true,
+        answeredFor: useScanStore.getState().generation,
+        read: readFailed("no lock"),
+      },
+      said: PLACE_UNCHECKED_LABEL,
+      absent: PLACE_COUNTING_LABEL,
+    },
+  ];
+
+  it("says why there is no count, and which of the two it is", () => {
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      useProvenanceStore.setState(row.provenance);
+      const host = mount(<HarnessList />);
+      expect(host.textContent, row.name).toContain(row.said);
+      expect(host.textContent, row.name).not.toContain(row.absent);
+      // No badge at all where a package count would be: not a count of
+      // installations under a package's label, and not a zero either.
+      expect(findSkillBadge(host, "Claude Code"), row.name).toBeNull();
+    }
   });
 });
