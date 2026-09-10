@@ -637,3 +637,58 @@ fn write_gh(catalog: &Path, summary: &str) {
     )
     .unwrap();
 }
+
+/// A package's own words reach a Library row escaped, the way the
+/// marketplace row already has them.
+///
+/// Catalog prose is written by whoever published the package. A control
+/// character acts on the surface drawing it and an invisible or
+/// direction-flipping one lets a line read as something it does not say,
+/// so `names::shown` puts both on screen as their escapes. The row and the
+/// marketplace row show one package version, and a character escaped in
+/// one and acted on in the other is the contradiction with a spelling.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_row_escapes_author_text_the_way_a_catalog_row_does() {
+    let f = fixture("[mcp-servers.db]\nsource = \"cat\"\n");
+    // A right-to-left override inside the author's own sentence.
+    fs::write(
+        f.catalog.join("mcp/db.toml"),
+        "command = \"db-mcp\"\nsummary = \"Reads\u{202E}the project database.\"\n",
+    )
+    .unwrap();
+    apply_now(&f);
+
+    let offered = browse::packages(
+        &f.env,
+        &browse::Catalog::Subscription {
+            scope: f.scope.clone(),
+            source: "cat".to_owned(),
+        },
+    )
+    .unwrap();
+    let catalog_row = offered
+        .iter()
+        .find(|row| row.kind == ItemKind::McpServer && row.name == "db")
+        .expect("the server is offered");
+
+    let rows = kendex_core::library::provenance(&f.env, std::slice::from_ref(&f.scope)).unwrap();
+    let row = rows
+        .iter()
+        .find(|row| row.package_ref().name == "db")
+        .expect("the server has a provenance row");
+
+    let shown = row.summary.as_deref().expect("the row carries the words");
+    assert!(
+        !shown.contains('\u{202E}'),
+        "the override reached the row as itself: {shown}"
+    );
+    assert!(
+        shown.contains("\\u{202e}"),
+        "the override is not on the row as its escape: {shown}"
+    );
+    assert_eq!(
+        row.summary, catalog_row.summary,
+        "one package version reads differently on its two surfaces"
+    );
+}

@@ -51,6 +51,25 @@ describe("previewSummary", () => {
     }
   });
 
+  // A summary is ordinary author text and an emoji is ordinary in one. It
+  // is two of the units a string indexes in, so a bound counted in units
+  // can land between its halves; nothing before the bound is a space, so
+  // there is no word boundary to fall back to and hide it.
+  it("never cuts a character in half", () => {
+    const { shown, truncated } = previewSummary(
+      `${"a".repeat(PREVIEW_SUMMARY_CHARS - 1)}\u{1F600} and more`,
+    );
+    expect(truncated).toBe(true);
+    expect(shown).toBe(`${"a".repeat(PREVIEW_SUMMARY_CHARS - 1)}\u{1F600}…`);
+    // Said again as the property, so a rewritten expectation cannot pass
+    // with half a character in it: no unpaired surrogate anywhere.
+    expect(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(
+        shown,
+      ),
+    ).toBe(false);
+  });
+
   it("never ends a cut mid-word and never keeps more than the bound", () => {
     const { shown, truncated } = previewSummary(long);
     expect(truncated).toBe(true);

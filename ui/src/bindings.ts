@@ -3108,6 +3108,10 @@ export type ProvenanceRow = {
 	 *  says the author wrote nothing reachable, and that is a supported
 	 *  state — a command, a URL, a path, a script body or a line kendex
 	 *  built is never promoted into a sentence about the package.
+	 * 
+	 *  Author text, so it arrives shown-safe: a control, invisible or
+	 *  direction-flipping character is here as its escape, never as
+	 *  itself.
 	 */
 	summary: string | null,
 	/**

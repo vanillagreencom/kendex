@@ -71,6 +71,10 @@ pub struct ProvenanceRow {
     /// says the author wrote nothing reachable, and that is a supported
     /// state — a command, a URL, a path, a script body or a line kendex
     /// built is never promoted into a sentence about the package.
+    ///
+    /// Author text, so it arrives shown-safe: a control, invisible or
+    /// direction-flipping character is here as its escape, never as
+    /// itself.
     pub summary: Option<String>,
     /// Which package this installation is, where the records establish
     /// one. `None` says they do not: the observation keeps its own
@@ -205,7 +209,14 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
             harness,
             at,
             origin: facts.origin,
-            summary: facts.summary,
+            // Author text, escaped once for every row here rather than at
+            // each path that fills one: a control character would act on
+            // the surface drawing it, and an invisible or
+            // direction-flipping one would let one package's line read as
+            // another's. `source::browse` escapes the same text for the
+            // marketplace row, so one package version reads the same in
+            // both places.
+            summary: facts.summary.as_deref().map(crate::names::shown),
             package: facts.package,
         })
         .collect())
