@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Ask,
+  ItemKind,
   ObservedItem,
   PackageMeta_Serialize,
   PackageSetup,
@@ -23,7 +24,7 @@ import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 import { useAuditStore } from "@/stores/audit";
 import { useMarketplacesStore } from "@/stores/marketplaces";
-import { usePackageSetupStore } from "@/stores/package-setup";
+import { declaresSetup, usePackageSetupStore } from "@/stores/package-setup";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
@@ -145,11 +146,20 @@ const setupSays = (per: (scope: Scope) => PackageSetup) =>
  *  above the tabs, and the Projects tab draws from what it answered. A
  *  status can mean running the package's own script, so where the read is
  *  started is part of the behaviour and the harness keeps it there. */
-function Page({ scopes }: { scopes: Scope[] }) {
-  usePackageSetupRead("commit-guards", scopes);
+function Page({
+  scopes,
+  kind = "skill",
+}: {
+  scopes: Scope[];
+  kind?: ItemKind;
+}) {
+  // The page holds the read to the kind as well as to `declares`: a
+  // `repo-effects` block lives in a SKILL.md, and every entry is keyed as a
+  // skill.
+  usePackageSetupRead(declaresSetup(kind) ? "commit-guards" : null, scopes);
   return (
     <PackageProjects
-      kind="skill"
+      kind={kind}
       name="commit-guards"
       scopes={scopes}
       installations={scopes.map(install)}
@@ -160,8 +170,8 @@ function Page({ scopes }: { scopes: Scope[] }) {
   );
 }
 
-const openTab = async (scopes: Scope[]) => {
-  const host = mount(<Page scopes={scopes} />);
+const openTab = async (scopes: Scope[], kind: ItemKind = "skill") => {
+  const host = mount(<Page scopes={scopes} kind={kind} />);
   await settle();
   return host;
 };
@@ -176,6 +186,10 @@ const buttonNamed = (host: HTMLElement, label: string, nth = 0) => {
 
 beforeEach(() => {
   usePackageSetupStore.setState({ entries: {} });
+  // Cleared per case, so `asked()` names this case's reads and not the
+  // file's: the mock is a module factory and `restoreAllMocks` does not
+  // reach it.
+  vi.mocked(commands.packageSetup).mockClear();
   useAuditStore.setState({ removeItem: vi.fn(), busy: false });
   useUpdatesStore.setState({
     rows: [],
@@ -303,6 +317,18 @@ describe("setup on the Projects tab", () => {
       ),
     ).toHaveLength(1);
     expect(host.textContent).not.toContain(setupHeading("User level"));
+  });
+
+  it("asks nothing on a page about another kind", async () => {
+    // An agent and a skill may both be called commit-guards. The page
+    // about the agent must not report — or offer to run — the skill's
+    // repository effect.
+    setupSays(() => answer("notActive"));
+
+    const host = await openTab([VG], "agent");
+
+    expect(asked()).toEqual([]);
+    expect(host.textContent).not.toContain(setupHeading("vg"));
   });
 
   it("asks as a surface on open and as a person on Check again", async () => {

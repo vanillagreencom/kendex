@@ -22,6 +22,7 @@ import { useAuditStore } from "@/stores/audit";
 import { useInstallFlow } from "@/stores/install-flow";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
+import { declaresSetup } from "@/stores/package-setup";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useUpdatesStore } from "@/stores/updates";
 
@@ -80,6 +81,9 @@ export function PackageProjects({
     installations,
   );
   const { entryFor, declares, recheck } = usePackageSetup(name, scopes);
+  // The read is held to the same pair in `package-tabs.tsx`; asked here as
+  // well because the rows are what would draw a state nothing read.
+  const reportsSetup = declares && declaresSetup(kind);
   const updateOne = useUpdatesStore((s) => s.updateOne);
   const updateRows = useUpdatesStore((s) => s.updateRows);
   const removeItem = useAuditStore((s) => s.removeItem);
@@ -166,7 +170,7 @@ export function PackageProjects({
                   focus !== null && scopeKey(focus) === scopeKey(place.scope)
                 }
                 setup={
-                  declares && place.scope.scope === "project"
+                  reportsSetup && place.scope.scope === "project"
                     ? (entry ?? { setup: null, refused: null, reading: true })
                     : null
                 }

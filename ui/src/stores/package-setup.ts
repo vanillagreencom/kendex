@@ -13,7 +13,13 @@
 // place that has not been read has no entry, which is what the row draws
 // its checking state from — an absent answer is never an inactive one.
 import { create } from "zustand";
-import { type Ask, commands, type PackageSetup, type Scope } from "@/bindings";
+import {
+  type Ask,
+  commands,
+  type ItemKind,
+  type PackageSetup,
+  type Scope,
+} from "@/bindings";
 import { placeKey } from "@/lib/package-places";
 
 /** One place's last answer, or the fact that its read is out.
@@ -56,18 +62,46 @@ interface PackageSetupState {
   forget: () => void;
 }
 
-/** A place's entry key. The kind is a skill wherever an effect is
- *  declared — a `repo-effects` block lives in a `SKILL.md` — so the key is
- *  built with the same helper every other per-place cache uses, and the
- *  kind is pinned rather than threaded through every call. */
+/** A place's entry key. [`declaresSetup`] is why the kind is pinned rather
+ *  than threaded through every call. */
 const keyOf = (scope: Scope, name: string): string =>
-  placeKey("skill", name, scope);
+  placeKey(SETUP_KIND, name, scope);
+
+/** The one kind a repository effect can be declared by: a `repo-effects`
+ *  block lives in a `SKILL.md`, and `engine::installed_declaration` reads
+ *  the lock for skills alone.
+ *
+ *  Named here rather than assumed, because assuming it is how a page about
+ *  an agent asks after a skill: names are unique per kind, not across
+ *  them, so an agent and a skill may both be called `commit-guards` — and
+ *  a page about the agent would then report, and offer to run, the skill's
+ *  repository effect. */
+const SETUP_KIND: ItemKind = "skill";
+
+/** Whether a package of this kind can declare a repository effect at all.
+ *  What a surface asks before starting a read: everything below is keyed
+ *  by [`SETUP_KIND`], so a page about another kind must not ask. */
+export const declaresSetup = (kind: ItemKind): boolean => kind === SETUP_KIND;
+
+/** The latest read issued for each place, counted so a slower earlier one
+ *  can tell it has been overtaken. Module state rather than store state:
+ *  nothing renders from it, and a counter in the store would publish a
+ *  change to every subscriber on each read. */
+const issued: Record<string, number> = {};
 
 export const usePackageSetupStore = create<PackageSetupState>((set, get) => ({
   entries: {},
 
   check: async (scope, name, ask = "surface") => {
     const key = keyOf(scope, name);
+    // Which read this is for this place. Two effects drive these — the
+    // page opening and the effects dialog closing — and a person can
+    // press Check again over either, so two reads of one place can be out
+    // together. Without this the slower one lands last and states a
+    // repository as it stood before the write that prompted the second,
+    // which is the stale answer the whole store exists to avoid.
+    const token = (issued[key] ?? 0) + 1;
+    issued[key] = token;
     set((state) => ({
       entries: {
         ...state.entries,
@@ -94,6 +128,11 @@ export const usePackageSetupStore = create<PackageSetupState>((set, get) => ({
       // reach still says what stopped it.
       refused = error instanceof Error ? error.message : String(error);
     }
+    // A read the place has moved past answers for nothing: its successor
+    // is out and will say what is true now, and `reading` belongs to that
+    // one. Dropped rather than merged — there is no half of a stale answer
+    // worth keeping.
+    if (issued[key] !== token) return;
     set((state) => ({
       entries: { ...state.entries, [key]: { setup, refused, reading: false } },
     }));
@@ -103,7 +142,12 @@ export const usePackageSetupStore = create<PackageSetupState>((set, get) => ({
     await Promise.all(scopes.map((scope) => get().check(scope, name)));
   },
 
-  forget: () => set({ entries: {} }),
+  forget: () => {
+    // The reads still out belong to a package this store no longer holds,
+    // so every place moves past them at once.
+    for (const key of Object.keys(issued)) issued[key] += 1;
+    set({ entries: {} });
+  },
 }));
 
 /** One place's entry as its row reads it: what was answered, and whether a

@@ -159,9 +159,15 @@ export function SetupRow({
           {/* What the check itself said, whatever it said. This is the
               remediation text somebody acts on, so a verdict never
               travels without it. */}
-          {status?.said.map((line) => (
+          {/* By position, because the lines are not distinct: a check may
+              write the same warning twice, and keying on the text merges
+              the pair into one row. The list is output in the order it was
+              written and is never reordered or filtered, which is what
+              makes the index the stable identity here. */}
+          {status?.said.map((line, at) => (
             <p
-              key={line}
+              // biome-ignore lint/suspicious/noArrayIndexKey: output lines are not distinct and never reorder
+              key={at}
               className="mt-0.5 break-words font-mono text-xs text-muted-foreground"
             >
               {line}

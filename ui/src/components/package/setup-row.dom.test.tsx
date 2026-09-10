@@ -202,6 +202,36 @@ describe("the tone each state carries", () => {
   });
 });
 
+/** A check may write the same line twice — two identical warnings from one
+ *  run — and both belong on screen.
+ *
+ *  The rows are keyed by position because the lines are not distinct.
+ *  Duplicate keys are unsupported in React: it renders both siblings today
+ *  and says so, and what it does on a later update is undefined. So the
+ *  claim under test is that the keys ARE unique, which is what the error
+ *  it raises reports. */
+describe("a check that repeats itself", () => {
+  it("draws every line it wrote, under keys React accepts", () => {
+    const twice = setup("couldNotCheck");
+    twice.status.said = [
+      "could not read the hooks directory",
+      "could not read the hooks directory",
+    ];
+    const complained = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const host = draw("couldNotCheck", twice);
+
+    const lines = Array.from(host.querySelectorAll("p")).filter(
+      (one) => one.textContent === "could not read the hooks directory",
+    );
+    expect(lines).toHaveLength(2);
+    expect(
+      complained.mock.calls.map((call) => String(call[0])).join("\n"),
+    ).not.toContain("same key");
+    complained.mockRestore();
+  });
+});
+
 /** A command that refused leaves no answer to read a state or a control
  *  from, and the row still has to say what happened and offer the one
  *  thing that helps. Reached where one project's installed declaration
