@@ -3268,6 +3268,13 @@ export type ProjectOffer = {
 	tangled: TangledFile[],
 	/**  The shared configuration files kendex writes one key in. */
 	shared: string[],
+	/**
+	 *  The project's manifest, where this action wrote it and the commit
+	 *  does not carry it. `null` where every declaration these renders
+	 *  need is committed already, or where a person opened the offer and
+	 *  there is no action to attribute a change to.
+	 */
+	manifest: string | null,
 	/**  How many of the person's own files changed. */
 	others: number,
 	branch: string,

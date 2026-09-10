@@ -47,6 +47,16 @@ export const carriesEarlier = (path: string) =>
   `${path} was already changed before this action. git commits whole files, so committing it commits that earlier change too.`;
 export const declaresWhatChanged = (path: string) =>
   `${path} records what kendex renders here and was already changed before this action. This action adds or removes a file, so the commit cannot leave it out.`;
+/** The file this action declared what it wrote in. kendex folds keys into
+ *  that document and owns none of its bytes, so no commit it makes can
+ *  include it, and the reader is told which file to commit rather than
+ *  finding out later. Stated at its real size: the committed trees work
+ *  on their own, and it is a later write by kendex in a fresh checkout
+ *  that reads the older declaration. */
+export const MANIFEST_LEFT_LABEL = "This commit leaves out your declaration";
+export const manifestLeft = (path: string) =>
+  `This action changed ${path}, which records what this project asks kendex for. kendex writes keys in that file and leaves the rest of it to you, so it never commits it. Commit ${path} yourself. Until you do, a checkout of this commit asks for something else, and the next time kendex writes in that checkout it sweeps these files or stops managing them.`;
+
 export const ACCEPT_EARLIER_LABEL =
   "Commit the earlier changes in these files too";
 export const ACCEPT_EARLIER_HELD =

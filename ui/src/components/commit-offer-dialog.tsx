@@ -48,7 +48,9 @@ import {
   FILES_LABEL,
   LEAVE_IT_HERE_LABEL,
   LEAVE_LABEL,
+  MANIFEST_LEFT_LABEL,
   MESSAGE_LABEL,
+  manifestLeft,
   NOT_PUT_BACK_LINE,
   NOT_PUT_BACK_TITLE,
   NOTHING_TO_COMMIT_TOAST,
@@ -295,6 +297,13 @@ function OfferState({
           />
         </Section>
         <Scope offer={offer} busy={busy} />
+        {offer.manifest === null ? null : (
+          <Section title={MANIFEST_LEFT_LABEL}>
+            <p className="text-muted-foreground">
+              {manifestLeft(offer.manifest)}
+            </p>
+          </Section>
+        )}
         {offer.shared.length > 0 ? (
           <Section title={SHARED_LABEL}>
             <Paths paths={offer.shared} />

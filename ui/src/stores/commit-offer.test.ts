@@ -41,6 +41,7 @@ const offer = (over: Partial<ProjectOffer> = {}): ProjectOffer => ({
   choice: false,
   tangled: [],
   shared: [],
+  manifest: null,
   others: 0,
   branch: "main",
   remote: "origin",

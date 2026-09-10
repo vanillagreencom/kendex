@@ -42,9 +42,14 @@ pub enum Held {
 
 /// What a project's pending kendex changes held before an action ran.
 ///
-/// Only the paths that already had a pending change are recorded. A path
-/// absent from [`Baseline::held`] was clean, which is the whole of what a
-/// later reading needs to know about it.
+/// The paths that already had a pending change are recorded, and so is the
+/// project's manifest, whose reading is taken whether it was pending or
+/// not: a manifest that was clean before and is clean now is the case the
+/// offer must stay quiet about, and only a reading taken then tells it from
+/// one this action wrote. A path absent from [`Baseline::held`] was clean,
+/// which is the whole of what a later reading needs to know about an owned
+/// path; an absent manifest row is a reading never taken, and nothing is
+/// claimed about it either way.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Baseline {
     pub held: BTreeMap<String, Held>,
@@ -53,21 +58,30 @@ pub struct Baseline {
 /// Read what this project's pending kendex changes hold now, to compare a
 /// later reading against.
 ///
-/// Taken before the action runs. A scope that is not a git project, and one
-/// where nothing kendex owns has changed, both hold nothing pending, which
-/// is an empty baseline rather than a missing one: every path the action
-/// then changes was clean before it.
+/// Taken before the action runs. A scope that is not a project holds
+/// nothing, and a project where nothing kendex owns has changed holds its
+/// manifest's reading alone: an empty set of pending paths rather than a
+/// missing one, so every path the action then changes reads as clean
+/// before it.
 pub fn baseline(scope: &Scope, generated: &GeneratedPaths) -> Result<Baseline, Failed> {
-    let Some(scan) = super::scan(scope, generated)? else {
+    let Scope::Project { root } = scope else {
         return Ok(Baseline::default());
     };
-    Ok(Baseline {
-        held: scan
-            .owned
-            .iter()
-            .map(|owned| (owned.path.clone(), held(&scan.root, &owned.path)))
-            .collect(),
-    })
+    let mut readings: BTreeMap<String, Held> = super::paths::declaration(root)
+        .map(|path| {
+            let reading = held(root, &path);
+            (path, reading)
+        })
+        .into_iter()
+        .collect();
+    if let Some(scan) = super::scan(scope, generated)? {
+        readings.extend(
+            scan.owned
+                .iter()
+                .map(|owned| (owned.path.clone(), held(&scan.root, &owned.path))),
+        );
+    }
+    Ok(Baseline { held: readings })
 }
 
 /// What stands at one path now.
@@ -146,6 +160,10 @@ pub struct Pending {
     /// whole. `crate::engine::generated_paths::companions` is the one place
     /// that decides this.
     declarations: BTreeSet<String>,
+    /// The project's manifest, where this action wrote it and what it
+    /// wrote is not committed. The commit leaves that change behind, so
+    /// the offer says so and the person commits the file themselves.
+    manifest: Option<String>,
 }
 
 /// Compare a reading of the project against the one taken before the
@@ -166,6 +184,7 @@ pub fn pending(scan: &Scan, since: &Baseline) -> Pending {
         .collect();
     Pending {
         files,
+        manifest: wrote_the_manifest(scan, since),
         declarations: companions(&scan.root)
             .iter()
             .filter_map(|path| {
@@ -189,6 +208,25 @@ fn attribute(before: Option<&Held>, now: &Held) -> Attribution {
         Some(_) if *now == Held::Unreadable => Attribution::Both,
         Some(before) if before == now => Attribution::Older,
         Some(_) => Attribution::Both,
+    }
+}
+
+/// The project's manifest where this action wrote it and the write is not
+/// committed, read the way every other path is: the content before the
+/// action against the content now.
+///
+/// Three answers are silence, each for its own reason. git reports the file
+/// unchanged, so the declaration these renders need is already committed
+/// and nothing is left behind. No reading was taken before the action, so
+/// what changed the file is not known and nothing may be claimed about it.
+/// Or the action left the file exactly as it found it, and the pending
+/// change in it is somebody else's to commit.
+fn wrote_the_manifest(scan: &Scan, since: &Baseline) -> Option<String> {
+    let path = scan.manifest.as_ref()?;
+    let before = since.held.get(path.as_str())?;
+    match attribute(Some(before), &held(&scan.root, path)) {
+        Attribution::Older => None,
+        Attribution::Action | Attribution::Both => Some(path.clone()),
     }
 }
 
@@ -265,6 +303,20 @@ impl Pending {
         tangled.sort_by(|a, b| a.path.cmp(&b.path));
         tangled.dedup_by(|a, b| a.path == b.path);
         tangled
+    }
+
+    /// The manifest this action wrote that the commit does not carry, and
+    /// nothing where every declaration these renders need is committed
+    /// already.
+    ///
+    /// kendex folds keys into that file and owns none of its bytes, so no
+    /// commit kendex makes can include it. A commit of renders whose
+    /// declaration stays in the working tree leaves a checkout that asks
+    /// for something else: the trees are there and work without kendex,
+    /// and a later apply in that checkout sweeps these renders or leaves
+    /// them unmanaged.
+    pub fn manifest_not_carried(&self) -> Option<&str> {
+        self.manifest.as_deref()
     }
 
     /// Whether the action's own work adds or takes away a path kendex
