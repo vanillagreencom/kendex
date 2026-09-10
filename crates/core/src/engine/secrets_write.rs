@@ -173,6 +173,11 @@ fn write(
             pre: Pre::from(&draft.base),
             path,
             bytes: text.into_bytes(),
+            // Asked again at the write, once the `.gitignore` line this
+            // plan owes has landed. A project in no repository has
+            // nothing to be carried by, and `Repo::probe` is what holds
+            // that apart from a git that would not answer.
+            ignored_under: crate::guard::Repo::probe(root)?.map(|_| root.to_path_buf()),
         },
     });
     Ok(said.notes)

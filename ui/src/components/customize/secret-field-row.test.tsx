@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { SecretEdit, SecretRow } from "@/bindings";
 import {
+  SECRET_CANCEL_ACTION,
   SECRET_CLEAR_ACTION,
   SECRET_NOT_SET,
   SECRET_REPLACE_ACTION,
@@ -133,6 +134,47 @@ describe("SecretFieldRow", () => {
     await userEvent.click(saved);
     expect(host.querySelector("input")).toBeNull();
     expect(button(host, SECRET_REPLACE_ACTION)).not.toBeNull();
+  });
+
+  /// A box opened while the destination was writable stays mounted when a
+  /// pick resolves to a refused one, or when the key turns out to be one
+  /// core will not write over. Typing into it then stages a write that
+  /// Save is certain to refuse, so the input carries the same condition
+  /// the buttons do — while Cancel stays live, because taking the draft
+  /// back is exactly what is left to do.
+  it("disables the open input when nothing can be written there", async () => {
+    const onEdit = vi.fn();
+    const host = render({}, { onEdit });
+    const open = button(host, SECRET_SET_ACTION);
+    if (!open) throw new Error("the field offered no set");
+    await userEvent.click(open);
+    expect(host.querySelector("input")?.disabled).toBe(false);
+
+    for (const props of [
+      { writable: false },
+      { row: row({ current: { state: "unknown", reason: "assigned twice" } }) },
+    ]) {
+      const shut = mount(
+        <SecretFieldRow
+          skill="linear"
+          row={row()}
+          file=".env.local"
+          writable
+          edit={{
+            skill: "linear",
+            key: "LINEAR_API_KEY",
+            value: { kind: "set", value: "k" },
+          }}
+          onEdit={onEdit}
+          onCancel={() => {}}
+          {...props}
+        />,
+      );
+      const input = shut.querySelector("input");
+      expect(input).not.toBeNull();
+      expect(input?.disabled).toBe(true);
+      expect(button(shut, SECRET_CANCEL_ACTION)).not.toBeNull();
+    }
   });
 
   /// A key nothing has answered opens with Set and offers no clear:

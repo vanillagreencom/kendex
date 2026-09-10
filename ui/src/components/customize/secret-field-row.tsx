@@ -141,6 +141,13 @@ export function SecretFieldRow({
               spellCheck={false}
               aria-label={row.key}
               className="w-full"
+              // Same condition the buttons carry. A box opened while the
+              // destination was writable stays mounted when a pick
+              // resolves to a refused one, or when the key becomes
+              // unknown, and typing into it would stage a write core is
+              // certain to refuse. Cancel stays live either way, so the
+              // draft can still be taken back.
+              disabled={!settable}
               placeholder={SECRET_INPUT_PLACEHOLDER}
               value={edit?.value.kind === "set" ? edit.value.value : ""}
               onChange={(event) =>

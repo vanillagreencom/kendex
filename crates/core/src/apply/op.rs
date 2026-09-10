@@ -99,6 +99,21 @@ pub enum Op {
         path: PathBuf,
         bytes: Vec<u8>,
         pre: Pre,
+        /// The work tree the file must be out of git's reach inside, or
+        /// `None` where the project is in no repository and there is
+        /// nothing to be carried by.
+        ///
+        /// Planning asks git whether the path is ignored and plans the
+        /// `.gitignore` line it owes, but neither answer survives to the
+        /// write: the line lands in the project's root `.gitignore`, and
+        /// whether git then honours it is a question only git can settle
+        /// — a nearer `.gitignore` may negate the rule, and a
+        /// `.gitignore` that is a symlink is one git does not read at all
+        /// while a write follows it. So the answer is taken again here,
+        /// after the ignore op has run and before a credential exists on
+        /// disk, rather than enumerating the layouts that would defeat
+        /// it.
+        ignored_under: Option<PathBuf>,
     },
     /// Compare-and-swap one key in one git config file. `expected` is the
     /// current value the plan observed (None = unset); a config that moved
@@ -236,8 +251,18 @@ impl Op {
                 fs::write(path, bytes).map_err(|e| CoreError::io(path, e))?;
                 crate::fs::make_executable(path)
             }
-            Op::WritePrivateFile { path, bytes, pre } => {
+            Op::WritePrivateFile {
+                path,
+                bytes,
+                pre,
+                ignored_under,
+            } => {
                 pre.check(path)?;
+                // Before `ensure_parent`, so a refusal here has mutated
+                // nothing at all.
+                if let Some(root) = ignored_under {
+                    refuse_unless_ignored(root, path)?;
+                }
                 ensure_parent(path)?;
                 crate::fs::write_private(path, bytes)
             }
@@ -248,6 +273,43 @@ impl Op {
                 value,
             } => git_config_swap(file, key, expected.as_deref(), value.as_deref()),
         }
+    }
+}
+
+/// Refuse unless git, asked now, ignores the path a credential is about
+/// to be written to.
+///
+/// `git check-ignore` is the only thing that knows the answer: it reads
+/// every `.gitignore` on the way down, the repository's exclude file and
+/// its core.excludesFile, and applies the precedence between them. Asking
+/// it here rather than trusting the plan's own earlier read is the point
+/// — the ignore line this plan owed has just been written, and this is
+/// where whether it worked stops being a guess.
+///
+/// It fails closed twice over: an exit status that is neither "ignored"
+/// nor "not ignored" is a check that could not be taken, and that refuses
+/// too.
+fn refuse_unless_ignored(root: &Path, path: &Path) -> Result<()> {
+    let named = path.display().to_string();
+    let output =
+        crate::process::Hardened::git(&["check-ignore", "-q", "--", &named], Some(root)).run()?;
+    // `-q` answers with its exit status alone: 0 ignored, 1 not, anything
+    // else a failure to answer.
+    match output.status.code() {
+        Some(0) => Ok(()),
+        Some(1) => Err(CoreError::GitFailed {
+            command: format!("git check-ignore -- {named}"),
+            stderr: format!(
+                "git does not ignore {named}, so a credential written there would be committed; nothing was written"
+            ),
+        }),
+        other => Err(CoreError::GitFailed {
+            command: format!("git check-ignore -- {named}"),
+            stderr: format!(
+                "git could not say whether it ignores {named} (exited {other:?}): {}; nothing was written",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        }),
     }
 }
 

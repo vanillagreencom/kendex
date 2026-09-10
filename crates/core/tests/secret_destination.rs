@@ -370,6 +370,52 @@ fn kendex_own_configuration_is_refused_even_where_git_ignores_it() {
     assert!(problem.contains("kendex's own configuration"), "{problem}");
 }
 
+/// The owed rule going into the root `.gitignore` is not the same fact as
+/// git honouring it, and only git settles the second. Both shapes below
+/// leave planning with the same clean answer — an absent, unignored
+/// destination owed a rule — and both defeat the rule that gets written,
+/// so the write has to ask again once it has landed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_credential_is_refused_where_git_does_not_honour_the_owed_rule() {
+    // A nearer .gitignore takes the file back out of the root rule.
+    let nested = fixture(true);
+    fs::create_dir_all(nested.project.join("keys")).unwrap();
+    fs::write(nested.project.join("keys/.gitignore"), "!private.env\n").unwrap();
+    let settings = "[env]\nKENDEX_ENV_FILE = \"keys/private.env\"\n";
+    fs::write(nested.project.join("kendex.settings.toml"), settings).unwrap();
+    assert!(
+        matches!(
+            state(&nested, Some(settings), None),
+            DestinationState::Missing { ignore: Some(_) }
+        ),
+        "planning must see a file it is owed a rule for, or this proves nothing"
+    );
+    let refused = save(&nested, "keys/private.env", false);
+    assert!(refused.is_err(), "{refused:?}");
+    assert!(
+        !nested.project.join("keys/private.env").exists(),
+        "a refused write must leave no credential behind"
+    );
+
+    // A .gitignore that is a symlink is one git never reads, while a
+    // write follows it.
+    let linked = fixture(true);
+    let elsewhere = linked.project.join("ignore-rules");
+    fs::write(&elsewhere, "").unwrap();
+    std::os::unix::fs::symlink(&elsewhere, linked.project.join(".gitignore")).unwrap();
+    assert!(
+        matches!(
+            state(&linked, None, None),
+            DestinationState::Missing { ignore: Some(_) }
+        ),
+        "planning must see a file it is owed a rule for, or this proves nothing"
+    );
+    let refused = save(&linked, ".env.local", false);
+    assert!(refused.is_err(), "{refused:?}");
+    assert!(!linked.project.join(".env.local").exists());
+}
+
 /// A project with no repository has nothing that could carry the file
 /// anywhere, so the ignore question does not apply and the save goes
 /// through.
