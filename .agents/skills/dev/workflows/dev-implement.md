@@ -201,7 +201,7 @@ git -C [WORKTREE_PATH] commit -m "[PREFIX]([ISSUE_ID]): [DESCRIPTION]"
 git -C [WORKTREE_PATH] log -1 --oneline
 ```
 
-Use the CURRENT sub-issue ID when bundled, not the parent's. Never stage lock files the project gitignores — stage specific files by name. Append `[validate: FAILING_CHECK]` when validation failures remain.
+Use the CURRENT sub-issue ID when bundled, not the parent's. Never stage lock files the project gitignores — stage specific files by name. When validation failures remain, add `[validate: FAILING_CHECK]` to the body as a second `-m`, never to the header.
 
 ---
 
