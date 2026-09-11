@@ -84,16 +84,22 @@ closes any fence it finds open — no run of fence-looking lines earlier in the
 body can hide the block that follows. It names the count and the file:line
 entries: the detail carries a bounded list (a status description holds 140
 characters, so a truncated list says how many it dropped) and the full list
-goes to stderr. It has NO DEDICATED settings key and no disposition
-protocol: nothing written in the PR clears it, and the only switch that
+goes to stderr. It has NO DEDICATED settings key, and the only switch that
 reaches it is REVIEW_GATE_MODE=off, which answers approved for the whole gate
-without reading any evidence. It clears when the commit the gate relies on
-carries no such block — normally a fresh review at a new head, or the carry
+without reading any evidence. An entry is SUBTRACTED when the PR author has
+answered it: an issue comment binding this head (a hex run at or above
+REVIEW_GATE_SHA_PREFIX_FLOOR the head starts with, so a reply does not
+survive a push) carrying a line that opens with the entry's own
+`**file:line**` token and continues with one of the three reply forms. The
+reply is read by the SAME grammar the thread terms read, so a tracking claim
+naming no issue and a decline naming no mechanism answer nothing; the newest
+line naming an entry decides. The term also clears when the commit the gate
+relies on carries no such block — a fresh review at a new head, or the carry
 base once carry supplies the evidence. Every shape it cannot read refuses
 too — a heading with no readable count, a count disagreeing with the entries
-under it — and the KNOWN LIMIT is the mirror of the errored-attestation
-filter's: a body quoting the heading at the start of a line counts as a real
-block.
+under it, a disposition read producing no count — and the KNOWN LIMIT is the
+mirror of the errored-attestation filter's: a body quoting the heading at the
+start of a line counts as a real block.
 
 TWO THREAD-CONTENT TERMS ride the same read, both failing closed. A thread's
 disposition is its newest non-bot reply that is a reply form or carries a
@@ -154,8 +160,10 @@ ladder and exceptions in references/settings.md; list values pack with ';'):
   REVIEW_GATE_COMMENT_REVIEWERS             (c) 'login:binding-pattern' pairs
                                             (first ':' splits; pattern is a
                                             literal prefix); empty disables
-  REVIEW_GATE_SHA_PREFIX_FLOOR              (c) shortest sha prefix a comment
-                                            may bind (4..40; default 7)
+  REVIEW_GATE_SHA_PREFIX_FLOOR              (c, and the suppressed-finding
+                                            disposition reply) shortest sha
+                                            prefix a comment may bind
+                                            (4..40; default 7)
   REVIEW_GATE_OVERRIDE_CONTEXT              (d) operator override status
                                             context (default
                                             kendex-reviewer-outage); empty
@@ -1100,8 +1108,17 @@ EOF
 # sha", case-insensitively, with a floor so a degenerate prefix cannot
 # match every head. The trust anchor is the author login plus the LITERAL
 # binding pattern immediately preceding the sha slot, not the quoting.
-comment_hits=0
-if [ -n "$COMMENT_REVIEWERS_N" ]; then
+# The issue-comment page set, read AT MOST ONCE per evaluation and shared by
+# the two terms that need it: comment-form evidence here, and the
+# suppressed-finding disposition read far below. Every failure is fail-loud
+# exit 2, as every other evidence read is; the function exits the script
+# rather than returning a status, so no caller can carry on over a broken
+# read.
+comments=""
+comments_loaded=0
+load_issue_comments() {
+  [ "$comments_loaded" = "0" ] || return 0
+  local raw_comments
   # Two steps, not a pipe — same pagination/fail-loud/zero-byte reasons as
   # the reviews read above.
   raw_comments="$(gh_read "repos/$GH_REPO/issues/$PR_NUMBER/comments?per_page=100" --paginate)" || {
@@ -1122,6 +1139,12 @@ if [ -n "$COMMENT_REVIEWERS_N" ]; then
     rg_message error predicate-comments-pages "$PR_NUMBER" "::error::issue-comments read for PR #$PR_NUMBER returned non-array pages or a vacuous body (broken read)" >&2
     exit 2
   }
+  comments_loaded=1
+}
+
+comment_hits=0
+if [ -n "$COMMENT_REVIEWERS_N" ]; then
+  load_issue_comments
   while IFS= read -r pair; do
     [ -z "$pair" ] && continue
     # Grammar was proved in the configuration phase above, which is the one
@@ -1542,36 +1565,11 @@ EOF_RENDER_NAMES
   fi
 fi
 
-# A genuine GraphQL failure must NOT fall through as unresolved threads — fail
-# loudly instead. Thread pages are WALKED and summed (100 per page, 20-page/
-# 2000-thread bound); past the bound, or on a truthy hasNextPage whose cursor
-# cannot advance, the count reports "overflow" and fails closed to
-# threads-open. Same posture for a thread node whose isResolved is not a
-# boolean ("malformed"): null/missing nodes must never count as resolved —
-# that direction is a false approval on a merge gate.
-#
-# REVIEW_GATE_THREADS=off skips this read ENTIRELY and the predicate never
-# emits threads-open: on repos whose thread hygiene is a server-side
-# zero-bypass ruleset (required_review_thread_resolution), the CI-side term
-# is a latency optimization that costs a GraphQL read per evaluation for a
-# verdict the merge-time gate already enforces — and forces every caller to
-# reinterpret threads-open in its own adapter. The narrowing is bounded:
-# only the thread term is disabled; evidence and changes-requested still
-# fail closed exactly as before.
-unresolved=0
-untracked=0
-unreasoned=0
-if [ "$THREADS_MODE" = "enforce" ]; then
-# A thread's disposition is its newest non-bot comment that is a Fixed in
-# <sha>/Declined: reply or carries a track-word; other comments never move
-# it. It is an untracked claim when it is not such a reply and names no
-# Linear or GitHub issue; resolving the thread does not clear it, since the
-# claimant is also the resolver. Bot comments are exempt (they quote each
-# other); a missing comments field reads as none. A thread past 50 comments
-# cannot be fully read in this page shape, so it fails closed as malformed.
-#
-# The reply forms are spelled once, above both reductions, so a change to
-# what a decline is reaches both. They read different sets on purpose.
+# THE REPLY FORMS, spelled once above every reduction that reads one: the
+# two thread-content terms below, and the suppressed-finding disposition
+# read further down, which answers a body finding in a PR comment because no
+# thread carries it. A change to what a decline is reaches all three. They
+# read different sets on purpose.
 # `disposition` is the canonical colon form, and the untracked-claim term is
 # the only thing it may mean: widening it there would let "Declined under the
 # cap, tracked separately" clear a tracking claim naming no issue, which
@@ -1590,7 +1588,8 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # Tracker ids go first, while each is still one token and still uppercase:
 # punctuation normalization would otherwise leave the letters behind, and
 # `Declined: KEN-881` would read as a stated reason of "ken". The shape is
-# the untracked-claim term's, so the two cannot disagree about what an id is.
+# `names_issue`'s, the one spelling of a tracker id, so no reduction can
+# disagree about what an id is.
 #
 # Two NAME strips ride after BOTH word lists, and both are positional rather
 # than a vocabulary — no set of names is read or listed anywhere. A count
@@ -1620,8 +1619,10 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # strips: `\b` reads `_` as a word character. The corpus section "two
 # unrelated labels joined by a held separator" is what holds that.
 #
-# THIS PROGRAM RUNS UNDER `gh --jq`, AND THAT ENGINE IS GO'S RE2: no
-# lookaround compiles. A pattern carrying one aborts the read, so this script
+# THE THREAD READ RUNS UNDER `gh --jq`, AND THAT ENGINE IS GO'S RE2: no
+# lookaround compiles. These defs reach it, so none of them may carry one —
+# the suppressed-finding read runs the same defs through the local jq, which
+# takes patterns RE2 refuses. A pattern carrying one aborts the read, so this script
 # exits 2, the writer prints "taking no action" and reds without posting a
 # status, and the gate keeps whatever it already held. That is why a decline
 # stopped a PR converging rather than turning it red. The local jq is
@@ -1643,12 +1644,10 @@ if [ "$THREADS_MODE" = "enforce" ]; then
 # pinned in tests/corpus/declines-known-limit.txt: a name standing after the
 # count, a count not spelled N/N, a path whose own segments are listed words,
 # and a slash written inside a multi-word entry.
-t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|declined:)"; "i");
+REPLY_FORMS_DEF='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|declined:)"; "i");
   def declined: test("^\\s*declined\\b"; "i");
   def tracking: test("(?i)\\btrack(ed|ing|s)?\\b");
-  def replies: [(.comments.nodes // [])[] | select((.author.__typename // "User") != "Bot") | (.body // "")];
-  def standing: [replies[] | select(disposition or tracking)] | last // empty;
-  def standing_decline: [replies[] | select(disposition or declined or tracking)] | last // empty;
+  def names_issue: test("([A-Z][A-Z0-9]+-[0-9]+|#[0-9]+)\\b");
   def word_strip($list):
     gsub("(?<s>[^\\p{L}\\p{N}]+)|(?<w>" + $list + ")(?<b>[^\\p{L}\\p{N}])|(?<r>[\\p{L}\\p{N}]+)";
       if .w != null then " " + .b elif .s != null then .s else .r end);
@@ -1666,6 +1665,37 @@ t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|decli
     | gsub("\\b[0-9a-f]{7,40}\\b"; " ")
     | gsub("\\b[0-9]+\\b"; " ")
     | gsub("^ +| +$"; "");
+'
+# A genuine GraphQL failure must NOT fall through as unresolved threads — fail
+# loudly instead. Thread pages are WALKED and summed (100 per page, 20-page/
+# 2000-thread bound); past the bound, or on a truthy hasNextPage whose cursor
+# cannot advance, the count reports "overflow" and fails closed to
+# threads-open. Same posture for a thread node whose isResolved is not a
+# boolean ("malformed"): null/missing nodes must never count as resolved —
+# that direction is a false approval on a merge gate.
+#
+# REVIEW_GATE_THREADS=off skips this read ENTIRELY and the predicate never
+# emits threads-open: on repos whose thread hygiene is a server-side
+# zero-bypass ruleset (required_review_thread_resolution), the CI-side term
+# is a latency optimization that costs a GraphQL read per evaluation for a
+# verdict the merge-time gate already enforces — and forces every caller to
+# reinterpret threads-open in its own adapter. The narrowing is bounded:
+# only the thread term is disabled; evidence and changes-requested still
+# fail closed exactly as before.
+unresolved=0
+untracked=0
+unreasoned=0
+if [ "$THREADS_MODE" = "enforce" ]; then
+# A thread's disposition is its newest non-bot comment that is a Fixed in
+# <sha>/Declined: reply or carries a track-word; other comments never move
+# it. It is an untracked claim when it is not such a reply and names no
+# Linear or GitHub issue; resolving the thread does not clear it, since the
+# claimant is also the resolver. Bot comments are exempt (they quote each
+# other); a missing comments field reads as none. A thread past 50 comments
+# cannot be fully read in this page shape, so it fails closed as malformed.
+t_threads_page_jq="$REPLY_FORMS_DEF"'  def replies: [(.comments.nodes // [])[] | select((.author.__typename // "User") != "Bot") | (.body // "")];
+  def standing: [replies[] | select(disposition or tracking)] | last // empty;
+  def standing_decline: [replies[] | select(disposition or declined or tracking)] | last // empty;
   if ((.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) != "boolean")
     or ([.data.repository.pullRequest.reviewThreads.nodes[] | select((.isResolved | type) != "boolean")] | length) > 0
   then "malformed"
@@ -1675,7 +1705,7 @@ t_threads_page_jq='def disposition: test("^\\s*(fixed in [0-9a-f]{7,40}\\b|decli
     + " " + ([.data.repository.pullRequest.reviewThreads.nodes[]
         | standing
         | select(disposition | not)
-        | select(test("([A-Z][A-Z0-9]+-[0-9]+|#[0-9]+)\\b") | not)] | length | tostring)
+        | select(names_issue | not)] | length | tostring)
     + " " + ([.data.repository.pullRequest.reviewThreads.nodes[]
         | standing_decline
         | select(declined)
@@ -1873,6 +1903,73 @@ elif [ "$suppressed_state" = "ok" ] && [ "$supp_declared" != "$supp_entries" ]; 
 elif [ "$suppressed_state" = "ok" ]; then
   suppressed="$supp_declared"
 fi
+
+# THE DISPOSITION READ: a body finding is answered the way a thread finding
+# is. No thread carries it, so the reply is a PR comment by the AUTHOR that
+# binds this head — the binding comment-form evidence uses, a hex run at or
+# above REVIEW_GATE_SHA_PREFIX_FLOOR that the head starts with, so a reply
+# written for an earlier head does not survive a push — and names the entry
+# by the same `**file:line**` token the scan above extracted, followed by the
+# reply. The reply is judged by the SHARED reply forms: a reply that is
+# neither a disposition nor a tracking claim, a tracking claim naming no
+# issue, and a decline whose reason strips to nothing all leave the entry
+# standing, so a label answers nothing here either. Only entries the read
+# subtracts leave the count; an entry with no reply, or the read itself
+# failing to produce a count, keeps every finding — the fail-closed
+# direction, and the reason this refuses to a verdict rather than to exit 2.
+#
+# Answering is the AUTHOR's, exactly as a thread reply is: this term does not
+# ask who may disposition a finding, only that the disposition is written,
+# bound and reasoned.
+supp_answered=0
+if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
+  load_issue_comments
+  supp_disp="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
+          --arg floor "$SHA_FLOOR" --arg entries "$supp_list" "$REPLY_FORMS_DEF"'
+    def unanswered($r):
+      ((($r | disposition) or ($r | tracking)) | not)
+      or ((($r | disposition) | not) and (($r | names_issue) | not))
+      or (($r | declined) and (($r | reason_left) == ""));
+    # The bound sha is captured BEFORE the comparison: referring to it as dot
+    # inside startswith would rebind dot to the head and accept any sha, the
+    # same trap the comment-form matcher documents.
+    def head_bound($sha; $floor):
+      [ scan("[0-9a-fA-F]{" + $floor + ",40}") | ascii_downcase | . as $c
+        | select(($sha | ascii_downcase) | startswith($c)) ] | length > 0;
+    ($entries | split("\n") | map(select(length > 0))) as $wanted
+    | [ .[]
+        | select((.user.login // "") == $author)
+        | (.body // "" | gsub("\r"; ""))
+        | select(head_bound($sha; $floor))
+        | split("\n")[]
+        | capture("^[ \t]*([-*+][ \t]+)?\\*\\*(?<e>[^*]+:[0-9]+)\\*\\*[^\\p{L}\\p{N}]*(?<r>.*)$")
+      ] as $said
+    # The NEWEST line naming an entry decides, as a thread takes its newest
+    # reply: an author who answers and then writes something else about the
+    # same entry has withdrawn the answer.
+    | [ $wanted[]
+        | . as $e
+        | ([ $said[] | select(.e == $e) ] | last) as $reply
+        | select($reply == null or unanswered($reply.r))
+      ]
+    | "\(length)\n" + join("\n")' <<<"$comments")" || supp_disp=""
+  supp_left="${supp_disp%%$'\n'*}"
+  case "$supp_left" in
+    '' | *[!0-9]*) suppressed_state=disposition-unreadable ;;
+    *)
+      supp_answered=$((supp_entries - supp_left))
+      suppressed="$supp_left"
+      supp_entries="$supp_left"
+      case "$supp_disp" in
+        *$'\n'*) supp_list="${supp_disp#*$'\n'}" ;;
+        *) supp_list="" ;;
+      esac
+      ;;
+  esac
+fi
+if [ "$supp_answered" != "0" ]; then
+  rg_message notice predicate-suppressed-answered "$supp_answered" "PR #$PR_NUMBER head $HEAD_SHA: $supp_answered suppressed finding(s) answered by a head-bound author comment" >&2
+fi
 # The evaluated line reports the number when the block was read whole, and
 # the refusal word when it was not — the shape `unresolved` uses for its own
 # overflow.
@@ -1881,11 +1978,12 @@ supp_notice="$suppressed_state"
 # The FULL list goes to the log, where a human reads it whole; the detail
 # below lands in a 140-character commit-status description and is bounded.
 if [ -n "$supp_list" ]; then
-  rg_message notice predicate-suppressed "$supp_notice" "PR #$PR_NUMBER head $HEAD_SHA: findings written into a review body, carried by no thread:
+  rg_message notice predicate-suppressed "$supp_notice" "PR #$PR_NUMBER head $HEAD_SHA: findings written into a review body, carried by no thread and unanswered at this head:
 $supp_list" >&2
 fi
 case "$suppressed_state" in
   malformed) supp_detail="a Suppressed comments block could not be read (broken parse) — no finding count is provable" ;;
+  disposition-unreadable) supp_detail="the head-bound disposition replies could not be read — every suppressed finding stands" ;;
   unparsed) supp_detail="a Suppressed comments heading names no readable count — read it in the review body" ;;
   mismatch) supp_detail="Suppressed comments declares $supp_declared finding(s) but $supp_entries entry line(s) parsed — read the block in the review body" ;;
   ok)

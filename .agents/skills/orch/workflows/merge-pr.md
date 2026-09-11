@@ -108,9 +108,10 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --
 
 `can_merge: true` → § 4, showing any warnings. `false` → show the issues with their suggested fixes. `auto-recommended` logs `Fix and retry` and takes that route once; the same blocker after the retry records `merge-check-blocked`. `ask` presents `Skip` | `Fix and retry` | `Force merge`, with `Fix and retry` recommended.
 
-Two warnings are merge gates, not advice:
+Three warnings are merge gates, not advice:
 
 - **`unresolved_threads`** — zero unresolved review threads is required at merge time. Route to `review-pr-comments` to reply and resolve first. `auto-recommended` keeps triaging within `REVIEW_MAX_EXTERNAL_ROUNDS`, then records `review-threads-open`; merge past them only on explicit user override.
+- **`suppressed-findings`** — the review-gate verdict on the failing gate status, naming the count and the `file:line` entries a reviewer wrote into its review body. No thread carries them, so `unresolved_threads` reads zero and `review-pr-comments` reaches none of them. Disposition each entry under [references/finding-disposition.md](../references/finding-disposition.md), then post ONE PR comment as the PR author naming this head's sha and, per entry, its `file:line` exactly as the status names it followed by `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <ID>`. The gate reads that comment and subtracts what it answers; a label, a tracking claim naming no issue, and a reply bound to an earlier head all leave the entry blocking. Never an admin merge, an empty commit, or a restack to earn a fresh head — a code change is only ever the fix itself. `auto-recommended` posts that comment once and re-checks; a term still blocking after it records `review-suppressed-findings`.
 - **`not_approved`** — resolve the project's gate mode first with `.agents/skills/orch/scripts/approval-wait --resolve-mode` ([references/gates.md](../references/gates.md)) and route on the printed `GATE_MODE`:
   - `off` — informational only; do not gate on it.
   - `review` — `not_approved` is expected. Poll `approval-wait [PR_NUMBER] 30 --json --mode review` and treat `reviewed` as the met gate.

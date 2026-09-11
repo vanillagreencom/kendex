@@ -187,3 +187,39 @@ reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(printf
 run "a fence run before the heading cannot hide the block" suppressed-findings
 supp_carries "the masked-block detail names the count" "detail=1 suppressed finding(s)" "$LAST_LINE"
 supp_carries "the masked-block detail names the file:line" "$SUPP_FIRST" "$LAST_LINE"
+
+# ------------------------------------------------- the disposition replies ---
+# A body finding carries no thread, so its reply is a PR comment by the
+# author: one that binds this head and opens a line with the same
+# `**file:line**` token the block printed. The reply itself is read by the
+# SHARED reply forms, so what answers no thread answers no body entry either
+# — and a reply written for another head, or by anyone but the author, is
+# not the author's disposition of this head.
+supp_reply_case() { # COMMENT_AUTHOR, COMMENT_BODY, VERDICT, NAME
+  reset
+  CFG_TRUSTED_LOGINS=""
+  CFG_MIN_STATE=any
+  CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+  reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_body '### Suppressed comments (2)' "$SUPP_ENTRIES")")"
+  comment "$1" "$(printf '%b' "$2")" >"$fixtures/comments.json"
+  run "$4" "$3"
+}
+SUPP_REASON='Declined: the generator draws its name from the row set, so a collision is unreachable.'
+SUPP_BOTH="**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400"
+while IFS='|' read -r name author bound body want; do
+  supp_reply_case "$author" "Dispositions at $bound:\n$body" "$want" "$name"
+done <<EOF
+a bound reasoned decline and a tracked entry clear the block|$AUTHOR|${HEAD:0:7}|$SUPP_BOTH|approved
+a label-only decline answers nothing|$AUTHOR|${HEAD:0:7}|**$SUPP_FIRST** - Declined: out of scope\n**$SUPP_SECOND** - Declined: pre-existing|suppressed-findings
+a tracking claim naming no issue answers nothing|$AUTHOR|${HEAD:0:7}|**$SUPP_FIRST** - Tracking this separately.\n**$SUPP_SECOND** - Tracking this separately.|suppressed-findings
+a reply bound to another head answers nothing|$AUTHOR|${OTHER:0:7}|$SUPP_BOTH|suppressed-findings
+a reply by another login answers nothing|other-user|${HEAD:0:7}|$SUPP_BOTH|suppressed-findings
+EOF
+
+# The subtraction is per entry, not per block: the answered entry leaves the
+# count and the list, and the one nobody wrote about still fails the gate.
+supp_reply_case "$AUTHOR" "Dispositions at ${HEAD:0:7}:\n**$SUPP_FIRST** - $SUPP_REASON" \
+  suppressed-findings "an answered entry is subtracted and the unanswered one still blocks"
+supp_carries "the partial detail counts only what is left" "detail=1 suppressed finding(s)" "$LAST_LINE"
+supp_carries "the partial detail names the unanswered entry" "$SUPP_SECOND" "$LAST_LINE"
+supp_omits "the partial detail drops the answered entry" "$SUPP_FIRST" "$LAST_LINE"

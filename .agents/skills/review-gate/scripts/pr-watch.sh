@@ -72,11 +72,13 @@ Attention kinds:
                      findings the reviewer wrote into its own body instead of
                      posting as comments, so NO thread carries them and the
                      thread count above reads zero. The line names the count
-                     and the file:line entries. Nothing written in the PR
-                     clears it; it clears when that commit carries no such
-                     block, normally a fresh review at a new head. Also fires
-                     when the block cannot be read whole, which fails closed
-                     the same way. Needs the predicate (evaluate mode only)
+                     and the file:line entries still unanswered. An entry is
+                     answered by an issue comment from the PR author that
+                     binds this head and opens a line with that entry's own
+                     `**file:line**` token followed by Fixed in <sha>,
+                     Declined: <reason>, or Tracked: <issue>. Also fires when
+                     the block cannot be read whole, which fails closed the
+                     same way. Needs the predicate (evaluate mode only)
   unreasoned-decline a thread whose newest disposition reply declines and
                      names no mechanism — an empty reason, or nothing but
                      non-reason tokens (frozen, cap, round N, tests pass,

@@ -42,8 +42,13 @@ for tool in gh python3 jq; do
   }
 done
 
-prog="$(sed -n "/^t_threads_page_jq='/,/^  end'/p" "$PRED" | sed "s/^t_threads_page_jq='//; s/^  end'\$/  end/")"
-[ -n "$prog" ] || { echo "FAIL: could not extract t_threads_page_jq"; exit 1; }
+# The shipped thread program is the shared reply-form defs plus the thread
+# reduction: the predicate concatenates the two, so the proof reads both.
+forms="$(sed -n "/^REPLY_FORMS_DEF='/,/^'\$/p" "$PRED" | sed "1s/^REPLY_FORMS_DEF='//; \$d")"
+reduction="$(sed -n "/^t_threads_page_jq=/,/^  end'\$/p" "$PRED" | sed "1s/^t_threads_page_jq=[^']*'//; s/^  end'\$/  end/")"
+prog="$forms
+$reduction"
+[ -n "$forms" ] && [ -n "$reduction" ] || { echo "FAIL: could not extract the thread program"; exit 1; }
 
 work="$(mktemp -d)" || { echo "FATAL: mktemp -d failed" >&2; exit 1; }
 srv="$work/srv"
@@ -210,7 +215,7 @@ while IFS='|' read -r label from to check_local; do
   fi
 done <<'CASES'
 reason|gsub("(?<w>[\\p{L}\\p{N}]+|gsub("(?<![\\p{L}\\p{N}])(?<w>[\\p{L}\\p{N}]+|yes
-claim|select(test("([A-Z][A-Z0-9]+-[0-9]+|select(test("(?<![a-z])([A-Z][A-Z0-9]+-[0-9]+|no
+claim|def names_issue: test("([A-Z][A-Z0-9]+-[0-9]+|def names_issue: test("(?<![a-z])([A-Z][A-Z0-9]+-[0-9]+|no
 CASES
 
 # ----------------------------------------------------------- control three ---
