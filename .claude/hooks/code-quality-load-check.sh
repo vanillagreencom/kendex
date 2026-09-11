@@ -5,7 +5,7 @@
 # matcher: Edit|MultiEdit|NotebookEdit|Write
 # description: Refuses an Edit, MultiEdit, NotebookEdit or Write onto a path inside a git work tree until the agent making the call has loaded the code-quality skill, so the repository rule "load the code-quality skill before writing or changing code" is decided rather than remembered. Loaded is read off the transcript that records that agent's tool calls: a `Skill` tool call whose `skill` input is `code-quality`. That transcript is the session transcript the payload names, or, when the payload carries `agent_id` because a subagent made the call, the subagent's own `agent-<agent_id>.jsonl` under the session's `subagents/` directory, directly or one directory below; the lead session's load does not pass a subagent's edit. The work tree's own `tmp/` is scratch and passes — commit messages, status files and notes — and so does every path outside a work tree, which is where a session's temporary files belong. Every session in the repository is judged, not only a delegated agent. KENDEX_CODE_QUALITY_HOOK=off disables it for a session that is not editing the repository under those rules. Claude Code only, the harness whose payload names the transcript and whose Skill tool records the load.
 # summary: Holds back edits to a repository until the session has loaded the code-quality skill, so the standard is applied rather than remembered.
-# safety: Reads the payload, asks git where the target path is, and reads the transcript of the agent making the call; writes nothing. A payload, a git answer or a transcript it cannot read is refused, never passed, so an unreadable state never reads as loaded: an `agent_id` that is not a string or holds a `/`, or that names no single subagent transcript, is refused. The refusal names the skill to load and the path it refused, and never a bypass. Every refusal opens with `code-quality-load-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the payload, asks git where the target path is, and reads the transcript of the agent making the call; writes nothing. A payload, a git answer or a transcript it cannot read is refused, never passed, so an unreadable state never reads as loaded: an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in, or that names no single subagent transcript, is refused. The refusal names the skill to load and the path it refused, and never a bypass. Every refusal opens with `code-quality-load-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 15
 # harnesses: [claude-code]
 # ---
@@ -53,7 +53,7 @@ refuse() { # KEY VALUE [CAUSE]
         echo "the payload names no transcript_path string, so whether $SKILL is loaded cannot be read; refusing rather than skipping the guard"
         ;;
       payload=invalid-agent-id)
-        echo "the payload's agent_id is not a string naming a file inside the session's subagents/ directory, so the transcript of the subagent making the call cannot be found; refusing rather than skipping the guard"
+        echo "the payload's agent_id is not a string of ASCII letters, digits, _ and -, so the transcript of the subagent making the call cannot be found; refusing rather than skipping the guard"
         ;;
       transcript=unreadable)
         echo "the transcript $TRANSCRIPT is not exactly one readable file, so whether $SKILL is loaded cannot be read; refusing"
@@ -119,12 +119,17 @@ TRANSCRIPT=$(printf '%s' "$INPUT" | jq -r '.transcript_path
 # The harness adds agent_id only to a subagent's call, and transcript_path
 # still names the session's transcript then. The subagent's transcript file
 # name is built here, empty for the session's own call: a built name is never
-# empty, so the two cases cannot be mistaken. The file name carries the id
-# between a prefix and a suffix, so a `/` is the only way it could leave the
-# directory it is looked up in.
+# empty, so the two cases cannot be mistaken. The id is judged as the payload
+# holds it, before the shell reads it: a NUL that the shell would drop, a `/`
+# or a newline would each name another file. It passes only when it is
+# spelled in the alphabet the harness names subagents in, ASCII letters,
+# digits, `_` and `-`, which removing every such character proves by leaving
+# nothing; an anchored match would not, since `$` also matches before a
+# trailing newline.
 AGENT_FILE=$(printf '%s' "$INPUT" | jq -r 'if has("agent_id") then .agent_id
-  | if type == "string" and (contains("/") | not) then "agent-\(.).jsonl"
-    else error("not a file name") end
+  | if type == "string" and . != "" and gsub("[A-Za-z0-9_-]"; "") == ""
+    then "agent-\(.).jsonl"
+    else error("not an agent id") end
   else "" end' 2>/dev/null) ||
   refuse payload invalid-agent-id
 

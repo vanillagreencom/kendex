@@ -213,6 +213,12 @@ assert_eq "rc=$rc first=$(first_line)" "rc=2 first=$REFUSAL" \
 run_subagent "$TMP_ROOT/session-loaded.jsonl" a7ce49cf892d6e2f5
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=code-quality-load-check: transcript=unreadable" \
   "an agent_id with no transcript of its own refuses, though the session loaded the skill"
+# A NUL is dropped when the shell reads the id, and what remains here is the
+# loaded subagent's own id: the id is judged before it names a file.
+run_payload "$("${JQ[@]}" --arg p "$REPO/src/lib.rs" --arg tr "$TMP_ROOT/session-unloaded.jsonl" --arg a "$SUBAGENT_ID" \
+  '{tool_name:"Edit",tool_input:{file_path:$p},transcript_path:$tr,agent_id:($a[:8] + ([0] | implode) + $a[8:])}')"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=code-quality-load-check: payload=invalid-agent-id" \
+  "an agent_id holding a NUL refuses, though the id without it names a subagent that loaded the skill"
 
 echo "code-quality-load-check: what the rule does not reach"
 run_tool Write file_path "$REPO/tmp/commit-msg.txt" "$NONE_T"
