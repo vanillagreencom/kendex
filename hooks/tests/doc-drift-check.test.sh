@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # doc-drift-check: a Stop hook that blocks once per set of findings. Every
-# changed non-markdown path is matched against the nearest non-root AGENTS.md
-# above it, tracked or untracked, and every topic file whose Covers entry
+# changed non-markdown path is matched against the nearest AGENTS.md above it,
+# tracked or untracked — the root's own for a path whose directory is the
+# repository root, one below the root for anything deeper — and every topic
+# file whose Covers entry
 # reaches it; a covering doc left unchanged, a Covers entry no path on disk
 # matches, and a changed path on disk no doc covers where some topic declares
 # an entry and the render inventory `.kendex-generated.json` does not list it
@@ -88,8 +90,9 @@ fgit() {
 }
 
 # A repository on a branch named main with no remote: a root AGENTS.md
-# (covers nothing), crates/core with its own AGENTS.md, a topic covering
-# crates/core, and ui/ under no doc at all.
+# (covering the paths directly at the root and nothing deeper), crates/core
+# with its own AGENTS.md, a topic covering crates/core, and ui/ under no doc
+# at all.
 seed_repo() { # DIR
   mkdir -p "$1/crates/core/src" "$1/docs/architecture" "$1/ui/src"
   fgit init -q "$1"
@@ -194,10 +197,10 @@ build() { # WORLD — the row's repository, its run directory and PATH
         seal
         ;;
       file-topic) printf '# Selected path\n\nCovers: ui/src/app.ts\n' >"$REPO/docs/architecture/selected.md"; seal ;;
-      # The render inventory kendex writes, listing one of the two paths no
-      # document covers, so one row asks what a render does and the other what
-      # a path the same inventory does not list still does.
-      generated) printf '["top.rs"]\n' >"$REPO/.kendex-generated.json"; seal ;;
+      # The render inventory kendex writes, listing one of the two paths below
+      # the root that no document covers, so one row asks what a render does
+      # and the other what a path the same inventory does not list still does.
+      generated) printf '["ui/src/app.ts"]\n' >"$REPO/.kendex-generated.json"; seal ;;
       empty-generated) : >"$REPO/.kendex-generated.json"; seal ;;
       root-topic) printf '# All\n\nCovers: . ./ /\n' >"$REPO/docs/architecture/all.md"; seal ;;
       with-master) fgit -C "$REPO" branch master ;;
@@ -408,7 +411,7 @@ the farther AGENTS.md is never named|repo crates-agents|code|$CORE_DOCS
 a markdown-only change names nothing|repo|md|-
 an untracked new file is a change, named by its path|repo|new|crates/core/AGENTS.md(crates/core/src/added.rs),docs/architecture/core.md(crates/core/src/added.rs)
 a staged new file is a change, named by its path|repo|new stage|crates/core/AGENTS.md(crates/core/src/added.rs),docs/architecture/core.md(crates/core/src/added.rs)
-code under no doc at all is named as uncovered|repo|ui top|top.rs,ui/src/app.ts
+a path at the root is covered by the root AGENTS.md, while code below the root under no doc at all is named as uncovered|repo|ui top|AGENTS.md(top.rs),ui/src/app.ts
 an untracked new file from a subdirectory is named by its repository path|repo subdir|new|crates/core/AGENTS.md(crates/core/src/added.rs),docs/architecture/core.md(crates/core/src/added.rs)
 an ignored path is not a change|repo ignore-target|target|-
 a trailing-slash entry covers the directory|repo ui-topic|ui|docs/architecture/ui.md(ui/src/app.ts)
@@ -427,14 +430,14 @@ a Covers entry matching no path is named on a markdown-only change|repo dangling
 an entry naming a file deleted and not yet staged is named|repo file-topic|rm-ui|2|docs/architecture/selected.md(Covers: ui/src/app.ts),docs/architecture/selected.md(ui/src/app.ts)|stale=1;dangling=1;base=default-branch
 a glob entry is satisfied by a path its * reaches across /|repo glob-topic|md|0|-|-
 an entry whose only match is an untracked new file is satisfied|repo|covered-new|0|-|-
-a changed path no doc covers is named|repo|top|2|top.rs|uncovered=1;base=default-branch
-a changed path the render inventory lists is a render, not uncovered|repo generated|top|0|-|-
-a changed path the same inventory does not list is still uncovered|repo generated|ui|2|ui/src/app.ts|uncovered=1;base=default-branch
+a changed path at the root names the root AGENTS.md as stale, never itself as uncovered|repo|top|2|AGENTS.md(top.rs)|stale=1;base=default-branch
+a changed path the render inventory lists is a render, not uncovered|repo generated|ui|0|-|-
+a changed path the same inventory does not list is still uncovered|repo generated|other|2|ui/src/app.tsx|uncovered=1;base=default-branch
 a deleted path no doc covers is not named|repo|rm-ui|0|-|-
 an untracked AGENTS.md covers the new code beside it|repo|newpkg|0|-|-
 an AGENTS.md deleted and not yet staged no longer covers the code beside it|repo ui-agents|rm-ui-agents ui|2|ui/src/app.ts|uncovered=1;base=default-branch
 a warning git writes on a read that succeeds is not a path|repo autocrlf|code agents topic|0|-|-
-each kind that holds has its keyed line, stale then dangling then uncovered|repo dangling-topic|code top|2|$CORE_DOCS,docs/architecture/gone.md(Covers: crates/gone),top.rs|stale=2;dangling=1;uncovered=1;base=default-branch
+each kind that holds has its keyed line, stale then dangling then uncovered|repo dangling-topic|code ui|2|$CORE_DOCS,docs/architecture/gone.md(Covers: crates/gone),ui/src/app.ts|stale=2;dangling=1;uncovered=1;base=default-branch
 "
 
 run_table "base selection: what the branch is compared against" "world change rc out base" "\
@@ -461,9 +464,9 @@ another session is told the same set|repo|code stopped|stop2|2|$CORE_DOCS
 a set that gained a document blocks again|repo ui-topic|ui stopped code|stop|2|$CORE_AND_UI
 a set named earlier passes after another set intervened|repo ui-topic|ui stopped code stopped revert-code|stop|0|-
 a dangling entry named once passes on a later stop|repo dangling-topic|md stopped|stop|0|-
-an uncovered path named once passes on a later stop|repo|top stopped|stop|0|-
+an uncovered path named once passes on a later stop|repo|ui stopped|stop|0|-
 a set that gained a dangling entry blocks again|repo|code stopped dangle|stop|2|$CORE_DOCS,docs/architecture/gone.md(Covers: crates/gone)
-a set that gained an uncovered path blocks again|repo|code stopped top|stop|2|$CORE_DOCS,top.rs
+a set that gained an uncovered path blocks again|repo|code stopped ui|stop|2|$CORE_DOCS,ui/src/app.ts
 "
 
 run_table "a state the hook cannot read or a marker it cannot write is refused" "world change payload rc out err" "\
