@@ -240,15 +240,15 @@ gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
   done <"$GG_TMP/files.z"
 }
 
-# The staged text walk shares selection and blob classification across lanes.
-# A pure rename adds no content. A rename with changed bytes is an addition.
-gg_walk_staged_paths() { # NOUN ON_FILE — callback receives PATH BLOBFILE SHA
+# The diff walks share selection and blob classification across lanes. A pure
+# rename adds no content. A rename with changed bytes is an addition.
+#
+# The records in $GG_TMP/raw.z, whichever diff produced them: --raw -z
+# alternates "meta NUL path NUL", meta being
+# ":srcmode dstmode srcsha dstsha status". One reader, so a range scope and
+# the staged scope cannot classify the same record two ways.
+gg_walk_raw_records() { # NOUN ON_FILE — callback receives PATH BLOBFILE SHA
   local noun="$1" on_file="$2" meta f dstmode dstsha
-  GG_WALK_SKIPPED=0
-  : >"$GG_TMP/skipped.z"
-  gg_require_merged_index
-  git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT >"$GG_TMP/raw.z" \
-    || gg_fail staged-collect "$?" "could not collect the staged changes (git diff --cached --raw failed)"
   while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
     gg_matches_path_glob "$f" || continue
     gg_is_excluded "$f" && continue
@@ -272,6 +272,54 @@ gg_walk_staged_paths() { # NOUN ON_FILE — callback receives PATH BLOBFILE SHA
     fi
     "$on_file" "$f" "$GG_TMP/blob" "$dstsha"
   done <"$GG_TMP/raw.z"
+}
+
+gg_walk_staged_paths() { # NOUN ON_FILE — callback receives PATH BLOBFILE SHA
+  local noun="$1" on_file="$2"
+  GG_WALK_SKIPPED=0
+  : >"$GG_TMP/skipped.z"
+  gg_require_merged_index
+  git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT >"$GG_TMP/raw.z" \
+    || gg_fail staged-collect "$?" "could not collect the staged changes (git diff --cached --raw failed)"
+  gg_walk_raw_records "$noun" "$on_file"
+}
+
+# The diff range a scope kind names, byte-ceiling's dot conventions exactly:
+# `base` is three dots, what the branch adds over the ancestor it and REF
+# share, which is what CI asks of a pull request; `against` is two dots, what
+# landing this would do to REF's own tree, which is what a push asks. The ref
+# is resolved here so a scope naming no commit refuses loudly rather than
+# selecting an empty set and reporting it clean.
+# The out-variable is never named `built`: a caller passing that name would
+# have this function's own local answered instead of its own, and both callers
+# below spell theirs `range`.
+gg_diff_range() { # VAR KIND REF — VAR gets the diff range
+  local __v="$1" kind="$2" ref="$3" dots="" built=""
+  case "$kind" in
+    base) dots="..." ;;
+    against) dots=".." ;;
+    *) gg_fail range-kind "$kind" "The range scope is base or against." ;;
+  esac
+  git rev-parse --verify --quiet "$ref^{commit}" >/dev/null 2>&1 \
+    || gg_fail range-ref "$ref" "The range ref does not name a commit."
+  built="$ref$dots"HEAD
+  eval "$__v=\$built"
+}
+
+# The same walk over a commit range instead of the index, for a caller that
+# stages nothing: a push, where the branch's own state is what a replay left
+# and no index diff describes it. RANGE is gg_diff_range's answer, so the
+# dots and the ref's validity are settled before this runs. Rename detection
+# is held to exact content for the staged walk's reason: at any lower
+# similarity a renamed file that also changed is one R record the filter
+# drops, and the change arrives unjudged.
+gg_walk_range_paths() { # RANGE NOUN ON_FILE — callback receives PATH BLOBFILE SHA
+  local range="$1" noun="$2" on_file="$3"
+  GG_WALK_SKIPPED=0
+  : >"$GG_TMP/skipped.z"
+  git -c diff.renames=true diff --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT "$range" >"$GG_TMP/raw.z" \
+    || gg_fail range-collect "$range:$?" "could not collect the changes over $range (git diff --raw failed)"
+  gg_walk_raw_records "$noun" "$on_file"
 }
 
 # --- exclusion list: pattern<TAB>reason, reason mandatory --------------------

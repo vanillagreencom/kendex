@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # pre-push — the branch-scope guard chain, shaped for the git pre-push hook
-# (the installed .git/hooks/kendex-guards shim execs it): the commit-guards
-# batch over what each pushed branch would do to the remote.
+# (the installed .git/hooks/kendex-guards shim execs it): doc-limits over the
+# pushed tree, then the commit-guards batch over what each pushed branch would
+# do to the remote, in the order the pre-commit chain runs them.
 #
 # Why a lane here at all. Git runs no hook when it REPLAYS a commit — a
 # rebase, a cherry-pick, an autosquash — so a branch can arrive in a state no
@@ -25,20 +26,31 @@ GG_CHECK="pre-push"
 source "$SCRIPT_DIR/lib/paths.sh"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/siblings.sh
+source "$SCRIPT_DIR/lib/siblings.sh"
 
 usage() {
   cat <<'EOF'
 usage: pre-push REMOTE URL
 
-Runs the commit-guards batch over what each pushed branch would do to the
-remote. COMMIT_GUARDS_CHECKS decides the lanes, less the ones this scope
-leaves nothing for: a check whose configured scope selects from the staged
-diff opens no file here, since nothing is staged by the time judging starts,
-so the batch withholds it and names it rather than counting it clean. The
-markdown lanes are those under their default scope, which means a malformed
-document or a broken reference a replay carried in is not caught at push;
-COMMIT_GUARDS_MD_SCOPE=all makes them sweep the tree instead, and they run
-here. Git passes the remote name and its URL as arguments and the ref lines
+Runs doc-limits over the pushed tree and then the commit-guards batch over
+what each pushed branch would do to the remote, the order the pre-commit
+chain runs them in. doc-limits measures every tracked document against its
+class ceiling, so its verdict does not depend on which scope a ref line
+resolves to and it runs once per push, at the first line that would be
+judged. COMMIT_GUARDS_CHECKS decides the batch lanes, less the ones this
+scope leaves nothing for: a check this run hands no scope, whose own bare
+default selects from the staged diff, opens no file here, since nothing is
+staged by the time judging starts, so the batch withholds it and names it
+rather than counting it clean. Where a range scope can be established the
+markdown lanes take it under their default scope and judge what the branch
+changed, so a malformed document or a broken reference a replay carried in is
+caught; where none can be, the whole tree is the scope and those lanes are
+withheld, since that sweep is absolute rather than ratcheted and choosing it
+is COMMIT_GUARDS_MD_SCOPE=all, the project's call. A project that has chosen
+it keeps the sweep under every scope, a range included. Git passes the remote
+name
+and its URL as arguments and the ref lines
 `<local-ref> <local-oid> <remote-ref> <remote-oid>` on stdin. Wire it through
 the installed shim: `install-git-hooks --repo <root>`.
 
@@ -61,13 +73,14 @@ local dates them, so after a `git remote set-url` they still describe the
 previous repository and an oversized file can read there as pre-existing.
 With no base at all, the whole tree is the scope.
 
-Two refusals keep the verdict about the thing being pushed. A branch whose tip
-is not HEAD is refused: byte-ceiling is the only lane scoped to a commit range
-and every other one scans the index, so the batch answers about this checkout.
-The index having content HEAD does not is refused for the same reason — a
-verdict over staged bytes is a verdict about a tree nobody is pushing. Neither
-consults untracked files or unstaged edits, which no lane reads. The verdict
-line names the way past a refusal.
+Two refusals keep the verdict about the thing being pushed. Every range scope
+here ends at HEAD, byte-ceiling's and the markdown lanes' alike, so a branch
+whose tip is not HEAD is refused: this checkout cannot judge it. The index
+having content HEAD does not is refused too. Every scan not handed a range
+reads the index, as does the sweep a range triggers in md-refs, and every
+lane reads its tracked policy there, so a verdict over staged content is a
+verdict about a tree nobody is pushing. Neither consults untracked files or unstaged edits, which no lane
+reads. The verdict line names the way past a refusal.
 
 Configuration: every COMMIT_GUARDS_* key the batch reads applies here
 unchanged.
@@ -244,11 +257,13 @@ local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
 # Whether the index holds exactly the content the pushed commit does.
 #
 # The not-head refusal settles that the commit leaving the machine is HEAD's.
-# It settles nothing about what the lanes read: byte-ceiling is the only one
-# scoped to a commit range, and every other check in the family scans the
-# INDEX. So staged content makes the batch answer about a tree nobody is
-# pushing — and wrong in the direction that matters, since a violation
-# committed and then staged away reads clean while it is uploaded.
+# It settles nothing about what the lanes read. A range scope takes its blobs
+# from the diff's own records, but every scan not handed one reads the INDEX,
+# as does the sweep a range triggers in md-refs, and every lane reads its
+# tracked policy from the index. So staged content makes the batch answer
+# about a tree nobody is pushing — and wrong in the direction that matters,
+# since a violation committed and then staged away reads clean while it is
+# uploaded.
 #
 # The index, not the work tree: an unstaged edit changes nothing any lane
 # reads, and neither does an untracked file, so neither is consulted. Asked
@@ -280,12 +295,37 @@ index_is_head() { # -> 0 when the index holds exactly HEAD's tracked content
     gg_message index-path "$path" "This path is staged over HEAD."
     count=$((count + 1))
   done <"$GG_TMP/index.z"
-  gg_message index-drift "$count" "pre-push: the index holds content HEAD does not, and every lane but byte-ceiling reads the index — so a verdict here would be about a tree nobody is pushing. Commit the staged content or reset it, then push again. The verdict line below names the way past this refusal."
+  gg_message index-drift "$count" "pre-push: the index holds content HEAD does not, every scan not handed a range reads the index, and every lane reads its tracked policy there — so a verdict here would be about a tree nobody is pushing. Commit the staged content or reset it, then push again. The verdict line below names the way past this refusal."
   return 1
 }
 
 had_violations=0
 had_errors=0
+
+# doc-limits over the pushed tree, the lane the pre-commit chain runs first.
+#
+# Once per push rather than once per ref line: it measures every tracked
+# document against its class ceiling, absolutely, so the verdict is the same
+# whatever scope a line resolves to and a second run would repeat the first
+# word for word. Lazily, at the first line that would actually be judged, so a
+# push carrying nothing but deletions and tags is never held for it — and
+# after index_is_head, because --staged reads the INDEX and only that refusal
+# establishes the index is the tree being pushed.
+DOC_LIMITS_STATE=unasked
+doc_limits_once() { # folds the lane's verdict into this run's aggregators, once
+  local status=0
+  case "$DOC_LIMITS_STATE" in
+    asked) return 0 ;;
+  esac
+  DOC_LIMITS_STATE=asked
+  gg_doc_limits_lane "$SCRIPT_DIR" || status=$?
+  case "$status" in
+    0) ;;
+    1) had_violations=1 ;;
+    *) had_errors=1 ;;
+  esac
+}
+
 # The scopes already judged, newline-delimited. One push can name the same
 # commit under several remote refs, and the batch reads this checkout, so a
 # second run over the same base would repeat the first one's verdict word for
@@ -313,12 +353,16 @@ judge() { # SCOPE REF SCOPE-FLAGS... — run the batch once per distinct scope
   # one it withholds — a project that configured them to sweep the tree
   # instead gets them run here, since that scope needs nothing staged.
   #
-  # Withheld rather than given a wider scope by this lane: it has no range
-  # scope to give them, and imposing the whole-tree one would refuse every
-  # push in a repository holding markdown that predates the guard, since
-  # that scope is absolute rather than ratcheted. Choosing it is the
-  # project's to make. Judging a replayed markdown change under the default
-  # scope is work this lane does not do yet.
+  # Where this lane HAS a range to hand them — the two scopes below that
+  # carry a ref — the markdown lanes take it and judge what the branch
+  # changed, which is how a replayed document reaches a verdict. The
+  # whole-tree scope is the one that reaches them with nothing: imposing the
+  # absolute sweep there would refuse every push in a repository holding
+  # markdown that predates the guard, and choosing it is the project's to
+  # make, COMMIT_GUARDS_MD_SCOPE=all. Where a project HAS chosen it, the
+  # batch keeps that sweep and hands the range to no markdown lane: a range
+  # is narrower, so substituting one would answer a smaller question under
+  # the setting's name. That decision is the batch's, not this lane's.
   #
   # The batch reads no input, and is given none: a check that read stdin
   # would take the ref lines this loop has not reached, and a line nobody
@@ -404,6 +448,7 @@ while IFS=' ' read -r local_ref local_oid remote_ref remote_oid || [ -n "$local_
     had_errors=1
     continue
   fi
+  doc_limits_once
   # The destination's own answer first: the commit the remote ref is at,
   # usable only where this repository actually has that object — git sends the
   # oid it learned from the remote, which a shallow or freshly cloned checkout

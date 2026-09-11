@@ -7,9 +7,12 @@
 # remedy.
 #
 # Scopes: --staged judges every markdown file the staged diff adds or
-# changes, in full; --all judges every tracked markdown file the path globs
-# name; with neither, COMMIT_GUARDS_MD_SCOPE decides (lib/md-scope.sh).
-# Content comes from the index, like every scan in this family.
+# changes, in full; --base REF and --against REF judge the same over a commit
+# range, byte-ceiling's dots (three and two); --all judges every tracked
+# markdown file the path globs name; with neither, COMMIT_GUARDS_MD_SCOPE
+# decides (lib/md-scope.sh). Content comes from the index, like every scan in
+# this family, except under a range, which reads the HEAD-side blobs its diff
+# records.
 #
 # Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 set -euo pipefail
@@ -36,7 +39,7 @@ SHAPES_AWK="$SCRIPT_DIR/lib/md-shapes.awk"
 usage() {
   gg_message usage md-format "Command usage follows."
   cat <<EOF
-usage: md-format [--staged | --all]
+usage: md-format [--staged | --base REF | --against REF | --all]
 
 A markdown file is one paragraph per line and one list item per line, with
 blank lines between paragraphs, list blocks, headings and fences, and no
@@ -44,8 +47,11 @@ trailing-double-space line break. Fenced code, tables, HTML blocks, indented
 code and front matter are not judged. Reflow a file with md-reflow.
 
 --staged judges every markdown file the staged diff adds or changes, in
-full; --all judges every tracked markdown file the path globs name. With
-neither, COMMIT_GUARDS_MD_SCOPE decides: 'touched' (the default) is --staged
+full; --base REF judges the same over what this branch adds since the
+merge-base with REF (three dots) and --against REF over what the change
+would do to REF's own tree (two dots), which is the scope a push takes;
+--all judges every tracked markdown file the path globs name. With none of
+them, COMMIT_GUARDS_MD_SCOPE decides: 'touched' (the default) is --staged
 and judges nothing when nothing is staged; 'all' is --all.
 
 Configuration (env > .env.local > .kendex/settings.toml >
@@ -63,10 +69,30 @@ EOF
 
 STAGED=0
 ALL=0
+# Every scope flag is recorded as it is read, not just applied: applying alone
+# loses the first of two, and the exclusivity check would then see one scope.
 while [ $# -gt 0 ]; do
   case "$1" in
-    --staged) STAGED=1 ;;
-    --all) ALL=1 ;;
+    --staged)
+      gg_md_name_scope --staged
+      STAGED=1
+      ;;
+    --all)
+      gg_md_name_scope --all
+      ALL=1
+      ;;
+    --base)
+      [ $# -ge 2 ] || gg_fail argument-missing "--base" "--base requires a ref"
+      shift
+      gg_md_name_range base "$1"
+      ;;
+    --base=*) gg_md_name_range base "${1#--base=}" ;;
+    --against)
+      [ $# -ge 2 ] || gg_fail argument-missing "--against" "--against requires a ref"
+      shift
+      gg_md_name_range against "$1"
+      ;;
+    --against=*) gg_md_name_range against "${1#--against=}" ;;
     -h | --help)
       usage
       exit 0

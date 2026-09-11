@@ -24,7 +24,7 @@ A tracked file a change puts over `COMMIT_GUARDS_BYTE_CEILING_KB` (KB = 1024 byt
 - `--against REF`: the same files between REF's own tree and HEAD — two dots, so the baseline is REF's own blob. Where REF is an ancestor of HEAD the two scopes agree. Where they have diverged they do not, and only this one measures what landing HEAD at REF would do to REF: a file over the ceiling at the shared ancestor, smaller at REF and larger at HEAD, is a shrink to `--base` and growth to `--against`.
 - `--all`: every tracked file. No source blob, so no tighten-only baseline: an existing oversized file fails this scope even where it holds or shrinks.
 
-The batch names the scope: `commit-guards all` hands the lane `--all`, `all --base REF` hands `--base REF`, `all --against REF` hands `--against REF`, `all --staged` hands `--staged`. A copy is an addition; symlinks and gitlinks are not sized.
+The batch names the scope: `commit-guards all` hands the lane `--all`, `all --base REF` hands `--base REF`, `all --against REF` hands `--against REF`, `all --staged` hands `--staged`. byte-ceiling takes a range under every setting, since it is ratcheted and the range is the question it answers. The two range scopes also reach md-format and md-refs, on the same dot conventions, but only where `COMMIT_GUARDS_MD_SCOPE` is `touched`; under `all` those lanes are handed `--all` instead, because a range is narrower than the sweep that setting asks for. A copy is an addition; symlinks and gitlinks are not sized.
 
 ## suppression-ban
 
@@ -119,7 +119,7 @@ Violations, each naming file, line and rule:
 
 An unterminated fence, front matter, HTML comment or prompt-section block is exit 2 naming the file and opening line.
 
-`--staged` judges every markdown file the staged diff adds, modifies or type-changes, in full, from the index, renames held to exact content. `--all` judges every tracked file `COMMIT_GUARDS_MD_PATHS` names minus `COMMIT_GUARDS_MD_EXCLUDES`. With neither, `COMMIT_GUARDS_MD_SCOPE` decides: `touched` is `--staged`, judging nothing when nothing is staged; `all` is `--all`. The commit batch hands the lane `--staged`.
+`--staged` judges every markdown file the staged diff adds, modifies or type-changes, in full, from the index, renames held to exact content. `--base REF` and `--against REF` judge the same over a commit range, byte-ceiling's dots: three for what the branch adds over the ancestor it and REF share, two for what the change would do to REF's own tree. `--all` judges every tracked file `COMMIT_GUARDS_MD_PATHS` names minus `COMMIT_GUARDS_MD_EXCLUDES`. With no flag, `COMMIT_GUARDS_MD_SCOPE` decides: `touched` is `--staged`, judging nothing when nothing is staged; `all` is `--all`. The commit batch hands the lane `--staged`. A range-scoped batch hands it the range only under `touched`; under `all` it hands `--all`, since a range would answer a narrower question than the scope the project configured. The push batch withholds the lane where it has no range and the scope is `touched`.
 
 ### md-reflow
 
@@ -144,7 +144,7 @@ A source file carries the same citations outside markdown, and they are judged t
 - Nothing else. Outside markdown a link, a bare path and a bare decision ID are prose, and only `§` points a reader at a place in a file. The heading runs to the end of the line and the prefix rule judges it, so prose may follow it.
 - One `git grep` over the index names the files this pass opens: a file whose bytes do not hold the section sign holds none of these citations, so it is counted without being read. A carrier whose content is binary is named as unmeasured, as the other lanes name theirs.
 
-`--staged` and `--all` check every tracked file named by `COMMIT_GUARDS_MD_REFS_PATHS` or `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS`, minus `COMMIT_GUARDS_MD_EXCLUDES`. With neither flag, `COMMIT_GUARDS_MD_SCOPE=touched` checks that set when any change is staged, including deletions; `all` checks it unconditionally. This includes references in unchanged documents. Callers and targets resolve against the index; a tracked path holding a newline is no link target.
+`--staged` and `--all` check every tracked file named by `COMMIT_GUARDS_MD_REFS_PATHS` or `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS`, minus `COMMIT_GUARDS_MD_EXCLUDES`. `--base REF` and `--against REF` check that same set when the commit range carries any change, including a deletion, and nothing when it carries none; the dots are byte-ceiling's. With no flag, `COMMIT_GUARDS_MD_SCOPE=touched` checks the set when any change is staged, including deletions; `all` checks it unconditionally, and a range-scoped batch hands the lane `--all` under that setting rather than a range. Every scope that checks anything checks the whole set, so this includes references in unchanged documents. Callers and targets resolve against the index; a tracked path holding a newline is no link target.
 
 ## comments
 

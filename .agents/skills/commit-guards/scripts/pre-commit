@@ -9,9 +9,8 @@
 # Every step runs before the verdict, so one commit attempt reports every
 # blocker. Aggregation fails CLOSED: exit 2 if any step could not complete,
 # else 1 if any found violations, else 0. Both nonzero verdicts block.
-# Consumer protocol: the doc-limits compatibility branch reads exit 2 and
-# the complete first diagnostic line for the unsupported --staged flag.
-# Other output is presentation, not evidence for that branch.
+# Sibling resolution and the doc-limits lane, which the pre-push lane runs
+# too, are lib/siblings.sh's.
 set -euo pipefail
 
 GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
@@ -21,12 +20,12 @@ SCRIPT_DIR="${GG_BOOT%$'\n'}"
 GG_CHECK="pre-commit"
 # shellcheck source=lib/paths.sh
 source "$SCRIPT_DIR/lib/paths.sh"
-# shellcheck source=lib/skill-roots.sh
-source "$SCRIPT_DIR/lib/skill-roots.sh"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 # shellcheck source=lib/settings.sh
 source "$SCRIPT_DIR/lib/settings.sh"
+# shellcheck source=lib/siblings.sh
+source "$SCRIPT_DIR/lib/siblings.sh"
 
 usage() {
   cat <<'EOF'
@@ -79,109 +78,21 @@ run_step() { # LABEL COMMAND [ARGS...] — runs one step and folds its verdict
   esac
 }
 
-# Sibling gates resolve against the COMMITTING work tree first: the shim may
-# exec this script from a shared install in another checkout (linked worktrees
-# share one hooks directory), whose branch state must not decide which gates
-# exist for this commit — and a re-vendored copy in this tree gates it, not
-# the install it replaces. The roots mirror the shim's rediscovery list, which
-# covers a consumer's .agents/skills shape and kendex's own skills/ layout;
-# the install beside this script serves only a tree carrying no copy.
-
-# Whether the SKILL is present decides, not whether its script happens to be
-# runnable: a present skill with a missing, dangling or unexecutable script
-# is a broken install, and the chain must never pass by losing a gate. -L
-# catches a dangling symlink, which -e reports as absent.
-# The roots resolve_sibling walked, for a skip to name. A diagnostic that
-# lists one of two searched places is worse than none: it sends the reader
-# to the directory that was never the problem.
-gg_searched_roots() {
-  local project=""
-  gg_project_root project "$SCRIPT_DIR" || project=""
-  [ "$project" = "$PWD" ] && project=""
-  case "$project" in
-    "") printf '%s' "$PWD" ;;
-    *) printf '%s and %s' "$PWD" "$project" ;;
-  esac
-}
-
-resolve_sibling() { # SKILL — skill directory on stdout; 1 when no side carries it
-  local skill="$1" base="" dir="" root="" project=""
-  # The committing tree first, then the project this copy is installed
-  # under. That order is the re-vendor rule: a tree carrying its own copy of
-  # a gate gates its own commit with it, so $PWD outranks everything.
-  #
-  # The project root is the addition. git runs a hook from the work-tree top
-  # level, which is the project root only when the two are the same
-  # directory; where a kendex project sits below it the siblings are beside
-  # THIS copy and nowhere near $PWD, and a sibling that failed was a gate
-  # reporting nothing while the chain exited 0.
-  gg_project_root project "$SCRIPT_DIR" || project=""
-  [ "$project" = "$PWD" ] && project=""
-  for root in "$PWD" "$project"; do
-    [ -n "$root" ] || continue
-    for base in $GG_SKILL_ROOTS; do
-      dir="$root/$base/$skill"
-      if [ -e "$dir" ] || [ -L "$dir" ]; then
-        printf '%s\n' "$dir"
-        return 0
-      fi
-    done
-  done
-  dir="$SCRIPT_DIR/../../$skill"
-  if [ -e "$dir" ] || [ -L "$dir" ]; then
-    printf '%s\n' "$dir"
-    return 0
-  fi
-  return 1
-}
-
-if DOC_LIMITS_SKILL="$(resolve_sibling doc-limits)"; then
-  DOC_LIMITS="$DOC_LIMITS_SKILL/scripts/doc-limits"
-  [ -x "$DOC_LIMITS" ] || gg_fail lane-missing "$DOC_LIMITS" "the doc-limits skill is installed at $DOC_LIMITS_SKILL but $DOC_LIMITS is missing or not executable — reinstall it"
-  # A consuming repo may replace the vendored script with its own gate — a
-  # fork without the --staged interface, wired through its own hooks. This
-  # chain owns only the kendex-shape script, and the ONE
-  # deterministic signal is the run itself: an argument parser that rejects
-  # --staged says so in its own first line. No help-prose inference — two
-  # reviewers proved usage-shape detection cannot converge.
-  gg_message step doc-limits "=== pre-commit: doc-limits (document byte ceilings)"
-  sr_run_status=0
-  sr_run_out="$("$DOC_LIMITS" --staged 2>&1)" || sr_run_status=$?
-  [ -n "$sr_run_out" ] && printf '%s\n' "$sr_run_out"
-  # The rejection is a PARSER diagnostic: the whole first line, in the
-  # tool-prefixed shapes an argument parser emits. Guard-family tools stamp
-  # diagnostics with the ::error:: annotation; strip exactly that prefix so
-  # the shapes below see the tool's own line. A config diagnostic that
-  # merely ECHOES the phrase inside a longer line never matches.
-  sr_first_line="${sr_run_out%%$'\n'*}"
-  sr_first_line="${sr_first_line#::error::}"
-  sr_rejects_staged=0
-  if [ "$sr_run_status" -eq 2 ]; then
-    case "$sr_first_line" in
-      "doc-limits: unknown argument '--staged'"*|"doc-limits: unrecognized option '--staged'"*|"doc-limits: unrecognized option: --staged"*|"doc-limits: invalid option: --staged"*|"doc-limits: invalid option -- staged"*)
-        sr_rejects_staged=1
-        ;;
-    esac
-  fi
-  case "$sr_run_status:$sr_rejects_staged" in
-    0:*) ;;
-    1:*) had_violations=1 ;;
-    2:1)
-      gg_message staged-unsupported "$DOC_LIMITS" "=== pre-commit: doc-limits at $DOC_LIMITS rejects --staged (repo-local replacement) — skipped; this repo's own wiring owns that gate"
-      ;;
-    *)
-      had_errors=1
-      gg_message step-incomplete "doc-limits:$sr_run_status" "pre-commit: step 'doc-limits' did not complete (exit $sr_run_status)"
-      ;;
-  esac
-else
-  gg_message lane-absent "doc-limits roots=$(gg_searched_roots) skills=$GG_SKILL_ROOTS fallback=$SCRIPT_DIR/../../doc-limits" "=== pre-commit: doc-limits not installed — skipped (no doc-limits skill under $(gg_searched_roots) ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../doc-limits)"
-fi
+# The doc-limits lane first, as the pre-push lane runs it first: sibling
+# resolution and the lane itself are lib/siblings.sh's, so the two hooks
+# cannot disagree about which copy of a gate judges a tree.
+doc_limits_status=0
+gg_doc_limits_lane "$SCRIPT_DIR" || doc_limits_status=$?
+case "$doc_limits_status" in
+  0) ;;
+  1) had_violations=1 ;;
+  *) had_errors=1 ;;
+esac
 
 # Same sibling contract for preflight: its --staged lanes judge the same
 # blobs, and a human committing outside any harness gets the deterministic
 # checks CI would otherwise report first.
-if PREFLIGHT_SKILL="$(resolve_sibling preflight)"; then
+if PREFLIGHT_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" preflight)"; then
   PREFLIGHT="$PREFLIGHT_SKILL/scripts/preflight"
   [ -x "$PREFLIGHT" ] || gg_fail lane-missing "$PREFLIGHT" "the preflight skill is installed at $PREFLIGHT_SKILL but $PREFLIGHT is missing or not executable — reinstall it"
   if git rev-parse --verify --quiet HEAD >/dev/null; then
@@ -192,18 +103,18 @@ if PREFLIGHT_SKILL="$(resolve_sibling preflight)"; then
     gg_message base-missing preflight "=== pre-commit: first commit — preflight --staged has no base; skipped"
   fi
 else
-  gg_message lane-absent "preflight roots=$(gg_searched_roots) skills=$GG_SKILL_ROOTS fallback=$SCRIPT_DIR/../../preflight" "=== pre-commit: preflight not installed — skipped (no preflight skill under $(gg_searched_roots) ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../preflight)"
+  gg_message lane-absent "preflight roots=$(gg_searched_roots "$SCRIPT_DIR") skills=$GG_SKILL_ROOTS fallback=$SCRIPT_DIR/../../preflight" "=== pre-commit: preflight not installed — skipped (no preflight skill under $(gg_searched_roots "$SCRIPT_DIR") ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../preflight)"
 fi
 
 # Same sibling contract for the bot-instructions check: the rendered review
 # bot instruction files are judged against the staged doctrine and manifest,
 # one coherent staged state, so no consumer wires a wrapper of its own.
-if BOT_SKILL="$(resolve_sibling bot-instructions)"; then
+if BOT_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" bot-instructions)"; then
   BOT_CHECK="$BOT_SKILL/scripts/bot-instructions"
   [ -x "$BOT_CHECK" ] || gg_fail lane-missing "$BOT_CHECK" "the bot-instructions skill is installed at $BOT_SKILL but $BOT_CHECK is missing or not executable — reinstall it"
   run_step "bot-instructions check --staged" "$BOT_CHECK" check --staged
 else
-  gg_message lane-absent "bot-instructions roots=$(gg_searched_roots) skills=$GG_SKILL_ROOTS fallback=$SCRIPT_DIR/../../bot-instructions" "=== pre-commit: bot-instructions not installed — skipped (no bot-instructions skill under $(gg_searched_roots) ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../bot-instructions)"
+  gg_message lane-absent "bot-instructions roots=$(gg_searched_roots "$SCRIPT_DIR") skills=$GG_SKILL_ROOTS fallback=$SCRIPT_DIR/../../bot-instructions" "=== pre-commit: bot-instructions not installed — skipped (no bot-instructions skill under $(gg_searched_roots "$SCRIPT_DIR") ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../bot-instructions)"
 fi
 
 BATCH="$SCRIPT_DIR/commit-guards"

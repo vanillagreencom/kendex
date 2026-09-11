@@ -171,6 +171,10 @@ run_rows() { # label | fixture | envs | args | expect
 
 echo "=== scopes: --staged judges the files a commit touches, in full ==="
 seeded() { repo "$1"; put clean.md 'Clean.\n'; put wrapped.md "$WRAPPED"; commit seed; } # NAME — a committed wrap, nothing staged
+# Two commits, so HEAD~1 names one and a row can spell two different refs
+# under one flag name. Its own fixture: the counts every --all row asserts are
+# the shared one's, and a file added there would move them.
+two_commits() { repo "$1"; put first.md 'First.\n'; commit first; put second.md 'Second.\n'; commit second; } # NAME
 fx_touched_full() { seeded touched-full; put wrapped.md 'Wrapped\ntext.\nMore.\n'; }
 fx_unstaged_edit() { seeded unstaged-edit; put wrapped.md 'Wrapped text. More.\n'; write clean.md "$WRAPPED"; }
 fx_staged_edit() { seeded staged-edit; put wrapped.md 'Wrapped text. More.\n'; put clean.md "$WRAPPED"; }
@@ -196,7 +200,12 @@ run_rows \
   "COMMIT_GUARDS_MD_SCOPE=all is --all|seeded env-all|COMMIT_GUARDS_MD_SCOPE=all||rc=1 $(viol wrapped.md 2 "$WRAP");$(failed 1 2)" \
   "the scope resolves from kendex.settings.toml [env]|fx_settings_all|||rc=1 $(viol wrapped.md 2 "$WRAP");$(failed 1 2)" \
   "an unknown scope is exit 2, quoting it|seeded scope-unknown|COMMIT_GUARDS_MD_SCOPE=sometimes||rc=2 ${ERR}scope=sometimes" \
-  "--staged with --all is exit 2|seeded both-flags||--staged --all|rc=2 ${ERR}scope-flags=--staged,--all"
+  "--staged with --all is exit 2|seeded both-flags||--staged --all|rc=2 ${ERR}scope-flags=--staged,--all" \
+  "two range flags name two scopes, so the contradiction is refused rather than resolved to the last one|seeded two-ranges||--base HEAD --against HEAD|rc=2 ${ERR}scope-flags=--base HEAD,--against HEAD" \
+  "one flag naming two refs is the same contradiction|two_commits two-refs||--base HEAD --base HEAD~1|rc=2 ${ERR}scope-flags=--base HEAD,--base HEAD~1" \
+  "a range beside --all is refused too, whichever came first|seeded range-and-all||--all --base HEAD|rc=2 ${ERR}scope-flags=--all,--base HEAD" \
+  "control: a flag repeated verbatim names one scope and runs|seeded repeat-range||--base HEAD --base HEAD|rc=0 $(nomatch range '*.md')" \
+  "control: one range flag alone reaches the range scope|seeded one-range||--base HEAD|rc=0 $(nomatch range '*.md')"
 
 echo "=== the path list and the excludes list bound both scopes ==="
 paths() { repo "$1"; put docs/wrapped.md "$WRAPPED"; put vendor/wrapped.md "$WRAPPED"; put notes.txt "$WRAPPED"; } # NAME — two wrapped markdown files and a .txt
