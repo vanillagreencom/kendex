@@ -48,9 +48,7 @@ fn referents(manifest: &Manifest, source: &str) -> Vec<String> {
 }
 
 pub fn list_sources(env: &Env, scope: &Scope) -> Result<Vec<SourceRow>> {
-    let Some(manifest) = manifest::load_current(&manifest::manifest_path(env, scope))? else {
-        return Ok(Vec::new());
-    };
+    let manifest = crate::engine::ops::manifest_for_reading(env, scope)?;
     Ok(manifest
         .sources
         .iter()
@@ -102,9 +100,7 @@ pub struct SubscriptionRow {
 /// rather than zero, because "nothing here" and "not counted yet" are
 /// different sentences.
 pub fn list_subscriptions(env: &Env, scope: &Scope) -> Result<Vec<SubscriptionRow>> {
-    let Some(manifest) = manifest::load_current(&manifest::manifest_path(env, scope))? else {
-        return Ok(Vec::new());
-    };
+    let manifest = crate::engine::ops::manifest_for_reading(env, scope)?;
     let mut rows = Vec::new();
     for (name, decl) in &manifest.sources {
         let mut commit = None;

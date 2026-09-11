@@ -10,7 +10,7 @@ use crate::engine::{EngineReport, PlanOptions, plan_scope};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::lock::{Lock, lock_path};
-use crate::manifest::{ItemDecl, Manifest, Method};
+use crate::manifest::{self, ItemDecl, Manifest, Method};
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::{self, find_item, list_items, source_config};
 
@@ -55,8 +55,49 @@ pub struct AddRequest {
 
 /// Declare items (and their auto-expanded skills), then plan the scope.
 /// The returned report's plan includes persisting the updated manifest.
+///
+/// A project that has no manifest yet reaches the personal scope's
+/// default marketplace when nothing offers the request: that one
+/// declaration is carried into the project in the same plan as the
+/// packages, so a refused install leaves the project unsubscribed, and a
+/// name that marketplace does not offer either is refused naming the
+/// package and the marketplace it was looked for in. A manifest that
+/// exists is left as written whatever it holds, so a bare name its
+/// subscriptions do not offer is not found and nothing is declared or
+/// fetched, and a personal scope that removed the default, or holds it
+/// switched off, has nothing to carry: the project's own refusal stands.
 pub fn add(env: &Env, scope: &Scope, request: &AddRequest) -> Result<EngineReport> {
-    add_seeded(env, scope, request, None)
+    let refused = match add_seeded(env, scope, request, None) {
+        Err(refused @ (CoreError::ItemNotOffered { .. } | CoreError::NoDefaultSource { .. })) => {
+            refused
+        }
+        other => return other,
+    };
+    let Scope::Project { root } = scope else {
+        return Err(refused);
+    };
+    let Some(name) = personal_default_for(env, scope)? else {
+        return Err(refused);
+    };
+    crate::source_ops::install_project_from_personal(env, root, &name, request)
+}
+
+/// The personal scope's default marketplace, by the alias the personal
+/// manifest keys it under, for a project whose manifest file is absent —
+/// the one condition the seed applies under. `None` where the project has
+/// a manifest, whatever it holds, or where the personal scope holds no
+/// usable default: none at all, or one switched off, which the search
+/// would have skipped in the project's own scope.
+fn personal_default_for(env: &Env, scope: &Scope) -> Result<Option<String>> {
+    if manifest::load_current(&manifest::manifest_path(env, scope))?.is_some() {
+        return Ok(None);
+    }
+    let personal = super::manifest_for_reading(env, &Scope::Global)?;
+    match pick::default_source(&personal) {
+        Ok(name) => Ok(personal.sources[&name].enabled.then_some(name)),
+        Err(CoreError::NoDefaultSource { .. }) => Ok(None),
+        Err(other) => Err(other),
+    }
 }
 
 /// `add`, optionally declaring a subscription into the scope first. Installing

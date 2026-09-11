@@ -451,3 +451,48 @@ fn an_edited_install_is_listed_even_with_nothing_newer() {
         "{edited}"
     );
 }
+
+/// A pending positional repository is never mistaken for the personal
+/// scope's default. The personal fetch a bare add into a fresh project
+/// makes reads the pending alias off the personal manifest; a request that
+/// names its repository derives the same alias a personal subscription may
+/// happen to use, and that unrelated repository must stay unfetched. Drop
+/// the bare-add gate and this case is what goes red.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pending_positional_repository_never_fetches_a_personal_alias_twin() {
+    let tmp = fixture();
+    let home = tmp.path();
+    let proj = home.join("proj");
+    // The personal scope subscribes to other/tools as "tools", the alias a
+    // positional acme/tools derives; only other/tools has an upstream.
+    let other = home.join("git/other/tools");
+    fs::create_dir_all(other.join("skills/gh")).unwrap();
+    fs::write(
+        other.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: github flows\n---\nOther.\n",
+    )
+    .unwrap();
+    git(&other, &["init", "--quiet", "-b", "main"]);
+    git(&other, &["add", "."]);
+    git(&other, &["commit", "--quiet", "-m", "one"]);
+    let env = kendex_core::env::Env::host_rooted(home)
+        .with_var("KENDEX_GIT_BASE", &format!("file://{}/git", home.display()));
+    let personal = env.global_manifest_file();
+    fs::create_dir_all(personal.parent().unwrap()).unwrap();
+    fs::write(
+        &personal,
+        "schema = 6\n\n[sources.tools]\nrepo = \"other/tools\"\n",
+    )
+    .unwrap();
+
+    let output = kendex(home, &proj, &["add", "acme/tools", "--skill", "gh", "-y"]);
+
+    assert!(!output.status.success(), "{}", said(&output));
+    assert_eq!(
+        kendex_core::remote::cache_head(&env, "other/tools", None),
+        None,
+        "the personal twin was fetched for a positional repository"
+    );
+    assert!(!proj.join("kendex.toml").exists());
+}

@@ -1,0 +1,1 @@
+- The app's Refresh on a fresh machine fetches the kendex marketplace the Marketplaces page already lists, so a template install no longer waits on a subscription nothing could refresh.

@@ -148,16 +148,30 @@ fn schema_less_file_is_refused_and_never_a_mutation_target() {
 }
 
 #[test]
-fn seed_declares_the_default_source_once() {
-    let manifest = seed(&[HarnessId::Claude]);
-    // Spelled out: a fresh scope seeds the post-rename name and repo.
-    assert_eq!(
-        manifest.sources["kendex"].repo.as_deref(),
-        Some("vanillagreencom/kendex")
-    );
-    assert!(manifest.sources[DEFAULT_SOURCE_NAME].enabled);
-    assert_eq!(manifest.declared(ItemKind::Agent).len(), 0);
-    assert_eq!(manifest.install.harnesses, [HarnessId::Claude]);
+fn seed_declares_the_default_source_in_the_personal_scope_only() {
+    use crate::model::Scope;
+
+    let project = Scope::Project {
+        root: std::path::PathBuf::from("/srv/app"),
+    };
+    // Spelled out: the personal scope seeds the post-rename name and repo;
+    // a project seeds its tools and nothing to read from.
+    for (scope, sources) in [
+        (Scope::Global, vec![("kendex", "vanillagreencom/kendex")]),
+        (project, vec![]),
+    ] {
+        let manifest = seed(&scope, &[HarnessId::Claude]);
+        let seeded: Vec<(&str, &str)> = manifest
+            .sources
+            .iter()
+            .map(|(name, decl)| (name.as_str(), decl.repo.as_deref().unwrap_or_default()))
+            .collect();
+        assert_eq!(seeded, sources, "{scope:?}");
+        assert!(manifest.sources.values().all(|decl| decl.enabled));
+        assert_eq!(manifest.schema, MANIFEST_SCHEMA);
+        assert_eq!(manifest.declared(ItemKind::Agent).len(), 0);
+        assert_eq!(manifest.install.harnesses, [HarnessId::Claude]);
+    }
 }
 
 #[test]

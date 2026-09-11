@@ -271,11 +271,19 @@ fn add_gh(
     env: &Env,
     scope: &Scope,
 ) -> kendex_core::error::Result<kendex_core::engine::EngineReport> {
+    add_skill(env, scope, "gh")
+}
+
+fn add_skill(
+    env: &Env,
+    scope: &Scope,
+    name: &str,
+) -> kendex_core::error::Result<kendex_core::engine::EngineReport> {
     ops::add(
         env,
         scope,
         &ops::AddRequest {
-            skills: vec!["gh".into()],
+            skills: vec![name.to_owned()],
             ..ops::AddRequest::default()
         },
     )
@@ -366,13 +374,81 @@ fn two_default_repo_subscriptions_neither_seeded_refuse_naming_both() {
     }
 }
 
-/// With nothing subscribed to the default repo there is no fallback at
-/// all: `--all` with no source named refuses rather than guessing the one
-/// subscription that happens to exist. A bare item name searches instead.
+/// A project with no manifest yet reaches the personal scope's default
+/// marketplace: the personal declaration is carried into the project in
+/// the same plan as the package, so a fresh project's bare add lands and
+/// the project subscribes to the default by copy, never by seed. The
+/// personal manifest is read-only input, and one that was never written
+/// stays unwritten.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn no_default_subscription_is_a_typed_error_never_a_guess() {
+fn a_project_with_no_manifest_reaches_the_personal_scopes_default() {
     let (_tmp, env, scope, project) = fixture();
+    upstream(env.home.as_path(), DEFAULT_SOURCE_REPO);
+    remote::sync(&env, DEFAULT_SOURCE_REPO, None).unwrap();
+    let personal = kendex_core::manifest::manifest_path(&env, &Scope::Global);
+    assert!(!project.join("kendex.toml").exists());
+
+    let report = add_gh(&env, &scope).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
+    let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
+    assert!(manifest.contains("[sources.kendex]"), "{manifest}");
+    assert!(manifest.contains("[skills.gh]"), "{manifest}");
+    assert!(manifest.contains("source = \"kendex\""), "{manifest}");
+    assert!(!personal.exists());
+}
+
+/// Where the personal default cannot serve a fresh project, nothing is
+/// declared and nothing written. A personal default switched off is
+/// skipped the way the search skips one, so the project's own not-offered
+/// refusal stands; a name the carried default does not offer is refused
+/// by the retry itself, naming that package and the marketplace it was
+/// looked for in.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fresh_project_writes_nothing_where_the_personal_default_cannot_serve() {
+    let (_tmp, env, scope, project) = fixture();
+    upstream(env.home.as_path(), DEFAULT_SOURCE_REPO);
+    remote::sync(&env, DEFAULT_SOURCE_REPO, None).unwrap();
+    let personal = kendex_core::manifest::manifest_path(&env, &Scope::Global);
+    fs::create_dir_all(personal.parent().unwrap()).unwrap();
+    let switched_off = format!(
+        "schema = 6\n\n[sources.kendex]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\nenabled = false\n"
+    );
+
+    fs::write(&personal, &switched_off).unwrap();
+    let error = add_skill(&env, &scope, "gh").unwrap_err();
+    assert!(
+        matches!(&error, CoreError::ItemNotOffered { name, .. } if name == "gh"),
+        "disabled personal default: expected not offered, got {error}"
+    );
+    assert!(!project.join("kendex.toml").exists());
+
+    fs::remove_file(&personal).unwrap();
+    let error = add_skill(&env, &scope, "ghost").unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            CoreError::ItemNotInSource { name, source_name }
+                if name == "ghost" && source_name == "kendex"
+        ),
+        "name the default does not carry: expected not in source, got {error}"
+    );
+    assert!(!project.join("kendex.toml").exists());
+}
+
+/// With nothing subscribed to the default repo in the project or the
+/// personal scope there is no fallback at all: `--all` with no source
+/// named refuses rather than guessing the one subscription that happens
+/// to exist. A bare item name searches instead. The personal scope
+/// removed its default, and a removal is durable: nothing seeds it back.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn no_default_subscription_anywhere_is_a_typed_error_never_a_guess() {
+    let (_tmp, env, scope, project) = fixture();
+    let personal = kendex_core::manifest::manifest_path(&env, &Scope::Global);
+    fs::create_dir_all(personal.parent().unwrap()).unwrap();
+    fs::write(&personal, "schema = 6\n").unwrap();
     let other = env.home.join("other");
     fs::create_dir_all(other.join("skills/gh")).unwrap();
     fs::write(other.join("skills/gh/SKILL.md"), "---\nname: gh\n---\nx\n").unwrap();

@@ -106,3 +106,41 @@ fn rows_show_reference_enablement_and_referents() {
     assert!(rows[0].enabled);
     assert_eq!(rows[0].declared_items, ["skills.gh"]);
 }
+
+/// What a scope with no manifest lists is what its first write would
+/// create: the personal scope carries the default marketplace, a project
+/// carries nothing to read from, and a manifest that exists without the
+/// default keeps it removed. One reader answers all three, so a page can
+/// never offer to subscribe what the next write already holds.
+#[test]
+fn an_absent_manifest_lists_what_its_first_write_would_seed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    let project = Scope::Project { root: project };
+    let global_manifest = crate::manifest::manifest_path(&env, &Scope::Global);
+    fs::create_dir_all(global_manifest.parent().unwrap()).unwrap();
+    for (scope, written, expected) in [
+        (
+            Scope::Global,
+            None,
+            vec![(
+                crate::manifest::DEFAULT_SOURCE_NAME.to_owned(),
+                Some(crate::manifest::DEFAULT_SOURCE_REPO.to_owned()),
+            )],
+        ),
+        (project, None, vec![]),
+        (Scope::Global, Some("schema = 6\n"), vec![]),
+    ] {
+        if let Some(text) = written {
+            fs::write(&global_manifest, text).unwrap();
+        }
+        let listed: Vec<(String, Option<String>)> = list_subscriptions(&env, &scope)
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.name, row.repo))
+            .collect();
+        assert_eq!(listed, expected, "{scope:?} with {written:?}");
+    }
+}

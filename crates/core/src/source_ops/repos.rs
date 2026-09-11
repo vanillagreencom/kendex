@@ -84,7 +84,9 @@ pub fn declared_identity(
 
 /// Every subscription across the personal scope and every project,
 /// personal first, from the manifests alone — folders included. An absent
-/// manifest contributes nothing; an unreadable manifest fails the join.
+/// manifest reads as its first write would create it: the personal scope
+/// carries the default marketplace, a project nothing. An unreadable
+/// manifest fails the join.
 ///
 /// The one walk over the declarations, so a caller asking which catalog
 /// carries a marketplace and a caller asking which repositories are
@@ -100,11 +102,7 @@ pub fn subscriptions(env: &Env) -> Result<Vec<Subscription>> {
     );
     let mut out = Vec::new();
     for scope in scopes {
-        let Some(manifest) =
-            crate::manifest::load_current(&crate::manifest::manifest_path(env, &scope))?
-        else {
-            continue;
-        };
+        let manifest = crate::engine::ops::manifest_for_reading(env, &scope)?;
         for (name, decl) in &manifest.sources {
             let (repo, path) = (decl.repo.as_deref(), decl.path.as_deref());
             let (Some(reference), Some(repo_identity)) =

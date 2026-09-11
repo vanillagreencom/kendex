@@ -2,6 +2,10 @@
 //! reuse-or-refuse rule — a collection never re-pins an existing
 //! subscription as a side effect.
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::rooted;
+
 use std::cell::RefCell;
 use std::fs;
 
@@ -165,6 +169,35 @@ fn a_fresh_scope_subscribes_each_repo_at_the_snapshot() {
         tools.action,
         SourceAction::Subscribe {
             reference: "other/tools".to_owned()
+        }
+    );
+}
+
+/// A scope that has no manifest yet is read as its first write would
+/// create it, so a member of the default marketplace reuses the seeded
+/// subscription: planning a fresh Subscribe there would print a step the
+/// install then refuses as a duplicate. Read the absent file as empty
+/// and this case is what goes red.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fresh_personal_scope_reuses_the_seeded_default_marketplace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(home, FakeOs::Linux);
+    let collection = Collection {
+        id: "i".to_owned(),
+        name: "starter".to_owned(),
+        members: vec![member(
+            kendex_core::manifest::DEFAULT_SOURCE_REPO,
+            "gh",
+            None,
+        )],
+    };
+    let steps = collection_steps(&env, &Scope::Global, &collection).unwrap();
+    assert_eq!(
+        steps[0].action,
+        SourceAction::Reuse {
+            name: kendex_core::manifest::DEFAULT_SOURCE_NAME.to_owned()
         }
     );
 }

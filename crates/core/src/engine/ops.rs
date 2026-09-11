@@ -64,14 +64,32 @@ pub(crate) fn adopt_detected(env: &Env, manifest: &mut Manifest) -> Option<Strin
     )
 }
 
-/// Load the scope's manifest for mutation, seeding a fresh one (with the
-/// default source) when none exists. Legacy files are a hard error.
+/// The scope's manifest as a listing reads it: the file where there is
+/// one, else what [`manifest_for_mutation`] would write first. One answer
+/// to what an absent manifest holds, so a page can never offer a
+/// subscription the next write already carries. Legacy files are a hard
+/// error.
+pub fn manifest_for_reading(env: &Env, scope: &Scope) -> Result<Manifest> {
+    Ok(
+        manifest::load_current(&manifest::manifest_path(env, scope))?
+            .unwrap_or_else(|| absent(env, scope)),
+    )
+}
+
+/// Load the scope's manifest for mutation, seeding a fresh one when none
+/// exists. Legacy files are a hard error.
 pub fn manifest_for_mutation(env: &Env, scope: &Scope) -> Result<Manifest> {
-    let path = manifest::manifest_path(env, scope);
-    match manifest::load_for_mutation(&path)? {
-        Some(manifest) => Ok(manifest),
-        None => Ok(manifest::seed(&detected_harnesses(env))),
-    }
+    Ok(
+        manifest::load_for_mutation(&manifest::manifest_path(env, scope))?
+            .unwrap_or_else(|| absent(env, scope)),
+    )
+}
+
+/// What an absent manifest holds, for reading and for the first write
+/// alike. The seed is applied to an absent file only: a default the
+/// person removed from a file that exists is never put back.
+fn absent(env: &Env, scope: &Scope) -> Manifest {
+    manifest::seed(scope, &detected_harnesses(env))
 }
 
 /// Drop declarations and plan the removal of exactly those items. A removal

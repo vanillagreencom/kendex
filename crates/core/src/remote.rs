@@ -269,7 +269,7 @@ pub fn sync_declared_sources(env: &Env, manifest: &Manifest) -> Vec<String> {
     let in_use = sources_in_use(manifest);
     let mut notes = Vec::new();
     for (name, decl) in syncable(manifest, |name| in_use.contains(name)) {
-        match sync_one(env, name, decl) {
+        match sync_source(env, name, decl) {
             Ok(warning) => notes.extend(warning),
             Err(error) => notes.push(error.to_string()),
         }
@@ -283,7 +283,7 @@ pub fn sync_declared_sources(env: &Env, manifest: &Manifest) -> Vec<String> {
 pub fn sync_sources(env: &Env, manifest: &Manifest) -> Result<Vec<String>> {
     let mut warnings = Vec::new();
     for (name, decl) in syncable(manifest, |_| true) {
-        warnings.extend(sync_one(env, name, decl)?);
+        warnings.extend(sync_source(env, name, decl)?);
     }
     Ok(warnings)
 }
@@ -301,7 +301,10 @@ fn syncable<'a>(
         .map(|(name, decl)| (name.as_str(), decl))
 }
 
-fn sync_one(env: &Env, name: &str, decl: &SourceDecl) -> Result<Option<String>> {
+/// Resolve one declared source: a never-cached repository that cannot be
+/// fetched is a hard error, a refresh that fails on a cached one is the
+/// warning returned. A path source has nothing to fetch.
+pub fn sync_source(env: &Env, name: &str, decl: &SourceDecl) -> Result<Option<String>> {
     let Some(repo) = &decl.repo else {
         return Ok(None);
     };

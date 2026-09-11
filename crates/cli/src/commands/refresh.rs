@@ -144,10 +144,10 @@ pub fn run(
     for scope in &scopes {
         let scope = scope.clone();
         reached.push(scope.clone());
-        let manifest_path = kendex_core::manifest::manifest_path(env, &scope);
-        if let Ok(kendex_core::manifest::ManifestFile::Current(manifest)) =
-            kendex_core::manifest::load(&manifest_path)
-        {
+        // A scope with no manifest file yet reads as its first write would
+        // create it; a file this build cannot read is skipped here and
+        // refused by the plan below, in its own words.
+        if let Ok(manifest) = kendex_core::engine::ops::manifest_for_reading(env, &scope) {
             // An unreachable catalog is reported, not fatal: what came from
             // every other catalog still refreshes.
             let notes = {

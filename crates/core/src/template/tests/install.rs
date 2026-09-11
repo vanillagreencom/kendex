@@ -6,7 +6,9 @@ use std::fs;
 use super::super::*;
 use super::create::{seeded, snapshot};
 use super::skill;
+use crate::env::FakeOs;
 use crate::model::{HarnessId, Scope};
+use crate::test_util::rooted;
 
 /// The whole project, saved with its own local package copied in.
 #[allow(clippy::unwrap_used)]
@@ -67,6 +69,43 @@ fn a_resolution_names_the_repository_the_copies_and_what_is_missing() {
     assert!(copies.contains(&"house-style"), "{copies:?}");
     assert!(copies.contains(&"stray"), "{copies:?}");
     assert_eq!(resolution.count(), template.members.len());
+}
+
+/// A home with no personal manifest yet is read as its first write would
+/// create it, so a member of the default marketplace resolves onto the
+/// seeded subscription and the install reuses it — rather than the
+/// unsubscribed arm subscribing a second time and being refused as a
+/// duplicate before anything lands. Never fetched, the subscription
+/// stands as any declared one does: the member waits on a refresh. Read
+/// the absent file as empty and this case is what goes red.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_member_of_the_default_marketplace_resolves_onto_the_seeded_subscription() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(home, FakeOs::Linux);
+    assert!(!crate::manifest::manifest_path(&env, &Scope::Global).exists());
+    let template = Template {
+        name: "Starter".to_owned(),
+        id: "starter".to_owned(),
+        members: vec![Member {
+            kind: MemberKind::Skill,
+            name: "gh".to_owned(),
+            enabled: true,
+            source: MemberSource::Marketplace {
+                repo: crate::manifest::DEFAULT_SOURCE_REPO.to_owned(),
+                rev: None,
+            },
+        }],
+        customizations: Customizations::default(),
+    };
+
+    let resolution = resolve(&env, &template).unwrap();
+    assert_eq!(resolution.groups.len(), 1, "{:?}", resolution.groups);
+    assert_eq!(
+        resolution.groups[0].source.as_deref(),
+        Some(crate::manifest::DEFAULT_SOURCE_NAME)
+    );
 }
 
 /// A copy the store no longer holds keeps its member visible and names it

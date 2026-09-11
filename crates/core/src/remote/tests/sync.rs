@@ -5,6 +5,7 @@ use std::fs;
 
 use super::{REPO, fixture};
 use crate::manifest;
+use crate::model::Scope;
 use crate::remote::{cache_head, sync_declared_sources, sync_sources};
 
 /// Every enabled remote in a manifest resolves; a never-cached one that
@@ -12,7 +13,7 @@ use crate::remote::{cache_head, sync_declared_sources, sync_sources};
 #[test]
 fn sync_sources_reports_warnings_and_fails_on_the_unreachable() {
     let f = fixture();
-    let mut manifest = manifest::seed(&[]);
+    let mut manifest = manifest::seed(&Scope::Global, &[]);
     manifest.sources.insert(
         "cat".to_owned(),
         manifest::SourceDecl {
@@ -40,7 +41,7 @@ fn sync_sources_reports_warnings_and_fails_on_the_unreachable() {
 #[test]
 fn a_refresh_skips_a_catalog_nothing_installs_from() {
     let f = fixture();
-    let mut manifest = manifest::seed(&[]);
+    let mut manifest = manifest::seed(&Scope::Global, &[]);
     manifest.sources.insert(
         "cat".to_owned(),
         manifest::SourceDecl {
@@ -74,7 +75,7 @@ fn a_refresh_skips_a_catalog_nothing_installs_from() {
 #[test]
 fn a_refresh_reports_an_unreachable_catalog_and_resolves_the_rest() {
     let f = fixture();
-    let mut manifest = manifest::seed(&[]);
+    let mut manifest = manifest::seed(&Scope::Global, &[]);
     for (name, repo) in [("cat", REPO), ("gone", "owner/gone")] {
         manifest.sources.insert(
             name.to_owned(),

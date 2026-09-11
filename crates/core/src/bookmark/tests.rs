@@ -100,6 +100,16 @@ fn set(repo: &str, name: &str) -> Bookmark {
     }
 }
 
+/// A personal scope that removed the default marketplace: a manifest that
+/// exists and subscribes to nothing, so the machine's subscriptions are
+/// exactly what the projects declare.
+#[allow(clippy::unwrap_used)]
+fn personal_without_default(env: &Env) {
+    let path = crate::manifest::manifest_path(env, &Scope::Global);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, "schema = 6\n").unwrap();
+}
+
 /// A fake home with nothing on it, for the index cases that need no
 /// catalog.
 #[allow(clippy::unwrap_used)]
@@ -341,6 +351,7 @@ fn a_saved_item_resolves_through_the_subscription_that_carries_it() {
 #[allow(clippy::unwrap_used)]
 fn one_relative_folder_declared_in_two_places_is_two_marketplaces() {
     let machine = machine();
+    personal_without_default(&machine.env);
     let mut expected = Vec::new();
     for (project, offered, spelled) in [
         ("alpha", "only-alpha", "./catalog"),
@@ -453,11 +464,7 @@ fn a_dropped_package_and_an_unreadable_marketplace_are_different_answers() {
 #[allow(clippy::unwrap_used)]
 fn an_unsubscribed_marketplace_is_addressable_only_as_a_repository() {
     let (_tmp, env) = bare();
-    add(
-        &env,
-        package("vanillagreencom/kendex", ItemKind::Skill, "gh"),
-    )
-    .unwrap();
+    add(&env, package("acme/tools", ItemKind::Skill, "gh")).unwrap();
     add(&env, package("/somewhere/else", ItemKind::Skill, "gh")).unwrap();
 
     let resolved = resolve(&env).unwrap();
@@ -465,7 +472,7 @@ fn an_unsubscribed_marketplace_is_addressable_only_as_a_repository() {
     assert_eq!(
         resolved[0].catalog,
         Some(Catalog::Repo {
-            repo: "vanillagreencom/kendex".to_owned(),
+            repo: "acme/tools".to_owned(),
         })
     );
     assert!(

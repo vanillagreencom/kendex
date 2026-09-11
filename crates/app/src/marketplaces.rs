@@ -7,7 +7,7 @@
 
 use kendex_core::env::Env;
 use kendex_core::library::{self, ProvenanceRow};
-use kendex_core::manifest::{Manifest, manifest_path};
+use kendex_core::manifest::manifest_path;
 use kendex_core::model::{ItemKind, Scope};
 use kendex_core::source::browse::{
     self, AvailablePackage, BundleDetail, Catalog, CatalogSummary, PackagePreview, PackageSafety,
@@ -22,14 +22,6 @@ pub mod install;
 
 use crate::scopes::{all as all_scopes, env};
 
-fn manifest_for_reading(env: &Env, scope: &Scope) -> Result<Manifest, String> {
-    Ok(
-        kendex_core::manifest::load_current(&manifest_path(env, scope))
-            .map_err(|e| e.to_string())?
-            .unwrap_or_default(),
-    )
-}
-
 /// One subscription's catalog opened for reading, or the error that says
 /// why its content is unreachable right now.
 fn open_catalog(
@@ -37,7 +29,8 @@ fn open_catalog(
     scope: &Scope,
     source: &str,
 ) -> Result<(SealedSource, SourceConfig, String), String> {
-    let manifest = manifest_for_reading(env, scope)?;
+    let manifest =
+        kendex_core::engine::ops::manifest_for_reading(env, scope).map_err(|e| e.to_string())?;
     let ready = kendex_core::source::require_ready(env, scope, source, &manifest)
         .map_err(|e| e.to_string())?;
     let sealed = SealedSource::open(&ready.root).map_err(|e| e.to_string())?;

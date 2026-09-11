@@ -176,11 +176,27 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
         plan(env, &scope, args.subscription.as_ref(), &request)
     };
     let report = match planned {
-        Err(kendex_core::error::CoreError::SourcePending { .. }) => {
+        Err(kendex_core::error::CoreError::SourcePending { name }) => {
             let manifest = ops::manifest_for_mutation(env, &scope)?;
             let synced = {
                 let _reading = ui::spinner("reading sources");
-                kendex_core::remote::sync_sources(env, &manifest)?
+                let mut synced = kendex_core::remote::sync_sources(env, &manifest)?;
+                // A bare add into a project can reach the personal scope's
+                // default marketplace, declared nowhere in the project:
+                // pending, it is fetched from the scope that declares it.
+                // A request that names its source never does, so a pending
+                // positional repository is not mistaken for a personal alias
+                // that happens to share its name.
+                if request.source.is_none()
+                    && !manifest.sources.contains_key(&name)
+                    && let Scope::Project { .. } = &scope
+                    && let Some(decl) = ops::manifest_for_reading(env, &Scope::Global)?
+                        .sources
+                        .get(&name)
+                {
+                    synced.extend(kendex_core::remote::sync_source(env, &name, decl)?);
+                }
+                synced
             };
             for warning in synced {
                 warn(&format!("warning: {}", warning));

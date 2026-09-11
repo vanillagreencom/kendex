@@ -99,12 +99,6 @@ fn marketplace_list_json_is_versioned_and_stable() {
             },
             {
                 "scope": { "scope": "project", "root": project.display().to_string() },
-                "name": "kendex",
-                "repo": "vanillagreencom/kendex",
-                "enabled": true
-            },
-            {
-                "scope": { "scope": "project", "root": project.display().to_string() },
                 "name": "mkt",
                 "repo": "team/tools",
                 "enabled": true

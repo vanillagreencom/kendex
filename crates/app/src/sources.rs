@@ -1,7 +1,7 @@
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
+use kendex_core::remote;
 use kendex_core::source_ops::{self, SourceRow};
-use kendex_core::{manifest, remote};
 
 use crate::scopes::{all as all_scopes, env};
 
@@ -61,11 +61,21 @@ pub fn source_toggle(scope: Scope, name: String, enabled: bool) -> Result<Source
 #[specta::specta]
 pub fn sources_refresh() -> Result<Vec<String>, String> {
     let env = env()?;
+    refresh(&env, &all_scopes(&env)?)
+}
+
+/// Every enabled remote source of the scopes given, fetched. A scope with
+/// no manifest file yet is read as its first write would create it, so a
+/// fresh machine's refresh reaches the default marketplace the pages
+/// already list; a file this build cannot read is passed over here, the
+/// way it was, and refused where it is next written. Separate from the
+/// command so a test can reach it the way [`crate::marketplaces::rows`]
+/// is reached.
+pub fn refresh(env: &Env, scopes: &[Scope]) -> Result<Vec<String>, String> {
     let mut warnings = Vec::new();
-    for scope in all_scopes(&env)? {
-        let path = manifest::manifest_path(&env, &scope);
-        if let Ok(Some(loaded)) = manifest::load_for_mutation(&path) {
-            warnings.extend(remote::sync_sources(&env, &loaded).map_err(|e| e.to_string())?);
+    for scope in scopes {
+        if let Ok(loaded) = kendex_core::engine::ops::manifest_for_reading(env, scope) {
+            warnings.extend(remote::sync_sources(env, &loaded).map_err(|e| e.to_string())?);
         }
     }
     Ok(warnings)

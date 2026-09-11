@@ -243,20 +243,26 @@ pub fn read_for_mutation(path: &Path) -> Result<(Option<Manifest>, Base)> {
 
 /// First manifest for a scope: the default source is seeded exactly once,
 /// here — later reconciliation never re-adds it (its removal is durable).
-pub fn seed(detected_harnesses: &[HarnessId]) -> Manifest {
+/// Only the personal scope gains it. A project reaches the default
+/// marketplace through an explicit subscription of its own, so one that
+/// has written nothing yet does not read as a second subscription beside
+/// the personal one.
+pub fn seed(scope: &Scope, detected_harnesses: &[HarnessId]) -> Manifest {
     let mut manifest = Manifest {
         schema: MANIFEST_SCHEMA,
         ..Manifest::default()
     };
-    manifest.sources.insert(
-        DEFAULT_SOURCE_NAME.to_owned(),
-        SourceDecl {
-            repo: Some(DEFAULT_SOURCE_REPO.to_owned()),
-            path: None,
-            rev: None,
-            enabled: true,
-        },
-    );
+    if let Scope::Global = scope {
+        manifest.sources.insert(
+            DEFAULT_SOURCE_NAME.to_owned(),
+            SourceDecl {
+                repo: Some(DEFAULT_SOURCE_REPO.to_owned()),
+                path: None,
+                rev: None,
+                enabled: true,
+            },
+        );
+    }
     manifest.install.harnesses = detected_harnesses.to_vec();
     manifest
 }

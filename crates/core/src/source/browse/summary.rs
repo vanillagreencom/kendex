@@ -169,11 +169,7 @@ fn subscribed_as(env: &Env, identity: &str) -> Result<Option<SubscriptionRef>> {
         if row.repo_identity != identity {
             continue;
         }
-        let Some(manifest) =
-            crate::manifest::load_current(&crate::manifest::manifest_path(env, &row.scope))?
-        else {
-            continue;
-        };
+        let manifest = crate::engine::ops::manifest_for_reading(env, &row.scope)?;
         if matches!(
             crate::source::resolve(env, &row.scope, &row.name, &manifest),
             Ok(crate::source::SourceState::Ready(_))
