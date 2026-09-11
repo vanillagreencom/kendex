@@ -271,11 +271,19 @@ fn add_gh(
     env: &Env,
     scope: &Scope,
 ) -> kendex_core::error::Result<kendex_core::engine::EngineReport> {
+    add_skill(env, scope, "gh")
+}
+
+fn add_skill(
+    env: &Env,
+    scope: &Scope,
+    name: &str,
+) -> kendex_core::error::Result<kendex_core::engine::EngineReport> {
     ops::add(
         env,
         scope,
         &ops::AddRequest {
-            skills: vec!["gh".into()],
+            skills: vec![name.to_owned()],
             ..ops::AddRequest::default()
         },
     )
@@ -388,6 +396,44 @@ fn a_project_with_no_manifest_reaches_the_personal_scopes_default() {
     assert!(manifest.contains("[skills.gh]"), "{manifest}");
     assert!(manifest.contains("source = \"kendex\""), "{manifest}");
     assert!(!personal.exists());
+}
+
+/// The personal scope is advisory on that path: where it cannot supply a
+/// usable default, the project's own refusal stands and names the search
+/// that ran there, never a subscription the project has not got. A
+/// personal default switched off is skipped the way the search skips one;
+/// a name the personal default does not carry is not offered, nothing
+/// declared and nothing written.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fresh_projects_refusal_stands_where_the_personal_default_cannot_serve() {
+    let (_tmp, env, scope, project) = fixture();
+    upstream(env.home.as_path(), DEFAULT_SOURCE_REPO);
+    remote::sync(&env, DEFAULT_SOURCE_REPO, None).unwrap();
+    let personal = kendex_core::manifest::manifest_path(&env, &Scope::Global);
+    fs::create_dir_all(personal.parent().unwrap()).unwrap();
+    let switched_off = format!(
+        "schema = 6\n\n[sources.kendex]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\nenabled = false\n"
+    );
+    for (written, wanted) in [(Some(switched_off.as_str()), "gh"), (None, "ghost")] {
+        match written {
+            Some(text) => fs::write(&personal, text).unwrap(),
+            None => {
+                if personal.exists() {
+                    fs::remove_file(&personal).unwrap();
+                }
+            }
+        }
+        let error = add_skill(&env, &scope, wanted).unwrap_err();
+        assert!(
+            matches!(&error, CoreError::ItemNotOffered { name, .. } if name == wanted),
+            "{written:?} adding {wanted}: expected not offered, got {error}"
+        );
+        assert!(
+            !project.join("kendex.toml").exists(),
+            "{written:?} adding {wanted}"
+        );
+    }
 }
 
 /// With nothing subscribed to the default repo in the project or the

@@ -156,9 +156,10 @@ pub struct TemplateInstall {
 /// marketplace members, what version each resolves to, which copies it
 /// owns, and which members nothing can reach.
 pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
-    let personal =
-        crate::manifest::load_current(&crate::manifest::manifest_path(env, &Scope::Global))?
-            .unwrap_or_default();
+    // The personal scope as its first write would create it: a fresh home
+    // already carries the default marketplace, so a member from it reuses
+    // that subscription rather than planning a second one the write refuses.
+    let personal = crate::engine::ops::manifest_for_reading(env, &Scope::Global)?;
     let mut groups: BTreeMap<String, ResolvedGroup> = BTreeMap::new();
     let mut copies = Vec::new();
     // A name two members claim is not installable however either half

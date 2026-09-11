@@ -74,9 +74,15 @@ pub fn add(env: &Env, scope: &Scope, request: &AddRequest) -> Result<EngineRepor
     let Scope::Project { root } = scope else {
         return Err(refused);
     };
-    match personal_default_for(env, scope)? {
-        Some(name) => crate::source_ops::install_project_from_personal(env, root, &name, request),
-        None => Err(refused),
+    let Some(name) = personal_default_for(env, scope)? else {
+        return Err(refused);
+    };
+    match crate::source_ops::install_project_from_personal(env, root, &name, request) {
+        // The carried default does not offer it either: the project's own
+        // refusal stands, describing the search that ran there, rather than
+        // one naming a subscription the project has not got.
+        Err(CoreError::ItemNotInSource { source_name, .. }) if source_name == name => Err(refused),
+        other => other,
     }
 }
 
@@ -84,14 +90,15 @@ pub fn add(env: &Env, scope: &Scope, request: &AddRequest) -> Result<EngineRepor
 /// manifest keys it under, for a project whose manifest file is absent —
 /// the one condition the seed applies under. `None` where the project has
 /// a manifest, whatever it holds, or where the personal scope holds no
-/// default either.
+/// usable default: none at all, or one switched off, which the search
+/// would have skipped in the project's own scope.
 fn personal_default_for(env: &Env, scope: &Scope) -> Result<Option<String>> {
     if manifest::load_current(&manifest::manifest_path(env, scope))?.is_some() {
         return Ok(None);
     }
     let personal = super::manifest_for_reading(env, &Scope::Global)?;
     match pick::default_source(&personal) {
-        Ok(name) => Ok(Some(name)),
+        Ok(name) => Ok(personal.sources[&name].enabled.then_some(name)),
         Err(CoreError::NoDefaultSource { .. }) => Ok(None),
         Err(other) => Err(other),
     }

@@ -68,9 +68,11 @@ pub fn collection_steps(
     // every member as a fresh subscription, print that listing, ask the
     // person to confirm it, and fetch every repository — before the
     // install reloaded the same file and refused. So the refusal comes
-    // out here, at the door, in the record's own words.
-    let manifest = crate::manifest::load_current(&crate::manifest::manifest_path(env, scope))?
-        .unwrap_or_default();
+    // out here, at the door, in the record's own words — and an absent
+    // file reads as the install will write it, so a member of the default
+    // marketplace reuses the seeded subscription rather than planning a
+    // second one the write refuses.
+    let manifest = crate::engine::ops::manifest_for_reading(env, scope)?;
     let mut by_repo: BTreeMap<String, CollectionStep> = BTreeMap::new();
     for member in &collection.members {
         let identity = crate::source_ref::repo_identity(&member.repo);
