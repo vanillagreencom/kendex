@@ -237,8 +237,8 @@ step() {
       ;;
     # A pre-push hook that refuses, publishing the commit-guards message
     # protocol the tool reads: `pre-push: <key>=<value>` lines, a completed
-    # run ending in `pre-push: result=<code>`. The remote is never asked, so
-    # nothing about it has moved and no lease was ever tested.
+    # run ending in `pre-push: result=<code>`. The refusal updates no remote
+    # ref, so the row's remote stays where the fixture left it.
     hook-refuses)
       mkdir -p "$MAIN/.git/hooks"
       cat >"$MAIN/.git/hooks/pre-push" <<'HOOK'
@@ -433,7 +433,7 @@ a lease fetch that fails for a reason other than a missing branch aborts the pus
 the configured bot remote takes the lease and the push|pair bot-remote fix publish advance fix2|push TOPIC|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:-,bot:head upstream=bot push=-
 the package alone pushes through plain git|github fix standalone|push TOPIC --no-rebase --set-upstream|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=- upstream=- push=-C <wt> push -u origin HEAD:refs/heads/topic
 a sibling GitHub helper, when present, owns the git invocation|github fix with-helper|push TOPIC --no-rebase --set-upstream|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=- upstream=- push=-c kendex.test-github-helper=loaded -C <wt> push -u origin HEAD:refs/heads/topic
-a pre-push hook refusal is named as one, not as the lease the remote never tested|pair fix hook-refuses|push TOPIC --set-upstream|1|-|skip-rebase+hook-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
+a pre-push hook refusal is named as one, not as a force-with-lease conflict|pair fix hook-refuses|push TOPIC --set-upstream|1|-|skip-rebase+hook-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
 must-fail: with the hook arm cut, the same refusal is told as a force-with-lease conflict|pair fix unfixed-hook|push TOPIC --set-upstream|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
 '
 
