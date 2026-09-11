@@ -199,10 +199,11 @@ either the prior run's leftovers or CI that finished before the wait started.
 It completes once that same picture has held for the stale window — 90
 seconds of wall clock, not a count of polls, so the threshold does not scale
 with poll_interval — which at the default interval is the second poll, well
-inside the default budget. The picture is every check's name and state, so a
-poll that differs from the one being held — a check registering late as a
-settled success, an emptied rollup, a run the wait itself asked for — starts
-the window over rather than inheriting the time already served. Short of the
+inside the default budget. The window measures consecutive polls showing one
+unchanged settled picture, that picture being every check's name and state:
+any other poll — a changed rollup, an emptied one, a failure, a rollup of
+nothing but skipped checks, a run the wait itself asked for — starts the
+window over rather than passing on the time already served. Short of the
 window the wait keeps polling and the deadline reports status "timeout" with
 verdict "pending".
 
@@ -666,8 +667,24 @@ classify_checks() {
 checks_stderr=$(mktemp)
 trap 'rm -f "$checks_stderr"' EXIT
 
+# Wait out one interval, carrying the settled streak only across consecutive
+# polls that reached the settled-check window. Every other poll shape — an
+# emptied rollup, a failure, a rerun, a rollup of nothing but skipped checks —
+# ends the streak here, so a later identical picture is confirmed on its own
+# rather than on time the wait already served. Every sleep in the loop runs
+# through this, which is what keeps the rule to one site.
+poll_sleep() {
+  local seconds="$1"
+  [ "$settled_this_poll" = true ] || stale_key=""
+  sleep "$seconds"
+  update_elapsed
+}
+
 update_elapsed
 while [ "$elapsed" -lt "$MAX_WAIT" ]; do
+  # Only the settled-check window sets this true, and only for the poll that
+  # reached it.
+  settled_this_poll=false
   # Capture stderr so we can distinguish auth/repo failures from "no checks yet".
   checks_status=0
   set +e
@@ -756,12 +773,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
       fi
       exit 1
     fi
-    # A rollup that went empty is not the picture any streak was holding, and
-    # the key comparison below never sees this poll: drop the streak so the
-    # checks that come back are confirmed on their own.
-    stale_key=""
-    sleep "$POLL_INTERVAL"
-    update_elapsed
+    poll_sleep "$POLL_INTERVAL"
     continue
   fi
 
@@ -804,8 +816,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
         check_classes=$(jq -c '.pending += (.failed | map(.state = "EXPECTED" | .bucket = "pending")) | .failed = []' <<<"$check_classes")
         last_check_classes="$check_classes"
         seen_in_progress=true
-        sleep "$POLL_INTERVAL"
-        update_elapsed
+        poll_sleep "$POLL_INTERVAL"
         continue
         ;;
       superseded)
@@ -826,13 +837,8 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
           ci_message retry "$@" >&2
           gh run rerun "$failed_run" --repo "$REPO" --failed 2>/dev/null || true
           retries=$((retries + 1))
-          # The rerun produces new checks, and the picture it replaces can be
-          # identical to the one that follows it, so the key comparison below
-          # cannot see this change: drop the streak explicitly.
-          seen_in_progress=false
-          stale_key=""
-          sleep 10
-          update_elapsed
+          seen_in_progress=false  # Reset because rerun will produce new checks
+          poll_sleep 10
           continue
         fi
 
@@ -855,6 +861,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
     # them apart: a poll whose picture differs from the one being held — a
     # check registering late as a settled success, say — starts the window
     # over rather than inheriting the elapsed time of a picture it replaced.
+    settled_this_poll=true
     settled_key=$(echo "$check_classes" | settled_checks_key)
     if [ "$settled_key" != "$stale_key" ]; then
       stale_key="$settled_key"
@@ -867,8 +874,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
     fi
   fi
 
-  sleep "$POLL_INTERVAL"
-  update_elapsed
+  poll_sleep "$POLL_INTERVAL"
 done
 
 # Deadline reached with checks still outstanding — report timeout, not
