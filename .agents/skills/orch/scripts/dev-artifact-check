@@ -51,13 +51,32 @@ ID_GRAMMAR='^[A-Za-z0-9._-]+$'
 # --expect-items is a comma-separated list of item numbers.
 EXPECT_GRAMMAR='^[0-9]+(,[0-9]+)*$'
 scratch_files=()
+# Set by `finish` at every exit whose outcome this script already described —
+# the JSON result on stdout, or a keyed line on stderr. An exit that did not
+# reach `finish` is an abort no site described, and `on_exit` names its status:
+# an armed --wait watchdog that cannot fork mid-poll dies on errexit where the
+# helper died, and without the keyed line its caller sees a bare status beside
+# an empty stdout and cannot tell an unwatched round from a rejected one.
+REPORTED=0
 
-cleanup_scratch() {
+on_exit() {
+  local status=$?
+  # The report comes before the cleanup, not after: `rm` is the external
+  # command, and the run this backstop exists for is the one where no external
+  # command can start. `message` is printf and case alone.
+  if (( status != 0 )) && (( REPORTED == 0 )); then
+    message exit "$status" >&2
+  fi
   if (( ${#scratch_files[@]} > 0 )); then
     rm -f -- "${scratch_files[@]}"
   fi
 }
-trap cleanup_scratch EXIT
+trap on_exit EXIT
+
+finish() {
+  REPORTED=1
+  exit "$1"
+}
 
 # The per-harness backgrounding paragraph under --wait is an intentional twin
 # of review-artifact-check's: each --help is self-contained, so edit both.
@@ -186,7 +205,11 @@ commit object but is not an ancestor of the current HEAD — the signature of a
 receipt orphaned by a later rebase (kendex#994). Expected after a legitimate
 rebase; the orchestrator decides what it means for the round.
 
-Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
+Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error or when a
+probe this check runs could not answer (the verdict was unreadable). Any other
+status is an abort — a helper this check ran died and no result was produced —
+and stderr carries `dev-artifact-check: exit=STATUS` as its first line. Under
+--wait that status is the answer to "is this round still watched": it is not.
 EOF
 }
 
@@ -307,12 +330,16 @@ message() {
       printf 'dev-artifact-check: verdict-unreadable file=%s\n' "$file"
       printf 'The emitted artifact verdict could not be read.\n'
       ;;
+    exit)
+      printf 'dev-artifact-check: exit=%s\n' "$1"
+      printf 'The check ended without a result. No verdict was reached for this round.\n'
+      ;;
   esac
 }
 
 die() {
   message "$@" >&2
-  exit 2
+  finish 2
 }
 
 need() {
@@ -685,7 +712,7 @@ validate_artifact() {
 # validates --expect-items once and runs the check. -h/--help prints usage. ---
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
-  exit 0
+  finish 0
 fi
 
 file=""
@@ -789,7 +816,7 @@ else
   # Neither --file nor round mode → usage error. One identity model (round id);
   # the legacy positional mode was removed with its only caller.
   usage >&2
-  exit 2
+  finish 2
 fi
 
 # Round mode checks a fix receipt against its round record or not at all.
@@ -848,11 +875,21 @@ if (( wait_secs > 0 )); then
   while :; do
     rc=0
     out="$(check_once)" || rc=$?
-    (( rc != 2 )) || exit 2
-    verdict="$(jq -r '.verdict // "wait"' <<<"$out" 2>/dev/null || printf 'wait')"
+    (( rc != 2 )) || finish 2
+    # A failed jq, or a check_once that aborted part-way and left output no
+    # verdict can be read from, is the probe breaking — never this round's
+    # answer. Reading either as "wait" would keep the watchdog polling over a
+    # probe that no longer works, and the round it was armed for would go
+    # untimed with nothing said. It refuses here instead, on the same keyed
+    # line and status check_once uses for its own unreadable verdict.
+    verdict="$(jq -r '.verdict // "wait"' <<<"$out" 2>/dev/null)" || verdict=""
+    if [[ -z "$verdict" ]]; then
+      message verdict-unreadable >&2
+      finish 2
+    fi
     if [[ "$verdict" != "wait" ]] || (( $(date +%s) >= deadline )); then
       printf '%s\n' "$out"
-      exit "$rc"
+      finish "$rc"
     fi
     remaining=$(( deadline - $(date +%s) ))
     sleep_for="$interval"
@@ -863,4 +900,4 @@ if (( wait_secs > 0 )); then
 fi
 rc=0
 check_once || rc=$?
-exit "$rc"
+finish "$rc"

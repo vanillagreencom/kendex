@@ -45,12 +45,15 @@ new_repo() {
 # run_check ARGS... — runs the check; OUT is its JSON, RC its exit, ERR the
 # stderr file.
 RUN_SEQ=0
+# SHIM_PATH, when set, is prepended to PATH for the run: the probe-failure case
+# shadows one helper at a time so a row fails the probe it names and no other.
+SHIM_PATH=""
 run_check() {
   RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
   mkdir -p "$RUN"
   ERR="$RUN/stderr"
   set +e
-  OUT=$("$CHECK" "$@" 2>"$ERR")
+  OUT=$(PATH="${SHIM_PATH:+$SHIM_PATH:}$PATH" "$CHECK" "$@" 2>"$ERR")
   RC=$?
   set -e
 }
@@ -62,6 +65,8 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 # key the result does not carry reads ABSENT, so `null` means a real null.
 #   rc              exit status
 #   stderr~<text>   whether stderr carries <text> (`+` reads as a space)
+#   stderr_first~<text>  whether stderr's FIRST line is exactly <text> (`+`
+#                   reads as a space) — the keyed line a caller parses
 #   hint_present    whether the result carries a non-empty string hint; an
 #                   unparseable result reads false, never fired
 #   help_sections   which of the routed --help sections are present: gates
@@ -82,6 +87,11 @@ observe() {
         value="${value#,}"; value="${value:-none}"
         ;;
       stderr~*) needle="${name#stderr~}"; value="$(grep -qF -- "${needle//+/ }" "$ERR" && echo true || echo false)" ;;
+      stderr_first~*)
+        needle="${name#stderr_first~}"
+        IFS= read -r value < "$ERR" || value=""
+        value="$([[ "$value" == "${needle//+/ }" ]] && echo true || echo false)"
+        ;;
       hint_present) value="$(json '(.hint | type) == "string" and .hint != ""')" ;;
       *) value="$(json "if has(\"$name\") then .$name else \"ABSENT\" end")" ;;
     esac
@@ -457,6 +467,35 @@ start_epoch="$(date +%s)"
 run_check --file "$WAITD/never.json" --wait 2 --interval 1
 elapsed=$(( $(date +%s) - start_epoch ))
 assert_eq "$(observe "rc=1 verdict=wait") held=$([[ "$elapsed" -ge 2 ]] && echo true || echo false)" "rc=1 verdict=wait held=true" "--wait holds to its deadline and returns verdict wait (${elapsed}s)" "$ERR"
+
+echo "=== a probe that fails mid-wait refuses on a keyed line, never as \"wait\" ==="
+# Reached from the lane this came from: an armed --wait watchdog on a machine
+# at its thread ceiling, where every fork fails and the poll's own helpers are
+# what break. A probe failure read as the verdict "wait" keeps the watchdog
+# polling a probe that no longer works and leaves the round untimed with
+# nothing said. The verdict read refuses on its own keyed line; a helper that
+# died where errexit ends the script has its status named by the EXIT trap. One
+# helper is shadowed per row, so a row fails the probe it names.
+PROBE_SHIMS="$TMP_ROOT/probe-shims"
+for probe_cmd in sleep jq; do
+  mkdir -p "$PROBE_SHIMS/$probe_cmd"
+  printf '#!/usr/bin/env bash\nexit 254\n' > "$PROBE_SHIMS/$probe_cmd/$probe_cmd"
+  chmod +x "$PROBE_SHIMS/$probe_cmd/$probe_cmd"
+done
+NEVER="$TMP_ROOT/probe-never.json"
+probe_table() {
+  local row label probe expect
+  for row in "$@"; do
+    IFS='^' read -r label probe expect <<<"$row"
+    SHIM_PATH="$PROBE_SHIMS/$probe"
+    run_check --file "$NEVER" --wait 20 --interval 1
+    SHIM_PATH=""
+    assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
+  done
+}
+probe_table \
+  "a sleep that cannot run ends the wait with its own status, keyed^sleep^rc=254 stderr_first~dev-artifact-check:+exit=254=true" \
+  "an unreadable verdict refuses instead of polling on^jq^rc=2 stderr_first~dev-artifact-check:+verdict-unreadable+file=$NEVER=true"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

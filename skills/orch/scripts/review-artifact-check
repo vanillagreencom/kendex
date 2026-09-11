@@ -34,7 +34,7 @@ artifact_detail() {
 
 usage_error() {
   artifact_detail "$@" >&2
-  exit 2
+  finish 2
 }
 
 # The per-harness backgrounding paragraph under --wait is an intentional twin
@@ -164,7 +164,11 @@ create the gates' error channel — every mode still prints a parseable rejectio
 status a legitimate rejection uses, so an empty stdout beside it would read as
 "artifact rejected" to a caller checking only the status.
 
-Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
+Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error. Any
+other status is an abort — a helper this check ran died and no result was
+produced — and stderr carries `review-artifact-check: exit=STATUS` as its first
+line. Under --wait that status is the answer to "is this delegation still
+watched": it is not.
 EOF
 }
 
@@ -188,6 +192,7 @@ emit() {
      + (if $measurement_suppressed == "" then {}
         else {measurement_suppressed: $measurement_suppressed} end)' 2>/dev/null)"; then
     printf '%s\n' "$out"
+    review_artifact_reported=1
     return 0
   fi
   # The result could not be formatted, so what lands on stdout is a rejection,
@@ -230,7 +235,7 @@ if [[ "${1:-}" == "--path" ]]; then
   fi
   mkdir -p -- "$wt/tmp"
   printf '%s/tmp/review-%s-%s.json\n' "$wt" "$agent" "$(date -u +%Y%m%d-%H%M%S)"
-  exit 0
+  finish 0
 fi
 
 # --- File mode: validate one explicit JSON path deterministically ---
@@ -252,13 +257,13 @@ if [[ "${1:-}" == "--file" ]]; then
   fi
   if [[ ! -f "$file" ]]; then
     emit false "" "missing" "$(artifact_detail missing "$file")"
-    exit 1
+    finish 1
   fi
   if [[ -n "$delegated_at" ]]; then
     mtime="$(file_mtime "$file")"
     if (( mtime < delegated_at )); then
       emit false "$file" "stale" "$(artifact_detail stale "$mtime" "$delegated_at")"
-      exit 1
+      finish 1
     fi
   fi
   verdict_rc=0
@@ -271,7 +276,7 @@ if [[ "${1:-}" == "--file" ]]; then
     else
       emit false "$file" "invalid" "$(gate_failure_detail "$verdict_rc")"
     fi
-    exit 1
+    finish 1
   fi
   if artifact_content_gates "$file"; then
     # An acceptance that could not be emitted is not an acceptance. Written
@@ -279,11 +284,11 @@ if [[ "${1:-}" == "--file" ]]; then
     # caller branches on, and it must not depend on a shell option that a later
     # refactor into a masking context (a command substitution, an `if`) would
     # quietly suspend — which is exactly why --wait needs its own output guard.
-    emit true "$file" "$review_artifact_reason" || exit 1
-    exit 0
+    emit true "$file" "$review_artifact_reason" || finish 1
+    finish 0
   fi
   emit false "$file" "$review_artifact_reason" "$review_artifact_detail"
-  exit 1
+  finish 1
 fi
 
 wait_secs=0
@@ -403,24 +408,24 @@ if (( wait_secs > 0 )); then
       review_artifact_measurement_failed=""
       review_artifact_measurement_suppressed=""
       emit false "" "invalid" "$(artifact_detail result "$out")"
-      exit 1
+      finish 1
     fi
     landed_reason="$(jq -r '.reason // ""' <<<"$out" 2>/dev/null || printf '')"
     if [[ "$rc" == "0" ]]; then
       printf '%s\n' "$out"
-      exit 0
+      finish 0
     fi
     if [[ "$landed_reason" != "missing" && "$landed_reason" != "stale" ]]; then
       if [[ "$confirming" == "true" ]] || (( $(date +%s) >= deadline )); then
         printf '%s\n' "$out"
-        exit "$rc"
+        finish "$rc"
       fi
       confirming=true
     else
       confirming=false
       if (( $(date +%s) >= deadline )); then
         printf '%s\n' "$out"
-        exit "$rc"
+        finish "$rc"
       fi
     fi
     remaining=$(( deadline - $(date +%s) ))
@@ -430,4 +435,6 @@ if (( wait_secs > 0 )); then
     sleep "$sleep_for"
   done
 fi
-glob_check
+rc=0
+glob_check || rc=$?
+finish "$rc"

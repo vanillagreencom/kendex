@@ -17,10 +17,34 @@
 #
 # Rejection details start with `review-artifact-check: <code> key=value ...`.
 # English explanation follows that line. emit_unavailable retains the JSON
-# result protocol even when jq cannot encode it.
+# result protocol even when jq cannot encode it, and the EXIT trap below names
+# the status of an abort that produced no result at all.
 # Sourced by: review-artifact-check.
 
 set -euo pipefail
+
+# Whether the check has already described its outcome — a JSON result on
+# stdout, or a keyed line on stderr. `finish` records a described exit, and
+# every emitter records its own write, because errexit can end the script at
+# the emitter itself (a broken jq makes `emit` return nonzero) after the
+# fallback result has already landed on stdout. An exit that left this at 0 is
+# an abort nothing described: errexit ends the script where a helper died, and
+# a backgrounded --wait watchdog that cannot fork mid-poll dies there. Without
+# the keyed line its caller sees a bare status beside an empty stdout and
+# cannot tell an unwatched round from a rejected artifact.
+review_artifact_reported=0
+finish() {
+  review_artifact_reported=1
+  exit "$1"
+}
+# printf and arithmetic only: this runs when a fork is exactly what failed.
+review_artifact_exit_report() {
+  local status="$1"
+  (( status != 0 )) || return 0
+  (( review_artifact_reported == 0 )) || return 0
+  printf 'review-artifact-check: exit=%s\n' "$status" >&2
+  printf 'The check ended without a result. No artifact was accepted or rejected.\n' >&2
+}
 
 # Last-resort emitter: no jq, no substitution, nothing that can fail. It lives
 # here rather than in review-artifact-check because the error channel below is
@@ -42,6 +66,7 @@ emit_unavailable() {
   detail="${detail//[[:cntrl:]]/ }"
   while [[ "$detail" == *"  "* ]]; do detail="${detail//  / }"; done
   printf '{"ok":false,"path":null,"reason":"invalid","detail":"review-artifact-check: unavailable dependency=%s\\n%s"}\n' "$dependency" "$detail"
+  review_artifact_reported=1
 }
 
 # jq's stderr lands here and is read only when the gate's exit status says the
@@ -67,8 +92,9 @@ review_artifact_gate_err="$(mktemp "$review_artifact_gate_tmp_root/review-artifa
 review_artifact_gate_cleanup() { rm -f "$review_artifact_gate_err"; }
 # INT/TERM as well as EXIT: this orchestrator arms backgrounded --wait
 # watchdogs on every round and kills them at their deadline, and an untrapped
-# signal leaks the file.
-trap 'review_artifact_gate_cleanup' EXIT
+# signal leaks the file. The report comes before the cleanup, whose `rm` is the
+# external command a fork-starved run cannot start.
+trap 'review_artifact_exit_report "$?"; review_artifact_gate_cleanup' EXIT
 trap 'review_artifact_gate_cleanup; exit 130' INT
 trap 'review_artifact_gate_cleanup; exit 143' TERM
 

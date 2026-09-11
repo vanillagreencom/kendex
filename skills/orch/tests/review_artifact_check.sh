@@ -103,12 +103,15 @@ stage() {
 # run_check ARGS... — runs the check with %W, %F and %D in ARGS replaced by
 # the staged worktree, the --file target and the delegation boundary; OUT is
 # the JSON, RC the exit, ERR the stderr file.
+# SHIM_PATH, when set, is prepended to PATH for the run: the probe-failure case
+# shadows one helper at a time so a row fails the probe it names and no other.
+SHIM_PATH=""
 run_check() {
   local args=() a
   for a in "$@"; do a="${a//%W/$WT}"; a="${a//%F/$F}"; a="${a//%D/$DELEG}"; args+=("$a"); done
   ERR="$RUN/stderr"
   set +e
-  OUT=$("$CHECK" ${args[@]+"${args[@]}"} 2>"$ERR")
+  OUT=$(PATH="${SHIM_PATH:+$SHIM_PATH:}$PATH" "$CHECK" ${args[@]+"${args[@]}"} 2>"$ERR")
   RC=$?
   set -e
 }
@@ -330,6 +333,35 @@ run_check -h
 assert_eq "$(observe "rc=0 stdout_nonempty=true")" "rc=0 stdout_nonempty=true" "-h prints usage"
 TMPDIR="$TMP_ROOT/does-not-exist/nope" run_check --help
 assert_eq "$(observe "rc=0 stdout_nonempty=true")" "rc=0 stdout_nonempty=true" "--help still prints the contract under an unusable TMPDIR"
+
+echo "=== a probe that fails mid-wait is named, never left silent ==="
+# Reached from the lane this came from: an armed --wait watchdog on a machine
+# at its thread ceiling, where every fork fails and the poll's own helpers are
+# what break. A helper that dies where errexit ends the script produced no
+# result, and its bare status beside an empty stdout reads to the caller like a
+# rejection; the EXIT trap names that status on a keyed line instead. The
+# inverse row is the probe that ALREADY answers: a jq the check cannot run is
+# a parseable rejection on stdout, exit 1, and no keyed line is added over it.
+PROBE_SHIMS="$TMP_ROOT/probe-shims"
+for probe_cmd in sleep jq; do
+  mkdir -p "$PROBE_SHIMS/$probe_cmd"
+  printf '#!/usr/bin/env bash\nexit 254\n' > "$PROBE_SHIMS/$probe_cmd/$probe_cmd"
+  chmod +x "$PROBE_SHIMS/$probe_cmd/$probe_cmd"
+done
+probe_table() {
+  local row label probe expect
+  for row in "$@"; do
+    IFS='|' read -r label probe expect <<<"$row"
+    stage ""
+    SHIM_PATH="$PROBE_SHIMS/$probe"
+    run_check %W proberev 0 --wait 20 --interval 1
+    SHIM_PATH=""
+    assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
+  done
+}
+probe_table \
+  "a sleep that cannot run ends the wait with its own status, keyed|sleep|rc=254 stderr_code=exit=254 stdout_nonempty=false" \
+  "a jq that cannot run already answers, and takes no keyed line|jq|rc=1 stderr=empty ok=false reason=invalid"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
