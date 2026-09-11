@@ -727,8 +727,7 @@ REPO_NAME="${REPO#*/}"
 # not a GitHub constant, so it is read rather than assumed. A PR based outside
 # the set draws no automatic review at all, which is why the deadline separates
 # that structural silence ("unreviewable") from a reviewer who merely did not
-# show ("timeout"/"proceeded"). The ruleset cannot change the answer mid-wait,
-# so this costs two reads, not two per poll.
+# show ("timeout"/"proceeded").
 resolve_auto_review_targets() {
   local rulesets ruleset_ids ruleset_id detail
   DEFAULT_BRANCH=$(gh api "repos/$REPO" -q '.default_branch' 2>/dev/null) || DEFAULT_BRANCH=""
