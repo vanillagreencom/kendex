@@ -2,7 +2,8 @@
 # Tests for the code-quality-load-check hook.
 #
 # The hook refuses an Edit, MultiEdit, NotebookEdit or Write onto a path
-# inside a git work tree until the session transcript shows a Skill tool call
+# inside a git work tree until the transcript of the agent making the call
+# shows a Skill tool call
 # whose skill input is `code-quality`. Pinned here: the refusal and its value,
 # the pass once the skill is loaded, and what the rule deliberately does not
 # reach — the work tree's own tmp/, a path outside every work tree, and a
@@ -207,6 +208,14 @@ subagent_world session-loaded "$LOADED_T" "$NONE_T"
 run_subagent "$TMP_ROOT/session-unloaded.jsonl" "$SUBAGENT_ID"
 assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" \
   "a subagent that loaded the skill passes, though the session did not"
+# The harness may also write a subagent's transcript one directory below
+# subagents/.
+mkdir -p "$TMP_ROOT/session-nested/subagents/workers"
+cp "$NONE_T" "$TMP_ROOT/session-nested.jsonl"
+cp "$LOADED_T" "$TMP_ROOT/session-nested/subagents/workers/agent-$SUBAGENT_ID.jsonl"
+run_subagent "$TMP_ROOT/session-nested.jsonl" "$SUBAGENT_ID"
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" \
+  "a subagent transcript one directory below subagents/ is found, and its load passes"
 run_subagent "$TMP_ROOT/session-loaded.jsonl" "$SUBAGENT_ID"
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=$REFUSAL" \
   "a subagent that did not load the skill is refused, though the session did"
