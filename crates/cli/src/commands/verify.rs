@@ -52,11 +52,14 @@ fn missing_declarations(
 /// Drift check over lock entries; non-zero exit on any failing row — this
 /// is the signal consuming repos compose in shell pipelines.
 ///
-/// Three things are named beside the rows without changing the count, which
+/// Four things are named beside the rows without changing the count, which
 /// is a count of lock entries and nothing else: content nothing manages,
-/// what a scope declares that its record does not hold, and the
-/// instruction shims the scope owes — each printed as a row of its own,
-/// and a failing one closes the run non-zero like a failing lock row.
+/// what a scope declares that its record does not hold, the instruction
+/// shims the scope owes, and a repository effect kendex recorded arming
+/// that the package no longer stands behind — each printed as a row of its
+/// own, and a failing one closes the run non-zero like a failing lock row.
+/// The last fails closed: a recorded arming whose check could not be taken
+/// is a row nothing measured, never a clean one.
 ///
 /// A missing or unreadable install record closes the run non-zero. The verb
 /// still weighs current manifest and render bytes, so a recovery decision has
@@ -85,6 +88,10 @@ pub fn run(
     // count above is of lock entries, and each shim already printed its
     // own row where it was found.
     let mut shims_failed = 0usize;
+    // Recorded armings the package no longer stands behind, for the exit
+    // code alone, the same way: each printed its own row where it was
+    // found.
+    let mut setup_failed = 0usize;
 
     for scope in resolve_scopes(env, filter)? {
         let path = lock_path(env, &scope);
@@ -148,13 +155,14 @@ pub fn run(
             }
             shims_failed += usize::from(say_shim(shim));
         }
+        setup_failed += super::repo_effects::say_lapsed(env, &scope, &names);
     }
 
     print_unmanaged(&unmanaged);
     print_gaps(&gaps);
     ui::ledger(&head(checked, failed, !gaps.is_empty()), &[]);
     Ok(
-        match failed > 0 || shims_failed > 0 || recordless || !gaps.is_empty() {
+        match failed > 0 || shims_failed > 0 || setup_failed > 0 || recordless || !gaps.is_empty() {
             true => ExitCode::FAILURE,
             false => ExitCode::SUCCESS,
         },

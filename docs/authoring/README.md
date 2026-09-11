@@ -133,6 +133,8 @@ The exit status is the whole answer, and it is the same taxonomy the commit hook
 | `1` | It is not. |
 | anything else | The check could not be taken. |
 
+Where kendex recorded arming the effect, `kendex verify` fails and `kendex refresh` names the package on a `1` or on a check that could not be taken, with `kendex guard install` as the remedy. Neither verb runs the installer again: a yes is given against the disclosure of its day, and a later version may declare more.
+
 The script writes nothing and changes nothing. Whatever it prints on either stream reaches the person as the package's own words, so put the remedy there.
 
 Nothing the declaration says decides when the checker runs. Your script comes out of a checkout, and a checkout arrives with a fetch, so opening a package's page must not run it. What licenses a run is kendex's own record of having armed the effect in that repository: kendex writes it when your installer exits clean, keeps it in a git directory, which git clones for nobody, and drops it when your uninstaller runs. Which one is your effect's reach: an effect under `.git/` is the whole repository's, so one arming answers for every work tree; an effect elsewhere in the checkout is the work tree it was armed in and no other. A repository nothing here armed runs none of your code.

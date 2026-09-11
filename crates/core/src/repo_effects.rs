@@ -28,7 +28,7 @@ pub use disclosure::{
     Companion, Disclosure, Offers, Withheld, Written, installed_skills, offers, offers_for,
     touches_git,
 };
-pub use setup::{Ask, SetupState, SetupStatus, status};
+pub use setup::{Ask, Lapse, Lapsed, SetupState, SetupStatus, lapsed, status};
 pub use undo::{Spoken, UndoError, undo};
 
 use serde::{Deserialize, Serialize};

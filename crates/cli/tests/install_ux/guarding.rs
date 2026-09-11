@@ -378,6 +378,70 @@ fn a_failing_uninstaller_keeps_the_package_installed() {
     );
 }
 
+/// A repository kendex armed whose gate has since lost a lane fails
+/// `verify` and is named by `refresh`, and the refresh arms nothing.
+///
+/// kendex's record of the arming is what licenses asking the package, and
+/// the package's answer is the whole verdict. A refresh brings a package's
+/// next version and not a new arming, so a lane that version declares and
+/// the armed shims do not carry is exactly this state: a push gate that is
+/// missing while every render reads OK. Failing closed and naming the
+/// verb that re-arms is what the two verbs owe; re-arming on the old yes
+/// is what `commands::repo_effects` refuses to do.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_lapsed_arming_fails_verify_and_is_named_by_refresh() {
+    const ROW: &str = "✗ setup commit-guards: kendex armed it here and the package says its effect is not in force — kendex guard install arms it again";
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    offer(&world, "commit-guards");
+    world.run(&[
+        "add",
+        "cat",
+        "--skill",
+        "commit-guards",
+        "-y",
+        "--allow-repo-effects",
+    ]);
+    let pre_push = world.at(".git/hooks/pre-push");
+    assert!(
+        read(&pre_push).contains("kendex-guards"),
+        "the yes did not arm the push lane"
+    );
+
+    // Armed and whole: nothing to name on either verb.
+    let clean = world.try_run(&["verify", "--scope", "project"]);
+    assert!(clean.status.success(), "{}", spoke(&clean));
+    assert!(!spoke(&clean).contains("✗ setup"), "{}", spoke(&clean));
+    let quiet = world.run(&["refresh", "--scope", "project"]);
+    assert!(!quiet.contains("✗ setup"), "{quiet}");
+
+    // The control: the push lane's delegating line goes, which is the
+    // state a lane armed before it existed is in.
+    let armed_text = read(&pre_push);
+    let without: String = armed_text
+        .lines()
+        .filter(|line| !line.contains("kendex-guards"))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    assert_ne!(without, armed_text, "no delegating line to remove");
+    fs::write(&pre_push, without).unwrap();
+
+    let red = world.try_run(&["verify", "--scope", "project"]);
+    let out = spoke(&red);
+    assert_eq!(red.status.code(), Some(1), "{out}");
+    assert!(out.contains(ROW), "{out}");
+    // The package's own words travel with the row: they name the lane.
+    assert!(out.contains("pre-push"), "{out}");
+
+    let named = world.run(&["refresh", "--scope", "project"]);
+    assert!(named.contains(ROW), "{named}");
+    assert!(
+        !read(&pre_push).contains("kendex-guards"),
+        "refresh armed the lane on its own:\n{named}"
+    );
+}
+
 /// `kendex check` names an unarmed repository, in the package's own words,
 /// and says nothing once it is armed.
 #[test]

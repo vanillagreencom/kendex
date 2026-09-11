@@ -204,12 +204,19 @@ pub fn run(
             }
         };
         match applied {
-            Ok(count) => closing.push(Closing {
-                scope: scope.clone(),
-                count,
-                blocked,
-                scored: report.safety.clone(),
-            }),
+            Ok(count) => {
+                // What the scope's armed packages say now that it is
+                // written. Said, never acted on: a refresh arms nothing,
+                // and `commands::repo_effects` says why the record of an
+                // earlier yes does not change that.
+                super::repo_effects::say_lapsed(env, &scope, &[]);
+                closing.push(Closing {
+                    scope: scope.clone(),
+                    count,
+                    blocked,
+                    scored: report.safety.clone(),
+                });
+            }
             // A cancel is the reader stopping the run, not one scope
             // failing to refresh. Collected as a failure it would come out
             // as "failed to refresh 1 item/source(s)" and exit 1, and the

@@ -13,10 +13,23 @@
 //! still installs the package: the person keeps the scripts and arms them
 //! later.
 //!
-//! The yes is spent where it is given. Nothing here writes it down, so no
-//! later run inherits it: `kendex refresh` repairs the files a package
-//! installs and never arms anything, and a repository is armed by the
-//! invocation that says so — this one, or `kendex guard install`.
+//! The yes is spent where it is given. Nothing here writes it down as a
+//! standing consent, so no later run inherits it: `kendex refresh` repairs
+//! the files a package installs and never arms anything, and a repository
+//! is armed by the invocation that says so — this one, or `kendex guard
+//! install`. Not even where kendex's own record says this repository was
+//! armed before, for two reasons. The yes was given against the disclosure
+//! as it read that day, its declared writes and its summary, and a
+//! package's next version can declare more — a hook lane the armed shims
+//! do not carry — so running its installer again on the strength of that
+//! yes applies an effect nobody was shown. And the installer a refresh
+//! would run is code that arrived with the fetch the same refresh made:
+//! running it unasked is running a checkout's script on the checkout's
+//! own say-so. What a refresh owes an armed repository instead is to say
+//! so when the package reports its effect no longer standing — one
+//! reading, `kendex_core::repo_effects::lapsed`, which `kendex verify`
+//! fails on — and to name `kendex guard install`, which is the person
+//! saying yes again to the disclosure as it now reads.
 //!
 //! Every value a package declared goes out through the `ui` seam, which
 //! escapes it. This block is read immediately before a consent prompt, and
@@ -38,10 +51,59 @@ use kendex_core::env::Env;
 use kendex_core::model::Scope;
 use kendex_core::repo_effects::{DeclaredEffects, Disclosure, Spoken};
 
-use super::{CliResult, answer, say};
+use super::{CliResult, answer, fail, fail_refusal, say, scope_label};
 
 mod disclose;
 pub use disclose::disclose;
+
+/// Name every package kendex recorded arming in this scope whose effect
+/// the package no longer stands behind, and how many lines that took.
+///
+/// One wording for both verbs that say it: `verify`, which fails on the
+/// count, and `refresh`, which names the state after it wrote. The remedy
+/// is the verb as data, never a line to paste. The package's own words
+/// follow as detail: they are the remediation text a person acts on.
+///
+/// A read that could not be made counts as one line. A verb that reports
+/// nothing lapsed has to have looked, so a scope whose record or
+/// declarations would not read is named rather than passed over.
+///
+/// `names` narrows to the packages a verb was asked about; empty is all.
+pub fn say_lapsed(env: &Env, scope: &Scope, names: &[String]) -> usize {
+    let lapsed = match kendex_core::repo_effects::lapsed(env, scope) {
+        Ok(lapsed) => lapsed,
+        Err(error) => {
+            fail_refusal(
+                &format!("! {}: repository setup not checked: ", scope_label(scope)),
+                &error,
+            );
+            return 1;
+        }
+    };
+    let mut named = 0;
+    for package in lapsed
+        .iter()
+        .filter(|package| names.is_empty() || names.contains(&package.name))
+    {
+        let verdict = match package.lapse {
+            kendex_core::repo_effects::Lapse::NotInForce => {
+                "kendex armed it here and the package says its effect is not in force"
+            }
+            kendex_core::repo_effects::Lapse::Unchecked => {
+                "whether its effect is in force could not be checked"
+            }
+        };
+        fail(&format!(
+            "✗ setup {}: {verdict} — kendex guard install arms it again",
+            package.name
+        ));
+        for line in &package.said {
+            say(&format!("  ! {line}"));
+        }
+        named += 1;
+    }
+    named
+}
 
 /// Ask about the disclosed effects and apply the ones that get a yes.
 ///

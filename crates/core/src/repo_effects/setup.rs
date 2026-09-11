@@ -281,6 +281,68 @@ fn could_not_check(
     }
 }
 
+/// One installed package whose recorded arming no longer holds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Lapsed {
+    pub name: String,
+    pub lapse: Lapse,
+    /// What the package said, or why it could not be asked: the
+    /// [`SetupStatus::said`] of the status this was read from.
+    pub said: Vec<String>,
+}
+
+/// How a recorded arming stopped holding. Two of the states in
+/// [`SetupState`] and only those, so a surface naming one has no other
+/// state to have an answer for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lapse {
+    /// kendex recorded arming the effect here and the package's check says
+    /// it is not in force: [`SetupState::NeedsRepair`].
+    NotInForce,
+    /// The check could not be taken, or the record could not be read, so
+    /// nothing was measured: [`SetupState::CouldNotCheck`].
+    Unchecked,
+}
+
+/// Every installed package in this scope whose recorded arming no longer
+/// holds — the one reading `kendex verify` fails on and `kendex refresh`
+/// names, so the two verbs cannot disagree about a repository.
+///
+/// Read under [`Ask::Surface`]: a package kendex never recorded arming
+/// here runs no script and is not in the list, whatever state its effect
+/// is in, because absence of a record is not a claim about the repository.
+/// A check that could not be taken IS in the list, record or none: a verb
+/// that reports the gate as standing has to have measured it, and one that
+/// could not measure it says so rather than passing. The reason travels in
+/// `said`.
+///
+/// Empty outside a project, where there is no repository for an effect to
+/// stand in.
+pub fn lapsed(env: &crate::env::Env, scope: &Scope) -> crate::error::Result<Vec<Lapsed>> {
+    if !matches!(scope, Scope::Project { .. }) {
+        return Ok(Vec::new());
+    }
+    let mut lapsed = Vec::new();
+    for declared in crate::engine::installed_declarations(env, scope)? {
+        let status = status(scope, &declared, Ask::Surface);
+        let lapse = match status.state {
+            SetupState::NeedsRepair => Lapse::NotInForce,
+            SetupState::CouldNotCheck => Lapse::Unchecked,
+            SetupState::NotDeclared
+            | SetupState::NotARepository
+            | SetupState::Active
+            | SetupState::NotActive
+            | SetupState::Unavailable => continue,
+        };
+        lapsed.push(Lapsed {
+            name: declared.name,
+            lapse,
+            said: status.said,
+        });
+    }
+    Ok(lapsed)
+}
+
 /// Where a project's arming records live, for the callers that arm and
 /// disarm one: `None` outside a work tree, where there is nothing
 /// git-private to write into.

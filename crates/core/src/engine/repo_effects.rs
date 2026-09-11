@@ -214,7 +214,30 @@ pub fn installed_declaration(
     name: &str,
 ) -> Result<Option<DeclaredEffects>> {
     let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
-    let Some(installed) = installed_tree(env, scope, &lock, name)? else {
+    declaration_of(env, scope, &lock, name)
+}
+
+/// Every installed package's declaration in one scope, read the way
+/// [`installed_declaration`] reads one — for a verb that asks after the
+/// standing of everything the scope carries rather than one name it was
+/// handed. A package that declares nothing, or whose files are gone, is not
+/// in the list; one whose declaration will not read stops the whole read,
+/// for the reason [`leaving`] gives.
+pub fn installed_declarations(env: &Env, scope: &Scope) -> Result<Vec<DeclaredEffects>> {
+    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
+    crate::lock::skill_names(&lock)
+        .iter()
+        .filter_map(|name| declaration_of(env, scope, &lock, name).transpose())
+        .collect()
+}
+
+fn declaration_of(
+    env: &Env,
+    scope: &Scope,
+    lock: &crate::lock::Lock,
+    name: &str,
+) -> Result<Option<DeclaredEffects>> {
+    let Some(installed) = installed_tree(env, scope, lock, name)? else {
         return Ok(None);
     };
     match declaration(&installed.text) {
