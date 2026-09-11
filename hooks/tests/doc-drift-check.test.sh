@@ -3,15 +3,15 @@
 # changed non-markdown path is matched against the nearest AGENTS.md above it,
 # tracked or untracked — the root's own for a path whose directory is the
 # repository root, one below the root for anything deeper — and every topic
-# file whose Covers entry
-# reaches it; a covering doc left unchanged, a Covers entry no path on disk
-# matches, and a changed path on disk no doc covers where some topic declares
-# an entry and the render inventory `.kendex-generated.json` does not list it
-# are each named
+# file whose Covers entry reaches it; a covering doc left unchanged, a Covers
+# entry no path on disk matches, and a changed path on disk no doc covers
+# where some topic declares an entry are each named
 # once on stderr with exit 2, the channel the harness gives Claude, and stdout
 # stays empty. The set is recorded under
 # `<git common dir>/kendex/doc-drift/<session_id>-<digest>`, so a later stop
-# naming that same set passes and a set that differs blocks once more. The
+# naming that same set passes and a set that differs blocks once more. A
+# changed path the render inventory `.kendex-generated.json` lists is named at
+# neither kind, judged before coverage so that holds at the root too. The
 # changed set is read against the branch's merge-base with the default branch,
 # or the working tree alone where no base applies. A payload, git state or
 # marker the hook cannot read or write is refused, never passed.
@@ -197,10 +197,11 @@ build() { # WORLD — the row's repository, its run directory and PATH
         seal
         ;;
       file-topic) printf '# Selected path\n\nCovers: ui/src/app.ts\n' >"$REPO/docs/architecture/selected.md"; seal ;;
-      # The render inventory kendex writes, listing one of the two paths below
-      # the root that no document covers, so one row asks what a render does
-      # and the other what a path the same inventory does not list still does.
-      generated) printf '["ui/src/app.ts"]\n' >"$REPO/.kendex-generated.json"; seal ;;
+      # The render inventory kendex writes, listing the changed path at the
+      # root, the one a covering document reaches, so one row asks what a
+      # render does where coverage would otherwise name it and the other what
+      # a path the same inventory does not list still does.
+      generated) printf '["top.rs"]\n' >"$REPO/.kendex-generated.json"; seal ;;
       empty-generated) : >"$REPO/.kendex-generated.json"; seal ;;
       root-topic) printf '# All\n\nCovers: . ./ /\n' >"$REPO/docs/architecture/all.md"; seal ;;
       with-master) fgit -C "$REPO" branch master ;;
@@ -431,8 +432,8 @@ an entry naming a file deleted and not yet staged is named|repo file-topic|rm-ui
 a glob entry is satisfied by a path its * reaches across /|repo glob-topic|md|0|-|-
 an entry whose only match is an untracked new file is satisfied|repo|covered-new|0|-|-
 a changed path at the root names the root AGENTS.md as stale, never itself as uncovered|repo|top|2|AGENTS.md(top.rs)|stale=1;base=default-branch
-a changed path the render inventory lists is a render, not uncovered|repo generated|ui|0|-|-
-a changed path the same inventory does not list is still uncovered|repo generated|other|2|ui/src/app.tsx|uncovered=1;base=default-branch
+a changed path the render inventory lists is a render, named at neither kind though the root AGENTS.md covers it|repo generated|top|0|-|-
+a changed path the same inventory does not list is still uncovered|repo generated|ui|2|ui/src/app.ts|uncovered=1;base=default-branch
 a deleted path no doc covers is not named|repo|rm-ui|0|-|-
 an untracked AGENTS.md covers the new code beside it|repo|newpkg|0|-|-
 an AGENTS.md deleted and not yet staged no longer covers the code beside it|repo ui-agents|rm-ui-agents ui|2|ui/src/app.ts|uncovered=1;base=default-branch
