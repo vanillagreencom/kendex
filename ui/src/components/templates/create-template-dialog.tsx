@@ -251,19 +251,23 @@ export function CreateTemplateDialog({
               </p>
             ) : null}
 
-            <section className="flex flex-col gap-2">
-              <SectionHeading>{INCLUDED_PACKAGES_LABEL}</SectionHeading>
-              {members.map((member) => (
-                <MemberChoice
-                  key={member.key}
-                  member={member}
-                  checked={!dropped.has(member.key)}
-                  onToggle={() => setDropped(toggle(dropped, member.key))}
-                  side={sides[member.key]}
-                  onSide={(side) => setSides({ ...sides, [member.key]: side })}
-                />
-              ))}
-            </section>
+            {members.length > 0 ? (
+              <section className="flex flex-col gap-2">
+                <SectionHeading>{INCLUDED_PACKAGES_LABEL}</SectionHeading>
+                {members.map((member) => (
+                  <MemberChoice
+                    key={member.key}
+                    member={member}
+                    checked={!dropped.has(member.key)}
+                    onToggle={() => setDropped(toggle(dropped, member.key))}
+                    side={sides[member.key]}
+                    onSide={(side) =>
+                      setSides({ ...sides, [member.key]: side })
+                    }
+                  />
+                ))}
+              </section>
+            ) : null}
 
             <section className="flex flex-col gap-2">
               <Label className="flex items-start gap-2 font-normal">
@@ -300,7 +304,7 @@ export function CreateTemplateDialog({
                       }
                       aria-label={`${local.kind} ${local.name}`}
                     />
-                    <span className="truncate">
+                    <span className="min-w-0 truncate" title={local.at}>
                       {local.name}
                       <span className="text-muted-foreground">
                         {" "}

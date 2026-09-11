@@ -1,0 +1,1 @@
+- Pressing a row's tick box in a marketplace's package list or in Bookmarks selects the row instead of opening the package, so Install selected and Add to template appear.

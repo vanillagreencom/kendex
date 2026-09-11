@@ -1,0 +1,1 @@
+- A template's page lines its breadcrumb up with its title.

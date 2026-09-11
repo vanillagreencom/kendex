@@ -22,6 +22,7 @@ import {
 } from "@/lib/copy-install";
 import {
   INSTALLED_IN_HEADING,
+  installedInLabel,
   PACKAGE_STATE_UNKNOWN,
   SUBSCRIBE_TO_INSTALL_LABEL,
 } from "@/lib/copy-marketplaces";
@@ -629,6 +630,46 @@ describe("the columns a narrow table keeps", () => {
       roomIs(1400);
       const wideHost = mountTree(table);
       expect(heads(wideHost), page).toEqual(wide);
+    }
+  });
+
+  // A marketplace's own page owes each package its count and the way to
+  // its places at every width: where the Installed in column has no room,
+  // the row says it under the name. The cross-marketplace list names no
+  // places at any width.
+  it("keeps a package's place count on its row once the column goes", () => {
+    const held: Scope[] = [
+      { scope: "global" } as Scope,
+      { scope: "project", root: "/home/me/hyprtrade" } as Scope,
+    ];
+    const index = new Map([[placesKey("skill", "gh"), held]]);
+    const entries = [entry, { ...entry, row: { ...entry.row, name: "zz" } }];
+    const CASES = [
+      { width: 700, places: index, underName: [installedInLabel(held), ""] },
+      { width: 1400, places: index, underName: ["", ""] },
+      { width: 700, places: undefined, underName: ["", ""] },
+    ];
+    expect(CASES).toHaveLength(3);
+    for (const { width, places, underName } of CASES) {
+      stub.scores = {};
+      useProvenanceStore.setState({ loaded: true, rows: [] });
+      roomIs(width);
+      const host = mountTree(
+        <PackagesTable
+          entries={entries}
+          showMarketplace={places === undefined}
+          places={places}
+        />,
+      );
+      // The Name cell of each row, after the tick cell.
+      const said = [...host.querySelectorAll("tbody tr")].map(
+        (each) =>
+          each.children[1]?.querySelector('button[aria-label^="Installed in"]')
+            ?.textContent ?? "",
+      );
+      expect(said, `${width}px, places ${places ? "named" : "absent"}`).toEqual(
+        underName,
+      );
     }
   });
 });

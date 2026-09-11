@@ -21,6 +21,7 @@ import {
   COPIES_GO_INTO_THIS_TEMPLATE,
   INCLUDE_CUSTOMIZATIONS_LABEL,
   INCLUDE_LOCAL_LABEL,
+  INCLUDED_PACKAGES_LABEL,
   LICENSE_CONFIRM,
   NEW_TEMPLATE_LABEL,
   NO_TEMPLATES_TO_INSTALL,
@@ -318,6 +319,7 @@ describe("creating a template from a project", () => {
     expect(document.body.textContent).toContain(
       "a catalog stores an agent as markdown",
     );
+    expect(document.body.textContent).toContain(INCLUDED_PACKAGES_LABEL);
 
     await act(async () => button(document, NEW_TEMPLATE_LABEL).click());
     expect(commands.templateCreateFromProject).toHaveBeenCalledWith(
@@ -331,6 +333,28 @@ describe("creating a template from a project", () => {
         fingerprint: "offer-1",
       },
     );
+  });
+
+  // A project kendex manages nothing in still offers its local packages,
+  // under no heading for a list with nothing in it.
+  it("heads no included packages where the project has none", async () => {
+    vi.mocked(commands.templateDraft).mockResolvedValue({
+      status: "ok",
+      data: { ...DRAFT, members: [] },
+    });
+    mount(
+      <CreateTemplateDialog
+        project="/work/acme"
+        place="acme"
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+    await settle();
+
+    expect(document.body.textContent).not.toContain(INCLUDED_PACKAGES_LABEL);
+    expect(document.body.textContent).toContain(INCLUDE_LOCAL_LABEL);
+    expect(document.body.textContent).toContain("stray");
   });
 
   it("carries the local packages and the settings when both are ticked", async () => {

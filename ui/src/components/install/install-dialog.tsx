@@ -341,8 +341,12 @@ function PlacePicker({
               onChange(togglePlace(offered, places, place))
             }
           />
-          <span>{names[index]}</span>
-          <span className="truncate font-mono text-xs text-muted-foreground">
+          <span className="shrink-0">{names[index]}</span>
+          {/* A folder is the one unbreakable line here: it gives way to
+              the name, and only a folder is set in the code face. */}
+          <span
+            className={`min-w-0 truncate text-xs text-muted-foreground${scopePath(place) ? " font-mono" : ""}`}
+          >
             {scopePath(place) ?? PERSONAL_PLACE_HELP}
           </span>
         </Label>

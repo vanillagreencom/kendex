@@ -1,0 +1,1 @@
+- Long folder paths no longer push the Install and Create template dialogs past the window edge; the folders shorten and the buttons stay in view.
