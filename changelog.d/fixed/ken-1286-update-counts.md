@@ -1,0 +1,1 @@
+- The Updates page counts the places its updates are in, not its rows, and the update review says "Update 1 package?" for one package in several places.

@@ -2,6 +2,7 @@
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Checkbox } from "@/components/ui/checkbox";
 import { opensOnActivate } from "@/lib/opens-on-activate";
 import { mount } from "@/test/dom";
 
@@ -16,9 +17,11 @@ describe("a surface that opens what it names", () => {
   const mountSurface = () => {
     const onOpen = vi.fn();
     const inside = vi.fn();
+    const ticked = vi.fn();
     const host = mount(
       <div {...opensOnActivate(onOpen, "Open gh")} data-testid="surface">
         <span data-testid="text">gh</span>
+        <Checkbox aria-label="Select gh" onCheckedChange={ticked} />
         <button type="button" onClick={inside}>
           Update
         </button>
@@ -31,28 +34,69 @@ describe("a surface that opens what it names", () => {
     };
     const control = host.querySelector("button");
     if (!control) throw new Error("no control inside the surface");
-    return { host, onOpen, inside, at, control };
+    const box = host.querySelector<HTMLElement>('[aria-label="Select gh"]');
+    if (!box) throw new Error("no tick box inside the surface");
+    return { host, onOpen, inside, ticked, at, control, box };
   };
 
   it("takes focus, opens on Enter, and leaves its own controls alone", async () => {
     const cases = [
       // A keyboard reaches the surface and Enter opens it.
-      { name: "Enter on the surface", act: "enter-surface", opens: 1, ran: 0 },
+      {
+        name: "Enter on the surface",
+        act: "enter-surface",
+        opens: 1,
+        ran: 0,
+        ticks: 0,
+      },
       // Enter on a button inside runs that button, and only that button —
       // otherwise every keyboard press on a row's Update would leave the
       // page as well.
-      { name: "Enter on a control", act: "enter-control", opens: 0, ran: 1 },
+      {
+        name: "Enter on a control",
+        act: "enter-control",
+        opens: 0,
+        ran: 1,
+        ticks: 0,
+      },
       // A click anywhere the controls do not answer opens.
-      { name: "click on the text", act: "click-text", opens: 1, ran: 0 },
+      {
+        name: "click on the text",
+        act: "click-text",
+        opens: 1,
+        ran: 0,
+        ticks: 0,
+      },
       // A completed click on a control is that control's.
-      { name: "click on a control", act: "click-control", opens: 0, ran: 1 },
+      {
+        name: "click on a control",
+        act: "click-control",
+        opens: 0,
+        ran: 1,
+        ticks: 0,
+      },
+      // A tick box is drawn as a span rather than a button, and pressing it
+      // selects the row without leaving the page.
+      {
+        name: "click on a tick box",
+        act: "click-box",
+        opens: 0,
+        ran: 0,
+        ticks: 1,
+      },
       // A click ending a drag across the surface's text was someone keeping
       // the text, not asking to leave the page.
-      { name: "click ending a drag", act: "drag-text", opens: 0, ran: 0 },
+      {
+        name: "click ending a drag",
+        act: "drag-text",
+        opens: 0,
+        ran: 0,
+        ticks: 0,
+      },
     ];
-    expect(cases).toHaveLength(5);
+    expect(cases).toHaveLength(6);
     for (const entry of cases) {
-      const { onOpen, inside, at, control } = mountSurface();
+      const { onOpen, inside, ticked, at, control, box } = mountSurface();
       expect(at("surface").getAttribute("tabindex"), entry.name).toBe("0");
       // The extra focus stop says what it is and what opens it: a stop
       // that announced only the cells it holds would tell a reader
@@ -75,11 +119,14 @@ describe("a surface that opens what it names", () => {
         await userEvent.keyboard("{Enter}");
       } else if (entry.act === "click-control") {
         await userEvent.click(control);
+      } else if (entry.act === "click-box") {
+        await userEvent.click(box);
       } else {
         await userEvent.click(at("text"));
       }
       expect(onOpen, entry.name).toHaveBeenCalledTimes(entry.opens);
       expect(inside, entry.name).toHaveBeenCalledTimes(entry.ran);
+      expect(ticked, entry.name).toHaveBeenCalledTimes(entry.ticks);
       vi.restoreAllMocks();
     }
   });

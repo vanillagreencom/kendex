@@ -1,0 +1,1 @@
+- In a narrow window, each row of a marketplace's package list still says how many places hold the package, under its name, and opens those places.

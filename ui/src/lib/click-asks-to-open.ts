@@ -6,12 +6,16 @@ import type { MouseEvent } from "react";
  *  through the surface that owns it. A dialog opened from a card is read, not
  *  a request to leave the page; its backdrop is pressed to close it.
  *
+ *  A tick box is matched by its role: `components/ui/checkbox.tsx` draws the
+ *  box as a span, with its input hidden beside it, so a press on the box
+ *  reaches no element selector here.
+ *
  *  The menu is matched by the prefix its parts share rather than by their
  *  roles: a menu item renders as a plain div, so no element selector reaches
  *  it, and the popup's own padding lies between the items. One selector
  *  covers every part the wrapper draws, including any it grows. */
 const CONTROLS =
-  'a, button, input, select, textarea, [role="button"], [data-slot="tooltip-content"], [data-slot="dialog-content"], [data-slot="dialog-overlay"], [data-slot^="dropdown-menu-"]';
+  'a, button, input, select, textarea, [role="button"], [role="checkbox"], [data-slot="tooltip-content"], [data-slot="dialog-content"], [data-slot="dialog-overlay"], [data-slot^="dropdown-menu-"]';
 
 /**
  * Whether a click on a whole-surface shortcut — a project card, a Library

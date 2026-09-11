@@ -463,7 +463,8 @@ export function PackagesTable({
               columns={columns}
               marketplace={named.get(catalogKey(entry.catalog))}
               places={
-                places?.get(placesKey(entry.row.kind, entry.row.name)) ?? []
+                places &&
+                (places.get(placesKey(entry.row.kind, entry.row.name)) ?? [])
               }
               offerSubscribe={offerSubscribe}
               selectable={installableRow(entry)}

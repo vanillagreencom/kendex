@@ -413,9 +413,9 @@ function SavedRow({
       )}
     >
       <div className="flex items-center gap-3">
-        {/* Ticking a row is not opening it: the box draws as a button, and
-            `opensOnActivate` reads a control inside the card as having
-            answered the click. A row nothing can install carries no box. */}
+        {/* Ticking a row is not opening it: `clickAsksToOpen` counts the
+            box as a control that answered the click. A row nothing can
+            install carries no box. */}
         <div className="w-5 shrink-0">
           {offered ? (
             <Checkbox

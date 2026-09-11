@@ -90,8 +90,10 @@ export function PackageRow({
   marketplace: MarketplaceDisplay | undefined;
   /** Where this package is installed from this marketplace. The table
    *  builds the whole index once — see `lib/installed-places.ts` — so a row
-   *  neither scans the provenance join nor subscribes to it. */
-  places: Scope[];
+   *  neither scans the provenance join nor subscribes to it. Absent on the
+   *  cross-marketplace list, which is a page for no single subscription and
+   *  names no places at all. */
+  places: Scope[] | undefined;
   /** Whether a bare repository's row may subscribe and install — decided
    * once for the table, never per row. */
   offerSubscribe: boolean;
@@ -137,9 +139,9 @@ export function PackageRow({
   const updated = row.updatedAt ? Date.parse(row.updatedAt) : Number.NaN;
   return (
     <TableRow className="group cursor-pointer" {...open}>
-      {/* Ticking a row is not opening it. The box draws as a button, and
-          `opensOnActivate` reads a control inside the surface as having
-          answered the click, so the row stays put under a tick. */}
+      {/* Ticking a row is not opening it. `clickAsksToOpen` counts the
+          box as a control that answered the click, so the row stays put
+          under a tick. */}
       <TableCell className="w-8">
         {selectable ? (
           <Checkbox
@@ -171,6 +173,14 @@ export function PackageRow({
             {row.summary ? (
               <div className="truncate text-xs text-muted-foreground">
                 {row.summary}
+              </div>
+            ) : null}
+            {/* A table too narrow for the Installed in column still owes
+                each package its count and the way to its places, so the
+                row says it under the name instead. */}
+            {places !== undefined && !columns.places && places.length > 0 ? (
+              <div className="text-xs text-muted-foreground">
+                <InstalledIn places={places} standalone />
               </div>
             ) : null}
           </div>
@@ -239,7 +249,7 @@ export function PackageRow({
           <SafetyDot tone="muted" words={SAFETY_DOT_UNCHECKED} />
         )}
       </TableCell>
-      {columns.places ? (
+      {columns.places && places !== undefined ? (
         <TableCell className="max-w-40 truncate text-muted-foreground">
           {places.length > 0 ? (
             <InstalledIn places={places} />

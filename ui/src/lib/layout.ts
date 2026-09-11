@@ -22,6 +22,7 @@ const WIDE_PAGES = new Set([
   "marketplaces",
   "marketplaceDetail",
   "availablePackage",
+  "template",
 ]);
 
 export function isWidePage(page: string): boolean {
