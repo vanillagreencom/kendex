@@ -3,9 +3,9 @@
 # name: doc-drift-check
 # event: Stop
 # matcher:
-# description: Blocks a stop once per set of stale documents — the documents covering changed code that did not change — so the agent, the only party that can update them, is the one given the list. The refusal opens with `doc-drift-check: stale=<count>` and `doc-drift-check: base=<ref>` — the ref it compared against, or `default-branch`, `none` or `unrelated` — and names each document under them; stdout carries nothing and no user-facing notice is written. The set is recorded as `<git common dir>/kendex/doc-drift/<session_id>-<digest of the sorted set>`, so a later stop naming that same set passes and an agent that read the list and changed nothing is not asked again; a set that gains or loses a document is a different set and blocks once. `stop_hook_active` true passes. Uses the nearest tracked non-root AGENTS.md and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Claude Code only.
-# summary: Stops an agent at the end of its turn when documents covering the code it changed did not change, and hands it the list.
-# safety: Reads the payload, git state and the topic files; the only write is the per-set marker under the repository's git common dir. Exit 2 names the documents and asks for each to be confirmed or updated, never bypassed. jq reads the payload and a sha256 tool names the set; every command the hook runs is checked before it is called, the payload readers ahead of the payload and the rest after `stop_hook_active` has been read, so a discovery command's absence costs one retry rather than refusing the retry too; only a missing payload reader refuses that as well, the flag being in the payload it cannot read. A payload, git state or marker the hook cannot read or write is refused, never passed. Every refusal opens with `doc-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# description: Blocks a stop once per set of findings so the agent, the only party that can act on them, is the one given the list. Three kinds are found: stale, a document covering changed code that did not change; dangling, an architecture topic `Covers:` entry that no tracked or untracked non-ignored path on disk matches; uncovered, a changed non-markdown path still on disk that no topic entry and no non-root AGENTS.md covers, judged only where some topic declares an entry. The refusal opens with one keyed line per kind that holds, in the order `doc-drift-check: stale=<count>`, `doc-drift-check: dangling=<count>`, `doc-drift-check: uncovered=<count>`, then `doc-drift-check: base=<ref>` — the ref it compared against, or `default-branch`, `none` or `unrelated` — and names each finding under them; stdout carries nothing and no user-facing notice is written. The set is recorded as `<git common dir>/kendex/doc-drift/<session_id>-<digest of the sorted set>`, so a later stop naming that same set passes and an agent that read the list and changed nothing is not asked again; a set that gains or loses a finding is a different set and blocks once. `stop_hook_active` true passes, and so does a stop with nothing changed; any change, markdown alone included, has every Covers entry judged. Uses the nearest non-root AGENTS.md, tracked or untracked and not ignored, and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Claude Code only.
+# summary: Stops an agent at the end of its turn when documents covering the code it changed did not change or an architecture topic names a path that does not exist, and hands it the list. Where some topic declares a Covers entry, changed code with no covering document is named too.
+# safety: Reads the payload, git state, the topic files and git's listing of what each Covers entry matches; the only write is the per-set marker under the repository's git common dir. Exit 2 names the findings and asks for each document to be confirmed or updated and each entry or path to be corrected, never bypassed. jq reads the payload and a sha256 tool names the set; every command the hook runs is checked before it is called, the payload readers ahead of the payload and the rest after `stop_hook_active` has been read, so a discovery command's absence costs one retry rather than refusing the retry too; only a missing payload reader refuses that as well, the flag being in the payload it cannot read. A payload, git state or marker the hook cannot read or write is refused, never passed. Every refusal opens with `doc-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
 # harnesses: [claude-code]
 # ---
@@ -19,12 +19,17 @@ set -euo pipefail
 export LC_ALL=C
 
 # What the refusals name, empty until each is known: which base the changed set
-# was read against, that same choice in English, the documents themselves and
-# how many, and the marker that records having named them.
+# was read against, that same choice in English, and each kind of finding as
+# its lines and how many: stale documents, Covers entries that match nothing,
+# changed paths no document covers.
 BASE_VALUE=""
 JUDGED=""
 STALE=""
 STALE_COUNT=0
+DANGLING=""
+DANGLING_COUNT=0
+UNCOVERED=""
+UNCOVERED_COUNT=0
 # A refusal has written its own keyed line; the EXIT trap writes one only for a
 # status no handler claimed.
 REFUSED=0
@@ -32,27 +37,35 @@ REFUSED=0
 # Every line this hook writes, and the only place its text lives. The first
 # line is the contract a reader parses, `doc-drift-check: <key>=<value>`: a
 # stable key for the condition and the value acted on — the missing commands,
-# why the payload could not be read, how many documents are named, the git
-# subcommand that failed, the marker path, or the status a discovery command
-# left. The English explanation follows it, and never a bypass.
-# The keyed line stands first, at position 1. What a command this hook runs
-# wrote is captured where the hook reads it and passed here as the cause, so it
-# is replayed under the key rather than ahead of it.
+# why the payload could not be read, how many findings of a kind are named, the
+# git subcommand that failed, the marker path, or the status a discovery
+# command left. The English explanation follows it, and never a bypass.
+# The keyed line stands first, at position 1; a `drift` refusal writes one per
+# kind of finding that holds, in a fixed order, then `base=`. What a command
+# this hook runs wrote is captured where the hook reads it and passed here as
+# the cause, so it is replayed under the key rather than ahead of it.
 #
 # The audience is the agent. The documents are work only the agent can do, and
 # most sessions in this repository run with nobody watching, so the list goes
 # to the channel the harness gives Claude — stderr with exit 2 — and stdout is
 # left empty rather than carrying a second copy for a user who cannot act on it.
-refuse() { # KEY VALUE [DETAIL]
+refuse() { # KEY VALUE [DETAIL], or `drift` alone
   {
-    printf 'doc-drift-check: %s=%s\n' "$1" "$2"
-    case "$1=$2" in
-      stale=*)
+    [ "$1" = drift ] || printf 'doc-drift-check: %s=%s\n' "$1" "$2"
+    case "$1=${2:-}" in
+      drift=)
+        [ "$STALE_COUNT" -eq 0 ] || printf 'doc-drift-check: stale=%s\n' "$STALE_COUNT"
+        [ "$DANGLING_COUNT" -eq 0 ] || printf 'doc-drift-check: dangling=%s\n' "$DANGLING_COUNT"
+        [ "$UNCOVERED_COUNT" -eq 0 ] || printf 'doc-drift-check: uncovered=%s\n' "$UNCOVERED_COUNT"
         printf 'doc-drift-check: base=%s\n' "$BASE_VALUE"
-        printf 'code changed at paths these documents cover, and none of them changed:\n'
-        printf '%s' "$STALE"
+        [ -z "$STALE" ] ||
+          printf 'code changed at paths these documents cover, and none of them changed; confirm each still holds or update it:\n%s' "$STALE"
+        [ -z "$DANGLING" ] ||
+          printf 'these architecture topic Covers entries match no path in the tree, so each covers nothing; correct or remove it:\n%s' "$DANGLING"
+        [ -z "$UNCOVERED" ] ||
+          printf 'code changed at these paths, and no topic Covers entry or AGENTS.md below the root covers them; add each to the Covers line of the topic that describes it:\n%s' "$UNCOVERED"
         printf 'Compared %s\n' "$JUDGED"
-        printf 'Confirm each document still holds or update it, then finish.\n'
+        printf 'Handle each, then finish.\n'
         ;;
       missing-tools=*)
         printf '%s\n' "the commands ${2//,/, } are required to read the payload, the git state and the documents and are not on PATH; refusing rather than skipping the check. sha256sum stands for it or shasum, either of which names the set"
@@ -226,22 +239,60 @@ else
   esac
 fi
 
-# `-z` asks for the paths themselves. Line-oriented git output C-quotes a
+# Every git read that yields paths goes through here, one path per line in
+# PATHS. `-z` asks for the paths themselves: line-oriented git output C-quotes a
 # non-ASCII path, and a quoted path ends in a quote rather than in its own
-# suffix. Against a base, one diff covers the worktree and the index both;
-# without one, the two are read separately. Untracked paths are read in
-# either case: without them a stop whose only work is an untracked file
-# presents an empty changed set and nothing is named.
+# suffix. Only stdout becomes the list. A run that succeeds may still write to
+# stderr (core.autocrlf's line-ending warning, the rename limit), and a warning
+# read as a path would be named, so git's and tr's stderr are captured apart
+# and replayed under the git= key only when the read fails.
+git_paths() { # LABEL ARGS... — sets PATHS; LABEL is the git= value on failure
+  local label="$1"
+  shift
+  PATHS=$(
+    {
+      cause=$( { git "$@" | tr '\0' '\n' >&3; } 2>&1) || {
+        printf '%s\n' "$cause"
+        exit 1
+      }
+    } 3>&1
+  ) || refuse git "$label" "$PATHS"
+}
+
+# The paths present in the tree for one pathspec, one per line in PATHS: tracked
+# and untracked non-ignored, as the changed set reads them, and only those on
+# disk, since the index still lists a file deleted and not yet staged.
+tree_paths() { # PATHSPEC — sets PATHS
+  local listed="" path
+  git_paths 'ls-files' ls-files -z --cached --others --exclude-standard --full-name -- "$1"
+  while IFS= read -r path; do
+    [ -z "$path" ] || ! on_disk "$path" || listed="$listed$path"$'\n'
+  done <<EOF
+$PATHS
+EOF
+  PATHS=$listed
+}
+
+on_disk() { # REPOSITORY-RELATIVE PATH
+  [ -e "$REPO_ROOT/$1" ]
+}
+
+# Against a base, one diff covers the worktree and the index both; without
+# one, the two are read separately. Untracked paths are read in either case:
+# without them a stop whose only work is an untracked file presents an empty
+# changed set and nothing is named.
+STAGED=""
 if [ -n "$BASE" ]; then
-  CHANGED=$(git diff --name-only -z "$BASE" 2>&1 | tr '\0' '\n' 2>&1) || refuse git 'diff' "$CHANGED"
-  STAGED=""
+  git_paths 'diff' diff --name-only -z "$BASE"
+  CHANGED=$PATHS
 else
-  CHANGED=$(git diff --name-only -z 2>&1 | tr '\0' '\n' 2>&1) || refuse git 'diff' "$CHANGED"
-  STAGED=$(git diff --cached --name-only -z 2>&1 | tr '\0' '\n' 2>&1) ||
-    refuse git 'diff --cached' "$STAGED"
+  git_paths 'diff' diff --name-only -z
+  CHANGED=$PATHS
+  git_paths 'diff --cached' diff --cached --name-only -z
+  STAGED=$PATHS
 fi
-UNTRACKED=$(git ls-files --others --exclude-standard --full-name -z -- :/ 2>&1 | tr '\0' '\n' 2>&1) ||
-  refuse git 'ls-files' "$UNTRACKED"
+git_paths 'ls-files' ls-files --others --exclude-standard --full-name -z -- :/
+UNTRACKED=$PATHS
 # Each filter's own words are captured where the hook reads it: a bare
 # assignment would let sort or sed write first and leave the trap's keyed line
 # second. Both are silent when they succeed.
@@ -254,18 +305,19 @@ fi
 
 # A markdown path is a doc, whatever directory it sits in. Neither filter may
 # stop reading early: under pipefail an early-exiting reader turns the
-# producer's SIGPIPE into status 141, read as no match.
+# producer's SIGPIPE into status 141, read as no match. A markdown-only change
+# still has its Covers entries judged below, since editing a topic is how an
+# entry comes to match nothing.
 CODE_CHANGED=$(printf '%s\n' "$ALL_CHANGED" | sed '/\.md$/d' 2>&1) ||
   refuse exit "$?" "$CODE_CHANGED"
-if [ -z "$CODE_CHANGED" ]; then
-  exit 0
-fi
 
 # Covering docs. `:(top)` roots the pattern at the repository whatever the
 # cwd, and `*` crosses `/`, so this is every AGENTS.md below the root and
-# not the root's own, which covers nothing.
-AGENTS_DOCS=$(git ls-files -z --full-name -- ':(top)*/AGENTS.md' 2>&1 | tr '\0' '\n' 2>&1) ||
-  refuse git 'ls-files' "$AGENTS_DOCS"
+# not the root's own, which covers nothing. Untracked non-ignored ones count,
+# as a topic written this session does: a new directory's AGENTS.md covers the
+# code beside it before either is committed.
+tree_paths ':(top)*/AGENTS.md'
+AGENTS_DOCS=$PATHS
 
 # Topic files are read from the working tree, so a file written this session
 # already covers what it says it covers; a tracked one deleted this session
@@ -333,12 +385,49 @@ EOF
   done
 }
 
+# Every finding, one per line as `<kind><TAB><what it names>`, is the set the
+# marker records. The kind prefix keeps an entry, a path and a document from
+# reading as one another.
+NAMED=""
+
+# A Covers entry that no path in the tree matches covers nothing, and its topic
+# reads as covered while it is not. Git's own pathspec lists what an entry
+# reaches, and without `:(glob)` magic it matches as covers_path does: a plain
+# path is itself or anything below it, and a glob matches the whole path with
+# `*` crossing `/`. One git call per entry, rather than covers_path over every
+# file, keeps a large tree inside the hook's timeout.
+while IFS=$'\t' read -r covered cdoc; do
+  # The empty line the here-document ends on.
+  [ -n "$covered" ] || continue
+  tree_paths ":(top)$covered"
+  [ -z "$PATHS" ] || continue
+  member="dangling"$'\t'"$covered"$'\t'"$cdoc"
+  in_list "$NAMED" "$member" && continue
+  NAMED="$NAMED$member"$'\n'
+  DANGLING="$DANGLING  $cdoc (Covers: $covered)"$'\n'
+  DANGLING_COUNT=$((DANGLING_COUNT + 1))
+done <<EOF
+$COVERS
+EOF
+
 # Every doc left unchanged while code it covers changed, with the first such
-# path; a doc is named once however many paths reached it.
-STALE_DOCS=""
+# path; a doc is named once however many paths reached it. A changed path no
+# doc covers is named as uncovered only where some topic declares an entry: a
+# repository without one has no map to be incomplete, and naming every changed
+# path there would block each stop of a repository that never adopted topics.
+# A deleted path is never uncovered: an entry added for it would match nothing.
 while IFS= read -r path; do
+  # An empty code set reads as one empty line.
+  [ -n "$path" ] || continue
   docs=$(covering_docs "$path")
-  [ -n "$docs" ] || continue
+  if [ -z "$docs" ]; then
+    [ -n "$COVERS" ] || continue
+    on_disk "$path" || continue
+    NAMED="$NAMED"uncovered$'\t'"$path"$'\n'
+    UNCOVERED="$UNCOVERED  $path"$'\n'
+    UNCOVERED_COUNT=$((UNCOVERED_COUNT + 1))
+    continue
+  fi
   touched=0
   while IFS= read -r doc; do
     if in_list "$ALL_CHANGED" "$doc"; then
@@ -350,8 +439,9 @@ $docs
 EOF
   [ "$touched" -eq 0 ] || continue
   while IFS= read -r doc; do
-    in_list "$STALE_DOCS" "$doc" && continue
-    STALE_DOCS="$STALE_DOCS$doc"$'\n'
+    member="stale"$'\t'"$doc"
+    in_list "$NAMED" "$member" && continue
+    NAMED="$NAMED$member"$'\n'
     STALE="$STALE  $doc ($path changed)"$'\n'
     STALE_COUNT=$((STALE_COUNT + 1))
   done <<EOF
@@ -361,7 +451,7 @@ done <<EOF
 $CODE_CHANGED
 EOF
 
-if [ -z "$STALE" ]; then
+if [ -z "$NAMED" ]; then
   exit 0
 fi
 
@@ -370,11 +460,11 @@ if ! [[ "$SESSION" =~ $SESSION_SHAPE ]]; then
   refuse session-id invalid
 fi
 
-# The marker's name has to tell one stale set from another, and a doc path can
-# hold bytes a filename cannot, so the set is hashed. The sort is what makes
-# two runs that reached the same documents by different paths agree on one
-# name; without it the block would repeat for a set already named.
-DIGEST=$( { printf '%s' "$STALE_DOCS" | sort | hash_set; } 2>&1 ) || refuse exit "$?" "$DIGEST"
+# The marker's name has to tell one set from another, and a path can hold bytes
+# a filename cannot, so the set is hashed. The sort is what makes two runs that
+# reached the same documents by different paths agree on one name; without it
+# the block would repeat for a set already named.
+DIGEST=$( { printf '%s' "$NAMED" | sort | hash_set; } 2>&1 ) || refuse exit "$?" "$DIGEST"
 
 # The marker lives under the git COMMON dir so every linked worktree of the
 # repository shares it. rev-parse answers relative to the cwd when the dir
@@ -398,4 +488,4 @@ if ! MARKER_ERR=$(mkdir -p -- "$MARKER_DIR" 2>&1) ||
   refuse marker "$MARKER" "$MARKER_ERR"
 fi
 
-refuse stale "$STALE_COUNT"
+refuse drift
