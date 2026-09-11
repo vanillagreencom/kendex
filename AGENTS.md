@@ -28,6 +28,8 @@ Desktop app and thin CLI (Rust + Tauri + React) for managing AI coding-harness c
 - `skills/AGENTS.md`: when working under `skills/`, `agents/` or `hooks/`.
 - `hooks/AGENTS.md`: when writing or changing a hook script.
 - `pi-extensions/AGENTS.md`: when working under `pi-extensions/`.
+- `tools/AGENTS.md`: when working under `tools/`.
+- `.github/AGENTS.md`: when changing a workflow or a review-bot instruction file.
 - `docs/DEVELOPMENT.md`: building from source and where a debug build writes.
 - `docs/RELEASING.md`: cutting a release.
 
