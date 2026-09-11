@@ -163,6 +163,23 @@ EOF
   ROW_PATH="$ROOT/bin"
 }
 
+# A pre-push hook publishing the commit-guards message protocol the tool
+# reads: `pre-push: <key>=<value>` lines, a completed run ending in
+# `pre-push: result=<code>`. One writer for every verdict a row needs, since
+# what separates them is the verdict line and the exit status and nothing
+# else — an empty verdict leaves the transcript with keyed lines and none.
+arm_pre_push_hook() { # VERDICT-LINE-OR-EMPTY EXIT
+  mkdir -p "$MAIN/.git/hooks"
+  cat >"$MAIN/.git/hooks/pre-push" <<HOOK
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'pre-push: step=all\n'
+${1:+printf '$1\n'}
+exit $2
+HOOK
+  chmod +x "$MAIN/.git/hooks/pre-push"
+}
+
 # The step vocabulary. The first word of a fixture builds the world; the
 # rest drive it.
 step() {
@@ -235,21 +252,15 @@ step() {
       git -C "$MAIN" remote add broken "$ROOT/missing.git"
       printf 'BOT_REMOTE_NAME="broken"\n' >>"$MAIN/.env.local"
       ;;
-    # A pre-push hook that refuses, publishing the commit-guards message
-    # protocol the tool reads: `pre-push: <key>=<value>` lines, a completed
-    # run ending in `pre-push: result=<code>`. The refusal updates no remote
-    # ref, so the row's remote stays where the fixture left it.
-    hook-refuses)
-      mkdir -p "$MAIN/.git/hooks"
-      cat >"$MAIN/.git/hooks/pre-push" <<'HOOK'
-#!/usr/bin/env bash
-cat >/dev/null
-printf 'pre-push: step=all\n'
-printf 'pre-push: result=1\n'
-exit 1
-HOOK
-      chmod +x "$MAIN/.git/hooks/pre-push"
-      ;;
+    # The three transcripts the classifier has to tell apart, one hook each.
+    # A refusal carrying its verdict; one that never reaches a verdict, the
+    # shape the commit-guards lane's collection refusals exit in; and a clean
+    # run, after which anything the remote rejects is the remote's to explain.
+    # A refusal updates no remote ref, so those rows' remotes stay where the
+    # fixture left them.
+    hook-refuses) arm_pre_push_hook 'pre-push: result=1' 1 ;;
+    hook-aborts) arm_pre_push_hook '' 1 ;;
+    hook-passes) arm_pre_push_hook 'pre-push: result=0' 0 ;;
     # The must-fail control's world: a package copy with the hook-refusal arm
     # cut out, so the same refusal falls back to the lease story it used to be
     # reported as — fetch and rebase, over a remote that never moved.
@@ -435,6 +446,8 @@ the package alone pushes through plain git|github fix standalone|push TOPIC --no
 a sibling GitHub helper, when present, owns the git invocation|github fix with-helper|push TOPIC --no-rebase --set-upstream|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=- upstream=- push=-c kendex.test-github-helper=loaded -C <wt> push -u origin HEAD:refs/heads/topic
 a pre-push hook refusal is named as one, not as a force-with-lease conflict|pair fix hook-refuses|push TOPIC --set-upstream|1|-|skip-rebase+hook-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
 must-fail: with the hook arm cut, the same refusal is told as a force-with-lease conflict|pair fix unfixed-hook|push TOPIC --set-upstream|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
+keyed lines that never reach a verdict are a refusal too, the shape a hook aborts in|pair fix hook-aborts|push TOPIC --set-upstream|1|-|skip-rebase+hook-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
+a clean hook leaves the remote its own rejection to explain, under the lease record|pair fix foreign hook-passes|push TOPIC --set-upstream|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:external upstream=- push=-
 '
 
 echo "=== worktree push ==="
