@@ -235,6 +235,34 @@ step() {
       git -C "$MAIN" remote add broken "$ROOT/missing.git"
       printf 'BOT_REMOTE_NAME="broken"\n' >>"$MAIN/.env.local"
       ;;
+    # A pre-push hook that refuses, publishing the commit-guards message
+    # protocol the tool reads: `pre-push: <key>=<value>` lines, a completed
+    # run ending in `pre-push: result=<code>`. The remote is never asked, so
+    # nothing about it has moved and no lease was ever tested.
+    hook-refuses)
+      mkdir -p "$MAIN/.git/hooks"
+      cat >"$MAIN/.git/hooks/pre-push" <<'HOOK'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'pre-push: step=all\n'
+printf 'pre-push: result=1\n'
+exit 1
+HOOK
+      chmod +x "$MAIN/.git/hooks/pre-push"
+      ;;
+    # The must-fail control's world: a package copy with the hook-refusal arm
+    # cut out, so the same refusal falls back to the lease story it used to be
+    # reported as — fetch and rebase, over a remote that never moved.
+    unfixed-hook)
+      step standalone
+      step hook-refuses
+      sed -i.bak 's/if push_output_refused_by_hook .*; then/if false; then/' "$ROW_SCRIPT"
+      rm -f "$ROW_SCRIPT.bak"
+      grep -q 'if false; then' "$ROW_SCRIPT" || {
+        echo "FIXTURE: the hook-arm edit matched nothing in $ROW_SCRIPT" >&2
+        exit 2
+      }
+      ;;
     # A copy of the package alone, or beside a sibling GitHub package whose
     # helper marks the git invocation it owns.
     standalone)
@@ -365,6 +393,7 @@ err_text() {
     two:*) printf 'worktree-push-target-count: 2' ;;
     empty) printf 'worktree-push-target-empty: target' ;;
     lease-rejected) printf 'worktree-push-rejected: origin/topic' ;;
+    hook-rejected) printf 'worktree-push-hook-rejected: origin/topic' ;;
     not-contained) printf 'worktree-push-remote-uncontained: origin/topic' ;;
     fetch-failed) printf 'worktree-remote-fetch-failed: broken/topic' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$spec" ;;
@@ -404,6 +433,8 @@ a lease fetch that fails for a reason other than a missing branch aborts the pus
 the configured bot remote takes the lease and the push|pair bot-remote fix publish advance fix2|push TOPIC|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:-,bot:head upstream=bot push=-
 the package alone pushes through plain git|github fix standalone|push TOPIC --no-rebase --set-upstream|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=- upstream=- push=-C <wt> push -u origin HEAD:refs/heads/topic
 a sibling GitHub helper, when present, owns the git invocation|github fix with-helper|push TOPIC --no-rebase --set-upstream|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=- upstream=- push=-c kendex.test-github-helper=loaded -C <wt> push -u origin HEAD:refs/heads/topic
+a pre-push hook refusal is named as one, not as the lease the remote never tested|pair fix hook-refuses|push TOPIC --set-upstream|1|-|skip-rebase+hook-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
+must-fail: with the hook arm cut, the same refusal is told as a force-with-lease conflict|pair fix unfixed-hook|push TOPIC --set-upstream|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
 '
 
 echo "=== worktree push ==="

@@ -321,6 +321,14 @@ already upstream) so callers can remap commit SHAs recorded before the rebase
 otherwise by commit subject. A push that skips the rebase, or one run with
 --no-rebase, prints no map.
 
+A refused push names its judge. A pre-push hook that publishes the
+commit-guards message protocol ('pre-push: <key>=<value>' lines, a completed
+run ending in 'pre-push: result=<code>') is reported as
+'worktree-push-hook-rejected': the remote was never asked, so fetching and
+rebasing repairs nothing, and the hook's own lines below the record name what
+to fix. Every other failure under a force-with-lease is reported as
+'worktree-push-rejected', and the rest as 'worktree-push-failed'.
+
 GitHub auth: push and origin fetches use the GitHub skill's git-https-auth
 behavior when available: if gh auth is valid, the git command gets a
 temporary HTTPS rewrite and 'gh auth git-credential' config. Remote URLs and

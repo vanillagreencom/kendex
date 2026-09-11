@@ -244,10 +244,11 @@ assert_eq "nor under the other one git pushes to" \
   "$MULTI_WHOLE" "$(direct origin "$MULTI_LINE" "$TMP/second.git")"
 
 # The must-fail control: the same two-URL remote judged by a copy of the lane
-# that accepts one value instead of exactly one. `--get` answers with the LAST
-# value while the fetch used the FIRST, so a lane reading one takes a boundary
-# from refs that describe the other repository — narrow, against the wrong
-# place, which is the direction a bound must never be guessed in.
+# that accepts one value instead of exactly one. git resolves a remote to its
+# FIRST URL while running this hook once per URL, so a lane that drops the
+# count takes a boundary under the first and none under the second — a remote
+# whose refs stand behind only one of the two places it pushes, answered as
+# though they stood behind the push as a whole.
 MULTI_LANE="$DIRECT/.agents/skills/commit-guards/scripts/pre-push"
 MULTI_KEPT="$TMP/pre-push.kept"
 cp -- "$MULTI_LANE" "$MULTI_KEPT"
@@ -255,10 +256,63 @@ sed -i.bak 's#-eq 1 \] || return 1#-ge 1 ] || return 1#' "$MULTI_LANE"
 rm -f -- "$MULTI_LANE.bak"
 assert_eq "the one-value edit took" "rewritten" \
   "$(if cmp -s "$MULTI_KEPT" "$MULTI_LANE"; then echo unchanged; else echo rewritten; fi)"
-assert_eq "must-fail: accepting one of the URLs bounds the range by the other repository" \
-  "$MULTI_BOUNDED" "$(direct origin "$MULTI_LINE" "$TMP/second.git")"
+assert_eq "must-fail: accepting one of the URLs bounds the range under a remote that pushes to two" \
+  "$MULTI_BOUNDED" "$(direct origin "$MULTI_LINE" "$TMP/direct.git")"
 cp -- "$MULTI_KEPT" "$MULTI_LANE"
 q git -C "$DIRECT" remote set-url --delete origin "$TMP/second.git"
+
+# ------------------------------------------------- the spelling git resolves
+#
+# A `url.<base>.insteadOf` rewrite respells ONE repository; it does not send
+# the push to another, so the tracking refs still describe the destination and
+# the branch still has a boundary. The producer is the github skill's HTTPS
+# fallback, which pushes with `-c url.https://github.com/.insteadOf=<ssh url>`
+# over a `git@github.com:` remote — a rewrite git hands this hook in its own
+# environment. The whole path runs here: git resolves the URL, passes it as
+# the second argument, and the lane asks git what the remote resolves to under
+# the same configuration.
+REWRITE=""
+new_repo REWRITE rewrite
+block body 10 >"$REWRITE/big.md"
+q git -C "$REWRITE" add kendex.settings.toml big.md
+q git -C "$REWRITE" commit -q -m "feat: seed"
+q git -C "$REWRITE" push -q origin main
+q git -C "$REWRITE" checkout -q -b topic
+block more 10 >>"$REWRITE/big.md"
+q git -C "$REWRITE" add big.md
+q git -C "$REWRITE" commit -q -m "feat: grow"
+# The same repository the tracking refs came from, under a spelling only the
+# rewrite resolves — the shape a consumer's SSH remote has when the fallback
+# pushes it over HTTPS. The branch is new on the remote, so its ref line
+# carries no destination oid and the boundary is what decides the scope.
+q git -C "$REWRITE" remote set-url origin "xalias:rewrite.git"
+REWRITE_LANE="$REWRITE/.agents/skills/commit-guards/scripts/pre-push"
+
+rewritten_push() { # -> the run's one line on stdout
+  local rc=0 out=""
+  out="$(git -C "$REWRITE" -c "url.$TMP/.insteadOf=xalias:" \
+    push --dry-run origin HEAD:refs/heads/topic 2>&1)" || rc=$?
+  said "$rc" "$out"
+}
+
+REWRITE_BOUNDED="rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0"
+REWRITE_WHOLE="rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0"
+assert_eq "a push through a rewritten spelling of the remote keeps its boundary" \
+  "$REWRITE_BOUNDED" "$(rewritten_push)"
+
+# The must-fail control: the same push judged by a copy of the lane that reads
+# the configured value back instead of asking git what it resolves to. That is
+# a second judge of the same question, and it disagrees on every rewrite —
+# the branch loses a boundary it has and the whole tree becomes the scope.
+REWRITE_KEPT="$TMP/pre-push.rewrite.kept"
+cp -- "$REWRITE_LANE" "$REWRITE_KEPT"
+sed -i.bak 's#git ls-remote --get-url "$REMOTE"#git config --get "remote.$REMOTE.url"#' "$REWRITE_LANE"
+rm -f -- "$REWRITE_LANE.bak"
+assert_eq "the configured-value edit took" "rewritten" \
+  "$(if cmp -s "$REWRITE_KEPT" "$REWRITE_LANE"; then echo unchanged; else echo rewritten; fi)"
+assert_eq "must-fail: reading the configured value back loses the boundary the rewrite kept" \
+  "$REWRITE_WHOLE" "$(rewritten_push)"
+cp -- "$REWRITE_KEPT" "$REWRITE_LANE"
 
 # ------------------------------------------------------------------ the replay
 #
