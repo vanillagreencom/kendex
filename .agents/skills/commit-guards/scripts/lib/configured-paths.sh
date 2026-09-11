@@ -327,26 +327,21 @@ GG_EXCLUDE_PATTERNS=()
 # shellcheck source=generated-paths.sh
 source "${BASH_SOURCE[0]%/*}/generated-paths.sh"
 
-# The scans read the INDEX, so policy files come from the index too: staged
-# edits to one govern staged scans, and a sparse checkout that omits the
-# tracked file from disk still applies it. A path staged for DELETION governs
-# as ABSENT — the commit carries no such file — which is not the same as a
-# never-tracked path, where the worktree copy is all there is.
+# The scans read the INDEX, so policy files come from the index and nowhere
+# else: staged edits to one govern staged scans, and a sparse checkout that
+# omits the tracked file from disk still applies it. A path the index does not
+# carry is ABSENT — whether it is staged for deletion or was never tracked,
+# the commit carries no such file. Every caller is a policy that can only
+# loosen a verdict (an excludes list, the render inventory, a tighten-only
+# baseline), and a worktree file nobody staged would hold the commit to rows
+# it does not carry, so the worktree copy is not read here at all.
 #
-# Each probe reserves one status for its one expected answer and routes every
-# other status through gg_fail. A probe git could not answer must
-# not fall through to the worktree copy: that judges the commit against looser
-# policy than the index carries, and says nothing while doing it.
-#
-# `tracked` drops the never-tracked fallback: a path the index does not carry
-# is absent, for a policy that can only loosen a verdict, where a worktree
-# file nobody staged would hold the commit to rows it does not carry.
-gg_policy_content() { # FILE [tracked] — content on stdout; 1 = the commit has no such file
-  local file="$1" mode="${2:-}" status=0 head_status=0 tree_status=0 entry=""
-  case "$mode" in
-    "" | tracked) ;;
-    *) gg_fail policy-mode "$mode" "gg_policy_content takes no mode but tracked" ;;
-  esac
+# The index probe reserves one status for its one expected answer and routes
+# every other status through gg_fail: a probe git could not answer must not be
+# read as "untracked", which would judge the commit against looser policy than
+# the index carries, and say nothing while doing it.
+gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such file
+  local file="$1" status=0
   # :(literal) — a path spelling a glob (`*`, `?`, `[`) must match itself in
   # the index, never whatever the glob happens to reach.
   git ls-files --error-unmatch -- ":(literal)$file" >/dev/null 2>&1 || status=$?
@@ -358,30 +353,9 @@ gg_policy_content() { # FILE [tracked] — content on stdout; 1 = the commit has
       git show ":0:$file" || gg_fail index-copy "$file" "could not read the staged copy of $(gg_shown "$file")"
       return 0
       ;;
-    1) [ "$mode" != tracked ] || return 1 ;;
+    1) return 1 ;;
     *) gg_fail index-query "$file:$status" "could not query the index for $(gg_shown "$file") (git ls-files exit $status); refusing to treat it as untracked" ;;
   esac
-  # ls-tree, never `cat-file -e`: with rev:path syntax git answers "no such
-  # path in HEAD" with the same 128 an operational failure returns, so only
-  # ls-tree (exit 0, empty output for an absent path) tells the two apart.
-  # An unborn HEAD carries nothing by definition — rev-parse reserves exit 1.
-  git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || head_status=$?
-  case "$head_status" in
-    0)
-      entry="$(git ls-tree HEAD -- ":(literal)$file" 2>/dev/null)" || tree_status=$?
-      [ "$tree_status" -eq 0 ] \
-        || gg_fail head-query "$file:$tree_status" "could not probe HEAD for $(gg_shown "$file") (git ls-tree exit $tree_status); refusing to treat it as untracked"
-      # Tracked in HEAD, absent from the index: staged for deletion.
-      if [ -n "$entry" ]; then return 1; fi
-      ;;
-    1) ;;
-    *) gg_fail head-resolve "$file:$head_status" "could not resolve HEAD while reading $(gg_shown "$file") (git rev-parse exit $head_status); refusing to treat it as untracked" ;;
-  esac
-  if [ -f "$file" ]; then
-    cat -- "$file" || gg_fail file-read "$file" "could not read $(gg_shown "$file")"
-    return 0
-  fi
-  return 1
 }
 
 # Shell glob matched against the full repo-relative path (`*` crosses `/`);
