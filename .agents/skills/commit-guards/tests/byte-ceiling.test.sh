@@ -145,6 +145,7 @@ legacy() { repo "$1"; put old.bin 4; commit "legacy oversized file"; } # NAME
 sweep() { legacy "$1"; baseline "$2"; } # NAME ROWS — the legacy file under a declared baseline
 fx_all_grown() { sweep all-grown 'old.bin\t4096\n'; put old.bin 5; }
 fx_all_unstaged() { legacy all-unstaged; mkdir -p "$R/tools"; printf 'old.bin\t4096\n' >"$R/$BASE_FILE"; } # a baseline written, never staged
+baseline_at() { legacy "$1"; mkdir -p "$R/conf"; printf 'old.bin\t4096\n' >"$R/conf/baseline"; git -C "$R" add -A; commit "baseline off the default path"; } # NAME
 feature() { # NAME ACTION — a feature branch over the legacy file: shrink, grow, add
   legacy "$1"
   git -C "$R" checkout -qb feature
@@ -178,6 +179,10 @@ run_rows \
   "--all fails a row larger than its file: a loosened row would let the file grow back unjudged|sweep all-loose old.bin\t5120\n|$C=1|--all|rc=1 ${ERR}baseline-loose=old.bin:5120:4096;$(failed 1 2 1 "$SWEEP")" \
   "--all fails a row naming no oversized file, while the held row beside it passes|sweep all-stale gone.bin\t4096\nold.bin\t4096\n|$C=1|--all|rc=1 ${ERR}baseline-stale=gone.bin:4096;$(failed 1 2 1 "$SWEEP")" \
   "a malformed baseline row is exit 2 naming its line|sweep all-malformed old.bin\tbig\n|$C=1|--all|rc=2 ${ERR}baseline-format=$BASE_FILE:1:$(printf 'old.bin\tbig')" \
+  "--baseline FILE names the baseline the sweep holds the file to|baseline_at baseline-flag|$C=1|--all --baseline conf/baseline|rc=0 $(ok 2 "$SWEEP")" \
+  "the equals form of --baseline names the same baseline|baseline_at baseline-eq|$C=1|--all --baseline=conf/baseline|rc=0 $(ok 2 "$SWEEP")" \
+  "COMMIT_GUARDS_BYTE_BASELINE names it through the settings ladder|baseline_at baseline-setting|COMMIT_GUARDS_BYTE_BASELINE=conf/baseline,$C=1|--all|rc=0 $(ok 2 "$SWEEP")" \
+  "control: with neither the flag nor the setting the default path holds nothing, and the file fails|baseline_at baseline-default|$C=1|--all|rc=1 $(over old.bin 4096 4 1);$(failed 1 2 1 "$SWEEP")" \
   "--base main permits a legacy oversized file to shrink|feature base-shrink shrink|$C=1|--base main|rc=0 $(ok 1 "$(since main)")" \
   "--base main rejects growth from the merge-base size|feature base-grow grow|$C=1|--base main|rc=1 $(grew old.bin 4096 5120 5 1);$(failed 1 1 1 "$(since main)")" \
   "--base main fails on the branch's added file|feature base-add add|$C=1|--base main|rc=1 $(over feat.bin 2048 2 1);$(failed 1 1 1 "$(since main)")" \
