@@ -9,7 +9,8 @@
 # file, one inside an untracked directory), the once-per-agent marker under the
 # reviewed repository's git common dir, that a sibling worktree's dirt is
 # not this worktree's, and the fail-closed edges — an unreadable payload,
-# a transcript that cannot be read, a git that cannot answer.
+# a transcript that cannot be read, a git that cannot answer, an agent_id not
+# spelled in the alphabet the harness names subagents in.
 #
 # Fixtures are throwaway git repositories built under a HOME of their own.
 #
@@ -289,6 +290,26 @@ assert_eq "$rc" 2 "no transcript_path refuses"
 run_payload "{\"agent_type\":\"reviewer-test\",\"agent_id\":\"../x\",\"transcript_path\":\"$T\"}"
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: agent-id=invalid" \
   "an agent_id that is not a name refuses"
+# The id is judged as the payload holds it, so no spelling outside the
+# alphabet reaches the marker path whatever the encoding between. This row
+# pins that refusal rather than a defect the old hook had: @tsv escaped a NUL
+# to a backslash and a zero, and the old shell-side test refused that for the
+# backslash.
+run_payload "{\"agent_type\":\"reviewer-test\",\"agent_id\":\"a1\\u0000a2\",\"transcript_path\":\"$T\"}"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: agent-id=invalid" \
+  "an agent_id carrying a NUL refuses"
+# `..` names the marker directory's parent, which exists once a first block
+# has recorded the directory, so an id the alphabet let through reads as this
+# subagent's own recorded block and passes a dirty worktree's stop unchecked.
+REPO_DOTS="$(new_repo dots)"
+T_DOTS="$(transcript_for "$REPO_DOTS")"
+printf 'probe\n' >"$REPO_DOTS/probe.txt"
+run_hook "$T_DOTS" reviewer-test k1
+assert_eq "$rc" 2 "a first block records the marker directory"
+run_payload "{\"agent_type\":\"reviewer-test\",\"agent_id\":\"..\",\"transcript_path\":\"$T_DOTS\"}"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: agent-id=invalid" \
+  "an agent_id of .. refuses rather than reading the marker directory's parent as a recorded block"
+assert_eq "$(ls -A "$REPO_DOTS/.git/kendex/reviewer-stop")" "k1" "and records no marker of its own"
 run_payload "{\"agent_type\":\"reviewer-test\",\"transcript_path\":\"$T\"}"
 assert_eq "$rc" 2 "no agent_id refuses"
 T2="$TMP_ROOT/transcript.gone.jsonl"
