@@ -305,3 +305,22 @@ gg_count_nonempty_lines() { # FILE — count on stdout; loud exit if grep cannot
   [ "$status" -le 1 ] || gg_fail lines-count "$1:$status" "could not count lines in $(gg_shown "$1") (grep exit $status)"
   printf '%s\n' "$n"
 }
+
+# A tighten-only baseline's hygiene: rows are 'path<TAB>N' with N a positive
+# integer, LC_ALL=C sorted, unique paths. Enforced, never repaired.
+gg_validate_baseline() { # FILE LABEL — returns only when every row is well formed
+  local file="$1" label="$2" grep_status=0 dup_status=0 bad_rows dup_paths
+  bad_rows="$(grep -nEv "^[^${GG_TAB}]+${GG_TAB}[1-9][0-9]*\$" -- "$file")" || grep_status=$?
+  [ "$grep_status" -le 1 ] || gg_fail baseline-scan "$label:$grep_status" "could not validate $label (grep exit $grep_status)"
+  if [ -n "$bad_rows" ]; then
+    gg_fail baseline-format "$label:$bad_rows" "$label: malformed row(s) above (expected 'path<TAB>N' with N a positive integer)"
+  fi
+  if ! LC_ALL=C sort -c -- "$file" 2>/dev/null; then
+    gg_fail baseline-order "$label" "$label: rows must be LC_ALL=C sorted (LC_ALL=C sort -o $label $label)"
+  fi
+  dup_paths="$(cut -f1 -- "$file" | LC_ALL=C uniq -d)" || dup_status=$?
+  [ "$dup_status" -eq 0 ] || gg_fail baseline-scan "$label:$dup_status" "could not read the paths of $label (exit $dup_status)"
+  if [ -n "$dup_paths" ]; then
+    gg_fail baseline-duplicates "$label:$dup_paths" "$label: duplicate path row(s) above"
+  fi
+}

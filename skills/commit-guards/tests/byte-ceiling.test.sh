@@ -5,7 +5,9 @@
 # copy and a moved-and-grown file are, a symlink or gitlink is not sized
 # content, --base judges the branch since its merge-base, --against judges
 # what it would do to another tree, and --all sweeps
-# every tracked file, lockfiles and declared asset trees are exempt, the
+# every tracked file, holding an oversized one to its baseline row and failing
+# a row that is loose or names no oversized file, lockfiles and declared
+# asset trees are exempt, the
 # ceiling resolves through the settings ladder and is validated, and a
 # measurement that breaks is a collection error, never a pass. One table:
 # a fixture builds the repository, the check runs with ARGS under ENVS, and
@@ -22,7 +24,7 @@ BC="$SKILL_DIR/scripts/byte-ceiling"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
 # Hermetic: a leaked setting would move every ceiling below.
-unset COMMIT_GUARDS_BYTE_CEILING_KB COMMIT_GUARDS_BYTE_EXCLUDES COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
+unset COMMIT_GUARDS_BYTE_CEILING_KB COMMIT_GUARDS_BYTE_EXCLUDES COMMIT_GUARDS_BYTE_BASELINE COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
 FAIL=0
@@ -75,6 +77,8 @@ put() { # PATH KB [FILL]
 commit() { git -C "$R" commit -qm "${1:-seed}"; }
 EXCL='tools/byte-ceiling-excludes'
 excludes() { mkdir -p "$R/tools"; printf '%b' "$1" >"$R/$EXCL"; git -C "$R" add -A; } # CONTENT (printf %b)
+BASE_FILE='tools/byte-ceiling-baseline'
+baseline() { mkdir -p "$R/tools"; printf '%b' "$1" >"$R/$BASE_FILE"; git -C "$R" add -A; } # ROWS (printf %b)
 
 # Stable records preserve sizes, counts, ceiling and scope.
 ERR="byte-ceiling: "
@@ -138,6 +142,10 @@ run_rows \
 
 echo "=== --all sweeps every tracked file; --base REF judges the branch since the merge-base ==="
 legacy() { repo "$1"; put old.bin 4; commit "legacy oversized file"; } # NAME
+sweep() { legacy "$1"; baseline "$2"; } # NAME ROWS — the legacy file under a declared baseline
+fx_all_grown() { sweep all-grown 'old.bin\t4096\n'; put old.bin 5; }
+fx_all_unstaged() { legacy all-unstaged; mkdir -p "$R/tools"; printf 'old.bin\t4096\n' >"$R/$BASE_FILE"; } # a baseline written, never staged
+baseline_at() { legacy "$1"; mkdir -p "$R/conf"; printf 'old.bin\t4096\n' >"$R/conf/baseline"; git -C "$R" add -A; commit "baseline off the default path"; } # NAME
 feature() { # NAME ACTION — a feature branch over the legacy file: shrink, grow, add
   legacy "$1"
   git -C "$R" checkout -qb feature
@@ -164,7 +172,17 @@ fx_unmerged() { # NAME — an add/add conflict: the index carries stages 2 and 3
 run_rows \
   "staged mode passes with nothing staged: the legacy file is untouched|legacy legacy-staged|$C=1||rc=0 $(ok 0)" \
   "--staged spelled out is the same scope, not a sweep|legacy legacy-staged-flag|$C=1|--staged|rc=0 $(ok 0)" \
-  "--all fails on the legacy oversized file, naming the sweep|legacy legacy-all|$C=1|--all|rc=1 $(over old.bin 4096 4 1);$(failed 1 1 1 "$SWEEP")" \
+  "--all fails an oversized file with no baseline row, naming the sweep|legacy legacy-all|$C=1|--all|rc=1 $(over old.bin 4096 4 1);$(failed 1 1 1 "$SWEEP")" \
+  "--all holds a legacy oversized file at its baseline row; the baseline is a tracked file and is counted|sweep all-held old.bin\t4096\n|$C=1|--all|rc=0 $(ok 2 "$SWEEP")" \
+  "--all reads the baseline from the index alone: a row written and never staged holds nothing|fx_all_unstaged|$C=1|--all|rc=1 $(over old.bin 4096 4 1);$(failed 1 1 1 "$SWEEP")" \
+  "--all fails a legacy file grown past its row|fx_all_grown|$C=1|--all|rc=1 $(grew old.bin 4096 5120 5 1);$(failed 1 2 1 "$SWEEP")" \
+  "--all fails a row larger than its file: a loosened row would let the file grow back unjudged|sweep all-loose old.bin\t5120\n|$C=1|--all|rc=1 ${ERR}baseline-loose=old.bin:5120:4096;$(failed 1 2 1 "$SWEEP")" \
+  "--all fails a row naming no oversized file, while the held row beside it passes|sweep all-stale gone.bin\t4096\nold.bin\t4096\n|$C=1|--all|rc=1 ${ERR}baseline-stale=gone.bin:4096;$(failed 1 2 1 "$SWEEP")" \
+  "a malformed baseline row is exit 2 naming its line|sweep all-malformed old.bin\tbig\n|$C=1|--all|rc=2 ${ERR}baseline-format=$BASE_FILE:1:$(printf 'old.bin\tbig')" \
+  "--baseline FILE names the baseline the sweep holds the file to|baseline_at baseline-flag|$C=1|--all --baseline conf/baseline|rc=0 $(ok 2 "$SWEEP")" \
+  "the equals form of --baseline names the same baseline|baseline_at baseline-eq|$C=1|--all --baseline=conf/baseline|rc=0 $(ok 2 "$SWEEP")" \
+  "COMMIT_GUARDS_BYTE_BASELINE names it through the settings ladder|baseline_at baseline-setting|COMMIT_GUARDS_BYTE_BASELINE=conf/baseline,$C=1|--all|rc=0 $(ok 2 "$SWEEP")" \
+  "control: with neither the flag nor the setting the default path holds nothing, and the file fails|baseline_at baseline-default|$C=1|--all|rc=1 $(over old.bin 4096 4 1);$(failed 1 2 1 "$SWEEP")" \
   "--base main permits a legacy oversized file to shrink|feature base-shrink shrink|$C=1|--base main|rc=0 $(ok 1 "$(since main)")" \
   "--base main rejects growth from the merge-base size|feature base-grow grow|$C=1|--base main|rc=1 $(grew old.bin 4096 5120 5 1);$(failed 1 1 1 "$(since main)")" \
   "--base main fails on the branch's added file|feature base-add add|$C=1|--base main|rc=1 $(over feat.bin 2048 2 1);$(failed 1 1 1 "$(since main)")" \

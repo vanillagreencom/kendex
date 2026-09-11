@@ -16,13 +16,17 @@
 #                       REF. Where REF is an ancestor of HEAD the two agree;
 #                       where the two have diverged they do not, and only
 #                       this one measures the effect on REF
-#   --all               every tracked file (full sweep)
+#   --all               every tracked file (full sweep), each oversized one
+#                       held to its row in the byte baseline
 #
 # Sizes are OBJECT sizes (`git cat-file -s` of each diff blob): the bytes that
 # enter history, filters applied, independent of worktree state. The source
 # blob is the tighten-only baseline for an existing oversized file. Renames
 # are detected, so moving an existing large file is not an addition; a copy
-# is one. Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
+# is one. A sweep has no second tree and so no source blob: its prior is the
+# declared baseline (path<TAB>bytes), and a row looser than its file or naming
+# no oversized file fails, so the declaration only tightens. Exit codes:
+# 0 clean; 1 violations; 2 usage/config/collection error.
 set -euo pipefail
 
 GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
@@ -38,7 +42,7 @@ source "$SCRIPT_DIR/lib/settings.sh"
 usage() {
   gg_message usage "$GG_CHECK" "Command usage follows."
   cat <<'EOF'
-usage: byte-ceiling [--staged | --base REF | --against REF | --all] [--excludes FILE]
+usage: byte-ceiling [--staged | --base REF | --against REF | --all] [--excludes FILE] [--baseline FILE]
 
 Tracked files a change puts over the byte ceiling fail. An existing file
 already over the ceiling may stay the same size or shrink, but may not grow.
@@ -55,11 +59,17 @@ push asks. A file already over the ceiling at the shared ancestor, smaller at
 REF and larger at HEAD, is a shrink to the first question and growth to the
 second.
 
+--all has no prior tree, so it holds each oversized file to its row in the
+baseline (path<TAB>bytes, read from the index): a file at its row passes, one
+past it or with no row fails, and a row larger than its file or naming no
+oversized file fails. An absent baseline is empty.
+
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
   COMMIT_GUARDS_BYTE_CEILING_KB   ceiling in KB        (default 200)
   COMMIT_GUARDS_BYTE_EXCLUDES     exclusion-list path  (default tools/byte-ceiling-excludes)
-Flag --excludes overrides the path setting.
+  COMMIT_GUARDS_BYTE_BASELINE     --all baseline path  (default tools/byte-ceiling-baseline)
+Flags --excludes and --baseline override the path settings.
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
@@ -68,6 +78,7 @@ EOF
 MODE="staged"
 BASE_REF=""
 EXCLUDES_OPT=""
+BASELINE_OPT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --staged) MODE="staged" ;;
@@ -98,6 +109,12 @@ while [ $# -gt 0 ]; do
       EXCLUDES_OPT="$1"
       ;;
     --excludes=*) EXCLUDES_OPT="${1#--excludes=}" ;;
+    --baseline)
+      [ $# -ge 2 ] || gg_fail argument-missing "--baseline" "--baseline requires a path"
+      shift
+      BASELINE_OPT="$1"
+      ;;
+    --baseline=*) BASELINE_OPT="${1#--baseline=}" ;;
     -h | --help)
       usage
       exit 0
@@ -115,6 +132,13 @@ CEILING_BYTES=$((CEILING_KB * 1024))
 
 EXCLUDES_FILE="$(gg_resolve_path "$EXCLUDES_OPT" COMMIT_GUARDS_BYTE_EXCLUDES "tools/byte-ceiling-excludes" excludes)" || exit 2
 gg_load_excludes "$EXCLUDES_FILE"
+
+# Only the sweep reads the baseline: every other scope takes its prior from
+# the diff's own source blob.
+BASELINE_FILE=""
+if [ "$MODE" = "all" ]; then
+  BASELINE_FILE="$(gg_resolve_path "$BASELINE_OPT" COMMIT_GUARDS_BYTE_BASELINE "tools/byte-ceiling-baseline" baseline)" || exit 2
+fi
 
 # Generated whole-file by package managers: size is not a design signal.
 LOCKFILE_BASENAMES="Cargo.lock package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml bun.lock bun.lockb flake.lock poetry.lock uv.lock Pipfile.lock Gemfile.lock composer.lock go.sum gradle.lockfile packages.lock.json Package.resolved"
@@ -175,6 +199,16 @@ case "$MODE" in
     # ls-files -s emits one record per STAGE for an unmerged path, so the
     # walk below would size two or three rival blobs as separate files.
     gg_require_merged_index
+    # Index only: a row can only hold a file, so an unstaged edit or a
+    # never-staged file must not hold the swept index to rows it does not
+    # carry.
+    baseline_status=0
+    gg_policy_content "$BASELINE_FILE" tracked >"$GG_TMP/baseline.tsv" || baseline_status=$?
+    case "$baseline_status" in
+      0) gg_validate_baseline "$GG_TMP/baseline.tsv" "$BASELINE_FILE" ;;
+      1) : >"$GG_TMP/baseline.tsv" ;;
+      *) gg_fail baseline-read "$BASELINE_FILE:$baseline_status" "could not read the baseline $BASELINE_FILE (exit $baseline_status, cause above)" ;;
+    esac
     git ls-files -sz >"$GG_TMP/files.z" 2>"$GG_TMP/dependency.err" || gg_fail_cause index-read "$?" "$GG_TMP/dependency.err" "git ls-files failed"
     while IFS= read -r -d '' rec; do
       # Record shape: "<mode> <sha> <stage>\t<path>".
@@ -211,6 +245,23 @@ if [ "$MODE" != "all" ]; then
   done <"$GG_TMP/raw.z"
 fi
 
+# Rows are validated one path and one size per line, so a tracked path holding
+# a tab or a newline never equals a row path and meets no row.
+baseline_row() { # PATH — the row's bytes on stdout; 1 when no row names PATH
+  local row_path row_bytes
+  while IFS="$GG_TAB" read -r row_path row_bytes || [ -n "$row_path" ]; do
+    if [ "$row_path" = "$1" ]; then
+      printf '%s' "$row_bytes"
+      return 0
+    fi
+  done <"$GG_TMP/baseline.tsv"
+  return 1
+}
+
+NL=$'\n'
+# The row paths an oversized file met, newline-delimited: a row path holds no
+# newline, and Bash 3.2 has no associative array.
+matched_rows=""
 checked=0
 violations=0
 while IFS= read -r -d '' sha \
@@ -223,10 +274,25 @@ while IFS= read -r -d '' sha \
   checked=$((checked + 1))
   if [ "$size" -gt "$CEILING_BYTES" ]; then
     prior_size=""
-    if gg_mode_is_regular "$srcmode"; then
+    if [ "$MODE" = "all" ]; then
+      if prior_size="$(baseline_row "$f")"; then
+        matched_rows="$matched_rows$f$NL"
+      else
+        prior_size=""
+      fi
+    elif gg_mode_is_regular "$srcmode"; then
       prior_size="$(git cat-file -s "$srcsha" 2>"$GG_TMP/dependency.err")" || gg_fail_cause prior-size "$f:$srcsha" "$GG_TMP/dependency.err" "cannot read prior blob $srcsha for '$f' — its size is unmeasurable, refusing to skip it"
     fi
     if [ -n "$prior_size" ] && [ "$prior_size" -gt "$CEILING_BYTES" ] && [ "$size" -le "$prior_size" ]; then
+      # A source blob is the file's own past, so a shrink is progress. A row
+      # is a declaration, and one left above its file would let the file grow
+      # back to the row unjudged.
+      if [ "$MODE" != "all" ] || [ "$size" -eq "$prior_size" ]; then
+        continue
+      fi
+      gg_message baseline-loose "$f:$prior_size:$size" "The baseline row allows more bytes than the file holds."
+      echo "  remedy: lower the row in $BASELINE_FILE to $size, or remove it once the file is under the ceiling"
+      violations=$((violations + 1))
       continue
     fi
     kb=$(((size + 1023) / 1024))
@@ -239,6 +305,19 @@ while IFS= read -r -d '' sha \
     violations=$((violations + 1))
   fi
 done <"$GG_TMP/candidates.z"
+
+# A row no oversized file met holds nothing today, and would let a file
+# re-added at that path return to the row's size.
+if [ "$MODE" = "all" ]; then
+  while IFS="$GG_TAB" read -r row_path row_bytes || [ -n "$row_path" ]; do
+    case "$NL$matched_rows" in
+      *"$NL$row_path$NL"*) continue ;;
+    esac
+    gg_message baseline-stale "$row_path:$row_bytes" "No oversized file the sweep judges is at this path."
+    echo "  remedy: remove the row from $BASELINE_FILE"
+    violations=$((violations + 1))
+  done <"$GG_TMP/baseline.tsv"
+fi
 
 case "$MODE" in
   staged) SCOPE_DESC="staged file(s)" ;;
