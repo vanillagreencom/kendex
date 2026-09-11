@@ -181,10 +181,14 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
             let synced = {
                 let _reading = ui::spinner("reading sources");
                 let mut synced = kendex_core::remote::sync_sources(env, &manifest)?;
-                // An add into a project can reach the personal scope's
+                // A bare add into a project can reach the personal scope's
                 // default marketplace, declared nowhere in the project:
                 // pending, it is fetched from the scope that declares it.
-                if !manifest.sources.contains_key(&name)
+                // A request that names its source never does, so a pending
+                // positional repository is not mistaken for a personal alias
+                // that happens to share its name.
+                if request.source.is_none()
+                    && !manifest.sources.contains_key(&name)
                     && let Scope::Project { .. } = &scope
                     && let Some(decl) = ops::manifest_for_reading(env, &Scope::Global)?
                         .sources
