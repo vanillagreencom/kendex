@@ -16,9 +16,8 @@ kendex distribution is independent of npm. `kendex add`/`refresh` copies local s
 - Publish only Pi extension packages that actually need a new npm version.
 - Use scoped npm names from `package.json` (normally `@vanillagreen/<name>`).
 - Per-package release tags use `<unscoped-name>-v<version>` (example: `pi-qol-v1.0.4`).
-- Never publish outside `op run --env-file=../../.env.npm -- npm publish --userconfig=../../.npmrc`.
-- Never write or log npm tokens. `.env.npm` only contains an `op://` reference, never a literal token; never commit `.env.npm` (gitignored).
-- Never use `op run --no-masking` outside one-off auth verification.
+- Publish with plain `npm publish`. The token is `NPM_TOKEN` in the environment, read by `~/.npmrc` through its `//registry.npmjs.org/:_authToken=${NPM_TOKEN}` line; nothing interactive, no 1Password, so it runs unattended on a workstation and in a fleet lane alike. Before the first publish run `npm whoami`; it must print the org account, else stop.
+- Never write or log npm tokens. Never put a literal token in any `.npmrc`; never create `.env.npm` or a repo-level `.npmrc`.
 - Stage only intended files. Preserve unrelated user dirty files; if unrelated dirt exists, stop and ask unless the user explicitly included it.
 - Version bump commits are separate from source/docs commits when source/docs changes are not already committed.
 - After any committed Pi package source change, run `kendex refresh`, then `kendex verify -g <changed packages...>`.
@@ -109,7 +108,7 @@ For each marked package that needs publishing:
 
    ```bash
    cd pi-extensions/<dir>
-   op run --env-file=../../.env.npm -- npm publish --userconfig=../../.npmrc
+   npm publish
    cd ../..
    ```
 
