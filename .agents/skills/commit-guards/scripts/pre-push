@@ -219,13 +219,13 @@ tracking_describes_push() { # -> 0 when the tracking refs are this push URL's
 # destination, and the whole tree is the only honest scope left.
 #
 # It is the last resort rather than the first, and the reason is measured.
-# byte-ceiling's `--all` emits candidates with no source blob, so its
-# tighten-only ratchet never applies and every tracked file over the ceiling
-# fails; CHECKS.md § byte-ceiling states the scopes apart. So a repository
-# carrying files that were already oversized when it adopted this package
-# DOES have such a push refused, and the excludes list or the bypass is the
-# way past it. Trying the boundary first is what keeps that rare rather than
-# routine; giving `--all` a ratchet is byte-ceiling's to do, not this lane's.
+# byte-ceiling's `--all` has no source blob, so it holds an oversized file to
+# its row in the byte baseline and fails one with no row; CHECKS.md §
+# byte-ceiling states the scopes apart. So a repository carrying files that
+# were already oversized when it adopted this package, with no baseline rows
+# for them, DOES have such a push refused, and a baseline row, the excludes
+# list or the bypass is the way past it. Trying the boundary first is what
+# keeps that rare rather than routine.
 local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
   local __v="$1" local_oid="$2" status=0 line=""
   # What this branch adds over what those refs last recorded. The boundary

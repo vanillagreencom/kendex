@@ -16,6 +16,11 @@ COMMIT_GUARDS_CHECKS = "todo-ban byte-ceiling suppression-ban conflict-markers c
 # Declared asset trees are exempted through COMMIT_GUARDS_BYTE_EXCLUDES.
 COMMIT_GUARDS_BYTE_CEILING_KB = "200"
 
+# The baseline byte-ceiling --all holds legacy oversized files to:
+# path<TAB>bytes rows, the object size each may keep. An absent file is an
+# empty baseline, so every oversized file fails the sweep.
+COMMIT_GUARDS_BYTE_BASELINE = "tools/byte-ceiling-baseline"
+
 # The changelog-entries fragment tree: a space-separated list of shell globs
 # against the full repo-relative path (`*` crosses `/`). Each match must be
 # one Markdown list item under a Keep a Changelog section directory, within

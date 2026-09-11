@@ -195,33 +195,17 @@ while IFS= read -r -d '' f; do
 done <"$GG_TMP/bare.z"
 LC_ALL=C sort "$GG_TMP/counts.raw" >"$GG_TMP/counts.tsv"
 
-# Baseline load + hygiene: worktree file first; a tracked-but-absent
-# baseline (sparse checkout) is read from the index so it cannot degrade to
-# empty; otherwise the baseline is empty. Hygiene is enforced, not repaired:
-# rows are 'path<TAB>count' with positive counts, LC_ALL=C sorted, unique.
-validate_baseline() { # FILE LABEL
-  local file="$1" label="$2" grep_status=0 bad_rows dup_paths
-  bad_rows="$(grep -nEv "^[^${GG_TAB}]+${GG_TAB}[1-9][0-9]*\$" -- "$file")" || grep_status=$?
-  [ "$grep_status" -le 1 ] || gg_fail baseline-scan "$label:$grep_status" "could not validate $label (grep exit $grep_status)"
-  if [ -n "$bad_rows" ]; then
-    gg_fail baseline-format "$label:$bad_rows" "$label: malformed row(s) above (expected 'path<TAB>count' with a positive count)"
-  fi
-  if ! LC_ALL=C sort -c -- "$file" 2>/dev/null; then
-    gg_fail baseline-order "$label" "$label: rows must be LC_ALL=C sorted (LC_ALL=C sort -o $BASELINE_FILE $BASELINE_FILE)"
-  fi
-  dup_paths="$(cut -f1 -- "$file" | LC_ALL=C uniq -d)"
-  if [ -n "$dup_paths" ]; then
-    gg_fail baseline-duplicates "$label:$dup_paths" "$label: duplicate path row(s) above"
-  fi
-}
-
+# Baseline load + hygiene (gg_validate_baseline): worktree file first; a
+# tracked-but-absent baseline (sparse checkout) is read from the index so it
+# cannot degrade to empty; otherwise the baseline is empty.
+#
 # The scan is index-scoped, so the baseline it is judged against is the index
 # copy too: an unstaged row bump must not authorize growth the commit does not
 # carry. Only a never-tracked baseline, and --update (which rewrites the
 # worktree copy), read from disk.
 BASELINE_FROM_INDEX=0
 if [ "$MODE" = "update" ] && [ -f "$BASELINE_FILE" ]; then
-  validate_baseline "$BASELINE_FILE" "$BASELINE_FILE"
+  gg_validate_baseline "$BASELINE_FILE" "$BASELINE_FILE"
   cp -- "$BASELINE_FILE" "$GG_TMP/baseline.tsv"
 else
   baseline_status=0
@@ -230,7 +214,7 @@ else
     0)
       # A readable policy with no worktree file came from the index.
       [ -f "$BASELINE_FILE" ] || BASELINE_FROM_INDEX=1
-      validate_baseline "$GG_TMP/baseline.tsv" "$BASELINE_FILE"
+      gg_validate_baseline "$GG_TMP/baseline.tsv" "$BASELINE_FILE"
       ;;
     1) : >"$GG_TMP/baseline.tsv" ;;
     *) gg_fail baseline-read "$BASELINE_FILE:$baseline_status" "could not read the baseline $BASELINE_FILE (exit $baseline_status, cause above)" ;;
