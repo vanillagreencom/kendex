@@ -80,7 +80,7 @@ refuse() { # KEY VALUE [DETAIL], or `drift` alone
         printf 'the render inventory .kendex-generated.json is present and could not be read\n'
         ;;
       inventory=invalid-json)
-        printf 'the render inventory .kendex-generated.json is not a JSON array of non-empty path strings; refusing rather than judging every render as code no document covers\n'
+        printf 'the render inventory .kendex-generated.json is not one JSON array of non-empty path strings, none holding a newline or a NUL; refusing rather than judging every render as code no document covers\n'
         ;;
       session-id=invalid)
         printf 'the payload carries no usable session_id, so naming these documents could not be recorded; refusing\n'
@@ -337,9 +337,22 @@ if [ -f "$INVENTORY" ]; then
   # reaches the refusal under its keyed line rather than ahead of it. Both are
   # silent when they succeed.
   INVENTORY_JSON=$(cat -- "$INVENTORY" 2>&1) || refuse inventory unreadable "$INVENTORY_JSON"
-  GENERATED=$(printf '%s' "$INVENTORY_JSON" | jq -r '
-    if type == "array" and all(.[]; type == "string" and length > 0)
-    then .[] else "" | halt_error(21) end' 2>&1) ||
+  # The shape check is the one
+  # `skills/commit-guards/scripts/lib/generated-paths.sh` runs on this same
+  # file, spelled again because a hook ships alone into a repository that need
+  # not have commit-guards installed. `-s` is what makes a count of documents
+  # visible at all: without it an empty, whitespace-only or truncated file
+  # yields no output and no error, which is the file being read as a project
+  # with nothing rendered. Exactly one document, an array whose members are
+  # non-empty strings holding neither a newline nor a NUL, since a path with a
+  # newline in it could not be matched a line at a time below.
+  GENERATED=$(printf '%s' "$INVENTORY_JSON" | jq -ers '
+    if length == 1 then .[0] else "" | halt_error(20) end
+    | if type == "array" and all(.[];
+        type == "string" and length > 0
+        and (contains("\n") or contains("\u0000") | not))
+      then join("\n")
+      else "" | halt_error(21) end' 2>&1) ||
     refuse inventory invalid-json "$GENERATED"
 fi
 

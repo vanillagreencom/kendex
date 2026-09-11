@@ -198,7 +198,7 @@ build() { # WORLD — the row's repository, its run directory and PATH
       # document covers, so one row asks what a render does and the other what
       # a path the same inventory does not list still does.
       generated) printf '["top.rs"]\n' >"$REPO/.kendex-generated.json"; seal ;;
-      bad-generated) printf 'not json\n' >"$REPO/.kendex-generated.json"; seal ;;
+      empty-generated) : >"$REPO/.kendex-generated.json"; seal ;;
       root-topic) printf '# All\n\nCovers: . ./ /\n' >"$REPO/docs/architecture/all.md"; seal ;;
       with-master) fgit -C "$REPO" branch master ;;
       master) fgit -C "$REPO" branch -m main master ;;
@@ -476,7 +476,7 @@ a default-branch probe git cannot answer is not read as absent|clone break:symbo
 a payload that cannot be read|repo break:cat|code|stop|2|-|payload=unreadable;fixture: cat failed
 a payload that is not JSON|repo|code|raw|2|-|payload=invalid-json
 a jq that cannot answer for the payload, with its own words below|repo break:jq|code|stop|2|-|payload=invalid-json;fixture: jq failed
-an inventory that does not parse is not read as nothing rendered|repo bad-generated|top|stop|2|-|inventory=invalid-json
+an inventory holding no document is not read as nothing rendered|repo empty-generated|top|stop|2|-|inventory=invalid-json
 a payload carrying no session id|repo|code|noid|2|-|session-id=invalid
 a marker that cannot be recorded|repo sealed-marker|code|stop|2|-|marker=<path>
 no command the hook runs on PATH names the payload readers alone|repo nopath|code|stop|2|-|missing-tools=jq,cat
