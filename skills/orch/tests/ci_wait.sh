@@ -169,57 +169,33 @@ case "${1:-}" in
           exit 8
         fi
       fi
-      # Green, then a settled transient failure, then green again, phased on
-      # the rerun the script itself requests rather than on a call count: the
-      # retry path reads the rollup a second time through get_failed_run_id,
-      # so a count alone would put the failure's own lookup in the next phase.
-      if [[ "${STUB_PR_CHECKS_MODE:-}" == "rerun_then_green" ]]; then
+      # One rollup per poll, from STUB_PR_CHECKS_SEQUENCE: colon-separated
+      # tokens (a row's env list separates on commas), the count file giving
+      # the poll index, the last token repeating. `fail_rerun` phases on the
+      # rerun the script itself requests rather than on the index, because the
+      # retry path reads the rollup a second time through get_failed_run_id.
+      if [[ -n "${STUB_PR_CHECKS_SEQUENCE:-}" ]]; then
         count=0
         if [[ -f "${STUB_PR_CHECKS_COUNT_FILE:?}" ]]; then
           count="$(cat "$STUB_PR_CHECKS_COUNT_FILE")"
         fi
         count=$((count + 1))
         printf '%s' "$count" > "$STUB_PR_CHECKS_COUNT_FILE"
-        if [[ "$count" -gt 3 && ! -s "${STUB_RERUN_CALLS_FILE:-/dev/null}" ]]; then
-          echo '[{"name":"build","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29099680623/job/301","workflow":"CI","startedAt":"2026-07-10T11:00:00Z","completedAt":"2026-07-10T11:05:00Z"}]'
-          exit 1
-        fi
-        echo '[{"name":"build","state":"SUCCESS"}]'
-        exit 0
-      fi
-      # A check that registers late and settled: one green check on the first
-      # poll, two on every later one. Nothing is ever pending, so only the
-      # settled-check window decides when the wait completes.
-      if [[ "${STUB_PR_CHECKS_MODE:-}" == "late_second_check" ]]; then
-        count=0
-        if [[ -f "${STUB_PR_CHECKS_COUNT_FILE:?}" ]]; then
-          count="$(cat "$STUB_PR_CHECKS_COUNT_FILE")"
-        fi
-        count=$((count + 1))
-        printf '%s' "$count" > "$STUB_PR_CHECKS_COUNT_FILE"
-        if [[ "$count" -eq 1 ]]; then
-          echo '[{"name":"build","state":"SUCCESS"}]'
-          exit 0
-        fi
-        echo '[{"name":"build","state":"SUCCESS"},{"name":"lint","state":"SUCCESS"}]'
-        exit 0
-      fi
-      # One check going SUCCESS, SKIPPED, SUCCESS. A skipped check is in no
-      # class, so the middle poll reaches neither the settled-check window nor
-      # any failure arm, and the greens either side of it are the same picture.
-      if [[ "${STUB_PR_CHECKS_MODE:-}" == "skipped_between_greens" ]]; then
-        count=0
-        if [[ -f "${STUB_PR_CHECKS_COUNT_FILE:?}" ]]; then
-          count="$(cat "$STUB_PR_CHECKS_COUNT_FILE")"
-        fi
-        count=$((count + 1))
-        printf '%s' "$count" > "$STUB_PR_CHECKS_COUNT_FILE"
-        if [[ "$count" -eq 2 ]]; then
-          echo '[{"name":"build","state":"SKIPPED"}]'
-          exit 0
-        fi
-        echo '[{"name":"build","state":"SUCCESS"}]'
-        exit 0
+        IFS=':' read -ra toks <<<"$STUB_PR_CHECKS_SEQUENCE"
+        idx=$((count - 1))
+        [[ "$idx" -lt "${#toks[@]}" ]] || idx=$((${#toks[@]} - 1))
+        case "${toks[$idx]}" in
+          green)   echo '[{"name":"build","state":"SUCCESS"}]'; exit 0 ;;
+          green2)  echo '[{"name":"build","state":"SUCCESS"},{"name":"lint","state":"SUCCESS"}]'; exit 0 ;;
+          mixed)   echo '[{"name":"build","state":"SUCCESS"},{"name":"docs","state":"SKIPPED"}]'; exit 0 ;;
+          skipped) echo '[{"name":"build","state":"SKIPPED"}]'; exit 0 ;;
+          fail_rerun)
+            [[ ! -s "${STUB_RERUN_CALLS_FILE:-/dev/null}" ]] || { echo '[{"name":"build","state":"SUCCESS"}]'; exit 0; }
+            echo '[{"name":"build","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29099680623/job/301","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"}]'
+            exit 1
+            ;;
+          *) printf 'unknown sequence token: %s\n' "${toks[$idx]}" >&2; exit 1 ;;
+        esac
       fi
       if [[ "${STUB_PR_CHECKS_MODE:-}" == "pending_always" ]]; then
         echo '[{"name":"build","state":"IN_PROGRESS"}]'
@@ -505,8 +481,9 @@ table "$JSON" \
   "a PR already green at the script's own defaults completes, not times out||$JSON_DEFAULTS||rc=0 status=complete verdict=pass passed=1" \
   "a pending check at those defaults still waits to the deadline||$JSON_DEFAULTS|STUB_PR_CHECKS_MODE=pending_always|rc=1 status=timeout verdict=pending check.build=IN_PROGRESS" \
   'a green rollup the budget never confirmed is pending at the deadline, not pass||1 10 30 --json||rc=1 status=timeout verdict=pending passed=1 pending=0' \
-  'a check registering late and settled restarts the window|||STUB_PR_CHECKS_MODE=late_second_check|rc=0 status=complete verdict=pass passed=2 elapsed_seconds=120' \
-  'a poll in no class breaks the streak the greens either side of it would share|||STUB_PR_CHECKS_MODE=skipped_between_greens|rc=0 status=complete verdict=pass passed=1 elapsed_seconds=150' \
+  'a check registering late and settled restarts the window|||STUB_PR_CHECKS_SEQUENCE=green:green2|rc=0 status=complete verdict=pass passed=2 elapsed_seconds=120' \
+  'a poll in no class breaks the streak the greens either side of it would share|||STUB_PR_CHECKS_SEQUENCE=green:skipped:green|rc=0 status=complete verdict=pass passed=1 elapsed_seconds=150' \
+  'a check registering late as skipped is a different rollup and restarts the window|||STUB_PR_CHECKS_SEQUENCE=green:mixed|rc=0 status=complete verdict=pass passed=1 elapsed_seconds=120' \
   "checks still in progress at the deadline are a timeout||$JSON_SHORT|STUB_PR_CHECKS_MODE=pending_always|rc=1 status=timeout verdict=pending check.build=IN_PROGRESS" \
   'no checks registered past the grace window is a named error|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=3|rc=1 status=error error_named=true' \
   "no checks registered inside the default grace window stays pending||$JSON_SHORT|STUB_PR_CHECKS_MODE=empty|rc=1 status=timeout verdict=pending" \
@@ -607,7 +584,7 @@ assert_le 65536 "$transient_tail_bytes" "one pipe buffer fits inside the log pas
 table "$JSON" \
   "a transient marker in a large failed-job log reruns the failing run; the retried failure still settles terminal|||STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-checks.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json,STUB_RUN_LOG_FILE=$transient_log|rc=1 verdict=fail reruns=29662812172" \
   "a gh failure reading the log is not transient: nothing is rerun|||STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-checks.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json|rc=1 verdict=fail reruns=none" \
-  "a rerun restarts the settled-check window: the greens before it carry nothing|||STUB_PR_CHECKS_MODE=rerun_then_green,STUB_RUN_LOG_FILE=$transient_log|rc=0 status=complete verdict=pass reruns=29099680623 elapsed_seconds=190"
+  "a rerun restarts the settled-check window: the greens before it carry nothing|||STUB_PR_CHECKS_SEQUENCE=green:green:green:fail_rerun,STUB_RUN_LOG_FILE=$transient_log|rc=0 status=complete verdict=pass reruns=29099680623 elapsed_seconds=190"
 
 echo "=== argument validation ends in the parser, before any gh call ==="
 # The recording gh stub fails every call, so a case that reached auth or a
