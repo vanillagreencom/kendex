@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # dev-artifact-check --verdict field, review-artifact-check --path mode, and
 # ci-wait's none-configured route: each acceptance answer must be a single
-# deterministic word the orchestrator can act on without combining checks.
+# deterministic word the orchestrator can act on without combining checks, and
+# that route's result must name the repository it read like every other one.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -90,6 +91,15 @@ out=$(cd "$WT" && PATH="$BIN:$PATH" env -u GH_REPO GH_STUB_LOG="$TMP/gh.log" \
   CI_WAIT_NO_CHECKS_GRACE=1 GH_TOKEN=stub "$SCRIPTS/ci-wait" 1 1 5 --json 2>/dev/null || true)
 check "no workflows + no protection + no rules → verdict none" "none" "$(jq -r '.verdict // empty' <<<"$out")"
 check "none-configured is status complete" "complete" "$(jq -r '.status // empty' <<<"$out")"
+# This route builds its own result object rather than routing through
+# emit_result, so the repository every other verdict names is asserted here
+# too, on both the JSON object and the plain line.
+check "none-configured names the repository it read" "owner/repo" "$(jq -r '.repo // empty' <<<"$out")"
+
+text=$(cd "$WT" && PATH="$BIN:$PATH" env -u GH_REPO GH_STUB_LOG="$TMP/gh-text.log" \
+  CI_WAIT_NO_CHECKS_GRACE=1 GH_TOKEN=stub "$SCRIPTS/ci-wait" 1 1 5 2>/dev/null || true)
+check "the plain none-configured line names its base and repository" \
+  "ci-wait: none-configured base=main repo=owner/repo" "${text%%$'\n'*}"
 
 # Teeth: with active workflows present the shortcut must NOT fire — the run
 # falls through to the grace path and, at grace 1s with no checks, errors out.

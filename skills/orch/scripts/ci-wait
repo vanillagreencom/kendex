@@ -110,7 +110,7 @@ ci_message() {
       printf '%s\n' "no-CI probe inconclusive ($probe_name not probed: the PR's $probe_input lookup failed); continuing to wait for checks"
       ;;
     none-configured)
-      printf 'ci-wait: none-configured base=%s\n' "$base_branch"
+      printf 'ci-wait: none-configured base=%s repo=%s\n' "$base_branch" "$REPO"
       printf '%s\n' "CI: none configured (no active workflows, no required checks on $base_branch)"
       ;;
     no-checks)
@@ -690,8 +690,13 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
       if [ "$wf_count" = "0" ] && [ "$protected" = "false" ] && [ "$rule_checks" = "0" ] && [ "$ext_statuses" = "0" ]; then
         update_elapsed
         if $JSON_OUTPUT; then
-          jq -n --argjson elapsed "$elapsed" --arg base "$base_branch" \
-            '{status: "complete", verdict: "none", elapsed_seconds: $elapsed,
+          # emit_result derives its verdict from the check classes and carries
+          # no reason, neither of which this route can say, so it builds its
+          # own object. Every field it shares with emit_result, repo included,
+          # holds the same value there: this verdict names the repository it
+          # read like every other one.
+          jq -n --argjson elapsed "$elapsed" --arg base "$base_branch" --arg repo "$REPO" \
+            '{status: "complete", verdict: "none", repo: $repo, elapsed_seconds: $elapsed,
               reason: ("no CI configured: no active workflows and no required checks on " + $base),
               pending_checks: [], failed_checks: [], passed_checks: []}'
         else
