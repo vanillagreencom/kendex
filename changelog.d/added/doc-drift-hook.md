@@ -1,1 +1,1 @@
-- `doc-drift-check` (Claude Code Stop) names the unchanged documents covering changed code to the agent and blocks that stop once per set; a stop whose set was already named passes.
+- `doc-drift-check` (Claude Code Stop) blocks a stop once per set, naming unchanged docs over changed code, `Covers:` entries that match no file, and changed files no doc covers.

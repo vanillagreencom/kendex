@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# doc-drift-check: a Stop hook that blocks once per stale-document set. Every
+# doc-drift-check: a Stop hook that blocks once per set of findings. Every
 # changed non-markdown path is matched against the nearest tracked non-root
 # AGENTS.md above it and every topic file whose Covers entry reaches it; a
-# covering doc left unchanged is named once on stderr with exit 2, the channel
-# the harness gives Claude, and stdout stays empty. The set is recorded under
+# covering doc left unchanged, a Covers entry no path on disk matches, and a
+# changed path no doc covers where some topic declares an entry are each named
+# once on stderr with exit 2, the channel the harness gives Claude, and stdout
+# stays empty. The set is recorded under
 # `<git common dir>/kendex/doc-drift/<session_id>-<digest>`, so a later stop
 # naming that same set passes and a set that differs blocks once more. The
 # changed set is read against the branch's merge-base with the default branch,
@@ -27,14 +29,15 @@
 #            (stop_hook_active true), `noid` (no session_id) or `raw` (not
 #            JSON); tables without the column feed `stop`
 #   rc       the exit status
-#   out      the documents the refusal names, each as `<doc>(<changed path>)`,
-#            sorted and joined by `,`; `-` when it names none. Anything on
-#            stdout renders as `stdout:` and the text, since the hook writes
-#            there at no time
-#   base     the refusal's `doc-drift-check: base=` value: the ref the hook
-#            compared against, or `default-branch`, `none` or `unrelated` for
-#            the three ways it is left the working tree alone; `-` without a
-#            refusal
+#   out      the findings the refusal names, sorted and joined by `,`: a stale
+#            document as `<doc>(<changed path>)`, a dangling entry as
+#            `<topic>(Covers: <entry>)`, an uncovered path bare; `-` when it
+#            names none. Anything on stdout renders as `stdout:` and the text,
+#            since the hook writes there at no time
+#   base     the refusal's `doc-drift-check: base=` value, the line after its
+#            count lines: the ref the hook compared against, or
+#            `default-branch`, `none` or `unrelated` for the three ways it is
+#            left the working tree alone; `-` without a refusal
 #   stale    the refusal's own first line, `doc-drift-check: stale=<count>`;
 #            `-` without a refusal
 #   err      the keyed first line of each report in order, joined by `;`, with
@@ -174,9 +177,12 @@ build() { # WORLD — the row's repository, its run directory and PATH
       ignore-target) printf 'target/\n' >"$REPO/.gitignore"; seal ;;
       ui-topic)
         mkdir -p "$REPO/ui/lib"
+        printf 'export const c = 0;\n' >"$REPO/ui/lib/c.ts"
         printf '# UI\n\nCovers: ui/src/, crates/core,ui/lib\n' >"$REPO/docs/architecture/ui.md"
         seal
         ;;
+      dangling-topic) change dangle; seal ;;
+      glob-topic) printf '# Libraries\n\nCovers: crates/*lib.rs\n' >"$REPO/docs/architecture/libs.md"; seal ;;
       selected-topic)
         mkdir -p "$REPO/crates/eval/src"
         printf '# Selected paths\n\nCovers: ui/src/app.ts, crates/*/src/eval*.rs\n' >"$REPO/docs/architecture/selected.md"
@@ -232,6 +238,8 @@ change() { # WORDS — the row's edits, in order
       top) printf 'x\n' >"$REPO/top.rs" ;;
       target) mkdir -p "$REPO/crates/core/target"; printf 'fn generated() {}\n' >"$REPO/crates/core/target/generated.rs" ;;
       eval) printf 'pub fn more() {}\n' >>"$REPO/crates/eval/src/eval_score.rs" ;;
+      dangle) printf '# Gone\n\nCovers: crates/gone\n' >"$REPO/docs/architecture/gone.md" ;;
+      rm-ui) rm -- "$REPO/ui/src/app.ts" ;;
       stage) fgit -C "$REPO" add -A ;;
       commit) fgit -C "$REPO" add -A; fgit -C "$REPO" commit -q -m step ;;
       stopped) run stop ;;
@@ -269,21 +277,36 @@ out_text() {
         path="${line#* (}"
         out="$out$doc(${path% changed)})"$'\n'
         ;;
+      "  "*" (Covers: "*")")
+        line="${line#  }"
+        out="$out${line%% (*}(${line#* (}"$'\n'
+        ;;
+      "  "*) out="$out${line#  }"$'\n' ;;
     esac
   done <<<"$MESSAGE"
   [[ "$out" != "" ]] || { printf -- '-'; return; }
   printf '%s' "$out" | LC_ALL=C sort | paste -s -d ',' -
 }
 
-# The refusal opens with two keyed lines, `stale=` then `base=`, so this reads
-# line 2 rather than searching for the key: a base line further down would not
-# be the contract.
+# The refusal opens with a keyed count line per kind of finding, then `base=`,
+# so this reads the line after that run rather than searching for the key: a
+# base line further down would not be the contract.
 base_text() {
-  case "$MESSAGE" in
-    "doc-drift-check: stale="*) ;;
-    *) printf -- '-'; return ;;
-  esac
-  printf '%s\n' "$MESSAGE" | sed -n '2s/^doc-drift-check: base=//p'
+  local line counted=0
+  while IFS= read -r line; do
+    case "$line" in
+      "doc-drift-check: stale="* | "doc-drift-check: dangling="* | "doc-drift-check: uncovered="*) counted=1 ;;
+      "doc-drift-check: base="*)
+        if [[ "$counted" -eq 1 ]]; then
+          printf '%s' "${line#doc-drift-check: base=}"
+          return
+        fi
+        break
+        ;;
+      *) break ;;
+    esac
+  done <<<"$MESSAGE"
+  printf -- '-'
 }
 
 err_text() {
@@ -360,7 +383,7 @@ CORE_AND_UI="$CORE_DOCS,docs/architecture/ui.md(crates/core/src/lib.rs)"
 
 run_table "coverage: which unchanged docs a changed path names" "world change out" "\
 a clean tree names nothing|repo|-|-
-code under a directory no doc covers|repo nodocs|code|-
+code where no topic declares a Covers entry names nothing, not even as uncovered|repo nodocs|code|-
 the nearest AGENTS.md and the covering topic, each with the path, never the root AGENTS.md|repo|code|$CORE_DOCS
 a changed nearest AGENTS.md is not named|repo|code agents|-
 a changed topic is not named|repo|code topic|-
@@ -370,7 +393,7 @@ the farther AGENTS.md is never named|repo crates-agents|code|$CORE_DOCS
 a markdown-only change names nothing|repo|md|-
 an untracked new file is a change, named by its path|repo|new|crates/core/AGENTS.md(crates/core/src/added.rs),docs/architecture/core.md(crates/core/src/added.rs)
 a staged new file is a change, named by its path|repo|new stage|crates/core/AGENTS.md(crates/core/src/added.rs),docs/architecture/core.md(crates/core/src/added.rs)
-code under no doc at all names nothing|repo|ui top|-
+code under no doc at all is named as uncovered|repo|ui top|top.rs,ui/src/app.ts
 an untracked new file from a subdirectory is named by its repository path|repo subdir|new|crates/core/AGENTS.md(crates/core/src/added.rs),docs/architecture/core.md(crates/core/src/added.rs)
 an ignored path is not a change|repo ignore-target|target|-
 a trailing-slash entry covers the directory|repo ui-topic|ui|docs/architecture/ui.md(ui/src/app.ts)
@@ -379,9 +402,17 @@ a second topic naming the same directory is named beside the first|repo ui-topic
 an exact file entry reaches its topic|repo selected-topic|ui|docs/architecture/selected.md(ui/src/app.ts)
 a glob entry reaches its topic, * crossing /|repo selected-topic|eval|docs/architecture/selected.md(crates/eval/src/eval_score.rs)
 a topic two paths reach is named once, with the first path|repo selected-topic|ui eval|docs/architecture/selected.md(crates/eval/src/eval_score.rs)
-an exact file entry does not cover a sibling sharing its prefix|repo file-topic|other|-
-root entries cover nothing|repo root-topic|ui|-
+an exact file entry does not cover a sibling sharing its prefix, which is uncovered|repo file-topic|other|ui/src/app.tsx
+root entries cover nothing, so the path is uncovered|repo root-topic|ui|ui/src/app.ts
 a non-ASCII path is code and keeps its bytes|repo|unicode|crates/core/AGENTS.md(crates/core/src/über.rs),docs/architecture/core.md(crates/core/src/über.rs)
+"
+
+run_table "an entry matching no path, and a changed path no doc covers" "world change rc out err" "\
+a Covers entry matching no path is named on a markdown-only change|repo dangling-topic|md|2|docs/architecture/gone.md(Covers: crates/gone)|dangling=1;base=default-branch
+an entry naming a file deleted and not yet staged is named|repo file-topic|rm-ui|2|docs/architecture/selected.md(Covers: ui/src/app.ts),docs/architecture/selected.md(ui/src/app.ts)|stale=1;dangling=1;base=default-branch
+a glob entry is satisfied by a path its * reaches across /|repo glob-topic|md|0|-|-
+a changed path no doc covers is named|repo|top|2|top.rs|uncovered=1;base=default-branch
+each kind that holds has its keyed line, stale then dangling then uncovered|repo dangling-topic|code top|2|$CORE_DOCS,docs/architecture/gone.md(Covers: crates/gone),top.rs|stale=2;dangling=1;uncovered=1;base=default-branch
 "
 
 run_table "base selection: what the branch is compared against" "world change rc out base" "\
@@ -407,6 +438,10 @@ an active stop records nothing, so the set still blocks|repo|code stopped-active
 another session is told the same set|repo|code stopped|stop2|2|$CORE_DOCS
 a set that gained a document blocks again|repo ui-topic|ui stopped code|stop|2|$CORE_AND_UI
 a set named earlier passes after another set intervened|repo ui-topic|ui stopped code stopped revert-code|stop|0|-
+a dangling entry named once passes on a later stop|repo dangling-topic|md stopped|stop|0|-
+an uncovered path named once passes on a later stop|repo|top stopped|stop|0|-
+a set that gained a dangling entry blocks again|repo|code stopped dangle|stop|2|$CORE_DOCS,docs/architecture/gone.md(Covers: crates/gone)
+a set that gained an uncovered path blocks again|repo|code stopped top|stop|2|$CORE_DOCS,top.rs
 "
 
 run_table "a state the hook cannot read or a marker it cannot write is refused" "world change payload rc out err" "\
