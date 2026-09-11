@@ -169,6 +169,34 @@ case "${1:-}" in
           exit 8
         fi
       fi
+      # One rollup per poll, from STUB_PR_CHECKS_SEQUENCE: colon-separated
+      # tokens (a row's env list separates on commas), the count file giving
+      # the poll index, the last token repeating. `fail_rerun` phases on the
+      # rerun the script itself requests rather than on the index, because the
+      # retry path reads the rollup a second time through get_failed_run_id.
+      if [[ -n "${STUB_PR_CHECKS_SEQUENCE:-}" ]]; then
+        count=0
+        if [[ -f "${STUB_PR_CHECKS_COUNT_FILE:?}" ]]; then
+          count="$(cat "$STUB_PR_CHECKS_COUNT_FILE")"
+        fi
+        count=$((count + 1))
+        printf '%s' "$count" > "$STUB_PR_CHECKS_COUNT_FILE"
+        IFS=':' read -ra toks <<<"$STUB_PR_CHECKS_SEQUENCE"
+        idx=$((count - 1))
+        [[ "$idx" -lt "${#toks[@]}" ]] || idx=$((${#toks[@]} - 1))
+        case "${toks[$idx]}" in
+          green)   echo '[{"name":"build","state":"SUCCESS"}]'; exit 0 ;;
+          green2)  echo '[{"name":"build","state":"SUCCESS"},{"name":"lint","state":"SUCCESS"}]'; exit 0 ;;
+          mixed)   echo '[{"name":"build","state":"SUCCESS"},{"name":"docs","state":"SKIPPED"}]'; exit 0 ;;
+          skipped) echo '[{"name":"build","state":"SKIPPED"}]'; exit 0 ;;
+          fail_rerun)
+            [[ ! -s "${STUB_RERUN_CALLS_FILE:-/dev/null}" ]] || { echo '[{"name":"build","state":"SUCCESS"}]'; exit 0; }
+            echo '[{"name":"build","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29099680623/job/301","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"}]'
+            exit 1
+            ;;
+          *) printf 'unknown sequence token: %s\n' "${toks[$idx]}" >&2; exit 1 ;;
+        esac
+      fi
       if [[ "${STUB_PR_CHECKS_MODE:-}" == "pending_always" ]]; then
         echo '[{"name":"build","state":"IN_PROGRESS"}]'
         exit 8
@@ -389,8 +417,15 @@ table() {
   done
 }
 
-JSON='1 1 30 --json'
+# The poll interval and budget every row inherits. Both are spent on the
+# virtual clock, so they are sized like production's rather than to save real
+# seconds: the settled-check window below is wall-clock seconds, and a budget
+# under it leaves a green PR unconfirmed at the deadline.
+JSON='1 30 300 --json'
 JSON_SHORT='1 1 5 --json'
+# The script's own defaults for poll interval and budget: positional args
+# omitted, so a row using this reads whatever ci-wait defaults to.
+JSON_DEFAULTS='1 --json'
 
 echo "=== the auth ladder: env token, keyring, bot token ==="
 # A stale inherited token is unset with a warning and the keyring tried; with
@@ -433,10 +468,22 @@ echo "=== the verdict over the checks sequence ==="
 # never success or silence; no checks registered is pending inside the
 # CI_WAIT_NO_CHECKS_GRACE window and an error past it; a settled failure is
 # terminal; an auth failure is a parseable error object.
+#
+# The settled-check window is wall-clock seconds, so the three rows taking the
+# script's own poll interval and budget are what a lane actually runs: a PR
+# already green before the wait started completes, a pending one still waits,
+# and a budget shorter than the window reports the unconfirmed green rollup as
+# pending — "pass" is paired with status "complete" and nothing else.
 table "$JSON" \
   'a pending exit with valid JSON keeps polling|||STUB_PR_CHECKS_MODE=pending_once|rc=0 verdict=pass checks_polls=2' \
   "an EXPECTED check is pending until it clears||$JSON_SHORT|STUB_PR_CHECKS_MODE=expected_once|rc=0 verdict=pass checks_polls=2" \
   'a pass is complete with its checks listed||||rc=0 status=complete verdict=pass passed=1' \
+  "a PR already green at the script's own defaults completes, not times out||$JSON_DEFAULTS||rc=0 status=complete verdict=pass passed=1" \
+  "a pending check at those defaults still waits to the deadline||$JSON_DEFAULTS|STUB_PR_CHECKS_MODE=pending_always|rc=1 status=timeout verdict=pending check.build=IN_PROGRESS" \
+  'a green rollup the budget never confirmed is pending at the deadline, not pass||1 10 30 --json||rc=1 status=timeout verdict=pending passed=1 pending=0' \
+  'a check registering late and settled restarts the window|||STUB_PR_CHECKS_SEQUENCE=green:green2|rc=0 status=complete verdict=pass passed=2 elapsed_seconds=120' \
+  'a poll in no class breaks the streak the greens either side of it would share|||STUB_PR_CHECKS_SEQUENCE=green:skipped:green|rc=0 status=complete verdict=pass passed=1 elapsed_seconds=150' \
+  'a check registering late as skipped is a different rollup and restarts the window|||STUB_PR_CHECKS_SEQUENCE=green:mixed|rc=0 status=complete verdict=pass passed=1 elapsed_seconds=120' \
   "checks still in progress at the deadline are a timeout||$JSON_SHORT|STUB_PR_CHECKS_MODE=pending_always|rc=1 status=timeout verdict=pending check.build=IN_PROGRESS" \
   'no checks registered past the grace window is a named error|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=3|rc=1 status=error error_named=true' \
   "no checks registered inside the default grace window stays pending||$JSON_SHORT|STUB_PR_CHECKS_MODE=empty|rc=1 status=timeout verdict=pending" \
@@ -446,7 +493,7 @@ table "$JSON" \
 echo "=== text mode prints a result line for every terminal status ==="
 # The line beyond its leading words is not a contract anything parses; the
 # leading words are text-only, so a JSON default flip fails these rows.
-table '1 1 30' \
+table '1 30 300' \
   'passed||||rc=0 stdout~ci-wait:+passed+pr=1+repo=owner/repo=true' \
   'failed|||STUB_PR_CHECKS_MODE=failure|rc=1 stdout~ci-wait:+failed+pr=1+repo=owner/repo=true' \
   'timeout||1 1 5|STUB_PR_CHECKS_MODE=pending_always|rc=1 stdout~ci-wait:+timeout+elapsed=5+verdict=pending+repo=owner/repo=true' \
@@ -536,7 +583,8 @@ assert_le 131072 "$transient_window_bytes" "two pipe buffers fit inside the scan
 assert_le 65536 "$transient_tail_bytes" "one pipe buffer fits inside the log past the window"
 table "$JSON" \
   "a transient marker in a large failed-job log reruns the failing run; the retried failure still settles terminal|||STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-checks.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json,STUB_RUN_LOG_FILE=$transient_log|rc=1 verdict=fail reruns=29662812172" \
-  "a gh failure reading the log is not transient: nothing is rerun|||STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-checks.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json|rc=1 verdict=fail reruns=none"
+  "a gh failure reading the log is not transient: nothing is rerun|||STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-checks.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json|rc=1 verdict=fail reruns=none" \
+  "a rerun restarts the settled-check window: the greens before it carry nothing|||STUB_PR_CHECKS_SEQUENCE=green:green:green:fail_rerun,STUB_RUN_LOG_FILE=$transient_log|rc=0 status=complete verdict=pass reruns=29099680623 elapsed_seconds=190"
 
 echo "=== argument validation ends in the parser, before any gh call ==="
 # The recording gh stub fails every call, so a case that reached auth or a
