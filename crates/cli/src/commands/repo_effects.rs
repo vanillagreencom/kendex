@@ -64,8 +64,13 @@ pub use disclose::disclose;
 /// is the verb as data, never a line to paste, and it is the one that
 /// re-arms THIS package: `kendex guard install` runs commit-guards'
 /// installer and nothing else's, so any other package is sent to the
-/// doors that apply its own repository changes again. The package's own
-/// words follow as detail: they are the remediation text a person acts on.
+/// doors that apply its own repository changes again. Only a package the
+/// check said is not in force gets it. A lapse nothing measured has no
+/// re-arm verb that clears it — an installer run over a declaration that
+/// will not read leaves it unread, and a removal refuses over the same
+/// declaration — so that row ends at the verdict and the reason under it
+/// is the way out. The package's own words follow as detail: they are the
+/// remediation text a person acts on.
 ///
 /// A read that could not be made counts as one line. A verb that reports
 /// nothing lapsed has to have looked, so a scope whose record or
@@ -88,21 +93,23 @@ pub fn say_lapsed(env: &Env, scope: &Scope, names: &[String]) -> usize {
         .iter()
         .filter(|package| names.is_empty() || names.contains(&package.name))
     {
-        let verdict = match package.lapse {
+        let row = match package.lapse {
             kendex_core::repo_effects::Lapse::NotInForce => {
-                "kendex armed it here and the package says its effect is not in force"
+                let remedy = match package.name == kendex_core::guard::SKILL {
+                    true => "kendex guard install arms it again",
+                    false => {
+                        "applying its repository changes again arms it: the package's page in the app, or remove and add it with --allow-repo-effects"
+                    }
+                };
+                format!(
+                    "kendex armed it here and the package says its effect is not in force — {remedy}"
+                )
             }
             kendex_core::repo_effects::Lapse::Unchecked => {
-                "whether its effect is in force could not be checked"
+                "whether its effect is in force could not be checked".to_owned()
             }
         };
-        let remedy = match package.name == kendex_core::guard::SKILL {
-            true => "kendex guard install arms it again",
-            false => {
-                "applying its repository changes again arms it: the package's page in the app, or remove and add it with --allow-repo-effects"
-            }
-        };
-        fail(&format!("✗ setup {}: {verdict} — {remedy}", package.name));
+        fail(&format!("✗ setup {}: {row}", package.name));
         for line in &package.said {
             say(&format!("  ! {line}"));
         }

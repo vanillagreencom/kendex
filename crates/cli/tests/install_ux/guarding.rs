@@ -483,12 +483,15 @@ fn a_declaration_that_will_not_read_fails_verify_only_where_kendex_armed_it() {
     let red = world.try_run(&["verify", "--scope", "project"]);
     let out = spoke(&red);
     assert_eq!(red.status.code(), Some(1), "{out}");
+    // No re-arm verb: an installer run leaves the declaration unread, so
+    // the row ends at the verdict and the reason under it is the way out.
     assert!(
         out.contains(
-            "✗ setup commit-guards: whether its effect is in force could not be checked — kendex guard install arms it again"
+            "✗ setup commit-guards: whether its effect is in force could not be checked\n"
         ),
         "{out}"
     );
+    assert!(!out.contains("arms it again"), "{out}");
     assert!(out.contains("will not read"), "{out}");
 }
 

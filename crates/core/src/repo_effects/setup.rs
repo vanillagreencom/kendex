@@ -349,7 +349,7 @@ pub fn lapsed(env: &crate::env::Env, scope: &Scope) -> crate::error::Result<Vec<
             crate::engine::InstalledDeclaration::Unreadable { name, at } => {
                 let said = match recorded_in_either(root, &name) {
                     Ok(true) => format!(
-                        "its repo-effects declaration at {} will not read, so the check kendex owes this repository could not be run",
+                        "its repo-effects declaration at {} will not read, so the check kendex owes this repository could not be run; a kendex that reads it, or the frontmatter repaired, is the way out",
                         at.display()
                     ),
                     Ok(false) => continue,
