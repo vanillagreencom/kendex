@@ -542,11 +542,13 @@ echo "=== the verdict names the repository it read ==="
 # wait launched from this checkout for another repository's PR read this
 # checkout's same-numbered PR and called it merged. GH_REPO decides; a value
 # that is not owner/name is refused before any poll, never sent to an API
-# path that cannot hold it.
+# path that cannot hold it. The refusal names the rejected value in its
+# diagnostic and leaves the result's repo empty, so nothing reads an
+# unvalidated candidate as the repository the verdict is about.
 table "$QW" \
   'GH_REPO names the repository, over the checkout gh repo view answers for|state:last=merged,queue:last=in|1 1 10 --json --no-check-probe|GH_REPO=other/elsewhere|rc=0 verdict=merged repo=other/elsewhere' \
   'GH_REPO unset names the checkout|state:last=merged,queue:last=in|1 1 10 --json --no-check-probe||rc=0 verdict=merged repo=owner/repo' \
-  'a GH_REPO that is not owner/name is refused|open_queued||GH_REPO=elsewhere|rc=1 status=error verdict=unknown error_line=queue-wait:+repo-shape+repo=elsewhere'
+  'a GH_REPO that is not owner/name is refused|open_queued||GH_REPO=elsewhere|rc=1 status=error verdict=unknown repo= error_line=queue-wait:+repo-shape+repo=elsewhere'
 
 echo "=== text mode names the verdict on stdout ==="
 # The line's wording beyond the verdict word is not a contract anything

@@ -626,11 +626,13 @@ echo "=== the verdict names the repository it read ==="
 # wait launched from this checkout for another repository's PR read this
 # checkout's same-numbered PR. GH_REPO decides; a value that is not owner/name
 # is refused before any review read, never sent to an API path that cannot
-# hold it.
+# hold it. The refusal names the rejected value in its diagnostic and leaves
+# the result's repo empty, so nothing reads an unvalidated candidate as the
+# repository the verdict is about.
 table "$APPROVAL" \
   'GH_REPO names the repository, over the checkout gh repo view answers for||GH_REPO=other/elsewhere,STUB_APPROVAL_MODE=approved_decision|rc=0 status=approved repo=other/elsewhere' \
   'GH_REPO unset names the checkout||STUB_APPROVAL_MODE=approved_decision|rc=0 status=approved repo=owner/repo' \
-  'a GH_REPO that is not owner/name is refused||GH_REPO=elsewhere,STUB_APPROVAL_MODE=approved_decision|rc=1 status=error error_line=approval-wait:+repo-shape+repo=elsewhere'
+  'a GH_REPO that is not owner/name is refused||GH_REPO=elsewhere,STUB_APPROVAL_MODE=approved_decision|rc=1 status=error repo= error_line=approval-wait:+repo-shape+repo=elsewhere'
 
 echo "=== text mode prints a result line for every branch the emitter has ==="
 # The line's wording is not a contract anything parses; what holds is that no

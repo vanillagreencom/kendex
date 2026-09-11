@@ -457,11 +457,13 @@ echo "=== the verdict names the repository it read ==="
 # wait launched from this checkout for another repository's PR read this
 # checkout's same-numbered PR. GH_REPO decides, and the slug it names is what
 # reaches `gh --repo`; a value that is not owner/name is refused before any
-# check read.
+# check read. The refusal names the rejected value in its diagnostic and
+# leaves the result's repo empty, so nothing reads an unvalidated candidate
+# as the repository the verdict is about.
 table "$JSON" \
   'GH_REPO names the repository, over the checkout gh repo view answers for|||GH_REPO=other/elsewhere|rc=0 verdict=pass repo=other/elsewhere repo_arg=other/elsewhere' \
   'GH_REPO unset names the checkout||||rc=0 verdict=pass repo=owner/repo repo_arg=owner/repo' \
-  'a GH_REPO that is not owner/name is refused|||GH_REPO=elsewhere|rc=1 status=error error_named=true stderr~ci-wait:+repo-shape+repo=elsewhere=true repo_arg=none'
+  'a GH_REPO that is not owner/name is refused|||GH_REPO=elsewhere|rc=1 status=error error_named=true repo= stderr~ci-wait:+repo-shape+repo=elsewhere=true repo_arg=none'
 
 echo "=== the repo slug falls back to the origin URL without its .git suffix ==="
 # When `gh repo view` answers empty, owner/repo comes from the origin URL; the

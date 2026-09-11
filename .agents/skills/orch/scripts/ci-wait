@@ -70,8 +70,8 @@ ci_message() {
       printf '%s\n' "Could not resolve GitHub repo (GH_REPO unset, gh repo view and git remote both failed)"
       ;;
     repo-shape)
-      printf 'ci-wait: repo-shape repo=%q\n' "$REPO"
-      printf '%s\n' "could not read '$REPO' as owner/repo for the check queries"
+      printf 'ci-wait: repo-shape repo=%q\n' "$REPO_REJECTED"
+      printf '%s\n' "could not read '$REPO_REJECTED' as owner/repo for the check queries"
       ;;
     conflicting)
       printf 'ci-wait: conflicting pr=%s state=%s\n' "$PR_NUM" "$merge_state"
@@ -146,8 +146,11 @@ source "$SCRIPT_DIR/lib/gh-repo.sh"
 
 # Named in every result, so a verdict states the repository it read. Empty
 # until the resolver below runs, which is after the auth ladder: an auth
-# failure is a verdict about no repository.
+# failure is a verdict about no repository. A candidate the resolver refuses
+# is no repository either: it lands in REPO_REJECTED for the diagnostic to
+# name, never in REPO, so no consumer reads it as one that resolved.
 REPO=""
+REPO_REJECTED=""
 
 print_usage() {
   cat <<'USAGE'
@@ -194,8 +197,9 @@ JSON output (always when --json):
     "status": "complete" | "timeout" | "error",
     "verdict": "pass" | "fail" | "pending" | "none",
     "repo": <string>,             # the repository this verdict is about,
-                                  # "" only when the wait ended before it
-                                  # was resolved (missing gh, no auth)
+                                  # "" whenever the wait ended before one
+                                  # was resolved: missing gh, no auth,
+                                  # repo-unresolved, repo-shape
     "elapsed_seconds": <int>,
     "error": <string>,            # only when status == "error"
     "pending_checks": [ {name,state} ... ],
@@ -220,7 +224,9 @@ the origin remote) when GH_REPO is unset. `gh repo view` ignores GH_REPO and
 answers for the working directory, so a wait on another repository's PR from
 this checkout reads GH_REPO or nothing else will. Every result names the
 repository it read; a GH_REPO that is not owner/name is refused (repo-shape,
-exit 1) rather than sent to an API path that cannot hold it.
+exit 1) rather than sent to an API path that cannot hold it. The
+refusal names the rejected value in its diagnostic line and leaves the JSON
+`repo` field empty, since a refusal is a verdict about no repository.
 
 Auth: resolved through lib/gh-auth.sh, shared with approval-wait and
 queue-wait (kendex#19) — env-first: already-resolved GH_TOKEN /
@@ -420,6 +426,8 @@ fi
 repo_status=0
 REPO=$(orch_resolve_gh_repo "$PROJECT_ROOT") || repo_status=$?
 if [ "$repo_status" -eq 2 ]; then
+  REPO_REJECTED="$REPO"
+  REPO=""
   emit_error repo-shape
   ci_message repo-shape "$@" >&2
   exit 1
