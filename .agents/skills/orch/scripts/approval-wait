@@ -221,6 +221,32 @@ change during this wait. A mid-wait force-push falls back to "timeout",
 and the head is re-confirmed once more at the deadline itself, so proceed
 never bypasses a live gate and never attests a stale head.
 
+Automatic review and the base branch: GitHub's automatic reviewer is armed
+by any ACTIVE BRANCH RULESET carrying a rule of type copilot_code_review. A
+base draws one when such a ruleset's conditions.ref_name includes it and that
+same ruleset does not exclude it, so the target set is the union over those
+rulesets. It is per-repo configuration, never a GitHub constant. The set is
+resolved ONCE before the poll loop, from every page of the repo's ruleset
+listing and each active branch ruleset's detail (source "ruleset"). The
+repo's default branch is the whole set (source "default_branch") only when
+the listing is refused with HTTP 403 or 404 that is not a rate limit, or
+reads completely with no ruleset carrying the rule. Any other failed listing
+or detail read leaves the set "unresolved". The PR's baseRefName is matched
+against it: "~ALL" matches any base, "~DEFAULT_BRANCH" the repo default, and
+any other pattern must equal refs/heads/<base> exactly. GitHub matches a
+pattern with File.fnmatch under File::FNM_PATHNAME, where * does not match /;
+approval-wait does not reproduce that, so a pattern holding *, ?, [ or \
+leaves the set "unresolved", as does ~DEFAULT_BRANCH when the default branch
+cannot be read.
+
+A base outside that set draws no automatic review, so reviewer silence there
+is structural rather than a slow reviewer: the deadline reports
+"unreviewable" (exit 1) and never degrades to "proceeded", whatever
+PR_REVIEW_ON_TIMEOUT says. A review can still be requested by hand on such a
+base (gh pr edit <PR#> --add-reviewer @copilot), which is why the wait runs
+its full budget rather than returning early. An "unresolved" target set
+likewise never proceeds: it reports "timeout".
+
 Transient GitHub API failures (kendex#748) — HTTP 5xx, HTTP 429, timeout,
 transport error — are retried with doubling backoff (capped at 8x) inside
 the existing max_wait budget and reported as a transient_api_errors count;
@@ -230,7 +256,7 @@ a fully successful poll resets the backoff. Non-transient failures (HTTP
 JSON output (always when --json):
   {
     "status": "approved" | "reviewed" | "changes_requested" | "comments"
-              | "timeout" | "proceeded" | "error",
+              | "timeout" | "proceeded" | "unreviewable" | "error",
     "review_decision": <string>,  # raw reviewDecision ("" when unset)
     "approvals": <int>,           # reviewers whose latest review is APPROVED
     "changes_requested": <int>,   # reviewers at CHANGES_REQUESTED
@@ -244,6 +270,10 @@ JSON output (always when --json):
                                   # (PR_REVIEW_CHECK success)
     "review_evidence_surface": <string>,  # alongside review_evidence
                                   # "check": "check_run" or "status"
+    "base_ref": <string>,         # the PR's base branch
+    "auto_review_targeted": <bool>,  # the base draws an automatic review
+    "auto_review_target_source": "ruleset" | "default_branch" | "unresolved",
+    "auto_review_targets": [<string>],  # union of the ref_name include patterns
     "transient_api_errors": <int>,  # only when > 0
     "error": <string>             # only when status == "error"
   }
@@ -259,8 +289,9 @@ selected). Full ladder: orch DEVELOPMENT.md.
 Exit codes:
   0  approved (approval mode) / reviewed (review mode) / proceeded
      (deadline reached under PR_REVIEW_ON_TIMEOUT=proceed)
-  1  changes requested, unresolved comments pending, timeout, or a
-     non-auth error
+  1  changes requested, unresolved comments pending, timeout,
+     unreviewable (no automatic reviewer targets the PR's base and none
+     arrived), or a non-auth error
   2  usage error: missing or empty argument, invalid --mode value, or
      unknown flag
   3  hard GitHub auth/CLI failure (matches ci-wait and queue-wait)
@@ -451,6 +482,17 @@ last_changes=0
 last_unresolved=0
 last_head_sha=""
 last_reviews_at_head=0
+last_base_ref=""
+# The automatic-review target set and this PR's standing against it. Declared
+# beside the other snapshot state because emit_error runs on the pre-repo
+# failure paths, before resolve_auto_review_targets can fill them in.
+last_auto_review_targeted=false
+AUTO_REVIEW_SOURCE="unresolved"
+AUTO_REVIEW_INCLUDE=""
+AUTO_REVIEW_EXCLUDE=""
+AUTO_REVIEW_TARGETS_JSON="[]"
+AUTO_REVIEW_TARGETS_TEXT=""
+DEFAULT_BRANCH=""
 # Approval mode only: non-author, non-dismissed latest reviews of ANY state
 # (COMMENTED included). Distinguishes "a reviewer engaged but did not approve"
 # from "no reviewer showed at all", so the PR_REVIEW_ON_TIMEOUT=proceed degrade
@@ -499,7 +541,7 @@ run_approved_gate() {
 # Emit the final machine-readable result on stdout. Every exit path routes
 # through here (or emit_error) so the script can never finish silently.
 #   status: approved | reviewed | changes_requested | comments | timeout
-#         | proceeded | error
+#         | proceeded | unreviewable | error
 emit_result() {
   local status="$1" error_msg="${2:-}" mode_fields
   update_elapsed
@@ -525,6 +567,10 @@ emit_result() {
     jq -n \
       --arg s "$status" \
       --arg decision "$last_review_decision" \
+      --arg base_ref "$last_base_ref" \
+      --argjson auto_targeted "$last_auto_review_targeted" \
+      --arg auto_source "$AUTO_REVIEW_SOURCE" \
+      --argjson auto_targets "$AUTO_REVIEW_TARGETS_JSON" \
       --argjson approvals "$last_approvals" \
       --argjson changes "$last_changes" \
       --argjson unresolved "$last_unresolved" \
@@ -538,7 +584,11 @@ emit_result() {
         approvals: $approvals,
         changes_requested: $changes,
         unresolved_count: $unresolved,
-        elapsed_seconds: $elapsed
+        elapsed_seconds: $elapsed,
+        base_ref: $base_ref,
+        auto_review_targeted: $auto_targeted,
+        auto_review_target_source: $auto_source,
+        auto_review_targets: $auto_targets
       } + $mode_fields
         + (if $transient > 0 then {transient_api_errors: $transient} else {} end)
         + (if $error == "" then {} else {error: $error} end)' || return $?
@@ -578,6 +628,9 @@ emit_result() {
       else
         echo "Approval: $last_unresolved unresolved review thread(s) pending triage, no approval verdict yet"
       fi
+      ;;
+    unreviewable)
+      echo "No automatic review for base '${last_base_ref:-unknown}' after ${elapsed}s: the automatic-review target set (${AUTO_REVIEW_TARGETS_TEXT:-none}, source: $AUTO_REVIEW_SOURCE) does not cover it. Request one with: gh pr edit $PR_NUM --add-reviewer @copilot"
       ;;
     timeout)
       if [[ "$MODE" == "review" ]]; then
@@ -674,6 +727,134 @@ fi
 OWNER="${REPO%%/*}"
 REPO_NAME="${REPO#*/}"
 
+# --- automatic-review target set (resolved ONCE, before the poll loop) ---
+# GitHub's automatic reviewer is armed by any ACTIVE BRANCH RULESET carrying a
+# rule of type copilot_code_review, and the set of bases that draw one is the
+# union of those rulesets' conditions.ref_name. Which bases those are is
+# per-repo configuration, not a GitHub constant, so it is read rather than
+# assumed. A PR based outside the set draws no automatic review at all, which is
+# why the deadline separates that structural silence ("unreviewable") from a
+# reviewer who merely did not show ("timeout"/"proceeded").
+# AUTO_REVIEW_INCLUDE and AUTO_REVIEW_EXCLUDE hold one
+# "<ruleset-id><TAB><pattern>" record per line, so an exclude stays bound to the
+# ruleset that declares it.
+
+# Read every active branch ruleset carrying copilot_code_review into
+# AUTO_REVIEW_INCLUDE / AUTO_REVIEW_EXCLUDE. Returns 0 when at least one does;
+# 2 when no ruleset rule is visible, because the listing was refused as a
+# permission denial (HTTP 403 or 404 that is not a rate limit) or read
+# completely with no ruleset carrying the rule; 1 on every other failure, which
+# leaves the set unjudgeable. It classifies through gh_failure_is_transient, so
+# it runs only after that function is defined.
+read_auto_review_rules() {
+  local rulesets ruleset_ids ruleset_id detail carries includes excludes
+  local list_status=0 err_text found=false
+  AUTO_REVIEW_INCLUDE=""
+  AUTO_REVIEW_EXCLUDE=""
+  : > "$GH_ERR_FILE"
+  rulesets=$(gh api "repos/$REPO/rulesets" --paginate 2>"$GH_ERR_FILE") || list_status=$?
+  if [ "$list_status" -ne 0 ]; then
+    err_text=$(cat "$GH_ERR_FILE" 2>/dev/null) || err_text=""
+    case "$err_text" in
+      *"HTTP 403"*|*"HTTP 404"*) gh_failure_is_transient "$list_status" || return 2 ;;
+    esac
+    return 1
+  fi
+  # The listing carries no rules or conditions, so every active branch ruleset
+  # is opened. A zero-byte or non-list answer is a failed read, never an empty
+  # listing.
+  ruleset_ids=$(jq -r -s 'if length > 0 and all(.[]; type == "array")
+    then add | .[] | select(.target == "branch" and .enforcement == "active") | .id
+    else error("the ruleset listing is not a set of pages") end' <<<"$rulesets" 2>/dev/null) || return 1
+  while IFS= read -r ruleset_id; do
+    [ -n "$ruleset_id" ] || continue
+    detail=$(gh api "repos/$REPO/rulesets/$ruleset_id" 2>/dev/null) || return 1
+    carries=$(jq -r 'any(.rules[]?; .type == "copilot_code_review")' <<<"$detail" 2>/dev/null) || return 1
+    [ "$carries" = true ] || continue
+    includes=$(jq -r --arg id "$ruleset_id" '.conditions.ref_name.include[]? | "\($id)\t\(.)"' <<<"$detail") || return 1
+    excludes=$(jq -r --arg id "$ruleset_id" '.conditions.ref_name.exclude[]? | "\($id)\t\(.)"' <<<"$detail") || return 1
+    AUTO_REVIEW_INCLUDE="$AUTO_REVIEW_INCLUDE$includes"$'\n'
+    AUTO_REVIEW_EXCLUDE="$AUTO_REVIEW_EXCLUDE$excludes"$'\n'
+    found=true
+  done <<<"$ruleset_ids"
+  [ "$found" = true ] || return 2
+}
+
+resolve_auto_review_targets() {
+  local rules_status=0 pattern
+  DEFAULT_BRANCH=$(gh api "repos/$REPO" -q '.default_branch' 2>/dev/null) || DEFAULT_BRANCH=""
+  read_auto_review_rules || rules_status=$?
+  case "$rules_status" in
+    0) AUTO_REVIEW_SOURCE="ruleset" ;;
+    2)
+      # No ruleset rule is visible: the default branch is the whole target set,
+      # which is what the shipped "Copilot review for default branch" shape means.
+      AUTO_REVIEW_INCLUDE=$(printf 'default_branch\t~DEFAULT_BRANCH')
+      AUTO_REVIEW_EXCLUDE=""
+      AUTO_REVIEW_SOURCE="default_branch"
+      ;;
+    *)
+      # 1, or any status the reader does not define: a failed read decides nothing.
+      AUTO_REVIEW_SOURCE="unresolved"
+      ;;
+  esac
+  # A set this run cannot judge exactly is reported unresolved rather than
+  # matched as a hit or a miss. ~DEFAULT_BRANCH names a branch this run could not
+  # read. GitHub matches every other pattern with File.fnmatch under
+  # File::FNM_PATHNAME, where * does not cross / and a shell pattern's * does, so
+  # only a literal ref is compared and a pattern carrying glob syntax is not.
+  while IFS=$'\t' read -r _ pattern; do
+    case "$pattern" in
+      '~DEFAULT_BRANCH') [ -n "$DEFAULT_BRANCH" ] || AUTO_REVIEW_SOURCE="unresolved" ;;
+      *'*'*|*'?'*|*'['*|*'\'*) AUTO_REVIEW_SOURCE="unresolved" ;;
+    esac
+  done <<<"$AUTO_REVIEW_INCLUDE"$'\n'"$AUTO_REVIEW_EXCLUDE"
+  if [ "$AUTO_REVIEW_SOURCE" = "unresolved" ]; then
+    AUTO_REVIEW_INCLUDE=""
+    AUTO_REVIEW_EXCLUDE=""
+  fi
+  AUTO_REVIEW_TARGETS_JSON=$(jq -R -s 'split("\n") | map(select(length > 0) | sub("^[^\t]*\t"; ""))
+    | reduce .[] as $pattern ([]; if any(.[]; . == $pattern) then . else . + [$pattern] end)' \
+    <<<"$AUTO_REVIEW_INCLUDE") || AUTO_REVIEW_TARGETS_JSON="[]"
+  AUTO_REVIEW_TARGETS_TEXT=$(jq -r 'join(" ")' <<<"$AUTO_REVIEW_TARGETS_JSON") || AUTO_REVIEW_TARGETS_TEXT=""
+}
+
+# Does one ref_name pattern cover this base? "~ALL" covers every base,
+# "~DEFAULT_BRANCH" the repo default, and any other pattern is a literal ref
+# compared with the base's full ref: resolution leaves a set holding a glob
+# unresolved, so no glob reaches this point.
+auto_review_pattern_matches() { # PATTERN BASE
+  case "$1" in
+    '~ALL') return 0 ;;
+    '~DEFAULT_BRANCH') [ -n "$DEFAULT_BRANCH" ] && [ "$2" = "$DEFAULT_BRANCH" ] ;;
+    *) [ "$1" = "refs/heads/$2" ] ;;
+  esac
+}
+
+# Whether RULESET_ID's own exclude patterns cover BASE.
+auto_review_ruleset_excludes() { # RULESET_ID BASE
+  local ruleset_id pattern
+  while IFS=$'\t' read -r ruleset_id pattern; do
+    [ "$ruleset_id" = "$1" ] || continue
+    if auto_review_pattern_matches "$pattern" "$2"; then return 0; fi
+  done <<<"$AUTO_REVIEW_EXCLUDE"
+  return 1
+}
+
+# Whether the automatic reviewer is armed for BASE: some ruleset includes it
+# and that same ruleset does not exclude it. An exclude narrows only its own
+# ruleset, since GitHub evaluates each ruleset on its own.
+auto_review_targets_base() { # BASE
+  local ruleset_id pattern
+  [ -n "$1" ] || return 1
+  while IFS=$'\t' read -r ruleset_id pattern; do
+    [ -n "$ruleset_id" ] || continue
+    auto_review_pattern_matches "$pattern" "$1" || continue
+    auto_review_ruleset_excludes "$ruleset_id" "$1" || return 0
+  done <<<"$AUTO_REVIEW_INCLUDE"
+  return 1
+}
+
 # The reviewThreads walk is lib/review-threads.sh's, shared with queue-wait's
 # late-findings guard so the waiter and the guard cannot disagree about what an
 # open thread is. gh's stderr lands in GH_ERR_FILE for the transient/terminal
@@ -742,6 +923,20 @@ confirm_head_unchanged() {
   [ -n "$cur" ] && [ "$cur" = "$last_head_sha" ]
 }
 
+# Record the base this poll saw and whether the automatic reviewer targets it.
+# The base rides along on the poll's own pr view call, so a mid-wait retarget
+# (GitHub moves a stacked PR's base when its base branch merges) is picked up.
+read_base_ref() {
+  last_base_ref=$(jq -r '.baseRefName // ""' <<<"$view_json")
+  if auto_review_targets_base "$last_base_ref"; then
+    last_auto_review_targeted=true
+  else
+    last_auto_review_targeted=false
+  fi
+}
+
+resolve_auto_review_targets
+
 update_elapsed
 while true; do
   if [ "$MODE" = "review" ]; then
@@ -749,7 +944,7 @@ while true; do
     # head, and only reviews of the CURRENT head satisfy the gate) ---
     view_status=0
     set +e
-    view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid,author 2>"$GH_ERR_FILE")
+    view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid,author,baseRefName 2>"$GH_ERR_FILE")
     view_status=$?
     set -e
     if [ "$view_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view_json"; then
@@ -763,6 +958,7 @@ while true; do
     fi
     last_head_sha=$(jq -r '.headRefOid // ""' <<<"$view_json")
     pr_author=$(jq -r '.author.login // ""' <<<"$view_json")
+    read_base_ref
 
     # --- submitted reviews snapshot (REST carries commit_id; latestReviews
     # does not, so head pinning needs the pulls/reviews listing). Captured in
@@ -901,7 +1097,7 @@ while true; do
     # bookkeeping the proceed guard reads) ---
     view_status=0
     set +e
-    view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json reviewDecision,latestReviews,headRefOid,author 2>"$GH_ERR_FILE")
+    view_json=$(gh pr view "$PR_NUM" --repo "$REPO" --json reviewDecision,latestReviews,headRefOid,author,baseRefName 2>"$GH_ERR_FILE")
     view_status=$?
     set -e
     if [ "$view_status" -ne 0 ] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view_json"; then
@@ -917,6 +1113,7 @@ while true; do
     last_review_decision=$(jq -r '.reviewDecision // ""' <<<"$view_json")
     last_head_sha=$(jq -r '.headRefOid // ""' <<<"$view_json")
     pr_author=$(jq -r '.author.login // ""' <<<"$view_json")
+    read_base_ref
     # latestReviews already holds the latest review per reviewer; count formal
     # verdict states only. COMMENTED/DISMISSED reviews neither approve nor block.
     last_approvals=$(jq '[.latestReviews[]? | select(.state == "APPROVED")] | length' <<<"$view_json")
@@ -1023,15 +1220,38 @@ done
 #     START_TIME, so a force-push near MAX_WAIT would otherwise proceed seconds
 #     after the new commit appeared, before the reviewer could re-review it;
 #     fall back to timeout so the caller re-waits on the now-stable head.
+#   - a readable automatic-review target set that covers this PR's base. The
+#     two cases that fails are handled below.
 # The caller records "proceeded" as a reviewer-down override; CI and the
 # comment-hygiene gate still apply.
-if [ "$ON_TIMEOUT" = "proceed" ] && [ "$last_unresolved" -eq 0 ] \
-  && [ "$last_reviews_present" -eq 0 ] && [ "$head_changed_during_wait" = false ] \
+reviewer_silent=false
+if [ "$last_unresolved" -eq 0 ] && [ "$last_reviews_present" -eq 0 ]; then
+  reviewer_silent=true
+fi
+
+# Silence over a base no automatic-review ruleset targets is not a reviewer who
+# failed to show — nothing was ever going to arrive on its own. That is its own
+# verdict, exit 1, whatever PR_REVIEW_ON_TIMEOUT says: proceed is the one
+# fail-open path this script has, and a structurally impossible wait must never
+# reach it. The wait still spends its budget rather than returning early,
+# because a review CAN be requested by hand on such a base and may land during
+# it. An unresolved target set is not a miss: it falls through to the timeout
+# below, since a failed read must not manufacture either verdict.
+if [ "$reviewer_silent" = true ] && [ "$AUTO_REVIEW_SOURCE" != "unresolved" ] \
+  && [ "$last_auto_review_targeted" = false ]; then
+  emit_result "unreviewable"
+  exit 1
+fi
+
+if [ "$ON_TIMEOUT" = "proceed" ] && [ "$reviewer_silent" = true ] \
+  && [ "$AUTO_REVIEW_SOURCE" != "unresolved" ] \
+  && [ "$head_changed_during_wait" = false ] \
   && confirm_head_unchanged; then
   emit_result "proceeded"
   exit 0
 fi
-# Either not a proceed, or the head moved in the final window (confirm failed):
-# report timeout so the caller re-waits on the current head.
+# Either not a proceed, the target set could not be read, or the head moved in
+# the final window (confirm failed): report timeout so the caller re-waits on
+# the current head.
 emit_result "timeout"
 exit 1
