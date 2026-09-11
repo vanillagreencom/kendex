@@ -5,7 +5,7 @@
 # matcher:
 # description: Blocks a reviewer subagent's stop once when the worktree it reviewed is not clean. The worktree is the one the artifact path in the subagent's transcript names (`<worktree>/tmp/review-<agent>-*.json`, the newest mention); `git status --porcelain --untracked-files=all` there listing anything blocks, naming each path, and a transcript naming no artifact path blocks the same way, since the review contract is an artifact at that path. An agent_type not starting with `reviewer-` passes, as does `stop_hook_active` true; a block is recorded per agent_id under `<git common dir>/kendex/reviewer-stop/` so a later stop of the same subagent passes. Claude Code only, the harness with a SubagentStop event that names the agent.
 # summary: Stops a reviewer agent from finishing while the worktree it reviewed still holds files it left behind.
-# safety: Reads the payload, the transcript and git status; the only write is the per-agent marker under the reviewed repository's git common dir. Exit 2 names the paths and asks for the reviewer's own files to be deleted and the rest reported, never bypassed. jq is required to read the payload; a payload, transcript or git that cannot be read is refused, never passed. Every refusal opens with `reviewer-stop-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the payload, the transcript and git status; the only write is the per-agent marker under the reviewed repository's git common dir. Exit 2 names the paths and asks for the reviewer's own files to be deleted and the rest reported, never bypassed. jq is required to read the payload; a payload, transcript or git that cannot be read is refused, never passed, and so is an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in, which is judged in jq before the shell reads it so that a NUL, a `/`, a newline, `.` or `..` never names another subagent's marker. Every refusal opens with `reviewer-stop-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
 # harnesses: [claude-code]
 # ---
@@ -45,7 +45,7 @@ refuse() { # KEY VALUE [DETAIL]
         echo "the hook payload is not valid JSON, or a field it reads is not a string; refusing rather than skipping the guard"
         ;;
       agent-id=invalid)
-        echo "the payload carries no usable agent_id, so a block could not be recorded; refusing"
+        echo "the payload's agent_id is not spelled in the alphabet the harness names subagents in, ASCII letters, digits, underscore and hyphen, so the marker a block would be recorded under is not this subagent's; refusing"
         ;;
       transcript=unreadable)
         echo "the payload's transcript_path $TRANSCRIPT is not a readable file, so the reviewed worktree is unknown; refusing"
@@ -94,9 +94,23 @@ done
 # diagnostic on the passing side.
 INPUT=$(cat 2>&1) || refuse payload unreadable "$INPUT"
 
+# The agent id names the marker a block is recorded under, so it is judged as
+# the payload holds it, before the shell reads it: a NUL the shell drops from
+# a command substitution would leave an id naming another subagent's marker,
+# and `.` or `..` name the marker directory and its parent, each of which
+# exists, so the recorded-block test would pass the stop unchecked. It passes
+# only when it is spelled in the alphabet the harness names subagents in,
+# ASCII letters, digits, `_` and `-`, which removing every such character
+# proves by leaving nothing; an anchored match would not, since `$` also
+# matches before a trailing newline. jq hands back an id it accepted or the
+# empty string, and an accepted id is never empty, so the two cannot be
+# mistaken for one another downstream.
 FIELDS=$(printf '%s' "$INPUT" | jq -r '
   def str($v): if $v == null then "" elif ($v | type) == "string" then $v else error("not a string") end;
-  [str(.agent_type), str(.agent_id), str(.transcript_path), (.stop_hook_active == true | tostring)] | @tsv' 2>/dev/null) ||
+  [str(.agent_type),
+   (str(.agent_id) | if . != "" and gsub("[A-Za-z0-9_-]"; "") == "" then . else "" end),
+   str(.transcript_path),
+   (.stop_hook_active == true | tostring)] | @tsv' 2>/dev/null) ||
   refuse payload invalid-json
 TAB=$'\t'
 AGENT_TYPE=${FIELDS%%"$TAB"*}
@@ -114,8 +128,10 @@ if [ "$ACTIVE" = "true" ]; then
   exit 0
 fi
 
-AGENT_SHAPE='^[A-Za-z0-9._-]+$'
-if ! [[ "$AGENT_ID" =~ $AGENT_SHAPE ]]; then
+# Empty is the refusal jq made above, read here rather than there so the two
+# stops that need no marker — an agent that is not a reviewer, and a stop the
+# harness is already re-running — keep passing whatever id they carry.
+if [ -z "$AGENT_ID" ]; then
   refuse agent-id invalid
 fi
 if [ ! -r "$TRANSCRIPT" ] || [ ! -f "$TRANSCRIPT" ]; then
