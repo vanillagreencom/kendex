@@ -23,15 +23,15 @@ queue_message() {
       ;;
     repo-unresolved)
       printf 'queue-wait: repo-unresolved remote=%s\n' "origin"
-      printf '%s\n' "could not resolve GitHub repo (gh repo view and git remote both failed)"
+      printf '%s\n' "could not resolve GitHub repo (GH_REPO unset, gh repo view and git remote both failed)"
       ;;
     pr-view-failed)
       printf 'queue-wait: pr-view-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
       printf '%s\n' "gh pr view failed for PR #$PR_NUM in $REPO"
       ;;
     repo-shape)
-      printf 'queue-wait: repo-shape repo=%q\n' "$REPO"
-      printf '%s\n' "could not split '$REPO' into owner/repo for the merge-queue query"
+      printf 'queue-wait: repo-shape repo=%q\n' "$REPO_REJECTED"
+      printf '%s\n' "could not split '$REPO_REJECTED' into owner/repo for the merge-queue query"
       ;;
     queue-rejected)
       printf 'queue-wait: queue-rejected pr=%s detail=%q\n' "$PR_NUM" "$gql_error"
@@ -118,8 +118,18 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
+# shellcheck source=lib/gh-repo.sh
+source "$SCRIPT_DIR/lib/gh-repo.sh"
 # shellcheck source=lib/review-threads.sh
 source "$SCRIPT_DIR/lib/review-threads.sh"
+
+# Named in every result, so a verdict states the repository it read. Empty
+# until the resolver below runs, which is after the auth ladder: an auth
+# failure is a verdict about no repository. A candidate the resolver refuses
+# is no repository either: it lands in REPO_REJECTED for the diagnostic to
+# name, never in REPO, so no consumer reads it as one that resolved.
+REPO=""
+REPO_REJECTED=""
 
 print_usage() {
   printf 'queue-wait: usage command=%s\n' 'queue-wait'
@@ -268,6 +278,10 @@ JSON output (always when --json):
     "verdict": "merged" | "conflicting" | "ejected" | "disarmed"
                | "dequeued" | "closed" | "queued" | "not_queued"
                | "unknown",
+    "repo": <string>,              # the repository this verdict is about,
+                                   # "" whenever the wait ended before one
+                                   # was resolved: missing gh, no auth,
+                                   # repo-unresolved, repo-shape
     "elapsed_seconds": <int>,
     "polls": <int>,
     "pr_state": <string>,          # OPEN | MERGED | CLOSED | "" (never read)
@@ -294,6 +308,16 @@ JSON output (always when --json):
     "transient_api_errors": <int>, # only when > 0
     "error": <string>              # only when status == "error"
   }
+
+Repository: resolved through lib/gh-repo.sh, shared with approval-wait and
+ci-wait — GH_REPO first, then the working directory (`gh repo view`, then
+the origin remote) when GH_REPO is unset. `gh repo view` ignores GH_REPO and
+answers for the working directory, so a wait on another repository's PR from
+this checkout reads GH_REPO or nothing else will. Every result names the
+repository it read; a GH_REPO that is not owner/name is refused (repo-shape,
+exit 1) rather than sent to an API path that cannot hold it. The
+refusal names the rejected value in its diagnostic line and leaves the JSON
+`repo` field empty, since a refusal is a verdict about no repository.
 
 Auth: resolved through lib/gh-auth.sh, shared with approval-wait and
 ci-wait (kendex#19) — env-first: already-resolved GH_TOKEN/GITHUB_TOKEN/
@@ -519,6 +543,7 @@ emit_result() {
       --arg v "$verdict" \
       --argjson elapsed "$elapsed" \
       --argjson polls "$polls" \
+      --arg repo "$REPO" \
       --arg pr_state "$last_pr_state" \
       --arg merged_at "$last_merged_at" \
       --argjson in_queue "$last_in_queue" \
@@ -536,6 +561,7 @@ emit_result() {
       '{
         status: $s,
         verdict: $v,
+        repo: $repo,
         elapsed_seconds: $elapsed,
         polls: $polls,
         pr_state: $pr_state,
@@ -554,7 +580,7 @@ emit_result() {
         + (if $error == "" then {} else {error: $error} end)'
     return 0
   fi
-  printf 'queue-wait: result status=%s verdict=%s pr=%s cause=%s polls=%s progressing=%s\n' "$status" "$verdict" "$PR_NUM" "${last_cause:-none}" "$polls" "$progressing"
+  printf 'queue-wait: result status=%s verdict=%s pr=%s repo=%s cause=%s polls=%s progressing=%s\n' "$status" "$verdict" "$PR_NUM" "${REPO:-unresolved}" "${last_cause:-none}" "$polls" "$progressing"
   case "$verdict" in
     merged)
       echo "Merge queue: merged (PR #$PR_NUM${last_merged_at:+ at $last_merged_at})"
@@ -662,26 +688,22 @@ if [[ "$AUTH_READY" != "true" ]]; then
 fi
 
 # --- Resolve repo explicitly so gh calls don't depend on local auth/inference ---
-REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
-if [ -z "$REPO" ]; then
-  origin_url=$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null || true)
-  # Capture owner/repo greedily, then strip a trailing ".git" explicitly — the
-  # same portable form ci-wait uses.
-  REPO=$(echo "$origin_url" | sed -nE 's#^.*github\.com[:/]+([^/]+/[^/]+)$#\1#p')
-  REPO="${REPO%.git}"
+repo_status=0
+REPO=$(orch_resolve_gh_repo "$PROJECT_ROOT") || repo_status=$?
+if [ "$repo_status" -eq 2 ]; then
+  REPO_REJECTED="$REPO"
+  REPO=""
+  emit_error repo-shape
+
+  exit 1
 fi
-if [ -z "$REPO" ]; then
+if [ "$repo_status" -ne 0 ]; then
   emit_error repo-unresolved
 
   exit 1
 fi
 REPO_OWNER="${REPO%%/*}"
 REPO_NAME="${REPO#*/}"
-if [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ] || [ "$REPO_OWNER" = "$REPO" ]; then
-  emit_error repo-shape
-
-  exit 1
-fi
 
 # mergeQueueEntry.position and .headCommit are schema-verified fields
 # (`__type(name:"MergeQueueEntry")`); headCommit is the merge-group commit

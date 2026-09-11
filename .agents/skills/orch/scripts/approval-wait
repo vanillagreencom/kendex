@@ -23,7 +23,11 @@ approval_message() {
       ;;
     repo-unresolved)
       printf 'approval-wait: repo-unresolved remote=%s\n' "origin"
-      printf '%s\n' "could not resolve GitHub repo (gh repo view and git remote both failed)"
+      printf '%s\n' "could not resolve GitHub repo (GH_REPO unset, gh repo view and git remote both failed)"
+      ;;
+    repo-shape)
+      printf 'approval-wait: repo-shape repo=%q\n' "$REPO_REJECTED"
+      printf '%s\n' "could not read '$REPO_REJECTED' as owner/repo for the review-gate queries"
       ;;
     pr-view-failed)
       printf 'approval-wait: pr-view-failed pr=%s repo=%s\n' "$PR_NUM" "$REPO"
@@ -104,6 +108,16 @@ export PROJECT_ROOT
 
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
+# shellcheck source=lib/gh-repo.sh
+source "$SCRIPT_DIR/lib/gh-repo.sh"
+
+# Named in every result, so a verdict states the repository it read. Empty
+# until the resolver below runs, which is after the auth ladder: an auth
+# failure is a verdict about no repository. A candidate the resolver refuses
+# is no repository either: it lands in REPO_REJECTED for the diagnostic to
+# name, never in REPO, so no consumer reads it as one that resolved.
+REPO=""
+REPO_REJECTED=""
 # shellcheck source=lib/review-threads.sh
 source "$SCRIPT_DIR/lib/review-threads.sh"
 
@@ -257,6 +271,10 @@ JSON output (always when --json):
   {
     "status": "approved" | "reviewed" | "changes_requested" | "comments"
               | "timeout" | "proceeded" | "unreviewable" | "error",
+    "repo": <string>,             # the repository this verdict is about,
+                                  # "" whenever the wait ended before one
+                                  # was resolved: missing gh, no auth,
+                                  # repo-unresolved, repo-shape
     "review_decision": <string>,  # raw reviewDecision ("" when unset)
     "approvals": <int>,           # reviewers whose latest review is APPROVED
     "changes_requested": <int>,   # reviewers at CHANGES_REQUESTED
@@ -277,6 +295,16 @@ JSON output (always when --json):
     "transient_api_errors": <int>,  # only when > 0
     "error": <string>             # only when status == "error"
   }
+
+Repository: resolved through lib/gh-repo.sh, shared with ci-wait and
+queue-wait — GH_REPO first, then the working directory (`gh repo view`, then
+the origin remote) when GH_REPO is unset. `gh repo view` ignores GH_REPO and
+answers for the working directory, so a wait on another repository's PR from
+this checkout reads GH_REPO or nothing else will. Every result names the
+repository it read; a GH_REPO that is not owner/name is refused (repo-shape,
+exit 1) rather than sent to an API path that cannot hold it. The
+refusal names the rejected value in its diagnostic line and leaves the JSON
+`repo` field empty, since a refusal is a verdict about no repository.
 
 Auth: resolved through lib/gh-auth.sh, shared with ci-wait and queue-wait
 (kendex#19) — env-first: already-resolved GH_TOKEN/GITHUB_TOKEN/GH_BOT_TOKEN
@@ -566,6 +594,7 @@ emit_result() {
     fi
     jq -n \
       --arg s "$status" \
+      --arg repo "$REPO" \
       --arg decision "$last_review_decision" \
       --arg base_ref "$last_base_ref" \
       --argjson auto_targeted "$last_auto_review_targeted" \
@@ -580,6 +609,7 @@ emit_result() {
       --arg error "$error_msg" \
       '{
         status: $s,
+        repo: $repo,
         review_decision: $decision,
         approvals: $approvals,
         changes_requested: $changes,
@@ -594,7 +624,7 @@ emit_result() {
         + (if $error == "" then {} else {error: $error} end)' || return $?
     return 0
   fi
-  printf 'approval-wait: result status=%s pr=%s mode=%s elapsed=%s unresolved=%s\n' "$status" "$PR_NUM" "$MODE" "$elapsed" "$last_unresolved"
+  printf 'approval-wait: result status=%s pr=%s repo=%s mode=%s elapsed=%s unresolved=%s\n' "$status" "$PR_NUM" "${REPO:-unresolved}" "$MODE" "$elapsed" "$last_unresolved"
   case "$status" in
     approved)
       echo "Approval: approved (decision: ${last_review_decision:-none}, approvals: $last_approvals, unresolved threads: $last_unresolved)"
@@ -711,14 +741,16 @@ if [[ "$AUTH_READY" != "true" ]]; then
 fi
 
 # --- Resolve repo explicitly so gh calls don't depend on local auth/inference ---
-REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
-if [ -z "$REPO" ]; then
-  origin_url=$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null || true)
-  # Strip a trailing ".git" with parameter expansion, not the ERE.
-  REPO=$(echo "$origin_url" | sed -nE 's#^.*github\.com[:/]+([^/]+/[^/]+)$#\1#p')
-  REPO="${REPO%.git}"
+repo_status=0
+REPO=$(orch_resolve_gh_repo "$PROJECT_ROOT") || repo_status=$?
+if [ "$repo_status" -eq 2 ]; then
+  REPO_REJECTED="$REPO"
+  REPO=""
+  emit_error repo-shape
+
+  exit 1
 fi
-if [ -z "$REPO" ]; then
+if [ "$repo_status" -ne 0 ]; then
   emit_error repo-unresolved
 
   exit 1

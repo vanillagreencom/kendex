@@ -163,7 +163,7 @@ run_queue_wait() {
   shift || true
   (cd "$TMP_ROOT/repo" \
     && PATH="$TMP_ROOT/bin:$PATH" \
-       env STUB_SEQ_DIR="$SEQ_DIR" \
+       env -u GH_REPO STUB_SEQ_DIR="$SEQ_DIR" \
            QUEUE_WAIT_CONFIRM_POLLS=2 \
            QUEUE_WAIT_ARM_GRACE=120 \
            QUEUE_WAIT_PROBE_INTERVAL=0 \
@@ -291,7 +291,7 @@ err="$TMP_ROOT/e6"
 out="$(run_queue_wait -- 1 1 20 --no-check-probe 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "1" "plain conflicting result exits 1" "$err"
 assert_eq "$(sed -n '1p' <<<"$out")" \
-  "queue-wait: result status=complete verdict=conflicting pr=1 cause=base_conflict polls=2 progressing=null" \
+  "queue-wait: result status=complete verdict=conflicting pr=1 repo=owner/repo cause=base_conflict polls=2 progressing=null" \
   "the plain result carries the confirmed verdict and cause" "$err"
 
 # queue-verdict-routing-lint.test.sh checks the help enum against emitted verdicts.
