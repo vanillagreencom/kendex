@@ -14,6 +14,29 @@ pub fn rooted(tmp: &tempfile::TempDir) -> PathBuf {
     kendex_core::paths::canonical(tmp.path()).expect("fixture root canonicalizes")
 }
 
+/// The checkout this crate sits in, canonical: the workspace root two levels
+/// above `crates/<name>`, whichever of the three crates compiled this module.
+///
+/// A test holding this repository's own committed files to what its code
+/// produces reads them from here, and one spelling of the root is what lets
+/// a path derived from it be stripped back to the name a committed file
+/// holds.
+#[allow(
+    dead_code,
+    clippy::expect_used,
+    reason = "every test binary includes this whole module and uses the part it needs; a crate that is not in a readable checkout has no repository to assert about"
+)]
+pub fn checkout_root() -> PathBuf {
+    let guess = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    kendex_core::paths::canonical(&guess).unwrap_or_else(|error| {
+        panic!(
+            "{} is not a readable directory, so this crate is not sitting in the \
+             kendex checkout: {error}",
+            guess.display()
+        )
+    })
+}
+
 /// Child-process roots from one fixture home, with the debug sandbox disabled.
 /// Apply explicit test overrides after these defaults.
 #[allow(
