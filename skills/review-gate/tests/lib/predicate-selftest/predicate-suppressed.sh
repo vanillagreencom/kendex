@@ -270,11 +270,10 @@ run "a shorter entry does not claim a longer entry's line" suppressed-findings
 supp_carries "the longer entry's answer left the shorter one standing" "$SUPP_SHORT" "$LAST_LINE"
 supp_carries "only one finding is left" "detail=1 suppressed finding(s)" "$LAST_LINE"
 
-# Only what the comment says OUTSIDE its replies binds the head. A reply line
-# disposes a finding and asserts no commit, yet it is full of runs shaped like
-# a sha: a Fixed-in commit, a tracking claim's #-number, and the entry token
-# itself when a path opens with hex, as this one does. Binding on any of them
-# lets a comment written for an earlier head bind itself to this one.
+# The comment binds by saying so, and a sha-shaped run it merely carries is
+# not saying so. This body holds a head prefix in the one place an author
+# never means as an assertion, the entry token of a path that opens with hex,
+# and no `Dispositions at` line: it answers nothing.
 SUPP_HEXPATH="${HEAD:0:8}.ts:1"
 reset
 CFG_TRUSTED_LOGINS=""
@@ -283,4 +282,20 @@ CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
 reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_body '### Suppressed comments (1)' "**$SUPP_HEXPATH**
 * Blocking: the lane name can collide with a row already carrying it.")")"
 comment "$AUTHOR" "$(printf 'Dispositions:\n%s - %s\n' "$SUPP_HEXPATH" "$SUPP_REASON")" >"$fixtures/comments.json"
-run "a head prefix carried only by a reply line binds nothing" suppressed-findings
+run "a head prefix with no marker in front of it binds nothing" suppressed-findings
+
+# The entry list changes with every review, so a comment outlives the block it
+# answered: at one head the author disposes two findings, pushes, and the new
+# review drops the one that was fixed and re-prints the other. The stale line
+# is then text no entry claims. Nothing about it says which commit this
+# comment answers, and the comment's own marker names the OLD head, so the
+# decline beside it must not ride to a diff it was never written against.
+SUPP_GONE='src/model/lanes.ts:9'
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_MIN_STATE=any
+CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_body '### Suppressed comments (2)' "$SUPP_ENTRIES")")"
+comment "$AUTHOR" "$(printf 'Dispositions at %s:\n%s - Fixed in %s\n**%s** - %s\n**%s** - Tracked: KEN-1400\n' \
+  "${OTHER:0:7}" "$SUPP_GONE" "$HEAD" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")" >"$fixtures/comments.json"
+run "a comment marked for an older head answers nothing at this one" suppressed-findings

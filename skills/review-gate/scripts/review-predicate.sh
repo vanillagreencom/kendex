@@ -91,12 +91,13 @@ answered it: an issue comment binding this head, carrying a line that opens
 with the entry's own `file:line` token — bare as this detail prints it or
 bold as the review body does, both read, neither the anchor, since equality
 with a scanned entry is the identity check — and continues with one of the
-three reply forms. The COMMENT binds, in the text OUTSIDE its reply lines,
-by naming a sha at or above REVIEW_GATE_SHA_PREFIX_FLOOR that the head starts
-with, so a reply written for an earlier head does not survive a push. A reply
-line asserts no commit, and every sha-shaped run on one — a `Fixed in <sha>`
-commit, a tracking claim's `#1234567`, a path opening with hex — would bind a
-comment to a diff no reviewer re-read. The reply is read by the
+three reply forms. The COMMENT binds by SAYING SO: `Dispositions at <sha>`,
+naming a sha at or above REVIEW_GATE_SHA_PREFIX_FLOOR that the head starts
+with, so a comment written for an earlier head does not survive a push.
+Nothing else binds. A sha-shaped run the comment merely carries — a `Fixed in
+<sha>` commit, a tracking claim's `#1234567`, a path opening with hex, a line
+disposing an entry the newest review dropped — asserts no commit, and binding
+on one carried a comment to a diff no reviewer re-read. The reply is read by the
 SAME grammar the thread terms read, so a tracking claim naming no issue and
 a decline naming no mechanism answer nothing; the newest line naming an
 entry decides. The term also clears when the commit the gate
@@ -1932,14 +1933,15 @@ fi
 # ask who may disposition a finding, only that the disposition is written,
 # bound and reasoned.
 #
-# THE COMMENT BINDS THE HEAD IN ITS OWN TEXT, never in a reply. A reply line
-# disposes one finding; nothing on it says which commit the comment answers,
-# and a sha-shaped run there — the commit a `Fixed in <sha>` names, a
-# tracking claim's `#1234567`, a path that opens with hex — that happens to
-# prefix the head binds a comment written for an earlier one. The binding
-# scan therefore reads the lines the line rule does NOT claim: the comment
-# asserts its head in its own text, which is the disposition comment orch
-# already tells an author to write.
+# THE COMMENT BINDS THE HEAD BY SAYING SO: a line reading `Dispositions at
+# <sha>`, the phrase orch already tells an author to write. Nothing else in
+# it binds. A sha-shaped run asserts no commit — the one a `Fixed in <sha>`
+# names, a tracking claim's `#1234567`, a path that opens with hex, a line
+# disposing an entry the newest review dropped — yet while any of them could
+# bind, a comment written for an earlier head bound itself to this one
+# through whichever run it happened to carry, taking its other replies across
+# a diff no reviewer re-read. A marker cannot be written by accident, which
+# is what ends the class rather than excluding its members one at a time.
 supp_answered=0
 if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
   load_issue_comments
@@ -1949,12 +1951,15 @@ if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
       ((($r | disposition) or ($r | tracking)) | not)
       or ((($r | disposition) | not) and (($r | names_issue) | not))
       or (($r | declined) and (($r | reason_left) == ""));
-    # The bound sha is captured BEFORE the comparison: referring to it as dot
-    # inside startswith would rebind dot to the head and accept any sha, the
-    # same trap the comment-form matcher documents.
+    # The shape is the comment-form matcher: the literal marker, decoration
+    # after it ignored as non-hex, then the sha. The bound sha is captured
+    # BEFORE the comparison, since referring to it as dot inside startswith
+    # would rebind dot to the head and accept any sha — the trap that matcher
+    # documents.
     def head_bound($sha; $floor):
-      [ scan("[0-9a-fA-F]{" + $floor + ",40}") | ascii_downcase | . as $c
-        | select(($sha | ascii_downcase) | startswith($c)) ] | length > 0;
+      [ scan("dispositions[ \t]+at[^0-9a-fA-F]*([0-9a-fA-F]{" + $floor + ",40})"; "i")
+        | (.[0] | ascii_downcase) as $claimed
+        | select(($sha | ascii_downcase) | startswith($claimed)) ] | length > 0;
     # A line names an entry by EQUALITY with one the scan extracted, never by
     # a token pattern of its own: the scan is the one definition of what an
     # entry token is, and a second spelling here would be a twin that drifts
@@ -1985,22 +1990,10 @@ if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
     ($entries | split("\n") | map(select(length > 0))) as $wanted
     | [ .[]
         | select((.user.login // "") == $author)
-        | ((.body // "" | gsub("\r"; "")) | split("\n")
-           | map({line: ., reply: [line_reply($wanted)]})) as $lines
-        # ONLY WHAT THE COMMENT SAYS OUTSIDE ITS REPLIES BINDS THE HEAD. A
-        # reply line disposes one finding and asserts nothing about which
-        # commit this comment answers, so every hex run on one is something
-        # else wearing the shape of a sha: the commit a `Fixed in <sha>`
-        # names, the `#1234567` of a tracking claim, the entry token itself
-        # when a path opens with hex. Any of them can prefix the head, and
-        # then a comment written for an EARLIER head binds itself to this one
-        # and carries replies across a diff no reviewer re-read: the fail-open
-        # this term exists to close, reachable through any of those.
-        # Dropping the reply lines closes the class; excluding them one slot
-        # at a time only moves it to the next.
-        | select([ $lines[] | select((.reply | length) == 0) | .line ]
-                 | join("\n") | head_bound($sha; $floor))
-        | $lines[].reply[]
+        | (.body // "" | gsub("\r"; ""))
+        | select(head_bound($sha; $floor))
+        | split("\n")[]
+        | line_reply($wanted)
       ] as $said
     # The NEWEST line naming an entry decides, as a thread takes its newest
     # reply: an author who answers and then writes something else about the
