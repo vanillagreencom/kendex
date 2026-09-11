@@ -5,7 +5,7 @@
 # matcher:
 # description: Blocks a reviewer subagent's stop once when the worktree it reviewed is not clean. The worktree is the one the artifact path in the subagent's transcript names (`<worktree>/tmp/review-<agent>-*.json`, the newest mention); `git status --porcelain --untracked-files=all` there listing anything blocks, naming each path, and a transcript naming no artifact path blocks the same way, since the review contract is an artifact at that path. An agent_type not starting with `reviewer-` passes, as does `stop_hook_active` true; a block is recorded per agent_id under `<git common dir>/kendex/reviewer-stop/` so a later stop of the same subagent passes. Claude Code only, the harness with a SubagentStop event that names the agent.
 # summary: Stops a reviewer agent from finishing while the worktree it reviewed still holds files it left behind.
-# safety: Reads the payload, the transcript and git status; the only write is the per-agent marker under the reviewed repository's git common dir. Exit 2 names the paths and asks for the reviewer's own files to be deleted and the rest reported, never bypassed. jq is required to read the payload; a payload, transcript or git that cannot be read is refused, never passed, and so is an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in, which is judged in jq before the shell reads it so that a NUL, a `/`, a newline, `.` or `..` never names another subagent's marker. Every refusal opens with `reviewer-stop-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the payload, the transcript and git status; the only write is the per-agent marker under the reviewed repository's git common dir. Exit 2 names the paths and asks for the reviewer's own files to be deleted and the rest reported, never bypassed. jq is required to read the payload; a payload, transcript or git that cannot be read is refused, never passed, and so is an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in; it is judged in jq where the payload holds it, so a NUL, a `/`, a newline, `.` or `..` never reaches the marker path, whatever encoding the read passes through. Every refusal opens with `reviewer-stop-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
 # harnesses: [claude-code]
 # ---
@@ -94,12 +94,16 @@ done
 # diagnostic on the passing side.
 INPUT=$(cat 2>&1) || refuse payload unreadable "$INPUT"
 
-# The agent id names the marker a block is recorded under, so it is judged as
-# the payload holds it, before the shell reads it: a NUL the shell drops from
-# a command substitution would leave an id naming another subagent's marker,
-# and `.` or `..` name the marker directory and its parent, each of which
-# exists, so the recorded-block test would pass the stop unchecked. It passes
-# only when it is spelled in the alphabet the harness names subagents in,
+# The agent id names the marker a block is recorded under, so it is judged
+# where the payload holds it rather than after an encoding has carried it to
+# the shell: no spelling outside the alphabet reaches the marker path,
+# whatever that encoding does. The encoding here is @tsv, which escapes a
+# NUL, a tab, a newline, a carriage return and a backslash, so the ids a
+# shell-side test could ever be handed were the dotted ones — `.` and `..`
+# name the marker directory and its parent, each of which exists once a block
+# has recorded the directory, and the recorded-block test below read them as
+# this subagent's own and passed the stop unchecked. An id passes only when
+# it is spelled in the alphabet the harness names subagents in,
 # ASCII letters, digits, `_` and `-`, which removing every such character
 # proves by leaving nothing; an anchored match would not, since `$` also
 # matches before a trailing newline. jq hands back an id it accepted or the
