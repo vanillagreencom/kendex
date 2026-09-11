@@ -187,6 +187,23 @@ case "${1:-}" in
         echo '[{"name":"build","state":"SUCCESS"}]'
         exit 0
       fi
+      # A check that registers late and settled: one green check on the first
+      # poll, two on every later one. Nothing is ever pending, so only the
+      # settled-check window decides when the wait completes.
+      if [[ "${STUB_PR_CHECKS_MODE:-}" == "late_second_check" ]]; then
+        count=0
+        if [[ -f "${STUB_PR_CHECKS_COUNT_FILE:?}" ]]; then
+          count="$(cat "$STUB_PR_CHECKS_COUNT_FILE")"
+        fi
+        count=$((count + 1))
+        printf '%s' "$count" > "$STUB_PR_CHECKS_COUNT_FILE"
+        if [[ "$count" -eq 1 ]]; then
+          echo '[{"name":"build","state":"SUCCESS"}]'
+          exit 0
+        fi
+        echo '[{"name":"build","state":"SUCCESS"},{"name":"lint","state":"SUCCESS"}]'
+        exit 0
+      fi
       if [[ "${STUB_PR_CHECKS_MODE:-}" == "pending_always" ]]; then
         echo '[{"name":"build","state":"IN_PROGRESS"}]'
         exit 8
@@ -471,6 +488,7 @@ table "$JSON" \
   "a PR already green at the script's own defaults completes, not times out||$JSON_DEFAULTS||rc=0 status=complete verdict=pass passed=1" \
   "a pending check at those defaults still waits to the deadline||$JSON_DEFAULTS|STUB_PR_CHECKS_MODE=pending_always|rc=1 status=timeout verdict=pending check.build=IN_PROGRESS" \
   'a green rollup the budget never confirmed is pending at the deadline, not pass||1 10 30 --json||rc=1 status=timeout verdict=pending passed=1 pending=0' \
+  'a check registering late and settled restarts the window|||STUB_PR_CHECKS_MODE=late_second_check|rc=0 status=complete verdict=pass passed=2 elapsed_seconds=120' \
   "checks still in progress at the deadline are a timeout||$JSON_SHORT|STUB_PR_CHECKS_MODE=pending_always|rc=1 status=timeout verdict=pending check.build=IN_PROGRESS" \
   'no checks registered past the grace window is a named error|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=3|rc=1 status=error error_named=true' \
   "no checks registered inside the default grace window stays pending||$JSON_SHORT|STUB_PR_CHECKS_MODE=empty|rc=1 status=timeout verdict=pending" \

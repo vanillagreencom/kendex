@@ -199,8 +199,12 @@ either the prior run's leftovers or CI that finished before the wait started.
 It completes once that same picture has held for the stale window — 90
 seconds of wall clock, not a count of polls, so the threshold does not scale
 with poll_interval — which at the default interval is the second poll, well
-inside the default budget. Short of the window the wait keeps polling and the
-deadline reports status "timeout" with verdict "pending".
+inside the default budget. The picture is every check's name and state, so a
+poll that differs from the one being held — a check registering late as a
+settled success, an emptied rollup, a run the wait itself asked for — starts
+the window over rather than inheriting the time already served. Short of the
+window the wait keeps polling and the deadline reports status "timeout" with
+verdict "pending".
 
 JSON output (always when --json):
   {
@@ -318,6 +322,11 @@ EMPTY_CLASSES='{"pending":[],"failed":[],"passed":[]}'
 # report the checks that were still outstanding.
 last_check_classes="$EMPTY_CLASSES"
 
+# Each classified check as name and reported state, with the fallbacks older
+# gh output needs. One spelling, read by the result object and by the
+# settled-check window's key.
+CI_CHECK_VIEW_JQ='map_values([.[] | {name, state: (.state // .bucket // "UNKNOWN")}])'
+
 # Emit the final machine-readable result on stdout. Every exit path routes
 # through here (or emit_error) so the script can never finish silently.
 #   status: complete | timeout | error
@@ -341,7 +350,7 @@ emit_result() {
       --arg repo "$REPO" \
       --argjson elapsed "$elapsed" \
       --arg error "$error_msg" \
-      --argjson classes "$(jq -c 'map_values(map({name, state: (.state // .bucket // "UNKNOWN")}))' <<<"$classes")" \
+      --argjson classes "$(jq -c "$CI_CHECK_VIEW_JQ" <<<"$classes")" \
       '{
         status: $s,
         verdict: $v,
@@ -507,9 +516,12 @@ fi
 # started spent the whole budget and reported a timeout.
 seen_in_progress=false
 STALE_WINDOW=90  # seconds of only completed/skipped before assuming genuinely done
-# Elapsed seconds at the start of the current all-settled streak; -1 when no
-# streak is open.
-stale_since=-1
+# The streak: the settled picture being held, and the elapsed second it was
+# first seen. A poll showing a different picture starts a new streak, so the
+# window measures one unchanging rollup and not merely the time since the
+# first settled poll. Empty means no streak is open.
+stale_key=""
+stale_since=0
 
 # The log is captured whole and windowed in-shell, and head and grep read
 # here-strings, which have no producer to signal: `gh | head -200`
@@ -633,6 +645,14 @@ superseding_run_state() {
   ' <<<"$classes"
 }
 
+# One comparable line naming the settled picture a poll shows: every check's
+# name and state, ordered, so a rollup that only reorders its checks reads as
+# the same picture while a late-registered one does not. Reads classified
+# checks; the settled-check window compares consecutive polls with it.
+settled_checks_key() {
+  jq -cS "$CI_CHECK_VIEW_JQ"' | map_values(sort_by(.name, .state))'
+}
+
 classify_checks() {
   jq -c "$CI_RUN_JQ_DEFS"'
     {
@@ -736,6 +756,10 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
       fi
       exit 1
     fi
+    # A rollup that went empty is not the picture any streak was holding, and
+    # the key comparison below never sees this poll: drop the streak so the
+    # checks that come back are confirmed on their own.
+    stale_key=""
     sleep "$POLL_INTERVAL"
     update_elapsed
     continue
@@ -759,7 +783,6 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
   # Track if we've observed a fresh run (guards against stale-check race)
   if [ "$pending_count" -gt 0 ]; then
     seen_in_progress=true
-    stale_since=-1
   fi
 
   # Check for failure (only when all checks have settled). Before declaring
@@ -781,7 +804,6 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
         check_classes=$(jq -c '.pending += (.failed | map(.state = "EXPECTED" | .bucket = "pending")) | .failed = []' <<<"$check_classes")
         last_check_classes="$check_classes"
         seen_in_progress=true
-        stale_since=-1
         sleep "$POLL_INTERVAL"
         update_elapsed
         continue
@@ -804,10 +826,11 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
           ci_message retry "$@" >&2
           gh run rerun "$failed_run" --repo "$REPO" --failed 2>/dev/null || true
           retries=$((retries + 1))
-          # Reset because rerun will produce new checks: the rollups before it
-          # confirm nothing about the run it just started.
+          # The rerun produces new checks, and the picture it replaces can be
+          # identical to the one that follows it, so the key comparison below
+          # cannot see this change: drop the streak explicitly.
           seen_in_progress=false
-          stale_since=-1
+          stale_key=""
           sleep 10
           update_elapsed
           continue
@@ -829,8 +852,12 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
     # Only seeing completed/skipped checks but never saw in-progress.
     # Could be stale checks from prior run, or CI already completed before
     # we started watching. Hold the same picture for STALE_WINDOW to tell
-    # them apart.
-    if [ "$stale_since" -lt 0 ]; then
+    # them apart: a poll whose picture differs from the one being held — a
+    # check registering late as a settled success, say — starts the window
+    # over rather than inheriting the elapsed time of a picture it replaced.
+    settled_key=$(echo "$check_classes" | settled_checks_key)
+    if [ "$settled_key" != "$stale_key" ]; then
+      stale_key="$settled_key"
       stale_since="$elapsed"
     fi
     if [ "$((elapsed - stale_since))" -ge "$STALE_WINDOW" ]; then
