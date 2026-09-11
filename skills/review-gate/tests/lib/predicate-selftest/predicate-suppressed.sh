@@ -299,3 +299,33 @@ reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_b
 comment "$AUTHOR" "$(printf 'Dispositions at %s:\n%s - Fixed in %s\n**%s** - %s\n**%s** - Tracked: KEN-1400\n' \
   "${OTHER:0:7}" "$SUPP_GONE" "$HEAD" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")" >"$fixtures/comments.json"
 run "a comment marked for an older head answers nothing at this one" suppressed-findings
+
+# The marker OPENS a line. A comment quoting the phrase — from another pull
+# request, inside a fenced example, mid-sentence — is not an author saying
+# which commit this comment answers, and a body scan took all of those.
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_MIN_STATE=any
+CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_body '### Suppressed comments (2)' "$SUPP_ENTRIES")")"
+comment "$AUTHOR" "$(printf 'The other PR says Dispositions at %s, which is this head.\n**%s** - %s\n**%s** - Tracked: KEN-1400\n' \
+  "${HEAD:0:7}" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")" >"$fixtures/comments.json"
+run "a marker quoted mid-line binds nothing" suppressed-findings
+
+# A path may carry a colon of its own, so one entry can open another entry's
+# line at a separator the bare arm allows. The remainder still holds a track
+# word and an id, so without a longest-match rule one reply answers both.
+SUPP_STEM='src/foo:1'
+SUPP_EXTENDS='src/foo:1.ts:2'
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_MIN_STATE=any
+CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_body '### Suppressed comments (2)' "**$SUPP_STEM**
+* Blocking: the first finding.
+**$SUPP_EXTENDS**
+* Blocking: the second finding.")")"
+comment "$AUTHOR" "$(printf 'Dispositions at %s:\n%s - Tracked: KEN-1400\n' "${HEAD:0:7}" "$SUPP_EXTENDS")" >"$fixtures/comments.json"
+run "a line names one entry, the longest it opens with" suppressed-findings
+supp_carries "the entry the line extends is still standing" "$SUPP_STEM" "$LAST_LINE"
+supp_carries "only the extending entry was answered" "detail=1 suppressed finding(s)" "$LAST_LINE"

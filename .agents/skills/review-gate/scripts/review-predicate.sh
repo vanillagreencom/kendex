@@ -1956,9 +1956,18 @@ if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
     # BEFORE the comparison, since referring to it as dot inside startswith
     # would rebind dot to the head and accept any sha — the trap that matcher
     # documents.
+    #
+    # THE MARKER OPENS A LINE. A body scan would take the phrase anywhere the
+    # comment carries it — quoted from another pull request, inside a fenced
+    # example, mid-sentence in prose — and the decoration run would reach
+    # across newlines for a sha on a later line. None of those is an author
+    # asserting which commit this comment answers. The line anchor is the
+    # whole of it: no fence tracker, because a fenced marker does not open a
+    # line of the comment any more than a quoted one does.
     def head_bound($sha; $floor):
-      [ scan("dispositions[ \t]+at[^0-9a-fA-F]*([0-9a-fA-F]{" + $floor + ",40})"; "i")
-        | (.[0] | ascii_downcase) as $claimed
+      [ split("\n")[]
+        | capture("^[ \t]*dispositions[ \t]+at[^0-9a-fA-F]*(?<c>[0-9a-fA-F]{" + $floor + ",40})"; "i")
+        | (.c | ascii_downcase) as $claimed
         | select(($sha | ascii_downcase) | startswith($claimed)) ] | length > 0;
     # A line names an entry by EQUALITY with one the scan extracted, never by
     # a token pattern of its own: the scan is the one definition of what an
@@ -1969,31 +1978,40 @@ if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
     # detail prints it bare.
     #
     # The bare arm requires the character after the entry to be no letter or
-    # digit, so `a/b.ts:1` cannot claim the line `a/b.ts:12 ...`; the bold arm
-    # needs no such test, its closing `**` being the terminator. At most one
-    # entry can match a line: extending a match would need a digit where the
-    # test demands a separator.
-    def line_reply($wanted):
+    # digit, so `a/b.ts:1` cannot claim the line `a/b.ts:12 ...`. A path may
+    # hold a colon of its own, though, and then one entry is a prefix of
+    # another at a separator the test allows: `src/foo:1` opens the line of
+    # `src/foo:1.ts:2`, whose remainder still carries a track word and an id,
+    # and one reply would answer both findings. A LINE NAMES ONE ENTRY, the
+    # longest it opens with — the list arrives ordered by length and the first
+    # match wins — so the shorter finding is left for its own reply.
+    def line_reply($by_length):
       sub("^[ \t]*([-*+][ \t]+)?"; "") as $l
-      | $wanted[]
-      | . as $e
-      | ($e | length) as $n
-      | if ($l | startswith("**" + $e + "**"))
-        then {entry: $e, r: ($l[($n + 4):])}
-        elif ($l | startswith($e)) and (($l[$n:] | test("^[\\p{L}\\p{N}]")) | not)
-        then {entry: $e, r: ($l[$n:])}
-        else empty
-        end
+      | first(
+          $by_length[]
+          | . as $e
+          | ($e | length) as $n
+          | if ($l | startswith("**" + $e + "**"))
+            then {entry: $e, r: ($l[($n + 4):])}
+            elif ($l | startswith($e)) and (($l[$n:] | test("^[\\p{L}\\p{N}]")) | not)
+            then {entry: $e, r: ($l[$n:])}
+            else empty
+            end)
       # The separator run between the token and the reply is what the author
       # wrote there — a dash, a colon, an em dash, nothing at all.
       | .r |= sub("^[^\\p{L}\\p{N}]*"; "");
+    # $wanted keeps the order the scan found the entries in, which is the
+    # order the detail and the log name what is left. Matching reads the same
+    # set longest-first, which is a property of the match and not of the
+    # report.
     ($entries | split("\n") | map(select(length > 0))) as $wanted
+    | ($wanted | sort_by(-length)) as $by_length
     | [ .[]
         | select((.user.login // "") == $author)
         | (.body // "" | gsub("\r"; ""))
         | select(head_bound($sha; $floor))
         | split("\n")[]
-        | line_reply($wanted)
+        | line_reply($by_length)
       ] as $said
     # The NEWEST line naming an entry decides, as a thread takes its newest
     # reply: an author who answers and then writes something else about the
