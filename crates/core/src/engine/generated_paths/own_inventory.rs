@@ -155,8 +155,8 @@ fn judge(listed: &BTreeSet<String>, rendered: &BTreeSet<String>) -> Standing {
 /// names them. Present and unreadable, or present and not the document the
 /// writer lays down, refuses instead of reading as a checkout that renders
 /// nothing — which would pass every drift silently.
-fn committed(root: &Path) -> Result<BTreeSet<String>, Finding> {
-    let text = match crate::fs::read_if_exists(&root.join(INVENTORY)) {
+fn committed(inventory: &Path) -> Result<BTreeSet<String>, Finding> {
+    let text = match crate::fs::read_if_exists(inventory) {
         Ok(Some(text)) => text,
         Ok(None) => return Ok(BTreeSet::new()),
         Err(error) => {
@@ -170,10 +170,15 @@ fn committed(root: &Path) -> Result<BTreeSet<String>, Finding> {
     })
 }
 
-/// Plan this checkout as `refresh` does, and hold its committed inventory to
+/// Plan `root` as `refresh` does, and hold the inventory at `inventory` to
 /// what that pass renders. The plan is taken and never executed, so the run
 /// writes nothing into the scope it judges.
-fn check(root: &Path) -> Standing {
+///
+/// The inventory is a parameter rather than a path derived inside, so the
+/// control below drives this whole path — the read, the planned set and the
+/// comparison — against a planted inventory instead of exercising `judge`
+/// alone, which would stay green if this stopped reading either side.
+fn check_against(root: &Path, inventory: &Path) -> Standing {
     let unplanned = |cause: String| {
         Standing::Refused(Finding::Unplanned {
             root: crate::paths::slashed(root),
@@ -191,14 +196,19 @@ fn check(root: &Path) -> Standing {
         Ok(report) => report,
         Err(error) => return unplanned(error.to_string()),
     };
-    match committed(root) {
+    match committed(inventory) {
         Ok(listed) => judge(&listed, &report.generated.relative(root)),
         Err(finding) => Standing::Refused(finding),
     }
 }
 
+/// A checkout held to the inventory committed in it.
+fn check(root: &Path) -> Standing {
+    check_against(root, &root.join(INVENTORY))
+}
+
 /// The check itself: this repository's `.kendex-generated.json` is the set
-/// this repository renders.
+/// this repository renders. The passing direction, through the whole path.
 #[test]
 fn the_committed_inventory_is_the_set_this_checkout_renders() {
     let root = crate::test_util::checkout_root();
@@ -208,23 +218,49 @@ fn the_committed_inventory_is_the_set_this_checkout_renders() {
     }
 }
 
-fn set(paths: &[&str]) -> BTreeSet<String> {
-    paths.iter().map(|path| (*path).to_owned()).collect()
-}
+/// A path no checkout renders, planted to prove the `stale` direction. The
+/// leading dot makes it a name `kendex.toml` could not declare an item under.
+const RENDERED_NOWHERE: &str = ".agents/skills/.nothing-renders-this/SKILL.md";
 
-/// A render the inventory does not list, and an entry nothing renders: one
-/// keyed line each, in order, and the refusal that carries them.
+/// The refusing direction, through the same path the check above runs: this
+/// checkout's own committed inventory with one real render taken out and one
+/// entry nothing renders put in, read from a planted copy while the checkout
+/// itself is planned untouched.
+///
+/// Both planted defects are asserted, in the finding and as the keyed line
+/// each writes. The entry taken out is read off the committed inventory
+/// rather than named here, so the control cannot drift from what this
+/// repository actually renders.
 #[test]
 fn an_inventory_that_is_not_the_render_set_is_refused() {
-    let rendered = set(&[".agents/skills/one/SKILL.md", INVENTORY]);
-    let listed = set(&[".agents/skills/gone/SKILL.md", INVENTORY]);
+    let root = crate::test_util::checkout_root();
+    let listed = committed(&root.join(INVENTORY)).expect("the committed inventory reads");
+    let removed = listed
+        .iter()
+        .find(|path| path.as_str() != INVENTORY)
+        .expect("the committed inventory lists a render")
+        .clone();
 
-    let standing = judge(&listed, &rendered);
+    let mut planted: BTreeSet<String> = listed.clone();
+    assert!(planted.remove(&removed), "the entry chosen was listed");
+    assert!(
+        planted.insert(RENDERED_NOWHERE.to_owned()),
+        "the planted entry was not already listed"
+    );
+    let tmp = tempfile::tempdir().expect("a scratch directory");
+    let path = crate::test_util::rooted(&tmp).join(INVENTORY);
+    std::fs::write(
+        &path,
+        serde_json::to_string(&planted).expect("the planted inventory serializes"),
+    )
+    .expect("the planted inventory is writable");
+
+    let standing = check_against(&root, &path);
     assert_eq!(
         standing,
         Standing::Refused(Finding::Drifted {
-            missing: vec![".agents/skills/one/SKILL.md".to_owned()],
-            stale: vec![".agents/skills/gone/SKILL.md".to_owned()],
+            missing: vec![removed],
+            stale: vec![RENDERED_NOWHERE.to_owned()],
         })
     );
     let Standing::Refused(finding) = standing else {
@@ -234,13 +270,4 @@ fn an_inventory_that_is_not_the_render_set_is_refused() {
     let mut lines = text.lines();
     assert_eq!(lines.next(), Some("render-inventory: missing=1"));
     assert_eq!(lines.next(), Some("render-inventory: stale=1"));
-}
-
-/// An inventory equal to the render set passes, so the refusal above is the
-/// difference and not the comparison always answering.
-#[test]
-fn an_inventory_equal_to_the_render_set_passes() {
-    let rendered = set(&[".agents/skills/one/SKILL.md", INVENTORY]);
-
-    assert_eq!(judge(&rendered.clone(), &rendered), Standing::Current);
 }
