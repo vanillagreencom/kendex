@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AvailablePackage,
@@ -343,6 +344,22 @@ describe("the Bookmark control on a marketplace row", () => {
 
     await act(async () => control(host, removeBookmarkLabel("gh")).click());
     expect(commands.bookmarkRemove).toHaveBeenCalledWith(SAVED_SKILL.bookmark);
+  });
+
+  it("says a refused save where it was pressed, and leaves nothing for the Bookmarks tab", async () => {
+    const refusal = "the bookmark index will not read";
+    vi.mocked(commands.bookmarkAdd).mockResolvedValue({
+      status: "error",
+      error: refusal,
+    });
+    const host = table();
+    await settle();
+
+    await act(async () => control(host, bookmarkLabel("gh")).click());
+    await settle();
+    expect(toast.error).toHaveBeenCalledWith(refusal);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(useBookmarksStore.getState().refused).toBeNull();
   });
 });
 

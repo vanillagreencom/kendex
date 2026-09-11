@@ -10,6 +10,8 @@ import {
   removeBookmarkLabel,
   savedToast,
 } from "@/lib/copy-bookmarks";
+import { refusalWords } from "@/lib/refusal";
+import { NO_REASON_GIVEN } from "@/lib/settled";
 import { cn } from "@/lib/utils";
 import { useBookmarksAnswer, useBookmarksStore } from "@/stores/bookmarks";
 import { useMarketplacesStore } from "@/stores/marketplaces";
@@ -58,6 +60,7 @@ export function BookmarkButton({
   const ensure = useBookmarksStore((s) => s.ensure);
   const add = useBookmarksStore((s) => s.add);
   const remove = useBookmarksStore((s) => s.remove);
+  const clearRefusal = useBookmarksStore((s) => s.clearRefusal);
 
   // The list this control draws from, read once for the whole app: a
   // table draws one of these per row, and a read per row would resolve
@@ -76,9 +79,16 @@ export function BookmarkButton({
   const toggle = () => {
     const bookmark = held?.bookmark ?? bookmarkOf(target, item, name);
     const saving = held ? remove(bookmark) : add(bookmark);
-    void saving.then((ok) => {
-      if (!ok) return;
-      toast.success(held ? forgotToast(name) : savedToast(name));
+    void saving.then((refusal) => {
+      if (refusal === null) {
+        toast.success(held ? forgotToast(name) : savedToast(name));
+        return;
+      }
+      // Said here, where the person pressed, then let go: the Bookmarks
+      // tab's own line is for writes made from the tab, and would otherwise
+      // show this one later under a write it did not make.
+      toast.error(refusalWords(refusal) ?? NO_REASON_GIVEN);
+      clearRefusal();
     });
   };
 

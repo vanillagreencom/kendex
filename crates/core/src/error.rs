@@ -471,6 +471,12 @@ pub enum CoreError {
     #[error("the bundle '{name}' is not readable in its catalog — {problem}")]
     UnreadableBundle { name: String, problem: String },
 
+    /// A catalog whose own config will not read, asked about one name in
+    /// it. `why` is the config's own account of what is wrong: any lookup
+    /// there finds nothing, which is not the catalog saying the name is gone.
+    #[error("{why}")]
+    CatalogUnusable { why: String },
+
     /// The check script this build embeds does not parse. An invariant of
     /// the binary rather than of anything on disk: `drift::hook::HOOK_SCRIPT`
     /// is both what the install writes and what the renderer places, so

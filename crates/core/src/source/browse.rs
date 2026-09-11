@@ -145,7 +145,7 @@ pub struct BundleDetail {
 /// marketplace cannot be served and that it has dropped a package are
 /// different sentences with different remedies.
 pub fn offers_package(env: &Env, catalog: &Catalog, kind: ItemKind, name: &str) -> Result<bool> {
-    let browsed = open(env, catalog)?;
+    let browsed = open_to_ask(env, catalog)?;
     Ok(crate::source::find_item(&browsed.sealed, &browsed.config, kind, name).is_some())
 }
 
@@ -153,8 +153,22 @@ pub fn offers_package(env: &Env, catalog: &Catalog, kind: ItemKind, name: &str) 
 /// declared in a shape this reader will not read is not a set the catalog
 /// offers, and its reason travels rather than reading as absence.
 pub fn offers_bundle(env: &Env, catalog: &Catalog, name: &str) -> Result<bool> {
-    let browsed = open(env, catalog)?;
+    let browsed = open_to_ask(env, catalog)?;
     Ok(super::bundles::find(&browsed.sealed, &browsed.config, name)?.is_some())
+}
+
+/// One catalog opened to be asked whether it offers a name. A catalog whose
+/// own config will not read finds nothing under any name, so it refuses in
+/// that config's own words rather than letting "none" stand as its answer.
+fn open_to_ask(env: &Env, catalog: &Catalog) -> Result<Browsed> {
+    let browsed = open(env, catalog)?;
+    if browsed.config.mode != crate::source::CatalogMode::Unusable {
+        return Ok(browsed);
+    }
+    match browsed.config.hidden_content() {
+        Some(why) => Err(CoreError::CatalogUnusable { why }),
+        None => unreachable!("hidden_content answers for every unusable config"),
+    }
 }
 
 /// Every package one catalog offers, across kinds.

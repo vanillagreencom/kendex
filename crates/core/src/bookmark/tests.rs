@@ -423,6 +423,28 @@ fn a_dropped_package_and_an_unreadable_marketplace_are_different_answers() {
     );
     assert_eq!(resolved[0].bookmark.name, "gone");
     assert_eq!(list(&machine.env).unwrap().len(), 1);
+
+    // A marketplace that is there but whose own config will not read is
+    // that answer too, in the config's own words, for a package and a set
+    // alike: a lookup in it finds nothing, whatever it offers.
+    fs::create_dir_all(&machine.catalog).unwrap();
+    fs::write(machine.catalog.join("kendex.toml"), "[marketplace\n").unwrap();
+    add(&machine.env, set(&repo, "starter")).unwrap();
+    let sealed = crate::source_read::SealedSource::open(&machine.catalog).unwrap();
+    let why = crate::source::source_config(&sealed, "catalog")
+        .unwrap()
+        .hidden_content()
+        .unwrap();
+    let resolved = resolve(&machine.env).unwrap();
+    assert_eq!(resolved.len(), 2, "{resolved:?}");
+    for saved in &resolved {
+        assert_eq!(
+            saved.reach,
+            Reach::Unavailable { why: why.clone() },
+            "{:?}",
+            saved.bookmark
+        );
+    }
 }
 
 /// A marketplace nothing here subscribes to is not a failure: a repository

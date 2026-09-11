@@ -36,7 +36,8 @@ interface BookmarksState {
   read: Read;
   /** A write in flight, so a surface can hold its own buttons. */
   busy: boolean;
-  /** What a write refused with, or null. Cleared when the next one starts. */
+  /** What a write refused with, or null. Cleared when the next one starts,
+   *  and by a surface once it has said the refusal itself. */
   refused: string | null;
   load: () => Promise<void>;
   /** Read the list unless a read is out or has answered. What a Bookmark
@@ -47,8 +48,10 @@ interface BookmarksState {
    *  again on its own, and the Bookmarks tab asks for a fresh read when it
    *  opens. */
   ensure: () => void;
-  add: (bookmark: Bookmark) => Promise<boolean>;
-  remove: (bookmark: Bookmark) => Promise<boolean>;
+  /** Each resolves with what the write refused with, or null once it took,
+   *  so the surface that asked can say it where the person is looking. */
+  add: (bookmark: Bookmark) => Promise<string | null>;
+  remove: (bookmark: Bookmark) => Promise<string | null>;
   clearRefusal: () => void;
 }
 
@@ -117,13 +120,13 @@ async function write<T>(
   body: () => Promise<
     { status: "ok"; data: T } | { status: "error"; error: string }
   >,
-): Promise<boolean> {
+): Promise<string | null> {
   set({ busy: true, refused: null });
   const answer = await settled(body());
   set({ busy: false });
   if (answer.status === "error") set({ refused: answer.error });
   await get().load();
-  return answer.status === "ok";
+  return answer.status === "error" ? answer.error : null;
 }
 
 /** What the bookmark index says, as one answer a surface reads whole.
