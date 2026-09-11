@@ -12,9 +12,10 @@ import { rowForCatalog, summaryFor } from "@/lib/marketplace-display";
 /** What a surface needs to save, or to recognise, a marketplace item.
  *
  *  Two strings for one marketplace, because they answer different
- *  questions. `repo` is what a bookmark records — the repository or folder
- *  the subscription points at, never its alias, which is a per-place
- *  manifest key that a bookmark belonging to no place cannot use.
+ *  questions. `repo` is what a bookmark records — the repository the
+ *  subscription points at, or the directory its folder resolves to — never
+ *  its alias, which is a per-place manifest key that a bookmark belonging
+ *  to no place cannot use.
  *  `identity` is that reference folded to the one string every comparison
  *  in kendex makes, which is what tells a saved row from an unsaved one
  *  however either side spells the marketplace. */
@@ -25,8 +26,9 @@ export interface BookmarkTarget {
 
 /** The marketplace a page or row is showing, in both spellings.
  *
- *  Both come from core: the subscription row carries the reference it
- *  declares and the identity core folded it to, and a repository browsed
+ *  Both come from core: the subscription row carries the repository it
+ *  declares or the directory its folder resolves to, beside the identity
+ *  core folded that to, and a repository browsed
  *  before anyone subscribes carries the same pair on the summary that
  *  fetched it. Neither is derived here — a second spelling of that fold
  *  outside core would be a second answer to which marketplaces are one.
@@ -44,7 +46,7 @@ export function bookmarkTarget(
     return identity === null ? null : { repo: catalog.repo, identity };
   }
   const row = rowForCatalog(rows, catalog);
-  const repo = row?.repo ?? row?.path ?? null;
+  const repo = row?.repo ?? row?.resolvedPath ?? null;
   const identity = row?.repoIdentity ?? null;
   return repo === null || identity === null ? null : { repo, identity };
 }

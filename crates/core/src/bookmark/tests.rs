@@ -146,7 +146,10 @@ fn one_repository_spelled_two_ways_is_one_bookmark() {
         "https://github.com/VanillaGreenCom/kendex.git",
         "git@github.com:vanillagreencom/kendex",
     ] {
-        add(&env, package(repo, ItemKind::Skill, "gh")).unwrap();
+        let saved = add(&env, package(repo, ItemKind::Skill, "gh")).unwrap();
+        // A save hands back what the index holds, so a confirmation names
+        // the spelling that is stored rather than the one just typed.
+        assert_eq!(saved.repo, "vanillagreencom/kendex", "saving {repo}");
     }
     let held = list(&env).unwrap();
     assert_eq!(held.len(), 1, "{held:?}");
@@ -326,6 +329,69 @@ fn a_saved_item_resolves_through_the_subscription_that_carries_it() {
         }),
         "{resolved:?}"
     );
+}
+
+/// A folder is the directory it resolves to from the place declaring it,
+/// never its spelling: two projects each declaring `catalog` are two
+/// marketplaces, and the item saved from each resolves through that
+/// project's own subscription and reads that project's own directory. A
+/// declaration spelled `./catalog` or `catalog/` is the directory the saved
+/// `catalog` names.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn one_relative_folder_declared_in_two_places_is_two_marketplaces() {
+    let machine = machine();
+    let mut expected = Vec::new();
+    for (project, offered, spelled) in [
+        ("alpha", "only-alpha", "./catalog"),
+        ("beta", "only-beta", "catalog/"),
+    ] {
+        let root = machine.home.join(project);
+        let skill = root.join("catalog/skills").join(offered);
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            format!("---\nname: {offered}\ndescription: about {offered}\n---\nBody.\n"),
+        )
+        .unwrap();
+        let root = root.canonicalize().unwrap();
+        fs::write(
+            crate::manifest::manifest_path(&machine.env, &Scope::Project { root: root.clone() }),
+            format!("schema = 6\n[sources.catalog]\npath = \"{spelled}\"\n"),
+        )
+        .unwrap();
+        crate::settings::register_project(&machine.env, &root).unwrap();
+        let folder = crate::paths::slashed(&root.join("catalog"));
+        add(&machine.env, package(&folder, ItemKind::Skill, offered)).unwrap();
+        expected.push((root, folder));
+    }
+
+    let identities: Vec<String> = crate::source_ops::subscriptions(&machine.env)
+        .unwrap()
+        .into_iter()
+        .map(|row| row.repo_identity)
+        .collect();
+    let folders: Vec<String> = expected
+        .iter()
+        .map(|(_, folder)| crate::source_ref::repo_identity(folder))
+        .collect();
+    assert_eq!(identities, folders);
+
+    let resolved = resolve(&machine.env).unwrap();
+    assert_eq!(resolved.len(), 2, "{resolved:?}");
+    for ((root, _), item) in expected.iter().zip(&resolved) {
+        // Offered is the proof of which directory was read: each project's
+        // folder offers a skill the other does not.
+        assert_eq!(item.reach, Reach::Offered, "{item:?}");
+        assert_eq!(
+            item.catalog,
+            Some(Catalog::Subscription {
+                scope: Scope::Project { root: root.clone() },
+                source: "catalog".to_owned(),
+            }),
+            "{item:?}"
+        );
+    }
 }
 
 /// A package the marketplace has dropped keeps its row, says so, and is

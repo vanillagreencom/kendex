@@ -92,6 +92,7 @@ impl AddFlags {
             no_auto_skills: self.no_auto_skills,
             hold: self.hold,
             allow_repo_effects: self.allow_repo_effects,
+            subscription: None,
         }
     }
 }

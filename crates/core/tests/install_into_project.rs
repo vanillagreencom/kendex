@@ -2,6 +2,10 @@
 //! subscription: a refused install leaves the project subscribed to nothing.
 #![cfg(unix)]
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::rooted;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -10,7 +14,7 @@ use kendex_core::engine::ops;
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::error::CoreError;
 use kendex_core::model::Scope;
-use kendex_core::{apply, remote, source_ops};
+use kendex_core::{apply, manifest, remote, source_ops};
 
 #[allow(clippy::unwrap_used)]
 fn git(dir: &Path, args: &[&str]) {
@@ -193,4 +197,57 @@ fn the_same_repo_under_the_same_alias_still_installs() {
     assert!(manifest.contains("[sources.kit]"), "{manifest}");
     assert!(manifest.contains("repo = \"acme/kit\""), "{manifest}");
     assert!(manifest.contains("[skills.gh]"), "{manifest}");
+}
+
+/// A personal folder declared by a relative spelling reaches a project as
+/// the directory that spelling names from the personal scope, so an install
+/// into the project reads the folder the personal subscription reads rather
+/// than a folder of the same name inside the project.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_personal_relative_folder_is_carried_into_a_project_as_its_home_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    for (catalog, body) in [
+        (home.join("catalog"), "home bytes"),
+        (home.join("app/catalog"), "project bytes"),
+    ] {
+        fs::create_dir_all(catalog.join("skills/gh")).unwrap();
+        fs::write(
+            catalog.join("skills/gh/SKILL.md"),
+            format!("---\nname: gh\n---\n{body}\n"),
+        )
+        .unwrap();
+    }
+    let personal = manifest::manifest_path(&env, &Scope::Global);
+    fs::create_dir_all(personal.parent().unwrap()).unwrap();
+    fs::write(
+        &personal,
+        "schema = 6\n[sources.mine]\npath = \"catalog\"\n",
+    )
+    .unwrap();
+    let project = home.join("app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+
+    let report = source_ops::install_project_from_personal(
+        &env,
+        &project,
+        "mine",
+        &ops::AddRequest {
+            skills: vec!["gh".to_owned()],
+            ..ops::AddRequest::default()
+        },
+    )
+    .unwrap();
+    apply::execute(&env, &report.plan).unwrap();
+
+    let scope = Scope::Project { root: project };
+    let declared = manifest::load_current(&manifest::manifest_path(&env, &scope))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        declared.sources["mine"].path.as_deref(),
+        Some(kendex_core::paths::slashed(&home.join("catalog")).as_str())
+    );
 }

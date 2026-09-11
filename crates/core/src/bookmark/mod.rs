@@ -101,11 +101,14 @@ const BUNDLE_WORD: &str = "bundle";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub struct Bookmark {
-    /// The marketplace, named the way a source declaration names it: the
-    /// repository, or the folder a path source points at. Never the
+    /// The marketplace: the repository as a declaration spells it, or the
+    /// directory a folder source resolves to on this machine. Never the
     /// subscription's alias — an alias is a per-place manifest key, and a
     /// bookmark belongs to no place, so two projects spelling one
-    /// marketplace differently would save as two different bookmarks.
+    /// marketplace differently would save as two different bookmarks. A
+    /// folder is never recorded by a relative spelling for the same reason:
+    /// that spelling names a different directory from every place declaring
+    /// it.
     pub repo: String,
     pub item: BookmarkItem,
     /// The name the catalog offers it under.
@@ -157,9 +160,10 @@ pub fn list(env: &Env) -> Result<Vec<Bookmark>> {
     Ok(index::load(env)?.bookmarks)
 }
 
-/// Save one. Saving the same item again is the same one bookmark: the
-/// index is keyed by identity, and a second row would be a second way to
-/// remove one thing.
+/// Save one, and hand back the bookmark the index holds for it. Saving the
+/// same item again is the same one bookmark, under the spelling it was
+/// first saved with: the index is keyed by identity, and a second row would
+/// be a second way to remove one thing.
 pub fn add(env: &Env, bookmark: Bookmark) -> Result<Bookmark> {
     if let Err(why) = bookmark.usable() {
         return Err(CoreError::BookmarkUnusable {
@@ -168,9 +172,10 @@ pub fn add(env: &Env, bookmark: Bookmark) -> Result<Bookmark> {
         });
     }
     index::mutate(env, |index| {
-        if !index.bookmarks.iter().any(|held| held.is(&bookmark)) {
-            index.bookmarks.push(bookmark.clone());
+        if let Some(held) = index.bookmarks.iter().find(|held| held.is(&bookmark)) {
+            return Ok(held.clone());
         }
+        index.bookmarks.push(bookmark.clone());
         Ok(bookmark)
     })
     .map(|(_, saved)| saved)

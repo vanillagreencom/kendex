@@ -1,0 +1,1 @@
+- Installing from a personal folder marketplace into a project reads the folder the marketplace was declared as, not a folder of the same name inside the project.

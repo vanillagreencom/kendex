@@ -164,7 +164,15 @@ describe("a Community row's Subscribed marker", () => {
   });
 
   it("ignores path subscriptions, which are no repository", () => {
-    expect(subscribedKeys([row("", null)]).size).toBe(0);
+    // A folder carries an identity too: the directory it resolves to.
+    const folder: MarketplaceRow = {
+      ...row("", null),
+      repo: null,
+      path: "catalog",
+      resolvedPath: "/home/me/catalog",
+      repoIdentity: "/home/me/catalog",
+    };
+    expect(subscribedKeys([folder]).size).toBe(0);
   });
 
   // There is no client-side "these rows are not current" refusal: the

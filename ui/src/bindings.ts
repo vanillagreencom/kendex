@@ -984,11 +984,14 @@ export type Base = string | null;
 /**  One saved marketplace item. */
 export type Bookmark = {
 	/**
-	 *  The marketplace, named the way a source declaration names it: the
-	 *  repository, or the folder a path source points at. Never the
+	 *  The marketplace: the repository as a declaration spells it, or the
+	 *  directory a folder source resolves to on this machine. Never the
 	 *  subscription's alias — an alias is a per-place manifest key, and a
 	 *  bookmark belongs to no place, so two projects spelling one
-	 *  marketplace differently would save as two different bookmarks.
+	 *  marketplace differently would save as two different bookmarks. A
+	 *  folder is never recorded by a relative spelling for the same reason:
+	 *  that spelling names a different directory from every place declaring
+	 *  it.
 	 */
 	repo: string,
 	item: BookmarkItem,
@@ -2966,12 +2969,13 @@ export type MarketplaceRow = {
 	 */
 	repoKey: string | null,
 	/**
-	 *  One string per repository on any host, from
-	 *  [`kendex_core::source_ref::repo_identity`] — the same value
-	 *  subscription dedup and update grouping compare. `repo_key` answers
-	 *  only for GitHub, so it cannot tell two marketplaces apart anywhere
-	 *  else; this is what a surface folding declarations into one
-	 *  marketplace has to key on.
+	 *  One string per marketplace, from
+	 *  [`kendex_core::source_ops::declared_identity`]: a repository on any
+	 *  host, or the directory a folder resolves to — the same value
+	 *  subscription dedup, update grouping and a saved bookmark compare.
+	 *  `repo_key` answers only for GitHub, so it cannot tell two
+	 *  marketplaces apart anywhere else; this is what a surface folding
+	 *  declarations into one marketplace has to key on.
 	 */
 	repoIdentity: string | null,
 	/**  The declared folder, as the person typed it. */
@@ -2979,14 +2983,15 @@ export type MarketplaceRow = {
 	/**
 	 *  Where that folder is on this machine, from
 	 *  [`kendex_core::source::path_root`]: the declaration resolved against
-	 *  the place that declares it, slashed. A folder marketplace's
-	 *  identity, the way `repo_identity` is a repository's. Two directories
+	 *  the place that declares it, slashed. What `repo_identity` folds for
+	 *  a folder, and what a bookmark of one records. Two directories
 	 *  never share a string, which the spelling alone cannot promise:
 	 *  rootedness is the running platform's answer, and a POSIX-rooted path
 	 *  on Windows joins onto each declaring scope's own drive. The join is
-	 *  lexical — no `.`/`..` collapse, no symlink or case folding — so one
-	 *  directory reached by a `..` spelling is a second card, which only
-	 *  over-splits; that card's own places and controls stay right.
+	 *  lexical — a `.` segment drops, but no `..` collapse, no symlink or
+	 *  case folding — so one directory reached by a `..` spelling is a
+	 *  second card, which only over-splits; that card's own places and
+	 *  controls stay right.
 	 */
 	resolvedPath: string | null,
 	rev: string | null,
@@ -4297,7 +4302,10 @@ export type SavedItem = {
 	bookmark: Bookmark,
 	/**
 	 *  The marketplace folded to one string, from
-	 *  [`crate::source_ref::repo_identity`]. Carried rather than left to
+	 *  [`crate::source_ref::repo_identity`] — for a folder, over the
+	 *  directory the bookmark records, which is what
+	 *  [`crate::source_ops::declared_identity`] folds a declaration of that
+	 *  folder to. Carried rather than left to
 	 *  the reader: a surface deciding whether the row it is drawing is
 	 *  saved compares this against its own marketplace's identity, and a
 	 *  second spelling of that fold outside core is a second answer.

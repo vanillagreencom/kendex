@@ -89,14 +89,22 @@ pub fn local_source_root(env: &Env, scope: &Scope) -> PathBuf {
 /// root-relative and joins onto the scope's drive — two scopes on two
 /// drives name two directories, and a surface folding declarations into one
 /// marketplace has to key on this, never on the spelling.
+///
+/// Read through `Path::components`, so a `.` segment and a trailing
+/// separator drop: `./catalog`, `catalog` and `catalog/` are one directory.
+/// A `..` stays as written, for the reason [`crate::paths::as_written`]
+/// gives: folded by spelling, it names another directory wherever the
+/// segment before it is a link.
 pub fn path_root(env: &Env, scope: &Scope, path: &str) -> PathBuf {
-    if Path::new(path).is_absolute() {
-        return PathBuf::from(path);
-    }
-    match scope {
-        Scope::Global => env.home.join(path),
-        Scope::Project { root } => root.join(path),
-    }
+    let joined = if Path::new(path).is_absolute() {
+        PathBuf::from(path)
+    } else {
+        match scope {
+            Scope::Global => env.home.join(path),
+            Scope::Project { root } => root.join(path),
+        }
+    };
+    joined.components().collect()
 }
 
 /// Where the in-place source reads, or nothing at a scope that has no

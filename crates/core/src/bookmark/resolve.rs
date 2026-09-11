@@ -51,7 +51,10 @@ pub enum Reach {
 pub struct SavedItem {
     pub bookmark: Bookmark,
     /// The marketplace folded to one string, from
-    /// [`crate::source_ref::repo_identity`]. Carried rather than left to
+    /// [`crate::source_ref::repo_identity`] — for a folder, over the
+    /// directory the bookmark records, which is what
+    /// [`crate::source_ops::declared_identity`] folds a declaration of that
+    /// folder to. Carried rather than left to
     /// the reader: a surface deciding whether the row it is drawing is
     /// saved compares this against its own marketplace's identity, and a
     /// second spelling of that fold outside core is a second answer.

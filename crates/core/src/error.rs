@@ -273,6 +273,15 @@ pub enum CoreError {
         repo: String,
     },
 
+    /// An install from a project's own subscription into any other place.
+    /// Only a personal subscription is carried into another place.
+    #[error(
+        "'{}' is subscribed in {}, so it installs only into that project — subscribe to it personally to install it anywhere else",
+        crate::names::shown(name),
+        crate::names::shown(&root.display().to_string())
+    )]
+    SubscriptionInstallsWhereDeclared { name: String, root: PathBuf },
+
     /// The typed no-default state the cross-source search catches: a bare
     /// add with no default subscription resolves by searching every
     /// subscription, never by guessing one.

@@ -6,7 +6,7 @@
 //! tool that arrived after the scope was set up is offerable and one gone
 //! since does not read as present.
 
-use kendex_core::engine::ops::{self as engine_ops, AddRequest};
+use kendex_core::engine::ops::AddRequest;
 use kendex_core::env::Env;
 use kendex_core::manifest::Method;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
@@ -154,15 +154,6 @@ pub fn install(
         return Err("nothing selected to install".to_owned());
     }
     let target = destination.unwrap_or_else(|| scope.clone());
-    let redirected = target != scope;
-    if redirected {
-        if !matches!(&target, Scope::Project { .. }) {
-            return Err("an install can only be redirected into a project".to_owned());
-        }
-        if scope != Scope::Global {
-            return Err("only a personal subscription can install into a project".to_owned());
-        }
-    }
     let mut request = AddRequest {
         source: Some(source.clone()),
         hold,
@@ -188,15 +179,11 @@ pub fn install(
     // A whole set carries its own members; expanding agents' skills on top
     // would install beyond what the set declares.
     request.no_auto_skills = !request.bundles.is_empty();
-    // Redirected into a project, the subscription and the packages are one
-    // plan: a refused install leaves the project subscribed to nothing.
-    let report = match &target {
-        Scope::Project { root } if redirected => {
-            source_ops::install_project_from_personal(env, root, &source, &request)
-        }
-        _ => engine_ops::add(env, &target, &request),
-    }
-    .map_err(|e| e.to_string())?;
+    // Which places a subscription installs into is core's rule. Redirected
+    // into a project, the subscription and the packages are one plan: a
+    // refused install leaves the project subscribed to nothing.
+    let report = source_ops::install_from(env, &scope, &source, &target, &request)
+        .map_err(|e| e.to_string())?;
     // Through the one executor, like every report, because no path here
     // can prove its own plan takes nothing away. An add is not exempt: a
     // rendering the engine refuses drops that package's lock entry

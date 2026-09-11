@@ -31,6 +31,7 @@ import {
   selectedLabel,
 } from "@/lib/copy-install";
 import { ADD_TO_TEMPLATE_LABEL } from "@/lib/copy-templates";
+import { groupsOf, type WantedPackage } from "@/lib/install-ask";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
 import { cn } from "@/lib/utils";
@@ -56,18 +57,18 @@ const installable = (item: SavedItem): boolean =>
 
 /** What the guided install asks about when the answer is saved rows.
  *
- *  Grouped by the subscription each row is offered through, because one
- *  install request carries one source — the same shape the packages table
- *  builds from its own ticked rows. A curated set installs whole; a
- *  package installs as itself. */
-function groupsFor(items: SavedItem[]): InstallSubject["groups"] {
-  const groups: InstallSubject["groups"] = [];
+ *  Packages are grouped by `groupsOf`, the one fold every selection goes
+ *  through: one request per subscription, told apart by the place declaring
+ *  it as well as its alias. A curated set keeps itself whole, so each set
+ *  is its own request rather than a member of one: two sets from one
+ *  marketplace are two requests. */
+function requestsFor(items: SavedItem[]): InstallSubject["groups"] {
+  const packages: WantedPackage[] = [];
+  const sets: InstallSubject["groups"] = [];
   for (const { bookmark, catalog } of items) {
     if (catalog === null || catalog.by !== "subscription") continue;
-    // A set keeps itself whole, so it is its own request rather than a
-    // member of one: two sets from one marketplace are two requests.
     if (bookmark.item.is === "bundle") {
-      groups.push({
+      sets.push({
         source: catalog.source,
         browsing: catalog.scope,
         items: [],
@@ -75,22 +76,12 @@ function groupsFor(items: SavedItem[]): InstallSubject["groups"] {
       });
       continue;
     }
-    const one = { kind: bookmark.item.kind, name: bookmark.name };
-    const existing = groups.find(
-      (group) => group.source === catalog.source && group.bundle === null,
-    );
-    if (existing) {
-      existing.items.push(one);
-      continue;
-    }
-    groups.push({
-      source: catalog.source,
-      browsing: catalog.scope,
-      items: [one],
-      bundle: null,
+    packages.push({
+      catalog,
+      item: { kind: bookmark.item.kind, name: bookmark.name },
     });
   }
-  return groups;
+  return [...groupsOf(packages), ...sets];
 }
 
 /** The kinds an answer declares, which decides which tools may take it. A
@@ -192,7 +183,7 @@ export function BookmarksView() {
    *  asked. */
   const askFor = (only?: SavedItem) => {
     const items = only ? [only] : chosen;
-    const groups = groupsFor(items);
+    const groups = requestsFor(items);
     if (groups.length === 0) return;
     openInstall({
       subjects: [

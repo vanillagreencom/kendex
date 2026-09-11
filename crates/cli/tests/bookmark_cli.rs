@@ -390,3 +390,168 @@ fn one_repository_spelled_two_ways_saves_once() {
         said(&missing)
     );
 }
+
+/// A folder a project subscribes to by a relative spelling is saved as the
+/// directory that spelling names from the project, and installs from that
+/// directory through the project's own subscription. It installs nowhere
+/// that did not choose the marketplace, and a folder of the same name
+/// elsewhere is never read in its place.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_folder_saved_in_a_project_installs_only_through_that_projects_subscription() {
+    let (_tmp, home) = world();
+    let app = home.join("app");
+    skill(&app.join("catalog/skills"), "gh", "app bytes");
+    write(
+        &app.join("catalog/kendex.toml"),
+        "[marketplace]\nname = \"app\"\n",
+    );
+    fs::create_dir_all(app.join(".claude")).unwrap();
+    write(
+        &app.join("kendex.toml"),
+        "schema = 6\n[install]\nharnesses = [\"claude\"]\n[sources.catalog]\npath = \"catalog\"\n",
+    );
+    let registered = kendex(&home, &home, &["project", "add", app.to_str().unwrap()]);
+    assert!(registered.status.success(), "{}", said(&registered));
+
+    // Typed from the project in another spelling of the folder its
+    // subscription declares.
+    let saved = kendex(
+        &home,
+        &app,
+        &[
+            "bookmark",
+            "add",
+            "gh",
+            "--kind",
+            "skill",
+            "--source",
+            "./catalog",
+        ],
+    );
+    assert!(saved.status.success(), "{}", said(&saved));
+    let listed = said(&kendex(&home, &home, &["bookmark", "list"]));
+    assert!(listed.contains("[offered]"), "{listed}");
+
+    // The personal setup never subscribed to it, so nothing is carried
+    // there: the home folder of the same name is not what was saved.
+    let personal = home.join(".config/kendex/kendex.toml");
+    let before = fs::read(&personal).unwrap();
+    let refused = kendex(&home, &home, &["bookmark", "install", "gh", "--yes"]);
+    assert!(!refused.status.success(), "{}", said(&refused));
+    assert_eq!(fs::read(&personal).unwrap(), before, "{}", said(&refused));
+    assert!(
+        !home.join(".claude/skills/gh").exists(),
+        "{}",
+        said(&refused)
+    );
+
+    let installed = kendex(
+        &home,
+        &home,
+        &[
+            "bookmark",
+            "install",
+            "gh",
+            "--project",
+            app.to_str().unwrap(),
+            "--yes",
+        ],
+    );
+    assert!(installed.status.success(), "{}", said(&installed));
+    let body = fs::read_to_string(app.join(".claude/skills/gh/SKILL.md")).unwrap();
+    assert!(body.contains("app bytes"), "{body}");
+    // Through the subscription the project already holds, not a second
+    // declaration of the same folder.
+    let manifest = fs::read_to_string(app.join("kendex.toml")).unwrap();
+    assert_eq!(manifest.matches("[sources.").count(), 1, "{manifest}");
+}
+
+/// A folder the personal setup subscribes to by a relative spelling
+/// installs into a project from the directory that spelling names from the
+/// personal scope, through that subscription, where the project holds a
+/// folder of the same name.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_personal_folder_installs_into_a_project_from_the_folder_it_names() {
+    let (_tmp, home) = world();
+    let fresh = home.join("fresh");
+    write(
+        &home.join(".config/kendex/kendex.toml"),
+        "schema = 6\n[install]\nharnesses = [\"claude\"]\n[sources.mine]\npath = \"catalog\"\n",
+    );
+    skill(&fresh.join("catalog/skills"), "gh", "project bytes");
+    write(
+        &fresh.join("catalog/kendex.toml"),
+        "[marketplace]\nname = \"decoy\"\n",
+    );
+
+    let saved = kendex(
+        &home,
+        &home,
+        &[
+            "bookmark", "add", "gh", "--kind", "skill", "--source", "catalog",
+        ],
+    );
+    assert!(saved.status.success(), "{}", said(&saved));
+
+    let installed = kendex(
+        &home,
+        &home,
+        &[
+            "bookmark",
+            "install",
+            "gh",
+            "--project",
+            fresh.to_str().unwrap(),
+            "--yes",
+        ],
+    );
+    assert!(installed.status.success(), "{}", said(&installed));
+    let body = fs::read_to_string(fresh.join(".claude/skills/gh/SKILL.md")).unwrap();
+    assert!(body.contains("market bytes"), "{body}");
+    // The project gains the personal subscription itself, under its own
+    // alias, rather than a declaration of its own read from the reference.
+    let manifest = fs::read_to_string(fresh.join("kendex.toml")).unwrap();
+    assert!(manifest.contains("[sources.mine]"), "{manifest}");
+}
+
+/// `--project` naming the home directory is refused before anything is
+/// written: a home made into a project would take every install below it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn installing_into_the_home_directory_as_a_project_refuses() {
+    let (_tmp, home) = world();
+    let catalog = home.join("catalog");
+    let saved = kendex(
+        &home,
+        &home,
+        &[
+            "bookmark",
+            "add",
+            "gh",
+            "--kind",
+            "skill",
+            "--source",
+            catalog.to_str().unwrap(),
+        ],
+    );
+    assert!(saved.status.success(), "{}", said(&saved));
+
+    let refused = kendex(
+        &home,
+        &home,
+        &[
+            "bookmark",
+            "install",
+            "gh",
+            "--project",
+            home.to_str().unwrap(),
+            "--yes",
+        ],
+    );
+    let text = said(&refused);
+    assert!(!refused.status.success(), "{text}");
+    assert!(!home.join("kendex.toml").exists(), "{text}");
+    assert!(!home.join(".claude/skills/gh").exists(), "{text}");
+}

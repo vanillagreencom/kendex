@@ -8,6 +8,7 @@ import type {
   Catalog,
   MarketplaceRow,
   SavedItem,
+  Scope,
 } from "@/bindings";
 import { commands } from "@/bindings";
 import { BookmarksView } from "@/components/bookmarks/bookmarks-view";
@@ -262,6 +263,59 @@ describe("the Bookmark control on a marketplace row", () => {
     expect(control(cardHost, bookmarkLabel("gh"))).toBeTruthy();
   });
 
+  it("is offered on a folder marketplace, and saves the directory the folder resolves to", async () => {
+    const folder: MarketplaceRow = {
+      ...SUBSCRIPTION,
+      name: "catalog",
+      repo: null,
+      repoKey: null,
+      // What core folds a folder declaration to: the directory it
+      // resolves to, never the spelling.
+      repoIdentity: "/home/me/catalog",
+      path: "catalog",
+      resolvedPath: "/home/me/catalog",
+    };
+    const catalog: Catalog = {
+      by: "subscription",
+      scope: { scope: "global" },
+      source: "catalog",
+    };
+    useMarketplacesStore.setState({ rows: [folder] });
+    const host = mount(
+      <PackagesTable
+        entries={[{ catalog, row: OFFERED, recordsUnreadable: false }]}
+        showMarketplace={false}
+      />,
+    );
+    await settle();
+
+    await act(async () => control(host, bookmarkLabel("gh")).click());
+    expect(commands.bookmarkAdd).toHaveBeenCalledWith({
+      repo: "/home/me/catalog",
+      item: { is: "package", kind: "skill" },
+      name: "gh",
+    });
+  });
+
+  it("claims nothing about what is saved over a read that failed, and reads again on the next mount", async () => {
+    vi.mocked(commands.bookmarksList).mockResolvedValue({
+      status: "error",
+      error: "the index could not be read",
+    });
+    const failed = table();
+    await settle();
+    for (const label of [bookmarkLabel("gh"), removeBookmarkLabel("gh")]) {
+      expect(failed.querySelector(`[aria-label="${label}"]`), label).toBeNull();
+    }
+
+    // The failure does not stand for the session: the next control to
+    // mount reads again, and draws what that read answers.
+    savedIs([SAVED_SKILL]);
+    const again = table();
+    await settle();
+    expect(control(again, removeBookmarkLabel("gh"))).toBeTruthy();
+  });
+
   it("forgets the saved item it is on, through the bookmark it holds", async () => {
     savedIs([SAVED_SKILL]);
     const host = table();
@@ -326,6 +380,49 @@ describe("the Bookmarks tab", () => {
       },
     ]);
     expect(ask?.subjects[0]?.kinds).toEqual(["skill"]);
+  });
+
+  it("installs two places' subscriptions sharing one alias as two requests", async () => {
+    // An alias is unique inside one manifest only: the personal scope and
+    // a project can each key a different marketplace under it.
+    const project: Scope = { scope: "project", root: "/home/me/app" };
+    savedIs([
+      SAVED_SKILL,
+      {
+        bookmark: {
+          repo: "other/skills",
+          item: { is: "package", kind: "skill" },
+          name: "lint",
+        },
+        repoIdentity: "github.com/other/skills",
+        catalog: {
+          by: "subscription",
+          scope: project,
+          source: "their-name-for-it",
+        },
+        reach: { at: "offered" },
+      },
+    ]);
+    const host = mount(<BookmarksView />);
+    await settle();
+
+    await act(async () => control(host, "Select gh").click());
+    await act(async () => control(host, "Select lint").click());
+    await act(async () => button(host, installSelectedLabel(2)).click());
+    expect(useInstallFlow.getState().ask?.subjects[0]?.groups).toEqual([
+      {
+        source: "their-name-for-it",
+        browsing: { scope: "global" },
+        items: [{ kind: "skill", name: "gh" }],
+        bundle: null,
+      },
+      {
+        source: "their-name-for-it",
+        browsing: project,
+        items: [{ kind: "skill", name: "lint" }],
+        bundle: null,
+      },
+    ]);
   });
 
   it("offers a ticked selection to a template, as the marketplace the bookmark records", async () => {

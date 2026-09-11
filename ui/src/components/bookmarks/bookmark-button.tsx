@@ -11,7 +11,7 @@ import {
   savedToast,
 } from "@/lib/copy-bookmarks";
 import { cn } from "@/lib/utils";
-import { useBookmarksStore } from "@/stores/bookmarks";
+import { useBookmarksAnswer, useBookmarksStore } from "@/stores/bookmarks";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 
 /** Save this marketplace item, or forget it — the one control, wherever a
@@ -29,7 +29,10 @@ import { useMarketplacesStore } from "@/stores/marketplaces";
  *
  *  Nothing is drawn until the marketplace this item comes from can be
  *  named: a bookmark records the repository rather than a per-place alias,
- *  and a control offered before that read lands would save under a guess. */
+ *  and a control offered before that read lands would save under a guess.
+ *  Nor is anything drawn until the saved list has answered: a control drawn
+ *  over a read that has not landed, or that failed with nothing behind it,
+ *  would say this item is not saved when nothing was read. */
 export function BookmarkButton({
   catalog,
   item,
@@ -50,7 +53,7 @@ export function BookmarkButton({
 }) {
   const rows = useMarketplacesStore((s) => s.rows);
   const summaries = useMarketplacesStore((s) => s.summaries);
-  const saved = useBookmarksStore((s) => s.saved);
+  const answer = useBookmarksAnswer();
   const busy = useBookmarksStore((s) => s.busy);
   const ensure = useBookmarksStore((s) => s.ensure);
   const add = useBookmarksStore((s) => s.add);
@@ -65,7 +68,8 @@ export function BookmarkButton({
 
   const target = bookmarkTarget(catalog, rows, summaries);
   if (target === null) return null;
-  const held = savedAs(saved, target, item, name);
+  if (answer.shown === "waiting" || answer.shown === "unreadable") return null;
+  const held = savedAs(answer.saved, target, item, name);
   const label = held ? removeBookmarkLabel(name) : bookmarkLabel(name);
   const Icon = held ? BookmarkCheck : BookmarkIcon;
 

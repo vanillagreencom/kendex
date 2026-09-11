@@ -1,5 +1,5 @@
-//! A folder subscription's row carries where the folder is, not only what
-//! was typed.
+//! A folder subscription's row carries where the folder is, and the
+//! identity core folds that directory to, not only what was typed.
 //!
 //! The Subscribed grid folds declarations into one card by identity, and a
 //! folder's identity is the directory it resolves to: a relative
@@ -54,19 +54,32 @@ fn a_folder_row_resolves_its_path_against_the_declaring_place() {
     let env = Env::fake(&home, FakeOs::Linux);
 
     let listed = rows(&env, &projects).unwrap();
-    let resolved: Vec<(Option<&str>, Option<&str>)> = listed
+    // The identity is the resolved directory, never the spelling: a
+    // bookmark saved from one project's `catalog` is compared on it.
+    let resolved: Vec<(Option<&str>, Option<&str>, Option<&str>)> = listed
         .iter()
-        .map(|row| (row.path.as_deref(), row.resolved_path.as_deref()))
+        .map(|row| {
+            (
+                row.path.as_deref(),
+                row.resolved_path.as_deref(),
+                row.repo_identity.as_deref(),
+            )
+        })
         .collect();
     let under =
         |name: &str| kendex_core::paths::slashed(&home.join("dev").join(name).join("catalog"));
+    let (alpha, beta) = (under("alpha"), under("beta"));
     let shared_slashed = kendex_core::paths::slashed(&shared);
     assert_eq!(
         resolved,
         vec![
-            (Some("catalog"), Some(under("alpha").as_str())),
-            (Some("catalog"), Some(under("beta").as_str())),
-            (Some(shared_slashed.as_str()), Some(shared_slashed.as_str())),
+            (Some("catalog"), Some(alpha.as_str()), Some(alpha.as_str())),
+            (Some("catalog"), Some(beta.as_str()), Some(beta.as_str())),
+            (
+                Some(shared_slashed.as_str()),
+                Some(shared_slashed.as_str()),
+                Some(shared_slashed.as_str())
+            ),
         ]
     );
 }

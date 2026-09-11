@@ -39,11 +39,13 @@ interface BookmarksState {
   /** What a write refused with, or null. Cleared when the next one starts. */
   refused: string | null;
   load: () => Promise<void>;
-  /** Read the list if nothing has read it yet. What a Bookmark control
-   *  calls: a table draws one per row, and a read per row would be one
-   *  resolution of every saved item per package on screen. A write reads
+  /** Read the list unless a read is out or has answered. What a Bookmark
+   *  control calls: a table draws one per row, and a read per row would be
+   *  one resolution of every saved item per package on screen. A read that
+   *  failed is asked again by the next control to mount, so one failure
+   *  does not leave every control blank for the session. A write reads
    *  again on its own, and the Bookmarks tab asks for a fresh read when it
-   *  opens, so nothing here goes stale for want of a second ask. */
+   *  opens. */
   ensure: () => void;
   add: (bookmark: Bookmark) => Promise<boolean>;
   remove: (bookmark: Bookmark) => Promise<boolean>;
@@ -93,7 +95,8 @@ export const useBookmarksStore = create<BookmarksState>((set, get) => {
     },
 
     ensure: () => {
-      if (get().read.status !== "idle") return;
+      const { status } = get().read;
+      if (status === "reading" || status === "read") return;
       void get().load();
     },
 

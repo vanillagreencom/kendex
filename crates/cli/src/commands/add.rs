@@ -32,6 +32,18 @@ pub struct AddArgs {
     pub no_auto_skills: bool,
     pub hold: bool,
     pub allow_repo_effects: bool,
+    /// The subscription to install from, where the verb has already
+    /// resolved which one carries what it installs. It is read in the
+    /// place that declares it rather than against the destination's own
+    /// declarations, and replaces `source`.
+    pub subscription: Option<Declared>,
+}
+
+/// A subscription, named by the place that declares it and the alias it is
+/// keyed under there.
+pub struct Declared {
+    pub scope: Scope,
+    pub name: String,
 }
 
 /// Where this install goes and how it is delivered. Flags settle both
@@ -161,7 +173,7 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
     settle_targets(env, &scope, &mut request, &args)?;
     let planned = {
         let _planning = ui::spinner("planning the install");
-        ops::add(env, &scope, &request)
+        plan(env, &scope, args.subscription.as_ref(), &request)
     };
     let report = match planned {
         Err(kendex_core::error::CoreError::SourcePending { .. }) => {
@@ -174,11 +186,32 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
                 warn(&format!("warning: {}", warning));
             }
             let _planning = ui::spinner("planning the install");
-            ops::add(env, &scope, &request)?
+            plan(env, &scope, args.subscription.as_ref(), &request)?
         }
         other => other?,
     };
     write_and_close(env, &scope, &report, args.yes, args.allow_repo_effects)
+}
+
+/// The plan for this request: read against the destination's own
+/// declarations, or from the subscription the verb already resolved, in
+/// the place that declares it.
+fn plan(
+    env: &Env,
+    scope: &Scope,
+    subscription: Option<&Declared>,
+    request: &AddRequest,
+) -> kendex_core::error::Result<kendex_core::engine::EngineReport> {
+    match subscription {
+        Some(declared) => kendex_core::source_ops::install_from(
+            env,
+            &declared.scope,
+            &declared.name,
+            scope,
+            request,
+        ),
+        None => ops::add(env, scope, request),
+    }
 }
 
 /// The write, the repository-effects account, the close, and the

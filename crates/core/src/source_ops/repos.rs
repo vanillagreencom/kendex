@@ -53,11 +53,33 @@ pub struct Subscription {
     pub reference: String,
     /// Whether that reference is a repository rather than a folder.
     pub is_remote: bool,
-    /// One string per marketplace, from
-    /// [`crate::source_ref::repo_identity`] — the fold every comparison in
-    /// this repository makes before deciding two declarations name one
-    /// marketplace.
+    /// One string per marketplace, from [`declared_identity`] — what every
+    /// comparison of two declarations, or of a declaration and a saved
+    /// bookmark, is made over.
     pub repo_identity: String,
+}
+
+/// One string per marketplace a declaration points at, or `None` for one
+/// naming neither a repository nor a folder.
+///
+/// A repository is folded by [`crate::source_ref::repo_identity`]. A folder
+/// is the directory it resolves to from the place that declares it,
+/// [`crate::source::path_root`], folded the same way. The relative spelling
+/// is never the identity: `catalog` declared in two projects is two
+/// directories, and folding the spelling would let a reader affirm one of
+/// them and install from the other.
+pub fn declared_identity(
+    env: &Env,
+    scope: &Scope,
+    repo: Option<&str>,
+    path: Option<&str>,
+) -> Option<String> {
+    let reference = match (repo, path) {
+        (Some(repo), _) => repo.to_owned(),
+        (None, Some(path)) => crate::paths::slashed(&crate::source::path_root(env, scope, path)),
+        (None, None) => return None,
+    };
+    Some(crate::source_ref::repo_identity(&reference))
 }
 
 /// Every subscription across the personal scope and every project,
@@ -84,15 +106,18 @@ pub fn subscriptions(env: &Env) -> Result<Vec<Subscription>> {
             continue;
         };
         for (name, decl) in &manifest.sources {
-            let Some(reference) = decl.repo.as_deref().or(decl.path.as_deref()) else {
+            let (repo, path) = (decl.repo.as_deref(), decl.path.as_deref());
+            let (Some(reference), Some(repo_identity)) =
+                (repo.or(path), declared_identity(env, &scope, repo, path))
+            else {
                 continue;
             };
             out.push(Subscription {
                 scope: scope.clone(),
                 name: name.clone(),
                 reference: reference.to_owned(),
-                is_remote: decl.repo.is_some(),
-                repo_identity: crate::source_ref::repo_identity(reference),
+                is_remote: repo.is_some(),
+                repo_identity,
             });
         }
     }

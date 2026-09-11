@@ -4,14 +4,16 @@
 //! marketplace are one, and whether a saved item is still offered are
 //! core's.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand};
 use kendex_core::bookmark::{self, Bookmark, BookmarkItem, Reach, SavedItem};
 use kendex_core::env::Env;
 use kendex_core::model::{ItemKind, Scope};
+use kendex_core::source::browse::Catalog;
+use kendex_core::source_ref::SourceRef;
 
-use super::add::AddArgs;
+use super::add::{AddArgs, Declared};
 use super::{CliResult, note, out, say, warn};
 
 #[derive(Subcommand)]
@@ -114,7 +116,7 @@ fn add(env: &Env, name: String, kind: &str, source: String) -> CliResult {
     let saved = bookmark::add(
         env,
         Bookmark {
-            repo: source,
+            repo: marketplace(env, &source)?,
             item: BookmarkItem::parse(kind)?,
             name,
         },
@@ -126,6 +128,28 @@ fn add(env: &Env, name: String, kind: &str, source: String) -> CliResult {
         saved.repo
     ));
     Ok(())
+}
+
+/// The marketplace a person typed, as a bookmark records it. A repository
+/// is kept as typed, for core to fold. A folder is recorded where it
+/// resolves from the folder this runs in, the join `source::path_root`
+/// gives a declaration made here, because its relative spelling names
+/// another directory from every place that reads it.
+fn marketplace(env: &Env, typed: &str) -> Result<String, Box<dyn std::error::Error>> {
+    match kendex_core::source_ref::parse_typed(typed)? {
+        SourceRef::Path { path } => {
+            let here = std::env::current_dir()
+                .and_then(|cwd| kendex_core::paths::canonical(&cwd))
+                .map_err(|e| format!("the current folder could not be read: {e}"))?;
+            Ok(kendex_core::paths::slashed(
+                &kendex_core::source::path_root(env, &Scope::Project { root: here }, &path),
+            ))
+        }
+        SourceRef::Remote { .. }
+        | SourceRef::Tree { .. }
+        | SourceRef::SkillsSh { .. }
+        | SourceRef::Collection { .. } => Ok(typed.to_owned()),
+    }
 }
 
 fn remove(env: &Env, name: &str, which: &Which) -> CliResult {
@@ -145,11 +169,9 @@ fn install(env: &Env, name: &str, which: &Which, project: Option<PathBuf>, yes: 
     // registered by the install that reaches it: a run that only refused
     // once it had started would leave a project on the list with nothing
     // in it.
-    installable(&item)?;
+    let subscription = installable(&item)?;
     let destination = match project {
-        Some(root) => Scope::Project {
-            root: kendex_core::paths::canonical(&root)?,
-        },
+        Some(root) => project_named(env, &root)?,
         None => Scope::Global,
     };
     say(&format!(
@@ -159,36 +181,67 @@ fn install(env: &Env, name: &str, which: &Which, project: Option<PathBuf>, yes: 
         item.bookmark.repo,
         super::scope_label(&destination)
     ));
-    super::add::run_into(env, &destination, request(&item, yes))
+    super::add::run_into(env, &destination, request(&item, subscription, yes))
 }
 
-/// Whether a saved item may be installed at all, or the refusal saying why
-/// not. Only a marketplace this machine can serve and that still offers the
-/// item may be: every other standing would send the engine at content
-/// nobody has read.
-fn installable(item: &SavedItem) -> Result<(), String> {
-    match &item.reach {
-        Reach::Offered => Ok(()),
-        Reach::NotOffered { why } | Reach::Unavailable { why } => Err(why.clone()),
-        Reach::Unsubscribed => Err(format!("{NOT_SUBSCRIBED} — subscribe to it, then install")),
+/// The project `--project` names, or the refusal where it is the home
+/// directory. `discover::may_be_a_project_root` is the rule, the one
+/// `kendex add` settles its destination by: a home made into a project
+/// would take every install below it.
+///
+/// The rule compares in `std::fs::canonicalize`'s spelling, and the root
+/// handed back is `paths::reduced` of it, the split `kendex add` makes.
+fn project_named(env: &Env, named: &Path) -> Result<Scope, Box<dyn std::error::Error>> {
+    let here = named
+        .canonicalize()
+        .map_err(|e| format!("{} could not be read: {e}", named.display()))?;
+    let root = kendex_core::paths::reduced(&here);
+    if !kendex_core::discover::may_be_a_project_root(&here, env.real_home()) {
+        return Err(format!(
+            "{} is your home directory, and kendex does not make it a project — everything below it would install into it; leave out --project for your personal setup, or name the project you mean",
+            root.display()
+        )
+        .into());
+    }
+    Ok(Scope::Project { root })
+}
+
+/// The subscription a saved item installs from, or the refusal saying why
+/// it may not be installed. Only a marketplace this machine can serve and
+/// that still offers the item may be: every other standing would send the
+/// engine at content nobody has read.
+fn installable(item: &SavedItem) -> Result<Declared, String> {
+    match (&item.reach, &item.catalog) {
+        (Reach::Offered, Some(Catalog::Subscription { scope, source })) => Ok(Declared {
+            scope: scope.clone(),
+            name: source.clone(),
+        }),
+        (Reach::Offered, None | Some(Catalog::Repo { .. })) => Err(format!(
+            "internal: saved {} '{}' reads as offered through no subscription",
+            item.bookmark.item.name(),
+            item.bookmark.name
+        )),
+        (Reach::NotOffered { why } | Reach::Unavailable { why }, _) => Err(why.clone()),
+        (Reach::Unsubscribed, _) => {
+            Err(format!("{NOT_SUBSCRIBED} — subscribe to it, then install"))
+        }
     }
 }
 
-/// The install this saved item asks for: its own marketplace, and its own
-/// name under its own kind. A curated set installs whole, the way it does
-/// from its page.
+/// The install this saved item asks for: its own name under its own kind,
+/// from the subscription its standing was read through. A curated set
+/// installs whole, the way it does from its page.
 ///
-/// The marketplace is sent as the reference the bookmark records rather
-/// than as the alias the catalog was resolved through: an alias belongs to
-/// the place that declared it, and the destination may be another place
-/// entirely. The engine reads the reference against the destination's own
-/// declarations and reuses whichever subscription already names that
-/// repository, so a place that has it under its own name gains no second
-/// one.
-fn request(item: &SavedItem, yes: bool) -> AddArgs {
+/// The subscription travels as the place declaring it and its alias there,
+/// never as the reference the bookmark records. A reference read against
+/// the destination's own declarations is whatever that place makes of it —
+/// an alias that happens to share its name, or a folder spelled against
+/// another root — and the install would read content the standing never
+/// read.
+fn request(item: &SavedItem, subscription: Declared, yes: bool) -> AddArgs {
     let name = vec![item.bookmark.name.clone()];
     let mut args = AddArgs {
-        source: Some(item.bookmark.repo.clone()),
+        subscription: Some(subscription),
         yes,
         ..AddArgs::default()
     };
@@ -219,7 +272,9 @@ fn pick(env: &Env, name: &str, which: &Which) -> Result<SavedItem, Box<dyn std::
     let source = which
         .source
         .as_deref()
-        .map(kendex_core::source_ref::repo_identity);
+        .map(|typed| marketplace(env, typed))
+        .transpose()?
+        .map(|repo| kendex_core::source_ref::repo_identity(&repo));
     let mut found: Vec<SavedItem> = bookmark::resolve(env)?
         .into_iter()
         .filter(|item| item.bookmark.name == name)
