@@ -1954,6 +1954,33 @@ if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
     def head_bound($sha; $floor):
       [ scan("[0-9a-fA-F]{" + $floor + ",40}") | ascii_downcase | . as $c
         | select(($sha | ascii_downcase) | startswith($c)) ] | length > 0;
+    # A line names an entry by EQUALITY with one the scan extracted, never by
+    # a token pattern of its own: the scan is the one definition of what an
+    # entry token is, and a second spelling here would be a twin that drifts
+    # from it — the first one already did, refusing a path with a space the
+    # scan admits and the detail prints. Both surfaces the author can copy go
+    # through this one path: the review body prints the token bold, the status
+    # detail prints it bare.
+    #
+    # The bare arm requires the character after the entry to be no letter or
+    # digit, so `a/b.ts:1` cannot claim the line `a/b.ts:12 ...`; the bold arm
+    # needs no such test, its closing `**` being the terminator. At most one
+    # entry can match a line: extending a match would need a digit where the
+    # test demands a separator.
+    def line_reply($wanted):
+      sub("^[ \t]*([-*+][ \t]+)?"; "") as $l
+      | $wanted[]
+      | . as $e
+      | ($e | length) as $n
+      | if ($l | startswith("**" + $e + "**"))
+        then {entry: $e, r: ($l[($n + 4):])}
+        elif ($l | startswith($e)) and (($l[$n:] | test("^[\\p{L}\\p{N}]")) | not)
+        then {entry: $e, r: ($l[$n:])}
+        else empty
+        end
+      # The separator run between the token and the reply is what the author
+      # wrote there — a dash, a colon, an em dash, nothing at all.
+      | .r |= sub("^[^\\p{L}\\p{N}]*"; "");
     ($entries | split("\n") | map(select(length > 0))) as $wanted
     | [ .[]
         | select((.user.login // "") == $author)
@@ -1962,8 +1989,7 @@ if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
                        | head_bound($sha; $floor))
         | $body
         | split("\n")[]
-        | capture("^[ \t]*([-*+][ \t]+)?(\\*\\*(?<b>[^*]+:[0-9]+)\\*\\*|(?<e>[^*\\s]+:[0-9]+))[^\\p{L}\\p{N}]*(?<r>.*)$")
-        | {entry: (.b // .e), r: .r}
+        | line_reply($wanted)
       ] as $said
     # The NEWEST line naming an entry decides, as a thread takes its newest
     # reply: an author who answers and then writes something else about the

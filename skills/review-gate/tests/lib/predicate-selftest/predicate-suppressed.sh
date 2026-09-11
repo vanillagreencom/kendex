@@ -234,3 +234,38 @@ supp_reply_case "$AUTHOR" "Dispositions at ${HEAD:0:7}:\n**$SUPP_FIRST** - $SUPP
 supp_carries "the partial detail counts only what is left" "detail=1 suppressed finding(s)" "$LAST_LINE"
 supp_carries "the partial detail names the unanswered entry" "$SUPP_SECOND" "$LAST_LINE"
 supp_omits "the partial detail drops the answered entry" "$SUPP_FIRST" "$LAST_LINE"
+
+# The scan is the ONE definition of an entry token, and it admits a space:
+# `[^*]+:[0-9]+` inside the bold markers, stored and printed bare. A reply
+# line is matched by EQUALITY with a scanned entry rather than by a token
+# pattern of its own, so a path the status prints is a path the author can
+# copy back, whatever is in it. A second grammar here refused this one.
+SUPP_SPACED='docs/release notes.md:12'
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_MIN_STATE=any
+CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_body '### Suppressed comments (1)' "**$SUPP_SPACED**
+* Blocking: the note names a version that never shipped.")")"
+comment "$AUTHOR" "$(printf 'Dispositions at %s:\n%s - %s\n' "${HEAD:0:7}" "$SUPP_SPACED" "$SUPP_REASON")" >"$fixtures/comments.json"
+run "a bare entry whose path carries a space is answered" approved
+
+# A shorter entry must not claim a longer one's line. The character after the
+# token has to be no letter or digit, and a tracking reply is what makes that
+# load-bearing: `tracking` and `names_issue` read the WHOLE reply, so the
+# junk remainder a prefix match leaves ("2 - Tracked: ...") carries the track
+# word and the id, and the entry nobody wrote about would be answered.
+SUPP_SHORT='src/lane.ts:1'
+SUPP_LONGER='src/lane.ts:12'
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_MIN_STATE=any
+CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_body '### Suppressed comments (2)' "**$SUPP_SHORT**
+* Blocking: the first finding.
+**$SUPP_LONGER**
+* Blocking: the second finding.")")"
+comment "$AUTHOR" "$(printf 'Dispositions at %s:\n%s - Tracked: KEN-1400\n' "${HEAD:0:7}" "$SUPP_LONGER")" >"$fixtures/comments.json"
+run "a shorter entry does not claim a longer entry's line" suppressed-findings
+supp_carries "the longer entry's answer left the shorter one standing" "$SUPP_SHORT" "$LAST_LINE"
+supp_carries "only one finding is left" "detail=1 suppressed finding(s)" "$LAST_LINE"
