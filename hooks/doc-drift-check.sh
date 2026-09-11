@@ -3,7 +3,7 @@
 # name: doc-drift-check
 # event: Stop
 # matcher:
-# description: Blocks a stop once per set of findings so the agent, the only party that can act on them, is the one given the list. Three kinds are found: stale, a document covering changed code that did not change; dangling, an architecture topic `Covers:` entry that no tracked or untracked non-ignored path on disk matches; uncovered, a changed non-markdown path still on disk that no topic entry and no non-root AGENTS.md covers, judged only where some topic declares an entry and never for a path the repository's `.kendex-generated.json` lists, a render being covered through the source it was rendered from. The refusal opens with one keyed line per kind that holds, in the order `doc-drift-check: stale=<count>`, `doc-drift-check: dangling=<count>`, `doc-drift-check: uncovered=<count>`, then `doc-drift-check: base=<ref>` — the ref it compared against, or `default-branch`, `none` or `unrelated` — and names each finding under them; stdout carries nothing and no user-facing notice is written. The set is recorded as `<git common dir>/kendex/doc-drift/<session_id>-<digest of the sorted set>`, so a later stop naming that same set passes and an agent that read the list and changed nothing is not asked again; a set that gains or loses a finding is a different set and blocks once. `stop_hook_active` true passes, and so does a stop with nothing changed; any change, markdown alone included, has every Covers entry judged. Uses the nearest non-root AGENTS.md, tracked or untracked and not ignored, and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Claude Code only.
+# description: Blocks a stop once per set of findings so the agent, the only party that can act on them, is the one given the list. Three kinds are found: stale, a document covering changed code that did not change; dangling, an architecture topic `Covers:` entry that no tracked or untracked non-ignored path on disk matches; uncovered, a changed non-markdown path still on disk that no topic entry and no AGENTS.md covers, judged only where some topic declares an entry. A changed path the repository's `.kendex-generated.json` lists is named at neither kind, a render being covered through the source it was rendered from. The refusal opens with one keyed line per kind that holds, in the order `doc-drift-check: stale=<count>`, `doc-drift-check: dangling=<count>`, `doc-drift-check: uncovered=<count>`, then `doc-drift-check: base=<ref>` — the ref it compared against, or `default-branch`, `none` or `unrelated` — and names each finding under them; stdout carries nothing and no user-facing notice is written. The set is recorded as `<git common dir>/kendex/doc-drift/<session_id>-<digest of the sorted set>`, so a later stop naming that same set passes and an agent that read the list and changed nothing is not asked again; a set that gains or loses a finding is a different set and blocks once. `stop_hook_active` true passes, and so does a stop with nothing changed; any change, markdown alone included, has every Covers entry judged. Uses the nearest AGENTS.md, tracked or untracked and not ignored, which for a path directly at the repository root is the root's own and for a path below it is one below the root, and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Claude Code only.
 # summary: Stops an agent at the end of its turn when documents covering the code it changed did not change or an architecture topic names a path that does not exist, and hands it the list. Where some topic declares a Covers entry, changed code with no covering document is named too.
 # safety: Reads the payload, git state, the topic files, the render inventory `.kendex-generated.json` and git's listing of what each Covers entry matches; the only write is the per-set marker under the repository's git common dir. Exit 2 names the findings and asks for each document to be confirmed or updated and each entry or path to be corrected, never bypassed. jq reads the payload and a sha256 tool names the set; every command the hook runs is checked before it is called, the payload readers ahead of the payload and the rest after `stop_hook_active` has been read, so a discovery command's absence costs one retry rather than refusing the retry too; only a missing payload reader refuses that as well, the flag being in the payload it cannot read. A payload, git state, render inventory or marker the hook cannot read or write is refused, never passed. Every refusal opens with `doc-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
@@ -63,7 +63,7 @@ refuse() { # KEY VALUE [DETAIL], or `drift` alone
         [ -z "$DANGLING" ] ||
           printf 'these architecture topic Covers entries match no path in the tree, so each covers nothing; correct or remove it:\n%s' "$DANGLING"
         [ -z "$UNCOVERED" ] ||
-          printf 'code changed at these paths, and no topic Covers entry or AGENTS.md below the root covers them; add each to the Covers line of the topic that describes it:\n%s' "$UNCOVERED"
+          printf 'code changed at these paths, and no topic Covers entry or AGENTS.md covers them; add each to the Covers line of the topic that describes it:\n%s' "$UNCOVERED"
         printf 'Compared %s\n' "$JUDGED"
         printf 'Handle each, then finish.\n'
         ;;
@@ -80,7 +80,7 @@ refuse() { # KEY VALUE [DETAIL], or `drift` alone
         printf 'the render inventory .kendex-generated.json is present and could not be read\n'
         ;;
       inventory=invalid-json)
-        printf 'the render inventory .kendex-generated.json is not one JSON array of non-empty path strings, none holding a newline or a NUL; refusing rather than judging every render as code no document covers\n'
+        printf 'the render inventory .kendex-generated.json is not one JSON array of non-empty path strings, none holding a newline or a NUL; refusing rather than judging every render as code a document was meant to cover\n'
         ;;
       session-id=invalid)
         printf 'the payload carries no usable session_id, so naming these documents could not be recorded; refusing\n'
@@ -268,9 +268,9 @@ git_paths() { # LABEL ARGS... — sets PATHS; LABEL is the git= value on failure
 # The paths present in the tree for one pathspec, one per line in PATHS: tracked
 # and untracked non-ignored, as the changed set reads them, and only those on
 # disk, since the index still lists a file deleted and not yet staged.
-tree_paths() { # PATHSPEC — sets PATHS
+tree_paths() { # PATHSPEC... — sets PATHS
   local listed="" path
-  git_paths 'ls-files' ls-files -z --cached --others --exclude-standard --full-name -- "$1"
+  git_paths 'ls-files' ls-files -z --cached --others --exclude-standard --full-name -- "$@"
   while IFS= read -r path; do
     [ -z "$path" ] || ! on_disk "$path" || listed="$listed$path"$'\n'
   done <<EOF
@@ -321,12 +321,12 @@ CODE_CHANGED=$(printf '%s\n' "$ALL_CHANGED" | sed '/\.md$/d' 2>&1) ||
 # writer keeps this inventory and is the one judge of whether a path is a
 # render, so the hook reads it rather than matching harness directory names of
 # its own. A render is never the thing a document covers — the source it was
-# rendered from is — so a changed render is not named uncovered below.
+# rendered from is — so a changed render is named at neither kind below.
 #
 # The read discipline is the one commit-guards' suppression-ban applies to the
 # same file: an absent inventory is a repository with nothing rendered and
 # excludes nothing, while a present one that does not parse is refused rather
-# than read as empty, which would name every render as uncovered and say
+# than read as empty, which would name every render as a finding and say
 # nothing about why. It is read from the working tree, as the topic files are:
 # a refresh writes the inventory and the renders it lists together, so the
 # working-tree copy is the one that describes the renders being judged.
@@ -357,18 +357,18 @@ if [ -f "$INVENTORY" ]; then
 fi
 
 # Covering docs. `:(top)` roots the pattern at the repository whatever the
-# cwd, and `*` crosses `/`, so this is every AGENTS.md below the root and
-# not the root's own, which covers nothing. Untracked non-ignored ones count,
-# as a topic written this session does: a new directory's AGENTS.md covers the
-# code beside it before either is committed.
-tree_paths ':(top)*/AGENTS.md'
+# cwd, and `*` crosses `/`, so this is the root's own AGENTS.md and every
+# AGENTS.md below it. Untracked non-ignored ones count, as a topic written
+# this session does: a new directory's AGENTS.md covers the code beside it
+# before either is committed.
+tree_paths ':(top)AGENTS.md' ':(top)*/AGENTS.md'
 AGENTS_DOCS=$PATHS
 
 # Topic files are read from the working tree, so a file written this session
 # already covers what it says it covers; a tracked one deleted this session
 # covers nothing, and is in the changed set besides. Each pair is one line,
-# "<path pattern><TAB><topic path>". An entry of "." would cover the root, which
-# nothing does. `set -f` around the split: an entry is split on blanks,
+# "<path pattern><TAB><topic path>". An entry of "." would cover the whole
+# tree, which no topic does. `set -f` around the split: an entry is split on blanks,
 # never globbed, while the topic glob itself still expands.
 COVERS=""
 for topic in "$REPO_ROOT"/docs/architecture/*.md; do
@@ -420,7 +420,18 @@ covering_docs() {
   done <<EOF
 $COVERS
 EOF
+  # The nearest AGENTS.md above the path. A path whose directory is the root
+  # has the root's own, the one document that describes the repository as a
+  # whole, and only such a path has it: the walk below stops before the root,
+  # so a path in a directory still needs an AGENTS.md below the root at or
+  # above it, or a topic entry.
   dir=$(dirname "$path")
+  if [ "$dir" = "." ]; then
+    if in_list "$AGENTS_DOCS" AGENTS.md; then
+      printf '%s\n' AGENTS.md
+    fi
+    return 0
+  fi
   while [ "$dir" != "." ] && [ "$dir" != "/" ]; do
     if [ -z "$nearest" ] && in_list "$AGENTS_DOCS" "$dir/AGENTS.md"; then
       nearest="$dir/AGENTS.md"
@@ -461,16 +472,19 @@ EOF
 # repository without one has no map to be incomplete, and naming every changed
 # path there would block each stop of a repository that never adopted topics.
 # A deleted path is never uncovered: an entry added for it would match nothing.
-# Nor is a render the inventory lists: the document to correct covers its
-# source, and an entry added for the render would name a generated file.
 while IFS= read -r path; do
   # An empty code set reads as one empty line.
   [ -n "$path" ] || continue
+  # A render the inventory lists is named at neither kind, and the judgement is
+  # made before coverage so that holds wherever the render sits, the repository
+  # root included. The document to correct covers the source the render was
+  # written from, so a render neither leaves a document stale nor asks for a
+  # Covers entry that would name a generated file.
+  in_list "$GENERATED" "$path" && continue
   docs=$(covering_docs "$path")
   if [ -z "$docs" ]; then
     [ -n "$COVERS" ] || continue
     on_disk "$path" || continue
-    in_list "$GENERATED" "$path" && continue
     NAMED="$NAMED"uncovered$'\t'"$path"$'\n'
     UNCOVERED="$UNCOVERED  $path"$'\n'
     UNCOVERED_COUNT=$((UNCOVERED_COUNT + 1))
