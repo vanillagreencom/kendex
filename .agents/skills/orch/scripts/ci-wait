@@ -30,19 +30,19 @@ ci_message() {
       printf '%s\n' "ci-wait: max_wait must be a positive integer (got '$MAX_WAIT')"
       ;;
     passed)
-      printf 'ci-wait: passed pr=%s\n' "$PR_NUM"
+      printf 'ci-wait: passed pr=%s repo=%s\n' "$PR_NUM" "${REPO:-unresolved}"
       printf '%s\n' "CI passed"
       ;;
     failed)
-      printf 'ci-wait: failed pr=%s\n' "$PR_NUM"
+      printf 'ci-wait: failed pr=%s repo=%s\n' "$PR_NUM" "${REPO:-unresolved}"
       printf '%s\n' "CI failed:"
       ;;
     timeout)
-      printf 'ci-wait: timeout elapsed=%s verdict=%s\n' "$elapsed" "$verdict"
+      printf 'ci-wait: timeout elapsed=%s verdict=%s repo=%s\n' "$elapsed" "$verdict" "${REPO:-unresolved}"
       printf '%s\n' "CI timeout after ${elapsed}s (verdict: $verdict)"
       ;;
     error)
-      printf 'ci-wait: error pr=%s\n' "$PR_NUM"
+      printf 'ci-wait: error pr=%s repo=%s\n' "$PR_NUM" "${REPO:-unresolved}"
       printf '%s\n' "CI error: $error_msg"
       ;;
     missing-gh)
@@ -67,7 +67,11 @@ ci_message() {
       ;;
     repo-unresolved)
       printf 'ci-wait: repo-unresolved remote=%s\n' "origin"
-      printf '%s\n' "Could not resolve GitHub repo (gh repo view and git remote both failed)"
+      printf '%s\n' "Could not resolve GitHub repo (GH_REPO unset, gh repo view and git remote both failed)"
+      ;;
+    repo-shape)
+      printf 'ci-wait: repo-shape repo=%q\n' "$REPO"
+      printf '%s\n' "could not read '$REPO' as owner/repo for the check queries"
       ;;
     conflicting)
       printf 'ci-wait: conflicting pr=%s state=%s\n' "$PR_NUM" "$merge_state"
@@ -137,6 +141,13 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
+# shellcheck source=lib/gh-repo.sh
+source "$SCRIPT_DIR/lib/gh-repo.sh"
+
+# Named in every result, so a verdict states the repository it read. Empty
+# until the resolver below runs, which is after the auth ladder: an auth
+# failure is a verdict about no repository.
+REPO=""
 
 print_usage() {
   cat <<'USAGE'
@@ -182,6 +193,9 @@ JSON output (always when --json):
   {
     "status": "complete" | "timeout" | "error",
     "verdict": "pass" | "fail" | "pending" | "none",
+    "repo": <string>,             # the repository this verdict is about,
+                                  # "" only when the wait ended before it
+                                  # was resolved (missing gh, no auth)
     "elapsed_seconds": <int>,
     "error": <string>,            # only when status == "error"
     "pending_checks": [ {name,state} ... ],
@@ -199,6 +213,14 @@ Environment:
                 can lag. Within the grace window the result stays verdict
                 "pending"; past it, the explicit "no checks registered"
                 diagnostic fires.
+
+Repository: resolved through lib/gh-repo.sh, shared with approval-wait and
+queue-wait — GH_REPO first, then the working directory (`gh repo view`, then
+the origin remote) when GH_REPO is unset. `gh repo view` ignores GH_REPO and
+answers for the working directory, so a wait on another repository's PR from
+this checkout reads GH_REPO or nothing else will. Every result names the
+repository it read; a GH_REPO that is not owner/name is refused (repo-shape,
+exit 1) rather than sent to an API path that cannot hold it.
 
 Auth: resolved through lib/gh-auth.sh, shared with approval-wait and
 queue-wait (kendex#19) — env-first: already-resolved GH_TOKEN /
@@ -297,12 +319,14 @@ emit_result() {
     jq -n \
       --arg s "$status" \
       --arg v "$verdict" \
+      --arg repo "$REPO" \
       --argjson elapsed "$elapsed" \
       --arg error "$error_msg" \
       --argjson classes "$(jq -c 'map_values(map({name, state: (.state // .bucket // "UNKNOWN")}))' <<<"$classes")" \
       '{
         status: $s,
         verdict: $v,
+        repo: $repo,
         elapsed_seconds: $elapsed,
         pending_checks: $classes.pending,
         failed_checks: $classes.failed,
@@ -393,19 +417,14 @@ if [[ "$AUTH_READY" != "true" ]]; then
 fi
 
 # --- Resolve repo explicitly so gh calls don't depend on local auth/inference ---
-REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
-if [ -z "$REPO" ]; then
-  origin_url=$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null || true)
-  # Capture owner/repo greedily, then strip a trailing ".git" explicitly. GNU
-  # sed / POSIX ERE has no non-greedy quantifier, so a `[^/]+?(\.git)?$` pattern
-  # would greedily swallow ".git" into the slug. Do the suffix
-  # strip with bash parameter expansion instead — portable for both SSH
-  # (git@github.com:owner/repo.git) and HTTPS origins, with or without ".git",
-  # and safe for repo names that merely contain the substring "git".
-  REPO=$(echo "$origin_url" | sed -nE 's#^.*github\.com[:/]+([^/]+/[^/]+)$#\1#p')
-  REPO="${REPO%.git}"
+repo_status=0
+REPO=$(orch_resolve_gh_repo "$PROJECT_ROOT") || repo_status=$?
+if [ "$repo_status" -eq 2 ]; then
+  emit_error repo-shape
+  ci_message repo-shape "$@" >&2
+  exit 1
 fi
-if [ -z "$REPO" ]; then
+if [ "$repo_status" -ne 0 ]; then
   emit_error repo-unresolved
   ci_message repo-unresolved "$@" >&2
   exit 1

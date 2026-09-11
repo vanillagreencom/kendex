@@ -425,7 +425,7 @@ run_wait() {
   [[ -z "$env_list" ]] || IFS=',' read -ra env_args <<<"$env_list"
   set +e
   OUT=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-    env ${env_args[@]+"${env_args[@]}"} \
+    env -u GH_REPO ${env_args[@]+"${env_args[@]}"} \
         STUB_APPROVAL_COUNT_FILE="$RUN/approval-polls" \
         STUB_REVIEWS_COUNT_FILE="$RUN/review-polls" \
         STUB_HEAD_COUNT_FILE="$RUN/head-polls" \
@@ -453,6 +453,8 @@ count_lines() { # FILE — 0 when it was never written
 #   outage_marker                   whether the JSON carries that field
 #   target_patterns   auto_review_targets joined, so a row compares as one word
 #   transient_errors_seen           transient_api_errors >= 1
+#   text_repo the repo field on the plain result's first line
+#   error_line  first line of the JSON error, spaces encoded as +
 observe() {
   local got="" token name
   for token in $1; do
@@ -463,6 +465,8 @@ observe() {
       spent) got="$got spent=$(json '.elapsed_seconds >= 3')" ;;
       stdout) got="$got stdout=$([[ -n "$OUT" ]] && echo line || echo empty)" ;;
       text_status) got="$got text_status=$(sed -n '1s/^approval-wait: result status=\([^ ]*\).*$/\1/p' <<<"$OUT")" ;;
+      text_repo) got="$got text_repo=$(sed -n '1s/^approval-wait: result .* repo=\([^ ]*\).*$/\1/p' <<<"$OUT")" ;;
+      error_line) got="$got error_line=$(json '.error | split("\n")[0]' | tr ' ' '+')" ;;
       approval_polls) got="$got approval_polls=$(cat "$RUN/approval-polls" 2>/dev/null || echo 0)" ;;
       review_polls) got="$got review_polls=$(cat "$RUN/review-polls" 2>/dev/null || echo 0)" ;;
       status_queries) got="$got status_queries=$(count_lines "$RUN/status-queries")" ;;
@@ -617,6 +621,17 @@ table "$REVIEW" \
   'a 404 is terminal at once with no transient count||STUB_REVIEWS_MODE=http_404|rc=1 status=error transient_api_errors=null early=true' \
   'approval-mode pr view 503s then an approval is approved with the count|1 1 3 --json|STUB_APPROVAL_MODE=approved_after_503|rc=0 status=approved transient_api_errors=2'
 
+echo "=== the verdict names the repository it read ==="
+# `gh repo view` answers for the working directory and ignores GH_REPO, so a
+# wait launched from this checkout for another repository's PR read this
+# checkout's same-numbered PR. GH_REPO decides; a value that is not owner/name
+# is refused before any review read, never sent to an API path that cannot
+# hold it.
+table "$APPROVAL" \
+  'GH_REPO names the repository, over the checkout gh repo view answers for||GH_REPO=other/elsewhere,STUB_APPROVAL_MODE=approved_decision|rc=0 status=approved repo=other/elsewhere' \
+  'GH_REPO unset names the checkout||STUB_APPROVAL_MODE=approved_decision|rc=0 status=approved repo=owner/repo' \
+  'a GH_REPO that is not owner/name is refused||GH_REPO=elsewhere,STUB_APPROVAL_MODE=approved_decision|rc=1 status=error error_line=approval-wait:+repo-shape+repo=elsewhere'
+
 echo "=== text mode prints a result line for every branch the emitter has ==="
 # The line's wording is not a contract anything parses; what holds is that no
 # terminal status leaves stdout empty, with the same exit code as --json. The
@@ -638,7 +653,8 @@ table '1 1 3' \
   "review: timeout|$TEXT_REVIEW|STUB_REVIEWS_MODE=none|rc=1 text_status=timeout" \
   "review: error|$TEXT_REVIEW|GH_TOKEN=bad-token,STUB_GH_DENY_KEYRING=1|rc=3 text_status=error" \
   "review: proceeded|$TEXT_REVIEW|STUB_REVIEWS_MODE=none,PR_REVIEW_ON_TIMEOUT=proceed|rc=0 text_status=proceeded" \
-  "review: unreviewable|$TEXT_REVIEW|STUB_REVIEWS_MODE=none,STUB_BASE_REF=stack-base|rc=1 text_status=unreviewable"
+  "review: unreviewable|$TEXT_REVIEW|STUB_REVIEWS_MODE=none,STUB_BASE_REF=stack-base|rc=1 text_status=unreviewable" \
+  'the result line names the repository it read||GH_REPO=other/elsewhere,STUB_APPROVAL_MODE=approved_decision|rc=0 text_status=approved text_repo=other/elsewhere'
 
 echo "=== PR_REVIEW_WAIT_SECS: an absent max_wait positional resolves through orch-env ==="
 # Process env beats kendex.settings.toml [env], and an explicit positional

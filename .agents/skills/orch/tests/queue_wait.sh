@@ -370,6 +370,8 @@ STAGE_SEQ=0
 # how production invokes it, with the staged sequence directory and the
 # suite's default knobs; ENV is a comma-separated list of `env` arguments
 # that may override those knobs. Sets OUT, RC and ERR (the stderr file).
+# GH_REPO comes off first: it decides which repository the wait reads, so the
+# runner's own value would otherwise answer for every row.
 run_wait() {
   local env_list="$1" env_args=()
   shift
@@ -377,7 +379,7 @@ run_wait() {
   ERR="$SEQ_DIR/stderr"
   set +e
   OUT=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-    env STUB_SEQ_DIR="$SEQ_DIR" \
+    env -u GH_REPO STUB_SEQ_DIR="$SEQ_DIR" \
         QUEUE_WAIT_CONFIRM_POLLS=2 \
         QUEUE_WAIT_ARM_GRACE=120 \
         QUEUE_WAIT_PROBE_INTERVAL=0 \
@@ -396,6 +398,7 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 #   error_line        first line of the JSON error, spaces encoded as +
 #   stdout            `line` when anything was printed, `empty` otherwise
 #   text_verdict      the verdict field on the plain result's first line
+#   text_repo         the repo field on that same line
 #   help_record       stable usage record, spaces encoded as +
 #   mutations         the GraphQL mutations issued, in order: `disable`,
 #                     `dequeue`, or `none`
@@ -414,6 +417,7 @@ observe() {
       error_line) value="$(json '.error | split("\n")[0]')"; value="${value// /+}" ;;
       stdout) value="$([[ -n "$OUT" ]] && echo line || echo empty)" ;;
       text_verdict) value="$(sed -n '1s/^queue-wait: result status=[^ ]* verdict=\([^ ]*\).*$/\1/p' <<<"$OUT")" ;;
+      text_repo) value="$(sed -n '1s/^queue-wait: result .* repo=\([^ ]*\).*$/\1/p' <<<"$OUT")" ;;
       help_record) value="${OUT%%$'\n'*}"; value="${value// /+}" ;;
       mutations)
         value="$(sed -e 's/^disablePullRequestAutoMerge .*/disable/' -e 's/^dequeuePullRequest .*/dequeue/' "$SEQ_DIR/mutations.log" 2>/dev/null | paste -sd, - || true)"
@@ -533,6 +537,17 @@ table '1 1 8 --json --no-check-probe' \
   'a failed read between two reads does not erase the movement|open_queued_head,checkruns:1=c1.0,checkruns:2=fail502,checkruns:last=c2.0|1 1 4 --json --no-check-probe||verdict=queued progressing=true cause=still_progressing' \
   'a merged verdict carries progressing and no cause|state:last=merged,queue:last=in_head|1 1 10 --json --no-check-probe||verdict=merged has_progressing=true has_cause=false'
 
+echo "=== the verdict names the repository it read ==="
+# `gh repo view` answers for the working directory and ignores GH_REPO, so a
+# wait launched from this checkout for another repository's PR read this
+# checkout's same-numbered PR and called it merged. GH_REPO decides; a value
+# that is not owner/name is refused before any poll, never sent to an API
+# path that cannot hold it.
+table "$QW" \
+  'GH_REPO names the repository, over the checkout gh repo view answers for|state:last=merged,queue:last=in|1 1 10 --json --no-check-probe|GH_REPO=other/elsewhere|rc=0 verdict=merged repo=other/elsewhere' \
+  'GH_REPO unset names the checkout|state:last=merged,queue:last=in|1 1 10 --json --no-check-probe||rc=0 verdict=merged repo=owner/repo' \
+  'a GH_REPO that is not owner/name is refused|open_queued||GH_REPO=elsewhere|rc=1 status=error verdict=unknown error_line=queue-wait:+repo-shape+repo=elsewhere'
+
 echo "=== text mode names the verdict on stdout ==="
 # The line's wording beyond the verdict word is not a contract anything
 # parses; what holds is that every verdict prints its own line, with the same
@@ -541,7 +556,8 @@ table '1 1 20 --no-check-probe' \
   'ejected|state:last=open,queue:1=in,queue:last=out|||rc=1 text_verdict=ejected' \
   "dequeued|open_queued,threads:last=late,$DQ|||rc=1 text_verdict=dequeued" \
   'queued after one poll|open_queued|1 1 1 --no-check-probe||rc=1 text_verdict=queued' \
-  'queued and stalled|open_queued_head,checkruns:last=c1.0|1 1 8 --no-check-probe||rc=1 text_verdict=queued'
+  'queued and stalled|open_queued_head,checkruns:last=c1.0|1 1 8 --no-check-probe||rc=1 text_verdict=queued' \
+  'the result line names the repository it read|state:last=merged,queue:last=in|1 1 10 --no-check-probe|GH_REPO=other/elsewhere|rc=0 text_verdict=merged text_repo=other/elsewhere'
 
 echo "=== argument validation ends in the parser, before any gh call ==="
 # The recording gh stub fails every call, so a case that reached auth or a

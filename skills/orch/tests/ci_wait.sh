@@ -285,7 +285,7 @@ run_wait() {
   [[ -z "$env_list" ]] || IFS=',' read -ra env_args <<<"$env_list"
   set +e
   OUT=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-    env ${env_args[@]+"${env_args[@]}"} \
+    env -u GH_REPO ${env_args[@]+"${env_args[@]}"} \
         STUB_GH_API_USER_COUNT_FILE="$RUN/api-user-calls" \
         STUB_PR_CHECKS_COUNT_FILE="$RUN/checks-polls" \
         STUB_REPO_ARG_FILE="$RUN/repo-arg" \
@@ -447,10 +447,21 @@ echo "=== text mode prints a result line for every terminal status ==="
 # The line beyond its leading words is not a contract anything parses; the
 # leading words are text-only, so a JSON default flip fails these rows.
 table '1 1 30' \
-  'passed||||rc=0 stdout~ci-wait:+passed+pr=1=true' \
-  'failed|||STUB_PR_CHECKS_MODE=failure|rc=1 stdout~ci-wait:+failed+pr=1=true' \
-  'timeout||1 1 5|STUB_PR_CHECKS_MODE=pending_always|rc=1 stdout~ci-wait:+timeout+elapsed=5+verdict=pending=true' \
-  'error|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=3|rc=1 stdout~ci-wait:+error+pr=1=true'
+  'passed||||rc=0 stdout~ci-wait:+passed+pr=1+repo=owner/repo=true' \
+  'failed|||STUB_PR_CHECKS_MODE=failure|rc=1 stdout~ci-wait:+failed+pr=1+repo=owner/repo=true' \
+  'timeout||1 1 5|STUB_PR_CHECKS_MODE=pending_always|rc=1 stdout~ci-wait:+timeout+elapsed=5+verdict=pending+repo=owner/repo=true' \
+  'error|||STUB_PR_CHECKS_MODE=empty,CI_WAIT_NO_CHECKS_GRACE=3|rc=1 stdout~ci-wait:+error+pr=1+repo=owner/repo=true'
+
+echo "=== the verdict names the repository it read ==="
+# `gh repo view` answers for the working directory and ignores GH_REPO, so a
+# wait launched from this checkout for another repository's PR read this
+# checkout's same-numbered PR. GH_REPO decides, and the slug it names is what
+# reaches `gh --repo`; a value that is not owner/name is refused before any
+# check read.
+table "$JSON" \
+  'GH_REPO names the repository, over the checkout gh repo view answers for|||GH_REPO=other/elsewhere|rc=0 verdict=pass repo=other/elsewhere repo_arg=other/elsewhere' \
+  'GH_REPO unset names the checkout||||rc=0 verdict=pass repo=owner/repo repo_arg=owner/repo' \
+  'a GH_REPO that is not owner/name is refused|||GH_REPO=elsewhere|rc=1 status=error error_named=true stderr~ci-wait:+repo-shape+repo=elsewhere=true repo_arg=none'
 
 echo "=== the repo slug falls back to the origin URL without its .git suffix ==="
 # When `gh repo view` answers empty, owner/repo comes from the origin URL; the
