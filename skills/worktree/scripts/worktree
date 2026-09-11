@@ -350,23 +350,22 @@ remote_ref_lease_arg() {
   printf '%s\n' "--force-with-lease=${remote_head_ref}:${expected_oid}"
 }
 
-# Which judge refused a push, read off the transcript.
+# Which judge refused a push, read off the transcript, one predicate each.
 #
-# git exits 1 for a pre-push hook refusal and for a ref the remote rejected
-# alike, so the exit status cannot tell them apart and the lease story was
-# told over both: an operator was sent to fetch and rebase over a lease that
-# was not what refused, while the hook's own verdict sat unread a few lines
-# below it. What a hook refusal establishes is that the attempt updated no
-# remote ref, and which hook to read.
+# git exits 1 for a pre-push hook refusal and a rejected ref alike, so every
+# arm keys on a line somebody printed, never on the absence of one. Keying the
+# lease story on an unreadable hook verdict sent an operator to fetch and
+# rebase over a composed hook's refusal — the commit-guards lane clean, the
+# consumer's own hook rejecting under it, which is how the installer arms a
+# repository that already had one — and over network failures besides.
 #
-# The commit-guards pre-push lane is the producer, and this reads the message
-# protocol it publishes rather than restating how it decides: every line is
-# `pre-push: <key>=<value>`, and a run that completed ends with
+# The commit-guards lane is one producer, and this reads the message protocol
+# it publishes rather than restating how it decides: lines are
+# `pre-push: <key>=<value>`, and a completed run ends with
 # `pre-push: result=<code>`, zero being the only clean one. So a refusal is a
-# nonzero verdict, or keyed lines that never reach a verdict at all — the
-# lane's collection refusals exit before it. A hook that publishes no such
-# line is a hook this cannot read, and the caller classifies those as it did
-# before.
+# nonzero verdict, or keyed lines that never reach a verdict, which is how its
+# collection refusals exit. What neither predicate names reaches the caller's
+# last arm, where git's own output states the cause.
 push_output_refused_by_hook() { # OUTPUT -> 0 when a pre-push hook refused
   local line keyed=false verdict=false
   while IFS= read -r line; do
@@ -379,6 +378,20 @@ push_output_refused_by_hook() { # OUTPUT -> 0 when a pre-push hook refused
     esac
   done <<<"$1"
   [[ "$keyed" == true && "$verdict" == false ]]
+}
+
+# git is the other producer. It prints `! [rejected] <src> -> <dst> (stale
+# info)` for a failed --force-with-lease, the empty-expectation form this tool
+# uses on a first push included, and `(fetch first)` for an ordinary
+# rejection — so the lease story is told where git tells it and nowhere else.
+push_output_lease_rejected() { # OUTPUT -> 0 when git reports a stale lease
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      *'[rejected]'*'(stale info)'*) return 0 ;;
+    esac
+  done <<<"$1"
+  return 1
 }
 
 # After a push auto-rebase rewrote the branch, print one machine-readable
@@ -4088,10 +4101,10 @@ case "${1:-}" in
     if ! PUSH_OUTPUT="$(git_with_github_https_auth -C "$WT_PATH" push ${PUSH_UPSTREAM_ARGS[@]+"${PUSH_UPSTREAM_ARGS[@]}"} ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" "$PUSH_REF" 2>&1)"; then
       if push_output_refused_by_hook "$PUSH_OUTPUT"; then
         worktree_message push-hook-rejected "$REMOTE/${CURRENT_BRANCH:-HEAD}" "Error: A pre-push hook refused the push, so this attempt updated no remote ref. The hook's own keyed lines are in the git output below — fix what they name." >&2
-      elif [[ ${#PUSH_LEASE[@]} -gt 0 ]]; then
-        worktree_message push-rejected "$REMOTE/$CURRENT_BRANCH" "Error: Push rejected. Remote '$REMOTE/$CURRENT_BRANCH' may have changed since the force-with-lease expectation; fetch and rebase/merge before retrying." >&2
+      elif push_output_lease_rejected "$PUSH_OUTPUT"; then
+        worktree_message push-rejected "$REMOTE/$CURRENT_BRANCH" "Error: Push rejected. Git reports the force-with-lease expectation for '$REMOTE/$CURRENT_BRANCH' stale, so the remote moved since it was captured; fetch and rebase/merge before retrying." >&2
       else
-        worktree_message push-failed "$REMOTE/${CURRENT_BRANCH:-HEAD}" "Error: Push to '$REMOTE/${CURRENT_BRANCH:-HEAD}' failed." >&2
+        worktree_message push-failed "$REMOTE/${CURRENT_BRANCH:-HEAD}" "Error: Push to '$REMOTE/${CURRENT_BRANCH:-HEAD}' failed; git's own output below states the cause." >&2
       fi
       [[ -n "$PUSH_OUTPUT" ]] && sed 's/^/  git: /' <<<"$PUSH_OUTPUT" >&2
       exit 1
