@@ -189,6 +189,38 @@ plant pass "the same case with balanced patterns passes" \
   'done)' \
   'printf "%s\n" "$verdicts"'
 
+# The same construct with the substitution inside double quotes. Unquoted, the
+# `)` that ends the case pattern closes the substitution early and leaves a
+# stray one at the top level, which is what the row above reds on; quoted, it
+# lands inside the string and NO Bash refuses the file — 3.2 because it never
+# descends into a body, 5 because it parses the body correctly. That pair is
+# the reach the body parse adds, and the row after them asserts the silence.
+plant refuse "the same case inside a quoted command substitution reds the lane" \
+  'verdicts="$(for v in a b; do' \
+  '  case "$v" in' \
+  '    a) echo one ;;' \
+  '    b) echo two ;;' \
+  '  esac' \
+  'done)"' \
+  'printf "%s\n" "$verdicts"'
+QUOTED_DIR="$PLANT_DIR"
+plant pass "the same quoted case with balanced patterns passes" \
+  'verdicts="$(for v in a b; do' \
+  '  case "$v" in' \
+  '    (a) echo one ;;' \
+  '    (b) echo two ;;' \
+  '  esac' \
+  'done)"' \
+  'printf "%s\n" "$verdicts"'
+
+if [ -z "$QUOTED_DIR" ] || [ ! -f "$QUOTED_DIR/planted.sh" ]; then
+  bad "the quoted planted case file was not kept, so the silence below went unasserted"
+elif bash -n -- "$QUOTED_DIR/planted.sh" 2>/dev/null; then
+  ok "Bash $BASH_VERSION parses the quoted planted file whole, so the red above came from the body parse"
+else
+  bad "Bash $BASH_VERSION refused the quoted planted file whole, so the red above proves nothing about the body parse"
+fi
+
 # The two readers that miss it, asserted on the very file the row above
 # reddened: the host shell parses it, and the lint's text scan calls the
 # directory clean. Without both, the red above could be any syntax error.
@@ -210,6 +242,58 @@ else
     bad "the lint reddened the planted file (exit $status), so this row proves nothing about the parse pass"
   fi
 fi
+
+# The same construct inside a heredoc body. An unquoted delimiter makes the
+# body a word Bash expands, so 3.2 parses its substitution at expansion and
+# refuses it as it refuses the ones above; a quoted delimiter makes the body
+# text that is never expanded, so the identical body is correct source there.
+plant refuse "the same case inside an unquoted heredoc body reds the lane" \
+  'cat <<EOF' \
+  '$(for v in a b; do' \
+  '  case "$v" in' \
+  '    a) echo one ;;' \
+  '    b) echo two ;;' \
+  '  esac' \
+  'done)' \
+  'EOF'
+plant pass "the same case inside a quoted heredoc body passes, never being expanded" \
+  "cat <<'EOF'" \
+  '$(for v in a b; do' \
+  '  case "$v" in' \
+  '    a) echo one ;;' \
+  '    b) echo two ;;' \
+  '  esac' \
+  'done)' \
+  'EOF'
+
+# The same construct one context further in than a file's own scan reaches,
+# and quoted, so no stray paren is left for a parse of the file to red on:
+# inside a backquote body, and inside `$(( ))`.
+plant refuse "the same case in a quoted substitution inside a backquote body reds the lane" \
+  'x=`y="$(case a in a) echo hi;; esac)"; echo "$y"`' \
+  'printf "%s\n" "$x"'
+plant pass "the same backquote body with balanced patterns passes" \
+  'x=`y="$(case a in (a) echo hi;; esac)"; echo "$y"`' \
+  'printf "%s\n" "$x"'
+plant refuse "the same case in a quoted substitution inside arithmetic reds the lane" \
+  'x=$(( "$(case a in a) echo 1;; esac)" + 1 ))' \
+  'printf "%s\n" "$x"'
+
+# Two backquotes deep, where the raw text hides the substitution: `\\\$` is a
+# `$` only once each level's body has its backslashes removed the way 3.2
+# removes them, so this reds only when every round unescapes and re-feeds.
+plant refuse "the same case behind an escaped backquote inside a backquote body reds the lane" \
+  'x=`echo \`echo "\\\$(case a in a) echo hi;; esac)"\``' \
+  'printf "%s\n" "$x"'
+
+# A backslash escapes a quote inside `$'...'` and is a plain character inside
+# `'...'`. A scan that reads either spelling the other way is still inside a
+# quote at the end of the file, and the run ends at 2 instead of passing. The
+# plain spelling comes first: a scan that misreads `$'...'` is left inside a
+# quote that a `'\'` after it would close again.
+plant pass "ANSI-C and plain single quotes each close where Bash closes them" \
+  "sep='\\'" \
+  "msg=\$'don\\'t'"
 
 # --- 4. the fail-closed paths, each proven red ---------------------------
 # A row is `label|mutation|argv|exit|first`:
@@ -427,6 +511,80 @@ EOF
   printf 'no fail-closed row was asserted\n' >&2
   exit 2
 }
+
+# --- 4b. the extractor's own two ways of not running ---------------------
+# Both rows run the SHIPPED lane end to end under the real Bash 3.2, because
+# the stub worlds in section 4 answer the check pass themselves and never
+# reach the extractor inside it. Each stages a copy of the lane with ONE line
+# of its extractor replaced, so the row turns on that line's absence and not
+# on the extractor being gone.
+#
+# The keyed line the outer pass answers with is `no-verdict`: the inner pass
+# writes its own refusal to stderr and nothing at all to stdout, which is
+# what the outer can honestly say it read. The inner key is asserted under
+# it, so the row tells the two apart.
+extractor_mutant() { # extractor_mutant DIR FROM TO — a lane copy, one line replaced
+  mkdir -p "$1/tools" || return 1
+  cp "$LINT" "$1/tools/bash32-lint" || return 1
+  sed "s|^$2\$|$3|" "$PARSE" >"$1/tools/bash32-parse" || return 1
+  chmod +x "$1/tools/bash32-parse" || return 1
+  # Asserted in both directions: an expression that matched nothing would run
+  # the shipped extractor and score the row it was meant to force.
+  [ "$(grep -Fxc -- "$3" "$1/tools/bash32-parse")" -eq 1 ] || return 1
+  [ "$(grep -Fxc -- "$2" "$1/tools/bash32-parse")" -eq 0 ] || return 1
+}
+
+# A row is `label|from|to|fixture|inner`, `inner` being the refusal the pass
+# under 3.2 writes as `<key>=<value>`. The value `nonzero` is any nonzero
+# status: `extractor=` carries awk's own exit status, and awks disagree on it
+# (BSD awk and mawk exit 2 on a program that does not parse, gawk and busybox
+# exit 1). The fixture is one line of
+# correct Bash 3.2 that the shipped extractor reads and the copy cannot; both
+# fixtures also carry a command substitution, so a copy that reached the body
+# parse at all would have had one to report.
+#   arithmetic  `(( ))` is an arithmetic command, where `<<` is a shift. A
+#               copy that reads it as two subshells takes the shift for a
+#               heredoc, loses the rest of the file, and must refuse rather
+#               than report the bodies it did reach.
+#   BEGIN       the extractor program itself no longer parses, so awk exits
+#               without having read anything.
+#
+# `from` is read twice: as the sed pattern that replaces the line and as the
+# text grep -F counts back afterwards. It is spelled as the lane spells the
+# line, because an escape sed takes is a character grep counts, and a count
+# of a line that never existed passes whether or not the replacement landed.
+extractor_rows="\
+a file the scan loses track of ends the run|      if (substr(line, i + 1, 1) == \"(\" && word_start(prev)) {|      if (0) {|shifted=0; (( shifted = 1 << 2 ))|unscannable=1
+an extractor that cannot run ends the run|BEGIN { id = first; file = \"\" }|BEGIN { id = first; file = \"\"|shifted=0|extractor=nonzero"
+
+while IFS='|' read -r label from to fixture inner; do
+  [ -n "$label" ] || continue
+  EW="$W/extractor-$((PASS + FAIL))"
+  if ! mkdir -p "$EW/world" || ! extractor_mutant "$EW" "$from" "$to"; then
+    bad "$label" "the row's lane copy could not be staged"
+    continue
+  fi
+  printf '%s\n' '#!/usr/bin/env bash' "$fixture" 'seen="$(printf %s body)"' \
+    'printf "%s\n" "$seen"' >"$EW/world/real.sh"
+  run "$EW/tools/bash32-parse" "$EW/world"
+  key="${inner%%=*}"
+  want="${inner#*=}"
+  got="$(printf '%s\n' "$OUT" | sed -n "s/^bash32-parse: $key=//p")"
+  matched=no
+  case "$want:$got" in
+  nonzero:'' | nonzero:0 | nonzero:*[!0-9]*) ;;
+  nonzero:*) matched=yes ;;
+  *) [ "$got" != "$want" ] || matched=yes ;;
+  esac
+  if [ "$RC" -eq 2 ] && [ "$FIRST" = "no-verdict=2" ] && [ "$matched" = yes ]; then
+    ok "$label"
+  else
+    bad "$label (want rc=2 first=no-verdict=2 carrying $inner, got rc=$RC first=$FIRST $key=${got:--})" \
+      "$(printf '%s' "$OUT" | tr '\n' ';')"
+  fi
+done <<EOF
+$extractor_rows
+EOF
 
 # --- 5. a runtime that cannot deliver does not shadow one that can -------
 # The lane names more than one, and what a candidate ANSWERS decides it, not
