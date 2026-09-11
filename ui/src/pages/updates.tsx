@@ -50,6 +50,7 @@ import { scopeKey } from "@/lib/scope";
 import {
   hiddenUpdates,
   packageCount,
+  placeCount,
   placeKey,
   placeName,
   placesWithUpdates,
@@ -141,7 +142,9 @@ export function UpdatesPage() {
         subtitle={
           <>
             {visible.length > 0 ? (
-              <p>{updatesSubtitle(packageCount(visible), visible.length)}</p>
+              <p>
+                {updatesSubtitle(packageCount(visible), placeCount(visible))}
+              </p>
             ) : null}
             <p
               className="text-xs"

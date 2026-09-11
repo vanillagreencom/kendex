@@ -10,6 +10,7 @@ import {
   groupUpdates,
   outOfDateIn,
   packageCount,
+  placeCount,
   placeName,
   placesWithUpdates,
   skippedPlaces,
@@ -138,6 +139,20 @@ describe("update groups", () => {
     expect(
       packageCount([row("gh", null), row("gh", "/a"), row("x", "/a")]),
     ).toBe(2);
+  });
+
+  // The Updates page's "N updates across M places": a row is one package in
+  // one place, so the places are counted apart from the rows.
+  it("counts places, not rows", () => {
+    const CASES = [
+      { rows: [row("gh", null), row("gh", "/a"), row("x", "/a")], places: 2 },
+      { rows: [row("gh", "/a"), row("x", "/a")], places: 1 },
+      { rows: [row("gh", null)], places: 1 },
+    ];
+    expect(CASES).toHaveLength(3);
+    for (const { rows, places } of CASES) {
+      expect(placeCount(rows), `${rows.length} rows`).toBe(places);
+    }
   });
 
   it("leaves a place held by its owner out of a bulk update", () => {

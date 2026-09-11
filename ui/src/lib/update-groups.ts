@@ -50,6 +50,12 @@ export function groupUpdates(rows: UpdateRow[]): UpdateGroup[] {
 export const packageCount = (rows: UpdateRow[]): number =>
   new Set(rows.map(groupKey)).size;
 
+/** How many distinct places those packages are out of date in. A row is
+ *  one package in one place, so two packages sharing a project are one
+ *  place, not two. */
+export const placeCount = (rows: UpdateRow[]): number =>
+  new Set(rows.map((row) => scopeKey(row.scope))).size;
+
 /** Why this place's Update is withheld, or null when nothing withholds it.
  *  Every surface that offers Update reads this one function — the update
  *  review dialog, the row's own button, and the package page through

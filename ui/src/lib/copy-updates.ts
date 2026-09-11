@@ -195,13 +195,17 @@ export const OPEN_PACKAGE_LABEL = "Open package";
 export const openPlaceLabel = (place: string): string => `Open ${place}`;
 export const updateReviewOneTitle = (name: string, place: string): string =>
   `Update ${name} in ${place}?`;
+/** More than one place to write, which can still be one package: the same
+ *  package in two places is two rows under one count. */
 export const updateReviewManyTitle = (
   packages: number,
   place: string | null,
-): string =>
-  place === null
-    ? `Update ${packages} packages?`
-    : `Update ${packages} packages in ${place}?`;
+): string => {
+  const counted = packages === 1 ? "1 package" : `${packages} packages`;
+  return place === null
+    ? `Update ${counted}?`
+    : `Update ${counted} in ${place}?`;
+};
 export const UPDATE_REVIEW_BODY =
   "kendex replaces the installed files with the newest version from the source. Nothing is committed — you choose what to do with the changed files when the update finishes.";
 export const UPDATE_REVIEW_CONFIRM = "Update";
