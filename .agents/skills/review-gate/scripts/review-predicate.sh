@@ -87,13 +87,18 @@ characters, so a truncated list says how many it dropped) and the full list
 goes to stderr. It has NO DEDICATED settings key, and the only switch that
 reaches it is REVIEW_GATE_MODE=off, which answers approved for the whole gate
 without reading any evidence. An entry is SUBTRACTED when the PR author has
-answered it: an issue comment binding this head (a hex run at or above
-REVIEW_GATE_SHA_PREFIX_FLOOR the head starts with, so a reply does not
-survive a push) carrying a line that opens with the entry's own
-`**file:line**` token and continues with one of the three reply forms. The
-reply is read by the SAME grammar the thread terms read, so a tracking claim
-naming no issue and a decline naming no mechanism answer nothing; the newest
-line naming an entry decides. The term also clears when the commit the gate
+answered it: an issue comment binding this head, carrying a line that opens
+with the entry's own `file:line` token — bare as this detail prints it or
+bold as the review body does, both read, neither the anchor, since equality
+with a scanned entry is the identity check — and continues with one of the
+three reply forms. The COMMENT binds, by naming a sha at or above
+REVIEW_GATE_SHA_PREFIX_FLOOR that the head starts with, so a reply does not
+survive a push; a sha in a `Fixed in <sha>` slot never binds, because the
+ordinary commit-reply-push order makes that very sha the head and a comment
+would bind itself to a diff no reviewer re-read. The reply is read by the
+SAME grammar the thread terms read, so a tracking claim naming no issue and
+a decline naming no mechanism answer nothing; the newest line naming an
+entry decides. The term also clears when the commit the gate
 relies on carries no such block — a fresh review at a new head, or the carry
 base once carry supplies the evidence. Every shape it cannot read refuses
 too — a heading with no readable count, a count disagreeing with the entries
@@ -1908,9 +1913,13 @@ fi
 # is. No thread carries it, so the reply is a PR comment by the AUTHOR that
 # binds this head — the binding comment-form evidence uses, a hex run at or
 # above REVIEW_GATE_SHA_PREFIX_FLOOR that the head starts with, so a reply
-# written for an earlier head does not survive a push — and names the entry
-# by the same `**file:line**` token the scan above extracted, followed by the
-# reply. The reply is judged by the SHARED reply forms: a reply that is
+# written for an earlier head does not survive a push — and opens a line with
+# the entry's own `file:line` token, which the status prints bare and the
+# review body prints bold, followed by the reply. BOTH SPELLINGS ARE READ and
+# neither is the anchor: the token's equality with a scanned entry is what
+# identifies the finding, so the asterisks decide nothing and an author
+# copying either surface is answered. The reply is judged by the SHARED
+# reply forms: a reply that is
 # neither a disposition nor a tracking claim, a tracking claim naming no
 # issue, and a decline whose reason strips to nothing all leave the entry
 # standing, so a label answers nothing here either. Only entries the read
@@ -1921,6 +1930,15 @@ fi
 # Answering is the AUTHOR's, exactly as a thread reply is: this term does not
 # ask who may disposition a finding, only that the disposition is written,
 # bound and reasoned.
+#
+# A `Fixed in <sha>` SHA IS NOT A BINDING. It names the commit carrying the
+# fix, and the ordinary sequence — commit the fix, write the reply citing it,
+# push — makes that very sha the head. Left in the scan, a comment written
+# for an EARLIER head would bind itself to the new one the moment its own fix
+# landed, carrying every other reply in it forward across a diff no reviewer
+# re-read: this term's fail-open, on the one path an author walks every time.
+# So the slot is stripped before the scan and only what the comment says
+# ELSEWHERE can assert the head.
 supp_answered=0
 if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
   load_issue_comments
@@ -1939,17 +1957,20 @@ if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
     ($entries | split("\n") | map(select(length > 0))) as $wanted
     | [ .[]
         | select((.user.login // "") == $author)
-        | (.body // "" | gsub("\r"; ""))
-        | select(head_bound($sha; $floor))
+        | (.body // "" | gsub("\r"; "")) as $body
+        | select($body | gsub("fixed\\s+in\\s+[0-9a-fA-F]{7,40}"; " "; "i")
+                       | head_bound($sha; $floor))
+        | $body
         | split("\n")[]
-        | capture("^[ \t]*([-*+][ \t]+)?\\*\\*(?<e>[^*]+:[0-9]+)\\*\\*[^\\p{L}\\p{N}]*(?<r>.*)$")
+        | capture("^[ \t]*([-*+][ \t]+)?(\\*\\*(?<b>[^*]+:[0-9]+)\\*\\*|(?<e>[^*\\s]+:[0-9]+))[^\\p{L}\\p{N}]*(?<r>.*)$")
+        | {entry: (.b // .e), r: .r}
       ] as $said
     # The NEWEST line naming an entry decides, as a thread takes its newest
     # reply: an author who answers and then writes something else about the
     # same entry has withdrawn the answer.
     | [ $wanted[]
         | . as $e
-        | ([ $said[] | select(.e == $e) ] | last) as $reply
+        | ([ $said[] | select(.entry == $e) ] | last) as $reply
         | select($reply == null or unanswered($reply.r))
       ]
     | "\(length)\n" + join("\n")' <<<"$comments")" || supp_disp=""

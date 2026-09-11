@@ -190,11 +190,19 @@ supp_carries "the masked-block detail names the file:line" "$SUPP_FIRST" "$LAST_
 
 # ------------------------------------------------- the disposition replies ---
 # A body finding carries no thread, so its reply is a PR comment by the
-# author: one that binds this head and opens a line with the same
-# `**file:line**` token the block printed. The reply itself is read by the
-# SHARED reply forms, so what answers no thread answers no body entry either
-# — and a reply written for another head, or by anyone but the author, is
-# not the author's disposition of this head.
+# author: one that binds this head and opens a line with the entry's own
+# `file:line` token, bare as the status prints it or bold as the review body
+# does. The reply itself is read by the SHARED reply forms, so what answers
+# no thread answers no body entry either — and a reply written for another
+# head, or by anyone but the author, is not the author's disposition of this
+# head.
+#
+# A `Fixed in <sha>` sha is not a binding. Commit the fix, write the reply
+# citing it, push, and that sha IS the head: a comment written for the
+# earlier head would otherwise bind itself to the new one and carry its other
+# replies across a diff no reviewer re-read. The two rows below take that in
+# both directions — the Fixed-in sha alone binds nothing, and a comment that
+# says the head elsewhere still answers the entry its Fixed-in reply names.
 supp_reply_case() { # COMMENT_AUTHOR, COMMENT_BODY, VERDICT, NAME
   reset
   CFG_TRUSTED_LOGINS=""
@@ -210,6 +218,9 @@ while IFS='|' read -r name author bound body want; do
   supp_reply_case "$author" "Dispositions at $bound:\n$body" "$want" "$name"
 done <<EOF
 a bound reasoned decline and a tracked entry clear the block|$AUTHOR|${HEAD:0:7}|$SUPP_BOTH|approved
+a reply naming the entries bare, as the status prints them, clears the block|$AUTHOR|${HEAD:0:7}|$SUPP_FIRST - $SUPP_REASON\n$SUPP_SECOND - Tracked: KEN-1400|approved
+a comment tied to the head only by its own Fixed-in sha answers nothing|$AUTHOR|${OTHER:0:7}|**$SUPP_FIRST** - Fixed in $HEAD\n**$SUPP_SECOND** - $SUPP_REASON|suppressed-findings
+a comment naming the head elsewhere still answers a Fixed-in entry|$AUTHOR|${HEAD:0:7}|**$SUPP_FIRST** - Fixed in $HEAD\n**$SUPP_SECOND** - $SUPP_REASON|approved
 a label-only decline answers nothing|$AUTHOR|${HEAD:0:7}|**$SUPP_FIRST** - Declined: out of scope\n**$SUPP_SECOND** - Declined: pre-existing|suppressed-findings
 a tracking claim naming no issue answers nothing|$AUTHOR|${HEAD:0:7}|**$SUPP_FIRST** - Tracking this separately.\n**$SUPP_SECOND** - Tracking this separately.|suppressed-findings
 a reply bound to another head answers nothing|$AUTHOR|${OTHER:0:7}|$SUPP_BOTH|suppressed-findings
