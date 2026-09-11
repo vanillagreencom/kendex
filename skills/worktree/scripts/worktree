@@ -4101,9 +4101,9 @@ case "${1:-}" in
     # first. A successful push is defined by its exit status and stays quiet.
     if ! PUSH_OUTPUT="$(LC_ALL=C git_with_github_https_auth -C "$WT_PATH" push ${PUSH_UPSTREAM_ARGS[@]+"${PUSH_UPSTREAM_ARGS[@]}"} ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" "$PUSH_REF" 2>&1)"; then
       if push_output_refused_by_hook "$PUSH_OUTPUT"; then
-        worktree_message push-hook-rejected "$REMOTE/${CURRENT_BRANCH:-HEAD}" "Error: A pre-push hook refused the push, so this attempt updated no remote ref. The hook's own keyed lines are in the git output below — fix what they name." >&2
+        worktree_message push-hook-rejected "$REMOTE/${CURRENT_BRANCH:-HEAD}" "Error: A pre-push hook refused the push. The hook's own keyed lines are in the git output below — fix what they name." >&2
       elif push_output_lease_rejected "$PUSH_OUTPUT"; then
-        worktree_message push-rejected "$REMOTE/$CURRENT_BRANCH" "Error: Push rejected. Git reports the force-with-lease expectation for '$REMOTE/$CURRENT_BRANCH' stale, so the remote moved since it was captured; fetch and rebase/merge before retrying." >&2
+        worktree_message push-rejected "$REMOTE/$CURRENT_BRANCH" "Error: Push rejected. Git reports the force-with-lease expectation for '$REMOTE/$CURRENT_BRANCH' stale; fetch and rebase/merge before retrying." >&2
       else
         worktree_message push-failed "$REMOTE/${CURRENT_BRANCH:-HEAD}" "Error: Push to '$REMOTE/${CURRENT_BRANCH:-HEAD}' failed; git's own output below states the cause." >&2
       fi

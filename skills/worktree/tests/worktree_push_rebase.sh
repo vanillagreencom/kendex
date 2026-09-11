@@ -261,8 +261,7 @@ step() {
     # after which anything the remote rejects is the remote's to explain; and
     # a composed hook, whose lane half is clean and whose consumer half then
     # refuses on its own, the shape the installer leaves in a repository that
-    # already had a pre-push hook. A refusal updates no remote ref, so those
-    # rows' remotes stay where the fixture left them.
+    # already had a pre-push hook.
     hook-refuses) arm_pre_push_hook 'pre-push: result=1' 1 ;;
     hook-aborts) arm_pre_push_hook '' 1 ;;
     hook-passes) arm_pre_push_hook 'pre-push: result=0' 0 ;;

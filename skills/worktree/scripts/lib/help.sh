@@ -324,13 +324,13 @@ otherwise by commit subject. A push that skips the rebase, or one run with
 A refused push names its judge, and every judge reads a line rather than the
 absence of one. A pre-push hook that publishes the commit-guards message
 protocol ('pre-push: <key>=<value>' lines, a completed run ending in
-'pre-push: result=<code>') is reported as 'worktree-push-hook-rejected': the
-attempt updated no remote ref, and the hook's own lines below the record name
-what to fix. A ref git rejected under its own '! [rejected] ... (stale info)'
-line, which it prints for a failed --force-with-lease and nothing else, is
-'worktree-push-rejected'. Everything else is 'worktree-push-failed' with git's
-output below the record, which is where a consumer's own half of a composed
-pre-push hook, or a network or permission failure, states its cause.
+'pre-push: result=<code>') is reported as 'worktree-push-hook-rejected', and
+the hook's own lines below the record name what to fix. A ref git rejected
+under its own '! [rejected] ... (stale info)' line, which it prints for a
+failed --force-with-lease and nothing else, is 'worktree-push-rejected'.
+Everything else is 'worktree-push-failed' with git's output below the record,
+which is where a consumer's own half of a composed pre-push hook, or a network
+or permission failure, states its cause.
 
 GitHub auth: push and origin fetches use the GitHub skill's git-https-auth
 behavior when available: if gh auth is valid, the git command gets a
