@@ -84,7 +84,9 @@ pub fn declared_identity(
 
 /// Every subscription across the personal scope and every project,
 /// personal first, from the manifests alone — folders included. An absent
-/// manifest contributes nothing; an unreadable manifest fails the join.
+/// manifest reads as its first write would create it: the personal scope
+/// carries the default marketplace, a project nothing. An unreadable
+/// manifest fails the join.
 ///
 /// The one walk over the declarations, so a caller asking which catalog
 /// carries a marketplace and a caller asking which repositories are
