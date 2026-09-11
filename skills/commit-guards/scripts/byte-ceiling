@@ -203,7 +203,7 @@ case "$MODE" in
     # never-staged file must not hold the swept index to rows it does not
     # carry.
     baseline_status=0
-    gg_policy_content "$BASELINE_FILE" tracked >"$GG_TMP/baseline.tsv" || baseline_status=$?
+    gg_policy_content "$BASELINE_FILE" >"$GG_TMP/baseline.tsv" || baseline_status=$?
     case "$baseline_status" in
       0) gg_validate_baseline "$GG_TMP/baseline.tsv" "$BASELINE_FILE" ;;
       1) : >"$GG_TMP/baseline.tsv" ;;

@@ -195,14 +195,13 @@ while IFS= read -r -d '' f; do
 done <"$GG_TMP/bare.z"
 LC_ALL=C sort "$GG_TMP/counts.raw" >"$GG_TMP/counts.tsv"
 
-# Baseline load + hygiene (gg_validate_baseline): worktree file first; a
-# tracked-but-absent baseline (sparse checkout) is read from the index so it
-# cannot degrade to empty; otherwise the baseline is empty.
+# Baseline load + hygiene (gg_validate_baseline). The scan is index-scoped, so
+# the baseline it is judged against is the index copy too: an unstaged row bump
+# must not authorize growth the commit does not carry, and a tracked baseline
+# absent from the work tree (a sparse checkout) still applies rather than
+# degrading to empty. A baseline the index does not carry is empty.
 #
-# The scan is index-scoped, so the baseline it is judged against is the index
-# copy too: an unstaged row bump must not authorize growth the commit does not
-# carry. Only a never-tracked baseline, and --update (which rewrites the
-# worktree copy), read from disk.
+# --update is the one reader of the file on disk, since it rewrites that file.
 BASELINE_FROM_INDEX=0
 if [ "$MODE" = "update" ] && [ -f "$BASELINE_FILE" ]; then
   gg_validate_baseline "$BASELINE_FILE" "$BASELINE_FILE"
@@ -212,7 +211,8 @@ else
   gg_policy_content "$BASELINE_FILE" >"$GG_TMP/baseline.tsv" || baseline_status=$?
   case "$baseline_status" in
     0)
-      # A readable policy with no worktree file came from the index.
+      # A baseline the index carries with no file on disk: --update below has
+      # nothing to rewrite and must say so rather than write a new file.
       [ -f "$BASELINE_FILE" ] || BASELINE_FROM_INDEX=1
       gg_validate_baseline "$GG_TMP/baseline.tsv" "$BASELINE_FILE"
       ;;

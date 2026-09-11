@@ -230,7 +230,7 @@ run_rows \
   "an unstaged emptying of the inventory changes nothing: the index copy governs|fx_inv_unstaged|||rc=0 $OK|-" \
   "the staged emptying exposes the render|fx_inv_staged|||rc=1 $INV_HIT|-" \
   "an inventory staged for deletion excludes nothing, whatever the work tree holds|fx_inv_deleted|||rc=1 $INV_HIT|-" \
-  "a never-tracked inventory on disk is all there is, and governs|fx_inv_untracked|||rc=0 $OK|-" \
+  "a never-tracked inventory excludes nothing either: the index is the only reader|fx_inv_untracked|||rc=1 $INV_HIT|-" \
   "no inventory anywhere excludes nothing: an all-in-place project has no renders|fx_inv_none|||rc=1 $INV_HIT|-" \
   "control: with no inventory a clean render passes|fx_inv_none_clean|||rc=0 $OK|-" \
   "an object is refused: the writer emits an array|fx_inv_object|||rc=2 $ERR_INV|-" \

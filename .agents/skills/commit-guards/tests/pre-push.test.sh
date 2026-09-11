@@ -281,6 +281,59 @@ assert_eq "a branch rebased into a breach is refused before it leaves the machin
 assert_eq "and refused again when the push spells its left side HEAD" \
   "$REFUSED" "$(push_ref "$REBASED" HEAD:refs/heads/topic)"
 
+# ------------------------------------------------------ the policy at push
+#
+# That breach is excludable: a row in byte-ceiling's excludes list leaves the
+# document out of the scan. Every lane reads its policy from the INDEX, so a
+# stray list nobody staged cannot excuse the document the push is carrying —
+# a verdict bought with a local file no commit holds is a fail-open in gate
+# code, and the lane's own help says neither untracked files nor unstaged
+# edits are consulted.
+EXCLUDES=tools/byte-ceiling-excludes
+excludes_row() { # REPO — the row that would leave big.md out of the scan, in the work tree
+  mkdir -p "$1/tools"
+  printf 'big.md\ta row that would excuse the document\n' >"$1/$EXCLUDES"
+}
+
+STRAY=""
+scenario STRAY stray 1
+excludes_row "$STRAY"
+assert_eq "an untracked excludes row excuses nothing: the rebased breach is still refused" \
+  "$REFUSED" "$(push_ref "$STRAY" topic)"
+
+# The inverse, which is what makes the row above a row that would have worked.
+# Staging it alone cannot answer this: the index-drift refusal fires first, so
+# the row reaches the index the only way a push carries one, in a commit.
+HONOURED=""
+scenario HONOURED honoured 1
+excludes_row "$HONOURED"
+q git -C "$HONOURED" add "$EXCLUDES"
+q git -C "$HONOURED" commit -q -m "chore: declare the document in the excludes list"
+assert_eq "control: the same row committed is honoured and the push passes" \
+  "rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
+  "$(push_ref "$HONOURED" topic)"
+
+# The must-fail control: a copy of the policy reader that falls back to the
+# worktree copy for a path the index does not carry. The stray row is then
+# honoured, and the document the push is carrying leaves under a clean verdict.
+FALLBACK="$TMP/.fallback/commit-guards"
+mkdir -p "$(dirname "$FALLBACK")"
+cp -R "$SKILL_TEMPLATE" "$FALLBACK"
+FALLBACK_LIB="$FALLBACK/scripts/lib/configured-paths.sh"
+FALLBACK_BEFORE="$(cat -- "$FALLBACK_LIB")"
+sed -i.bak 's#^    1) return 1 ;;$#    1) [ ! -f "$file" ] || { cat -- "$file"; return 0; }; return 1 ;;#' \
+  "$FALLBACK_LIB"
+rm -f -- "$FALLBACK_LIB.bak"
+assert_eq "the fallback edit took" "rewritten" \
+  "$(if [ "$FALLBACK_BEFORE" = "$(cat -- "$FALLBACK_LIB")" ]; then echo unchanged; else echo rewritten; fi)"
+
+FELLBACK=""
+scenario FELLBACK fellback 1 "$FALLBACK"
+excludes_row "$FELLBACK"
+assert_eq "must-fail: with the worktree fallback restored, the stray row excuses the breach and it pushes" \
+  "rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:0:1:base:<oid>;pre-push: result=0" \
+  "$(push_ref "$FELLBACK" topic)"
+
 # ------------------------------------------------------------- the subject
 #
 # The not-head refusal settles which commit is leaving; it settles nothing
