@@ -3,9 +3,11 @@
 //! belongs to `plugin/item` names (and, as a positional source,
 //! `owner/repo`), and a bare name is a search over every enabled
 //! subscription in the scope — one match installs, two refuse to guess,
-//! none is not found. Never a fallback: a zero-match search already
-//! covered the default subscription, and guessing past it would install
-//! from a source nobody named.
+//! none is not found. Never a fallback to a source nobody named: a
+//! zero-match search already covered the default subscription where the
+//! scope holds one, and a project with no manifest yet reaches the
+//! personal scope's default marketplace through [`super::add`], that one
+//! alone.
 
 use std::collections::BTreeMap;
 

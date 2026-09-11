@@ -120,14 +120,7 @@ pub fn subscribe_project_to(
     project_root: &std::path::Path,
     source_name: &str,
 ) -> Result<EngineReport> {
-    let personal = match manifest::load(&manifest::manifest_path(env, &Scope::Global))? {
-        manifest::ManifestFile::Current(manifest) => *manifest,
-        _ => {
-            return Err(CoreError::UnknownSource {
-                name: source_name.to_owned(),
-            });
-        }
-    };
+    let personal = crate::engine::ops::manifest_for_reading(env, &Scope::Global)?;
     let Some(decl) = personal
         .sources
         .get(source_name)
@@ -167,14 +160,7 @@ pub fn install_project_from_personal(
     source_name: &str,
     request: &crate::engine::ops::AddRequest,
 ) -> Result<EngineReport> {
-    let personal = match manifest::load(&manifest::manifest_path(env, &Scope::Global))? {
-        manifest::ManifestFile::Current(manifest) => *manifest,
-        _ => {
-            return Err(CoreError::UnknownSource {
-                name: source_name.to_owned(),
-            });
-        }
-    };
+    let personal = crate::engine::ops::manifest_for_reading(env, &Scope::Global)?;
     let Some(decl) = personal
         .sources
         .get(source_name)

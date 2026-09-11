@@ -75,8 +75,7 @@ pub(crate) fn landing<'a>(
 /// subscribed catalog offers. The Problems page is where that record is
 /// explained and fixed.
 fn records(env: &Env, scope: &Scope) -> Result<Records> {
-    let manifest = crate::manifest::load_current(&crate::manifest::manifest_path(env, scope))?
-        .unwrap_or_default();
+    let manifest = crate::engine::ops::manifest_for_reading(env, scope)?;
     Ok(Records {
         manifest,
         lock: lock_of(env, scope),

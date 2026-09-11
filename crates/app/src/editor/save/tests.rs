@@ -2,7 +2,7 @@ use super::*;
 use kendex_core::manifest::{
     DEFAULT_SOURCE_NAME, DEFAULT_SOURCE_REPO, ItemDecl, MANIFEST_SCHEMA, SourceDecl,
 };
-use kendex_core::model::HarnessId;
+use kendex_core::model::{HarnessId, Scope};
 use std::collections::BTreeMap;
 
 use crate::test_util::source_path;
@@ -364,12 +364,15 @@ fn creating_a_manifest_here_still_seeds_the_default_source() {
             schema: MANIFEST_SCHEMA,
             ..Manifest::default()
         },
-        manifest::seed(&[HarnessId::Claude]),
+        manifest::seed(&Scope::Global, &[HarnessId::Claude]),
     );
-    assert_eq!(seeded.sources, manifest::seed(&[HarnessId::Claude]).sources);
+    assert_eq!(
+        seeded.sources,
+        manifest::seed(&Scope::Global, &[HarnessId::Claude]).sources
+    );
     assert_eq!(seeded.install.harnesses, [HarnessId::Claude]);
 
-    let declared = on_first_creation(manifest(), manifest::seed(&[HarnessId::Pi]));
+    let declared = on_first_creation(manifest(), manifest::seed(&Scope::Global, &[HarnessId::Pi]));
     assert_eq!(declared.sources, manifest().sources);
     assert!(declared.install.harnesses.is_empty());
 }
