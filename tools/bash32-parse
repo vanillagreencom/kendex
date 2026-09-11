@@ -128,7 +128,7 @@ message_text() { # KEY VALUE [EXTRA...] — the English for one key, and all of 
   extractor)
     echo "the command substitution bodies could not be extracted: the value names the step that failed, or the status the extractor exited with, and whatever it wrote follows. A file whose substitutions went unread is never reported as parsed." ;;
   unscannable)
-    echo "shell files Bash 3.2 parsed and this pass could not follow to the end of, named below." ;;
+    echo "shell files, or command substitution bodies inside them, that Bash 3.2 parsed and this pass could not follow to the end of, named below; a body is named by the file and the line it was cut from." ;;
   clean)
     printf '%s shell file(s), each parsed by Bash %s via %s, and every command substitution body inside them parsed on its own.\n' "$2" "$3" "$4" ;;
   *)
@@ -169,6 +169,17 @@ die_cause() { # KEY VALUE CAUSE — CAUSE is the failing command's own words
 # does not parse. Backquote bodies are taken as well — their delimiter is the
 # next unescaped backquote, so the early close above cannot reach them, but
 # `bash -n` leaves their body unparsed exactly as it leaves a `$( )` body.
+# A backquote body is handed over with the backslashes 3.2 removes before
+# parsing it already removed, so an escaped backquote inside it is the nested
+# body it becomes.
+#
+# A body is a script `bash -n` does not descend into either, so --check hands
+# every body 3.2 accepted back to this program as a file of its own, round
+# after round, until a round takes no body. The program therefore takes only
+# the OUTERMOST bodies of the text it scans: whatever a body holds — a `$( )`,
+# a backquote, a heredoc — is found when that body is scanned in turn, read
+# the way 3.2 reads it at expansion rather than by a second set of rules for
+# each context a substitution can sit in.
 #
 # A heredoc body at the top level is a WORD Bash reads whole and expands
 # later, so the spelling that opened it decides everything. A quoted
@@ -178,22 +189,29 @@ die_cause() { # KEY VALUE CAUSE — CAUSE is the failing command's own words
 # expand it, and a `$( )` in there carries the construct above as surely as
 # one in code, so that body is scanned in the only mode true of a word —
 # `$(`, a backquote and a backslash act, and a loose quote or paren outside
-# an open body is a character. A heredoc opened INSIDE a body is neither,
-# because 3.2's paren count runs straight through one — measured under the
-# pinned image, not assumed.
+# an open body is a character. A heredoc opened INSIDE a body is neither
+# while that body is being delimited, because 3.2's paren count runs straight
+# through one — measured under the pinned image, not assumed — and it is a
+# heredoc at the top level once that body is scanned in turn.
 #
-# What it does not reach: the inside of `$(( ))`, which is arithmetic and not
-# a command list. That is an under-read, reporting nothing rather than
-# something wrong.
+# `$(( ))` is arithmetic, not a body, so no round reaches inside it. The scan
+# counts its parens and opens a `$( )` or a backquote inside it as it does
+# anywhere else.
+#
+# What it does not reach: the body of a process substitution, `<( )` or
+# `>( )`, which 3.2 also parses only once it expands it — measured — and this
+# scan counts as a plain pair of parens. A `$( )` or a backquote inside one is
+# still taken.
 extractor_program() { # the awk program, on stdout
   cat <<'EXTRACTOR'
-# Every command substitution body in the files named on the command line,
-# delimited the way Bash 3.2 delimits one.
+# Every outermost command substitution body in the files named on the command
+# line, delimited the way Bash 3.2 delimits one.
 #
-# `dir` receives one file per body, named by its id. `lost` receives the name
-# of any file the scan did not reach the end of in a settled state. stdout
-# carries one line per body: `<id> <line> <file>`, the file last so a path
-# holding a blank stays whole.
+# `dir` receives one file per body, named by its id; ids continue from
+# `first`, the last one an earlier round used. `lost` receives the name of any
+# file the scan did not reach the end of in a settled state. stdout carries
+# one line per body: `<id> <line> <file>`, the file last so a path holding a
+# blank stays whole.
 function word_start(c) {
   return c == "\n" || c == " " || c == "\t" || c == ";" || c == "&" || c == "|"
 }
@@ -203,6 +221,41 @@ function keep(text, ln,   f) {
   printf "%s", text > f
   close(f)
   print id, ln, file
+}
+# The text 3.2 parses when it expands a backquote body: the backslash before
+# a backslash, a backquote or a dollar sign is removed, and the one before a
+# double quote as well when `dq` is set.
+function unescape(text, dq,   out, k, n, ch, nx) {
+  out = ""
+  n = length(text)
+  for (k = 1; k <= n; k++) {
+    ch = substr(text, k, 1)
+    if (ch == "\\" && k < n) {
+      nx = substr(text, k + 1, 1)
+      if (nx == "\\" || nx == "`" || nx == "$" || (dq && nx == "\"")) {
+        ch = nx
+        k++
+      }
+    }
+    out = out ch
+  }
+  return out
+}
+# A `$( )` opens at `i`. Whatever the scan held open is saved for the `)` that
+# closes it, the body starts with nothing open, and only a body at the
+# outermost level is gathered.
+function open_subst() {
+  held_quote[depth] = quote; held_paren[depth] = paren; held_arith[depth] = arith
+  depth++
+  quote = ""; paren = 0; arith = 0
+  if (depth == 1) { body = ""; start = i + 2; opened = FNR }
+}
+# A backquote opens at `i`. 3.2 also removes the backslash before a `"` in its
+# body when it opens inside a double-quoted string, and not inside `$(( ))`
+# or a heredoc body there, measured under the pinned image.
+function open_bq() {
+  bq = 1; bqstart = i + 1; bqline = FNR
+  bqdq = (quote == "\"" && arith == 0 && !(word_body && depth == 0))
 }
 # A file whose last line leaves a substitution, a quote, a backquote,
 # arithmetic or a heredoc open is one this scan lost track of. Every caller
@@ -225,7 +278,7 @@ function open_body() {
   strip_tabs = dash[1]
   if (bare[1]) { word_body = 1; quote = "\"" }
 }
-BEGIN { id = 0; file = "" }
+BEGIN { id = first; file = "" }
 FNR == 1 {
   settle()
   file = FILENAME
@@ -262,25 +315,31 @@ FNR == 1 {
   prev = "\n"
   while (i <= last) {
     c = substr(line, i, 1)
-    # `$(( ))` is arithmetic, not a command list, and its parens balance, so
-    # the scan steps over it rather than handing its text to a shell parser.
-    if (arith > 0) {
-      if (c == "\\") { i += 2; prev = "x"; continue }
-      if (c == "(") arith++
-      else if (c == ")") arith--
-      i++; prev = c; continue
-    }
     # A backquote body ends at the next unescaped backquote, whatever parens
     # or quotes it holds. That delimiter cannot be closed early the way a
     # paren count can, but its body goes unparsed by `bash -n` all the same.
+    # Looked for ahead of arithmetic, which a backquote can open inside.
     if (bq) {
       if (c == "\\") { i += 2; prev = "x"; continue }
       if (c == "`") {
         bqbody = bqbody substr(line, bqstart, i - bqstart)
         bq = 0
-        keep(bqbody, bqline)
+        if (depth == 0) keep(unescape(bqbody, bqdq), bqline)
         bqbody = ""
       }
+      i++; prev = c; continue
+    }
+    # `$(( ))` is arithmetic, not a command list, and its parens balance, so
+    # the scan counts them rather than handing its text to a shell parser. A
+    # `$( )` or a backquote inside it is a command list all the same.
+    if (arith > 0) {
+      if (c == "\\") { i += 2; prev = "x"; continue }
+      if (c == "`") { open_bq(); i++; prev = c; continue }
+      if (c == "$" && substr(line, i + 1, 1) == "(" && substr(line, i + 2, 1) != "(") {
+        open_subst(); i += 2; prev = "x"; continue
+      }
+      if (c == "(") arith++
+      else if (c == ")") arith--
       i++; prev = c; continue
     }
     if (quote == "'") {
@@ -293,14 +352,10 @@ FNR == 1 {
     if (quote == "\"") {
       if (c == "\\") { i += 2; prev = "x"; continue }
       if (c == "\"" && !(word_body && depth == 0)) { quote = ""; i++; prev = c; continue }
-      if (c == "`") { bq = 1; bqstart = i + 1; bqline = FNR; i++; prev = c; continue }
+      if (c == "`") { open_bq(); i++; prev = c; continue }
       if (c == "$" && substr(line, i + 1, 1) == "(") {
         if (substr(line, i + 2, 1) == "(") { arith = 2; i += 3; prev = "x"; continue }
-        held_quote[depth] = quote; held_paren[depth] = paren
-        depth++
-        quote = ""; paren = 0
-        body[depth] = ""; start[depth] = i + 2; opened[depth] = FNR
-        i += 2; prev = "x"; continue
+        open_subst(); i += 2; prev = "x"; continue
       }
       i++; prev = c; continue
     }
@@ -308,14 +363,10 @@ FNR == 1 {
     if (c == "'") { quote = "'"; ansi_c = (prev == "$"); i++; prev = c; continue }
     if (c == "\"") { quote = "\""; i++; prev = c; continue }
     if (c == "#" && word_start(prev)) break
-    if (c == "`") { bq = 1; bqstart = i + 1; bqline = FNR; i++; prev = c; continue }
+    if (c == "`") { open_bq(); i++; prev = c; continue }
     if (c == "$" && substr(line, i + 1, 1) == "(") {
       if (substr(line, i + 2, 1) == "(") { arith = 2; i += 3; prev = "x"; continue }
-      held_quote[depth] = quote; held_paren[depth] = paren
-      depth++
-      quote = ""; paren = 0
-      body[depth] = ""; start[depth] = i + 2; opened[depth] = FNR
-      i += 2; prev = "x"; continue
+      open_subst(); i += 2; prev = "x"; continue
     }
     if (c == "(") {
       # `(( ))` opening a word is an arithmetic command, not two subshells,
@@ -328,10 +379,9 @@ FNR == 1 {
     if (c == ")") {
       if (paren > 0) paren--
       else if (depth > 0) {
-        body[depth] = body[depth] substr(line, start[depth], i - start[depth])
-        keep(body[depth], opened[depth])
+        if (depth == 1) keep(body substr(line, start, i - start), opened)
         depth--
-        quote = held_quote[depth]; paren = held_paren[depth]
+        quote = held_quote[depth]; paren = held_paren[depth]; arith = held_arith[depth]
       }
       i++; prev = c; continue
     }
@@ -378,10 +428,7 @@ FNR == 1 {
     }
     i++; prev = c; continue
   }
-  for (k = 1; k <= depth; k++) {
-    body[k] = body[k] substr(line, start[k]) "\n"
-    start[k] = 1
-  }
+  if (depth > 0) { body = body substr(line, start) "\n"; start = 1 }
   if (bq) { bqbody = bqbody substr(line, bqstart) "\n"; bqstart = 1 }
   if (in_heredoc) next
   if (pending > 0 && depth == 0 && quote == "" && !bq) {
@@ -429,51 +476,85 @@ if [ "${1-}" = "--check" ]; then
   # reporting the bodies it did reach.
   parsed=0
   failed=0
-  taken=0
-  scanned=()
+  fed=0
+  feed=()
   for f in "$@"; do
     parsed=$((parsed + 1))
     if "$BASH" -n -- "$f"; then
-      scanned[$taken]="$f"
-      taken=$((taken + 1))
+      feed[$fed]="$f"
+      fed=$((fed + 1))
     else
       failed=$((failed + 1))
     fi
   done
 
-  : >"$SCRATCH/index" || die extractor "$SCRATCH/index"
-  if [ "$taken" -gt 0 ]; then
+  # Then the bodies, in rounds: each round scans what the one before it
+  # accepted, the files and then bodies, and the rounds end when one takes no
+  # body, which they must, every body being shorter than the text it was cut
+  # from. Rounds after the first run inside the body directory and name each
+  # body by its bare id, so the argument list stays short however many bodies
+  # a round feeds.
+  #
+  # Each body is parsed on stdin, so what the shell says names a line in the
+  # body it was given rather than a path in a directory that is gone by the
+  # time anyone reads it; the line above its words names the file and the
+  # line the body was cut from, carried through every round. A file is
+  # counted once however many of its bodies fail, in whichever round.
+  NL='
+'
+  failed_src=""
+  origin_src=()
+  origin_line=()
+  last_id=0
+  round=0
+  here="$PWD"
+  while [ "$fed" -gt 0 ]; do
     status=0
-    awk -v dir="$SCRATCH/bodies" -v lost="$SCRATCH/lost" \
-      -f "$SCRATCH/substs.awk" -- "${scanned[@]}" \
+    (cd -- "$here" && awk -v dir="$SCRATCH/bodies" -v lost="$SCRATCH/lost" \
+      -v first="$last_id" -f "$SCRATCH/substs.awk" -- "${feed[@]}") \
       >"$SCRATCH/index" 2>"$SCRATCH/extract-err" || status=$?
     [ "$status" -eq 0 ] ||
       die_cause extractor "$status" "$(cat "$SCRATCH/extract-err")"
-    [ ! -s "$SCRATCH/lost" ] ||
-      die_cause unscannable "$(wc -l <"$SCRATCH/lost" | tr -d ' ')" \
-        "$(cat "$SCRATCH/lost")"
-  fi
-
-  # Each body on stdin, so what the shell says names a line in the body it
-  # was given rather than a path in a directory that is gone by the time
-  # anyone reads it; the line above its words names the file and the line the
-  # body was cut from. A file is counted once however many of its bodies
-  # fail, and its bodies are consecutive here because they are emitted in the
-  # order the files were handed over.
-  last_bad=""
-  while read -r id at src; do
-    [ -n "$id" ] || continue
-    if "$BASH" -n <"$SCRATCH/bodies/$id" 2>"$SCRATCH/body-err"; then
-      continue
+    if [ -s "$SCRATCH/lost" ]; then
+      where=""
+      while IFS= read -r from; do
+        [ "$round" -eq 0 ] ||
+          from="${origin_src[$from]}: line ${origin_line[$from]}"
+        where="$where$NL$from"
+      done <"$SCRATCH/lost"
+      die_cause unscannable "$(wc -l <"$SCRATCH/lost" | tr -d ' ')" "${where#"$NL"}"
     fi
-    printf '%s: line %s: the command substitution body Bash 3.2 delimits here does not parse:\n' \
-      "$src" "$at" >&2
-    sed 's/^/  /' "$SCRATCH/body-err" >&2
-    if [ "$src" != "$last_bad" ]; then
-      failed=$((failed + 1))
-      last_bad="$src"
-    fi
-  done <"$SCRATCH/index"
+    fed=0
+    feed=()
+    while read -r id at from; do
+      [ -n "$id" ] || continue
+      last_id="$id"
+      src="$from"
+      if [ "$round" -gt 0 ]; then
+        src="${origin_src[$from]}"
+        at=$((${origin_line[$from]} + at - 1))
+      fi
+      if "$BASH" -n <"$SCRATCH/bodies/$id" 2>"$SCRATCH/body-err"; then
+        origin_src[$id]="$src"
+        origin_line[$id]="$at"
+        feed[$fed]="$id"
+        fed=$((fed + 1))
+        continue
+      fi
+      printf '%s: line %s: the command substitution body Bash 3.2 delimits here does not parse:\n' \
+        "$src" "$at" >&2
+      sed 's/^/  /' "$SCRATCH/body-err" >&2
+      case "$NL$failed_src$NL" in
+      *"$NL$src$NL"*) ;;
+      *)
+        failed_src="$failed_src$NL$src"
+        failed=$((failed + 1))
+        ;;
+      esac
+    done <"$SCRATCH/index"
+    here="$SCRATCH/bodies"
+    round=$((round + 1))
+  done
 
   printf 'bash32-parse: parsed=%s\n' "$parsed"
   printf 'bash32-parse: failed=%s\n' "$failed"

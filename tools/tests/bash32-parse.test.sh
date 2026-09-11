@@ -266,6 +266,26 @@ plant pass "the same case inside a quoted heredoc body passes, never being expan
   'done)' \
   'EOF'
 
+# The same construct one context further in than a file's own scan reaches,
+# and quoted, so no stray paren is left for a parse of the file to red on:
+# inside a backquote body, and inside `$(( ))`.
+plant refuse "the same case in a quoted substitution inside a backquote body reds the lane" \
+  'x=`y="$(case a in a) echo hi;; esac)"; echo "$y"`' \
+  'printf "%s\n" "$x"'
+plant pass "the same backquote body with balanced patterns passes" \
+  'x=`y="$(case a in (a) echo hi;; esac)"; echo "$y"`' \
+  'printf "%s\n" "$x"'
+plant refuse "the same case in a quoted substitution inside arithmetic reds the lane" \
+  'x=$(( "$(case a in a) echo 1;; esac)" + 1 ))' \
+  'printf "%s\n" "$x"'
+
+# Two backquotes deep, where the raw text hides the substitution: `\\\$` is a
+# `$` only once each level's body has its backslashes removed the way 3.2
+# removes them, so this reds only when every round unescapes and re-feeds.
+plant refuse "the same case behind an escaped backquote inside a backquote body reds the lane" \
+  'x=`echo \`echo "\\\$(case a in a) echo hi;; esac)"\``' \
+  'printf "%s\n" "$x"'
+
 # A backslash escapes a quote inside `$'...'` and is a plain character inside
 # `'...'`. A scan that reads either spelling the other way is still inside a
 # quote at the end of the file, and the run ends at 2 instead of passing. The
@@ -531,7 +551,7 @@ extractor_mutant() { # extractor_mutant DIR FROM TO — a lane copy, one line re
 # of a line that never existed passes whether or not the replacement landed.
 extractor_rows="\
 a file the scan loses track of ends the run|      if (substr(line, i + 1, 1) == \"(\" && word_start(prev)) {|      if (0) {|shifted=0; (( shifted = 1 << 2 ))|unscannable=1
-an extractor that cannot run ends the run|BEGIN { id = 0; file = \"\" }|BEGIN { id = 0; file = \"\"|shifted=0|extractor=1"
+an extractor that cannot run ends the run|BEGIN { id = first; file = \"\" }|BEGIN { id = first; file = \"\"|shifted=0|extractor=1"
 
 while IFS='|' read -r label from to fixture inner; do
   [ -n "$label" ] || continue
