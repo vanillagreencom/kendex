@@ -3,9 +3,9 @@
 # name: code-quality-load-check
 # event: PreToolUse
 # matcher: Edit|MultiEdit|NotebookEdit|Write
-# description: Refuses an Edit, MultiEdit, NotebookEdit or Write onto a path inside a git work tree until the session has loaded the code-quality skill, so the repository rule "load the code-quality skill before writing or changing code" is decided rather than remembered. Loaded is read off the session transcript the payload names: a `Skill` tool call whose `skill` input is `code-quality`. The work tree's own `tmp/` is scratch and passes — commit messages, status files and notes — and so does every path outside a work tree, which is where a session's temporary files belong. Every session in the repository is judged, not only a delegated agent. KENDEX_CODE_QUALITY_HOOK=off disables it for a session that is not editing the repository under those rules. Claude Code only, the harness whose payload names the transcript and whose Skill tool records the load.
+# description: Refuses an Edit, MultiEdit, NotebookEdit or Write onto a path inside a git work tree until the agent making the call has loaded the code-quality skill, so the repository rule "load the code-quality skill before writing or changing code" is decided rather than remembered. Loaded is read off the transcript that records that agent's tool calls: a `Skill` tool call whose `skill` input is `code-quality`. That transcript is the session transcript the payload names, or, when the payload carries `agent_id` because a subagent made the call, the subagent's own `agent-<agent_id>.jsonl` under the session's `subagents/` directory, directly or one directory below; the lead session's load does not pass a subagent's edit. The work tree's own `tmp/` is scratch and passes — commit messages, status files and notes — and so does every path outside a work tree, which is where a session's temporary files belong. Every session in the repository is judged, not only a delegated agent. KENDEX_CODE_QUALITY_HOOK=off disables it for a session that is not editing the repository under those rules. Claude Code only, the harness whose payload names the transcript and whose Skill tool records the load.
 # summary: Holds back edits to a repository until the session has loaded the code-quality skill, so the standard is applied rather than remembered.
-# safety: Reads the payload, asks git where the target path is, and reads the session transcript; writes nothing. A payload, a git answer or a transcript it cannot read is refused, never passed, so an unreadable state never reads as loaded. The refusal names the skill to load and the path it refused, and never a bypass. Every refusal opens with `code-quality-load-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the payload, asks git where the target path is, and reads the transcript of the agent making the call; writes nothing. A payload, a git answer or a transcript it cannot read is refused, never passed, so an unreadable state never reads as loaded: an `agent_id` that is not a string or holds a `/`, or that names no single subagent transcript, is refused. The refusal names the skill to load and the path it refused, and never a bypass. Every refusal opens with `code-quality-load-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 15
 # harnesses: [claude-code]
 # ---
@@ -52,14 +52,17 @@ refuse() { # KEY VALUE [CAUSE]
       payload=no-transcript)
         echo "the payload names no transcript_path string, so whether $SKILL is loaded cannot be read; refusing rather than skipping the guard"
         ;;
+      payload=invalid-agent-id)
+        echo "the payload's agent_id is not a string naming a file inside the session's subagents/ directory, so the transcript of the subagent making the call cannot be found; refusing rather than skipping the guard"
+        ;;
       transcript=unreadable)
-        echo "the payload's transcript_path $TRANSCRIPT is not a readable file, so whether $SKILL is loaded cannot be read; refusing"
+        echo "the transcript $TRANSCRIPT is not exactly one readable file, so whether $SKILL is loaded cannot be read; refusing"
         ;;
       transcript=unread)
         echo "the transcript $TRANSCRIPT could not be read, so whether $SKILL is loaded cannot be read; refusing:"
         ;;
       unloaded=*)
-        echo "$TARGET is inside a repository and this session has not loaded the $2 skill, whose rules the edit would be judged by. Load it — the Skill tool, skill: $2 — and make the edit after that."
+        echo "$TARGET is inside a repository and the agent making this edit has not loaded the $2 skill, whose rules the edit would be judged by. Load it — the Skill tool, skill: $2 — and make the edit after that."
         ;;
       git=unreadable)
         echo "git could not say where $TARGET is, so the edit is refused:"
@@ -113,6 +116,18 @@ TRANSCRIPT=$(printf '%s' "$INPUT" | jq -r '.transcript_path
   | if type == "string" then . else error("not a string") end' 2>/dev/null) ||
   refuse payload no-transcript
 
+# The harness adds agent_id only to a subagent's call, and transcript_path
+# still names the session's transcript then. The subagent's transcript file
+# name is built here, empty for the session's own call: a built name is never
+# empty, so the two cases cannot be mistaken. The file name carries the id
+# between a prefix and a suffix, so a `/` is the only way it could leave the
+# directory it is looked up in.
+AGENT_FILE=$(printf '%s' "$INPUT" | jq -r 'if has("agent_id") then .agent_id
+  | if type == "string" and (contains("/") | not) then "agent-\(.).jsonl"
+    else error("not a file name") end
+  else "" end' 2>/dev/null) ||
+  refuse payload invalid-agent-id
+
 # Where the target is, is asked of the nearest directory that exists, since a
 # Write creates the missing ones. "Not a git repository" is the pass: a file
 # outside every work tree is a session's own scratch and no repository's code.
@@ -137,6 +152,26 @@ PREFIX=$(git -C "$DIR" rev-parse --show-prefix 2>&1) || refuse git unreadable "$
 case "$PREFIX${TARGET#"$DIR"/}" in
   tmp/*) exit 0 ;;
 esac
+
+# A subagent's tool calls, its load among them, are recorded in its own
+# transcript beside the session's: `<session>/subagents/agent-<id>.jsonl`, or
+# one directory below subagents/. Only the `*` is a pattern, so exactly the
+# built file name matches, and a count other than one leaves no transcript to
+# judge by.
+if [ -n "$AGENT_FILE" ]; then
+  SUBAGENTS="${TRANSCRIPT%.jsonl}/subagents"
+  MATCHES=0
+  FOUND=""
+  for candidate in "$SUBAGENTS/$AGENT_FILE" "$SUBAGENTS"/*/"$AGENT_FILE"; do
+    if [ -e "$candidate" ]; then
+      MATCHES=$((MATCHES + 1))
+      FOUND=$candidate
+    fi
+  done
+  TRANSCRIPT="$SUBAGENTS/$AGENT_FILE or $SUBAGENTS/*/$AGENT_FILE"
+  [ "$MATCHES" -eq 1 ] || refuse transcript unreadable
+  TRANSCRIPT=$FOUND
+fi
 
 if [ ! -r "$TRANSCRIPT" ] || [ ! -f "$TRANSCRIPT" ]; then
   refuse transcript unreadable

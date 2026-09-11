@@ -8,7 +8,9 @@
 # reach — the work tree's own tmp/, a path outside every work tree, and a
 # session that turned the hook off. Pinned beside them, the precision the
 # transcript read exists for: the skill's name in a system message, in a tool
-# result or in a Skill call for another skill is not a load. Then the
+# result or in a Skill call for another skill is not a load. A subagent's call
+# is judged by its own transcript under the session's subagents/ directory,
+# never by the session's load. Then the
 # fail-closed edges — an unreadable payload, a missing target or transcript
 # field, a transcript that is not there, a git that cannot answer, no jq.
 #
@@ -184,6 +186,33 @@ printf '%s' '{"type":"assistant","message":{"role":"assistant","content":[{"type
 run_tool Edit file_path "$REPO/src/lib.rs" "$TRUNCATED_T"
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=$REFUSAL" \
   "a half-written Skill call is not a load"
+
+echo "code-quality-load-check: a subagent's call is judged by its own transcript"
+# The harness names the session's transcript in transcript_path whichever
+# agent made the call, and adds agent_id only for a subagent, whose tool calls
+# it records in `<session>/subagents/agent-<agent_id>.jsonl`. Each world is a
+# session transcript and one subagent's beside it, with the load in only one.
+SUBAGENT_ID=adev-generalist-5f867e9826a04a12
+subagent_world() { # NAME SESSION-FIXTURE SUBAGENT-FIXTURE
+  mkdir -p "$TMP_ROOT/$1/subagents"
+  cp "$2" "$TMP_ROOT/$1.jsonl"
+  cp "$3" "$TMP_ROOT/$1/subagents/agent-$SUBAGENT_ID.jsonl"
+}
+run_subagent() { # SESSION-TRANSCRIPT AGENT-ID -> rc, stderr in $err
+  run_payload "$("${JQ[@]}" --arg p "$REPO/src/lib.rs" --arg tr "$1" --arg a "$2" \
+    '{tool_name:"Edit",tool_input:{file_path:$p},transcript_path:$tr,agent_id:$a}')"
+}
+subagent_world session-unloaded "$NONE_T" "$LOADED_T"
+subagent_world session-loaded "$LOADED_T" "$NONE_T"
+run_subagent "$TMP_ROOT/session-unloaded.jsonl" "$SUBAGENT_ID"
+assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" \
+  "a subagent that loaded the skill passes, though the session did not"
+run_subagent "$TMP_ROOT/session-loaded.jsonl" "$SUBAGENT_ID"
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=$REFUSAL" \
+  "a subagent that did not load the skill is refused, though the session did"
+run_subagent "$TMP_ROOT/session-loaded.jsonl" a7ce49cf892d6e2f5
+assert_eq "rc=$rc first=$(first_line)" "rc=2 first=code-quality-load-check: transcript=unreadable" \
+  "an agent_id with no transcript of its own refuses, though the session loaded the skill"
 
 echo "code-quality-load-check: what the rule does not reach"
 run_tool Write file_path "$REPO/tmp/commit-msg.txt" "$NONE_T"
