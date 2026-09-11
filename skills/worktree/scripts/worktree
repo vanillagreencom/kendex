@@ -352,20 +352,19 @@ remote_ref_lease_arg() {
 
 # Which judge refused a push, read off the transcript, one predicate each.
 #
-# git exits 1 for a pre-push hook refusal and a rejected ref alike, so every
-# arm keys on a line somebody printed, never on the absence of one. Keying the
-# lease story on an unreadable hook verdict sent an operator to fetch and
-# rebase over a composed hook's refusal — the commit-guards lane clean, the
+# git exits 1 for a hook refusal and a rejected ref alike, so every arm keys
+# on a line somebody printed, never on the absence of one. Keying the lease
+# story on an unreadable hook verdict sent an operator to fetch and rebase
+# over a composed hook's refusal, its commit-guards lane clean and the
 # consumer's own hook rejecting under it, which is how the installer arms a
-# repository that already had one — and over network failures besides.
+# repository that already had one.
 #
-# The commit-guards lane is one producer, and this reads the message protocol
-# it publishes rather than restating how it decides: lines are
-# `pre-push: <key>=<value>`, and a completed run ends with
-# `pre-push: result=<code>`, zero being the only clean one. So a refusal is a
-# nonzero verdict, or keyed lines that never reach a verdict, which is how its
-# collection refusals exit. What neither predicate names reaches the caller's
-# last arm, where git's own output states the cause.
+# That lane is one producer, and this reads the protocol it publishes rather
+# than restating how it decides: lines are `pre-push: <key>=<value>`, and a
+# completed run ends with `pre-push: result=<code>`, zero being the only clean
+# one. So a refusal is a nonzero verdict, or keyed lines that never reach one,
+# which is how its collection refusals exit. What neither predicate names
+# reaches the last arm, where git's own output states the cause.
 push_output_refused_by_hook() { # OUTPUT -> 0 when a pre-push hook refused
   local line keyed=false verdict=false
   while IFS= read -r line; do
@@ -380,10 +379,12 @@ push_output_refused_by_hook() { # OUTPUT -> 0 when a pre-push hook refused
   [[ "$keyed" == true && "$verdict" == false ]]
 }
 
-# git is the other producer. It prints `! [rejected] <src> -> <dst> (stale
-# info)` for a failed --force-with-lease, the empty-expectation form this tool
-# uses on a first push included, and `(fetch first)` for an ordinary
-# rejection — so the lease story is told where git tells it and nowhere else.
+# git is the other producer, and it translates these words, so the push whose
+# transcript both predicates read runs under LC_ALL=C. It prints `! [rejected]
+# <src> -> <dst> (stale info)` for a failed --force-with-lease, the
+# empty-expectation form this tool uses on a first push included, and
+# `(fetch first)` for an ordinary rejection — so the lease story is told where
+# git tells it and nowhere else.
 push_output_lease_rejected() { # OUTPUT -> 0 when git reports a stale lease
   local line
   while IFS= read -r line; do
@@ -4098,7 +4099,7 @@ case "${1:-}" in
     PUSH_OUTPUT=""
     # Capture Git's vendor text so a failed push can emit its stable record
     # first. A successful push is defined by its exit status and stays quiet.
-    if ! PUSH_OUTPUT="$(git_with_github_https_auth -C "$WT_PATH" push ${PUSH_UPSTREAM_ARGS[@]+"${PUSH_UPSTREAM_ARGS[@]}"} ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" "$PUSH_REF" 2>&1)"; then
+    if ! PUSH_OUTPUT="$(LC_ALL=C git_with_github_https_auth -C "$WT_PATH" push ${PUSH_UPSTREAM_ARGS[@]+"${PUSH_UPSTREAM_ARGS[@]}"} ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" "$PUSH_REF" 2>&1)"; then
       if push_output_refused_by_hook "$PUSH_OUTPUT"; then
         worktree_message push-hook-rejected "$REMOTE/${CURRENT_BRANCH:-HEAD}" "Error: A pre-push hook refused the push, so this attempt updated no remote ref. The hook's own keyed lines are in the git output below — fix what they name." >&2
       elif push_output_lease_rejected "$PUSH_OUTPUT"; then
