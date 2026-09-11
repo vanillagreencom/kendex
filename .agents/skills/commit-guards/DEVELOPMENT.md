@@ -76,7 +76,7 @@ The installer writes into `.git/hooks`, never `core.hooksPath`:
 
 `scripts/pre-commit` judges one commit snapshot: staged content, with tracked configuration read from the index. Order:
 
-1. `doc-limits --staged` for document byte ceilings, from the committing work tree's copy first, then this install's; a stated skip where neither exists or the repo-local one rejects `--staged` in its first-line parser diagnostic. The resolution and the lane are `scripts/lib/siblings.sh`'s, so the pre-push chain runs the same gate the same way.
+1. `doc-limits --staged` for document byte ceilings, from the committing work tree's copy first, then this install's; a stated skip where neither exists. An installed copy that does not complete is a step that did not complete, and blocks. The resolution and the lane are `scripts/lib/siblings.sh`'s, so the pre-push chain runs the same gate the same way.
 2. `preflight --staged`, resolved the same way; a first commit skips it with a note.
 3. `bot-instructions check --staged`, resolved the same way, so no consumer carries a wrapper for it.
 4. `commit-guards all --staged`.
