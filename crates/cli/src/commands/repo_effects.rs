@@ -61,8 +61,11 @@ pub use disclose::disclose;
 ///
 /// One wording for both verbs that say it: `verify`, which fails on the
 /// count, and `refresh`, which names the state after it wrote. The remedy
-/// is the verb as data, never a line to paste. The package's own words
-/// follow as detail: they are the remediation text a person acts on.
+/// is the verb as data, never a line to paste, and it is the one that
+/// re-arms THIS package: `kendex guard install` runs commit-guards'
+/// installer and nothing else's, so any other package is sent to the
+/// doors that apply its own repository changes again. The package's own
+/// words follow as detail: they are the remediation text a person acts on.
 ///
 /// A read that could not be made counts as one line. A verb that reports
 /// nothing lapsed has to have looked, so a scope whose record or
@@ -93,10 +96,13 @@ pub fn say_lapsed(env: &Env, scope: &Scope, names: &[String]) -> usize {
                 "whether its effect is in force could not be checked"
             }
         };
-        fail(&format!(
-            "✗ setup {}: {verdict} — kendex guard install arms it again",
-            package.name
-        ));
+        let remedy = match package.name == kendex_core::guard::SKILL {
+            true => "kendex guard install arms it again",
+            false => {
+                "applying its repository changes again arms it: the package's page in the app, or remove and add it with --allow-repo-effects"
+            }
+        };
+        fail(&format!("✗ setup {}: {verdict} — {remedy}", package.name));
         for line in &package.said {
             say(&format!("  ! {line}"));
         }

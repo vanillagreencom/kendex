@@ -217,18 +217,56 @@ pub fn installed_declaration(
     declaration_of(env, scope, &lock, name)
 }
 
-/// Every installed package's declaration in one scope, read the way
-/// [`installed_declaration`] reads one — for a verb that asks after the
-/// standing of everything the scope carries rather than one name it was
-/// handed. A package that declares nothing, or whose files are gone, is not
-/// in the list; one whose declaration will not read stops the whole read,
-/// for the reason [`leaving`] gives.
-pub fn installed_declarations(env: &Env, scope: &Scope) -> Result<Vec<DeclaredEffects>> {
+/// One installed package's declaration as a whole-scope read hands it on.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InstalledDeclaration {
+    Declared(DeclaredEffects),
+    /// The package's `SKILL.md` at `at` opens a `repo-effects` block that
+    /// will not read. Not an error here, because the reader has no record
+    /// in hand yet: a scope that never armed the package has nothing to
+    /// report about it, and a scope that did has to hear that its check
+    /// could not be run. Which of those it is, is the caller's to decide
+    /// once it has read kendex's own record.
+    Unreadable {
+        name: String,
+        at: std::path::PathBuf,
+    },
+}
+
+/// Every installed package's declaration in one scope — for a verb that
+/// asks after the standing of everything the scope carries rather than one
+/// name it was handed. A package that declares nothing, or whose files are
+/// gone, is not in the list.
+///
+/// A declaration that will not read is a member, not a stop, which is the
+/// opposite of what [`installed_declaration`] and [`leaving`] do with one.
+/// Those are about to run or remove the package, and a declaration they
+/// cannot read may name a script they must not miss. A whole-scope read
+/// runs nothing on its own: refusing the scope over one package's
+/// frontmatter would fail every project that merely carries the package,
+/// and the default catalog adding a key ahead of the binary is exactly how
+/// such a declaration reaches one.
+pub fn installed_declarations(env: &Env, scope: &Scope) -> Result<Vec<InstalledDeclaration>> {
     let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
-    crate::lock::skill_names(&lock)
-        .iter()
-        .filter_map(|name| declaration_of(env, scope, &lock, name).transpose())
-        .collect()
+    let mut found = Vec::new();
+    for name in &crate::lock::skill_names(&lock) {
+        let Some(installed) = installed_tree(env, scope, &lock, name)? else {
+            continue;
+        };
+        found.push(match declaration(&installed.text) {
+            Declaration::Effects(effects) => InstalledDeclaration::Declared(DeclaredEffects {
+                name: name.clone(),
+                root: installed.root,
+                effects: *effects,
+            }),
+            Declaration::Absent => continue,
+            Declaration::Unreadable => InstalledDeclaration::Unreadable {
+                name: name.clone(),
+                at: installed.declaration,
+            },
+        });
+    }
+    Ok(found)
 }
 
 fn declaration_of(

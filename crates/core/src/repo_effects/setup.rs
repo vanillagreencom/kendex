@@ -299,7 +299,8 @@ pub enum Lapse {
     /// kendex recorded arming the effect here and the package's check says
     /// it is not in force: [`SetupState::NeedsRepair`].
     NotInForce,
-    /// The check could not be taken, or the record could not be read, so
+    /// The check could not be taken, the record could not be read, or the
+    /// declaration naming the check will not read under a record, so
     /// nothing was measured: [`SetupState::CouldNotCheck`].
     Unchecked,
 }
@@ -316,31 +317,65 @@ pub enum Lapse {
 /// could not measure it says so rather than passing. The reason travels in
 /// `said`.
 ///
+/// The same two answers for a declaration that will not read. Its reach is
+/// unknown, so the record is looked for in both of the repository's git
+/// directories: none in either and the package is skipped, whatever its
+/// frontmatter says, because a scope that never armed it — a clone, a
+/// project that declined — has nothing to report; one in either and the
+/// check kendex owes could not be run, which is a lapse with its reason.
+///
 /// Empty outside a project, where there is no repository for an effect to
 /// stand in.
 pub fn lapsed(env: &crate::env::Env, scope: &Scope) -> crate::error::Result<Vec<Lapsed>> {
-    if !matches!(scope, Scope::Project { .. }) {
+    let Scope::Project { root } = scope else {
         return Ok(Vec::new());
-    }
+    };
     let mut lapsed = Vec::new();
-    for declared in crate::engine::installed_declarations(env, scope)? {
-        let status = status(scope, &declared, Ask::Surface);
-        let lapse = match status.state {
-            SetupState::NeedsRepair => Lapse::NotInForce,
-            SetupState::CouldNotCheck => Lapse::Unchecked,
-            SetupState::NotDeclared
-            | SetupState::NotARepository
-            | SetupState::Active
-            | SetupState::NotActive
-            | SetupState::Unavailable => continue,
+    for installed in crate::engine::installed_declarations(env, scope)? {
+        let (name, lapse, said) = match installed {
+            crate::engine::InstalledDeclaration::Declared(declared) => {
+                let status = status(scope, &declared, Ask::Surface);
+                let lapse = match status.state {
+                    SetupState::NeedsRepair => Lapse::NotInForce,
+                    SetupState::CouldNotCheck => Lapse::Unchecked,
+                    SetupState::NotDeclared
+                    | SetupState::NotARepository
+                    | SetupState::Active
+                    | SetupState::NotActive
+                    | SetupState::Unavailable => continue,
+                };
+                (declared.name, lapse, status.said)
+            }
+            crate::engine::InstalledDeclaration::Unreadable { name, at } => {
+                let said = match recorded_in_either(root, &name) {
+                    Ok(true) => format!(
+                        "its repo-effects declaration at {} will not read, so the check kendex owes this repository could not be run",
+                        at.display()
+                    ),
+                    Ok(false) => continue,
+                    Err(error) => error.to_string(),
+                };
+                (name, Lapse::Unchecked, vec![crate::names::shown(&said)])
+            }
         };
-        lapsed.push(Lapsed {
-            name: declared.name,
-            lapse,
-            said: status.said,
-        });
+        lapsed.push(Lapsed { name, lapse, said });
     }
     Ok(lapsed)
+}
+
+/// Whether kendex recorded arming this package in either of the
+/// repository's git directories — the question for a package whose reach
+/// cannot be read off its declaration. No work tree is no record.
+fn recorded_in_either(root: &std::path::Path, name: &str) -> crate::error::Result<bool> {
+    let Some(repo) = crate::guard::Repo::probe(root)? else {
+        return Ok(false);
+    };
+    for shared in [true, false] {
+        if super::armed::recorded(super::armed::record_dir(&repo, shared), name)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Where a project's arming records live, for the callers that arm and

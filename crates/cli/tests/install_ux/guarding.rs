@@ -442,6 +442,106 @@ fn a_lapsed_arming_fails_verify_and_is_named_by_refresh() {
     );
 }
 
+/// A declaration that will not read is a lapse only where kendex recorded
+/// arming the package: a scope that merely carries the package stays
+/// green, and one kendex armed hears that the check could not be run.
+///
+/// The producer is the catalog adding a `repo-effects` key ahead of the
+/// binary, which the declaration reader refuses whole. Refusing the whole
+/// scope over it would fail every clone and every project that declined
+/// the effect, which is the wrong direction for a state nothing measured.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_declaration_that_will_not_read_fails_verify_only_where_kendex_armed_it() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    offer(&world, "commit-guards");
+    world.run(&["add", "cat", "--skill", "commit-guards", "-y"]);
+
+    let declaration = world.catalog.join("skills/commit-guards/SKILL.md");
+    let text = read(&declaration);
+    let anchor = "  checker: \"scripts/install-git-hooks --check\"\n";
+    assert!(text.contains(anchor), "the declaration moved");
+    fs::write(
+        &declaration,
+        text.replace(anchor, &format!("{anchor}  later-key: \"unknown here\"\n")),
+    )
+    .unwrap();
+    world.run(&["refresh", "--scope", "project"]);
+    assert!(
+        read(&world.at(".agents/skills/commit-guards/SKILL.md")).contains("later-key"),
+        "the refresh did not carry the new declaration"
+    );
+
+    // Never armed here: nothing to report, whatever the frontmatter says.
+    let green = world.try_run(&["verify", "--scope", "project"]);
+    assert!(green.status.success(), "{}", spoke(&green));
+    assert!(!spoke(&green).contains("✗ setup"), "{}", spoke(&green));
+
+    // Armed here: the check kendex owes cannot be run, and that is red.
+    world.run(&["guard", "install"]);
+    let red = world.try_run(&["verify", "--scope", "project"]);
+    let out = spoke(&red);
+    assert_eq!(red.status.code(), Some(1), "{out}");
+    assert!(
+        out.contains(
+            "✗ setup commit-guards: whether its effect is in force could not be checked — kendex guard install arms it again"
+        ),
+        "{out}"
+    );
+    assert!(out.contains("will not read"), "{out}");
+}
+
+/// A package that is not commit-guards is sent to the doors that re-arm
+/// it, never to `kendex guard install`, which runs only commit-guards'
+/// installer.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_lapsed_package_that_is_not_commit_guards_is_told_its_own_remedy() {
+    use std::os::unix::fs::PermissionsExt;
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    let package = world.catalog.join("skills/fenced");
+    crate::write(
+        &package.join("SKILL.md"),
+        "---\nname: fenced\ndescription: marks the checkout\nrepo-effects:\n  summary: \"Writes a marker file in this checkout.\"\n  writes:\n    - \".fenced\"\n  installer: \"scripts/arm\"\n  uninstaller: \"scripts/disarm\"\n  checker: \"scripts/check\"\n---\nMarks the checkout.\n",
+    );
+    for (script, body) in [
+        ("arm", ": > .fenced\n"),
+        ("disarm", "rm -f .fenced\n"),
+        ("check", "test -f .fenced\n"),
+    ] {
+        let path = package.join("scripts").join(script);
+        crate::write(&path, &format!("#!/bin/sh\n{body}"));
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let added = world.run(&[
+        "add",
+        "cat",
+        "--skill",
+        "fenced",
+        "-y",
+        "--allow-repo-effects",
+    ]);
+    assert!(
+        world.at(".fenced").is_file(),
+        "the yes did not arm it:\n{added}"
+    );
+
+    // The control: the effect goes, the way a checkout loses a marker.
+    fs::remove_file(world.at(".fenced")).unwrap();
+    let red = world.try_run(&["verify", "--scope", "project"]);
+    let out = spoke(&red);
+    assert_eq!(red.status.code(), Some(1), "{out}");
+    assert!(
+        out.contains(
+            "✗ setup fenced: kendex armed it here and the package says its effect is not in force — applying its repository changes again arms it: the package's page in the app, or remove and add it with --allow-repo-effects"
+        ),
+        "{out}"
+    );
+    assert!(!out.contains("guard install"), "{out}");
+}
+
 /// `kendex check` names an unarmed repository, in the package's own words,
 /// and says nothing once it is armed.
 #[test]
