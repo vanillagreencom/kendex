@@ -222,15 +222,22 @@ and the head is re-confirmed once more at the deadline itself, so proceed
 never bypasses a live gate and never attests a stale head.
 
 Automatic review and the base branch: GitHub's automatic reviewer is armed
-by an ACTIVE BRANCH RULESET carrying a rule of type copilot_code_review, and
-that ruleset's conditions.ref_name is the set of bases that draw one. It is
-per-repo configuration, never a GitHub constant. The set is resolved ONCE
-before the poll loop, from the repo's rulesets (source "ruleset"); when that
-read fails or no ruleset carries the rule, the repo's default branch is the
-whole set (source "default_branch"); when neither can be read the set is
-"unresolved". The PR's baseRefName is matched against it — "~ALL" matches
-any base, "~DEFAULT_BRANCH" the repo default, any other pattern is an
-fnmatch over refs/heads/<base>, and an exclude pattern beats an include.
+by any ACTIVE BRANCH RULESET carrying a rule of type copilot_code_review. A
+base draws one when such a ruleset's conditions.ref_name includes it and that
+same ruleset does not exclude it, so the target set is the union over those
+rulesets. It is per-repo configuration, never a GitHub constant. The set is
+resolved ONCE before the poll loop, from every page of the repo's ruleset
+listing and each active branch ruleset's detail (source "ruleset"). The
+repo's default branch is the whole set (source "default_branch") only when
+the listing is refused with HTTP 403 or 404 that is not a rate limit, or
+reads completely with no ruleset carrying the rule. Any other failed listing
+or detail read leaves the set "unresolved". The PR's baseRefName is matched
+against it: "~ALL" matches any base, "~DEFAULT_BRANCH" the repo default, and
+any other pattern must equal refs/heads/<base> exactly. GitHub matches a
+pattern with File.fnmatch under File::FNM_PATHNAME, where * does not match /;
+approval-wait does not reproduce that, so a pattern holding *, ?, [ or \
+leaves the set "unresolved", as does ~DEFAULT_BRANCH when the default branch
+cannot be read.
 
 A base outside that set draws no automatic review, so reviewer silence there
 is structural rather than a slow reviewer: the deadline reports
@@ -266,7 +273,7 @@ JSON output (always when --json):
     "base_ref": <string>,         # the PR's base branch
     "auto_review_targeted": <bool>,  # the base draws an automatic review
     "auto_review_target_source": "ruleset" | "default_branch" | "unresolved",
-    "auto_review_targets": [<string>],  # the ref_name include patterns
+    "auto_review_targets": [<string>],  # union of the ref_name include patterns
     "transient_api_errors": <int>,  # only when > 0
     "error": <string>             # only when status == "error"
   }
@@ -721,80 +728,132 @@ OWNER="${REPO%%/*}"
 REPO_NAME="${REPO#*/}"
 
 # --- automatic-review target set (resolved ONCE, before the poll loop) ---
-# GitHub's automatic reviewer is armed by an ACTIVE BRANCH RULESET carrying a
-# rule of type copilot_code_review; that ruleset's conditions.ref_name is the
-# set of bases that draw one. Which bases those are is per-repo configuration,
-# not a GitHub constant, so it is read rather than assumed. A PR based outside
-# the set draws no automatic review at all, which is why the deadline separates
-# that structural silence ("unreviewable") from a reviewer who merely did not
-# show ("timeout"/"proceeded").
+# GitHub's automatic reviewer is armed by any ACTIVE BRANCH RULESET carrying a
+# rule of type copilot_code_review, and the set of bases that draw one is the
+# union of those rulesets' conditions.ref_name. Which bases those are is
+# per-repo configuration, not a GitHub constant, so it is read rather than
+# assumed. A PR based outside the set draws no automatic review at all, which is
+# why the deadline separates that structural silence ("unreviewable") from a
+# reviewer who merely did not show ("timeout"/"proceeded").
+# AUTO_REVIEW_INCLUDE and AUTO_REVIEW_EXCLUDE hold one
+# "<ruleset-id><TAB><pattern>" record per line, so an exclude stays bound to the
+# ruleset that declares it.
+
+# Read every active branch ruleset carrying copilot_code_review into
+# AUTO_REVIEW_INCLUDE / AUTO_REVIEW_EXCLUDE. Returns 0 when at least one does;
+# 2 when no ruleset rule is visible, because the listing was refused as a
+# permission denial (HTTP 403 or 404 that is not a rate limit) or read
+# completely with no ruleset carrying the rule; 1 on every other failure, which
+# leaves the set unjudgeable. It classifies through gh_failure_is_transient, so
+# it runs only after that function is defined.
+read_auto_review_rules() {
+  local rulesets ruleset_ids ruleset_id detail carries includes excludes
+  local list_status=0 err_text found=false
+  AUTO_REVIEW_INCLUDE=""
+  AUTO_REVIEW_EXCLUDE=""
+  : > "$GH_ERR_FILE"
+  rulesets=$(gh api "repos/$REPO/rulesets" --paginate 2>"$GH_ERR_FILE") || list_status=$?
+  if [ "$list_status" -ne 0 ]; then
+    err_text=$(cat "$GH_ERR_FILE" 2>/dev/null) || err_text=""
+    case "$err_text" in
+      *"HTTP 403"*|*"HTTP 404"*) gh_failure_is_transient "$list_status" || return 2 ;;
+    esac
+    return 1
+  fi
+  # The listing carries no rules or conditions, so every active branch ruleset
+  # is opened. A zero-byte or non-list answer is a failed read, never an empty
+  # listing.
+  ruleset_ids=$(jq -r -s 'if length > 0 and all(.[]; type == "array")
+    then add | .[] | select(.target == "branch" and .enforcement == "active") | .id
+    else error("the ruleset listing is not a set of pages") end' <<<"$rulesets" 2>/dev/null) || return 1
+  while IFS= read -r ruleset_id; do
+    [ -n "$ruleset_id" ] || continue
+    detail=$(gh api "repos/$REPO/rulesets/$ruleset_id" 2>/dev/null) || return 1
+    carries=$(jq -r 'any(.rules[]?; .type == "copilot_code_review")' <<<"$detail" 2>/dev/null) || return 1
+    [ "$carries" = true ] || continue
+    includes=$(jq -r --arg id "$ruleset_id" '.conditions.ref_name.include[]? | "\($id)\t\(.)"' <<<"$detail") || return 1
+    excludes=$(jq -r --arg id "$ruleset_id" '.conditions.ref_name.exclude[]? | "\($id)\t\(.)"' <<<"$detail") || return 1
+    AUTO_REVIEW_INCLUDE="$AUTO_REVIEW_INCLUDE$includes"$'\n'
+    AUTO_REVIEW_EXCLUDE="$AUTO_REVIEW_EXCLUDE$excludes"$'\n'
+    found=true
+  done <<<"$ruleset_ids"
+  [ "$found" = true ] || return 2
+}
+
 resolve_auto_review_targets() {
-  local rulesets ruleset_ids ruleset_id detail
+  local rules_status=0 pattern
   DEFAULT_BRANCH=$(gh api "repos/$REPO" -q '.default_branch' 2>/dev/null) || DEFAULT_BRANCH=""
-  rulesets=$(gh api "repos/$REPO/rulesets" 2>/dev/null) || rulesets=""
-  if [ -n "$rulesets" ] && jq -e 'type == "array"' >/dev/null 2>&1 <<<"$rulesets"; then
-    # The listing carries no rules or conditions, so each active branch ruleset
-    # is opened until one carries the copilot_code_review rule.
-    ruleset_ids=$(jq -r '.[] | select(.target == "branch" and .enforcement == "active") | .id' <<<"$rulesets") || ruleset_ids=""
-    while IFS= read -r ruleset_id; do
-      [ -n "$ruleset_id" ] || continue
-      detail=$(gh api "repos/$REPO/rulesets/$ruleset_id" 2>/dev/null) || continue
-      jq -e 'any(.rules[]?; .type == "copilot_code_review")' >/dev/null 2>&1 <<<"$detail" || continue
-      AUTO_REVIEW_INCLUDE=$(jq -r '.conditions.ref_name.include[]? // empty' <<<"$detail") || AUTO_REVIEW_INCLUDE=""
-      AUTO_REVIEW_EXCLUDE=$(jq -r '.conditions.ref_name.exclude[]? // empty' <<<"$detail") || AUTO_REVIEW_EXCLUDE=""
-      AUTO_REVIEW_SOURCE="ruleset"
-      break
-    done <<<"$ruleset_ids"
-  fi
-  if [ "$AUTO_REVIEW_SOURCE" = "unresolved" ] && [ -n "$DEFAULT_BRANCH" ]; then
-    # No readable ruleset rule: the default branch is the whole target set,
-    # which is what the shipped "Copilot review for default branch" shape means.
-    AUTO_REVIEW_INCLUDE="~DEFAULT_BRANCH"
-    AUTO_REVIEW_EXCLUDE=""
-    AUTO_REVIEW_SOURCE="default_branch"
-  fi
-  # ~DEFAULT_BRANCH names a branch this run could not read, so the set cannot be
-  # judged. Unresolved is reported as unresolved rather than matched as a miss:
-  # a failed read must not manufacture an "unreviewable" verdict.
-  if [ -z "$DEFAULT_BRANCH" ] && [[ "$AUTO_REVIEW_INCLUDE$AUTO_REVIEW_EXCLUDE" == *'~DEFAULT_BRANCH'* ]]; then
-    AUTO_REVIEW_SOURCE="unresolved"
+  read_auto_review_rules || rules_status=$?
+  case "$rules_status" in
+    0) AUTO_REVIEW_SOURCE="ruleset" ;;
+    2)
+      # No ruleset rule is visible: the default branch is the whole target set,
+      # which is what the shipped "Copilot review for default branch" shape means.
+      AUTO_REVIEW_INCLUDE=$(printf 'default_branch\t~DEFAULT_BRANCH')
+      AUTO_REVIEW_EXCLUDE=""
+      AUTO_REVIEW_SOURCE="default_branch"
+      ;;
+    *)
+      # 1, or any status the reader does not define: a failed read decides nothing.
+      AUTO_REVIEW_SOURCE="unresolved"
+      ;;
+  esac
+  # A set this run cannot judge exactly is reported unresolved rather than
+  # matched as a hit or a miss. ~DEFAULT_BRANCH names a branch this run could not
+  # read. GitHub matches every other pattern with File.fnmatch under
+  # File::FNM_PATHNAME, where * does not cross / and a shell pattern's * does, so
+  # only a literal ref is compared and a pattern carrying glob syntax is not.
+  while IFS=$'\t' read -r _ pattern; do
+    case "$pattern" in
+      '~DEFAULT_BRANCH') [ -n "$DEFAULT_BRANCH" ] || AUTO_REVIEW_SOURCE="unresolved" ;;
+      *'*'*|*'?'*|*'['*|*'\'*) AUTO_REVIEW_SOURCE="unresolved" ;;
+    esac
+  done <<<"$AUTO_REVIEW_INCLUDE"$'\n'"$AUTO_REVIEW_EXCLUDE"
+  if [ "$AUTO_REVIEW_SOURCE" = "unresolved" ]; then
     AUTO_REVIEW_INCLUDE=""
     AUTO_REVIEW_EXCLUDE=""
   fi
-  AUTO_REVIEW_TARGETS_JSON=$(printf '%s' "$AUTO_REVIEW_INCLUDE" \
-    | jq -R -s 'split("\n") | map(select(length > 0))') || AUTO_REVIEW_TARGETS_JSON="[]"
-  AUTO_REVIEW_TARGETS_TEXT=$(printf '%s' "$AUTO_REVIEW_INCLUDE" | tr '\n' ' ') || AUTO_REVIEW_TARGETS_TEXT=""
-  AUTO_REVIEW_TARGETS_TEXT="${AUTO_REVIEW_TARGETS_TEXT% }"
+  AUTO_REVIEW_TARGETS_JSON=$(jq -R -s 'split("\n") | map(select(length > 0) | sub("^[^\t]*\t"; ""))
+    | reduce .[] as $pattern ([]; if any(.[]; . == $pattern) then . else . + [$pattern] end)' \
+    <<<"$AUTO_REVIEW_INCLUDE") || AUTO_REVIEW_TARGETS_JSON="[]"
+  AUTO_REVIEW_TARGETS_TEXT=$(jq -r 'join(" ")' <<<"$AUTO_REVIEW_TARGETS_JSON") || AUTO_REVIEW_TARGETS_TEXT=""
 }
 
 # Does one ref_name pattern cover this base? "~ALL" covers every base,
-# "~DEFAULT_BRANCH" the repo default, and any other pattern is an fnmatch over
-# the base's full ref, which is how a ruleset ref condition is spelled.
+# "~DEFAULT_BRANCH" the repo default, and any other pattern is a literal ref
+# compared with the base's full ref: resolution leaves a set holding a glob
+# unresolved, so no glob reaches this point.
 auto_review_pattern_matches() { # PATTERN BASE
   case "$1" in
     '~ALL') return 0 ;;
     '~DEFAULT_BRANCH') [ -n "$DEFAULT_BRANCH" ] && [ "$2" = "$DEFAULT_BRANCH" ] ;;
-    *) case "refs/heads/$2" in $1) return 0 ;; *) return 1 ;; esac ;;
+    *) [ "$1" = "refs/heads/$2" ] ;;
   esac
 }
 
-# Whether the automatic reviewer is armed for BASE. An exclude pattern beats an
-# include, matching GitHub's own ruleset evaluation.
-auto_review_targets_base() { # BASE
-  local pattern
-  [ -n "$1" ] || return 1
-  while IFS= read -r pattern; do
-    [ -n "$pattern" ] || continue
-    if auto_review_pattern_matches "$pattern" "$1"; then return 1; fi
+# Whether RULESET_ID's own exclude patterns cover BASE.
+auto_review_ruleset_excludes() { # RULESET_ID BASE
+  local ruleset_id pattern
+  while IFS=$'\t' read -r ruleset_id pattern; do
+    [ "$ruleset_id" = "$1" ] || continue
+    if auto_review_pattern_matches "$pattern" "$2"; then return 0; fi
   done <<<"$AUTO_REVIEW_EXCLUDE"
-  while IFS= read -r pattern; do
-    [ -n "$pattern" ] || continue
-    if auto_review_pattern_matches "$pattern" "$1"; then return 0; fi
-  done <<<"$AUTO_REVIEW_INCLUDE"
   return 1
 }
 
-resolve_auto_review_targets
+# Whether the automatic reviewer is armed for BASE: some ruleset includes it
+# and that same ruleset does not exclude it. An exclude narrows only its own
+# ruleset, since GitHub evaluates each ruleset on its own.
+auto_review_targets_base() { # BASE
+  local ruleset_id pattern
+  [ -n "$1" ] || return 1
+  while IFS=$'\t' read -r ruleset_id pattern; do
+    [ -n "$ruleset_id" ] || continue
+    auto_review_pattern_matches "$pattern" "$1" || continue
+    auto_review_ruleset_excludes "$ruleset_id" "$1" || return 0
+  done <<<"$AUTO_REVIEW_INCLUDE"
+  return 1
+}
 
 # The reviewThreads walk is lib/review-threads.sh's, shared with queue-wait's
 # late-findings guard so the waiter and the guard cannot disagree about what an
@@ -875,6 +934,8 @@ read_base_ref() {
     last_auto_review_targeted=false
   fi
 }
+
+resolve_auto_review_targets
 
 update_elapsed
 while true; do

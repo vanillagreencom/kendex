@@ -29,7 +29,7 @@ A wait is a running waiter, never a session sitting at its prompt.
 
 ## Stacked pull requests
 
-`approval-wait` returns `unreviewable` (exit 1) when the deadline passes with no reviewer evidence and the PR's base sits outside the automatic-review ruleset's target set. Nothing was going to arrive on its own. Which bases draw an automatic review is per-repo configuration, read from the repo's rulesets: the review-gate skill's `.agents/skills/review-gate/references/automatic-review.md`.
+`approval-wait` returns `unreviewable` (exit 1) when the deadline passes with no reviewer evidence and the PR's base sits outside the target set of the repo's automatic-review rulesets. Nothing was going to arrive on its own. Which bases draw an automatic review is per-repo configuration, read from the repo's rulesets: the review-gate skill's `.agents/skills/review-gate/references/automatic-review.md`.
 
 Work the chain in this order:
 

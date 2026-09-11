@@ -7,12 +7,12 @@ Which pull requests draw GitHub's automatic Copilot review, and what to do when 
 | Fact | Value |
 |---|---|
 | Arming mechanism | an active branch ruleset carrying a rule of type `copilot_code_review` |
-| Set of bases that draw a review | that ruleset's `conditions.ref_name` — the `include` patterns, minus the `exclude` patterns |
-| Pattern forms | `~ALL` (every branch), `~DEFAULT_BRANCH` (the repo default), any other pattern as an fnmatch over `refs/heads/<base>` |
+| Set of bases that draw a review | the union over every such ruleset: a base draws one when a ruleset's `conditions.ref_name.include` covers it and the same ruleset's `exclude` does not |
+| Pattern forms | `~ALL` (every branch), `~DEFAULT_BRANCH` (the repo default), any other pattern matched against `refs/heads/<base>` by `File.fnmatch` with `File::FNM_PATHNAME`, so `*` does not match `/` |
 | Re-review on a new head | the rule's `review_on_push` parameter |
 | Draft pull requests | the rule's `review_draft_pull_requests` parameter |
 
-Read a repo's own set with `gh api repos/<owner>/<repo>/rulesets`, then the detail of each `target: "branch"`, `enforcement: "active"` entry.
+Read a repo's own set with `gh api --paginate repos/<owner>/<repo>/rulesets`, then the detail of each `target: "branch"`, `enforcement: "active"` entry.
 
 The target set is per-repo configuration, not GitHub behaviour. In `vanillagreencom/kendex` it is ruleset `16519713`, "Copilot review for default branch", whose `conditions.ref_name.include` is `["~DEFAULT_BRANCH"]`. A pull request based on any branch other than `main` therefore draws no automatic review in this repo. A repo whose ruleset targets more branches reviews stacked pull requests.
 
@@ -29,4 +29,4 @@ Evidence for the manual route: probe pull request `vanillagreencom/kendex#2527`,
 
 ## What the waiter reports
 
-Orch's `approval-wait` resolves the same target set once per wait and matches the pull request's `baseRefName` against it. Reviewer silence on a base outside the set is reported as status `unreviewable` (exit 1), never the fail-open `proceeded`. Its JSON carries `base_ref`, `auto_review_targeted`, `auto_review_target_source` and `auto_review_targets`. Full contract: `approval-wait --help`. The stacked-chain sequence is orch's `references/gates.md` § Stacked pull requests.
+Orch's `approval-wait` resolves the same target set once per wait and matches the pull request's `baseRefName` against it. It compares `~ALL`, `~DEFAULT_BRANCH` and literal refs only. A set holding any glob pattern (`*`, `?`, `[` or `\`) is `unresolved`, and so is a set behind a failed ruleset read other than a permission denial. Reviewer silence on a base outside the set is reported as status `unreviewable` (exit 1), and on an `unresolved` set as `timeout`; neither is the fail-open `proceeded`. Its JSON carries `base_ref`, `auto_review_targeted`, `auto_review_target_source` and `auto_review_targets`. Full contract: `approval-wait --help`. The stacked-chain sequence is orch's `references/gates.md` § Stacked pull requests.
