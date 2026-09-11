@@ -131,10 +131,16 @@ fn add(env: &Env, name: String, kind: &str, source: String) -> CliResult {
 }
 
 /// The marketplace a person typed, as a bookmark records it. A repository
-/// is kept as typed, for core to fold. A folder is recorded where it
-/// resolves from the folder this runs in, the join `source::path_root`
-/// gives a declaration made here, because its relative spelling names
-/// another directory from every place that reads it.
+/// is recorded as the parser reads it, for core to fold: a revision, a tree
+/// URL's ref and package path, and a skills.sh package say where inside the
+/// marketplace the person was looking, never which marketplace it is, and
+/// kept they would fold to an identity no subscription carries. A folder is
+/// recorded where it resolves from the folder this runs in, the join
+/// `source::path_root` gives a declaration made here, because its relative
+/// spelling names another directory from every place that reads it.
+///
+/// A collection link is refused: it names packages across marketplaces, so
+/// there is no one marketplace to record.
 fn marketplace(env: &Env, typed: &str) -> Result<String, Box<dyn std::error::Error>> {
     match kendex_core::source_ref::parse_typed(typed)? {
         SourceRef::Path { path } => {
@@ -145,10 +151,14 @@ fn marketplace(env: &Env, typed: &str) -> Result<String, Box<dyn std::error::Err
                 &kendex_core::source::path_root(env, &Scope::Project { root: here }, &path),
             ))
         }
-        SourceRef::Remote { .. }
-        | SourceRef::Tree { .. }
-        | SourceRef::SkillsSh { .. }
-        | SourceRef::Collection { .. } => Ok(typed.to_owned()),
+        SourceRef::Remote { repo, .. }
+        | SourceRef::Tree { repo, .. }
+        | SourceRef::SkillsSh { repo, .. } => Ok(repo),
+        SourceRef::Collection { .. } => Err(kendex_core::error::CoreError::SourceRefInvalid {
+            reference: typed.to_owned(),
+            reason: "a collection link names packages across marketplaces, not one marketplace — pass owner/repo, a marketplace link, or a folder".to_owned(),
+        }
+        .into()),
     }
 }
 

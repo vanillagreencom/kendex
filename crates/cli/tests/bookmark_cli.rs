@@ -74,7 +74,7 @@ fn world() -> (tempfile::TempDir, std::path::PathBuf) {
     // Subscribed personally, so a saved item resolves without the CLI
     // being told where its marketplace is.
     write(
-        &home.join(".config/kendex/kendex.toml"),
+        &kendex_core::env::Env::host_rooted(&home).global_manifest_file(),
         &format!(
             "schema = 6\n[install]\nharnesses = [\"claude\"]\n[sources.cat]\n{}\n[sources.other]\n{}\n",
             source_path(&catalog),
@@ -391,6 +391,61 @@ fn one_repository_spelled_two_ways_saves_once() {
     );
 }
 
+/// A link into a marketplace — a revision, a tree URL, a skills.sh package
+/// — is saved as the repository it is in, so it is the marketplace a
+/// subscription to that repository carries. A collection link names no one
+/// marketplace and is refused before anything is saved.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_link_into_a_marketplace_saves_the_repository_it_is_in() {
+    for spelling in [
+        "vanillagreencom/kendex@v1",
+        "https://github.com/vanillagreencom/kendex/tree/main/skills/gh",
+        "https://skills.sh/vanillagreencom/kendex/gh",
+    ] {
+        let (_tmp, home) = world();
+        let saved = kendex(
+            &home,
+            &home,
+            &[
+                "bookmark", "add", "gh", "--kind", "skill", "--source", spelling,
+            ],
+        );
+        assert!(saved.status.success(), "{spelling}: {}", said(&saved));
+        // Named by the repository alone, the identity a subscription to it
+        // is compared on, it is the item just saved.
+        let named = kendex(
+            &home,
+            &home,
+            &[
+                "bookmark",
+                "show",
+                "gh",
+                "--source",
+                "vanillagreencom/kendex",
+            ],
+        );
+        assert!(named.status.success(), "{spelling}: {}", said(&named));
+    }
+
+    let (_tmp, home) = world();
+    let link = "https://kendex.ai/c/abcdefgh12345678";
+    let refused = kendex(
+        &home,
+        &home,
+        &[
+            "bookmark", "add", "starter", "--kind", "bundle", "--source", link,
+        ],
+    );
+    let text = said(&refused);
+    assert!(!refused.status.success(), "{text}");
+    assert!(text.contains(link), "{text}");
+    assert!(
+        said(&kendex(&home, &home, &["bookmark", "list"])).contains("nothing saved yet"),
+        "a refused collection link saved a bookmark"
+    );
+}
+
 /// A folder a project subscribes to by a relative spelling is saved as the
 /// directory that spelling names from the project, and installs from that
 /// directory through the project's own subscription. It installs nowhere
@@ -435,7 +490,7 @@ fn a_folder_saved_in_a_project_installs_only_through_that_projects_subscription(
 
     // The personal setup never subscribed to it, so nothing is carried
     // there: the home folder of the same name is not what was saved.
-    let personal = home.join(".config/kendex/kendex.toml");
+    let personal = kendex_core::env::Env::host_rooted(&home).global_manifest_file();
     let before = fs::read(&personal).unwrap();
     let refused = kendex(&home, &home, &["bookmark", "install", "gh", "--yes"]);
     assert!(!refused.status.success(), "{}", said(&refused));
@@ -477,7 +532,7 @@ fn a_personal_folder_installs_into_a_project_from_the_folder_it_names() {
     let (_tmp, home) = world();
     let fresh = home.join("fresh");
     write(
-        &home.join(".config/kendex/kendex.toml"),
+        &kendex_core::env::Env::host_rooted(&home).global_manifest_file(),
         "schema = 6\n[install]\nharnesses = [\"claude\"]\n[sources.mine]\npath = \"catalog\"\n",
     );
     skill(&fresh.join("catalog/skills"), "gh", "project bytes");

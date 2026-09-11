@@ -22,6 +22,12 @@ export const BOOKMARKS_LAST_KNOWN =
 export const BOOKMARKS_SEARCH = "Search saved items";
 export const BOOKMARKS_NONE_MATCH = "No saved item matches this search.";
 
+/** Said instead of opening the install when a saved set's members cannot be
+ *  read: the install states how many packages it covers, and that count is
+ *  unknown until the set is read. */
+export const setUnreadableLine = (bundle: string, why: string): string =>
+  `The ${bundle} set can't be read right now, so the install can't say what it covers — ${why}`;
+
 /** What a saved item is, in the words the rest of the app uses. */
 export const savedKindLabel = (item: BookmarkItem): string =>
   item.is === "bundle" ? "Curated set" : kindLabel(item.kind);

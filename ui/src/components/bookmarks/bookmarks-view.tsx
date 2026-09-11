@@ -21,6 +21,7 @@ import {
   REMOVE_BOOKMARK_ACTION,
   removeBookmarkLabel,
   savedSummary,
+  setUnreadableLine,
   UNAVAILABLE_WORD,
 } from "@/lib/copy-bookmarks";
 import {
@@ -37,6 +38,7 @@ import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
 import { cn } from "@/lib/utils";
 import { useBookmarksAnswer, useBookmarksStore } from "@/stores/bookmarks";
 import { type InstallSubject, useInstallFlow } from "@/stores/install-flow";
+import { bundleKey, useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 
 /** The rows an answer with none has, as one value rather than a fresh
@@ -101,6 +103,54 @@ const kindsOf = (items: SavedItem[]): ItemKind[] =>
         ),
       ];
 
+/** Said where a set read left neither members nor a reason, which the
+ *  store's read never does: it lands one or the other under the set's key. */
+const SET_READ_UNSETTLED =
+  "internal: the set read settled with neither its members nor a reason";
+
+/** How many packages these rows install, or why that cannot be said.
+ *
+ *  A package is one. A curated set installs every member, so its count is
+ *  read through the set read its own page makes, from the cache that read
+ *  fills. The rows counted are the rows `requestsFor` makes requests of. */
+async function packagesIn(
+  items: SavedItem[],
+): Promise<{ count: number } | { unread: string }> {
+  const requested = items.flatMap(({ bookmark, catalog }) =>
+    catalog === null || catalog.by !== "subscription"
+      ? []
+      : [{ bookmark, catalog }],
+  );
+  const sets = requested.filter(
+    ({ bookmark }) => bookmark.item.is === "bundle",
+  );
+  await Promise.all(
+    sets.map(({ bookmark, catalog }) => {
+      const store = useMarketplacesStore.getState();
+      return store.bundles[bundleKey(catalog, bookmark.name, null)] ===
+        undefined
+        ? store.loadBundle(catalog, bookmark.name, null)
+        : undefined;
+    }),
+  );
+  const { bundles, readErrors } = useMarketplacesStore.getState();
+  let count = requested.length - sets.length;
+  for (const { bookmark, catalog } of sets) {
+    const key = bundleKey(catalog, bookmark.name, null);
+    const detail = bundles[key];
+    if (detail === undefined) {
+      return {
+        unread: setUnreadableLine(
+          bookmark.name,
+          readErrors[key] ?? SET_READ_UNSETTLED,
+        ),
+      };
+    }
+    count += detail.members.length;
+  }
+  return { count };
+}
+
 /** "Bookmarks": the saved marketplace items, searchable, one row each.
  *
  *  Personal across projects, so there is no location filter here — the one
@@ -117,6 +167,7 @@ export function BookmarksView() {
   const [search, setSearch] = useState("");
   const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
   const [addingToTemplate, setAddingToTemplate] = useState(false);
+  const [unread, setUnread] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const searchFocus = useNavStore((s) => s.searchFocus);
 
@@ -180,11 +231,18 @@ export function BookmarksView() {
 
   /** One saved row, or the ticked ones — the same guided install every
    *  other surface opens, which is where the destination and the tools are
-   *  asked. */
-  const askFor = (only?: SavedItem) => {
+   *  asked. It opens on how many packages the answer installs, a set's
+   *  members included, and not at all while a set's count is unknown. */
+  const askFor = async (only?: SavedItem) => {
     const items = only ? [only] : chosen;
     const groups = requestsFor(items);
     if (groups.length === 0) return;
+    const covered = await packagesIn(items);
+    if ("unread" in covered) {
+      setUnread(covered.unread);
+      return;
+    }
+    setUnread(null);
     openInstall({
       subjects: [
         {
@@ -192,8 +250,8 @@ export function BookmarksView() {
           label: only
             ? justThisLabel(only.bookmark.name)
             : selectedLabel(items.length),
-          what: only ? only.bookmark.name : packageCount(items.length),
-          count: items.length,
+          what: only ? only.bookmark.name : packageCount(covered.count),
+          count: covered.count,
           groups,
           kinds: kindsOf(items),
         },
@@ -232,6 +290,11 @@ export function BookmarksView() {
         {refused ? (
           <p className="text-[13px] text-critical">{refused}</p>
         ) : null}
+        {unread ? (
+          <p className="text-[13px] text-critical" role="alert">
+            {unread}
+          </p>
+        ) : null}
       </div>
       <div
         className={cn("flex min-h-0 flex-1 flex-col gap-2", WIDE_CONTENT_WIDTH)}
@@ -249,7 +312,7 @@ export function BookmarksView() {
             >
               {ADD_TO_TEMPLATE_LABEL}
             </Button>
-            <Button size="sm" onClick={() => askFor()}>
+            <Button size="sm" onClick={() => void askFor()}>
               {installSelectedLabel(chosen.length)}
             </Button>
           </div>
@@ -275,7 +338,7 @@ export function BookmarksView() {
               })
             }
             onOpen={() => open(item)}
-            onInstall={() => askFor(item)}
+            onInstall={() => void askFor(item)}
             onRetry={() => void load()}
             onRemove={() => void remove(item.bookmark)}
           />

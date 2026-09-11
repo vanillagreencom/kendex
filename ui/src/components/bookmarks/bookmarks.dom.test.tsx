@@ -12,6 +12,7 @@ import type {
 } from "@/bindings";
 import { commands } from "@/bindings";
 import { BookmarksView } from "@/components/bookmarks/bookmarks-view";
+import { InstallDialog } from "@/components/install/install-dialog";
 import { BundleCards } from "@/components/marketplaces/bundle-cards";
 import { PackagesTable } from "@/components/marketplaces/packages-table";
 import {
@@ -20,7 +21,12 @@ import {
   bookmarkLabel,
   removeBookmarkLabel,
 } from "@/lib/copy-bookmarks";
-import { INSTALL_ACTION, installSelectedLabel } from "@/lib/copy-install";
+import {
+  INSTALL_ACTION,
+  installSelectedLabel,
+  packageCount,
+  selectedLabel,
+} from "@/lib/copy-install";
 import { ADD_TO_TEMPLATE_LABEL } from "@/lib/copy-templates";
 import { READ_LANDED } from "@/lib/read-state";
 import { useBookmarksStore } from "@/stores/bookmarks";
@@ -54,6 +60,8 @@ vi.mock("@/bindings", () => ({
     bookmarksList: vi.fn(),
     bookmarkAdd: vi.fn(),
     bookmarkRemove: vi.fn(),
+    marketplaceBundle: vi.fn(),
+    installTargets: vi.fn(),
     templatesList: vi.fn(),
     templateAddMembers: vi.fn(),
     templateCreateFromSelection: vi.fn(),
@@ -126,6 +134,16 @@ const SAVED_SKILL: SavedItem = {
   reach: { at: "offered" },
 };
 
+/** A curated set saved from the same marketplace. */
+const SAVED_SET: SavedItem = {
+  ...SAVED_SKILL,
+  bookmark: {
+    repo: SAVED_SKILL.bookmark.repo,
+    item: { is: "bundle" },
+    name: "starter",
+  },
+};
+
 const savedIs = (saved: SavedItem[]) => {
   vi.mocked(commands.bookmarksList).mockResolvedValue({
     status: "ok",
@@ -162,6 +180,8 @@ beforeEach(() => {
   useMarketplacesStore.setState({
     rows: [SUBSCRIPTION],
     summaries: {},
+    bundles: {},
+    readErrors: {},
     read: READ_LANDED,
   });
   useTemplatesStore.setState({
@@ -423,6 +443,63 @@ describe("the Bookmarks tab", () => {
         bundle: null,
       },
     ]);
+  });
+
+  it("says a ticked set installs every one of its members", async () => {
+    vi.mocked(commands.marketplaceBundle).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...SET,
+        name: "starter",
+        members: [
+          { kind: "skill", name: "gh", state: "available" },
+          { kind: "skill", name: "lint", state: "available" },
+          { kind: "agent", name: "reviewer", state: "available" },
+        ],
+        totalMembers: 3,
+      },
+    });
+    vi.mocked(commands.installTargets).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+    savedIs([SAVED_SKILL, SAVED_SET]);
+    const host = mount(
+      <>
+        <BookmarksView />
+        <InstallDialog />
+      </>,
+    );
+    await settle();
+
+    await act(async () => control(host, "Select gh").click());
+    await act(async () => control(host, "Select starter").click());
+    await act(async () => button(host, installSelectedLabel(2)).click());
+    await settle();
+    expect(commands.marketplaceBundle).toHaveBeenCalledWith(
+      CATALOG,
+      "starter",
+      null,
+    );
+    expect(useInstallFlow.getState().ask?.subjects[0]?.count).toBe(4);
+    expect(document.body.textContent).toContain(
+      `${selectedLabel(2)} · ${packageCount(4)}`,
+    );
+  });
+
+  it("opens no install on a set whose members cannot be read, and says why", async () => {
+    vi.mocked(commands.marketplaceBundle).mockResolvedValue({
+      status: "error",
+      error: "no manifest there",
+    });
+    savedIs([SAVED_SET]);
+    const host = mount(<BookmarksView />);
+    await settle();
+
+    await act(async () => button(host, INSTALL_ACTION).click());
+    await settle();
+    expect(useInstallFlow.getState().ask).toBeNull();
+    expect(host.textContent).toContain("no manifest there");
   });
 
   it("offers a ticked selection to a template, as the marketplace the bookmark records", async () => {

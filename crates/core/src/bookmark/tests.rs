@@ -64,7 +64,7 @@ fn subscribe(machine: &Machine, alias: &str) {
 fn project_subscribing(machine: &Machine, name: &str, alias: &str) -> PathBuf {
     let root = machine.home.join(name);
     fs::create_dir_all(&root).unwrap();
-    let root = root.canonicalize().unwrap();
+    let root = crate::paths::canonical(&root).unwrap();
     write_manifest(
         &crate::manifest::manifest_path(&machine.env, &Scope::Project { root: root.clone() }),
         alias,
@@ -354,7 +354,7 @@ fn one_relative_folder_declared_in_two_places_is_two_marketplaces() {
             format!("---\nname: {offered}\ndescription: about {offered}\n---\nBody.\n"),
         )
         .unwrap();
-        let root = root.canonicalize().unwrap();
+        let root = crate::paths::canonical(&root).unwrap();
         fs::write(
             crate::manifest::manifest_path(&machine.env, &Scope::Project { root: root.clone() }),
             format!("schema = 6\n[sources.catalog]\npath = \"{spelled}\"\n"),
