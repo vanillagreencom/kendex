@@ -169,6 +169,24 @@ case "${1:-}" in
           exit 8
         fi
       fi
+      # Green, then a settled transient failure, then green again, phased on
+      # the rerun the script itself requests rather than on a call count: the
+      # retry path reads the rollup a second time through get_failed_run_id,
+      # so a count alone would put the failure's own lookup in the next phase.
+      if [[ "${STUB_PR_CHECKS_MODE:-}" == "rerun_then_green" ]]; then
+        count=0
+        if [[ -f "${STUB_PR_CHECKS_COUNT_FILE:?}" ]]; then
+          count="$(cat "$STUB_PR_CHECKS_COUNT_FILE")"
+        fi
+        count=$((count + 1))
+        printf '%s' "$count" > "$STUB_PR_CHECKS_COUNT_FILE"
+        if [[ "$count" -gt 3 && ! -s "${STUB_RERUN_CALLS_FILE:-/dev/null}" ]]; then
+          echo '[{"name":"build","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/29099680623/job/301","workflow":"CI","startedAt":"2026-07-10T11:00:00Z","completedAt":"2026-07-10T11:05:00Z"}]'
+          exit 1
+        fi
+        echo '[{"name":"build","state":"SUCCESS"}]'
+        exit 0
+      fi
       if [[ "${STUB_PR_CHECKS_MODE:-}" == "pending_always" ]]; then
         echo '[{"name":"build","state":"IN_PROGRESS"}]'
         exit 8
@@ -552,7 +570,8 @@ assert_le 131072 "$transient_window_bytes" "two pipe buffers fit inside the scan
 assert_le 65536 "$transient_tail_bytes" "one pipe buffer fits inside the log past the window"
 table "$JSON" \
   "a transient marker in a large failed-job log reruns the failing run; the retried failure still settles terminal|||STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-checks.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json,STUB_RUN_LOG_FILE=$transient_log|rc=1 verdict=fail reruns=29662812172" \
-  "a gh failure reading the log is not transient: nothing is rerun|||STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-checks.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json|rc=1 verdict=fail reruns=none"
+  "a gh failure reading the log is not transient: nothing is rerun|||STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-checks.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json|rc=1 verdict=fail reruns=none" \
+  "a rerun restarts the settled-check window: the greens before it carry nothing|||STUB_PR_CHECKS_MODE=rerun_then_green,STUB_RUN_LOG_FILE=$transient_log|rc=0 status=complete verdict=pass reruns=29099680623 elapsed_seconds=190"
 
 echo "=== argument validation ends in the parser, before any gh call ==="
 # The recording gh stub fails every call, so a case that reached auth or a

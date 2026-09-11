@@ -804,7 +804,10 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
           ci_message retry "$@" >&2
           gh run rerun "$failed_run" --repo "$REPO" --failed 2>/dev/null || true
           retries=$((retries + 1))
-          seen_in_progress=false  # Reset because rerun will produce new checks
+          # Reset because rerun will produce new checks: the rollups before it
+          # confirm nothing about the run it just started.
+          seen_in_progress=false
+          stale_since=-1
           sleep 10
           update_elapsed
           continue
