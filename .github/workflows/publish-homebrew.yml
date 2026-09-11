@@ -1,0 +1,119 @@
+name: publish-homebrew
+
+# The Homebrew tap vanillagreencom/homebrew-kendex does not pull recipe
+# changes from this repository. This workflow copies packaging/homebrew/
+# into the tap's Formula/ and Casks/ directories and pushes what changed.
+# Unlike publish-aur it does not wait for the release downloads: a recipe
+# is pushed as soon as it differs from the tap, so a recipe carrying
+# placeholder checksums must not reach main before its release is up
+# (packaging/README.md § Publishing).
+#
+# Deploy keys are disabled on the tap, so the push uses an installation
+# token of the fleet GitHub App, minted for that one repository.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - packaging/homebrew/**
+      - .github/workflows/publish-homebrew.yml
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Show what would be pushed without pushing it
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # Cancellation could leave the formula pushed and the cask not.
+  group: publish-homebrew
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # Reads this repository; writes only to the tap, with the App's token.
+    permissions:
+      contents: read
+    # CI_RUNNER_2V is unset on this public repository, so this is ubuntu-latest.
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    env:
+      TAP: vanillagreencom/homebrew-kendex
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Skipped for a dry run: it clones the public tap over HTTPS and pushes
+      # nothing, so anyone can dispatch one without the secrets. A real run
+      # with either secret empty fails here, by name, before anything is
+      # cloned: a green run that pushed nothing would leave the tap stale.
+      - name: The tap credentials are set
+        if: ${{ inputs.dry_run != true }}
+        env:
+          FLEET_GH_APP_ID: ${{ secrets.FLEET_GH_APP_ID }}
+          FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "$FLEET_GH_APP_ID" ] || missing="$missing FLEET_GH_APP_ID"
+          [ -n "$FLEET_GH_APP_PRIVATE_KEY" ] || missing="$missing FLEET_GH_APP_PRIVATE_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::not set:$missing. Both FLEET_GH_APP_ID and FLEET_GH_APP_PRIVATE_KEY are needed to push to $TAP, so nothing was published. Add the secrets (packaging/README.md § Publishing), or copy packaging/homebrew/ into the tap by hand and say so in the release notes."
+            exit 1
+          fi
+
+      - name: Mint a token for the tap
+        if: ${{ inputs.dry_run != true }}
+        id: token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          # The secret holds the App ID; this input also takes the client id.
+          app-id: ${{ secrets.FLEET_GH_APP_ID }}
+          private-key: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
+          owner: vanillagreencom
+          repositories: homebrew-kendex
+
+      - name: Publish packaging/homebrew to the tap
+        env:
+          TOKEN: ${{ steps.token.outputs.token }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          clone="$RUNNER_TEMP/tap"
+          git clone --quiet -- "https://github.com/$TAP.git" "$clone"
+
+          # The formula deliberately is NOT named kendex: brew resolves a
+          # formula before a cask, and the plain name must reach the cask so
+          # the default install is the app.
+          mkdir -p "$clone/Formula" "$clone/Casks"
+          install -m 644 -- packaging/homebrew/kendex-cli.rb "$clone/Formula/kendex-cli.rb"
+          install -m 644 -- packaging/homebrew/kendex-cask.rb "$clone/Casks/kendex.rb"
+
+          git -C "$clone" add --all
+          if git -C "$clone" diff --cached --quiet --exit-code; then
+            echo "publish-homebrew: unchanged=$TAP"
+            exit 0
+          fi
+          echo "publish-homebrew: changed=$TAP"
+          git -C "$clone" --no-pager diff --cached --stat
+
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            git -C "$clone" --no-pager diff --cached
+            echo "publish-homebrew: dry-run=$TAP"
+            exit 0
+          fi
+
+          message="sync from vanillagreencom/kendex ${REVISION:0:7}"
+          git -C "$clone" -c user.name="kendex packaging" -c user.email="packaging@vanillagreen" \
+            commit --quiet -m "$message"
+          # The token rides in a request header, not in the remote URL, so it
+          # is never written into the clone's config.
+          basic="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          git -C "$clone" -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $basic" \
+            push --quiet origin HEAD:main
+          echo "publish-homebrew: pushed=$TAP ($message)"
