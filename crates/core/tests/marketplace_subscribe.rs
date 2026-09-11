@@ -398,15 +398,15 @@ fn a_project_with_no_manifest_reaches_the_personal_scopes_default() {
     assert!(!personal.exists());
 }
 
-/// The personal scope is advisory on that path: where it cannot supply a
-/// usable default, the project's own refusal stands and names the search
-/// that ran there, never a subscription the project has not got. A
-/// personal default switched off is skipped the way the search skips one;
-/// a name the personal default does not carry is not offered, nothing
-/// declared and nothing written.
+/// Where the personal default cannot serve a fresh project, nothing is
+/// declared and nothing written. A personal default switched off is
+/// skipped the way the search skips one, so the project's own not-offered
+/// refusal stands; a name the carried default does not offer is refused
+/// by the retry itself, naming that package and the marketplace it was
+/// looked for in.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_fresh_projects_refusal_stands_where_the_personal_default_cannot_serve() {
+fn a_fresh_project_writes_nothing_where_the_personal_default_cannot_serve() {
     let (_tmp, env, scope, project) = fixture();
     upstream(env.home.as_path(), DEFAULT_SOURCE_REPO);
     remote::sync(&env, DEFAULT_SOURCE_REPO, None).unwrap();
@@ -415,25 +415,26 @@ fn a_fresh_projects_refusal_stands_where_the_personal_default_cannot_serve() {
     let switched_off = format!(
         "schema = 6\n\n[sources.kendex]\nrepo = \"{DEFAULT_SOURCE_REPO}\"\nenabled = false\n"
     );
-    for (written, wanted) in [(Some(switched_off.as_str()), "gh"), (None, "ghost")] {
-        match written {
-            Some(text) => fs::write(&personal, text).unwrap(),
-            None => {
-                if personal.exists() {
-                    fs::remove_file(&personal).unwrap();
-                }
-            }
-        }
-        let error = add_skill(&env, &scope, wanted).unwrap_err();
-        assert!(
-            matches!(&error, CoreError::ItemNotOffered { name, .. } if name == wanted),
-            "{written:?} adding {wanted}: expected not offered, got {error}"
-        );
-        assert!(
-            !project.join("kendex.toml").exists(),
-            "{written:?} adding {wanted}"
-        );
-    }
+
+    fs::write(&personal, &switched_off).unwrap();
+    let error = add_skill(&env, &scope, "gh").unwrap_err();
+    assert!(
+        matches!(&error, CoreError::ItemNotOffered { name, .. } if name == "gh"),
+        "disabled personal default: expected not offered, got {error}"
+    );
+    assert!(!project.join("kendex.toml").exists());
+
+    fs::remove_file(&personal).unwrap();
+    let error = add_skill(&env, &scope, "ghost").unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            CoreError::ItemNotInSource { name, source_name }
+                if name == "ghost" && source_name == "kendex"
+        ),
+        "name the default does not carry: expected not in source, got {error}"
+    );
+    assert!(!project.join("kendex.toml").exists());
 }
 
 /// With nothing subscribed to the default repo in the project or the

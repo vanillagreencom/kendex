@@ -59,11 +59,13 @@ pub struct AddRequest {
 /// A project that has no manifest yet reaches the personal scope's
 /// default marketplace when nothing offers the request: that one
 /// declaration is carried into the project in the same plan as the
-/// packages, so a refused install leaves the project unsubscribed. A
-/// manifest that exists is left as written whatever it holds, so a bare
-/// name its subscriptions do not offer is not found and nothing is
-/// declared or fetched, and a personal scope that removed the default has
-/// nothing to carry: the project's own refusal stands either way.
+/// packages, so a refused install leaves the project unsubscribed, and a
+/// name that marketplace does not offer either is refused naming the
+/// package and the marketplace it was looked for in. A manifest that
+/// exists is left as written whatever it holds, so a bare name its
+/// subscriptions do not offer is not found and nothing is declared or
+/// fetched, and a personal scope that removed the default, or holds it
+/// switched off, has nothing to carry: the project's own refusal stands.
 pub fn add(env: &Env, scope: &Scope, request: &AddRequest) -> Result<EngineReport> {
     let refused = match add_seeded(env, scope, request, None) {
         Err(refused @ (CoreError::ItemNotOffered { .. } | CoreError::NoDefaultSource { .. })) => {
@@ -77,13 +79,7 @@ pub fn add(env: &Env, scope: &Scope, request: &AddRequest) -> Result<EngineRepor
     let Some(name) = personal_default_for(env, scope)? else {
         return Err(refused);
     };
-    match crate::source_ops::install_project_from_personal(env, root, &name, request) {
-        // The carried default does not offer it either: the project's own
-        // refusal stands, describing the search that ran there, rather than
-        // one naming a subscription the project has not got.
-        Err(CoreError::ItemNotInSource { source_name, .. }) if source_name == name => Err(refused),
-        other => other,
-    }
+    crate::source_ops::install_project_from_personal(env, root, &name, request)
 }
 
 /// The personal scope's default marketplace, by the alias the personal
