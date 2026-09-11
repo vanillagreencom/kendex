@@ -105,7 +105,7 @@ use unmanaged::unmanaged_rows;
 mod compared;
 pub use compared::Comparison;
 mod repo_effects;
-pub use repo_effects::installed_declaration;
+pub use repo_effects::{InstalledDeclaration, installed_declaration, installed_declarations};
 mod report_types;
 pub use report_types::{
     DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ForkEdit, ItemWarning,
