@@ -27,7 +27,7 @@ repo-effects:
     - "preflight"
     - "bot-instructions"
   notes:
-    - "A missing companion is announced and skipped, as is a repo-local doc-limits that rejects --staged and preflight on a first commit; every other companion or guard failure blocks the commit, a bot-instructions check that finds a stale render included."
+    - "A missing companion is announced and skipped, as is preflight on a first commit; every other companion or guard failure blocks the commit, a bot-instructions check that finds a stale render included."
     - "Every hook blocks on a nonzero result; Git's no-verify flag bypasses the commit hooks for one commit and the pre-push hook for one push."
     - "Git runs no hook when it replays a commit, so a rebase or a cherry-pick can carry a violation onto a branch unseen; the pre-push hook is where that branch is judged."
     - "Git does not clone hooks; arm every clone once."

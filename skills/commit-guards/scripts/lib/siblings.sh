@@ -73,48 +73,20 @@ gg_resolve_sibling() { # SCRIPTS-DIR SKILL — skill directory on stdout; 1 when
 # happens to be runnable: a present skill with a missing, dangling or
 # unexecutable script is a broken install, and a chain must never pass by
 # losing a gate. -L catches a dangling symlink, which -e reports as absent.
-#
-# Consumer protocol: the compatibility branch below reads exit 2 and the
-# complete first diagnostic line for the unsupported --staged flag. Other
-# output is presentation, not evidence for that branch.
 gg_doc_limits_lane() { # SCRIPTS-DIR — 0 clean or skipped, 1 violations, 2 could not complete
-  local scripts="$1" skill="" lane="" out="" status=0 first="" rejects=0
+  local scripts="$1" skill="" lane="" out="" status=0
   if ! skill="$(gg_resolve_sibling "$scripts" doc-limits)"; then
     gg_message lane-absent "doc-limits roots=$(gg_searched_roots "$scripts") skills=$GG_SKILL_ROOTS fallback=$scripts/../../doc-limits" "=== $GG_CHECK: doc-limits not installed — skipped (no doc-limits skill under $(gg_searched_roots "$scripts") ($GG_SKILL_ROOTS), nor at $scripts/../../doc-limits)"
     return 0
   fi
   lane="$skill/scripts/doc-limits"
   [ -x "$lane" ] || gg_fail lane-missing "$lane" "the doc-limits skill is installed at $skill but $lane is missing or not executable — reinstall it"
-  # A consuming repo may replace the vendored script with its own gate — a
-  # fork without the --staged interface, wired through its own hooks. This
-  # lane owns only the kendex-shape script, and the ONE deterministic signal
-  # is the run itself: an argument parser that rejects --staged says so in its
-  # own first line. No help-prose inference — two reviewers proved usage-shape
-  # detection cannot converge.
   gg_message step doc-limits "=== $GG_CHECK: doc-limits (document byte ceilings)"
   out="$("$lane" --staged 2>&1)" || status=$?
   [ -n "$out" ] && printf '%s\n' "$out"
-  # The rejection is a PARSER diagnostic: the whole first line, in the
-  # tool-prefixed shapes an argument parser emits. Guard-family tools stamp
-  # diagnostics with the ::error:: annotation; strip exactly that prefix so
-  # the shapes below see the tool's own line. A config diagnostic that merely
-  # ECHOES the phrase inside a longer line never matches.
-  first="${out%%$'\n'*}"
-  first="${first#::error::}"
-  if [ "$status" -eq 2 ]; then
-    case "$first" in
-      "doc-limits: unknown argument '--staged'"* | "doc-limits: unrecognized option '--staged'"* | "doc-limits: unrecognized option: --staged"* | "doc-limits: invalid option: --staged"* | "doc-limits: invalid option -- staged"*)
-        rejects=1
-        ;;
-    esac
-  fi
-  case "$status:$rejects" in
-    0:*) return 0 ;;
-    1:*) return 1 ;;
-    2:1)
-      gg_message staged-unsupported "$lane" "=== $GG_CHECK: doc-limits at $lane rejects --staged (repo-local replacement) — skipped; this repo's own wiring owns that gate"
-      return 0
-      ;;
+  case "$status" in
+    0) return 0 ;;
+    1) return 1 ;;
   esac
   gg_message step-incomplete "doc-limits:$status" "$GG_CHECK: step 'doc-limits' did not complete (exit $status)"
   return 2
