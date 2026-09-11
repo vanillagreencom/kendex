@@ -28,7 +28,7 @@ A tag carrying a SemVer pre-release identifier (`v1.0.0-rc1`) is published outri
 
 ## After publishing
 
-Every package recipe carries per-release checksums; `packaging/README.md` § Per release lists what to bump and where to push.
+Every package recipe carries per-release checksums; `packaging/README.md` § Per release lists what to bump, and § Publishing the workflows that carry the bump to the AUR and the Homebrew tap once it is on `main`.
 
 ## Local packaging
 
