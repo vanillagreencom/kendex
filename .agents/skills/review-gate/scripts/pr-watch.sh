@@ -74,8 +74,9 @@ Attention kinds:
                      thread count above reads zero. The line names the count
                      and the file:line entries still unanswered. An entry is
                      answered by an issue comment from the PR author that
-                     names this head's sha OUTSIDE any Fixed in <sha> slot
-                     and opens a line with that entry's own file:line token,
+                     names this head's sha on a line of its own, nothing on a
+                     reply line binding, and opens a line per entry with that
+                     entry's own file:line token,
                      bare as this line prints it or bold as the review body
                      does, followed by Fixed in <sha>, Declined: <reason>, or
                      Tracked: <issue>. Also fires when

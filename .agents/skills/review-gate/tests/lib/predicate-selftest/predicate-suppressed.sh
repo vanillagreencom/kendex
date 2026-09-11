@@ -269,3 +269,18 @@ comment "$AUTHOR" "$(printf 'Dispositions at %s:\n%s - Tracked: KEN-1400\n' "${H
 run "a shorter entry does not claim a longer entry's line" suppressed-findings
 supp_carries "the longer entry's answer left the shorter one standing" "$SUPP_SHORT" "$LAST_LINE"
 supp_carries "only one finding is left" "detail=1 suppressed finding(s)" "$LAST_LINE"
+
+# Only what the comment says OUTSIDE its replies binds the head. A reply line
+# disposes a finding and asserts no commit, yet it is full of runs shaped like
+# a sha: a Fixed-in commit, a tracking claim's #-number, and the entry token
+# itself when a path opens with hex, as this one does. Binding on any of them
+# lets a comment written for an earlier head bind itself to this one.
+SUPP_HEXPATH="${HEAD:0:8}.ts:1"
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_MIN_STATE=any
+CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_body '### Suppressed comments (1)' "**$SUPP_HEXPATH**
+* Blocking: the lane name can collide with a row already carrying it.")")"
+comment "$AUTHOR" "$(printf 'Dispositions:\n%s - %s\n' "$SUPP_HEXPATH" "$SUPP_REASON")" >"$fixtures/comments.json"
+run "a head prefix carried only by a reply line binds nothing" suppressed-findings

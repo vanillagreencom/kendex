@@ -91,11 +91,12 @@ answered it: an issue comment binding this head, carrying a line that opens
 with the entry's own `file:line` token — bare as this detail prints it or
 bold as the review body does, both read, neither the anchor, since equality
 with a scanned entry is the identity check — and continues with one of the
-three reply forms. The COMMENT binds, by naming a sha at or above
-REVIEW_GATE_SHA_PREFIX_FLOOR that the head starts with, so a reply does not
-survive a push; a sha in a `Fixed in <sha>` slot never binds, because the
-ordinary commit-reply-push order makes that very sha the head and a comment
-would bind itself to a diff no reviewer re-read. The reply is read by the
+three reply forms. The COMMENT binds, in the text OUTSIDE its reply lines,
+by naming a sha at or above REVIEW_GATE_SHA_PREFIX_FLOOR that the head starts
+with, so a reply written for an earlier head does not survive a push. A reply
+line asserts no commit, and every sha-shaped run on one — a `Fixed in <sha>`
+commit, a tracking claim's `#1234567`, a path opening with hex — would bind a
+comment to a diff no reviewer re-read. The reply is read by the
 SAME grammar the thread terms read, so a tracking claim naming no issue and
 a decline naming no mechanism answer nothing; the newest line naming an
 entry decides. The term also clears when the commit the gate
@@ -1931,14 +1932,14 @@ fi
 # ask who may disposition a finding, only that the disposition is written,
 # bound and reasoned.
 #
-# A `Fixed in <sha>` SHA IS NOT A BINDING. It names the commit carrying the
-# fix, and the ordinary sequence — commit the fix, write the reply citing it,
-# push — makes that very sha the head. Left in the scan, a comment written
-# for an EARLIER head would bind itself to the new one the moment its own fix
-# landed, carrying every other reply in it forward across a diff no reviewer
-# re-read: this term's fail-open, on the one path an author walks every time.
-# So the slot is stripped before the scan and only what the comment says
-# ELSEWHERE can assert the head.
+# THE COMMENT BINDS THE HEAD IN ITS OWN TEXT, never in a reply. A reply line
+# disposes one finding; nothing on it says which commit the comment answers,
+# and a sha-shaped run there — the commit a `Fixed in <sha>` names, a
+# tracking claim's `#1234567`, a path that opens with hex — that happens to
+# prefix the head binds a comment written for an earlier one. The binding
+# scan therefore reads the lines the line rule does NOT claim: the comment
+# asserts its head in its own text, which is the disposition comment orch
+# already tells an author to write.
 supp_answered=0
 if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
   load_issue_comments
@@ -1984,12 +1985,22 @@ if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
     ($entries | split("\n") | map(select(length > 0))) as $wanted
     | [ .[]
         | select((.user.login // "") == $author)
-        | (.body // "" | gsub("\r"; "")) as $body
-        | select($body | gsub("fixed\\s+in\\s+[0-9a-fA-F]{7,40}"; " "; "i")
-                       | head_bound($sha; $floor))
-        | $body
-        | split("\n")[]
-        | line_reply($wanted)
+        | ((.body // "" | gsub("\r"; "")) | split("\n")
+           | map({line: ., reply: [line_reply($wanted)]})) as $lines
+        # ONLY WHAT THE COMMENT SAYS OUTSIDE ITS REPLIES BINDS THE HEAD. A
+        # reply line disposes one finding and asserts nothing about which
+        # commit this comment answers, so every hex run on one is something
+        # else wearing the shape of a sha: the commit a `Fixed in <sha>`
+        # names, the `#1234567` of a tracking claim, the entry token itself
+        # when a path opens with hex. Any of them can prefix the head, and
+        # then a comment written for an EARLIER head binds itself to this one
+        # and carries replies across a diff no reviewer re-read: the fail-open
+        # this term exists to close, reachable through any of those.
+        # Dropping the reply lines closes the class; excluding them one slot
+        # at a time only moves it to the next.
+        | select([ $lines[] | select((.reply | length) == 0) | .line ]
+                 | join("\n") | head_bound($sha; $floor))
+        | $lines[].reply[]
       ] as $said
     # The NEWEST line naming an entry decides, as a thread takes its newest
     # reply: an author who answers and then writes something else about the
