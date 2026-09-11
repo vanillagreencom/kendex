@@ -80,6 +80,25 @@ impl MemberKind {
         }
     }
 
+    /// Where a place declares this member: the manifest table its name
+    /// lands in. The one judge of what an install writes and of which
+    /// members can collide — two members that land in one table under one
+    /// name are one declaration, whatever kind each was saved as.
+    pub fn namespace(self) -> Namespace {
+        match self {
+            // A plugin is its registry's own curated set and installs as
+            // one, so it is declared beside a bundle rather than beside the
+            // kind it names.
+            MemberKind::Plugin | MemberKind::Bundle => Namespace::Set,
+            MemberKind::Agent => Namespace::Item(ItemKind::Agent),
+            MemberKind::Skill => Namespace::Item(ItemKind::Skill),
+            MemberKind::Hook => Namespace::Item(ItemKind::Hook),
+            MemberKind::Command => Namespace::Item(ItemKind::Command),
+            MemberKind::McpServer => Namespace::Item(ItemKind::McpServer),
+            MemberKind::PiExtension => Namespace::Item(ItemKind::PiExtension),
+        }
+    }
+
     pub fn of(kind: ItemKind) -> MemberKind {
         match kind {
             ItemKind::Agent => MemberKind::Agent,
@@ -98,6 +117,17 @@ impl MemberKind {
             None => "bundle",
         }
     }
+}
+
+/// The manifest table a member's name is declared in when the template is
+/// installed. Read off [`MemberKind::namespace`] and nowhere else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Namespace {
+    /// `[<kind>.<name>]`, the table for that kind of package. Never
+    /// [`ItemKind::Plugin`], which has no such table: a plugin is a set.
+    Item(ItemKind),
+    /// `[bundles.<name>]`, where a bundle and a plugin alike land.
+    Set,
 }
 
 /// Where a member's content comes from when the template is installed.

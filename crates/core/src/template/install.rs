@@ -22,7 +22,7 @@ use crate::manifest::{ItemDecl, LOCAL_SOURCE_NAME, Manifest, Method};
 use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::local_slot;
 
-use super::{MemberKind, MemberSource, Template, store};
+use super::{MemberKind, MemberSource, Namespace, Template, store};
 
 /// One package a resolved group installs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -167,7 +167,7 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
     let contested = contested(&template.members);
     let mut missing: Vec<MissingMember> = contested.values().cloned().collect();
     for member in &template.members {
-        if contested.contains_key(&(member.kind, member.name.clone())) {
+        if contested.contains_key(&(member.kind.namespace(), member.name.clone())) {
             continue;
         }
         match &member.source {
@@ -200,24 +200,25 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
                     });
                     continue;
                 }
-                match member.kind.item() {
-                    // A plugin is its registry's own curated set, so it
-                    // installs as one — the same reading every install
-                    // path gives it. It keeps its own kind on the row, so
-                    // a surface acting on that row can still name it.
-                    None | Some(ItemKind::Plugin) => group.bundles.push(ResolvedSet {
+                // Routed by the table the member declares in, the same
+                // judge `contested` keys on, so what this offers and what
+                // that refuses cannot disagree. A set keeps its own kind
+                // on the row, so a surface acting on that row can still
+                // name a plugin as one.
+                match member.kind.namespace() {
+                    Namespace::Set => group.bundles.push(ResolvedSet {
                         name: member.name.clone(),
                         enabled: member.enabled,
                         kind: member.kind,
                     }),
-                    Some(ItemKind::PiExtension) => missing.push(MissingMember {
+                    Namespace::Item(ItemKind::PiExtension) => missing.push(MissingMember {
                         kind: member.kind,
                         name: member.name.clone(),
                         repo: Some(repo.clone()),
                         which: which_of(member),
                         why: super::PI_EXTENSION_DIRECT.to_owned(),
                     }),
-                    Some(kind) => group.items.push(ResolvedItem {
+                    Namespace::Item(kind) => group.items.push(ResolvedItem {
                         kind,
                         name: member.name.clone(),
                         enabled: member.enabled,
@@ -489,20 +490,28 @@ fn no_longer_offered(repo: &str) -> String {
 /// with the first group's writes already on disk, and a copy taken after a
 /// marketplace member of the same name replaces the declaration this run
 /// had just written.
-fn contested(members: &[super::Member]) -> BTreeMap<(MemberKind, String), MissingMember> {
-    let mut claimed: BTreeMap<(MemberKind, String), Vec<&super::Member>> = BTreeMap::new();
+///
+/// Keyed on the table a member declares in rather than on its kind, because
+/// that is what a place keys on: a bundle and a plugin under one name are
+/// two kinds and one `[bundles.<name>]`, and `resolve` routes both there by
+/// the same judge.
+fn contested(members: &[super::Member]) -> BTreeMap<(Namespace, String), MissingMember> {
+    let mut claimed: BTreeMap<(Namespace, String), Vec<&super::Member>> = BTreeMap::new();
     for member in members {
         claimed
-            .entry((member.kind, member.name.clone()))
+            .entry((member.kind.namespace(), member.name.clone()))
             .or_default()
             .push(member);
     }
     claimed
         .into_iter()
         .filter(|(_, claimants)| claimants.len() > 1)
-        .map(|((kind, name), claimants)| {
+        .map(|((namespace, name), claimants)| {
             let row = MissingMember {
-                kind,
+                // The first claimant's kind: the row carries one, and the
+                // way out the text names is removing one claimant, which a
+                // surface acting on this row does by that kind and name.
+                kind: claimants[0].kind,
                 name: name.clone(),
                 // Neither claimant's repository, because the row is about
                 // the name rather than about one of them — and a surface
@@ -510,15 +519,18 @@ fn contested(members: &[super::Member]) -> BTreeMap<(MemberKind, String), Missin
                 // name, which is what [`super::MemberWhich::Any`] says.
                 repo: None,
                 which: super::MemberWhich::Any,
-                why: two_claims(kind, &name, &claimants),
+                why: two_claims(&name, &claimants),
             };
-            ((kind, name), row)
+            ((namespace, name), row)
         })
         .collect()
 }
 
-/// Said for a name two members claim, naming where each of them came from.
-fn two_claims(kind: MemberKind, name: &str, claimants: &[&super::Member]) -> String {
+/// Said for a name two members claim, naming what each of them was saved
+/// as and where it came from. The kind rides on each claimant rather than
+/// once up front because the claimants need not share one: a bundle and a
+/// plugin collide too.
+fn two_claims(name: &str, claimants: &[&super::Member]) -> String {
     let came_from = |member: &super::Member| match &member.source {
         MemberSource::Marketplace { repo, .. } => {
             format!("from {}", crate::names::shown(repo))
@@ -531,11 +543,13 @@ fn two_claims(kind: MemberKind, name: &str, claimants: &[&super::Member]) -> Str
         ),
         MemberSource::Copy { from: None, .. } => "as this template's own copy".to_owned(),
     };
-    let each: Vec<String> = claimants.iter().map(|member| came_from(member)).collect();
+    let shown = crate::names::shown(name);
+    let each: Vec<String> = claimants
+        .iter()
+        .map(|member| format!("{} '{shown}' {}", member.kind.name(), came_from(member)))
+        .collect();
     format!(
-        "this template holds {} '{}' {} — a place declares one package under a name, so remove one of them or save them in two templates",
-        kind.name(),
-        crate::names::shown(name),
+        "this template holds {} — a place declares one package under a name, so remove one of them or save them in two templates",
         each.join(" and ")
     )
 }
@@ -740,7 +754,9 @@ pub fn install(
                 ItemKind::Hook => request.hooks.push(item.name.clone()),
                 ItemKind::Command => request.commands.push(item.name.clone()),
                 ItemKind::McpServer => request.mcp_servers.push(item.name.clone()),
-                ItemKind::Plugin => request.bundles.push(item.name.clone()),
+                ItemKind::Plugin => unreachable!(
+                    "a plugin declares in [bundles.<name>]: MemberKind::namespace routes it to the group's sets, never its items"
+                ),
                 ItemKind::PiExtension => request.pi_extensions.push(item.name.clone()),
             }
         }

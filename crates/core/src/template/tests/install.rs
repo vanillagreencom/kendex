@@ -687,6 +687,118 @@ fn one_name_claimed_by_two_members_refuses_before_anything_is_written() {
     }
 }
 
+/// A bundle and a plugin are two kinds and one `[bundles.<name>]`, so one
+/// name held as both is one contested name: resolution refuses it before
+/// anything is written, naming both claimants, and under two names the
+/// pair installs. Keyed on the member kind instead, the preview offered
+/// both and the install declared the first and refused the second with the
+/// first's writes on disk.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_bundle_and_a_plugin_under_one_name_are_one_contested_name() {
+    let project = seeded();
+    let market = |kind: MemberKind, name: &str, repo: &str| Member {
+        kind,
+        name: name.to_owned(),
+        enabled: true,
+        source: MemberSource::Marketplace {
+            repo: repo.to_owned(),
+            rev: None,
+        },
+    };
+
+    let clash = create_from_selection(
+        &project.env,
+        "Clash",
+        vec![
+            market(MemberKind::Bundle, "review", "owner/first"),
+            market(MemberKind::Plugin, "review", "owner/second"),
+        ],
+    )
+    .unwrap();
+    let resolution = resolve(&project.env, &clash).unwrap();
+    assert_eq!(resolution.missing.len(), 1, "{:?}", resolution.missing);
+    let row = &resolution.missing[0];
+    assert_eq!(
+        (row.kind, row.name.as_str(), &row.which),
+        (MemberKind::Bundle, "review", &MemberWhich::Any)
+    );
+    for claimant in [
+        "bundle 'review' from owner/first",
+        "plugin 'review' from owner/second",
+    ] {
+        assert!(row.why.contains(claimant), "{}", row.why);
+    }
+    assert_eq!(resolution.groups, Vec::new());
+
+    let target = destination(&project, "into-clash");
+    let Scope::Project { root } = &target else {
+        unreachable!("built as a project scope")
+    };
+    let before = snapshot(root);
+    let refused = install(
+        &project.env,
+        &clash,
+        &target,
+        Some(vec![HarnessId::Claude]),
+        None,
+    );
+    let Err(CoreError::TemplateMemberUnavailable { why, .. }) = refused else {
+        panic!("a contested name should refuse the install: {refused:?}");
+    };
+    assert!(why.contains("declares one package under a name"), "{why}");
+    assert_eq!(
+        snapshot(root),
+        before,
+        "the refused install wrote into {}",
+        root.display()
+    );
+
+    // Under two names the pair is two sets of one group, and both land.
+    fs::write(
+        project.catalog.join("kendex.toml"),
+        "[marketplace]\nname = \"cat\"\nlicense = \"MIT\"\n\
+         [bundles.review]\nskills = [\"gh\"]\n\
+         [bundles.other]\ncommands = [\"note\"]\n",
+    )
+    .unwrap();
+    let repo = crate::paths::slashed(&project.catalog);
+    let apart = create_from_selection(
+        &project.env,
+        "Apart",
+        vec![
+            market(MemberKind::Bundle, "review", &repo),
+            market(MemberKind::Plugin, "other", &repo),
+        ],
+    )
+    .unwrap();
+    let resolution = resolve(&project.env, &apart).unwrap();
+    assert_eq!(resolution.missing, Vec::new());
+    assert_eq!(resolution.groups.len(), 1, "{:?}", resolution.groups);
+    assert_eq!(
+        resolution.groups[0].bundles.len(),
+        2,
+        "{:?}",
+        resolution.groups
+    );
+    let landed = install(
+        &project.env,
+        &apart,
+        &destination(&project, "into-apart"),
+        Some(vec![HarnessId::Claude]),
+        None,
+    )
+    .unwrap();
+    assert_eq!(landed.stopped, None);
+    for wanted in ["bundle review", "plugin other"] {
+        assert!(
+            landed.declared.contains(&wanted.to_owned()),
+            "{:?}",
+            landed.declared
+        );
+    }
+}
+
 /// A plugin is its registry's own curated set, so it installs whole the
 /// way a bundle does — and the resolved row keeps saying it is a plugin,
 /// so a reference built from that row reaches the member rather than
