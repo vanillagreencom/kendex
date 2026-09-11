@@ -4,7 +4,8 @@
 # above it, tracked or untracked, and every topic file whose Covers entry
 # reaches it; a covering doc left unchanged, a Covers entry no path on disk
 # matches, and a changed path on disk no doc covers where some topic declares
-# an entry are each named
+# an entry and the render inventory `.kendex-generated.json` does not list it
+# are each named
 # once on stderr with exit 2, the channel the harness gives Claude, and stdout
 # stays empty. The set is recorded under
 # `<git common dir>/kendex/doc-drift/<session_id>-<digest>`, so a later stop
@@ -193,6 +194,11 @@ build() { # WORLD — the row's repository, its run directory and PATH
         seal
         ;;
       file-topic) printf '# Selected path\n\nCovers: ui/src/app.ts\n' >"$REPO/docs/architecture/selected.md"; seal ;;
+      # The render inventory kendex writes, listing one of the two paths no
+      # document covers, so one row asks what a render does and the other what
+      # a path the same inventory does not list still does.
+      generated) printf '["top.rs"]\n' >"$REPO/.kendex-generated.json"; seal ;;
+      empty-generated) : >"$REPO/.kendex-generated.json"; seal ;;
       root-topic) printf '# All\n\nCovers: . ./ /\n' >"$REPO/docs/architecture/all.md"; seal ;;
       with-master) fgit -C "$REPO" branch master ;;
       master) fgit -C "$REPO" branch -m main master ;;
@@ -422,6 +428,8 @@ an entry naming a file deleted and not yet staged is named|repo file-topic|rm-ui
 a glob entry is satisfied by a path its * reaches across /|repo glob-topic|md|0|-|-
 an entry whose only match is an untracked new file is satisfied|repo|covered-new|0|-|-
 a changed path no doc covers is named|repo|top|2|top.rs|uncovered=1;base=default-branch
+a changed path the render inventory lists is a render, not uncovered|repo generated|top|0|-|-
+a changed path the same inventory does not list is still uncovered|repo generated|ui|2|ui/src/app.ts|uncovered=1;base=default-branch
 a deleted path no doc covers is not named|repo|rm-ui|0|-|-
 an untracked AGENTS.md covers the new code beside it|repo|newpkg|0|-|-
 an AGENTS.md deleted and not yet staged no longer covers the code beside it|repo ui-agents|rm-ui-agents ui|2|ui/src/app.ts|uncovered=1;base=default-branch
@@ -468,6 +476,7 @@ a default-branch probe git cannot answer is not read as absent|clone break:symbo
 a payload that cannot be read|repo break:cat|code|stop|2|-|payload=unreadable;fixture: cat failed
 a payload that is not JSON|repo|code|raw|2|-|payload=invalid-json
 a jq that cannot answer for the payload, with its own words below|repo break:jq|code|stop|2|-|payload=invalid-json;fixture: jq failed
+an inventory holding no document is not read as nothing rendered|repo empty-generated|top|stop|2|-|inventory=invalid-json
 a payload carrying no session id|repo|code|noid|2|-|session-id=invalid
 a marker that cannot be recorded|repo sealed-marker|code|stop|2|-|marker=<path>
 no command the hook runs on PATH names the payload readers alone|repo nopath|code|stop|2|-|missing-tools=jq,cat

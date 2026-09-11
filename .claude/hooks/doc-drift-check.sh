@@ -3,9 +3,9 @@
 # name: doc-drift-check
 # event: Stop
 # matcher:
-# description: Blocks a stop once per set of findings so the agent, the only party that can act on them, is the one given the list. Three kinds are found: stale, a document covering changed code that did not change; dangling, an architecture topic `Covers:` entry that no tracked or untracked non-ignored path on disk matches; uncovered, a changed non-markdown path still on disk that no topic entry and no non-root AGENTS.md covers, judged only where some topic declares an entry. The refusal opens with one keyed line per kind that holds, in the order `doc-drift-check: stale=<count>`, `doc-drift-check: dangling=<count>`, `doc-drift-check: uncovered=<count>`, then `doc-drift-check: base=<ref>` — the ref it compared against, or `default-branch`, `none` or `unrelated` — and names each finding under them; stdout carries nothing and no user-facing notice is written. The set is recorded as `<git common dir>/kendex/doc-drift/<session_id>-<digest of the sorted set>`, so a later stop naming that same set passes and an agent that read the list and changed nothing is not asked again; a set that gains or loses a finding is a different set and blocks once. `stop_hook_active` true passes, and so does a stop with nothing changed; any change, markdown alone included, has every Covers entry judged. Uses the nearest non-root AGENTS.md, tracked or untracked and not ignored, and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Claude Code only.
+# description: Blocks a stop once per set of findings so the agent, the only party that can act on them, is the one given the list. Three kinds are found: stale, a document covering changed code that did not change; dangling, an architecture topic `Covers:` entry that no tracked or untracked non-ignored path on disk matches; uncovered, a changed non-markdown path still on disk that no topic entry and no non-root AGENTS.md covers, judged only where some topic declares an entry and never for a path the repository's `.kendex-generated.json` lists, a render being covered through the source it was rendered from. The refusal opens with one keyed line per kind that holds, in the order `doc-drift-check: stale=<count>`, `doc-drift-check: dangling=<count>`, `doc-drift-check: uncovered=<count>`, then `doc-drift-check: base=<ref>` — the ref it compared against, or `default-branch`, `none` or `unrelated` — and names each finding under them; stdout carries nothing and no user-facing notice is written. The set is recorded as `<git common dir>/kendex/doc-drift/<session_id>-<digest of the sorted set>`, so a later stop naming that same set passes and an agent that read the list and changed nothing is not asked again; a set that gains or loses a finding is a different set and blocks once. `stop_hook_active` true passes, and so does a stop with nothing changed; any change, markdown alone included, has every Covers entry judged. Uses the nearest non-root AGENTS.md, tracked or untracked and not ignored, and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Claude Code only.
 # summary: Stops an agent at the end of its turn when documents covering the code it changed did not change or an architecture topic names a path that does not exist, and hands it the list. Where some topic declares a Covers entry, changed code with no covering document is named too.
-# safety: Reads the payload, git state, the topic files and git's listing of what each Covers entry matches; the only write is the per-set marker under the repository's git common dir. Exit 2 names the findings and asks for each document to be confirmed or updated and each entry or path to be corrected, never bypassed. jq reads the payload and a sha256 tool names the set; every command the hook runs is checked before it is called, the payload readers ahead of the payload and the rest after `stop_hook_active` has been read, so a discovery command's absence costs one retry rather than refusing the retry too; only a missing payload reader refuses that as well, the flag being in the payload it cannot read. A payload, git state or marker the hook cannot read or write is refused, never passed. Every refusal opens with `doc-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the payload, git state, the topic files, the render inventory `.kendex-generated.json` and git's listing of what each Covers entry matches; the only write is the per-set marker under the repository's git common dir. Exit 2 names the findings and asks for each document to be confirmed or updated and each entry or path to be corrected, never bypassed. jq reads the payload and a sha256 tool names the set; every command the hook runs is checked before it is called, the payload readers ahead of the payload and the rest after `stop_hook_active` has been read, so a discovery command's absence costs one retry rather than refusing the retry too; only a missing payload reader refuses that as well, the flag being in the payload it cannot read. A payload, git state, render inventory or marker the hook cannot read or write is refused, never passed. Every refusal opens with `doc-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
 # harnesses: [claude-code]
 # ---
@@ -75,6 +75,12 @@ refuse() { # KEY VALUE [DETAIL], or `drift` alone
         ;;
       payload=invalid-json)
         printf 'the hook payload is not valid JSON, or a field it reads is not a string; refusing rather than skipping the check\n'
+        ;;
+      inventory=unreadable)
+        printf 'the render inventory .kendex-generated.json is present and could not be read\n'
+        ;;
+      inventory=invalid-json)
+        printf 'the render inventory .kendex-generated.json is not one JSON array of non-empty path strings, none holding a newline or a NUL; refusing rather than judging every render as code no document covers\n'
         ;;
       session-id=invalid)
         printf 'the payload carries no usable session_id, so naming these documents could not be recorded; refusing\n'
@@ -311,6 +317,45 @@ fi
 CODE_CHANGED=$(printf '%s\n' "$ALL_CHANGED" | sed '/\.md$/d' 2>&1) ||
   refuse exit "$?" "$CODE_CHANGED"
 
+# What kendex rendered into this repository, one path per line. The render
+# writer keeps this inventory and is the one judge of whether a path is a
+# render, so the hook reads it rather than matching harness directory names of
+# its own. A render is never the thing a document covers — the source it was
+# rendered from is — so a changed render is not named uncovered below.
+#
+# The read discipline is the one commit-guards' suppression-ban applies to the
+# same file: an absent inventory is a repository with nothing rendered and
+# excludes nothing, while a present one that does not parse is refused rather
+# than read as empty, which would name every render as uncovered and say
+# nothing about why. It is read from the working tree, as the topic files are:
+# a refresh writes the inventory and the renders it lists together, so the
+# working-tree copy is the one that describes the renders being judged.
+GENERATED=""
+INVENTORY="$REPO_ROOT/.kendex-generated.json"
+if [ -f "$INVENTORY" ]; then
+  # cat's and jq's own words are captured where each is read, so a failure
+  # reaches the refusal under its keyed line rather than ahead of it. Both are
+  # silent when they succeed.
+  INVENTORY_JSON=$(cat -- "$INVENTORY" 2>&1) || refuse inventory unreadable "$INVENTORY_JSON"
+  # The shape check is the one
+  # `skills/commit-guards/scripts/lib/generated-paths.sh` runs on this same
+  # file, spelled again because a hook ships alone into a repository that need
+  # not have commit-guards installed. `-s` is what makes a count of documents
+  # visible at all: without it an empty, whitespace-only or truncated file
+  # yields no output and no error, which is the file being read as a project
+  # with nothing rendered. Exactly one document, an array whose members are
+  # non-empty strings holding neither a newline nor a NUL, since a path with a
+  # newline in it could not be matched a line at a time below.
+  GENERATED=$(printf '%s' "$INVENTORY_JSON" | jq -ers '
+    if length == 1 then .[0] else "" | halt_error(20) end
+    | if type == "array" and all(.[];
+        type == "string" and length > 0
+        and (contains("\n") or contains("\u0000") | not))
+      then join("\n")
+      else "" | halt_error(21) end' 2>&1) ||
+    refuse inventory invalid-json "$GENERATED"
+fi
+
 # Covering docs. `:(top)` roots the pattern at the repository whatever the
 # cwd, and `*` crosses `/`, so this is every AGENTS.md below the root and
 # not the root's own, which covers nothing. Untracked non-ignored ones count,
@@ -416,6 +461,8 @@ EOF
 # repository without one has no map to be incomplete, and naming every changed
 # path there would block each stop of a repository that never adopted topics.
 # A deleted path is never uncovered: an entry added for it would match nothing.
+# Nor is a render the inventory lists: the document to correct covers its
+# source, and an entry added for the render would name a generated file.
 while IFS= read -r path; do
   # An empty code set reads as one empty line.
   [ -n "$path" ] || continue
@@ -423,6 +470,7 @@ while IFS= read -r path; do
   if [ -z "$docs" ]; then
     [ -n "$COVERS" ] || continue
     on_disk "$path" || continue
+    in_list "$GENERATED" "$path" && continue
     NAMED="$NAMED"uncovered$'\t'"$path"$'\n'
     UNCOVERED="$UNCOVERED  $path"$'\n'
     UNCOVERED_COUNT=$((UNCOVERED_COUNT + 1))
