@@ -26,7 +26,8 @@ A loud failure beats a silent wrong answer. Handle every error, check invariants
 ## Correctness
 
 - No workarounds or quick hacks. If the correct fix is larger than expected, say so.
-- **Never fail open.** A dependency failure (command, file, network, parse) must not leave the caller in a passing or default state: no validator degrading to "no findings", no probe failure read as "not applicable".
+- **Never fail open.** A dependency failure (command, file, network, parse) must not leave the caller in a passing or default state: no validator degrading to "no findings", no probe failure read as "not applicable". An absent or unknown input is not a dependency failure: refusing on it disables a working path, which needs its own justification stated where the choice is made.
+- Make illegal states unrepresentable: a state with several cases is one tagged value each site matches exhaustively, never independent flags each site conjoins. § Language Discipline holds each language's spelling.
 - A gate, guard or scanner change adds no enumerated exemption list; a refusal is one rule at the point the code cannot judge.
 - A branch that "shouldn't happen" is never an empty or silently-ignored `else`: assert it, return an explicit internal error, or mark it unreachable, with a message naming the violated invariant. Use plain conditionals only when both branches are expected paths.
 - An error path must name the actual cause, not a neighbouring dependency.
@@ -47,7 +48,7 @@ A new or modified production gate or guard ships with one must-fail control per 
 
 ## Tests
 
-- One must-fail control per changed behavioral surface with a test is the whole mutation requirement. A workflow sentence has no test and adds no control. Do not run mutant batteries beyond the one control. The control plants one defect that turns the surface's test red; use the existing `HOOK_UNDER_TEST` and mutant-hook patterns as the shape. Each surface also tests its inverse.
+- One must-fail control per changed behavioral surface with a test is the whole mutation requirement. A workflow sentence has no test and adds no control. Do not run mutant batteries beyond the one control. The control plants one defect that turns the surface's test red; use the existing `HOOK_UNDER_TEST` and mutant-hook patterns as the shape. Each surface also tests its inverse. Where no edit to the production code reddens a surface's test, state that, why, and what the test holds, in place of its control; a production gate or guard keeps its per-rule control. A test that asserts the mechanism implementing a guarantee has no control, since planting the mechanism moves the test with it: assert the guarantee.
 - N planted defects means N asserted rows. A fixture that plants several defects under one verdict passes while any one of them is caught, and is never allowed.
 - Shaped input (positions, settings keys, tamper classes) is one table-driven case: one loop, one assertion per row, the row list visible in the file.
 - Every hook or script refusal and notice starts with a stable first line: a short key and the relevant path, count, exit code or other value. Put the English explanation on following lines. Keep message text in one place per hook or script.
@@ -56,15 +57,15 @@ A new or modified production gate or guard ships with one must-fail control per 
 - No test of the test harness: a pin on a manifest script string or a runner configuration proves nothing about behaviour.
 - A shared fixture is a neutral world (a seeded repository, a fake SDK). A fixture that carries a planted defect is private to its case.
 - One file per surface, beside the code, named for the surface.
-- A file past about 64 KB or about 60 cases holds more than one surface. Split it at a surface seam and move cases whole. The seam is the author's judgement; no check measures it.
+- A file past about 64 KB or about 60 cases holds more than one surface. Split it at a surface seam and move cases whole: count occurrences per test name rather than keying by name, compare bodies in both directions, and re-target every document citing the file. The seam is the author's judgement; no check measures it.
 
 ## Language Discipline
 
-- **Rust**: make illegal states unrepresentable; exhaustive matches (no `_ =>` over enums you own); enums over strings/sentinels/booleans-with-meaning. A test that hands a temporary path to code that may resolve symlinks binds its canonical root at creation and passes that binding, never the raw path; platform-only test APIs carry a `cfg` and, when the property is portable, a portable twin.
+- **Rust**: exhaustive matches (no `_ =>` over enums you own); enums over strings/sentinels/booleans-with-meaning. A test that hands a temporary path to code that may resolve symlinks binds its canonical root at creation and passes that binding, never the raw path; platform-only test APIs carry a `cfg` and, when the property is portable, a portable twin.
 - **Bash**: check the result of every effectful substitution, in test position too; `--` before path arguments sourced from configuration, argv, or the environment (not paths the script built itself, e.g. `mktemp -d`); no `[A-Za-z]`-class assumptions under arbitrary locales. The `set -euo pipefail` preamble, an unchecked or untrapped `mktemp` and a declaration masking a status are preflight's `fail-open`, `mktemp-trap` and `masked-returns` lanes.
 - In any `pipefail` script, never pipe a shell writer into an early-closing reader — `head`, `grep -q`, `grep -m N` — which stops reading while its producer still writes: the 141 SIGPIPE status aborts the run where `errexit` fires, and in condition position, where it does not, reads as a plain false that drops the result with no error. Capture whole and window in-shell, or give the reader a here-string. An added line of that shape is preflight's `early-close-pipe` lane. A must-fail control for one writes its input from the shell, never `cat` reading a file, which pushes several hundred KB before it blocks and passes a buffer-sized fixture either way.
 - Measure a commit header with commit-guards' locale-stable `gg_chars`, never raw `awk length` or `wc -c`.
-- **TypeScript/JS**: distinguish missing from present-but-falsy (`""`, `0`) at every guard; no `any` at module boundaries. A store selector returns a stable reference: never mint an array, object or Set inside one (a fresh value re-renders forever and blanks the page).
+- **TypeScript/JS**: discriminated unions switched with a `never` default over strings and booleans-with-meaning; distinguish missing from present-but-falsy (`""`, `0`) at every guard; no `any` at module boundaries. A store selector returns a stable reference: never mint an array, object or Set inside one (a fresh value re-renders forever and blanks the page). An effect that positions or measures rendered content takes what is drawn as its trigger, not a list of state names; the exhaustive-dependencies lint checks only what the effect reads.
 
 ## Comments and Prose
 
@@ -86,9 +87,9 @@ Commit bodies explain intent, never narrate the diff.
 
 ## Over-Engineering
 
-Build only what was asked. No speculative abstractions, no error handling for impossible scenarios, no generalization before a third caller exists. Delete wrappers that only forward. A new dependency needs a one-line justification in its commit message.
+Build only what was asked. No speculative abstractions, no error handling for impossible scenarios, no generalization before a third caller exists; a decision re-derived at N sites already has N callers. Delete wrappers that only forward. A new dependency needs a one-line justification in its commit message.
 
-One judge per question: never re-implement a decision (classify, validate, parse, detect state) another component or language already owns. Delegate. A second spelling is a defect even when both copies agree. Package behavior lives in the package's shipped scripts; a host binary only locates, execs, and surfaces results.
+One judge per question: never re-implement a decision (classify, validate, parse, detect state) another component or language already owns; delegate. A decision re-derived at each use site in one file is the same defect: compute it once and let each site match on the result. A second spelling is a defect even when both copies agree. Package behavior lives in the package's shipped scripts; a host binary only locates, execs, and surfaces results.
 
 ## Cleanup
 
