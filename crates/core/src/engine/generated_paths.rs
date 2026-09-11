@@ -80,6 +80,38 @@ impl GeneratedPaths {
             .collect()
     }
 
+    /// Every inventory path as the document spells it: relative to the
+    /// root, slashed, and sorted by the set it comes out of.
+    ///
+    /// This is the one derivation of that set. The write reaches it through
+    /// [`GeneratedPaths::document`] and `own_inventory.rs` reads it directly,
+    /// so neither decides what a render is a second time.
+    fn relative(&self, root: &Path) -> BTreeSet<String> {
+        self.inventory(root)
+            .iter()
+            .filter_map(|path| path.strip_prefix(root).ok().map(crate::paths::slashed))
+            .collect()
+    }
+
+    /// The inventory document, exactly as the write below lays it down: the
+    /// write's serialization of [`GeneratedPaths::relative`], and nothing
+    /// besides.
+    ///
+    /// A reader holds the committed copy to that set rather than to these
+    /// bytes — `own_inventory.rs` parses the JSON back into a set, as
+    /// commit-guards' `generated-paths.sh` does — so the order and the
+    /// spacing are this function's alone and no reader depends on them.
+    fn document(&self, root: &Path) -> Result<String> {
+        let mut text = serde_json::to_string(&self.relative(root)).map_err(|error| {
+            crate::error::CoreError::JsonParse {
+                path: root.join(INVENTORY),
+                message: error.to_string(),
+            }
+        })?;
+        text.push('\n');
+        Ok(text)
+    }
+
     /// The files kendex owns whole, the inventory file among them — what
     /// the commit offer covers. The inventory is kendex's own file end to
     /// end, so a commit may take it; [`companions`] says why one that adds
@@ -181,17 +213,7 @@ pub(super) fn plan(
     if generated.is_empty() && !path.exists() {
         return Ok(generated);
     }
-    let relative: BTreeSet<String> = generated
-        .inventory(root)
-        .iter()
-        .filter_map(|path| path.strip_prefix(root).ok().map(crate::paths::slashed))
-        .collect();
-    let mut text =
-        serde_json::to_string(&relative).map_err(|error| crate::error::CoreError::JsonParse {
-            path: path.clone(),
-            message: error.to_string(),
-        })?;
-    text.push('\n');
+    let text = generated.document(root)?;
     if crate::fs::read_if_exists(&path)?.as_deref() == Some(&text) {
         return Ok(generated);
     }
@@ -205,3 +227,8 @@ pub(super) fn plan(
     });
     Ok(generated)
 }
+
+/// This repository's own committed inventory, held to what this pass
+/// renders. Its own file: the check needs a message of its own.
+#[cfg(all(test, unix))]
+mod own_inventory;

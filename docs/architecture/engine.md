@@ -13,6 +13,7 @@ The engine turns a manifest into a plan and a plan into disk. Planning derives t
 - Mutation ownership comes only from recorded written positions. Read-only origin lookup uses `crates/core/src/ownership.rs` to consult current records, declarations, and installed metadata. Recovered evidence never authorizes replacement. Enforced by `crates/core/tests/unmanaged_ownership.rs` and `crates/core/src/library/tests.rs::report_and_library_recover_the_same_origin_without_a_readable_record`.
 
 - CI reads the committed generated-file inventory from the render plan. In-place sources and Pi carrier payloads stay outside it. Enforced by `crates/core/tests/instruction_shims.rs::generated_inventory_tracks_renders_and_excludes_source` and the harness-ci package tests.
+- An apply is the only writer of that inventory, so this repository's committed copy is held to the set it renders by a check that takes the plan and never runs it: `crates/core/src/engine/generated_paths/own_inventory.rs`. Its judge of what a render is comes off the same `GeneratedPaths` the write reads, so no list of harness directories is spelled beside it, and it is gated off Windows, where a checkout materialises a committed symlink as a regular file and the plan derives a different set.
 
 ## Invariants
 

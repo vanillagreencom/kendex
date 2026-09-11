@@ -5,8 +5,6 @@
 //! key that points nowhere reads back empty, so each declared set must read
 //! back with its members.
 
-use std::path::{Path, PathBuf};
-
 use crate::model::ItemKind;
 use crate::source::{SourceConfig, find_item, source_config};
 use crate::source_read::SealedSource;
@@ -34,19 +32,8 @@ const A_MEMBER: [(&str, ItemKind, &str); 3] = [
 /// unreached and the whole test green.
 const A_REQUIREMENT: (&str, &str) = ("orch", "dev");
 
-fn repo_root() -> PathBuf {
-    let guess = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    guess.canonicalize().unwrap_or_else(|error| {
-        panic!(
-            "{} is not a readable directory, so this crate is not sitting in the \
-             kendex checkout: {error}",
-            guess.display()
-        )
-    })
-}
-
 fn open() -> (SealedSource, SourceConfig) {
-    let root = repo_root();
+    let root = crate::test_util::checkout_root();
     let sealed = SealedSource::open(&root)
         .unwrap_or_else(|error| panic!("{} does not open as a catalog: {error}", root.display()));
     let config = source_config(&sealed, "kendex")
