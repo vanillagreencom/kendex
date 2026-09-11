@@ -144,6 +144,7 @@ echo "=== --all sweeps every tracked file; --base REF judges the branch since th
 legacy() { repo "$1"; put old.bin 4; commit "legacy oversized file"; } # NAME
 sweep() { legacy "$1"; baseline "$2"; } # NAME ROWS — the legacy file under a declared baseline
 fx_all_grown() { sweep all-grown 'old.bin\t4096\n'; put old.bin 5; }
+fx_all_unstaged() { legacy all-unstaged; mkdir -p "$R/tools"; printf 'old.bin\t4096\n' >"$R/$BASE_FILE"; } # a baseline written, never staged
 feature() { # NAME ACTION — a feature branch over the legacy file: shrink, grow, add
   legacy "$1"
   git -C "$R" checkout -qb feature
@@ -172,6 +173,7 @@ run_rows \
   "--staged spelled out is the same scope, not a sweep|legacy legacy-staged-flag|$C=1|--staged|rc=0 $(ok 0)" \
   "--all fails an oversized file with no baseline row, naming the sweep|legacy legacy-all|$C=1|--all|rc=1 $(over old.bin 4096 4 1);$(failed 1 1 1 "$SWEEP")" \
   "--all holds a legacy oversized file at its baseline row; the baseline is a tracked file and is counted|sweep all-held old.bin\t4096\n|$C=1|--all|rc=0 $(ok 2 "$SWEEP")" \
+  "--all reads the baseline from the index alone: a row written and never staged holds nothing|fx_all_unstaged|$C=1|--all|rc=1 $(over old.bin 4096 4 1);$(failed 1 1 1 "$SWEEP")" \
   "--all fails a legacy file grown past its row|fx_all_grown|$C=1|--all|rc=1 $(grew old.bin 4096 5120 5 1);$(failed 1 2 1 "$SWEEP")" \
   "--all fails a row larger than its file: a loosened row would let the file grow back unjudged|sweep all-loose old.bin\t5120\n|$C=1|--all|rc=1 ${ERR}baseline-loose=old.bin:5120:4096;$(failed 1 2 1 "$SWEEP")" \
   "--all fails a row naming no oversized file, while the held row beside it passes|sweep all-stale gone.bin\t4096\nold.bin\t4096\n|$C=1|--all|rc=1 ${ERR}baseline-stale=gone.bin:4096;$(failed 1 2 1 "$SWEEP")" \

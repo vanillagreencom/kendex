@@ -337,8 +337,16 @@ source "${BASH_SOURCE[0]%/*}/generated-paths.sh"
 # other status through gg_fail. A probe git could not answer must
 # not fall through to the worktree copy: that judges the commit against looser
 # policy than the index carries, and says nothing while doing it.
-gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such file
-  local file="$1" status=0 head_status=0 tree_status=0 entry=""
+#
+# `tracked` drops the never-tracked fallback: a path the index does not carry
+# is absent, for a policy that can only loosen a verdict, where a worktree
+# file nobody staged would hold the commit to rows it does not carry.
+gg_policy_content() { # FILE [tracked] — content on stdout; 1 = the commit has no such file
+  local file="$1" mode="${2:-}" status=0 head_status=0 tree_status=0 entry=""
+  case "$mode" in
+    "" | tracked) ;;
+    *) gg_fail policy-mode "$mode" "gg_policy_content takes no mode but tracked" ;;
+  esac
   # :(literal) — a path spelling a glob (`*`, `?`, `[`) must match itself in
   # the index, never whatever the glob happens to reach.
   git ls-files --error-unmatch -- ":(literal)$file" >/dev/null 2>&1 || status=$?
@@ -350,7 +358,7 @@ gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such f
       git show ":0:$file" || gg_fail index-copy "$file" "could not read the staged copy of $(gg_shown "$file")"
       return 0
       ;;
-    1) ;;
+    1) [ "$mode" != tracked ] || return 1 ;;
     *) gg_fail index-query "$file:$status" "could not query the index for $(gg_shown "$file") (git ls-files exit $status); refusing to treat it as untracked" ;;
   esac
   # ls-tree, never `cat-file -e`: with rev:path syntax git answers "no such
