@@ -177,6 +177,7 @@ build() { # WORLD — the row's repository, its run directory and PATH
       crates-agents) printf '# crates\n' >"$REPO/crates/AGENTS.md"; seal ;;
       ignore-target) printf 'target/\n' >"$REPO/.gitignore"; seal ;;
       autocrlf) fgit -C "$REPO" config core.autocrlf true ;;
+      ui-agents) printf '# ui\n' >"$REPO/ui/AGENTS.md"; seal ;;
       ui-topic)
         mkdir -p "$REPO/ui/lib"
         printf 'export const c = 0;\n' >"$REPO/ui/lib/c.ts"
@@ -242,6 +243,7 @@ change() { # WORDS — the row's edits, in order
       eval) printf 'pub fn more() {}\n' >>"$REPO/crates/eval/src/eval_score.rs" ;;
       dangle) printf '# Gone\n\nCovers: crates/gone\n' >"$REPO/docs/architecture/gone.md" ;;
       rm-ui) rm -- "$REPO/ui/src/app.ts" ;;
+      rm-ui-agents) rm -- "$REPO/ui/AGENTS.md" ;;
       newpkg) mkdir -p "$REPO/newpkg"; printf '# newpkg\n' >"$REPO/newpkg/AGENTS.md"; printf 'x\n' >"$REPO/newpkg/x.rs" ;;
       covered-new)
         printf 'export const n = 1;\n' >"$REPO/ui/src/new.ts"
@@ -422,6 +424,7 @@ an entry whose only match is an untracked new file is satisfied|repo|covered-new
 a changed path no doc covers is named|repo|top|2|top.rs|uncovered=1;base=default-branch
 a deleted path no doc covers is not named|repo|rm-ui|0|-|-
 an untracked AGENTS.md covers the new code beside it|repo|newpkg|0|-|-
+an AGENTS.md deleted and not yet staged no longer covers the code beside it|repo ui-agents|rm-ui-agents ui|2|ui/src/app.ts|uncovered=1;base=default-branch
 a warning git writes on a read that succeeds is not a path|repo autocrlf|code agents topic|0|-|-
 each kind that holds has its keyed line, stale then dangling then uncovered|repo dangling-topic|code top|2|$CORE_DOCS,docs/architecture/gone.md(Covers: crates/gone),top.rs|stale=2;dangling=1;uncovered=1;base=default-branch
 "

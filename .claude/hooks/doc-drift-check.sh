@@ -259,6 +259,24 @@ git_paths() { # LABEL ARGS... — sets PATHS; LABEL is the git= value on failure
   ) || refuse git "$label" "$PATHS"
 }
 
+# The paths present in the tree for one pathspec, one per line in PATHS: tracked
+# and untracked non-ignored, as the changed set reads them, and only those on
+# disk, since the index still lists a file deleted and not yet staged.
+tree_paths() { # PATHSPEC — sets PATHS
+  local listed="" path
+  git_paths 'ls-files' ls-files -z --cached --others --exclude-standard --full-name -- "$1"
+  while IFS= read -r path; do
+    [ -z "$path" ] || ! on_disk "$path" || listed="$listed$path"$'\n'
+  done <<EOF
+$PATHS
+EOF
+  PATHS=$listed
+}
+
+on_disk() { # REPOSITORY-RELATIVE PATH
+  [ -e "$REPO_ROOT/$1" ]
+}
+
 # Against a base, one diff covers the worktree and the index both; without
 # one, the two are read separately. Untracked paths are read in either case:
 # without them a stop whose only work is an untracked file presents an empty
@@ -298,7 +316,7 @@ CODE_CHANGED=$(printf '%s\n' "$ALL_CHANGED" | sed '/\.md$/d' 2>&1) ||
 # not the root's own, which covers nothing. Untracked non-ignored ones count,
 # as a topic written this session does: a new directory's AGENTS.md covers the
 # code beside it before either is committed.
-git_paths 'ls-files' ls-files -z --cached --others --exclude-standard --full-name -- ':(top)*/AGENTS.md'
+tree_paths ':(top)*/AGENTS.md'
 AGENTS_DOCS=$PATHS
 
 # Topic files are read from the working tree, so a file written this session
@@ -332,14 +350,6 @@ done
 # the producer's SIGPIPE into status 141, read here as "absent".
 in_list() { # LIST NEEDLE
   printf '%s\n' "$1" | grep -Fx -- "$2" >/dev/null
-}
-
-# The tree a finding is judged against is what is on disk: the index still
-# lists a file deleted and not yet staged, and a changed set carries every
-# deletion. An entry matching only such a path covers nothing, and a deleted
-# path has nothing left for a document to cover.
-on_disk() { # REPOSITORY-RELATIVE PATH
-  [ -e "$REPO_ROOT/$1" ]
 }
 
 # One matcher for every Covers entry. A plain path covers itself and anything
@@ -384,24 +394,13 @@ NAMED=""
 # reads as covered while it is not. Git's own pathspec lists what an entry
 # reaches, and without `:(glob)` magic it matches as covers_path does: a plain
 # path is itself or anything below it, and a glob matches the whole path with
-# `*` crossing `/`. Tracked and untracked non-ignored paths count, as in the
-# changed set, and only while on disk. One git call per entry, rather than
-# covers_path over every file, keeps a large tree inside the hook's timeout.
+# `*` crossing `/`. One git call per entry, rather than covers_path over every
+# file, keeps a large tree inside the hook's timeout.
 while IFS=$'\t' read -r covered cdoc; do
   # The empty line the here-document ends on.
   [ -n "$covered" ] || continue
-  git_paths 'ls-files' ls-files -z --cached --others --exclude-standard --full-name -- ":(top)$covered"
-  reached=$PATHS
-  present=0
-  while IFS= read -r hit; do
-    if [ -n "$hit" ] && on_disk "$hit"; then
-      present=1
-      break
-    fi
-  done <<EOF
-$reached
-EOF
-  [ "$present" -eq 0 ] || continue
+  tree_paths ":(top)$covered"
+  [ -z "$PATHS" ] || continue
   member="dangling"$'\t'"$covered"$'\t'"$cdoc"
   in_list "$NAMED" "$member" && continue
   NAMED="$NAMED$member"$'\n'
