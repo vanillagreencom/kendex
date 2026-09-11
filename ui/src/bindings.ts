@@ -580,6 +580,15 @@ export const commands = {
 	fork: ForkProvenance_Serialize | null,
 	catalog: CatalogGroupMeta | null,
 } | null, string>(__TAURI_INVOKE("package_meta", { scope, kind, name })),
+	/**
+	 *  Every saved item, read against this machine. One read for the whole
+	 *  app: the Bookmarks tab draws these rows, and every Bookmark control
+	 *  elsewhere decides whether its own row is saved by looking for its
+	 *  marketplace's identity in this list.
+	 */
+	bookmarksList: () => typedError<SavedItem[], string>(__TAURI_INVOKE("bookmarks_list")),
+	bookmarkAdd: (bookmark: Bookmark) => typedError<Bookmark, string>(__TAURI_INVOKE("bookmark_add", { bookmark })),
+	bookmarkRemove: (bookmark: Bookmark) => typedError<null, string>(__TAURI_INVOKE("bookmark_remove", { bookmark })),
 	templatesList: () => typedError<Template_Serialize[], string>(__TAURI_INVOKE("templates_list")),
 	/**
 	 *  Everything the create-from-project modal draws, read fresh. Nothing is
@@ -971,6 +980,35 @@ export type AvailablePackage = {
  *  is not the bytes, and reading them apart is how the two come adrift.
  */
 export type Base = string | null;
+
+/**  One saved marketplace item. */
+export type Bookmark = {
+	/**
+	 *  The marketplace: the repository as a declaration spells it, or the
+	 *  directory a folder source resolves to on this machine. Never the
+	 *  subscription's alias — an alias is a per-place manifest key, and a
+	 *  bookmark belongs to no place, so two projects spelling one
+	 *  marketplace differently would save as two different bookmarks. A
+	 *  folder is never recorded by a relative spelling for the same reason:
+	 *  that spelling names a different directory from every place declaring
+	 *  it.
+	 */
+	repo: string,
+	item: BookmarkItem,
+	/**  The name the catalog offers it under. */
+	name: string,
+};
+
+/**
+ *  What a bookmark points at inside a marketplace: one package the catalog
+ *  offers, of one kind, or a curated set the catalog declares and installs
+ *  whole.
+ * 
+ *  The kind rides inside the package arm rather than beside it, so a set —
+ *  which has no package kind — cannot be recorded with one, and a package
+ *  cannot be recorded without one.
+ */
+export type BookmarkItem = { is: "package"; kind: ItemKind } | { is: "bundle" };
 
 /**  Package-owned review-bot settings, retained without interpreting their schema. */
 export type BotInstructions = Record<string, unknown>;
@@ -2931,12 +2969,13 @@ export type MarketplaceRow = {
 	 */
 	repoKey: string | null,
 	/**
-	 *  One string per repository on any host, from
-	 *  [`kendex_core::source_ref::repo_identity`] — the same value
-	 *  subscription dedup and update grouping compare. `repo_key` answers
-	 *  only for GitHub, so it cannot tell two marketplaces apart anywhere
-	 *  else; this is what a surface folding declarations into one
-	 *  marketplace has to key on.
+	 *  One string per marketplace, from
+	 *  [`kendex_core::source_ops::declared_identity`]: a repository on any
+	 *  host, or the directory a folder resolves to — the same value
+	 *  subscription dedup, update grouping and a saved bookmark compare.
+	 *  `repo_key` answers only for GitHub, so it cannot tell two
+	 *  marketplaces apart anywhere else; this is what a surface folding
+	 *  declarations into one marketplace has to key on.
 	 */
 	repoIdentity: string | null,
 	/**  The declared folder, as the person typed it. */
@@ -2944,14 +2983,15 @@ export type MarketplaceRow = {
 	/**
 	 *  Where that folder is on this machine, from
 	 *  [`kendex_core::source::path_root`]: the declaration resolved against
-	 *  the place that declares it, slashed. A folder marketplace's
-	 *  identity, the way `repo_identity` is a repository's. Two directories
+	 *  the place that declares it, slashed. What `repo_identity` folds for
+	 *  a folder, and what a bookmark of one records. Two directories
 	 *  never share a string, which the spelling alone cannot promise:
 	 *  rootedness is the running platform's answer, and a POSIX-rooted path
 	 *  on Windows joins onto each declaring scope's own drive. The join is
-	 *  lexical — no `.`/`..` collapse, no symlink or case folding — so one
-	 *  directory reached by a `..` spelling is a second card, which only
-	 *  over-splits; that card's own places and controls stay right.
+	 *  lexical — a `.` segment drops, but no `..` collapse, no symlink or
+	 *  case folding — so one directory reached by a `..` spelling is a
+	 *  second card, which only over-splits; that card's own places and
+	 *  controls stay right.
 	 */
 	resolvedPath: string | null,
 	rev: string | null,
@@ -3911,6 +3951,31 @@ export type QualityScore = {
 	penaltyPercent: number,
 };
 
+/**  Where a saved item stands on this machine. */
+export type Reach = 
+/**
+ *  A subscription here carries the marketplace, its catalog reads, and
+ *  it still offers this item. The one state an install may start from.
+ */
+{ at: "offered" } | 
+/**
+ *  The catalog reads and no longer offers it — renamed or dropped
+ *  after the bookmark was saved. The row stays, saying so.
+ */
+{ at: "not-offered"; why: string } | 
+/**
+ *  Nothing here subscribes to the marketplace, and it is a repository
+ *  kendex can browse. Opening the row fetches it; installing from it
+ *  subscribes first, which is the marketplace page's own offer and not
+ *  this list's to make.
+ */
+{ at: "unsubscribed" } | 
+/**
+ *  The marketplace cannot be served right now, or cannot be addressed
+ *  at all. `why` is the whole reason, from whichever reader judged it.
+ */
+{ at: "unavailable"; why: string };
+
 /**  A step that did not go through. */
 export type Refused = {
 	/**  The step, as its own line names it. */
@@ -4230,6 +4295,30 @@ export type SafetyTarget = {
 export type Said = {
 	stdout: string[],
 	stderr: string[],
+};
+
+/**  One saved item as a surface draws it. */
+export type SavedItem = {
+	bookmark: Bookmark,
+	/**
+	 *  The marketplace folded to one string, from
+	 *  [`crate::source_ref::repo_identity`] — for a folder, over the
+	 *  directory the bookmark records, which is what
+	 *  [`crate::source_ops::declared_identity`] folds a declaration of that
+	 *  folder to. Carried rather than left to
+	 *  the reader: a surface deciding whether the row it is drawing is
+	 *  saved compares this against its own marketplace's identity, and a
+	 *  second spelling of that fold outside core is a second answer.
+	 */
+	repoIdentity: string,
+	/**
+	 *  The catalog this item is addressed through, or null where nothing
+	 *  on this machine can address the marketplace at all. It is what a
+	 *  row opens; a row with none opens nothing rather than opening some
+	 *  other marketplace's page.
+	 */
+	catalog: Catalog | null,
+	reach: Reach,
 };
 
 /**

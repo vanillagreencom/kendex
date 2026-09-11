@@ -61,25 +61,27 @@ pub struct MarketplaceRow {
     /// The canonical `owner/repo` a GitHub declaration folds to — what a
     /// directory row is matched against, however the subscription spells it.
     pub repo_key: Option<String>,
-    /// One string per repository on any host, from
-    /// [`kendex_core::source_ref::repo_identity`] — the same value
-    /// subscription dedup and update grouping compare. `repo_key` answers
-    /// only for GitHub, so it cannot tell two marketplaces apart anywhere
-    /// else; this is what a surface folding declarations into one
-    /// marketplace has to key on.
+    /// One string per marketplace, from
+    /// [`kendex_core::source_ops::declared_identity`]: a repository on any
+    /// host, or the directory a folder resolves to — the same value
+    /// subscription dedup, update grouping and a saved bookmark compare.
+    /// `repo_key` answers only for GitHub, so it cannot tell two
+    /// marketplaces apart anywhere else; this is what a surface folding
+    /// declarations into one marketplace has to key on.
     pub repo_identity: Option<String>,
     /// The declared folder, as the person typed it.
     pub path: Option<String>,
     /// Where that folder is on this machine, from
     /// [`kendex_core::source::path_root`]: the declaration resolved against
-    /// the place that declares it, slashed. A folder marketplace's
-    /// identity, the way `repo_identity` is a repository's. Two directories
+    /// the place that declares it, slashed. What `repo_identity` folds for
+    /// a folder, and what a bookmark of one records. Two directories
     /// never share a string, which the spelling alone cannot promise:
     /// rootedness is the running platform's answer, and a POSIX-rooted path
     /// on Windows joins onto each declaring scope's own drive. The join is
-    /// lexical — no `.`/`..` collapse, no symlink or case folding — so one
-    /// directory reached by a `..` spelling is a second card, which only
-    /// over-splits; that card's own places and controls stay right.
+    /// lexical — a `.` segment drops, but no `..` collapse, no symlink or
+    /// case folding — so one directory reached by a `..` spelling is a
+    /// second card, which only over-splits; that card's own places and
+    /// controls stay right.
     pub resolved_path: Option<String>,
     pub rev: Option<String>,
     /// The commit the subscription reads right now, when the cache holds one.
@@ -143,10 +145,12 @@ pub fn rows(env: &Env, scopes: &[Scope]) -> Result<Vec<MarketplaceRow>, String> 
                     .repo
                     .as_deref()
                     .and_then(kendex_core::source_ref::owner_repo),
-                repo_identity: row
-                    .repo
-                    .as_deref()
-                    .map(kendex_core::source_ref::repo_identity),
+                repo_identity: source_ops::declared_identity(
+                    env,
+                    scope,
+                    row.repo.as_deref(),
+                    row.path.as_deref(),
+                ),
                 repo: row.repo,
                 resolved_path: row.path.as_deref().map(|path| {
                     kendex_core::paths::slashed(&kendex_core::source::path_root(env, scope, path))

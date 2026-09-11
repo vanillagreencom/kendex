@@ -128,7 +128,11 @@ pub fn subscribe_project_to(
             });
         }
     };
-    let Some(decl) = personal.sources.get(source_name) else {
+    let Some(decl) = personal
+        .sources
+        .get(source_name)
+        .map(|decl| carried(env, decl))
+    else {
         return Err(CoreError::UnknownSource {
             name: source_name.to_owned(),
         });
@@ -142,12 +146,12 @@ pub fn subscribe_project_to(
         .clone()
         .or_else(|| decl.path.clone())
         .unwrap_or_default();
-    check_subscription(&manifest, Some(source_name), decl, &reference)?;
+    check_subscription(&manifest, Some(source_name), &decl, &reference)?;
     manifest
         .sources
         .insert(source_name.to_owned(), decl.clone());
     let mut report = persist_and_plan(env, &scope, manifest)?;
-    announce_subscription(env, &mut report, &scope, source_name, decl);
+    announce_subscription(env, &mut report, &scope, source_name, &decl);
     Ok(report)
 }
 
@@ -171,7 +175,11 @@ pub fn install_project_from_personal(
             });
         }
     };
-    let Some(decl) = personal.sources.get(source_name).cloned() else {
+    let Some(decl) = personal
+        .sources
+        .get(source_name)
+        .map(|decl| carried(env, decl))
+    else {
         return Err(CoreError::UnknownSource {
             name: source_name.to_owned(),
         });
@@ -204,6 +212,54 @@ pub fn install_project_from_personal(
     )?;
     announce_subscription(env, &mut report, &scope, source_name, &decl);
     Ok(report)
+}
+
+/// Install from one subscription into a place. A subscription installs
+/// where it is declared, and a personal one also installs into a project,
+/// which gains it in the same plan ([`install_project_from_personal`]). A
+/// project's own subscription installs nowhere else: carrying it out would
+/// declare a marketplace in a place that never chose it. `source` is the
+/// alias the declaring manifest keys it under, and replaces the request's
+/// own source.
+pub fn install_from(
+    env: &Env,
+    declared_in: &Scope,
+    source: &str,
+    destination: &Scope,
+    request: &crate::engine::ops::AddRequest,
+) -> Result<EngineReport> {
+    let request = crate::engine::ops::AddRequest {
+        source: Some(source.to_owned()),
+        ..request.clone()
+    };
+    match (declared_in, destination) {
+        (Scope::Global, Scope::Global) => crate::engine::ops::add(env, destination, &request),
+        (Scope::Project { .. }, Scope::Project { .. }) if declared_in == destination => {
+            crate::engine::ops::add(env, destination, &request)
+        }
+        (Scope::Global, Scope::Project { root }) => {
+            install_project_from_personal(env, root, source, &request)
+        }
+        (Scope::Project { root }, Scope::Global | Scope::Project { .. }) => {
+            Err(CoreError::SubscriptionInstallsWhereDeclared {
+                name: source.to_owned(),
+                root: root.clone(),
+            })
+        }
+    }
+}
+
+/// A personal declaration as a project carries it. A folder is carried as
+/// the directory it resolves to from the personal scope: a relative
+/// spelling copied as written resolves under the project instead, and
+/// names a directory the personal subscription never read.
+fn carried(env: &Env, decl: &SourceDecl) -> SourceDecl {
+    SourceDecl {
+        path: decl.path.as_deref().map(|path| {
+            crate::paths::slashed(&crate::source::path_root(env, &Scope::Global, path))
+        }),
+        ..decl.clone()
+    }
 }
 
 /// One repository per scope, whatever the spelling: a repo already

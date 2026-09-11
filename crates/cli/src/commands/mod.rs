@@ -4,6 +4,7 @@ pub mod adopt;
 pub mod advisory;
 pub mod apply_cmd;
 pub mod blocked;
+pub mod bookmark_cmd;
 pub mod check;
 pub mod check_catalog;
 pub mod commit_offer;

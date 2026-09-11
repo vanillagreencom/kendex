@@ -120,6 +120,9 @@ enum Command {
     /// Save a group of packages and install it into any project
     #[command(subcommand)]
     Template(commands::template_cmd::TemplateCommand),
+    /// Save marketplace packages and curated sets to find again
+    #[command(subcommand)]
+    Bookmark(commands::bookmark_cmd::BookmarkCommand),
     /// List everything observed on this machine
     #[command(alias = "ls")]
     List {
@@ -470,6 +473,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         Command::Project(cmd) => commands::project::run(&env, cmd)?,
         Command::Template(cmd) => commands::template_cmd::run(&env, cmd)?,
+        Command::Bookmark(cmd) => commands::bookmark_cmd::run(&env, cmd)?,
         Command::List {
             global,
             scope,

@@ -1,6 +1,7 @@
 import { type ComponentProps, useEffect } from "react";
 import type { AvailablePackage, Catalog, Scope } from "@/bindings";
 import { Ago } from "@/components/ago";
+import { BookmarkButton } from "@/components/bookmarks/bookmark-button";
 import { InstalledIn } from "@/components/marketplaces/installed-in";
 import { PackageName } from "@/components/package/package-name";
 import { ScoreTooltip } from "@/components/score-tooltip";
@@ -135,7 +136,7 @@ export function PackageRow({
 
   const updated = row.updatedAt ? Date.parse(row.updatedAt) : Number.NaN;
   return (
-    <TableRow className="cursor-pointer" {...open}>
+    <TableRow className="group cursor-pointer" {...open}>
       {/* Ticking a row is not opening it. The box draws as a button, and
           `opensOnActivate` reads a control inside the surface as having
           answered the click, so the row stays put under a tick. */}
@@ -247,6 +248,16 @@ export function PackageRow({
           )}
         </TableCell>
       ) : null}
+      {/* A control inside the row that does not open it: saving a
+          package is a note about where it came from, not a way into it. */}
+      <TableCell className="w-10">
+        <BookmarkButton
+          catalog={catalog}
+          item={{ is: "package", kind: row.kind }}
+          name={row.name}
+          reveal
+        />
+      </TableCell>
       <TableCell className="text-right">
         {row.state === "installed" ? (
           <span className="text-xs text-muted-foreground">Installed</span>

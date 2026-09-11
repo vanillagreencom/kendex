@@ -48,7 +48,8 @@ const folder = (
   row({
     repo: null,
     repoKey: null,
-    repoIdentity: null,
+    // What core folds a folder to: the directory it resolves to.
+    repoIdentity: resolvedPath,
     provenance: resolvedPath,
     path,
     resolvedPath,

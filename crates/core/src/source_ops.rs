@@ -2,7 +2,9 @@ use serde::Serialize;
 use specta::Type;
 
 mod repos;
-pub use repos::{RepoSubscription, repo_subscriptions};
+pub use repos::{
+    RepoSubscription, Subscription, declared_identity, repo_subscriptions, subscriptions,
+};
 
 use crate::engine::{EngineReport, PlanOptions, plan_scope};
 use crate::env::Env;
@@ -183,7 +185,9 @@ pub fn add_source(env: &Env, scope: &Scope, name: &str, reference: &str) -> Resu
 mod collection;
 mod subscribe;
 pub use collection::{CollectionStep, SourceAction, collection_steps};
-pub use subscribe::{Subscribed, install_project_from_personal, subscribe, subscribe_project_to};
+pub use subscribe::{
+    Subscribed, install_from, install_project_from_personal, subscribe, subscribe_project_to,
+};
 
 pub fn remove_source(env: &Env, scope: &Scope, name: &str) -> Result<EngineReport> {
     let mut manifest = crate::engine::ops::manifest_for_mutation(env, scope)?;

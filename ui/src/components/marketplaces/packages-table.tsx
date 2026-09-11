@@ -80,7 +80,8 @@ import {
 // only at a rung's own width.
 const NAME_ROOM = 288; // `max-w-72` on the name cell
 const SELECT_ROOM = 32; // `w-8` on the tick cell, at every width
-const KEPT_ROOM = SELECT_ROOM + NAME_ROOM + 112 + 80 + 128; // tick, Name, Kind, Safety, Status
+const BOOKMARK_ROOM = 40; // `w-10` on the bookmark cell, at every width
+const KEPT_ROOM = SELECT_ROOM + NAME_ROOM + 112 + 80 + BOOKMARK_ROOM + 128; // tick, Name, Kind, Safety, Bookmark, Status
 const OPTIONAL_ROOM: Record<keyof PackageColumns, number> = {
   marketplace: 160,
   places: 160,
@@ -447,6 +448,10 @@ export function PackagesTable({
             {columns.places ? (
               <TableHead className="w-40">{INSTALLED_IN_HEADING}</TableHead>
             ) : null}
+            {/* The bookmark control's column. Headed by nothing, like
+                the tick column: each row's own control says what it does,
+                and a word here would be a column label for a control. */}
+            <TableHead className="w-10" />
             <TableHead className="w-32 text-right">Status</TableHead>
           </TableRow>
         </TableHeader>

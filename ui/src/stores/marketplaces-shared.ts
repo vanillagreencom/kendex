@@ -66,9 +66,15 @@ export const catalogKey = (catalog: Catalog): string =>
  * marker reads, so it flips the moment a subscription lands or goes,
  * wherever that happened. Never `repoKey`: that is the GitHub `owner/repo`
  * and null everywhere else, so keying on it would read a GitLab or
- * self-hosted subscription as no subscription at all. */
+ * self-hosted subscription as no subscription at all. A folder carries an
+ * identity too, the directory it resolves to, and is left out: it is no
+ * repository. */
 export const subscribedKeys = (rows: MarketplaceRow[]): Set<string> =>
-  new Set(rows.flatMap((row) => (row.repoIdentity ? [row.repoIdentity] : [])));
+  new Set(
+    rows.flatMap((row) =>
+      row.repo !== null && row.repoIdentity ? [row.repoIdentity] : [],
+    ),
+  );
 
 /** The subscription the live list already declares for a repository the
  * page is browsing bare — `summary` left it bare because that subscription

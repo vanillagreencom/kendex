@@ -273,6 +273,15 @@ pub enum CoreError {
         repo: String,
     },
 
+    /// An install from a project's own subscription into any other place.
+    /// Only a personal subscription is carried into another place.
+    #[error(
+        "'{}' is subscribed in {}, so it installs only into that project — subscribe to it personally to install it anywhere else",
+        crate::names::shown(name),
+        crate::names::shown(&root.display().to_string())
+    )]
+    SubscriptionInstallsWhereDeclared { name: String, root: PathBuf },
+
     /// The typed no-default state the cross-source search catches: a bare
     /// add with no default subscription resolves by searching every
     /// subscription, never by guessing one.
@@ -462,6 +471,12 @@ pub enum CoreError {
     #[error("the bundle '{name}' is not readable in its catalog — {problem}")]
     UnreadableBundle { name: String, problem: String },
 
+    /// A catalog whose own config will not read, asked about one name in
+    /// it. `why` is the config's own account of what is wrong: any lookup
+    /// there finds nothing, which is not the catalog saying the name is gone.
+    #[error("{why}")]
+    CatalogUnusable { why: String },
+
     /// The check script this build embeds does not parse. An invariant of
     /// the binary rather than of anything on disk: `drift::hook::HOOK_SCRIPT`
     /// is both what the install writes and what the renderer places, so
@@ -643,6 +658,27 @@ pub enum CoreError {
         crate::names::shown(copy)
     )]
     TemplateCopyUnreadable { copy: String, why: String },
+
+    /// A bookmark kendex will not save, or a word it does not know in the
+    /// vocabulary a saved item is named by. `why` is the whole reason.
+    #[error(
+        "'{}' cannot be saved as a bookmark — {why}",
+        crate::names::shown(what)
+    )]
+    BookmarkUnusable { what: String, why: String },
+
+    #[error("nothing saved is called '{}'", crate::names::shown(name))]
+    NoSuchBookmark { name: String },
+
+    /// The bookmark index holds a row naming nothing a surface can act on.
+    /// Refused whole rather than skipped: a skipped row is a bookmark that
+    /// silently stops existing, and the next save would write the file back
+    /// without it.
+    #[error(
+        "{}: a saved item cannot be read — {why}",
+        crate::names::shown(&path.display().to_string())
+    )]
+    BookmarkIndexUnusable { path: PathBuf, why: String },
 
     /// No credential is stored on this machine — signing in is the fix.
     #[error("not signed in — run `kendex login` first")]

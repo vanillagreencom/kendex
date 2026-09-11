@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import type { InstallItem, InstallState, ItemKind } from "@/bindings";
+import { BookmarkButton } from "@/components/bookmarks/bookmark-button";
 import {
   BundleMemberLine,
   memberKey,
@@ -182,23 +183,30 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
           ) : null
         }
         action={
-          subscribed ? (
-            // One button, whatever is ticked: the whole set and the ticked
-            // members are two answers to the flow's own what question, not
-            // two buttons in two corners of the page.
-            <Button
-              disabled={busy || !detail || recordsUnknown}
-              onClick={() => startInstall()}
-            >
-              {INSTALL_ACTION}
-            </Button>
-          ) : catalog.by === "repo" ? (
-            <RepoAction
-              repo={catalog.repo}
-              summary={summary}
-              subscribeLabel="Subscribe to install"
+          <span className="flex items-center gap-2">
+            <BookmarkButton
+              catalog={catalog}
+              item={{ is: "bundle" }}
+              name={bundle}
             />
-          ) : null
+            {subscribed ? (
+              // One button, whatever is ticked: the whole set and the
+              // ticked members are two answers to the flow's own what
+              // question, not two buttons in two corners of the page.
+              <Button
+                disabled={busy || !detail || recordsUnknown}
+                onClick={() => startInstall()}
+              >
+                {INSTALL_ACTION}
+              </Button>
+            ) : catalog.by === "repo" ? (
+              <RepoAction
+                repo={catalog.repo}
+                summary={summary}
+                subscribeLabel="Subscribe to install"
+              />
+            ) : null}
+          </span>
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto">

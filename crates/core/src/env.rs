@@ -170,6 +170,14 @@ impl Env {
         self.app_config_dir().join("templates.toml")
     }
 
+    /// The bookmark index — marketplace packages and curated sets saved to
+    /// find again, the person's and machine-local, beside the settings file
+    /// the rest of their preferences live in. It records identities only:
+    /// a bookmark keeps no copy of what it names, so it has no store.
+    pub fn bookmarks_file(&self) -> PathBuf {
+        self.app_config_dir().join("bookmarks.toml")
+    }
+
     pub fn global_manifest_file(&self) -> PathBuf {
         self.app_config_dir().join(crate::manifest::MANIFEST_FILE)
     }

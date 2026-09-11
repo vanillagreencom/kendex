@@ -93,9 +93,9 @@ export function displayName({
 /** One subscription row's display identity. */
 export function marketplaceDisplay(row: MarketplaceRow): MarketplaceDisplay {
   // A folder marketplace is the one with no repository behind it, whatever
-  // it calls itself: `resolvedPath` is core's answer for the declaration,
-  // and `repoIdentity` is core's answer for a remote on any host.
-  const local = row.repo === null && row.repoIdentity === null;
+  // it calls itself. Not the one with no identity: core folds a folder's
+  // resolved directory into `repoIdentity` as it folds a remote.
+  const local = row.repo === null;
   return {
     name: displayName({
       meta: row.meta,
@@ -175,7 +175,7 @@ export const displayFor = ({
     (catalog.by === "repo" ? catalog.repo : summary?.provenance) ??
     null;
   const alias = catalog.by === "repo" ? catalog.repo : catalog.source;
-  const local = row ? row.repo === null && row.repoIdentity === null : false;
+  const local = row ? row.repo === null : false;
   return {
     name: displayName({
       meta,
