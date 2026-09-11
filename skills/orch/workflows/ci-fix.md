@@ -97,7 +97,7 @@ Worktree: [WORKTREE_PATH]
 2. Fix the issue, editing files under `[WORKTREE_PATH]` by absolute path.
 3. Run the project's validation command from `[WORKTREE_PATH]`.
 4. If the target failure is fixed but OTHER failures remain: still commit, and note them in the message.
-5. Stage and commit: `git -C [WORKTREE_PATH] add -A`, then `git -C [WORKTREE_PATH] commit -m "fix([ISSUE_ID]): [DESCRIPTION]"`, appending `[validate: FAILING_CHECK]` to the message when other failures remain.
+5. Stage and commit: `git -C [WORKTREE_PATH] add -A`, then `git -C [WORKTREE_PATH] commit -m "fix([ISSUE_ID]): [DESCRIPTION]"`, adding `-m "[validate: FAILING_CHECK]"` as the body, never to the header, when other failures remain.
 6. Push: `git -C [WORKTREE_PATH] push`.
 
 Report: what was fixed, the validate status, and any unrelated failures.
