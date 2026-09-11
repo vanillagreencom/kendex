@@ -534,7 +534,11 @@ extractor_mutant() { # extractor_mutant DIR FROM TO — a lane copy, one line re
   [ "$(grep -Fxc -- "$2" "$1/tools/bash32-parse")" -eq 0 ] || return 1
 }
 
-# A row is `label|from|to|fixture|inner key`. The fixture is one line of
+# A row is `label|from|to|fixture|inner`, `inner` being the refusal the pass
+# under 3.2 writes as `<key>=<value>`. The value `nonzero` is any nonzero
+# status: `extractor=` carries awk's own exit status, and awks disagree on it
+# (BSD awk and mawk exit 2 on a program that does not parse, gawk and busybox
+# exit 1). The fixture is one line of
 # correct Bash 3.2 that the shipped extractor reads and the copy cannot; both
 # fixtures also carry a command substitution, so a copy that reached the body
 # parse at all would have had one to report.
@@ -551,7 +555,7 @@ extractor_mutant() { # extractor_mutant DIR FROM TO — a lane copy, one line re
 # of a line that never existed passes whether or not the replacement landed.
 extractor_rows="\
 a file the scan loses track of ends the run|      if (substr(line, i + 1, 1) == \"(\" && word_start(prev)) {|      if (0) {|shifted=0; (( shifted = 1 << 2 ))|unscannable=1
-an extractor that cannot run ends the run|BEGIN { id = first; file = \"\" }|BEGIN { id = first; file = \"\"|shifted=0|extractor=1"
+an extractor that cannot run ends the run|BEGIN { id = first; file = \"\" }|BEGIN { id = first; file = \"\"|shifted=0|extractor=nonzero"
 
 while IFS='|' read -r label from to fixture inner; do
   [ -n "$label" ] || continue
@@ -563,11 +567,19 @@ while IFS='|' read -r label from to fixture inner; do
   printf '%s\n' '#!/usr/bin/env bash' "$fixture" 'seen="$(printf %s body)"' \
     'printf "%s\n" "$seen"' >"$EW/world/real.sh"
   run "$EW/tools/bash32-parse" "$EW/world"
-  if [ "$RC" -eq 2 ] && [ "$FIRST" = "no-verdict=2" ] &&
-    [ "${OUT#*"bash32-parse: $inner"}" != "$OUT" ]; then
+  key="${inner%%=*}"
+  want="${inner#*=}"
+  got="$(printf '%s\n' "$OUT" | sed -n "s/^bash32-parse: $key=//p")"
+  matched=no
+  case "$want:$got" in
+  nonzero:'' | nonzero:0 | nonzero:*[!0-9]*) ;;
+  nonzero:*) matched=yes ;;
+  *) [ "$got" != "$want" ] || matched=yes ;;
+  esac
+  if [ "$RC" -eq 2 ] && [ "$FIRST" = "no-verdict=2" ] && [ "$matched" = yes ]; then
     ok "$label"
   else
-    bad "$label (want rc=2 first=no-verdict=2 carrying $inner, got rc=$RC first=$FIRST)" \
+    bad "$label (want rc=2 first=no-verdict=2 carrying $inner, got rc=$RC first=$FIRST $key=${got:--})" \
       "$(printf '%s' "$OUT" | tr '\n' ';')"
   fi
 done <<EOF
