@@ -194,13 +194,13 @@ that completed successfully discards the stale failures; a failed newest
 run, or a cancelled run with no newer or fresher sibling, stays terminal.
 A missing replacement reaches the timeout rather than passing.
 
-A rollup of nothing but settled checks, none ever seen in progress, is either
-the prior run's leftovers or CI that finished before the wait started. It
-completes once the stale window has measured consecutive polls showing one
-unchanged rollup of every check's name and state: 90 seconds of wall clock,
-not a count of polls, which at the default interval is the second poll. Any
-other poll starts the window over, and short of it the deadline reports
-status "timeout" with verdict "pending".
+A rollup of settled checks with at least one passed, none ever seen in
+progress, is either the prior run's leftovers or CI that finished before the
+wait started. It completes once the stale window has measured consecutive
+polls showing one unchanged rollup of every check's name and state: 90
+seconds of wall clock, not a count of polls, which at the default interval is
+the second poll. Any other poll starts the window over, and short of it the
+deadline reports status "timeout" with verdict "pending".
 
 JSON output (always when --json):
   {
@@ -831,6 +831,9 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
     # which drop skipped entries: a check registering late as SKIPPED is a
     # different rollup and starts the window over.
     settled_this_poll=true
+    # The clock the streak is stamped and measured against is the one this
+    # rollup was read at, not the one before the request that fetched it.
+    update_elapsed
     settled_key=$(jq -cS '[.[] | {name, state}] | sort_by(.name, .state)' <<<"$checks_json")
     if [ "$settled_key" != "$stale_key" ]; then
       stale_key="$settled_key"

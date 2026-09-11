@@ -284,7 +284,7 @@ After any fix-up push: push → the Restart check, and on a restart wait for a N
 | `status=complete`, `verdict=fail` | → § 5.1 |
 | `status=timeout` or `status=error` | Re-run once. If it repeats, `auto-recommended` records `ci-status-unconfirmed`; `ask` presents `Skip CI` \| `Retry` \| `Abort`, with `Retry` recommended |
 
-A PR already green when the wait started reaches the first row, not the last: ci-wait pairs `verdict=pass` with `status=complete` alone, so neither a timeout nor an error can carry it.
+A PR already green when the wait started reaches the first row, never this one: `ci-wait --help` pairs `verdict=pass` with `status=complete` alone.
 
 ### 5.1 CI Failure Recovery
 
