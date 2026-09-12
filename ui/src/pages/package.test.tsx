@@ -1220,6 +1220,25 @@ describe("the package page's file actions", () => {
     expect(back).not.toHaveBeenCalled();
     expect(host.textContent).not.toContain(MISSING_FILES_NOTICE_TITLE);
     expect(buttons(host)).toContain(OPEN_IN_LABEL);
+
+    // The hold ended with the scan that showed the copy: the package
+    // removed from the restored page is a package the scan lost, and the
+    // page leaves the way it does for any other.
+    await act(async () => {
+      useScanStore.setState((state) => ({
+        result: {
+          harnesses: [],
+          items: [],
+          missingProjects: [],
+          readProjects: [],
+          warnings: [],
+        },
+        generation: state.generation + 1,
+      }));
+      joinAnswered([]);
+    });
+    await settle();
+    expect(back).toHaveBeenCalled();
     useScanStore.setState({ generation });
   });
 

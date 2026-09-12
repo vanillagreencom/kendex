@@ -212,13 +212,17 @@ export function PackagePage() {
   // clear the fact the moment the file is back, and a scan that failed
   // or is still out holds no copy — and a page that trusted either alone
   // in that window would leave, or go blank, over a repair that worked.
-  // Keyed by the place, so a link to another package starts unheld.
+  // Keyed by the place, so a link to another package starts unheld, and
+  // released the moment the scan shows the copy: the hold bridges the
+  // repair's readback and nothing after it, so a package removed from
+  // the restored page leaves the way any removed package does.
   const placeKey = asked
     ? `${asked.kind}:${asked.name}:${scopeKey(asked.scope)}`
     : null;
   const [repairDrawnFor, setRepairDrawnFor] = useState<string | null>(null);
   useEffect(() => {
-    if (missingHere && primary === undefined) setRepairDrawnFor(placeKey);
+    if (primary !== undefined) setRepairDrawnFor(null);
+    else if (missingHere) setRepairDrawnFor(placeKey);
   }, [missingHere, primary, placeKey]);
   const held = placeKey !== null && repairDrawnFor === placeKey;
 
