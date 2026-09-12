@@ -81,8 +81,12 @@ Lanes:
                   reader fed a here-string or a file, a reader that runs to
                   the end of its input (tr, sed, wc), a command after ||
                   rather than after a pipe, or the same text on a comment
-                  line. A file with no pipefail preamble of its own is out of
-                  scope even where a sourcing caller supplies one.
+                  line. A quoted message IS read as a pipeline when it also
+                  carries a command substitution: the span is kept whole
+                  because the substitution runs, and the pipe inside it
+                  cannot be told from the one outside. A file with no
+                  pipefail preamble of its own is out of scope even where a
+                  sourcing caller supplies one.
   unwired-suite   a new suite file no runner invokes. Suites are
                   tests/*.test.sh, tests/test-*.sh, a shell file with a
                   test-<name> basename and no extension, *.test.ts, *.test.js
@@ -902,52 +906,105 @@ is_comment_line() { # LINE — leading-whitespace-then-# only; a trailing commen
 # one. A double-quoted span still runs whatever a `$(` inside it opens, so
 # that one is kept whole. The delimiters stay, so the command-position anchor
 # every line-shape lane carries still reads the word boundary a quote makes.
-# A pair is required: the lone apostrophe of `don't` closes no span, and a
-# string whose closing quote is on another line is not one of these.
 #
 # One blanking step for every lane that judges a line as this script's own
 # commands (both the fail-open shapes the text decides, mktemp-trap,
 # early-close-pipe). hardcoded-temp-path is not one of them: its subject is
 # the quoted literal itself, in any language. masked-returns is not either,
 # because a parse of the whole file owns that lane's reading.
+#
+# A double-quoted span ends at the first `"` OUTSIDE any substitution it
+# opened, never at the next `"` in the text: shell restarts quoting inside
+# `$( … )`, so the inner quotes of `x="$(cmd "$arg")"` belong to the
+# substitution. Ending the span at one of those would cut the line at the
+# inner quote and drop the rest of the command, including the `)` that
+# `substitution_status_checked` reads and the pipeline `early-close-pipe`
+# looks for. `st` is the nesting stack that holds that property, innermost
+# context last: `'` a single-quoted span, `"` a double-quoted one, `(` a
+# substitution or subshell. Only `$(` opens one from inside double quotes,
+# where a bare paren is literal; inside a substitution every quote opens
+# again. A span that never closes on this line is not a span: its opening
+# quote is emitted as ordinary text and the scan resumes after it, so an
+# unpaired apostrophe cannot swallow a double-quoted span behind it.
+#
 # In-shell and out through a global, never a subprocess: this runs on every
 # added shell line that carries a quote, and a fork per line costs more than
-# all the lanes it feeds. Each turn takes the leftmost span that actually
-# closes, so an unpaired apostrophe cannot swallow a double-quoted span
-# behind it.
+# all the lanes it feeds. Each turn jumps to the next character its own state
+# cares about rather than walking the line one character at a time.
 shell_command_text() { # LINE — sets SHELL_COMMAND_TEXT
-  local rest="$1" out="" pre="" body="" q="" sq_pre="" dq_pre="" sq_closes=0 dq_closes=0
+  local rest="$1" out="" st="" top="" span="" openq="" resume="" pre="" tok=""
   while :; do
-    sq_pre="${rest%%\'*}"
-    dq_pre="${rest%%\"*}"
-    sq_closes=0
-    dq_closes=0
-    if [ "$sq_pre" != "$rest" ]; then
-      case "${rest#"$sq_pre'"}" in *\'*) sq_closes=1 ;; esac
-    fi
-    if [ "$dq_pre" != "$rest" ]; then
-      case "${rest#"$dq_pre\""}" in *\"*) dq_closes=1 ;; esac
-    fi
-    if [ "$sq_closes" = 1 ] && { [ "$dq_closes" = 0 ] || [ "${#sq_pre}" -lt "${#dq_pre}" ]; }; then
-      q="'"
-      pre="$sq_pre"
-    elif [ "$dq_closes" = 1 ]; then
-      q='"'
-      pre="$dq_pre"
-    else
+    case "$top" in
+      '') pre="${rest%%[\"\']*}" ;;
+      "'") pre="${rest%%\'*}" ;;
+      '"') pre="${rest%%[\"\$]*}" ;;
+      *) pre="${rest%%[\"\'()]*}" ;;
+    esac
+    if [ "$pre" = "$rest" ]; then
+      if [ -n "$st" ]; then
+        out="$out$openq"
+        rest="$resume"
+        st=""
+        top=""
+        span=""
+        continue
+      fi
+      out="$out$rest"
       break
     fi
-    rest="${rest#"$pre$q"}"
-    body="${rest%%"$q"*}"
-    rest="${rest#"$body$q"}"
-    if [ "$q" = '"' ]; then
-      case "$body" in
-        *'$('*) out="$out$pre$q$body$q"; continue ;;
-      esac
+    tok="${rest#"$pre"}"
+    tok="${tok%"${tok#?}"}"
+    rest="${rest#"$pre$tok"}"
+    if [ -z "$st" ]; then
+      out="$out$pre"
+      openq="$tok"
+      span="$tok"
+      resume="$rest"
+      st="$tok"
+      top="$tok"
+      continue
     fi
-    out="$out$pre$q$q"
+    span="$span$pre$tok"
+    case "$top" in
+      "'" | '"')
+        if [ "$tok" = "$top" ]; then
+          st="${st%?}"
+          top="${st#"${st%?}"}"
+        elif [ "$tok" = '$' ]; then
+          case "$rest" in
+            '('*)
+              span="$span("
+              rest="${rest#?}"
+              st="$st("
+              top="("
+              ;;
+          esac
+        fi
+        ;;
+      *)
+        case "$tok" in
+          ')')
+            st="${st%?}"
+            top="${st#"${st%?}"}"
+            ;;
+          *)
+            st="$st$tok"
+            top="$tok"
+            ;;
+        esac
+        ;;
+    esac
+    if [ -z "$st" ]; then
+      case "$span" in
+        \'*) out="$out''" ;;
+        *'$('*) out="$out$span" ;;
+        *) out="$out\"\"" ;;
+      esac
+      span=""
+      openq=""
+    fi
   done
-  SHELL_COMMAND_TEXT="$out$rest"
+  SHELL_COMMAND_TEXT="$out"
 }
 
 # The `|| true` shape on a command whose exit 2 means "could not read" or

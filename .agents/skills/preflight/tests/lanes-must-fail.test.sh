@@ -71,10 +71,23 @@ pf_world() {
     strict) printf '#!/usr/bin/env bash\necho fresh\n' >"$R/scripts/fresh.sh" ;;
     swallow) printf '#!/usr/bin/env bash\nset -euo pipefail\necho existing\ngrep -q x -- "$1" || true\n' >"$R/scripts/existing.sh" ;;
     swallowsubst) printf '#!/usr/bin/env bash\nset -euo pipefail\necho existing\nn="$(git rev-list --count HEAD || true)"\necho "$n"\n' >"$R/scripts/existing.sh" ;;
+    # The same shape where the substitution carries a quoted argument of its
+    # own. A read that ends the span at that inner quote loses the `|| true`
+    # with the rest of the command, and the lane goes quiet on the line it
+    # exists for.
+    swallownested) printf '#!/usr/bin/env bash\nset -euo pipefail\nref="$1"\nn="$(git rev-list --count "$ref" || true)"\necho "$n"\n' >"$R/scripts/existing.sh" ;;
     # Written from the shell, never with cat reading a file: a cat-fed
     # fixture pushes several hundred KB before it blocks, so it passes
     # either way.
     earlyclose) printf '#!/usr/bin/env bash\nset -euo pipefail\nif echo "$1" | grep -q x; then echo hit; fi\n' >"$R/scripts/existing.sh" ;;
+    # The same 141 inside a substitution that carries a quoted argument. The
+    # pipeline is halved so this suite's own committed line does not carry
+    # the shape at a command position.
+    earlyclosenested)
+      ecn_writer='n="$(printf "%s\n" "$1" '
+      ecn_reader='| head -1)"'
+      printf '#!/usr/bin/env bash\nset -euo pipefail\n%s%s\necho "$n"\n' "$ecn_writer" "$ecn_reader" >"$R/scripts/existing.sh"
+      ;;
     # The same lane inside the test tree, on the mid-pipeline shape: the
     # reader is two stages down and another stage runs after it, and the
     # suite's own pipefail is what turns the writer's SIGPIPE into the 141
@@ -188,7 +201,9 @@ an mktemp assignment in an errexit-less file fails as fail-open|mktemp|-|-|1|scr
 a new script that never sets -e/-u/pipefail fails as fail-open|strict|-|-|1|scripts/fresh.sh:0: [fail-open]|new shell file without strict mode
 a grep whose status or-true drops fails as fail-open, naming the command|swallow|-|-|1|scripts/existing.sh:4: [fail-open]|grep || true swallows exit 2
 the shape is caught inside a command substitution too|swallowsubst|-|-|1|scripts/existing.sh:4: [fail-open]|git || true swallows exit 2
+a quoted argument inside that substitution does not end its span early|swallownested|-|-|1|scripts/existing.sh:4: [fail-open]|git || true swallows exit 2
 a condition piping echo into grep -q fails as early-close-pipe|earlyclose|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
+a pipeline inside a substitution that carries a quoted argument is still one|earlyclosenested|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
 a suite that sets pipefail is judged too, mid-pipeline reader included|earlyclosesuite|-|-|1|tests/known.test.sh:3: [early-close-pipe]|-
 an assignment whose guard errexit kills first fails as fail-open|bareassign|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
 an operator inside the substitution does not exempt the assignment|bareinner|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit

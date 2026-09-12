@@ -713,4 +713,53 @@ fires "unquoting the scratch line makes the mktemp invocation this script's" "sc
 fires "unquoting the window line makes the early-closing pipeline this script's" "scripts/writer.sh:6: [early-close-pipe]"
 fires "unquoting the assignment makes the unchecked mktemp this lib's" "scripts/lib/tpl.sh:3: [fail-open] unchecked mktemp"
 
+echo "=== a substitution's own quoted arguments belong to the substitution ==="
+seed nestedsubst
+mkdir -p "$R/scripts/lib"
+# Shell restarts quoting inside `$( … )`, so the span of x="$(cmd "$arg")"
+# ends at the LAST quote, not at the inner one. Ending it early cuts the line
+# at the inner argument and drops the rest of the command with it: the `)`
+# that the status test reads, and the pipeline the early-close lane looks
+# for. Both directions are one line each.
+cat >"$R/scripts/nested.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+base="$1"
+# The status is captured on the same line, so the test below is reachable —
+# and it is reachable only if the `)` before `||` survived the read.
+ROOT="$(git -C "$base" rev-parse --show-toplevel 2>/dev/null)" || ROOT=""
+if [ -z "$ROOT" ]; then
+  exit 1
+fi
+echo "$ROOT"
+EOF
+# An errexit-less lib, where the mktemp assignment shape is judged: its
+# status is checked by the OR-list the mangled read used to swallow.
+cat >"$R/scripts/lib/scratch.sh" <<'EOF'
+#!/usr/bin/env bash
+# Sourced by the scripts beside it: the caller's shell owns the mode.
+make_scratch() {
+  TMP="$(mktemp -d "$1/xxXXXX")" || return 1
+  trap 'rmdir -- "${TMP:?}"' EXIT
+}
+EOF
+git -C "$R" add -A
+run_pf
+clean "a substitution carrying its own quoted argument keeps the status test that follows its closing paren" 2
+
+echo "=== control: the early-close shape inside such a substitution still fires ==="
+# Halved so this suite's own committed line does not carry the shape at a
+# command position; the fixture line joins the halves.
+ns_head='n="$(printf "%s\n" "$1" '
+ns_tail='| head -1)"'
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'set -euo pipefail\n'
+  printf '%s%s\n' "$ns_head" "$ns_tail"
+  printf 'echo "$n"\n'
+} >"$R/scripts/nested.sh"
+git -C "$R" add -A
+run_pf
+fires "a pipeline inside a substitution that also carries a quoted argument is still a pipeline" "scripts/nested.sh:3: [early-close-pipe]"
+
 pf_summary
