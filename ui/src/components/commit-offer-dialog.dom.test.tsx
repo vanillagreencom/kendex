@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectOffer, Refused } from "@/bindings";
 import { EARLIER_WORD } from "@/components/project-changes/change-rows";
 import {
@@ -180,100 +180,6 @@ describe("the commit refused where the checkout could not be put back", () => {
       "This checkout is back on main and kendex/renders is gone.",
     );
     expect(buttons()).toContain("Commit again");
-  });
-});
-
-// The box holding a program's words is about twelve lines tall and
-// scrolls. git and gh write their refusal under whatever a hook printed on
-// the way, so a box left at the top opens on the hook and puts the reason
-// below the fold. jsdom lays nothing out and reports every height as zero,
-// so the room is supplied here, the way the ResizeObserver stub supplies a
-// width.
-describe("the box holding what a program said", () => {
-  const ROOM = 500;
-
-  beforeEach(() => {
-    Object.defineProperty(HTMLPreElement.prototype, "scrollHeight", {
-      configurable: true,
-      get: () => ROOM,
-    });
-  });
-
-  afterEach(() => {
-    Reflect.deleteProperty(HTMLPreElement.prototype, "scrollHeight");
-  });
-
-  const pushRefused = (said: string[], timedOut: boolean) => ({
-    at: "pushRefused" as const,
-    refused: { step: "the push", said, timedOut, seconds: 30, gh: false },
-    sha: "c9517af",
-    branch: "main",
-    files: 1,
-    canOpen: false,
-    before: null,
-  });
-
-  // One mounted tree through both cases. A step that ran out of time has no
-  // words and so no box, and the words and the bound reach the same tree
-  // position: drawn from separate mounts, neither case would see the other.
-  it("opens at its end, and is absent where the step ran out of time", async () => {
-    useCommitOfferStore.setState({
-      stage: pushRefused(
-        [
-          "pre-push: lane changelog ok",
-          "pre-push: result=0",
-          "error: failed to push some refs to 'git@github.com:acme/site.git'",
-        ],
-        false,
-      ),
-    });
-    const host = mount(<CommitOfferDialog />);
-    await settle();
-
-    const box = host.ownerDocument.body.querySelector("pre");
-    expect(box, "no box holding the words").not.toBeNull();
-    expect((box as HTMLPreElement).scrollTop).toBe(ROOM);
-    expect(box?.textContent).toContain("error: failed to push some refs");
-
-    await act(async () => {
-      useCommitOfferStore.setState({ stage: pushRefused([], true) });
-    });
-    await settle();
-
-    expect(host.ownerDocument.body.querySelector("pre")).toBeNull();
-    expect(host.ownerDocument.body.textContent).toContain("30");
-  });
-
-  // The commit path is the other direction, and it has to stay where it
-  // was. git sends a commit hook's stdout to its own stderr, so the
-  // reorder leaves those words untouched: the last line is the chain
-  // saying the commit was blocked, with the lanes that failed above it.
-  it("stays at its top where the commit was refused", async () => {
-    useCommitOfferStore.setState({
-      stage: {
-        at: "commitRefused",
-        refused: {
-          step: "the commit",
-          said: [
-            "changelog-entries: the fragment exceeds the character cap",
-            "pre-commit: violations \u2014 commit blocked; see the failures above",
-          ],
-          timedOut: false,
-          seconds: 30,
-          gh: false,
-        },
-        stillStaged: null,
-        abandoned: true,
-        notPutBack: null,
-      },
-    });
-    const host = mount(<CommitOfferDialog />);
-    await settle();
-
-    const box = host.ownerDocument.body.querySelector("pre");
-    expect(box, "no box holding the words").not.toBeNull();
-    expect((box as HTMLPreElement).scrollTop).toBe(0);
-    expect(box?.textContent).toContain("changelog-entries");
   });
 });
 

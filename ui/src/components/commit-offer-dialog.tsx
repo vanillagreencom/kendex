@@ -1,5 +1,5 @@
 import { CheckIcon, CopyIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ProjectOffer, Refused, TangledFile } from "@/bindings";
 import { ExternalLink } from "@/components/external-link";
 import { offerEntries } from "@/components/project-changes/change-rows";
@@ -234,43 +234,15 @@ function Paths({ paths }: { paths: string[] }) {
 
 /** A program's own words, whole, one line at a time, in order. Nothing is
  *  summarised, reworded or truncated. A step that ran out of time has no
- *  words to show, so it says what it stopped waiting for instead.
- *
- *  The box holds about twelve lines and scrolls, and it opens at its top.
- *  `openAtEnd` is for the steps whose last line is the one worth reading:
- *  a push and a pull request, where git and gh write their own refusal
- *  under whatever a hook printed on stdout on the way.
- *
- *  It is never passed for a commit. git sends a commit hook's stdout to
- *  its own stderr, so those words arrive in the order the hook wrote them
- *  and end on whatever it says last. A chain that runs every lane ends on
- *  a line saying the commit was blocked, with the lanes that failed above
- *  it, and opening at the end would scroll exactly those off. */
-function Said({
-  refused,
-  openAtEnd = false,
-}: {
-  refused: Refused;
-  openAtEnd?: boolean;
-}) {
-  const box = useRef<HTMLPreElement>(null);
-  const words = refused.said.join("\n");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: which words are drawn, not what the effect reads
-  useEffect(() => {
-    const element = box.current;
-    if (!openAtEnd || !element) return;
-    element.scrollTop = element.scrollHeight;
-  }, [openAtEnd, words]);
+ *  words to show, so it says what it stopped waiting for instead. */
+function Said({ refused }: { refused: Refused }) {
   if (refused.timedOut) {
     return <p className="text-sm">{didNotFinish(refused.seconds)}</p>;
   }
   return (
     <Section title={saidLabel(refused)}>
-      <pre
-        ref={box}
-        className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs"
-      >
-        {words}
+      <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">
+        {refused.said.join("\n")}
       </pre>
     </Section>
   );
@@ -724,7 +696,7 @@ function PushRefusedState({
       </DialogHeader>
       <div className="space-y-4 text-sm">
         <Row label={COMMIT_ROW_LABEL}>{commitOn(sha, branch)}</Row>
-        <Said refused={refused} openAtEnd />
+        <Said refused={refused} />
         <p>{commitIsOn(branch)}</p>
       </div>
       <DialogFooter>
@@ -762,7 +734,7 @@ function PullRequestRefusedState({
       <div className="space-y-4 text-sm">
         <Row label={COMMIT_ROW_LABEL}>{commitOn(sha, branch)}</Row>
         <Row label={BRANCH_ROW_LABEL}>{remoteBranch(remote, branch)}</Row>
-        <Said refused={refused} openAtEnd />
+        <Said refused={refused} />
         <p>{branchIsOn(remote)}</p>
       </div>
       <DialogFooter>
