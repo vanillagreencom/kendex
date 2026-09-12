@@ -509,6 +509,17 @@ printf 'sleep: cannot continue\n' >&2
 exit 254
 SHIM
 chmod +x "$NOISY/sleep"
+# The same treatment for the probe whose failure becomes a REFUSAL rather than
+# an abort. That refusal is documented as stderr's first line, which only holds
+# because every read on its path silences its own diagnostic; a jq that speaks
+# before it dies is what tells the two apart, and the silent shim cannot.
+mkdir -p "$PROBE_SHIMS/noisy-jq"
+cat > "$PROBE_SHIMS/noisy-jq/jq" <<'SHIM'
+#!/usr/bin/env bash
+printf 'jq: error: noisy diagnostic\n' >&2
+exit 254
+SHIM
+chmod +x "$PROBE_SHIMS/noisy-jq/jq"
 NEVER="$TMP_ROOT/probe-never.json"
 probe_table() {
   local row label probe args expect
@@ -526,7 +537,9 @@ probe_table \
   "a sleep that cannot run ends the wait with its own status, keyed^sleep^$WAITING^rc=254 stderr_abort=254" \
   "a sleep that speaks first still gets its status keyed^noisy-sleep^$WAITING^rc=254 stderr_first~sleep:+cannot+continue=true stderr_abort=254" \
   "an unreadable verdict refuses instead of polling on^jq^$WAITING^rc=2 stderr_first~dev-artifact-check:+verdict-unreadable+file=$NEVER=true" \
-  "single-shot refuses the same way, not as a bare rejection^jq^--file $NEVER^rc=2 stderr_first~dev-artifact-check:+verdict-unreadable+file=$NEVER=true"
+  "single-shot refuses the same way, not as a bare rejection^jq^--file $NEVER^rc=2 stderr_first~dev-artifact-check:+verdict-unreadable+file=$NEVER=true" \
+  "a jq that speaks first is still not ahead of the refusal, either mode^noisy-jq^$WAITING^rc=2 stderr_first~dev-artifact-check:+verdict-unreadable+file=$NEVER=true" \
+  "the same holds single-shot^noisy-jq^--file $NEVER^rc=2 stderr_first~dev-artifact-check:+verdict-unreadable+file=$NEVER=true"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

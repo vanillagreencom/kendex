@@ -217,8 +217,9 @@ rebase; the orchestrator decides what it means for the round.
 
 Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error or when a
 probe this check runs could not answer (the verdict was unreadable). A status 2
-refusal is written by this script before anything else, so it IS stderr's first
-line.
+refusal IS stderr's first line, and stays first by construction: every probe
+read whose failure becomes a refusal silences its own diagnostic, so nothing a
+helper wrote can precede the keyed line.
 
 Any status outside 0, 1 and 2 is an abort: no result was produced, and under
 --wait the round is no longer watched. stderr then CARRIES `dev-artifact-check:
@@ -402,6 +403,10 @@ emit() {
   else
     verdict="retry"
   fi
+  # Silenced for POSITION, not to hide anything. Every probe read whose failure
+  # becomes a keyed refusal swallows its own diagnostic, because the refusal is
+  # documented as stderr's first line and a diagnostic written before it would
+  # push it to second. The cause is not lost: the refusal names it.
   jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" --arg warning "$warning" \
     --arg hint "$hint" --arg verdict "$verdict" \
     --argjson files "$files" --argjson validate "${validate:-null}" --argjson validate_note "${validate_note:-null}" \
@@ -409,7 +414,7 @@ emit() {
       warning: (if $warning == "" then null else $warning end),
       hint: (if $hint == "" then null else $hint end),
       files: $files,
-      validate: $validate, validate_note: $validate_note}'
+      validate: $validate, validate_note: $validate_note}' 2>/dev/null
 }
 
 # The artifact's internal round_id must equal the expected token. Guards against
@@ -858,7 +863,7 @@ check_once() {
   require_round_record_flag
   out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo" "$round_record")" || rc=$?
   if (( rc == 0 )); then
-    verdict="$(jq -r '.verdict' <<<"$out")" || {
+    verdict="$(jq -r '.verdict' <<<"$out" 2>/dev/null)" || {
       message verdict-unreadable >&2
       return 2
     }

@@ -378,6 +378,17 @@ printf 'sleep: cannot continue\n' >&2
 exit 254
 SHIM
 chmod +x "$PROBE_SHIMS/noisy-sleep/sleep"
+# The same treatment for the probe whose failure becomes a REFUSAL rather than
+# an abort. That refusal is documented as stderr's first line, which only holds
+# because file_mtime silences both stat spellings; a stat that speaks before it
+# dies is what tells the two apart, and the silent shim cannot.
+mkdir -p "$PROBE_SHIMS/noisy-stat"
+cat > "$PROBE_SHIMS/noisy-stat/stat" <<'SHIM'
+#!/usr/bin/env bash
+printf 'stat: cannot read file system information\n' >&2
+exit 254
+SHIM
+chmod +x "$PROBE_SHIMS/noisy-stat/stat"
 probe_table() {
   local row label probe spec args expect
   for row in "$@"; do
@@ -395,7 +406,9 @@ probe_table \
   "a sleep that cannot run ends the wait with its own status, keyed|sleep||$WAITING|rc=254 stderr_abort=254 stdout_nonempty=false" \
   "a sleep that speaks first still gets its status keyed|noisy-sleep||$WAITING|rc=254 stderr_code=sleep: stderr_abort=254" \
   "a jq that cannot run already answers, and takes no keyed line|jq||$WAITING|rc=1 stderr=empty ok=false reason=invalid" \
-  "an unreadable mtime refuses, never calls a fresh artifact stale|stat|review-freshrev-1@after=qa_ok|%W freshrev %D --wait 20 --interval 1|rc=2 stderr_code=mtime stdout_nonempty=false"
+  "an unreadable mtime refuses, never calls a fresh artifact stale|stat|review-freshrev-1@after=qa_ok|%W freshrev %D --wait 20 --interval 1|rc=2 stderr_code=mtime stdout_nonempty=false" \
+  "a stat that speaks first is still not ahead of the refusal|noisy-stat|review-freshrev-1@after=qa_ok|%W freshrev %D --wait 20 --interval 1|rc=2 stderr_code=mtime stdout_nonempty=false" \
+  "the same holds without --wait|noisy-stat|review-freshrev-1@after=qa_ok|%W freshrev %D|rc=2 stderr_code=mtime stdout_nonempty=false"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
