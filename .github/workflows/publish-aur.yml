@@ -52,6 +52,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # A release event checks out the tag by default, and the recipe
+          # bump for that release merges to main after the tag exists, so a
+          # release run publishes from main; a push or dispatch keeps its ref.
+          ref: ${{ github.event_name == 'release' && 'main' || github.ref }}
           persist-credentials: false
 
       # AUR clients read .SRCINFO; it must agree with the PKGBUILD they build.
