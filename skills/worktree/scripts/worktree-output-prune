@@ -37,7 +37,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Dict, FrozenSet, List, NamedTuple, Optional, Tuple
 
 try:
     import fcntl
@@ -68,8 +68,9 @@ class Layout(NamedTuple):
     """One ecosystem. A new ecosystem is a new row in LAYOUTS and nothing else.
 
     A row supplies the marker file that identifies a repository as this
-    ecosystem, the lock files that must sit beside that marker (empty when the
-    marker alone identifies it), and the output directories the ecosystem owns.
+    ecosystem, the lock files one of which must be in scope for that marker —
+    in its own directory or an ancestor's, empty when the marker alone
+    identifies it — and the output directories the ecosystem owns.
     """
 
     name: str
@@ -204,19 +205,41 @@ def tracks_content(worktree: Path, relative_path: str) -> bool:
     The layout table is data a maintainer extends, and this is what keeps that
     safe: a row naming a path some repository commits is kept instead of
     deleting committed source.
+
+    :(literal) because the argument is a path, not a pattern. git reads a bare
+    pathspec as a glob, and Next.js names route directories app/[slug] in
+    ordinary scaffolding. Measured on git 2.55: a bare pathspec still finds a
+    glob-named directory's own tracked descendants, because the directory-prefix
+    match git tries first is literal — what it adds is the reverse, matching a
+    tracked path elsewhere that wildmatches the whole pathspec, which would keep
+    this directory under a reason that is not true of it. :(literal) disables
+    the wildcards and leaves the directory-prefix match, which the two rows for
+    tracked descendants pin.
     """
-    listed = git(worktree, "ls-files", "-z", "--", relative_path)
+    listed = git(worktree, "ls-files", "-z", "--", ":(literal)" + relative_path)
     if listed.returncode:
         raise InspectionIncomplete("tracked-files-unreadable", listed.stderr.strip())
     return bool(listed.stdout)
 
 
-def identifies(directory: Path, layout: Layout) -> bool:
+def holds_lock(directory: Path, layout: Layout) -> bool:
+    """Whether one of the layout's lock files sits in this directory."""
+    return any((directory / sibling).is_file() for sibling in layout.siblings)
+
+
+def identifies(directory: Path, layout: Layout, lock_in_scope: bool) -> bool:
+    """Whether this directory is a root of the layout.
+
+    A marker alone identifies an ecosystem whose row names no lock file, Cargo
+    being the one. Where a row does name them, one must be in scope: in this
+    directory or in an ancestor. A workspace writes its lock file once, at the
+    workspace root, so apps/web/package.json is identified by the root's lock and
+    its node_modules and .next are reclaimed. A marker with no lock file anywhere
+    above it is still refused — something has to identify the ecosystem.
+    """
     if not (directory / layout.marker).is_file():
         return False
-    if not layout.siblings:
-        return True
-    return any((directory / sibling).is_file() for sibling in layout.siblings)
+    return not layout.siblings or lock_in_scope
 
 
 def package_roots(worktree: Path) -> Tuple[Tuple[Path, Layout], ...]:
@@ -236,11 +259,22 @@ def package_roots(worktree: Path) -> Tuple[Tuple[Path, Layout], ...]:
         for output in layout.outputs:
             pruned.add(output.path.split("/", 1)[0])
     found: List[Tuple[Path, Layout]] = []
+    # Which layouts have a lock file in scope at each directory walked. os.walk
+    # descends pre-order, so a directory's parent has always been recorded by the
+    # time it is reached, and the lock a workspace root holds carries down to
+    # every package under it. The top directory's parent is outside the worktree
+    # and absent, which reads as nothing in scope.
+    in_scope: Dict[Path, FrozenSet[str]] = {}
     for parent, dirs, _files in os.walk(worktree, followlinks=False, onerror=walk_error):
         dirs[:] = sorted(name for name in dirs if name not in pruned and not name.startswith("."))
+        here = Path(parent)
+        inherited = in_scope.get(here.parent, frozenset())
+        in_scope[here] = inherited | frozenset(
+            layout.name for layout in LAYOUTS if holds_lock(here, layout)
+        )
         for layout in LAYOUTS:
-            if identifies(Path(parent), layout):
-                found.append((Path(parent), layout))
+            if identifies(here, layout, layout.name in in_scope[here]):
+                found.append((here, layout))
     return tuple(found)
 
 

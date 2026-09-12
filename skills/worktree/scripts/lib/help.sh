@@ -292,13 +292,17 @@ reporting bytes per output path and naming a reason for every path it keeps.
 It recognizes Cargo (target/, one prunable unit per profile directory holding a
 .cargo-lock, which is held while that unit is pruned and is the one file left
 behind) and JavaScript (node_modules/ and .next/ beside a package.json and a
-package manager's lock file, each removed whole). A marker does not have to sit
-at the worktree root: each directory carrying one is its own root, found by a
-walk that descends into neither build output nor any dot-prefixed directory,
-.git among them, and that follows no symlink out of the worktree. So a project
-hidden under a dotted directory keeps its output, which reclaims less and
-deletes nothing. A repository matching no layout is a reported no-op, not an
-error.
+package manager's lock file, each removed whole).
+
+Neither the marker nor the lock file has to sit at the worktree root. Each
+directory carrying a marker is its own root, and a lock file in any enclosing
+directory identifies it, so a workspace that writes its lock once at the root
+has every package under it reclaimed. A manifest with no lock file above it
+anywhere is still refused. The walk that finds these roots descends into neither
+build output nor any dot-prefixed directory, .git among them, and follows no
+symlink out of the worktree, so a project hidden under a dotted directory keeps
+its output, which reclaims less and deletes nothing. A repository matching no
+layout is a reported no-op, not an error.
 
 What the live-build refusal is worth depends on whether the output has a lock.
 A Cargo profile is pruned under its own .cargo-lock, held from before the check

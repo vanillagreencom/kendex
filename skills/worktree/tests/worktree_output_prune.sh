@@ -318,6 +318,9 @@ unit_record() {
     target) output='target' ;;
     modules) ecosystem=javascript; output='node_modules' ;;
     ui-modules) ecosystem=javascript; output='ui/node_modules' ;;
+    web-modules) ecosystem=javascript; output='apps/web/node_modules' ;;
+    web-next) ecosystem=javascript; output='apps/web/.next' ;;
+    glob-debug) output='a?b/target/debug' ;;
     next) ecosystem=javascript; output='.next' ;;
     *)
       printf 'UNKNOWN-UNIT:%s' "$unit"
@@ -358,6 +361,7 @@ out_text() {
     release-only) report eligible preview release ;;
     debug-only) report eligible preview debug ;;
     cargo-and-ui) report eligible preview debug release ui-modules ;;
+    workspace) report eligible preview web-modules web-next ;;
     cargo-and-next) report eligible preview debug release next ;;
     cargo-and-modules) report eligible preview debug release modules ;;
     empty) report eligible preview ;;
@@ -373,6 +377,10 @@ err_text() {
     lock-held) unit_record kept debug lock-held ;;
     debug-live-holder) unit_record kept debug live-holder ;;
     ui-unprobed) unit_record kept ui-modules holder-probe-unavailable ;;
+    workspace-unprobed)
+      printf '%s;%s' "$(unit_record kept web-modules holder-probe-unavailable)" \
+        "$(unit_record kept web-next holder-probe-unavailable)"
+      ;;
     live-holder) unit_record kept modules live-holder ;;
     symlink) unit_record kept modules symlink ;;
     tracked) unit_record kept next tracked ;;
@@ -456,6 +464,7 @@ case "$(uname -s)" in
     # With no probe at all there is no second scan either, so the lock-free
     # output is kept for want of one rather than for the holder in it.
     P_LATE_REASON=holder-probe-unavailable
+    P_WORKSPACE_OUT=empty;          P_WORKSPACE_ERR=workspace-unprobed
     ;;
   *)
     P_APPLY_OUT=both-apply;         P_APPLY_ERR=-
@@ -468,6 +477,7 @@ case "$(uname -s)" in
     P_EXE_OUT=release-only;         P_EXE_ERR=debug-live-holder
     P_NESTED_OUT=cargo-and-ui;      P_NESTED_ERR=-
     P_LATE_REASON=live-holder
+    P_WORKSPACE_OUT=workspace;      P_WORKSPACE_ERR=-
     ;;
 esac
 
@@ -810,6 +820,55 @@ UNDEFINED="$(WORKTREE_SCRIPT="$RENUMBERED/worktree" run 'cleanup --targets-only 
 assert_match "$UNDEFINED" \
   "rc=1 out=$(unit_record pruned debug) err=worktree-output-prune-prune-failed: worktree=<wt> ecosystem=cargo output=target/<triple>/release;worktree-output-prune-incomplete: worktree=<wt> reason=filesystem-error detail=*;worktree-output-prune-engine-failed: worktree=<wt> exit=9 branch=present left=$FAILURE_LEFT" \
   'an undefined exit status is reported after the records it rendered, not as a report that is absent'
+# A package root under a bracketed directory name, the shape Next.js scaffolds
+# as app/[slug], with a committed file under its output. git reads a bare
+# pathspec as a glob, so the tracked check has to name a path rather than a
+# pattern; it must also still find tracked descendants, which is the half that
+# breaks if the pathspec narrows to exact matches.
+build bracketed-root cargo tree
+mkdir -p "$WT/app/[slug]/target/debug"
+printf '[package]\nname = "slug"\n' >"$WT/app/[slug]/Cargo.toml"
+: >"$WT/app/[slug]/target/debug/.cargo-lock"
+fill "$WT/app/[slug]/target/debug/deps.o" 20480
+printf 'committed\n' >"$WT/app/[slug]/target/committed.txt"
+git -C "$WT" add -f 'app/[slug]/Cargo.toml' 'app/[slug]/target/committed.txt'
+git -C "$WT" commit -q -m 'a bracketed package root with committed output'
+age "$WT/app/[slug]/target"
+assert_match "$(run 'cleanup --targets-only --apply')" \
+  "rc=0 out=$(report pruned apply) err=worktree-output-prune-kept: worktree=<wt> ecosystem=cargo output=app/[[]slug]/target reason=tracked branch=present left=*" \
+  'a bracketed package root with committed output under it is kept, not deleted'
+assert_eq "$(test -f "$WT/app/[slug]/target/committed.txt" && test -f "$WT/app/[slug]/target/debug/deps.o" && echo present)" \
+  present 'the bracketed output survives the apply whole'
+
+# The one shape the pathspec change alters: an output path carrying a glob
+# character, nothing tracked under it, and a tracked file elsewhere whose whole
+# path the pattern matches. As a pattern it reported content that is not there
+# and kept the directory under a reason untrue of it.
+build glob-overmatch cargo tree
+mkdir -p "$WT/a?b/target/debug" "$WT/axb"
+printf '[package]\nname = "q"\n' >"$WT/a?b/Cargo.toml"
+: >"$WT/a?b/target/debug/.cargo-lock"
+fill "$WT/a?b/target/debug/deps.o" 20480
+printf 'decoy\n' >"$WT/axb/target"
+git -C "$WT" add -f 'a?b/Cargo.toml' axb/target
+git -C "$WT" commit -q -m 'a tracked file whose path the glob would match'
+age "$WT/a?b/target"
+assert_match "$(run 'cleanup --targets-only --apply')" \
+  "rc=0 out=$(report pruned apply glob-debug) err= branch=present left=*" \
+  'a glob character in the path does not report tracked content that is elsewhere'
+
+# A workspace: the lock file sits once at the root and the nested package holds
+# its own output. Rejecting the nested manifest for want of a sibling lock left
+# every package in a monorepo unreclaimed.
+build workspace js tree
+mkdir -p "$WT/apps/web/node_modules/left-pad" "$WT/apps/web/.next/cache"
+printf '{"name":"web"}\n' >"$WT/apps/web/package.json"
+fill "$WT/apps/web/node_modules/left-pad/index.js" 20480
+fill "$WT/apps/web/.next/cache/blob" 20480
+age "$WT/apps/web/node_modules" "$WT/apps/web/.next"
+assert_match "$(run 'cleanup --targets-only')" \
+  "rc=0 out=$(out_text "$P_WORKSPACE_OUT") err=$(err_text "$P_WORKSPACE_ERR") branch=present left=*" \
+  'a nested package is identified by the lock file at the workspace root'
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
