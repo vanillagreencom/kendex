@@ -631,6 +631,10 @@ describe("a package whose rendering is gone everywhere", () => {
     ...extra,
   });
 
+  /** The author's words on the declaration the record names. A row with no
+   *  copy left reads them off that record, since it has no file to read. */
+  const SEEDED_WORDS = "Open a pull request from the terminal";
+
   // The row a record seeds for an installation the scan cannot see: core
   // keys it by the declaration alone, so it carries no file.
   const seeded = {
@@ -640,7 +644,7 @@ describe("a package whose rendering is gone everywhere", () => {
     harness: "claude" as const,
     at: null,
     origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
-    summary: null,
+    summary: SEEDED_WORDS,
     package: { kind: "skill" as const, name: "gh" },
   };
 
@@ -713,6 +717,9 @@ describe("a package whose rendering is gone everywhere", () => {
       ).toBe(marked);
       const cells = cellsOf(host);
       expect(cells, name).toHaveLength(8);
+      // The description under the name, which for the row with no copy left
+      // can only come from the record.
+      expect(cells[0].textContent, name).toContain(SEEDED_WORDS);
       // The row stands for the place its record names, so its Where and
       // From cells answer from that place rather than from a scan that has
       // nothing to say about it.
