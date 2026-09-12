@@ -88,6 +88,13 @@ pf_world() {
       ecn_reader='| head -1)"'
       printf '#!/usr/bin/env bash\nset -euo pipefail\n%s%s\necho "$n"\n' "$ecn_writer" "$ecn_reader" >"$R/scripts/existing.sh"
       ;;
+    # The same 141 where the substitution carries an ESCAPED quote. A scan
+    # that reads that quote as the span's end loses the pipeline behind it.
+    earlycloseescape)
+      ece_writer='n="$(printf "a\"b" '
+      ece_reader='| head -1)"'
+      printf '#!/usr/bin/env bash\nset -euo pipefail\n%s%s\necho "$n"\n' "$ece_writer" "$ece_reader" >"$R/scripts/existing.sh"
+      ;;
     # The same 141 in the backtick spelling: EARLY_CLOSE_WRITER names the
     # backtick as a command position too.
     earlyclosetick)
@@ -221,6 +228,7 @@ a quoted argument inside that substitution does not end its span early|swallowne
 a condition piping echo into grep -q fails as early-close-pipe|earlyclose|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
 a pipeline inside a substitution that carries a quoted argument is still one|earlyclosenested|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
 the backtick spelling of that substitution is judged too|earlyclosetick|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
+an escaped quote inside that substitution does not end its span|earlycloseescape|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
 a suite that sets pipefail is judged too, mid-pipeline reader included|earlyclosesuite|-|-|1|tests/known.test.sh:3: [early-close-pipe]|-
 an assignment whose guard errexit kills first fails as fail-open|bareassign|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
 an operator inside the substitution does not exempt the assignment|bareinner|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit

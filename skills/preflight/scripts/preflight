@@ -914,36 +914,60 @@ is_comment_line() { # LINE — leading-whitespace-then-# only; a trailing commen
 # the quoted literal itself, in any language. masked-returns is not either,
 # because a parse of the whole file owns that lane's reading.
 #
-# A double-quoted span ends at the first `"` OUTSIDE any substitution it
-# opened, never at the next `"` in the text: shell restarts quoting inside a
-# substitution, so the inner quotes of `x="$(cmd "$arg")"` belong to it.
-# Ending the span at one of those would cut the line at the inner quote and
-# drop the rest of the command, including the `)` that
-# `substitution_status_checked` reads and the pipeline `early-close-pipe`
-# looks for. `st` is the nesting stack that holds that property, innermost
-# context last: `'` a single-quoted span, `"` a double-quoted one, `(` a
-# substitution or subshell, ``` the older substitution spelling, which
-# closes at its matching backtick rather than at a paren. Both spellings run
-# a command from inside double quotes, and both are what the mktemp-trap and
-# early-close-pipe anchors already name as a command position; a bare paren
-# there is literal, and inside a substitution every quote opens again. A span
-# that never closes on this line is not a span: its opening quote is emitted
-# as ordinary text and the scan resumes after it, so an unpaired apostrophe
-# cannot swallow a double-quoted span behind it.
+# This is a lexer, and the set of shell rules it implements is the whole of
+# what it promises. A gap in the set is a lane going blind, not a cosmetic
+# miss, so the set is written out here for a reader to check against rather
+# than discover one shape at a time. Implemented:
+#
+#   - A single-quoted span runs to the next `'`. Nothing inside it expands,
+#     escapes or opens anything.
+#   - A double-quoted span runs to the first `"` OUTSIDE any substitution it
+#     opened. Shell restarts quoting inside a substitution, so the inner
+#     quotes of `x="$(cmd "$arg")"` belong to it; ending the span at one of
+#     those would cut the line at the inner quote and drop the rest of the
+#     command, the `)` that `substitution_status_checked` reads and the
+#     pipeline `early-close-pipe` looks for with it.
+#   - Both substitution spellings open a nesting from inside double quotes:
+#     `$( … )`, closing at its matching paren with nested parens counted, and
+#     `` … ``, closing at its matching backtick. Both run a command, and
+#     both are what the mktemp-trap and early-close-pipe anchors already name
+#     as a command position. A bare paren inside double quotes is literal.
+#   - A backslash escapes the character after it everywhere except inside a
+#     single-quoted span, where it is literal. So `"a\"b"` is one span, not
+#     two, and the code after it is not read as this file's own.
+#   - A span that never closes on this line is not a span: its opening quote
+#     is emitted as ordinary text and the scan resumes after it, so an
+#     unpaired apostrophe cannot swallow a double-quoted span behind it.
+#
+# Deliberately not implemented, each because it leaves inert text mis-split
+# rather than losing a command, which over-reports instead of going blind:
+#
+#   - Quote context across physical lines. preflight judges added lines one
+#     at a time, so the middle line of a multi-line template carries no quote
+#     and is read as code.
+#   - `$'…'` ANSI-C quoting, where a backslash DOES escape inside single
+#     quotes. The span ends early at the escaped quote.
+#   - Quotes nested inside `${…}`, which are lexed as adjacent spans. Nothing
+#     inside a parameter expansion runs a command.
+#   - Heredoc bodies, which are lines of data this scan reads as code.
+#
+# `st` is the nesting stack that holds all of it, innermost context last:
+# `'` a single-quoted span, `"` a double-quoted one, `(` a substitution or
+# subshell, ``` the backtick substitution.
 #
 # In-shell and out through a global, never a subprocess: this runs on every
 # added shell line that carries a quote, and a fork per line costs more than
 # all the lanes it feeds. Each turn jumps to the next character its own state
 # cares about rather than walking the line one character at a time.
 shell_command_text() { # LINE — sets SHELL_COMMAND_TEXT
-  local rest="$1" out="" st="" top="" span="" openq="" resume="" pre="" tok=""
+  local rest="$1" out="" st="" top="" span="" openq="" resume="" pre="" tok="" esc=""
   while :; do
     case "$top" in
-      '') pre="${rest%%[\"\']*}" ;;
+      '') pre="${rest%%[\"\'\\]*}" ;;
       "'") pre="${rest%%\'*}" ;;
-      '"') pre="${rest%%[\"\$\`]*}" ;;
-      '`') pre="${rest%%[\"\'(\`]*}" ;;
-      *) pre="${rest%%[\"\'()\`]*}" ;;
+      '"') pre="${rest%%[\"\$\`\\]*}" ;;
+      '`') pre="${rest%%[\"\'(\`\\]*}" ;;
+      *) pre="${rest%%[\"\'()\`\\]*}" ;;
     esac
     if [ "$pre" = "$rest" ]; then
       if [ -n "$st" ]; then
@@ -960,6 +984,16 @@ shell_command_text() { # LINE — sets SHELL_COMMAND_TEXT
     tok="${rest#"$pre"}"
     tok="${tok%"${tok#?}"}"
     rest="${rest#"$pre$tok"}"
+    if [ "$tok" = '\' ]; then
+      esc="${rest%"${rest#?}"}"
+      rest="${rest#?}"
+      if [ -z "$st" ]; then
+        out="$out$pre\\$esc"
+      else
+        span="$span$pre\\$esc"
+      fi
+      continue
+    fi
     if [ -z "$st" ]; then
       out="$out$pre"
       openq="$tok"

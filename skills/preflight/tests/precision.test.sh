@@ -675,6 +675,9 @@ set -euo pipefail
 # the written file, never in this one.
 hook_line='cd "$d"; git rev-parse --git-dir 2>/dev/null || true'
 scratch_line='cd "$d"; mktemp -d'
+# An escaped quote does not end the message it stands in, so the shape it
+# names is still inside the message and not this file's command.
+note="he said \"cd x; git log || true\" once"
 EOF
 printf "window_line='%s%s'\n" "$ec_head" "$ec_tail" >>"$R/scripts/writer.sh"
 printf 'echo "the idiom is %s%s"\n' "$dq_head" "$ec_tail" >>"$R/scripts/writer.sh"
@@ -694,7 +697,7 @@ echo "$assign_line"
 EOF
 git -C "$R" add -A
 run_pf
-clean "a swallowed status, an mktemp invocation in both substitution spellings, an early-closing pipeline and an mktemp assignment inside single quotes are the written file's commands, and a pipeline named in a double-quoted message is nobody's" 2
+clean "a swallowed status, an mktemp invocation in both substitution spellings, an early-closing pipeline and an mktemp assignment inside single quotes are the written file's commands, and a pipeline or a swallowed status named in a double-quoted message, past an escaped quote or not, is nobody's" 2
 
 echo "=== control: the same four shapes outside the quotes are this script's own ==="
 {
