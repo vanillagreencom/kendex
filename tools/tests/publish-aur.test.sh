@@ -12,12 +12,17 @@
 # and are read only by the drift row, which pins its first line.
 #
 # The rows table is `label|release|argv|rc|keys`:
-#   release  what downloads/ holds before the run: `ready` the x86_64 command
-#            with the bytes the fixture pins; `none` nothing; `wrong` the
-#            x86_64 command with other bytes; `down` a curl that exits 7 on
-#            every call; `500` a HEAD on the x86_64 command answering 500;
+#   release  what downloads/ holds before the run: `ready` both commands
+#            with the bytes the shipped fixture pins; `none` nothing; `wrong`
+#            the x86_64 command with other bytes; `down` a curl that exits 7
+#            on every call; `500` a HEAD on the x86_64 command answering 500;
 #            `bin-ready` the icon, the AppImage and the command kendex-bin
 #            pins, each with its bytes
+#
+# The fixture's kendex recipe pins aarch64 to the placeholder, as the real
+# one does today. Every row but the placeholder one runs `ship`, which fills
+# that pin with the aarch64 command's sha256, so the rows read the release
+# checks; the placeholder row reads the deferral that comes before them.
 #   argv     the arguments as written
 #   keys     the keyed lines, `-` for none
 set -euo pipefail
@@ -53,7 +58,10 @@ release() { # WORLD-DIR NAME — downloads/ as the rows table describes NAME
   rm -rf -- "$d"
   mkdir -p -- "$d"
   case "$2" in
-    ready) printf 'x86_64 cli bytes' >"$d/kendex-x86_64" ;;
+    ready)
+      printf 'x86_64 cli bytes' >"$d/kendex-x86_64"
+      printf 'aarch64 cli bytes' >"$d/kendex-aarch64"
+      ;;
     none) ;;
     wrong) printf 'other bytes' >"$d/kendex-x86_64" ;;
     down) printf '7\n' >"$d/exit" ;;
@@ -91,6 +99,17 @@ EOF
 # aur_head WORLD-DIR PACKAGE — the commit the world's AUR holds for PACKAGE
 aur_head() { git --git-dir="$1/aur/$2.git" rev-parse master; }
 
+# ship WORLD-DIR — kendex's aarch64 pin filled with the release's sha256 in
+# both files, committed, so the recipe carries no placeholder.
+ship() {
+  local recipe="$1/tree/packaging/arch/kendex" sum
+  sum="$(aur_world_sha256 'aarch64 cli bytes')"
+  sed -i.bak "s/$AUR_WORLD_PLACEHOLDER/$sum/" "$recipe/PKGBUILD" "$recipe/.SRCINFO"
+  rm -- "$recipe/PKGBUILD.bak" "$recipe/.SRCINFO.bak"
+  grep -q "$AUR_WORLD_PLACEHOLDER" "$recipe/PKGBUILD" "$recipe/.SRCINFO" && { echo "publish-aur.test: ship left a placeholder" >&2; exit 1; }
+  git -C "$1/tree" -c user.name=world -c user.email=world@example.invalid commit --quiet -am 'ship aarch64'
+}
+
 # Every deferral and refusal, and what a dry run says, with the AUR behind
 # the tree: the world's AUR holds the fixture, so the tree is bumped first.
 bump() { # WORLD-DIR — kendex's recipe at pkgrel=2 in both files, committed
@@ -103,7 +122,7 @@ bump() { # WORLD-DIR — kendex's recipe at pkgrel=2 in both files, committed
 }
 
 rows='
-release ready, dry run|ready|--dry-run kendex|0|placeholder=kendex-aarch64,changed=kendex,dry-run=kendex
+release ready, dry run|ready|--dry-run kendex|0|changed=kendex,dry-run=kendex
 release absent|none|--dry-run kendex|0|deferred=kendex
 release bytes differ|wrong|--dry-run kendex|0|deferred=kendex
 host unreachable|down|--dry-run kendex|1|unreachable=https://example.invalid/v1.2.3/kendex-x86_64
@@ -117,6 +136,7 @@ unknown package|none|--dry-run vgs-shell|2|package=vgs-shell
 while IFS='|' read -r label rel argv rc keys; do
   [ -n "$label" ] || continue
   dir="$(world row)"
+  ship "$dir"
   bump "$dir"
   release "$dir" "$rel"
   before="$(aur_head "$dir" kendex)"
@@ -138,8 +158,28 @@ done <<EOF
 $rows
 EOF
 
+# A recipe still pinning a target to the placeholder is deferred before any
+# request, release or not: the fixture as shipped, with its release up.
+dir="$(world placeholder)"
+bump "$dir"
+release "$dir" ready
+before="$(aur_head "$dir" kendex)"
+run "$dir" kendex
+after="$(aur_head "$dir" kendex)"
+if [ "$RC" = 0 ] && [ "$KEYS" = "deferred=kendex" ] && [ "$before" = "$after" ]; then
+  ok "placeholder pin: rc=0 keys=$KEYS, the AUR was not written"
+else
+  bad "placeholder pin: want rc=0 keys=deferred=kendex and no push" "got rc=$RC keys=$KEYS $before -> $after
+$OUT"
+fi
+case "$OUT" in
+  *'kendex-aarch64'*'placeholder'*) ok "placeholder pin: the line names the file and the pin" ;;
+  *) bad "placeholder pin: the line names the file and the pin" "$OUT" ;;
+esac
+
 # A dry run shows the whole diff, so a reader can review what a push would carry.
 dir="$(world diff)"
+ship "$dir"
 bump "$dir"
 release "$dir" ready
 run "$dir" --dry-run kendex
@@ -164,12 +204,13 @@ fi
 
 # A push lands the tree's files on the AUR's master and verifies them there.
 dir="$(world push)"
+ship "$dir"
 bump "$dir"
 release "$dir" ready
 before="$(aur_head "$dir" kendex)"
 run "$dir" kendex
 after="$(aur_head "$dir" kendex)"
-if [ "$RC" = 0 ] && [ "$KEYS" = "placeholder=kendex-aarch64,changed=kendex,pushed=kendex" ]; then
+if [ "$RC" = 0 ] && [ "$KEYS" = "changed=kendex,pushed=kendex" ]; then
   ok "push: rc=0 keys=$KEYS"
 else
   bad "push" "rc=$RC keys=$KEYS
@@ -196,7 +237,7 @@ fi
 
 # A second run after the push finds nothing to do.
 run "$dir" kendex
-if [ "$RC" = 0 ] && [ "$KEYS" = "placeholder=kendex-aarch64,unchanged=kendex" ]; then
+if [ "$RC" = 0 ] && [ "$KEYS" = "unchanged=kendex" ]; then
   ok "push again: unchanged"
 else
   bad "push again: unchanged" "rc=$RC keys=$KEYS"
