@@ -220,7 +220,7 @@ launch() {
   # that first instant would fault the handler instead of running it.
   LAUNCH_WORKER_PID=""
   LAUNCH_RUNTIME_DIR="$runtime_dir"
-  local deadline cancel_rc="" log="$runtime_dir/worker.log"
+  local deadline cancel_rc="" attempts log="$runtime_dir/worker.log"
   local status_file="$runtime_dir/worker.status" launch_umask
   local worker_args launch_model="${SECOND_OPINION_LAUNCH_MODEL:-}"
   # THE WINDOW BETWEEN THE FORK AND THE PROTOCOL. Once the worker exists it can
@@ -281,6 +281,19 @@ launch() {
   trap 'cleanup_launch; exit 143' TERM HUP
   trap 'cleanup_launch; exit 130' INT
   [[ -z "$cancel_rc" ]] || { cleanup_launch; exit "$cancel_rc"; }
+  # PUBLISH A WORKER THAT HAS ALREADY TAKEN ITS GROUP. Everything below hands
+  # the pid to a consumer that probes `-$pid`, and the child reaches its setpgid
+  # only after bash returns from the fork, so a pid published inside that window
+  # reads to `wait` as a worker that is gone: exit 1, relaunch, and a second CLI
+  # run while the first goes on unsupervised. Bounded, and it ends the moment
+  # the pid is gone, which is how a fork that could not exec its prefix still
+  # reaches that branch with its own reason.
+  attempts=100
+  while [[ $attempts -gt 0 ]] && ! process_group_alive "$LAUNCH_WORKER_PID"; do
+    kill -0 "$LAUNCH_WORKER_PID" 2>/dev/null || break
+    attempts=$((attempts - 1))
+    sleep 0.05
+  done
   (umask 077 && set -C && printf '%s\n' "$LAUNCH_WORKER_PID" > "$runtime_dir/pid") \
     || die "cannot record detached worker pid: $runtime_dir/pid"
   printf 'artifact: %s\n' "$artifact"

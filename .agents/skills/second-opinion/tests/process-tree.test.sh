@@ -346,8 +346,22 @@ cancel_in_window() { # RUNTIME LABEL -> the surviving CLI's pid, empty when none
   await_file "$TMP_ROOT/$label.pid" || true
   cat < "$TMP_ROOT/$label.pid"
 }
+launch_then_wait() { # RUNTIME LABEL -> what the wait command it printed reported
+  local label="$2" pid w
+  mkdir "$TMP_ROOT/$label-rt"
+  env "${WIDENED_WINDOW[@]}" CLI_HOLD=30 CLI_PID_FILE="$TMP_ROOT/$label.pid" \
+    CLI_PGID_FILE="$TMP_ROOT/$label.pgid" "$1" launch "$TMP_ROOT/bin/recording-codex" \
+    "$TMP_ROOT/$label-answer" "$TMP_ROOT/$label-rt" 60 false 5 quick q \
+    > "$TMP_ROOT/$label.stdout" 2> "$TMP_ROOT/$label.stderr"
+  w="$(sed -n 's/^wait: //p' "$TMP_ROOT/$label.stdout")"
+  pid="$(read_pid "$TMP_ROOT/$label-rt/pid" "the published worker")"
+  STRAYS+=("$pid")
+  bash -c "$w" > "$TMP_ROOT/$label-wait.stdout" 2> "$TMP_ROOT/$label-wait.stderr" || true
+  cat "$TMP_ROOT/$label-wait.stderr"
+  kill -KILL -- "-$pid" 2>/dev/null || true
+}
 if [[ -z "$SLOW_PERL_REAL" ]]; then
-  printf 'SKIP: the fork-window case needs the perl the runtime itself uses\n'
+  printf 'SKIP: the fork-window cases need the perl the runtime itself uses\n'
 else
   window_survivor="$(cancel_in_window "$RUNTIME" window)"
   [[ -z "$window_survivor" ]] \
@@ -371,6 +385,28 @@ else
   STRAYS+=("$mutant_survivor")
   kill -KILL "$mutant_survivor" 2>/dev/null || true
   ok "the control's guard reports success over a live CLI ($mutant_survivor)"
+
+  echo "=== launch publishes a worker its own wait can see ==="
+  # The wait command launch prints probes `-$pid`, so a worker published before
+  # it has grouped reads there as one that is gone: exit 1, relaunch, and a
+  # second CLI run while the first goes on unsupervised.
+  case "$(launch_then_wait "$RUNTIME" publish)" in
+    *"is gone and published no status"*) fail "launch published a worker its own wait read as gone" ;;
+  esac
+  ok "the wait launch prints sees a worker that has taken its group"
+
+  echo "=== control: the same launch publishing before the worker groups ==="
+  # The pre-fix publication, restored by one line: without the wait the case
+  # above passes on a launcher that hands out a pid nothing can probe yet.
+  EARLY_MUTANT="$TMP_ROOT/early-publish-runtime"
+  sed 's/^  attempts=100$/  attempts=0/' "$RUNTIME" > "$EARLY_MUTANT"
+  chmod +x "$EARLY_MUTANT"
+  cmp -s "$RUNTIME" "$EARLY_MUTANT" && fail "the early-publish control mutated nothing"
+  bash -n "$EARLY_MUTANT" || fail "the early-publish control is not valid shell"
+  case "$(launch_then_wait "$EARLY_MUTANT" early)" in
+    *"is gone and published no status"*) ok "the control's early publication reads as a gone worker" ;;
+    *) fail "the early-publish control was not read as gone — the case above proves nothing" ;;
+  esac
 fi
 
 echo "=== a signal to second-opinion still reaches the CLI ==="
