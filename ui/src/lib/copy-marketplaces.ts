@@ -107,6 +107,11 @@ export const MARKETPLACE_NOT_DOWNLOADED = `This marketplace hasn't been download
 export const MARKETPLACE_OFFERS_NO_PACKAGES =
   "Nothing to list yet — this marketplace offers no packages.";
 
+/** The Packages tab with its read still out. Its slot being empty is not
+ * the catalog offering nothing: only a read that has landed can say that,
+ * and the sibling Bundles tab says the same of its own. */
+export const MARKETPLACE_READING_PACKAGES = "Reading its packages…";
+
 // How a marketplace names itself and where it comes from. A folder on this
 // machine says so beside its path: a working checkout and the remote
 // catalogue it was cloned from declare the same name, and without this the

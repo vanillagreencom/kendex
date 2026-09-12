@@ -2,12 +2,15 @@
 // The Bundles tab's read is wiring, not a prop: the page has to ask for the
 // catalog's declared sets and put what comes back on screen. Prop-driven
 // tests of the cards cannot see that the ask was made at all.
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BundleDetail } from "@/bindings";
 import { commands } from "@/bindings";
 import {
   MARKETPLACE_NOT_DOWNLOADED,
+  MARKETPLACE_OFFERS_NO_PACKAGES,
   MARKETPLACE_PLACES_TITLE,
+  MARKETPLACE_READING_PACKAGES,
 } from "@/lib/copy-marketplaces";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { subscription } from "@/stores/marketplaces-shared";
@@ -162,5 +165,51 @@ describe("the marketplace page's tabs", () => {
     );
     expect(tabs).toEqual(["Bundles", "Packages", "About"]);
     expect(tabs).not.toContain(MARKETPLACE_PLACES_TITLE);
+  });
+});
+
+// An empty slot is not an empty catalog. `offered` is `cached ?? NONE`, so
+// the row count cannot tell a read still out from one that landed with
+// nothing; only the cache slot's presence can, which is what the branch
+// keys on.
+describe("the Packages tab's read states", () => {
+  const openPackages = async (host: HTMLElement) => {
+    const tab = [...host.querySelectorAll('[role="tab"]')].find(
+      (node) => node.textContent === "Packages",
+    );
+    await userEvent.click(tab as HTMLElement);
+    await settle();
+  };
+
+  const rows = [
+    {
+      name: "says it is reading while the packages read is still out",
+      response: new Promise<never>(() => {}),
+      shown: MARKETPLACE_READING_PACKAGES,
+      absent: MARKETPLACE_OFFERS_NO_PACKAGES,
+    },
+    {
+      name: "says the catalog offers none once that read has landed empty",
+      response: Promise.resolve({ status: "ok" as const, data: [] }),
+      shown: MARKETPLACE_OFFERS_NO_PACKAGES,
+      absent: MARKETPLACE_READING_PACKAGES,
+    },
+  ];
+  expect(rows).toHaveLength(2);
+  it.each(rows)("$name", async (row) => {
+    useMarketplacesStore.setState({ packages: {}, readErrors: {} });
+    vi.mocked(commands.marketplacePackages).mockReturnValue(
+      row.response as ReturnType<typeof commands.marketplacePackages>,
+    );
+    const host = mount(<MarketplaceDetailPage />);
+    await settle();
+    await openPackages(host);
+    expect(
+      {
+        shown: host.textContent?.includes(row.shown),
+        absent: host.textContent?.includes(row.absent),
+      },
+      row.name,
+    ).toEqual({ shown: true, absent: false });
   });
 });

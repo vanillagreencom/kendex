@@ -17,6 +17,7 @@ import { catalogRefusal } from "@/lib/catalog-read-state";
 import {
   MARKETPLACE_NOT_DOWNLOADED,
   MARKETPLACE_OFFERS_NO_PACKAGES,
+  MARKETPLACE_READING_PACKAGES,
 } from "@/lib/copy-marketplaces";
 import { PAGE_BODY, PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { rowForCatalog } from "@/lib/marketplace-display";
@@ -197,6 +198,10 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
                     >
                       Its packages can't be read right now —{" "}
                       {packagesRefused.reason}
+                    </p>
+                  ) : cached === undefined ? (
+                    <p className="py-16 text-center text-sm text-muted-foreground">
+                      {MARKETPLACE_READING_PACKAGES}
                     </p>
                   ) : offered.length === 0 ? (
                     <p className="py-16 text-center text-sm text-muted-foreground">
