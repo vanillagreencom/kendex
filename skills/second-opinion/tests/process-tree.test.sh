@@ -21,12 +21,27 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 . "$TEST_DIR/lib/install.bash"
 TMP_ROOT="$(mktemp -d)"
 STRAYS=()
+# A RESIDUE NAMES ITSELF. `rm -rf` on a root a surviving process is still
+# writing to fails with ENOTEMPTY, and that bare `rm:` line is the only thing
+# the run carries: every case has already printed PASS, so the suite reports a
+# failure with no row and no case behind it. The refusal below names the root
+# and what is left in it, and still exits nonzero — the leak is a real defect in
+# whichever case left it, never something the trap may absorb.
 cleanup() {
-  local p
+  local rc=$?
+  local p leftovers rm_err
   for p in ${STRAYS[@]+"${STRAYS[@]}"}; do
     [[ -z "$p" ]] || kill -KILL "$p" 2>/dev/null || true
   done
-  rm -rf "$TMP_ROOT"
+  rm_err=$(rm -rf "${TMP_ROOT:?}" 2>&1) || {
+    leftovers=$(find "${TMP_ROOT:?}" -mindepth 1 2>/dev/null | sed -n '1,5p' | tr '\n' ' ') \
+      || leftovers="unreadable"
+    printf 'suite-temp-root-not-removed: root=%s left=%s\n' "$TMP_ROOT" "$leftovers" >&2
+    printf '%s\n' "$rm_err" >&2
+    echo "a case left a process writing under the suite temp root" >&2
+    exit 1
+  }
+  exit "$rc"
 }
 trap cleanup EXIT
 
@@ -40,9 +55,9 @@ await_gone() { # PID — up to 10s
   for _ in $(seq 1 200); do gone "$1" && return 0; sleep 0.05; done
   return 1
 }
-await_file() { # PATH — up to 10s
+await_file() { # PATH [POLLS] — 0.05s apart, 200 polls (10s) by default
   local _
-  for _ in $(seq 1 200); do [[ -s "$1" ]] && return 0; sleep 0.05; done
+  for _ in $(seq 1 "${2:-200}"); do [[ -s "$1" ]] && return 0; sleep 0.05; done
   return 1
 }
 # A PID READ FROM A FIXTURE MUST BE A PID. A fixture that reaches for a builtin
@@ -125,6 +140,25 @@ sleep 0.2
 printf 'leader done\n'
 SH
 chmod +x "$TMP_ROOT/bin/orphan-codex"
+# A CLI that goes on writing at the TOP of $TMP_ROOT for as long as it lives.
+# The suite's own `rm -rf` is what this is aimed at: a survivor creating entries
+# there between rm's unlink pass and its final rmdir is the ENOTEMPTY that fails
+# the run with no row. The real CLIs above reach that state only when the host
+# is loaded enough to schedule them inside that window; this one is always in it.
+cat > "$TMP_ROOT/bin/laggard-codex" <<'SH'
+#!/usr/bin/env bash
+cat >/dev/null
+sleep 600 &
+printf '%s\n' "$!" > "$CLI_KID_FILE"
+printf 'started\n' > "$CLI_READY_FILE"
+n=0
+while :; do
+  n=$((n + 1))
+  printf 'tick\n' > "$CLI_READY_FILE.$n"
+  sleep 0.05
+done
+SH
+chmod +x "$TMP_ROOT/bin/laggard-codex"
 
 unset CLAUDECODE CLAUDE_CODE CLAUDE_PROJECT_DIR CODEX_SANDBOX \
       CODEX_SANDBOX_NETWORK_DISABLED PI_CODING_AGENT_DIR OPENCODE \
@@ -609,14 +643,14 @@ assert_contains "$TMP_ROOT/cleanup-fail.stderr" \
   || fail "cleanup failure deleted the runtime state needed to retry"
 ok "cleanup failure preserves the runtime directory"
 
-run_launch_cleanup_failure() { # RUNTIME LABEL
-  local runtime="$1" label="$2" root rc=0
+run_launch_cleanup_failure() { # RUNTIME LABEL [CLI]
+  local runtime="$1" label="$2" cli="${3:-treeish-codex}" root rc=0
   root="$TMP_ROOT/$label"
   mkdir "$root-runtime"
   : > "$root-runtime/pid"
   RUNTIME_PATH="$runtime" SECOND_OPINION_PATH="$SECOND_OPINION" CASE_ROOT="$TMP_ROOT" \
     CASE_LABEL="$label" STOP_CAPTURE="$root.stop-pid" \
-    SECOND_OPINION_LAUNCH_MODEL=claude SECOND_OPINION_CODEX_CMD=treeish-codex \
+    SECOND_OPINION_LAUNCH_MODEL=claude SECOND_OPINION_CODEX_CMD="$cli" \
     CLI_READY_FILE="$root.ready" CLI_KID_FILE="$root.kid" bash -c '
       source "$RUNTIME_PATH"
       stop_process_group() {
@@ -631,12 +665,38 @@ run_launch_cleanup_failure() { # RUNTIME LABEL
     ' > "$root.stdout" 2> "$root.stderr" || rc=$?
   printf '%s\n' "$rc"
 }
+# TEAR DOWN BOTH GROUPS THE CASE STARTED, AND RETURN ONLY ONCE BOTH ARE GONE.
+# The injected refusal means the runtime never stops this tree, so stopping it
+# is the case's own job, and the tree is two process groups: the worker leads
+# one and the CLI the other, because the runtime gives every CLI a group of its
+# own. Signalling `-$worker` reaches half of it, and returning as soon as the
+# worker's LEADER is gone returns while the CLI half runs — with the CLI's own
+# marker files still to be written at the top of $TMP_ROOT, where they land
+# inside the EXIT trap's `rm -rf` and fail the suite with ENOTEMPTY.
+#
+# So the wait is on observed state, in this order: the CLI's ready marker is
+# the last file it writes, so a case that has it has nothing left to create;
+# the child it recorded gives the group the CLI leads; and every pid this acts
+# on is registered as a stray so the EXIT sweep is a backstop rather than the
+# only teardown. The CLI's own pid is never visible here — the runtime forks
+# it, not this suite — which is why the child's group is the handle.
 cleanup_captured_launch() { # LABEL
-  local label="$1" pid
-  pid=$(cat < "$TMP_ROOT/$label.stop-pid")
-  kill -KILL -- "-$pid" 2>/dev/null || true
-  for _ in $(seq 1 200); do gone "$pid" && return 0; sleep 0.05; done
-  return 1
+  local label="$1" worker kid cli_group
+  worker="$(read_pid "$TMP_ROOT/$label.stop-pid" "the captured launch")"
+  STRAYS+=("$worker")
+  await_file "$TMP_ROOT/$label.ready" 600 \
+    || fail "$label: the CLI never reported ready, so its group cannot be stopped"
+  kid="$(read_pid "$TMP_ROOT/$label.kid" "the captured launch CLI")"
+  cli_group="$(ps -o pgid= -p "$kid" 2>/dev/null || true)"
+  cli_group="${cli_group//[[:space:]]/}"
+  [[ "$cli_group" =~ ^[1-9][0-9]*$ ]] \
+    || fail "$label: no process group for the CLI's child $kid"
+  STRAYS+=("$kid" "$cli_group")
+  kill -KILL -- "-$worker" 2>/dev/null || true
+  kill -KILL -- "-$cli_group" 2>/dev/null || true
+  await_gone "$worker" || return 1
+  await_gone "$kid" || return 1
+  return 0
 }
 
 rc="$(run_launch_cleanup_failure "$RUNTIME" launch-cleanup)"
@@ -678,3 +738,22 @@ assert_rc "$rc" 1 "the launch-cleanup mutant still reports publication failure"
 ok "the mutant proves the return preserves launch recovery state"
 cleanup_captured_launch launch-cleanup-mutant \
   || fail "launch-cleanup mutant left its worker running"
+
+echo "=== control: a captured launch's teardown leaves nothing writing under the temp root ==="
+# Without this the two cases above cannot say that their teardown ENDED the
+# tree; they only say the refusal was reported. The laggard CLI turns the
+# survivor into something observable on an idle host: it writes at the top of
+# $TMP_ROOT every 0.05s for as long as it lives, so a teardown that returns
+# with the CLI's group running shows up as an entry appearing after the
+# teardown returned — the same entry that, in a merge group, appears inside the
+# EXIT trap's `rm -rf` and fails the run with ENOTEMPTY and no row.
+rc="$(run_launch_cleanup_failure "$RUNTIME" laggard laggard-codex)"
+assert_rc "$rc" 1 "the laggard CLI's launch reports its cleanup failure"
+cleanup_captured_launch laggard || fail "the laggard control left its worker running"
+laggard_entries="$(ls "$TMP_ROOT")"
+for _ in $(seq 1 40); do
+  [[ "$(ls "$TMP_ROOT")" == "$laggard_entries" ]] \
+    || fail "the teardown returned while a survivor was still writing under $TMP_ROOT"
+  sleep 0.05
+done
+ok "the teardown returns with nothing of the case still writing under the temp root"
