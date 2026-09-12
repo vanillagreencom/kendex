@@ -33,6 +33,8 @@
 # real to read back the argv claude receives.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# shellcheck source=lib/shared-skill-libs.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
@@ -128,6 +130,7 @@ REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/scripts/lib"
 cp "$SRC_OT" "$REPO/scripts/open-terminal"
 cp "$SRC_LIB_DIR"/*.sh "$REPO/scripts/lib/"
+orch_fixture_shared_libs "$REPO"
 chmod +x "$REPO/scripts/open-terminal"
 git -C "$REPO" init -q
 OT="$REPO/scripts/open-terminal"
@@ -296,6 +299,7 @@ mutant() {
   mkdir -p "$dir/scripts/lib"
   cp "$SRC_OT" "$dir/scripts/open-terminal"
   cp "$SRC_LIB_DIR"/*.sh "$dir/scripts/lib/"
+  orch_fixture_shared_libs "$dir"
   sed "$expr" "$src" > "$dir/scripts/$file"
   if cmp -s "$src" "$dir/scripts/$file"; then
     FAIL=$((FAIL + 1))

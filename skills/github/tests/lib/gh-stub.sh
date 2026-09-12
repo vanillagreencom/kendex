@@ -57,10 +57,14 @@
 
 # _gh_stub_seed — stage the three identity answers. Install and reset both
 # start from them, so the seeded owner/repo is written in one place.
+#
+# `repo view` answers the bare slug: the stub does not judge a call's flags, and
+# every caller asks for it through the shared resolver, which runs
+# `gh repo view --json nameWithOwner -q .nameWithOwner`.
 _gh_stub_seed() {
   gh_stub_answer auth-status 'Logged in'
   gh_stub_answer api-user 'test-user'
-  gh_stub_answer repo-view '{"owner":{"login":"owner"},"name":"repo","nameWithOwner":"owner/repo"}'
+  gh_stub_answer repo-view 'owner/repo'
 }
 
 # gh_stub_install DIR — write DIR/gh and export STUB_DIR beside it.

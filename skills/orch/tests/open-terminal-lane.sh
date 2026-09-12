@@ -11,6 +11,8 @@
 # mode, and an unstubbed launch would open a real window per row.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# shellcheck source=lib/shared-skill-libs.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 OPEN_TERMINAL="$SCRIPTS_DIR/open-terminal"
@@ -309,6 +311,7 @@ SCRIPTREPO="$TMP_ROOT/scriptrepo"; CALLERREPO="$TMP_ROOT/callerrepo"
 mkdir -p "$SCRIPTREPO/scripts/lib" "$CALLERREPO"
 cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTREPO/scripts/"
 cp "$SCRIPTS_DIR/lib"/*.sh "$SCRIPTREPO/scripts/lib/"
+orch_fixture_shared_libs "$SCRIPTREPO"
 chmod +x "$SCRIPTREPO/scripts/open-terminal" "$SCRIPTREPO/scripts/lanes"
 git -C "$SCRIPTREPO" init -q; git -C "$CALLERREPO" init -q
 ( cd "$CALLERREPO" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
@@ -317,6 +320,69 @@ git -C "$SCRIPTREPO" init -q; git -C "$CALLERREPO" init -q
   "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto --cmd true CC-20 ) >/dev/null 2>&1
 assert_eq "caller=$(ls -1 "$CALLERREPO"/tmp/oversee-watch/claims 2>/dev/null | wc -l | tr -d '[:space:]') script=$(ls -1 "$SCRIPTREPO"/tmp/oversee-watch/claims 2>/dev/null | wc -l | tr -d '[:space:]')" \
   "caller=1 script=0" "the claim lands in the caller checkout, where lanes reads it, never under the script's"
+
+# The repository the launch line renders splits the same way. The resolver's
+# first rung, `gh repo view`, answers for the caller's cwd, so its origin-remote
+# fallback must read the caller's checkout too — reading the script's would
+# brief the lane on whichever repository the kendex install happens to sit in.
+# gh exits 1 here, which is the rung that answers nothing.
+git -C "$SCRIPTREPO" remote add origin git@github.com:script-owner/script-repo.git
+git -C "$CALLERREPO" remote add origin git@github.com:caller-owner/caller-repo.git
+REPO_LOG="$TMP_ROOT/caller.repo.tmux.log"
+( cd "$CALLERREPO" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
+  TMUX=stub,1,0 OT_TMUX_LOG="$REPO_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.repo.panes" \
+  OT_WT_LOG="$TMP_ROOT/caller.repo.worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+  "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto --cmd 'true {repo}' CC-21 ) >/dev/null 2>&1
+assert_eq "caller=$(grep -c 'caller-owner/caller-repo' "$REPO_LOG" || true) script=$(grep -c 'script-owner/script-repo' "$REPO_LOG" || true)" \
+  "caller=1 script=0" "the launch line names the caller checkout's repository, never the script checkout's"
+
+echo "=== a GH_REPO the resolver refuses never reaches the launch line ==="
+# The resolver returns status 2 for a value that is not owner/name and PRINTS
+# it anyway, so the value is on stdout whether it was accepted or rejected.
+# resolve_repo is where that distinction is kept: a consumer reading the
+# output without the status types a quote-bearing GH_REPO into the pane shell
+# that runs the rendered line. gh-repo-resolve.test.sh pins the refusal; this
+# pins what open-terminal does with it.
+BAD_REPO="o/r';id;'"
+
+# The mutant: a resolve_repo that reads the output and drops the status.
+MUTREPO="$TMP_ROOT/mutrepo"
+mkdir -p "$MUTREPO/scripts/lib"
+cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$MUTREPO/scripts/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$MUTREPO/scripts/lib/"
+orch_fixture_shared_libs "$MUTREPO"
+chmod +x "$MUTREPO/scripts/open-terminal" "$MUTREPO/scripts/lanes"
+assert_eq "$(grep -Fc '[[ "$resolve_status" -eq 0 ]] || return 0' "$MUTREPO/scripts/open-terminal")" "1" \
+  "control finds exactly one live status check"
+# `#` as the delimiter: the line the control rewrites carries `||`.
+sed -i.bak 's#\[\[ "$resolve_status" -eq 0 \]\] || return 0#[[ "$resolve_status" -eq 0 ]] || :#' \
+  "$MUTREPO/scripts/open-terminal"
+assert_eq "$(grep -Fc '[[ "$resolve_status" -eq 0 ]] || return 0' "$MUTREPO/scripts/open-terminal")" "0" \
+  "control applied the mutation"
+
+# run_bad_repo SCRIPT NAME — one launch under the refused GH_REPO, from a
+# caller checkout of its own so the claim store starts empty. Prints
+# `launched=<n> rejected=<n>`: the windows opened, and the tmux lines carrying
+# the refused value. Both halves matter — a run that launched nothing would
+# report rejected=0 for the wrong reason.
+run_bad_repo() {
+  local script="$1" name="$2"
+  local caller="$TMP_ROOT/$name-caller" log="$TMP_ROOT/$name.tmux.log"
+  mkdir -p "$caller"
+  git -C "$caller" init -q
+  ( cd "$caller" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
+    GH_REPO="$BAD_REPO" TMUX=stub,1,0 OT_TMUX_LOG="$log" OT_TMUX_SERVER_PID="$$" \
+    OT_TMUX_PANES="$TMP_ROOT/$name.panes" OT_WT_LOG="$TMP_ROOT/$name.worktree.log" \
+    PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+    "$script" --harness claude --lane auto --cmd 'true {repo}' CC-30 ) >/dev/null 2>&1
+  printf 'launched=%s rejected=%s' \
+    "$(grep -c '^new-window' "$log" || true)" "$(grep -cF "$BAD_REPO" "$log" || true)"
+}
+
+assert_eq "$(run_bad_repo "$SCRIPTREPO/scripts/open-terminal" refused)" "launched=1 rejected=0" \
+  "a GH_REPO the resolver refuses renders no repository into the launch line"
+assert_eq "$(run_bad_repo "$MUTREPO/scripts/open-terminal" accepted)" "launched=1 rejected=1" \
+  "must-fail control: a resolve_repo that drops the status types the refused value into the pane"
 
 # Hermeticity proof: every window the launch rows created went through the
 # stub. No new-window line anywhere means a real tmux server took the calls.

@@ -266,6 +266,8 @@ source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT"
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
+# shellcheck source=lib/gh-repo.sh
+source "$SCRIPT_DIR/lib/gh-repo.sh"
 # shellcheck source=lib/date-ladder.sh
 source "$SCRIPT_DIR/lib/date-ladder.sh"
 # shellcheck source=lib/usage-reset.sh
@@ -467,8 +469,13 @@ if ! orch_github_auth_status; then
 fi
 
 if [[ ${#REPOS[@]} -eq 0 ]]; then
-  resolved="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
-  [[ -n "$resolved" ]] || die repo-unresolved "" "option=--repo"
+  # The shared resolver, so a watch launched with GH_REPO naming another
+  # repository reduces that one rather than the checkout it was started in.
+  # Exit 2 prints the value it rejected, which is no more usable as a `--repo`
+  # argument than nothing resolved at all, so both refuse here.
+  resolve_status=0
+  resolved="$(orch_resolve_gh_repo "$PROJECT_ROOT")" || resolve_status=$?
+  [[ "$resolve_status" -eq 0 && -n "$resolved" ]] || die repo-unresolved "" "option=--repo"
   REPOS=("$resolved")
 fi
 # One canonical spelling per repository, settled once, HERE — below the default

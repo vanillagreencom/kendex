@@ -7,6 +7,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/gh-auth.sh
 source "$SCRIPT_DIR/../lib/gh-auth.sh"
+# shellcheck source=../lib/gh-repo.sh
+source "$SCRIPT_DIR/../lib/gh-repo.sh"
 
 show_help() {
     cat <<'EOF'
@@ -88,20 +90,21 @@ emit_preflight_result() {
 LABEL_ADD_REPOSITORY=""
 
 preflight_label_add() {
-    local label="$1" policy="$2"
-    local repo_json="" repo_rc=0 repository=""
-    repo_json="$(gh repo view --json nameWithOwner 2>&1)" || repo_rc=$?
+    local label="$1" policy="$2" project_root="$3"
+    local repository="" repo_rc=0
+    # The shared resolver, so the label lookup and the mutation below land in
+    # the same repository the `gh pr view` / `gh issue view` target lookup
+    # does: those honour GH_REPO and a bare `gh repo view` does not.
+    repository="$(kendex_github_resolve_gh_repo "$project_root")" || repo_rc=$?
+    if [ "$repo_rc" -eq 2 ]; then
+        emit_preflight_result \
+            "preflight_failed" "$policy" "invalid_repository_metadata" "" "$label" "$repository" >&2
+        return 1
+    fi
     if [ "$repo_rc" -ne 0 ]; then
         emit_preflight_result \
-            "preflight_failed" "$policy" "repository_lookup_failed" "" "$label" "$repo_json" >&2
+            "preflight_failed" "$policy" "repository_lookup_failed" "" "$label" "" >&2
         return "$repo_rc"
-    fi
-
-    repository="$(printf '%s' "$repo_json" | jq -r '.nameWithOwner // empty')"
-    if [ -z "$repository" ]; then
-        emit_preflight_result \
-            "preflight_failed" "$policy" "invalid_repository_metadata" "" "$label" "$repo_json" >&2
-        return 1
     fi
     LABEL_ADD_REPOSITORY="$repository"
 
@@ -241,7 +244,7 @@ main() {
     kendex_github_sanitize_gh_env
 
     local preflight_rc=0
-    preflight_label_add "$label" "$policy" || preflight_rc=$?
+    preflight_label_add "$label" "$policy" "$project_root" || preflight_rc=$?
     if [ "$preflight_rc" -eq 10 ]; then
         exit 0
     fi

@@ -48,7 +48,14 @@ git -C "$TMP_ROOT/repo" init -q
 . "$TEST_DIR/lib/gh-stub.sh"
 GH_STUB_DIR="$TMP_ROOT/gh-stub" gh_stub_install "$TMP_ROOT/bin"
 
+# RUN_ENV is what a case adds to post-reply's environment; every table row
+# runs with none. SUBJECT is the script under test, so a control can point at
+# a mutated copy.
+RUN_ENV=()
+SUBJECT=""
+
 build() {
+  RUN_ENV=()
   gh_stub_reset
   gh_stub_answer pr-view '{"number":77,"headRefName":"feature-branch"}'
   gh_stub_answer 'api:/replies' '{"html_url":"https://github.com/owner/repo/pull/23#discussion_r999"}'
@@ -90,7 +97,7 @@ run() {
   # shellcheck disable=SC2206
   argv=($1)
   (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO \
-    "$POST_REPLY" "${argv[@]}" >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
+    ${RUN_ENV[@]+"${RUN_ENV[@]}"} "${SUBJECT:-$POST_REPLY}" "${argv[@]}" >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
   printf 'rc=%s out=%s err=%s calls=%s' "$rc" "$(out_text)" "$(err_text)" "$(calls)"
 }
 
@@ -122,6 +129,47 @@ a numeric id with --pr dry-runs the rest method against that PR|2633519824 Fixed
 a numeric id with --pr posts to the PR's /replies endpoint|2633519824 Fixed --pr 23|0|success=true url=https://github.com/owner/repo/pull/23#discussion_r999|-|repo,auth,api:repos/owner/repo/pulls/23/comments/2633519824/replies
 a thread id needs no --pr and dry-runs the graphql method|PRRT_kwDOexample123 Thanks --dry-run|0|dry method=graphql pr=- id=PRRT_kwDOexample123|-|-
 "
+
+URL='https://github.com/owner/repo/pull/23#discussion_r999'
+REPLY_PATH='pulls/23/comments/2633519824/replies'
+
+echo "=== which repository the REST reply reaches ==="
+# get_repo_info supplies the owner and repo of every REST path post-reply
+# builds, and it resolves through the shared ladder, so GH_REPO names the
+# repository here exactly as it names it for the `gh pr view` beside it.
+# Nothing else in this suite would notice a return to a GH_REPO-blind
+# `gh repo view`: the stub answers one repository and every row asserts that
+# one. With GH_REPO set the checkout is never asked, so no `repo` call is made.
+build
+RUN_ENV=(GH_REPO=other/elsewhere)
+assert_eq "$(run '2633519824 Fixed --pr 23')" \
+  "rc=0 out=success=true url=$URL err=- calls=auth,api:repos/other/elsewhere/$REPLY_PATH" \
+  "GH_REPO names the repository the reply is posted to"
+
+echo "=== must-fail control ==="
+# Put the GH_REPO-blind `gh repo view` back in get_repo_info, keeping the lines
+# around it. The case above reddens, and it reddens by posting the reply to the
+# checkout's repository while GH_REPO named another one — a comment written
+# into the wrong repository's pull request.
+MUTANT_DIR="$TMP_ROOT/mutant"
+mkdir -p "$MUTANT_DIR/commands"
+cp -R "$REPO_ROOT/skills/github/scripts/lib" "$MUTANT_DIR/lib"
+MUTANT="$MUTANT_DIR/commands/post-reply.sh"
+cp "$POST_REPLY" "$MUTANT"
+MUTANT_LIB="$MUTANT_DIR/lib/github-api.sh"
+assert_eq "$(grep -Fc 'kendex_github_resolve_gh_repo "${PROJECT_ROOT:-$PWD}"' "$MUTANT_LIB")" "1" \
+  "control finds exactly one live resolver call"
+sed -i.bak 's|kendex_github_resolve_gh_repo "${PROJECT_ROOT:-$PWD}"|gh repo view --json nameWithOwner -q .nameWithOwner|' "$MUTANT_LIB"
+assert_eq "$(grep -Fc 'kendex_github_resolve_gh_repo "${PROJECT_ROOT:-$PWD}"' "$MUTANT_LIB")" "0" \
+  "control applied the mutation"
+build
+RUN_ENV=(GH_REPO=other/elsewhere)
+SUBJECT="$MUTANT"
+GOT="$(run '2633519824 Fixed --pr 23')"
+SUBJECT=""
+assert_eq "$GOT" \
+  "rc=0 out=success=true url=$URL err=- calls=repo,auth,api:repos/owner/repo/$REPLY_PATH" \
+  "must-fail control: a GH_REPO-blind lookup posts the reply to the checkout's repository"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

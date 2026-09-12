@@ -216,6 +216,8 @@ export CLAIM_ROOT
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT"
+# shellcheck source=lib/gh-repo.sh
+source "$SCRIPT_DIR/lib/gh-repo.sh"
 # shellcheck source=lib/lane-claims.sh
 source "$SCRIPT_DIR/lib/lane-claims.sh"
 # shellcheck source=lib/pane-working.sh
@@ -396,9 +398,22 @@ fi
 
 
 
+# The repository the launch command renders as `{repo}`. An explicit --repo
+# wins; otherwise the shared resolver, so a run started with GH_REPO naming
+# another repository hands the spawned lane that one. A resolver exit of 1 or 2
+# renders nothing rather than a value no `gh --repo` argument would accept.
+#
+# CLAIM_ROOT, not PROJECT_ROOT: the resolver's first rung, `gh repo view`,
+# answers for the CALLER's checkout, and PROJECT_ROOT is the checkout this
+# script is installed in, which a worktree's `.agents` symlink makes a
+# different one. Two rungs of one ladder reading two roots is the
+# split-across-two-repositories this resolver exists to close.
 resolve_repo() {
   if [[ -n "$REPO" ]]; then printf '%s\n' "$REPO"; return; fi
-  gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true
+  local resolved="" resolve_status=0
+  resolved="$(orch_resolve_gh_repo "${CLAIM_ROOT:-$PWD}")" || resolve_status=$?
+  [[ "$resolve_status" -eq 0 ]] || return 0
+  printf '%s\n' "$resolved"
 }
 
 start_cmd() {

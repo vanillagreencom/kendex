@@ -110,7 +110,7 @@ case "${1:-}" in
   repo)
     if [[ "${2:-}" == "view" ]]; then
       _token_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
-      echo '{"nameWithOwner":"test-owner/test-repo"}'
+      echo 'test-owner/test-repo'
       exit 0
     fi
     ;;
