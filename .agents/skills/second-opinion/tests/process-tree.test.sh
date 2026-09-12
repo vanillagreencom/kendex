@@ -422,19 +422,59 @@ cancel_in_window() { # RUNTIME LABEL -> the surviving CLI's pid, empty when none
   await_file "$TMP_ROOT/$label.pid" || true
   cat < "$TMP_ROOT/$label.pid"
 }
+# THE CALLER REDIRECTS THIS, it does not capture it in `$(...)`. The teardown
+# at the end registers strays and refuses through `fail`, and a command
+# substitution puts both in a subshell: the registration is lost when it exits
+# and the refusal ends only that subshell. What the rows below match on is
+# unchanged either way.
 launch_then_wait() { # RUNTIME LABEL -> what the wait command it printed reported
-  local label="$2" pid w
+  local label="$2" pid w cli_pid cli_pgid
   mkdir "$TMP_ROOT/$label-rt"
   env "${WIDENED_WINDOW[@]}" CLI_HOLD=30 CLI_PID_FILE="$TMP_ROOT/$label.pid" \
     CLI_PGID_FILE="$TMP_ROOT/$label.pgid" "$1" launch "$TMP_ROOT/bin/recording-codex" \
     "$TMP_ROOT/$label-answer" "$TMP_ROOT/$label-rt" 60 false 5 quick q \
     > "$TMP_ROOT/$label.stdout" 2> "$TMP_ROOT/$label.stderr"
   w="$(sed -n 's/^wait: //p' "$TMP_ROOT/$label.stdout")"
-  pid="$(read_pid "$TMP_ROOT/$label-rt/pid" "the published worker")"
+  pid="$(read_pid "$TMP_ROOT/$label-rt/pid" "the published worker")" \
+    || fail "$label: no worker pid in $label-rt/pid"
   STRAYS+=("$pid")
   bash -c "$w" > "$TMP_ROOT/$label-wait.stdout" 2> "$TMP_ROOT/$label-wait.stderr" || true
   cat "$TMP_ROOT/$label-wait.stderr"
+  # EVERYTHING BELOW IS TEARDOWN, ADDED AFTER THE MEASUREMENT ABOVE, and it
+  # writes nothing to stdout, which is the value the rows match on.
+  #
+  # The worker is signalled by GROUP AND BY PID. The early-publish control is
+  # built to publish a pid before the child reaches its setpgid, so there the
+  # group does not exist when this runs and the group signal is a no-op by
+  # construction — which is how that case's worker and its CLI lived out
+  # CLI_HOLD and then wrote $TMP_ROOT/<label>-answer at the top of the temp
+  # root, inside the window the EXIT trap removes it in. This frame holds that
+  # fork, which is what makes the bare pid safe to signal.
   kill -KILL -- "-$pid" 2>/dev/null || true
+  kill -KILL "$pid" 2>/dev/null || true
+  # The CLI records its own pid and group, but only once it has exec'd, and an
+  # absent or empty file is NOT an error here: the widened window exists so a
+  # run can be stopped before the CLI ever runs, and then there is nothing to
+  # reap. Bounded, so a case with no CLI does not pay the full wait.
+  await_file "$TMP_ROOT/$label.pid" 40 || true
+  cli_pid=""
+  cli_pgid=""
+  [[ ! -s "$TMP_ROOT/$label.pid" ]] || cli_pid="$(cat < "$TMP_ROOT/$label.pid")"
+  [[ ! -s "$TMP_ROOT/$label.pgid" ]] || cli_pgid="$(cat < "$TMP_ROOT/$label.pgid")"
+  if [[ "$cli_pgid" =~ ^[1-9][0-9]*$ ]]; then
+    STRAYS+=("$cli_pgid")
+    kill -KILL -- "-$cli_pgid" 2>/dev/null || true
+  fi
+  if [[ "$cli_pid" =~ ^[1-9][0-9]*$ ]]; then
+    STRAYS+=("$cli_pid")
+    kill -KILL "$cli_pid" 2>/dev/null || true
+  fi
+  await_gone "$pid" || fail "$label: the published worker $pid survived KILL"
+  await_group_gone "$pid" || fail "$label: the worker group $pid survived KILL"
+  if [[ "$cli_pgid" =~ ^[1-9][0-9]*$ ]]; then
+    await_group_gone "$cli_pgid" \
+      || fail "$label: the CLI group $cli_pgid survived KILL"
+  fi
 }
 if [[ -z "$SLOW_PERL_REAL" ]]; then
   printf 'SKIP: the fork-window cases need the perl the runtime itself uses\n'
@@ -459,14 +499,33 @@ else
   [[ -n "$mutant_survivor" ]] \
     || fail "the absent-group control left no survivor — the case above proves nothing"
   STRAYS+=("$mutant_survivor")
-  kill -KILL "$mutant_survivor" 2>/dev/null || true
+  # The survivor holds CLI_HOLD as a `sleep` CHILD, so killing the leader alone
+  # orphans that sleep for two minutes. It recorded the group it leads, so that
+  # is what gets signalled; the row's claim is already settled above, by the
+  # survivor being there at all. The group file is empty when the CLI exec'd but
+  # had not reached its second write, which is an expected outcome of the window
+  # this case stops a run inside, not a defect.
+  mutant_pgid=""
+  [[ ! -s "$TMP_ROOT/window-mutant.pgid" ]] \
+    || mutant_pgid="$(cat < "$TMP_ROOT/window-mutant.pgid")"
+  if [[ "$mutant_pgid" =~ ^[1-9][0-9]*$ ]]; then
+    STRAYS+=("$mutant_pgid")
+    kill -KILL -- "-$mutant_pgid" 2>/dev/null || true
+    await_group_gone "$mutant_pgid" \
+      || fail "the window-mutant CLI group $mutant_pgid survived KILL"
+  else
+    kill -KILL "$mutant_survivor" 2>/dev/null || true
+    await_gone "$mutant_survivor" \
+      || fail "the window-mutant CLI $mutant_survivor survived KILL"
+  fi
   ok "the control's guard reports success over a live CLI ($mutant_survivor)"
 
   echo "=== launch publishes a worker its own wait can see ==="
   # The wait command launch prints probes `-$pid`, so a worker published before
   # it has grouped reads there as one that is gone: exit 1, relaunch, and a
   # second CLI run while the first goes on unsupervised.
-  case "$(launch_then_wait "$RUNTIME" publish)" in
+  launch_then_wait "$RUNTIME" publish > "$TMP_ROOT/publish.reported"
+  case "$(cat < "$TMP_ROOT/publish.reported")" in
     *"is gone and published no status"*) fail "launch published a worker its own wait read as gone" ;;
   esac
   ok "the wait launch prints sees a worker that has taken its group"
@@ -479,7 +538,8 @@ else
   chmod +x "$EARLY_MUTANT"
   cmp -s "$RUNTIME" "$EARLY_MUTANT" && fail "the early-publish control mutated nothing"
   bash -n "$EARLY_MUTANT" || fail "the early-publish control is not valid shell"
-  case "$(launch_then_wait "$EARLY_MUTANT" early)" in
+  launch_then_wait "$EARLY_MUTANT" early > "$TMP_ROOT/early.reported"
+  case "$(cat < "$TMP_ROOT/early.reported")" in
     *"is gone and published no status"*) ok "the control's early publication reads as a gone worker" ;;
     *) fail "the early-publish control was not read as gone — the case above proves nothing" ;;
   esac
