@@ -293,9 +293,12 @@ It recognizes Cargo (target/, one prunable unit per profile directory holding a
 .cargo-lock, which is held while that unit is pruned and is the one file left
 behind) and JavaScript (node_modules/ and .next/ beside a package.json and a
 package manager's lock file, each removed whole). A marker does not have to sit
-at the worktree root: every directory carrying one is its own root, found by a
-walk that never descends into build output and never follows a symlink out of
-the worktree. A repository matching no layout is a reported no-op, not an error.
+at the worktree root: each directory carrying one is its own root, found by a
+walk that descends into neither build output nor any dot-prefixed directory,
+.git among them, and that follows no symlink out of the worktree. So a project
+hidden under a dotted directory keeps its output, which reclaims less and
+deletes nothing. A repository matching no layout is a reported no-op, not an
+error.
 
 What the live-build refusal is worth depends on whether the output has a lock.
 A Cargo profile is pruned under its own .cargo-lock, held from before the check

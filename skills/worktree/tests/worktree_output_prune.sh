@@ -752,13 +752,32 @@ assert_eq "$(test -d "$WT/node_modules/left-pad" && echo present)" present \
   'the output the late holder sits in is not pruned'
 cleanup_row_pids
 
-# A unit whose recursive delete raises. The release profile's deps directory is
-# made unwritable, so unlinking inside it fails. debug is pruned first, so this
-# also shows that an earlier unit's record survives the failure.
+# An engine copy whose prune refuses one named unit, the way the racing-build row
+# plants its unlink. Not a permission trick: root bypasses discretionary
+# permissions, so as UID 0 the delete would succeed, the directory would be gone,
+# and the chmod restoring it would fail with ENOENT and take the suite down
+# before this row's assertions and every row after them. A planted raise answers
+# the same whatever the uid, and leaves nothing to restore.
+plant_prune_failure() { # scripts-copy-destination unit-directory-to-refuse
+  cp -a "$SCRIPTS_DIR" "$1"
+  python3 - "$1/worktree-output-prune" "$2" <<'PLANT'
+import pathlib, sys
+engine, victim = pathlib.Path(sys.argv[1]), sys.argv[2]
+body = engine.read_text()
+anchor = "def prune(unit: Unit) -> None:\n"
+assert body.count(anchor) == 1, body.count(anchor)
+refusal = "    if str(unit.directory) == %r:\n        raise OSError(13, 'planted')\n" % victim
+engine.write_text(body.replace(anchor, anchor + refusal))
+PLANT
+}
+
+# A unit whose recursive delete raises, the release profile refusing while debug
+# is pruned first, so this also shows that an earlier unit's record survives the
+# failure.
 build prune-failure cargo tree cargo-out
-chmod 500 "$WT/target/$TRIPLE/release/deps"
-FAILED="$(run 'cleanup --targets-only --apply')"
-chmod 700 "$WT/target/$TRIPLE/release/deps"
+REFUSING="$ROOT/refusing-scripts"
+plant_prune_failure "$REFUSING" "$WT/target/$TRIPLE/release"
+FAILED="$(WORKTREE_SCRIPT="$REFUSING/worktree" run 'cleanup --targets-only --apply')"
 FAILURE_LEFT="$DOT,$CARGO_SRC,$BASE,target,target/<triple>,target/<triple>/release"
 FAILURE_LEFT="$FAILURE_LEFT,target/<triple>/release/.cargo-lock,target/<triple>/release/deps"
 FAILURE_LEFT="$FAILURE_LEFT,target/<triple>/release/deps/big.o,target/debug"
@@ -772,13 +791,13 @@ assert_match "$FAILED" \
 assert_eq "$(test -e "$WT/target/debug/deps" && echo present || echo gone)$(test -e "$WT/target/$TRIPLE/release/deps/big.o" && echo present || echo gone)" \
   gonepresent 'exit 1 on an apply leaves the worktree partly pruned, not untouched'
 
-# An exit status this version does not define, reached from the same fixture by
-# renumbering the engine's own failure status. The wrapper used to call that
+# The same refusal under an exit status this version does not define, reached by
+# renumbering that engine copy's own failure status. The wrapper used to call the
 # report absent and the worktree untouched, on the line after it rendered the
 # report and while debug was already emptied.
 build undefined-exit cargo tree cargo-out
 RENUMBERED="$ROOT/renumbered"
-cp -a "$SCRIPTS_DIR" "$RENUMBERED"
+plant_prune_failure "$RENUMBERED" "$WT/target/$TRIPLE/release"
 python3 - "$RENUMBERED/worktree-output-prune" <<'RENUMBER'
 import pathlib, sys
 engine = pathlib.Path(sys.argv[1])
@@ -787,9 +806,7 @@ old = "INSPECTION_INCOMPLETE = 1"
 assert body.count(old) == 1, body.count(old)
 engine.write_text(body.replace(old, "INSPECTION_INCOMPLETE = 9"))
 RENUMBER
-chmod 500 "$WT/target/$TRIPLE/release/deps"
 UNDEFINED="$(WORKTREE_SCRIPT="$RENUMBERED/worktree" run 'cleanup --targets-only --apply')"
-chmod 700 "$WT/target/$TRIPLE/release/deps"
 assert_match "$UNDEFINED" \
   "rc=1 out=$(unit_record pruned debug) err=worktree-output-prune-prune-failed: worktree=<wt> ecosystem=cargo output=target/<triple>/release;worktree-output-prune-incomplete: worktree=<wt> reason=filesystem-error detail=*;worktree-output-prune-engine-failed: worktree=<wt> exit=9 branch=present left=$FAILURE_LEFT" \
   'an undefined exit status is reported after the records it rendered, not as a report that is absent'
