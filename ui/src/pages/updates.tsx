@@ -1,13 +1,7 @@
-import {
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  RefreshCw,
-} from "lucide-react";
-import { useEffect, useState } from "react";
+import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import type { Scope, UpdateRow } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
@@ -29,8 +23,6 @@ import {
   IGNORE_CONFIRM_LABEL,
   ignoreConfirmTitle,
   UPDATE_ALL_LABEL,
-  UPDATES_EMPTY,
-  UPDATES_EMPTY_BODY,
   UPDATES_UNCHECKED_TITLE,
 } from "@/lib/copy";
 import {
@@ -45,6 +37,7 @@ import {
   updatesSubtitle,
 } from "@/lib/copy-updates";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
+import { usePackageIndex } from "@/lib/package-identity";
 import { exactTime } from "@/lib/relative-time";
 import { scopeKey } from "@/lib/scope";
 import {
@@ -57,10 +50,16 @@ import {
   updatablePlaces,
   visibleUpdates,
 } from "@/lib/update-groups";
-import { readUnsettled } from "@/lib/updates-read-state";
+import {
+  emptyStanding,
+  readUnsettled,
+  scannedInstalled,
+} from "@/lib/updates-read-state";
 import { useNowTick } from "@/lib/use-now-tick";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount } from "@/stores/audit";
+import { useNavStore } from "@/stores/nav";
+import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
 
@@ -80,6 +79,15 @@ export function UpdatesPage() {
   // One choice for every table on the page; the `…` menu lives on the
   // main table, or on the muted one when it is the only table drawn.
   const setShowVersion = useUpdatesView((s) => s.setShowVersion);
+  const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
+  // What is installed comes from the machine scan, never the update rows.
+  const scan = useScanStore((s) => s.result);
+  const scanError = useScanStore((s) => s.error);
+  const packageOf = usePackageIndex();
+  const installed = useMemo(
+    () => scannedInstalled(scan, scanError, packageOf),
+    [scan, scanError, packageOf],
+  );
   const [showHidden, setShowHidden] = useState(false);
   const [confirmIgnore, setConfirmIgnore] = useState<UpdateRow | null>(null);
   // WHICH places an update was asked for, never the rows themselves, and
@@ -126,11 +134,13 @@ export function UpdatesPage() {
 
   const beforeList = updatesBeforeList({
     read,
+    standing: emptyStanding(installed, lastFetched),
     empty,
     checking,
     busy,
     lastChecked,
     onCheck: () => void check(),
+    onBrowse: () => goToMarketplaces(),
   });
   if (beforeList) return beforeList;
 
@@ -207,16 +217,13 @@ export function UpdatesPage() {
             </StatusNote>
           ) : null}
           <UnreadablePlacesNote places={unreadable} />
-          {visible.length === 0 ? (
-            // Only a read that covered every project may call the machine
-            // up to date: a project with no standing is not a project with
-            // nothing to update.
-            read.error === null && unreadable.length === 0 ? (
-              <EmptyState icon={CheckCircle2} title={UPDATES_EMPTY}>
-                {UPDATES_EMPTY_BODY}
-              </EmptyState>
-            ) : null
-          ) : (
+          {/* Nothing is drawn where the list is empty: this branch is
+              reached only with hidden rows, warnings or unreadable places
+              keeping the page on, and each of those draws itself below.
+              An up-to-date claim over muted updates or a place nobody
+              could read is the contradiction `updatesBeforeList` answers,
+              and only it may make that claim. */}
+          {visible.length === 0 ? null : (
             <UpdatesTable
               rows={visible}
               onIgnore={setConfirmIgnore}

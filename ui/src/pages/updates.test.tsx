@@ -4,10 +4,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { updateRow } from "@/components/updates-test-rows";
 import {
+  BROWSE_MARKETPLACES_LABEL,
   CHECK_FOR_UPDATES_LABEL,
   UPDATE_ALL_LABEL,
   UPDATES_ATTENTION_TITLE,
   UPDATES_EMPTY,
+  UPDATES_NOTHING_INSTALLED,
 } from "@/lib/copy";
 import {
   NEVER_CHECKED,
@@ -16,6 +18,7 @@ import {
   UPDATES_CHECKING,
   UPDATES_UNCONFIRMED_TITLE,
 } from "@/lib/copy-updates";
+import { observedSkill, scanFound } from "@/test/observed";
 import { UpdatesPage } from "./updates";
 
 // Static markup escapes apostrophes, so a pinned copy token must be
@@ -43,6 +46,8 @@ const stub = vi.hoisted(() => ({
   lastFetched: null as number | null,
   busy: false,
   unreadable: [] as unknown[],
+  /** What the machine scan found, where the page reads what is installed. */
+  scan: null as unknown,
 }));
 
 vi.mock("@/stores/updates", async (importOriginal) => {
@@ -64,13 +69,35 @@ vi.mock("@/stores/updates", async (importOriginal) => {
   return { ...mod, useUpdatesStore: Object.assign(hook, mod.useUpdatesStore) };
 });
 
+vi.mock("@/stores/scan", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/stores/scan")>();
+  const hook = (selector?: (state: unknown) => unknown) => {
+    const state = { ...mod.useScanStore.getState(), result: stub.scan };
+    return selector ? selector(state) : state;
+  };
+  return { ...mod, useScanStore: Object.assign(hook, mod.useScanStore) };
+});
+
+// A join that recognises nothing; which scans may be counted from at all is
+// pinned in `lib/updates-read-state.test.ts`.
+vi.mock("@/lib/package-identity", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/lib/package-identity")>();
+  return { ...mod, usePackageIndex: () => () => null };
+});
+
 beforeEach(() => {
   stub.rows = [];
   stub.read = { status: "landed", error: null };
   stub.lastFetched = null;
   stub.busy = false;
   stub.unreadable = [];
+  // The ordinary machine: a scan that found something.
+  stub.scan = scanFound([observedSkill("deploy")]);
 });
+
+/** The row core emits for something installed and current. */
+const currentRow = (name: string) =>
+  updateRow(name, null, { updateAvailable: false, latest: null });
 
 /** Unix seconds `ago` seconds before now — the shape the overview reports,
  *  read against the same clock the page renders against. */
@@ -145,7 +172,7 @@ describe("the Updates page across its read states", () => {
       {
         name: "holds the empty state's retry while a write is out",
         read: landed,
-        updates: [],
+        updates: [currentRow("gh")],
         busy: true,
         present: [],
         absent: [],
@@ -203,6 +230,70 @@ describe("the Updates page across its read states", () => {
   });
 });
 
+// An empty list carries three different meanings, and only one of them is
+// good news. The update read covers declared remote packages alone, so a
+// machine of adopted, local or unmanaged content produces no rows at all
+// while the Library counts its packages: the scan says whether the machine
+// is empty, and the update rows never do. Which scans may be counted from
+// is `scannedInstalled`'s, pinned in `lib/updates-read-state.test.ts`; the
+// rows here are what each verdict puts on screen.
+describe("what an empty Updates page says about this machine", () => {
+  it("reads the machine from the scan and up-to-dateness from the check", () => {
+    const rows = [
+      {
+        name: "says nothing is installed, and offers a marketplace rather than a check",
+        updates: [],
+        scan: scanFound([]),
+        age: null,
+        present: [UPDATES_NOTHING_INSTALLED, BROWSE_MARKETPLACES_LABEL],
+        absent: [UPDATES_EMPTY, NEVER_CHECKED, CHECK_FOR_UPDATES_LABEL],
+      },
+      {
+        name: "keeps the check on a machine the scan sees and the update read lists nothing for",
+        updates: [],
+        scan: scanFound([observedSkill("adopted")]),
+        age: null,
+        present: [NEVER_CHECKED, CHECK_FOR_UPDATES_LABEL],
+        absent: [
+          UPDATES_NOTHING_INSTALLED,
+          BROWSE_MARKETPLACES_LABEL,
+          UPDATES_EMPTY,
+        ],
+      },
+      {
+        name: "says no check has run where something is installed and no fetch reached a source",
+        updates: [currentRow("gh")],
+        scan: scanFound([observedSkill("deploy")]),
+        age: null,
+        present: [NEVER_CHECKED, CHECK_FOR_UPDATES_LABEL],
+        absent: [UPDATES_EMPTY, UPDATES_NOTHING_INSTALLED],
+      },
+      {
+        name: "calls the machine up to date once a check has reached a source",
+        updates: [currentRow("gh")],
+        scan: scanFound([observedSkill("deploy")]),
+        age: 5 * 86_400,
+        present: [UPDATES_EMPTY, CHECK_FOR_UPDATES_LABEL],
+        absent: [NEVER_CHECKED, UPDATES_NOTHING_INSTALLED],
+      },
+    ];
+    expect(rows).toHaveLength(4);
+    for (const row of rows) {
+      stub.rows = row.updates;
+      stub.scan = row.scan;
+      stub.lastFetched = row.age === null ? null : secondsAgo(row.age);
+      const html = renderToStaticMarkup(<UpdatesPage />);
+      expect(
+        {
+          present: row.present.filter((value) => html.includes(value)),
+          absent: row.absent.filter((value) => html.includes(value)),
+        },
+        row.name,
+      ).toEqual({ present: row.present, absent: [] });
+    }
+  });
+});
+
 // Both the list and the empty state disclose when their answer was checked.
 describe("how fresh the page says its answer is", () => {
   it("dates only answers a check produced", () => {
@@ -216,7 +307,7 @@ describe("how fresh the page says its answer is", () => {
       },
       {
         name: "dates the up-to-date state, which is the one that hides its age",
-        updates: [],
+        updates: [currentRow("gh")],
         age: 5 * 86_400,
         present: [UPDATES_EMPTY, "Last checked 5d ago"],
         absent: [],
@@ -228,15 +319,8 @@ describe("how fresh the page says its answer is", () => {
         present: [NEVER_CHECKED],
         absent: ["Last checked"],
       },
-      {
-        name: "calls a completed, error-free empty read up to date and says it has never checked",
-        updates: [],
-        age: null,
-        present: [UPDATES_EMPTY, NEVER_CHECKED],
-        absent: ["Last checked"],
-      },
     ];
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(3);
     for (const row of rows) {
       stub.rows = row.updates;
       stub.lastFetched = row.age === null ? null : secondsAgo(row.age);

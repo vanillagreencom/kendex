@@ -1,9 +1,12 @@
-import type { ItemKind, Scope, UpdateRow } from "@/bindings";
+import type { ItemKind, ScanResult, Scope, UpdateRow } from "@/bindings";
+import { isActionable } from "@/lib/copy-scan";
 import {
   NO_UPDATE_STANDING_NOTE,
   UPDATE_NEEDS_CHECK_HERE,
   UPDATES_CHECKING,
 } from "@/lib/copy-updates";
+import { groupItems, installedCount } from "@/lib/derive";
+import type { PackageOf } from "@/lib/package-identity";
 import type { ReadState } from "@/lib/read-state";
 import { sameScope } from "@/lib/scope";
 import { updateWithheld } from "@/lib/update-groups";
@@ -33,6 +36,45 @@ interface PageState {
  *  `grep -rn readUnsettled ui/src` is the list of surfaces that ask. */
 export const readUnsettled = (state: PageState): boolean =>
   state.read.status !== "landed" || state.checking || state.reading;
+
+/** What an Updates page with nothing to list is saying: nothing installed,
+ *  nothing checked, or a check that found everything current. */
+export type EmptyStanding =
+  | { kind: "nothing-installed" }
+  | { kind: "unchecked" }
+  | { kind: "current" };
+
+/** How many packages the machine holds, in the package unit the Library
+ *  counts in, or null where nothing can say. Only a scan reporting it read
+ *  the WHOLE machine produces a count, because the caller words a zero as
+ *  "Nothing installed yet" and takes the check away with it. A failed
+ *  re-read leaves the last result standing (`stores/scan.ts`); every other
+ *  clause below is the scan itself admitting it saw less. */
+export const scannedInstalled = (
+  scan: ScanResult | null,
+  /** The standing error, which outlives the result it failed to replace. */
+  scanError: string | null,
+  packageOf: PackageOf | null,
+): number | null => {
+  if (scan === null || packageOf === null || scanError !== null) return null;
+  if (scan.missingProjects.length > 0) return null;
+  if (scan.warnings.some(isActionable)) return null;
+  return installedCount(groupItems(scan.items, packageOf));
+};
+
+/** Only a count that says the machine is empty makes it empty, and never
+ *  the update rows: core's `updates()` walks the planned REMOTE
+ *  declarations alone, so adopted, local, in-place and unmanaged content
+ *  has no rows while the Library counts it. A count nobody can take falls
+ *  to the `unchecked`/`current` pair, which keeps the check on screen. */
+export const emptyStanding = (
+  installed: number | null,
+  /** Unix seconds of the last successful fetch, as the overview reports it. */
+  lastFetched: number | null,
+): EmptyStanding => {
+  if (installed === 0) return { kind: "nothing-installed" };
+  return lastFetched === null ? { kind: "unchecked" } : { kind: "current" };
+};
 
 /** Whether the update rows can be read as last-known facts: a read that
  *  landed, or a failed re-check that kept the rows it had. One rule for

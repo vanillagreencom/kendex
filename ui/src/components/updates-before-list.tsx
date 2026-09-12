@@ -1,31 +1,40 @@
-import { CheckCircle2, TriangleAlert } from "lucide-react";
+import { CheckCircle2, Package, RefreshCw, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { DotSpinner } from "@/components/loading";
 import { Button } from "@/components/ui/button";
 import {
+  BROWSE_MARKETPLACES_LABEL,
   CHECK_FOR_UPDATES_LABEL,
   UPDATES_ATTENTION_TITLE,
   UPDATES_EMPTY,
   UPDATES_EMPTY_BODY,
+  UPDATES_NOTHING_INSTALLED,
+  UPDATES_NOTHING_INSTALLED_BODY,
+  UPDATES_UNCHECKED_BODY,
 } from "@/lib/copy";
-import { UPDATES_CHECKING } from "@/lib/copy-updates";
+import { NEVER_CHECKED, UPDATES_CHECKING } from "@/lib/copy-updates";
 import type { ReadState } from "@/lib/read-state";
+import type { EmptyStanding } from "@/lib/updates-read-state";
 
-/** What the Updates page shows while there is no list to show, or null
- *  once there is one. Three different answers that must never blur: a
- *  first read still on its way, a read that failed with nothing kept from
- *  a better one, and a completed error-free read that found nothing —
- *  only the last may say "Everything is up to date". */
+/** What the Updates page shows while there is no list to show, or null once
+ *  there is one. Five answers that must never blur: a first read on its way,
+ *  one that failed with nothing kept, a machine with nothing installed, one
+ *  no check has reached, and one a check found current — only the last may
+ *  say "Everything is up to date". */
 export function updatesBeforeList({
   read,
+  standing,
   empty,
   checking,
   busy,
   lastChecked,
   onCheck,
+  onBrowse,
 }: {
   read: ReadState;
+  /** What an empty list means, once the read has nothing left to say. */
+  standing: EmptyStanding;
   empty: boolean;
   checking: boolean;
   /** True while a write is out. The store refuses a check on it, so this
@@ -35,6 +44,8 @@ export function updatesBeforeList({
   /** How old the answer behind this page is, already worded. */
   lastChecked: string;
   onCheck: () => void;
+  /** Where a machine with nothing installed is sent. */
+  onBrowse: () => void;
 }): ReactNode | null {
   const retry = (
     <Button variant="outline" disabled={checking || busy} onClick={onCheck}>
@@ -70,19 +81,59 @@ export function updatesBeforeList({
       </div>
     );
   }
-  // With nothing to update there is nothing to introduce: a title and a
-  // sentence explaining a list that isn't there is furniture around good
-  // news. The sidebar already says which page this is. The age of the
-  // check is the exception — this is the page where a stale answer looks
-  // exactly like a current one, so the good news says how old it is.
   if (empty) {
     return (
       <div className="flex min-h-full items-center justify-center">
-        <EmptyState icon={CheckCircle2} title={UPDATES_EMPTY} action={retry}>
-          {`${UPDATES_EMPTY_BODY} ${lastChecked}.`}
-        </EmptyState>
+        {emptyAnswer(standing, { retry, lastChecked, onBrowse })}
       </div>
     );
   }
   return null;
+}
+
+/** The one empty answer this machine is owed, drawn from the standing so the
+ *  three cannot be reached two ways. The age travels with the good news:
+ *  here a stale answer looks exactly like a current one. */
+function emptyAnswer(
+  standing: EmptyStanding,
+  {
+    retry,
+    lastChecked,
+    onBrowse,
+  }: { retry: ReactNode; lastChecked: string; onBrowse: () => void },
+): ReactNode {
+  switch (standing.kind) {
+    // No check can bring an empty machine news: the way on is a package.
+    case "nothing-installed":
+      return (
+        <EmptyState
+          icon={Package}
+          title={UPDATES_NOTHING_INSTALLED}
+          action={
+            <Button variant="outline" onClick={onBrowse}>
+              {BROWSE_MARKETPLACES_LABEL}
+            </Button>
+          }
+        >
+          {UPDATES_NOTHING_INSTALLED_BODY}
+        </EmptyState>
+      );
+    // Nothing reached a source, so the check is the offer and currency not.
+    case "unchecked":
+      return (
+        <EmptyState icon={RefreshCw} title={NEVER_CHECKED} action={retry}>
+          {UPDATES_UNCHECKED_BODY}
+        </EmptyState>
+      );
+    case "current":
+      return (
+        <EmptyState icon={CheckCircle2} title={UPDATES_EMPTY} action={retry}>
+          {`${UPDATES_EMPTY_BODY} ${lastChecked}.`}
+        </EmptyState>
+      );
+  }
+
+  // A fourth standing has to be answered above before this compiles.
+  const unanswered: never = standing;
+  return unanswered;
 }

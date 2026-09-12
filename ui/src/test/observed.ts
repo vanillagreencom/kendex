@@ -1,4 +1,4 @@
-import type { ObservedItem } from "@/bindings";
+import type { ObservedItem, ScanResult, ScanWarning } from "@/bindings";
 
 /** The separator between a shared file and the entry inside it, the way
  *  core spells it — a character no path and no command can hold. Written
@@ -28,3 +28,36 @@ const identityOf = (item: Omit<ObservedItem, "at">): string => {
     ? item.fileState.target
     : item.path;
 };
+
+/** A plain skill at the personal level, for a test that needs the scan to
+ *  have found an installation rather than a particular one. */
+export const observedSkill = (name: string): ObservedItem =>
+  observed({
+    kind: "skill",
+    name,
+    harness: "claude",
+    scope: { scope: "global" },
+    path: `/h/.claude/skills/${name}`,
+    fileState: { state: "dir" },
+    enabled: true,
+    origin: null,
+    summary: null,
+    action: null,
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+  });
+
+/** A landed scan of these installations, whole unless given unread projects
+ *  or warnings. */
+export const scanFound = (
+  items: ObservedItem[],
+  missingProjects: ScanResult["missingProjects"] = [],
+  warnings: ScanWarning[] = [],
+): ScanResult => ({
+  harnesses: [],
+  items,
+  missingProjects,
+  readProjects: [],
+  warnings,
+});
