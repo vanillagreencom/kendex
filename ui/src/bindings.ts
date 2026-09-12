@@ -5284,8 +5284,8 @@ export type UpdateRow = {
 	 *  A file kendex recorded writing is gone from disk, and the next
 	 *  apply puts it back: the same plan `blocked_by_local_edit` is read
 	 *  from holds the write, so the update is the repair. Only a recorded
-	 *  rendering counts — the planner reports a declaration never
-	 *  installed as missing too, and that one is not news.
+	 *  rendering counts, at the positions the record carries: a declaration
+	 *  never installed and a rendering a newer layout moved are not news.
 	 */
 	filesMissing: boolean,
 	/**
