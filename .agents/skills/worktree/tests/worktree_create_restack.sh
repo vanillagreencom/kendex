@@ -178,6 +178,22 @@ step() {
       git -C "$WT" merge -q --ff-only origin/main
       commit_wt fix.txt fix
       ;;
+    # Two branch commits under one subject, main landing the first one's patch:
+    # the restack rewrites the branch and its map cannot say which of the pair
+    # survived, so the completion refuses.
+    twins)
+      make_pair
+      printf 'a\n' >"$WT/twin-a.txt"
+      git -C "$WT" add twin-a.txt
+      git -C "$WT" commit -q -m 'twin subject'
+      printf 'b\n' >"$WT/twin-b.txt"
+      git -C "$WT" add twin-b.txt
+      git -C "$WT" commit -q -m 'twin subject'
+      printf 'a\n' >"$MAIN/twin-a.txt"
+      git -C "$MAIN" add twin-a.txt
+      git -C "$MAIN" commit -q -m 'main: twin-a'
+      git -C "$MAIN" push -q origin main
+      ;;
     publish) git -C "$WT" push -q origin "HEAD:refs/heads/$ISSUE" ;;
     restack) tool create "$ISSUE" --restack ;;
     reuse) tool create "$ISSUE" --reuse ;;
@@ -398,6 +414,9 @@ map_lines() {
     1d) printf 'rebase-map: <pre> dropped' ;;
     1e) printf 'rebase-map: <end> <head>' ;;
     1p) printf 'rebase-map: <pre> <end>' ;;
+    # Not a hop: the record a refusing restack leaves so a later push refuses
+    # too, naming the head it rewrote from.
+    unmapped) printf 'rebase-unmapped: <pre>' ;;
     1r) printf 'rebase-map: <pre> <restacked>' ;;
     2d) printf 'rebase-map: <pre~1> dropped;rebase-map: <pre> <head>' ;;
     2x) printf 'rebase-map: <pre> <head~1>;rebase-map: <end> <head>' ;;
@@ -413,6 +432,7 @@ map_file_text() {
   case "$spec" in
     -) printf -- '-' ;;
     *+*) printf '%s;%s' "$(map_file_text "${spec%%+*}")" "$(map_file_text "${spec#*+}")" ;;
+    unmapped) map_lines unmapped ;;
     *) printf 'rebase-hop:;%s' "$(map_lines "$spec")" ;;
   esac
 }
@@ -436,6 +456,8 @@ err_text() {
     unreattachable) printf 'worktree-restack-reattach-failed: <wt>' ;;
     remote-moved) printf 'worktree-restack-remote-moved: origin/topic' ;;
     setup-warning) printf 'worktree-config-path-invalid: WORKTREE_MKDIRS=../outside;worktree-restack-setup-failed: <wt>' ;;
+    ambiguous) printf 'worktree-rebase-map-ambiguous: twin subject' ;;
+    map-unreadable) printf 'worktree-restack-map-unreadable: <wt>' ;;
     lease-rejected) printf 'worktree-push-rejected: origin/topic' ;;
     not-contained) printf 'worktree-push-remote-uncontained: origin/topic' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$spec" ;;
@@ -487,6 +509,7 @@ a local rewrite is not covered by prior authorization|clean reuse local-rewrite|
 clean reuse rebases onto the advanced main and prints the path|plain|create topic --reuse|0|wt|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
 --restack with nothing to rebase is a no-op|plain reuse|create topic --restack|0|wt|-|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
 a restack over a base the branch already contains rewrites nothing and leaves no map|contained|create topic --restack|0|wt|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=-
+a restack whose map cannot be derived records the rewrite for a later push to refuse on|twins|create topic --restack|1|-|ambiguous+map-unreadable|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,other.txt:orig,twin-a.txt:a,twin-b.txt:b restack=- remote=- map=unmapped
 '
 
 echo "=== worktree create reuse rebase-conflict recovery ==="

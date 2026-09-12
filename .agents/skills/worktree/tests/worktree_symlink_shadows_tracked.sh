@@ -202,6 +202,23 @@ step() {
       printf 'a\n' >"$MAIN/twin-a.txt"
       commit_main twin-a.txt
       ;;
+    # Both sides add the same path with different content, so the rebase stops
+    # on a conflict and a --restack pauses there. It sits outside the entry, so
+    # resolving it does not disturb the layout the row pins.
+    contend)
+      printf 'branch\n' >"$WT/contended.txt"
+      git -C "$WT" add contended.txt
+      git -C "$WT" commit -q -m 'branch contended'
+      printf 'main\n' >"$MAIN/contended.txt"
+      commit_main contended.txt
+      ;;
+    # The paused restack a row's `restack continue` completes. The pause is a
+    # refusal, so it cannot go through tool(), which aborts the suite on one.
+    paused)
+      (cd "$MAIN" && "$WORKTREE_SCRIPT" create topic --restack >/dev/null 2>&1) || true
+      printf 'resolved\n' >"$WT/contended.txt"
+      git -C "$WT" add contended.txt
+      ;;
     repair) tool repair-links "$WT" ;;
     # A commit of the worktree's own, away from the entry, for a rebase to carry.
     feature) printf 'branch work\n' >"$WT/feature.txt"; git -C "$WT" add feature.txt; git -C "$WT" commit -q -m 'feature work' ;;
@@ -341,6 +358,7 @@ an entry shadowing a tracked subtree gets per-child links, not a parent link ove
 git can write the tracked subtree: a merge advancing the vendored file lands beside the links|shadow create advance|@merge|0|-|-|$SHADOW_V2
 create --reuse rebases the branch through the advanced vendored file and keeps the per-child layout|shadow create feature advance|create topic --reuse|0|wt|map:1|$SHADOW_V2
 a reuse whose map cannot be derived puts the links back before it refuses|shadow create twins legacy-link|create topic --reuse|1|-|ambiguous+map-unreadable|$SHADOW_V1
+a restack continue whose map cannot be derived puts the links back, having no finish or abort left|shadow create twins contend legacy-link paused|restack continue topic|1|-|ambiguous+map-unreadable|$SHADOW_V1
 the reuse refresh restores links the rebase dropped when main starts tracking a child under the entry|predated create feature track-link-child|create topic --reuse|0|wt|map:1|.agents=dir .agents/skills=dir .agents/skills/deep-research=dir .agents/skills/deep-research/SKILL.md=file:installed skill .agents/state.json=link(<main>/.agents/state.json) assume=- status=-
 fix-links on the per-child layout is idempotent and quiet|shadow create advance merge|fix-links @wt|0|restored|-|$SHADOW_V2
 a legacy parent link over tracked files heals to the per-child layout and clears the stale bit|shadow create advance merge legacy-link|fix-links @wt|0|restored|-|$SHADOW_V2

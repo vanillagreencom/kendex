@@ -551,6 +551,20 @@ read_unmapped_rewrite() {
   done <"$map_file"
 }
 
+# Every way the map can fail leaves the branch rewritten with nothing
+# describing it, which is the state a later push must refuse on. The order here
+# is the point: the rewrite is recorded BEFORE the authorization is cleared,
+# because clearing unsets originalHead and a marker written after it would name
+# nothing and read as no marker at all. An empty head means the record never
+# held one, so there is nothing to carry across.
+restack_map_refusal() {
+  local wt="$1" original_head="$2" key="$3" value="$4" text="$5"
+  [[ -z "$original_head" ]] || record_unmapped_rewrite "$wt" "$original_head" || true
+  clear_restack_push_authorization "$wt"
+  worktree_message "$key" "$value" "$text" >&2
+  return 1
+}
+
 # A completed guarded restack rewrote the same branch commits a push
 # auto-rebase rewrites, so it reports the same map from the same emitter.
 # `baseOid` is the new base, so `baseOid..originalHead` holds exactly the
@@ -577,20 +591,20 @@ emit_restack_rebase_map() {
      ! pre_list="$(git -C "$wt" log --reverse --format='%H %s' "$base_oid..$original_head")" || \
      ! post_list="$(git -C "$wt" log --reverse --format='%H %s' "$base_oid..HEAD")" || \
      ! map_lines="$(emit_rebase_map "$pre_list" "$post_list")"; then
-    clear_restack_push_authorization "$wt"
-    worktree_message restack-map-unreadable "$wt" "Error: Could not map the restacked commits of $wt from its recorded base and original head; no rebase map was reported and no rewritten push was authorized." >&2
+    restack_map_refusal "$wt" "$original_head" restack-map-unreadable "$wt" \
+      "Error: Could not map the restacked commits of $wt from its recorded base and original head; no rebase map was reported and no rewritten push was authorized."
     return 1
   fi
   [[ -n "$map_lines" ]] || return 0
   printf '%s\n' "$map_lines" >&2
   if ! map_file="$(restack_rebase_map_file "$wt")"; then
-    clear_restack_push_authorization "$wt"
-    worktree_message restack-map-unresolved "$wt" "Error: Could not resolve the worktree-private rebase-map file for $wt; the lines above are the map's only copy and no rewritten push was authorized." >&2
+    restack_map_refusal "$wt" "$original_head" restack-map-unresolved "$wt" \
+      "Error: Could not resolve the worktree-private rebase-map file for $wt; the lines above are the map's only copy and no rewritten push was authorized."
     return 1
   fi
   if ! printf '%s\n%s\n' "$RESTACK_HOP_MARK" "$map_lines" >>"$map_file"; then
-    clear_restack_push_authorization "$wt"
-    worktree_message restack-map-unrecorded "$map_file" "Error: Could not append the rebase map to $map_file; the lines above are the map's only copy and no rewritten push was authorized." >&2
+    restack_map_refusal "$wt" "$original_head" restack-map-unrecorded "$map_file" \
+      "Error: Could not append the rebase map to $map_file; the lines above are the map's only copy and no rewritten push was authorized."
     return 1
   fi
 }
@@ -2141,7 +2155,16 @@ case "${1:-}" in
       exit 1
     fi
     RESTACK_REMOTE="$(restack_state_get "$WT_PATH" remote)"
-    emit_restack_rebase_map "$WT_PATH" || exit 1
+    # The one exit here that puts the links back. Its siblings above leave a
+    # live paused restack, whose continue or abort still restores them, which
+    # is the contract push --help states; leave them as they are. Here the
+    # rebase has already completed, so both controls refuse with
+    # no-paused-state, and the authorization this refusal clears would fail
+    # their next check anyway. Nothing else would ever restore the links.
+    if ! emit_restack_rebase_map "$WT_PATH"; then
+      restore_unshadowed_worktree_setup "$WT_PATH"
+      exit 1
+    fi
     finalize_pending_restack_authorization "$WT_PATH" "$RESTACK_REMOTE" "$RESTACK_BRANCH" "$RESTACK_LIVE_EXPECTED_OID" || exit 1
     release_issue_claim_lock
     setup_app_worktree "$WT_PATH"
@@ -2975,7 +2998,7 @@ case "${1:-}" in
       worktree_message push-rebase-unmapped "$UNMAPPED_REWRITE_HEAD" "Error: An earlier rebase rewrote this branch from the head named above without a derivable commit map, so SHAs recorded before it are still unreconciled; refusing to push." >&2
       echo "The pre-rebase commits are in the reflog: git -C \"$WT_PATH\" reflog" >&2
       echo "Reconcile every recorded SHA against that reflog, then remove the record to push:" >&2
-      echo "  rm -f $(restack_rebase_map_file "$WT_PATH" 2>/dev/null || printf '<map file>')" >&2
+      echo "  rm -f \"$(restack_rebase_map_file "$WT_PATH" 2>/dev/null || printf '<map file>')\"" >&2
       exit 1
     fi
 
@@ -3004,7 +3027,7 @@ case "${1:-}" in
             worktree_message push-rebase-unmapped "$PRE_REBASE_HEAD" "Error: The rebase onto origin/$DEFAULT_BRANCH is done but its commit map could not be derived, so SHAs recorded before it cannot be reconciled; refusing to push." >&2
             echo "The branch is rebased; its pre-rebase commits are in the reflog: git -C \"$WT_PATH\" reflog" >&2
             echo "Reconcile every recorded SHA against that reflog, then remove the record to push:" >&2
-            echo "  rm -f $(restack_rebase_map_file "$WT_PATH" 2>/dev/null || printf '<map file>')" >&2
+            echo "  rm -f \"$(restack_rebase_map_file "$WT_PATH" 2>/dev/null || printf '<map file>')\"" >&2
             exit 1
           fi
         fi
