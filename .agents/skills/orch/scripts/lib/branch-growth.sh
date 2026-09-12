@@ -9,9 +9,13 @@ BRANCH_GROWTH_BASE_REF=""
 # The one git invocation every branch measurement reads, so both gates score
 # the same diffstat under the same rules. --find-renames is passed rather than
 # left to the runner's diff.renames, which decides whether a move a size
-# ratchet forced costs zero lines or twice the file. The base ref it compared
-# against is left in BRANCH_GROWTH_BASE_REF for a caller that binds its
-# verdict to the commits it measured.
+# ratchet forced costs zero lines or twice the file. core.quotePath=false keeps
+# a non-ASCII path literal: under the default git wraps it in double quotes and
+# escapes the bytes, and the classifier compares whole paths, so a quoted
+# tests/ path stops reading as a test and its lines are scored against the
+# stricter production allowance. The base ref it compared against is left in
+# BRANCH_GROWTH_BASE_REF for a caller that binds its verdict to the commits it
+# measured.
 branch_size_numstat() {
   local worktree="$1" base_resolver="$2" commit="$3" out_name="$4"
   local base_branch base_ref measured_numstat
@@ -26,7 +30,7 @@ branch_size_numstat() {
     return 1
   fi
   BRANCH_GROWTH_BASE_REF="$base_ref"
-  measured_numstat="$(git -C "$worktree" diff --numstat --no-ext-diff --find-renames "$base_ref"..."$commit" --)" \
+  measured_numstat="$(git -C "$worktree" -c core.quotePath=false diff --numstat --no-ext-diff --find-renames "$base_ref"..."$commit" --)" \
     || branch_growth_fail "git could not compare '$base_ref' with '$commit' in '$worktree'" || return 1
   printf -v "$out_name" '%s' "$measured_numstat"
 }
