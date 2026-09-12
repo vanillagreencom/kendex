@@ -57,6 +57,15 @@
           "requiresReload": true
         },
         {
+          "key": "statusline.showAccount",
+          "label": "Show account email",
+          "description": "Append the Claude login this session authenticated as, as the Claude bridge reports it. Nothing is shown before the first turn, or when the request used an API key or a third-party backend such as Bedrock or Vertex.",
+          "type": "boolean",
+          "default": true,
+          "category": "Statusline",
+          "apply": "live"
+        },
+        {
           "key": "replaceFooter",
           "label": "Replace built-in footer",
           "description": "Hide Pi default footer while the compact QOL statusline is enabled.",

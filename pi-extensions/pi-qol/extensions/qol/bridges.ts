@@ -1,5 +1,6 @@
 import {
 	CAVEMAN_BRIDGE_SYMBOL,
+	CLAUDE_BILLING_IDENTITY_SYMBOL,
 	PI_AGENTS_STATUSLINE_SYMBOL,
 	QUESTION_SERVICE_SYMBOL,
 	KENDEX_MODAL_LOCK_SYMBOL,
@@ -19,6 +20,18 @@ export interface CavemanBridge {
 
 export interface PiAgentsStatuslineBridge {
 	getCurrentSubagent(cwd?: string): { name: string; color?: string } | undefined;
+}
+
+/** The Claude bridge's published account surface. It answers with a login
+ *  email only when the SDK confirmed one for the child that ran the request:
+ *  an API key or a Bedrock, Vertex, Foundry, Anthropic-AWS or Mantle backend
+ *  authenticates as something no config directory names, and a companion
+ *  account router can rotate the profile per request without the environment
+ *  changing. Reading a config directory here instead would name the wrong
+ *  account in every one of those cases. */
+export interface ClaudeBillingIdentityBridge {
+	version: 1;
+	currentLoginEmail(): string | undefined;
 }
 
 export interface QuestionRequestLike {
@@ -45,6 +58,12 @@ export function readCavemanBridge(): CavemanBridge | undefined {
 	const host = globalThis as unknown as Record<PropertyKey, unknown>;
 	const value = host[CAVEMAN_BRIDGE_SYMBOL];
 	return value && typeof value === "object" ? (value as CavemanBridge) : undefined;
+}
+
+export function readClaudeBillingIdentityBridge(): ClaudeBillingIdentityBridge | undefined {
+	const host = globalThis as unknown as Record<PropertyKey, unknown>;
+	const value = host[CLAUDE_BILLING_IDENTITY_SYMBOL] as ClaudeBillingIdentityBridge | undefined;
+	return value?.version === 1 && typeof value.currentLoginEmail === "function" ? value : undefined;
 }
 
 export function readPiAgentsStatuslineBridge(): PiAgentsStatuslineBridge | undefined {
