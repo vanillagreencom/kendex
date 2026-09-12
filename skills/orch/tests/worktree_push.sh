@@ -304,6 +304,28 @@ assert_contains "$(cat "$run_err")" "Init the record and re-run, or remove the m
 assert_eq "$([[ -s "$args_log" ]] && echo ran || echo no)" "no" "the unrecordable map refuses before the push"
 assert_eq "$([[ -e "$restack_map_file" ]] && echo present || echo absent)" "present" "the unrecorded file is left in place"
 
+# A rebase that rewrote the branch without a derivable map is recorded in the
+# same file. No mapping repairs that rewrite, so this refuses under its own key
+# before any hop is applied rather than under the grammar refusal, which would
+# be a correct refusal carrying the wrong cause.
+work="$TMP_ROOT/work-restack-unmapped"
+reset_state "$work"
+unmapped_before="$(state_json "$work")"
+printf 'rebase-hop:\nrebase-map: %s %s\nrebase-unmapped: %s\n' "$OLD_A" "$NEW_A" "$OLD_B" >"$restack_map_file"
+: >"$args_log"
+STUB_ARGS_LOG="$args_log" STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC" "1" "a recorded unmapped rewrite refuses"
+assert_eq "$(grep '^worktree-push:' "$run_err")" \
+  "worktree-push: rebase-unmapped head=$OLD_B file=$restack_map_file" \
+  "the refusal names the head the rewrite started from, under its own key"
+assert_eq "$(grep -c '^restack-reconcile:' "$run_out" || true)" "0" \
+  "no hop is applied while the unmapped rewrite stands"
+assert_eq "$(state_json "$work")" "$unmapped_before" "workflow state is left alone"
+assert_eq "$([[ -s "$args_log" ]] && echo ran || echo no)" "no" "the refusal lands before the push"
+assert_eq "$([[ -e "$restack_map_file" ]] && echo present || echo absent)" "present" \
+  "the whole file is kept for the operator to read"
+rm -f "$restack_map_file"
+
 # A record that exists but cannot be written: the hop is not recorded, and the
 # refusal says so under its own key with the count of what did land. chmod mode
 # bits do not bind root, so the denial is probed and the case skipped visibly

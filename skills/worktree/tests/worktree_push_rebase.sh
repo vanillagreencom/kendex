@@ -61,6 +61,7 @@ END=""        # HEAD at the end of the fixture
 END1=""       # HEAD~1 at the end of the fixture
 END2=""       # HEAD~2 at the end of the fixture, where the branch has one
 EXTERNAL=""   # a commit an outsider pushed to the remote branch
+UNMAPPED=""   # the head a refusing push rewrote the branch from
 ROW_SCRIPT="" # the package copy a row runs instead of the script under test
 ROW_PATH=""   # a PATH prefix holding a row's git shim
 ROW_CWD=""    # the directory a row's command runs from, when not the main checkout
@@ -247,6 +248,13 @@ step() {
     # drops one of the pair and the subject they share says nothing about
     # which one it was.
     twins-main) commit_main twin-a.txt a ;;
+    # The push that rewrites the branch and then refuses, because its map
+    # cannot be derived. It leaves the record a later push must refuse on;
+    # UNMAPPED is the head it rewrote from.
+    unmapped-push)
+      UNMAPPED="$(git -C "$WT" rev-parse HEAD)"
+      tool push "$ISSUE" --set-upstream
+      ;;
     publish) tool push "$ISSUE" --set-upstream ;;
     move-remote)
       EXTERNAL="$(external_commit)"
@@ -337,7 +345,7 @@ build() {
   shift
   MAIN="$ROOT/main"
   WT="$ROOT/trees/$ISSUE"
-  BASE="" END="" END1="" END2="" EXTERNAL="" ROW_SCRIPT="" ROW_PATH="" ROW_CWD=""
+  BASE="" END="" END1="" END2="" EXTERNAL="" UNMAPPED="" ROW_SCRIPT="" ROW_PATH="" ROW_CWD=""
   for word in "$@"; do
     step "$word"
   done
@@ -378,6 +386,7 @@ alias_text() {
     -e "s|$head1|<head~1>|g" \
     -e "s|$head|<head>|g" \
     -e "s|${EXTERNAL:-NONE}|<external>|g" \
+    -e "s|${UNMAPPED:-NONE}|<unmapped>|g" \
     -e '/^To <root>\/[a-z]*\.git$/d' \
     -e '/^To git@github\.com/d' \
     -e '/^error: failed to push/d' \
@@ -441,7 +450,8 @@ err_text() {
     skip-rebase) printf 'worktree-rebase-skipped: topic' ;;
     map:*) printf 'worktree-rebase-count: %s' "${spec#map:}" ;;
     ambiguous) printf 'worktree-rebase-map-ambiguous: twin subject' ;;
-    unmapped) printf 'worktree-push-rebase-unmapped: topic' ;;
+    unmapped) printf 'worktree-push-rebase-unmapped: <end>' ;;
+    unmapped-retry) printf 'worktree-push-rebase-unmapped: <unmapped>' ;;
     unknown:*) printf 'worktree-push-option-unknown: %s' "${spec#unknown:}" ;;
     two:*) printf 'worktree-push-target-count: 2' ;;
     empty) printf 'worktree-push-target-empty: target' ;;
@@ -479,6 +489,7 @@ an empty positional before a real one is still refused|pair fix|push @empty @wt|
 an empty positional after a real one is a duplicate, not a silent second target|pair fix|push @wt @empty|1|-|two:<wt>'"'"' and '"'"'|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
 a commit whose patch main already landed is dropped by the rebase and mapped as dropped|pair dup fix dup-main|push @wt --set-upstream|0|map-dropped|map:2|head=rebased ahead=1 tree=dup.txt:dup,file.txt:orig,fix.txt:fix remote=origin:head upstream=origin push=-
 commits sharing one subject, partly dropped, refuse the push rather than guess which survived|pair twins twins-main|push @wt --set-upstream|1|-|ambiguous+unmapped|head=rebased ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:- upstream=- push=-
+a push after an unmapped rewrite refuses on its record rather than publishing it|pair twins twins-main unmapped-push|push @wt --set-upstream|1|-|unmapped-retry|head=end ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:- upstream=- push=-
 a whole subject group that survives beside a dropped commit still maps|pair twins dup dup-main|push @wt --set-upstream|0|map-group|map:3|head=rebased ahead=2 tree=dup.txt:dup,file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:head upstream=origin push=-
 an issue ID names the current checkout when it is an issue worktree outside the trees base|outside fix|push TOPIC --no-rebase|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=-
 a first push by issue ID creates the remote branch and sets its upstream|pair fix|push TOPIC --set-upstream|0|-|skip-rebase|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=-

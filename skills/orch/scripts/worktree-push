@@ -43,6 +43,13 @@
 # reached workflow state before the refusal; `--check-live-round` consumes
 # nothing and deletes nothing.
 #
+# The same file carries one more line: `rebase-unmapped: <pre-rebase-head>`,
+# which a push auto-rebase writes when it rewrote the branch and could not
+# derive a map for it. No mapping repairs that rewrite, so this refuses on the
+# line before it applies any hop and publishes nothing. An operator reconciles
+# the recorded SHAs against the worktree reflog and removes the file, which is
+# also what clears it for `worktree push`.
+#
 # A fix round in flight is refused rather than reconciled: its record pins the
 # commit the delegated agent is working from, and the rebase this command runs
 # would move every commit out from under it, leaving the round's receipt to
@@ -129,6 +136,11 @@ ISSUE_GRAMMAR='^[A-Za-z0-9][A-Za-z0-9._-]*$'
 # worktree script writes there — the wire format between the two scripts, like
 # the `rebase-map: ` prefix itself.
 RESTACK_HOP_MARK='rebase-hop:'
+# The line a push auto-rebase leaves in the same file when it rewrote the
+# branch without a derivable map. It names the pre-rebase head and stands until
+# an operator clears the file, so it is the same literal the worktree script
+# writes there.
+RESTACK_UNMAPPED_MARK='rebase-unmapped:'
 
 # The leading comment block is the contract, printed by shape rather than by
 # line number so --help cannot drift as that block grows.
@@ -154,6 +166,7 @@ message() {
 	not-directory) printf 'The worktree directory does not resolve.\n' ;;
 	not-worktree) printf 'The directory is not a Git worktree.\n' ;;
 	restack-map-path) printf 'The worktree-private rebase-map file could not be resolved. No push ran.\n' ;;
+	rebase-unmapped) printf 'An earlier rebase rewrote this branch from the head named above without a derivable commit map, so recorded SHAs are unreconciled in a way no mapping repairs and none may be published. Nothing was reconciled and the whole file was kept. Reconcile every recorded SHA against the worktree reflog, then remove the file. No push ran.\n' ;;
 	restack-map-grammar) printf 'The restack rebase-map file is not a hop record this can apply: each hop opens with its own boundary line and holds at least one mapping. hops_applied is how many complete hops before it reached workflow state, and the whole file was kept. Apply the rebase-map lines after those hops with workflow-state update, then remove the file. No push ran.\n' ;;
 	restack-map-nostate) printf 'No workflow state records this issue, so it holds no SHA a restack could have made stale and nothing can hold the map. Init the record and re-run, or remove the map file. No push ran.\n' ;;
 	restack-map-write) printf 'A restack hop was not recorded. hops_applied is how many hops before it reached workflow state, and the whole file was kept. Repair workflow state, then apply the rebase-map lines after those hops with workflow-state update before publishing recorded SHAs. No push ran.\n' ;;
@@ -418,6 +431,19 @@ reconcile_restack_hop() {
 }
 
 if [[ -e "$restack_map_file" ]]; then
+	# A rebase that rewrote the branch without a derivable map is recorded in
+	# this file too, and it is read before any hop is applied: no mapping
+	# repairs that rewrite, so nothing here may be reconciled or published
+	# while it stands, and the hops stay in the file for the operator reading
+	# it.
+	restack_unmapped=''
+	while IFS= read -r restack_line || [[ -n "$restack_line" ]]; do
+		case "$restack_line" in
+		"$RESTACK_UNMAPPED_MARK "*) restack_unmapped="${restack_line#"$RESTACK_UNMAPPED_MARK" }" ;;
+		esac
+	done <"$restack_map_file"
+	[[ -z "$restack_unmapped" ]] \
+		|| fail rebase-unmapped "head=$restack_unmapped" "file=$restack_map_file"
 	# The record names SHAs recorded against a state file. With no record there
 	# is nothing the hops could move, and nothing this run can hold them in.
 	[[ "$state_present" == "true" ]] \

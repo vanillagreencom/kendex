@@ -513,6 +513,44 @@ restack_rebase_map_file() {
   printf '%s\n' "$path"
 }
 
+# The line a push auto-rebase leaves in the map file when it rewrote the branch
+# but could not derive a map for it. The rewrite outlives the process that
+# refused, and a retry finds the base already contained, so it rebases nothing,
+# derives nothing and would publish a rewrite no map ever described. The marker
+# is what carries the refusal across those processes. `worktree-push` reads the
+# same line.
+readonly RESTACK_UNMAPPED_MARK='rebase-unmapped:'
+
+# Record an unmapped rewrite in the worktree's map file. The caller refuses
+# whatever this returns; a marker that cannot be written narrows that refusal
+# to the current process, which is why the failure is reported rather than
+# swallowed.
+record_unmapped_rewrite() {
+  local wt="$1" original_head="$2" map_file=""
+  if ! map_file="$(restack_rebase_map_file "$wt")" || \
+     ! printf '%s %s\n' "$RESTACK_UNMAPPED_MARK" "$original_head" >>"$map_file"; then
+    worktree_message rebase-unmapped-unrecorded "$wt" "Error: Could not record the unmapped rewrite in $wt, so a later push cannot be refused on it; reconcile the recorded SHAs before any push." >&2
+    return 1
+  fi
+}
+
+# Sets UNMAPPED_REWRITE_HEAD to the pre-rebase head an earlier push recorded
+# when it rewrote the branch without a derivable map, empty where there is no
+# such record. Returns non-zero when the record cannot be read at all: not
+# knowing is not permission to publish a rewrite.
+UNMAPPED_REWRITE_HEAD=""
+read_unmapped_rewrite() {
+  local wt="$1" map_file="" line=""
+  UNMAPPED_REWRITE_HEAD=""
+  map_file="$(restack_rebase_map_file "$wt")" || return 1
+  [[ -e "$map_file" ]] || return 0
+  while IFS= read -r line; do
+    case "$line" in
+      "$RESTACK_UNMAPPED_MARK "*) UNMAPPED_REWRITE_HEAD="${line#"$RESTACK_UNMAPPED_MARK" }" ;;
+    esac
+  done <"$map_file"
+}
+
 # A completed guarded restack rewrote the same branch commits a push
 # auto-rebase rewrites, so it reports the same map from the same emitter.
 # `baseOid` is the new base, so `baseOid..originalHead` holds exactly the
@@ -2923,6 +2961,24 @@ case "${1:-}" in
       fi
     fi
 
+    # An earlier push may have rewritten this branch without deriving a map and
+    # refused. That rewrite stands, and this run would find the base already
+    # contained, rebase nothing and derive nothing, so it must refuse too
+    # rather than publish a branch no map ever described. --no-rebase is no
+    # exception: the commits are already rewritten. It sits after the lease,
+    # which judges a diverged remote on its own and says so in its own words.
+    if ! read_unmapped_rewrite "$WT_PATH"; then
+      worktree_message push-unmapped-unreadable "$WT_PATH" "Error: Could not read $WT_PATH's rebase-map record, so whether an earlier rebase left this branch unmapped is unknown; refusing to push." >&2
+      exit 1
+    fi
+    if [[ -n "$UNMAPPED_REWRITE_HEAD" ]]; then
+      worktree_message push-rebase-unmapped "$UNMAPPED_REWRITE_HEAD" "Error: An earlier rebase rewrote this branch from the head named above without a derivable commit map, so SHAs recorded before it are still unreconciled; refusing to push." >&2
+      echo "The pre-rebase commits are in the reflog: git -C \"$WT_PATH\" reflog" >&2
+      echo "Reconcile every recorded SHA against that reflog, then remove the record to push:" >&2
+      echo "  rm -f $(restack_rebase_map_file "$WT_PATH" 2>/dev/null || printf '<map file>')" >&2
+      exit 1
+    fi
+
     if [[ "$AUTO_REBASE" == true ]]; then
       git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || true
       if [[ -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]]; then
@@ -2931,6 +2987,7 @@ case "${1:-}" in
         else
           # Snapshot the branch-only commits before/after the rebase so a
           # rewrite is reported as an old→new commit map.
+          PRE_REBASE_HEAD="$(git -C "$WT_PATH" rev-parse HEAD)"
           PRE_REBASE_COMMITS="$(git -C "$WT_PATH" log --reverse --format='%H %s' "origin/$DEFAULT_BRANCH..HEAD")"
           if ! git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
             git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || true
@@ -2941,10 +2998,13 @@ case "${1:-}" in
           setup_worktree_links "$WT_PATH"
           POST_REBASE_COMMITS="$(git -C "$WT_PATH" log --reverse --format='%H %s' "origin/$DEFAULT_BRANCH..HEAD")"
           if ! emit_rebase_map "$PRE_REBASE_COMMITS" "$POST_REBASE_COMMITS"; then
-            worktree_message push-rebase-unmapped "$CURRENT_BRANCH" "Error: The rebase onto origin/$DEFAULT_BRANCH is done but its commit map could not be derived, so SHAs recorded before it cannot be reconciled; refusing to push." >&2
+            # The rewrite outlives this refusal, so it is recorded in the
+            # worktree before exiting; a retry reads it above and refuses too.
+            record_unmapped_rewrite "$WT_PATH" "$PRE_REBASE_HEAD" || true
+            worktree_message push-rebase-unmapped "$PRE_REBASE_HEAD" "Error: The rebase onto origin/$DEFAULT_BRANCH is done but its commit map could not be derived, so SHAs recorded before it cannot be reconciled; refusing to push." >&2
             echo "The branch is rebased; its pre-rebase commits are in the reflog: git -C \"$WT_PATH\" reflog" >&2
-            echo "Reconcile every recorded SHA against that reflog by hand before publishing any of them." >&2
-            echo "A second push does not repair this: the rebase is done, so it prints no map at all." >&2
+            echo "Reconcile every recorded SHA against that reflog, then remove the record to push:" >&2
+            echo "  rm -f $(restack_rebase_map_file "$WT_PATH" 2>/dev/null || printf '<map file>')" >&2
             exit 1
           fi
         fi

@@ -411,8 +411,14 @@ otherwise by commit subject. A push that skips the rebase, or one run with
 Subjects pair a group the rebase kept whole or dropped whole. Where it kept
 only part of a group, which commit each one became is not derivable, and a
 guess would name a real commit that is not the recorded one: push prints no
-map and refuses, leaving the branch rebased and unpushed. Give those commits
-distinct subjects, or reconcile the recorded SHAs against the reflog by hand.
+map and refuses, leaving the branch rebased and unpushed.
+
+That rewrite outlives the refusal, and a retry would find the base already
+contained, rebase nothing and derive nothing, so the refusing push records
+'rebase-unmapped: <pre-rebase-head>' in 'kendex-rebase-map' in the worktree's
+git dir and every later push refuses on it, --no-rebase included. Reconcile
+every recorded SHA against the worktree's reflog, then remove that file to
+push again; there is no flag that skips it.
 
 Every path that rewrites branch commits reports the same map from the same
 emitter: this auto-rebase, and a completed restack through 'create --reuse',
