@@ -14,8 +14,9 @@
 #
 # A run copies PKGBUILD, .SRCINFO and every companion file the recipe names,
 # scriptlets and local sources such as a patch (tools/check-aur-sync
-# --print-files), from packaging/arch/<package>/ into a
-# clone of the AUR repository, commits what changed and pushes it. Pushing
+# --print-files), from packaging/arch/<package>/ into a clone of the AUR
+# repository, removes any file the AUR tracks that the recipe no longer
+# names, commits what changed and pushes it. Pushing
 # needs the AUR account's SSH key; a dry run clones over HTTPS and needs none.
 # Edit recipes here: publication overwrites direct AUR edits.
 #
@@ -194,6 +195,14 @@ for package in "${packages[@]}"; do
     [[ -n "$file" ]] || continue
     install -m 644 -- "$source_dir/$file" "$clone/$file"
   done <<< "$files"
+  # A companion the recipe no longer names (a dropped scriptlet or patch) is
+  # removed from the AUR: left there, the two would drift apart with every
+  # check reporting them in sync. Removed from the work tree, not the index,
+  # so the diff below shows the deletion and the dry run prints it.
+  while IFS= read -r tracked; do
+    [[ -n "$tracked" ]] || continue
+    grep -qxF -- "$tracked" <<< "$files" || rm -f -- "$clone/$tracked"
+  done < <(git -C "$clone" ls-files)
 
   # Intent-to-add puts a new file in the diff too; without it a file the AUR
   # lacks would look like no change at all.

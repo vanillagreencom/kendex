@@ -3,8 +3,10 @@ name: publish-aur
 # The AUR does not pull recipe changes from this repository. This workflow
 # pushes packaging/arch/<package>/ to each package's AUR repository once
 # the release downloads the recipe pins exist and hash to their pins;
-# tools/publish-aur holds the rules. The weekly job checks that the AUR
-# still holds what this tree holds, without publishing.
+# tools/publish-aur holds the rules. A package whose release was not up
+# when its bump merged is deferred, so publishing a release runs this
+# workflow again and lands it. The weekly job checks that the AUR still
+# holds what this tree holds, without publishing.
 
 on:
   push:
@@ -14,6 +16,9 @@ on:
       - tools/publish-aur
       - tools/check-aur-sync
       - .github/workflows/publish-aur.yml
+  # A draft becoming a release is what makes a deferred package ready.
+  release:
+    types: [published]
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:
