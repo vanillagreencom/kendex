@@ -234,6 +234,41 @@ assert_contains "$TMP_ROOT/killed-wait.stderr" "relaunch the original second-opi
 [[ -s "$TMP_ROOT/killed-answer" ]] && fail "the killed worker wrote an artifact"
 ok "the killed run left no artifact"
 
+echo "=== a worker that never started carries its reason to the caller ==="
+# The group-leader prefix is the first thing the worker's fork execs, so a host
+# without perl fails there and nowhere else: nohup writes its refusal to
+# worker.log, no status is ever published, and the branch above is the only
+# reader that log has. It also keeps the runtime directory, so the message names
+# where the evidence sits.
+# shellcheck source=lib/path-farm.bash
+. "$TEST_DIR/lib/path-farm.bash"
+NOPERL_BIN="$TMP_ROOT/noperl"
+path_farm_without "$NOPERL_BIN" perl
+if PATH="$NOPERL_BIN" command -v perl > /dev/null 2>&1 \
+   || ! PATH="$NOPERL_BIN" command -v nohup > /dev/null 2>&1; then
+  printf 'SKIP: no PATH with nohup but without perl on this host\n'
+else
+  mkdir "$TMP_ROOT/noperl-runtime"
+  PATH="$NOPERL_BIN" SECOND_OPINION_LAUNCH_MODEL=claude SECOND_OPINION_CODEX_CMD=codex \
+    "$RUNTIME" launch "$SECOND_OPINION" "$TMP_ROOT/noperl-answer" \
+    "$TMP_ROOT/noperl-runtime" 60 false 2 \
+    quick question --target=codex --cwd "$TMP_ROOT/work" --timeout 30 \
+    > "$TMP_ROOT/noperl-launch.stdout" 2> "$TMP_ROOT/noperl-launch.stderr"
+  noperl_wait="$(sed -n 's/^wait: //p' "$TMP_ROOT/noperl-launch.stdout")"
+  [[ -n "$noperl_wait" ]] || fail "the perl-less launch printed no wait: command"
+  rc=0
+  PATH="$NOPERL_BIN" bash -c "$noperl_wait" \
+    > "$TMP_ROOT/noperl-wait.stdout" 2> "$TMP_ROOT/noperl-wait.stderr" || rc=$?
+  assert_rc "$rc" 1 "a worker that never started is terminal"
+  # `nohup:` can only have come from the replayed log: the wait's own message
+  # carries neither it nor the name of what failed. Its wording differs between
+  # the GNU and BSD spellings, so only the prefix both print is pinned.
+  assert_contains "$TMP_ROOT/noperl-wait.stderr" "nohup:" \
+    "the wait replays the log that named what could not be run"
+  assert_contains "$TMP_ROOT/noperl-wait.stderr" "$TMP_ROOT/noperl-runtime" \
+    "the wait names the preserved directory that log sits in"
+fi
+
 # --- Staged terminal states ---------------------------------------------------
 # A dead pid with no status, an elapsed deadline, and a status already on disk
 # are all built directly, so no case depends on winning a wall-clock margin.

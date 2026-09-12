@@ -50,12 +50,21 @@ validate_runtime_dir() {
 # setpgid(0, 0) and then exec, one pid throughout, every inherited descriptor
 # kept, and no shell reporting on any of it.
 #
+# The two other things job control supplied are put back by hand. Without it
+# bash points an async command's stdin at /dev/null, so each fork below hands
+# its child the descriptor that child actually needs; and without it bash sets
+# an async child's SIGINT and SIGQUIT to SIG_IGN, which survives exec, so the
+# CLI, the detached worker and every descendant would inherit two signals no
+# later `trap` can take back. The perl program restores both dispositions.
+#
 # perl carries POSIX setpgid on both platforms this ships to, and stock macOS
-# ships no setsid(1), so one mechanism covers both. The fallback rule is that
-# there is none: on a host with no perl the fork fails 127 and the CLI-failure
-# gate reports perl's own words as the cause, because a run whose tree leads no
-# group of its own cannot be torn down at all.
-AS_GROUP_LEADER=(perl -e 'setpgrp(0, 0) or die "setpgrp: $!\n"; exec { $ARGV[0] } @ARGV; die "exec $ARGV[0]: $!\n"')
+# ships no setsid(1), so one mechanism covers both. Where perl is missing the
+# fallback rule is that the run stops, in each fork's own voice: group_run's
+# fork exits 127 with `perl: command not found` in the CLI's stderr file, which
+# the CLI-failure gate reports as the cause, and launch's worker never starts,
+# leaving nohup's own refusal in worker.log for `wait` to replay when it finds
+# the worker gone with no status. Neither runs a tree that cannot be torn down.
+AS_GROUP_LEADER=(perl -e '$SIG{INT} = $SIG{QUIT} = "DEFAULT"; setpgrp(0, 0) or die "setpgrp: $!\n"; exec { $ARGV[0] } @ARGV; die "exec $ARGV[0]: $!\n"')
 # THE PROBE IS THE GROUP, NOT ITS LEADER. A leader can exit while its children
 # run on — that is the ordinary shape of a CLI that forks — so probing the
 # leader answers "the first process finished", never "the tree is gone". Asking
@@ -65,7 +74,26 @@ AS_GROUP_LEADER=(perl -e 'setpgrp(0, 0) or die "setpgrp: $!\n"; exec { $ARGV[0] 
 process_group_alive() { kill -0 -- "-$1" 2>/dev/null; }
 stop_process_group() {
   local leader="$1" grace="$2" end now
-  process_group_alive "$leader" || return 0
+  if ! process_group_alive "$leader"; then
+    # THE FORK WINDOW, WHERE AN ABSENT GROUP IS NOT AN ANSWER. `$!` exists from
+    # the fork; the group exists only once the child itself reaches setpgid,
+    # microseconds later. In between, the probe above says ESRCH about a live
+    # child, and reading that as "already stopped" reports success on a running
+    # tree — group_run's cancel path lands here with certainty when a signal
+    # arrives before the pid is recorded, and cleanup_launch would go on to
+    # delete the state its live worker is the only handle on.
+    #
+    # Nothing but this script's own fork-to-exec code can be inside that window:
+    # bash, then perl, neither with children yet and both taking the default
+    # TERM, so one signal at the pid ends the tree there. A pid already gone
+    # takes no signal, and a child that exited but has not been waited for takes
+    # it as a no-op and still reads as stopped — which is why the pid is
+    # signalled once and never escalated on: `kill -0` cannot tell that child
+    # from a live one, and a loop on it would never end.
+    kill -0 "$leader" 2>/dev/null || return 0
+    kill -TERM "$leader" 2>/dev/null || true
+    process_group_alive "$leader" || return 0
+  fi
   if ! kill -TERM -- "-$leader" 2>/dev/null; then
     process_group_alive "$leader" || return 0
     printf 'could-not-send-TERM: group=%s\n' "$leader" >&2
@@ -153,8 +181,8 @@ group_run() {
   trap 'request_cancel 143' TERM HUP
   trap 'request_cancel 130' INT
   trap stop_cli EXIT
-  # Stdin is handed over explicitly: bash points an async command that redirects
-  # nothing of its own at /dev/null, and the CLI's prompt arrives there.
+  # The CLI's prompt arrives on the caller's stdin, which an async command does
+  # not inherit on its own.
   exec 8<&0
   "${AS_GROUP_LEADER[@]}" "$@" <&8 2>"$stderr_file" &
   GROUP_CLI_PID=$!
@@ -356,7 +384,13 @@ wait_for_run() {
       status=$(completion_status "$status_file") || status_rc=$?
       [[ $status_rc -ne 2 ]] || die "cannot read worker status: $status_file"
       [[ -z "$status" ]] || continue
-      echo "second-opinion: the detached worker is gone and published no status; relaunch the original second-opinion command" >&2
+      # The only terminal branch that kept its evidence to itself. Whatever
+      # killed the worker before it could publish wrote its reason to the log —
+      # a failed exec of the group-leader prefix says so there and nowhere else
+      # — and this branch leaves the runtime directory in place, so both the log
+      # and the path to it are still readable when the caller is told to retry.
+      replay_log
+      echo "second-opinion: the detached worker is gone and published no status; its log is above and its runtime state is kept at $runtime_dir; relaunch the original second-opinion command" >&2
       exit 1
     fi
     if [[ $now -ge $attempt_deadline ]]; then

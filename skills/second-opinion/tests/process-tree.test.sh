@@ -307,6 +307,78 @@ noisy_noise="$(quiet_group_run "$NOISE_MUTANT" noisy)"
   || fail "the parent-noise control left the stderr pin green — the case above proves nothing"
 ok "the control's planted line reddens the same pin ($noisy_noise)"
 
+echo "=== a stop inside the fork window still ends the tree ==="
+# `$!` exists from the fork; the group only once the child reaches its own
+# setpgid. A teardown landing in between asks about a group that does not exist
+# yet, and answering "already stopped" there leaves the CLI running while the
+# runtime reports success. The window is microseconds wide in production, so it
+# is widened here by a perl that is slow to start: nothing in the runtime is
+# altered, the child simply stays ungrouped long enough to aim at. The CLI
+# records its own pid, so its file existing IS the survivor.
+SLOW_PERL_REAL="$(command -v perl || true)"
+cat > "$TMP_ROOT/bin/window-codex" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$$" > "$CLI_RAN_FILE"
+sleep 120
+SH
+chmod +x "$TMP_ROOT/bin/window-codex"
+mkdir -p "$TMP_ROOT/slowbin"
+cat > "$TMP_ROOT/slowbin/perl" <<'SH'
+#!/usr/bin/env bash
+sleep "$SLOW_PERL_DELAY"
+exec "$SLOW_PERL_REAL" "$@"
+SH
+chmod +x "$TMP_ROOT/slowbin/perl"
+# cancel_in_window RUNTIME LABEL -> the surviving CLI's pid, empty when none
+cancel_in_window() {
+  local runtime="$1" label="$2" job rc=0 _
+  : > "$TMP_ROOT/$label.cli-ran"
+  CLI_RAN_FILE="$TMP_ROOT/$label.cli-ran" SLOW_PERL_REAL="$SLOW_PERL_REAL" \
+    SLOW_PERL_DELAY=1 PATH="$TMP_ROOT/slowbin:$PATH" \
+    "$runtime" group-run "$TMP_ROOT/$label.cli-stderr" window-codex < /dev/null \
+    > "$TMP_ROOT/$label.stdout" 2> "$TMP_ROOT/$label.stderr" &
+  job=$!
+  # Well inside the slow perl's delay, and after the pid is recorded: the stop
+  # this triggers is the shipped one, aimed at a child that has not grouped.
+  sleep 0.3
+  kill -TERM "$job" 2>/dev/null || true
+  wait "$job" 2>/dev/null || rc=$?
+  [[ "$rc" == 143 ]] || fail "$label: the cancelled group-run exited $rc, not 143"
+  # Longer than the delay: a child that outlived the stop reaches its exec here.
+  for _ in $(seq 1 40); do
+    [[ -s "$TMP_ROOT/$label.cli-ran" ]] && break
+    sleep 0.05
+  done
+  cat < "$TMP_ROOT/$label.cli-ran"
+}
+if [[ -z "$SLOW_PERL_REAL" ]]; then
+  printf 'SKIP: the fork-window case needs the perl the runtime itself uses\n'
+else
+  window_survivor="$(cancel_in_window "$RUNTIME" window)"
+  [[ -z "$window_survivor" ]] \
+    || { STRAYS+=("$window_survivor"); fail "a cancel in the fork window left the CLI $window_survivor running"; }
+  ok "a cancel inside the fork window leaves no CLI behind"
+
+  echo "=== control: the same cancel against a guard that reads an absent group as stopped ==="
+  # The pre-fix guard, restored by one line: without it the case above passes on
+  # a runtime that reports success over a live tree.
+  WINDOW_MUTANT="$TMP_ROOT/absent-group-runtime"
+  sed 's%^\(  *\)kill -0 "$leader" 2>/dev/null || return 0$%\1return 0%' \
+    "$RUNTIME" > "$WINDOW_MUTANT"
+  chmod +x "$WINDOW_MUTANT"
+  [[ "$(grep -c 'kill -0 "$leader" 2>/dev/null || return 0' "$RUNTIME")" == 1 ]] \
+    || fail "the absent-group control has no single line to replace"
+  [[ "$(grep -c 'kill -0 "$leader" 2>/dev/null || return 0' "$WINDOW_MUTANT")" == 0 ]] \
+    || fail "the absent-group control left the fork-window probe in place"
+  bash -n "$WINDOW_MUTANT" || fail "the absent-group control is not valid shell"
+  mutant_survivor="$(cancel_in_window "$WINDOW_MUTANT" window-mutant)"
+  [[ -n "$mutant_survivor" ]] \
+    || fail "the absent-group control left no survivor — the case above proves nothing"
+  STRAYS+=("$mutant_survivor")
+  kill -KILL "$mutant_survivor" 2>/dev/null || true
+  ok "the control's guard reports success over a live CLI ($mutant_survivor)"
+fi
+
 echo "=== a signal to second-opinion still reaches the CLI ==="
 # The other half, and the reason the wrapper cannot simply drop --foreground:
 # the caller owns the lane's lifetime. Needs a session to signal, so it is
