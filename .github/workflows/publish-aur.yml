@@ -121,5 +121,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # A package deferred until its release is up is expected to differ
+      # from the AUR, so only the packages publish-aur would publish today
+      # are compared; drift among those still fails the job.
       - name: Published AUR recipes still match this repo
-        run: tools/check-aur-sync --remote
+        run: |
+          set -euo pipefail
+          publishable="$(tools/publish-aur --publishable)"
+          if [ -z "$publishable" ]; then
+            echo "publish-aur: every package waits on its release today; nothing to compare"
+            exit 0
+          fi
+          # shellcheck disable=SC2086
+          tools/check-aur-sync --remote $publishable

@@ -23,7 +23,8 @@
 #           kendex's .SRCINFO carrying a line makepkg never writes; `stray-var`
 #           kendex's PKGBUILD assigning a name that is neither a field nor a
 #           `_helper`; `helper` a `_commit=` helper in the PKGBUILD, which is
-#           fine; `aur-drift` the AUR copy of kendex's PKGBUILD behind the
+#           fine; `scriptlet` kendex naming an install scriptlet in both files with the
+#           file beside them (the AUR copy lacks it); `aur-drift` the AUR copy of kendex's PKGBUILD behind the
 #           tree; `aur-gone` no AUR repository for kendex
 #   argv    the arguments as written, `-` for none
 set -euo pipefail
@@ -78,6 +79,11 @@ world() { # NAME — a fresh copy of the pristine world at $TMP/w-NAME, defect p
     stray) header_line "$recipe/.SRCINFO" "$(printf '\tflavour = spicy')" ;;
     stray-var) header_line "$recipe/PKGBUILD" 'flavour=spicy' ;;
     helper) header_line "$recipe/PKGBUILD" '_commit=abc123' ;;
+    scriptlet)
+      header_line "$recipe/PKGBUILD" 'install=kendex.install'
+      header_line "$recipe/.SRCINFO" "$(printf '\tinstall = kendex.install')"
+      printf 'post_install() { :; }\n' >"$recipe/kendex.install"
+      ;;
     aur-drift)
       git clone --quiet -- "$dir/aur/kendex.git" "$dir/seed"
       sed -i.bak 's/^pkgrel=1$/pkgrel=0/' "$dir/seed/PKGBUILD" && rm -- "$dir/seed/PKGBUILD.bak"
@@ -136,6 +142,8 @@ pkgbase renamed in the .SRCINFO|pkgbase|-|1|drift=1
 a line makepkg never writes in the .SRCINFO|stray|-|2|unreadable=packaging/arch/kendex/.SRCINFO
 a name that is no field in the PKGBUILD|stray-var|-|2|unreadable=packaging/arch/kendex/PKGBUILD
 a _helper variable in the PKGBUILD|helper|-|0|Arch PKGBUILD/.SRCINFO agree (kendex, kendex-bin, kendex-git)
+scriptlet present beside the recipe|scriptlet|kendex|0|Arch PKGBUILD/.SRCINFO agree (kendex)
+scriptlet not yet on the AUR|scriptlet|--remote kendex|1|drift=3
 remote agrees|clean|--remote kendex|0|AUR recipes match this repo (kendex)
 remote behind|aur-drift|--remote kendex|1|drift=1
 remote gone|aur-gone|--remote kendex|2|clone=kendex
@@ -179,6 +187,21 @@ case "$OUT" in
   *'install=kendex.install names no file'*) ok "absent scriptlet is named" ;;
   *) bad "absent scriptlet is named" "$OUT" ;;
 esac
+
+# The remote finding names the scriptlet the AUR lacks.
+dir="$(world scriptlet)"
+run "$dir" --remote kendex
+case "$OUT" in
+  *'kendex: kendex.install is not published at all'*) ok "remote drift names the missing scriptlet" ;;
+  *) bad "remote drift names the missing scriptlet" "$OUT" ;;
+esac
+
+# --print-files: the two makepkg reads, then each scriptlet the recipe names.
+run "$dir" --print-files kendex
+if [ "$RC" = 0 ] && [ "$OUT" = "$(printf 'PKGBUILD\n.SRCINFO\nkendex.install')" ]; then ok "--print-files kendex: PKGBUILD, .SRCINFO, kendex.install"; else bad "--print-files kendex" "rc=$RC out=$OUT"; fi
+dir="$(world clean)"
+run "$dir" --print-files kendex-git
+if [ "$RC" = 0 ] && [ "$OUT" = "$(printf 'PKGBUILD\n.SRCINFO')" ]; then ok "--print-files kendex-git: the two files"; else bad "--print-files kendex-git" "rc=$RC out=$OUT"; fi
 
 # A name outside the package set is argparse's refusal, exit 2, before any file is read.
 dir="$(world clean)"
