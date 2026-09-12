@@ -41,6 +41,11 @@ finish() {
 # for a simple command that cannot fork — the poll loop's `sleep` under real
 # fork exhaustion — where bash ends the shell with status 127 and runs no trap,
 # so the exit status is the contract and this line is the courtesy.
+#
+# It is therefore PRESENT on stderr, never promised first. The stable-first-line
+# contract covers the refusals the check authors at a decision point, which it
+# writes before anything else; a trap that runs AFTER the command that failed
+# cannot outrun that command's own diagnostic, and must not claim to.
 review_artifact_exit_report() {
   local status="$1"
   (( status != 0 )) || return 0

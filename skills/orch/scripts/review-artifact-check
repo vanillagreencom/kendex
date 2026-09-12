@@ -167,17 +167,21 @@ status a legitimate rejection uses, so an empty stdout beside it would read as
 
 Exit 0 when a valid artifact was found, 1 otherwise, 2 on a usage error or on a
 probe this check runs that could not answer (an artifact timestamp `stat` could
-not read). A status 2 carries its keyed line on stderr and nothing on stdout,
-which is why it is not the rejection status: an empty stdout beside exit 1
-would read as a rejection to a caller checking only the status. Any
-status outside 0, 1 and 2 is an abort: no result was produced, and under --wait
-the delegation is no longer watched. stderr carries `review-artifact-check:
-exit=STATUS` as its first line only where bash reaches the EXIT trap — a helper
-that ran and exited nonzero, or a command substitution that could not fork
-(status 254). A SIMPLE command that cannot fork, which is the poll loop's
-`sleep` under real fork exhaustion, ends the shell with a bare status (127 on
-bash 5) and no keyed line at all. Judge an unwatched delegation on the status,
-never on the line.
+not read). A status 2 refusal is written by this script before anything else,
+so it IS stderr's first line, and it carries nothing on stdout — which is why 2
+is not the rejection status: an empty stdout beside exit 1 would read as a
+rejection to a caller checking only the status.
+
+Any status outside 0, 1 and 2 is an abort: no result was produced, and under
+--wait the delegation is no longer watched. stderr then CARRIES
+`review-artifact-check: exit=STATUS`, but not as its first line — the EXIT trap
+runs after the command that failed, so that command's own diagnostic, and
+bash's `fork: retry` lines, print ahead of it. It is written at all only where
+bash reaches the trap: a helper that ran and exited nonzero, or a command
+substitution that could not fork (status 254). A SIMPLE command that cannot
+fork, which is the poll loop's `sleep` under real fork exhaustion, ends the
+shell with a bare status (127 on bash 5) and no keyed line anywhere. Judge an
+unwatched delegation on the status, never on the line.
 EOF
 }
 

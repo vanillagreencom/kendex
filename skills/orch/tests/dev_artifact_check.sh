@@ -66,7 +66,12 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 #   rc              exit status
 #   stderr~<text>   whether stderr carries <text> (`+` reads as a space)
 #   stderr_first~<text>  whether stderr's FIRST line is exactly <text> (`+`
-#                   reads as a space) — the keyed line a caller parses
+#                   reads as a space) — for the refusals this script authors,
+#                   which it writes before anything else
+#   stderr_abort    the status named by the EXIT trap's keyed line ANYWHERE on
+#                   stderr, or `absent`. Position is not asserted: the trap runs
+#                   after the command that failed, so that command's own
+#                   diagnostic precedes it
 #   hint_present    whether the result carries a non-empty string hint; an
 #                   unparseable result reads false, never fired
 #   help_sections   which of the routed --help sections are present: gates
@@ -91,6 +96,11 @@ observe() {
         needle="${name#stderr_first~}"
         IFS= read -r value < "$ERR" || value=""
         value="$([[ "$value" == "${needle//+/ }" ]] && echo true || echo false)"
+        ;;
+      stderr_abort)
+        value="$(grep -o 'dev-artifact-check: exit=[0-9][0-9]*' "$ERR" 2>/dev/null || printf '')"
+        value="${value#dev-artifact-check: exit=}"
+        value="${value:-absent}"
         ;;
       hint_present) value="$(json '(.hint | type) == "string" and .hint != ""')" ;;
       *) value="$(json "if has(\"$name\") then .$name else \"ABSENT\" end")" ;;
@@ -487,6 +497,18 @@ for probe_cmd in sleep jq; do
   printf '#!/usr/bin/env bash\nexit 254\n' > "$PROBE_SHIMS/$probe_cmd/$probe_cmd"
   chmod +x "$PROBE_SHIMS/$probe_cmd/$probe_cmd"
 done
+# A sleep that SPEAKS before it dies, which is what a real one does. The silent
+# shims above leave the keyed line first by accident of their silence; this one
+# is the honest case, and the row on it is why no row asserts the trap's line
+# is first.
+NOISY="$PROBE_SHIMS/noisy-sleep"
+mkdir -p "$NOISY"
+cat > "$NOISY/sleep" <<'SHIM'
+#!/usr/bin/env bash
+printf 'sleep: cannot continue\n' >&2
+exit 254
+SHIM
+chmod +x "$NOISY/sleep"
 NEVER="$TMP_ROOT/probe-never.json"
 probe_table() {
   local row label probe args expect
@@ -501,7 +523,8 @@ probe_table() {
 }
 WAITING="--file $NEVER --wait 20 --interval 1"
 probe_table \
-  "a sleep that cannot run ends the wait with its own status, keyed^sleep^$WAITING^rc=254 stderr_first~dev-artifact-check:+exit=254=true" \
+  "a sleep that cannot run ends the wait with its own status, keyed^sleep^$WAITING^rc=254 stderr_abort=254" \
+  "a sleep that speaks first still gets its status keyed^noisy-sleep^$WAITING^rc=254 stderr_first~sleep:+cannot+continue=true stderr_abort=254" \
   "an unreadable verdict refuses instead of polling on^jq^$WAITING^rc=2 stderr_first~dev-artifact-check:+verdict-unreadable+file=$NEVER=true" \
   "single-shot refuses the same way, not as a bare rejection^jq^--file $NEVER^rc=2 stderr_first~dev-artifact-check:+verdict-unreadable+file=$NEVER=true"
 

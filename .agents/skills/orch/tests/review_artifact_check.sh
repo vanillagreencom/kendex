@@ -129,6 +129,10 @@ json() { jq -r "$@" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 #   diagnostic      the stable diagnostic code
 #   stdout_nonempty whether help wrote a response
 #   stdout~<text>   whether stdout carries <text>
+#   stderr_abort    the status named by the EXIT trap's keyed line ANYWHERE on
+#                   stderr, or `absent`. Position is not asserted: the trap runs
+#                   after the command that failed, so that command's own
+#                   diagnostic precedes it
 #   stderr          `line` when anything was written there, else `empty`
 observe() {
   local got="" token name value needle
@@ -149,6 +153,11 @@ observe() {
           needle="${name#stderr~}"; needle="${needle//%W/$WT}"
           value="$([[ " $value " == *" ${needle/:/=} "* ]] && echo true || echo false)"
         fi ;;
+      stderr_abort)
+        value="$(grep -o 'review-artifact-check: exit=[0-9][0-9]*' "$ERR" 2>/dev/null || printf '')"
+        value="${value#review-artifact-check: exit=}"
+        value="${value:-absent}"
+        ;;
       stderr) value="$([[ -s "$ERR" ]] && echo line || echo empty)" ;;
       *) value="$(json "if has(\"$name\") then .$name else \"ABSENT\" end")" ;;
     esac
@@ -358,6 +367,17 @@ for probe_cmd in sleep jq stat; do
   printf '#!/usr/bin/env bash\nexit 254\n' > "$PROBE_SHIMS/$probe_cmd/$probe_cmd"
   chmod +x "$PROBE_SHIMS/$probe_cmd/$probe_cmd"
 done
+# A sleep that SPEAKS before it dies, which is what a real one does. The silent
+# shims above leave the keyed line first by accident of their silence; this one
+# is the honest case, and the row on it is why no row asserts the trap's line
+# is first.
+mkdir -p "$PROBE_SHIMS/noisy-sleep"
+cat > "$PROBE_SHIMS/noisy-sleep/sleep" <<'SHIM'
+#!/usr/bin/env bash
+printf 'sleep: cannot continue\n' >&2
+exit 254
+SHIM
+chmod +x "$PROBE_SHIMS/noisy-sleep/sleep"
 probe_table() {
   local row label probe spec args expect
   for row in "$@"; do
@@ -372,7 +392,8 @@ probe_table() {
 }
 WAITING='%W proberev 0 --wait 20 --interval 1'
 probe_table \
-  "a sleep that cannot run ends the wait with its own status, keyed|sleep||$WAITING|rc=254 stderr_code=exit=254 stdout_nonempty=false" \
+  "a sleep that cannot run ends the wait with its own status, keyed|sleep||$WAITING|rc=254 stderr_abort=254 stdout_nonempty=false" \
+  "a sleep that speaks first still gets its status keyed|noisy-sleep||$WAITING|rc=254 stderr_code=sleep: stderr_abort=254" \
   "a jq that cannot run already answers, and takes no keyed line|jq||$WAITING|rc=1 stderr=empty ok=false reason=invalid" \
   "an unreadable mtime refuses, never calls a fresh artifact stale|stat|review-freshrev-1@after=qa_ok|%W freshrev %D --wait 20 --interval 1|rc=2 stderr_code=mtime stdout_nonempty=false"
 
