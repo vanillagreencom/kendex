@@ -1469,3 +1469,58 @@ fn a_copy_no_tool_can_take_is_rolled_back_with_the_refusal() {
         }
     }
 }
+
+/// A refusal whose held copy plan cannot be taken back still answers with
+/// the refusal, the rollback failure beside it: the scope lock another
+/// writer holds refuses the abort, and the held writes stay pending for
+/// the next recovery, which takes them back once the lock is free.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refusal_whose_rollback_fails_still_names_the_refusal() {
+    let project = seeded();
+    let target = destination(&project, "fresh");
+    let Scope::Project { root } = &target else {
+        unreachable!("built as a project scope")
+    };
+    let written = root.join(crate::source::LOCAL_SOURCE_DIR).join("held.md");
+    let plan = crate::apply::Plan::landed(
+        target.clone(),
+        vec![crate::apply::PlannedOp {
+            description: "a copy a later step reads".into(),
+            op: crate::apply::Op::WriteFile {
+                pre: crate::apply::Pre::Absent,
+                path: written.clone(),
+                bytes: b"held".to_vec(),
+            },
+        }],
+    )
+    .unwrap();
+    let held = crate::apply::execute_held(&project.env, &plan).unwrap();
+    assert!(written.is_file());
+    let busy = crate::apply::lock_scope(&project.env, &target).unwrap();
+
+    let refused = super::super::install::refused_held(
+        &project.env,
+        held,
+        CoreError::InstallsNowhere {
+            reason: "no tool".to_owned(),
+        },
+    );
+
+    match refused {
+        CoreError::RollbackFailed { refused, cause } => {
+            assert!(
+                matches!(*refused, CoreError::InstallsNowhere { .. }),
+                "{refused:?}"
+            );
+            assert!(matches!(*cause, CoreError::ScopeBusy { .. }), "{cause:?}");
+        }
+        other => panic!("the refusal was replaced: {other:?}"),
+    }
+    // The writes are still there, pending; the next recovery takes them
+    // back.
+    assert!(written.is_file());
+    drop(busy);
+    assert!(crate::apply::recover(&project.env, &target).unwrap());
+    assert!(!written.exists());
+}

@@ -984,10 +984,7 @@ fn install_local(
     );
     let report = match report {
         Ok(report) => report,
-        Err(refused) => {
-            held.abort(env)?;
-            return Err(refused);
-        }
+        Err(refused) => return Err(refused_held(env, held, refused)),
     };
     let prepared = held.applied > 0;
     held.keep(env)?;
@@ -999,6 +996,21 @@ fn install_local(
     })?;
     landed.install.notes.extend(report.notes);
     Ok(())
+}
+
+/// What a refused local add answers with once its held copy plan is taken
+/// back: the refusal itself, or, where taking the copies back failed too,
+/// the refusal with that failure beside it. The refusal is what the person
+/// acts on either way; a rollback failure in its place would name the
+/// copies and say nothing of why the install stopped.
+pub(super) fn refused_held(env: &Env, held: crate::apply::Held, refused: CoreError) -> CoreError {
+    match held.abort(env) {
+        Ok(()) => refused,
+        Err(cause) => CoreError::RollbackFailed {
+            refused: Box::new(refused),
+            cause: Box::new(cause),
+        },
+    }
 }
 
 /// The names of the template's own copies of one kind, as the add that
