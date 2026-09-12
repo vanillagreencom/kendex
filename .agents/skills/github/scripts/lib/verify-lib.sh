@@ -102,6 +102,34 @@ detect_package_manager() {
     fi
 }
 
+# Whether a Cargo manifest declares `[profile.agent]`: prints `agent` when it
+# does, nothing otherwise. A declaration is a parsed table, never a grep
+# hit; a comment or a string can spell the header without declaring it.
+RUST_AGENT_PROFILE_PY='import sys, tomllib
+with open(sys.argv[1], "rb") as fh:
+    profiles = tomllib.load(fh).get("profile")
+print("agent" if isinstance(profiles, dict) and "agent" in profiles else "")
+'
+
+# The build and test commands for one Rust manifest, as `build|test`. A
+# workspace that declares an `agent` profile is smoke-built on it, since a
+# lane asking whether the tree compiles and its tests pass has no use for
+# the link-time optimization release pays. Cargo reads profiles from the
+# root manifest only, so the manifest that names the stack is the one read.
+# The reader is python3 with tomllib; a host without one, or a manifest that
+# does not parse, keeps the release commands, which build the same tree
+# slower, and leave a broken manifest for cargo to report.
+rust_stack_commands() {
+    local manifest="$1"
+    local declared
+    declared=$(python3 -c "$RUST_AGENT_PROFILE_PY" "$manifest" 2>/dev/null) || declared=""
+    if [ "$declared" = "agent" ]; then
+        printf 'cargo build --profile agent|cargo test --profile agent'
+    else
+        printf 'cargo build --release|cargo test --release'
+    fi
+}
+
 # Detect all build/test stacks in the project.
 # Each detection returns: name, build_cmd, test_cmd, cwd (relative to verify dir)
 detect_stacks() {
@@ -110,7 +138,7 @@ detect_stacks() {
 
     # Rust: workspace and single crate build and test identically from the root.
     if [ -f "$dir/Cargo.toml" ]; then
-        stacks+=("rust|cargo build --release|cargo test --release|.")
+        stacks+=("rust|$(rust_stack_commands "$dir/Cargo.toml")|.")
     else
         # Check for Cargo.toml in immediate subdirs (monorepo without workspace)
         for sub in "$dir"/*/Cargo.toml; do
@@ -118,7 +146,7 @@ detect_stacks() {
             local subdir
             subdir=$(dirname "$sub")
             local reldir="${subdir#"$dir"/}"
-            stacks+=("rust:$reldir|cargo build --release|cargo test --release|$reldir")
+            stacks+=("rust:$reldir|$(rust_stack_commands "$sub")|$reldir")
         done
     fi
 
