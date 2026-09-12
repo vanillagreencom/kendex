@@ -39,6 +39,28 @@ runtime_dir_valid() { [[ -d "$1" && ! -L "$1" ]]; }
 validate_runtime_dir() {
   runtime_dir_valid "$1" || die "runtime directory is missing, unsafe, or changed: $1"
 }
+# THE CHILD MAKES ITS OWN GROUP, BETWEEN THE FORK AND THE EXEC. Both forks below
+# need `$!` to be a process-group leader: that pid is what the two functions
+# below signal and probe as `-$pid`, and what `launch` records as the run's
+# stoppable handle. Bash arranges that only under job control, which also has
+# the PARENT call setpgid on the child — a call that races the child's own exec
+# and, when it loses, prints `child setpgid (N to N): Operation not permitted`
+# onto this script's stderr, where its consumers read the run's transcript. So
+# the child does it: setpgid(0, 0) then exec, one pid throughout, every
+# inherited descriptor kept, and no shell reporting on any of it.
+#
+# Job control supplied two other things, put back by hand. It kept bash from
+# pointing an async command's stdin at /dev/null, so each fork hands its child
+# the descriptor that child needs; and it kept bash from setting an async
+# child's SIGINT and SIGQUIT to SIG_IGN, which survives exec and no later
+# `trap` can take back, so the perl program restores both dispositions.
+#
+# perl carries POSIX setpgid on both platforms this ships to and stock macOS has
+# no setsid(1), so one mechanism covers both. Where perl is missing each fork
+# stops in its own voice: group_run's exits 127 with `perl: command not found`
+# in the CLI stderr file the CLI-failure gate reports, and launch's worker never
+# starts, leaving nohup's refusal in worker.log for `wait` to replay.
+AS_GROUP_LEADER=(perl -e '$SIG{INT} = $SIG{QUIT} = "DEFAULT"; setpgrp(0, 0) or die "setpgrp: $!\n"; exec { $ARGV[0] } @ARGV; die "exec $ARGV[0]: $!\n"')
 # THE PROBE IS THE GROUP, NOT ITS LEADER. A leader can exit while its children
 # run on — that is the ordinary shape of a CLI that forks — so probing the
 # leader answers "the first process finished", never "the tree is gone". Asking
@@ -46,6 +68,27 @@ validate_runtime_dir() {
 # both callers below actually need: a survivor holding a captured pipe open is
 # the failure they exist to prevent.
 process_group_alive() { kill -0 -- "-$1" 2>/dev/null; }
+# STOP A CHILD THIS FRAME ITSELF FORKED, grouped yet or not. The group appears
+# only when the child reaches the setpgid the block above describes, microseconds
+# after `$!` exists, and reading that absence as "already stopped" reports success
+# on a running tree. Only this script's own fork-to-exec code is ever in that
+# window — bash, then perl, neither with children yet and both taking the default
+# TERM — so one signal at the pid ends the tree, sent once and never escalated
+# on, since `kill -0` cannot tell an unwaited-for child from a live one.
+#
+# ONLY A CALLER HOLDING ITS OWN FORK MAY USE THIS. A resumed `wait` reads its
+# pid off disk, possibly hours later, by which time the kernel may have given
+# that number to an unrelated process; signalling a bare pid there would kill
+# it. That caller uses stop_process_group, which signals the group alone.
+stop_forked_child() {
+  local leader="$1"
+  if ! process_group_alive "$leader"; then
+    kill -0 "$leader" 2>/dev/null || return 0
+    kill -TERM "$leader" 2>/dev/null || true
+    process_group_alive "$leader" || return 0
+  fi
+  stop_process_group "$@"
+}
 stop_process_group() {
   local leader="$1" grace="$2" end now
   process_group_alive "$leader" || return 0
@@ -125,7 +168,7 @@ group_run() {
   [[ $# -gt 0 ]] || die "group command is missing"
   local rc=0 cancel_rc=""
   GROUP_CLI_PID=""
-  stop_cli() { [[ -z "$GROUP_CLI_PID" ]] || stop_process_group "$GROUP_CLI_PID" 25; }
+  stop_cli() { [[ -z "$GROUP_CLI_PID" ]] || stop_forked_child "$GROUP_CLI_PID" 25; }
   # OWN THE CHILD BEFORE A HANDLER MAY EXIT. Between the fork below and the
   # assignment that follows it there is no pid to act on, and a handler that
   # exited there would leave a live process group behind with nothing left to
@@ -136,16 +179,11 @@ group_run() {
   trap 'request_cancel 143' TERM HUP
   trap 'request_cancel 130' INT
   trap stop_cli EXIT
-  # Job control is on only across the fork: that is what makes the CLI a
-  # process-group leader, and turning it straight back off keeps bash from
-  # printing job notices onto the CLI's own output. Stdin is handed over
-  # explicitly — an async command in a job-control shell does not inherit the
-  # /dev/null a plain background job would get, and the prompt arrives there.
+  # The CLI's prompt arrives on the caller's stdin, which an async command does
+  # not inherit on its own.
   exec 8<&0
-  set -m
-  "$@" <&8 2>"$stderr_file" &
+  "${AS_GROUP_LEADER[@]}" "$@" <&8 2>"$stderr_file" &
   GROUP_CLI_PID=$!
-  set +m
   exec 8<&-
   trap 'stop_cli; exit 143' TERM HUP
   trap 'stop_cli; exit 130' INT
@@ -188,7 +226,7 @@ launch() {
   # that first instant would fault the handler instead of running it.
   LAUNCH_WORKER_PID=""
   LAUNCH_RUNTIME_DIR="$runtime_dir"
-  local deadline cancel_rc="" log="$runtime_dir/worker.log"
+  local deadline cancel_rc="" attempts log="$runtime_dir/worker.log"
   local status_file="$runtime_dir/worker.status" launch_umask
   local worker_args launch_model="${SECOND_OPINION_LAUNCH_MODEL:-}"
   # THE WINDOW BETWEEN THE FORK AND THE PROTOCOL. Once the worker exists it can
@@ -203,7 +241,7 @@ launch() {
   # a failed publish — is still this launch's, where a flag would be readable
   # but pointless.
   cleanup_launch() {
-    if [[ -n "$LAUNCH_WORKER_PID" ]] && ! stop_process_group "$LAUNCH_WORKER_PID" 30; then
+    if [[ -n "$LAUNCH_WORKER_PID" ]] && ! stop_forked_child "$LAUNCH_WORKER_PID" 30; then
       printf 'launch-cleanup-failed: runtime=%s\n' "$LAUNCH_RUNTIME_DIR" >&2
       echo "second-opinion-runtime: launch cleanup failed; runtime state preserved: $LAUNCH_RUNTIME_DIR" >&2
       return 1
@@ -230,16 +268,14 @@ launch() {
   deadline=$(($(date +%s) + budget))
   worker_args=("$@" --detached-worker "--output=$artifact")
   $owned && worker_args+=(--scratch-output)
-  # The worker leads its own process group — job control across the fork, and
-  # nothing else. That is what lets the deadline tear the whole run down later,
-  # and it needs no setsid, which stock macOS does not ship. nohup keeps a
+  # The worker leads its own process group, which is what lets the
+  # deadline tear the whole run down later. nohup keeps a
   # hangup off it and the closed stdio lets the caller exit.
   #
   # The wrapper publishes through fd 9 after the worker returns. The worker
   # gets that descriptor closed and never receives the status path.
-  set -m
   SECOND_OPINION_CURRENT_MODEL="$launch_model" \
-    nohup bash -c '
+    nohup "${AS_GROUP_LEADER[@]}" bash -c '
       rc=0
       "$@" 9>&- || rc=$?
       printf "%s\n" "$rc" >&9
@@ -247,11 +283,23 @@ launch() {
     ' second-opinion-worker "$script" "${worker_args[@]}" \
     < /dev/null > "$log" 2>&1 &
   LAUNCH_WORKER_PID=$!
-  set +m
   exec 9>&-
   trap 'cleanup_launch; exit 143' TERM HUP
   trap 'cleanup_launch; exit 130' INT
   [[ -z "$cancel_rc" ]] || { cleanup_launch; exit "$cancel_rc"; }
+  # PUBLISH A WORKER THAT HAS ALREADY TAKEN ITS GROUP. Everything below hands
+  # the pid to a consumer that probes `-$pid`, and the child reaches its setpgid
+  # only after bash returns from the fork, so a pid published inside that window
+  # reads to `wait` as a worker that is gone: exit 1, relaunch, and a second CLI
+  # run while the first goes on unsupervised. Bounded, and it ends the moment
+  # the pid is gone, which is how a fork that could not exec its prefix still
+  # reaches that branch with its own reason.
+  attempts=100
+  while [[ $attempts -gt 0 ]] && ! process_group_alive "$LAUNCH_WORKER_PID"; do
+    kill -0 "$LAUNCH_WORKER_PID" 2>/dev/null || break
+    attempts=$((attempts - 1))
+    sleep 0.05
+  done
   (umask 077 && set -C && printf '%s\n' "$LAUNCH_WORKER_PID" > "$runtime_dir/pid") \
     || die "cannot record detached worker pid: $runtime_dir/pid"
   printf 'artifact: %s\n' "$artifact"
@@ -346,7 +394,11 @@ wait_for_run() {
       status=$(completion_status "$status_file") || status_rc=$?
       [[ $status_rc -ne 2 ]] || die "cannot read worker status: $status_file"
       [[ -z "$status" ]] || continue
-      echo "second-opinion: the detached worker is gone and published no status; relaunch the original second-opinion command" >&2
+      # The one terminal branch that replayed nothing, and the only reader the
+      # worker's log has when the fork could not exec its prefix. This branch
+      # keeps the runtime directory, so the log and its path both still hold.
+      replay_log
+      echo "second-opinion: the detached worker is gone and published no status; its log is above and its runtime state is kept at $runtime_dir; relaunch the original second-opinion command" >&2
       exit 1
     fi
     if [[ $now -ge $attempt_deadline ]]; then
