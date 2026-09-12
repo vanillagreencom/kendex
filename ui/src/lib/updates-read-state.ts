@@ -1,9 +1,11 @@
-import type { ItemKind, Scope, UpdateRow } from "@/bindings";
+import type { ItemKind, ScanResult, Scope, UpdateRow } from "@/bindings";
 import {
   NO_UPDATE_STANDING_NOTE,
   UPDATE_NEEDS_CHECK_HERE,
   UPDATES_CHECKING,
 } from "@/lib/copy-updates";
+import { groupItems, installedCount } from "@/lib/derive";
+import type { PackageOf } from "@/lib/package-identity";
 import type { ReadState } from "@/lib/read-state";
 import { sameScope } from "@/lib/scope";
 import { updateWithheld } from "@/lib/update-groups";
@@ -57,6 +59,33 @@ export type EmptyStanding =
   | { kind: "nothing-installed" }
   | { kind: "unchecked" }
   | { kind: "current" };
+
+/** How many packages the machine holds, or null where nothing can say —
+ *  the count [`emptyStanding`] may call a machine empty on. Only a
+ *  settled, complete, successful scan produces one, because the caller
+ *  words a zero as "Nothing installed yet" and takes the check away with
+ *  it.
+ *
+ *  A failed re-read leaves the last result and its generation standing
+ *  (`stores/scan.ts`), so a kept zero would report a machine nothing has
+ *  looked at since. A landed scan carrying `missingProjects` read part of
+ *  the machine, and a project it could not open is where the content may
+ *  be. A join answering about another scan cannot group what is on screen,
+ *  which is the gate `usePackageIndex` puts on every other counter.
+ *
+ *  Counted in the package unit through [`installedCount`], so this and the
+ *  Library's table can never disagree about what one package is. */
+export const scannedInstalled = (
+  scan: ScanResult | null,
+  /** The scan store's standing error, which outlives the result it failed
+   *  to replace. */
+  scanError: string | null,
+  packageOf: PackageOf | null,
+): number | null => {
+  if (scan === null || packageOf === null || scanError !== null) return null;
+  if (scan.missingProjects.length > 0) return null;
+  return installedCount(groupItems(scan.items, packageOf));
+};
 
 /** Only a count that says the machine is empty makes it empty. A count
  *  nobody can take yet falls to the `unchecked`/`current` pair, which keeps

@@ -10,7 +10,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
 import { BROWSE_MARKETPLACES_LABEL } from "@/lib/copy";
 import { READ_LANDED } from "@/lib/read-state";
-import { useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
@@ -21,8 +20,6 @@ import { UpdatesPage } from "./updates";
 vi.mock("@/bindings", () => ({
   commands: {
     auditAll: vi.fn(),
-    libraryProvenance: vi.fn(),
-    scanMachine: vi.fn(),
     updatesOverview: vi.fn(),
   },
 }));
@@ -63,11 +60,6 @@ beforeEach(() => {
     lastFetched: null,
     busy: false,
     checking: false,
-  });
-  useAuditStore.setState({
-    views: [],
-    auditedAt: Date.now(),
-    read: READ_LANDED,
   });
   useNavStore.setState({ page: "updates", history: [], future: [] });
 });

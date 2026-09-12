@@ -36,7 +36,6 @@ import {
   updatePlaceItem,
   updatesSubtitle,
 } from "@/lib/copy-updates";
-import { groupItems, installedCount } from "@/lib/derive";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { usePackageIndex } from "@/lib/package-identity";
 import { exactTime } from "@/lib/relative-time";
@@ -51,7 +50,11 @@ import {
   updatablePlaces,
   visibleUpdates,
 } from "@/lib/update-groups";
-import { emptyStanding, readUnsettled } from "@/lib/updates-read-state";
+import {
+  emptyStanding,
+  readUnsettled,
+  scannedInstalled,
+} from "@/lib/updates-read-state";
 import { useNowTick } from "@/lib/use-now-tick";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount } from "@/stores/audit";
@@ -80,32 +83,15 @@ export function UpdatesPage() {
   // What an empty list means is not this page's read to answer: the update
   // check covers declared remote packages, and a machine of adopted, local
   // or unmanaged content produces no rows while holding plenty. So the
-  // count comes from the machine scan the Library and Home count through,
-  // in their unit.
+  // count comes from the machine scan, and which scans may produce one is
+  // `scannedInstalled`'s to say.
   const scan = useScanStore((s) => s.result);
   const scanError = useScanStore((s) => s.error);
   const packageOf = usePackageIndex();
-  // Only a settled, complete, successful scan may say a machine is empty,
-  // and the three ways it is none of those are answered here rather than
-  // at the branch that words the answer.
-  //
-  // A failed re-read leaves the last result and its generation standing
-  // (`stores/scan.ts`), so a kept zero would go on reporting a machine
-  // nothing has looked at since. A landed scan with `missingProjects` read
-  // part of the machine, and a project it could not open is where the
-  // content may be. And a join answering about another scan cannot group
-  // what is on screen, which is the gate `usePackageIndex` already puts on
-  // every other counter.
-  //
-  // Each of them is null, not zero: `emptyStanding` sends null to the pair
-  // that keeps Check for updates on screen, and offering a marketplace to
-  // a machine that may be full is the claim this page exists to stop
-  // making.
-  const installed = useMemo(() => {
-    if (!scan || !packageOf || scanError !== null) return null;
-    if (scan.missingProjects.length > 0) return null;
-    return installedCount(groupItems(scan.items, packageOf));
-  }, [scan, scanError, packageOf]);
+  const installed = useMemo(
+    () => scannedInstalled(scan, scanError, packageOf),
+    [scan, scanError, packageOf],
+  );
   const [showHidden, setShowHidden] = useState(false);
   const [confirmIgnore, setConfirmIgnore] = useState<UpdateRow | null>(null);
   // WHICH places an update was asked for, never the rows themselves, and

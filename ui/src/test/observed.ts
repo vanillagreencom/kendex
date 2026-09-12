@@ -28,3 +28,22 @@ const identityOf = (item: Omit<ObservedItem, "at">): string => {
     ? item.fileState.target
     : item.path;
 };
+
+/** A plain skill at the personal level, for a test that needs the scan to
+ *  have found an installation rather than a particular one. */
+export const observedSkill = (name: string): ObservedItem =>
+  observed({
+    kind: "skill",
+    name,
+    harness: "claude",
+    scope: { scope: "global" },
+    path: `/h/.claude/skills/${name}`,
+    fileState: { state: "dir" },
+    enabled: true,
+    origin: null,
+    summary: null,
+    action: null,
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+  });
