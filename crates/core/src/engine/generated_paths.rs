@@ -118,9 +118,10 @@ impl GeneratedPaths {
     /// hook — parses the JSON back into a set and holds the committed copy
     /// to that. A merge reads lines: with the whole set on one line, two
     /// branches that each add a render conflict on that line at every
-    /// restack and the resolution is an array composed by hand; one entry
-    /// per line, sorted, merges two different additions cleanly and names
-    /// only the entries a real conflict concerns.
+    /// restack and the resolution is an array composed by hand. One entry
+    /// per line, sorted, merges two additions that land at different points
+    /// in the order on its own, and where both land at the same point the
+    /// conflict is two lines naming those entries rather than the whole set.
     fn document(&self, root: &Path) -> Result<String> {
         Self::laid_out(&self.relative(root), root)
     }

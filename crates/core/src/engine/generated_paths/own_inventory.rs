@@ -13,10 +13,11 @@
 //! nothing, so the judge of what a render is stays [`super::collect`] — the
 //! renderer's own — and no list of harness directories is spelled a second
 //! time here. It holds the bytes as well as the set: the writer lays the
-//! set down one entry per line so two branches adding renders merge, and
-//! every reader parses the JSON back into a set, so only a byte comparison
-//! against the writer's own document notices a copy some other writer laid
-//! out on one line.
+//! set down one entry per line so two branches adding renders at different
+//! points in the order merge and a same-point conflict names those entries
+//! alone, and every reader parses the JSON back into a set, so only a byte
+//! comparison against the writer's own document notices a copy some other
+//! writer laid out on one line.
 //!
 //! Not on Windows. The renders this repository commits include symlinks,
 //! and a Windows checkout materialises each as a regular file holding its
@@ -141,7 +142,7 @@ fn refusal(finding: &Finding) -> String {
                 "the committed inventory lists the set this checkout renders and is not \
                  laid out as the writer writes it, one entry per line in the set's order, \
                  so the next refresh rewrites it whole and two branches adding renders \
-                 conflict on it\n",
+                 conflict on its one line wherever their entries sort\n",
             );
             text.push_str(&rewrite());
         }
