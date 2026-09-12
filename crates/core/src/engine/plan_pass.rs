@@ -19,8 +19,9 @@ use super::{
 /// One pass over the desired items, with the two holds that outrank
 /// planning: a revision conflict writes nothing, and an edited install
 /// writes nothing unless the caller asked for edits to be discarded.
-/// Returns the fork edits this pass took into their own local sources,
-/// which are the item pass's alone to find and are not drift.
+/// Returns the fork edits this pass took into their own local sources
+/// and the installations whose Missing row is a deletion of what the
+/// record says stood there; both are this pass's alone and are not drift.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn plan_items(
     env: &Env,
@@ -35,10 +36,12 @@ pub(super) fn plan_items(
     config_edits: &mut config_edits::ConfigEditPlan,
     new_lock: &mut Lock,
     written: &mut written::Written,
-) -> Result<Vec<super::ForkEdit>> {
+) -> Result<(Vec<super::ForkEdit>, Vec<super::report_types::RecordedGone>)> {
     let mut absorbed = std::collections::BTreeMap::new();
     let mut fork_edits = Vec::new();
+    let mut recorded_gone = Vec::new();
     for item in &state.items {
+        let before = drift.len();
         let mut sink = item_plan::PlanSink {
             drift,
             fork_edits: &mut fork_edits,
@@ -65,8 +68,33 @@ pub(super) fn plan_items(
             &options.replace_unmanaged_names,
         );
         plan_item(env, item, scope, lock, owned_paths, replace, &mut sink)?;
+        let missing = drift[before..]
+            .iter()
+            .any(|row| row.state == DriftState::Missing);
+        if missing && gone_from_record(lock.entries.get(&item.key), item) {
+            recorded_gone.push((item.kind, item.name.clone()));
+        }
     }
-    Ok(fork_edits)
+    Ok((fork_edits, recorded_gone))
+}
+
+/// Whether a Missing row of this item is a file kendex wrote that is gone:
+/// the record says a rendering stood here (`rendered_hash` is set exactly
+/// when kendex wrote one) and this pass wants no position the record does
+/// not carry — a new one is a layout move between kendex versions, whose
+/// recorded file may still be on disk for `stale` to sweep. A record with
+/// no positions (a hook's script, an agent) reads on `rendered_hash` alone.
+fn gone_from_record(existing: Option<&crate::lock::LockEntry>, item: &desired::Desired) -> bool {
+    existing.is_some_and(|entry| {
+        entry.rendered_hash.is_some()
+            && match (&entry.emitted, &item.emitted) {
+                (Some(recorded), Some(wanted)) => wanted
+                    .paths
+                    .iter()
+                    .all(|path| recorded.paths.contains(path)),
+                _ => true,
+            }
+    })
 }
 
 /// Whether an override reaches this item: the scope-wide form, or the

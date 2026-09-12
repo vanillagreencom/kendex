@@ -225,6 +225,9 @@ pub struct EngineReport {
     /// The forks this pass found edited on disk. They are not in `drift`:
     /// there is nothing to fix and nothing to decide.
     pub fork_edits: Vec<ForkEdit>,
+    /// The installations whose Missing row is a deletion of a rendering the
+    /// record says stood there; the Updates read says it as `files_missing`.
+    pub recorded_gone: Vec<RecordedGone>,
     /// The paths this pass renders into the scope, split into the files
     /// kendex owns whole and the shared configuration files it writes one
     /// key in. The inventory is written from it, and the commit offer
@@ -232,6 +235,9 @@ pub struct EngineReport {
     /// name different files.
     pub generated: super::GeneratedPaths,
 }
+
+/// An installation `EngineReport::recorded_gone` names, by kind and name.
+pub type RecordedGone = (ItemKind, String);
 
 /// One name a removal was asked for, with the kind it must be when the
 /// caller knew one. `None` names the name alone, which is what the `remove`

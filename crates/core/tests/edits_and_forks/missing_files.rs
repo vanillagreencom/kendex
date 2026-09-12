@@ -126,3 +126,33 @@ fn a_hook_never_installed_is_not_missing_a_file() {
     let declared = row(&w, ItemKind::Hook, "guard");
     assert!(!declared.files_missing, "{declared:?}");
 }
+
+// A rendering the layout moved is not gone: the record carries the position
+// it wrote, still on disk, while this pass wants another one and reports it
+// absent. Calling that a deletion offers a repair for an intact package.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_rendering_the_layout_moved_is_not_missing() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "Body.");
+    commit(&w.upstream, "one");
+    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    let link = w.home.join("app/.claude/skills/gh");
+    let old = w.home.join("app/.claude/skills/gh-old");
+    fs::rename(&link, &old).unwrap();
+    let path = lock_path(&w.env, &w.scope);
+    let mut lock = load_lock(&path).unwrap();
+    let key = kendex_core::lock::entry_key(ItemKind::Skill, "gh", HarnessId::Claude);
+    let emitted = lock
+        .entries
+        .get_mut(&key)
+        .unwrap()
+        .emitted
+        .as_mut()
+        .unwrap();
+    *emitted.paths.iter_mut().find(|p| **p == link).unwrap() = old;
+    kendex_core::lock::save(&path, &lock).unwrap();
+
+    assert!(!row(&w, ItemKind::Skill, "gh").files_missing);
+}

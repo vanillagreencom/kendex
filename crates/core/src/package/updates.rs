@@ -75,8 +75,8 @@ pub struct UpdateRow {
     /// A file kendex recorded writing is gone from disk, and the next
     /// apply puts it back: the same plan `blocked_by_local_edit` is read
     /// from holds the write, so the update is the repair. Only a recorded
-    /// rendering counts — the planner reports a declaration never
-    /// installed as missing too, and that one is not news.
+    /// rendering counts, at the positions the record carries: a declaration
+    /// never installed and a rendering a newer layout moved are not news.
     pub files_missing: bool,
     /// Which renderings carry the edit, one entry per physical rendering:
     /// an agent renders once per tool, while tools sharing a skill's
@@ -249,19 +249,6 @@ struct EditFacts {
     files_missing: std::collections::BTreeSet<(ItemKind, String)>,
 }
 
-/// Whether this row is a file kendex wrote that is no longer there. The
-/// planner reports every absent position as missing, a declaration never
-/// installed included; the lock entry's `rendered_hash` is what says a
-/// file stood at this position, since it is set exactly when kendex wrote
-/// one.
-fn recorded_and_gone(lock: &crate::lock::Lock, row: &crate::engine::DriftRow) -> bool {
-    matches!(row.state, crate::engine::DriftState::Missing)
-        && lock
-            .entries
-            .get(&crate::lock::entry_key(row.kind, &row.name, row.harness))
-            .is_some_and(|entry| entry.rendered_hash.is_some())
-}
-
 /// Both readings of one plan of the scope, so each matches exactly what an
 /// update attempt does: what the planner would hold as hand-edited, and
 /// the forks whose edits it absorbs instead — which hold nothing and are
@@ -290,13 +277,7 @@ fn edit_facts(
                     .iter()
                     .map(|edit| (edit.kind, edit.name.clone())),
             );
-            files_missing.extend(
-                report
-                    .drift
-                    .iter()
-                    .filter(|row| recorded_and_gone(lock, row))
-                    .map(|row| (row.kind, row.name.clone())),
-            );
+            files_missing.extend(report.recorded_gone.iter().cloned());
             report
                 .drift
                 .into_iter()
