@@ -119,7 +119,16 @@ export function InstalledRow({
       className="cursor-pointer"
     >
       {/* Cells are nowrap by default; the description is the one column that
-          wants to wrap rather than run out of the row and get cut mid-word. */}
+          wants to wrap rather than run out of the row and get cut mid-word.
+
+          Every cell whose content the reader supplies, or whose length they
+          decide, carries the ceiling its column is budgeted at in
+          `installed-view.tsx`. The table lays out automatically, where a
+          width on a header is what the column asks for rather than what it
+          gets, so without these the budget's arithmetic is a floor and one
+          long project name pushes Status off the narrowest window. What the
+          ceiling hides stays reachable: these cells carry the whole of it on
+          `title`, and the package's own page states it in full. */}
       <TableCell className="max-w-72 font-medium whitespace-normal">
         <span className="flex items-start gap-2">
           {/* The list says nothing about customization: whether a package
@@ -229,12 +238,12 @@ export function InstalledRow({
         {kindLabel(group.kind)}
       </TableCell>
       {columns.tags ? (
-        <TableCell className="align-top">
+        <TableCell className="max-w-40 align-top">
           <TagBadges tags={group.tags} />
         </TableCell>
       ) : null}
       {columns.harnesses ? (
-        <TableCell>
+        <TableCell className="max-w-40">
           <span className="flex flex-wrap gap-1">
             {/* A chip names a harness, so it opens that harness's own view
                 of what is installed for it. */}
@@ -253,11 +262,14 @@ export function InstalledRow({
       {/* A place names a thing, so it opens it — but only where the cell
           names one place. "3 locations" is a count, and the places behind
           it are listed on the package's own page. */}
-      <TableCell title={whereTitle} className="text-muted-foreground">
+      <TableCell
+        title={whereTitle}
+        className="max-w-28 truncate text-muted-foreground"
+      >
         {scopes.length === 1 ? (
           <button
             type="button"
-            className="hover:underline"
+            className="block max-w-full truncate hover:underline"
             onClick={() => onOpenPlace(scopes[0])}
           >
             {whereLabel}
@@ -272,12 +284,12 @@ export function InstalledRow({
       {columns.from ? (
         <TableCell
           title={originTitle(origin)}
-          className="text-muted-foreground"
+          className="max-w-32 truncate text-muted-foreground"
         >
           {onOpenFrom && originLabel(origin) ? (
             <button
               type="button"
-              className="hover:underline"
+              className="block max-w-full truncate hover:underline"
               onClick={onOpenFrom}
             >
               {originLabel(origin)}

@@ -996,6 +996,14 @@ describe("the columns a narrow Library table keeps", () => {
       (cell) => cell.textContent?.trim() ?? "",
     );
 
+  /** The cells of the first package row. The headers are the view's and the
+   *  cells are the row's, so a table that agrees with itself has to be read
+   *  on both sides: drop a conditional from one and the columns misalign
+   *  while the other still reads correctly. */
+  const cells = (host: HTMLElement): HTMLTableCellElement[] => [
+    ...host.querySelectorAll<HTMLTableCellElement>("tbody tr:first-child td"),
+  ];
+
   beforeEach(() => {
     vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
     useEditorStore.setState({ saved: {} });
@@ -1017,8 +1025,10 @@ describe("the columns a narrow Library table keeps", () => {
     roomIs(AT_MINIMUM_WINDOW);
     const narrow = mount(<InstalledView />);
     expect(heads(narrow)).toEqual(["Name", "Type", "Where", "Status"]);
-    // The column is on screen, and so is the row's own reading of it.
-    expect(narrow.querySelector("tbody tr")?.textContent).toContain("Active");
+    // The row draws what the header declares, and Status is the last of
+    // them: four cells, the fourth carrying the dot's own reading.
+    expect(cells(narrow)).toHaveLength(4);
+    expect(cells(narrow)[3].textContent).toContain("Active");
 
     roomIs(1400);
     const wide = mount(<InstalledView />);
@@ -1032,5 +1042,36 @@ describe("the columns a narrow Library table keeps", () => {
       "Updated",
       "Status",
     ]);
+    expect(cells(wide)).toHaveLength(8);
+    expect(cells(wide)[7].textContent).toContain("Active");
+  });
+
+  // A project basename is the reader's, and the table lays out
+  // automatically, so an uncapped Where cell took whatever its content
+  // asked for and carried the columns after it off the right edge.
+  it("keeps the row to its columns when a project name is long", () => {
+    const LONG = "/work/kendex-marketplace-integration";
+    const place: Scope = { scope: "project", root: LONG };
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [installed(place)],
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    joinAnswered();
+    roomIs(AT_MINIMUM_WINDOW);
+    const host = mount(<InstalledView />);
+
+    const row = cells(host);
+    expect(row).toHaveLength(4);
+    expect(row[3].textContent, "Status is still the last cell").toContain(
+      "Active",
+    );
+    // Capped on screen, whole on the cell: the reader loses no part of
+    // which project this is.
+    expect(row[2].textContent).toContain("kendex-marketplace-integration");
+    expect(row[2].getAttribute("title")).toBe(LONG);
   });
 });
