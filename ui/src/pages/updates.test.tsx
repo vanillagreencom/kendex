@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ObservedItem, ScanResult, UpdateRow } from "@/bindings";
+import type {
+  MissingProject,
+  ObservedItem,
+  ScanResult,
+  UpdateRow,
+} from "@/bindings";
 import { updateRow } from "@/components/updates-test-rows";
 import {
   BROWSE_MARKETPLACES_LABEL,
@@ -49,6 +54,7 @@ const stub = vi.hoisted(() => ({
   /** What the machine scan found, and whether its join has answered for
    *  it — the pair the page counts installed packages through. */
   scan: null as unknown,
+  scanError: null as string | null,
   generation: 1,
   answeredFor: 1 as number | null,
 }));
@@ -78,6 +84,7 @@ vi.mock("@/stores/scan", async (importOriginal) => {
     const state = {
       ...mod.useScanStore.getState(),
       result: stub.scan,
+      error: stub.scanError,
       generation: stub.generation,
     };
     return selector ? selector(state) : state;
@@ -112,6 +119,7 @@ beforeEach(() => {
   // scan: the ordinary machine, on which no empty state may claim the
   // machine is empty.
   stub.scan = scanOf([installedItem("deploy")]);
+  stub.scanError = null;
   stub.generation = 1;
   stub.answeredFor = 1;
 });
@@ -134,13 +142,22 @@ const installedItem = (name: string): ObservedItem =>
     vendor: null,
   });
 
-const scanOf = (items: ObservedItem[]): ScanResult => ({
+const scanOf = (
+  items: ObservedItem[],
+  missingProjects: MissingProject[] = [],
+): ScanResult => ({
   harnesses: [],
   items,
-  missingProjects: [],
+  missingProjects,
   readProjects: [],
   warnings: [],
 });
+
+/** A registered project the scan could not read as one. */
+const unreadProject: MissingProject = {
+  root: "/work/hyprtrade",
+  why: { kind: "not-a-folder" },
+};
 
 /** A recorded package with nothing noteworthy about it — the row core
  *  emits for something installed and current. */
@@ -344,11 +361,31 @@ describe("what an empty Updates page says about this machine", () => {
         present: [NEVER_CHECKED, CHECK_FOR_UPDATES_LABEL],
         absent: [UPDATES_NOTHING_INSTALLED, BROWSE_MARKETPLACES_LABEL],
       },
+      {
+        name: "calls no machine empty on a zero kept behind a failed scan",
+        updates: [],
+        scan: scanOf([]),
+        scanError: "config unreadable",
+        joined: true,
+        age: null,
+        present: [NEVER_CHECKED, CHECK_FOR_UPDATES_LABEL],
+        absent: [UPDATES_NOTHING_INSTALLED, BROWSE_MARKETPLACES_LABEL],
+      },
+      {
+        name: "calls no machine empty where the scan could not read a project",
+        updates: [],
+        scan: scanOf([], [unreadProject]),
+        joined: true,
+        age: null,
+        present: [NEVER_CHECKED, CHECK_FOR_UPDATES_LABEL],
+        absent: [UPDATES_NOTHING_INSTALLED, BROWSE_MARKETPLACES_LABEL],
+      },
     ];
-    expect(rows).toHaveLength(6);
+    expect(rows).toHaveLength(8);
     for (const row of rows) {
       stub.rows = row.updates;
       stub.scan = row.scan;
+      stub.scanError = row.scanError ?? null;
       stub.answeredFor = row.joined ? stub.generation : stub.generation - 1;
       stub.lastFetched = row.age === null ? null : secondsAgo(row.age);
       const html = renderToStaticMarkup(<UpdatesPage />);

@@ -81,17 +81,31 @@ export function UpdatesPage() {
   // check covers declared remote packages, and a machine of adopted, local
   // or unmanaged content produces no rows while holding plenty. So the
   // count comes from the machine scan the Library and Home count through,
-  // in their unit, and is null until the join answers for the scan on
-  // screen — the same gate `usePackageIndex` puts on every other counter.
+  // in their unit.
   const scan = useScanStore((s) => s.result);
+  const scanError = useScanStore((s) => s.error);
   const packageOf = usePackageIndex();
-  const installed = useMemo(
-    () =>
-      scan && packageOf
-        ? installedCount(groupItems(scan.items, packageOf))
-        : null,
-    [scan, packageOf],
-  );
+  // Only a settled, complete, successful scan may say a machine is empty,
+  // and the three ways it is none of those are answered here rather than
+  // at the branch that words the answer.
+  //
+  // A failed re-read leaves the last result and its generation standing
+  // (`stores/scan.ts`), so a kept zero would go on reporting a machine
+  // nothing has looked at since. A landed scan with `missingProjects` read
+  // part of the machine, and a project it could not open is where the
+  // content may be. And a join answering about another scan cannot group
+  // what is on screen, which is the gate `usePackageIndex` already puts on
+  // every other counter.
+  //
+  // Each of them is null, not zero: `emptyStanding` sends null to the pair
+  // that keeps Check for updates on screen, and offering a marketplace to
+  // a machine that may be full is the claim this page exists to stop
+  // making.
+  const installed = useMemo(() => {
+    if (!scan || !packageOf || scanError !== null) return null;
+    if (scan.missingProjects.length > 0) return null;
+    return installedCount(groupItems(scan.items, packageOf));
+  }, [scan, scanError, packageOf]);
   const [showHidden, setShowHidden] = useState(false);
   const [confirmIgnore, setConfirmIgnore] = useState<UpdateRow | null>(null);
   // WHICH places an update was asked for, never the rows themselves, and
