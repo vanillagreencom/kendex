@@ -13,12 +13,17 @@ use specta::Type;
 /// own neutral words, drop the retry that would answer the same, and keep
 /// its critical text for a read that really went wrong.
 ///
-/// One type for every read that opens a source — the package page's
-/// timeline, and the marketplace page's packages, curated sets and summary
-/// — rather than one per page. Telling
-/// [`CoreError::SourcePending`] apart from every other refusal is a single
-/// question, and a second spelling of it is a page that answers differently
-/// about the same source.
+/// One type for every command that answers it, rather than one per page:
+/// telling [`CoreError::SourcePending`] apart from every other refusal is a
+/// single question, and a second spelling of it is a page that answers
+/// differently about the same source.
+///
+/// Not every read that opens a source answers it. A read a page issues on
+/// open does, since that is where an undownloaded source is first met; a
+/// read reached from content those reads produce still flattens to core's
+/// words, because the refusal has already been drawn by the read that got
+/// the reader there. `crates/app/AGENTS.md` carries the rule and the grep
+/// that enumerates the commands.
 #[derive(Debug, Serialize, Type)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum SourceReadRefused {
