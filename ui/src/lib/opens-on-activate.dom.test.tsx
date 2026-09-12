@@ -107,13 +107,13 @@ describe("a surface that opens what it names", () => {
         ran: 0,
         ticks: 0,
       },
-      // The inverse: the enabled control beside it still answers its own
-      // press, and still keeps the surface out of it.
+      // The inverse: a press on the same row clear of that control's box
+      // still opens, so the refusal covers the button and not the row.
       {
-        name: "press on the control beside it",
-        act: "click-control",
-        opens: 0,
-        ran: 1,
+        name: "press clear of the switched-off control",
+        act: "press-clear",
+        opens: 1,
+        ran: 0,
         ticks: 0,
       },
       // A click ending a drag across the surface's text was someone keeping
@@ -151,10 +151,16 @@ describe("a surface that opens what it names", () => {
         await userEvent.keyboard("{Enter}");
       } else if (entry.act === "click-control") {
         await userEvent.click(control);
-      } else if (entry.act === "press-off") {
+      } else if (entry.act === "press-off" || entry.act === "press-clear") {
+        // 50 lies inside the switched-off button's stubbed box, 120 beyond
+        // its right edge; both are presses on the surface, since a
+        // switched-off control never becomes the target.
         await userEvent.pointer({
           target: at("surface"),
-          coords: { clientX: 50, clientY: 20 },
+          coords: {
+            clientX: entry.act === "press-off" ? 50 : 120,
+            clientY: 20,
+          },
           keys: "[MouseLeft]",
         });
       } else if (entry.act === "click-box") {

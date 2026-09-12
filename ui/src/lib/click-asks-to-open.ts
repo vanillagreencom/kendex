@@ -24,7 +24,8 @@ const CONTROLS =
  *  package page. The answer has to come from the geometry, and from the
  *  element's own box rather than the point: `elementsFromPoint` honours
  *  `pointer-events: none` exactly as the click did, so it cannot see the
- *  control either.
+ *  control either. The box covers [left, right) and [top, bottom), so the
+ *  line along its far edges belongs to what is drawn beyond it.
  *
  *  Only for a pressed point. Keyboard and assistive activation arrive with
  *  detail 0 and no meaningful coordinates, and a disabled control cannot hold
@@ -34,9 +35,9 @@ function pressLandsOnDisabledControl(event: MouseEvent<HTMLElement>): boolean {
     const box = control.getBoundingClientRect();
     if (
       event.clientX >= box.left &&
-      event.clientX <= box.right &&
+      event.clientX < box.right &&
       event.clientY >= box.top &&
-      event.clientY <= box.bottom
+      event.clientY < box.bottom
     )
       return true;
   }
