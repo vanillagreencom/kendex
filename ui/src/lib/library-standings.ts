@@ -7,7 +7,7 @@ import {
   placesSource,
 } from "@/lib/customized-places";
 import type { ItemGroup } from "@/lib/derive";
-import { groupScopes } from "@/lib/derive";
+import { groupPlaces } from "@/lib/derive";
 import { useMissingRows } from "@/lib/missing-files";
 import { availableUpdates } from "@/lib/update-groups";
 import { rowsKnown } from "@/lib/updates-read-state";
@@ -50,26 +50,45 @@ export function useLibraryStandings(groups: ItemGroup[]): {
     () => placesSource(saved, updateRows, updatesLoaded, savedSettings),
     [saved, updateRows, updatesLoaded, savedSettings],
   );
+  // The same rows the Library's own list stands a missing package's row up
+  // from, so the badge, that row and the standings below cannot come apart.
+  const missingRows = useMissingRows();
+  const missing = useMemo(() => {
+    const out = new Map<string, Scope[]>();
+    for (const row of missingRows ?? []) {
+      const key = `${row.kind}:${row.name}`;
+      out.set(key, [...(out.get(key) ?? []), row.scope]);
+    }
+    return out;
+  }, [missingRows]);
+  const placesOf = useMemo(
+    () => (group: ItemGroup) =>
+      groupPlaces(group, missing.get(`${group.kind}:${group.name}`) ?? []),
+    [missing],
+  );
   const byKey = useMemo(() => {
     const out = new Map<string, PlaceStanding[]>();
     for (const group of groups)
       out.set(
         group.key,
-        placeStandings(places, group.kind, group.name, groupScopes(group)),
+        // Every place the row stands in, not only the observed ones: a
+        // fork whose last rendering was deleted is still a fork, and its
+        // badge is read off the place it was made in.
+        placeStandings(places, group.kind, group.name, placesOf(group)),
       );
     return out;
-  }, [groups, places]);
+  }, [groups, places, placesOf]);
   const editedAnywhere = useMemo(
     () =>
       updatesLoaded
         ? (group: ItemGroup) =>
-            groupScopes(group).some(
+            placesOf(group).some(
               (scope) =>
                 placeFacts(places, group.kind, group.name, scope).edited ===
                 true,
             )
         : null,
-    [places, updatesLoaded],
+    [places, placesOf, updatesLoaded],
   );
   // Keyed by kind and name, the Library's own unit: a row stands for the
   // package wherever it is installed, so an update in any one of its places
@@ -88,17 +107,6 @@ export function useLibraryStandings(groups: ItemGroup[]): {
         : null,
     [outOfDate, updatesLanded],
   );
-  // The same rows the Library's own list stands a missing package's row
-  // up from, so the badge and that row can never come apart.
-  const missingRows = useMissingRows();
-  const missing = useMemo(() => {
-    const out = new Map<string, Scope[]>();
-    for (const row of missingRows) {
-      const key = `${row.kind}:${row.name}`;
-      out.set(key, [...(out.get(key) ?? []), row.scope]);
-    }
-    return out;
-  }, [missingRows]);
   const missingIn = useMemo(
     () =>
       updatesLoaded

@@ -88,6 +88,44 @@ export function summaryIndex(rows: ProvenanceRow[]): SummaryOf {
     null;
 }
 
+/** What the author says one package does, asked of the package itself
+ *  rather than of an installation of it. */
+export type SummaryOfPackage = (ref: {
+  kind: ItemKind;
+  name: string;
+}) => string | null;
+
+/** Those words for a package the scan saw no installation of at all.
+ *
+ *  Core fills the summary of every row it seeded from a record — the words
+ *  of the declaration it read — and keys such a row by that declaration
+ *  rather than by a file, because there is no file: its `at` is null.
+ *  {@link summaryIndex} cannot answer for one, being keyed by an observed
+ *  installation, so a row with no copy left would show no words and drop
+ *  out of a search for what its author wrote.
+ *
+ *  Keyed by kind and name, which is what such a row stands for. Two places
+ *  can declare different versions of one package and carry different
+ *  words; the first with any speaks, the rule `groupItems` already applies
+ *  across an installed package's copies. */
+export function seededSummaryIndex(rows: ProvenanceRow[]): SummaryOfPackage {
+  const byPackage = new Map<string, string>();
+  for (const row of rows) {
+    if (row.at !== null || !row.package || !row.summary) continue;
+    const key = [row.package.kind, row.package.name].join(FIELD);
+    if (!byPackage.has(key)) byPackage.set(key, row.summary);
+  }
+  return (ref) => byPackage.get([ref.kind, ref.name].join(FIELD)) ?? null;
+}
+
+/** That lookup for a component, rebuilt only when the join changes. Read
+ *  the way {@link useSummaryIndex} is: one line of text that may be a
+ *  moment stale is not a wrong row, so it answers off the last read. */
+export function useSeededSummaryIndex(): SummaryOfPackage {
+  const rows = useProvenanceStore((s) => s.rows);
+  return useMemo(() => seededSummaryIndex(rows), [rows]);
+}
+
 /** Where one observed installation came from, or null where the join has
  *  no record of it.
  *

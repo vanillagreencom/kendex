@@ -14,6 +14,7 @@ import { openLibraryAt } from "@/components/library/use-filter-handoff";
 import {
   FORKED_BADGE_LABEL,
   MISSING_FILES_BADGE_LABEL,
+  UPDATES_NOTHING_INSTALLED as NOTHING_INSTALLED,
   PACKAGES_CHECK_FAILED_TITLE,
   PACKAGES_UNCONFIRMED_TITLE,
   TAGS_ROW_LABEL,
@@ -428,6 +429,13 @@ describe("a package whose rendering is gone everywhere", () => {
       cell.querySelector("button")?.textContent?.trim(),
     );
 
+  /** The place pills above the table, which are what a reader narrows by.
+   *  A pill is the only control here that reports a pressed state. */
+  const pillLabels = (host: HTMLElement) =>
+    [...host.querySelectorAll("button[aria-pressed]")].map((pill) =>
+      pill.textContent?.trim(),
+    );
+
   // The row's own cells, at a width that draws every column: Name, Type,
   // Tags, Harnesses, Where, From, Updated, Status. Read from the row
   // rather than from the page, whose filter bar names the same places and
@@ -469,8 +477,10 @@ describe("a package whose rendering is gone everywhere", () => {
 
   // Rows a read has not confirmed have counted nothing: a row drawn off
   // them would state as a fact that a package's files are gone before any
-  // read said so.
-  it("draws no row before a read has confirmed the rows", () => {
+  // read said so. Nor may the table then say which emptiness this is —
+  // "Nothing installed yet" is as definite a claim as the row would be,
+  // and on a machine whose every package lost its rendering it is false.
+  it("draws no row, and claims no emptiness, before a read confirms the rows", () => {
     scanIs([]);
     joinAnswered([seeded] as never);
     useUpdatesStore.setState({
@@ -480,6 +490,58 @@ describe("a package whose rendering is gone everywhere", () => {
     const host = mount(<InstalledView />);
     expect(names(host)).not.toContain("gh");
     expect(host.textContent).not.toContain(MISSING_FILES_BADGE_LABEL);
+    expect(host.textContent).not.toContain(NOTHING_INSTALLED);
+  });
+
+  // The place pills are how a reader narrows to what a row names. Drawn
+  // off the scan they would not offer a project whose every package lost
+  // its rendering, leaving its row on screen and no way to look at it.
+  it("offers the place pill for a project only its missing rows stand in", () => {
+    scanIs([]);
+    joinAnswered([seeded] as never);
+    useUpdatesStore.setState({
+      rows: [row({ filesMissing: true })] as never,
+      read: READ_LANDED,
+    });
+    const host = mount(<InstalledView />);
+    // The pills, not the row: the row's own Where cell names the place too
+    // and would answer for a filter strip that offered nothing.
+    expect(pillLabels(host)).toEqual(["Everywhere", "Personal", "vg"]);
+    expect(names(host)).toContain("gh");
+  });
+
+  // Which of the two emptinesses the table shows is read off the rows it
+  // could draw. Read off the scan, a machine whose only package lost its
+  // rendering says "Nothing installed yet" under a filter that is merely
+  // hiding the one row it has.
+  it("says a filter is hiding the row, not that nothing is installed", () => {
+    scanIs([]);
+    joinAnswered([seeded] as never);
+    useUpdatesStore.setState({
+      rows: [row({ filesMissing: true })] as never,
+      read: READ_LANDED,
+    });
+    useNavStore.setState({ search: "nothing matches this" });
+    const host = mount(<InstalledView />);
+    expect(names(host)).not.toContain("gh");
+    expect(host.textContent).toContain("Nothing matches");
+    expect(host.textContent).not.toContain(NOTHING_INSTALLED);
+  });
+
+  // The words come off the row a record seeded, which core fills for
+  // exactly the rows the scan could not see — so the same author-text
+  // search that found the package while its files existed still finds it.
+  it("shows and searches the declared words when no copy is left", () => {
+    scanIs([]);
+    joinAnswered([{ ...seeded, summary: "about gh" }] as never);
+    useUpdatesStore.setState({
+      rows: [row({ filesMissing: true })] as never,
+      read: READ_LANDED,
+    });
+    expect(mount(<InstalledView />).textContent).toContain("about gh");
+
+    useNavStore.setState({ search: "about gh" });
+    expect(names(mount(<InstalledView />))).toContain("gh");
   });
 
   // The badge on a row names every place the package is missing in,
@@ -510,6 +572,90 @@ describe("a package whose rendering is gone everywhere", () => {
       identity: "recorded",
       scope: VG,
     });
+  });
+
+  // A marketplace alias is declared at a place, so the record the From
+  // column names has to be the one for the place this table is showing.
+  // The badges still name every place, which is what they are for.
+  it("names the narrowed place's marketplace, not the first one recorded", () => {
+    scanIs([]);
+    joinAnswered([
+      { ...seeded, scope: { scope: "global" } },
+      {
+        ...seeded,
+        origin: { origin: "marketplace", source: "vgcat", repo: "o/vg" },
+      },
+    ] as never);
+    useUpdatesStore.setState({
+      rows: [
+        row({ scope: { scope: "global" }, filesMissing: true }),
+        row({ filesMissing: true }),
+      ] as never,
+      read: READ_LANDED,
+    });
+    useNavStore.setState({ libraryScope: { project: VG.root } });
+    roomIs(1400);
+    const cells = cellsOf(mount(<InstalledView />));
+    expect(cells).toHaveLength(8);
+    expect(cells[5].textContent).toContain("vgcat");
+    expect(cells[5].textContent).not.toContain("cat,");
+  });
+
+  // The From facet reads the same record the column draws, so it narrows
+  // on the alias the table's own place declared. This also walks the
+  // filter's own path over a row with no copy, which nothing else does.
+  it("narrows on the marketplace the narrowed place declared", () => {
+    scanIs([]);
+    joinAnswered([
+      { ...seeded, scope: { scope: "global" } },
+      {
+        ...seeded,
+        origin: { origin: "marketplace", source: "vgcat", repo: "o/vg" },
+      },
+    ] as never);
+    useUpdatesStore.setState({
+      rows: [
+        row({ scope: { scope: "global" }, filesMissing: true }),
+        row({ filesMissing: true }),
+      ] as never,
+      read: READ_LANDED,
+    });
+    useNavStore.setState({ libraryScope: { project: VG.root } });
+
+    useLibraryViewStore.setState({ ...NO_FILTERS, from: "vgcat" });
+    expect(names(mount(<InstalledView />))).toContain("gh");
+
+    useLibraryViewStore.setState({ ...NO_FILTERS, from: "cat" });
+    expect(names(mount(<InstalledView />))).not.toContain("gh");
+  });
+
+  // A fork is a fork wherever it was made, and deleting its rendering does
+  // not undo it. The badge is read off the places the row stands in, which
+  // for this row are only the ones its record names.
+  it("keeps the forked badge when the fork's last rendering is gone", () => {
+    scanIs([]);
+    joinAnswered([
+      {
+        ...seeded,
+        origin: { origin: "own", forkedFrom: null, source: "local" },
+      },
+    ] as never);
+    useEditorStore.setState({
+      saved: {
+        [VG.root]: {
+          schema: 1,
+          install: {},
+          forks: {
+            skill: { gh: { source: "local", "forked-at": "2026-01-01" } },
+          },
+        } as never,
+      },
+    });
+    useUpdatesStore.setState({
+      rows: [row({ filesMissing: true })] as never,
+      read: READ_LANDED,
+    });
+    expect(mount(<InstalledView />).textContent).toContain(FORKED_BADGE_LABEL);
   });
 
   it("opens the package at the place the repair is offered", async () => {

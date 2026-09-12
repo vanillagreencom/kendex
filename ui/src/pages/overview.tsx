@@ -109,7 +109,7 @@ export function OverviewPage() {
       result && packageOf
         ? withRecordedMissing(
             groupItems(result.items, packageOf),
-            missingPackages,
+            missingPackages ?? [],
           )
         : [],
     [result, packageOf, missingPackages],
@@ -150,7 +150,9 @@ export function OverviewPage() {
 
   const rows = attentionRows({
     editedPackages,
-    missingPackages,
+    // Nothing to report where no read has answered for them: a row saying
+    // a package's files are gone is a definite claim.
+    missingPackages: missingPackages ?? [],
     result,
     updatesError,
     updates,
@@ -239,14 +241,22 @@ export function OverviewPage() {
                 />
                 {/* Counted in the Library's unit — packages, not
                     installations — so the number matches the table the
-                    click lands on, and only once the read that says which
-                    installations are one package has answered. A number
-                    taken before it would count installations under a label
-                    that says packages; one kept from an earlier answer is
-                    last-known, and says so rather than passing as current. */}
+                    click lands on, and only once both reads that decide
+                    that table's rows have answered. A number taken before
+                    the identity join would count installations under a
+                    label that says packages; one taken before the rows
+                    naming packages whose rendering is gone would leave
+                    those out, and this page counts them as missing files
+                    two rows above. One kept from an earlier answer is
+                    last-known, and says so rather than passing as
+                    current. */}
                 <StatTile
                   label="Installed"
-                  value={packagesKnown ? installedCount(groups) : null}
+                  value={
+                    packagesKnown && missingPackages
+                      ? installedCount(groups)
+                      : null
+                  }
                   detail={
                     packagesRead.status === "failed"
                       ? PACKAGES_UNCHECKED_DETAIL

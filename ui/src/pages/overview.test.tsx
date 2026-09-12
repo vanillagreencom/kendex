@@ -394,6 +394,17 @@ describe("the Installed tile", () => {
     expect(tileValue(html, "Installed")).toBe("—");
   });
 
+  // The rows saying which packages have lost their rendering decide this
+  // table's row set as much as the scan does, so a read that has not
+  // answered for them leaves no number — never a definite zero.
+  it("states no count while the missing rows are unread", () => {
+    stub.scan = { result: scanned, error: null, scanning: false };
+    stub.updates = { ...stub.updates, read: READ_PENDING, rows: [] };
+    expect(tileValue(renderToStaticMarkup(<OverviewPage />), "Installed")).toBe(
+      "—",
+    );
+  });
+
   // A package whose rendering was deleted by hand is still installed: the
   // record holds it, the row above counts it among the ones missing files,
   // and the Library this tile opens draws a row for it. Counted off the

@@ -3,13 +3,16 @@ import type {
   ItemKind,
   ObservedItem,
   PackageRef,
-  ScanResult,
   Scope,
   Tag,
   UpdateRow,
 } from "@/bindings";
 import { KINDS } from "@/lib/labels";
-import type { PackageOf, SummaryOf } from "@/lib/package-identity";
+import type {
+  PackageOf,
+  SummaryOf,
+  SummaryOfPackage,
+} from "@/lib/package-identity";
 import { sameScope, scopeKey } from "@/lib/scope";
 
 export type ScopeSelection = "all" | "global" | { project: string };
@@ -280,6 +283,11 @@ export function missingUnder(
 export function withRecordedMissing(
   groups: ItemGroup[],
   missing: UpdateRow[],
+  /** What the author says a package with no copy left does, out of the row
+   *  a record seeded for it. Defaulted because it is display text: a caller
+   *  that only counts rows has no use for it, while every caller that draws
+   *  or searches one passes it. */
+  summaryOf: SummaryOfPackage = () => null,
 ): ItemGroup[] {
   const added = new Map<string, ItemGroup>();
   const seen = new Set(groups.map((group) => group.key));
@@ -294,10 +302,12 @@ export function withRecordedMissing(
       package: { kind: row.kind, name: row.name },
       kind: row.kind,
       name: row.name,
-      // The author's words reach a row through the copy on disk, and there
-      // is no copy — the package page says nothing about a missing package
-      // for the same reason.
-      summary: null,
+      // The words of the declaration this row was seeded from. There is no
+      // copy on disk to read them off, which is why core answers for
+      // exactly these rows out of the record instead — and a search for
+      // what the author wrote must keep finding the package while its
+      // files are gone.
+      summary: summaryOf(row),
       installations: [],
       harnesses: [],
       tags: [],
@@ -515,24 +525,24 @@ export function groupScopes(group: ItemGroup): Scope[] {
   return [...seen.values()];
 }
 
-function projectScopes(result: ScanResult): string[] {
-  const roots = new Set<string>();
-  for (const item of result.items) {
-    if (item.scope.scope === "project") roots.add(item.scope.root);
-  }
-  return [...roots].sort();
-}
-
-/** The places the Library offers to look: every project with something
- * installed, plus the one being looked at. A project can be picked before it
- * holds anything — from its card on Projects, or by emptying it while the
- * table is open — and a place with no pill would leave an empty table with
- * nothing on screen saying where it is looking. */
+/** The places the Library offers to look: every project its rows stand in,
+ * plus the one being looked at. A project can be picked before it holds
+ * anything — from its card on Projects, or by emptying it while the table
+ * is open — and a place with no pill would leave an empty table with
+ * nothing on screen saying where it is looking.
+ *
+ * Asked of the places the rows carry rather than of the scan, because the
+ * table draws rows the scan never saw: a project whose every package lost
+ * its rendering still has rows here, and without its pill the reader
+ * cannot narrow to the place those rows name. */
 export function scopeChoices(
-  result: ScanResult | null,
+  places: Scope[],
   selection: ScopeSelection,
 ): string[] {
-  const roots = new Set(result ? projectScopes(result) : []);
+  const roots = new Set<string>();
+  for (const place of places) {
+    if (place.scope === "project") roots.add(place.root);
+  }
   if (selection !== "all" && selection !== "global") {
     roots.add(selection.project);
   }
