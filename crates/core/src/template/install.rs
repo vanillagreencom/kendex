@@ -728,25 +728,6 @@ pub fn install(
     if resolution.count() == 0 {
         return Err(CoreError::TemplateEmpty);
     }
-    // Every add this run will make is asked whether it lands before the
-    // first commit. A subscription and the local copies are each a
-    // commit of their own ahead of the add that would refuse, and a
-    // destination no tool can take has to refuse whole, with nothing on
-    // disk.
-    for group in &resolution.groups {
-        engine_ops::lands(
-            env,
-            destination,
-            &group_request(group, harnesses.clone(), method),
-        )?;
-    }
-    if !resolution.copies.is_empty() {
-        engine_ops::lands(
-            env,
-            destination,
-            &local_request(&resolution, harnesses.clone(), method),
-        )?;
-    }
     let mut landed = Landing::default();
     for group in &resolution.groups {
         // A repository nothing subscribes to is subscribed personally
@@ -770,8 +751,29 @@ pub fn install(
                 subscribed.name
             }
         };
-        let mut request = group_request(group, harnesses.clone(), method);
-        request.source = Some(source.clone());
+        let mut request = AddRequest {
+            source: Some(source.clone()),
+            harnesses: harnesses.clone(),
+            method,
+            bundles: group.bundles.iter().map(|set| set.name.clone()).collect(),
+            ..AddRequest::default()
+        };
+        for item in &group.items {
+            match item.kind {
+                ItemKind::Agent => request.agents.push(item.name.clone()),
+                ItemKind::Skill => request.skills.push(item.name.clone()),
+                ItemKind::Hook => request.hooks.push(item.name.clone()),
+                ItemKind::Command => request.commands.push(item.name.clone()),
+                ItemKind::McpServer => request.mcp_servers.push(item.name.clone()),
+                ItemKind::Plugin => unreachable!(
+                    "a plugin declares in [bundles.<name>]: MemberKind::namespace routes it to the group's sets, never its items"
+                ),
+                ItemKind::PiExtension => request.pi_extensions.push(item.name.clone()),
+            }
+        }
+        // A whole set carries its own members; expanding agents' skills on
+        // top would install beyond what the set declares.
+        request.no_auto_skills = !request.bundles.is_empty();
         let report = went!(
             landed,
             match destination {
@@ -822,67 +824,6 @@ pub fn install(
     let carried = carry_customizations(env, template, destination, &mut landed);
     went!(landed, carried);
     Ok(landed.install)
-}
-
-/// The add one marketplace group makes, less the subscription it is made
-/// from: that is known only once the group is subscribed, and nothing
-/// about where the add lands reads it.
-fn group_request(
-    group: &ResolvedGroup,
-    harnesses: Option<Vec<HarnessId>>,
-    method: Option<Method>,
-) -> AddRequest {
-    let mut request = AddRequest {
-        harnesses,
-        method,
-        bundles: group.bundles.iter().map(|set| set.name.clone()).collect(),
-        ..AddRequest::default()
-    };
-    for item in &group.items {
-        match item.kind {
-            ItemKind::Agent => request.agents.push(item.name.clone()),
-            ItemKind::Skill => request.skills.push(item.name.clone()),
-            ItemKind::Hook => request.hooks.push(item.name.clone()),
-            ItemKind::Command => request.commands.push(item.name.clone()),
-            ItemKind::McpServer => request.mcp_servers.push(item.name.clone()),
-            ItemKind::Plugin => unreachable!(
-                "a plugin declares in [bundles.<name>]: MemberKind::namespace routes it to the group's sets, never its items"
-            ),
-            ItemKind::PiExtension => request.pi_extensions.push(item.name.clone()),
-        }
-    }
-    // A whole set carries its own members; expanding agents' skills on
-    // top would install beyond what the set declares.
-    request.no_auto_skills = !request.bundles.is_empty();
-    request
-}
-
-/// The add that renders the template's own copies from the destination's
-/// local source.
-fn local_request(
-    resolution: &Resolution,
-    harnesses: Option<Vec<HarnessId>>,
-    method: Option<Method>,
-) -> AddRequest {
-    let named = |kind: ItemKind| -> Vec<String> {
-        resolution
-            .copies
-            .iter()
-            .filter(|copy| copy.kind == kind)
-            .map(|copy| copy.name.clone())
-            .collect()
-    };
-    AddRequest {
-        source: Some(LOCAL_SOURCE_NAME.to_owned()),
-        harnesses,
-        method,
-        skills: named(ItemKind::Skill),
-        agents: named(ItemKind::Agent),
-        hooks: named(ItemKind::Hook),
-        commands: named(ItemKind::Command),
-        mcp_servers: named(ItemKind::McpServer),
-        ..AddRequest::default()
-    }
 }
 
 /// Write the template's own copies into the destination's local packages
@@ -982,7 +923,42 @@ fn install_local(
     let report = engine_ops::add(
         env,
         destination,
-        &local_request(resolution, harnesses, method),
+        &AddRequest {
+            source: Some(LOCAL_SOURCE_NAME.to_owned()),
+            harnesses,
+            method,
+            skills: resolution
+                .copies
+                .iter()
+                .filter(|copy| copy.kind == ItemKind::Skill)
+                .map(|copy| copy.name.clone())
+                .collect(),
+            agents: resolution
+                .copies
+                .iter()
+                .filter(|copy| copy.kind == ItemKind::Agent)
+                .map(|copy| copy.name.clone())
+                .collect(),
+            hooks: resolution
+                .copies
+                .iter()
+                .filter(|copy| copy.kind == ItemKind::Hook)
+                .map(|copy| copy.name.clone())
+                .collect(),
+            commands: resolution
+                .copies
+                .iter()
+                .filter(|copy| copy.kind == ItemKind::Command)
+                .map(|copy| copy.name.clone())
+                .collect(),
+            mcp_servers: resolution
+                .copies
+                .iter()
+                .filter(|copy| copy.kind == ItemKind::McpServer)
+                .map(|copy| copy.name.clone())
+                .collect(),
+            ..AddRequest::default()
+        },
     )?;
     landed.commit(env, &report.plan, |install| {
         install.declared.extend(declared);

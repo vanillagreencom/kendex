@@ -8,7 +8,9 @@ use super::*;
 mod fixture_url;
 use fixture_url::file_url;
 
-use crate::test_util::no_record_on_this_runner;
+#[path = "../../../../test_util.rs"]
+mod test_util;
+use test_util::no_record_on_this_runner;
 
 /// The one skew this order can still leave is an app already across
 /// and a command that would not move. It is not a dead end — the

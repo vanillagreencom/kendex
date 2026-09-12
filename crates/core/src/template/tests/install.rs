@@ -211,37 +211,6 @@ fn installing_twice_leaves_the_same_project() {
     );
 }
 
-/// A destination no tool can take is refused before the first commit: the
-/// personal subscription the first group would make and the copies are
-/// each a write ahead of the add that judges, and none of them lands.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_destination_no_tool_can_take_refuses_before_the_first_write() {
-    let project = seeded();
-    let template = template_of(&project, "Rust service");
-    fs::remove_dir_all(project.home.join(".claude")).unwrap();
-    let target = destination(&project, "fresh");
-    let Scope::Project { root } = &target else {
-        unreachable!("built as a project scope")
-    };
-    let personal = crate::manifest::manifest_path(&project.env, &Scope::Global);
-    let personal_before = fs::read(&personal).ok();
-    let before = snapshot(root);
-
-    let refused = install(&project.env, &template, &target, None, None);
-
-    assert!(
-        matches!(refused, Err(CoreError::InstallsNowhere { .. })),
-        "expected the installs-nowhere refusal, got {refused:?}"
-    );
-    assert_eq!(snapshot(root), before, "the refusal wrote into the project");
-    assert_eq!(
-        fs::read(&personal).ok(),
-        personal_before,
-        "the refusal changed the personal setup"
-    );
-}
-
 /// The repository the fixture's marketplace is a folder at — what an
 /// install subscribes to.
 #[allow(clippy::unwrap_used)]

@@ -1,9 +1,3 @@
-// Declared once for the whole lib test tree so the shared helpers compile
-// under one module name.
-#[cfg(test)]
-#[path = "../../test_util.rs"]
-mod test_util;
-
 mod commands;
 mod dispatch_args;
 use dispatch_args::{check, remove};
