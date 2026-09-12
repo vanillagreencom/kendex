@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# Publish this repository's Homebrew recipes to the tap.
+#
+# Usage: tools/publish-homebrew [--dry-run]
+#
+# --dry-run: show what would be pushed without committing or pushing.
+# -h, --help: print this help.
+#
+# A run copies packaging/homebrew/kendex-cli.rb to Formula/kendex-cli.rb and
+# packaging/homebrew/kendex-cask.rb to Casks/kendex.rb in a clone of the tap,
+# commits what changed and pushes it. The formula is deliberately NOT named
+# kendex: brew resolves a formula before a cask, and the plain name must reach
+# the cask so the default install is the app. Edit recipes here: publication
+# overwrites direct tap edits.
+#
+# A recipe still pinning a target to the all-zero placeholder is deferred, not
+# copied: that target has not shipped, and brew would offer a download that is
+# absent or fails its checksum. It is published with the release that fills the
+# pin (packaging/README.md § Per release). The other recipe goes on its own.
+# Nothing else is checked against the release: a recipe that carries no
+# placeholder is pushed as soon as it differs from the tap.
+#
+# Environment:
+#   TAP            owner/repo of the tap (default vanillagreencom/homebrew-kendex)
+#   TAP_REMOTE     where it is cloned from (default https://github.com/$TAP.git);
+#                  a test points this at a local repository
+#   PUBLISH_TOKEN  the token a real push authenticates with, sent as a request
+#                  header and never written into the clone; required unless
+#                  --dry-run
+#   REVISION       the commit the tap's commit message names (default: HEAD)
+#
+# Every line this script writes opens `publish-homebrew: <key>=<value>`:
+#   option=<arg>       unknown option (exit 2)
+#   token=missing      a real push with no PUBLISH_TOKEN (exit 1), before any clone
+#   deferred=<file>    the recipe pins the placeholder; it is not copied
+#   nothing=<tap>      every recipe is deferred; the tap is not even cloned
+#   clone=<tap>        the tap could not be cloned (exit 1)
+#   unchanged=<tap>    the tap already holds this tree's recipes
+#   changed=<tap>      a diff follows (the stat, and under --dry-run the diff)
+#   dry-run=<tap>      nothing was pushed
+#   pushed=<tap>       the commit reached the tap
+set -euo pipefail
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+tap="${TAP:-vanillagreencom/homebrew-kendex}"
+remote="${TAP_REMOTE:-https://github.com/$tap.git}"
+placeholder='0000000000000000000000000000000000000000000000000000000000000000'
+
+say() { # KEY VALUE [LINE...] — the keyed line, then each explanation line
+  printf 'publish-homebrew: %s=%s\n' "$1" "$2"
+  shift 2
+  for line in "$@"; do printf '%s\n' "$line"; done
+}
+
+dry_run=0
+for argument in "$@"; do
+  case "$argument" in
+    --dry-run) dry_run=1 ;;
+    -h|--help) sed -n '2,21p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *) say option "$argument" "usage: tools/publish-homebrew [--dry-run]" >&2; exit 2 ;;
+  esac
+done
+
+if [[ "$dry_run" -eq 0 && -z "${PUBLISH_TOKEN:-}" ]]; then
+  say token missing "a real push needs PUBLISH_TOKEN; nothing was cloned or published" >&2
+  exit 1
+fi
+
+# recipe source in this tree -> its path in the tap
+recipes() {
+  printf '%s %s\n' \
+    packaging/homebrew/kendex-cli.rb Formula/kendex-cli.rb \
+    packaging/homebrew/kendex-cask.rb Casks/kendex.rb
+}
+
+# Decide before cloning: a run that copies nothing never touches the tap.
+selected=""
+while IFS=' ' read -r src dst; do
+  # placeholder guard: begin
+  if grep -q -- "$placeholder" "$root/$src"; then
+    say deferred "$src" "$src pins a target to the all-zero placeholder: fill the pin, or drop the target from the recipe, and the next push to main publishes it"
+    continue
+  fi
+  # placeholder guard: end
+  selected="$selected$src $dst
+"
+done <<EOF_RECIPES
+$(recipes)
+EOF_RECIPES
+if [[ -z "$selected" ]]; then
+  say nothing "$tap"
+  exit 0
+fi
+
+tmp="$(mktemp -d)" || { echo "publish-homebrew: mktemp -d failed" >&2; exit 1; }
+trap 'rm -rf -- "${tmp:?}"' EXIT
+clone="$tmp/tap"
+
+if ! git clone --quiet -- "$remote" "$clone"; then
+  say clone "$tap" "cannot clone $remote; NOTHING was published" >&2
+  exit 1
+fi
+
+mkdir -p "$clone/Formula" "$clone/Casks"
+while IFS=' ' read -r src dst; do
+  [[ -n "$src" ]] || continue
+  install -m 644 -- "$root/$src" "$clone/$dst"
+done <<EOF_SELECTED
+$selected
+EOF_SELECTED
+
+git -C "$clone" add --all
+if git -C "$clone" diff --cached --quiet --exit-code; then
+  say unchanged "$tap"
+  exit 0
+fi
+
+say changed "$tap"
+git -C "$clone" --no-pager diff --cached --stat
+
+if [[ "$dry_run" -eq 1 ]]; then
+  git -C "$clone" --no-pager diff --cached
+  say dry-run "$tap"
+  exit 0
+fi
+
+revision="${REVISION:-$(git -C "$root" rev-parse HEAD)}"
+message="sync from vanillagreencom/kendex ${revision:0:7}"
+git -C "$clone" -c user.name="kendex packaging" -c user.email="packaging@vanillagreen" \
+  commit --quiet -m "$message"
+# The token rides in a request header scoped to the tap's host, never in the
+# remote URL, so it is not written into the clone's configuration. A local
+# remote (a test) gets no header.
+auth=()
+if [[ "$remote" == https://* ]]; then
+  basic="$(printf 'x-access-token:%s' "$PUBLISH_TOKEN" | base64 | tr -d '\n')"
+  auth=(-c "http.${remote%/*}/.extraheader=AUTHORIZATION: basic $basic")
+fi
+git -C "$clone" ${auth[@]+"${auth[@]}"} push --quiet origin HEAD:main
+say pushed "$tap" "$message"

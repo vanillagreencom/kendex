@@ -1,0 +1,250 @@
+#!/usr/bin/env bash
+# Publish this repository's Arch recipes to their AUR repositories.
+#
+# Usage: tools/publish-aur [--dry-run | --publishable] [package...]
+#
+# --dry-run: show what would be pushed without committing or pushing.
+# --publishable: decide only; print the name of each package whose release
+#   is ready, one per line on stdout and nothing else there, and clone
+#   nothing. The weekly drift job expands that output as the packages to
+#   compare against the AUR, since a deferred package is expected to differ.
+# -h, --help: print this help.
+#
+# Packages: kendex, kendex-bin, kendex-git (all three when none is named).
+#
+# A run copies PKGBUILD, .SRCINFO and every companion file the recipe names,
+# scriptlets and local sources such as a patch (tools/check-aur-sync
+# --print-files), from packaging/arch/<package>/ into a clone of the AUR
+# repository, removes any file the AUR tracks that the recipe no longer
+# names, commits what changed and pushes it. Pushing
+# needs the AUR account's SSH key; a dry run clones over HTTPS and needs none.
+# Edit recipes here: publication overwrites direct AUR edits.
+#
+# A package is deferred, not failed, while its release is not ready: a
+# recipe that pins any download to the all-zero placeholder (that target
+# has not shipped, and a recipe carrying a placeholder is published only
+# with the release that fills it, packaging/README.md § Per release), a
+# download that is still absent, or one whose bytes do not hash to the
+# pinned sha256. An unreachable host, an unexpected HTTP status or a recipe
+# that cannot be read fails the run: none of those is a release that has
+# not happened yet. kendex-git builds from a git clone, so it has no
+# download to wait for.
+#
+# Every line this script writes opens `publish-aur: <key>=<value>`:
+#   option=<arg>          unknown option (exit 2)
+#   package=<name>        not one of the packages above (exit 2)
+#   deferred=<package>    the release is not ready; the package is skipped
+#   unreachable=<url>     curl could not complete the request (exit 1)
+#   status=<code>         an HTTP status that is neither ready nor absent (exit 1)
+#   unreadable=<package>  the recipe's sources could not be read (exit 1)
+#   clone=<package>       the AUR repository could not be cloned (exit 1)
+#   unchanged=<package>   the AUR already holds this tree's recipe
+#   changed=<package>     a diff follows (the stat, and under --dry-run the diff)
+#   dry-run=<package>     nothing was pushed for this package
+#   pushed=<package>      the commit reached the AUR
+set -euo pipefail
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+check="$root/tools/check-aur-sync"
+
+say() { # KEY VALUE [LINE...] — the keyed line, then each explanation line
+  printf 'publish-aur: %s=%s\n' "$1" "$2"
+  shift 2
+  for line in "$@"; do printf '%s\n' "$line"; done
+}
+
+dry_run=0
+publishable=0
+packages=()
+for argument in "$@"; do
+  case "$argument" in
+    --dry-run) dry_run=1 ;;
+    --publishable) publishable=1 ;;
+    -h|--help) sed -n '2,27p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -*) say option "$argument" "usage: tools/publish-aur [--dry-run | --publishable] [package...]" >&2; exit 2 ;;
+    kendex|kendex-bin|kendex-git) packages+=("$argument") ;;
+    *) say package "$argument" "the packages are kendex, kendex-bin and kendex-git" >&2; exit 2 ;;
+  esac
+done
+if [[ ${#packages[@]} -eq 0 ]]; then
+  packages=(kendex kendex-bin kendex-git)
+fi
+
+# AUR clients read .SRCINFO, so it must agree with PKGBUILD before publication.
+# Its two status lines go to stderr: stdout is the package names under
+# --publishable, which the weekly job expands as arguments.
+"$check" >&2
+
+revision="$(git -C "$root" rev-parse --short HEAD)"
+message="sync from vanillagreencom/kendex $revision"
+
+tmp="$(mktemp -d)" || { echo "publish-aur: mktemp -d failed" >&2; exit 1; }
+trap 'rm -rf -- "${tmp:?}"' EXIT
+
+placeholder='0000000000000000000000000000000000000000000000000000000000000000'
+
+# macOS ships shasum and no sha256sum.
+sha256_stdin() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum
+  else
+    shasum -a 256
+  fi | cut -d' ' -f1
+}
+
+# Whether every download the recipe pins exists and hashes to its pin.
+# Return 0 when the release is ready, 1 when it is not yet (defer), 2 when
+# the answer is unknown (fail). A missing release is a state to wait out;
+# an unreachable host or a status outside 2xx/404/410 is a fault to look at.
+# A placeholder pin defers before any request: the whole recipe is pushed
+# or none of it, and a pushed placeholder gives every user on that target a
+# package that fails makepkg's validity check instead of a clear "not yet".
+sources_current() {
+  local package="$1" pairs url digest name code rc actual
+
+  if ! pairs="$("$check" --print-source-checksums "$package")"; then
+    say unreadable "$package" "the recipe's sources could not be read, so whether its release is ready is unknown" >&2
+    return 2
+  fi
+
+  while IFS=$'\t' read -r url digest; do
+    [[ -n "$url" ]] || continue
+    if [[ "$digest" == "$placeholder" ]]; then
+      say deferred "$package" "it pins ${url##*/} to the all-zero placeholder: that target has not shipped" \
+        "a recipe carrying a placeholder is published only with the release that fills it (packaging/README.md § Per release); fill the pin, or drop the target from the recipe, and publish again" >&2
+      return 1
+    fi
+  done <<< "$pairs"
+
+  while IFS=$'\t' read -r url digest; do
+    [[ -n "$url" ]] || continue
+    name="${url##*/}"
+    rc=0
+    code="$(curl -sSL --head --max-time 30 --retry 2 -o /dev/null -w '%{http_code}' -- "$url")" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      say unreachable "$url" "curl exit $rc, so whether $package's download exists is unknown" \
+        "an unreachable host is not a missing release: reading it as one would skip the publish and leave the AUR stale under a green run" >&2
+      return 2
+    fi
+    case "$code" in
+      404|410)
+        say deferred "$package" "its download $url returned $code" \
+          "that is the state between a version bump and its release; publish again once the release is up. If no release is pending, the source URL is wrong" >&2
+        return 1
+        ;;
+      2??) ;;
+      *)
+        say status "$code" "$url is neither a working download nor a missing one" \
+          "failing rather than guessing: a 403 or a 5xx is a fault to look at, not a release that has not happened yet" >&2
+        return 2
+        ;;
+    esac
+
+    # The release publishes no checksum list, so the download itself is measured.
+    rc=0
+    actual="$(curl -sSfL --max-time 600 --retry 2 -- "$url" | sha256_stdin)" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      say unreachable "$url" "the download could not be read to the end (exit $rc), so whether it matches the recipe is unknown" >&2
+      return 2
+    fi
+    if [[ "$actual" != "$digest" ]]; then
+      say deferred "$package" "$name hashes to $actual and the recipe pins $digest" \
+        "that is the state between a version bump and its checksum pin; pin the released file's sha256 and publish again. Shipping this recipe would fail makepkg's validity check for every user" >&2
+      return 1
+    fi
+  done <<< "$pairs"
+  return 0
+}
+
+status=0
+published=()
+for package in "${packages[@]}"; do
+  source_dir="$root/packaging/arch/$package"
+  clone="$tmp/$package"
+
+  # kendex-git prints no downloads (its source is `git+`), so it is never deferred.
+  sources_current "$package" || case "$?" in
+    1) continue ;;
+    *) status=1; continue ;;
+  esac
+
+  if [[ "$publishable" -eq 1 ]]; then
+    printf '%s\n' "$package"
+    continue
+  fi
+
+  if [[ "$dry_run" -eq 1 ]]; then
+    remote="https://aur.archlinux.org/$package.git"
+  else
+    remote="ssh://aur@aur.archlinux.org/$package.git"
+  fi
+
+  if ! git clone --quiet -- "$remote" "$clone"; then
+    say clone "$package" "cannot clone $remote; NOTHING was published for $package" >&2
+    status=1
+    continue
+  fi
+
+  # The recipe's own file set: a scriptlet or a local source it names ships
+  # beside it, or every AUR build fails on the missing file. check-aur-sync
+  # refused a name with no file at the top of this run.
+  if ! files="$("$check" --print-files "$package")"; then
+    say unreadable "$package" "the recipe's file set could not be read" >&2
+    status=1
+    continue
+  fi
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    install -m 644 -- "$source_dir/$file" "$clone/$file"
+  done <<< "$files"
+
+  # Intent-to-add puts a new file in the diff too; without it a file the AUR
+  # lacks would look like no change at all.
+  git -C "$clone" add --intent-to-add --all
+  # A companion the recipe no longer names (a dropped scriptlet or patch) is
+  # removed from the AUR: left there, the two would drift apart with every
+  # check reporting them in sync. Removed from the work tree after the
+  # intent-to-add, so the index still holds it and the diff below shows the
+  # deletion, which the dry run prints.
+  while IFS= read -r tracked; do
+    [[ -n "$tracked" ]] || continue
+    grep -qxF -- "$tracked" <<< "$files" || rm -f -- "$clone/$tracked"
+  done < <(git -C "$clone" ls-files)
+
+  if git -C "$clone" diff --quiet --exit-code; then
+    say unchanged "$package"
+    published+=("$package")
+    continue
+  fi
+
+  say changed "$package"
+  git -C "$clone" --no-pager diff --stat
+
+  if [[ "$dry_run" -eq 1 ]]; then
+    git -C "$clone" --no-pager diff
+    say dry-run "$package"
+    continue
+  fi
+
+  git -C "$clone" add --all
+  # AUR pushes need a committer identity. CI supplies one through
+  # AUR_COMMIT_NAME and AUR_COMMIT_EMAIL; a checkout with its own is left alone.
+  identity=()
+  if ! git -C "$clone" config user.email >/dev/null; then
+    identity=(
+      -c "user.name=${AUR_COMMIT_NAME:-kendex packaging}"
+      -c "user.email=${AUR_COMMIT_EMAIL:-packaging@vanillagreen}"
+    )
+  fi
+  git -C "$clone" ${identity[@]+"${identity[@]}"} commit --quiet -m "$message"
+  git -C "$clone" push --quiet origin HEAD:master
+  say pushed "$package" "$message"
+  published+=("$package")
+done
+
+# Verify only what this run published: a deferred package is expected to differ.
+if [[ "$dry_run" -eq 0 && ${#published[@]} -gt 0 ]]; then
+  "$check" --remote "${published[@]}" || status=1
+fi
+
+exit "$status"

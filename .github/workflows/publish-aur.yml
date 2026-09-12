@@ -1,0 +1,145 @@
+name: publish-aur
+
+# The AUR does not pull recipe changes from this repository. This workflow
+# pushes packaging/arch/<package>/ to each package's AUR repository once
+# the release downloads the recipe pins exist and hash to their pins;
+# tools/publish-aur holds the rules. A package whose release was not up
+# when its bump merged is deferred, so publishing a release runs this
+# workflow again and lands it. The weekly job checks that the AUR still
+# holds what this tree holds, without publishing.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - packaging/arch/**
+      - tools/publish-aur
+      - tools/check-aur-sync
+      - .github/workflows/publish-aur.yml
+  # A draft becoming a release is what makes a deferred package ready.
+  release:
+    types: [published]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: Packages to publish, space separated
+        type: string
+        default: kendex kendex-bin kendex-git
+      dry_run:
+        description: Show what would be pushed without pushing it
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # Cancellation could leave part of the selected package set published.
+  group: publish-aur
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event_name != 'schedule'
+    # Reads this repository and writes only to the AUR, over SSH with its own key.
+    permissions:
+      contents: read
+    # CI_RUNNER_2V is unset on this public repository, so this is ubuntu-latest.
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # A release event checks out the tag by default, and the recipe
+          # bump for that release merges to main after the tag exists, so a
+          # release run publishes from main; a push or dispatch keeps its ref.
+          ref: ${{ github.event_name == 'release' && 'main' || github.ref }}
+          persist-credentials: false
+
+      # AUR clients read .SRCINFO; it must agree with the PKGBUILD they build.
+      - name: Arch recipes agree internally
+        run: tools/check-aur-sync
+
+      # Skipped for a dry run: tools/publish-aur --dry-run clones over HTTPS
+      # and needs no key, so anyone can dispatch one without the secret.
+      - name: Configure the AUR SSH key
+        if: ${{ inputs.dry_run != true }}
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          # The aur.archlinux.org host key line, verified against the
+          # fingerprints Arch publishes; packaging/README.md § Publishing.
+          AUR_SSH_KNOWN_HOSTS: ${{ vars.AUR_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$AUR_SSH_PRIVATE_KEY" ]; then
+            # A skipped publish would leave a green run and a stale AUR.
+            echo "::error::AUR_SSH_PRIVATE_KEY is not set, so nothing can be published. Add the secret, or publish by hand with tools/publish-aur and say so in the release notes."
+            exit 1
+          fi
+          if [ -z "$AUR_SSH_KNOWN_HOSTS" ]; then
+            echo "::error::AUR_SSH_KNOWN_HOSTS is not set. Set it to the aur.archlinux.org host key line, verified against the fingerprints on the Arch User Repository wiki page (packaging/README.md § Publishing). Refusing to guess a host key or to accept whatever answers."
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          printf '%s\n' "$AUR_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf 'Host aur.archlinux.org\n  User aur\n  IdentityFile ~/.ssh/aur\n  IdentitiesOnly yes\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config ~/.ssh/known_hosts
+          # The trusted fingerprint, so a wrong host key line is visible in the log.
+          ssh-keygen -lf ~/.ssh/known_hosts
+
+      - name: Publish packaging/arch to the AUR
+        env:
+          # Unset on this repository; tools/publish-aur then commits as
+          # "kendex packaging <packaging@vanillagreen>".
+          AUR_COMMIT_NAME: ${{ vars.AUR_COMMIT_NAME }}
+          AUR_COMMIT_EMAIL: ${{ vars.AUR_COMMIT_EMAIL }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          # A push carries no inputs and publishes the whole set.
+          PACKAGES: ${{ inputs.packages || 'kendex kendex-bin kendex-git' }}
+        run: |
+          set -euo pipefail
+          # An argv array, so a name cannot glob; tools/publish-aur refuses
+          # anything but its three packages.
+          read -ra selected <<< "$PACKAGES"
+          if [ ${#selected[@]} -eq 0 ]; then
+            echo "::error::no packages selected"
+            exit 1
+          fi
+          echo "publishing: ${selected[*]}"
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            tools/publish-aur --dry-run "${selected[@]}"
+          else
+            tools/publish-aur "${selected[@]}"
+          fi
+
+      # tools/publish-aur verifies only the packages it published: a package
+      # deferred until its release is up is expected to differ from the AUR.
+
+  drift:
+    if: github.event_name == 'schedule'
+    permissions:
+      contents: read
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # A package deferred until its release is up is expected to differ
+      # from the AUR, so only the packages publish-aur would publish today
+      # are compared; drift among those still fails the job.
+      - name: Published AUR recipes still match this repo
+        run: |
+          set -euo pipefail
+          publishable="$(tools/publish-aur --publishable)"
+          if [ -z "$publishable" ]; then
+            echo "publish-aur: every package waits on its release today; nothing to compare"
+            exit 0
+          fi
+          # shellcheck disable=SC2086
+          tools/check-aur-sync --remote $publishable
