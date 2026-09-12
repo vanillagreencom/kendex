@@ -2751,6 +2751,23 @@ case "${1:-}" in
       # its lease IS a native git lock — so the release has to come before the
       # lock precheck below, not after it. Only our own lease is
       # released; a foreign one falls through and the precheck names its owner.
+      # The rewrite record and any hop no push has consumed live in the
+      # worktree's private git dir and die with it, while the branch they
+      # describe is kept whenever it is not provably merged. Removing here
+      # would leave that branch with nothing describing its rewrite and the
+      # next push over it publishing pre-rewrite SHAs, so this asks first.
+      # It runs before the lease release, which is the first mutation.
+      if ! REMOVE_MAP_FILE="$(restack_rebase_map_file "$WT_PATH")"; then
+        worktree_message remove-map-unreadable "$WT_PATH" "Error: Could not read whether $WT_PATH still holds an unreconciled rebase map; refusing to remove it." >&2
+        exit 1
+      fi
+      if [[ -s "$REMOVE_MAP_FILE" ]]; then
+        worktree_message remove-rebase-map "$REMOVE_MAP_FILE" "Error: $WT_PATH still holds an unreconciled rebase map, the only record of a rewrite this removal would delete while keeping the branch; refusing to remove it." >&2
+        echo "Nothing in the worktree was modified." >&2
+        echo "Let orch/scripts/worktree-push consume it, or reconcile every recorded SHA against the worktree reflog, then remove it:" >&2
+        echo "  rm -f \"$REMOVE_MAP_FILE\"" >&2
+        exit 1
+      fi
       if ! release_own_session_lease "$WT_PATH" "$REMOVE_ISSUE_OWNER"; then
         exit 1
       fi

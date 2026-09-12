@@ -81,6 +81,13 @@ step() {
         'WORKTREE_RELATIVE_SYMLINKS=".claude/POINTER.md=../AGENTS.md"' >"$MAIN/.env.local"
       (cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT") >/dev/null
       ;;
+    # An unreconciled rebase map in the worktree's private git dir: the only
+    # record of a rewrite, which removal would delete while keeping the
+    # branch the rewrite produced.
+    unreconciled-map)
+      MAP_FILE="$(git -C "$WT" rev-parse --absolute-git-dir)/kendex-rebase-map"
+      printf 'rebase-unmapped: %s\n' "$(git -C "$WT" rev-parse HEAD)" >"$MAP_FILE"
+      ;;
     lock) git -C "$MAIN" worktree lock "$WT" --reason "session guard: owner=topic" ;;
     unlock) git -C "$MAIN" worktree unlock "$WT" ;;
     # git itself refuses the removal after every precheck passed: the lock
@@ -114,6 +121,7 @@ build() {
   MAIN="$ROOT/main"
   WT="$ROOT/trees/topic"
   ROW_PATH="$TMP_ROOT/bin:$PATH"
+  MAP_FILE=""
   for word in "$@"; do step "$word"; done
 }
 
@@ -143,6 +151,7 @@ remove_state() {
 }
 
 REAL_GIT_BIN="$(command -v git)"
+MAP_FILE=""
 
 run_remove() {
   local -a argv
@@ -152,7 +161,7 @@ run_remove() {
     "$WORKTREE_SCRIPT" remove "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
   printf 'rc=%s out=%s err=%s %s' "$rc" \
     "$(message_records <"$ROOT/out" | sed -e "s|$WT|<wt>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" -e '/^Usage: /q' | paste -s -d ';' -)" \
-    "$(message_records <"$ROOT/err" | sed -e "s|$WT|<wt>|g" -e "s|$MAIN|<main>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" | paste -s -d ';' -)" \
+    "$(message_records <"$ROOT/err" | sed -e "s|${MAP_FILE:-NONE}|<map>|g" -e "s|$WT|<wt>|g" -e "s|$MAIN|<main>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" | paste -s -d ';' -)" \
     "$(remove_state)"
 }
 
@@ -162,6 +171,10 @@ locked_block() {
 
 refused_block() {
   printf '%s' 'worktree-remove-failed: <wt>'
+}
+
+map_block() {
+  printf '%s' 'worktree-remove-rebase-map: <map>'
 }
 
 unmerged_block() {
@@ -185,6 +198,7 @@ remove_err() {
     unmerged) unmerged_block ;;
     locked) locked_block ;;
     refused) refused_block ;;
+    held-map) map_block ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -201,6 +215,7 @@ an unmerged branch: the worktree goes, the branch stays, the diagnostic names th
 a locked worktree is refused with its owner and the unlock command, links intact|tree links lock|TOPIC|1|-|locked|worktree=registered/yes branch=present dirs=topic links=LINKS
 the same worktree unlocked is removed|tree links lock unlock|TOPIC|0|removed|deleted|worktree=absent/no branch=absent dirs=- links=-
 a removal git refuses after every precheck leaves the worktree, branch and links intact|tree links git-refuses|TOPIC|1|-|refused|worktree=registered/yes branch=present dirs=topic links=LINKS
+a worktree still holding an unreconciled rebase map is refused, tree and branch intact|tree commit links unreconciled-map|TOPIC|1|-|held-map|worktree=registered/yes branch=present dirs=topic links=LINKS
 '
 
 echo "=== worktree remove ==="

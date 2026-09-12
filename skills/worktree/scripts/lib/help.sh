@@ -249,7 +249,10 @@ Failure semantics:
   message is reported. A failure partway through can leave the worktree
   partially removed: treat a removal failure as "inspect what remains"
   (fix-links restores configured symlinks); the branch is never deleted on
-  that path. remove checks for a native 'git worktree lock' up front and
+  that path. A worktree still holding an unreconciled rebase map is refused
+  before anything is touched: that map lives in the worktree's own git dir and
+  would die with it, while the branch it describes is kept whenever it is not
+  provably merged (push --help). remove checks for a native 'git worktree lock' up front and
   exits non-zero with a diagnostic naming the lock reason and the
   'git worktree unlock' command. The branch goes only on the proof cleanup
   uses: ancestry into the default branch, or, when a squash erased that, a
