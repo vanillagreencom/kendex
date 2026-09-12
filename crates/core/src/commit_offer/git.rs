@@ -6,6 +6,7 @@
 //! behind each step.
 
 use std::path::Path;
+use std::process::Output;
 
 use crate::process::Hardened;
 
@@ -35,22 +36,30 @@ pub fn run(hardened: Hardened, step: Step) -> Result<Vec<u8>, Failed> {
     }
     Err(Failed {
         step,
-        refusal: Refusal::Said(said(&output.stderr, &output.stdout)),
+        refusal: Refusal::Said(said(&output)),
     })
 }
 
-/// git and gh both put a refusal on stderr, and a hook's own output goes
-/// there whole; stdout follows for the programs that also write there.
-/// Shown one line at a time, in order, with nothing dropped.
-pub fn said(stderr: &[u8], stdout: &[u8]) -> Vec<String> {
+/// The program's own words, one line at a time, in order, with nothing
+/// dropped: stdout first, then stderr.
+///
+/// stderr goes last so the block ends on the refusal itself, which is what
+/// both git and gh write there. stdout carries whatever ran and passed on
+/// the way — a pre-push hook prints its own lines there and git keeps them
+/// — so a block ending on stdout ends on a hook reporting success under a
+/// push the remote rejected, with the rejection scrolled off the top.
+///
+/// Takes the whole [`Output`] rather than two byte slices, which are the
+/// same type and would transpose silently.
+fn said(output: &Output) -> Vec<String> {
     let lines = |bytes: &[u8]| -> Vec<String> {
         String::from_utf8_lossy(bytes)
             .lines()
             .map(str::to_owned)
             .collect()
     };
-    let mut all = lines(stderr);
-    all.extend(lines(stdout));
+    let mut all = lines(&output.stdout);
+    all.extend(lines(&output.stderr));
     all
 }
 
@@ -235,7 +244,7 @@ pub fn born(root: &Path) -> Result<bool, Failed> {
         Ok(output) if output.status.code() == Some(1) => Ok(false),
         Ok(output) => Err(Failed {
             step: Step::Read,
-            refusal: Refusal::Said(said(&output.stderr, &output.stdout)),
+            refusal: Refusal::Said(said(&output)),
         }),
         Err(error) => Err(Failed {
             step: Step::Read,

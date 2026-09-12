@@ -196,7 +196,7 @@ A step that times out is reported as that step's failure, naming the step and th
 
 ## Surfacing a refusal
 
-- git puts a hook's own output on git's stderr, both halves of it, and prints nothing on its stdout when a hook refuses. So stderr is what carries the words, and it is shown whole, one line at a time, in order. Where the program also wrote to stdout, as `gh` does for some diagnostics, that follows.
+- Both halves are shown whole, one line at a time, in order: stdout first, then stderr, so the block ends on the refusal itself. git and gh both write their refusal to stderr. stdout carries whatever ran and passed on the way, such as a pre-push hook's own report, which git keeps there.
 - Each line goes through the surface's escaping: `ui::say` on the CLI, React text on the app. A control character in a hook's output must not move a cursor or colour a line.
 - Nothing is summarised, reworded, truncated to a first line, or matched against a pattern to decide what it means.
 - No output cap. `Hardened::max_output` refuses the whole call when the cap is passed, and its error carries none of what the program said, which would lose exactly the words the contract promises. A hook's output is bounded by the hook, and no cap is worth a refusal that says nothing.
