@@ -55,6 +55,18 @@ await_gone() { # PID — up to 10s
   for _ in $(seq 1 200); do gone "$1" && return 0; sleep 0.05; done
   return 1
 }
+# THE GROUP, NOT ITS LEADER. A leader can exit while its children run on, so a
+# wait on the leader pid answers "the first process finished", never "the tree
+# is gone" — and a survivor of a tree this suite started is what writes under
+# $TMP_ROOT while the EXIT trap removes it. The negative pid asks about the
+# whole group; second-opinion-runtime's `process_group_alive` spells the probe
+# the same way, for the same reason.
+group_gone() { ! kill -0 -- "-$1" 2>/dev/null; }
+await_group_gone() { # GROUP — up to 10s
+  local _
+  for _ in $(seq 1 200); do group_gone "$1" && return 0; sleep 0.05; done
+  return 1
+}
 await_file() { # PATH [POLLS] — 0.05s apart, 200 polls (10s) by default
   local _
   for _ in $(seq 1 "${2:-200}"); do [[ -s "$1" ]] && return 0; sleep 0.05; done
@@ -689,14 +701,16 @@ run_launch_cleanup_failure() { # RUNTIME LABEL [CLI]
 #
 # EVERY PID READ FAILS THE SUITE WHERE IT IS CAPTURED. `read_pid` reports
 # through `fail`, whose `exit 1` ends only the command substitution it runs in,
-# and each call site spells `cleanup_captured_launch <label> || fail ...`, which
-# turns errexit off for this whole body. An unchecked capture therefore leaves
-# an empty pid that `kill -- -` swallows and `await_gone` calls gone at once:
-# the suite prints FAIL on stderr and exits 0, green to a CI lane, while the
-# worker it failed to read leaks. That is the same ENOTEMPTY producer this
-# teardown exists to end, reached by exactly the runtime regression the two
-# cases below guard — one that stops calling stop_process_group leaves the pid
-# file this reads absent.
+# so an unchecked capture leaves an empty pid that `kill -- -` swallows and a
+# liveness probe calls gone at once: the suite prints FAIL on stderr and exits
+# 0, green to a CI lane, while the worker it failed to read leaks. That is the
+# same ENOTEMPTY producer this teardown exists to end, reached by exactly the
+# runtime regression the two cases below guard — one that stops calling
+# stop_process_group leaves the pid file this reads absent.
+#
+# Every refusal here is `fail`, so this returns only on success and its callers
+# are bare; a `|| fail` at a call site would also turn errexit off for this
+# whole body, which is what let the unchecked capture run on in the first place.
 cleanup_captured_launch() { # LABEL
   local label="$1" worker kid cli_group
   worker="$(read_pid "$TMP_ROOT/$label.stop-pid" "the captured launch")" \
@@ -715,9 +729,14 @@ cleanup_captured_launch() { # LABEL
     || fail "$label: the CLI never reported ready, so it may still write"
   kill -KILL -- "-$worker" 2>/dev/null || true
   kill -KILL -- "-$cli_group" 2>/dev/null || true
-  await_gone "$worker" || return 1
-  await_gone "$kid" || return 1
-  return 0
+  # Both waits are on the GROUP. A wait on the two leader pids returns while a
+  # member that outlived its leader is still running, which is the whole shape
+  # this teardown exists to end, and a timeout here is a live tree rather than
+  # something to return success over.
+  await_group_gone "$worker" \
+    || fail "$label: the worker group $worker survived KILL"
+  await_group_gone "$cli_group" \
+    || fail "$label: the CLI group $cli_group survived KILL"
 }
 
 rc="$(run_launch_cleanup_failure "$RUNTIME" launch-cleanup)"
@@ -731,7 +750,7 @@ assert_contains "$TMP_ROOT/launch-cleanup.stderr" \
 [[ -d "$TMP_ROOT/launch-cleanup-runtime" ]] \
   || fail "launch cleanup failure deleted its recovery state"
 ok "launch cleanup failure preserves the runtime directory"
-cleanup_captured_launch launch-cleanup || fail "launch cleanup control left its worker running"
+cleanup_captured_launch launch-cleanup
 
 LAUNCH_CLEANUP_MUTANT="$MUTANT_DIR/launch-cleanup-mutant-runtime-script"
 awk '
@@ -757,8 +776,7 @@ assert_rc "$rc" 1 "the launch-cleanup mutant still reports publication failure"
 [[ ! -e "$TMP_ROOT/launch-cleanup-mutant-runtime" ]] \
   || fail "the launch-cleanup mutant did not delete recovery state"
 ok "the mutant proves the return preserves launch recovery state"
-cleanup_captured_launch launch-cleanup-mutant \
-  || fail "launch-cleanup mutant left its worker running"
+cleanup_captured_launch launch-cleanup-mutant
 
 echo "=== control: a captured launch's teardown leaves nothing writing under the temp root ==="
 # Without this the two cases above cannot say that their teardown ENDED the
@@ -779,7 +797,7 @@ echo "=== control: a captured launch's teardown leaves nothing writing under the
 laggard_entries() { ls -A "$TMP_ROOT" | grep '^laggard[.-]'; }
 rc="$(run_launch_cleanup_failure "$RUNTIME" laggard laggard-codex)"
 assert_rc "$rc" 1 "the laggard CLI's launch reports its cleanup failure"
-cleanup_captured_launch laggard || fail "the laggard control left its worker running"
+cleanup_captured_launch laggard
 laggard_settled="$(laggard_entries)"
 for _ in $(seq 1 40); do
   [[ "$(laggard_entries)" == "$laggard_settled" ]] \
