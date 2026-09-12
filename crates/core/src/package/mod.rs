@@ -105,7 +105,7 @@ pub(crate) fn package_ref_for(
         }
     };
     let sealed = SealedSource::open(&root)?;
-    let config = crate::source::source_config(&sealed, crate::source::repo_leaf(&repo))?;
+    let config = crate::source::source_config_for(&sealed, &repo)?;
     // The tip may not offer the item (moved, deleted); the effective
     // revision the declaration reads is the fallback that keeps the page
     // and the diff working for what is actually installed.
@@ -117,9 +117,7 @@ pub(crate) fn package_ref_for(
             return None;
         };
         let effective = SealedSource::open(&ready.root).ok()?;
-        let config =
-            crate::source::source_config(&effective, crate::source::repo_leaf(&ready.provenance))
-                .ok()?;
+        let config = crate::source::source_config_for(&effective, &ready.provenance).ok()?;
         crate::source::find_item(&effective, &config, kind, name)
             .and_then(|path| {
                 path.strip_prefix(effective.root())
@@ -260,12 +258,7 @@ pub fn resolve_hold(
         });
     };
     let resolution = resolve_selector(env, &repo, selector)?;
-    if !item_in_tree(
-        &resolution.root,
-        crate::source::repo_leaf(&repo),
-        kind,
-        name,
-    )? {
+    if !item_in_tree(&resolution.root, &repo, kind, name)? {
         return Err(CoreError::ItemMissingAtRev {
             name: name.to_owned(),
             repo,
@@ -297,12 +290,7 @@ pub fn prove_present(
             name: decl.source.clone(),
         });
     };
-    if !item_in_tree(
-        &ready.root,
-        crate::source::repo_leaf(&ready.provenance),
-        kind,
-        name,
-    )? {
+    if !item_in_tree(&ready.root, &ready.provenance, kind, name)? {
         return Err(CoreError::ItemNotInSource {
             name: name.to_owned(),
             source_name: decl.source.clone(),
@@ -313,9 +301,9 @@ pub fn prove_present(
 
 /// Whether one source tree offers the item — the shared reading behind
 /// both proofs above.
-fn item_in_tree(root: &Path, repo_leaf: &str, kind: ItemKind, name: &str) -> Result<bool> {
+fn item_in_tree(root: &Path, provenance: &str, kind: ItemKind, name: &str) -> Result<bool> {
     let sealed = SealedSource::open(root)?;
-    let config = crate::source::source_config(&sealed, repo_leaf)?;
+    let config = crate::source::source_config_for(&sealed, provenance)?;
     Ok(crate::source::find_item(&sealed, &config, kind, name).is_some())
 }
 

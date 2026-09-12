@@ -12,7 +12,7 @@ use crate::error::{CoreError, Result};
 use crate::lock::{Lock, lock_path};
 use crate::manifest::{self, ItemDecl, Manifest, Method};
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::source::{self, find_item, list_items, source_config};
+use crate::source::{self, find_item, list_items, source_config_for};
 
 #[derive(Debug, Default, Clone)]
 pub struct AddRequest {
@@ -225,7 +225,7 @@ fn add_from(
     let ready = source::require_ready(env, scope, source_name, manifest)?;
     let hold_at = hold_commit(request, source_name, &ready)?;
     let sealed = crate::source_read::SealedSource::open(&ready.root)?;
-    let config = source_config(&sealed, crate::source::repo_leaf(&ready.provenance))?;
+    let config = source_config_for(&sealed, &ready.provenance)?;
 
     let mut agents = wanted.agents.clone();
     let mut skills = wanted.skills.clone();

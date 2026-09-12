@@ -91,8 +91,7 @@ fn effective_item(
         });
     };
     let sealed = SealedSource::open(&ready.root)?;
-    let config =
-        crate::source::source_config(&sealed, crate::source::repo_leaf(&ready.provenance))?;
+    let config = crate::source::source_config_for(&sealed, &ready.provenance)?;
     let Some(item_path) = crate::source::find_item(&sealed, &config, kind, name) else {
         return Err(CoreError::ItemNotInSource {
             name: name.to_owned(),

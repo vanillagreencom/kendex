@@ -181,7 +181,7 @@ impl DeclaredHeaders {
                 return None;
             }
             let sealed = SealedSource::open(&ready.root).ok()?;
-            let config = super::source_config(&sealed, super::repo_leaf(&ready.provenance)).ok()?;
+            let config = super::source_config_for(&sealed, &ready.provenance).ok()?;
             Some((sealed, config))
         });
         let (sealed, config) = opened.as_ref()?;

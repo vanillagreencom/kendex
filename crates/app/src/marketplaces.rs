@@ -34,11 +34,8 @@ fn open_catalog(
     let ready = kendex_core::source::require_ready(env, scope, source, &manifest)
         .map_err(|e| e.to_string())?;
     let sealed = SealedSource::open(&ready.root).map_err(|e| e.to_string())?;
-    let config = kendex_core::source::source_config(
-        &sealed,
-        kendex_core::source::repo_leaf(&ready.provenance),
-    )
-    .map_err(|e| e.to_string())?;
+    let config = kendex_core::source::source_config_for(&sealed, &ready.provenance)
+        .map_err(|e| e.to_string())?;
     Ok((sealed, config, ready.provenance))
 }
 

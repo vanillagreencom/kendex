@@ -138,17 +138,23 @@ pub struct TemplateInstall {
     /// The repositories subscribed to along the way, in the order they
     /// were.
     pub subscribed: Vec<String>,
-    /// Packages declared, by kind and name.
+    /// Packages installed, by kind and name: each declared in the
+    /// destination's manifest and rendered by an add that committed.
     pub declared: Vec<String>,
-    /// Copies written into the destination's own local packages.
+    /// Copies written into the destination's own local packages, by kind
+    /// and name: bytes in the local slot, declared from there in the same
+    /// write. Not a package installed: the add that renders a copy runs
+    /// after this write and can refuse, so a name here that `declared`
+    /// lacks is local bytes and a declaration with no render behind them.
     pub copied: Vec<String>,
     /// What a step said while it worked.
     pub notes: Vec<String>,
     /// Why the run stopped short of the whole template, or null where it
-    /// finished. Whatever the lists above name is installed either way —
-    /// that is what makes this an account rather than a refusal, and it is
-    /// why a run that stopped still answers rather than throwing its own
-    /// record away.
+    /// finished. What `subscribed` and `declared` name is on disk either
+    /// way, and `copied` names bytes that may sit ahead of a render that
+    /// refused — that is what makes this an account rather than a
+    /// refusal, and it is why a run that stopped still answers rather
+    /// than throwing its own record away.
     pub stopped: Option<String>,
 }
 
@@ -602,42 +608,46 @@ fn subscription_for(personal: &Manifest, repo: &str) -> Option<String> {
 /// What a caller reads — what is on disk, and whether the run stopped
 /// part-way — is decided from writes that committed, never from the
 /// members that were asked for. Every write an install makes goes through
-/// [`Landing::commit`], and that is what keeps the account and the writes
+/// [`Landing::prepare`], and that is what keeps the account and the writes
 /// one fact: a step cannot describe a write it did not make, and no step
 /// holds a record of its own to drop when a later one refuses.
 #[derive(Default)]
 struct Landing {
     install: TemplateInstall,
-    /// How many plans this run committed. A plan is one transaction — it
-    /// applies whole or rolls back — so this counts writes that are on
-    /// disk.
-    committed: usize,
+    /// Whether a write a refusal would have to answer for has committed:
+    /// a refusal after one is a run that stopped part-way.
+    landed: bool,
 }
 
 impl Landing {
-    /// Execute one plan, and where it wrote, record what it wrote.
-    ///
-    /// The description travels with the plan rather than being pushed
-    /// beside it, so an entry in the record answers for an operation that
-    /// ran. A plan with nothing in it runs nothing and records nothing.
+    /// Execute one plan, and where it wrote, record it and count it landed.
     fn commit(
         &mut self,
         env: &Env,
         plan: &Plan,
         wrote: impl FnOnce(&mut TemplateInstall),
     ) -> Result<()> {
-        if crate::apply::execute(env, plan)?.applied == 0 {
-            return Ok(());
-        }
-        self.committed += 1;
-        wrote(&mut self.install);
+        self.landed |= self.prepare(env, plan, wrote)?;
         Ok(())
     }
 
-    /// Whether anything this run did is on disk. What decides between an
-    /// install that refused and one that stopped part-way.
-    fn anything_landed(&self) -> bool {
-        self.committed > 0
+    /// Execute one plan, and where it wrote, record what it wrote without
+    /// counting it as landed; whether it wrote is the answer.
+    ///
+    /// The description travels with the plan rather than being pushed
+    /// beside it, so an entry in the record answers for an operation that
+    /// ran. A plan with nothing in it runs nothing and records nothing.
+    fn prepare(
+        &mut self,
+        env: &Env,
+        plan: &Plan,
+        wrote: impl FnOnce(&mut TemplateInstall),
+    ) -> Result<bool> {
+        if crate::apply::execute(env, plan)?.applied == 0 {
+            return Ok(false);
+        }
+        wrote(&mut self.install);
+        Ok(true)
     }
 
     /// Whether this run has already declared that package.
@@ -656,9 +666,9 @@ impl Landing {
     }
 }
 
-/// What a failing step does to the run: nothing landed yet, so the
-/// failure is the whole answer; or something did, and the account of it
-/// travels back with the reason it stopped.
+/// What a failing step does to the run: no package went in yet, so the
+/// failure is the whole answer; or one did, and the account of it travels
+/// back with the reason it stopped.
 ///
 /// A template install is several writes and only the per-scope
 /// transactions are atomic, so a person whose third step failed still has
@@ -672,7 +682,7 @@ enum Stopped<T> {
 fn step<T>(landed: &Landing, result: Result<T>) -> Result<Stopped<T>> {
     match result {
         Ok(value) => Ok(Stopped::Went(value)),
-        Err(error) if landed.anything_landed() => Ok(Stopped::Short(error)),
+        Err(error) if landed.landed => Ok(Stopped::Short(error)),
         Err(error) => Err(error),
     }
 }
@@ -825,10 +835,11 @@ pub fn install(
 /// different bytes is a refusal naming it — this never writes over content
 /// somebody else owns.
 ///
-/// The run's record is handed in rather than made here. What this commits
-/// is on disk whatever happens next, so a refusal in the rendering below
-/// cannot take the account of it away: there is one record for the
-/// install, and this step has no copy of its own to drop.
+/// The run's record is handed in rather than made here. The copies are
+/// what the members need before the add below can install them, and
+/// their declarations enter the record with that add: a refusal in the
+/// rendering leaves the copied bytes and their declarations in place and
+/// counts no package from this step as gone in.
 fn install_local(
     env: &Env,
     template: &Template,
@@ -903,9 +914,9 @@ fn install_local(
         },
     });
     let plan = Plan::landed(destination.clone(), ops)?;
-    landed.commit(env, &plan, |install| {
+    // Not counted as landed: what a member needs before it can go in.
+    landed.prepare(env, &plan, |install| {
         install.copied.extend(copied);
-        install.declared.extend(declared);
     })?;
     // The declarations are in; rendering them is the ordinary apply every
     // other install ends on.
@@ -916,42 +927,30 @@ fn install_local(
             source: Some(LOCAL_SOURCE_NAME.to_owned()),
             harnesses,
             method,
-            skills: resolution
-                .copies
-                .iter()
-                .filter(|copy| copy.kind == ItemKind::Skill)
-                .map(|copy| copy.name.clone())
-                .collect(),
-            agents: resolution
-                .copies
-                .iter()
-                .filter(|copy| copy.kind == ItemKind::Agent)
-                .map(|copy| copy.name.clone())
-                .collect(),
-            hooks: resolution
-                .copies
-                .iter()
-                .filter(|copy| copy.kind == ItemKind::Hook)
-                .map(|copy| copy.name.clone())
-                .collect(),
-            commands: resolution
-                .copies
-                .iter()
-                .filter(|copy| copy.kind == ItemKind::Command)
-                .map(|copy| copy.name.clone())
-                .collect(),
-            mcp_servers: resolution
-                .copies
-                .iter()
-                .filter(|copy| copy.kind == ItemKind::McpServer)
-                .map(|copy| copy.name.clone())
-                .collect(),
+            skills: copies_of(resolution, ItemKind::Skill),
+            agents: copies_of(resolution, ItemKind::Agent),
+            hooks: copies_of(resolution, ItemKind::Hook),
+            commands: copies_of(resolution, ItemKind::Command),
+            mcp_servers: copies_of(resolution, ItemKind::McpServer),
             ..AddRequest::default()
         },
     )?;
-    landed.commit(env, &report.plan, |_| {})?;
+    landed.commit(env, &report.plan, |install| {
+        install.declared.extend(declared);
+    })?;
     landed.install.notes.extend(report.notes);
     Ok(())
+}
+
+/// The names of the template's own copies of one kind, as the add that
+/// renders them from the local slot wants them.
+fn copies_of(resolution: &Resolution, kind: ItemKind) -> Vec<String> {
+    resolution
+        .copies
+        .iter()
+        .filter(|copy| copy.kind == kind)
+        .map(|copy| copy.name.clone())
+        .collect()
 }
 
 /// The writes that carry the terms the copied bytes came under into the

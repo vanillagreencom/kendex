@@ -172,7 +172,7 @@ fn commit_tree(env: &Env, scope: &Scope, kind: ItemKind, name: &str, commit: &st
         }
     };
     let sealed = SealedSource::open(&root)?;
-    let config = crate::source::source_config(&sealed, crate::source::repo_leaf(&repo))?;
+    let config = crate::source::source_config_for(&sealed, &repo)?;
     let Some(item_path) = crate::source::find_item(&sealed, &config, kind, name) else {
         return Err(CoreError::ItemMissingAtRev {
             name: name.to_owned(),

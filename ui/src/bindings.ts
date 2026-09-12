@@ -5101,18 +5101,28 @@ export type TemplateInstall = {
 	 *  were.
 	 */
 	subscribed: string[],
-	/**  Packages declared, by kind and name. */
+	/**
+	 *  Packages installed, by kind and name: each declared in the
+	 *  destination's manifest and rendered by an add that committed.
+	 */
 	declared: string[],
-	/**  Copies written into the destination's own local packages. */
+	/**
+	 *  Copies written into the destination's own local packages, by kind
+	 *  and name: bytes in the local slot, declared from there in the same
+	 *  write. Not a package installed: the add that renders a copy runs
+	 *  after this write and can refuse, so a name here that `declared`
+	 *  lacks is local bytes and a declaration with no render behind them.
+	 */
 	copied: string[],
 	/**  What a step said while it worked. */
 	notes: string[],
 	/**
 	 *  Why the run stopped short of the whole template, or null where it
-	 *  finished. Whatever the lists above name is installed either way —
-	 *  that is what makes this an account rather than a refusal, and it is
-	 *  why a run that stopped still answers rather than throwing its own
-	 *  record away.
+	 *  finished. What `subscribed` and `declared` name is on disk either
+	 *  way, and `copied` names bytes that may sit ahead of a render that
+	 *  refused — that is what makes this an account rather than a
+	 *  refusal, and it is why a run that stopped still answers rather
+	 *  than throwing its own record away.
 	 */
 	stopped: string | null,
 };
