@@ -11,6 +11,7 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
+. "$TEST_DIR/lib/install.bash"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -25,7 +26,7 @@ assert_rc() { [[ "$1" == "$2" ]] || fail "$3 (expected $2, got $1)"; ok "$3"; }
 # so harness detection finds nothing and the declared model is what applies.
 mkdir -p "$TMP_ROOT/proj/skills" "$TMP_ROOT/bin" "$TMP_ROOT/psbin" "$TMP_ROOT/work"
 git -C "$TMP_ROOT/proj" init -q
-cp -R "$REPO_ROOT/skills/second-opinion" "$TMP_ROOT/proj/skills/second-opinion"
+second_opinion_install "$REPO_ROOT/skills/second-opinion" "$TMP_ROOT/proj/skills"
 SECOND_OPINION="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion"
 RUNTIME="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion-runtime"
 
@@ -128,7 +129,10 @@ echo "=== control: without the exit status the same run never reports success ==
 # The status file is the only authoritative terminal signal. Strip the line that
 # publishes it and the identical run must stop reporting completion — a wait
 # that still returned 0 would be reading the artifact, or the pid, instead.
-MUTANT_DIR="$TMP_ROOT/mutant"
+# At the runtime's own depth inside the fixture install: the runtime resolves
+# the group-leader prefix relative to its own directory, and a copy parked
+# elsewhere refuses at startup instead of running the case.
+MUTANT_DIR="$TMP_ROOT/proj/skills/second-opinion/mutants"
 mkdir "$MUTANT_DIR"
 cp "$RUNTIME" "$MUTANT_DIR/second-opinion-runtime"
 MUTANT="$MUTANT_DIR/second-opinion-runtime"

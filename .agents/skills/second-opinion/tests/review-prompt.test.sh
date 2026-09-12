@@ -25,12 +25,13 @@
 #   head=<head|->  the artifact's reviewed head
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib/stub-cli-world.bash"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/install.bash"
 
 # The hermetic copy: a repository of its own, no settings file.
 PROJ="$TMP_ROOT/proj"
 mkdir -p "$PROJ/skills"
 git init -q "$PROJ"
-cp -R "$SKILL_DIR" "$PROJ/skills/second-opinion"
+second_opinion_install "$SKILL_DIR" "$PROJ/skills"
 HERMETIC="$PROJ/skills/second-opinion/scripts/second-opinion"
 
 # BSD utilities that read `--` as a file operand.

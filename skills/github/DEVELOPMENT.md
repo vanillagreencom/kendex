@@ -10,7 +10,7 @@ Maintainer notes. Consumer docs: [README.md](README.md); the agent contract: [SK
 
 Parse arguments with an explicit `while`/`shift` loop that rejects unknown flags and surplus positionals. Emit JSON with `jq -n`, never string interpolation: API error text routinely contains quotes. A failed dependency exits nonzero rather than returning an empty result that reads as "none found".
 
-Subprocess time bounds go through `scripts/lib/bounded.sh`, the one portable wall-clock bound. Token resolution and the keyring fallback are `scripts/lib/gh-auth.sh`, shared with the orch waiters. Check-rollup run scoping is `scripts/lib/ci-run-correlation.sh`, shared with orch `ci-wait`.
+Subprocess time bounds go through `scripts/lib/bounded.sh`, the one portable wall-clock bound. Token resolution and the keyring fallback are `scripts/lib/gh-auth.sh`, shared with the orch waiters. Check-rollup run scoping is `scripts/lib/ci-run-correlation.sh`, shared with orch `ci-wait`. The process-group leader prefix every bounded child forks through is `scripts/lib/group-leader.sh`, shared with the second-opinion runtime and reviewer's `mutation-stability`; both skills declare `github` required for it.
 
 ## Tests
 

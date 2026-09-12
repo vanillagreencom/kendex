@@ -144,5 +144,98 @@ check_bound "a bound too wide for the arithmetic is refused" 1844674407370955161
 # the documented way to ask for that, and nothing else may reach it.
 check_bound "a zero bound runs the command unbounded" 0.0 0 true
 
+# WHAT A CALLER CAPTURES IS THE CHILD'S TRANSCRIPT, not the runner's. Under job
+# control bash called setpgid on the child from the parent, and when it lost
+# that race with the child's own exec it printed
+# `child setpgid (N to N): Operation not permitted` onto this stderr. On the
+# macOS shard that line reddened a pin on a captured transcript and ejected an
+# unrelated pull request from the merge queue.
+#
+# A GREEN LINUX RUN IS NOT EVIDENCE FOR THE PIN: the race never fires here. The
+# planted row below is what shows the pin can go red at all, and the failing-
+# child row is what shows it is not green because the transcript is discarded.
+MIRROR="$TMP/mirror"
+mkdir -p "$MIRROR"
+cp "$(dirname "$BOUNDED")/group-leader.sh" "$MIRROR/group-leader.sh"
+NOISY_BOUNDED="$MIRROR/bounded.sh"
+sed 's|^  \(.*KENDEX_GROUP_LEADER.*&\)$|  echo "child setpgid (1 to 1): Operation not permitted" >\&2; \1|' \
+  "$BOUNDED" > "$NOISY_BOUNDED"
+if cmp -s "$BOUNDED" "$NOISY_BOUNDED"; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  the parent-noise control mutated nothing\n'
+elif [[ "$(grep -c 'child setpgid (1 to 1)' "$NOISY_BOUNDED")" != 1 ]]; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  the parent-noise control planted more than one line\n'
+elif ! bash -n "$NOISY_BOUNDED"; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  the parent-noise control is not valid shell\n'
+else
+  PASS=$((PASS + 1)); printf '  ok    the parent-noise control plants exactly one parent-side line\n'
+fi
+
+check_transcript() { # LABEL RUNNER EXPECTED COMMAND...
+  local label="$1" runner="$2" expected="$3" rc=0 actual
+  shift 3
+  BOUNDED="$runner" bash -c '
+    source "$BOUNDED"
+    kendex_github_run_bounded 30 "$@"
+  ' bash "$@" >/dev/null 2>"$TMP/transcript.err" || rc=$?
+  actual="rc=$rc;transcript=$(tr '\n' '|' <"$TMP/transcript.err")"
+  if [[ "$actual" == "$expected" ]]; then
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "$label"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s: expected <%s>, got <%s>\n' "$label" "$expected" "$actual"
+  fi
+}
+
+echo "=== bounded runner transcript ==="
+check_transcript "a silent child leaves the runner's stderr empty" \
+  "$BOUNDED" "rc=0;transcript=" true
+check_transcript "a failing child keeps its own status and stderr" \
+  "$BOUNDED" "rc=3;transcript=boom|" bash -c 'printf "boom\n" >&2; exit 3'
+check_transcript "a planted parent-side line reddens the empty pin" \
+  "$NOISY_BOUNDED" \
+  "rc=0;transcript=child setpgid (1 to 1): Operation not permitted|" true
+
+# A TEARDOWN CAN ARRIVE WHILE THE CHILD IS STILL UNGROUPED. The child takes its
+# group between the fork and its exec, so `kill -0 -- "-$pid"` can find nothing
+# while the pid is very much alive; signalling the group alone would signal
+# nothing and report success over a running child. Driven at the function with a
+# child that shares this shell's group, which is the same state the window
+# produces without racing it.
+WINDOW_BOUNDED="$MIRROR/window-bounded.sh"
+sed 's%^    kill -0 "\$pid" 2>/dev/null || return 0$%    return 0%' \
+  "$BOUNDED" > "$WINDOW_BOUNDED"
+if cmp -s "$BOUNDED" "$WINDOW_BOUNDED"; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  the absent-group control mutated nothing\n'
+elif ! bash -n "$WINDOW_BOUNDED"; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  the absent-group control is not valid shell\n'
+else
+  PASS=$((PASS + 1)); printf '  ok    the absent-group control drops the ungrouped-child branch\n'
+fi
+
+check_window() { # LABEL RUNNER EXPECTED
+  local label="$1" runner="$2" expected="$3" actual
+  actual="$(BOUNDED="$runner" bash -c '
+    sleep 30 &
+    pid=$!
+    source "$BOUNDED"
+    _kendex_github_stop_bounded_group TERM "$pid"
+    if kill -0 "$pid" 2>/dev/null; then
+      printf alive
+      kill -KILL "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    else
+      printf gone
+    fi
+  ')"
+  if [[ "$actual" == "$expected" ]]; then
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "$label"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s: expected %s, got %s\n' "$label" "$expected" "$actual"
+  fi
+}
+
+echo "=== bounded teardown with the child still ungrouped ==="
+check_window "an ungrouped child is stopped through its own pid" "$BOUNDED" gone
+check_window "the absent-group control leaves it running" "$WINDOW_BOUNDED" alive
+
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

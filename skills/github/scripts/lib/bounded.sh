@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Portable wall-clock bound for GitHub helper subprocesses.
 
+_KENDEX_BOUNDED_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=group-leader.sh
+source "$_KENDEX_BOUNDED_LIB_DIR/group-leader.sh"
+unset _KENDEX_BOUNDED_LIB_DIR
+
 _kendex_github_restore_trap() {
   local signal="$1" saved="$2"
   if [ -n "$saved" ]; then
@@ -17,45 +22,66 @@ _kendex_github_bounded_group_members() {
   '
 }
 
-_kendex_github_stop_bounded_group() {
-  local signal="$1" target="$2" pid="$3" grace=0 group="" members="" member scan_failed=0
-  [ -n "$target" ] || return 0
-
-  case "$target" in -*) group="${target#-}" ;; esac
-  if [ -n "$group" ]; then
-    while [ "$grace" -lt 10 ]; do
-      if ! members="$(_kendex_github_bounded_group_members "$group" "$pid")"; then
-        scan_failed=1
-        break
-      fi
-      [ -n "$members" ] || break
-      while IFS= read -r member; do
-        [ -z "$member" ] || kill -s "$signal" "$member" 2>/dev/null || true
-      done <<<"$members"
-      sleep 0.1
-      grace=$((grace + 1))
-    done
-  fi
-
-  if [ "$scan_failed" -eq 1 ]; then
-    kill -s "$signal" -- "$target" 2>/dev/null || true
-  elif [ -n "$pid" ]; then
-    kill -s "$signal" "$pid" 2>/dev/null || true
-  fi
-
-  grace=0
-  while [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ "$grace" -lt 10 ]; do
+# Wait out the leader, then KILL what is left and reap it. TARGET is the group
+# when the child has one and the bare pid when it is still inside the fork
+# window group-leader.sh describes.
+_kendex_github_reap_bounded_leader() { # PID TARGET
+  local pid="$1" target="$2" grace=0
+  while kill -0 "$pid" 2>/dev/null && [ "$grace" -lt 10 ]; do
     sleep 0.1
     grace=$((grace + 1))
   done
   kill -KILL -- "$target" 2>/dev/null || true
-  [ -z "$pid" ] || wait "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
+
+# Stop a child THIS FRAME forked, grouped yet or not. Called with the pid alone:
+# the group is asked for here, where the signal is sent, and never cached at the
+# fork. A probe run where `$!` is assigned can land inside the fork window and
+# find no group, and a target pinned there would leave the command's own
+# children alive when the bound expires. By the time a stop is wanted the child
+# has long since grouped; one still inside that window is this frame's own
+# bash-then-perl, with no children of its own, which a single signal at the pid
+# ends — and the group sweep below still covers a group that appeared meanwhile.
+_kendex_github_stop_bounded_group() { # SIGNAL PID
+  local signal="$1" pid="$2" grace=0 members="" member scan_failed=0
+  [ -n "$pid" ] || return 0
+
+  if ! kill -0 -- "-$pid" 2>/dev/null; then
+    kill -0 "$pid" 2>/dev/null || return 0
+    kill -s "$signal" "$pid" 2>/dev/null || true
+    if ! kill -0 -- "-$pid" 2>/dev/null; then
+      _kendex_github_reap_bounded_leader "$pid" "$pid"
+      return 0
+    fi
+  fi
+
+  while [ "$grace" -lt 10 ]; do
+    if ! members="$(_kendex_github_bounded_group_members "$pid" "$pid")"; then
+      scan_failed=1
+      break
+    fi
+    [ -n "$members" ] || break
+    while IFS= read -r member; do
+      [ -z "$member" ] || kill -s "$signal" "$member" 2>/dev/null || true
+    done <<<"$members"
+    sleep 0.1
+    grace=$((grace + 1))
+  done
+
+  if [ "$scan_failed" -eq 1 ]; then
+    kill -s "$signal" -- "-$pid" 2>/dev/null || true
+  else
+    kill -s "$signal" "$pid" 2>/dev/null || true
+  fi
+
+  _kendex_github_reap_bounded_leader "$pid" "-$pid"
 }
 
 _kendex_github_forward_bounded_signal() {
-  local signal="$1" target="$2" pid="$3" old_hup="$4" old_int="$5" old_term="$6"
+  local signal="$1" pid="$2" old_hup="$3" old_int="$4" old_term="$5"
   trap - HUP INT TERM
-  _kendex_github_stop_bounded_group "$signal" "$target" "$pid"
+  _kendex_github_stop_bounded_group "$signal" "$pid"
   _kendex_github_restore_trap HUP "$old_hup"
   _kendex_github_restore_trap INT "$old_int"
   _kendex_github_restore_trap TERM "$old_term"
@@ -92,7 +118,7 @@ kendex_github_run_bounded() {
   local seconds="$1"
   shift
 
-  local restore_monitor=0 pid="" ticks=0 max_ticks status=0 target=""
+  local pid="" ticks=0 max_ticks status=0
   if ! max_ticks="$(kendex_github_bound_ticks "$seconds")"; then
     # 125 arrives having run nothing, so there is no output to explain it and
     # most callers can only pass it upward — an auth check that never ran, a
@@ -112,25 +138,20 @@ kendex_github_run_bounded() {
   old_hup="$(trap -p HUP)"
   old_int="$(trap -p INT)"
   old_term="$(trap -p TERM)"
-  trap '_kendex_github_forward_bounded_signal HUP "$target" "$pid" "$old_hup" "$old_int" "$old_term"' HUP
-  trap '_kendex_github_forward_bounded_signal INT "$target" "$pid" "$old_hup" "$old_int" "$old_term"' INT
-  trap '_kendex_github_forward_bounded_signal TERM "$target" "$pid" "$old_hup" "$old_int" "$old_term"' TERM
-  case "$-" in
-    *m*) ;;
-    *) set -m; restore_monitor=1 ;;
-  esac
+  trap '_kendex_github_forward_bounded_signal HUP "$pid" "$old_hup" "$old_int" "$old_term"' HUP
+  trap '_kendex_github_forward_bounded_signal INT "$pid" "$old_hup" "$old_int" "$old_term"' INT
+  trap '_kendex_github_forward_bounded_signal TERM "$pid" "$old_hup" "$old_int" "$old_term"' TERM
 
-  "$@" &
+  # The child takes its own group, and `<&0` hands it the caller's stdin: both
+  # are what job control used to supply here, and the parent-side setpgid it
+  # also brought printed onto this stderr whenever it lost the race with the
+  # child. group-leader.sh holds the whole of that reasoning.
+  "${KENDEX_GROUP_LEADER[@]}" "$@" <&0 &
   pid=$!
-  [ "$restore_monitor" -eq 0 ] || set +m
-  target="-$pid"
-  if ! kill -0 -- "$target" 2>/dev/null; then
-    target="$pid"
-  fi
 
   while kill -0 "$pid" 2>/dev/null; do
     if [ "$ticks" -ge "$max_ticks" ]; then
-      _kendex_github_stop_bounded_group TERM "$target" "$pid"
+      _kendex_github_stop_bounded_group TERM "$pid"
       _kendex_github_restore_trap HUP "$old_hup"
       _kendex_github_restore_trap INT "$old_int"
       _kendex_github_restore_trap TERM "$old_term"

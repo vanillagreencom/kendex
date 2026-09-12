@@ -5,6 +5,8 @@ summary: "Cross-model second opinion: review, challenge, audit, and consult thro
 license: MIT
 user-invocable: true
 argument-hint: "review [scope] | challenge [description] | audit [path] | quick [question]"
+dependencies:
+  required: [github]
 metadata:
   author: vanillagreen
   source: kendex

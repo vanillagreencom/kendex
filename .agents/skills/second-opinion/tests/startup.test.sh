@@ -19,6 +19,7 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
+. "$TEST_DIR/lib/install.bash"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
@@ -118,7 +119,7 @@ build() {
   for w in "$@"; do word "$w"; done
   [[ -n "$INSTALL" ]] || { echo "a row names no install" >&2; exit 2; }
   mkdir -p "$INSTALL/skills"
-  cp -R "$SKILL_DIR" "$INSTALL/skills/second-opinion"
+  second_opinion_install "$SKILL_DIR" "$INSTALL/skills"
 }
 
 alias_text() {
