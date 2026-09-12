@@ -207,7 +207,9 @@ export PROJECT_ROOT="$REPO_ROOT"
 export SCRIPT_DIR
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
-kendex_load_project_env "$REPO_ROOT"
+# The private env file is sourced here, and anything it prints would precede
+# the --json record on stdout.
+kendex_load_project_env "$REPO_ROOT" >&2
 
 test_paths="${ORCH_SIZE_TEST_PATHS:-}"
 
