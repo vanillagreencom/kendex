@@ -90,7 +90,9 @@ impl GeneratedPaths {
     }
 
     /// Every inventory path as the document spells it: relative to the
-    /// root, slashed, and sorted by the set it comes out of.
+    /// root, slashed, and sorted by the set it comes out of. That order is
+    /// the document's line order, so an entry added on two branches lands
+    /// at the same line on both.
     ///
     /// This is the one derivation of that set. The write reaches it through
     /// [`GeneratedPaths::document`] and `own_inventory.rs` reads it directly,
@@ -108,15 +110,19 @@ impl GeneratedPaths {
     }
 
     /// The inventory document, exactly as the write below lays it down: the
-    /// write's serialization of [`GeneratedPaths::relative`], and nothing
-    /// besides.
+    /// write's serialization of [`GeneratedPaths::relative`], one entry per
+    /// line in that set's order, and nothing besides.
     ///
-    /// A reader holds the committed copy to that set rather than to these
-    /// bytes — `own_inventory.rs` parses the JSON back into a set, as
-    /// commit-guards' `generated-paths.sh` does — so the order and the
-    /// spacing are this function's alone and no reader depends on them.
+    /// The layout is for git, not for a reader. Every reader — the check in
+    /// `own_inventory.rs`, commit-guards' `generated-paths.sh`, the drift
+    /// hook — parses the JSON back into a set and holds the committed copy
+    /// to that. A merge reads lines: with the whole set on one line, two
+    /// branches that each add a render conflict on that line at every
+    /// restack and the resolution is an array composed by hand; one entry
+    /// per line, sorted, merges two different additions cleanly and names
+    /// only the entries a real conflict concerns.
     fn document(&self, root: &Path) -> Result<String> {
-        let mut text = serde_json::to_string(&self.relative(root)).map_err(|error| {
+        let mut text = serde_json::to_string_pretty(&self.relative(root)).map_err(|error| {
             crate::error::CoreError::JsonParse {
                 path: root.join(INVENTORY),
                 message: error.to_string(),
@@ -256,3 +262,7 @@ pub(super) fn plan(
 /// renders. Its own file: the check needs a message of its own.
 #[cfg(all(test, unix))]
 mod own_inventory;
+
+/// The document's on-disk shape, which is what a merge reads.
+#[cfg(test)]
+mod tests;
