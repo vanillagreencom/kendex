@@ -46,15 +46,16 @@ exit 1
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
 
-# Two project roots: one with a github.com origin for the remote fallback, one
-# with no remote at all, where nothing resolves.
-for name in origin-repo no-remote; do
+# Three project roots for the remote fallback: a github.com origin, no remote at
+# all, and an origin on another host whose PATH carries github.com.
+for name in origin-repo no-remote foreign-origin; do
   mkdir -p "$TMP_ROOT/$name"
   git -C "$TMP_ROOT/$name" init -q
   git -C "$TMP_ROOT/$name" config user.email test@example.com
   git -C "$TMP_ROOT/$name" config user.name Test
 done
 git -C "$TMP_ROOT/origin-repo" remote add origin git@github.com:remote-owner/remote-repo.git
+git -C "$TMP_ROOT/foreign-origin" remote add origin https://gitlab.example/group/github.com/owner/repo
 
 # run_resolve ENV ROOT LIB FN — call FN with ENV (a comma-separated list of
 # `env` arguments) against ROOT, after sourcing LIB. Sets OUT and RC.
@@ -111,6 +112,7 @@ table \
   'GH_REPO unset reads the checkout|STUB_REPO_VIEW=cwd-owner/cwd-repo|origin-repo|rc=0 out=cwd-owner/cwd-repo' \
   'GH_REPO wins even where the checkout resolves to nothing|GH_REPO=other/elsewhere|no-remote|rc=0 out=other/elsewhere' \
   'an unresolvable checkout falls back to the origin remote, without its .git suffix||origin-repo|rc=0 out=remote-owner/remote-repo' \
+  'an origin on another host carrying github.com in its path resolves nothing||foreign-origin|rc=1 out=empty' \
   'no GH_REPO, no gh answer and no origin resolves nothing, never a default||no-remote|rc=1 out=empty'
 
 echo "=== a GH_REPO that is not owner/name is refused, never queried ==="
@@ -122,22 +124,48 @@ table \
   'a host-prefixed three-segment form|GH_REPO=github.com/other/elsewhere|origin-repo|rc=2 out=github.com/other/elsewhere' \
   'an empty owner segment|GH_REPO=/elsewhere|origin-repo|rc=2 out=/elsewhere' \
   'an empty name segment|GH_REPO=other/|origin-repo|rc=2 out=other/' \
-  'a value carrying whitespace|GH_REPO=other/else where|origin-repo|rc=2 out=other/else+where'
+  'a value carrying whitespace|GH_REPO=other/else where|origin-repo|rc=2 out=other/else+where' \
+  "a value carrying a quote and a semicolon|GH_REPO=o/r';id;'|origin-repo|rc=2 out=o/r';id;'"
 
-echo "=== must-fail control ==="
-# Remove the GH_REPO-first behaviour while keeping its lines: the first row
-# above is the one that reddens, and it reddens with the checkout's repository
-# — exactly the wrong-repository verdict the issue reported.
-MUTANT="$TMP_ROOT/gh-repo-mutant.sh"
-cp "$SHARED_LIB" "$MUTANT"
-assert_eq "$(grep -Fc 'if [ -n "${GH_REPO:-}" ]; then' "$MUTANT")" "1" \
-  "control finds exactly one live GH_REPO branch"
-sed -i.bak 's/^  if \[ -n "${GH_REPO:-}" \]; then$/  if [ -n "" ]; then/' "$MUTANT"
-assert_eq "$(grep -Fc 'if [ -n "" ]; then' "$MUTANT")" "1" \
-  "control applied the mutation"
+echo "=== must-fail controls ==="
+# One control per rule the resolver enforces. Each copies the resolver, puts
+# that rule back the way it read before the rule existed while keeping the line
+# it lives on, and names the row above that reddens.
+#
+# mutate NAME TEXT EXPR — copy the resolver to a private mutant, assert TEXT is
+# on exactly one line, apply sed EXPR, assert TEXT is gone. Sets MUTANT.
+mutate() {
+  local name="$1" text="$2" expr="$3"
+  MUTANT="$TMP_ROOT/gh-repo-mutant-$name.sh"
+  cp "$SHARED_LIB" "$MUTANT"
+  assert_eq "$(grep -Fc -- "$text" "$MUTANT")" "1" "control $name finds the live rule"
+  sed -i.bak "$expr" "$MUTANT"
+  assert_eq "$(grep -Fc -- "$text" "$MUTANT")" "0" "control $name applied the mutation"
+}
+
+# GH_REPO first. Without it the checkout's repository wins — exactly the
+# wrong-repository verdict the issue reported.
+mutate gh-repo-first 'if [ -n "${GH_REPO:-}" ]; then' \
+  's/^  if \[ -n "${GH_REPO:-}" \]; then$/  if [ -n "" ]; then/'
 run_resolve 'GH_REPO=other/elsewhere,STUB_REPO_VIEW=cwd-owner/cwd-repo' origin-repo "$MUTANT" "$SHARED_FN"
 assert_eq "$(observe 'rc=0 out=cwd-owner/cwd-repo')" "rc=0 out=cwd-owner/cwd-repo" \
   "must-fail control: without the GH_REPO branch the checkout's repository wins" "$ERR"
+
+# The owner/name character class. Widened back to "anything but whitespace and
+# a second slash", a quote-bearing value is accepted and reaches the launch
+# line open-terminal's caller shell runs.
+mutate shape-class 'A-Za-z0-9._-' 's|A-Za-z0-9\._-|^/[:space:]|g'
+run_resolve "GH_REPO=o/r';id;'" origin-repo "$MUTANT" "$SHARED_FN"
+assert_eq "$(observe "rc=0 out=o/r';id;'")" "rc=0 out=o/r';id;'" \
+  "must-fail control: a loose class accepts a quote-bearing value" "$ERR"
+
+# The origin host anchor. With the scheme group widened to anything at all,
+# github.com matches anywhere in the URL and a checkout on another host
+# resolves to a GitHub repository.
+mutate host-anchor '[A-Za-z][A-Za-z0-9+.-]*://' 's|\[A-Za-z\]\[A-Za-z0-9+\.-\]\*://|.*|'
+run_resolve '' foreign-origin "$MUTANT" "$SHARED_FN"
+assert_eq "$(observe 'rc=0 out=owner/repo')" "rc=0 out=owner/repo" \
+  "must-fail control: an unanchored host resolves another host's path segment" "$ERR"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

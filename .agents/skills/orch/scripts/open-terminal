@@ -402,10 +402,16 @@ fi
 # wins; otherwise the shared resolver, so a run started with GH_REPO naming
 # another repository hands the spawned lane that one. A resolver exit of 1 or 2
 # renders nothing rather than a value no `gh --repo` argument would accept.
+#
+# CLAIM_ROOT, not PROJECT_ROOT: the resolver's first rung, `gh repo view`,
+# answers for the CALLER's checkout, and PROJECT_ROOT is the checkout this
+# script is installed in, which a worktree's `.agents` symlink makes a
+# different one. Two rungs of one ladder reading two roots is the
+# split-across-two-repositories this resolver exists to close.
 resolve_repo() {
   if [[ -n "$REPO" ]]; then printf '%s\n' "$REPO"; return; fi
   local resolved="" resolve_status=0
-  resolved="$(orch_resolve_gh_repo "${PROJECT_ROOT:-$PWD}")" || resolve_status=$?
+  resolved="$(orch_resolve_gh_repo "${CLAIM_ROOT:-$PWD}")" || resolve_status=$?
   [[ "$resolve_status" -eq 0 ]] || return 0
   printf '%s\n' "$resolved"
 }

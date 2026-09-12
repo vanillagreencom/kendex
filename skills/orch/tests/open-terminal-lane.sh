@@ -321,6 +321,21 @@ git -C "$SCRIPTREPO" init -q; git -C "$CALLERREPO" init -q
 assert_eq "caller=$(ls -1 "$CALLERREPO"/tmp/oversee-watch/claims 2>/dev/null | wc -l | tr -d '[:space:]') script=$(ls -1 "$SCRIPTREPO"/tmp/oversee-watch/claims 2>/dev/null | wc -l | tr -d '[:space:]')" \
   "caller=1 script=0" "the claim lands in the caller checkout, where lanes reads it, never under the script's"
 
+# The repository the launch line renders splits the same way. The resolver's
+# first rung, `gh repo view`, answers for the caller's cwd, so its origin-remote
+# fallback must read the caller's checkout too — reading the script's would
+# brief the lane on whichever repository the kendex install happens to sit in.
+# gh exits 1 here, which is the rung that answers nothing.
+git -C "$SCRIPTREPO" remote add origin git@github.com:script-owner/script-repo.git
+git -C "$CALLERREPO" remote add origin git@github.com:caller-owner/caller-repo.git
+REPO_LOG="$TMP_ROOT/caller.repo.tmux.log"
+( cd "$CALLERREPO" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
+  TMUX=stub,1,0 OT_TMUX_LOG="$REPO_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$TMP_ROOT/caller.repo.panes" \
+  OT_WT_LOG="$TMP_ROOT/caller.repo.worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+  "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto --cmd 'true {repo}' CC-21 ) >/dev/null 2>&1
+assert_eq "caller=$(grep -c 'caller-owner/caller-repo' "$REPO_LOG" || true) script=$(grep -c 'script-owner/script-repo' "$REPO_LOG" || true)" \
+  "caller=1 script=0" "the launch line names the caller checkout's repository, never the script checkout's"
+
 # Hermeticity proof: every window the launch rows created went through the
 # stub. No new-window line anywhere means a real tmux server took the calls.
 if grep -q '^new-window' "$TMP_ROOT"/runs/*/tmux.log 2>/dev/null; then
