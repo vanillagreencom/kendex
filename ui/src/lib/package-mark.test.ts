@@ -51,6 +51,7 @@ const rows = [VG, HYPR].map(
       holdOwner: null,
       ignored: false,
       blockedByLocalEdit: false,
+      filesMissing: false,
       editedHarnesses: [],
       forkableHarness: null,
       canDiscard: false,

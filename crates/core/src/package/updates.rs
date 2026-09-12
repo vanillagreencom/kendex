@@ -72,6 +72,12 @@ pub struct UpdateRow {
     /// The installed files were edited by hand; updating is blocked until
     /// the edit is kept as a fork or discarded.
     pub blocked_by_local_edit: bool,
+    /// A file kendex recorded writing is gone from disk, and the next
+    /// apply puts it back: the same plan `blocked_by_local_edit` is read
+    /// from holds the write, so the update is the repair. Only a recorded
+    /// rendering counts — the planner reports a declaration never
+    /// installed as missing too, and that one is not news.
+    pub files_missing: bool,
     /// Which renderings carry the edit, one entry per physical rendering:
     /// an agent renders once per tool, while tools sharing a skill's
     /// canonical tree count once. Keeping the edit as a fork captures one
@@ -214,6 +220,7 @@ pub fn updates(env: &Env, scope: &Scope) -> Result<UpdatesReport> {
         // Update does. One plan for the scope.
         edited: facts.edited,
         fork_edited: facts.fork_edited,
+        files_missing: facts.files_missing,
         manifest: &manifest,
         lock: &lock,
     };
@@ -238,6 +245,21 @@ pub fn updates(env: &Env, scope: &Scope) -> Result<UpdatesReport> {
 struct EditFacts {
     edited: std::collections::BTreeMap<(ItemKind, String), Vec<HarnessId>>,
     fork_edited: std::collections::BTreeSet<(ItemKind, String)>,
+    /// The installations whose recorded files the plan found gone.
+    files_missing: std::collections::BTreeSet<(ItemKind, String)>,
+}
+
+/// Whether this row is a file kendex wrote that is no longer there. The
+/// planner reports every absent position as missing, a declaration never
+/// installed included; the lock entry's `rendered_hash` is what says a
+/// file stood at this position, since it is set exactly when kendex wrote
+/// one.
+fn recorded_and_gone(lock: &crate::lock::Lock, row: &crate::engine::DriftRow) -> bool {
+    matches!(row.state, crate::engine::DriftState::Missing)
+        && lock
+            .entries
+            .get(&crate::lock::entry_key(row.kind, &row.name, row.harness))
+            .is_some_and(|entry| entry.rendered_hash.is_some())
 }
 
 /// Both readings of one plan of the scope, so each matches exactly what an
@@ -253,6 +275,7 @@ fn edit_facts(
 ) -> EditFacts {
     let mut edited = std::collections::BTreeMap::<(ItemKind, String), Vec<HarnessId>>::new();
     let mut fork_edited = std::collections::BTreeSet::new();
+    let mut files_missing = std::collections::BTreeSet::new();
     let rows: Vec<(ItemKind, String, HarnessId)> = match crate::engine::plan_scope(
         env,
         scope,
@@ -266,6 +289,13 @@ fn edit_facts(
                     .fork_edits
                     .iter()
                     .map(|edit| (edit.kind, edit.name.clone())),
+            );
+            files_missing.extend(
+                report
+                    .drift
+                    .iter()
+                    .filter(|row| recorded_and_gone(lock, row))
+                    .map(|row| (row.kind, row.name.clone())),
             );
             report
                 .drift
@@ -288,7 +318,9 @@ fn edit_facts(
         // cannot prove clean. `fork_edited` has no fallback and stays
         // empty: it withholds nothing and offers nothing, so a scope that
         // cannot be planned costs a word on the page until the next good
-        // read, never a decision made on a guess.
+        // read, never a decision made on a guess. `files_missing` stays
+        // empty for the same reason: it offers a repair, and the plan
+        // that would run it is the one that could not be produced.
         Err(_) => lock
             .entries
             .values()
@@ -311,6 +343,7 @@ fn edit_facts(
     EditFacts {
         edited,
         fork_edited,
+        files_missing,
     }
 }
 
@@ -341,6 +374,7 @@ fn unversioned_row(
     decl: &crate::manifest::ItemDecl,
     forked: bool,
     fork_edited: bool,
+    files_missing: bool,
 ) -> UpdateRow {
     UpdateRow {
         scope: scope.clone(),
@@ -356,6 +390,7 @@ fn unversioned_row(
         hold_owner: None,
         ignored: false,
         blocked_by_local_edit: false,
+        files_missing,
         edited_harnesses: Vec::new(),
         forkable_harness: None,
         can_discard: false,

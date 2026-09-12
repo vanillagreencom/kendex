@@ -18,6 +18,7 @@ export const updateRow = (
   updateAvailable: true,
   pinned: false,
   blockedByLocalEdit: false,
+  filesMissing: false,
   editedHarnesses: [],
   forkableHarness: null,
   canDiscard: true,

@@ -16,6 +16,8 @@ import {
   bundledWithLabel,
   FORKED_BADGE_HELP,
   FORKED_BADGE_LABEL,
+  MISSING_FILES_BADGE_HELP,
+  MISSING_FILES_BADGE_LABEL,
   vendorHelp,
 } from "@/lib/copy";
 import { STATUS_LABELS } from "@/lib/copy-customize";
@@ -46,6 +48,7 @@ export function InstalledRow({
   origin,
   forkedIn,
   outOfDate,
+  missingIn,
   onOpen,
   onOpenHarness,
   onOpenPlace,
@@ -61,6 +64,9 @@ export function InstalledRow({
    *  the same one flow wherever it is taken, and this row's own click
    *  already opens the package. */
   outOfDate: boolean;
+  /** The places where a file kendex installed for this package is gone.
+   *  The repair lives on the package page, so the badge opens it there. */
+  missingIn: Scope[];
   onOpen: (scope?: Scope) => void;
   /** Open one of the tools this package is installed for. */
   onOpenHarness: (harness: HarnessId) => void;
@@ -140,6 +146,29 @@ export function InstalledRow({
                   />
                   <TooltipContent className="max-w-80">
                     {FORKED_BADGE_HELP}
+                  </TooltipContent>
+                </Tooltip>
+              ))}
+              {missingIn.map((where) => (
+                <Tooltip key={scopeKey(where)}>
+                  <TooltipTrigger
+                    render={
+                      <Badge
+                        variant="warning"
+                        className="cursor-pointer"
+                        render={
+                          <button type="button" onClick={() => onOpen(where)}>
+                            {`${MISSING_FILES_BADGE_LABEL} in ${placeName(where, scopes)}`}
+                            <span className="sr-only">
+                              {MISSING_FILES_BADGE_HELP}
+                            </span>
+                          </button>
+                        }
+                      />
+                    }
+                  />
+                  <TooltipContent className="max-w-80">
+                    {MISSING_FILES_BADGE_HELP}
                   </TooltipContent>
                 </Tooltip>
               ))}

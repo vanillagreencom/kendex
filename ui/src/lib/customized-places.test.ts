@@ -44,6 +44,7 @@ function row(scope: Scope, over: Partial<UpdateRow> = {}): UpdateRow {
     holdOwner: null,
     ignored: false,
     blockedByLocalEdit: false,
+    filesMissing: false,
     editedHarnesses: [],
     forkableHarness: null,
     canDiscard: false,

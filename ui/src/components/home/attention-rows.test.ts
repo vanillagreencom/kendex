@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ScanWarning, UpdateRow } from "@/bindings";
-import { EDITED_ATTENTION_ACTION, UPDATES_ATTENTION_DETAIL } from "@/lib/copy";
+import {
+  EDITED_ATTENTION_ACTION,
+  MISSING_FILES_ATTENTION_ACTION,
+  UPDATES_ATTENTION_DETAIL,
+} from "@/lib/copy";
 import { SEE_PROBLEMS_LABEL } from "@/lib/copy-marketplaces";
 import {
   UPDATES_WAITING_DETAIL,
@@ -21,6 +25,16 @@ const edited = (name: string, scope: UpdateRow["scope"]): UpdateRow =>
     editedHarnesses: ["claude"],
   }) as unknown as UpdateRow;
 
+const missingFile = (name: string, scope: UpdateRow["scope"]): UpdateRow =>
+  ({
+    kind: "hook",
+    name,
+    scope,
+    blockedByLocalEdit: false,
+    filesMissing: true,
+    editedHarnesses: [],
+  }) as unknown as UpdateRow;
+
 const warning = (
   problem: ScanWarning["problem"],
   standing: ScanWarning["standing"] = "actionable",
@@ -34,6 +48,7 @@ const warning = (
 
 const source = (over: Partial<AttentionSource>): AttentionSource => ({
   editedPackages: [],
+  missingPackages: [],
   result: {
     harnesses: [],
     items: [],
@@ -49,6 +64,7 @@ const source = (over: Partial<AttentionSource>): AttentionSource => ({
   onProblems: vi.fn(),
   onUpdates: vi.fn(),
   onEditedPackages: vi.fn(),
+  onMissingPackages: vi.fn(),
   onPackage: vi.fn(),
   onAuditRetry: vi.fn(),
   ...over,
@@ -124,6 +140,59 @@ describe("the edited packages row", () => {
     expect(attentionRows(source({})).some((r) => r.key === "edited")).toBe(
       false,
     );
+  });
+});
+
+// The row names the packages and where, says a file kendex installed is
+// gone and where the repair is, and lands on the one package's page or
+// on the Library where several are marked. Ahead of the edited row: a
+// file a tool still runs and cannot find outranks a decision waiting.
+describe("the missing files row", () => {
+  it("names each package by place and lands on the Library", () => {
+    const onMissingPackages = vi.fn();
+    const onPackage = vi.fn();
+    const rows = attentionRows(
+      source({
+        missingPackages: [missingFile("guard", HYPR), missingFile("gh", VG)],
+        editedPackages: [edited("worktree", HYPR)],
+        onMissingPackages,
+        onPackage,
+      }),
+    );
+    const found = row(rows, "missing-files");
+    expect(found.tone).toBe("warning");
+    expect(found.title).toBe("2 installed packages are missing files");
+    expect(found.detail).toContain("guard in hyprtrade; gh in vg.");
+    expect(found.detail).toContain("gone from disk");
+    expect(found.detail).toContain("Repair");
+    expect(found.action?.label).toBe(MISSING_FILES_ATTENTION_ACTION);
+    found.action?.onClick();
+    expect(onMissingPackages).toHaveBeenCalledTimes(1);
+    expect(onPackage).not.toHaveBeenCalled();
+    expect(rows.findIndex((r) => r.key === "missing-files")).toBeLessThan(
+      rows.findIndex((r) => r.key === "edited"),
+    );
+  });
+
+  it("opens the one package's own page when there is one", () => {
+    const onMissingPackages = vi.fn();
+    const onPackage = vi.fn();
+    const only = missingFile("guard", VG);
+    const rows = attentionRows(
+      source({ missingPackages: [only], onMissingPackages, onPackage }),
+    );
+    const found = row(rows, "missing-files");
+    expect(found.title).toBe("1 installed package is missing a file");
+    expect(found.action?.label).toBe("guard");
+    found.action?.onClick();
+    expect(onPackage).toHaveBeenCalledWith(only);
+    expect(onMissingPackages).not.toHaveBeenCalled();
+  });
+
+  it("is absent with every file in place", () => {
+    expect(
+      attentionRows(source({})).some((r) => r.key === "missing-files"),
+    ).toBe(false);
   });
 });
 

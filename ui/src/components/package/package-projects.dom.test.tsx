@@ -148,6 +148,7 @@ const row = (
   holdOwner: null,
   ignored: false,
   blockedByLocalEdit: false,
+  filesMissing: false,
   editedHarnesses: [],
   forkableHarness: null,
   canDiscard: false,

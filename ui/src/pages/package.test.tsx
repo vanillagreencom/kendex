@@ -222,6 +222,7 @@ const updateRow = (scope: Project): UpdateRow => ({
   holdOwner: null,
   ignored: false,
   blockedByLocalEdit: false,
+  filesMissing: false,
   editedHarnesses: [],
   forkableHarness: null,
   canDiscard: false,

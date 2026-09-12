@@ -7,6 +7,8 @@ import {
   bundledWithLabel,
   FORKED_BADGE_HELP,
   FORKED_BADGE_LABEL,
+  MISSING_FILES_BADGE_HELP,
+  MISSING_FILES_BADGE_LABEL,
   vendorHelp,
 } from "@/lib/copy";
 import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
@@ -173,6 +175,7 @@ describe("the words a Library row's badges stand for", () => {
           origin={null}
           forkedIn={[]}
           outOfDate={false}
+          missingIn={[]}
           onOpen={() => {}}
           onOpenHarness={() => {}}
           onOpenPlace={() => {}}
@@ -207,6 +210,29 @@ describe("the update mark", () => {
   });
 });
 
+// A file kendex installed is gone from one place. The badge names that
+// place, says so on focus, and opens the package there — where the repair
+// is — rather than marking the row and leaving the reader to find which
+// of its places is broken.
+describe("the missing files badge", () => {
+  it("marks the place missing a file and opens the package there", () => {
+    const { host, onOpen } = mount([], false, [HYPR]);
+    const badge = [...host.querySelectorAll<HTMLElement>("button")].find((b) =>
+      b.textContent?.startsWith(MISSING_FILES_BADGE_LABEL),
+    );
+    if (!badge) throw new Error("no missing files badge");
+    expect(badge.textContent).toContain("in hyprtrade");
+    expect(badge.textContent).toContain(MISSING_FILES_BADGE_HELP);
+    act(() => badge.click());
+    expect(onOpen).toHaveBeenCalledWith(HYPR);
+  });
+
+  it("marks nothing where every file is in place", () => {
+    const { host } = mount();
+    expect(host.textContent?.includes(MISSING_FILES_BADGE_LABEL)).toBe(false);
+  });
+});
+
 // Every other thing a row names opens too: the harness chip opens the
 // harness, the place opens the place, the marketplace opens the
 // marketplace. Each is a different target from the row's own, so a row
@@ -227,6 +253,7 @@ describe("the other things a Library row names", () => {
           }}
           forkedIn={[]}
           outOfDate={false}
+          missingIn={[]}
           onOpen={() => opened.push("package")}
           onOpenHarness={(harness) => opened.push(`harness:${harness}`)}
           onOpenPlace={(scope) => opened.push(`place:${scope.scope}`)}
@@ -261,6 +288,7 @@ describe("the other things a Library row names", () => {
           origin={null}
           forkedIn={[]}
           outOfDate={false}
+          missingIn={[]}
           onOpen={() => {}}
           onOpenHarness={() => {}}
           onOpenPlace={() => {}}
@@ -280,7 +308,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const mount = (forkedIn: Scope[] = [], outOfDate = false) => {
+const mount = (
+  forkedIn: Scope[] = [],
+  outOfDate = false,
+  missingIn: Scope[] = [],
+) => {
   const onOpen = vi.fn();
   // A table host, so the row is mounted inside the structure it renders
   // for rather than under a div.
@@ -291,6 +323,7 @@ const mount = (forkedIn: Scope[] = [], outOfDate = false) => {
         origin={null}
         forkedIn={forkedIn}
         outOfDate={outOfDate}
+        missingIn={missingIn}
         onOpen={onOpen}
         onOpenHarness={() => {}}
         onOpenPlace={() => {}}

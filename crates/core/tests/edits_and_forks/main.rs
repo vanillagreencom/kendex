@@ -15,6 +15,7 @@ mod edited_harness;
 mod vacant;
 
 mod forks;
+mod missing_files;
 
 use std::fs;
 use std::path::{Path, PathBuf};

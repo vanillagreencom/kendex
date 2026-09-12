@@ -52,10 +52,12 @@ interface UpdatesState extends Standing {
   reload: () => Promise<void>;
   check: () => Promise<void>;
   /** Bring one place current — the package page's Projects tab, which acts
-   *  on one copy at a time. Not the Updates page's: every confirm its
-   *  review takes goes through [`updateRows`], one place included, so that
-   *  page has one applier at every scope it offers. */
-  updateOne: (row: UpdateRow) => Promise<void>;
+   *  on one copy at a time, and its missing-files notice, whose repair is
+   *  this same apply said as one. Not the Updates page's: every confirm
+   *  its review takes goes through [`updateRows`], one place included, so
+   *  that page has one applier at every scope it offers. `done` is what
+   *  the toast says once the apply committed; an update by default. */
+  updateOne: (row: UpdateRow, done?: string) => Promise<void>;
   /** Bring every updatable place among `rows` current — every scope the
    *  Updates page's review offers, from one place to all of them, and a
    *  place's card. */
@@ -129,7 +131,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       }
     },
 
-    updateOne: async (row) => {
+    updateOne: async (row, done = updatedToastLabel(row.name)) => {
       // One write at a time, page-wide: the second committing after the
       // first released `busy` is a check opening over a commit it cannot see.
       if (get().busy) return oneAtATime();
@@ -150,7 +152,7 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
           // over a copy somebody changed, and saying "Updated" over that
           // is the whole point of asking the command what it did.
           // One package's apply, so a removal it reports is that package's.
-          sayApply(updatedToastLabel(row.name), answer.data.update, 1);
+          sayApply(done, answer.data.update, 1);
         }
         // Whatever it answered, the standing is read again: the work can
         // commit and then fail, and the rows must be what landed.
