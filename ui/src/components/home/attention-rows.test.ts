@@ -76,8 +76,9 @@ const row = (rows: ReturnType<typeof attentionRows>, key: string) => {
   return found as NonNullable<typeof found>;
 };
 
-// The row names the packages and where, says what "edited" is and what
-// the two ways out are, and its link lands on those packages alone.
+// The row names the packages and where, says what "edited" is and that
+// updates are paused, and its link lands on those packages alone. The
+// remedies belong to the package page, not to this row.
 describe("the edited packages row", () => {
   it("names each package by place and lands on the edited packages only", () => {
     const onEditedPackages = vi.fn();
@@ -100,7 +101,8 @@ describe("the edited packages row", () => {
       "commit-guards, second-opinion and worktree in hyprtrade; gh in vg.",
     );
     expect(found.detail).toContain("no longer matches its source");
-    expect(found.detail).toContain("Keep each as your own copy, or discard");
+    expect(found.detail).toContain("updates are paused there");
+    expect(found.detail).not.toMatch(/own copy|discard/i);
     expect(found.action?.label).toBe(EDITED_ATTENTION_ACTION);
     found.action?.onClick();
     expect(onEditedPackages).toHaveBeenCalledTimes(1);
