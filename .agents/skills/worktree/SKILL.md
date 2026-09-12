@@ -38,7 +38,7 @@ Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outsid
 | `restack` | Guardedly continue, skip, or abort a tool-created paused restack |
 | `list` | List all worktrees |
 | `remove` | Remove worktree, clean symlinks, prune branches |
-| `cleanup` | Remove worktrees whose branches are merged |
+| `cleanup` | Remove worktrees whose branches are merged; `--targets-only` prunes build output instead, keeping every worktree and branch |
 | `path` / `exists` | Print / check the worktree path for an issue ID |
 | `check` | Pre-create git state check (JSON: uncommitted, unpushed) |
 | `push` | Push worktree branch with auto-rebase and pinned `--force-with-lease`; the `rebase-map:` contract for remapping pre-rebase SHAs is in `push --help` |
@@ -65,6 +65,14 @@ A consumer wanting this file locally gets a pointer, never a copy: `cat "$(dirna
 ## Session guard (ownership leases)
 
 `scripts/worktree-session-guard` stops cleanup from destroying a claimed worktree, using a native Git worktree lock whose reason line carries the owner and a heartbeat. Who claims and when, what staleness measures, and the guard's limits: [references/session-guard.md](references/session-guard.md); commands, exit codes and `--repo` scope: `worktree-session-guard --help`.
+
+## Reclaiming build output
+
+`cleanup --targets-only` prunes build output and keeps the worktree, its branch and every tracked and untracked source file. It runs on a worktree with uncommitted work: output is written by a compiler or a package manager, so uncommitted work is no reason to leave it on disk, and on a machine hosting many worktrees the trees holding the output are the ones still in use. Run it from the main checkout, read the preview, then repeat with `--apply`. Flags, the layouts it recognizes, and every reason it keeps a path: `cleanup --help`.
+
+The layout table is data, one row per ecosystem, in `scripts/worktree-output-prune`. A row names the marker file that identifies the ecosystem, the lock files that must sit beside it, and the output directories it owns with the lock file (or absence of one) that marks an independently prunable unit inside each. Covering a further ecosystem is a new row there and no other change.
+
+Only this mode needs `python3`, Unix advisory file locks and Linux `/proc`. A missing one is reported and nothing is deleted.
 
 ## JS Dependencies
 

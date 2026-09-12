@@ -254,6 +254,7 @@ print_cleanup_help() {
   worktree_message help cleanup
   cat <<'EOF'
 Usage: worktree cleanup [--stale] [--ttl-minutes N]
+       worktree cleanup --targets-only [--apply] [--older-than-days N]
 
 Remove worktrees whose branch is already merged into origin/<default>.
 A worktree held by a session guard lease is never collected — not even one
@@ -281,10 +282,32 @@ path, configured symlinks, and branch for manual recovery. If branch deletion
 fails after worktree removal, cleanup also exits nonzero and names the
 remaining branch.
 
+--targets-only reclaims build output instead of removing worktrees. It keeps
+every worktree, branch, and tracked and untracked source file, and never
+fetches origin or proves a branch merged: build output is written by a compiler
+or a package manager, so uncommitted work in a worktree is no reason to leave
+its output in place. It previews by default and deletes only with --apply,
+reporting bytes per output path and naming a reason for every path it keeps.
+
+It recognizes Cargo (target/, one prunable unit per profile directory holding a
+.cargo-lock, which is held while that unit is pruned and is the one file left
+behind) and JavaScript (node_modules/ and .next/ beside a package.json and a
+package manager's lock file, each removed whole). A repository matching no
+layout is a reported no-op, not an error. It keeps an output path that is a
+symlink, resolves outside the worktree, has tracked content under it, has been
+written to within the retention window, is held by a live build, or is
+lock-free on a platform with no process inspection. It keeps the whole worktree
+when a session guard lease is present or HEAD moves mid-run, and takes the
+lease itself for the duration of an --apply. Only this mode needs python3.
+
 Options:
   --stale             Also collect worktrees whose guard lease is past the TTL
                       (an abandoned session). Releases the lease, then removes.
   --ttl-minutes N     Staleness horizon for --stale (default: 720)
+  --targets-only      Prune build output; keep the worktree and its branch.
+  --apply             Delete what the preview listed. --targets-only only.
+  --older-than-days N Keep output written within N days (default: 7).
+                      --targets-only only.
 EOF
 }
 

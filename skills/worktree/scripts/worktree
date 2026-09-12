@@ -1630,32 +1630,56 @@ reuse_respects_session_lease() {
   return 0
 }
 
+# The guard state of a worktree as one word in CLEANUP_LEASE_STATE — none,
+# held, unmanaged or unreadable — with the probe's exit status in
+# CLEANUP_LEASE_RC. One probe answers it for every sweep, so the removal path
+# and the output prune can never disagree about who holds a tree. An install
+# with no guard answers `none`: it holds nothing, and session_guard_available
+# has already warned that leases went unchecked.
+#
+# The probe carries the issue identity derived from the worktree's branch when
+# one is derivable. It changes no answer here — a lease is a lease whether it is
+# ours or another session's — but keeps every lifecycle probe naming the
+# best-known identity rather than whatever the environment happens to hold.
+CLEANUP_LEASE_STATE=""
+CLEANUP_LEASE_RC=0
+cleanup_probe_lease() {
+  local wt="$1" issue_owner="${2:-}" rc=0
+  local -a owner_args=()
+  CLEANUP_LEASE_RC=0
+  if ! session_guard_available; then
+    CLEANUP_LEASE_STATE=none
+    return 0
+  fi
+  if [[ -n "$issue_owner" ]]; then
+    owner_args=(--owner "$issue_owner")
+  fi
+  "$SESSION_GUARD" status "$wt" ${owner_args[@]+"${owner_args[@]}"} --repo "$PROJECT_ROOT" >/dev/null 2>&1 || rc=$?
+  CLEANUP_LEASE_RC="$rc"
+  case "$rc" in
+    3) CLEANUP_LEASE_STATE=none ;;
+    0 | 75) CLEANUP_LEASE_STATE=held ;;
+    4) CLEANUP_LEASE_STATE=unmanaged ;;
+    *) CLEANUP_LEASE_STATE=unreadable ;;
+  esac
+}
+
 # `cleanup` is the untargeted sweeper, so it is the operation that would
 # destroy live worktrees without the guard. It never removes a
 # claimed worktree — not even one claimed by THIS session, since our own lease
 # still means work is in progress there.
 cleanup_lease_permits_removal() {
-  local wt="$1" issue_owner="${2:-}" rc=0
-  local -a owner_args=()
-  session_guard_available || return 0
-  # The probe carries the issue identity derived from the worktree's branch
-  # when one is derivable. It changes nothing here — 0 and 75 land in
-  # the same arm, because our own lease still means work is in progress — but
-  # keeps every lifecycle probe naming the best-known identity rather than
-  # whatever the environment happens to hold.
-  if [[ -n "$issue_owner" ]]; then
-    owner_args=(--owner "$issue_owner")
-  fi
-  "$SESSION_GUARD" status "$wt" ${owner_args[@]+"${owner_args[@]}"} --repo "$PROJECT_ROOT" >/dev/null 2>&1 || rc=$?
-  case "$rc" in
-    3) return 0 ;;     # no lock at all
-    0 | 75) ;;         # a guard lease is present — ours (0) or another's (75)
-    4)
+  local wt="$1" issue_owner="${2:-}"
+  cleanup_probe_lease "$wt" "$issue_owner"
+  case "$CLEANUP_LEASE_STATE" in
+    none) return 0 ;;
+    held) ;;
+    unmanaged)
       worktree_message cleanup-unmanaged-lock "$wt" "Skipped (locked outside the session guard): $wt" >&2
       return 1
       ;;
     *)
-      worktree_message cleanup-lease-unreadable "path=$wt exit=$rc" "Skipped (session guard state could not be read, exit $rc): $wt" >&2
+      worktree_message cleanup-lease-unreadable "path=$wt exit=$CLEANUP_LEASE_RC" "Skipped (session guard state could not be read, exit $CLEANUP_LEASE_RC): $wt" >&2
       return 1
       ;;
   esac
@@ -1671,6 +1695,49 @@ cleanup_lease_permits_removal() {
   worktree_message cleanup-lease-fresh "$wt" "Skipped (guard lease is not past the ${CLEANUP_TTL_MINUTES}m TTL): $wt" >&2
   return 1
 }
+
+# Every registered worktree except the main checkout, into CLEANUP_TREES. Both
+# cleanup sweeps read this one enumeration, so neither can inspect a set the
+# other would not.
+#
+# NUL-delimited porcelain parsing survives paths with spaces, and the main
+# checkout is excluded by canonical comparison — git may report it under a
+# lexical (symlinked) spelling that a textual match against $PROJECT_ROOT
+# would miss.
+#
+# The listing lands in a file so its exit status is READ. Fed through process
+# substitution, bash discards that status, so a failed or truncated list would
+# leave the candidate set empty and the sweep would report a clean result —
+# the silent keep this function exists to end. A file, not a variable: bash
+# cannot hold the NUL bytes -z depends on.
+cleanup_enumerate_worktrees() {
+  local list_file="" err_file="" rc=0 line="" wt=""
+  CLEANUP_TREES=()
+  if ! list_file="$(mktemp "${TMPDIR:-/tmp}/worktree-cleanup-list.XXXXXX")"; then
+    worktree_message cleanup-scratch-failed "$PROJECT_ROOT" "Error: could not create a scratch file to enumerate worktrees; nothing was inspected." >&2
+    return 1
+  fi
+  err_file="${list_file}.err"
+  git -C "$PROJECT_ROOT" worktree list --porcelain -z >"$list_file" 2>"$err_file" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    worktree_message cleanup-enumeration-failed "$rc" "Error: 'git -C \"$PROJECT_ROOT\" worktree list --porcelain -z' failed (exit $rc)." >&2
+    [[ -s "$err_file" ]] && sed 's/^/  git: /' <"$err_file" >&2
+    rm -f "$list_file" "$err_file" 2>/dev/null || true
+    echo "  No worktree was inspected and none was collected; this is not a clean sweep." >&2
+    return 1
+  fi
+  while IFS= read -r -d '' line; do
+    [[ "$line" == worktree\ * ]] || continue
+    wt="${line#worktree }"
+    same_canonical_dir "$wt" "$PROJECT_ROOT" && continue
+    CLEANUP_TREES+=("$wt")
+  done <"$list_file"
+  rm -f "$list_file" "$err_file"
+}
+
+# `cleanup --targets-only`: the build-output prune, its flags and its lease.
+# shellcheck source=lib/output-prune.sh
+source "$SCRIPT_DIR/lib/output-prune.sh"
 
 # Refuse to act on a worktree that carries a native `git worktree lock`.
 # `git worktree remove --force` does NOT override a lock (git wants `-f -f`),
@@ -2535,14 +2602,31 @@ case "${1:-}" in
           shift 2
           ;;
         *)
+          if output_prune_parse_flag "$@"; then
+            shift "$OUTPUT_PRUNE_SHIFT"
+            continue
+          fi
           worktree_message cleanup-option-unknown "$1" "Error: unknown option '$1' for cleanup" >&2
           echo "Run: $0 cleanup --help" >&2
           exit 1
           ;;
       esac
     done
-    git_with_github_https_auth -C "$PROJECT_ROOT" fetch --prune origin
+    output_prune_validate
     CLEANUP_FAILED=false
+    # --targets-only branches off before the fetch and the merge proof: nothing
+    # it does needs a branch, let alone a merged one. The worktrees holding the
+    # output are the ones still in use, so gating the prune on a merge would
+    # reclaim nothing on the machine that reports a full disk.
+    if [[ "$OUTPUT_PRUNE_MODE" == true ]]; then
+      cleanup_enumerate_worktrees || exit 1
+      output_prune_sweep ${CLEANUP_TREES[@]+"${CLEANUP_TREES[@]}"} || CLEANUP_FAILED=true
+      if [[ "$CLEANUP_FAILED" == true ]]; then
+        exit 1
+      fi
+      exit 0
+    fi
+    git_with_github_https_auth -C "$PROJECT_ROOT" fetch --prune origin
     CLEANUP_MERGE_TARGET="origin/$DEFAULT_BRANCH"
     if ! git -C "$PROJECT_ROOT" rev-parse --verify "$CLEANUP_MERGE_TARGET" >/dev/null 2>&1; then
       CLEANUP_MERGE_TARGET="$DEFAULT_BRANCH"
@@ -2555,38 +2639,7 @@ case "${1:-}" in
     # NOT on this chain; a tip that IS on it has no commits of its own —
     # pending work, not merged work.
     CLEANUP_MAINLINE="$(git -C "$PROJECT_ROOT" rev-list --first-parent "$CLEANUP_MERGE_TARGET" 2>/dev/null || true)"
-    # Collect candidates first: NUL-delimited porcelain parsing survives paths
-    # with spaces, and the main checkout is excluded by canonical comparison —
-    # git may report it under a lexical (symlinked) spelling that a textual
-    # match against $PROJECT_ROOT would miss.
-    #
-    # The listing lands in a file so its exit status is READ. Fed through
-    # process substitution, bash discards that status, so a failed or truncated
-    # list would leave the candidate set empty and cleanup would report a clean
-    # sweep — the silent keep this loop exists to end. A file, not a variable:
-    # bash cannot hold the NUL bytes -z depends on.
-    if ! CLEANUP_LIST_FILE="$(mktemp "${TMPDIR:-/tmp}/worktree-cleanup-list.XXXXXX")"; then
-      worktree_message cleanup-scratch-failed "$PROJECT_ROOT" "Error: could not create a scratch file to enumerate worktrees; nothing was inspected." >&2
-      exit 1
-    fi
-    CLEANUP_LIST_RC=0
-    CLEANUP_LIST_ERR_FILE="${CLEANUP_LIST_FILE}.err"
-    git -C "$PROJECT_ROOT" worktree list --porcelain -z >"$CLEANUP_LIST_FILE" 2>"$CLEANUP_LIST_ERR_FILE" || CLEANUP_LIST_RC=$?
-    if [[ "$CLEANUP_LIST_RC" -ne 0 ]]; then
-      worktree_message cleanup-enumeration-failed "$CLEANUP_LIST_RC" "Error: 'git -C \"$PROJECT_ROOT\" worktree list --porcelain -z' failed (exit $CLEANUP_LIST_RC)." >&2
-      [[ -s "$CLEANUP_LIST_ERR_FILE" ]] && sed 's/^/  git: /' <"$CLEANUP_LIST_ERR_FILE" >&2
-      rm -f "$CLEANUP_LIST_FILE" "$CLEANUP_LIST_ERR_FILE" 2>/dev/null || true
-      echo "  No worktree was inspected and none was collected; this is not a clean sweep." >&2
-      exit 1
-    fi
-    CLEANUP_TREES=()
-    while IFS= read -r -d '' CLEANUP_LINE; do
-      [[ "$CLEANUP_LINE" == worktree\ * ]] || continue
-      CLEANUP_WT="${CLEANUP_LINE#worktree }"
-      same_canonical_dir "$CLEANUP_WT" "$PROJECT_ROOT" && continue
-      CLEANUP_TREES+=("$CLEANUP_WT")
-    done <"$CLEANUP_LIST_FILE"
-    rm -f "$CLEANUP_LIST_FILE" "$CLEANUP_LIST_ERR_FILE"
+    cleanup_enumerate_worktrees || exit 1
     for wt in ${CLEANUP_TREES[@]+"${CLEANUP_TREES[@]}"}; do
       # Every arm below either removes the worktree or says on stderr why it is
       # keeping it. Nothing falls through silently: the help promises that a

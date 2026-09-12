@@ -1,0 +1,494 @@
+#!/usr/bin/env python3
+"""Prune regenerable build output from one worktree, keeping every source file.
+
+Called per worktree by `worktree cleanup --targets-only` through
+lib/output-prune.sh, which owns flag parsing, the session-guard lease and the
+rendering of the records this engine emits. Build output is written by a
+compiler or a package manager and holds no user work, so an uncommitted-work
+check protects nothing here and none is made; HEAD is pinned instead, because a
+checkout swapped under a running prune is a different repository.
+
+stdout protocol: one `<stream>\\t<key>\\t<value>` record per line, per output path,
+unit or summary. `stream` is `out` or `err` and says where the caller renders the
+record, so a record kind this engine gains needs no change there. A unit whose
+path carries a control byte would split or mis-field its own record and is kept
+unpruned instead. Records are flushed as they are decided, so a run interrupted
+after a deletion still reports what it removed. Values are `key=value` pairs; the
+caller prefixes the worktree path. stderr carries English detail, which is not a
+parsed protocol.
+
+Exit status is this worktree's verdict:
+  0  inspection complete — every unit was pruned, reported eligible, or kept
+     with a reason
+  1  the inspection could not complete; nothing was deleted
+  6  HEAD moved during the run; nothing was deleted
+"""
+import argparse
+import contextlib
+import os
+import shutil
+import stat
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import List, NamedTuple, Optional, Tuple
+
+try:
+    import fcntl
+except ImportError:  # A platform without Unix advisory locks cannot hold a build lock.
+    fcntl = None
+
+INSPECTION_INCOMPLETE = 1
+HEAD_MOVED = 6
+
+
+class Output(NamedTuple):
+    """One build directory an ecosystem owns, relative to the worktree.
+
+    `lock` names the lock file that marks an independently prunable unit inside
+    the directory: each directory holding one is its own unit, the lock is held
+    while that unit is pruned and is the one file left behind, so a build
+    waiting on it resumes against the same inode. `None` means the directory
+    itself is one unit and is removed whole; with no lock to hold, the
+    live-holder probe is the only evidence a build is running there, and a
+    platform without that probe keeps the directory.
+    """
+
+    path: str
+    lock: Optional[str]
+
+
+class Layout(NamedTuple):
+    """One ecosystem. A new ecosystem is a new row in LAYOUTS and nothing else.
+
+    A row supplies the marker file that identifies a repository as this
+    ecosystem, the lock files that must sit beside that marker (empty when the
+    marker alone identifies it), and the output directories the ecosystem owns.
+    """
+
+    name: str
+    marker: str
+    siblings: Tuple[str, ...]
+    outputs: Tuple[Output, ...]
+
+
+# Every output path here is written by a tool this catalog's repositories run:
+# cargo writes target/, npm and pnpm write node_modules/, and Next.js writes
+# .next/ in the kendex.ai checkout.
+LAYOUTS = (
+    Layout(
+        name="cargo",
+        marker="Cargo.toml",
+        siblings=(),
+        outputs=(Output(path="target", lock=".cargo-lock"),),
+    ),
+    Layout(
+        name="javascript",
+        marker="package.json",
+        siblings=("package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb"),
+        outputs=(
+            Output(path="node_modules", lock=None),
+            Output(path=".next", lock=None),
+        ),
+    ),
+)
+
+
+class Unit(NamedTuple):
+    """One independently prunable directory and the lock that guards it."""
+
+    ecosystem: str
+    output: str
+    directory: Path
+    lock: Optional[Path]
+
+
+class TreeInfo(NamedTuple):
+    newest_mtime: float
+    allocated_bytes: int
+
+
+class InspectionIncomplete(RuntimeError):
+    """A fact the engine refuses to assume, as a record token plus detail."""
+
+    def __init__(self, reason: str, detail: str) -> None:
+        super().__init__(detail)
+        self.reason = reason
+        self.detail = detail
+
+
+def emit(stream: str, key: str, **fields: object) -> None:
+    value = " ".join("%s=%s" % (name.replace("_", "-"), text) for name, text in fields.items())
+    sys.stdout.write("%s\t%s\t%s\n" % (stream, key, value))
+    sys.stdout.flush()
+
+
+def git(worktree: Path, *args: str) -> subprocess.CompletedProcess:
+    env = os.environ.copy()
+    env["GIT_OPTIONAL_LOCKS"] = "0"
+    # A pre-commit hook exports these, and they point every call at the
+    # repository the hook is running in; -C overrides none of them.
+    for name in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        env.pop(name, None)
+    return subprocess.run(
+        ["git", "-C", str(worktree), *args],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def head_unchanged(worktree: Path, expected: str) -> bool:
+    head = git(worktree, "rev-parse", "HEAD")
+    if head.returncode:
+        raise InspectionIncomplete("head-unreadable", head.stderr.strip())
+    return head.stdout.strip() == expected
+
+
+def tracks_content(worktree: Path, relative_path: str) -> bool:
+    """True when git tracks a file under `relative_path`.
+
+    The layout table is data a maintainer extends, and this is what keeps that
+    safe: a row naming a path some repository commits is kept instead of
+    deleting committed source.
+    """
+    listed = git(worktree, "ls-files", "-z", "--", relative_path)
+    if listed.returncode:
+        raise InspectionIncomplete("tracked-files-unreadable", listed.stderr.strip())
+    return bool(listed.stdout)
+
+
+def identifies(worktree: Path, layout: Layout) -> bool:
+    if not (worktree / layout.marker).is_file():
+        return False
+    if not layout.siblings:
+        return True
+    return any((worktree / sibling).is_file() for sibling in layout.siblings)
+
+
+def walk_error(error: OSError) -> None:
+    raise error
+
+
+def tree_info(directory: Path) -> TreeInfo:
+    """Newest modification time and allocated bytes under `directory`.
+
+    Hardlinked artifacts are counted once: cargo hardlinks a profile's
+    binaries, so counting every link would report several times the space a
+    removal actually returns.
+    """
+    newest = directory.lstat().st_mtime
+    allocated = 0
+    seen = set()
+    for parent, dirs, files in os.walk(directory, followlinks=False, onerror=walk_error):
+        newest = max(newest, os.lstat(parent).st_mtime)
+        for name in dirs + files:
+            info = (Path(parent) / name).lstat()
+            newest = max(newest, info.st_mtime)
+            key = (info.st_dev, info.st_ino)
+            if key not in seen:
+                seen.add(key)
+                allocated += info.st_blocks * 512
+    return TreeInfo(newest_mtime=newest, allocated_bytes=allocated)
+
+
+def process_holders() -> Tuple[Tuple[str, ...], int]:
+    """Absolute paths held by another process of this user, and a skip count.
+
+    A path is held when a process has it as its working directory or open on a
+    file descriptor. The kernel hides a process's /proc entry from an ordinary
+    peer only when that process is non-dumpable or setuid; no compiler or
+    package manager is either, so such a process is counted and reported rather
+    than inspected. Other users' processes are outside this probe: they cannot
+    write into this user's worktree under ordinary permissions.
+    """
+    holders: List[str] = []
+    skipped = 0
+    own = os.getpid()
+    uid = os.getuid()
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit() or int(entry.name) == own:
+            continue
+        targets: List[str] = []
+        try:
+            if entry.stat().st_uid != uid:
+                continue
+            for link in [entry / "cwd", *(entry / "fd").iterdir()]:
+                try:
+                    targets.append(os.readlink(link))
+                except (FileNotFoundError, NotADirectoryError):
+                    continue
+        except PermissionError:
+            skipped += 1
+            continue
+        except (FileNotFoundError, ProcessLookupError, NotADirectoryError):
+            continue
+        for target in targets:
+            # An unlinked file an active build still writes through keeps the
+            # marker; the path it names is the one that matters.
+            if target.endswith(" (deleted)"):
+                target = target[: -len(" (deleted)")]
+            if target.startswith("/"):
+                holders.append(target)
+    return tuple(holders), skipped
+
+
+def held_under(holders: Tuple[str, ...], directory: Path) -> bool:
+    prefix = str(directory) + os.sep
+    return any(held == str(directory) or held.startswith(prefix) for held in holders)
+
+
+def lock_units(root: Path, lock_name: str) -> Tuple[Tuple[Path, Path], ...]:
+    """Directories under `root`, one and two levels down, holding `lock_name`.
+
+    Two levels because a cross-compiled profile sits at
+    target/<triple>/<profile> while a host profile sits at target/<profile>. A
+    symlinked directory or lock is skipped here and never reaches the prune.
+    """
+    found: List[Tuple[Path, Path]] = []
+    for depth1 in sorted(root.iterdir()):
+        if depth1.is_symlink() or not depth1.is_dir():
+            continue
+        lock = depth1 / lock_name
+        if lock.is_file() and not lock.is_symlink():
+            found.append((depth1, lock))
+            continue
+        for depth2 in sorted(depth1.iterdir()):
+            if depth2.is_symlink() or not depth2.is_dir():
+                continue
+            lock = depth2 / lock_name
+            if lock.is_file() and not lock.is_symlink():
+                found.append((depth2, lock))
+    return tuple(found)
+
+
+def prune(unit: Unit) -> None:
+    if unit.lock is None:
+        shutil.rmtree(unit.directory)
+        return
+    for child in unit.directory.iterdir():
+        if child == unit.lock:
+            continue
+        if child.is_symlink() or not child.is_dir():
+            child.unlink()
+        else:
+            shutil.rmtree(child)
+
+
+def retained_bytes(unit: Unit) -> int:
+    """Bytes a prune of this unit leaves behind: none, or the unit's own
+    directory and the lock it keeps. Subtracted from the unit's size so a
+    preview and an apply report the same figure for the same tree."""
+    if unit.lock is None:
+        return 0
+    total = 0
+    seen = set()
+    for path in (unit.directory, unit.lock):
+        info = path.lstat()
+        key = (info.st_dev, info.st_ino)
+        if key not in seen:
+            seen.add(key)
+            total += info.st_blocks * 512
+    return total
+
+
+def relative(worktree: Path, directory: Path) -> str:
+    return directory.relative_to(worktree).as_posix()
+
+
+def reportable(text: str) -> bool:
+    """A record is one line of tab-separated fields, so a path carrying a
+    control byte would split or mis-field its own record. A unit whose name
+    cannot be reported is not pruned: a deletion nobody can read about is
+    exactly what the byte report exists to prevent."""
+    return all(ord(character) >= 0x20 for character in text)
+
+
+def keep(worktree: Path, unit: Unit, reason: str) -> None:
+    emit(
+        "err",
+        "kept",
+        ecosystem=unit.ecosystem,
+        output=relative(worktree, unit.directory),
+        reason=reason,
+    )
+
+
+def discover(worktree: Path) -> Tuple[Unit, ...]:
+    """Every prunable unit in the worktree, reporting each path it keeps."""
+    layouts = tuple(layout for layout in LAYOUTS if identifies(worktree, layout))
+    if not layouts:
+        emit("err", "no-layout", reason="no-ecosystem-marker")
+        return ()
+    units: List[Unit] = []
+    for layout in layouts:
+        for output in layout.outputs:
+            path = worktree / output.path
+            kept = None
+            if path.is_symlink():
+                kept = "symlink"
+            elif not path.exists():
+                continue
+            elif not path.is_dir():
+                kept = "not-a-directory"
+            # A resolved worktree root plus a resolved output path differ only
+            # through a symlinked ancestor, which a multi-segment row can have.
+            elif path.resolve() != path:
+                kept = "outside-worktree"
+            elif tracks_content(worktree, output.path):
+                kept = "tracked"
+            if kept is not None:
+                emit("err", "kept", ecosystem=layout.name, output=output.path, reason=kept)
+                continue
+            if output.lock is None:
+                units.append(Unit(layout.name, output.path, path, None))
+                continue
+            found = lock_units(path, output.lock)
+            if not found:
+                emit("err", "kept", ecosystem=layout.name, output=output.path, reason="no-lock-unit")
+                continue
+            for directory, lock in found:
+                if not reportable(relative(worktree, directory)):
+                    emit("err", "kept", ecosystem=layout.name, output=output.path,
+                         reason="unreportable-unit-name")
+                    continue
+                units.append(Unit(layout.name, output.path, directory, lock))
+    return tuple(units)
+
+
+def hold_lock(stack: contextlib.ExitStack, unit: Unit) -> Optional[str]:
+    """Take the unit's lock, or name the reason the unit cannot be pruned."""
+    descriptor = os.open(unit.lock, os.O_RDWR | os.O_NOFOLLOW)
+    stack.callback(os.close, descriptor)
+    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        raise InspectionIncomplete("lock-not-regular", "build lock is not a regular file: %s" % unit.lock)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return "lock-held"
+    # The build that just released the lock may have replaced the file. A prune
+    # under the old inode would let the next build proceed unguarded.
+    if os.fstat(descriptor).st_ino != unit.lock.stat().st_ino:
+        return "lock-replaced"
+    return None
+
+
+def run(worktree: Path, head: str, older_than_days: int, apply_prune: bool) -> int:
+    if not head_unchanged(worktree, head):
+        return HEAD_MOVED
+    cutoff = time.time() - older_than_days * 86400
+    aged: List[Tuple[Unit, TreeInfo]] = []
+    for unit in discover(worktree):
+        info = tree_info(unit.directory)
+        if info.newest_mtime > cutoff:
+            keep(worktree, unit, "recent")
+            continue
+        aged.append((unit, info))
+
+    probe_available = Path("/proc/self").exists()
+    uninspected = 0
+    total = 0
+    pruned = 0
+    with contextlib.ExitStack() as stack:
+        locked: List[Tuple[Unit, TreeInfo]] = []
+        for unit, info in aged:
+            if unit.lock is None:
+                locked.append((unit, info))
+                continue
+            reason = hold_lock(stack, unit)
+            if reason is not None:
+                keep(worktree, unit, reason)
+                continue
+            locked.append((unit, info))
+
+        # Locks first: a build starting now blocks on one already held, so the
+        # holder scan below reads a settled set of processes.
+        holders: Tuple[str, ...] = ()
+        if probe_available:
+            holders, uninspected = process_holders()
+        idle: List[Tuple[Unit, TreeInfo]] = []
+        for unit, info in locked:
+            if not probe_available and unit.lock is None:
+                keep(worktree, unit, "holder-probe-unavailable")
+                continue
+            if held_under(holders, unit.directory):
+                keep(worktree, unit, "live-holder")
+                continue
+            idle.append((unit, info))
+
+        if not head_unchanged(worktree, head):
+            return HEAD_MOVED
+        if apply_prune and not shutil.rmtree.avoids_symlink_attacks:
+            raise InspectionIncomplete(
+                "unsafe-deletion", "symlink-safe recursive deletion is unavailable"
+            )
+        for unit, info in idle:
+            # Re-measured under the lock: the first measurement raced anything
+            # that was still writing here.
+            if tree_info(unit.directory).newest_mtime > cutoff:
+                keep(worktree, unit, "changed")
+                continue
+            output = relative(worktree, unit.directory)
+            reclaimed = info.allocated_bytes - retained_bytes(unit)
+            total += reclaimed
+            pruned += 1
+            if not apply_prune:
+                emit("out", "eligible", ecosystem=unit.ecosystem, output=output, bytes=reclaimed)
+                continue
+            prune(unit)
+            emit("out", "pruned", ecosystem=unit.ecosystem, output=output, bytes=reclaimed)
+
+    emit(
+        "out",
+        "summary",
+        mode="apply" if apply_prune else "preview",
+        units=pruned,
+        bytes=total,
+        uninspected_processes=uninspected,
+    )
+    return 0
+
+
+def positive_days(text: str) -> int:
+    days = int(text)
+    if days < 1:
+        raise argparse.ArgumentTypeError("retention must be at least one day")
+    return days
+
+
+def main(argv: Tuple[str, ...]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--worktree", required=True, type=Path)
+    parser.add_argument("--head", required=True)
+    parser.add_argument("--older-than-days", required=True, type=positive_days)
+    parser.add_argument("--apply", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        if fcntl is None:
+            raise InspectionIncomplete(
+                "locking-unavailable", "Unix advisory file locking is unavailable"
+            )
+        if not hasattr(os, "O_NOFOLLOW"):
+            raise InspectionIncomplete(
+                "nofollow-unavailable", "symlink-safe lock opening is unavailable"
+            )
+        worktree = args.worktree.resolve(strict=True)
+        if worktree != args.worktree.absolute():
+            raise InspectionIncomplete(
+                "worktree-symlinked", "worktree path resolves through a symlink: %s" % worktree
+            )
+        return run(worktree, args.head, args.older_than_days, args.apply)
+    except InspectionIncomplete as error:
+        emit("err", "incomplete", reason=error.reason)
+        print(error.detail, file=sys.stderr)
+        return INSPECTION_INCOMPLETE
+    except OSError as error:
+        emit("err", "incomplete", reason="filesystem-error")
+        print(error, file=sys.stderr)
+        return INSPECTION_INCOMPLETE
+
+
+if __name__ == "__main__":
+    sys.exit(main(tuple(sys.argv[1:])))
