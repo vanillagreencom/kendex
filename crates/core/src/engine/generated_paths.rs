@@ -122,7 +122,15 @@ impl GeneratedPaths {
     /// per line, sorted, merges two different additions cleanly and names
     /// only the entries a real conflict concerns.
     fn document(&self, root: &Path) -> Result<String> {
-        let mut text = serde_json::to_string_pretty(&self.relative(root)).map_err(|error| {
+        Self::laid_out(&self.relative(root), root)
+    }
+
+    /// `paths` serialized the way the write lays a document down. The one
+    /// spelling of that layout: [`GeneratedPaths::document`] writes it and
+    /// `own_inventory.rs` holds the committed copy to it over the declared
+    /// set, which in a lockless checkout is wider than the written one.
+    fn laid_out(paths: &BTreeSet<String>, root: &Path) -> Result<String> {
+        let mut text = serde_json::to_string_pretty(paths).map_err(|error| {
             crate::error::CoreError::JsonParse {
                 path: root.join(INVENTORY),
                 message: error.to_string(),

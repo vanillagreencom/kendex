@@ -4,7 +4,8 @@
 //! for them. It is for git: a merge reads lines, and one entry per line is
 //! what lets two branches that each add a render merge without a
 //! hand-composed array. This pins that layout as the bytes the writer lays
-//! down, both groups and the inventory itself among them.
+//! down, both written groups and the inventory itself among them, and a
+//! held position out of it: the write claims nothing there.
 
 use std::path::Path;
 
@@ -20,6 +21,7 @@ fn the_document_lists_one_sorted_entry_per_line() {
             .map(|path| root.join(path))
             .collect(),
         shared: std::iter::once(root.join(".gemini/settings.json")).collect(),
+        held: std::iter::once(root.join(".claude/agents/held.md")).collect(),
     };
     let text = generated.document(root).expect("the document serializes");
     assert_eq!(

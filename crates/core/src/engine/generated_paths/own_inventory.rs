@@ -12,7 +12,11 @@
 //! cause it. It plans this checkout the way `refresh` does and writes
 //! nothing, so the judge of what a render is stays [`super::collect`] — the
 //! renderer's own — and no list of harness directories is spelled a second
-//! time here.
+//! time here. It holds the bytes as well as the set: the writer lays the
+//! set down one entry per line so two branches adding renders merge, and
+//! every reader parses the JSON back into a set, so only a byte comparison
+//! against the writer's own document notices a copy some other writer laid
+//! out on one line.
 //!
 //! Not on Windows. The renders this repository commits include symlinks,
 //! and a Windows checkout materialises each as a regular file holding its
@@ -48,12 +52,16 @@ enum Finding {
         /// Listed and rendered nowhere here.
         stale: Vec<String>,
     },
+    /// It lists that set, and its bytes are not the document the writer
+    /// lays down for it.
+    Reflowed,
 }
 
 /// Whether the committed inventory is the set a pass renders.
 #[derive(Debug, PartialEq, Eq)]
 enum Standing {
-    /// It lists every rendered path and nothing besides.
+    /// It lists every rendered path and nothing besides, laid out as the
+    /// writer writes it.
     Current,
     /// It does not, and this is what the reader is handed.
     Refused(Finding),
@@ -125,20 +133,44 @@ fn refusal(finding: &Finding) -> String {
                     text.push_str(&format!("  {path}\n"));
                 }
             }
-            text.push_str(&format!(
-                "run `kendex refresh` at the checkout root, the one writer of {INVENTORY}, \
-                 and commit that file with this change\n"
-            ));
+            text.push_str(&rewrite());
+        }
+        Finding::Reflowed => {
+            text.push_str(&line("reflowed", INVENTORY));
+            text.push_str(
+                "the committed inventory lists the set this checkout renders and is not \
+                 laid out as the writer writes it, one entry per line in the set's order, \
+                 so the next refresh rewrites it whole and two branches adding renders \
+                 conflict on it\n",
+            );
+            text.push_str(&rewrite());
         }
     }
     text
 }
 
-/// The committed inventory against the set the declaration renders at.
+/// The remedy every finding a refresh repairs closes with.
+fn rewrite() -> String {
+    format!(
+        "run `kendex refresh` at the checkout root, the one writer of {INVENTORY}, and \
+         commit that file with this change\n"
+    )
+}
+
+/// The committed inventory against the set the declaration renders at, and
+/// then against the document the writer lays down for that set.
 ///
-/// Both directions are findings. A declared path the inventory does not
-/// list reads as hand-written to every reader of it, and a path it lists
-/// that nothing renders excludes a hand-written file from their scans.
+/// Both directions of the set are findings. A declared path the inventory
+/// does not list reads as hand-written to every reader of it, and a path it
+/// lists that nothing renders excludes a hand-written file from their scans.
+/// The set standing is judged first so a drift is named by its entries, not
+/// as bytes that differ; a copy holding the right set in another layout is
+/// the third finding, since every reader parses the JSON and no set
+/// comparison can see it. The bytes are held to the declared set's document
+/// rather than the written set's, because in a lockless checkout the file
+/// rightly lists the held positions the write leaves out, and holding it
+/// to the written set's document would refuse exactly that checkout under
+/// this finding.
 ///
 /// `declared` is every position this pass writes and every one it held —
 /// a position the declaration renders at whose bytes the pass would not
@@ -155,45 +187,57 @@ fn refusal(finding: &Finding) -> String {
 /// names it missing until the conflict is settled, which `refresh` itself
 /// refuses on the same run. Red on a tree whose renders cannot be trusted
 /// is the right answer there; green on an unrendered file is not.
-fn judge(listed: &BTreeSet<String>, declared: &BTreeSet<String>) -> Standing {
+fn judge(
+    listed: &BTreeSet<String>,
+    text: &str,
+    declared: &BTreeSet<String>,
+    document: &str,
+) -> Standing {
     let missing: Vec<String> = declared.difference(listed).cloned().collect();
     let stale: Vec<String> = listed.difference(declared).cloned().collect();
-    if missing.is_empty() && stale.is_empty() {
-        return Standing::Current;
+    if !missing.is_empty() || !stale.is_empty() {
+        return Standing::Refused(Finding::Drifted { missing, stale });
     }
-    Standing::Refused(Finding::Drifted { missing, stale })
+    if text != document {
+        return Standing::Refused(Finding::Reflowed);
+    }
+    Standing::Current
 }
 
-/// The paths the committed inventory lists.
+/// The committed inventory: its bytes, and the paths they list.
 ///
 /// An absent file is no read failure: a checkout that renders anything is
 /// owed one, so every rendered path comes back missing and the same refusal
-/// names them. Present and unreadable, or present and not the document the
-/// writer lays down, refuses instead of reading as a checkout that renders
+/// names them. Present and unreadable, or present and not one JSON array of
+/// path strings, refuses instead of reading as a checkout that renders
 /// nothing — which would pass every drift silently.
-fn committed(inventory: &Path) -> Result<BTreeSet<String>, Finding> {
+fn committed(inventory: &Path) -> Result<(String, BTreeSet<String>), Finding> {
     let text = match crate::fs::read_if_exists(inventory) {
         Ok(Some(text)) => text,
-        Ok(None) => return Ok(BTreeSet::new()),
+        Ok(None) => return Ok((String::new(), BTreeSet::new())),
         Err(error) => {
             return Err(Finding::Unreadable {
                 cause: error.to_string(),
             });
         }
     };
-    serde_json::from_str::<BTreeSet<String>>(&text).map_err(|error| Finding::Invalid {
-        cause: error.to_string(),
-    })
+    let listed =
+        serde_json::from_str::<BTreeSet<String>>(&text).map_err(|error| Finding::Invalid {
+            cause: error.to_string(),
+        })?;
+    Ok((text, listed))
 }
 
 /// Plan `root` as `refresh` does, and hold the inventory at `inventory` to
-/// what that pass renders. The plan is taken and never executed, so the run
-/// writes nothing into the scope it judges.
+/// what that pass renders and the document it would write for it. The plan
+/// is taken and never executed, so the run writes nothing into the scope it
+/// judges.
 ///
 /// The inventory is a parameter rather than a path derived inside, so the
-/// control below drives this whole path — the read, the planned set and the
-/// comparison — against a planted inventory instead of exercising `judge`
-/// alone, which would stay green if this stopped reading either side. The
+/// controls below drive this whole path — the read, the planned set, the
+/// planned document and the comparison — against a planted inventory
+/// instead of exercising `judge` alone, which would stay green if this
+/// stopped reading either side. The
 /// environment is one for the same reason: the lockless control plans a
 /// fixture of its own through this path.
 fn check_against(env: &Env, root: &Path, inventory: &Path) -> Standing {
@@ -210,18 +254,20 @@ fn check_against(env: &Env, root: &Path, inventory: &Path) -> Standing {
         Ok(report) => report,
         Err(error) => return unplanned(error.to_string()),
     };
+    let declared = GeneratedPaths::spelled(
+        report
+            .generated
+            .inventory(root)
+            .iter()
+            .chain(&report.generated.held),
+        root,
+    );
+    let document = match GeneratedPaths::laid_out(&declared, root) {
+        Ok(document) => document,
+        Err(error) => return unplanned(error.to_string()),
+    };
     match committed(inventory) {
-        Ok(listed) => judge(
-            &listed,
-            &GeneratedPaths::spelled(
-                report
-                    .generated
-                    .inventory(root)
-                    .iter()
-                    .chain(&report.generated.held),
-                root,
-            ),
-        ),
+        Ok((text, listed)) => judge(&listed, &text, &declared, &document),
         Err(finding) => Standing::Refused(finding),
     }
 }
@@ -241,7 +287,8 @@ fn check(root: &Path) -> Standing {
 }
 
 /// The check itself: this repository's `.kendex-generated.json` is the set
-/// this repository renders. The passing direction, through the whole path.
+/// this repository renders, laid out as the writer writes it. The passing
+/// direction, through the whole path.
 #[test]
 fn the_committed_inventory_is_the_set_this_checkout_renders() {
     let root = crate::test_util::checkout_root();
@@ -267,7 +314,7 @@ const RENDERED_NOWHERE: &str = ".agents/skills/.nothing-renders-this/SKILL.md";
 #[test]
 fn an_inventory_that_is_not_the_render_set_is_refused() {
     let root = crate::test_util::checkout_root();
-    let listed = committed(&root.join(INVENTORY)).expect("the committed inventory reads");
+    let (_, listed) = committed(&root.join(INVENTORY)).expect("the committed inventory reads");
     let removed = listed
         .iter()
         .find(|path| path.as_str() != INVENTORY)
@@ -304,6 +351,36 @@ fn an_inventory_that_is_not_the_render_set_is_refused() {
     let mut lines = text.lines();
     assert_eq!(lines.next(), Some("render-inventory: missing=1"));
     assert_eq!(lines.next(), Some("render-inventory: stale=1"));
+}
+
+/// The layout direction, through the same path: this checkout's own
+/// committed inventory, the right set to the entry, laid out on one line as
+/// a writer that predates the one-entry-per-line document writes it, read
+/// from a planted copy while the checkout itself is planned untouched.
+///
+/// A copy the set check passes and the layout check refuses is what a
+/// contributor's older `kendex refresh` leaves behind, and what every reader
+/// of the file, parsing it to a set, would wave through.
+#[test]
+fn an_inventory_laid_out_on_one_line_is_refused() {
+    let root = crate::test_util::checkout_root();
+    let (_, listed) = committed(&root.join(INVENTORY)).expect("the committed inventory reads");
+    let tmp = tempfile::tempdir().expect("a scratch directory");
+    let path = crate::test_util::rooted(&tmp).join(INVENTORY);
+    let mut one_line = serde_json::to_string(&listed).expect("the planted inventory serializes");
+    one_line.push('\n');
+    std::fs::write(&path, one_line).expect("the planted inventory is writable");
+
+    let env = Env::detect().expect("the host environment is readable");
+    let standing = check_against(&env, &root, &path);
+    assert_eq!(standing, Standing::Refused(Finding::Reflowed));
+    let Standing::Refused(finding) = standing else {
+        unreachable!("the assertion above pinned the variant")
+    };
+    assert_eq!(
+        refusal(&finding).lines().next(),
+        Some("render-inventory: reflowed=.kendex-generated.json")
+    );
 }
 
 /// A project with one skill rendered from its local source and its
@@ -355,9 +432,17 @@ impl Unrendered {
     /// The one-file skill keeps the missing set to the path the
     /// declaration adds.
     fn with_a_second_skill_unrendered(self) -> Unrendered {
+        let fixture = self.with_the_skill_edited();
+        fixture.write_skill("two", "Body.\n");
+        fixture.declare("two");
+        fixture
+    }
+
+    /// The rendered skill's source edited and nothing else changed: with the
+    /// lock the render is stale and listed, without it the render is held,
+    /// and the inventory the apply wrote lists it either way.
+    fn with_the_skill_edited(self) -> Unrendered {
         self.write_skill("one", "Edited body.\n");
-        self.write_skill("two", "Body.\n");
-        self.declare("two");
         self
     }
 
@@ -478,4 +563,16 @@ fn a_lockless_checkout_names_the_missing_render_alone() {
 fn a_lockless_checkout_names_an_unrendered_file_of_a_held_skill() {
     let fixture = Unrendered::new().with_a_file_added_to_the_skill();
     with_and_without_the_lock(&fixture, one_missing(".claude/skills/one/notes.md"));
+}
+
+/// The layout hold on a lockless checkout that is current: the inventory the
+/// apply wrote lists the held render, so its bytes are the declared set's
+/// document and not the written set's, which leaves the held position out.
+/// Held to the written set's document, this checkout would be refused as
+/// reflowed on a file the writer itself laid down. The inverse plans the
+/// same tree with its lock, where the render is listed as written.
+#[test]
+fn a_lockless_checkout_holding_the_declared_set_is_current() {
+    let fixture = Unrendered::new().with_the_skill_edited();
+    with_and_without_the_lock(&fixture, (Standing::Current, Vec::new()));
 }
