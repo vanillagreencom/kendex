@@ -691,6 +691,32 @@ else
   printf '  FAIL  a file linked from outside the sweep is not reported as reclaimable\n        with no outside link: %s\n        with one:            %s\n' \
     "$BEFORE_LINK" "$AFTER_LINK"
 fi
+# A package root whose own name carries a tab. A record is one line of
+# tab-separated fields, so that path cannot appear in its own refusal: the keep
+# names the ecosystem and the reason and nothing else, and nothing under the root
+# is inspected. Before the guard reached the root, a lock-free output there was
+# deleted first and the record that could not describe it followed.
+build unreportable-root cargo tree cargo-out
+TABBED="$WT/ui$(printf '\t')x"
+mkdir -p "$TABBED/node_modules/left-pad"
+printf '{"name":"x"}\n' >"$TABBED/package.json"
+printf '{"lockfileVersion":3}\n' >"$TABBED/package-lock.json"
+fill "$TABBED/node_modules/left-pad/index.js" 20480
+age "$TABBED/node_modules"
+run 'cleanup --targets-only --apply' >/dev/null
+assert_eq "$(alias_text <"$ROOT/err")" \
+  'worktree-output-prune-kept: worktree=<wt> ecosystem=javascript reason=unreportable-root-name' \
+  'a root whose name cannot be reported is kept, and the record carries no path'
+assert_eq "$(test -d "$TABBED/node_modules/left-pad" && echo present)" present \
+  'nothing under an unreportable root is pruned'
+# The wrapper renders one record per line; a raw tab or newline from a path would
+# be what splits one.
+assert_eq "$(LC_ALL=C tr -dc '\t' <"$ROOT/err" | wc -c | tr -d ' ')$(LC_ALL=C tr -dc '\t' <"$ROOT/out" | wc -c | tr -d ' ')" \
+  00 'no raw control byte from that path reaches the wrapper'
+# Its inverse: the roots that can be reported are still pruned, so one bad name
+# costs that root and not the worktree.
+assert_match "$(alias_text <"$ROOT/out")" "$(out_text cargo-apply)" \
+  'the reportable roots are pruned in the same run'
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

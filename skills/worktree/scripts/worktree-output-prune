@@ -135,8 +135,31 @@ class InspectionIncomplete(RuntimeError):
         self.detail = detail
 
 
+def reportable(text: str) -> bool:
+    """Whether a record can carry this text.
+
+    A record is one line of tab-separated fields, so a path holding a control
+    byte would split or mis-field its own record. Such a path is never pruned
+    either: a deletion nobody can read about is what the byte report exists to
+    prevent.
+    """
+    return all(ord(character) >= 0x20 for character in text)
+
+
 def emit(stream: str, key: str, **fields: object) -> None:
     value = " ".join("%s=%s" % (name.replace("_", "-"), text) for name, text in fields.items())
+    # Every path reaching here has been through reportable() at the point it was
+    # derived. This is that invariant rather than a second check: it refuses the
+    # worktree instead of letting a split record out, and it holds for a route
+    # added later that forgets to ask — which is how the package-root walk put
+    # paths beyond the one call site that did.
+    if not reportable(value):
+        # Naming the key, never the bytes: echoing the offending value would put
+        # the control byte on stderr, which is the one place this engine writes
+        # that nothing escapes.
+        raise InspectionIncomplete(
+            "unreportable-record", "a value of the %s record carries a control byte" % key
+        )
     sys.stdout.write("%s\t%s\t%s\n" % (stream, key, value))
     sys.stdout.flush()
 
@@ -417,14 +440,6 @@ def relative(worktree: Path, directory: Path) -> str:
     return directory.relative_to(worktree).as_posix()
 
 
-def reportable(text: str) -> bool:
-    """A record is one line of tab-separated fields, so a path carrying a
-    control byte would split or mis-field its own record. A unit whose name
-    cannot be reported is not pruned: a deletion nobody can read about is
-    exactly what the byte report exists to prevent."""
-    return all(ord(character) >= 0x20 for character in text)
-
-
 def keep(worktree: Path, unit: Unit, reason: str) -> None:
     emit(
         "err",
@@ -443,6 +458,13 @@ def discover(worktree: Path) -> Tuple[Unit, ...]:
         return ()
     units: List[Unit] = []
     for root, layout in roots:
+        if not reportable(relative(worktree, root)):
+            # The path cannot appear in its own refusal, so the record names
+            # only what it can. Nothing under this root is inspected, which is
+            # what keeps a lock-free output there from being deleted ahead of a
+            # record that could not have described it.
+            emit("err", "kept", ecosystem=layout.name, reason="unreportable-root-name")
+            continue
         for output in layout.outputs:
             path = root / output.path
             shown = relative(worktree, path)
@@ -467,8 +489,12 @@ def discover(worktree: Path) -> Tuple[Unit, ...]:
                 continue
             profiles = lock_units(path, output.lock)
             for directory in profiles.symlinked:
-                emit("err", "kept", ecosystem=layout.name,
-                     output=relative(worktree, directory), reason="symlink")
+                refused = relative(worktree, directory)
+                if not reportable(refused):
+                    emit("err", "kept", ecosystem=layout.name,
+                         reason="unreportable-unit-name")
+                    continue
+                emit("err", "kept", ecosystem=layout.name, output=refused, reason="symlink")
             if not profiles.units:
                 if not profiles.symlinked:
                     emit("err", "kept", ecosystem=layout.name, output=shown,

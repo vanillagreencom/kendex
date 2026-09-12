@@ -304,8 +304,10 @@ rather than the size of the tree.
 
 It keeps an output path, naming the reason, when the path is a symlink, is not
 a directory, resolves outside the worktree, or has tracked content under it;
-when a Cargo target/ holds no profile lock for it to take; when a unit's name
-carries a control byte the report cannot carry; when the unit was written to
+when a Cargo target/ holds no profile lock for it to take; when a unit's name,
+or the name of the package root holding it, carries a control byte the report
+cannot carry, in which case the record names the reason without the path and
+nothing under that root is touched; when the unit was written to
 within the retention window, or changed under the measurement itself;
 when its build lock is held or was replaced while it was being read; when a
 live process holds it; and when the unit is lock-free on a platform with no
