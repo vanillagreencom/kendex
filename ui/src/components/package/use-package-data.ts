@@ -10,7 +10,13 @@ import {
 } from "@/bindings";
 import { addressesDeclaration } from "@/lib/package-identity";
 import { installedCommits, landedWrites } from "@/lib/package-places";
-import { type PackageReads, timelineOf } from "@/lib/package-read-state";
+import {
+  type PackageReads,
+  SOURCE_READ_LANDED,
+  SOURCE_READ_PENDING,
+  type SourceRead,
+  sourceReadOf,
+} from "@/lib/package-read-state";
 import {
   READ_LANDED,
   READ_PENDING,
@@ -75,15 +81,15 @@ export function usePackageData(ref: PackageRef | null): {
   const [versions, setVersions] = useState<VersionRow[]>([]);
   // How each of the four went, kept beside the values: a read that failed
   // leaves the same empty page as one that found nothing, and the reason it
-  // came back with is the only thing that tells them apart.
+  // came back with is the only thing that tells them apart. The three that
+  // open the source each carry the source core said no fetch has
+  // downloaded, where that was its answer: a landed read with nothing to
+  // draw, told apart from one that failed because only a refresh, never a
+  // re-read, lifts it.
   const [record, setRecord] = useState<ReadState>(READ_PENDING);
-  const [timeline, setTimeline] = useState<ReadState>(READ_PENDING);
-  // The source the timeline is waiting on, where core's answer was that no
-  // fetch has downloaded it: a landed read with nothing to draw, told apart
-  // from one that failed because only a refresh, never a re-read, lifts it.
-  const [unfetched, setUnfetched] = useState<string | null>(null);
-  const [filesRead, setFilesRead] = useState<ReadState>(READ_PENDING);
-  const [readmeRead, setReadmeRead] = useState<ReadState>(READ_PENDING);
+  const [timeline, setTimeline] = useState<SourceRead>(SOURCE_READ_PENDING);
+  const [filesRead, setFilesRead] = useState<SourceRead>(SOURCE_READ_PENDING);
+  const [readmeRead, setReadmeRead] = useState<SourceRead>(SOURCE_READ_PENDING);
   // Whether the newest load is still out. Counted here rather than read off
   // the order below: one ticket covers four answers, and `outstanding` flips
   // on the first of them to land, so it is not this order's question to ask.
@@ -121,9 +127,8 @@ export function usePackageData(ref: PackageRef | null): {
       setFiles([]);
       setVersions([]);
       setRecord(READ_LANDED);
-      setFilesRead(READ_LANDED);
-      setTimeline(READ_LANDED);
-      setUnfetched(null);
+      setFilesRead(SOURCE_READ_LANDED);
+      setTimeline(SOURCE_READ_LANDED);
       setReading(false);
       return;
     }
@@ -155,23 +160,21 @@ export function usePackageData(ref: PackageRef | null): {
       (response) => {
         if (!lands()) return;
         setFiles(response.status === "ok" ? response.data : []);
-        setFilesRead(readOf(response));
+        setFilesRead(sourceReadOf(response));
       },
     );
     void settled(commands.packageReadme(ref.scope, ref.kind, ref.name)).then(
       (response) => {
         if (!lands()) return;
         setReadme(response.status === "ok" ? response.data : null);
-        setReadmeRead(readOf(response));
+        setReadmeRead(sourceReadOf(response));
       },
     );
     void settled(commands.packageVersions(ref.scope, ref.kind, ref.name)).then(
       (response) => {
         if (!lands()) return;
         setVersions(response.status === "ok" ? response.data : []);
-        const read = timelineOf(response);
-        setTimeline(read.timeline);
-        setUnfetched(read.unfetched);
+        setTimeline(sourceReadOf(response));
       },
     );
   }, [ref]);
@@ -186,7 +189,6 @@ export function usePackageData(ref: PackageRef | null): {
     reads: {
       record,
       timeline,
-      unfetched,
       files: filesRead,
       readme: readmeRead,
       reading,

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import { FILE_READ_FAILED_TITLE, NO_README_NOTE } from "@/lib/copy-files";
-import type { ReadState } from "@/lib/read-state";
+import { packageReadmeNote, type SourceRead } from "@/lib/package-read-state";
 
 /** The package's own words about itself, and nothing else.
  *
@@ -28,36 +28,46 @@ export function PackageReadme({
   /** The README the last landed read found, or null where the package
    *  carries none. */
   readme: ItemSource | null;
-  read: ReadState;
+  read: SourceRead;
   /** Whether the page's reads are out again, which is what disables the
    *  button while the answer under it is being asked for. */
   retryRunning: boolean;
   onRetry: () => void;
 }) {
-  if (read.status === "failed" && read.error !== null) {
-    // A read that failed is offered again where it failed, the way every
-    // other failed read on this page is: without it a transient refusal
-    // leaves the Overview holding an error until the page is left.
-    return (
-      <StatusNote
-        tone="critical"
-        title={FILE_READ_FAILED_TITLE}
-        action={
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={retryRunning}
-            onClick={onRetry}
-          >
-            {TRY_AGAIN_LABEL}
-          </Button>
-        }
-      >
-        {read.error}
-      </StatusNote>
-    );
+  const note = packageReadmeNote(read);
+  switch (note?.is) {
+    case "not-downloaded":
+      // An answer, said the way the header says it: a refresh is what
+      // lifts it, so no Try again, which would answer the same.
+      return <p className="text-sm text-muted-foreground">{note.line}</p>;
+    case "failed":
+      // A read that failed is offered again where it failed, the way every
+      // other failed read on this page is: without it a transient refusal
+      // leaves the Overview holding an error until the page is left.
+      return (
+        <StatusNote
+          tone="critical"
+          title={FILE_READ_FAILED_TITLE}
+          action={
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={retryRunning}
+              onClick={onRetry}
+            >
+              {TRY_AGAIN_LABEL}
+            </Button>
+          }
+        >
+          {note.line}
+        </StatusNote>
+      );
+    case undefined:
+      break;
+    default:
+      return note satisfies never;
   }
-  if (read.status === "pending") {
+  if (read.read.status === "pending") {
     return (
       <div className="space-y-2">
         <Skeleton className="h-3.5 w-3/4" />

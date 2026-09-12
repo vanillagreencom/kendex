@@ -178,15 +178,30 @@ pub fn apply_discard_edits(
     settle_report(&env, &scope, &report)
 }
 
+/// The Files tab's list, the file it picks and the Overview's README all
+/// open the package's source, so a source nothing has downloaded yet
+/// reaches the page as the same kind the timeline answers it with: the
+/// header and the tabs are one page describing one state.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn package_files(
     scope: Scope,
     kind: ItemKind,
     name: String,
-) -> Result<Vec<detail::PackageFile>, String> {
+) -> Result<Vec<detail::PackageFile>, SourceReadRefused> {
     let env = env()?;
-    detail::package_files(&env, &scope, kind, &name).map_err(|e| e.to_string())
+    files(&env, &scope, kind, &name)
+}
+
+/// The command's read with the machine passed in, so the shape it answers a
+/// source nothing has downloaded with is reachable from a test.
+pub fn files(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+) -> Result<Vec<detail::PackageFile>, SourceReadRefused> {
+    detail::package_files(env, scope, kind, name).map_err(SourceReadRefused::from)
 }
 
 #[tauri::command(async)]
@@ -196,9 +211,21 @@ pub fn package_file(
     kind: ItemKind,
     name: String,
     path: String,
-) -> Result<engine::ItemSource, String> {
+) -> Result<engine::ItemSource, SourceReadRefused> {
     let env = env()?;
-    detail::package_file(&env, &scope, kind, &name, &path).map_err(|e| e.to_string())
+    file(&env, &scope, kind, &name, &path)
+}
+
+/// The command's read with the machine passed in, for the same reason
+/// [`files`] has one.
+pub fn file(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    path: &str,
+) -> Result<engine::ItemSource, SourceReadRefused> {
+    detail::package_file(env, scope, kind, name, path).map_err(SourceReadRefused::from)
 }
 
 #[tauri::command(async)]
@@ -207,9 +234,20 @@ pub fn package_readme(
     scope: Scope,
     kind: ItemKind,
     name: String,
-) -> Result<Option<engine::ItemSource>, String> {
+) -> Result<Option<engine::ItemSource>, SourceReadRefused> {
     let env = env()?;
-    detail::package_readme(&env, &scope, kind, &name).map_err(|e| e.to_string())
+    readme(&env, &scope, kind, &name)
+}
+
+/// The command's read with the machine passed in, for the same reason
+/// [`files`] has one.
+pub fn readme(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+) -> Result<Option<engine::ItemSource>, SourceReadRefused> {
+    detail::package_readme(env, scope, kind, name).map_err(SourceReadRefused::from)
 }
 
 /// `None` where nothing is declared under this name — a derived bundle member
