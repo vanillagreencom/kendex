@@ -18,11 +18,10 @@ import type { ReadState } from "@/lib/read-state";
 import type { EmptyStanding } from "@/lib/updates-read-state";
 
 /** What the Updates page shows while there is no list to show, or null
- *  once there is one. Five different answers that must never blur: a
- *  first read still on its way, a read that failed with nothing kept from
- *  a better one, a machine with nothing installed, packages no check has
- *  reached a source for, and packages a check found current — only the
- *  last may say "Everything is up to date". */
+ *  once there is one. Five answers that must never blur: a first read still
+ *  on its way, one that failed with nothing kept, a machine with nothing
+ *  installed, one no check has reached a source for, and one a check found
+ *  current — only the last may say "Everything is up to date". */
 export function updatesBeforeList({
   read,
   standing,
@@ -34,8 +33,7 @@ export function updatesBeforeList({
   onBrowse,
 }: {
   read: ReadState;
-  /** What an empty list means on this machine, once the read itself has
-   *  nothing left to say. */
+  /** What an empty list means, once the read has nothing left to say. */
   standing: EmptyStanding;
   empty: boolean;
   checking: boolean;
@@ -46,8 +44,7 @@ export function updatesBeforeList({
   /** How old the answer behind this page is, already worded. */
   lastChecked: string;
   onCheck: () => void;
-  /** Where a machine with nothing installed is sent, since a check has
-   *  nothing to reach for it. */
+  /** Where a machine with nothing installed is sent. */
   onBrowse: () => void;
 }): ReactNode | null {
   const retry = (
@@ -95,9 +92,8 @@ export function updatesBeforeList({
 }
 
 /** The one empty answer this machine is owed, drawn from the standing so
- *  the three cannot be reached by two different paths. The age of the
- *  check travels with the good news: this is the page where a stale answer
- *  looks exactly like a current one. */
+ *  the three cannot be reached two ways. The age of the check travels with
+ *  the good news: here a stale answer looks exactly like a current one. */
 function emptyAnswer(
   standing: EmptyStanding,
   {
@@ -107,8 +103,8 @@ function emptyAnswer(
   }: { retry: ReactNode; lastChecked: string; onBrowse: () => void },
 ): ReactNode {
   switch (standing.kind) {
-    // The machine scan counts nothing installed, so no check can bring
-    // news: the way on is a package, not the retry.
+    // No check can bring news to an empty machine: the way on is a
+    // package, not the retry.
     case "nothing-installed":
       return (
         <EmptyState
@@ -123,8 +119,8 @@ function emptyAnswer(
           {UPDATES_NOTHING_INSTALLED_BODY}
         </EmptyState>
       );
-    // Packages are recorded and none carries news, but nothing has reached
-    // a source to say so. The check is the offer; up-to-dateness is not.
+    // Nothing has reached a source, so the check is the offer and
+    // up-to-dateness is not.
     case "unchecked":
       return (
         <EmptyState icon={RefreshCw} title={NEVER_CHECKED} action={retry}>

@@ -53,8 +53,7 @@ export type EmptyStanding =
  *  answering about another scan cannot group what is on screen. */
 export const scannedInstalled = (
   scan: ScanResult | null,
-  /** The scan store's standing error, which outlives the result it failed
-   *  to replace. */
+  /** The standing error, which outlives the result it failed to replace. */
   scanError: string | null,
   packageOf: PackageOf | null,
 ): number | null => {

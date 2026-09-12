@@ -46,8 +46,7 @@ const stub = vi.hoisted(() => ({
   lastFetched: null as number | null,
   busy: false,
   unreadable: [] as unknown[],
-  /** What the machine scan found — where the page reads whether anything
-   *  is installed. */
+  /** What the machine scan found, where the page reads what is installed. */
   scan: null as unknown,
 }));
 
@@ -73,10 +72,7 @@ vi.mock("@/stores/updates", async (importOriginal) => {
 vi.mock("@/stores/scan", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/stores/scan")>();
   const hook = (selector?: (state: unknown) => unknown) => {
-    const state = {
-      ...mod.useScanStore.getState(),
-      result: stub.scan,
-    };
+    const state = { ...mod.useScanStore.getState(), result: stub.scan };
     return selector ? selector(state) : state;
   };
   return { ...mod, useScanStore: Object.assign(hook, mod.useScanStore) };
@@ -84,8 +80,7 @@ vi.mock("@/stores/scan", async (importOriginal) => {
 
 // The join that recognises nothing, so these fixtures group as the scan saw
 // them. Which readings may be counted from at all is `scannedInstalled`'s,
-// pinned in `lib/updates-read-state.test.ts`, and the real gate is walked
-// end to end by `updates.dom.test.tsx`.
+// pinned in `lib/updates-read-state.test.ts`.
 vi.mock("@/lib/package-identity", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/package-identity")>();
   return { ...mod, usePackageIndex: () => () => null };
@@ -97,14 +92,11 @@ beforeEach(() => {
   stub.lastFetched = null;
   stub.busy = false;
   stub.unreadable = [];
-  // A landed scan holding one package, with its join answering for that
-  // scan: the ordinary machine, on which no empty state may claim the
-  // machine is empty.
+  // The ordinary machine: a scan that found something.
   stub.scan = scanFound([observedSkill("deploy")]);
 });
 
-/** A recorded package with nothing noteworthy about it — the row core
- *  emits for something installed and current. */
+/** The row core emits for something installed and current. */
 const currentRow = (name: string) =>
   updateRow(name, null, { updateAvailable: false, latest: null });
 

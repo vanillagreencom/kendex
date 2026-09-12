@@ -1,10 +1,8 @@
 // @vitest-environment jsdom
-// Where the Updates page leads when it has nothing to list. The static
-// table beside this file pins what each empty state says; this pins the one
-// thing a static render cannot reach — whether the control an empty machine
-// is given actually goes anywhere. Browse Marketplaces is the only action
-// that state offers, the check being deliberately absent, so a handler that
-// leads nowhere leaves the page with no way on.
+// Where an empty machine's Updates page leads. Browse Marketplaces is the
+// only action that state offers, the check being deliberately absent, so a
+// handler that goes nowhere leaves the page with no way on — and a static
+// render, which invokes no handler, cannot tell.
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
@@ -31,32 +29,19 @@ beforeEach(() => {
     status: "ok",
     data: [],
   } as never);
-  // The page reloads the standing on mount; an empty machine answers with
-  // nothing in every field, which is the state under test.
+  // The page reloads the standing on mount, and that answer replaces the
+  // staged one, so it carries the same empty machine.
   vi.mocked(commands.updatesOverview).mockResolvedValue({
     status: "ok",
     data: { rows: [], warnings: [], unreadable: [], fetchedAt: null },
   } as never);
-  // A settled, complete, successful scan of a machine with nothing on it,
-  // and a join that answered about that scan: the one state in which the
-  // page may say the machine is empty.
-  useScanStore.setState({
-    result: scanFound([]),
-    error: null,
-    scanning: false,
-    generation: 1,
-  });
-  useProvenanceStore.setState({ rows: [], loaded: true, answeredFor: 1 });
-  useUpdatesStore.setState({
-    rows: [],
-    warnings: [],
-    unreadable: [],
-    read: READ_LANDED,
-    lastFetched: null,
-    busy: false,
-    checking: false,
-  });
-  useNavStore.setState({ page: "updates", history: [], future: [] });
+  // A settled scan of a machine with nothing on it, and a join answering
+  // about that scan: the one state in which the page may say so. Only what
+  // differs from each store's own defaults is set.
+  useScanStore.setState({ result: scanFound([]), generation: 1 });
+  useProvenanceStore.setState({ loaded: true, answeredFor: 1 });
+  useUpdatesStore.setState({ read: READ_LANDED });
+  useNavStore.setState({ page: "updates" });
 });
 
 describe("where an empty machine's Updates page leads", () => {

@@ -3,13 +3,11 @@ import type { PackageOf } from "@/lib/package-identity";
 import { scannedInstalled } from "@/lib/updates-read-state";
 import { observedSkill, scanFound } from "@/test/observed";
 
-/** The join a landed scan's own read gives, which recognises nothing: these
- *  fixtures group as the scan saw them, which is all the count needs. */
+/** A join that recognises nothing, so fixtures group as the scan saw them. */
 const joined: PackageOf = () => null;
 
-// Only a settled, complete, successful scan may produce a count. Every
-// other reading is null and not zero, because the caller words a zero as
-// "Nothing installed yet" and takes the check away with it.
+// Every reading but a settled, complete, successful scan is null and not
+// zero, because the caller words a zero as "Nothing installed yet".
 describe("the installed count an empty Updates page may be read from", () => {
   it("counts only what a settled, complete, successful scan found", () => {
     const rows = [

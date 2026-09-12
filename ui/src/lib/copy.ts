@@ -181,8 +181,8 @@ export const DIFF_TRUNCATED_NOTE =
   "This comparison is long; only the first part is shown.";
 export const VERSION_ERROR_TITLE = "Couldn't switch versions";
 
-// Updates page. Three different empty pages, worded together so no one of
-// them can drift into claiming what the next one refuses.
+// Updates page. Three empty pages, worded together so none drifts into
+// claiming what the next refuses.
 export const UPDATES_EMPTY = "Everything is up to date";
 export const UPDATES_EMPTY_BODY =
   "Every package you installed is on its latest version.";

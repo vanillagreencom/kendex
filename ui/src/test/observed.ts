@@ -48,8 +48,8 @@ export const observedSkill = (name: string): ObservedItem =>
     vendor: null,
   });
 
-/** A landed machine scan of exactly these installations, complete unless a
- *  test hands it projects it could not read. */
+/** A landed scan of these installations, complete unless given projects it
+ *  could not read. */
 export const scanFound = (
   items: ObservedItem[],
   missingProjects: ScanResult["missingProjects"] = [],
