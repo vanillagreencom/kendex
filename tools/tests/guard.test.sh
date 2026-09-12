@@ -101,6 +101,30 @@ rm -f "$R/fake-bin/git" "$R/fake-bin/awk"
 git -C "$R" reset -q HEAD -- crates/core/tests/temp_path.rs
 rm -f "$R/crates/core/tests/temp_path.rs"
 
+echo "=== a test that names the kendex binary hands it a fixture home ==="
+# The refusal names the planted file: a red that does not is another lane's.
+mkdir -p "$R/crates/cli/tests"
+printf '%s\n' 'fn kendex() {' \
+  '    let out = std::process::Command::new(env!("CARGO_BIN_EXE_kendex")).output().unwrap();' \
+  '    drop(out);' '}' >"$R/crates/cli/tests/binary_home.rs"
+git -C "$R" add -A
+run_guard
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: binary-home=1"* ]] && [[ "$OUT" == *"crates/cli/tests/binary_home.rs"* ]] \
+  && ok "a crates/cli test that runs the binary with no fixture home is refused" \
+  || bad "a crates/cli test that runs the binary with no fixture home is refused" "rc=$RC out=$OUT"
+printf '%s\n' 'fn kendex(home: &std::path::Path) {' \
+  '    let mut run = std::process::Command::new(env!("CARGO_BIN_EXE_kendex"));' \
+  '    let out = run.envs(test_util::fixture_env(home)).output().unwrap();' \
+  '    drop(out);' '}' >"$R/crates/cli/tests/binary_home.rs"
+git -C "$R" add -A
+run_guard
+[ "$RC" -eq 0 ] \
+  && ok "the same test handing the binary fixture_env passes" \
+  || bad "the same test handing the binary fixture_env passes" "rc=$RC out=$OUT"
+git -C "$R" reset -q HEAD -- crates/cli/tests/binary_home.rs
+rm -f "$R/crates/cli/tests/binary_home.rs"
+rmdir "$R/crates/cli/tests" "$R/crates/cli"
+
 echo "=== the shipped packages' verdicts are not twinned here ==="
 # Guard delegates document sizes and changelog entries to their shipped
 # checks. The preconditions run those checks on the same defects: the

@@ -70,6 +70,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "raw Command::new — external processes go through process::Hardened." ;;
     fixture-home)
       echo "fixture HOME without KENDEX_REAL_HOME on the next line — that command would run in the dev sandbox." ;;
+    binary-home)
+      echo "the kendex binary named without a fixture home — hand it fixture_env() from crates/test_util.rs, or a HOME with KENDEX_REAL_HOME beside it; a release-profile test run otherwise drives the real machine." ;;
     fixture-diff)
       echo "the crates/*/tests diff the rooted() rule reads could not be produced." ;;
     fixture-scan)
@@ -384,6 +386,21 @@ hits=$(grep -rlE '\.env\("HOME"' crates/*/tests 2>/dev/null | while IFS= read -r
 done)
 [ -n "$hits" ] && {
   say fixture-home "$(count_lines "$hits")"
+  show "$hits" | head -5
+}
+
+# A test that runs the binary hands it a fixture home. The tree launches
+# the binary three ways — Command::new on the name, on a binding of it, and
+# through a PATH built from its directory — so the trigger is the name and
+# the check is per file: a file naming CARGO_BIN_EXE_kendex holds a
+# fixture_env() call or a HOME it sets, and the rule above pairs every HOME
+# it sets with the opt-out. A file that names the binary for another program
+# to run hands that program the same environment.
+hits=$(grep -rlF 'CARGO_BIN_EXE_kendex' crates/*/tests 2>/dev/null | while IFS= read -r f; do
+  grep -qE 'fixture_env\(|\.env\("HOME"' "$f" || printf '%s\n' "$f"
+done)
+[ -n "$hits" ] && {
+  say binary-home "$(count_lines "$hits")"
   show "$hits" | head -5
 }
 

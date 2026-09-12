@@ -275,9 +275,13 @@ impl Fixture {
             )
             .unwrap();
         }
+        // The script runs the staged binary, so the environment it gets is
+        // the binary's: a fixture home keeps the record it writes ahead of
+        // the parse inside the fixture, whichever profile built it.
         let run = std::process::Command::new(channel_script())
             .current_dir(&self.root)
             .env_clear()
+            .envs(crate::test_util::fixture_env(&self.root))
             .env(
                 "PATH",
                 format!(
