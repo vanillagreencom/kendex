@@ -243,6 +243,44 @@ else
   bad "push again: unchanged" "rc=$RC keys=$KEYS"
 fi
 
+# A recipe naming a scriptlet publishes it beside PKGBUILD and .SRCINFO:
+# left behind, every AUR build of the package fails on the missing file.
+dir="$(world scriptlet)"
+ship "$dir"
+recipe="$dir/tree/packaging/arch/kendex"
+awk '{ print } /^options=/ { print "install=kendex.install" }' "$recipe/PKGBUILD" >"$recipe/PKGBUILD.new" && mv -- "$recipe/PKGBUILD.new" "$recipe/PKGBUILD"
+awk '{ print } /^\toptions = / { print "\tinstall = kendex.install" }' "$recipe/.SRCINFO" >"$recipe/.SRCINFO.new" && mv -- "$recipe/.SRCINFO.new" "$recipe/.SRCINFO"
+printf 'post_install() { :; }\n' >"$recipe/kendex.install"
+grep -q '^install=kendex.install$' "$recipe/PKGBUILD" && grep -q '^	install = kendex.install$' "$recipe/.SRCINFO" || { echo "publish-aur.test: the scriptlet edit did not take" >&2; exit 1; }
+git -C "$dir/tree" add --all
+git -C "$dir/tree" -c user.name=world -c user.email=world@example.invalid commit --quiet -m 'scriptlet'
+release "$dir" ready
+run "$dir" kendex
+if [ "$RC" = 0 ] && [ "$KEYS" = "changed=kendex,pushed=kendex" ] &&
+  [ "$(git --git-dir="$dir/aur/kendex.git" show master:kendex.install)" = "$(cat "$recipe/kendex.install")" ]; then
+  ok "scriptlet: pushed beside the recipe, the AUR's master holds kendex.install"
+else
+  bad "scriptlet: the AUR's master holds kendex.install" "rc=$RC keys=$KEYS
+$OUT"
+fi
+
+# --publishable decides and prints, clones nothing: the deferred package is a
+# keyed line, the ready ones are the bare names on stdout, the AUR is untouched.
+dir="$(world publishable)"
+bump "$dir"
+release "$dir" none
+rm -rf -- "$dir/aur/kendex-git.git"
+before="$(aur_head "$dir" kendex)"
+run "$dir" --publishable kendex kendex-git
+after="$(aur_head "$dir" kendex)"
+names="$(printf '%s\n' "$OUT" | grep -x 'kendex\|kendex-bin\|kendex-git' || true)"
+if [ "$RC" = 0 ] && [ "$KEYS" = "deferred=kendex" ] && [ "$names" = "kendex-git" ] && [ "$before" = "$after" ]; then
+  ok "--publishable: kendex deferred, kendex-git named, no clone attempted (its AUR repository is gone and nothing complained)"
+else
+  bad "--publishable: want rc=0 keys=deferred=kendex names=kendex-git" "got rc=$RC keys=$KEYS names=$names
+$OUT"
+fi
+
 # An AUR repository that cannot be cloned fails that package and goes on.
 dir="$(world clone)"
 release "$dir" none

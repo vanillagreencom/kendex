@@ -16,7 +16,9 @@ Every refusal opens with one keyed line, `check-aur-sync: <key>=<value>`:
 --print-sources and --print-source-checksums are what tools/publish-aur reads
 to decide whether a release's downloads exist and match the recipe. A `git+`
 source is left out of both: it resolves whether or not a release exists,
-which is why kendex-git prints nothing and is never deferred.
+which is why kendex-git prints nothing and is never deferred. --print-files
+is the file set a recipe publishes: PKGBUILD, .SRCINFO and every scriptlet
+(`install=`, `changelog=`) it names, which the remote check compares too.
 """
 
 from __future__ import annotations
@@ -351,7 +353,22 @@ def check_local(package: str, directory: Path) -> list[str]:
     return problems
 
 
+def recipe_files(directory: Path) -> tuple[str, ...]:
+    """Every file the recipe publishes: the two makepkg reads, then each
+    scriptlet the PKGBUILD names, in order and once. A scriptlet left behind
+    makes every AUR build of the package fail on the missing file."""
+    pkgbuild, splits = parse_pkgbuild(directory / "PKGBUILD")
+    files = ["PKGBUILD", ".SRCINFO"]
+    for fields in (pkgbuild, *splits.values()):
+        for key in ("install", "changelog"):
+            for name in fields.get(key, []):
+                if name not in files:
+                    files.append(name)
+    return tuple(files)
+
+
 def check_remote(package: str, directory: Path, files: tuple[str, ...]) -> list[str]:
+    files = recipe_files(directory)
     with tempfile.TemporaryDirectory() as tmp:
         clone = Path(tmp) / package
         result = subprocess.run(
@@ -458,6 +475,11 @@ def main() -> int:
         help="print each http(s) source URL and the sha256 the recipe declares for it",
     )
     parser.add_argument(
+        "--print-files",
+        action="store_true",
+        help="print the files each selected recipe publishes (PKGBUILD, .SRCINFO, its scriptlets)",
+    )
+    parser.add_argument(
         "packages",
         nargs="*",
         choices=[*PACKAGES, []],
@@ -471,6 +493,15 @@ def main() -> int:
             for _, (relative, _) in selected.items():
                 for url, digest in remote_source_checksums(ROOT / relative):
                     print(f"{url}\t{digest}")
+        except CheckError as error:
+            return refuse(error)
+        return 0
+
+    if args.print_files:
+        try:
+            for _, (relative, _) in selected.items():
+                for name in recipe_files(ROOT / relative):
+                    print(name)
         except CheckError as error:
             return refuse(error)
         return 0

@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 # Publish this repository's Arch recipes to their AUR repositories.
 #
-# Usage: tools/publish-aur [--dry-run] [package...]
+# Usage: tools/publish-aur [--dry-run | --publishable] [package...]
 #
 # --dry-run: show what would be pushed without committing or pushing.
+# --publishable: decide only; print the name of each package whose release
+#   is ready, one per line, and clone nothing. The weekly drift job compares
+#   exactly those against the AUR, since a deferred package is expected to
+#   differ from it.
 # -h, --help: print this help.
 #
 # Packages: kendex, kendex-bin, kendex-git (all three when none is named).
 #
-# A run copies PKGBUILD and .SRCINFO from packaging/arch/<package>/ into a
+# A run copies PKGBUILD, .SRCINFO and every scriptlet the recipe names
+# (tools/check-aur-sync --print-files) from packaging/arch/<package>/ into a
 # clone of the AUR repository, commits what changed and pushes it. Pushing
 # needs the AUR account's SSH key; a dry run clones over HTTPS and needs none.
 # Edit recipes here: publication overwrites direct AUR edits.
@@ -47,12 +52,14 @@ say() { # KEY VALUE [LINE...] — the keyed line, then each explanation line
 }
 
 dry_run=0
+publishable=0
 packages=()
 for argument in "$@"; do
   case "$argument" in
     --dry-run) dry_run=1 ;;
-    -h|--help) sed -n '2,22p' "${BASH_SOURCE[0]}"; exit 0 ;;
-    -*) say option "$argument" "usage: tools/publish-aur [--dry-run] [package...]" >&2; exit 2 ;;
+    --publishable) publishable=1 ;;
+    -h|--help) sed -n '2,27p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -*) say option "$argument" "usage: tools/publish-aur [--dry-run | --publishable] [package...]" >&2; exit 2 ;;
     kendex|kendex-bin|kendex-git) packages+=("$argument") ;;
     *) say package "$argument" "the packages are kendex, kendex-bin and kendex-git" >&2; exit 2 ;;
   esac
@@ -157,6 +164,11 @@ for package in "${packages[@]}"; do
     *) status=1; continue ;;
   esac
 
+  if [[ "$publishable" -eq 1 ]]; then
+    printf '%s\n' "$package"
+    continue
+  fi
+
   if [[ "$dry_run" -eq 1 ]]; then
     remote="https://aur.archlinux.org/$package.git"
   else
@@ -169,9 +181,18 @@ for package in "${packages[@]}"; do
     continue
   fi
 
-  for file in PKGBUILD .SRCINFO; do
+  # The recipe's own file set: a scriptlet it names ships beside it, or every
+  # AUR build fails on the missing file. check-aur-sync refused a name with
+  # no file at the top of this run.
+  if ! files="$("$check" --print-files "$package")"; then
+    say unreadable "$package" "the recipe's file set could not be read" >&2
+    status=1
+    continue
+  fi
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
     install -m 644 -- "$source_dir/$file" "$clone/$file"
-  done
+  done <<< "$files"
 
   # Intent-to-add puts a new file in the diff too; without it a file the AUR
   # lacks would look like no change at all.
