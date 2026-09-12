@@ -257,16 +257,17 @@ export const FORK_ERROR_TITLE = "Couldn't keep the edits";
 export const forkedToastLabel = (name: string): string =>
   `${name} is yours now — updates are paused`;
 // Home's row for installs whose files no longer match what kendex wrote:
-// which packages, where, what that means, and the two ways out. The row
-// never says who edited them — a commit in the project's own repository
-// changes the files the same as a hand does.
+// which packages, where, and what that means. The remedies belong to the
+// package's own page, which holds the per-package answers this row does
+// not. The row never says who edited them — a commit in the project's
+// own repository changes the files the same as a hand does.
 export const editedAttentionTitle = (count: number): string =>
   count === 1
     ? "1 installed package was edited on disk"
     : `${count} installed packages were edited on disk`;
 /** `named` is the packages by place: "gh in vg; dev and orch in hyprtrade". */
 export const editedAttentionDetail = (named: string): string =>
-  `${named}. A file kendex installed no longer matches its source, so updates are paused there. Keep each as your own copy, or discard the edits.`;
+  `${named}. A file kendex installed no longer matches its source, so updates are paused there.`;
 export const EDITED_ATTENTION_ACTION = "Library";
 /** The Library's narrowing to those packages, in the filter strip. */
 export const EDITED_ON_DISK_LABEL = "Edited on disk";
