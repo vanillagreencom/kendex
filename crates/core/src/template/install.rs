@@ -927,36 +927,11 @@ fn install_local(
             source: Some(LOCAL_SOURCE_NAME.to_owned()),
             harnesses,
             method,
-            skills: resolution
-                .copies
-                .iter()
-                .filter(|copy| copy.kind == ItemKind::Skill)
-                .map(|copy| copy.name.clone())
-                .collect(),
-            agents: resolution
-                .copies
-                .iter()
-                .filter(|copy| copy.kind == ItemKind::Agent)
-                .map(|copy| copy.name.clone())
-                .collect(),
-            hooks: resolution
-                .copies
-                .iter()
-                .filter(|copy| copy.kind == ItemKind::Hook)
-                .map(|copy| copy.name.clone())
-                .collect(),
-            commands: resolution
-                .copies
-                .iter()
-                .filter(|copy| copy.kind == ItemKind::Command)
-                .map(|copy| copy.name.clone())
-                .collect(),
-            mcp_servers: resolution
-                .copies
-                .iter()
-                .filter(|copy| copy.kind == ItemKind::McpServer)
-                .map(|copy| copy.name.clone())
-                .collect(),
+            skills: copies_of(resolution, ItemKind::Skill),
+            agents: copies_of(resolution, ItemKind::Agent),
+            hooks: copies_of(resolution, ItemKind::Hook),
+            commands: copies_of(resolution, ItemKind::Command),
+            mcp_servers: copies_of(resolution, ItemKind::McpServer),
             ..AddRequest::default()
         },
     )?;
