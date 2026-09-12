@@ -414,11 +414,15 @@ guess would name a real commit that is not the recorded one: push prints no
 map and refuses, leaving the branch rebased and unpushed.
 
 That rewrite outlives the refusal, and a retry would find the base already
-contained, rebase nothing and derive nothing, so the refusing push records
-'rebase-unmapped: <pre-rebase-head>' in 'kendex-rebase-map' in the worktree's
-git dir and every later push refuses on it, --no-rebase included. Reconcile
-every recorded SHA against the worktree's reflog, then remove that file to
-push again; there is no flag that skips it.
+contained, rebase nothing and derive nothing. So before any rewrite starts,
+push and restack record 'rebase-unmapped: <head-about-to-be-rewritten>' in
+'kendex-rebase-map' in the worktree's git dir, and clear it only once the map
+is durable or the rewrite is unwound and the branch is back on that head. A
+death anywhere in between, an OOM kill included, leaves the record standing,
+and every later push refuses on it, --no-rebase included. Reconcile every
+recorded SHA against the worktree's reflog, then remove that file to push
+again; there is no flag that skips it. A rewrite whose record cannot be
+written does not start.
 
 Every path that rewrites branch commits reports the same map from the same
 emitter: this auto-rebase, and a completed restack through 'create --reuse',

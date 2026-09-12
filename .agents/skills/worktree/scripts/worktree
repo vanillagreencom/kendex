@@ -187,8 +187,11 @@ record_pending_restack_authorization() {
   fi
 }
 
+# Every caller has already unwound the rewrite and put the branch back on its
+# recorded head, so the write-ahead record goes with the authorization.
 cancel_pending_restack_authorization() {
   local wt="$1" authorized_head=""
+  warn_uncleared_pending_rewrite "$wt"
   authorized_head="$(restack_state_get "$wt" authorizedHead)"
   if [[ -z "$authorized_head" ]]; then
     clear_restack_push_authorization "$wt"
@@ -521,17 +524,57 @@ restack_rebase_map_file() {
 # same line.
 readonly RESTACK_UNMAPPED_MARK='rebase-unmapped:'
 
-# Record an unmapped rewrite in the worktree's map file. The caller refuses
-# whatever this returns; a marker that cannot be written narrows that refusal
-# to the current process, which is why the failure is reported rather than
-# swallowed.
-record_unmapped_rewrite() {
+# Record, BEFORE a rewrite starts, the head it is about to rewrite. Write-ahead
+# is the whole point: between git rewriting the first commit and a map reaching
+# disk there is a window where the branch is rewritten and nothing describes
+# it, and a process death there would leave the next run to find a contained
+# base, derive no map and publish over stale SHAs. With the record already
+# down, a death anywhere in that window leaves it standing and the next push
+# refuses. Its caller must not start the rewrite when this fails.
+record_pending_rewrite() {
   local wt="$1" original_head="$2" map_file=""
   if ! map_file="$(restack_rebase_map_file "$wt")" || \
      ! printf '%s %s\n' "$RESTACK_UNMAPPED_MARK" "$original_head" >>"$map_file"; then
-    worktree_message rebase-unmapped-unrecorded "$wt" "Error: Could not record the unmapped rewrite in $wt, so a later push cannot be refused on it; reconcile the recorded SHAs before any push." >&2
+    worktree_message rebase-pending-unrecorded "$wt" "Error: Could not record the pending rewrite in $wt, so a rewrite interrupted here could not be refused later; refusing to start it." >&2
     return 1
   fi
+}
+
+# Drop that record, once the rewrite's map is durable or the rewrite was
+# cancelled and its head restored. Hop lines in the same file are kept: they
+# describe rewrites that did get mapped. A clear that fails leaves the record
+# standing, which refuses the next push — the direction this must fail, and why
+# every caller reports the failure rather than passing it on.
+clear_pending_rewrite() {
+  local wt="$1" map_file="" tmp="" line="" kept=0
+  map_file="$(restack_rebase_map_file "$wt")" || return 1
+  [[ -e "$map_file" ]] || return 0
+  tmp="$map_file.pending.$$"
+  : >"$tmp" || return 1
+  while IFS= read -r line; do
+    case "$line" in
+      "$RESTACK_UNMAPPED_MARK "*) ;;
+      *)
+        printf '%s\n' "$line" >>"$tmp" || { rm -f "$tmp"; return 1; }
+        kept=1
+        ;;
+    esac
+  done <"$map_file"
+  if [[ "$kept" -eq 0 ]]; then
+    rm -f "$tmp"
+    rm -f "$map_file" || return 1
+    return 0
+  fi
+  mv "$tmp" "$map_file" || { rm -f "$tmp"; return 1; }
+}
+
+# One report for every caller that finished with the rewrite, so a record left
+# behind is never silent: the push it blocks is a later one.
+warn_uncleared_pending_rewrite() {
+  local wt="$1"
+  clear_pending_rewrite "$wt" && return 0
+  worktree_message rebase-pending-uncleared "$wt" "Warning: The finished rewrite's pending record could not be cleared, so the next push refuses until it is removed." >&2
+  return 0
 }
 
 # Sets UNMAPPED_REWRITE_HEAD to the pre-rebase head an earlier push recorded
@@ -552,14 +595,11 @@ read_unmapped_rewrite() {
 }
 
 # Every way the map can fail leaves the branch rewritten with nothing
-# describing it, which is the state a later push must refuse on. The order here
-# is the point: the rewrite is recorded BEFORE the authorization is cleared,
-# because clearing unsets originalHead and a marker written after it would name
-# nothing and read as no marker at all. An empty head means the record never
-# held one, so there is nothing to carry across.
+# describing it, which is the state a later push must refuse on. The record
+# that makes it refuse is already on disk: it was written before the rewrite
+# started, so this arm only has to leave it there and clear the authorization.
 restack_map_refusal() {
-  local wt="$1" original_head="$2" key="$3" value="$4" text="$5"
-  [[ -z "$original_head" ]] || record_unmapped_rewrite "$wt" "$original_head" || true
+  local wt="$1" key="$2" value="$3" text="$4"
   clear_restack_push_authorization "$wt"
   worktree_message "$key" "$value" "$text" >&2
   return 1
@@ -591,22 +631,25 @@ emit_restack_rebase_map() {
      ! pre_list="$(git -C "$wt" log --reverse --format='%H %s' "$base_oid..$original_head")" || \
      ! post_list="$(git -C "$wt" log --reverse --format='%H %s' "$base_oid..HEAD")" || \
      ! map_lines="$(emit_rebase_map "$pre_list" "$post_list")"; then
-    restack_map_refusal "$wt" "$original_head" restack-map-unreadable "$wt" \
+    restack_map_refusal "$wt" restack-map-unreadable "$wt" \
       "Error: Could not map the restacked commits of $wt from its recorded base and original head; no rebase map was reported and no rewritten push was authorized."
     return 1
   fi
-  [[ -n "$map_lines" ]] || return 0
+  # The rewrite provably changed nothing, so nothing needs describing.
+  [[ -n "$map_lines" ]] || { warn_uncleared_pending_rewrite "$wt"; return 0; }
   printf '%s\n' "$map_lines" >&2
   if ! map_file="$(restack_rebase_map_file "$wt")"; then
-    restack_map_refusal "$wt" "$original_head" restack-map-unresolved "$wt" \
+    restack_map_refusal "$wt" restack-map-unresolved "$wt" \
       "Error: Could not resolve the worktree-private rebase-map file for $wt; the lines above are the map's only copy and no rewritten push was authorized."
     return 1
   fi
   if ! printf '%s\n%s\n' "$RESTACK_HOP_MARK" "$map_lines" >>"$map_file"; then
-    restack_map_refusal "$wt" "$original_head" restack-map-unrecorded "$map_file" \
+    restack_map_refusal "$wt" restack-map-unrecorded "$map_file" \
       "Error: Could not append the rebase map to $map_file; the lines above are the map's only copy and no rewritten push was authorized."
     return 1
   fi
+  # The hop is on disk, so the rewrite it describes no longer needs the record.
+  warn_uncleared_pending_rewrite "$wt"
 }
 
 # Parse `push`'s arguments. Sets PUSH_ARG, PUSH_SET_UPSTREAM and
@@ -2298,6 +2341,14 @@ case "${1:-}" in
             exit 1
           fi
           prepare_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID" "$REUSE_BASE_OID" || exit 1
+          # One write-ahead for both engines, which start just below. It covers
+          # a paused restack too: the record outlives that process and the
+          # restack continue that completes the map is what clears it.
+          if ! record_pending_rewrite "$WT_PATH" "$(restack_state_get "$WT_PATH" originalHead)"; then
+            cancel_pending_restack_authorization "$WT_PATH"
+            restore_unshadowed_worktree_setup "$WT_PATH"
+            exit 1
+          fi
           if [[ "$REPLAY" == true ]]; then
             # Replay engine: detach at the base, cherry-pick the unique range
             # in order, and let finish_replay_branch_move move the branch ref
@@ -3012,8 +3063,14 @@ case "${1:-}" in
           # rewrite is reported as an old→new commit map.
           PRE_REBASE_HEAD="$(git -C "$WT_PATH" rev-parse HEAD)"
           PRE_REBASE_COMMITS="$(git -C "$WT_PATH" log --reverse --format='%H %s' "origin/$DEFAULT_BRANCH..HEAD")"
+          # Write-ahead, before git touches a commit: see record_pending_rewrite.
+          record_pending_rewrite "$WT_PATH" "$PRE_REBASE_HEAD" || exit 1
           if ! git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
             git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || true
+            # An abort that unwound the rewrite puts the branch back on the head
+            # the record names, so the record goes with it; one that did not
+            # leaves the branch mid-rewrite, where the record must stand.
+            rebase_in_progress "$WT_PATH" || warn_uncleared_pending_rewrite "$WT_PATH"
             worktree_message push-rebase-failed "$CURRENT_BRANCH" "Error: Rebase onto origin/$DEFAULT_BRANCH failed (conflicts). Push with --no-rebase or resolve manually." >&2
             exit 1
           fi
@@ -3021,15 +3078,17 @@ case "${1:-}" in
           setup_worktree_links "$WT_PATH"
           POST_REBASE_COMMITS="$(git -C "$WT_PATH" log --reverse --format='%H %s' "origin/$DEFAULT_BRANCH..HEAD")"
           if ! emit_rebase_map "$PRE_REBASE_COMMITS" "$POST_REBASE_COMMITS"; then
-            # The rewrite outlives this refusal, so it is recorded in the
-            # worktree before exiting; a retry reads it above and refuses too.
-            record_unmapped_rewrite "$WT_PATH" "$PRE_REBASE_HEAD" || true
+            # The record written before the rebase stays: a retry reads it
+            # above and refuses rather than publishing an undescribed rewrite.
             worktree_message push-rebase-unmapped "$PRE_REBASE_HEAD" "Error: The rebase onto origin/$DEFAULT_BRANCH is done but its commit map could not be derived, so SHAs recorded before it cannot be reconciled; refusing to push." >&2
             echo "The branch is rebased; its pre-rebase commits are in the reflog: git -C \"$WT_PATH\" reflog" >&2
             echo "Reconcile every recorded SHA against that reflog, then remove the record to push:" >&2
             echo "  rm -f \"$(restack_rebase_map_file "$WT_PATH" 2>/dev/null || printf '<map file>')\"" >&2
             exit 1
           fi
+          # The map is printed, which is how this path makes it durable: the
+          # caller captures the transcript whatever the push's exit code.
+          warn_uncleared_pending_rewrite "$WT_PATH"
         fi
       fi
     fi

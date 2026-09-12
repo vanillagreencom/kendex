@@ -372,6 +372,11 @@ map_lines() {
     -) printf -- '-' ;;
     1) printf 'rebase-map: <pre> <head>' ;;
     2d) printf 'rebase-map: <pre~1> dropped;rebase-map: <pre> <head>' ;;
+    # Not a hop: the write-ahead record a rewrite leaves until its map is
+    # durable or the rewrite is unwound, naming the head it started from.
+    unmapped) printf 'rebase-unmapped: <pre>' ;;
+    unmapped-head) printf 'rebase-unmapped: <head>' ;;
+    unmapped-head1) printf 'rebase-unmapped: <head~1>' ;;
     *) printf 'UNKNOWN-MAP-SPEC:%s' "$1" ;;
   esac
 }
@@ -383,6 +388,7 @@ map_file_text() {
   case "$spec" in
     -) printf -- '-' ;;
     *+*) printf '%s;%s' "$(map_file_text "${spec%%+*}")" "$(map_file_text "${spec#*+}")" ;;
+    unmapped*) map_lines "$spec" ;;
     *) printf 'rebase-hop:;%s' "$(map_lines "$spec")" ;;
   esac
 }
@@ -432,17 +438,17 @@ push after a clean replay publishes the head with the original lease|clean repla
 a dirty tree is refused before any mutation|clean dirty|create topic --reuse --replay|1|-|dirty|engine=none branch=topic head=pre ref=pre ahead=1 dirty= M file.txt tree=feature.txt:feature,file.txt:orig,other.txt:orig restack=- remote=pre map=-
 a merge commit in the range is refused and routed to the rebase engine|clean merge|create topic --reuse --replay|1|-|merges|engine=none branch=topic head=end ref=end ahead=3 dirty=- tree=feature.txt:feature,file.txt:orig,other.txt:orig,side.txt:side restack=- remote=pre map=-
 --reuse --replay over a conflict aborts back to the pre-replay branch and names both recovery paths|conflict|create topic --reuse --replay|1|-|aborted|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
---restack --replay over a published branch pauses the sequencer with a bound token and the branch unmoved|conflict publish|create topic --restack --replay|1|-|paused|engine=replay branch=detached head=base ref=pre ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:bound,mode:replay remote=pre map=-
---restack --replay over an unpublished branch pauses with no remote lease|conflict|create topic --restack --replay|1|-|paused|engine=replay branch=detached head=base ref=pre ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound,mode:replay remote=- map=-
+--restack --replay over a published branch pauses the sequencer with a bound token and the branch unmoved|conflict publish|create topic --restack --replay|1|-|paused|engine=replay branch=detached head=base ref=pre ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:bound,mode:replay remote=pre map=unmapped
+--restack --replay over an unpublished branch pauses with no remote lease|conflict|create topic --restack --replay|1|-|paused|engine=replay branch=detached head=base ref=pre ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound,mode:replay remote=- map=unmapped
 continue completes the resolved replay and authorizes its exact head|conflict publish restack-replay resolve|restack continue topic|0|completed|map:1|engine=none branch=topic head=rebased ref=head ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre map=1
 push after a completed replay publishes the rewritten head|conflict publish restack-replay resolve continue|push topic|0|-|skip-rebase|engine=none branch=topic head=end ref=end ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=- remote=end map=1
 skip drops the represented commit and replays the refresh-only commit|merged restack-replay|restack skip topic|0|completed|map:2d|engine=none branch=topic head=rebased ref=head ahead=1 dirty=- tree=file.txt:already merged plus main follow-up,other.txt:orig,refresh-only.txt:refresh only restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre map=2d
 abort restores the pre-replay branch and clears the record|conflict restack-replay|restack abort topic|0|aborted|-|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
-continue with HEAD checked out onto the branch is refused|conflict second restack-replay raw-checkout|restack continue topic|1|-|refusal:replay-mismatch|engine=replay branch=topic head=end ref=end ahead=2 dirty=- tree=file.txt:feature,other.txt:orig,second.txt:second restack=remote:origin,branch:topic,expected:-,orig:end,base:base,pending:true,token:bound,mode:replay remote=- map=-
+continue with HEAD checked out onto the branch is refused|conflict second restack-replay raw-checkout|restack continue topic|1|-|refusal:replay-mismatch|engine=replay branch=topic head=end ref=end ahead=2 dirty=- tree=file.txt:feature,other.txt:orig,second.txt:second restack=remote:origin,branch:topic,expected:-,orig:end,base:base,pending:true,token:bound,mode:replay remote=- map=unmapped-head
 abort with HEAD checked out onto the branch restores it|conflict second restack-replay raw-checkout|restack abort topic|0|aborted|-|engine=none branch=topic head=end ref=end ahead=2 dirty=- tree=file.txt:feature,other.txt:orig,second.txt:second restack=- remote=- map=-
-abort after a hand cherry-pick quit refuses to force the checkout over the unmerged index|conflict restack-replay raw-quit|restack abort topic|1|-|unreattachable|engine=none branch=detached head=base ref=pre ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:unbound,mode:replay remote=- map=-
+abort after a hand cherry-pick quit refuses to force the checkout over the unmerged index|conflict restack-replay raw-quit|restack abort topic|1|-|unreattachable|engine=none branch=detached head=base ref=pre ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:unbound,mode:replay remote=- map=unmapped
 abort after a hand cherry-pick abort clears the orphaned record and reattaches the branch|conflict restack-replay raw-abort|restack abort topic|0|cleared|-|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
-remote movement while paused refuses continue and leaves the replay paused|conflict publish restack-replay resolve move-remote|restack continue topic|1|-|remote-moved|engine=replay branch=detached head=base ref=pre ahead=0 dirty=M  file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:bound,mode:replay remote=external map=-
+remote movement while paused refuses continue and leaves the replay paused|conflict publish restack-replay resolve move-remote|restack continue topic|1|-|remote-moved|engine=replay branch=detached head=base ref=pre ahead=0 dirty=M  file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:bound,mode:replay remote=external map=unmapped
 abort stays available after remote movement|conflict publish restack-replay resolve move-remote|restack abort topic|0|aborted|-|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=external map=-
 remote movement after authorization fails the exact lease|clean replay move-remote|push topic|1|-|skip-rebase+lease-rejected|engine=none branch=topic head=end ref=end ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:end remote=external map=1
 --replay without an engine to modify is refused|plain|create topic --replay|1|-|bare-flag|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,other.txt:orig restack=- remote=- map=-

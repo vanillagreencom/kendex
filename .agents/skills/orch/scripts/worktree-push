@@ -43,12 +43,14 @@
 # reached workflow state before the refusal; `--check-live-round` consumes
 # nothing and deletes nothing.
 #
-# The same file carries one more line: `rebase-unmapped: <pre-rebase-head>`,
-# which a push auto-rebase writes when it rewrote the branch and could not
-# derive a map for it. No mapping repairs that rewrite, so this refuses on the
-# line before it applies any hop and publishes nothing. An operator reconciles
-# the recorded SHAs against the worktree reflog and removes the file, which is
-# also what clears it for `worktree push`.
+# The same file carries one more line: `rebase-unmapped: <head>`, which a push
+# or a restack writes BEFORE it rewrites that head and clears once the rewrite
+# is mapped or unwound. It stands wherever a rewrite happened that no map
+# describes, whether the tool refused or a kill left it no chance to. No
+# mapping repairs that, so this refuses on the line before it applies any hop
+# and publishes nothing. An operator reconciles the recorded SHAs against the
+# worktree reflog and removes the file, which is also what clears it for
+# `worktree push`.
 #
 # A fix round in flight is refused rather than reconciled: its record pins the
 # commit the delegated agent is working from, and the rebase this command runs
