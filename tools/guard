@@ -70,6 +70,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "raw Command::new — external processes go through process::Hardened." ;;
     fixture-home)
       echo "fixture HOME without KENDEX_REAL_HOME on the next line — that command would run in the dev sandbox." ;;
+    test-scan)
+      printf 'the per-file scan behind the %s lane could not run, so its files were not judged.\n' "$2" ;;
     binary-home)
       echo "a launch in a test naming the kendex binary carries no fixture home before it runs — give its builder fixture_env() from crates/test_util.rs, or a HOME with KENDEX_REAL_HOME beside it; a release-profile test run otherwise drives the real machine." ;;
     fixture-diff)
@@ -371,19 +373,35 @@ hits=$(scan 'Command::new' '^crates/(core|cli)/src/' | grep -v '^crates/core/src
   show "$hits" | head -5
 }
 
+# The per-file scans over the integration tests: the files a pattern
+# selects, each read by one awk program that prints the lines it refuses.
+# grep's 1 is no file selected; any other status of grep, and an awk that
+# could not run, is the scan's own failure and returns here as one, so the
+# lane refuses instead of reporting the files it never read as clean.
+# Usage: test_scan <grep-ERE> <awk-program>; the hits on stdout.
+test_scan() {
+  local pattern=$1 program=$2 files f
+  files=$(grep -rlE -- "$pattern" crates/*/tests)
+  case $? in 0 | 1) ;; *) return 2 ;; esac
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    awk -v file="$f" "$program" "$f" || return 2
+  done <<<"$files"
+}
+
 # A command that hands the binary a fixture home must say on the spot that
 # the home it gave is the one it means: without that, a debug build sandboxes
 # itself and the command drives the dev home instead of the fixture. Checked
 # per call site — one compliant builder must not vouch for the rest of a file
 # that holds several.
-hits=$(grep -rlE '\.env\("HOME"' crates/*/tests 2>/dev/null | while IFS= read -r f; do
-  awk -v file="$f" '
+if ! hits=$(test_scan '\.env\("HOME"' '
     pending && /^[[:space:]]*(\/\/|$)/ { next }
     pending { if ($0 !~ /KENDEX_REAL_HOME/) print file ":" pending; pending = 0 }
     /\.env\("HOME"/ { pending = NR }
     END { if (pending) print file ":" pending }
-  ' "$f"
-done)
+  '); then
+  say test-scan fixture-home
+fi
 [ -n "$hits" ] && {
   say fixture-home "$(count_lines "$hits")"
   show "$hits" | head -5
@@ -402,8 +420,7 @@ done)
 # A quoted program name other than kendex is another program's launch and
 # stays out; the binary reached through PATH is covered by the computed
 # launch that put it there.
-hits=$(grep -rlF 'CARGO_BIN_EXE_kendex' crates/*/tests 2>/dev/null | while IFS= read -r f; do
-  awk -v file="$f" '
+if ! hits=$(test_scan 'CARGO_BIN_EXE_kendex' '
     function refuse() { print file ":" pending; pending = 0 }
     function clears(l) { return l ~ /\.envs\([[:space:]]*(crate::)?(test_util::)?fixture_env\(|\.env\([[:space:]]*"HOME"/ }
     function launches(l) { return l ~ /\.(output|status|spawn)\(/ }
@@ -420,8 +437,9 @@ hits=$(grep -rlF 'CARGO_BIN_EXE_kendex' crates/*/tests 2>/dev/null | while IFS= 
     clears(line) { pending = 0; next }
     launches(line) || line ~ /^[[:space:]]*}/ { refuse() }
     END { if (pending) refuse() }
-  ' "$f"
-done)
+  '); then
+  say test-scan binary-home
+fi
 [ -n "$hits" ] && {
   say binary-home "$(count_lines "$hits")"
   show "$hits" | head -5

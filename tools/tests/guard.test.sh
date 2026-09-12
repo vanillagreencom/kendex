@@ -86,6 +86,9 @@ set -euo pipefail
 if [ "${FAIL_TEMP_AWK:-0}" -eq 1 ] && [[ "${1:-}" == *pending_text* ]]; then
   exit 2
 fi
+if [ "${FAIL_TEST_AWK:-0}" -eq 1 ] && [[ "$*" == *"function clears"* ]]; then
+  exit 2
+fi
 exec "$REAL_AWK" "$@"
 SH
 chmod +x "$R/fake-bin/git" "$R/fake-bin/awk"
@@ -97,6 +100,16 @@ run_guard PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_AWK="$REAL_AWK" FAI
 [ "$RC" -ne 0 ] && case "$OUT" in *"guard: fixture-scan=unreadable"*) true ;; *) false ;; esac \
   && ok "a failed fixture parser blocks guard" \
   || bad "a failed fixture parser blocks guard" "rc=$RC out=$OUT"
+# A per-file scan runs only over a file its pattern selects, so a marked
+# launch is planted for the stub to refuse to read.
+printf '%s\n' 'fn kendex(home: &std::path::Path) {' \
+  '    let out = std::process::Command::new(env!("CARGO_BIN_EXE_kendex")).envs(test_util::fixture_env(home)).output().unwrap();' \
+  '    drop(out);' '}' >"$R/crates/core/tests/binary_named.rs"
+run_guard PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" REAL_AWK="$REAL_AWK" FAIL_TEST_AWK=1
+[ "$RC" -ne 0 ] && case "$OUT" in *"guard: test-scan=binary-home"*) true ;; *) false ;; esac \
+  && ok "a failed per-file test scan blocks guard, naming its lane" \
+  || bad "a failed per-file test scan blocks guard, naming its lane" "rc=$RC out=$OUT"
+rm -f "$R/crates/core/tests/binary_named.rs"
 rm -f "$R/fake-bin/git" "$R/fake-bin/awk"
 git -C "$R" reset -q HEAD -- crates/core/tests/temp_path.rs
 rm -f "$R/crates/core/tests/temp_path.rs"
