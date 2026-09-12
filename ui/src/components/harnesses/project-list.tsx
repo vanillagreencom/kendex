@@ -54,6 +54,7 @@ import {
 } from "@/lib/derive";
 import { scopeNames } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
+import { useMissingRows } from "@/lib/missing-files";
 import { checksStanding } from "@/lib/package-checks";
 import {
   packagesUncounted,
@@ -403,6 +404,9 @@ export function ProjectList() {
   const changesRead = useProjectChangesStore((s) => s.read);
   const items = result?.items ?? [];
   const packageOf = usePackageIndex();
+  // The packages whose rendering is gone, which the Library draws a row
+  // for: a card's kind badge opens that list, so it counts the same set.
+  const missingRows = useMissingRows();
   // The badges count packages and their clicks open the Library on the same
   // narrowing, so both wait on the one read that says which installations
   // are one package.
@@ -439,7 +443,14 @@ export function ProjectList() {
           subtitle="Works in every project on this computer"
           counts={
             packageOf
-              ? [...installedCountByKind(items, personal, packageOf).entries()]
+              ? [
+                  ...installedCountByKind(
+                    items,
+                    personal,
+                    packageOf,
+                    missingRows,
+                  ).entries(),
+                ]
               : []
           }
           uncounted={uncounted}
@@ -496,6 +507,7 @@ export function ProjectList() {
                           items,
                           place,
                           packageOf,
+                          missingRows,
                         ).entries(),
                       ]
                     : []

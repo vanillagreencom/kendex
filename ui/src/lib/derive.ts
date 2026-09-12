@@ -39,7 +39,10 @@ export function scopeMatches(
   );
 }
 
-interface ItemFilter {
+/** What a surface has narrowed to. Handed to {@link filterItems} and to
+ *  {@link missingUnder} as one object, so what the scan is narrowed by and
+ *  what a row with no copy is judged against cannot drift apart. */
+export interface ItemFilter {
   scope: ScopeSelection;
   harness?: string;
   tag?: Tag;
@@ -241,6 +244,24 @@ const byRowOrder = (a: ItemGroup, b: ItemGroup): number =>
   a.name.localeCompare(b.name) ||
   a.key.localeCompare(b.key);
 
+/** The rows for packages with no copy left that a narrowing admits.
+ *
+ *  Such a row carries no tool and no tags — there is no copy to carry them
+ *  — so a narrowing by either is a question it cannot answer, and counting
+ *  or drawing the package under it would be a wrong answer rather than a
+ *  missing one. Its place it does carry, so that narrowing it does answer.
+ *
+ *  The one judge for that rule, because two surfaces ask it: the Library's
+ *  list, and the per-kind badges whose click opens that list. A second copy
+ *  is how a badge comes to read "2 skills" over a table of three rows. */
+export function missingUnder(
+  missing: UpdateRow[],
+  filter: ItemFilter,
+): UpdateRow[] {
+  if (filter.harness || filter.tag) return [];
+  return missing.filter((row) => scopeMatches(row, filter.scope));
+}
+
 /** The grouped scan, plus a row for every recorded package it holds no
  *  observation of at all.
  *
@@ -387,13 +408,23 @@ export function installedCountByKind(
   items: ObservedItem[],
   place: ItemPlace,
   packageOf: PackageOf,
+  /** The packages whose rendering a record says is gone, which the Library
+   *  draws a row for. Required rather than defaulted: a badge that quietly
+   *  left them out is exactly the disagreement this argument exists to
+   *  stop, and {@link missingUnder} is what decides which of them this
+   *  place admits. */
+  missing: UpdateRow[],
 ): Map<ItemKind, number> {
   const tally = new Map<ItemKind, number>();
-  const here = filterItems(items, {
+  const narrowing: ItemFilter = {
     scope: place.scope ?? "all",
     harness: place.harness,
-  });
-  for (const group of groupItems(here, packageOf)) {
+  };
+  const here = filterItems(items, narrowing);
+  for (const group of withRecordedMissing(
+    groupItems(here, packageOf),
+    missingUnder(missing, narrowing),
+  )) {
     tally.set(group.kind, (tally.get(group.kind) ?? 0) + 1);
   }
   // Handed back in the app's kind order, not the grouping's: the badges sit

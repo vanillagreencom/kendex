@@ -482,6 +482,36 @@ describe("a package whose rendering is gone everywhere", () => {
     expect(host.textContent).not.toContain(MISSING_FILES_BADGE_LABEL);
   });
 
+  // The badge on a row names every place the package is missing in,
+  // because the fact is about the package wherever it is. The row's own
+  // click is about the table on screen: narrowed to one project, a reader
+  // means that project's page, not whichever place the rows list first.
+  it("opens the narrowed place, not the first one the rows name", async () => {
+    scanIs([]);
+    joinAnswered([seeded] as never);
+    useUpdatesStore.setState({
+      // Global first, so taking the first place the rows name is the
+      // wrong answer this pins.
+      rows: [
+        row({ scope: { scope: "global" }, filesMissing: true }),
+        row({ filesMissing: true }),
+      ] as never,
+      read: READ_LANDED,
+    });
+    useNavStore.setState({ libraryScope: { project: VG.root } });
+    const host = mount(<InstalledView />);
+    const line = host.querySelector("tbody tr");
+    if (!line) throw new Error("no row");
+
+    await userEvent.click(line);
+    expect(useNavStore.getState().packageRef).toEqual({
+      kind: "skill",
+      name: "gh",
+      identity: "recorded",
+      scope: VG,
+    });
+  });
+
   it("opens the package at the place the repair is offered", async () => {
     scanIs([]);
     joinAnswered([seeded] as never);

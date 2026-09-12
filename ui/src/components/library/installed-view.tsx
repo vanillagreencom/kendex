@@ -29,7 +29,9 @@ import {
   groupPlaces,
   groupRef,
   groupsOfKind,
+  type ItemFilter,
   installedCount,
+  missingUnder,
   scopeChoices,
   scopeMatches,
   selectionOf,
@@ -244,23 +246,20 @@ export function InstalledView() {
     // this page exists to stop. With the read failed and nothing retained
     // the note above stands in their place instead.
     if (!result || !packageOf || packagesUnreadable) return [];
-    const filtered = filterItems(result.items, {
+    // One narrowing object for both halves of the list: what the scan is
+    // filtered by, and which packages with no copy left it admits.
+    const narrowing: ItemFilter = {
       scope,
       harness: harness === "any" ? undefined : harness,
       tag: tag === "any" ? undefined : (tag as Tag),
-    });
+    };
+    const filtered = filterItems(result.items, narrowing);
     // Searched after grouping, because what a search reads is the
     // package's name and its author's words, and both belong to the
     // package rather than to any one of its installations.
     let grouped = withRecordedMissing(
       groupItems(filtered, packageOf, summaryOf),
-      // A row with no copy left carries no tool and no tags, so a
-      // narrowing by either is a question it cannot answer — and drawing
-      // it under a filter nothing says it matches would be a wrong
-      // answer rather than a missing one. Its place it does carry.
-      harness === "any" && tag === "any"
-        ? missingRows.filter((row) => scopeMatches(row, scope))
-        : [],
+      missingUnder(missingRows, narrowing),
     ).filter((group) => groupMatches(group, search));
     // Narrowed after grouping: the kind on screen is the package's, and a
     // tool that stores a hook as a rule would otherwise drop out of its
@@ -445,6 +444,16 @@ export function InstalledView() {
                     // those — asked of the scan alone it would address
                     // nowhere and open nothing.
                     const places = groupPlaces(group, missingIn?.(group) ?? []);
+                    // Where the row's own click lands. The places whose
+                    // copy is gone answer for the package everywhere —
+                    // they have to, so a badge names every one of them —
+                    // so a row with no copy left can carry a place this
+                    // table is not showing. A reader looking at one
+                    // project means that project's page.
+                    const opens =
+                      places.find((one) =>
+                        scopeMatches({ scope: one }, scope),
+                      ) ?? places[0];
                     // The origin and the place that recorded it, read as one
                     // row: a marketplace source is an alias declared at a
                     // place, so pairing this row's alias with another place's
@@ -473,7 +482,7 @@ export function InstalledView() {
                         outOfDate={outOfDateAnywhere?.(group) ?? false}
                         missingIn={missingIn?.(group) ?? []}
                         onOpen={(scope) => {
-                          const where = scope ?? places[0];
+                          const where = scope ?? opens;
                           if (!where) return;
                           goToPackage({
                             ...groupRef(group),
