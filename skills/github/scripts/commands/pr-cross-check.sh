@@ -33,8 +33,9 @@ Quick mode analyzes:
 
 Verify mode additionally:
   - Creates temp worktree and merges PRs
-  - Builds and tests Rust (cargo --profile agent when the root manifest
-    declares [profile.agent] and python3 has tomllib, else --release)
+  - Builds and tests Rust: cargo build --profile agent and cargo test
+    --profile agent when the root manifest declares [profile.agent] and
+    python3 has tomllib, else cargo build --release and cargo test --release
 
 Examples:
   github.sh pr-cross-check              # Quick analysis of ready PRs
