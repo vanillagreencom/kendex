@@ -55,9 +55,11 @@ const refused = (over: Partial<Refused> = {}): Refused => ({
 describe("the offer state", () => {
   it("prints the design's words for its example values", () => {
     expect(commitOfferTitle(FILES, PROJECT)).toBe(
-      "kendex changed 12 files in site",
+      "12 files kendex wrote in site are not committed",
     );
-    expect(commitOfferTitle(1, PROJECT)).toBe("kendex changed 1 file in site");
+    expect(commitOfferTitle(1, PROJECT)).toBe(
+      "1 file kendex wrote in site is not committed",
+    );
     expect(otherNote(OTHERS)).toBe(
       "4 other files in this repository changed. kendex does not commit these.",
     );
