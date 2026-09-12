@@ -1,13 +1,21 @@
 // @vitest-environment jsdom
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { AvailablePackage, MarketplaceRow } from "@/bindings";
+import type {
+  AvailablePackage,
+  MarketplaceRow,
+  SourceReadRefused,
+} from "@/bindings";
+import { CHECK_FOR_UPDATES_LABEL } from "@/lib/copy";
 import {
   LOCAL_FOLDER_LABEL,
+  notDownloadedSourcesLine,
   SEE_PROBLEMS_LABEL,
   unreadableRecordsLine,
+  unreadableSourcesLine,
 } from "@/lib/copy-marketplaces";
 import { marketKey, useMarketplacesStore } from "@/stores/marketplaces";
+import { readErrorKey } from "@/stores/marketplaces-shared";
 import { usePreinstallSafety } from "@/stores/preinstall-safety";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
@@ -243,6 +251,65 @@ describe("naming what could not be read", () => {
     expect(lines()).toEqual([
       `${unreadableRecordsLine("just-added")} ${SEE_PROBLEMS_LABEL}`,
     ]);
+  });
+
+  // A marketplace read that produced no rows is judged by its kind, the
+  // way the marketplace's own page judges it. A subscription nothing has
+  // downloaded yet is the first-launch state, not a read failure: it gets
+  // a neutral line naming the header's control, and the warning stays for
+  // a read that went wrong — shaped or folded by the transport alike.
+  it("tells a marketplace nothing has downloaded from one that could not be read", () => {
+    const row = projectRow("/home/dev/hyprtrade", "kendex");
+    const rows: {
+      name: string;
+      refusal: SourceReadRefused | string;
+      warning: string[];
+      shown: string[];
+      absent: string[];
+    }[] = [
+      {
+        name: "a shaped failure",
+        refusal: { kind: "failed", message: "the clone is corrupt" },
+        warning: [unreadableSourcesLine("hyprtrade")],
+        shown: [],
+        absent: [notDownloadedSourcesLine("hyprtrade")],
+      },
+      {
+        name: "a transport failure",
+        refusal: "the channel closed",
+        warning: [unreadableSourcesLine("hyprtrade")],
+        shown: [],
+        absent: [notDownloadedSourcesLine("hyprtrade")],
+      },
+      {
+        name: "a marketplace nothing has downloaded",
+        refusal: { kind: "source-pending", source: "kendex" },
+        warning: [],
+        shown: [notDownloadedSourcesLine("hyprtrade"), CHECK_FOR_UPDATES_LABEL],
+        absent: [unreadableSourcesLine("hyprtrade")],
+      },
+    ];
+    expect(rows).toHaveLength(3);
+    for (const { name, refusal, warning, shown, absent } of rows) {
+      useMarketplacesStore.setState({
+        rows: [row],
+        packages: {},
+        readErrors: {
+          [readErrorKey(marketKey(row.scope, row.name), "packages")]: refusal,
+        },
+      });
+      const host = mount(<PackagesTab />);
+      expect(
+        [...host.querySelectorAll("p.text-warning")].map(
+          (line) => line.textContent,
+        ),
+        name,
+      ).toEqual(warning);
+      for (const text of shown) expect(host.textContent, name).toContain(text);
+      for (const text of absent) {
+        expect(host.textContent, name).not.toContain(text);
+      }
+    }
   });
 });
 

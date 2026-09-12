@@ -1,5 +1,7 @@
 import type { MarketplaceRow, Scope, SourceReadRefused } from "@/bindings";
+import { catalogRefusal } from "@/lib/catalog-read-state";
 import {
+  notDownloadedSourcesLine,
   SEE_PROBLEMS_LABEL,
   unreadableRecordsLine,
   unreadableRecordsWriteLine,
@@ -18,11 +20,15 @@ import { useNavStore } from "@/stores/nav";
  * packages are missing from the table; `records` is this place's lock,
  * which the overview read reports for the place as a whole and the
  * Problems page explains. A place with both is named once, under `sources`
- * — the missing rows are the larger fact. */
+ * — the missing rows are the larger fact. `pending` is a marketplace here
+ * nothing has downloaded yet: its packages are missing too, but that is an
+ * answer rather than a failure, so it gets its own neutral line beside
+ * whichever of the other two the place draws. */
 export interface TroubledScope {
   key: string;
   scope: Scope;
   sources: boolean;
+  pending: boolean;
   records: boolean;
 }
 
@@ -47,12 +53,20 @@ export function troubledScopes(
       key,
       scope: row.scope,
       sources: false,
+      pending: false,
       records: false,
     };
     if (row.recordsUnreadable) place.records = true;
     const market = marketKey(row.scope, row.name);
-    if (readErrors[readErrorKey(market, "packages")]) place.sources = true;
-    if (place.sources || place.records) places.set(key, place);
+    // The one judge every marketplace surface reads a refusal through: a
+    // slot tested for presence would count a marketplace nothing has
+    // downloaded among the ones that could not be read.
+    const refused = catalogRefusal(
+      readErrors[readErrorKey(market, "packages")],
+    );
+    if (refused?.is === "failed") place.sources = true;
+    if (refused?.is === "not-downloaded") place.pending = true;
+    if (place.sources || place.pending || place.records) places.set(key, place);
   }
   return [...places.values()];
 }
@@ -101,24 +115,36 @@ export function RecordsUnreadableWriteNote({ scope }: { scope: Scope }) {
  * could not be read: one line per place, and — where the Problems page
  * carries the reason — the way to it. Names come from [scopeNames], so two
  * projects whose folders share a basename are told apart by their paths
- * rather than printing the same line twice. */
+ * rather than printing the same line twice. A marketplace nothing has
+ * downloaded yet is said in a neutral line of its own, never in the
+ * warning: it is the first-launch state, and the page's header carries the
+ * control that lifts it. */
 export function TroubleLines({ places }: { places: TroubledScope[] }) {
   if (places.length === 0) return null;
   const names = scopeNames(places.map((place) => place.scope));
   return (
     <div className="mb-3 space-y-1">
       {places.map((place, index) => (
-        <p key={place.key} className="text-xs text-warning">
-          {place.sources
-            ? unreadableSourcesLine(names[index] ?? "")
-            : unreadableRecordsLine(names[index] ?? "")}
-          {place.records ? (
-            <>
-              {" "}
-              <SeeProblemsLink />
-            </>
+        <div key={place.key} className="space-y-1">
+          {place.sources || place.records ? (
+            <p className="text-xs text-warning">
+              {place.sources
+                ? unreadableSourcesLine(names[index] ?? "")
+                : unreadableRecordsLine(names[index] ?? "")}
+              {place.records ? (
+                <>
+                  {" "}
+                  <SeeProblemsLink />
+                </>
+              ) : null}
+            </p>
           ) : null}
-        </p>
+          {place.pending ? (
+            <p className="text-xs text-muted-foreground">
+              {notDownloadedSourcesLine(names[index] ?? "")}
+            </p>
+          ) : null}
+        </div>
       ))}
     </div>
   );

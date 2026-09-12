@@ -309,13 +309,13 @@ export const commands = {
 	 *  each member's state and the set's own `records_unreadable` — is then
 	 *  about that project, which is the scope the engine mutates.
 	 */
-	marketplaceBundle: (catalog: Catalog, name: string, destination: { scope: "global" } | { scope: "project"; root: string } | null) => typedError<BundleDetail, string>(__TAURI_INVOKE("marketplace_bundle", { catalog, name, destination })),
+	marketplaceBundle: (catalog: Catalog, name: string, destination: { scope: "global" } | { scope: "project"; root: string } | null) => typedError<BundleDetail, SourceReadRefused>(__TAURI_INVOKE("marketplace_bundle", { catalog, name, destination })),
 	/**
 	 *  Every curated set a catalog declares, with per-member installed state —
 	 *  what the marketplace page's Bundles tab lists.
 	 */
 	marketplaceBundles: (catalog: Catalog) => typedError<BundleDetail[], SourceReadRefused>(__TAURI_INVOKE("marketplace_bundles", { catalog })),
-	marketplacePackagePreview: (catalog: Catalog, kind: ItemKind, name: string, destination: { scope: "global" } | { scope: "project"; root: string } | null) => typedError<PackageView, string>(__TAURI_INVOKE("marketplace_package_preview", { catalog, kind, name, destination })),
+	marketplacePackagePreview: (catalog: Catalog, kind: ItemKind, name: string, destination: { scope: "global" } | { scope: "project"; root: string } | null) => typedError<PackageView, SourceReadRefused>(__TAURI_INVOKE("marketplace_package_preview", { catalog, kind, name, destination })),
 	/**
 	 *  Whether one place's lock is beyond this build, asked for a scope no
 	 *  catalog was opened for. Subscribing plans against the chosen place's
@@ -329,7 +329,7 @@ export const commands = {
 	 *  One offered file's content before install — the same read an installed
 	 *  package's file gets, confined to the package inside the catalog.
 	 */
-	marketplacePackageFile: (catalog: Catalog, kind: ItemKind, name: string, path: string) => typedError<ItemSource, string>(__TAURI_INVOKE("marketplace_package_file", { catalog, kind, name, path })),
+	marketplacePackageFile: (catalog: Catalog, kind: ItemKind, name: string, path: string) => typedError<ItemSource, SourceReadRefused>(__TAURI_INVOKE("marketplace_package_file", { catalog, kind, name, path })),
 	/**
 	 *  Install packages or a curated set from one subscription. `destination`
 	 *  redirects the install from the scope being browsed into a project: the

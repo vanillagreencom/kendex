@@ -52,6 +52,13 @@ export const unreadableRecordsLine = (place: string): string =>
 export const unreadableSourcesLine = (place: string): string =>
   `kendex couldn't read some of ${place}'s marketplaces, so their packages aren't listed.`;
 
+/** One place subscribed to a marketplace nothing has downloaded yet. Its
+ * packages are missing from the table for the same reason the marketplace's
+ * own page says with [MARKETPLACE_NOT_DOWNLOADED]: not a failure, and the
+ * page's header carries the one control that fills it. */
+export const notDownloadedSourcesLine = (place: string): string =>
+  `Some of ${place}'s marketplaces haven't been downloaded yet, so their packages aren't listed. ${CHECK_FOR_UPDATES_LABEL} to download them.`;
+
 /** One place a write cannot land in, said by [RecordsUnreadableWriteNote]
  * where a subscription's place is being chosen. Subscribing plans against
  * the chosen place's lock, so a record this build can't read refuses the

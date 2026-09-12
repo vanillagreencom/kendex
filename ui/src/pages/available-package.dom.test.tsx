@@ -13,6 +13,7 @@ import { PICK_A_FILE_NOTE } from "@/lib/copy-files";
 import { INSTALL_ACTION, justThisLabel } from "@/lib/copy-install";
 import {
   LOCAL_FOLDER_LABEL,
+  MARKETPLACE_NOT_DOWNLOADED,
   unreadableRecordsLine,
 } from "@/lib/copy-marketplaces";
 import { NO_REASON_GIVEN } from "@/lib/settled";
@@ -135,6 +136,23 @@ describe("a package page opened on a repository nobody subscribes to", () => {
     await settle();
 
     expect(host.textContent).toContain("the catalog is unreadable");
+    expect(host.textContent).not.toContain(NO_REASON_GIVEN);
+  });
+});
+
+// The preview read answers the same shape the summary does, and the page
+// draws it through the same judge: a subscription nothing has downloaded
+// yet is said in the neutral words naming Check for updates, not in core's.
+describe("a package page opened on a subscription nothing has downloaded", () => {
+  it("says so in place of the preview", async () => {
+    vi.mocked(commands.marketplacePackagePreview).mockResolvedValue({
+      status: "error",
+      error: { kind: "source-pending", source: "kit" },
+    });
+    const host = mount(<AvailablePackagePage />);
+    await settle();
+
+    expect(host.textContent).toContain(MARKETPLACE_NOT_DOWNLOADED);
     expect(host.textContent).not.toContain(NO_REASON_GIVEN);
   });
 });

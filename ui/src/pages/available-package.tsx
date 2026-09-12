@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { commands, type PackageView } from "@/bindings";
+import { commands, type PackageView, type SourceReadRefused } from "@/bindings";
 import { BookmarkButton } from "@/components/bookmarks/bookmark-button";
 import { FileBrowser } from "@/components/files/file-browser";
 import { packageFileEntries } from "@/components/files/package-file-rows";
@@ -68,7 +68,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   // the place this package is offered in; where it lands is the guided
   // flow's question, asked after this page has said what the package is.
   const address = ready ? `${catalogKey(catalog)}::${kind}::${name}` : null;
-  const read = useOrderedRead<PackageView>(address, () =>
+  const read = useOrderedRead<PackageView, SourceReadRefused>(address, () =>
     commands.marketplacePackagePreview(catalog, kind, name, null),
   );
   const view = read.status === "ok" ? read.data : null;
@@ -93,7 +93,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   // person typed, and it reads as the app's own folder wherever it shows.
   const marketplace = display.name;
   const repo = sourceLine(display) || null;
-  const shownError = catalogRefusalLine(reachError) ?? error;
+  const shownError = catalogRefusalLine(reachError ?? error);
   // Every Packages row opens this page, "Not known" ones included. The
   // engine answered unknown because it could not read the lock of the place
   // this package is offered in, and an install starting from here would
