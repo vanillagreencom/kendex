@@ -1,4 +1,5 @@
 import type { Scope } from "@/bindings";
+import { CHECK_FOR_UPDATES_LABEL } from "@/lib/copy";
 import { listed } from "@/lib/listed";
 import { placeWord } from "@/lib/place-word";
 // Marketplaces copy: the Subscribed tab's read states and Home's tile
@@ -90,6 +91,14 @@ export const SUBSCRIBE_TO_INSTALL_LABEL = "Subscribe and install";
 // of place its own list contradicts is the defect `place-word.ts` exists to
 // stop.
 export const MARKETPLACE_PLACES_TITLE = "Places that use it";
+
+/** A subscription nothing has downloaded yet, on the tab that would have
+ * listed its content. Not a failure: the declaration is there and its
+ * mirror is empty, reading again answers the same, and the page's own
+ * header carries the one control that fills it. Both content tabs say it,
+ * so the Bundles tab and the Packages tab never disagree about the state
+ * of the same marketplace. */
+export const MARKETPLACE_NOT_DOWNLOADED = `This marketplace hasn't been downloaded yet. ${CHECK_FOR_UPDATES_LABEL} to download it.`;
 
 // How a marketplace names itself and where it comes from. A folder on this
 // machine says so beside its path: a working checkout and the remote

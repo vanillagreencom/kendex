@@ -4,6 +4,7 @@ import { Ago } from "@/components/ago";
 import { ExternalLink } from "@/components/external-link";
 import { MarketplacePlaces } from "@/components/marketplaces/marketplace-places";
 import { useCachedRead } from "@/components/marketplaces/use-catalog";
+import { catalogRefusalLine } from "@/lib/catalog-read-state";
 import {
   ABOUT_AUTHOR_LABEL,
   ABOUT_CONTAINS_LABEL,
@@ -129,7 +130,7 @@ export function AboutSection({
       <div className="max-w-3xl space-y-6">
         {details}
         <p className="py-16 text-center text-sm text-critical" role="alert">
-          This catalog can't be read right now — {readError}
+          This catalog can't be read right now — {catalogRefusalLine(readError)}
         </p>
       </div>
     );

@@ -13,6 +13,7 @@ import {
 } from "@/components/marketplaces/use-catalog";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { catalogRefusalLine } from "@/lib/catalog-read-state";
 import {
   INSTALL_ACTION,
   justThisLabel,
@@ -64,7 +65,7 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   // own place rather than for a destination nobody has picked yet.
   const key = bundleKey(catalog, bundle, null);
   const detail = bundles[key];
-  const readError = reachError ?? readErrors[key];
+  const readError = catalogRefusalLine(reachError ?? readErrors[key]);
   const readBundle = useCallback(
     () => loadBundle(catalog, bundle, null),
     [loadBundle, catalog, bundle],

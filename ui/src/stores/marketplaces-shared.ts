@@ -9,6 +9,7 @@ import type {
   CatalogSummary,
   MarketplaceRow,
   Scope,
+  SourceReadRefused,
 } from "@/bindings";
 import { invalidations, type ReadState } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
@@ -32,8 +33,14 @@ export interface CatalogCaches {
    * the packages it offers. */
   catalogBundles: Record<string, BundleDetail[]>;
   /** Why a read produced nothing, by the same keys — the page the person is
-   * looking at says it instead of loading forever. */
-  readErrors: Record<string, string>;
+   * looking at says it instead of loading forever.
+   *
+   * The refusal itself, not its words: a subscription nothing has
+   * downloaded yet refuses every content read with its own kind, and a page
+   * given only the sentence has nothing left to tell that first state apart
+   * from a read that went wrong. A transport failure arrives as a bare
+   * string, the way `lib/refusal.ts` says every folded message does. */
+  readErrors: Record<string, SourceReadRefused | string>;
 }
 
 /** Bumped by [droppedSetCaches], the one place a drop is declared;

@@ -296,13 +296,13 @@ export const commands = {
 	 *  Every package one catalog offers, across kinds, with installed state
 	 *  joined in.
 	 */
-	marketplacePackages: (catalog: Catalog) => typedError<AvailablePackage[], string>(__TAURI_INVOKE("marketplace_packages", { catalog })),
+	marketplacePackages: (catalog: Catalog) => typedError<AvailablePackage[], SourceReadRefused>(__TAURI_INVOKE("marketplace_packages", { catalog })),
 	/**
 	 *  What a catalog says about itself, fetched fresh for a repository nobody
 	 *  subscribes to — the marketplace page's header, and the subscription to
 	 *  carry on as when this machine already holds one.
 	 */
-	marketplaceSummary: (catalog: Catalog) => typedError<CatalogSummary, string>(__TAURI_INVOKE("marketplace_summary", { catalog })),
+	marketplaceSummary: (catalog: Catalog) => typedError<CatalogSummary, SourceReadRefused>(__TAURI_INVOKE("marketplace_summary", { catalog })),
 	/**
 	 *  One curated set with per-member installed state. `destination`
 	 *  redirects the install into a project, and every answer about records —
@@ -314,7 +314,7 @@ export const commands = {
 	 *  Every curated set a catalog declares, with per-member installed state —
 	 *  what the marketplace page's Bundles tab lists.
 	 */
-	marketplaceBundles: (catalog: Catalog) => typedError<BundleDetail[], string>(__TAURI_INVOKE("marketplace_bundles", { catalog })),
+	marketplaceBundles: (catalog: Catalog) => typedError<BundleDetail[], SourceReadRefused>(__TAURI_INVOKE("marketplace_bundles", { catalog })),
 	marketplacePackagePreview: (catalog: Catalog, kind: ItemKind, name: string, destination: { scope: "global" } | { scope: "project"; root: string } | null) => typedError<PackageView, string>(__TAURI_INVOKE("marketplace_package_preview", { catalog, kind, name, destination })),
 	/**
 	 *  Whether one place's lock is beyond this build, asked for a scope no
@@ -494,7 +494,7 @@ export const commands = {
 	mineSubmitPreflight: (path: string) => typedError<SubmitPreflight, string>(__TAURI_INVOKE("mine_submit_preflight", { path })),
 	mineSubmit: (repo: string) => typedError<SubmittedView, AccountCallRefused>(__TAURI_INVOKE("mine_submit", { repo })),
 	mineSubmissions: () => typedError<SubmissionRow[], AccountCallRefused>(__TAURI_INVOKE("mine_submissions")),
-	packageVersions: (scope: Scope, kind: ItemKind, name: string) => typedError<VersionRow[], TimelineRefused>(__TAURI_INVOKE("package_versions", { scope, kind, name })),
+	packageVersions: (scope: Scope, kind: ItemKind, name: string) => typedError<VersionRow[], SourceReadRefused>(__TAURI_INVOKE("package_versions", { scope, kind, name })),
 	/**
 	 *  Bring one package current and apply — the Updates page's per-package
 	 *  and per-place Update, and the package page's. The scope's other
@@ -4836,6 +4836,30 @@ export type SourceDecl_Serialize = {
 	enabled?: boolean,
 };
 
+/**
+ *  Why a read of a source's content did not land. A source no fetch has
+ *  downloaded yet is an answer here, not a failure: the read found the
+ *  declaration and an empty mirror, asking again answers the same, and only
+ *  a download lifts it. A page holding the shape can name that state in its
+ *  own neutral words, drop the retry that would answer the same, and keep
+ *  its critical text for a read that really went wrong.
+ * 
+ *  One type for every read that opens a source — the package page's
+ *  timeline, and the marketplace page's packages, curated sets and summary
+ *  — rather than one per page. Telling
+ *  [`CoreError::SourcePending`] apart from every other refusal is a single
+ *  question, and a second spelling of it is a page that answers differently
+ *  about the same source.
+ */
+export type SourceReadRefused = 
+/**
+ *  Nothing has downloaded this source. Names it, which is what the
+ *  person downloads.
+ */
+{ kind: "source-pending"; source: string } | 
+/**  Anything else that stopped the read, in core's words. */
+{ kind: "failed"; message: string };
+
 /**  Everything the Sources page shows for one declared source in one scope. */
 export type SourceRow = {
 	scope: Scope,
@@ -5172,23 +5196,6 @@ export type TermsState = {
 	ask: boolean,
 	accepted: TermsAcceptance | null,
 };
-
-/**
- *  Why the timeline was not read. A source no fetch has downloaded yet is
- *  an answer here, not a failure: the tracking selector resolves to nothing
- *  in an empty mirror, reading again answers the same, and only a refresh
- *  of that source lifts it. It is a shape the page can act on rather than
- *  words it would have to recognise, so the header can name the source and
- *  keep Try again off it, where every other refusal keeps the retry.
- */
-export type TimelineRefused = 
-/**
- *  Nothing has fetched this source. Names it, which is what the
- *  person refreshes.
- */
-{ kind: "source-pending"; source: string } | 
-/**  Anything else that stopped the read, in core's words. */
-{ kind: "failed"; message: string };
 
 /**
  *  A scope whose standing could not be read at all, and why. The reason

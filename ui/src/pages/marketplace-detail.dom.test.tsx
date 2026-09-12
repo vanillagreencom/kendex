@@ -5,7 +5,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BundleDetail } from "@/bindings";
 import { commands } from "@/bindings";
-import { MARKETPLACE_PLACES_TITLE } from "@/lib/copy-marketplaces";
+import {
+  MARKETPLACE_NOT_DOWNLOADED,
+  MARKETPLACE_PLACES_TITLE,
+} from "@/lib/copy-marketplaces";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
@@ -76,18 +79,32 @@ describe("opening a marketplace", () => {
       name: "asks for the catalog's declared sets and shows them in the Bundles tab",
       response: { status: "ok", data: [starter] },
       shown: ["starter", "the six things to begin with"],
+      alert: false,
     },
     {
       name: "shows the read's own error when the catalog's sets cannot be read",
       response: { status: "error", error: "the catalog is unreadable" },
       shown: ["the catalog is unreadable"],
+      alert: true,
+    },
+    // The store keeps the refusal's shape, so the page can tell a
+    // subscription nothing has downloaded yet from a read that went wrong.
+    {
+      name: "says a never-downloaded marketplace is that, not a read failure",
+      response: {
+        status: "error",
+        error: { kind: "source-pending", source: "kit" },
+      },
+      shown: [MARKETPLACE_NOT_DOWNLOADED],
+      alert: false,
     },
   ] satisfies {
     name: string;
     response: Awaited<ReturnType<typeof commands.marketplaceBundles>>;
     shown: string[];
+    alert: boolean;
   }[];
-  expect(rows).toHaveLength(2);
+  expect(rows).toHaveLength(3);
   it.each(rows)("$name", async (row) => {
     useMarketplacesStore.setState({ catalogBundles: {}, readErrors: {} });
     vi.mocked(commands.marketplaceBundles).mockResolvedValue(row.response);
@@ -98,12 +115,14 @@ describe("opening a marketplace", () => {
         request: vi.mocked(commands.marketplaceBundles).mock.lastCall,
         shown: row.shown.map((value) => host.textContent?.includes(value)),
         empty: host.textContent?.includes("doesn't offer curated sets"),
+        alert: host.querySelector('[role="alert"]') !== null,
       },
       row.name,
     ).toEqual({
       request: [catalog],
       shown: row.shown.map(() => true),
       empty: false,
+      alert: row.alert,
     });
   });
 });

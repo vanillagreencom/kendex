@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import type { Catalog, CatalogSummary } from "@/bindings";
+import type { Catalog, CatalogSummary, SourceReadRefused } from "@/bindings";
 import {
   discoveredCatalog,
   displayFor,
@@ -33,7 +33,9 @@ export function useCatalog(requested: Catalog): {
    * declared name. Every page naming a marketplace reads this rather than
    * resolving its own. */
   display: MarketplaceDisplay;
-  error: string | null;
+  /** Why the summary read produced nothing, as the store kept it —
+   * `lib/catalog-read-state.ts` decides what it means. */
+  error: SourceReadRefused | string | null;
   ready: boolean;
   retry: () => void;
 } {

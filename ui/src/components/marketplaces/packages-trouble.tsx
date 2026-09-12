@@ -1,4 +1,4 @@
-import type { MarketplaceRow, Scope } from "@/bindings";
+import type { MarketplaceRow, Scope, SourceReadRefused } from "@/bindings";
 import {
   SEE_PROBLEMS_LABEL,
   unreadableRecordsLine,
@@ -37,7 +37,7 @@ export interface TroubledScope {
  * at all. Carried on the row, the fact lands with the rows it describes. */
 export function troubledScopes(
   rows: MarketplaceRow[],
-  readErrors: Record<string, string>,
+  readErrors: Record<string, SourceReadRefused | string>,
 ): TroubledScope[] {
   const places = new Map<string, TroubledScope>();
   for (const row of rows) {

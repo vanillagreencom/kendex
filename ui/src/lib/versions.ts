@@ -88,7 +88,7 @@ export interface UpdateOffer {
  *  Two of core's answers never arrive here as errors: nothing declared under
  *  this name, and a source with no repository. The command layer folds both
  *  into an absent value (`crates/app/src/packages.rs` `no_managed_package`),
- *  and the unfetched source arrives as its own shape (`TimelineRefused`),
+ *  and the unfetched source arrives as its own shape (`SourceReadRefused`),
  *  so the page never tells an answer about the manifest apart from a read
  *  that failed, and [`retry`] offers a read of this package again rather
  *  than a button over something no read can change.

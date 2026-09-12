@@ -272,7 +272,7 @@ describe("the Bookmark control on a marketplace row", () => {
       <BundleCards
         catalog={CATALOG}
         bundles={[SET]}
-        error={undefined}
+        refusal={undefined}
         places={new Map()}
       />,
     );

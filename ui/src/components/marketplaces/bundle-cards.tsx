@@ -1,8 +1,16 @@
 import { Package } from "lucide-react";
-import type { BundleDetail, Catalog, ItemKind, Scope } from "@/bindings";
+import type {
+  BundleDetail,
+  Catalog,
+  ItemKind,
+  Scope,
+  SourceReadRefused,
+} from "@/bindings";
 import { BookmarkButton } from "@/components/bookmarks/bookmark-button";
 import { InstalledIn } from "@/components/marketplaces/installed-in";
 import { Card, CardContent } from "@/components/ui/card";
+import { catalogRefusal } from "@/lib/catalog-read-state";
+import { MARKETPLACE_NOT_DOWNLOADED } from "@/lib/copy-marketplaces";
 import { bundlePlaces } from "@/lib/installed-places";
 import { kindLabel } from "@/lib/labels";
 import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
@@ -15,12 +23,14 @@ import { useNavStore } from "@/stores/nav";
 export function BundleCards({
   catalog,
   bundles,
-  error,
+  refusal,
   places,
 }: {
   catalog: Catalog;
   bundles: BundleDetail[] | undefined;
-  error: string | undefined;
+  /** Why the read produced no sets, as the store kept it —
+   * `lib/catalog-read-state.ts` decides what it means. */
+  refusal: SourceReadRefused | string | undefined;
   /** Where this marketplace's packages are installed, by kind and name —
    * `lib/installed-places.ts`. The page builds it once for the whole tab,
    * so a card neither scans the provenance join nor subscribes to it. */
@@ -28,10 +38,15 @@ export function BundleCards({
 }) {
   const goToBundle = useNavStore((s) => s.goToBundle);
 
-  if (error) {
-    return (
+  const refused = catalogRefusal(refusal);
+  if (refused) {
+    return refused.is === "not-downloaded" ? (
+      <p className="py-16 text-center text-sm text-muted-foreground">
+        {MARKETPLACE_NOT_DOWNLOADED}
+      </p>
+    ) : (
       <p className="py-16 text-center text-sm text-critical" role="alert">
-        Its curated sets can't be read right now — {error}
+        Its curated sets can't be read right now — {refused.reason}
       </p>
     );
   }
