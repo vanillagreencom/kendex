@@ -101,6 +101,22 @@ rm -f "$R/fake-bin/git" "$R/fake-bin/awk"
 git -C "$R" reset -q HEAD -- crates/core/tests/temp_path.rs
 rm -f "$R/crates/core/tests/temp_path.rs"
 
+echo "=== a test that names the kendex binary hands it a fixture home at each launch ==="
+MARKED='    let out = std::process::Command::new(env!("CARGO_BIN_EXE_kendex")).envs(test_util::fixture_env(home)).output().unwrap();'
+UNMARKED='    let out = std::process::Command::new(env!("CARGO_BIN_EXE_kendex")).output().unwrap();'
+mkdir -p "$R/crates/cli/tests" && printf '%s\n' 'fn marked(home: &std::path::Path) {' "$MARKED" '}' 'fn unmarked() {' "$UNMARKED" '}' >"$R/crates/cli/tests/binary_home.rs" && git -C "$R" add -A && run_guard
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: binary-home=1"* ]] && [[ "$OUT" == *"crates/cli/tests/binary_home.rs:5"* ]] && ok "an unmarked launch beside a marked one is refused at its line" || bad "an unmarked launch beside a marked one is refused at its line" "rc=$RC out=$OUT"
+printf '%s\n' 'fn unmarked(home: &std::path::Path, bin: &str) {' '    let mut run = std::process::Command::new(bin);' '    let git = std::process::Command::new("git").envs(test_util::fixture_env(home)).output().unwrap();' '    let out = run.output().unwrap();' '}' 'fn name() -> &'"'"'static str { env!("CARGO_BIN_EXE_kendex") }' >"$R/crates/cli/tests/binary_home.rs" && git -C "$R" add -A && run_guard
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: binary-home=1"* ]] && [[ "$OUT" == *"crates/cli/tests/binary_home.rs:2"* ]] && ok "a marked builder of another program between an unmarked launch and its run call is refused at the launch" || bad "a marked builder of another program between an unmarked launch and its run call is refused at the launch" "rc=$RC out=$OUT"
+printf '%s\n' 'fn marked(home: &std::path::Path) {' "$MARKED" '}' 'fn also(home: &std::path::Path) {' "$MARKED" '}' >"$R/crates/cli/tests/binary_home.rs" && git -C "$R" add -A && run_guard
+[ "$RC" -eq 0 ] && ok "two marked launches pass" || bad "two marked launches pass" "rc=$RC out=$OUT"
+printf '#!/usr/bin/env bash\n[[ "$*" == *"function clears"* ]] && exit 2\nexec "$REAL_AWK" "$@"\n' >"$R/fake-bin/awk" && chmod +x "$R/fake-bin/awk"
+run_guard PATH="$R/fake-bin:$PATH" REAL_AWK="$REAL_AWK"
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: test-scan=binary-home"* ]] && ok "a per-file scan that cannot run blocks guard, naming its lane" || bad "a per-file scan that cannot run blocks guard, naming its lane" "rc=$RC out=$OUT"
+printf '%s\n' 'fn home(home: &std::path::Path) {' '    let out = std::process::Command::new("git").env("HOME", home).env("KENDEX_REAL_HOME", "1").output().unwrap();' '}' >"$R/crates/cli/tests/fixture_home.rs" && printf '#!/usr/bin/env bash\n[[ "$*" == *KENDEX_REAL_HOME* ]] && exit 2\nexec "$REAL_AWK" "$@"\n' >"$R/fake-bin/awk" && run_guard PATH="$R/fake-bin:$PATH" REAL_AWK="$REAL_AWK"
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: test-scan=fixture-home"* ]] && ok "a fixture-home scan that cannot run blocks guard, naming its lane" || bad "a fixture-home scan that cannot run blocks guard, naming its lane" "rc=$RC out=$OUT"
+rm -f "$R/crates/cli/tests/fixture_home.rs"
+git -C "$R" reset -q HEAD -- crates/cli/tests/binary_home.rs && rm -f "$R/crates/cli/tests/binary_home.rs" "$R/fake-bin/awk" && rmdir "$R/crates/cli/tests" "$R/crates/cli"
 echo "=== the shipped packages' verdicts are not twinned here ==="
 # Guard delegates document sizes and changelog entries to their shipped
 # checks. The preconditions run those checks on the same defects: the

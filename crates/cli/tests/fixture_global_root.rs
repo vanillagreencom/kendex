@@ -45,6 +45,7 @@ fn install_command(home: &Path, catalog: &Path) -> Command {
         ])
         .current_dir(home)
         .env_clear()
+        .envs(test_util::fixture_env(home))
         .env("PATH", std::env::var_os("PATH").unwrap());
     command
 }

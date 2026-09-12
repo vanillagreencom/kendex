@@ -21,6 +21,7 @@ Desktop app and thin CLI (Rust + Tauri + React) for managing AI coding-harness c
 ## Read next
 
 - `docs/architecture/overview.md`: before structural work; its § Topics indexes the per-subsystem files.
+- `crates/AGENTS.md`: when writing a test under `crates/`.
 - `crates/core/AGENTS.md`: when working under `crates/core/`.
 - `crates/app/AGENTS.md`: when working under `crates/app/`.
 - `crates/cli/AGENTS.md`: when working under `crates/cli/`.
