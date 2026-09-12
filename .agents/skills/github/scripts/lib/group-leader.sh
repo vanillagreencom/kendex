@@ -36,8 +36,13 @@
 # TERM. Only a caller holding its own fork may signal a bare pid; a pid read
 # back off disk may by then belong to an unrelated process.
 #
-# The prefix EXECS its command, so that command must be an external program: a
-# shell function or a builtin with no external twin stops the fork at 127.
+# The prefix EXECS its command, so that command must be an external program. A
+# shell function or a builtin with no external twin cannot be exec'd, and perl
+# reports that as its own exec failure, carrying the errno the exec returned:
+# `exec <name>: No such file or directory` and status 2 for a name that is not
+# there, 13 for one that cannot be run. That is a different answer from the 127
+# below, which is the caller's shell finding no perl at all — a caller that
+# reads the two as one status misclassifies a missing command as a missing perl.
 #
 # perl carries POSIX setpgid on both platforms this ships to and stock macOS has
 # no setsid(1), so one mechanism covers both. Where perl is missing the fork
