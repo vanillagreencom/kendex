@@ -4,6 +4,7 @@ import { CustomizeSaveBar } from "@/components/customize/customize-save-bar";
 import { ChangesPanel } from "@/components/files/changes-panel";
 import { ChangesViewer } from "@/components/files/changes-viewer";
 import { DeleteDialog } from "@/components/package/delete-dialog";
+import { MissingFilesNotice } from "@/components/package/missing-files-notice";
 import { PackageActions } from "@/components/package/package-actions";
 import { PackageFiles } from "@/components/package/package-files";
 import { PackageHeader } from "@/components/package/package-header";
@@ -38,10 +39,12 @@ import {
 import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
 import { packageReadNote, unfetchedNote } from "@/lib/package-read-state";
+import { sameScope } from "@/lib/scope";
 import {
   packageForkEdited,
   packageRequiredBy,
   packageUpdateNote,
+  rowsKnown,
   updatesReadNote,
 } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
@@ -167,7 +170,25 @@ export function PackagePage() {
   // The package can still be installed elsewhere while this place has no
   // copy of it — a page about a place that does not have it has nothing
   // to show and no actions that would land anywhere.
-  const installedHere = installationAt(group, ref?.scope) !== undefined;
+  // A place the scan no longer sees the copy in, but whose update row
+  // says a recorded file is gone, still has this package: the file is
+  // what the row's repair puts back, and this page is where the repair
+  // is offered. Read off the row the planner produced, never a second
+  // look at the disk, and only from rows the read has confirmed.
+  const missingHere = useUpdatesStore(
+    (s) =>
+      asked !== null &&
+      rowsKnown(s) &&
+      s.rows.some(
+        (row) =>
+          row.kind === asked.kind &&
+          row.name === asked.name &&
+          sameScope(row.scope, asked.scope) &&
+          row.filesMissing,
+      ),
+  );
+  const installedHere =
+    installationAt(group, ref?.scope) !== undefined || missingHere;
 
   // The scan has lost this package (removed, renamed): leave the way the
   // user came. Only once the join has said which observations are this
@@ -199,7 +220,34 @@ export function PackagePage() {
   // would have the page describe one place while its buttons work on
   // another.
   const primary = installationAt(group, ref.scope);
-  if (!primary) return null;
+  // No copy the scan can see here, and the row says why: a recorded file
+  // is gone. Every control below opens or lists files at this place, so
+  // none of them can stand; the page is the header and the repair.
+  if (!primary) {
+    if (!missingHere) return null;
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <PackageHeader
+          kind={group.kind}
+          displayName={packageDisplayName(ref)}
+          summary={summaryAt(group, ref.scope, summaryOf)}
+          forked={meta?.fork != null}
+          forkEdited={forkEdited}
+          mark={mark}
+          requiredBy={requiredBy}
+          action={null}
+        />
+        <div className={cn("pt-6", PAGE_GUTTER)}>
+          <MissingFilesNotice
+            scope={ref.scope}
+            kind={group.kind}
+            name={group.name}
+            onResolved={reload}
+          />
+        </div>
+      </div>
+    );
+  }
   // Whether this page has a declaration behind it. Asked once, and the
   // controls that write one are simply not handed a handler: an
   // installation nothing recorded shares its scope, kind and name with

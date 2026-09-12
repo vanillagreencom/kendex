@@ -35,8 +35,9 @@ export function useLibraryStandings(groups: ItemGroup[]): {
   outOfDateAnywhere: ((group: ItemGroup) => boolean) | null;
   /** The places where a file kendex installed for this package is gone
    *  — the rows Home's missing-files row counts, so the badge and that
-   *  row cannot disagree. Null until a read lands, for the same reason
-   *  as `outOfDateAnywhere`. */
+   *  row cannot disagree. A local disk fact like an edit, so it is read
+   *  the way `editedAnywhere` is: from rows a landed read confirmed or a
+   *  failed re-check kept, and null before either. */
   missingIn: ((group: ItemGroup) => Scope[]) | null;
 } {
   const saved = useEditorStore((s) => s.saved);
@@ -97,10 +98,10 @@ export function useLibraryStandings(groups: ItemGroup[]): {
   }, [updateRows]);
   const missingIn = useMemo(
     () =>
-      updatesLanded
+      updatesLoaded
         ? (group: ItemGroup) => missing.get(`${group.kind}:${group.name}`) ?? []
         : null,
-    [missing, updatesLanded],
+    [missing, updatesLoaded],
   );
   return {
     standingsFor: (group: ItemGroup) => byKey.get(group.key) ?? [],

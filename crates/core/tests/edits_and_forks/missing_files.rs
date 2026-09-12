@@ -70,6 +70,36 @@ fn a_registered_hook_whose_script_is_gone_reads_as_missing_until_the_apply_puts_
     assert!(!repaired.files_missing, "{repaired:?}");
 }
 
+// An agent has no registration that keeps it observed once its rendering
+// is deleted: the lock is all that says a file stood there, and the row
+// has to say so the same way it does for a hook.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_deleted_agent_rendering_reads_as_missing() {
+    let w = world();
+    write_agent(&w.upstream, "rev", "Agent body.");
+    commit(&w.upstream, "one");
+    declare(&w, "[agents.rev]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    let rendering = w.home.join("app/.claude/agents/rev.md");
+    assert!(rendering.is_file(), "{}", rendering.display());
+    let row = |w: &World| {
+        kendex_core::package::updates::updates(&w.env, &w.scope)
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.kind == ItemKind::Agent && row.name == "rev")
+            .cloned()
+            .unwrap()
+    };
+    assert!(!row(&w).files_missing);
+
+    fs::remove_file(&rendering).unwrap();
+    let gone = row(&w);
+    assert!(gone.files_missing, "{gone:?}");
+    assert!(!gone.blocked_by_local_edit, "{gone:?}");
+}
+
 // A declaration that has never been installed is missing on disk too,
 // and is not news: nothing kendex wrote has gone. The row is told apart
 // by the lock, which records a rendering only once one was written.

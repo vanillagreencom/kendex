@@ -21,6 +21,7 @@ import {
   FORKED_BADGE_LABEL,
   FORKED_EDITED_BADGE_LABEL,
   KEEP_AS_FORK_LABEL,
+  MISSING_FILES_NOTICE_TITLE,
   OPEN_IN_EDITOR_LABEL,
   OPEN_IN_FILE_BROWSER_LABEL,
   OPEN_IN_LABEL,
@@ -42,6 +43,7 @@ import {
 } from "@/lib/copy-files";
 import { DELETE_LABEL, PROJECTS_TAB } from "@/lib/copy-projects";
 import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
+import { REPAIR_LABEL } from "@/lib/copy-setup";
 import {
   EDITED_CANT_UPDATE_NOTE,
   NO_UPDATE_STANDING_NOTE,
@@ -1094,6 +1096,33 @@ describe("the package page's file actions", () => {
     useNavStore.setState({ back });
     const host = await openPage(VG, [HYPR], {});
     expect(back).toHaveBeenCalled();
+    expect(
+      Array.from(host.querySelectorAll("button")).some(
+        (button) => button.textContent === OPEN_IN_LABEL,
+      ),
+    ).toBe(false);
+  });
+
+  // A copy the scan lost because its file is gone is not a place without
+  // the package: the row says the file was recorded here, and the repair
+  // that puts it back is offered on this page alone. Nothing else stands —
+  // the files, the open buttons and the tabs all reach a copy that is not
+  // there.
+  it("stay, with the repair, where this place's row says a file is gone", async () => {
+    const back = vi.fn();
+    useNavStore.setState({ back });
+    useUpdatesStore.setState({
+      rows: [{ ...updateRow(VG), filesMissing: true }],
+      read: READ_LANDED,
+    });
+    const host = await openPage(VG, [HYPR], {});
+    expect(back).not.toHaveBeenCalled();
+    expect(host.textContent).toContain(MISSING_FILES_NOTICE_TITLE);
+    expect(
+      Array.from(host.querySelectorAll("button")).some(
+        (button) => button.textContent === REPAIR_LABEL,
+      ),
+    ).toBe(true);
     expect(
       Array.from(host.querySelectorAll("button")).some(
         (button) => button.textContent === OPEN_IN_LABEL,
