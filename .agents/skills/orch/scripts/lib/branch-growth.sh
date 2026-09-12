@@ -43,16 +43,24 @@ BRANCH_GROWTH_RENDER_ROOTS=""
 # comes back out. A table this project cannot parse fails the measurement
 # rather than falling back to the default, which would score the branch under
 # roots the project did not choose.
+#
+# The one value leaves on descriptor 3, with the subshell's stdout pointed at
+# stderr for the duration of the load. The private env file is SOURCED, so
+# anything it prints would otherwise land in the capture ahead of the value: a
+# stray token naming a real top-level directory becomes a render root, changed
+# code under it pairs off as a mirror, and the branch measures smaller than it
+# is — the one direction that lets an oversized branch past the tripwire.
 branch_growth_render_roots() {
   local worktree="$1" repo_root resolved
   [[ -z "$BRANCH_GROWTH_RENDER_ROOTS" ]] || return 0
   repo_root="$(git -C "$worktree" rev-parse --show-toplevel 2>/dev/null)" \
     || branch_growth_fail "'$worktree' is not inside a git repository" || return 1
   resolved="$(
+    exec 3>&1 1>&2
     # shellcheck source=kendex-env.sh
     source "$BRANCH_GROWTH_LIB_DIR/kendex-env.sh" || exit 1
     kendex_load_project_env "$repo_root" || exit 1
-    printf '%s' "${ORCH_SIZE_RENDER_ROOTS:-}"
+    printf '%s' "${ORCH_SIZE_RENDER_ROOTS:-}" >&3
   )" || {
     branch_growth_fail "the kendex project settings under '$repo_root' could not be read"
     return 1

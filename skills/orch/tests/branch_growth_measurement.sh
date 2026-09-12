@@ -74,28 +74,41 @@ build_branch() {
   printf '%s\n' "$wt"
 }
 
-# The four numbers, from the three scripts, for one branch: the count
-# branch-size-check judges (production plus test additions), the count the
-# fix-round tripwire holds the branch to, the count an implementation receipt
-# records, and the render-mirror additions, so a case can say whether it
-# exercised the pairing at all.
-measure() {
-  local scripts="$1" wt="$2" size_json refusal artifact
-  size_json="$(env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS \
-    ORCH_STATE_DIR="$wt/tmp" "$scripts/branch-size-check" \
-    --worktree "$wt" --issue KEN-GROWTH --json)"
+# Every run below strips both size settings: all three scripts resolve the
+# render roots now, and a value exported by whoever runs the suite would leave
+# a row comparing counts taken under two different root lists.
+
+# The two numbers the fix round carries, for one branch: the count
+# dev-round-write holds the branch to, and the count dev-return-write records
+# as the implementation baseline.
+measure_tripwire() {
+  local scripts="$1" wt="$2" refusal artifact
   set +e
-  refusal="$(env ORCH_STATE_DIR="$wt/tmp" "$scripts/dev-round-write" \
+  refusal="$(env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS \
+    ORCH_STATE_DIR="$wt/tmp" "$scripts/dev-round-write" \
     --worktree "$wt" --issue KEN-GROWTH --round-id 1-1 \
     --item 1 "cut the branch back" "the branch this round shrinks" 2>&1 >/dev/null)"
   set -e
-  artifact="$(env ORCH_STATE_DIR="$wt/tmp" "$scripts/dev-return-write" \
+  artifact="$(env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS \
+    ORCH_STATE_DIR="$wt/tmp" "$scripts/dev-return-write" \
     --worktree "$wt" --kind implement --issue KEN-GROWTH --round-id 1-1 \
     --branch growth --commit "$(git -C "$wt" rev-parse HEAD)" --validate pass --no-summary)"
-  printf '%s %s %s %s\n' \
-    "$(jq -r '.production_lines + .test_lines' <<<"$size_json")" \
+  printf '%s %s\n' \
     "$(sed 's/^dev-round-write: growth-limit current=\([0-9]*\) .*/\1/;t;d' <<<"$refusal")" \
-    "$(jq -r '.baseline_lines' "$artifact")" \
+    "$(jq -r '.baseline_lines' "$artifact")"
+}
+
+# Those two with the push-time count around them: what branch-size-check judges
+# (production plus test additions) first, the render-mirror additions it
+# reports last, so a case can say whether it exercised the pairing at all.
+measure() {
+  local scripts="$1" wt="$2" size_json
+  size_json="$(env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS \
+    ORCH_STATE_DIR="$wt/tmp" "$scripts/branch-size-check" \
+    --worktree "$wt" --issue KEN-GROWTH --json)"
+  printf '%s %s %s\n' \
+    "$(jq -r '.production_lines + .test_lines' <<<"$size_json")" \
+    "$(measure_tripwire "$scripts" "$wt")" \
     "$(jq -r '.mirror_lines' <<<"$size_json")"
 }
 
@@ -120,6 +133,27 @@ assert_eq "$(measure "$MUTANT_SCRIPTS" "$MUTANT_WT")" "10 20 20 10" \
 CRATE_WT="$(build_branch crate 7:crates/core/src/lib.rs 4:crates/core/src/tests.rs)"
 assert_eq "$(measure "$LIVE_SCRIPTS" "$CRATE_WT")" "11 11 11 0" \
   "a branch with no render pairs nothing off, and all three counts stand where they stood"
+
+# --- A private env file's stdout is not a render root -----------------------
+# The private env file is SOURCED while the roots are resolved, so anything it
+# prints lands in the capture unless the value is held on a descriptor of its
+# own. `crates` arriving as a root pairs the 40 lines of crates/core/src/lib.rs
+# off against core/src/lib.rs and drops them from every count, so the branch
+# measures smaller than it is — the direction that lets an oversized branch
+# past the tripwire. The file is written after the commit, so it is untracked
+# and adds no lines of its own to either branch.
+#
+# The row reads the two judges that resolve the roots inside this measurement.
+# branch-size-check loads the project environment in its own shell and has
+# always emitted whatever the env file prints ahead of its JSON, on main as
+# here, so it answers to its own fix and not to this one.
+QUIET_WT="$(build_branch quiet 40:crates/core/src/lib.rs 6:core/src/lib.rs)"
+assert_eq "$(measure_tripwire "$LIVE_SCRIPTS" "$QUIET_WT")" "46 46" \
+  "control: with no private env file both judges measure the branch's real size"
+CHATTY_WT="$(build_branch chatty 40:crates/core/src/lib.rs 6:core/src/lib.rs)"
+printf 'echo "crates"\n' > "$CHATTY_WT/.env.local"
+assert_eq "$(measure_tripwire "$LIVE_SCRIPTS" "$CHATTY_WT")" "46 46" \
+  "a line the private env file prints reaches no render root, so both judges stand where the quiet branch put them"
 
 printf '\npass: %d  fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
