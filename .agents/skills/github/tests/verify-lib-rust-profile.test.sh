@@ -6,7 +6,9 @@
 #
 # A row is `label|manifest|reader|stack`:
 #   manifest  a fixture (see manifest_of): `declared` carries the table,
-#             `absent` spells it only inside a comment and a string
+#             `absent` spells it only inside a comment and a string, and
+#             `nested` has no root manifest, only a child crate `crate/`
+#             carrying the table
 #   reader    `host` runs with this host's PATH, `none` with an empty one,
 #             on which python3 resolves to nothing
 #   stack     the one `name|build|test|cwd` line detect_stacks prints, its
@@ -45,7 +47,7 @@ else
 fi
 
 # --- the manifests ------------------------------------------------------------
-mkdir -p "$TMP_ROOT/declared" "$TMP_ROOT/absent" "$TMP_ROOT/nopath"
+mkdir -p "$TMP_ROOT/declared" "$TMP_ROOT/absent" "$TMP_ROOT/nested/crate" "$TMP_ROOT/nopath"
 cat >"$TMP_ROOT/declared/Cargo.toml" <<'TOML'
 [package]
 name = "fixture"
@@ -62,9 +64,10 @@ name = "fixture"
 version = "0.1.0"
 description = "[profile.agent]"
 TOML
+cp "$TMP_ROOT/declared/Cargo.toml" "$TMP_ROOT/nested/crate/Cargo.toml"
 manifest_of() {
   case "$1" in
-    declared|absent) printf '%s/%s' "$TMP_ROOT" "$1" ;;
+    declared|absent|nested) printf '%s/%s' "$TMP_ROOT" "$1" ;;
     *) echo "UNKNOWN-MANIFEST: $1" >&2; exit 2 ;;
   esac
 }
@@ -114,11 +117,13 @@ run_table() {
 
 AGENT='rust,cargo build --profile agent,cargo test --profile agent,.'
 RELEASE='rust,cargo build --release,cargo test --release,.'
+NESTED_AGENT='rust:crate,cargo build --profile agent,cargo test --profile agent,crate'
 
 run_table "the Rust smoke commands per manifest" "\
 a declared agent profile is what the stack builds and tests on|declared|host|$AGENT
 a manifest without the table keeps the release commands|absent|host|$RELEASE
 a host without a TOML reader keeps the release commands|declared|none|$RELEASE
+a child crate under no root manifest is read for its own table|nested|host|$NESTED_AGENT
 "
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
