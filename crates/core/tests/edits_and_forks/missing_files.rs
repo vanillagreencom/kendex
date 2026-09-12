@@ -138,20 +138,18 @@ fn a_rendering_the_layout_moved_is_not_missing() {
     commit(&w.upstream, "one");
     declare(&w, "[skills.gh]\nsource = \"cat\"\n");
     sync_and_apply(&w);
-    let link = w.home.join("app/.claude/skills/gh");
-    let old = w.home.join("app/.claude/skills/gh-old");
-    fs::rename(&link, &old).unwrap();
     let path = lock_path(&w.env, &w.scope);
     let mut lock = load_lock(&path).unwrap();
     let key = kendex_core::lock::entry_key(ItemKind::Skill, "gh", HarnessId::Claude);
-    let emitted = lock
-        .entries
-        .get_mut(&key)
-        .unwrap()
-        .emitted
-        .as_mut()
+    let entry = lock.entries.get_mut(&key).unwrap();
+    let paths = &mut entry.emitted.as_mut().unwrap().paths;
+    let link = paths
+        .iter_mut()
+        .find(|p| p.ends_with(".claude/skills/gh"))
         .unwrap();
-    *emitted.paths.iter_mut().find(|p| **p == link).unwrap() = old;
+    let old = link.with_file_name("gh-old");
+    fs::rename(&link, &old).unwrap();
+    *link = old;
     kendex_core::lock::save(&path, &lock).unwrap();
 
     assert!(!row(&w, ItemKind::Skill, "gh").files_missing);
