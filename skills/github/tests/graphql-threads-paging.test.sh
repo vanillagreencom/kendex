@@ -32,7 +32,7 @@ cat >"$TMP_ROOT/bin/gh" <<'EOF'
 set -euo pipefail
 case "${1:-} ${2:-}" in
     "auth status") echo "Logged in"; exit 0 ;;
-    "repo view")   echo '{"owner":{"login":"owner"},"name":"repo"}'; exit 0 ;;
+    "repo view")   echo 'owner/repo'; exit 0 ;;
     "api graphql")
         if [[ "$*" == *"cursor=CURSOR2"* ]]; then
             printf '{"data":%s}\n' "${STUB_PAGE2:?}"

@@ -14,6 +14,8 @@
 # then a failure so no lane goes further), gh, and the worktree CLI.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# shellcheck source=lib/shared-skill-libs.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
@@ -109,6 +111,7 @@ stage() {
   mkdir -p "$1/scripts/lib"
   cp "$2" "$1/scripts/open-terminal"
   cp "$SRC_LIB_DIR"/*.sh "$1/scripts/lib/"
+  orch_fixture_shared_libs "$1"
   chmod +x "$1/scripts/open-terminal"
   git -C "$1" init -q
 }

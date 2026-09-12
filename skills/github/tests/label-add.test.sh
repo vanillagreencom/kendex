@@ -7,17 +7,22 @@
 # A row is `label|world|argv|rc|out|err|calls`:
 #   world  `token:bot` a GitHub App installation token in GH_BOT_TOKEN,
 #          `app-user` gh's user lookup refused (an App token),
+#          `gh-repo:<slug>` GH_REPO naming a repository,
 #          `label:<missing|fail>` the label lookup's answer, `target:fail` the
 #          PR or issue lookup failing,
 #          `mutation:<app-denied|pat-denied|hidden-denied|server-error>` the
-#          POST's failure; `-` for none. The caller's own tokens are stripped.
+#          POST's failure; `-` for none. The caller's own tokens and GH_REPO
+#          are stripped.
 #   argv   label-add's arguments as written
 #   out    stdout, a JSON answer reduced to `status/reason[/permission]
 #          label=<l> repo=<r>`
 #   err    stderr, reduced the same way; `-` when empty
 #   calls  every gh call by kind, in order: user (the token check a supplied
-#          token gets), repo, label:<lookup path>, pr:<n>, issue:<n>,
-#          post:<n>:<literal label>; any other call as its own words; `-` for none
+#          token gets), repo, label:<repo>:<lookup path>, pr:<n>, issue:<n>,
+#          post:<repo>:<n>:<literal label>; any other call as its own words;
+#          `-` for none. The two API kinds carry the repository their path
+#          reached, because one command sending its lookup and its write to
+#          different repositories is what the shared resolver exists to stop.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -55,9 +60,9 @@ case "${1:-} ${2:-}" in
     printf '{"login":"test-user"}\n'
     ;;
   "repo view")
-    printf '%s\n' "$STUB_REPO_JSON"
+    printf '%s\n' "$STUB_REPO_VIEW"
     ;;
-  "api repos/owner/repo/labels/"*)
+  "api repos/"*"/labels/"*)
     case "${STUB_LABEL:-exists}" in
       fail) printf 'gh: server error (HTTP 500)\n' >&2; exit 1 ;;
       missing)
@@ -75,7 +80,7 @@ case "${1:-} ${2:-}" in
     fi
     [ "$1" = pr ] && printf '{"number":42}\n' || printf '{"number":84}\n'
     ;;
-  "api repos/owner/repo/issues/42/labels"|"api repos/owner/repo/issues/84/labels")
+  "api repos/"*"/issues/"*"/labels")
     case "${STUB_MUTATION_RESULT:-success}" in
       app-denied) printf 'gh: Resource not accessible by integration (HTTP 403)\n' >&2; exit 1 ;;
       pat-denied) printf 'gh: Resource not accessible by personal access token (HTTP 403)\n' >&2; exit 1 ;;
@@ -96,11 +101,12 @@ chmod +x "$TMP_ROOT/bin/gh"
 W_ENV=()
 build() {
   local w
-  W_ENV=(STUB_REPO_JSON='{"nameWithOwner":"owner/repo"}')
+  W_ENV=(STUB_REPO_VIEW=owner/repo)
   for w in "$@"; do
     case "$w" in
       token:bot) W_ENV+=(GH_BOT_TOKEN=ghs_APP_INSTALLATION123) ;;
       app-user) W_ENV+=(STUB_APP_USER_UNAVAILABLE=1) ;;
+      gh-repo:*) W_ENV+=("GH_REPO=${w#gh-repo:}") ;;
       label:*) W_ENV+=("STUB_LABEL=${w#label:}") ;;
       target:fail) W_ENV+=(STUB_TARGET_FAILURE=1) ;;
       mutation:*) W_ENV+=("STUB_MUTATION_RESULT=${w#mutation:}") ;;
@@ -123,18 +129,22 @@ text_of() {
 }
 
 calls() {
-  local out="" line kind
+  local out="" line kind path
   while IFS= read -r line; do
     [[ "$line" != "" ]] || continue
     case "$line" in
       "api user --jq .login") kind=user ;;
-      "repo view --json nameWithOwner") kind=repo ;;
-      "api repos/owner/repo/labels/"*) kind="label:${line#api repos/owner/repo/labels/}" ;;
+      "repo view --json nameWithOwner -q .nameWithOwner") kind=repo ;;
+      "api repos/"*"/labels/"*)
+        path="${line#api repos/}"
+        kind="label:${path%%/labels/*}:${path#*/labels/}"
+        ;;
       "pr view "*" --json number") line="${line#pr view }"; kind="pr:${line% --json number}" ;;
       "issue view "*" --json number") line="${line#issue view }"; kind="issue:${line% --json number}" ;;
-      "api repos/owner/repo/issues/"*"/labels --method POST --raw-field labels[]="*)
-        line="${line#api repos/owner/repo/issues/}"
-        kind="post:${line%%/*}:${line#*labels[]=}"
+      "api repos/"*"/issues/"*"/labels --method POST --raw-field labels[]="*)
+        path="${line#api repos/}"
+        kind="post:${path%%/issues/*}:${path#*/issues/}"
+        kind="${kind%%/labels *}:${line#*labels[]=}"
         ;;
       *) kind="$line" ;;
     esac
@@ -148,8 +158,8 @@ run() {
   local -a argv
   # shellcheck disable=SC2206
   argv=($1)
-  (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN \
-    STUB_CALLS="$TMP_ROOT/gh.calls" "${W_ENV[@]}" "$LABEL_ADD" "${argv[@]}" \
+  (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO \
+    STUB_CALLS="$TMP_ROOT/gh.calls" "${W_ENV[@]}" "${SUBJECT:-$LABEL_ADD}" "${argv[@]}" \
     </dev/null >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
   printf 'rc=%s out=%s err=%s calls=%s' "$rc" "$(text_of "$TMP_ROOT/stdout")" "$(text_of "$TMP_ROOT/stderr")" "$(calls)"
 }
@@ -176,31 +186,66 @@ run_table() {
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }
 
-PRE="repo,label:needs-review"
+# The repository `gh repo view` answers for, which is what every row without a
+# `gh-repo:` word reaches.
+R="owner/repo"
+PRE="repo,label:$R:needs-review"
 PERM="insufficient_permission/issues=write or pull_requests=write"
 
 run_table "the label mutation and its policy" "\
-an App installation token adds an existing label though its user lookup fails|token:bot app-user|42 needs-review|0|updated|-|user,$PRE,pr:42,post:42:needs-review
+an App installation token adds an existing label though its user lookup fails|token:bot app-user|42 needs-review|0|updated|-|user,$PRE,pr:42,post:$R:42:needs-review
 a missing required label is a configuration error, exit 78, before the target is looked up|label:missing|42 needs-review --required|78|-|configuration_error/label_missing label=needs-review repo=owner/repo|$PRE
-a missing optional label is a supported skip, exit 0|label:missing|42 informational --optional|0|optional_unsupported/label_missing label=informational repo=owner/repo|-|repo,label:informational
-a personal-access-token denial of a required label is a capability error, exit 77, naming the grant|mutation:pat-denied|42 needs-review --required|77|-|capability_error/$PERM label=needs-review repo=owner/repo|$PRE,pr:42,post:42:needs-review
-the same denial of an optional label is a supported skip|mutation:pat-denied|42 informational --optional|0|optional_unsupported/$PERM label=informational repo=owner/repo|-|repo,label:informational,pr:42,post:42:informational
-an App installation's denial of an optional label is the skip too|token:bot app-user mutation:app-denied|42 informational --optional|0|optional_unsupported/$PERM label=informational repo=owner/repo|-|user,repo,label:informational,pr:42,post:42:informational
-a permission-masked 404 on the mutation is the optional skip too|mutation:hidden-denied|42 informational --optional|0|optional_unsupported/$PERM label=informational repo=owner/repo|-|repo,label:informational,pr:42,post:42:informational
-optional mode does not hide a label lookup failure|label:fail|42 informational --optional|1|-|preflight_failed/label_lookup_failed label=informational repo=owner/repo|repo,label:informational
-nor a target lookup failure|target:fail|42 informational --optional|1|-|preflight_failed/target_lookup_failed label=informational repo=owner/repo|repo,label:informational,pr:42
-nor a mutation server failure, whose output passes through|mutation:server-error|42 informational --optional|1|-|gh: server error (HTTP 500)|repo,label:informational,pr:42,post:42:informational
-the lookup URL-encodes the label; the mutation sends it literally|-|42 needs/review --required|0|updated|-|repo,label:needs%2Freview,pr:42,post:42:needs/review
-an @path label is a literal|-|42 @path|0|updated|-|repo,label:%40path,pr:42,post:42:@path
-an @- label is a literal|-|42 @-|0|updated|-|repo,label:%40-,pr:42,post:42:@-
-a true label is a literal|-|42 true|0|updated|-|repo,label:true,pr:42,post:42:true
-a false label is a literal|-|42 false|0|updated|-|repo,label:false,pr:42,post:42:false
-a null label is a literal|-|42 null|0|updated|-|repo,label:null,pr:42,post:42:null
-an integer-like label is a literal|-|42 12345|0|updated|-|repo,label:12345,pr:42,post:42:12345
-a repository-placeholder label is a literal|-|42 {owner}|0|updated|-|repo,label:%7Bowner%7D,pr:42,post:42:{owner}
-an issue target resolves its number and uses the shared endpoint|-|84 needs-review --issue|0|updated|-|$PRE,issue:84,post:84:needs-review
+a missing optional label is a supported skip, exit 0|label:missing|42 informational --optional|0|optional_unsupported/label_missing label=informational repo=owner/repo|-|repo,label:$R:informational
+a personal-access-token denial of a required label is a capability error, exit 77, naming the grant|mutation:pat-denied|42 needs-review --required|77|-|capability_error/$PERM label=needs-review repo=owner/repo|$PRE,pr:42,post:$R:42:needs-review
+the same denial of an optional label is a supported skip|mutation:pat-denied|42 informational --optional|0|optional_unsupported/$PERM label=informational repo=owner/repo|-|repo,label:$R:informational,pr:42,post:$R:42:informational
+an App installation's denial of an optional label is the skip too|token:bot app-user mutation:app-denied|42 informational --optional|0|optional_unsupported/$PERM label=informational repo=owner/repo|-|user,repo,label:$R:informational,pr:42,post:$R:42:informational
+a permission-masked 404 on the mutation is the optional skip too|mutation:hidden-denied|42 informational --optional|0|optional_unsupported/$PERM label=informational repo=owner/repo|-|repo,label:$R:informational,pr:42,post:$R:42:informational
+optional mode does not hide a label lookup failure|label:fail|42 informational --optional|1|-|preflight_failed/label_lookup_failed label=informational repo=owner/repo|repo,label:$R:informational
+nor a target lookup failure|target:fail|42 informational --optional|1|-|preflight_failed/target_lookup_failed label=informational repo=owner/repo|repo,label:$R:informational,pr:42
+nor a mutation server failure, whose output passes through|mutation:server-error|42 informational --optional|1|-|gh: server error (HTTP 500)|repo,label:$R:informational,pr:42,post:$R:42:informational
+the lookup URL-encodes the label; the mutation sends it literally|-|42 needs/review --required|0|updated|-|repo,label:$R:needs%2Freview,pr:42,post:$R:42:needs/review
+an @path label is a literal|-|42 @path|0|updated|-|repo,label:$R:%40path,pr:42,post:$R:42:@path
+an @- label is a literal|-|42 @-|0|updated|-|repo,label:$R:%40-,pr:42,post:$R:42:@-
+a true label is a literal|-|42 true|0|updated|-|repo,label:$R:true,pr:42,post:$R:42:true
+a false label is a literal|-|42 false|0|updated|-|repo,label:$R:false,pr:42,post:$R:42:false
+a null label is a literal|-|42 null|0|updated|-|repo,label:$R:null,pr:42,post:$R:42:null
+an integer-like label is a literal|-|42 12345|0|updated|-|repo,label:$R:12345,pr:42,post:$R:42:12345
+a repository-placeholder label is a literal|-|42 {owner}|0|updated|-|repo,label:$R:%7Bowner%7D,pr:42,post:$R:42:{owner}
+an issue target resolves its number and uses the shared endpoint|-|84 needs-review --issue|0|updated|-|$PRE,issue:84,post:$R:84:needs-review
 --required with --optional is refused before any call, exit 2|-|42 needs-review --required --optional|2|-|label-add: --required and --optional are mutually exclusive|-
 "
+
+# The repository a row names in GH_REPO, which `gh repo view` never reports.
+O="other/elsewhere"
+
+run_table "which repository the lookup and the write reach" "\
+GH_REPO names it, and the checkout is never asked|gh-repo:$O|42 needs-review|0|updated|-|label:$O:needs-review,pr:42,post:$O:42:needs-review
+without GH_REPO the checkout answers, lookup and write together|-|42 needs-review|0|updated|-|repo,label:$R:needs-review,pr:42,post:$R:42:needs-review
+"
+
+echo "=== must-fail control ==="
+# Put the GH_REPO-blind `gh repo view` back in the preflight, keeping every
+# other line. The first row above reddens, and it reddens the way the issue
+# reported it: the label lookup and the write land on the checkout's
+# repository while the target lookup, which honours GH_REPO, asked another
+# one about its number 42.
+MUTANT_DIR="$TMP_ROOT/mutant"
+mkdir -p "$MUTANT_DIR/commands"
+cp -R "$REPO_ROOT/skills/github/scripts/lib" "$MUTANT_DIR/lib"
+MUTANT="$MUTANT_DIR/commands/label-add.sh"
+cp "$LABEL_ADD" "$MUTANT"
+assert_eq "$(grep -Fc 'kendex_github_resolve_gh_repo "$project_root"' "$MUTANT")" "1" \
+  "control finds exactly one live resolver call"
+sed -i.bak 's#kendex_github_resolve_gh_repo "[$]project_root"#gh repo view --json nameWithOwner -q .nameWithOwner#' "$MUTANT"
+assert_eq "$(grep -Fc 'kendex_github_resolve_gh_repo "$project_root"' "$MUTANT")" "0" \
+  "control applied the mutation"
+build gh-repo:$O
+SUBJECT="$MUTANT"
+GOT="$(run "42 needs-review")"
+SUBJECT=""
+assert_eq "$GOT" \
+  "rc=0 out=updated err=- calls=repo,label:$R:needs-review,pr:42,post:$R:42:needs-review" \
+  "must-fail control: a GH_REPO-blind lookup sends the write to the checkout's repository"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

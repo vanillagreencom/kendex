@@ -42,15 +42,29 @@ _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 # shellcheck source=gh-auth.sh
 source "$_LIB_DIR/gh-auth.sh"
+# shellcheck source=gh-repo.sh
+source "$_LIB_DIR/gh-repo.sh"
 
-# Get repository owner and name from current git context
+# Get the repository every command built on this lib reads and writes, as
+# {"owner":{"login":…},"name":…}. It goes through the shared resolver so
+# GH_REPO decides here exactly as it decides for the `gh pr view` and
+# `gh issue view` calls the same command makes; a bare `gh repo view` ignores
+# GH_REPO and would point the read at this checkout while the write followed
+# GH_REPO elsewhere.
 get_repo_info() {
-    local info
-    info=$(gh repo view --json owner,name 2>/dev/null) || {
+    local slug resolve_status=0
+    slug=$(kendex_github_resolve_gh_repo "${PROJECT_ROOT:-$PWD}") || resolve_status=$?
+    if [ "$resolve_status" -eq 2 ]; then
+        jq -cn --arg slug "$slug" \
+            '{error:("Resolved repository is not owner/name: " + $slug)}' >&2
+        return 1
+    fi
+    if [ "$resolve_status" -ne 0 ]; then
         echo '{"error": "Not in a GitHub repository or gh not authenticated"}' >&2
         return 1
-    }
-    echo "$info"
+    fi
+    jq -cn --arg owner "${slug%%/*}" --arg name "${slug#*/}" \
+        '{owner:{login:$owner},name:$name}'
 }
 
 # Extract owner from repo info

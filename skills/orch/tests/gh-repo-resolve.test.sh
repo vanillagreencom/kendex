@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Tests for orch/scripts/lib/gh-repo.sh, the one resolver ci-wait, queue-wait
-# and approval-wait ask which repository they are waiting on.
+# Tests for `orch_resolve_gh_repo`, the orch entry point every waiter,
+# oversee-watch and open-terminal ask which repository they are acting on. It
+# forwards to `kendex_github_resolve_gh_repo` in the github skill, which owns
+# the ladder; the rows below run through the orch entry point, so a wrapper
+# that stopped forwarding reddens every one of them.
 #
 # Its reason to exist: `gh repo view` answers for the working directory and
-# ignores GH_REPO, so three inline copies of it handed a caller waiting on
-# another repository's PR from this checkout a verdict about this checkout's
+# ignores GH_REPO, so each inline copy of it handed a caller acting on another
+# repository's PR from this checkout a verdict about this checkout's
 # same-numbered PR. GH_REPO decides; the working directory answers only when
 # GH_REPO is unset.
 #
@@ -21,6 +24,12 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 source "$TEST_DIR/lib/waiter-assertions.sh"
 
 LIVE_LIB="$REPO_ROOT/skills/orch/scripts/lib/gh-repo.sh"
+LIVE_FN=orch_resolve_gh_repo
+# The resolver itself, which the wrapper sources by a fixed relative path. The
+# must-fail control mutates a copy of this file, so it names the owner rather
+# than the entry point.
+SHARED_LIB="$REPO_ROOT/skills/github/scripts/lib/gh-repo.sh"
+SHARED_FN=kendex_github_resolve_gh_repo
 
 # `gh repo view` stand-in. STUB_REPO_VIEW is what it answers; empty means it
 # printed nothing, the shape a checkout gh cannot resolve produces.
@@ -47,18 +56,18 @@ for name in origin-repo no-remote; do
 done
 git -C "$TMP_ROOT/origin-repo" remote add origin git@github.com:remote-owner/remote-repo.git
 
-# run_resolve ENV ROOT LIB — call the resolver with ENV (a comma-separated
-# list of `env` arguments) against ROOT, through LIB. Sets OUT and RC.
+# run_resolve ENV ROOT LIB FN — call FN with ENV (a comma-separated list of
+# `env` arguments) against ROOT, after sourcing LIB. Sets OUT and RC.
 # GH_REPO comes off first so a row's own value is the only one in play.
 run_resolve() {
-  local env_list="$1" root="$2" lib="$3" env_args=()
+  local env_list="$1" root="$2" lib="$3" fn="$4" env_args=()
   [[ -z "$env_list" ]] || IFS=',' read -ra env_args <<<"$env_list"
   ERR="$TMP_ROOT/stderr"
   set +e
   OUT=$(PATH="$TMP_ROOT/bin:$PATH" \
     env -u GH_REPO ${env_args[@]+"${env_args[@]}"} \
-      bash -c 'set -uo pipefail; . "$1"; orch_resolve_gh_repo "$2"' \
-      bash "$lib" "$TMP_ROOT/$root" 2>"$ERR")
+      bash -c 'set -uo pipefail; . "$1"; "$3" "$2"' \
+      bash "$lib" "$TMP_ROOT/$root" "$fn" 2>"$ERR")
   RC=$?
   set -e
 }
@@ -89,7 +98,7 @@ table() {
   for row in "$@"; do
     IFS='|' read -r label env root expect <<<"$row"
     [[ -n "$expect" ]] || { printf 'table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
-    run_resolve "$env" "$root" "$LIVE_LIB"
+    run_resolve "$env" "$root" "$LIVE_LIB" "$LIVE_FN"
     assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
   done
 }
@@ -120,13 +129,13 @@ echo "=== must-fail control ==="
 # above is the one that reddens, and it reddens with the checkout's repository
 # — exactly the wrong-repository verdict the issue reported.
 MUTANT="$TMP_ROOT/gh-repo-mutant.sh"
-cp "$LIVE_LIB" "$MUTANT"
+cp "$SHARED_LIB" "$MUTANT"
 assert_eq "$(grep -Fc 'if [ -n "${GH_REPO:-}" ]; then' "$MUTANT")" "1" \
   "control finds exactly one live GH_REPO branch"
 sed -i.bak 's/^  if \[ -n "${GH_REPO:-}" \]; then$/  if [ -n "" ]; then/' "$MUTANT"
 assert_eq "$(grep -Fc 'if [ -n "" ]; then' "$MUTANT")" "1" \
   "control applied the mutation"
-run_resolve 'GH_REPO=other/elsewhere,STUB_REPO_VIEW=cwd-owner/cwd-repo' origin-repo "$MUTANT"
+run_resolve 'GH_REPO=other/elsewhere,STUB_REPO_VIEW=cwd-owner/cwd-repo' origin-repo "$MUTANT" "$SHARED_FN"
 assert_eq "$(observe 'rc=0 out=cwd-owner/cwd-repo')" "rc=0 out=cwd-owner/cwd-repo" \
   "must-fail control: without the GH_REPO branch the checkout's repository wins" "$ERR"
 

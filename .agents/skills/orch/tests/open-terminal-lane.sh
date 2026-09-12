@@ -11,6 +11,8 @@
 # mode, and an unstubbed launch would open a real window per row.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# shellcheck source=lib/shared-skill-libs.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 OPEN_TERMINAL="$SCRIPTS_DIR/open-terminal"
@@ -309,6 +311,7 @@ SCRIPTREPO="$TMP_ROOT/scriptrepo"; CALLERREPO="$TMP_ROOT/callerrepo"
 mkdir -p "$SCRIPTREPO/scripts/lib" "$CALLERREPO"
 cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTREPO/scripts/"
 cp "$SCRIPTS_DIR/lib"/*.sh "$SCRIPTREPO/scripts/lib/"
+orch_fixture_shared_libs "$SCRIPTREPO"
 chmod +x "$SCRIPTREPO/scripts/open-terminal" "$SCRIPTREPO/scripts/lanes"
 git -C "$SCRIPTREPO" init -q; git -C "$CALLERREPO" init -q
 ( cd "$CALLERREPO" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \

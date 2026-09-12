@@ -71,7 +71,9 @@ case "${1:-}" in
         ;;
     repo)
         if [[ "${2:-}" == "view" ]]; then
-            echo '{"owner":{"login":"owner"},"name":"repo"}'
+            # The bare slug: this stub does not apply gh's own --json / -q
+            # filters, and the shared resolver asks for nameWithOwner.
+            echo 'owner/repo'
             exit 0
         fi
         ;;

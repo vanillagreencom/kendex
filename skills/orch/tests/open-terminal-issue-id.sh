@@ -11,6 +11,8 @@
 # the worktree CLI, GUI terminal, and gh so nothing external is launched.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# shellcheck source=lib/shared-skill-libs.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
@@ -86,6 +88,7 @@ make_ot_repo() {
   mkdir -p "$repo/scripts/lib"
   cp "$SRC_OT" "$repo/scripts/open-terminal"
   cp "$SRC_LIB_DIR"/*.sh "$repo/scripts/lib/"
+  orch_fixture_shared_libs "$repo"
   chmod +x "$repo/scripts/open-terminal"
   git -C "$repo" init -q
   if [[ -n "$settings" ]]; then

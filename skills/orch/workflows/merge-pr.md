@@ -179,7 +179,7 @@ A non-zero exit or empty output **aborts the merge**. Otherwise reparent each sa
 
 Some harnesses reset cwd per shell call — prefer `-C` and absolute paths over `cd &&` chains.
 
-**Clear `GH_REPO` and `GITHUB_REPOSITORY` on every command in this section that reaches GitHub, fenced or inline.** `gh` honours them over both cwd and `-C`, so an inherited value points a read at another repository and a mutation at that repository's same-numbered PR — a `branch -D` authorized by the wrong PR, or the queue wait's late-findings guard disarming and dequeuing someone else's. Reaching GitHub is a property of the script rather than of the command's spelling: a waiter, the `github.sh` router, `container-close` and `worktree` all call `gh` inside. Before adding a command here, read the script it names.
+**Clear `GH_REPO` and `GITHUB_REPOSITORY` on every command in this section that reaches GitHub, fenced or inline.** `gh pr view`, `gh api` and the rest honour them over both cwd and `-C`, while `gh repo view` ignores them and answers for the working directory. So an inherited value splits this section across two repositories: a read and a mutation land on that repository's same-numbered PR while the `gh repo view` below still names this checkout — a `branch -D` authorized by the wrong PR, or the queue wait's late-findings guard disarming and dequeuing someone else's. Clearing them puts every command here back on one repository. Reaching GitHub is a property of the script rather than of the command's spelling: a waiter, the `github.sh` router, `container-close` and `worktree` all call `gh` inside. Before adding a command here, read the script it names.
 
 ```bash
 .agents/skills/orch/scripts/git-context common-root .
