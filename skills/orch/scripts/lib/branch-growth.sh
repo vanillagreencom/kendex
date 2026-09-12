@@ -70,8 +70,12 @@ branch_growth_render_roots() {
 # The branch's changed lines as the fix-round tripwire scores them: additions
 # plus deletions, floor 1, over every path the one classification below did not
 # pair off as a render mirror. So the number an implementation receipt records
-# and the number a later round is held to are the same quantity branch-size-check
-# reports, and a source with a tracked render is counted once rather than twice.
+# and the number a later round is held to are one number, and a source with a
+# tracked render is counted once rather than twice.
+#
+# That render-mirror exclusion is the whole of what this shares with the
+# push-time check: branch-size-check judges additions alone, so a branch with
+# deletions counts more here than there. This measures churn, that one growth.
 #
 # The production and test split that same pass computes is not read here: it
 # answers to an allowance this measurement does not use, so no test-path globs

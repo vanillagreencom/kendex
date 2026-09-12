@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# One measurement, two judges. The fix-round tripwire dev-round-write enforces
-# and the implementation baseline dev-return-write records count the lines
-# branch-size-check counts at the push, so a source with a tracked render is
-# billed once by all three rather than twice by the first two.
+# One render-mirror exclusion, three judges. The fix-round tripwire
+# dev-round-write enforces, the implementation baseline dev-return-write
+# records, and the push-time check branch-size-check applies all pair a render
+# off against the source it renders, in one classification pass, so a source
+# with a tracked render is billed once rather than twice.
+#
+# That exclusion is all they share: the first two count additions plus
+# deletions, branch-size-check counts additions alone.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -133,6 +137,20 @@ assert_eq "$(measure "$MUTANT_SCRIPTS" "$MUTANT_WT")" "10 20 20 10" \
 CRATE_WT="$(build_branch crate 7:crates/core/src/lib.rs 4:crates/core/src/tests.rs)"
 assert_eq "$(measure "$LIVE_SCRIPTS" "$CRATE_WT")" "11 11 11 0" \
   "a branch with no render pairs nothing off, and all three counts stand where they stood"
+
+# --- A project-configured root reaches all three measurements ---------------
+# Every row above unsets ORCH_SIZE_RENDER_ROOTS and so exercises the built-in
+# default. This one leaves the roots to the fixture's own kendex.settings.toml
+# and names one the default does not carry. If any of the three stopped reading
+# the project table, `renders` would not be a root, the 10 mirror lines would
+# count in full, and the row would read 22 22 22 0 — which is why it needs no
+# separate control for the load.
+CONFIGURED_WT="$(build_branch configured 10:skills/x/SKILL.md 10:renders/skills/x/SKILL.md)"
+printf '[env]\nORCH_SIZE_RENDER_ROOTS = "renders"\n' > "$CONFIGURED_WT/kendex.settings.toml"
+git -C "$CONFIGURED_WT" add kendex.settings.toml
+git -C "$CONFIGURED_WT" commit -q -m settings
+assert_eq "$(measure "$LIVE_SCRIPTS" "$CONFIGURED_WT")" "12 12 12 10" \
+  "a root named only by the project table pairs its render off in all three measurements: 10 source lines plus the 2-line settings file, with 10 mirror lines set aside"
 
 # --- A private env file's stdout is not a render root -----------------------
 # The private env file is SOURCED while the roots are resolved, so anything it
