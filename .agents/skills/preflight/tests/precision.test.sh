@@ -653,4 +653,64 @@ git -C "$R" add -A
 run_pf --staged
 fires "the base's own migration, staged, still fails" "store/migrations/V1__init.sql:0: [applied-migration-edited]"
 
+echo "=== a shell template inside single quotes is text, not this script's commands ==="
+seed quotedtemplate
+mkdir -p "$R/scripts/lib"
+# Every shape sits after a `;` INSIDE the quotes, which is the command
+# position each lane anchors on: a template whose first word opened the span
+# would match no anchor and would pin nothing. The early-close pipeline is
+# halved across two variables so this suite's own committed line never
+# carries the shape at that position — the one lane the test tree is judged
+# by.
+ec_head='v=$1; printf "%s\n" "$v" '
+ec_tail='| head -1'
+# The double-quoted half of the same rule: a span with no `$(` in it opens no
+# command either, so the message naming the shape is not the shape. It takes
+# the same reader half, and its own writer half for the same reason.
+dq_head='cmd '
+cat >"$R/scripts/writer.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+# A hook this script writes to disk: the commands between the quotes run in
+# the written file, never in this one.
+hook_line='cd "$d"; git rev-parse --git-dir 2>/dev/null || true'
+scratch_line='cd "$d"; mktemp -d'
+EOF
+printf "window_line='%s%s'\n" "$ec_head" "$ec_tail" >>"$R/scripts/writer.sh"
+printf 'echo "the idiom is %s%s"\n' "$dq_head" "$ec_tail" >>"$R/scripts/writer.sh"
+printf 'printf "%%s\\n" "$hook_line" "$scratch_line" "$window_line" >"$1"\n' >>"$R/scripts/writer.sh"
+# The assignment shape needs a file that never sets errexit, and a sourced
+# lib is the one such file that is not itself a strict-mode finding.
+cat >"$R/scripts/lib/tpl.sh" <<'EOF'
+#!/usr/bin/env bash
+# Sourced by the scripts beside it: the caller's shell owns the mode.
+assign_line='d=$(mktemp -d)'
+echo "$assign_line"
+EOF
+git -C "$R" add -A
+run_pf
+clean "a swallowed status, an mktemp invocation, an early-closing pipeline and an mktemp assignment inside single quotes are the written file's commands, and a pipeline named in a double-quoted message is nobody's" 2
+
+echo "=== control: the same four shapes outside the quotes are this script's own ==="
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'set -euo pipefail\n'
+  printf 'd=$1\n'
+  printf 'cd "$d"; git rev-parse --git-dir 2>/dev/null || true\n'
+  printf 'cd "$d"; mktemp -d\n'
+  printf '%s%s\n' "$ec_head" "$ec_tail"
+} >"$R/scripts/writer.sh"
+cat >"$R/scripts/lib/tpl.sh" <<'EOF'
+#!/usr/bin/env bash
+# Sourced by the scripts beside it: the caller's shell owns the mode.
+d=$(mktemp -d)
+echo "$d"
+EOF
+git -C "$R" add -A
+run_pf
+fires "unquoting the hook line makes the swallowed status this script's" "scripts/writer.sh:4: [fail-open] git || true swallows exit 2"
+fires "unquoting the scratch line makes the mktemp invocation this script's" "scripts/writer.sh:5: [mktemp-trap] mktemp without an EXIT trap"
+fires "unquoting the window line makes the early-closing pipeline this script's" "scripts/writer.sh:6: [early-close-pipe]"
+fires "unquoting the assignment makes the unchecked mktemp this lib's" "scripts/lib/tpl.sh:3: [fail-open] unchecked mktemp"
+
 pf_summary

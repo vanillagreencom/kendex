@@ -62,7 +62,11 @@ pf_world() {
   case "$1" in
     syntax) printf '#!/usr/bin/env bash\nset -euo pipefail\nif [ 1 = 1 ]; then\n' >"$R/scripts/broken.sh" ;;
     scerror) printf '#!/usr/bin/env bash\nset -euo pipefail\nexit 300\n' >"$R/scripts/exitcode.sh" ;;
-    masked) printf '#!/usr/bin/env bash\nset -euo pipefail\ntrap '"'"'echo done'"'"' EXIT\nf() {\n  local d="$(mktemp -d)"\n  echo "$d"\n}\nf\n' >"$R/scripts/masked.sh" ;;
+    # Line 6 is the same declaration with the substitution inside single
+    # quotes, where it expands to nothing and masks no status. shellcheck
+    # parses the file and owns that reading, so this lane takes no blanking
+    # step of its own; the row's whole-set pin is what holds it to one head.
+    masked) printf '#!/usr/bin/env bash\nset -euo pipefail\ntrap '"'"'echo done'"'"' EXIT\nf() {\n  local d="$(mktemp -d)"\n  local tpl='"'"'e=$(mktemp -d)'"'"'\n  echo "$d$tpl"\n}\nf\n' >"$R/scripts/masked.sh" ;;
     mktemp) printf '#!/usr/bin/env bash\necho loose\nTMP="$(mktemp -d)"\necho "$TMP"\n' >"$R/scripts/loose.sh" ;;
     strict) printf '#!/usr/bin/env bash\necho fresh\n' >"$R/scripts/fresh.sh" ;;
     swallow) printf '#!/usr/bin/env bash\nset -euo pipefail\necho existing\ngrep -q x -- "$1" || true\n' >"$R/scripts/existing.sh" ;;
@@ -120,6 +124,9 @@ pf_world() {
     scratch) printf '#!/usr/bin/env bash\nset -euo pipefail\nD="$(mktemp -d)"\necho "$D"\n' >"$R/scripts/scratch.sh" ;;
     scratchfile) printf '#!/usr/bin/env bash\nset -euo pipefail\nF="$(mktemp)"\necho "$F"\n' >"$R/scripts/scratchfile.sh" ;;
     shellmk) printf '#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p %s/cache\n' /tmp >"$R/scripts/shellmk.sh" ;;
+    # This lane's subject IS the quoted literal, in every language, so the
+    # blanking step the command-judging lanes share must not reach it.
+    shellmkquoted) printf '#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p %s%s/cache%s\n' "'" /tmp "'" >"$R/scripts/shellmk.sh" ;;
     mkjs) printf 'const fs = require("fs");\nfs.mkdirSync("%s/out");\n' /tmp >"$R/src/mk.js" ;;
     mkjsprefix) printf 'const fs = require("fs");\nfs.mkdtempSync("%s/app-");\n' /tmp >"$R/src/mk.js" ;;
     mkjsroot) printf 'const fs = require("fs");\nfs.mkdtempSync("%s");\n' /tmp >"$R/src/mk.js" ;;
@@ -176,7 +183,7 @@ pf_world() {
 IFS= read -r -d '' rows <<'ROWS' || :
 an unparseable new script fails, attributed to shell-syntax|syntax|-|-|1|scripts/broken.sh:4: [shell-syntax]|-
 an out-of-range exit status fails as a shellcheck error|scerror|-|shellcheck|1|scripts/exitcode.sh:3: [shellcheck-errors]|SC2242
-a masking local-and-assign fails on the line that introduced it|masked|-|shellcheck|1|scripts/masked.sh:5: [masked-returns]|SC2155
+a masking local-and-assign fails on the line that introduced it, and the single-quoted declaration under it masks nothing|masked|-|shellcheck|1|scripts/masked.sh:5: [masked-returns]|SC2155
 an mktemp assignment in an errexit-less file fails as fail-open|mktemp|-|-|1|scripts/loose.sh:3: [fail-open]|unchecked mktemp
 a new script that never sets -e/-u/pipefail fails as fail-open|strict|-|-|1|scripts/fresh.sh:0: [fail-open]|new shell file without strict mode
 a grep whose status or-true drops fails as fail-open, naming the command|swallow|-|-|1|scripts/existing.sh:4: [fail-open]|grep || true swallows exit 2
@@ -188,6 +195,7 @@ an operator inside the substitution does not exempt the assignment|bareinner|-|-
 a new script with mktemp and no EXIT trap fails as mktemp-trap|scratch|-|-|1|scripts/scratch.sh:3: [mktemp-trap]|mktemp without an EXIT trap
 an mktemp with no arguments is the same finding|scratchfile|-|-|1|scripts/scratchfile.sh:3: [mktemp-trap]|mktemp without an EXIT trap
 a shell mkdir -p at a literal /tmp path fails|shellmk|-|-|1|scripts/shellmk.sh:3: [hardcoded-temp-path]|-
+the same path in single quotes is the same finding|shellmkquoted|-|-|1|scripts/shellmk.sh:3: [hardcoded-temp-path]|-
 a JS mkdirSync taking the literal fails|mkjs|-|-|1|src/mk.js:2: [hardcoded-temp-path]|-
 a JS mkdtempSync prefix under /tmp is the same finding|mkjsprefix|-|-|1|src/mk.js:2: [hardcoded-temp-path]|-
 the JS bare-root prefix form (mkdtempSync(/tmp) making a /tmpXXXXXX sibling) fails|mkjsroot|-|-|1|src/mk.js:2: [hardcoded-temp-path]|-

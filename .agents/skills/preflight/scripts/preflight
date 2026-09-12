@@ -81,10 +81,8 @@ Lanes:
                   reader fed a here-string or a file, a reader that runs to
                   the end of its input (tr, sed, wc), a command after ||
                   rather than after a pipe, or the same text on a comment
-                  line. A pipe inside a quoted message on a line that also
-                  opens with a writer is judged as a pipeline. A file with no
-                  pipefail preamble of its own is out of scope even where a
-                  sourcing caller supplies one.
+                  line. A file with no pipefail preamble of its own is out of
+                  scope even where a sourcing caller supplies one.
   unwired-suite   a new suite file no runner invokes. Suites are
                   tests/*.test.sh, tests/test-*.sh, a shell file with a
                   test-<name> basename and no extension, *.test.ts, *.test.js
@@ -144,6 +142,16 @@ Scope rules:
   test_*) only the swallowed-status shape and that same docs-cited-paths
   direction stand down. The mktemp assignment shape of fail-open is judged in
   every tree.
+  A lane that reads a line as this script's own commands — the
+  swallowed-status and mktemp-assignment shapes of fail-open, mktemp-trap and
+  early-close-pipe — judges it with its inert quoted spans blanked to their
+  delimiters. Single quotes suppress every expansion, so their span is text
+  wherever it stands: the hook and script templates a tool writes to disk
+  carry commands that run in the written file, never in the writer. A
+  double-quoted span is blanked too, unless a $( inside it opens a command
+  the line really runs. hardcoded-temp-path takes no blanking, since the
+  quoted literal is its subject; masked-returns takes none either, since
+  shellcheck parses the file and owns that reading.
   In an installed-artifact subtree (.agents/ and the harness directories'
   skills, agents, hooks, rules, instructions, packages and kendex trees)
   masked-returns, fail-open, early-close-pipe, unwired-suite, mktemp-trap and
@@ -887,30 +895,76 @@ is_comment_line() { # LINE — leading-whitespace-then-# only; a trailing commen
   return 1
 }
 
+# A line's shell command text: the quoted spans that run nothing, blanked to
+# their delimiters. Single quotes suppress every expansion, so their span is
+# literal text wherever it stands — the hook and script templates a tool
+# writes to disk carry commands that run in the written file, never in this
+# one. A double-quoted span still runs whatever a `$(` inside it opens, so
+# that one is kept whole. The delimiters stay, so the command-position anchor
+# every line-shape lane carries still reads the word boundary a quote makes.
+# A pair is required: the lone apostrophe of `don't` closes no span, and a
+# string whose closing quote is on another line is not one of these.
+#
+# One blanking step for every lane that judges a line as this script's own
+# commands (both the fail-open shapes the text decides, mktemp-trap,
+# early-close-pipe). hardcoded-temp-path is not one of them: its subject is
+# the quoted literal itself, in any language. masked-returns is not either,
+# because a parse of the whole file owns that lane's reading.
+# In-shell and out through a global, never a subprocess: this runs on every
+# added shell line that carries a quote, and a fork per line costs more than
+# all the lanes it feeds. Each turn takes the leftmost span that actually
+# closes, so an unpaired apostrophe cannot swallow a double-quoted span
+# behind it.
+shell_command_text() { # LINE — sets SHELL_COMMAND_TEXT
+  local rest="$1" out="" pre="" body="" q="" sq_pre="" dq_pre="" sq_closes=0 dq_closes=0
+  while :; do
+    sq_pre="${rest%%\'*}"
+    dq_pre="${rest%%\"*}"
+    sq_closes=0
+    dq_closes=0
+    if [ "$sq_pre" != "$rest" ]; then
+      case "${rest#"$sq_pre'"}" in *\'*) sq_closes=1 ;; esac
+    fi
+    if [ "$dq_pre" != "$rest" ]; then
+      case "${rest#"$dq_pre\""}" in *\"*) dq_closes=1 ;; esac
+    fi
+    if [ "$sq_closes" = 1 ] && { [ "$dq_closes" = 0 ] || [ "${#sq_pre}" -lt "${#dq_pre}" ]; }; then
+      q="'"
+      pre="$sq_pre"
+    elif [ "$dq_closes" = 1 ]; then
+      q='"'
+      pre="$dq_pre"
+    else
+      break
+    fi
+    rest="${rest#"$pre$q"}"
+    body="${rest%%"$q"*}"
+    rest="${rest#"$body$q"}"
+    if [ "$q" = '"' ]; then
+      case "$body" in
+        *'$('*) out="$out$pre$q$body$q"; continue ;;
+      esac
+    fi
+    out="$out$pre$q$q"
+  done
+  SHELL_COMMAND_TEXT="$out$rest"
+}
+
 # The `|| true` shape on a command whose exit 2 means "could not read" or
 # "invoked wrong": true erases that status and the caller reads the empty
 # result as a clean answer. The command must stand at a command position, so
-# the same text quoted inside a message is not a finding. Prints the
-# swallowed command, nothing when the shape is absent — a status-capturing
-# `|| status=$?` is a different line.
-swallowed_cmd() { # LINE -> command name on stdout
-  printf '%s\n' "$1" | LC_ALL=C awk '
-    # Blank quoted spans that carry no substitution: text in a message runs
-    # nothing, but "$(git … || true)" is a command inside quotes.
-    {
-      out = ""; rest = $0
-      while (match(rest, /"[^"]*"|\047[^\047]*\047/)) {
-        seg = substr(rest, RSTART, RLENGTH)
-        out = out substr(rest, 1, RSTART - 1) (index(seg, "$(") ? seg : substr(seg, 1, 1) substr(seg, 1, 1))
-        rest = substr(rest, RSTART + RLENGTH)
-      }
-      $0 = out rest
-    }
+# the same text quoted inside a message is not a finding. Sets the swallowed
+# command, empty when the shape is absent — a status-capturing
+# `|| status=$?` is a different line. Out through a global like the scan
+# above it, so the awk that cannot run ends the script here rather than
+# reading as a line with no shape.
+swallowed_cmd() { # COMMAND-TEXT (shell_command_text) — sets SWALLOWED_CMD
+  SWALLOWED_CMD="$(printf '%s\n' "$1" | LC_ALL=C awk '
     match($0, /(^[[:space:]]*|[;(`{&|][[:space:]]*)(grep|find|git|jq|diff|cmp)([[:space:]][^|]*)?\|\|[[:space:]]*(true|:)([^A-Za-z0-9_.-]|$)/) {
       s = substr($0, RSTART, RLENGTH)
       if (match(s, /(grep|find|git|jq|diff|cmp)/)) print substr(s, RSTART, RLENGTH)
       exit
-    }'
+    }')"
 }
 
 # The test tree sets its own rules, and this is its one grammar. A suite is
@@ -1324,10 +1378,20 @@ while IFS= read -r f; do
   while IFS= read -r rec; do
     n="${rec%%"$TAB"*}"
     content="${rec#*"$TAB"}"
+    # What this script's own shell would run on this line: the lanes below
+    # that judge a command read `code`, and the one that judges a quoted
+    # literal (hardcoded-temp-path) reads `content`. Scanned only where a
+    # quote can open a span, which most lines never do.
+    code="$content"
+    if [ "$is_sh" = 1 ]; then
+      case "$content" in
+        *\'* | *'"'*) shell_command_text "$content"; code="$SHELL_COMMAND_TEXT" ;;
+      esac
+    fi
 
     if [ "$is_sh" = 1 ] && [ "$vendored_mirror" = 0 ] && [ "$has_ee" = 0 ] \
-      && grep -Eq -- "$MKTEMP_ASSIGN" <<<"$content" \
-      && ! substitution_status_checked "$content"; then
+      && grep -Eq -- "$MKTEMP_ASSIGN" <<<"$code" \
+      && ! substitution_status_checked "$code"; then
       emit "$f" "$n" fail-open "unchecked mktemp in a file without errexit — a failed mktemp leaves the variable empty and the script runs on"
     fi
 
@@ -1340,10 +1404,10 @@ while IFS= read -r f; do
     # of the line, so a `#` in front of the shape already fails to match.
     if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] \
       && [ "$has_ee" = 1 ] && [ "$has_noee" = 0 ]; then
-      case "$content" in
+      case "$code" in
         *'$('*)
-          if ! substitution_status_checked "$content" && grep -Eq -- "$SUBST_ASSIGN_RE" <<<"$content"; then
-            assign_var="${content#"${content%%[![:space:]]*}"}"
+          if ! substitution_status_checked "$code" && grep -Eq -- "$SUBST_ASSIGN_RE" <<<"$code"; then
+            assign_var="${code#"${code%%[![:space:]]*}"}"
             assign_var="${assign_var%%=*}"
             if guard_tests_var "$cpath" "$n" "$assign_var"; then
               emit "$f" "$n" fail-open "bare command-substitution assignment under errexit — its status ends the script here, so the test of \$$assign_var below never runs; move the assignment into the condition"
@@ -1356,9 +1420,9 @@ while IFS= read -r f; do
     # The literal prefilters keep the regex passes off the lines that cannot
     # carry either shape — most of them.
     if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$is_new" = 1 ] && [ "$has_trap" = 0 ] && [ "$mktemp_reported" = 0 ]; then
-      case "$content" in
+      case "$code" in
         *mktemp*)
-          if ! is_comment_line "$content" && printf '%s' "$content" | grep -Eq -- "$MKTEMP_CALL_RE"; then
+          if ! is_comment_line "$content" && grep -Eq -- "$MKTEMP_CALL_RE" <<<"$code"; then
             mktemp_reported=1
             emit "$f" "$n" mktemp-trap "mktemp without an EXIT trap — scratch is never removed"
           fi
@@ -1387,12 +1451,12 @@ while IFS= read -r f; do
     fi
 
     if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$vendored_mirror" = 0 ] && [ "$is_testname" = 0 ]; then
-      case "$content" in
+      case "$code" in
         *"||"*)
           if ! is_comment_line "$content"; then
-            swallowed="$(swallowed_cmd "$content")"
-            if [ -n "$swallowed" ]; then
-              emit "$f" "$n" fail-open "$swallowed || true swallows exit 2 (unreadable input, broken invocation) — capture the status and treat >1 as failure"
+            swallowed_cmd "$code"
+            if [ -n "$SWALLOWED_CMD" ]; then
+              emit "$f" "$n" fail-open "$SWALLOWED_CMD || true swallows exit 2 (unreadable input, broken invocation) — capture the status and treat >1 as failure"
             fi
           fi
           ;;
@@ -1404,9 +1468,9 @@ while IFS= read -r f; do
     # is no licence to take a 141 that ends the run in the middle of a
     # section. The file's own pipefail is already the condition above.
     if [ "$is_sh" = 1 ] && [ "$vendored_mirror" = 0 ] && [ "$has_pf" = 1 ]; then
-      case "$content" in
+      case "$code" in
         *"|"*)
-          if ! is_comment_line "$content" && grep -Eq -- "$EARLY_CLOSE_RE" <<<"$content"; then
+          if ! is_comment_line "$content" && grep -Eq -- "$EARLY_CLOSE_RE" <<<"$code"; then
             emit "$f" "$n" early-close-pipe "a shell writer piped into a reader that stops before EOF — pipefail turns the writer's SIGPIPE into a 141 that aborts the branch under errexit, and reads as a plain no-match in condition position; capture whole and window in-shell, or feed the reader a here-string"
           fi
           ;;
