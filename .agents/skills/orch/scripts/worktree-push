@@ -5,7 +5,12 @@
 # `worktree push` auto-rebases onto the updated base and prints one
 # 'rebase-map: <old-sha> <new-sha>' line per rewritten commit, with the
 # literal word `dropped` in place of the new SHA when the replayed patch was
-# already upstream. Every SHA recorded in workflow state before that rebase
+# already upstream. Those printed lines are replayed to the caller and never
+# parsed here: the push records the same map as a hop in the worktree's
+# `kendex-rebase-map`, and that file is what this reconciles from, because a
+# map read out of the transcript would be read out of a temporary capture this
+# process removes on exit. Every SHA recorded in workflow state before that
+# rebase
 # — `fixed_items[].commit`, `pr_comment_review.fixes[].commit` — is stale the
 # moment the map prints, and publishing a stale SHA is forbidden. This
 # wrapper closes that gap at push time instead of leaving the remap to the
@@ -22,16 +27,17 @@
 #     submit-pr routes this summary and the exit code before publishing SHAs.
 #
 # A completed guarded restack (`worktree create --reuse`, `create --restack`,
-# `restack continue|skip`) rewrites the same commits in an earlier process, so
-# it leaves its own map in the worktree's git dir as `kendex-rebase-map`: a
-# `rebase-hop:` line opening that restack's hop, then one `rebase-map:` line
-# per rewritten commit. Each restack appends its own hop, so a worktree
-# restacked twice before one push holds two.
+# `restack continue|skip`) rewrites the same commits in an earlier process, and
+# records its map the same way: a `rebase-hop:` line opening that rewrite's
+# hop, then one `rebase-map:` line per rewritten commit. Each rewrite appends
+# its own hop, so a worktree restacked twice before one push holds two.
 #
-# This wrapper consumes that file before it runs the push and applies each hop
-# through the same grammar and the same reconciliation, printing one
-# `restack-reconcile: map_entries=N fixed_items=N pr_fixes=N` line per hop and
-# a `sha-reconcile:` line for the push's own. Every hop is a separate
+# This wrapper consumes that file twice, once before it runs the push and once
+# after, since the push writes its own hop during the run. Both consumes use
+# the same grammar and the same reconciliation, printing one
+# `restack-reconcile: map_entries=N fixed_items=N pr_fixes=N` line per hop
+# standing before the push and a `sha-reconcile:` line for the push's own.
+# Every hop is a separate
 # reconciliation because each one compares a record against the value it held
 # when that reconciliation began: a record the first hop moved from X to Y is
 # at Y when the second hop's Y-to-Z arrives, and the push's own hop then takes
@@ -101,12 +107,12 @@
 #                   recorded and applied
 #   1 (pushed)   -> the push landed but reconciliation did not (no state file,
 #                   unparseable map line, jq/update failure). The recorded SHAs
-#                   are NOT reconciled, and re-running does not repair them:
-#                   the rebase is done, so a second run prints no map and
-#                   reports success over the same stale record. Repair the
-#                   state, then apply the transcript's `rebase-map:` lines by
-#                   hand with `workflow-state update` before publishing any of
-#                   them.
+#                   are NOT reconciled, and the keyed line carries `push-exit`
+#                   to say the push had already run. The map is not lost with
+#                   the run: the whole map file is kept, so repairing what the
+#                   diagnostic names and re-running consumes it before that
+#                   run's own push. A map file this cannot parse at all is the
+#                   one case needing hand repair, and it names the file.
 #   1 (no push)  -> the run refused before the push: a usage error, a state
 #                   that would not resolve, a state that does not match the
 #                   arguments, or a live fix round in the worktree.
@@ -168,11 +174,11 @@ message() {
 	not-directory) printf 'The worktree directory does not resolve.\n' ;;
 	not-worktree) printf 'The directory is not a Git worktree.\n' ;;
 	restack-map-path) printf 'The worktree-private rebase-map file could not be resolved. No push ran.\n' ;;
-	rebase-unmapped) printf 'An earlier rebase rewrote this branch from the head named above without a derivable commit map, so recorded SHAs are unreconciled in a way no mapping repairs and none may be published. Nothing was reconciled and the whole file was kept. Reconcile every recorded SHA against the worktree reflog, then remove the file. No push ran.\n' ;;
-	restack-map-grammar) printf 'The restack rebase-map file is not a hop record this can apply: each hop opens with its own boundary line and holds at least one mapping. hops_applied is how many complete hops before it reached workflow state, and the whole file was kept. Apply the rebase-map lines after those hops with workflow-state update, then remove the file. No push ran.\n' ;;
-	restack-map-nostate) printf 'No workflow state records this issue, so it holds no SHA a restack could have made stale and nothing can hold the map. Init the record and re-run, or remove the map file. No push ran.\n' ;;
-	restack-map-write) printf 'A restack hop was not recorded. hops_applied is how many hops before it reached workflow state, and the whole file was kept. Repair workflow state, then apply the rebase-map lines after those hops with workflow-state update before publishing recorded SHAs. No push ran.\n' ;;
-	restack-map-clear) printf 'The reconciled restack rebase-map file could not be removed, so a later run would read it again. Remove it, then re-run. No push ran.\n' ;;
+	rebase-unmapped) printf 'An earlier rebase rewrote this branch from the head named above without a derivable commit map, so recorded SHAs are unreconciled in a way no mapping repairs and none may be published. Nothing was reconciled and the whole file was kept. Reconcile every recorded SHA against the worktree reflog, then remove the file.\n' ;;
+	restack-map-grammar) printf 'The restack rebase-map file is not a hop record this can apply: each hop opens with its own boundary line and holds at least one mapping. hops_applied is how many complete hops before it reached workflow state, and the whole file was kept. Apply the rebase-map lines after those hops with workflow-state update, then remove the file.\n' ;;
+	restack-map-nostate) printf 'No workflow state records this issue, so it holds no SHA a restack could have made stale and nothing can hold the map. Init the record and re-run, or remove the map file.\n' ;;
+	restack-map-write) printf 'A restack hop was not recorded. hops_applied is how many hops before it reached workflow state, and the whole file was kept. Repair workflow state, then apply the rebase-map lines after those hops with workflow-state update before publishing recorded SHAs.\n' ;;
+	restack-map-clear) printf 'The reconciled restack rebase-map file could not be removed, so a later run would read it again. Remove it, then re-run.\n' ;;
 	state-resolve) printf 'Workflow state could not be resolved. No push ran.\n' ;;
 	state-answer) printf 'The workflow-state existence result is invalid. No push ran.\n' ;;
 	state-read) printf 'Workflow state could not be read. No push ran.\n' ;;
@@ -182,10 +188,8 @@ message() {
 	round-read) printf 'The active dev round could not be read. No push ran.\n' ;;
 	live-round) printf 'The active fix round has no dev-return receipt. Land its receipt or stamp a fresh dev_round_id before rebasing.\n' ;;
 	temp-file) printf 'The push output could not be captured. No push ran.\n' ;;
-	map-scan) printf 'The push output could not be scanned. Recorded SHAs are not reconciled.\n' ;;
 	map-sha) printf 'A rebase-map SHA is invalid. The mappings that map carries are not reconciled.\n' ;;
 	map-build) printf 'The rebase map could not be assembled. The mappings it carries are not reconciled.\n' ;;
-	map-write) printf 'The rebase map was not recorded. A retry cannot recover it. Repair workflow state, then apply the replayed rebase-map lines with workflow-state update before publishing recorded SHAs.\n' ;;
 	esac
 }
 
@@ -399,16 +403,17 @@ fi
 # restack map and deletes no file: it answers one question and changes nothing.
 [[ "$check_live_round" != true ]] || exit 0
 
-# A completed guarded restack rewrote the branch in an earlier process and left
-# its map in the worktree's own git dir; the worktree script asks git for this
-# same path. Reconcile it BEFORE this run's push. Every hop is its own
-# reconcile_map call, because each call compares a record against the value it
-# held when that call began: a record the first restack moved X -> Y is at Y
-# when the second hop's Y -> Z arrives, and the push's own hop then takes it
-# further. A file read as one merged map would compare every entry against X
-# and strand the record on Y, a commit no branch has. The file is deleted only
-# once every hop is in workflow state — a failure here refuses before the push,
-# where nothing new has gone stale, and keeps the whole file.
+# Every rewrite this repository makes leaves its map in the worktree's own git
+# dir, as one hop per rewrite; the worktree script asks git for this same path.
+# A restack's hops are already there when this runs, and the push below writes
+# its own during the run, so the file is consumed twice: once before the push
+# and once after it. Each hop is its own reconcile_map call, because each call
+# compares a record against the value it held when that call began: a record
+# the first restack moved X -> Y is at Y when the second hop's Y -> Z arrives,
+# and the push's own hop then takes it further. A file read as one merged map
+# would compare every entry against X and strand the record on Y, a commit no
+# branch has. The file is deleted only once every hop it held is in workflow
+# state, and any failure keeps the whole file.
 if ! restack_map_file="$(git -C "$worktree_abs" rev-parse --git-path kendex-rebase-map 2>/dev/null)" \
 	|| [[ -z "$restack_map_file" ]]; then
 	fail restack-map-path "worktree=$worktree_abs"
@@ -418,26 +423,47 @@ fi
 restack_hop_lines=''
 restack_hop_open=false
 restack_hops=0
+restack_summary_key=restack-reconcile
+restack_pushed=false
+
+# A refusal before the push means nothing was pushed and the arguments or the
+# state are the repair; one after it means the push landed and its own exit
+# code has to survive. Same refusals and same values either way, plus the
+# push's exit code on the later ones, which is what tells the two apart on the
+# keyed line as well as in this command's own exit status.
+consume_fail() {
+	if [[ "$restack_pushed" == true ]]; then
+		fail_post_push "$@" "push-exit=$push_rc"
+	fi
+	fail "$@"
+}
 
 # Reconcile the hop that just ended, if one was open. Called at each boundary
 # and once more at end of file, so the last hop is not left unapplied.
 reconcile_restack_hop() {
 	[[ "$restack_hop_open" == true ]] || return 0
-	[[ -n "$restack_hop_lines" ]] || fail restack-map-grammar "file=$restack_map_file" "hops_applied=$restack_hops"
+	[[ -n "$restack_hop_lines" ]] || consume_fail restack-map-grammar "file=$restack_map_file" "hops_applied=$restack_hops"
 	parse_map_lines "$restack_hop_lines" \
-		|| fail "${MAP_FAIL_ARGS[@]}" "file=$restack_map_file" "hops_applied=$restack_hops"
-	reconcile_map restack-reconcile "$MAP_JSON" \
-		|| fail restack-map-write "issue=$issue" "state=$state_file" "file=$restack_map_file" "hops_applied=$restack_hops"
+		|| consume_fail "${MAP_FAIL_ARGS[@]}" "file=$restack_map_file" "hops_applied=$restack_hops"
+	reconcile_map "$restack_summary_key" "$MAP_JSON" \
+		|| consume_fail restack-map-write "issue=$issue" "state=$state_file" "file=$restack_map_file" "hops_applied=$restack_hops"
 	restack_hops=$((restack_hops + 1))
 	restack_hop_lines=''
 }
 
-if [[ -e "$restack_map_file" ]]; then
-	# A rebase that rewrote the branch without a derivable map is recorded in
-	# this file too, and it is read before any hop is applied: no mapping
-	# repairs that rewrite, so nothing here may be reconciled or published
-	# while it stands, and the hops stay in the file for the operator reading
-	# it.
+# Apply every hop the file holds, in order, then delete it. Reports each hop
+# under the caller's summary key: the hops standing before the push are other
+# rewrites' and the one written during it is this push's own.
+consume_rebase_map_file() {
+	restack_summary_key="$1"
+	restack_hop_lines=''
+	restack_hop_open=false
+	restack_hops=0
+	[[ -e "$restack_map_file" ]] || return 0
+	# A rewrite with no derivable map is recorded in this file too, and it is
+	# read before any hop is applied: no mapping repairs that rewrite, so
+	# nothing here may be reconciled or published while it stands, and the hops
+	# stay in the file for the operator reading it.
 	restack_unmapped=''
 	while IFS= read -r restack_line || [[ -n "$restack_line" ]]; do
 		case "$restack_line" in
@@ -445,11 +471,11 @@ if [[ -e "$restack_map_file" ]]; then
 		esac
 	done <"$restack_map_file"
 	[[ -z "$restack_unmapped" ]] \
-		|| fail rebase-unmapped "head=$restack_unmapped" "file=$restack_map_file"
+		|| consume_fail rebase-unmapped "head=$restack_unmapped" "file=$restack_map_file"
 	# The record names SHAs recorded against a state file. With no record there
 	# is nothing the hops could move, and nothing this run can hold them in.
 	[[ "$state_present" == "true" ]] \
-		|| fail restack-map-nostate "issue=$issue" "state=$state_file" "file=$restack_map_file"
+		|| consume_fail restack-map-nostate "issue=$issue" "state=$state_file" "file=$restack_map_file"
 	while IFS= read -r restack_line || [[ -n "$restack_line" ]]; do
 		case "$restack_line" in
 		"$RESTACK_HOP_MARK")
@@ -459,16 +485,18 @@ if [[ -e "$restack_map_file" ]]; then
 		'rebase-map: '*)
 			# A mapping outside a hop has no order, so the file is not a record
 			# this can apply rather than one hop it may guess at.
-			[[ "$restack_hop_open" == true ]] || fail restack-map-grammar "file=$restack_map_file" "hops_applied=$restack_hops"
+			[[ "$restack_hop_open" == true ]] || consume_fail restack-map-grammar "file=$restack_map_file" "hops_applied=$restack_hops"
 			restack_hop_lines="${restack_hop_lines:+$restack_hop_lines$'\n'}$restack_line"
 			;;
-		*) fail restack-map-grammar "file=$restack_map_file" "hops_applied=$restack_hops" ;;
+		*) consume_fail restack-map-grammar "file=$restack_map_file" "hops_applied=$restack_hops" ;;
 		esac
 	done <"$restack_map_file"
 	reconcile_restack_hop
-	[[ "$restack_hops" -gt 0 ]] || fail restack-map-grammar "file=$restack_map_file" "hops_applied=$restack_hops"
-	rm -f -- "$restack_map_file" || fail restack-map-clear "file=$restack_map_file"
-fi
+	[[ "$restack_hops" -gt 0 ]] || consume_fail restack-map-grammar "file=$restack_map_file" "hops_applied=$restack_hops"
+	rm -f -- "$restack_map_file" || consume_fail restack-map-clear "file=$restack_map_file"
+}
+
+consume_rebase_map_file restack-reconcile
 
 push_out="$(mktemp)" || fail temp-file command=mktemp
 trap 'rm -f "$push_out"' EXIT
@@ -480,9 +508,9 @@ push_rc=0
 
 # A failure after the push keeps the push's own exit code: exit 1 must mean
 # "the push landed but reconciliation did not", never dress a failed push as
-# a landed one. The transcript replays first: its rebase-map lines are the
-# only surviving copy of a map the completed rebase cannot regenerate
-# (|| true keeps the dying-stdout case from suppressing the diagnostic).
+# a landed one. The transcript replays first, so whatever the push said is on
+# the caller's terminal before the diagnostic (|| true keeps the dying-stdout
+# case from suppressing it).
 fail_post_push() {
 	cat "$push_out" || true
 	message "$@" >&2
@@ -492,30 +520,12 @@ fail_post_push() {
 	exit 1
 }
 
-map_lines=''
-grep_rc=0
-map_lines="$(grep '^rebase-map: ' "$push_out")" || grep_rc=$?
-[[ "$grep_rc" -le 1 ]] \
-	|| fail_post_push map-scan "exit=$grep_rc" "push-exit=$push_rc"
-
-parse_map_lines "$map_lines" \
-	|| fail_post_push "${MAP_FAIL_ARGS[@]}" "push-exit=$push_rc"
-
-# The replay is informational, and it runs BEFORE the state write: a broken
-# stdout must not abort the run before the map reaches workflow state, and on
-# a failed write those rebase-map lines are the map's only surviving copy.
+# The transcript is replayed, never parsed: the push's own map reaches this
+# process as a hop in the worktree's map file, consumed below. A map read from
+# here instead would be read out of a temporary capture this process removes on
+# exit, which is no record at all.
 cat "$push_out" || true
 
-if [[ "$MAP_JSON" == '{}' ]]; then
-	exit "$push_rc"
-fi
-
-if reconcile_map sha-reconcile "$MAP_JSON"; then
-	exit "$push_rc"
-fi
-
-message map-write "issue=$issue" "state=$state_file" "push-exit=$push_rc" >&2
-if [[ "$push_rc" -ne 0 ]]; then
-	exit "$push_rc"
-fi
-exit 1
+restack_pushed=true
+consume_rebase_map_file sha-reconcile
+exit "$push_rc"

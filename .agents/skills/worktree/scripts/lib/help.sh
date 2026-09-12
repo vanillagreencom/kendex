@@ -408,6 +408,13 @@ already upstream) so callers can remap commit SHAs recorded before the rebase
 otherwise by commit subject. A push that skips the rebase, or one run with
 --no-rebase, prints no map.
 
+Those printed lines are a report, not the record. The same map is appended to
+'kendex-rebase-map' in the worktree's git dir as its own hop, and that file is
+what 'orch/scripts/worktree-push' reconciles from: a map only printed lives in
+its reader's temporary capture, which that reader does not act on until this
+process has returned and which its own exit trap then removes. A push whose
+map cannot be recorded there refuses rather than publishing.
+
 Subjects pair a group the rebase kept whole or dropped whole. Where it kept
 only part of a group, which commit each one became is not derivable, and a
 guess would name a real commit that is not the recorded one: push prints no
@@ -428,17 +435,16 @@ Every path that rewrites branch commits reports the same map from the same
 emitter: this auto-rebase, and a completed restack through 'create --reuse',
 'create --restack' or 'restack continue|skip'. A restack reports its lines on
 stderr, because create's stdout is the worktree path it hands its caller, and
-appends them to 'kendex-rebase-map' in the worktree's own git dir: the restack
-and the later push are separate processes, so the file is the only channel
-between them. Each restack appends its own hop there, a 'rebase-hop:' line
-followed by that restack's map lines, and 'orch/scripts/worktree-push' applies
-the hops in order, one reconciliation each, before it pushes; it deletes the
-file only once every hop is recorded. The hops stay separate because each
-reconciliation compares a record against the value it held when that
-reconciliation began, so a record carried through two restacks needs two.
-A restack over a base its branch already contains rewrites nothing, reports no
-map, and writes no hop; a restack whose map cannot be recorded authorizes no
-push.
+records them the same way this auto-rebase does. Each rewrite appends its own
+hop to 'kendex-rebase-map', a 'rebase-hop:' line followed by that rewrite's
+map lines, and 'orch/scripts/worktree-push' applies the hops in order, one
+reconciliation each: those standing before it pushes, then the one its own
+push writes. It deletes the file only once every hop it read is recorded. The
+hops stay separate because each reconciliation compares a record against the
+value it held when that reconciliation began, so a record carried through two
+rewrites needs two. A rewrite over a base its branch already contains rewrites
+nothing, reports no map, and writes no hop; a restack whose map cannot be
+recorded authorizes no push.
 
 A refused push names its judge, and every judge reads a line rather than the
 absence of one. A pre-push hook that publishes the commit-guards message

@@ -460,6 +460,7 @@ err_text() {
     setup-warning) printf 'worktree-config-path-invalid: WORKTREE_MKDIRS=../outside;worktree-restack-setup-failed: <wt>' ;;
     ambiguous) printf 'worktree-rebase-map-ambiguous: twin subject' ;;
     map-unreadable) printf 'worktree-restack-map-unreadable: <wt>' ;;
+    pending-standing) printf 'worktree-rebase-pending-standing: <pre>' ;;
     lease-rejected) printf 'worktree-push-rejected: origin/topic' ;;
     not-contained) printf 'worktree-push-remote-uncontained: origin/topic' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$spec" ;;
@@ -512,6 +513,7 @@ clean reuse rebases onto the advanced main and prints the path|plain|create topi
 --restack with nothing to rebase is a no-op|plain reuse|create topic --restack|0|wt|-|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
 a restack over a base the branch already contains rewrites nothing and leaves no map|contained|create topic --restack|0|wt|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=-
 a restack whose map cannot be derived records the rewrite for a later push to refuse on|twins|create topic --restack|1|-|ambiguous+map-unreadable|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,other.txt:orig,twin-a.txt:a,twin-b.txt:b restack=- remote=- map=unmapped
+a second rewrite refuses while the first one is still unresolved|twins restack advance-main|create topic --reuse|1|-|pending-standing|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,other.txt:orig,twin-a.txt:a,twin-b.txt:b restack=- remote=- map=unmapped
 '
 
 echo "=== worktree create reuse rebase-conflict recovery ==="

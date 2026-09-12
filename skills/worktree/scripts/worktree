@@ -533,6 +533,18 @@ readonly RESTACK_UNMAPPED_MARK='rebase-unmapped:'
 # refuses. Its caller must not start the rewrite when this fails.
 record_pending_rewrite() {
   local wt="$1" original_head="$2" map_file=""
+  # One unresolved record at a time. A second standing beside the first is
+  # indistinguishable from it, and the clear that ends the second would take
+  # the first with it, leaving that earlier rewrite unrecorded and publishable.
+  # Refusing to start the second rewrite is what keeps the single-record
+  # invariant the clear relies on; a record that cannot be read falls through
+  # to the append below, which fails on the same cause and says so.
+  if read_unmapped_rewrite "$wt" && [[ -n "$UNMAPPED_REWRITE_HEAD" ]]; then
+    worktree_message rebase-pending-standing "$UNMAPPED_REWRITE_HEAD" "Error: An earlier rewrite of this branch from the head named above is still unresolved, so a second one cannot be told from it; refusing to start one." >&2
+    echo "Reconcile every recorded SHA against the worktree reflog, then remove the record:" >&2
+    echo "  rm -f \"$(restack_rebase_map_file "$wt" 2>/dev/null || printf '<map file>')\"" >&2
+    return 1
+  fi
   if ! map_file="$(restack_rebase_map_file "$wt")" || \
      ! printf '%s %s\n' "$RESTACK_UNMAPPED_MARK" "$original_head" >>"$map_file"; then
     worktree_message rebase-pending-unrecorded "$wt" "Error: Could not record the pending rewrite in $wt, so a rewrite interrupted here could not be refused later; refusing to start it." >&2
@@ -605,6 +617,20 @@ restack_map_refusal() {
   return 1
 }
 
+# Append one rewrite's map to the worktree's map file as its own hop, and set
+# REBASE_HOP_FILE to the file it wrote. This is the durable channel every door
+# uses: a map that was only printed lives in its reader's temporary capture,
+# which that reader does not act on until this process has already returned and
+# which its own exit trap then removes, so printing is not recording.
+# `orch/scripts/worktree-push` reconciles from this file.
+REBASE_HOP_FILE=""
+append_rebase_hop() {
+  local wt="$1" map_lines="$2"
+  REBASE_HOP_FILE=""
+  REBASE_HOP_FILE="$(restack_rebase_map_file "$wt")" || return 1
+  printf '%s\n%s\n' "$RESTACK_HOP_MARK" "$map_lines" >>"$REBASE_HOP_FILE"
+}
+
 # A completed guarded restack rewrote the same branch commits a push
 # auto-rebase rewrites, so it reports the same map from the same emitter.
 # `baseOid` is the new base, so `baseOid..originalHead` holds exactly the
@@ -623,7 +649,7 @@ restack_map_refusal() {
 # cannot be recorded authorizes no push: the reconciliation input would be
 # gone while the recorded SHAs went stale.
 emit_restack_rebase_map() {
-  local wt="$1" base_oid="" original_head="" pre_list="" post_list="" map_lines="" map_file=""
+  local wt="$1" base_oid="" original_head="" pre_list="" post_list="" map_lines=""
 
   if ! base_oid="$(restack_state_get "$wt" baseOid)" || \
      ! original_head="$(restack_state_get "$wt" originalHead)" || \
@@ -638,14 +664,9 @@ emit_restack_rebase_map() {
   # The rewrite provably changed nothing, so nothing needs describing.
   [[ -n "$map_lines" ]] || { warn_uncleared_pending_rewrite "$wt"; return 0; }
   printf '%s\n' "$map_lines" >&2
-  if ! map_file="$(restack_rebase_map_file "$wt")"; then
-    restack_map_refusal "$wt" restack-map-unresolved "$wt" \
-      "Error: Could not resolve the worktree-private rebase-map file for $wt; the lines above are the map's only copy and no rewritten push was authorized."
-    return 1
-  fi
-  if ! printf '%s\n%s\n' "$RESTACK_HOP_MARK" "$map_lines" >>"$map_file"; then
-    restack_map_refusal "$wt" restack-map-unrecorded "$map_file" \
-      "Error: Could not append the rebase map to $map_file; the lines above are the map's only copy and no rewritten push was authorized."
+  if ! append_rebase_hop "$wt" "$map_lines"; then
+    restack_map_refusal "$wt" restack-map-unrecorded "${REBASE_HOP_FILE:-$wt}" \
+      "Error: Could not record the rebase map for $wt; the lines above are the map's only copy and no rewritten push was authorized."
     return 1
   fi
   # The hop is on disk, so the rewrite it describes no longer needs the record.
@@ -2345,7 +2366,11 @@ case "${1:-}" in
           # a paused restack too: the record outlives that process and the
           # restack continue that completes the map is what clears it.
           if ! record_pending_rewrite "$WT_PATH" "$(restack_state_get "$WT_PATH" originalHead)"; then
-            cancel_pending_restack_authorization "$WT_PATH"
+            # Whatever stopped the record is not this attempt's to clean up: a
+            # record already standing belongs to an earlier rewrite, and
+            # cancelling would clear it along with this attempt. Drop only the
+            # authorization this attempt just prepared.
+            clear_restack_push_authorization "$WT_PATH"
             restore_unshadowed_worktree_setup "$WT_PATH"
             exit 1
           fi
@@ -3077,7 +3102,7 @@ case "${1:-}" in
           # Rebase can replace symlinks with tracked content — restore them
           setup_worktree_links "$WT_PATH"
           POST_REBASE_COMMITS="$(git -C "$WT_PATH" log --reverse --format='%H %s' "origin/$DEFAULT_BRANCH..HEAD")"
-          if ! emit_rebase_map "$PRE_REBASE_COMMITS" "$POST_REBASE_COMMITS"; then
+          if ! PUSH_MAP_LINES="$(emit_rebase_map "$PRE_REBASE_COMMITS" "$POST_REBASE_COMMITS")"; then
             # The record written before the rebase stays: a retry reads it
             # above and refuses rather than publishing an undescribed rewrite.
             worktree_message push-rebase-unmapped "$PRE_REBASE_HEAD" "Error: The rebase onto origin/$DEFAULT_BRANCH is done but its commit map could not be derived, so SHAs recorded before it cannot be reconciled; refusing to push." >&2
@@ -3086,8 +3111,15 @@ case "${1:-}" in
             echo "  rm -f \"$(restack_rebase_map_file "$WT_PATH" 2>/dev/null || printf '<map file>')\"" >&2
             exit 1
           fi
-          # The map is printed, which is how this path makes it durable: the
-          # caller captures the transcript whatever the push's exit code.
+          if [[ -n "$PUSH_MAP_LINES" ]]; then
+            printf '%s\n' "$PUSH_MAP_LINES"
+            # Printing is not recording: the hop on disk is what reaches
+            # worktree-push, and the pending record stands until it lands.
+            if ! append_rebase_hop "$WT_PATH" "$PUSH_MAP_LINES"; then
+              worktree_message push-map-unrecorded "${REBASE_HOP_FILE:-$WT_PATH}" "Error: The rebase onto origin/$DEFAULT_BRANCH is done but its map could not be recorded, so SHAs recorded before it cannot be reconciled; refusing to push. The map's only copy is on stdout above." >&2
+              exit 1
+            fi
+          fi
           warn_uncleared_pending_rewrite "$WT_PATH"
         fi
       fi
