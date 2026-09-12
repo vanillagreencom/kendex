@@ -297,6 +297,20 @@ at the worktree root: every directory carrying one is its own root, found by a
 walk that never descends into build output and never follows a symlink out of
 the worktree. A repository matching no layout is a reported no-op, not an error.
 
+What the live-build refusal is worth depends on whether the output has a lock.
+A Cargo profile is pruned under its own .cargo-lock, held from before the check
+until after the delete, so a build cannot start in it meanwhile. An output with
+no lock file -- node_modules, .next -- has nothing to hold: its refusal is a
+point-in-time scan of running processes, taken once during inspection and again
+immediately before the delete. That narrows the window to the gap between the
+second scan and the first unlink. It does not close it, and nothing can while no
+observable lock exists: a package manager that starts inside that gap, or during
+a multi-second recursive delete, is not seen. Run --apply when no install is
+expected, or leave the worktree claimed, which refuses it outright.
+
+A delete that fails partway names its unit in a prune-failed record and stops
+the sweep there; the units already pruned keep their records.
+
 Reported bytes are what the sweep would actually free. A hardlinked file counts
 only once every link to it is inside what this sweep prunes, so a pnpm
 node_modules linked from a global store reports the space its removal returns

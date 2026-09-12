@@ -14,8 +14,9 @@ record, so a record kind this engine gains needs no change there. A unit whose
 path carries a control byte would split or mis-field its own record and is kept
 unpruned instead. Records are flushed as they are decided, so a run interrupted
 after a deletion still reports what it removed. Values are `key=value` pairs; the
-caller prefixes the worktree path. stderr carries English detail, which is not a
-parsed protocol.
+caller prefixes the worktree path. Nothing is written to stderr: a free-form line
+there reached the operator ahead of the records the caller renders afterwards, so
+the one line that needed English carries it as its own last field instead.
 
 Exit status is this worktree's verdict:
   0  inspection complete — every unit was pruned, reported eligible, or kept
@@ -146,6 +147,13 @@ def reportable(text: str) -> bool:
     return all(ord(character) >= 0x20 for character in text)
 
 
+def one_line(text: str) -> str:
+    """English detail a record can carry: whitespace collapsed, so a message
+    holding a newline cannot split the line it travels on. It is the last field
+    of its record, which is why spaces in it are unambiguous."""
+    return " ".join(text.split()) or "no detail"
+
+
 def emit(stream: str, key: str, **fields: object) -> None:
     value = " ".join("%s=%s" % (name.replace("_", "-"), text) for name, text in fields.items())
     # Every path reaching here has been through reportable() at the point it was
@@ -155,8 +163,7 @@ def emit(stream: str, key: str, **fields: object) -> None:
     # paths beyond the one call site that did.
     if not reportable(value):
         # Naming the key, never the bytes: echoing the offending value would put
-        # the control byte on stderr, which is the one place this engine writes
-        # that nothing escapes.
+        # the control byte into this very record, which is the thing it breaks.
         raise InspectionIncomplete(
             "unreportable-record", "a value of the %s record carries a control byte" % key
         )
@@ -554,8 +561,10 @@ def run(worktree: Path, head: str, older_than_days: int, apply_prune: bool) -> i
                 continue
             locked.append(unit)
 
-        # Locks first: a build starting now blocks on one already held, so the
-        # holder scan below reads a settled set of processes.
+        # Locks first: a build starting now blocks on one already held, so for a
+        # locked unit this scan reads a settled set of processes. A lock-free
+        # unit has no such lock, so this answer is only a point in time for it
+        # and the apply loop scans again just before it deletes.
         holders: Tuple[str, ...] = ()
         if probe_available:
             holders, uninspected = process_holders()
@@ -591,12 +600,35 @@ def run(worktree: Path, head: str, older_than_days: int, apply_prune: bool) -> i
         for unit in settled:
             output = relative(worktree, unit.directory)
             reclaimed = reclaimable.get(unit.directory, 0)
-            total += reclaimed
-            pruned += 1
             if not apply_prune:
+                total += reclaimed
+                pruned += 1
                 emit("out", "eligible", ecosystem=unit.ecosystem, output=output, bytes=reclaimed)
                 continue
-            prune(unit)
+            # A locked unit needs no second scan: the lock it already holds is
+            # what makes the first scan's answer keep. A lock-free unit has
+            # nothing a starting writer would block on, so that answer can be
+            # stale by now and the scan is taken again here. This narrows the
+            # window to the gap between this scan and the first unlink; it does
+            # not close it, and nothing can while the output has no observable
+            # lock.
+            if probe_available and unit.lock is None:
+                fresh, fresh_uninspected = process_holders()
+                uninspected = max(uninspected, fresh_uninspected)
+                if held_under(fresh, unit.directory):
+                    keep(worktree, unit, "live-holder")
+                    continue
+            total += reclaimed
+            pruned += 1
+            try:
+                prune(unit)
+            except OSError:
+                # Name the unit before the failure leaves this loop. The sweep
+                # stops here, which is the conservative direction on a delete
+                # path, and the operator is left with a half-removed directory
+                # that otherwise appeared in no record at all.
+                emit("err", "prune-failed", ecosystem=unit.ecosystem, output=output)
+                raise
             emit("out", "pruned", ecosystem=unit.ecosystem, output=output, bytes=reclaimed)
 
     emit(
@@ -640,12 +672,10 @@ def main(argv: Tuple[str, ...]) -> int:
             )
         return run(worktree, args.head, args.older_than_days, args.apply)
     except InspectionIncomplete as error:
-        emit("err", "incomplete", reason=error.reason)
-        print(error.detail, file=sys.stderr)
+        emit("err", "incomplete", reason=error.reason, detail=one_line(error.detail))
         return INSPECTION_INCOMPLETE
     except OSError as error:
-        emit("err", "incomplete", reason="filesystem-error")
-        print(error, file=sys.stderr)
+        emit("err", "incomplete", reason="filesystem-error", detail=one_line(str(error)))
         return INSPECTION_INCOMPLETE
 
 

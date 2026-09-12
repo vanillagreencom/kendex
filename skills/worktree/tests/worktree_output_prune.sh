@@ -453,6 +453,9 @@ case "$(uname -s)" in
     # executing artifact goes unnoticed and the profile is pruned.
     P_EXE_OUT=cargo-preview;        P_EXE_ERR=-
     P_NESTED_OUT=cargo-preview;     P_NESTED_ERR=ui-unprobed
+    # With no probe at all there is no second scan either, so the lock-free
+    # output is kept for want of one rather than for the holder in it.
+    P_LATE_REASON=holder-probe-unavailable
     ;;
   *)
     P_APPLY_OUT=both-apply;         P_APPLY_ERR=-
@@ -464,6 +467,7 @@ case "$(uname -s)" in
     P_TRACKED_OUT=cargo-and-modules; P_TRACKED_ERR=tracked
     P_EXE_OUT=release-only;         P_EXE_ERR=debug-live-holder
     P_NESTED_OUT=cargo-and-ui;      P_NESTED_ERR=-
+    P_LATE_REASON=live-holder
     ;;
 esac
 
@@ -717,6 +721,51 @@ assert_eq "$(LC_ALL=C tr -dc '\t' <"$ROOT/err" | wc -c | tr -d ' ')$(LC_ALL=C tr
 # costs that root and not the worktree.
 assert_match "$(alias_text <"$ROOT/out")" "$(out_text cargo-apply)" \
   'the reportable roots are pruned in the same run'
+# A holder that appears only after the first scan. The git copy blocks inside the
+# engine's second HEAD check, which sits after that scan and before the apply
+# loop, so the process starts in that window every run. A lock-free output has no
+# lock making the first answer keep, which is why the apply loop scans again.
+build late-holder cargo js tree cargo-out js-out
+mkdir -p "$ROOT/lategit"
+{
+  printf '#!/usr/bin/env bash\nset -uo pipefail\n'
+  printf 'saw_ls=0; saw_rev=0; saw_head=0\n'
+  printf 'for arg in "$@"; do\n  case "$arg" in\n'
+  printf '    ls-files) saw_ls=1 ;;\n    rev-parse) saw_rev=1 ;;\n    HEAD) saw_head=1 ;;\n'
+  printf '  esac\ndone\n'
+  printf 'if [[ "$saw_ls" == 1 ]]; then : >%q; fi\n' "$ROOT/discovered"
+  printf 'if [[ "$saw_rev" == 1 && "$saw_head" == 1 && -e %q ]]; then\n' "$ROOT/discovered"
+  printf '  : >%q\n  sleep 5\nfi\n' "$ROOT/window-open"
+  printf 'exec %q "$@"\n' "$(command -v git)"
+} >"$ROOT/lategit/git"
+chmod +x "$ROOT/lategit/git"
+(await "$ROOT/window-open"; cd "$WT/node_modules" && touch "$ROOT/holder-live" && exec sleep 60) &
+ROW_PIDS+=("$!")
+ROW_PATH="$ROOT/lategit:$PATH"
+run 'cleanup --targets-only --apply' >/dev/null
+assert_eq "$(test -e "$ROOT/holder-live" && echo started)" started \
+  'the holder starts inside the window between the two scans'
+assert_eq "$(alias_text <"$ROOT/err" | tr ';' '\n' | grep 'output=node_modules' | paste -s -d ';' - || true)" \
+  "$(unit_record kept modules "$P_LATE_REASON")" \
+  'a holder that appears after the first scan still keeps its output'
+assert_eq "$(test -d "$WT/node_modules/left-pad" && echo present)" present \
+  'the output the late holder sits in is not pruned'
+cleanup_row_pids
+
+# A unit whose recursive delete raises. The release profile's deps directory is
+# made unwritable, so unlinking inside it fails. debug is pruned first, so this
+# also shows that an earlier unit's record survives the failure.
+build prune-failure cargo tree cargo-out
+chmod 500 "$WT/target/$TRIPLE/release/deps"
+FAILED="$(run 'cleanup --targets-only --apply')"
+chmod 700 "$WT/target/$TRIPLE/release/deps"
+FAILURE_LEFT="$DOT,$CARGO_SRC,$BASE,target,target/<triple>,target/<triple>/release"
+FAILURE_LEFT="$FAILURE_LEFT,target/<triple>/release/.cargo-lock,target/<triple>/release/deps"
+FAILURE_LEFT="$FAILURE_LEFT,target/<triple>/release/deps/big.o,target/debug"
+FAILURE_LEFT="$FAILURE_LEFT,target/debug/.cargo-lock"
+assert_match "$FAILED" \
+  "rc=1 out=$(unit_record pruned debug) err=worktree-output-prune-prune-failed: worktree=<wt> ecosystem=cargo output=target/<triple>/release;worktree-output-prune-incomplete: worktree=<wt> reason=filesystem-error detail=* branch=present left=$FAILURE_LEFT" \
+  'a delete that raises names its unit, and the unit pruned before it keeps its record'
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
