@@ -144,9 +144,10 @@ pub enum Refusal {
     /// not installed` against `gh said:` — turns on exactly that.
     NotStarted(String),
     /// The program's own words, whole, one line at a time, in order:
-    /// stderr first, because git puts a hook's own output there and prints
-    /// nothing on stdout when a hook refuses, then stdout for a program
-    /// that writes diagnostics to it, as `gh` does.
+    /// stdout first, then stderr, so the block ends on the refusal itself.
+    /// git and gh both write their refusal to stderr, while stdout carries
+    /// whatever ran and passed on the way, such as a pre-push hook's own
+    /// report.
     ///
     /// Nothing is summarised, reworded, truncated to a first line, or
     /// matched against a pattern to decide what it means.

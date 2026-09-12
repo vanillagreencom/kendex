@@ -868,6 +868,60 @@ fn a_push_lands_or_is_refused_in_the_remotes_words() {
     );
 }
 
+/// A refused push ends on git's own words, with the hook's kept above
+/// them.
+///
+/// git leaves a pre-push hook's output on stdout and writes the remote's
+/// rejection to stderr. Drawn stderr first, the block ended on the hook
+/// reporting that it passed, and the rejection sat above every line the
+/// hook had printed.
+#[cfg(unix)]
+#[test]
+fn a_refused_push_ends_on_gits_words_with_the_hooks_above_them() {
+    let repo = Repo::new(&[(OWNED[0], "one\n")]);
+    let bare = repo.with_origin();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let hook = bare.join("hooks/pre-receive");
+        fs::write(
+            &hook,
+            "#!/bin/sh\necho 'GH006: Protected branch update failed for refs/heads/main.' >&2\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let passing = ["pre-push: lane changelog ok", "pre-push: result=0"];
+    let body = passing
+        .iter()
+        .map(|line| format!("echo '{line}'"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    repo.hook("pre-push", &body, 0);
+
+    let refused = push(&repo.root, "origin", "main", false).unwrap_err();
+    assert_eq!(refused.step, Step::Push);
+    let said = refused.said();
+    assert!(
+        said.last()
+            .is_some_and(|line| line.contains("failed to push some refs")),
+        "the block did not end on git's refusal: {said:?}"
+    );
+    let kept: Vec<&str> = said
+        .iter()
+        .map(String::as_str)
+        .filter(|line| passing.contains(line))
+        .collect();
+    assert_eq!(
+        kept, passing,
+        "a hook line was dropped or reordered: {said:?}"
+    );
+    assert!(
+        said.iter()
+            .any(|line| line.contains("GH006: Protected branch update failed")),
+        "{said:?}"
+    );
+}
+
 /// `previous_head` is what a recovery would put the branch back to, and
 /// there is nothing to put it back to in a repository with no commit.
 #[test]
