@@ -243,17 +243,29 @@ const byRowOrder = (a: ItemGroup, b: ItemGroup): number =>
   a.name.localeCompare(b.name) ||
   a.key.localeCompare(b.key);
 
-/** The rows for packages with no copy left that a narrowing admits.
+/** Whether a narrowing can admit a row for a package with no copy left.
  *
  *  Such a row carries no tool and no tags — there is no copy to carry them
  *  — so a narrowing by either is a question it cannot answer, and drawing
  *  the package under it would be a wrong answer rather than a missing one.
- *  Its place it does carry, so that narrowing it does answer. */
+ *  Its place it does carry, so that narrowing it does answer.
+ *
+ *  Asked of the narrowing alone, because a surface has to know whether
+ *  those rows belong in what it is drawing before it is given any:
+ *  {@link missingUnder} is this same rule applied to rows in hand,
+ *  {@link installedCountByKind} asks it without them, and the Library's
+ *  empty state asks it to tell an emptiness the update read decides from
+ *  one the scan decides alone. The one owner of that rule, because a
+ *  caller spelling it out would be a second answer to the same question. */
+export const admitsMissing = (filter: ItemFilter): boolean =>
+  !filter.harness && !filter.tag;
+
+/** The rows for packages with no copy left that a narrowing admits. */
 export function missingUnder(
   missing: UpdateRow[],
   filter: ItemFilter,
 ): UpdateRow[] {
-  if (filter.harness || filter.tag) return [];
+  if (!admitsMissing(filter)) return [];
   return missing.filter((row) => scopeMatches(row, filter.scope));
 }
 
@@ -397,18 +409,37 @@ export interface ItemPlace {
  *  opens. A package installed on two harnesses, or in two locations, is one
  *  package here as it is there. A kind the place holds nothing of is absent
  *  rather than zero: the badges are what a place has, not a checklist of
- *  what it hasn't. */
+ *  what it hasn't.
+ *
+ *  Counts a package whose rendering is gone the way the Library's own list
+ *  draws it, through {@link withRecordedMissing}: the record says it is
+ *  installed here, so leaving it out would be a number the table its badge
+ *  opens disagrees with.
+ *
+ *  Null where those rows are part of this place's total and no read may be
+ *  counted over them — a figure taken then is definite over a set the
+ *  failed check could not confirm. A narrowing {@link admitsMissing} refuses
+ *  has a number whatever that read did, because no such row was ever in it. */
 export function installedCountByKind(
   items: ObservedItem[],
   place: ItemPlace,
   packageOf: PackageOf,
-): Map<ItemKind, number> {
-  const tally = new Map<ItemKind, number>();
-  const here = filterItems(items, {
+  /** The rows saying a recorded rendering is gone, or null where nothing
+   *  may be counted over them — `missing-files.ts::useCountableMissingRows`. */
+  missing: UpdateRow[] | null,
+): Map<ItemKind, number> | null {
+  const filter: ItemFilter = {
     scope: place.scope ?? "all",
     harness: place.harness,
-  });
-  for (const group of groupItems(here, packageOf)) {
+  };
+  if (missing === null && admitsMissing(filter)) return null;
+  const tally = new Map<ItemKind, number>();
+  const here = filterItems(items, filter);
+  const groups = withRecordedMissing(
+    groupItems(here, packageOf),
+    missingUnder(missing ?? [], filter),
+  );
+  for (const group of groups) {
     tally.set(group.kind, (tally.get(group.kind) ?? 0) + 1);
   }
   // Handed back in the app's kind order, not the grouping's: the badges sit

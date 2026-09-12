@@ -74,11 +74,15 @@ export function LibraryFilters({
   projects: string[];
   /** Rows the table is showing, against every row it could show. */
   shown: number;
-  /** Every row the table could show, or null where the read that says which
-   *  installations are one package could not answer — there is no total
-   *  then, and a number would be a count of something else. */
+  /** Every row the table could show, or null where a read behind that set
+   *  could not answer — the one saying which installations are one package,
+   *  or the one standing behind the packages no copy of which is left.
+   *  There is no total then, and a number would be a count of something
+   *  else. */
   total: number | null;
-  /** The first scan hasn't landed, so there is no count to state yet. */
+  /** A first read behind that set hasn't landed, so there is no count to
+   *  state yet — told apart from a read that failed, which the page says
+   *  in a note of its own. */
   counting: boolean;
   filtered: boolean;
   onClear: () => void;
@@ -181,7 +185,10 @@ export function LibraryFilters({
               <Skeleton className="h-3 w-16" />
             ) : total === null ? (
               // Not still counting and not a number: the count is
-              // unavailable, and the note above says why.
+              // unavailable. Two reads can take it away — the one saying
+              // which installations are one package, and the one standing
+              // behind the packages no copy of which is left — and the
+              // page draws a note above for whichever of them failed.
               <span className="tabular-nums">—</span>
             ) : (
               <span className="tabular-nums">

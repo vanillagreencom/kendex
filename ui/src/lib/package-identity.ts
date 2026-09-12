@@ -214,6 +214,22 @@ export function packagesUncounted(
   return known ? null : PLACE_COUNTING_LABEL;
 }
 
+/** Why a read a count stands on puts no number on a place, or null where
+ *  it puts one — the same two labels in the same slot, for a read with no
+ *  scan generation to weigh against. The update read is one: it speaks for
+ *  the whole machine at once, so whether its rows are current is the read's
+ *  own status and nothing else. */
+export function uncountedRead(read: ReadState): string | null {
+  switch (read.status) {
+    case "failed":
+      return PLACE_UNCHECKED_LABEL;
+    case "pending":
+      return PLACE_COUNTING_LABEL;
+    case "landed":
+      return null;
+  }
+}
+
 /** Whether a page opened on this reference may address a declaration.
  *
  *  The one place that question is answered. A recorded package has a

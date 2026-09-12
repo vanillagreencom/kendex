@@ -15,7 +15,11 @@ import { commands, PACKAGE_CHECK_HARNESSES } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
 import { updateRow } from "@/components/updates-test-rows";
 import { ADOPTABLE } from "@/lib/adoptable";
-import { unmanagedHereLabel } from "@/lib/copy";
+import {
+  PLACE_COUNTING_LABEL,
+  PLACE_UNCHECKED_LABEL,
+  unmanagedHereLabel,
+} from "@/lib/copy";
 import { NOT_CHECKED_BADGE } from "@/lib/copy-commit-offer";
 import { ADD_PACKAGES_LABEL } from "@/lib/copy-install";
 import {
@@ -704,6 +708,104 @@ describe("a place card's kind badge", () => {
       kind: "skill",
     });
     expect(badge).toBe(destinationRows());
+  });
+
+  // A package whose rendering was deleted by hand is installed at this
+  // place — the record says so, and the Library's table the badge opens
+  // stands its row up from the same rows. A badge without it lands on a
+  // table one row longer than its number. Those rows are also what a failed
+  // re-check was asked to confirm, so the badges go rather than publishing
+  // a number short by exactly them, and the card says which read is missing.
+  it("counts a package with no copy left, and says so when nothing may count it", () => {
+    const gone = updateRow("orch", ACME.root, { filesMissing: true });
+    const cases: [string, ReadState, number | null, string | null][] = [
+      [
+        "a read that landed counts it beside the one on disk",
+        READ_LANDED,
+        2,
+        null,
+      ],
+      [
+        "a re-check that failed over the rows it kept counts nothing",
+        readFailed("no network"),
+        null,
+        PLACE_UNCHECKED_LABEL,
+      ],
+      [
+        "a read still on its way is not a failure and says so",
+        READ_PENDING,
+        null,
+        PLACE_COUNTING_LABEL,
+      ],
+    ];
+    expect(cases).toHaveLength(3);
+    for (const [name, read, count, said] of cases) {
+      useUpdatesStore.setState({ rows: [gone], read });
+      const host = mount(<ProjectList />);
+      const card = [...host.querySelectorAll<HTMLElement>('[data-slot="card"]')]
+        .filter((el) => el.textContent?.startsWith("acme"))
+        .at(0);
+      if (!card) throw new Error("no acme card");
+      if (count !== null) {
+        expect(badgeCount(host, "acme"), name).toBe(count);
+      } else {
+        expect(
+          [...card.querySelectorAll("button")].some((one) =>
+            SKILL_BADGE.test(one.textContent ?? ""),
+          ),
+          name,
+        ).toBe(false);
+        // Nor the offer worded for a place with nothing in it, which is the
+        // same wrong claim the badges are withholding.
+        expect(
+          [...card.querySelectorAll("button")].some((one) =>
+            one.textContent?.startsWith(ADD_PACKAGES_LABEL),
+          ),
+          name,
+        ).toBe(false);
+      }
+      if (said !== null) expect(card.textContent, name).toContain(said);
+    }
+  });
+
+  // A place the update read could not cover at all contributes no rows, so
+  // the packages there whose rendering is gone are missing from its badges
+  // and nothing on the card would say so. The card's own rule — only a
+  // landed read puts a number on it, and a place the read could not cover
+  // has no number to put — is what `outOfDate` already follows.
+  it("puts no number on a place the update read could not cover", () => {
+    const cases: [string, Scope[], number | null][] = [
+      ["a place the read covered", [], 1],
+      ["a place it could not read", [ACME], null],
+    ];
+    expect(cases).toHaveLength(2);
+    for (const [name, places, count] of cases) {
+      useUpdatesStore.setState({
+        rows: [],
+        read: READ_LANDED,
+        unreadable: places.map((scope) => ({ scope, message: "no lock" })),
+      });
+      const host = mount(<ProjectList />);
+      const card = [...host.querySelectorAll<HTMLElement>('[data-slot="card"]')]
+        .filter((el) => el.textContent?.startsWith("acme"))
+        .at(0);
+      if (!card) throw new Error("no acme card");
+      if (count !== null) {
+        expect(badgeCount(host, "acme"), name).toBe(count);
+        expect(card.textContent, name).not.toContain(PLACE_UNCHECKED_LABEL);
+      } else {
+        expect(
+          [...card.querySelectorAll("button")].some((one) =>
+            SKILL_BADGE.test(one.textContent ?? ""),
+          ),
+          name,
+        ).toBe(false);
+        expect(card.textContent, name).toContain(PLACE_UNCHECKED_LABEL);
+      }
+      // Personal is in the same list and this one is not in it, so its own
+      // badges are untouched either way.
+      expect(badgeCount(host, "Personal"), name).toBe(2);
+    }
   });
 
   // The card reads as one target, so the keyboard opens it too — asking

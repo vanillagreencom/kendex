@@ -14,6 +14,7 @@ import {
   groupsOfKind,
   groupVendor,
   type ItemFilter,
+  type ItemPlace,
   installationAt,
   installedCount,
   installedCountByKind,
@@ -261,9 +262,12 @@ describe("groupItems by package identity", () => {
       installedCount(groupItems([native, rule, instruction], () => hook)),
     ).toBe(1);
     expect(
-      installedCountByKind([native, rule, instruction], {}, () => hook).get(
-        "hook",
-      ),
+      installedCountByKind(
+        [native, rule, instruction],
+        {},
+        () => hook,
+        [],
+      )?.get("hook"),
     ).toBe(1);
   });
 });
@@ -633,9 +637,10 @@ describe("installedCountByKind", () => {
       [item({}), item({ name: "x" }), item({ kind: "agent" })],
       {},
       unrecorded,
+      [],
     );
-    expect(counts.get("skill")).toBe(2);
-    expect(counts.get("agent")).toBe(1);
+    expect(counts?.get("skill")).toBe(2);
+    expect(counts?.get("agent")).toBe(1);
   });
 
   it("counts packages, not installations", () => {
@@ -647,8 +652,9 @@ describe("installedCountByKind", () => {
       ],
       {},
       unrecorded,
+      [],
     );
-    expect(counts.get("skill")).toBe(1);
+    expect(counts?.get("skill")).toBe(1);
   });
 
   it("counts only what the place holds", () => {
@@ -658,17 +664,22 @@ describe("installedCountByKind", () => {
       item({ name: "over-there", scope: { scope: "project", root: "/p" } }),
     ];
     expect(
-      installedCountByKind(items, { harness: "claude" }, unrecorded).get(
+      installedCountByKind(items, { harness: "claude" }, unrecorded, [])?.get(
         "skill",
       ),
     ).toBe(2);
     expect(
-      installedCountByKind(items, { scope: "global" }, unrecorded).get("skill"),
-    ).toBe(2);
-    expect(
-      installedCountByKind(items, { scope: { project: "/p" } }, unrecorded).get(
+      installedCountByKind(items, { scope: "global" }, unrecorded, [])?.get(
         "skill",
       ),
+    ).toBe(2);
+    expect(
+      installedCountByKind(
+        items,
+        { scope: { project: "/p" } },
+        unrecorded,
+        [],
+      )?.get("skill"),
     ).toBe(1);
   });
 
@@ -677,9 +688,9 @@ describe("installedCountByKind", () => {
   // groups hands back the wire order instead.
   it("hands the kinds back in the order the app shows them in", () => {
     const items = KINDS.map((kind) => item({ kind, name: `one-${kind}` }));
-    expect([...installedCountByKind(items, {}, unrecorded).keys()]).toEqual(
-      KINDS,
-    );
+    expect([
+      ...(installedCountByKind(items, {}, unrecorded, [])?.keys() ?? []),
+    ]).toEqual(KINDS);
   });
 
   it("leaves out a kind the place holds nothing of", () => {
@@ -687,8 +698,70 @@ describe("installedCountByKind", () => {
       [item({ kind: "agent" })],
       {},
       unrecorded,
+      [],
     );
-    expect(counts.has("skill")).toBe(false);
+    expect(counts?.has("skill")).toBe(false);
+    expect(counts?.has("agent")).toBe(true);
+  });
+
+  // A package whose rendering was deleted by hand is installed and has no
+  // observation anywhere: the record is the only thing that says so, and
+  // the Library's own table stands its row up from the same rows. A badge
+  // that left it out would land on a table one row longer than its number.
+  // Nothing may be counted over those rows while no read confirms them, so
+  // a narrowing they belong to has no number at all — one that could never
+  // hold such a row keeps its number, because none was ever missing from it.
+  it("counts the packages with no copy left that the place admits", () => {
+    const gone = (overrides: Record<string, unknown>) =>
+      ({
+        kind: "skill",
+        name: "orch",
+        scope: { scope: "global" },
+        filesMissing: true,
+        ...overrides,
+      }) as never;
+    const elsewhere = gone({ scope: { scope: "project", root: "/p" } });
+    const items = [item({})];
+    const cases: [string, ItemPlace, unknown[] | null, number | undefined][] = [
+      ["counts it beside what the scan saw", {}, [gone({})], 2],
+      [
+        "counts it at the place its record names",
+        { scope: "global" },
+        [gone({})],
+        2,
+      ],
+      [
+        "leaves out one another place's record names",
+        { scope: "global" },
+        [elsewhere],
+        1,
+      ],
+      [
+        "takes no number while nothing may be counted over them",
+        {},
+        null,
+        undefined,
+      ],
+      [
+        "keeps a tool's number, which no such row can be in",
+        { harness: "claude" },
+        null,
+        1,
+      ],
+    ];
+    expect(cases).toHaveLength(5);
+    for (const [name, place, missing, count] of cases) {
+      const counts = installedCountByKind(
+        items,
+        place,
+        unrecorded,
+        missing as never,
+      );
+      expect(counts?.get("skill"), name).toBe(count);
+    }
+    // The withheld answer is the absent map, not a map that counts nothing:
+    // a caller reading an empty tally would draw "nothing installed here".
+    expect(installedCountByKind(items, {}, unrecorded, null)).toBe(null);
   });
 });
 

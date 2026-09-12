@@ -19,9 +19,15 @@ import {
   SCAN_STALE_TITLE,
 } from "@/lib/copy";
 import { MARKETPLACES_UNCHECKED_DETAIL } from "@/lib/copy-marketplaces";
-import { groupItems, installedCount, recentItems } from "@/lib/derive";
+import {
+  groupItems,
+  installedCount,
+  recentItems,
+  withRecordedMissing,
+} from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
+import { useCountableMissingRows } from "@/lib/missing-files";
 import {
   usePackageIndex,
   usePackagesKnown,
@@ -29,6 +35,7 @@ import {
 } from "@/lib/package-identity";
 import { rescanEverything } from "@/lib/rescan";
 import { availableUpdateCount } from "@/lib/update-groups";
+import { rowsCountable } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount, useAuditStore } from "@/stores/audit";
 import { useMarketplacesStore } from "@/stores/marketplaces";
@@ -61,13 +68,13 @@ export function OverviewPage() {
   const editedPackages = updateRows.filter((row) => row.blockedByLocalEdit);
   const missingPackages = updateRows.filter((row) => row.filesMissing);
   const updatesError = useUpdatesStore((s) => s.read.error);
-  // Only a landed read may put a number on the page. `rows` survives a
-  // failed re-check as last-known facts, which is enough for the edited
-  // row above and not enough for a count. Counted as updates and not as
-  // news: the sidebar's badge stands for the Updates page's whole list,
-  // this row's words promise an update to take.
+  // The rows survive a failed re-check as last-known facts, which is enough
+  // for the edited row above and not enough for a number —
+  // [rowsCountable] is the one rule for that difference. Counted as updates
+  // and not as news: the sidebar's badge stands for the Updates page's
+  // whole list, this row's words promise an update to take.
   const updates = useUpdatesStore((s) =>
-    s.read.status === "landed" ? availableUpdateCount(s.rows) : null,
+    rowsCountable(s) ? availableUpdateCount(s.rows) : null,
   );
   const unreadable = useUpdatesStore((s) => s.unreadable);
   const goTo = useNavStore((s) => s.goTo);
@@ -94,9 +101,21 @@ export function OverviewPage() {
   const packageOf = usePackageIndex();
   const packagesKnown = usePackagesKnown();
   const packagesRead = usePackagesRead();
+  // The packages whose rendering a record says is gone. They are installed
+  // and the scan has nothing to observe of them, so the tile counts them
+  // the way the Library's list draws them — otherwise the tile is short by
+  // exactly the packages its own missing-files row above is about. Null
+  // where no read may be counted over them, which takes the number away.
+  const missingRows = useCountableMissingRows();
   const groups = useMemo(
-    () => (result && packageOf ? groupItems(result.items, packageOf) : []),
-    [result, packageOf],
+    () =>
+      result && packageOf
+        ? withRecordedMissing(
+            groupItems(result.items, packageOf),
+            missingRows ?? [],
+          )
+        : [],
+    [result, packageOf, missingRows],
   );
 
   const scanAgain = (
@@ -162,6 +181,9 @@ export function OverviewPage() {
   const harnessNames = (result?.harnesses ?? [])
     .map((h) => harnessName(h.harness))
     .join(", ");
+  // A package with no copy left has no mtime anywhere, so the rows standing
+  // one up carry none and this list is the same one it was before they
+  // joined `groups`: "Recently changed" is about files, and there are none.
   const recent = recentItems(groups, RECENT_ACTIVITY_LIMIT);
 
   return (
@@ -223,16 +245,22 @@ export function OverviewPage() {
                 />
                 {/* Counted in the Library's unit — packages, not
                     installations — so the number matches the table the
-                    click lands on, and only once the read that says which
-                    installations are one package has answered. A number
-                    taken before it would count installations under a label
-                    that says packages; one kept from an earlier answer is
-                    last-known, and says so rather than passing as current. */}
+                    click lands on, and only once both reads behind that
+                    set have answered. A number taken before the join would
+                    count installations under a label that says packages;
+                    one taken over rows a failed update check could not
+                    confirm is a definite figure for a set nothing stands
+                    behind. Either way the dash, with the reason beside it
+                    and, for the update check, its own row above. */}
                 <StatTile
                   label="Installed"
-                  value={packagesKnown ? installedCount(groups) : null}
+                  value={
+                    packagesKnown && missingRows !== null
+                      ? installedCount(groups)
+                      : null
+                  }
                   detail={
-                    packagesRead.status === "failed"
+                    packagesRead.status === "failed" || updatesError !== null
                       ? PACKAGES_UNCHECKED_DETAIL
                       : undefined
                   }

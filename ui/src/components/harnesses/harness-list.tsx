@@ -3,6 +3,7 @@ import { HarnessRow } from "@/components/harnesses/harness-row";
 import { Button } from "@/components/ui/button";
 import { installedCountByKind } from "@/lib/derive";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
+import { useCountableMissingRows } from "@/lib/missing-files";
 import {
   packagesUncounted,
   usePackageIndex,
@@ -34,6 +35,12 @@ export function HarnessList() {
   // narrowing, so both wait on the one read that says which installations
   // are one package.
   const uncounted = packagesUncounted(usePackagesKnown(), usePackagesRead());
+  // Handed on as what there is, for `installedCountByKind` to weigh against
+  // the narrowing. A package with no copy left carries no tool, so that
+  // count admits none of these rows under a harness and a row keeps its
+  // number whatever the update check did. Deciding it here instead would be
+  // a second answer to a question that count already owns.
+  const countableMissing = useCountableMissingRows();
 
   const anyDetected = ALL_HARNESSES.some((id) =>
     result?.harnesses.some((h) => h.harness === id),
@@ -77,8 +84,13 @@ export function HarnessList() {
             // No index means no count, which `uncounted` says in the
             // badges' place.
             const counts = packageOf
-              ? installedCountByKind(result?.items ?? [], place, packageOf)
-              : new Map();
+              ? installedCountByKind(
+                  result?.items ?? [],
+                  place,
+                  packageOf,
+                  countableMissing,
+                )
+              : null;
             return (
               <HarnessRow
                 key={id}
@@ -86,7 +98,7 @@ export function HarnessList() {
                 uncounted={uncounted}
                 detectedRoot={info?.root ?? null}
                 version={info?.version ?? null}
-                counts={[...counts.entries()]}
+                counts={counts ? [...counts.entries()] : []}
                 folder={settings?.["harness-roots"]?.[id] ?? ""}
                 onFolderChange={(root) => void setHarnessRoot(id, root)}
               />

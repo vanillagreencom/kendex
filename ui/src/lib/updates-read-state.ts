@@ -81,13 +81,32 @@ export const emptyStanding = (
  *  every reader of the per-place facts — the Library, the package header
  *  and the Customize page — so a fork or an edit is never a fact on one
  *  page and unknown on the next. A read still on its way, or a first
- *  read that failed with nothing kept, has nothing to read. */
+ *  read that failed with nothing kept, has nothing to read.
+ *
+ *  Counting those rows is a stricter question, and {@link rowsCountable}
+ *  is where it is answered. */
 export const rowsKnown = (state: {
   read: { status: string };
   rows: unknown[];
 }): boolean =>
   state.read.status === "landed" ||
   (state.read.status === "failed" && state.rows.length > 0);
+
+/** Whether a definite number may be taken over the update rows: a read
+ *  that landed, and nothing else.
+ *
+ *  Stricter than {@link rowsKnown}, and the difference between them is why
+ *  both exist. A fact is about one place — a fork, an edit, which places a
+ *  package's files are gone from — and rows a failed re-check kept are the
+ *  last thing anything observed about those places, which is what the page
+ *  says they are. A number is about all of them at once: it says this many
+ *  and no more, over the very set the failed check was asked to confirm and
+ *  could not. A mark saying a package is out of date anywhere is that same
+ *  claim taken over that same set, and asks this too.
+ *
+ *  `grep -rn rowsCountable ui/src` is the list of surfaces that ask. */
+export const rowsCountable = (state: { read: { status: string } }): boolean =>
+  state.read.status === "landed";
 
 /** Whether work the writes exclude is already out: a check building its
  *  report, or a write about to commit under it. One write at a time is what

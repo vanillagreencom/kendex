@@ -12,6 +12,7 @@ import type {
 import { InstalledView } from "@/components/library/installed-view";
 import { openLibraryAt } from "@/components/library/use-filter-handoff";
 import {
+  CHECK_FOR_UPDATES_LABEL,
   FORKED_BADGE_LABEL,
   MISSING_FILES_BADGE_LABEL,
   UPDATES_NOTHING_INSTALLED as NOTHING_INSTALLED,
@@ -19,6 +20,7 @@ import {
   PACKAGES_UNCONFIRMED_TITLE,
   TAGS_ROW_LABEL,
   TRY_AGAIN_LABEL,
+  UPDATES_ATTENTION_TITLE,
 } from "@/lib/copy";
 import { STATUS_LABELS } from "@/lib/copy-customize";
 import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
@@ -704,6 +706,152 @@ describe("a package whose rendering is gone everywhere", () => {
       identity: "recorded",
       scope: VG,
     });
+  });
+
+  /** The counter under the filter strip: `n items`, or the dash where
+   *  there is no total to state. */
+  const counter = (host: HTMLElement) =>
+    host.querySelector(".tabular-nums")?.textContent?.trim();
+
+  // A row is a last-known fact about one package and stands whatever the
+  // last check did — that is what the rows above are for. The total is a
+  // claim about the whole set at once, and that set is precisely what a
+  // re-check that failed was asked to confirm, so the number goes and the
+  // rows stay.
+  it("keeps the row and withholds the total after a failed re-check", () => {
+    const cases: [string, ReadState, string | undefined][] = [
+      ["a read that landed states the total", READ_LANDED, "1 items"],
+      [
+        "a re-check that failed over the rows it kept states none",
+        readFailed("no network"),
+        "—",
+      ],
+    ];
+    expect(cases).toHaveLength(2);
+    for (const [name, read, shown] of cases) {
+      scanIs([]);
+      joinAnswered([seeded] as never);
+      useUpdatesStore.setState({
+        rows: [row({ filesMissing: true })] as never,
+        read,
+      });
+      const host = mount(<InstalledView />);
+      expect(counter(host), name).toBe(shown);
+      // The row itself is unchanged: the fact it carries is the last thing
+      // anything observed about that place.
+      expect(names(host), name).toContain("gh");
+    }
+  });
+
+  // Withholding the wording is right only where those rows could have made
+  // the table non-empty. A tool or a tag is a question no package with no
+  // copy left can answer, so under one of those the emptiness is the
+  // scan's alone — and suppressing it there leaves a blank table with no
+  // wording and no way out of the filter doing the hiding.
+  it("still says what an emptiness the update read cannot touch is", () => {
+    /** The package rows, told from the empty row by that row's one
+     *  spanning cell — which carries a name button of its own. */
+    const packageRows = (host: HTMLElement) =>
+      [...host.querySelectorAll("tbody tr")].filter(
+        (line) => line.querySelectorAll("td").length > 1,
+      );
+    const cases: [string, Partial<typeof NO_FILTERS>, string, boolean][] = [
+      ["narrowed by a tool", { harness: "codex" }, "", true],
+      ["narrowed by a tag", { tag: "git" }, "", true],
+      [
+        "narrowed by a kind, which such a row does carry",
+        { kind: "agent" },
+        "",
+        false,
+      ],
+      [
+        "narrowed by a search, which it also answers",
+        {},
+        "no such name",
+        false,
+      ],
+    ];
+    expect(cases).toHaveLength(4);
+    for (const [name, filters, search, said] of cases) {
+      scanIs([here]);
+      joinAnswered([observedRow] as never);
+      // Rows kept from before the failure, so the table's own rows stand
+      // and only the total and the emptiness are in question.
+      useUpdatesStore.setState({
+        rows: [row({ filesMissing: false })] as never,
+        read: readFailed("no network"),
+      });
+      useLibraryViewStore.setState({ ...NO_FILTERS, ...filters });
+      useNavStore.setState({ libraryScope: "all", search });
+      const host = mount(<InstalledView />);
+      expect(packageRows(host), name).toHaveLength(0);
+      expect((host.textContent ?? "").includes("Nothing matches"), name).toBe(
+        said,
+      );
+    }
+  });
+
+  // A withheld total is a dash, and a dash nobody can act on is what
+  // `ui/AGENTS.md` forbids: a failed read shows its error with a retry.
+  // Home already does this for the same failure through its attention row;
+  // the Library says it beside the table the number belongs to.
+  it("says the update check failed and offers it again, beside the dash", () => {
+    const cases: [string, ReadState, boolean][] = [
+      ["a check that failed", readFailed("no network"), true],
+      ["a read that landed", READ_LANDED, false],
+    ];
+    expect(cases).toHaveLength(2);
+    for (const [name, read, noted] of cases) {
+      scanIs([here]);
+      joinAnswered([observedRow] as never);
+      useUpdatesStore.setState({
+        rows: [row({ filesMissing: false })] as never,
+        read,
+      });
+      const host = mount(<InstalledView />);
+      const text = host.textContent ?? "";
+      expect(text.includes(UPDATES_ATTENTION_TITLE), name).toBe(noted);
+      // The read's own reason, not a wording of this page's.
+      expect(text.includes("no network"), name).toBe(noted);
+      expect(
+        [...host.querySelectorAll("button")].some(
+          (one) => one.textContent?.trim() === CHECK_FOR_UPDATES_LABEL,
+        ),
+        name,
+      ).toBe(noted);
+      // And the number it explains is gone exactly when the note stands.
+      expect(counter(host), name).toBe(noted ? "—" : "1 items");
+    }
+  });
+
+  // Which emptiness this is — nothing installed, or nothing matching — is
+  // as definite a claim as the total. A package with no copy left has no
+  // observation anywhere, so the rows a failed re-check could not confirm
+  // are the only thing that would have made this table non-empty.
+  it("claims no emptiness from a missing set nothing confirmed", () => {
+    const cases: [string, ReadState, boolean][] = [
+      ["a read that landed found the machine empty", READ_LANDED, true],
+      [
+        "a re-check that failed confirmed no such thing",
+        readFailed("no network"),
+        false,
+      ],
+    ];
+    expect(cases).toHaveLength(2);
+    for (const [name, read, claimed] of cases) {
+      scanIs([]);
+      joinAnswered([] as never);
+      // Rows kept from before the failure, none of them about a rendering
+      // that is gone — the unconfirmed empty missing set.
+      useUpdatesStore.setState({
+        rows: [row({ filesMissing: false })] as never,
+        read,
+      });
+      const host = mount(<InstalledView />);
+      expect((host.textContent ?? "").includes(NOTHING_INSTALLED), name).toBe(
+        claimed,
+      );
+    }
   });
 });
 
