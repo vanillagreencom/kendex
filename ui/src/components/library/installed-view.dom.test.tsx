@@ -25,7 +25,7 @@ import {
 import { STATUS_LABELS } from "@/lib/copy-customize";
 import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
 import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
-import { observedAt } from "@/lib/derive";
+import { observedAt, type ScopeSelection } from "@/lib/derive";
 import {
   READ_LANDED,
   READ_PENDING,
@@ -33,7 +33,11 @@ import {
   readFailed,
 } from "@/lib/read-state";
 import { useEditorStore } from "@/stores/editor";
-import { NO_FILTERS, useLibraryViewStore } from "@/stores/library-view";
+import {
+  type FilterSelection,
+  NO_FILTERS,
+  useLibraryViewStore,
+} from "@/stores/library-view";
 import { useNavStore } from "@/stores/nav";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
@@ -362,6 +366,149 @@ describe("the missing files badge on a Library row", () => {
         (host.textContent ?? "").includes(MISSING_FILES_BADGE_LABEL),
         name,
       ).toBe(marked);
+    }
+  });
+});
+
+// The places one row names follow the same narrowing the list itself was
+// built with, through the one `missingUnder` rule. A package with no copy
+// left carries no tool and no tags, so under either of those facets the row
+// answers from what the scan saw alone; under a place it answers for that
+// place. The Where cell, the badges naming a place and the record the From
+// column reads take that one set, and unnarrowed it is the whole of it.
+describe("the places a narrowed Library row names", () => {
+  const GH = { kind: "skill" as const, name: "gh" };
+  // The only copy the scan can see, tagged so the tag facet has something
+  // to narrow on.
+  const seen = {
+    ...installed(HYPR),
+    at: installed(HYPR).path,
+    tags: ["git"],
+  } as unknown as ObservedItem;
+  // The record for the place whose copy is gone is listed first, so a
+  // lookup reaching past the narrowing reads that place's marketplace.
+  const records = [
+    {
+      ...GH,
+      scope: VG,
+      harness: "claude",
+      at: null,
+      origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+      summary: null,
+      package: GH,
+    },
+    {
+      ...GH,
+      scope: HYPR,
+      harness: "claude",
+      at: seen.at,
+      origin: { origin: "marketplace", source: "hyprcat", repo: "o/h" },
+      summary: null,
+      package: GH,
+    },
+  ];
+  const gone = (scope: Scope) => ({
+    ...GH,
+    scope,
+    updateAvailable: false,
+    removedUpstream: false,
+    mixed: false,
+    ignored: false,
+    blockedByLocalEdit: false,
+    filesMissing: true,
+    editedHarnesses: [],
+  });
+
+  beforeEach(() => {
+    vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [seen],
+        missingProjects: [],
+        readProjects: [],
+        warnings: [],
+      } as never,
+    });
+    joinAnswered(records as never);
+    // Gone in the reader's own setup and in one project, present in the
+    // project the scan sees it in.
+    useUpdatesStore.setState({
+      rows: [gone(VG), gone({ scope: "global" })] as never,
+      read: READ_LANDED,
+    });
+    useNavStore.setState({ libraryScope: "all", search: "" });
+    useLibraryViewStore.setState({ ...NO_FILTERS });
+    roomIs(1400);
+  });
+
+  /** The place each badge names, read off the badge's own label — the row's
+   *  text would also carry the Where cell, which answers the same question
+   *  and would stand in for a badge that says nothing. */
+  const missingPlaces = (host: HTMLElement) =>
+    [...host.querySelectorAll("tbody tr button span")]
+      .map((label) => label.textContent ?? "")
+      .filter((text) => text.startsWith(MISSING_FILES_BADGE_LABEL));
+
+  it("narrows a row's places by every facet, not the location alone", () => {
+    const cases: [
+      string,
+      FilterSelection,
+      ScopeSelection,
+      string,
+      string[],
+      string,
+    ][] = [
+      [
+        "narrowed by nothing",
+        NO_FILTERS,
+        "all",
+        "3 locations",
+        [
+          `${MISSING_FILES_BADGE_LABEL} in vg`,
+          `${MISSING_FILES_BADGE_LABEL} in User level`,
+        ],
+        "cat",
+      ],
+      [
+        "a place",
+        NO_FILTERS,
+        { project: VG.root },
+        "vg",
+        [`${MISSING_FILES_BADGE_LABEL} in vg`],
+        "cat",
+      ],
+      [
+        "a tool",
+        { ...NO_FILTERS, harness: "claude" },
+        "all",
+        "hyprtrade",
+        [],
+        "hyprcat",
+      ],
+      [
+        "a tag",
+        { ...NO_FILTERS, tag: "git" },
+        "all",
+        "hyprtrade",
+        [],
+        "hyprcat",
+      ],
+    ];
+    expect(cases).toHaveLength(4);
+    for (const [name, filters, scope, where, places, from] of cases) {
+      useNavStore.setState({ libraryScope: scope });
+      useLibraryViewStore.setState(filters);
+      const host = mount(<InstalledView />);
+      const cells = [
+        ...(host.querySelector("tbody tr")?.querySelectorAll("td") ?? []),
+      ];
+      expect(cells, name).toHaveLength(8);
+      expect(cells[4].textContent, name).toBe(where);
+      expect(cells[5].textContent, name).toBe(from);
+      expect(missingPlaces(host), name).toEqual(places);
     }
   });
 });

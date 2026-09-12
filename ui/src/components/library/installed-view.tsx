@@ -30,6 +30,7 @@ import {
 } from "@/lib/copy";
 import {
   admitsMissing,
+  EVERYWHERE,
   filterItems,
   groupItems,
   groupMatches,
@@ -261,25 +262,6 @@ export function InstalledView() {
   // which places a fork badge names.
   const { standingsFor, editedAnywhere, outOfDateAnywhere, missingIn } =
     useLibraryStandings(everywhere);
-  // The places on a row that the table's own narrowing admits, falling
-  // back to all of them where it admits none.
-  //
-  // A badge names every place the package is missing in, because the fact
-  // is about the package wherever it sits — so a row's places can include
-  // one this table is not showing. Everything that has to answer for the
-  // table on screen reads this instead: the row's click, and the record
-  // its From column names and filters on, since a marketplace alias is
-  // declared at a place and another place's alias can address a
-  // subscription that exists at neither.
-  const here = useMemo(
-    () => (group: ItemGroup) => {
-      const all = groupPlaces(group, missingIn?.(group) ?? []);
-      const admitted = all.filter((one) => scopeMatches({ scope: one }, scope));
-      return admitted.length > 0 ? admitted : all;
-    },
-    [missingIn, scope],
-  );
-
   // One narrowing object for every half of this list: what the scan is
   // filtered by, which packages with no copy left it admits, and — below
   // the table — whether an emptiness under it is the update read's to
@@ -291,6 +273,29 @@ export function InstalledView() {
       tag: tag === "any" ? undefined : (tag as Tag),
     }),
     [scope, harness, tag],
+  );
+
+  // The places a row stands in as the table's own narrowing has them,
+  // falling back to all of them where the location facet admits none.
+  //
+  // Narrowed by every facet, not the location alone: the places where the
+  // copy is gone come through the same `missingUnder` the list above builds
+  // its rows with, so a tool or a tag — which a row with no copy left
+  // carries neither of — leaves the row answering from what the scan saw.
+  // Everything that has to answer for the table on screen reads this: the
+  // row's Where cell and badges, its click, and the record its From column
+  // names and filters on, since a marketplace alias is declared at a place
+  // and another place's alias can address a subscription that exists at
+  // neither.
+  const here = useMemo(
+    () => (group: ItemGroup) => {
+      const all = groupPlaces(group, missingIn?.(group, narrowing) ?? []);
+      const admitted = all.filter((one) =>
+        scopeMatches({ scope: one }, narrowing.scope),
+      );
+      return admitted.length > 0 ? admitted : all;
+    },
+    [missingIn, narrowing],
   );
 
   const groups = useMemo(() => {
@@ -350,8 +355,11 @@ export function InstalledView() {
   const projects = useMemo(
     () =>
       scopeChoices(
+        // Every place, narrowed by nothing: a pill is how a reader reaches
+        // a narrowing, so offering only the places the current one admits
+        // would leave a facet no way out of itself.
         everywhere.flatMap((group) =>
-          groupPlaces(group, missingIn?.(group) ?? []),
+          groupPlaces(group, missingIn?.(group, EVERYWHERE) ?? []),
         ),
         scope,
       ),
@@ -561,7 +569,7 @@ export function InstalledView() {
                           .filter((s) => s.why === "forked")
                           .map((s) => s.scope)}
                         outOfDate={outOfDateAnywhere?.(group) ?? false}
-                        missingIn={missingIn?.(group) ?? []}
+                        missingIn={missingIn?.(group, narrowing) ?? []}
                         onOpen={(scope) => {
                           const where = scope ?? here(group)[0];
                           if (!where) return;

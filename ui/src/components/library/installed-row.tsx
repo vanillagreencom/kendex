@@ -76,8 +76,10 @@ export function InstalledRow({
    *  the same one flow wherever it is taken, and this row's own click
    *  already opens the package. */
   outOfDate: boolean;
-  /** The places where a file kendex installed for this package is gone.
-   *  The repair lives on the package page, so the badge opens it there. */
+  /** The places where a file kendex installed for this package is gone, as
+   *  the table's own narrowing has them — the caller narrows, because a
+   *  place a row cannot be seen under is one this row must not name. The
+   *  repair lives on the package page, so the badge opens it there. */
   missingIn: Scope[];
   onOpen: (scope?: Scope) => void;
   /** Open one of the tools this package is installed for. */

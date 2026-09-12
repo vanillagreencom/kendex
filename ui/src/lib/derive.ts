@@ -47,6 +47,12 @@ export interface ItemFilter {
   tag?: Tag;
 }
 
+/** The narrowing that holds nothing back. A surface answering for the whole
+ *  set states it with this rather than an empty filter of its own, so a
+ *  facet {@link ItemFilter} gains cannot mean "everything" at one call site
+ *  and something narrower at the next. */
+export const EVERYWHERE: ItemFilter = { scope: "all" };
+
 /** Narrowings that are true of one installation: where it is, which tool
  *  reads it, what its author said it is for. Which kind of package it is
  *  is not one of them — a tool stores a package under whatever kind it can
