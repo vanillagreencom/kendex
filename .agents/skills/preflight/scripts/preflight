@@ -962,12 +962,18 @@ is_comment_line() { # LINE — leading-whitespace-then-# only; a trailing commen
 shell_command_text() { # LINE — sets SHELL_COMMAND_TEXT
   local rest="$1" out="" st="" top="" span="" openq="" resume="" pre="" tok="" esc=""
   while :; do
+    # One arm per context, and no catch-all: a state whose arm stops
+    # matching would otherwise borrow its neighbour's set and go on looking
+    # correct, which is how the backtick arm was dead while every backtick
+    # test still passed. The refusal makes each arm reachable by any test
+    # that reaches its state.
     case "$top" in
       '') pre="${rest%%[\"\'\\]*}" ;;
       "'") pre="${rest%%\'*}" ;;
       '"') pre="${rest%%[\"\$\`\\]*}" ;;
       '`') pre="${rest%%[\"\'(\`\\]*}" ;;
-      *) pre="${rest%%[\"\'()\`\\]*}" ;;
+      '(') pre="${rest%%[\"\'()\`\\]*}" ;;
+      *) env_error lexer-state "$top" "shell_command_text reached a context its scan has no character set for; the stack holds only a quote, a paren or a backtick." ;;
     esac
     if [ "$pre" = "$rest" ]; then
       if [ -n "$st" ]; then
