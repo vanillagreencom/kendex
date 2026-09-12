@@ -4,7 +4,7 @@ import { Ago } from "@/components/ago";
 import { ExternalLink } from "@/components/external-link";
 import { MarketplacePlaces } from "@/components/marketplaces/marketplace-places";
 import { useCachedRead } from "@/components/marketplaces/use-catalog";
-import { catalogRefusalLine } from "@/lib/catalog-read-state";
+import { catalogRefusal } from "@/lib/catalog-read-state";
 import {
   ABOUT_AUTHOR_LABEL,
   ABOUT_CONTAINS_LABEL,
@@ -14,6 +14,7 @@ import {
   ABOUT_NOTHING_SAID,
   ABOUT_UPDATED_LABEL,
   catalogContents,
+  MARKETPLACE_NOT_DOWNLOADED,
   SOURCE_ALIAS_LABEL,
   SOURCE_LOCATION_LABEL,
 } from "@/lib/copy-marketplaces";
@@ -125,13 +126,20 @@ export function AboutSection({
     </>
   );
 
-  if (!about && readError) {
+  const refused = catalogRefusal(readError);
+  if (!about && refused) {
     return (
       <div className="max-w-3xl space-y-6">
         {details}
-        <p className="py-16 text-center text-sm text-critical" role="alert">
-          This catalog can't be read right now — {catalogRefusalLine(readError)}
-        </p>
+        {refused.is === "not-downloaded" ? (
+          <p className="py-16 text-center text-sm text-muted-foreground">
+            {MARKETPLACE_NOT_DOWNLOADED}
+          </p>
+        ) : (
+          <p className="py-16 text-center text-sm text-critical" role="alert">
+            This catalog can't be read right now — {refused.reason}
+          </p>
+        )}
       </div>
     );
   }

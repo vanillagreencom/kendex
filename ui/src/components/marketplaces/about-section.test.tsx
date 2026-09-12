@@ -5,11 +5,13 @@ import type {
   CatalogFinding,
   MarketplaceMeta,
   MarketplaceRow,
+  SourceReadRefused,
 } from "@/bindings";
 import {
   ABOUT_FINDINGS_TITLE,
   ABOUT_NOTHING_SAID,
   LOCAL_FOLDER_LABEL,
+  MARKETPLACE_NOT_DOWNLOADED,
   MARKETPLACE_PLACES_TITLE,
   SOURCE_ALIAS_LABEL,
   SOURCE_LOCATION_LABEL,
@@ -26,7 +28,7 @@ import { AboutSection } from "./about-section";
 const stub = vi.hoisted(() => ({
   about: {} as Record<string, unknown>,
   rows: [] as unknown[],
-  readErrors: {} as Record<string, string>,
+  readErrors: {} as Record<string, SourceReadRefused | string>,
 }));
 vi.mock("@/stores/marketplaces", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/stores/marketplaces")>();
@@ -162,13 +164,13 @@ describe("the About tab's source details", () => {
   const withSource = (
     row: MarketplaceRow | null,
     identity: string | null,
-    unreadable = false,
+    refusal: SourceReadRefused | string | null = null,
   ) => {
-    stub.about = unreadable
+    stub.about = refusal
       ? {}
       : { [catalogKey(catalog)]: { findings: [], updatedAt: null } };
-    stub.readErrors = unreadable
-      ? { [readErrorKey(catalogKey(catalog), "about")]: "fetch refused" }
+    stub.readErrors = refusal
+      ? { [readErrorKey(catalogKey(catalog), "about")]: refusal }
       : {};
     stub.rows = row ? [row] : [];
     return renderToStaticMarkup(
@@ -209,10 +211,44 @@ describe("the About tab's source details", () => {
   // whether to unsubscribe from. What this machine declares about it is not
   // the catalog's to withhold.
   it("keeps the source details when the catalog cannot be read", () => {
-    const html = withSource(local, "/home/me/dev/kendex", true);
+    const html = withSource(local, "/home/me/dev/kendex", "fetch refused");
     expect(html).toContain("fetch refused");
     expect(html).toContain(`${LOCAL_FOLDER_LABEL} · /home/me/dev/kendex`);
     expect(html).toContain(SOURCE_ALIAS_LABEL);
     expect(html).toContain(MARKETPLACE_PLACES_TITLE);
+  });
+
+  // This tab fires its read the moment the tab opens, so a subscription
+  // nothing has downloaded yet reaches it before anything else has. That
+  // first state is an answer, not a failure, and the two are told apart by
+  // the refusal's kind.
+  it("tells a never-downloaded marketplace apart from a read that failed", () => {
+    const rows: {
+      name: string;
+      refusal: SourceReadRefused | string;
+      shown: string;
+      alert: boolean;
+    }[] = [
+      {
+        name: "never downloaded",
+        refusal: { kind: "source-pending", source: "kendex" },
+        shown: MARKETPLACE_NOT_DOWNLOADED,
+        alert: false,
+      },
+      {
+        name: "read failed",
+        refusal: "fetch refused",
+        shown: "fetch refused",
+        alert: true,
+      },
+    ];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      const html = withSource(local, "/home/me/dev/kendex", row.refusal);
+      // Static markup escapes the apostrophe the copy carries, so the row
+      // is compared against what a reader sees rather than the entity.
+      expect(html.replaceAll("&#x27;", "'"), row.name).toContain(row.shown);
+      expect(html.includes('role="alert"'), row.name).toBe(row.alert);
+    }
   });
 });

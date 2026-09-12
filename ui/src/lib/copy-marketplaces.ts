@@ -100,6 +100,13 @@ export const MARKETPLACE_PLACES_TITLE = "Places that use it";
  * of the same marketplace. */
 export const MARKETPLACE_NOT_DOWNLOADED = `This marketplace hasn't been downloaded yet. ${CHECK_FOR_UPDATES_LABEL} to download it.`;
 
+/** The Packages tab with a read that landed and no rows. Its neighbour
+ * above takes the never-downloaded case, so a marketplace this reaches has
+ * been read and offers nothing; naming a missing download here would state
+ * a cause this branch can no longer be reached by. */
+export const MARKETPLACE_OFFERS_NO_PACKAGES =
+  "Nothing to list yet — this marketplace offers no packages.";
+
 // How a marketplace names itself and where it comes from. A folder on this
 // machine says so beside its path: a working checkout and the remote
 // catalogue it was cloned from declare the same name, and without this the

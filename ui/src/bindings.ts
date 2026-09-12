@@ -467,7 +467,7 @@ export const commands = {
 	 *  sub-tab when it is not, rather than showing a dead search box.
 	 */
 	communitySkillsshAvailable: () => typedError<boolean, string>(__TAURI_INVOKE("community_skillssh_available")),
-	marketplaceAbout: (catalog: Catalog) => typedError<AboutView, string>(__TAURI_INVOKE("marketplace_about", { catalog })),
+	marketplaceAbout: (catalog: Catalog) => typedError<AboutView, SourceReadRefused>(__TAURI_INVOKE("marketplace_about", { catalog })),
 	/**
 	 *  Where every installation came from, across every scope — the Library
 	 *  table's From column in one query.

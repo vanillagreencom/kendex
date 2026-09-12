@@ -14,7 +14,10 @@ import { useInstalledPlaces } from "@/components/marketplaces/use-installed-plac
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { catalogRefusal } from "@/lib/catalog-read-state";
-import { MARKETPLACE_NOT_DOWNLOADED } from "@/lib/copy-marketplaces";
+import {
+  MARKETPLACE_NOT_DOWNLOADED,
+  MARKETPLACE_OFFERS_NO_PACKAGES,
+} from "@/lib/copy-marketplaces";
 import { PAGE_BODY, PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { rowForCatalog } from "@/lib/marketplace-display";
 import { cn } from "@/lib/utils";
@@ -197,8 +200,7 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
                     </p>
                   ) : offered.length === 0 ? (
                     <p className="py-16 text-center text-sm text-muted-foreground">
-                      Nothing to list yet — this marketplace hasn't been
-                      fetched, or offers no packages.
+                      {MARKETPLACE_OFFERS_NO_PACKAGES}
                     </p>
                   ) : (
                     <PackagesTable

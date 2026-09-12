@@ -341,9 +341,9 @@ pub struct AboutView {
 
 #[tauri::command(async)]
 #[specta::specta]
-pub fn marketplace_about(catalog: Catalog) -> Result<AboutView, String> {
+pub fn marketplace_about(catalog: Catalog) -> Result<AboutView, SourceReadRefused> {
     let env = env()?;
-    let about = browse::about(&env, &catalog).map_err(|e| e.to_string())?;
+    let about = browse::about(&env, &catalog).map_err(SourceReadRefused::from)?;
     Ok(AboutView {
         updated_at: about.updated_at,
         findings: about.report.findings,
