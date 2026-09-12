@@ -12,6 +12,7 @@ import type {
 import { InstalledView } from "@/components/library/installed-view";
 import { openLibraryAt } from "@/components/library/use-filter-handoff";
 import {
+  FORKED_BADGE_LABEL,
   MISSING_FILES_BADGE_LABEL,
   PACKAGES_CHECK_FAILED_TITLE,
   PACKAGES_UNCONFIRMED_TITLE,
@@ -1073,5 +1074,64 @@ describe("the columns a narrow Library table keeps", () => {
     // which project this is.
     expect(row[2].textContent).toContain("kendex-marketplace-integration");
     expect(row[2].getAttribute("title")).toBe(LONG);
+  });
+
+  // Every Badge is shrink-0 and whitespace-nowrap, so a strip of them that
+  // cannot wrap set the name column's min-content width, which beats the
+  // cell's max-width under an automatic table layout. A fork badge names
+  // its place, and `placeName` falls back to a whole root where two places
+  // end alike, so two of those made the column as wide as they pleased.
+  it("keeps the row to its columns when a package is forked in long places", () => {
+    const PLACES = [
+      "/work/kendex-marketplace-integration/apps/web",
+      "/home/me/experiments/kendex-marketplace-integration/apps/web",
+    ];
+    const forked = {
+      schema: 1,
+      install: {},
+      forks: { skill: { gh: { source: "local", "forked-at": "2026-01-01" } } },
+    };
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: PLACES.map((root) => installed({ scope: "project", root })),
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    useEditorStore.setState({
+      saved: Object.fromEntries(PLACES.map((root) => [root, forked as never])),
+    });
+    joinAnswered(
+      PLACES.map((root) => ({
+        scope: { scope: "project", root },
+        kind: "skill" as const,
+        name: "gh",
+        harness: "claude" as const,
+        at: installed({ scope: "project", root }).path,
+        origin: { origin: "own" as const, forkedFrom: null, source: "local" },
+        summary: null,
+        package: { kind: "skill" as const, name: "gh" },
+      })) as never,
+    );
+    roomIs(AT_MINIMUM_WINDOW);
+    const host = mount(<InstalledView />);
+
+    const row = cells(host);
+    // Two badges, each naming a place long enough that the pair used to
+    // set the column's width on their own.
+    const badges = [...row[0].querySelectorAll("button")].filter((b) =>
+      (b.textContent ?? "").startsWith(FORKED_BADGE_LABEL),
+    );
+    expect(badges).toHaveLength(2);
+    // Clipped by CSS, never by the string: what a screen reader reads is
+    // still the whole place.
+    for (const badge of badges)
+      expect(badge.textContent).toContain("kendex-marketplace-integration");
+
+    expect(row).toHaveLength(4);
+    expect(row[3].textContent, "Status is still the last cell").toContain(
+      "Active",
+    );
   });
 });

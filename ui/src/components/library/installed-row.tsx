@@ -137,7 +137,17 @@ export function InstalledRow({
             <Icon className="size-4 text-muted-foreground" />
           </span>
           <span className="min-w-0">
-            <span className="flex items-center gap-1.5">
+            {/* The strip wraps. Every Badge is `shrink-0 whitespace-nowrap`
+                by design, so a row of them that cannot go to a second line
+                sets a min-content width for the column, and min-content
+                beats a max-width under an automatic table layout — the
+                cell's own ceiling stops binding and Status leaves the
+                narrowest window. The two badges naming a place also cap
+                what they ask for: `placeName` falls back to a whole root
+                where two places end alike, which no ceiling above them
+                bounds. Capping is visual only, so the label a screen
+                reader announces is still the whole of it. */}
+            <span className="flex flex-wrap items-center gap-1.5">
               {/* What a screen reader is told opens the package. The row
                   itself opens too, but a row announces its cells rather
                   than an action, so the name stays a real button. No
@@ -162,10 +172,12 @@ export function InstalledRow({
                     render={
                       <Badge
                         variant="outline"
-                        className="cursor-pointer"
+                        className="max-w-40 cursor-pointer"
                         render={
                           <button type="button" onClick={() => onOpen(where)}>
-                            {`${FORKED_BADGE_LABEL} in ${placeName(where, scopes)}`}
+                            <span className="min-w-0 truncate">
+                              {`${FORKED_BADGE_LABEL} in ${placeName(where, scopes)}`}
+                            </span>
                             <span className="sr-only">{FORKED_BADGE_HELP}</span>
                           </button>
                         }
@@ -183,10 +195,12 @@ export function InstalledRow({
                     render={
                       <Badge
                         variant="warning"
-                        className="cursor-pointer"
+                        className="max-w-40 cursor-pointer"
                         render={
                           <button type="button" onClick={() => onOpen(where)}>
-                            {`${MISSING_FILES_BADGE_LABEL} in ${placeName(where, scopes)}`}
+                            <span className="min-w-0 truncate">
+                              {`${MISSING_FILES_BADGE_LABEL} in ${placeName(where, scopes)}`}
+                            </span>
                             <span className="sr-only">
                               {MISSING_FILES_BADGE_HELP}
                             </span>
@@ -227,7 +241,7 @@ export function InstalledRow({
                 package runs, not what it is for, and the technical view
                 is where those belong. */}
             {group.summary ? (
-              <span className="line-clamp-2 text-xs font-normal text-muted-foreground">
+              <span className="line-clamp-2 text-xs font-normal break-words text-muted-foreground">
                 {group.summary}
               </span>
             ) : null}
