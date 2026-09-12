@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import type { Scope } from "@/bindings";
 import {
   type PlaceStanding,
   placeFacts,
@@ -32,6 +33,12 @@ export function useLibraryStandings(groups: ItemGroup[]): {
    *  Null until a read lands: a badge is a definite claim, and rows kept
    *  from a failed check have not confirmed one. */
   outOfDateAnywhere: ((group: ItemGroup) => boolean) | null;
+  /** The places where a file kendex installed for this package is gone
+   *  — the rows Home's missing-files row counts, so the badge and that
+   *  row cannot disagree. A local disk fact like an edit, so it is read
+   *  the way `editedAnywhere` is: from rows a landed read confirmed or a
+   *  failed re-check kept, and null before either. */
+  missingIn: ((group: ItemGroup) => Scope[]) | null;
 } {
   const saved = useEditorStore((s) => s.saved);
   const savedSettings = useEditorStore((s) => s.savedSettings);
@@ -80,9 +87,26 @@ export function useLibraryStandings(groups: ItemGroup[]): {
         : null,
     [outOfDate, updatesLanded],
   );
+  const missing = useMemo(() => {
+    const out = new Map<string, Scope[]>();
+    for (const row of updateRows) {
+      if (!row.filesMissing) continue;
+      const key = `${row.kind}:${row.name}`;
+      out.set(key, [...(out.get(key) ?? []), row.scope]);
+    }
+    return out;
+  }, [updateRows]);
+  const missingIn = useMemo(
+    () =>
+      updatesLoaded
+        ? (group: ItemGroup) => missing.get(`${group.kind}:${group.name}`) ?? []
+        : null,
+    [missing, updatesLoaded],
+  );
   return {
     standingsFor: (group: ItemGroup) => byKey.get(group.key) ?? [],
     editedAnywhere,
     outOfDateAnywhere,
+    missingIn,
   };
 }

@@ -136,8 +136,8 @@ export const sayApply = (
 export const applyRow = async (
   row: UpdateRow,
   report: Report,
-): Promise<ApplyOutcome> => {
-  const response =
+): Promise<ApplyOutcome> =>
+  settleOne(
     row.pinned && row.latest
       ? await commands.packageSetRev(
           row.scope,
@@ -145,7 +145,30 @@ export const applyRow = async (
           row.name,
           row.latest.commit,
         )
-      : await commands.packageUpdate(row.scope, row.kind, row.name);
+      : await commands.packageUpdate(row.scope, row.kind, row.name),
+    report,
+  );
+
+/** Install one place's package files again, moving nothing: the
+ *  single-package apply with no hold to move, so a held place plans at
+ *  the revision it holds and a following one at its source's tip.
+ *  [`applyRow`] is the update, which takes a held place to the newest; a
+ *  repair that did the same would rewrite a declaration the person never
+ *  asked to change. */
+export const repairRow = async (
+  row: UpdateRow,
+  report: Report,
+): Promise<ApplyOutcome> =>
+  settleOne(
+    await commands.packageUpdate(row.scope, row.kind, row.name),
+    report,
+  );
+
+/** One place's answer, whichever command gave it. */
+const settleOne = (
+  response: Awaited<ReturnType<typeof commands.packageUpdate>>,
+  report: Report,
+): ApplyOutcome => {
   if (response.status === "error") {
     report(response.error);
     return { ok: false };

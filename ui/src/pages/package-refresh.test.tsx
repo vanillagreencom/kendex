@@ -101,6 +101,7 @@ const rowAt = (commit: string, waiting: boolean): UpdateRow => ({
   holdOwner: null,
   ignored: false,
   blockedByLocalEdit: false,
+  filesMissing: false,
   editedHarnesses: [],
   forkableHarness: null,
   canDiscard: false,

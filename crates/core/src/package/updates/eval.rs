@@ -12,6 +12,7 @@ pub(super) struct Eval<'a> {
     pub(super) scope_key: String,
     pub(super) edited: std::collections::BTreeMap<(ItemKind, String), Vec<HarnessId>>,
     pub(super) fork_edited: std::collections::BTreeSet<(ItemKind, String)>,
+    pub(super) files_missing: std::collections::BTreeSet<(ItemKind, String)>,
     pub(super) manifest: &'a crate::manifest::Manifest,
     pub(super) lock: &'a crate::lock::Lock,
 }
@@ -20,6 +21,11 @@ impl Eval<'_> {
     /// Whether this fork's installed files carry the person's own edits.
     fn fork_edited(&self, kind: ItemKind, name: &str) -> bool {
         self.fork_edited.contains(&(kind, name.to_owned()))
+    }
+
+    /// Whether a file this installation recorded writing is gone.
+    fn files_missing(&self, kind: ItemKind, name: &str) -> bool {
+        self.files_missing.contains(&(kind, name.to_owned()))
     }
 
     fn edited_harnesses(&self, kind: ItemKind, name: &str) -> Vec<HarnessId> {
@@ -126,6 +132,7 @@ impl Eval<'_> {
                         &planned.decl,
                         false,
                         false,
+                        self.files_missing(planned.kind, name),
                     ));
                     at
                 });
@@ -146,8 +153,10 @@ impl Eval<'_> {
 
     /// A declaration whose repository coordinates could not be bound. Path
     /// and local sources have no versions and are silently no row — except
-    /// a fork, which the Library still needs to know about. Everything else
-    /// is a fact row or a warning, never a silent skip.
+    /// a fork, which the Library still needs to know about, and an
+    /// installation missing a recorded file, which Home has to offer the
+    /// repair for. Everything else is a fact row or a warning, never a
+    /// silent skip.
     fn unevaluated(
         &self,
         planned: &crate::engine::PlannedDeclaration,
@@ -169,14 +178,16 @@ impl Eval<'_> {
         };
         match error {
             CoreError::ItemRevUnsupported { .. } => {
-                if forked {
+                let files_missing = self.files_missing(kind, name);
+                if forked || files_missing {
                     report.rows.push(unversioned_row(
                         self.scope,
                         kind,
                         name,
                         decl,
-                        true,
+                        forked,
                         self.fork_edited(kind, name),
+                        files_missing,
                     ));
                 }
             }
@@ -210,6 +221,7 @@ impl Eval<'_> {
                     hold_owner: hold_owner.clone(),
                     ignored: self.is_ignored(kind, name, &repo),
                     blocked_by_local_edit: !edited_harnesses.is_empty(),
+                    files_missing: self.files_missing(kind, name),
                     forkable_harness: forkable_among(
                         self.env,
                         self.scope,
@@ -324,6 +336,7 @@ impl Eval<'_> {
             hold_owner: hold_owner.clone(),
             ignored: self.is_ignored(kind, name, &package.repo),
             blocked_by_local_edit: !edited_harnesses.is_empty(),
+            files_missing: self.files_missing(kind, name),
             forkable_harness: forkable_among(
                 self.env,
                 self.scope,

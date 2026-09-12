@@ -12,6 +12,7 @@ import type {
 import { InstalledView } from "@/components/library/installed-view";
 import { openLibraryAt } from "@/components/library/use-filter-handoff";
 import {
+  MISSING_FILES_BADGE_LABEL,
   PACKAGES_CHECK_FAILED_TITLE,
   PACKAGES_UNCONFIRMED_TITLE,
   TRY_AGAIN_LABEL,
@@ -294,6 +295,65 @@ describe("the update mark on a Library row", () => {
       const host = mount(<InstalledView />);
       expect(
         (host.textContent ?? "").includes(UPDATE_AVAILABLE_BADGE),
+        name,
+      ).toBe(marked);
+    }
+  });
+});
+
+// The badge says a file kendex installed here is gone, which is a fact
+// about the disk like an edit: Home draws its row from the rows a failed
+// re-check kept, so the badge reads them the same way, and a read that has
+// counted nothing draws none.
+describe("the missing files badge on a Library row", () => {
+  const row = (extra: Record<string, unknown>) => ({
+    kind: "skill",
+    name: "gh",
+    scope: VG,
+    updateAvailable: false,
+    removedUpstream: false,
+    mixed: false,
+    ignored: false,
+    blockedByLocalEdit: false,
+    filesMissing: false,
+    editedHarnesses: [],
+    ...extra,
+  });
+
+  beforeEach(() => {
+    vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [installed(VG)],
+        missingProjects: [],
+        readProjects: [],
+        warnings: [],
+      } as never,
+    });
+    useNavStore.setState({ libraryScope: "all", search: "" });
+    useLibraryViewStore.setState({ ...NO_FILTERS });
+  });
+
+  it("marks the place where a file is gone, off every read that kept rows", () => {
+    const cases: [string, ReadState, unknown[], boolean][] = [
+      [
+        "failed with rows kept",
+        readFailed("no network"),
+        [row({ filesMissing: true })],
+        true,
+      ],
+      ["every file in place", READ_LANDED, [row({})], false],
+      ["pending", READ_PENDING, [row({ filesMissing: true })], false],
+    ];
+    expect(cases).toHaveLength(3);
+    for (const [name, read, rows, marked] of cases) {
+      useUpdatesStore.setState({ rows: rows as never, read });
+      const host = mount(<InstalledView />);
+      expect(
+        (host.textContent ?? "").includes(MISSING_FILES_BADGE_LABEL),
         name,
       ).toBe(marked);
     }

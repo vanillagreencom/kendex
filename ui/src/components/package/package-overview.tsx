@@ -6,6 +6,7 @@ import type {
   VersionRow,
 } from "@/bindings";
 import { EditedNotice } from "@/components/package/fork-notice";
+import { MissingFilesNotice } from "@/components/package/missing-files-notice";
 import { PackageDetails } from "@/components/package/package-details";
 import { PackageReadme } from "@/components/package/package-readme";
 import type { ItemGroup } from "@/lib/derive";
@@ -74,6 +75,16 @@ export function PackageOverview({
           name={reference.name}
           alreadyForked={meta?.fork != null}
           onViewChanges={onCompareEdits}
+          onResolved={onReload}
+        />
+      ) : null}
+      {/* The repair is the declaration's own apply, so it too has no
+          meaning behind an observed row. */}
+      {declares ? (
+        <MissingFilesNotice
+          scope={reference.scope}
+          kind={reference.kind}
+          name={reference.name}
           onResolved={onReload}
         />
       ) : null}

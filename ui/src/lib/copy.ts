@@ -262,6 +262,33 @@ export const EDITED_ATTENTION_ACTION = "Library";
 /** The Library's narrowing to those packages, in the filter strip. */
 export const EDITED_ON_DISK_LABEL = "Edited on disk";
 
+// A file kendex installed that is gone from disk. Home's row names the
+// packages by place; the Library marks each place; the package page
+// offers the repair, which is the package's own apply from its source. No
+// line here names a version: a held place stays at its hold and a
+// following one takes its source's tip, and a promise of "the same file"
+// would be false for one of them.
+export const missingFilesAttentionTitle = (count: number): string =>
+  count === 1
+    ? "1 installed package is missing a file"
+    : `${count} installed packages are missing files`;
+/** `named` is the packages by place: "gh in vg; dev and orch in hyprtrade". */
+export const missingFilesAttentionDetail = (named: string): string =>
+  `${named}. A file kendex installed there is gone from disk. Open the package and press Repair to install it again.`;
+export const MISSING_FILES_ATTENTION_ACTION = "Library";
+export const MISSING_FILES_BADGE_LABEL = "Missing files";
+export const MISSING_FILES_BADGE_HELP =
+  "A file kendex installed here is gone from disk. Open the package to repair it.";
+export const MISSING_FILES_NOTICE_TITLE =
+  "A file of this package is gone from disk";
+export const MISSING_FILES_NOTICE_DETAIL =
+  "kendex installed it here and it is no longer there. Repair installs this package's files here again from its source; a package held at a version stays at it.";
+export const repairedToastLabel = (name: string): string => `Repaired ${name}`;
+/** The package page after a repair, while the scan that shows the copy
+ *  again is still out. */
+export const REPAIR_CONFIRMING_NOTE =
+  "Reading this machine again to show the repaired package…";
+
 export const FOLLOW_SOURCE_TOAST = "Now following its source";
 
 // The app's own out-of-date notice, in the sidebar. It names both versions

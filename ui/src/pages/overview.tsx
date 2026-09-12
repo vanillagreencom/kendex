@@ -59,6 +59,7 @@ export function OverviewPage() {
   // line; the failure itself gets its own row below, so their absence
   // never has to stand in for "couldn't check".
   const editedPackages = updateRows.filter((row) => row.blockedByLocalEdit);
+  const missingPackages = updateRows.filter((row) => row.filesMissing);
   const updatesError = useUpdatesStore((s) => s.read.error);
   // Only a landed read may put a number on the page. `rows` survives a
   // failed re-check as last-known facts, which is enough for the edited
@@ -133,6 +134,7 @@ export function OverviewPage() {
 
   const rows = attentionRows({
     editedPackages,
+    missingPackages,
     result,
     updatesError,
     updates,
@@ -142,6 +144,9 @@ export function OverviewPage() {
     onProblems: () => goTo("problems"),
     onUpdates: () => setPage("updates"),
     onEditedPackages: () => goToLibrary({ edited: true }),
+    // The installed list, unnarrowed: each row marks the places missing
+    // a file, and the row above already named them.
+    onMissingPackages: () => goToLibrary({}),
     onPackage: (row) =>
       // An attention row is built from the update read, which speaks
       // declared packages.

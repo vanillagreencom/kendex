@@ -149,7 +149,7 @@ pub fn plan_scope(
 
     plan_manifest_write(env, scope, options.manifest_base.as_ref(), &state, &mut ops)?;
 
-    let fork_edits = plan_pass::plan_items(
+    let (fork_edits, recorded_gone) = plan_pass::plan_items(
         env,
         &state,
         scope,
@@ -245,6 +245,7 @@ pub fn plan_scope(
         safety,
         instruction_shims,
         fork_edits,
+        recorded_gone,
         generated,
     };
     report.notes.extend(scope_notes);
@@ -351,6 +352,7 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
         repo_effects_leaving: Vec::new(),
         instruction_shims: Vec::new(),
         fork_edits: Vec::new(),
+        recorded_gone: Vec::new(),
         generated: GeneratedPaths::default(),
     };
     let empty = Manifest::default();

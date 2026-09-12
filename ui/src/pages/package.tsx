@@ -4,6 +4,7 @@ import { CustomizeSaveBar } from "@/components/customize/customize-save-bar";
 import { ChangesPanel } from "@/components/files/changes-panel";
 import { ChangesViewer } from "@/components/files/changes-viewer";
 import { DeleteDialog } from "@/components/package/delete-dialog";
+import { MissingFilesNotice } from "@/components/package/missing-files-notice";
 import { PackageActions } from "@/components/package/package-actions";
 import { PackageFiles } from "@/components/package/package-files";
 import { PackageHeader } from "@/components/package/package-header";
@@ -18,7 +19,15 @@ import {
   usePackageDiff,
 } from "@/components/package/use-package-data";
 import { PackagesNote } from "@/components/packages-note";
-import { YOUR_EDITS_SIDE, yourEditsInSide } from "@/lib/copy";
+import { StatusNote } from "@/components/status-note";
+import { Button } from "@/components/ui/button";
+import {
+  REPAIR_CONFIRMING_NOTE,
+  SCAN_AGAIN_LABEL,
+  SCAN_FAILED_TITLE,
+  YOUR_EDITS_SIDE,
+  yourEditsInSide,
+} from "@/lib/copy";
 import {
   groupFor,
   groupItems,
@@ -38,10 +47,13 @@ import {
 import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
 import { packageReadNote, unfetchedNote } from "@/lib/package-read-state";
+import { rescanEverything } from "@/lib/rescan";
+import { sameScope, scopeKey } from "@/lib/scope";
 import {
   packageForkEdited,
   packageRequiredBy,
   packageUpdateNote,
+  rowsKnown,
   updatesReadNote,
 } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
@@ -66,6 +78,8 @@ export function PackagePage() {
   const clearPackageView = useNavStore((s) => s.clearPackageView);
   const back = useNavStore((s) => s.back);
   const result = useScanStore((s) => s.result);
+  const scanError = useScanStore((s) => s.error);
+  const scanning = useScanStore((s) => s.scanning);
   const toggle = useAuditStore((s) => s.toggle);
   const { openScope } = useEditorStore();
 
@@ -167,16 +181,61 @@ export function PackagePage() {
   // The package can still be installed elsewhere while this place has no
   // copy of it — a page about a place that does not have it has nothing
   // to show and no actions that would land anywhere.
-  const installedHere = installationAt(group, ref?.scope) !== undefined;
+  // A place the scan no longer sees the copy in, but whose update row
+  // says a recorded file is gone, still has this package: the file is
+  // what the row's repair puts back, and this page is where the repair
+  // is offered. Read off the row the planner produced, never a second
+  // look at the disk, and only from rows the read has confirmed.
+  const missingHere = useUpdatesStore(
+    (s) =>
+      asked !== null &&
+      rowsKnown(s) &&
+      s.rows.some(
+        (row) =>
+          row.kind === asked.kind &&
+          row.name === asked.name &&
+          sameScope(row.scope, asked.scope) &&
+          row.filesMissing,
+      ),
+  );
+  // The installation this page is about. A package can be installed in
+  // several places and the page names one of them, so the actions that
+  // open files reach that place's copy. Falling back to another place's
+  // would have the page describe one place while its buttons work on
+  // another.
+  const primary = installationAt(group, ref?.scope);
+  const installedHere = primary !== undefined || missingHere;
+
+  // Once this page has drawn the repair for a place, it holds that place
+  // until the scan sees the copy again or the row says the file is still
+  // gone. The two reads behind those can disagree for a while — the rows
+  // clear the fact the moment the file is back, and a scan that failed
+  // or is still out holds no copy — and a page that trusted either alone
+  // in that window would leave, or go blank, over a repair that worked.
+  // Keyed by the place, so a link to another package starts unheld, and
+  // released the moment the scan shows the copy: the hold bridges the
+  // repair's readback and nothing after it, so a package removed from
+  // the restored page leaves the way any removed package does.
+  const placeKey = asked
+    ? `${asked.kind}:${asked.name}:${scopeKey(asked.scope)}`
+    : null;
+  const [repairDrawnFor, setRepairDrawnFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (primary !== undefined) setRepairDrawnFor(null);
+    else if (missingHere) setRepairDrawnFor(placeKey);
+  }, [missingHere, primary, placeKey]);
+  const held = placeKey !== null && repairDrawnFor === placeKey;
 
   // The scan has lost this package (removed, renamed): leave the way the
   // user came. Only once the join has said which observations are this
   // package — before that a package a tool stores under another identity
   // is not lost, it is not yet resolved, and leaving would throw the
-  // reader off a page that was about to draw.
+  // reader off a page that was about to draw. Never while the page is
+  // held over a repair: the scan losing the copy is the very state the
+  // repair was drawn for.
   useEffect(() => {
-    if (ref && result && packagesKnown && !installedHere) back();
-  }, [ref, result, packagesKnown, installedHere, back]);
+    if (ref && result && packagesKnown && !installedHere && !held) back();
+  }, [ref, result, packagesKnown, installedHere, held, back]);
 
   if (!ref) return null;
   // The read that says which installations are one package has not
@@ -192,14 +251,63 @@ export function PackagePage() {
       </div>
     );
   }
-  if (!group) return null;
-  // The installation this page is about. A package can be installed in
-  // several places and the page names one of them, so the actions that
-  // open files reach that place's copy. Falling back to another place's
-  // would have the page describe one place while its buttons work on
-  // another.
-  const primary = installationAt(group, ref.scope);
-  if (!primary) return null;
+  // No copy the scan can see here — or anywhere, when this was the only
+  // one — and the row says why: a recorded file is gone. Every control
+  // below opens or lists files at this place, so none of them can stand;
+  // the page is the header and the repair, built from the link's own
+  // scope, kind and name, which is all the two need. The summary is the
+  // observed copy's, so it is absent with the copy. Held over a repair
+  // with the row no longer saying the file is gone, the page waits for
+  // the scan in the notice's place: the failure with its retry where the
+  // scan failed, otherwise the read still out.
+  if (!group || !primary) {
+    if (!missingHere && !held) return null;
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <PackageHeader
+          kind={ref.kind}
+          displayName={packageDisplayName(ref)}
+          summary={summaryAt(group, ref.scope, summaryOf)}
+          forked={meta?.fork != null}
+          forkEdited={forkEdited}
+          mark={mark}
+          requiredBy={requiredBy}
+          action={null}
+        />
+        <div className={cn("pt-6", PAGE_GUTTER)}>
+          {missingHere ? (
+            <MissingFilesNotice
+              scope={ref.scope}
+              kind={ref.kind}
+              name={ref.name}
+              onResolved={reload}
+            />
+          ) : scanError !== null ? (
+            <StatusNote
+              tone="warning"
+              title={SCAN_FAILED_TITLE}
+              action={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={scanning}
+                  onClick={() => void rescanEverything({ announce: true })}
+                >
+                  {SCAN_AGAIN_LABEL}
+                </Button>
+              }
+            >
+              {scanError}
+            </StatusNote>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {REPAIR_CONFIRMING_NOTE}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
   // Whether this page has a declaration behind it. Asked once, and the
   // controls that write one are simply not handed a handler: an
   // installation nothing recorded shares its scope, kind and name with

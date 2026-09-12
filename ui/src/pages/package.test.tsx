@@ -21,6 +21,7 @@ import {
   FORKED_BADGE_LABEL,
   FORKED_EDITED_BADGE_LABEL,
   KEEP_AS_FORK_LABEL,
+  MISSING_FILES_NOTICE_TITLE,
   OPEN_IN_EDITOR_LABEL,
   OPEN_IN_FILE_BROWSER_LABEL,
   OPEN_IN_LABEL,
@@ -28,6 +29,8 @@ import {
   PACKAGES_CHECK_FAILED_TITLE,
   PLACE_COUNTING_LABEL,
   README_TAG,
+  SCAN_AGAIN_LABEL,
+  SCAN_FAILED_TITLE,
   TRY_AGAIN_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
@@ -42,6 +45,7 @@ import {
 } from "@/lib/copy-files";
 import { DELETE_LABEL, PROJECTS_TAB } from "@/lib/copy-projects";
 import { SAFETY_TAB, SAFETY_VENDOR } from "@/lib/copy-safety";
+import { REPAIR_LABEL } from "@/lib/copy-setup";
 import {
   EDITED_CANT_UPDATE_NOTE,
   NO_UPDATE_STANDING_NOTE,
@@ -93,6 +97,10 @@ vi.mock("@/bindings", async (importOriginal) => ({
     packageDiff: vi.fn(),
     // The page's safety tab asks for a fresh audit as it mounts.
     auditAll: vi.fn(),
+    // What a repair pressed on the page runs, and the two reads behind it.
+    packageUpdate: vi.fn(),
+    scanMachine: vi.fn(),
+    updatesOverview: vi.fn(),
   },
 }));
 
@@ -222,6 +230,7 @@ const updateRow = (scope: Project): UpdateRow => ({
   holdOwner: null,
   ignored: false,
   blockedByLocalEdit: false,
+  filesMissing: false,
   editedHarnesses: [],
   forkableHarness: null,
   canDiscard: false,
@@ -1098,6 +1107,155 @@ describe("the package page's file actions", () => {
         (button) => button.textContent === OPEN_IN_LABEL,
       ),
     ).toBe(false);
+  });
+
+  // A copy the scan lost because its file is gone is not a place without
+  // the package: the row says the file was recorded here, and the repair
+  // that puts it back is offered on this page alone. Nothing else stands —
+  // the files, the open buttons and the tabs all reach a copy that is not
+  // there. The same whether another place still holds a copy or this was
+  // the only one: the link carries the scope, kind and name, and the
+  // page needs no observation to draw the repair.
+  it("stay, with the repair, where this place's row says a file is gone", async () => {
+    const cases: [string, Project[]][] = [
+      ["observed elsewhere", [HYPR]],
+      ["observed nowhere", []],
+    ];
+    expect(cases).toHaveLength(2);
+    for (const [name, elsewhere] of cases) {
+      const back = vi.fn();
+      useNavStore.setState({ back });
+      useUpdatesStore.setState({
+        rows: [{ ...updateRow(VG), filesMissing: true }],
+        read: READ_LANDED,
+      });
+      const host = await openPage(VG, elsewhere, {});
+      expect(back, name).not.toHaveBeenCalled();
+      expect(host.textContent, name).toContain(MISSING_FILES_NOTICE_TITLE);
+      expect(buttons(host), name).toContain(REPAIR_LABEL);
+      expect(buttons(host), name).not.toContain(OPEN_IN_LABEL);
+    }
+  });
+
+  /** The page over a package whose only copy is gone, with a repair that
+   *  commits and rows that then stop saying the file is missing; what the
+   *  scan behind the repair answers is the case's own. */
+  const openRepairOnly = async (
+    scan: Awaited<ReturnType<typeof commands.scanMachine>>,
+  ) => {
+    const back = vi.fn();
+    useNavStore.setState({ back });
+    useUpdatesStore.setState({
+      rows: [{ ...updateRow(VG), filesMissing: true }],
+      read: READ_LANDED,
+    });
+    const host = await openPage(VG, [], {});
+    vi.mocked(commands.packageUpdate).mockResolvedValue({
+      status: "ok",
+      data: { view: scoredView, heldBack: [], removed: [], moved: [] },
+    } as never);
+    vi.mocked(commands.scanMachine).mockResolvedValue(scan);
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: {
+        rows: [updateRow(VG)],
+        warnings: [],
+        unreadable: [],
+        lastFetched: null,
+      },
+    });
+    useProvenanceStore.setState({
+      rows: [
+        {
+          scope: VG,
+          kind: "skill",
+          name: "gh",
+          harness: "claude",
+          at: installedAt(VG).at,
+          origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+          summary: null,
+          package: { kind: "skill", name: "gh" },
+        },
+      ],
+    } as never);
+    vi.mocked(commands.libraryProvenance).mockResolvedValue({
+      status: "ok",
+      data: useProvenanceStore.getState().rows,
+    } as never);
+    const repair = Array.from(host.querySelectorAll("button")).find(
+      (button) => button.textContent === REPAIR_LABEL,
+    );
+    if (!repair) throw new Error("no Repair button");
+    await userEvent.click(repair);
+    await settle();
+    expect(commands.packageUpdate).toHaveBeenCalledWith(VG, "skill", "gh");
+    return { host, back };
+  };
+
+  const buttons = (host: HTMLElement) =>
+    Array.from(host.querySelectorAll("button")).map(
+      (button) => button.textContent,
+    );
+
+  // The repair commits and the copy is back on the scan: the page draws
+  // the restored package rather than sending the reader back.
+  it("stay through a repair that puts the only copy back", async () => {
+    // The repair's readback lands a scan, which counts a generation the
+    // fixture above pins at zero for every page it opens; put it back
+    // once this page has drawn.
+    const generation = useScanStore.getState().generation;
+    const { host, back } = await openRepairOnly({
+      status: "ok",
+      data: {
+        harnesses: [],
+        items: [installedAt(VG)],
+        missingProjects: [],
+        readProjects: [],
+        warnings: [],
+      },
+    } as never);
+    expect(back).not.toHaveBeenCalled();
+    expect(host.textContent).not.toContain(MISSING_FILES_NOTICE_TITLE);
+    expect(buttons(host)).toContain(OPEN_IN_LABEL);
+
+    // The hold ended with the scan that showed the copy: the package
+    // removed from the restored page is a package the scan lost, and the
+    // page leaves the way it does for any other.
+    await act(async () => {
+      useScanStore.setState((state) => ({
+        result: {
+          harnesses: [],
+          items: [],
+          missingProjects: [],
+          readProjects: [],
+          warnings: [],
+        },
+        generation: state.generation + 1,
+      }));
+      joinAnswered([]);
+    });
+    await settle();
+    expect(back).toHaveBeenCalled();
+    useScanStore.setState({ generation });
+  });
+
+  // The repair commits and the rows stop saying the file is gone, but the
+  // scan behind it fails and keeps seeing no copy. The page is held: it
+  // neither leaves nor goes blank, and says the scan failed with the way
+  // to run it again where the repair stood.
+  it("stay with the scan's failure when the rescan after a repair fails", async () => {
+    const { host, back } = await openRepairOnly({
+      status: "error",
+      error: "REFUSED-BY-CORE: the scan could not run",
+    });
+    expect(back).not.toHaveBeenCalled();
+    expect(host.textContent).toContain(SCAN_FAILED_TITLE);
+    expect(host.textContent).toContain(
+      "REFUSED-BY-CORE: the scan could not run",
+    );
+    expect(buttons(host)).toContain(SCAN_AGAIN_LABEL);
+    expect(host.textContent).not.toContain(MISSING_FILES_NOTICE_TITLE);
+    useScanStore.setState({ error: null });
   });
 
   // Delete takes every copy at once, and the dialog closes on its own the

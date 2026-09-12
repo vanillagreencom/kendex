@@ -5289,6 +5289,14 @@ export type UpdateRow = {
 	 */
 	blockedByLocalEdit: boolean,
 	/**
+	 *  A file kendex recorded writing is gone from disk, and the next
+	 *  apply puts it back: the same plan `blocked_by_local_edit` is read
+	 *  from holds the write, so the update is the repair. Only a recorded
+	 *  rendering counts, at the positions the record carries: a declaration
+	 *  never installed and a rendering a newer layout moved are not news.
+	 */
+	filesMissing: boolean,
+	/**
 	 *  Which renderings carry the edit, one entry per physical rendering:
 	 *  an agent renders once per tool, while tools sharing a skill's
 	 *  canonical tree count once. Keeping the edit as a fork captures one

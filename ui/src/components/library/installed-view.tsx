@@ -156,7 +156,7 @@ export function InstalledView() {
   // Read from those, never from the filtered set: a standing answers for
   // the package, so narrowing the table to one project must not change
   // which places a fork badge names.
-  const { standingsFor, editedAnywhere, outOfDateAnywhere } =
+  const { standingsFor, editedAnywhere, outOfDateAnywhere, missingIn } =
     useLibraryStandings(everywhere);
   const groups = useMemo(() => {
     // Nothing may be drawn until the read that says which observations are
@@ -360,6 +360,7 @@ export function InstalledView() {
                         .filter((s) => s.why === "forked")
                         .map((s) => s.scope)}
                       outOfDate={outOfDateAnywhere?.(group) ?? false}
+                      missingIn={missingIn?.(group) ?? []}
                       onOpen={(scope) => {
                         const where = scope ?? primary?.scope;
                         if (!where) return;

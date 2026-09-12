@@ -11,6 +11,9 @@ import {
   EDITED_ATTENTION_ACTION,
   editedAttentionDetail,
   editedAttentionTitle,
+  MISSING_FILES_ATTENTION_ACTION,
+  missingFilesAttentionDetail,
+  missingFilesAttentionTitle,
   namesInWords,
   TRY_AGAIN_LABEL,
   UPDATES_ATTENTION_DETAIL,
@@ -41,6 +44,8 @@ import { scopeKey } from "@/lib/scope";
  *  fixed product order, and the page stays a layout. */
 export interface AttentionSource {
   editedPackages: UpdateRow[];
+  /** Installations a file kendex wrote has gone from. */
+  missingPackages: UpdateRow[];
   result: ScanResult | null;
   /** Why the last update check failed, or null. A failed check is a state
    *  to show, not a silence: with nothing said, a list without an "edited
@@ -64,14 +69,17 @@ export interface AttentionSource {
   onUpdates: () => void;
   /** The Library narrowed to the edited packages, and nothing wider. */
   onEditedPackages: () => void;
+  /** The Library's installed list, where each place missing a file is
+   *  marked on its package's row. */
+  onMissingPackages: () => void;
   onPackage: (row: UpdateRow) => void;
   onAuditRetry: () => void;
 }
 
-/** The edited packages by place: "gh in vg; dev and orch in hyprtrade".
- *  Grouped by place rather than listed flat, so three names in one
- *  project read as three and not as one package in three places. */
-export function editedPackagesByPlace(rows: UpdateRow[]): string {
+/** The packages by place: "gh in vg; dev and orch in hyprtrade". Grouped
+ *  by place rather than listed flat, so three names in one project read
+ *  as three and not as one package in three places. */
+export function packagesByPlace(rows: UpdateRow[]): string {
   const byPlace = new Map<
     string,
     { scope: UpdateRow["scope"]; names: string[] }
@@ -91,18 +99,42 @@ export function editedPackagesByPlace(rows: UpdateRow[]): string {
 }
 
 export function attentionRows(source: AttentionSource): AttentionRow[] {
-  const { editedPackages, result, updatesError, auditError, unreadable } =
-    source;
+  const {
+    editedPackages,
+    missingPackages,
+    result,
+    updatesError,
+    auditError,
+    unreadable,
+  } = source;
   const missing = result?.missingProjects ?? [];
 
   const rows: AttentionRow[] = [];
+  // Ahead of the edited row: an edit is a decision waiting, while a file
+  // that is gone is something a tool still runs and cannot find.
+  if (missingPackages.length > 0) {
+    const first = missingPackages[0];
+    rows.push({
+      key: "missing-files",
+      tone: "warning",
+      title: missingFilesAttentionTitle(missingPackages.length),
+      detail: missingFilesAttentionDetail(packagesByPlace(missingPackages)),
+      action:
+        missingPackages.length === 1 && first
+          ? { label: first.name, onClick: () => source.onPackage(first) }
+          : {
+              label: MISSING_FILES_ATTENTION_ACTION,
+              onClick: source.onMissingPackages,
+            },
+    });
+  }
   if (editedPackages.length > 0) {
     const first = editedPackages[0];
     rows.push({
       key: "edited",
       tone: "warning",
       title: editedAttentionTitle(editedPackages.length),
-      detail: editedAttentionDetail(editedPackagesByPlace(editedPackages)),
+      detail: editedAttentionDetail(packagesByPlace(editedPackages)),
       action:
         editedPackages.length === 1 && first
           ? { label: first.name, onClick: () => source.onPackage(first) }
