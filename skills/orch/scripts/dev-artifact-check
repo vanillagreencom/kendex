@@ -51,13 +51,42 @@ ID_GRAMMAR='^[A-Za-z0-9._-]+$'
 # --expect-items is a comma-separated list of item numbers.
 EXPECT_GRAMMAR='^[0-9]+(,[0-9]+)*$'
 scratch_files=()
+# Set by `finish` at every exit whose outcome this script already described —
+# the JSON result on stdout, or a keyed line on stderr. An exit that did not
+# reach `finish` is an abort no site described, and `on_exit` names its status
+# so a caller can tell an unwatched round from a rejected one.
+REPORTED=0
 
-cleanup_scratch() {
+on_exit() {
+  local status=$?
+  # BEST EFFORT, AND THE LIMIT IS BASH'S: this trap runs for a helper that ran
+  # and exited nonzero and for a command substitution that could not fork, but
+  # NOT for a simple command that cannot fork — the poll loop's `sleep` under
+  # real fork exhaustion — where bash ends the shell with status 127 and runs
+  # no trap, so the exit status is the contract and this line is the courtesy.
+  #
+  # It is therefore PRESENT on stderr, never promised first. The stable-first-
+  # line contract covers the refusals this script authors at a decision point,
+  # which it writes before anything else; a trap that runs AFTER the command
+  # that failed cannot outrun that command's own diagnostic, and must not claim
+  # to. --help says the same, and the suite pins presence, not position.
+  #
+  # The report comes before the cleanup, not after: `rm` is the external
+  # command, and the run this backstop exists for is the one where no external
+  # command can start. `message` is printf and case alone.
+  if (( status != 0 )) && (( REPORTED == 0 )); then
+    message exit "$status" >&2
+  fi
   if (( ${#scratch_files[@]} > 0 )); then
     rm -f -- "${scratch_files[@]}"
   fi
 }
-trap cleanup_scratch EXIT
+trap on_exit EXIT
+
+finish() {
+  REPORTED=1
+  exit "$1"
+}
 
 # The per-harness backgrounding paragraph under --wait is an intentional twin
 # of review-artifact-check's: each --help is self-contained, so edit both.
@@ -186,7 +215,22 @@ commit object but is not an ancestor of the current HEAD — the signature of a
 receipt orphaned by a later rebase (kendex#994). Expected after a legitimate
 rebase; the orchestrator decides what it means for the round.
 
-Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
+Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error or when a
+probe this check runs could not answer (the verdict was unreadable). A status 2
+refusal IS stderr's first line, and stays first by construction: every probe
+read whose failure becomes a refusal silences its own diagnostic, so nothing a
+helper wrote can precede the keyed line.
+
+Any status outside 0, 1 and 2 is an abort: no result was produced, and under
+--wait the round is no longer watched. stderr then CARRIES `dev-artifact-check:
+exit=STATUS`, but not as its first line — the EXIT trap runs after the command
+that failed, so that command's own diagnostic, and bash's `fork: retry` lines,
+print ahead of it. It is written at all only where bash reaches the trap: a
+helper that ran and exited nonzero, or a command substitution that could not
+fork (status 254). A SIMPLE command that cannot fork, which is the poll loop's
+`sleep` under real fork exhaustion, ends the shell with a bare status (127 on
+bash 5) and no keyed line anywhere. Judge an unwatched round on the status,
+never on the line.
 EOF
 }
 
@@ -307,12 +351,16 @@ message() {
       printf 'dev-artifact-check: verdict-unreadable file=%s\n' "$file"
       printf 'The emitted artifact verdict could not be read.\n'
       ;;
+    exit)
+      printf 'dev-artifact-check: exit=%s\n' "$1"
+      printf 'The check ended without a result. No verdict was reached for this round.\n'
+      ;;
   esac
 }
 
 die() {
   message "$@" >&2
-  exit 2
+  finish 2
 }
 
 need() {
@@ -355,6 +403,10 @@ emit() {
   else
     verdict="retry"
   fi
+  # Silenced for POSITION, not to hide anything. Every probe read whose failure
+  # becomes a keyed refusal swallows its own diagnostic, because the refusal is
+  # documented as stderr's first line and a diagnostic written before it would
+  # push it to second. The cause is not lost: the refusal names it.
   jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" --arg warning "$warning" \
     --arg hint "$hint" --arg verdict "$verdict" \
     --argjson files "$files" --argjson validate "${validate:-null}" --argjson validate_note "${validate_note:-null}" \
@@ -362,7 +414,7 @@ emit() {
       warning: (if $warning == "" then null else $warning end),
       hint: (if $hint == "" then null else $hint end),
       files: $files,
-      validate: $validate, validate_note: $validate_note}'
+      validate: $validate, validate_note: $validate_note}' 2>/dev/null
 }
 
 # The artifact's internal round_id must equal the expected token. Guards against
@@ -685,7 +737,7 @@ validate_artifact() {
 # validates --expect-items once and runs the check. -h/--help prints usage. ---
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
-  exit 0
+  finish 0
 fi
 
 file=""
@@ -789,7 +841,7 @@ else
   # Neither --file nor round mode → usage error. One identity model (round id);
   # the legacy positional mode was removed with its only caller.
   usage >&2
-  exit 2
+  finish 2
 fi
 
 # Round mode checks a fix receipt against its round record or not at all.
@@ -811,7 +863,7 @@ check_once() {
   require_round_record_flag
   out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo" "$round_record")" || rc=$?
   if (( rc == 0 )); then
-    verdict="$(jq -r '.verdict' <<<"$out")" || {
+    verdict="$(jq -r '.verdict' <<<"$out" 2>/dev/null)" || {
       message verdict-unreadable >&2
       return 2
     }
@@ -848,11 +900,21 @@ if (( wait_secs > 0 )); then
   while :; do
     rc=0
     out="$(check_once)" || rc=$?
-    (( rc != 2 )) || exit 2
-    verdict="$(jq -r '.verdict // "wait"' <<<"$out" 2>/dev/null || printf 'wait')"
+    (( rc != 2 )) || finish 2
+    # A failed jq, or a check_once that aborted part-way and left output no
+    # verdict can be read from, is the probe breaking — never this round's
+    # answer. Reading either as "wait" would keep the watchdog polling over a
+    # probe that no longer works, and the round it was armed for would go
+    # untimed with nothing said. It refuses here instead, on the same keyed
+    # line and status check_once uses for its own unreadable verdict.
+    verdict="$(jq -r '.verdict // "wait"' <<<"$out" 2>/dev/null)" || verdict=""
+    if [[ -z "$verdict" ]]; then
+      message verdict-unreadable >&2
+      finish 2
+    fi
     if [[ "$verdict" != "wait" ]] || (( $(date +%s) >= deadline )); then
       printf '%s\n' "$out"
-      exit "$rc"
+      finish "$rc"
     fi
     remaining=$(( deadline - $(date +%s) ))
     sleep_for="$interval"
@@ -861,6 +923,24 @@ if (( wait_secs > 0 )); then
     sleep "$sleep_for"
   done
 fi
+# Single-shot mode, which is acceptance Check A on every orchestrator wake, is
+# guarded exactly as the --wait loop above guards each poll. A check_once that
+# aborted part-way returns a rejection status with nothing on stdout, and
+# passing that straight to `finish` would report a rejection the caller can
+# read no verdict from, with no keyed line either. An ordinary rejection that
+# does carry a readable verdict stays an ordinary rejection.
 rc=0
-check_once || rc=$?
+out="$(check_once)" || rc=$?
+(( rc != 2 )) || finish 2
+if (( rc == 0 || rc == 1 )); then
+  verdict="$(jq -r '.verdict // "wait"' <<<"$out" 2>/dev/null)" || verdict=""
+  if [[ -z "$verdict" ]]; then
+    message verdict-unreadable >&2
+    finish 2
+  fi
+  printf '%s\n' "$out"
+  finish "$rc"
+fi
+# Any other status is an abort this tail cannot describe: leave REPORTED clear
+# so on_exit names it.
 exit "$rc"

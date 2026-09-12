@@ -103,12 +103,15 @@ stage() {
 # run_check ARGS... — runs the check with %W, %F and %D in ARGS replaced by
 # the staged worktree, the --file target and the delegation boundary; OUT is
 # the JSON, RC the exit, ERR the stderr file.
+# SHIM_PATH, when set, is prepended to PATH for the run: the probe-failure case
+# shadows one helper at a time so a row fails the probe it names and no other.
+SHIM_PATH=""
 run_check() {
   local args=() a
   for a in "$@"; do a="${a//%W/$WT}"; a="${a//%F/$F}"; a="${a//%D/$DELEG}"; args+=("$a"); done
   ERR="$RUN/stderr"
   set +e
-  OUT=$("$CHECK" ${args[@]+"${args[@]}"} 2>"$ERR")
+  OUT=$(PATH="${SHIM_PATH:+$SHIM_PATH:}$PATH" "$CHECK" ${args[@]+"${args[@]}"} 2>"$ERR")
   RC=$?
   set -e
 }
@@ -126,6 +129,10 @@ json() { jq -r "$@" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 #   diagnostic      the stable diagnostic code
 #   stdout_nonempty whether help wrote a response
 #   stdout~<text>   whether stdout carries <text>
+#   stderr_abort    the status named by the EXIT trap's keyed line ANYWHERE on
+#                   stderr, or `absent`. Position is not asserted: the trap runs
+#                   after the command that failed, so that command's own
+#                   diagnostic precedes it
 #   stderr          `line` when anything was written there, else `empty`
 observe() {
   local got="" token name value needle
@@ -146,6 +153,11 @@ observe() {
           needle="${name#stderr~}"; needle="${needle//%W/$WT}"
           value="$([[ " $value " == *" ${needle/:/=} "* ]] && echo true || echo false)"
         fi ;;
+      stderr_abort)
+        value="$(grep -o 'review-artifact-check: exit=[0-9][0-9]*' "$ERR" 2>/dev/null || printf '')"
+        value="${value#review-artifact-check: exit=}"
+        value="${value:-absent}"
+        ;;
       stderr) value="$([[ -s "$ERR" ]] && echo line || echo empty)" ;;
       *) value="$(json "if has(\"$name\") then .$name else \"ABSENT\" end")" ;;
     esac
@@ -330,6 +342,73 @@ run_check -h
 assert_eq "$(observe "rc=0 stdout_nonempty=true")" "rc=0 stdout_nonempty=true" "-h prints usage"
 TMPDIR="$TMP_ROOT/does-not-exist/nope" run_check --help
 assert_eq "$(observe "rc=0 stdout_nonempty=true")" "rc=0 stdout_nonempty=true" "--help still prints the contract under an unusable TMPDIR"
+
+echo "=== a probe that fails mid-wait is named, never left silent ==="
+# WHAT THE ROWS PLANT: a helper that RAN and exited nonzero, which is where
+# errexit ends the script and where bash does reach the EXIT trap. That is not
+# fork exhaustion, and no row here claims to be: when a SIMPLE command cannot
+# fork, bash ends the shell with status 127 and runs no trap, so no keyed line
+# lands and none can be pinned. On the reachable path the helper produced no
+# result, and its bare status beside an empty stdout would read to the caller
+# like a rejection; the EXIT trap names that status on a keyed line instead.
+#
+# The stat row is the one helper failure that used to become a VALUE rather
+# than a status: an unreadable mtime read as 0, which made a fresh valid
+# artifact `stale`, which is a reason --wait keeps polling on. It stages a
+# fresh valid artifact and a real boundary, so nothing but the broken stat can
+# produce `stale` here. Its inverse is the genuinely older artifact in the glob
+# table above, which still reads `stale` with a working stat.
+#
+# The jq row is the probe that ALREADY answers: a jq the check cannot run is a
+# parseable rejection on stdout, exit 1, and no keyed line over it.
+PROBE_SHIMS="$TMP_ROOT/probe-shims"
+for probe_cmd in sleep jq stat; do
+  mkdir -p "$PROBE_SHIMS/$probe_cmd"
+  printf '#!/usr/bin/env bash\nexit 254\n' > "$PROBE_SHIMS/$probe_cmd/$probe_cmd"
+  chmod +x "$PROBE_SHIMS/$probe_cmd/$probe_cmd"
+done
+# A sleep that SPEAKS before it dies, which is what a real one does. The silent
+# shims above leave the keyed line first by accident of their silence; this one
+# is the honest case, and the row on it is why no row asserts the trap's line
+# is first.
+mkdir -p "$PROBE_SHIMS/noisy-sleep"
+cat > "$PROBE_SHIMS/noisy-sleep/sleep" <<'SHIM'
+#!/usr/bin/env bash
+printf 'sleep: cannot continue\n' >&2
+exit 254
+SHIM
+chmod +x "$PROBE_SHIMS/noisy-sleep/sleep"
+# The same treatment for the probe whose failure becomes a REFUSAL rather than
+# an abort. That refusal is documented as stderr's first line, which only holds
+# because file_mtime silences both stat spellings; a stat that speaks before it
+# dies is what tells the two apart, and the silent shim cannot.
+mkdir -p "$PROBE_SHIMS/noisy-stat"
+cat > "$PROBE_SHIMS/noisy-stat/stat" <<'SHIM'
+#!/usr/bin/env bash
+printf 'stat: cannot read file system information\n' >&2
+exit 254
+SHIM
+chmod +x "$PROBE_SHIMS/noisy-stat/stat"
+probe_table() {
+  local row label probe spec args expect
+  for row in "$@"; do
+    IFS='|' read -r label probe spec args expect <<<"$row"
+    stage "$spec"
+    SHIM_PATH="$PROBE_SHIMS/$probe"
+    # shellcheck disable=SC2086
+    run_check $args
+    SHIM_PATH=""
+    assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
+  done
+}
+WAITING='%W proberev 0 --wait 20 --interval 1'
+probe_table \
+  "a sleep that cannot run ends the wait with its own status, keyed|sleep||$WAITING|rc=254 stderr_abort=254 stdout_nonempty=false" \
+  "a sleep that speaks first still gets its status keyed|noisy-sleep||$WAITING|rc=254 stderr_code=sleep: stderr_abort=254" \
+  "a jq that cannot run already answers, and takes no keyed line|jq||$WAITING|rc=1 stderr=empty ok=false reason=invalid" \
+  "an unreadable mtime refuses, never calls a fresh artifact stale|stat|review-freshrev-1@after=qa_ok|%W freshrev %D --wait 20 --interval 1|rc=2 stderr_code=mtime stdout_nonempty=false" \
+  "a stat that speaks first is still not ahead of the refusal|noisy-stat|review-freshrev-1@after=qa_ok|%W freshrev %D --wait 20 --interval 1|rc=2 stderr_code=mtime stdout_nonempty=false" \
+  "the same holds without --wait|noisy-stat|review-freshrev-1@after=qa_ok|%W freshrev %D|rc=2 stderr_code=mtime stdout_nonempty=false"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
