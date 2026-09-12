@@ -42,6 +42,40 @@ STUB
 chmod +x "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
 
+# A git that fails one call, for the rows that pin what the script does when
+# `git update-index` fails against an index it has just read — a read-only
+# index, or a lock another git process holds. The real git is resolved here so
+# the shim cannot reach itself through PATH, and it is prepended to PATH only
+# for the rows that ask, so every other row and every fixture step runs the
+# real git directly.
+#
+# A row names the FLAG it fails, not the subcommand: the script clears the
+# assume-unchanged bit at two sites and sets it at one, and a row that failed
+# every `update-index` would pin whichever downstream site ran next instead of
+# the one it planted. One failure per row, for the same reason.
+REAL_GIT="$(command -v git)"
+[[ -x "$REAL_GIT" ]] || { echo "FIXTURE: no git on PATH" >&2; exit 2; }
+mkdir -p "$TMP_ROOT/failbin"
+cat >"$TMP_ROOT/failbin/git" <<STUB
+#!/usr/bin/env bash
+# The word is matched anywhere in the argument list, since the callers write
+# \`git -C <dir> update-index <flag> ...\`. 3 is neither git's 1 nor its 128,
+# so a row cannot pass on a failure this shim did not plant.
+if [[ -n "\${WORKTREE_TEST_GIT_FAIL:-}" ]]; then
+  for arg in "\$@"; do
+    if [[ "\$arg" == "\$WORKTREE_TEST_GIT_FAIL" ]]; then
+      if [[ ! -e "\$WORKTREE_TEST_GIT_FAIL_ONCE" ]]; then
+        : >"\$WORKTREE_TEST_GIT_FAIL_ONCE"
+        exit 3
+      fi
+      break
+    fi
+  done
+fi
+exec "$REAL_GIT" "\$@"
+STUB
+chmod +x "$TMP_ROOT/failbin/git"
+
 # --- the symlink layout under a tracked-content entry: one table ---------------
 # A row builds its own checkout from a step word list (the first word shapes
 # the entry on main and commits it; the rest drive the worktree), runs one
@@ -54,6 +88,9 @@ ROOT=""
 MAIN=""
 WT=""
 ENTRY=""
+# The update-index flag the git shim fails once during the row's command;
+# empty leaves the shim off PATH entirely.
+GIT_FAIL=""
 
 make_repo() {
   mkdir -p "$MAIN"
@@ -178,6 +215,17 @@ step() {
     legacy-ignore-link) rm -f "$WT/.opencode/.gitignore"; ln -s "$MAIN/.opencode/.gitignore" "$WT/.opencode/.gitignore" ;;
     edit-copy) printf 'edited\n' >"$WT/.opencode/.gitignore" ;;
     index-lock) : >"$(git -C "$WT" rev-parse --git-path index.lock)" ;;
+    # A tracked file entry: linking it marks the path assume-unchanged so the
+    # symlink does not stand in git status as a typechange.
+    tracked-file)
+      printf 'rc v1\n' >"$MAIN/harnessrc"
+      entry harnessrc
+      commit_main harnessrc
+      ;;
+    # Arm the shim above for this row's command only, on the flag whose site
+    # the row pins.
+    fail-set-bit) GIT_FAIL=--assume-unchanged ;;
+    fail-clear-bit) GIT_FAIL=--no-assume-unchanged ;;
     *)
       echo "UNKNOWN-STEP: $1" >&2
       exit 2
@@ -192,6 +240,7 @@ build() {
   MAIN="$ROOT/main"
   WT="$ROOT/trees/topic"
   ENTRY=""
+  GIT_FAIL=""
   make_repo
   printf 'WORKTREE_BASE_DIR="../trees"\n' >"$MAIN/.env.local"
   for word in "$@"; do step "$word"; done
@@ -233,7 +282,10 @@ run() {
   for i in "${!argv[@]}"; do
     [[ "${argv[i]}" == @wt ]] && argv[i]="$WT"
   done
-  (cd "$MAIN" && "$WORKTREE_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  (cd "$MAIN" && PATH="${GIT_FAIL:+$TMP_ROOT/failbin:}$PATH" \
+    WORKTREE_TEST_GIT_FAIL="$GIT_FAIL" \
+    WORKTREE_TEST_GIT_FAIL_ONCE="$ROOT/git-failed-once" \
+    "$WORKTREE_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
   printf 'rc=%s out=%s err=%s %s' "$rc" "$(alias_text <"$ROOT/out")" "$(alias_text <"$ROOT/err")" "$(layout)"
 }
 
@@ -250,6 +302,8 @@ err_text() {
   case "$1" in
     -) printf '' ;;
     index-locked) printf 'worktree-index-flags-failed: <wt>/.agents;worktree-index-restore-failed: <wt>/.agents/engine.md;worktree-child-links-deferred: <wt>/.agents' ;;
+    set-bit-failed) printf 'worktree-assume-unchanged-failed: <wt>/harnessrc' ;;
+    clear-bit-failed) printf 'worktree-assume-unchanged-clear-failed: <wt>/.agents' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -281,6 +335,8 @@ the copy follows main on the next pass|ignoring create edit-ignore|fix-links @wt
 a legacy linked .gitignore heals to a copy|ignoring create legacy-ignore-link|fix-links @wt|0|restored|-|$IGNORING
 a worktree edit to the copy is overwritten by main's file|ignoring create edit-copy|fix-links @wt|0|restored|-|$IGNORING
 a locked index during the legacy heal reports failure, not a swallowed success|engine create legacy-link index-lock|repair-links @wt|1|-|index-locked|.agents=dir assume=.agents/engine.md status=-
+a failing assume-unchanged bit warns and still links the tracked file entry|tracked-file fail-set-bit|create topic|0|wt|set-bit-failed|harnessrc=link(<main>/harnessrc) assume=- status= T harnessrc
+a failing bit clear at the reuse unshadow warns and the checkout below still restores the tracked file|shadow create feature advance legacy-link fail-clear-bit|create topic --reuse|0|wt|clear-bit-failed|$SHADOW_V2
 "
 
 echo "=== the symlink layout under a tracked-content entry ==="
