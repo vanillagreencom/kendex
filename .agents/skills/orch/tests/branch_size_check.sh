@@ -57,6 +57,10 @@ git -C "$WT" config commit.gpgsign false
 # Rename detection off in the fixture: the check passes --find-renames itself,
 # and a control run under a runner that already enables it proves nothing.
 git -C "$WT" config diff.renames false
+# Path quoting left at git's default in the fixture: the measurement passes
+# core.quotePath=false itself, and the control that strips it must see the
+# quoting, which a runner whose global config already turns it off would hide.
+git -C "$WT" config core.quotePath true
 # On the base branch, so a move of them on the branch is a rename in the
 # comparison the check makes, and a rewrite of them has deletions to ignore.
 mkdir -p "$WT/src" "$WT/tests"
