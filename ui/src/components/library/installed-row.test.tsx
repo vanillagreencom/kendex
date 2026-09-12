@@ -232,6 +232,38 @@ describe("the missing files badge", () => {
     expect(host.textContent?.includes(MISSING_FILES_BADGE_LABEL)).toBe(false);
   });
 
+  // A place whose copy is gone is one of the row's places: the Where
+  // count and the badge read the same set, so a package seen in one
+  // project and gone from another counts two and names the second.
+  it("counts a place whose copy is gone among the row's places", () => {
+    const onePlace = groupItems([item(VG)] as never, () => ({
+      kind: "skill",
+      name: "gh",
+    }))[0];
+    const host = mountTree(
+      <tbody>
+        <InstalledRow
+          group={onePlace}
+          origin={null}
+          forkedIn={[]}
+          outOfDate={false}
+          missingIn={[HYPR]}
+          onOpen={() => {}}
+          onOpenHarness={() => {}}
+          onOpenPlace={() => {}}
+        />
+      </tbody>,
+      { host: "table" },
+    );
+    const where = host.querySelectorAll("td")[4];
+    expect(where?.textContent).toBe("2 locations");
+    expect(where?.getAttribute("title")).toBe("/work/vg, /work/hyprtrade");
+    const badge = [...host.querySelectorAll<HTMLElement>("button")].find((b) =>
+      b.textContent?.startsWith(MISSING_FILES_BADGE_LABEL),
+    );
+    expect(badge?.textContent).toContain("in hyprtrade");
+  });
+
   // Two same-named folders whose copies are both gone: neither is on the
   // scan, so the badges are named against each other rather than against
   // the places the row can still see.
