@@ -417,9 +417,10 @@ fi
 # runs it, a closing brace, the next Command::new of any program or the end
 # of the file — so another builder's line is never read as its evidence. A
 # comment line is skipped and a trailing comment stripped, so prose naming
-# the helper clears nothing, and a string holding its name is not the call.
-# The binary reached through PATH is covered by the computed launch that
-# put it there.
+# the helper clears nothing, and a string that only names it is not the
+# call; a string built to hold the clearing call itself is not told apart
+# from the call. The binary reached through PATH is covered by the
+# computed launch that put it there.
 if ! hits=$(test_scan 'CARGO_BIN_EXE_kendex' '
     function refuse() { print file ":" pending; pending = 0 }
     function clears(l) { return l ~ /\.envs\([[:space:]]*(crate::)?(test_util::)?fixture_env\(|\.env\([[:space:]]*"HOME"/ }
