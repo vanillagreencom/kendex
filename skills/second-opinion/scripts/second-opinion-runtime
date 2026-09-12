@@ -59,7 +59,7 @@ validate_runtime_dir() {
 # no setsid(1), so one mechanism covers both. Where perl is missing each fork
 # stops in its own voice: group_run's exits 127 with `perl: command not found`
 # in the CLI stderr file the CLI-failure gate reports, and launch's worker never
-# starts, leaving nohup's refusal in worker.log.
+# starts, leaving nohup's refusal in worker.log for `wait` to replay.
 AS_GROUP_LEADER=(perl -e '$SIG{INT} = $SIG{QUIT} = "DEFAULT"; setpgrp(0, 0) or die "setpgrp: $!\n"; exec { $ARGV[0] } @ARGV; die "exec $ARGV[0]: $!\n"')
 # THE PROBE IS THE GROUP, NOT ITS LEADER. A leader can exit while its children
 # run on — that is the ordinary shape of a CLI that forks — so probing the
@@ -388,7 +388,11 @@ wait_for_run() {
       status=$(completion_status "$status_file") || status_rc=$?
       [[ $status_rc -ne 2 ]] || die "cannot read worker status: $status_file"
       [[ -z "$status" ]] || continue
-      echo "second-opinion: the detached worker is gone and published no status; relaunch the original second-opinion command" >&2
+      # The one terminal branch that replayed nothing, and the only reader the
+      # worker's log has when the fork could not exec its prefix. This branch
+      # keeps the runtime directory, so the log and its path both still hold.
+      replay_log
+      echo "second-opinion: the detached worker is gone and published no status; its log is above and its runtime state is kept at $runtime_dir; relaunch the original second-opinion command" >&2
       exit 1
     fi
     if [[ $now -ge $attempt_deadline ]]; then
