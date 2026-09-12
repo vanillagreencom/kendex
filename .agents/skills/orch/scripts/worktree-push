@@ -21,6 +21,21 @@
 #   - prints `sha-reconcile: map_entries=N fixed_items=N pr_fixes=N`.
 #     submit-pr routes this summary and the exit code before publishing SHAs.
 #
+# A completed guarded restack (`worktree create --reuse`, `create --restack`,
+# `restack continue|skip`) rewrites the same commits in an earlier process, so
+# it leaves its own map in the worktree's git dir as `kendex-rebase-map`, one
+# `rebase-map:` line per rewritten commit, appended so several restacks before
+# one push all survive. This wrapper consumes that file before it runs the
+# push, applies it through the same grammar and the same reconciliation, prints
+# `restack-reconcile: map_entries=N fixed_items=N pr_fixes=N`, and deletes the
+# file only once its mappings are in workflow state. The two hops are applied
+# as two sequential reconciliations because each compares a record against its
+# original value: the restack hop moves a record from X to Y and the push's own
+# hop then moves it from Y to Z, where one merged map would leave it at Y.
+# Anything that stops the restack hop refuses before the push, where nothing
+# new has gone stale; `--check-live-round` consumes nothing and deletes
+# nothing.
+#
 # A fix round in flight is refused rather than reconciled: its record pins the
 # commit the delegated agent is working from, and the rebase this command runs
 # would move every commit out from under it, leaving the round's receipt to
@@ -83,6 +98,10 @@
 #                   map was printed, and no recorded SHA went stale. Correct
 #                   the arguments or the state named on stderr and re-run —
 #                   that IS the repair here; there is nothing to hand-apply.
+#                   A restack map the run could not consume refuses here too:
+#                   the restack's own rewrite already made the recorded SHAs
+#                   stale, so the file named on stderr holds the mappings that
+#                   repair them, and it is left in place for that.
 #   --check-live-round only:
 #                   0 no round in flight, the branch may be rebased; 3 a fix
 #                   round is live; 1 the question could not be answered (an
@@ -120,6 +139,11 @@ message() {
 	missing-command) printf 'Install the command to reconcile rebased SHAs.\n' ;;
 	not-directory) printf 'The worktree directory does not resolve.\n' ;;
 	not-worktree) printf 'The directory is not a Git worktree.\n' ;;
+	restack-map-path) printf 'The worktree-private rebase-map file could not be resolved. No push ran.\n' ;;
+	restack-map-scan) printf 'The restack rebase-map file could not be scanned. No push ran.\n' ;;
+	restack-map-empty) printf 'The restack rebase-map file holds no mapping, so the restack it records cannot be reconciled. Apply its lines with workflow-state update and remove the file, then re-run. No push ran.\n' ;;
+	restack-map-write) printf 'The restack rebase map was not recorded. Repair workflow state, then apply the file lines with workflow-state update before publishing recorded SHAs. No push ran.\n' ;;
+	restack-map-clear) printf 'The reconciled restack rebase-map file could not be removed, so a later run would read it again. Remove it, then re-run. No push ran.\n' ;;
 	state-resolve) printf 'Workflow state could not be resolved. No push ran.\n' ;;
 	state-answer) printf 'The workflow-state existence result is invalid. No push ran.\n' ;;
 	state-read) printf 'Workflow state could not be read. No push ran.\n' ;;
@@ -225,14 +249,44 @@ git -C "$worktree_abs" rev-parse --absolute-git-dir >/dev/null 2>&1 \
 state_flags=()
 [[ -z "$state_dir" ]] || state_flags=(--state-dir "$state_dir")
 
+# Assemble one JSON object from `rebase-map: <old> <new|dropped>` lines into
+# MAP_JSON. One grammar and one assembler serve both maps: the one a completed
+# restack left in the worktree and the one this run's own push prints. A
+# refusal leaves its message arguments in MAP_FAIL_ARGS for the caller to
+# report, because a refusal before the push and one after it differ in what
+# they must say.
+MAP_JSON='{}'
+MAP_FAIL_ARGS=()
+parse_map_lines() {
+	local lines="$1" old='' new=''
+	MAP_JSON='{}'
+	MAP_FAIL_ARGS=()
+	[[ -n "$lines" ]] || return 0
+	while IFS=' ' read -r _ old new; do
+		if [[ ! "$old" =~ $SHA_GRAMMAR ]]; then
+			MAP_FAIL_ARGS=(map-sha field=old "sha=$old")
+			return 1
+		fi
+		if [[ "$new" != "dropped" && ! "$new" =~ $SHA_GRAMMAR ]]; then
+			MAP_FAIL_ARGS=(map-sha field=new "sha=$new")
+			return 1
+		fi
+		MAP_JSON="$(jq -c --arg o "$old" --arg n "$new" '. + {($o): $n}' <<<"$MAP_JSON")" || {
+			MAP_FAIL_ARGS=(map-build)
+			return 1
+		}
+	done <<<"$lines"
+}
+
 # Apply one map (a JSON object of before->after) to workflow state atomically and
-# print the sha-reconcile summary. The map travels by environment variable so
-# the jq program stays a plain single-quoted literal. A recorded short SHA
-# matches when it is a prefix of a mapped old SHA; comparisons always run
-# against the entry's original value so one push's mappings cannot chain
-# through each other.
+# print the caller's summary line under its own key. The map travels by
+# environment variable so the jq program stays a plain single-quoted literal. A
+# recorded short SHA matches when it is a prefix of a mapped old SHA;
+# comparisons always run against the entry's original value so one map's
+# mappings cannot chain through each other — which is why a restack hop and a
+# push hop are applied as two sequential calls rather than one merged map.
 reconcile_map() {
-	local map_json="$1" report
+	local key="$1" map_json="$2" report
 	report="$(WTP_MAP="$map_json" "$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} update-report "$issue" '
 		def remap($map): . as $sha
 		  | reduce ($map | to_entries[]) as $e ($sha;
@@ -257,7 +311,8 @@ reconcile_map() {
 		    }
 		  }')" || return 1
 
-	printf 'sha-reconcile: map_entries=%s fixed_items=%s pr_fixes=%s\n' \
+	printf '%s: map_entries=%s fixed_items=%s pr_fixes=%s\n' \
+		"$key" \
 		"$(jq -r '.map_entries' <<<"$report")" \
 		"$(jq -r '.fixed_items' <<<"$report")" \
 		"$(jq -r '.pr_fixes' <<<"$report")"
@@ -311,8 +366,36 @@ if [[ "$state_present" == "true" ]]; then
 	fi
 fi
 # The question is answered and the answer is no. In check mode that is the
-# whole run: nothing is pushed, nothing is rebased.
+# whole run: nothing is pushed, nothing is rebased. Check mode consumes no
+# restack map and deletes no file: it answers one question and changes nothing.
 [[ "$check_live_round" != true ]] || exit 0
+
+# A completed guarded restack rewrote the branch in an earlier process and left
+# its map in the worktree's own git dir; the worktree script asks git for this
+# same path. Reconcile it BEFORE this run's push, and as its own call: the
+# restack hop is X -> Y and the push's auto-rebase hop is Y -> Z, and
+# reconcile_map compares each entry against its original value, so applying the
+# restack hop first leaves the record at Y for the push hop to move to Z. One
+# merged map would leave it at Y. The file is deleted only once its mappings are
+# in workflow state — a failure here refuses before the push, where nothing new
+# has gone stale.
+if ! restack_map_file="$(git -C "$worktree_abs" rev-parse --git-path kendex-rebase-map 2>/dev/null)" \
+	|| [[ -z "$restack_map_file" ]]; then
+	fail restack-map-path "worktree=$worktree_abs"
+fi
+[[ "$restack_map_file" == /* ]] || restack_map_file="$worktree_abs/$restack_map_file"
+if [[ -e "$restack_map_file" ]]; then
+	restack_grep_rc=0
+	restack_map_lines="$(grep '^rebase-map: ' "$restack_map_file")" || restack_grep_rc=$?
+	[[ "$restack_grep_rc" -le 1 ]] \
+		|| fail restack-map-scan "file=$restack_map_file" "exit=$restack_grep_rc"
+	parse_map_lines "$restack_map_lines" \
+		|| fail "${MAP_FAIL_ARGS[@]}" "file=$restack_map_file"
+	[[ "$MAP_JSON" != '{}' ]] || fail restack-map-empty "file=$restack_map_file"
+	reconcile_map restack-reconcile "$MAP_JSON" \
+		|| fail restack-map-write "issue=$issue" "state=$state_file" "file=$restack_map_file"
+	rm -f -- "$restack_map_file" || fail restack-map-clear "file=$restack_map_file"
+fi
 
 push_out="$(mktemp)" || fail temp-file command=mktemp
 trap 'rm -f "$push_out"' EXIT
@@ -342,28 +425,19 @@ map_lines="$(grep '^rebase-map: ' "$push_out")" || grep_rc=$?
 [[ "$grep_rc" -le 1 ]] \
 	|| fail_post_push map-scan "exit=$grep_rc" "push-exit=$push_rc"
 
-map_json='{}'
-if [[ -n "$map_lines" ]]; then
-	while IFS=' ' read -r _ old new; do
-		[[ "$old" =~ $SHA_GRAMMAR ]] \
-			|| fail_post_push map-sha field=old "sha=$old" "push-exit=$push_rc"
-		[[ "$new" == "dropped" || "$new" =~ $SHA_GRAMMAR ]] \
-			|| fail_post_push map-sha field=new "sha=$new" "push-exit=$push_rc"
-		map_json="$(jq -c --arg o "$old" --arg n "$new" '. + {($o): $n}' <<<"$map_json")" \
-			|| fail_post_push map-build "push-exit=$push_rc"
-	done <<<"$map_lines"
-fi
+parse_map_lines "$map_lines" \
+	|| fail_post_push "${MAP_FAIL_ARGS[@]}" "push-exit=$push_rc"
 
 # The replay is informational, and it runs BEFORE the state write: a broken
 # stdout must not abort the run before the map reaches workflow state, and on
 # a failed write those rebase-map lines are the map's only surviving copy.
 cat "$push_out" || true
 
-if [[ "$map_json" == '{}' ]]; then
+if [[ "$MAP_JSON" == '{}' ]]; then
 	exit "$push_rc"
 fi
 
-if reconcile_map "$map_json"; then
+if reconcile_map sha-reconcile "$MAP_JSON"; then
 	exit "$push_rc"
 fi
 

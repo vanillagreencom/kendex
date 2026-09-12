@@ -271,6 +271,7 @@ alias_text() {
   message_records |
   sed -e "s|$WT|<wt>|g" -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" \
     -e '/^To <root>\/origin\.git$/d' -e '/^ [!*+] /d' -e "/^branch '.*' set up to track/d" \
+    -e 's/^rebase-map: .*/rebase-map:.../' \
     -e 's/;/\\;/g' | paste -s -d ';' -
 }
 
@@ -304,6 +305,10 @@ err_text() {
     index-locked) printf 'worktree-index-flags-failed: <wt>/.agents;worktree-index-restore-failed: <wt>/.agents/engine.md;worktree-child-links-deferred: <wt>/.agents' ;;
     set-bit-failed) printf 'worktree-assume-unchanged-failed: <wt>/harnessrc' ;;
     clear-bit-failed) printf 'worktree-assume-unchanged-clear-failed: <wt>/.agents' ;;
+    # A completed restack reports its rewritten commits; what pairs them is
+    # worktree_create_restack.sh's contract, so the SHAs collapse here.
+    map:*) printf 'worktree-rebase-count: %s;rebase-map:...' "${1#map:}" ;;
+    *+*) err_text "${1%%+*}"; printf ';'; err_text "${1#*+}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -319,8 +324,8 @@ NEXT_IGNORE='file:node_modules/'
 ROWS="
 an entry shadowing a tracked subtree gets per-child links, not a parent link over assume-unchanged files|shadow|create topic|0|wt|-|$SHADOW_V1
 git can write the tracked subtree: a merge advancing the vendored file lands beside the links|shadow create advance|@merge|0|-|-|$SHADOW_V2
-create --reuse rebases the branch through the advanced vendored file and keeps the per-child layout|shadow create feature advance|create topic --reuse|0|wt|-|$SHADOW_V2
-the reuse refresh restores links the rebase dropped when main starts tracking a child under the entry|predated create feature track-link-child|create topic --reuse|0|wt|-|.agents=dir .agents/skills=dir .agents/skills/deep-research=dir .agents/skills/deep-research/SKILL.md=file:installed skill .agents/state.json=link(<main>/.agents/state.json) assume=- status=-
+create --reuse rebases the branch through the advanced vendored file and keeps the per-child layout|shadow create feature advance|create topic --reuse|0|wt|map:1|$SHADOW_V2
+the reuse refresh restores links the rebase dropped when main starts tracking a child under the entry|predated create feature track-link-child|create topic --reuse|0|wt|map:1|.agents=dir .agents/skills=dir .agents/skills/deep-research=dir .agents/skills/deep-research/SKILL.md=file:installed skill .agents/state.json=link(<main>/.agents/state.json) assume=- status=-
 fix-links on the per-child layout is idempotent and quiet|shadow create advance merge|fix-links @wt|0|restored|-|$SHADOW_V2
 a legacy parent link over tracked files heals to the per-child layout and clears the stale bit|shadow create advance merge legacy-link|fix-links @wt|0|restored|-|$SHADOW_V2
 a fully untracked entry keeps the plain parent symlink|untracked|create topic|0|wt|-|runtime=link(<main>/runtime) assume=- status=-
@@ -336,7 +341,7 @@ a legacy linked .gitignore heals to a copy|ignoring create legacy-ignore-link|fi
 a worktree edit to the copy is overwritten by main's file|ignoring create edit-copy|fix-links @wt|0|restored|-|$IGNORING
 a locked index during the legacy heal reports failure, not a swallowed success|engine create legacy-link index-lock|repair-links @wt|1|-|index-locked|.agents=dir assume=.agents/engine.md status=-
 a failing assume-unchanged bit warns and still links the tracked file entry|tracked-file fail-set-bit|create topic|0|wt|set-bit-failed|harnessrc=link(<main>/harnessrc) assume=- status= T harnessrc
-a failing bit clear at the reuse unshadow warns and the checkout below still restores the tracked file|shadow create feature advance legacy-link fail-clear-bit|create topic --reuse|0|wt|clear-bit-failed|$SHADOW_V2
+a failing bit clear at the reuse unshadow warns and the checkout below still restores the tracked file|shadow create feature advance legacy-link fail-clear-bit|create topic --reuse|0|wt|clear-bit-failed+map:1|$SHADOW_V2
 "
 
 echo "=== the symlink layout under a tracked-content entry ==="

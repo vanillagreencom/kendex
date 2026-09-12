@@ -7,7 +7,8 @@
 # the main checkout, and the row pins its exit status, its stdout, the tool's
 # own stderr, and the worktree's state afterwards: the engine, the branch,
 # the head, the commits ahead of origin/main, the index, every tracked file
-# with its first line, the restack record and the remote ref.
+# with its first line, the restack record, the remote ref and the rebase map
+# the restack left in the worktree for orch/scripts/worktree-push.
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
@@ -16,7 +17,8 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/messages.sh
 source "$TEST_DIR/lib/messages.sh"
-WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
+PACKAGE_DIR="$(cd "$TEST_DIR/.." && pwd)"
+WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$PACKAGE_DIR/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -54,6 +56,7 @@ ROOT=""
 MAIN=""
 WT=""
 PRE=""        # the branch tip the world was built with, before any tool step
+PRE1=""       # that tip's parent
 BASE=""       # origin/main at the end of the fixture
 END=""        # HEAD at the end of the fixture
 EXTERNAL=""   # a commit an outsider pushed to the remote branch
@@ -167,6 +170,14 @@ step() {
       commit_wt fix.txt fix
       commit_main main-advanced.txt advanced
       ;;
+    # The branch already contains the advanced main, so a reuse or restack
+    # rebases nothing and rewrites no commit.
+    contained)
+      make_pair
+      commit_main main-advanced.txt advanced
+      git -C "$WT" merge -q --ff-only origin/main
+      commit_wt fix.txt fix
+      ;;
     publish) git -C "$WT" push -q origin "HEAD:refs/heads/$ISSUE" ;;
     restack) tool create "$ISSUE" --restack ;;
     reuse) tool create "$ISSUE" --reuse ;;
@@ -230,10 +241,13 @@ build() {
   shift
   MAIN="$ROOT/main"
   WT="$ROOT/trees/$ISSUE"
-  PRE="" BASE="" END="" EXTERNAL="" UNEXPECTED="" RESTACKED=""
+  PRE="" PRE1="" BASE="" END="" EXTERNAL="" UNEXPECTED="" RESTACKED=""
   for word in "$@"; do
     step "$word"
-    [[ -n "$PRE" ]] || PRE="$(git -C "$WT" rev-parse HEAD)"
+    if [[ -z "$PRE" ]]; then
+      PRE="$(git -C "$WT" rev-parse HEAD)"
+      PRE1="$(git -C "$WT" rev-parse -q --verify 'HEAD~1' 2>/dev/null || true)"
+    fi
   done
   BASE="$(git -C "$MAIN" rev-parse origin/main)"
   END="$(git -C "$WT" rev-parse HEAD)"
@@ -263,15 +277,23 @@ oid_name() {
 # contract ("the paths Git names above"). A literal semicolon is escaped
 # before the lines are joined on it.
 alias_text() {
+  local head head1
+  head="$(git -C "$WT" rev-parse HEAD)"
+  head1="$(git -C "$WT" rev-parse -q --verify 'HEAD~1' 2>/dev/null || printf 'NONE')"
   message_records |
   sed \
     -e "s|$WT|<wt>|g" \
     -e "s|$ROOT|<root>|g" \
     -e "s|$WORKTREE_SCRIPT|<worktree>|g" \
+    -e "s|$head1|<head~1>|g" \
+    -e "s|$head|<head>|g" \
+    -e "s|${PRE1:-NONE}|<pre~1>|g" \
     -e "s|$PRE|<pre>|g" \
+    -e "s|$END|<end>|g" \
     -e "s|$BASE|<base>|g" \
     -e "s|${EXTERNAL:-NONE}|<external>|g" \
     -e "s|${UNEXPECTED:-NONE}|<unexpected>|g" \
+    -e "s|${RESTACKED:-NONE}|<restacked>|g" \
     -e '/^To <root>\/origin\.git$/d' \
     -e '/^error: failed to push/d' \
     -e '/^hint: /d' \
@@ -317,6 +339,17 @@ restack_keys() {
   printf '%s' "${out:-,-}" | cut -c2-
 }
 
+# The map a completed restack appends to the worktree's own git dir for
+# `orch/scripts/worktree-push` to consume. Absent is the answer for every path
+# that rewrote nothing, so every row pins it.
+restack_map() {
+  local path=""
+  path="$(git -C "$WT" rev-parse --git-path kendex-rebase-map 2>/dev/null)" || { printf -- '-'; return; }
+  [[ "$path" == /* ]] || path="$WT/$path"
+  if [[ ! -e "$path" ]]; then printf -- '-'; return; fi
+  alias_text <"$path"
+}
+
 state() {
   local engine=none branch ahead dirty tree
   paused_state_dir >/dev/null && engine=rebase
@@ -327,9 +360,9 @@ state() {
     body="$(git -C "$WT" cat-file -p "HEAD:$name")"
     printf '%s:%s,' "$name" "${body%%$'\n'*}"
   done)"
-  printf 'engine=%s branch=%s head=%s ahead=%s dirty=%s tree=%s restack=%s remote=%s' \
+  printf 'engine=%s branch=%s head=%s ahead=%s dirty=%s tree=%s restack=%s remote=%s map=%s' \
     "$engine" "${branch:-detached}" "$(worktree_head)" "${ahead:--}" "${dirty:--}" "${tree%,}" \
-    "$(restack_keys)" "$(oid_name "$(remote_oid)")"
+    "$(restack_keys)" "$(oid_name "$(remote_oid)")" "$(restack_map)"
 }
 
 # The command runs from the main checkout; @outsider names the foreign
@@ -353,11 +386,35 @@ run() {
 
 
 
+# The map lines a restack reports, by shape. The same text appears twice: on
+# stderr under the restack's count record, and in the pending map file the
+# worktree's git dir carries for orch/scripts/worktree-push. A shape's leading
+# digit is how many pre-restack commits the count record names.
+map_lines() {
+  case "$1" in
+    -) printf -- '-' ;;
+    1) printf 'rebase-map: <pre> <head>' ;;
+    1d) printf 'rebase-map: <pre> dropped' ;;
+    1e) printf 'rebase-map: <end> <head>' ;;
+    1r) printf 'rebase-map: <pre> <restacked>' ;;
+    2d) printf 'rebase-map: <pre~1> dropped;rebase-map: <pre> <head>' ;;
+    2x) printf 'rebase-map: <pre> <head~1>;rebase-map: <end> <head>' ;;
+    # Two restacks before one push: the file is appended, so the first
+    # restack's hop stands beside the second's.
+    append) printf 'rebase-map: <pre> <end>;rebase-map: <end> <head>' ;;
+    *) printf 'UNKNOWN-MAP-SPEC:%s' "$1" ;;
+  esac
+}
+
 err_text() {
-  local spec="$1"
+  local spec="$1" shape=""
   case "$spec" in
     *+*) printf '%s;%s' "$(err_text "${spec%%+*}")" "$(err_text "${spec#*+}")" ;;
     -) printf '' ;;
+    map:*)
+      shape="${spec#map:}"
+      printf 'worktree-rebase-count: %s;%s' "${shape%%[a-z]*}" "$(map_lines "$shape")"
+      ;;
     skip-rebase) printf 'worktree-rebase-skipped: topic' ;;
     paused) printf 'worktree-rebase-conflicts: <wt>' ;;
     aborted) printf 'worktree-rebase-failed: <wt>' ;;
@@ -387,36 +444,38 @@ out_text() {
 
 # --- the rows ---------------------------------------------------------------------
 # label|fixture|command|rc|out|err|state
-ROWS='--reuse over a conflict aborts the rebase and names both recovery paths|conflict|create topic --reuse|1|-|aborted|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=-
---restack over a published branch pauses in the conflict with a bound token|conflict publish|create topic --restack|1|-|paused|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:bound remote=pre
---restack over an unpublished branch pauses with no remote lease|conflict|create topic --restack|1|-|paused|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound remote=-
-a paused restack from before token binding is refused|conflict publish restack unbind|restack continue topic|1|-|refusal:pending-marker-missing|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base remote=pre
-a tampered sequencer token is refused|conflict publish restack tamper-token|restack continue topic|1|-|refusal:token-mismatch|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:unbound remote=pre
-a record naming another branch is refused|conflict publish restack wrong-branch|restack skip topic|1|-|refusal:rebase-mismatch|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:unrelated-branch,expected:pre,orig:pre,base:base,pending:true,token:bound remote=pre
-continue over an unresolved conflict reports the conflict, not unstaged changes|conflict restack|restack continue topic|1|-|conflicts|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound remote=-
-continue over a clean index with unstaged changes names them and offers no skip|conflict restack resolve dirty-other|restack continue topic|1|-|unstaged|engine=rebase branch=detached head=base ahead=0 dirty=M  file.txt, M other.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound remote=-
-continue completes the resolved restack and authorizes its exact head|conflict publish restack resolve|restack continue topic|0|completed|-|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre
-an unpublished completion leaves no push authorization|conflict restack resolve|restack continue topic|0|completed|-|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=- remote=-
-push after a completed restack publishes the head with the original lease|conflict publish restack resolve continue|push topic|0|-|skip-rebase|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=- remote=head
-a completed restack cannot be controlled again|conflict publish restack resolve continue push|restack continue topic|1|-|refusal:no-paused-state|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=- remote=head
-skip over a conflict drops that commit and completes|conflict publish restack|restack skip topic|0|completed|-|engine=none branch=topic head=base ahead=0 dirty=- tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:base remote=pre
-skip drops the represented commit and replays the refresh-only commit|merged restack|restack skip topic|0|completed|-|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:already merged plus main follow-up,other.txt:orig,refresh-only.txt:refresh only restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre
-abort restores the pre-restack branch and clears the record|conflict publish restack|restack abort topic|0|aborted|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=pre
-a clean restack authorizes its rewritten head|clean|create topic --restack|0|wt|-|engine=none branch=topic head=rebased ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre
-a second clean restack rewrites the authorized head and keeps the lease|clean restack advance-main|create topic --restack|0|wt|-|engine=none branch=topic head=rebased ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,main-advanced-twice.txt:advanced twice,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre
-continue on a record whose rebase was aborted by hand is refused|conflict restack raw-abort|restack continue topic|1|-|refusal:no-paused-state|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:unbound remote=-
-abort on a record whose rebase was aborted by hand clears the record|conflict restack raw-abort|restack abort topic|0|cleared|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=-
-abort on a record whose branch moved after the hand abort is refused|conflict restack raw-abort commit-later|restack abort topic|1|-|orphan-moved|engine=none branch=topic head=end ahead=2 dirty=- tree=file.txt:feature,later.txt:later,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:unbound remote=-
-continue with HEAD checked out off the recorded base is refused|conflict restack raw-checkout|restack continue topic|1|-|refusal:base-mismatch|engine=rebase branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound remote=-
-abort with HEAD checked out off the recorded base restores the branch|conflict restack raw-checkout|restack abort topic|0|aborted|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=-
-abort after a hand quit refuses to force the checkout over the unmerged index|conflict restack raw-quit|restack abort topic|1|-|unreattachable|engine=none branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:unbound remote=-
-a foreign repository carrying the keys is refused and untouched|conflict foreign|restack abort @outsider|1|-|refusal:unregistered|engine=none branch=main head=pre ahead=- dirty=- tree=file.txt:outside restack=pending:true,branch:main,orig:pre remote=-
-remote movement while paused refuses continue and leaves the remote alone|conflict publish restack resolve move-remote|restack continue topic|1|-|remote-moved|engine=rebase branch=detached head=base ahead=0 dirty=M  file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:bound remote=external
-abort succeeds under a setup config that no longer applies|conflict publish restack resolve move-remote bad-mkdirs|restack abort topic|0|aborted|setup-warning|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=external
-remote movement after authorization fails the exact lease|clean reuse move-remote|push topic|1|-|skip-rebase+lease-rejected|engine=none branch=topic head=end ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=external
-a local rewrite is not covered by prior authorization|clean reuse local-rewrite|push topic|1|-|not-contained|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:restacked remote=pre
-clean reuse rebases onto the advanced main and prints the path|plain|create topic --reuse|0|wt|-|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=-
---restack with nothing to rebase is a no-op|plain reuse|create topic --restack|0|wt|-|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=-
+ROWS='--reuse over a conflict aborts the rebase and names both recovery paths|conflict|create topic --reuse|1|-|aborted|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
+--restack over a published branch pauses in the conflict with a bound token|conflict publish|create topic --restack|1|-|paused|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:bound remote=pre map=-
+--restack over an unpublished branch pauses with no remote lease|conflict|create topic --restack|1|-|paused|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound remote=- map=-
+a paused restack from before token binding is refused|conflict publish restack unbind|restack continue topic|1|-|refusal:pending-marker-missing|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base remote=pre map=-
+a tampered sequencer token is refused|conflict publish restack tamper-token|restack continue topic|1|-|refusal:token-mismatch|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:unbound remote=pre map=-
+a record naming another branch is refused|conflict publish restack wrong-branch|restack skip topic|1|-|refusal:rebase-mismatch|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:unrelated-branch,expected:pre,orig:pre,base:base,pending:true,token:bound remote=pre map=-
+continue over an unresolved conflict reports the conflict, not unstaged changes|conflict restack|restack continue topic|1|-|conflicts|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound remote=- map=-
+continue over a clean index with unstaged changes names them and offers no skip|conflict restack resolve dirty-other|restack continue topic|1|-|unstaged|engine=rebase branch=detached head=base ahead=0 dirty=M  file.txt, M other.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound remote=- map=-
+continue completes the resolved restack and authorizes its exact head|conflict publish restack resolve|restack continue topic|0|completed|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre map=1
+an unpublished completion leaves no push authorization|conflict restack resolve|restack continue topic|0|completed|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=- remote=- map=1
+push after a completed restack publishes the head with the original lease|conflict publish restack resolve continue|push topic|0|-|skip-rebase|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=- remote=head map=1
+a completed restack cannot be controlled again|conflict publish restack resolve continue push|restack continue topic|1|-|refusal:no-paused-state|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=- remote=head map=1
+skip over a conflict drops that commit and completes|conflict publish restack|restack skip topic|0|completed|map:1d|engine=none branch=topic head=base ahead=0 dirty=- tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:base remote=pre map=1d
+skip drops the represented commit and replays the refresh-only commit|merged restack|restack skip topic|0|completed|map:2d|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:already merged plus main follow-up,other.txt:orig,refresh-only.txt:refresh only restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre map=2d
+abort restores the pre-restack branch and clears the record|conflict publish restack|restack abort topic|0|aborted|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=pre map=-
+a clean restack authorizes its rewritten head|clean|create topic --restack|0|wt|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre map=1
+a clean restack over a two-commit branch maps every rewritten commit|clean commit-later|create topic --restack|0|wt|map:2x|engine=none branch=topic head=rebased ahead=2 dirty=- tree=feature.txt:feature,file.txt:orig,later.txt:later,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre map=2x
+a second clean restack rewrites the authorized head and keeps the lease|clean restack advance-main|create topic --restack|0|wt|map:1e|engine=none branch=topic head=rebased ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,main-advanced-twice.txt:advanced twice,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre map=append
+continue on a record whose rebase was aborted by hand is refused|conflict restack raw-abort|restack continue topic|1|-|refusal:no-paused-state|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:unbound remote=- map=-
+abort on a record whose rebase was aborted by hand clears the record|conflict restack raw-abort|restack abort topic|0|cleared|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
+abort on a record whose branch moved after the hand abort is refused|conflict restack raw-abort commit-later|restack abort topic|1|-|orphan-moved|engine=none branch=topic head=end ahead=2 dirty=- tree=file.txt:feature,later.txt:later,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:unbound remote=- map=-
+continue with HEAD checked out off the recorded base is refused|conflict restack raw-checkout|restack continue topic|1|-|refusal:base-mismatch|engine=rebase branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound remote=- map=-
+abort with HEAD checked out off the recorded base restores the branch|conflict restack raw-checkout|restack abort topic|0|aborted|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
+abort after a hand quit refuses to force the checkout over the unmerged index|conflict restack raw-quit|restack abort topic|1|-|unreattachable|engine=none branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:unbound remote=- map=-
+a foreign repository carrying the keys is refused and untouched|conflict foreign|restack abort @outsider|1|-|refusal:unregistered|engine=none branch=main head=pre ahead=- dirty=- tree=file.txt:outside restack=pending:true,branch:main,orig:pre remote=- map=-
+remote movement while paused refuses continue and leaves the remote alone|conflict publish restack resolve move-remote|restack continue topic|1|-|remote-moved|engine=rebase branch=detached head=base ahead=0 dirty=M  file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:bound remote=external map=-
+abort succeeds under a setup config that no longer applies|conflict publish restack resolve move-remote bad-mkdirs|restack abort topic|0|aborted|setup-warning|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=external map=-
+remote movement after authorization fails the exact lease|clean reuse move-remote|push topic|1|-|skip-rebase+lease-rejected|engine=none branch=topic head=end ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=external map=1
+a local rewrite is not covered by prior authorization|clean reuse local-rewrite|push topic|1|-|not-contained|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:restacked remote=pre map=1r
+clean reuse rebases onto the advanced main and prints the path|plain|create topic --reuse|0|wt|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
+--restack with nothing to rebase is a no-op|plain reuse|create topic --restack|0|wt|-|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
+a restack over a base the branch already contains rewrites nothing and leaves no map|contained|create topic --restack|0|wt|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=-
 '
 
 echo "=== worktree create reuse rebase-conflict recovery ==="
@@ -426,6 +485,9 @@ while IFS='|' read -r label fixture command rc out err want_state; do
   n=$((n + 1))
   # shellcheck disable=SC2086
   build "row-$n" $fixture
+  # The state column's trailing map= carries a shape word, expanded here from
+  # the one renderer the err column's map: spec uses.
+  want_state="${want_state% map=*} map=$(map_lines "${want_state##* map=}")"
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
 
@@ -450,6 +512,51 @@ env GIT_DIR="$env_git_dir" GIT_INDEX_FILE="$env_git_dir/index" \
   bash "$TEST_DIR/worktree_push_rebase.sh" >"$ROOT/suite.out" 2>&1 || env_suite_rc=$?
 assert_eq "$env_suite_rc" "0" "a sibling suite passes under an exported git environment"
 assert_eq "$(env_fingerprint)" "$env_before" "that suite left the live worktree's log, index and restack authorization untouched"
+
+echo
+echo "=== must-fail control: with the emission cut, a completed restack records nothing ==="
+
+# Every row above pins what a completed restack reports and what it leaves in
+# the worktree. The defect planted here is the emission call itself, on a
+# private package copy: the same rebase still happens, and the map that the
+# rows above assert is then gone from both channels.
+build map-mutant clean
+mkdir -p "$ROOT/pkg"
+cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
+mutant_script="$ROOT/pkg/worktree/scripts/worktree"
+assert_eq "$(grep -c 'emit_restack_rebase_map "\$WT_PATH" || exit 1' "$mutant_script")" "3" \
+  "control finds every restack map emission to remove"
+sed -i.bak 's/emit_restack_rebase_map "\$WT_PATH" || exit 1/: "no map"/' "$mutant_script"
+rm -f "$mutant_script.bak"
+assert_eq "$(grep -c 'emit_restack_rebase_map "\$WT_PATH" || exit 1' "$mutant_script")" "0" \
+  "control removes them only from its private copy"
+mutant_rc=0
+(cd "$MAIN" && "$mutant_script" create "$ISSUE" --restack >"$ROOT/mutant.out" 2>"$ROOT/mutant.err") || mutant_rc=$?
+assert_eq "$mutant_rc" "0" "control: the mutant completes the same restack"
+assert_eq "$(worktree_head)" "rebased" "control: the mutant rewrote the branch"
+assert_eq "$(grep -c '^rebase-map: ' "$ROOT/mutant.err" || true)" "0" \
+  "control: the mutant reports no map"
+assert_eq "$(restack_map)" "-" "control: the mutant leaves no pending map file"
+
+echo
+echo "=== a map the restack cannot record authorizes no push ==="
+
+# The appended file is the only channel to the later push, so a restack that
+# cannot write it must not leave a push authorized over recorded SHAs nothing
+# can repair. A directory at the file's own path is what makes the append fail.
+build map-unwritable clean
+map_path="$(git -C "$WT" rev-parse --git-path kendex-rebase-map)"
+[[ "$map_path" == /* ]] || map_path="$WT/$map_path"
+mkdir -p "$map_path"
+unwritable_rc=0
+(cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" --restack \
+  >"$ROOT/unwritable.out" 2>"$ROOT/unwritable.err") || unwritable_rc=$?
+assert_eq "$unwritable_rc" "1" "a restack whose map cannot be recorded fails"
+assert_eq "$(grep '^worktree-restack-map-unrecorded:' "$ROOT/unwritable.err" | sed "s|$map_path|<map>|")" \
+  "worktree-restack-map-unrecorded: <map>" "the refusal names the file it could not append to"
+assert_eq "$(grep -c '^rebase-map: ' "$ROOT/unwritable.err" || true)" "1" \
+  "the map's only surviving copy is on stderr"
+assert_eq "$(restack_keys)" "-" "the refused restack leaves no push authorization"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

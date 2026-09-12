@@ -1,8 +1,12 @@
 #!/bin/bash
 # stdout protocol: create/path return a worktree path, exists returns a boolean,
 # check returns JSON, and push emits rebase-map: <old-sha> <new-sha|dropped> for
-# skills/orch/scripts/worktree-push. These data records remain separate from
-# worktree-<key>: <value> notices. English explanation is not a parsed protocol.
+# skills/orch/scripts/worktree-push. A completed restack (create --reuse,
+# create --restack, restack continue|skip) reports the same map lines on
+# stderr, because create's stdout is the worktree path, and appends them to
+# the worktree-private kendex-rebase-map file that worktree-push consumes.
+# These data records remain separate from worktree-<key>: <value> notices.
+# English explanation is not a parsed protocol.
 # Portable git worktree manager. Run with --help for the command index,
 # layout, and configuration contract; each mutating command documents its own
 # contract under `<command> --help`.
@@ -447,6 +451,60 @@ emit_rebase_map() {
     fi
     i=$((i + 1))
   done
+}
+
+# The worktree-private file a completed restack leaves its rebase map in. It
+# lives in the worktree's own git dir, so it is untracked, invisible to
+# `git status`, private to this checkout, and outlives the process that wrote
+# it. `skills/orch/scripts/worktree-push` asks git for the same path.
+restack_rebase_map_file() {
+  local wt="$1" path=""
+  path="$(git -C "$wt" rev-parse --git-path kendex-rebase-map 2>/dev/null)" || return 1
+  [[ -n "$path" ]] || return 1
+  [[ "$path" == /* ]] || path="$wt/$path"
+  printf '%s\n' "$path"
+}
+
+# A completed guarded restack rewrote the same branch commits a push
+# auto-rebase rewrites, so it reports the same map from the same emitter.
+# `baseOid` is the new base, so `baseOid..originalHead` holds exactly the
+# branch's own commits as they stood before the rewrite — the set the push
+# path snapshots as `origin/<default>..HEAD` — and `baseOid..HEAD` holds them
+# after it. Both keys are read here because
+# finalize_pending_restack_authorization unsets them.
+#
+# The map goes to stderr, not stdout: `create --reuse/--restack` hands its
+# caller the worktree path on stdout and a map printed there would be read as
+# part of it. The machine channel for a restack is the appended file, which
+# the separate `worktree-push` process consumes; two restacks before one push
+# both survive because the file is appended, never truncated. A restack whose
+# map cannot be recorded authorizes no push: the reconciliation input would be
+# gone while the recorded SHAs went stale.
+emit_restack_rebase_map() {
+  local wt="$1" base_oid="" original_head="" pre_list="" post_list="" map_lines="" map_file=""
+
+  if ! base_oid="$(restack_state_get "$wt" baseOid)" || \
+     ! original_head="$(restack_state_get "$wt" originalHead)" || \
+     [[ -z "$base_oid" || -z "$original_head" ]] || \
+     ! pre_list="$(git -C "$wt" log --reverse --format='%H %s' "$base_oid..$original_head")" || \
+     ! post_list="$(git -C "$wt" log --reverse --format='%H %s' "$base_oid..HEAD")" || \
+     ! map_lines="$(emit_rebase_map "$pre_list" "$post_list")"; then
+    clear_restack_push_authorization "$wt"
+    worktree_message restack-map-unreadable "$wt" "Error: Could not map the restacked commits of $wt from its recorded base and original head; no rebase map was reported and no rewritten push was authorized." >&2
+    return 1
+  fi
+  [[ -n "$map_lines" ]] || return 0
+  printf '%s\n' "$map_lines" >&2
+  if ! map_file="$(restack_rebase_map_file "$wt")"; then
+    clear_restack_push_authorization "$wt"
+    worktree_message restack-map-unresolved "$wt" "Error: Could not resolve the worktree-private rebase-map file for $wt; the lines above are the map's only copy and no rewritten push was authorized." >&2
+    return 1
+  fi
+  if ! printf '%s\n' "$map_lines" >>"$map_file"; then
+    clear_restack_push_authorization "$wt"
+    worktree_message restack-map-unrecorded "$map_file" "Error: Could not append the rebase map to $map_file; the lines above are the map's only copy and no rewritten push was authorized." >&2
+    return 1
+  fi
 }
 
 # Parse `push`'s arguments. Sets PUSH_ARG, PUSH_SET_UPSTREAM and
@@ -1995,6 +2053,7 @@ case "${1:-}" in
       exit 1
     fi
     RESTACK_REMOTE="$(restack_state_get "$WT_PATH" remote)"
+    emit_restack_rebase_map "$WT_PATH" || exit 1
     finalize_pending_restack_authorization "$WT_PATH" "$RESTACK_REMOTE" "$RESTACK_BRANCH" "$RESTACK_LIVE_EXPECTED_OID" || exit 1
     release_issue_claim_lock
     setup_app_worktree "$WT_PATH"
@@ -2219,8 +2278,10 @@ case "${1:-}" in
               worktree_message restack-unauthorized "$WT_PATH" "No rewritten push was authorized." >&2
               exit 1
             fi
+            emit_restack_rebase_map "$WT_PATH" || exit 1
             finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID" || exit 1
           elif REBASE_OUTPUT="$(git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" 2>&1)"; then
+            emit_restack_rebase_map "$WT_PATH" || exit 1
             finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID" || exit 1
           else
             # Capture conflict details before any abort erases the rebase state.

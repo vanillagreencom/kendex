@@ -136,6 +136,12 @@ to agree with, so abort takes the record alone: it requires the recorded branch
 to still be at its recorded original head, checks that branch out, clears the
 record, and re-applies worktree setup, refusing and keeping the record when the
 branch has moved or the checkout fails.
+
+On completion, continue and skip report one 'rebase-map: <old-sha>
+<new-sha|dropped>' line per rewritten commit on stderr and append the same
+lines to 'kendex-rebase-map' in the worktree's git dir, the same contract the
+push auto-rebase reports (push --help). A skipped commit is reported as
+'dropped'. abort rewrites nothing and reports no map.
 EOF
 }
 
@@ -205,6 +211,14 @@ Reuse rebase conflicts:
   With no conflict, --restack completes the same rebase as --reuse. The
   guarded actions fail closed on missing, stale, or unrelated state
   (restack --help).
+
+Rewritten commits:
+  A completed --reuse/--restack rebase reports one 'rebase-map: <old-sha>
+  <new-sha|dropped>' line per rewritten commit on stderr (stdout is the
+  worktree path) and appends the same lines to 'kendex-rebase-map' in the
+  worktree's git dir, which 'orch/scripts/worktree-push' consumes to reconcile
+  SHAs recorded before the restack (push --help). A base the branch already
+  contains rebases nothing and reports no map.
 
 Policy-blocked rebase (cherry-pick replay fallback):
   When an execution policy rejects top-level 'git rebase' porcelain, never
@@ -390,6 +404,18 @@ already upstream) so callers can remap commit SHAs recorded before the rebase
 (kendex#728). Commits pair by position when the pre/post counts match,
 otherwise by commit subject. A push that skips the rebase, or one run with
 --no-rebase, prints no map.
+
+Every path that rewrites branch commits reports the same map from the same
+emitter: this auto-rebase, and a completed restack through 'create --reuse',
+'create --restack' or 'restack continue|skip'. A restack reports its lines on
+stderr, because create's stdout is the worktree path it hands its caller, and
+appends them to 'kendex-rebase-map' in the worktree's own git dir: the restack
+and the later push are separate processes, so the file is the only channel
+between them. It is appended rather than truncated, so several restacks before
+one push all survive, and 'orch/scripts/worktree-push' consumes and deletes it
+before it pushes. A restack over a base its branch already contains rewrites
+nothing, reports no map, and writes no file; a restack whose map cannot be
+recorded authorizes no push.
 
 A refused push names its judge, and every judge reads a line rather than the
 absence of one. A pre-push hook that publishes the commit-guards message
