@@ -53,16 +53,35 @@ git_failed() { # SUBCOMMAND OUTPUT — an unreadable changed set is not an empty
 # whose metadata it cannot read, and the hook has no way to tell which.
 REPO_ROOT=$(git rev-parse --show-toplevel 2>&1) || git_failed 'rev-parse' "$REPO_ROOT"
 
+# Every git read that yields paths goes through here, one path per line in
+# PATHS. `-z` asks for the paths themselves: line-oriented git output C-quotes a
+# non-ASCII path, and a quoted path ends in a quote rather than in .rs. Only
+# stdout becomes the list. A run that succeeds may still write to stderr
+# (core.autocrlf's line-ending warning, the rename limit), and a warning read as
+# a path would enter the changed set, so git's and tr's stderr are captured
+# apart and replayed under the git= key only when the read fails.
+git_paths() { # LABEL ARGS... — sets PATHS; LABEL is the git= value on failure
+  local label="$1"
+  shift
+  PATHS=$(
+    {
+      cause=$( { git "$@" | tr '\0' '\n' >&3; } 2>&1) || {
+        printf '%s\n' "$cause"
+        exit 1
+      }
+    } 3>&1
+  ) || git_failed "$label" "$PATHS"
+}
+
 # What counts as changed: the worktree, the index, and untracked non-ignored
 # paths. Without that last set a task whose only work is an untracked file
-# presents an empty changed set and skips the gate entirely. `-z` asks for the paths
-# themselves. Line-oriented git output C-quotes a non-ASCII path, and a
-# quoted path ends in a quote rather than in .rs.
-CHANGED=$(git diff --name-only -z 2>&1 | tr '\0' '\n') || git_failed 'diff' "$CHANGED"
-STAGED=$(git diff --cached --name-only -z 2>&1 | tr '\0' '\n') ||
-  git_failed 'diff --cached' "$STAGED"
-UNTRACKED=$(git ls-files --others --exclude-standard --full-name -z -- :/ 2>&1 | tr '\0' '\n') ||
-  git_failed 'ls-files' "$UNTRACKED"
+# presents an empty changed set and skips the gate entirely.
+git_paths 'diff' diff --name-only -z
+CHANGED=$PATHS
+git_paths 'diff --cached' diff --cached --name-only -z
+STAGED=$PATHS
+git_paths 'ls-files' ls-files --others --exclude-standard --full-name -z -- :/
+UNTRACKED=$PATHS
 ALL_CHANGED=$(printf '%s\n%s\n%s' "$CHANGED" "$STAGED" "$UNTRACKED" | sort -u | sed '/^$/d')
 
 if [ -z "$ALL_CHANGED" ]; then
