@@ -76,8 +76,10 @@ export function InstalledRow({
    *  the same one flow wherever it is taken, and this row's own click
    *  already opens the package. */
   outOfDate: boolean;
-  /** The places where a file kendex installed for this package is gone.
-   *  The repair lives on the package page, so the badge opens it there. */
+  /** The places where a file kendex installed for this package is gone, as
+   *  the table's own narrowing has them — the caller narrows, and the Where
+   *  cell counts exactly these. The repair lives on the package page, so
+   *  the badge opens it there. */
   missingIn: Scope[];
   onOpen: (scope?: Scope) => void;
   /** Open one of the tools this package is installed for. */
@@ -99,6 +101,13 @@ export function InstalledRow({
   // provenance lookup reads, so the From column and this cell can never
   // name different places.
   const scopes = groupPlaces(group, missingIn);
+  // What a badge's place label is told apart from: every place this row
+  // names, forks included. A fork answers for the package wherever it was
+  // made, so its place can sit outside the narrowed set the Where cell
+  // counts — and `placeName` shortens a root only against the places it is
+  // handed, so two forks in same-named folders would carry one label on
+  // two buttons opening different projects.
+  const named = groupPlaces(group, [...missingIn, ...forkedIn]);
   const status = groupStatus(group);
   const whereLabel =
     scopes.length === 1 ? scopeName(scopes[0]) : `${scopes.length} locations`;
@@ -172,7 +181,7 @@ export function InstalledRow({
                         render={
                           <button type="button" onClick={() => onOpen(where)}>
                             <span className="min-w-0 truncate">
-                              {`${FORKED_BADGE_LABEL} in ${placeName(where, scopes)}`}
+                              {`${FORKED_BADGE_LABEL} in ${placeName(where, named)}`}
                             </span>
                             <span className="sr-only">{FORKED_BADGE_HELP}</span>
                           </button>
@@ -195,7 +204,7 @@ export function InstalledRow({
                         render={
                           <button type="button" onClick={() => onOpen(where)}>
                             <span className="min-w-0 truncate">
-                              {`${MISSING_FILES_BADGE_LABEL} in ${placeName(where, scopes)}`}
+                              {`${MISSING_FILES_BADGE_LABEL} in ${placeName(where, named)}`}
                             </span>
                             <span className="sr-only">
                               {MISSING_FILES_BADGE_HELP}

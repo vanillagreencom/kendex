@@ -25,7 +25,7 @@ import {
 import { STATUS_LABELS } from "@/lib/copy-customize";
 import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
 import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
-import { observedAt } from "@/lib/derive";
+import { observedAt, type ScopeSelection } from "@/lib/derive";
 import {
   READ_LANDED,
   READ_PENDING,
@@ -33,7 +33,11 @@ import {
   readFailed,
 } from "@/lib/read-state";
 import { useEditorStore } from "@/stores/editor";
-import { NO_FILTERS, useLibraryViewStore } from "@/stores/library-view";
+import {
+  type FilterSelection,
+  NO_FILTERS,
+  useLibraryViewStore,
+} from "@/stores/library-view";
 import { useNavStore } from "@/stores/nav";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
@@ -363,6 +367,247 @@ describe("the missing files badge on a Library row", () => {
         name,
       ).toBe(marked);
     }
+  });
+});
+
+// The places one row names follow the same narrowing the list itself was
+// built with, through the one `missingUnder` rule. A package with no copy
+// left carries no tool and no tags, so under either of those facets the row
+// answers from what the scan saw alone; under a place it answers for that
+// place. The Where cell, the badges naming a place and the record the From
+// column reads take that one set, and unnarrowed it is the whole of it.
+describe("the places a narrowed Library row names", () => {
+  const GH = { kind: "skill" as const, name: "gh" };
+  // The only copy the scan can see, tagged so the tag facet has something
+  // to narrow on.
+  const seen = {
+    ...installed(HYPR),
+    at: installed(HYPR).path,
+    tags: ["git"],
+  } as unknown as ObservedItem;
+  // The record for the place whose copy is gone is listed first, so a
+  // lookup reaching past the narrowing reads that place's marketplace.
+  const records = [
+    {
+      ...GH,
+      scope: VG,
+      harness: "claude",
+      at: null,
+      origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+      summary: null,
+      package: GH,
+    },
+    {
+      ...GH,
+      scope: HYPR,
+      harness: "claude",
+      at: seen.at,
+      origin: { origin: "marketplace", source: "hyprcat", repo: "o/h" },
+      summary: null,
+      package: GH,
+    },
+  ];
+  const gone = (scope: Scope) => ({
+    ...GH,
+    scope,
+    updateAvailable: false,
+    removedUpstream: false,
+    mixed: false,
+    ignored: false,
+    blockedByLocalEdit: false,
+    filesMissing: true,
+    editedHarnesses: [],
+  });
+
+  beforeEach(() => {
+    vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [seen],
+        missingProjects: [],
+        readProjects: [],
+        warnings: [],
+      } as never,
+    });
+    joinAnswered(records as never);
+    // Gone in the reader's own setup and in one project, present in the
+    // project the scan sees it in.
+    useUpdatesStore.setState({
+      rows: [gone(VG), gone({ scope: "global" })] as never,
+      read: READ_LANDED,
+    });
+    useNavStore.setState({ libraryScope: "all", search: "" });
+    useLibraryViewStore.setState({ ...NO_FILTERS });
+    roomIs(1400);
+  });
+
+  /** The place each badge names, read off the badge's own label — the row's
+   *  text would also carry the Where cell, which answers the same question
+   *  and would stand in for a badge that says nothing. */
+  const missingPlaces = (host: HTMLElement) =>
+    [...host.querySelectorAll("tbody tr button span")]
+      .map((label) => label.textContent ?? "")
+      .filter((text) => text.startsWith(MISSING_FILES_BADGE_LABEL));
+
+  it("narrows a row's places by every facet, not the location alone", () => {
+    const cases: [
+      string,
+      FilterSelection,
+      ScopeSelection,
+      string,
+      string[],
+      string,
+    ][] = [
+      [
+        "narrowed by nothing",
+        NO_FILTERS,
+        "all",
+        "3 locations",
+        [
+          `${MISSING_FILES_BADGE_LABEL} in vg`,
+          `${MISSING_FILES_BADGE_LABEL} in User level`,
+        ],
+        "cat",
+      ],
+      [
+        "a place",
+        NO_FILTERS,
+        { project: VG.root },
+        "vg",
+        [`${MISSING_FILES_BADGE_LABEL} in vg`],
+        "cat",
+      ],
+      [
+        "a tool",
+        { ...NO_FILTERS, harness: "claude" },
+        "all",
+        "hyprtrade",
+        [],
+        "hyprcat",
+      ],
+      [
+        "a tag",
+        { ...NO_FILTERS, tag: "git" },
+        "all",
+        "hyprtrade",
+        [],
+        "hyprcat",
+      ],
+    ];
+    expect(cases).toHaveLength(4);
+    for (const [name, filters, scope, where, places, from] of cases) {
+      useNavStore.setState({ libraryScope: scope });
+      useLibraryViewStore.setState(filters);
+      const host = mount(<InstalledView />);
+      const cells = [
+        ...(host.querySelector("tbody tr")?.querySelectorAll("td") ?? []),
+      ];
+      expect(cells, name).toHaveLength(8);
+      expect(cells[4].textContent, name).toBe(where);
+      expect(cells[5].textContent, name).toBe(from);
+      expect(missingPlaces(host), name).toEqual(places);
+    }
+  });
+
+  // A place the row is observed in has answered the tool and tag questions
+  // by being drawn there: a registration a harness still reads whose file
+  // is gone reads as missing while the scan sees the registration. The
+  // badge is the only route to the repair, so a narrowing that draws the
+  // row keeps it — the inverse, a place with no copy left under the same
+  // narrowing, is the "a tool" row above.
+  it("keeps the badge for a place the narrowed row is observed in", () => {
+    useUpdatesStore.setState({
+      rows: [gone(HYPR)] as never,
+      read: READ_LANDED,
+    });
+    useLibraryViewStore.setState({ ...NO_FILTERS, harness: "claude" });
+    const host = mount(<InstalledView />);
+    expect(missingPlaces(host)).toEqual([
+      `${MISSING_FILES_BADGE_LABEL} in hyprtrade`,
+    ]);
+  });
+
+  // Where a tool-narrowed row's own click lands, and where the badge on the
+  // place it is observed in lands. The Done-when names the click destination
+  // beside Where, and nothing else in this file clicks a row narrowed by
+  // anything but a location.
+  //
+  // The row's default click has no control of its own: `groupPlaces` puts a
+  // group's observed places before its missing ones, and a row drawn under a
+  // tool or a tag facet always has an observed place, so the first place is
+  // the same whatever the missing half returns. What that assertion holds is
+  // the pairing — the click and the Where cell above name one place. The
+  // badge's click does have one: it is the row that item 1's control
+  // removes, since dropping the observed branch leaves no badge to press.
+  it("opens the narrowed place from a tool-narrowed row and its badge", async () => {
+    useUpdatesStore.setState({
+      rows: [gone(HYPR), gone(VG)] as never,
+      read: READ_LANDED,
+    });
+    useLibraryViewStore.setState({ ...NO_FILTERS, harness: "claude" });
+    const opened = { kind: "skill", name: "gh", identity: "recorded" };
+    const host = mount(<InstalledView />);
+    const line = host.querySelector("tbody tr");
+    if (!line) throw new Error("no row");
+
+    await userEvent.click(line);
+    expect(useNavStore.getState().packageRef).toEqual({
+      ...opened,
+      scope: HYPR,
+    });
+
+    useNavStore.setState({ packageRef: null });
+    const badge = [...host.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").startsWith(MISSING_FILES_BADGE_LABEL),
+    );
+    if (!badge) throw new Error("no missing files badge");
+    await userEvent.click(badge);
+    expect(useNavStore.getState().packageRef).toEqual({
+      ...opened,
+      scope: HYPR,
+    });
+  });
+
+  // A fork answers for the package wherever it was made, so a fork badge
+  // names a place the narrowing excludes. `placeName` shortens a root only
+  // against the places it is handed, so labelling those badges against the
+  // Where cell's narrowed set alone puts one folder name on two buttons
+  // that open different projects.
+  it("tells two forks in same-named folders apart under a narrowing", () => {
+    const ONE: Scope = { scope: "project", root: "/work/one/app" };
+    const TWO: Scope = { scope: "project", root: "/work/two/app" };
+    const forked = {
+      schema: 1,
+      install: {},
+      forks: { skill: { gh: { source: "local", "forked-at": "2026-01-01" } } },
+    };
+    useEditorStore.setState({
+      saved: { [ONE.root]: forked as never, [TWO.root]: forked as never },
+    });
+    // The fork places reach the row's standings through its missing rows,
+    // which is what a fork whose last rendering was deleted looks like.
+    useUpdatesStore.setState({
+      rows: [gone(ONE), gone(TWO)] as never,
+      read: READ_LANDED,
+    });
+    useLibraryViewStore.setState({ ...NO_FILTERS, harness: "claude" });
+    const host = mount(<InstalledView />);
+    const forks = [...host.querySelectorAll("tbody tr button span")]
+      .map((label) => label.textContent ?? "")
+      .filter((text) => text.startsWith(FORKED_BADGE_LABEL));
+    expect(forks).toEqual([
+      `${FORKED_BADGE_LABEL} in one/app`,
+      `${FORKED_BADGE_LABEL} in two/app`,
+    ]);
+    // The Where cell keeps the narrowed set alone: neither fork place is
+    // one this row is observed in.
+    const cells = [
+      ...(host.querySelector("tbody tr")?.querySelectorAll("td") ?? []),
+    ];
+    expect(cells[4].textContent).toBe("hyprtrade");
   });
 });
 

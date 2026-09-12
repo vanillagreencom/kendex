@@ -1,13 +1,18 @@
 import { useMemo } from "react";
-import type { Scope } from "@/bindings";
+import type { Scope, UpdateRow } from "@/bindings";
 import {
   type PlaceStanding,
   placeFacts,
   placeStandings,
   placesSource,
 } from "@/lib/customized-places";
-import type { ItemGroup } from "@/lib/derive";
-import { groupPlaces, packageKey } from "@/lib/derive";
+import type { ItemFilter, ItemGroup } from "@/lib/derive";
+import {
+  EVERYWHERE,
+  groupPlaces,
+  missingPlacesOf,
+  packageKey,
+} from "@/lib/derive";
 import { useMissingRows } from "@/lib/missing-files";
 import { availableUpdates } from "@/lib/update-groups";
 import { rowsCountable, rowsKnown } from "@/lib/updates-read-state";
@@ -34,12 +39,20 @@ export function useLibraryStandings(groups: ItemGroup[]): {
    *  Null until a read lands: a badge is a definite claim, and rows kept
    *  from a failed check have not confirmed one. */
   outOfDateAnywhere: ((group: ItemGroup) => boolean) | null;
-  /** The places where a file kendex installed for this package is gone
-   *  — the rows Home's missing-files row counts, so the badge and that
-   *  row cannot disagree. A local disk fact like an edit, so it is read
-   *  the way `editedAnywhere` is: from rows a landed read confirmed or a
-   *  failed re-check kept, and null before either. */
-  missingIn: ((group: ItemGroup) => Scope[]) | null;
+  /** The places where a file kendex installed for this package is gone,
+   *  as the given narrowing has them — the rows Home's missing-files row
+   *  counts, so the badge and that row cannot disagree.
+   *
+   *  Narrowed through `derive.ts::missingPlacesOf`, the one rule saying
+   *  which of a row's missing places a narrowing keeps, so the group handed
+   *  in must be the one that narrowing drew. `EVERYWHERE` asks for the whole
+   *  set, which is what a fact about the package rather than about the table
+   *  takes.
+   *
+   *  A local disk fact like an edit, so it is read the way
+   *  `editedAnywhere` is: from rows a landed read confirmed or a failed
+   *  re-check kept, and null before either. */
+  missingIn: ((group: ItemGroup, filter: ItemFilter) => Scope[]) | null;
 } {
   const saved = useEditorStore((s) => s.saved);
   const savedSettings = useEditorStore((s) => s.savedSettings);
@@ -59,23 +72,30 @@ export function useLibraryStandings(groups: ItemGroup[]): {
   // cannot join that file's row, and a place set read across that line
   // would steer the Where cell, the fork badge and the row's own click.
   const missing = useMemo(() => {
-    const out = new Map<string, Scope[]>();
+    const out = new Map<string, UpdateRow[]>();
     for (const row of missingRows ?? []) {
       const key = packageKey(row);
-      out.set(key, [...(out.get(key) ?? []), row.scope]);
+      out.set(key, [...(out.get(key) ?? []), row]);
     }
     return out;
   }, [missingRows]);
-  // Where a record says this package's copy is gone. Nothing for a row the
-  // records account for nothing of: an observation answers only for
-  // itself, whatever it shares a kind and a name with.
+  // Where a record says this package's copy is gone, under one narrowing.
+  // Nothing for a row the records account for nothing of: an observation
+  // answers only for itself, whatever it shares a kind and a name with.
   const missingScopes = useMemo(
-    () => (group: ItemGroup) =>
-      group.package ? (missing.get(group.key) ?? []) : [],
+    () => (group: ItemGroup, filter: ItemFilter) =>
+      group.package
+        ? missingPlacesOf(group, missing.get(group.key) ?? [], filter)
+        : [],
     [missing],
   );
+  // A standing is a fact about the package in a place, not about the table
+  // showing it, so the places it is asked over are every one the row stands
+  // in: a fork whose last rendering was deleted is still a fork under a
+  // narrowing that would not draw its missing badge.
   const placesOf = useMemo(
-    () => (group: ItemGroup) => groupPlaces(group, missingScopes(group)),
+    () => (group: ItemGroup) =>
+      groupPlaces(group, missingScopes(group, EVERYWHERE)),
     [missingScopes],
   );
   const byKey = useMemo(() => {
@@ -83,9 +103,6 @@ export function useLibraryStandings(groups: ItemGroup[]): {
     for (const group of groups)
       out.set(
         group.key,
-        // Every place the row stands in, not only the observed ones: a
-        // fork whose last rendering was deleted is still a fork, and its
-        // badge is read off the place it was made in.
         placeStandings(places, group.kind, group.name, placesOf(group)),
       );
     return out;
