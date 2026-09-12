@@ -975,6 +975,88 @@ fn a_render_that_refuses_after_the_copy_committed_is_a_refusal() {
     }
 }
 
+/// A subscription the run made is a write outside the destination, and a
+/// refusal after it answers as a run that stopped part-way, naming it:
+/// the personal manifest now holds a marketplace the person did not
+/// subscribe to by hand, and a bare error would leave that invisible.
+///
+/// The template names a marketplace nothing subscribes to yet, so the
+/// run subscribes personally before the add; the add then refuses in the
+/// rendering. No package went in, and the account says so — `declared`
+/// stays empty — while `subscribed` carries the repository.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_render_that_refuses_after_the_subscription_committed_reports_the_subscription() {
+    use std::os::unix::fs::PermissionsExt;
+    let project = seeded();
+    // Marketplace members only: a copy would commit its own plan before
+    // the add, and this case is about the subscription alone.
+    let template = create_from_project(
+        &project.env,
+        &project.root,
+        &Chosen {
+            name: "Marketplace only".to_owned(),
+            members: vec!["skill:gh".to_owned()],
+            fingerprint: draft_from_project(&project.env, &project.root)
+                .unwrap()
+                .fingerprint,
+            ..Chosen::default()
+        },
+    )
+    .unwrap();
+    let resolution = resolve(&project.env, &template).unwrap();
+    assert_eq!(resolution.groups.len(), 1, "{:?}", resolution.groups);
+    assert_eq!(resolution.groups[0].source, None, "{:?}", resolution.groups);
+    let target = destination(&project, "unrenderable");
+    let Scope::Project { root } = &target else {
+        unreachable!("built as a project scope")
+    };
+    // The slot the render writes into, refusing writes; the harness root
+    // above it stays writable so a render is planned at all.
+    let slot = root.join(".claude/skills");
+    fs::create_dir_all(&slot).unwrap();
+    fs::set_permissions(&slot, fs::Permissions::from_mode(0o555)).unwrap();
+    // Root writes into a directory whatever its mode, so there the
+    // refusal under test does not exist and the install simply finishes.
+    let denied = !rustix::process::geteuid().is_root();
+    let landed = install(
+        &project.env,
+        &template,
+        &target,
+        Some(vec![HarnessId::Claude]),
+        None,
+    );
+    fs::set_permissions(&slot, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let landed = landed.unwrap();
+    assert_eq!(landed.subscribed, ["cat"].map(|_| project_repo(&project)));
+    match denied {
+        true => {
+            assert!(landed.stopped.is_some(), "{landed:?}");
+            assert_eq!(landed.declared, Vec::<String>::new(), "{landed:?}");
+        }
+        false => assert!(landed.stopped.is_none(), "{landed:?}"),
+    }
+    // The write the account names is on disk: the personal manifest holds
+    // a subscription at the repository the run reported.
+    let personal = crate::manifest::load_current(&crate::manifest::manifest_path(
+        &project.env,
+        &Scope::Global,
+    ))
+    .unwrap()
+    .unwrap();
+    let repo = project_repo(&project);
+    assert!(
+        personal
+            .sources
+            .values()
+            .any(|decl| decl.path.as_deref() == Some(repo.as_str())),
+        "{:?}",
+        personal.sources
+    );
+}
+
 /// A notice belongs to the copy that required it. Taking the last copy
 /// from a licensed marketplace out takes its terms with it, so the
 /// template stops listing them and an install of what is left carries no

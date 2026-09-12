@@ -630,19 +630,20 @@ impl Landing {
         Ok(())
     }
 
-    /// Whether a package this run installed is in the destination. What
+    /// Whether this run has written something a refusal would hide. What
     /// decides between an install that refused and one that stopped
     /// part-way.
     ///
-    /// A package went in when the add that declares and renders it
-    /// committed. The writes before that — a subscription, a copy into
-    /// the destination's local slot — are what a member needs before it
-    /// can go in, not a member gone in: a run whose add refuses after
-    /// them has put no package into the place, and reporting it as one
-    /// that stopped part-way would tell a person that some of the
-    /// template is installed when none of it is.
+    /// Two writes count. A package went in when the add that declares and
+    /// renders it committed. A subscription the run made is durable state
+    /// outside the destination: the personal manifest holds a marketplace
+    /// the person did not subscribe to by hand, so a refusal after it has
+    /// to name it. A copy into the destination's local slot is neither: it
+    /// is what a member needs before it can go in, not a member gone in,
+    /// and an account that counted it would tell a person that some of
+    /// the template is installed when none of it is.
     fn anything_landed(&self) -> bool {
-        !self.install.declared.is_empty()
+        !self.install.declared.is_empty() || !self.install.subscribed.is_empty()
     }
 
     /// Whether this run has already declared that package.
