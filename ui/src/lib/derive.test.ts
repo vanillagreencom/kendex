@@ -590,7 +590,7 @@ describe("withRecordedMissing", () => {
 
   /** The row a record seeds for an installation the scan did not see: no
    *  position, and the author's words off the declaration. */
-  const seeded = (summary: string): ProvenanceRow => ({
+  const seeded = (summary: string | null): ProvenanceRow => ({
     scope: { scope: "global" },
     kind: "skill",
     name: "deploy",
@@ -625,6 +625,19 @@ describe("withRecordedMissing", () => {
     );
     expect(rows[0].summary).toBe("Ship the release");
     expect(groupMatches(rows[0], "ship the release")).toBe(true);
+    // A declaration that says nothing leaves the row blank. The words on an
+    // observed row can be the file a tool loads, and
+    // `crates/core/src/library.rs::declared_header` forbids filling that
+    // blank from it.
+    const blank = withRecordedMissing(
+      [],
+      [missingRow({})],
+      recordedSummaryIndex([
+        observedElsewhere("Whatever the file says"),
+        seeded(null),
+      ]),
+    );
+    expect(blank[0].summary).toBeNull();
   });
 
   // The inverse: a row the scan made already carries its package's words,

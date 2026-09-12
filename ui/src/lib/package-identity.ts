@@ -102,26 +102,40 @@ export type RecordedSummaryOf = (ref: PackageRef) => string | null;
  *  row of that package reads.
  *
  *  A row the record seeded — the one with no position — speaks for the
- *  package ahead of an observed row, because only its words are the
- *  record's. An observation whose declaration cannot be reached is
- *  described by the file a tool loads instead, which for a generated
- *  wrapper is kendex's own line rather than anything the author wrote.
+ *  package, and an observed row only where the record seeded none. Its
+ *  silence speaks too: an author who wrote no words leaves a blank row, and
+ *  `library.rs::declared_header` states that nothing downstream may fill
+ *  that blank from the file a tool reads — which is what an observed row
+ *  falls back to, and for a generated wrapper is kendex's own line. So a
+ *  seeded row with no words is an answer of none, not an absence to go
+ *  looking past.
  *
- *  Among rows of one kind the first with words speaks. Two places can hold
+ *  Among observed rows the first with words speaks. Two places can hold
  *  two versions of the package, and the row these words are shown on is one
  *  package — so it says one thing about itself rather than picking a place
  *  it does not name. */
 export function recordedSummaryIndex(rows: ProvenanceRow[]): RecordedSummaryOf {
+  // Held apart from the words, because a row with none still answers for
+  // its package: tracked on the summary alone, a seeded blank would read as
+  // no seeded row at all and let an observed one stand in for it.
+  const seededPackages = new Set<string>();
   const byPackage = new Map<string, { seeded: boolean; summary: string }>();
   for (const row of rows) {
-    if (!row.package || !row.summary) continue;
-    const seeded = row.at === null;
+    if (!row.package) continue;
     const key = packageKey(row.package);
+    const seeded = row.at === null;
+    if (seeded) seededPackages.add(key);
+    if (!row.summary) continue;
     const held = byPackage.get(key);
     if (held && (held.seeded || !seeded)) continue;
     byPackage.set(key, { seeded, summary: row.summary });
   }
-  return (ref) => byPackage.get(packageKey(ref))?.summary ?? null;
+  return (ref) => {
+    const key = packageKey(ref);
+    const held = byPackage.get(key);
+    if (!held || (!held.seeded && seededPackages.has(key))) return null;
+    return held.summary;
+  };
 }
 
 /** Where one observed installation came from, or null where the join has
