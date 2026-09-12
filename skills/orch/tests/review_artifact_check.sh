@@ -335,13 +335,15 @@ TMPDIR="$TMP_ROOT/does-not-exist/nope" run_check --help
 assert_eq "$(observe "rc=0 stdout_nonempty=true")" "rc=0 stdout_nonempty=true" "--help still prints the contract under an unusable TMPDIR"
 
 echo "=== a probe that fails mid-wait is named, never left silent ==="
-# Reached from the lane this came from: an armed --wait watchdog on a machine
-# at its thread ceiling, where every fork fails and the poll's own helpers are
-# what break. A helper that dies where errexit ends the script produced no
-# result, and its bare status beside an empty stdout reads to the caller like a
-# rejection; the EXIT trap names that status on a keyed line instead. The
-# inverse row is the probe that ALREADY answers: a jq the check cannot run is
-# a parseable rejection on stdout, exit 1, and no keyed line is added over it.
+# WHAT THE ROWS PLANT: a helper that RAN and exited nonzero, which is where
+# errexit ends the script and where bash does reach the EXIT trap. That is not
+# fork exhaustion, and no row here claims to be: when a SIMPLE command cannot
+# fork, bash ends the shell with status 127 and runs no trap, so no keyed line
+# lands and none can be pinned. On the reachable path the helper produced no
+# result, and its bare status beside an empty stdout would read to the caller
+# like a rejection; the EXIT trap names that status on a keyed line instead.
+# The inverse row is the probe that ALREADY answers: a jq the check cannot run
+# is a parseable rejection on stdout, exit 1, and no keyed line over it.
 PROBE_SHIMS="$TMP_ROOT/probe-shims"
 for probe_cmd in sleep jq; do
   mkdir -p "$PROBE_SHIMS/$probe_cmd"

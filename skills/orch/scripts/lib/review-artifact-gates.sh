@@ -29,15 +29,18 @@ set -euo pipefail
 # the emitter itself (a broken jq makes `emit` return nonzero) after the
 # fallback result has already landed on stdout. An exit that left this at 0 is
 # an abort nothing described: errexit ends the script where a helper died, and
-# a backgrounded --wait watchdog that cannot fork mid-poll dies there. Without
-# the keyed line its caller sees a bare status beside an empty stdout and
-# cannot tell an unwatched round from a rejected artifact.
+# its bare status beside an empty stdout reads to a caller like a rejection.
 review_artifact_reported=0
 finish() {
   review_artifact_reported=1
   exit "$1"
 }
-# printf and arithmetic only: this runs when a fork is exactly what failed.
+# printf and arithmetic only, since a fork is what tends to have failed. BEST
+# EFFORT, AND THE LIMIT IS BASH'S: the EXIT trap runs for a helper that ran and
+# exited nonzero and for a command substitution that could not fork, but NOT
+# for a simple command that cannot fork — the poll loop's `sleep` under real
+# fork exhaustion — where bash ends the shell with status 127 and runs no trap,
+# so the exit status is the contract and this line is the courtesy.
 review_artifact_exit_report() {
   local status="$1"
   (( status != 0 )) || return 0

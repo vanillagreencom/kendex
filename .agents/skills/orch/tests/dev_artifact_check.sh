@@ -469,13 +469,14 @@ elapsed=$(( $(date +%s) - start_epoch ))
 assert_eq "$(observe "rc=1 verdict=wait") held=$([[ "$elapsed" -ge 2 ]] && echo true || echo false)" "rc=1 verdict=wait held=true" "--wait holds to its deadline and returns verdict wait (${elapsed}s)" "$ERR"
 
 echo "=== a probe that fails mid-wait refuses on a keyed line, never as \"wait\" ==="
-# Reached from the lane this came from: an armed --wait watchdog on a machine
-# at its thread ceiling, where every fork fails and the poll's own helpers are
-# what break. A probe failure read as the verdict "wait" keeps the watchdog
-# polling a probe that no longer works and leaves the round untimed with
-# nothing said. The verdict read refuses on its own keyed line; a helper that
-# died where errexit ends the script has its status named by the EXIT trap. One
-# helper is shadowed per row, so a row fails the probe it names.
+# WHAT THE ROWS PLANT: a helper that RAN and exited nonzero, which is where
+# errexit ends the script and where bash does reach the EXIT trap. That is not
+# fork exhaustion, and no row here claims to be: when a SIMPLE command cannot
+# fork, bash ends the shell with status 127 and runs no trap, so no keyed line
+# lands and none can be pinned. These rows pin the two reachable halves — a
+# verdict the poll could not read refuses on its own keyed line instead of
+# polling on as "wait", and a helper that failed has its status named by the
+# EXIT trap. One helper is shadowed per row, so a row fails the probe it names.
 PROBE_SHIMS="$TMP_ROOT/probe-shims"
 for probe_cmd in sleep jq; do
   mkdir -p "$PROBE_SHIMS/$probe_cmd"

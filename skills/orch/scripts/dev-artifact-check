@@ -53,14 +53,18 @@ EXPECT_GRAMMAR='^[0-9]+(,[0-9]+)*$'
 scratch_files=()
 # Set by `finish` at every exit whose outcome this script already described —
 # the JSON result on stdout, or a keyed line on stderr. An exit that did not
-# reach `finish` is an abort no site described, and `on_exit` names its status:
-# an armed --wait watchdog that cannot fork mid-poll dies on errexit where the
-# helper died, and without the keyed line its caller sees a bare status beside
-# an empty stdout and cannot tell an unwatched round from a rejected one.
+# reach `finish` is an abort no site described, and `on_exit` names its status
+# so a caller can tell an unwatched round from a rejected one.
 REPORTED=0
 
 on_exit() {
   local status=$?
+  # BEST EFFORT, AND THE LIMIT IS BASH'S: this trap runs for a helper that ran
+  # and exited nonzero and for a command substitution that could not fork, but
+  # NOT for a simple command that cannot fork — the poll loop's `sleep` under
+  # real fork exhaustion — where bash ends the shell with status 127 and runs
+  # no trap, so the exit status is the contract and this line is the courtesy.
+  #
   # The report comes before the cleanup, not after: `rm` is the external
   # command, and the run this backstop exists for is the one where no external
   # command can start. `message` is printf and case alone.
@@ -206,10 +210,14 @@ receipt orphaned by a later rebase (kendex#994). Expected after a legitimate
 rebase; the orchestrator decides what it means for the round.
 
 Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error or when a
-probe this check runs could not answer (the verdict was unreadable). Any other
-status is an abort — a helper this check ran died and no result was produced —
-and stderr carries `dev-artifact-check: exit=STATUS` as its first line. Under
---wait that status is the answer to "is this round still watched": it is not.
+probe this check runs could not answer (the verdict was unreadable). Any status
+outside 0, 1 and 2 is an abort: no result was produced, and under --wait the
+round is no longer watched. stderr carries `dev-artifact-check: exit=STATUS` as
+its first line only where bash reaches the EXIT trap — a helper that ran and
+exited nonzero, or a command substitution that could not fork (status 254). A
+SIMPLE command that cannot fork, which is the poll loop's `sleep` under real
+fork exhaustion, ends the shell with a bare status (127 on bash 5) and no keyed
+line at all. Judge an unwatched round on the status, never on the line.
 EOF
 }
 
