@@ -134,30 +134,30 @@ fn refusal(finding: &Finding) -> String {
     text
 }
 
-/// The committed inventory against the set a pass renders.
+/// The committed inventory against the set the declaration renders at.
 ///
-/// Both directions are findings. A rendered path the inventory does not list
-/// reads as hand-written to every reader of it, and a path it lists that
-/// nothing renders excludes a hand-written file from their scans.
+/// Both directions are findings. A declared path the inventory does not
+/// list reads as hand-written to every reader of it, and a path it lists
+/// that nothing renders excludes a hand-written file from their scans.
 ///
-/// A listed path the pass holds — a position the declaration renders at
-/// whose bytes the pass would not claim — is neither. A checkout without
-/// its lock holds every render whose bytes differ from its source, and a
-/// judge that read those as unrendered would name every such render as
-/// stale beside the one path the inventory actually lacks. `refresh` with
-/// the lock lists it, so it is not stale; the writer never lists a held
-/// position it does not already list, so an unlisted one is not missing.
-fn judge(
-    listed: &BTreeSet<String>,
-    rendered: &BTreeSet<String>,
-    held: &BTreeSet<String>,
-) -> Standing {
-    let missing: Vec<String> = rendered.difference(listed).cloned().collect();
-    let stale: Vec<String> = listed
-        .difference(rendered)
-        .filter(|path| !held.contains(*path))
-        .cloned()
-        .collect();
+/// `declared` is every position this pass writes and every one it held —
+/// a position the declaration renders at whose bytes the pass would not
+/// claim — in one set, so a held position is judged exactly as a written
+/// one. A checkout without its lock holds every render whose bytes differ
+/// from its source, and it holds the tree whole: a skill whose source
+/// gained a file with no render lands every position of that tree here,
+/// the unrendered one among them. Judged off the written set alone, the
+/// held ones would each be named stale beside the one path the inventory
+/// lacks; judged as neither, the unrendered one would pass unnamed, which
+/// is the direction a gate may not fail in. The one reading this costs is
+/// a checkout with its lock and a genuine conflict at a position a newly
+/// declared item renders at: `refresh` never lists that position, so this
+/// names it missing until the conflict is settled, which `refresh` itself
+/// refuses on the same run. Red on a tree whose renders cannot be trusted
+/// is the right answer there; green on an unrendered file is not.
+fn judge(listed: &BTreeSet<String>, declared: &BTreeSet<String>) -> Standing {
+    let missing: Vec<String> = declared.difference(listed).cloned().collect();
+    let stale: Vec<String> = listed.difference(declared).cloned().collect();
     if missing.is_empty() && stale.is_empty() {
         return Standing::Current;
     }
@@ -213,8 +213,14 @@ fn check_against(env: &Env, root: &Path, inventory: &Path) -> Standing {
     match committed(inventory) {
         Ok(listed) => judge(
             &listed,
-            &report.generated.relative(root),
-            &GeneratedPaths::spelled(report.generated.held.iter(), root),
+            &GeneratedPaths::spelled(
+                report
+                    .generated
+                    .inventory(root)
+                    .iter()
+                    .chain(&report.generated.held),
+                root,
+            ),
         ),
         Err(finding) => Standing::Refused(finding),
     }
@@ -301,13 +307,8 @@ fn an_inventory_that_is_not_the_render_set_is_refused() {
 }
 
 /// A project with one skill rendered from its local source and its
-/// inventory written, then two changes the inventory has not seen: the
-/// rendered skill's source edited, so its render differs from its source,
-/// and a second skill declared and rendered nowhere.
-///
-/// The first is what a lockless checkout holds and a locked one lists; the
-/// second is missing either way. The one-file skill keeps the missing set
-/// to the path the declaration adds.
+/// inventory written, on which each control makes the changes the
+/// inventory has not seen.
 struct Unrendered {
     _tmp: tempfile::TempDir,
     env: Env,
@@ -345,10 +346,28 @@ impl Unrendered {
         fixture.write_skill("one", "Body.\n");
         crate::apply::execute(&fixture.env, &fixture.add("one").plan)
             .expect("the first skill renders");
-        fixture.write_skill("one", "Edited body.\n");
-        fixture.write_skill("two", "Body.\n");
-        fixture.declare("two");
         fixture
+    }
+
+    /// The rendered skill's source edited, so its render differs from its
+    /// source: what a lockless checkout holds and a locked one lists. Then
+    /// a second skill declared and rendered nowhere, missing either way.
+    /// The one-file skill keeps the missing set to the path the
+    /// declaration adds.
+    fn with_a_second_skill_unrendered(self) -> Unrendered {
+        self.write_skill("one", "Edited body.\n");
+        self.write_skill("two", "Body.\n");
+        self.declare("two");
+        self
+    }
+
+    /// The rendered skill's source gains a file with no render. The tree
+    /// as a whole now differs from its source, so a lockless checkout
+    /// holds every position in it, the unrendered one included.
+    fn with_a_file_added_to_the_skill(self) -> Unrendered {
+        let dir = crate::source::local_source_root(&self.env, &self.scope()).join("skills/one");
+        std::fs::write(dir.join("notes.md"), "Notes.\n").expect("the added file is writable");
+        self
     }
 
     fn scope(&self) -> Scope {
@@ -416,16 +435,27 @@ impl Unrendered {
     }
 }
 
-/// The finding the fixture is owed, with its lock or without: the one path
+/// The finding a fixture is owed, with its lock or without: the one path
 /// nothing renders, and no render named stale because its bytes moved.
-fn one_missing() -> (Standing, Vec<String>) {
+fn one_missing(path: &str) -> (Standing, Vec<String>) {
     (
         Standing::Refused(Finding::Drifted {
-            missing: vec![UNRENDERED.to_owned()],
+            missing: vec![path.to_owned()],
             stale: Vec::new(),
         }),
         vec!["render-inventory: missing=1".to_owned()],
     )
+}
+
+/// The finding with the lock, then the same finding with it taken away.
+#[allow(
+    clippy::expect_used,
+    reason = "taking the lock away is a fixture step, not the behaviour under test"
+)]
+fn with_and_without_the_lock(fixture: &Unrendered, expected: (Standing, Vec<String>)) {
+    assert_eq!(fixture.checked(), expected, "with the lock");
+    std::fs::remove_file(fixture.lock()).expect("the lock is there to take away");
+    assert_eq!(fixture.checked(), expected, "without the lock");
 }
 
 /// The lockless control: with nothing saying the bytes on disk are kendex's
@@ -435,10 +465,17 @@ fn one_missing() -> (Standing, Vec<String>) {
 /// render is stale rather than held, and pins the same line.
 #[test]
 fn a_lockless_checkout_names_the_missing_render_alone() {
-    let fixture = Unrendered::new();
-    assert_eq!(fixture.checked(), one_missing(), "with the lock");
+    let fixture = Unrendered::new().with_a_second_skill_unrendered();
+    with_and_without_the_lock(&fixture, one_missing(UNRENDERED));
+}
 
-    let lock = fixture.lock();
-    std::fs::remove_file(&lock).expect("the lock is there to take away");
-    assert_eq!(fixture.checked(), one_missing(), "without the lock");
+/// The held tree's own unrendered position: a lockless checkout holds the
+/// whole skill once one file in it is unrendered, and the check names that
+/// file missing rather than passing a tree it could not judge. The inverse
+/// plans the same tree with its lock, where the skill is stale and the
+/// file is missing by the written set alone, and pins the same line.
+#[test]
+fn a_lockless_checkout_names_an_unrendered_file_of_a_held_skill() {
+    let fixture = Unrendered::new().with_a_file_added_to_the_skill();
+    with_and_without_the_lock(&fixture, one_missing(".claude/skills/one/notes.md"));
 }

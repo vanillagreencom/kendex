@@ -65,10 +65,10 @@ pub struct GeneratedPaths {
     /// `Unmanaged` row — as the other two groups would have carried them.
     /// Kendex writes nothing for these, so neither the inventory nor the
     /// offer lists them; they are here for a reader holding the committed
-    /// inventory to this pass, which has to tell a position the declaration
-    /// renders at whose bytes it cannot claim from one it renders nowhere.
-    /// A lockless checkout, where nothing says the bytes on disk are
-    /// kendex's own, refuses every render that differs from its source.
+    /// inventory to what the declaration renders at, which judges these
+    /// positions as it judges the written ones and says why in its own
+    /// module. A lockless checkout, where nothing says the bytes on disk
+    /// are kendex's own, refuses every render that differs from its source.
     pub held: BTreeSet<PathBuf>,
 }
 
@@ -100,7 +100,7 @@ impl GeneratedPaths {
     }
 
     /// Paths as the document spells them, so a reader of the inventory can
-    /// hold the held group against it in one spelling.
+    /// hold the written and held groups against it in one spelling.
     fn spelled<'a>(paths: impl Iterator<Item = &'a PathBuf>, root: &Path) -> BTreeSet<String> {
         paths
             .filter_map(|path| path.strip_prefix(root).ok().map(crate::paths::slashed))
