@@ -1076,6 +1076,91 @@ describe("the columns a narrow Library table keeps", () => {
     expect(row[2].getAttribute("title")).toBe(LONG);
   });
 
+  // The two cases above hold the ends of the ladder. These hold its rungs:
+  // which column comes back first is the judgement this issue asked for,
+  // and a reordered BUDGET.order or a changed cost would leave both ends
+  // right and every width between them wrong. Each width is the rung's own
+  // — the sum of the kept columns and everything afforded up to it — so a
+  // cost that moves takes its rung with it.
+  it("brings each column back at its own width, in its own order", () => {
+    const RUNGS = [
+      { room: 752, back: ["Harnesses"] },
+      { room: 880, back: ["Harnesses", "From"] },
+      { room: 992, back: ["Harnesses", "From", "Updated"] },
+      { room: 1152, back: ["Harnesses", "From", "Updated", TAGS_ROW_LABEL] },
+    ];
+    expect(RUNGS).toHaveLength(4);
+    for (const { room, back } of RUNGS) {
+      roomIs(room);
+      const host = mount(<InstalledView />);
+      // Drawn in the header's own order, which is not the restore order:
+      // a column comes back where the table draws it, not at the end.
+      const drawn = heads(host);
+      expect(drawn, `${room}px`).toEqual(
+        [
+          "Name",
+          "Type",
+          TAGS_ROW_LABEL,
+          "Harnesses",
+          "Where",
+          "From",
+          "Updated",
+          "Status",
+        ].filter(
+          (head) =>
+            ["Name", "Type", "Where", "Status"].includes(head) ||
+            back.includes(head),
+        ),
+      );
+      // One rung below its own width the newest column is not there yet.
+      roomIs(room - 1);
+      expect(heads(mount(<InstalledView />)), `${room - 1}px`).toEqual(
+        drawn.filter((head) => head !== back[back.length - 1]),
+      );
+    }
+  });
+
+  // The table draws two other states, and both changed here: the skeleton
+  // now draws the columns the table draws, and the empty row spans the
+  // columns on screen rather than a fixed eight. A reader whose scan has
+  // not answered, or whose filters match nothing, sees one of them at the
+  // minimum window like any other row.
+  it("draws the skeleton to the columns on screen", () => {
+    useProvenanceStore.setState({
+      rows: [],
+      loaded: false,
+      answeredFor: null,
+      read: READ_PENDING,
+    });
+    roomIs(AT_MINIMUM_WINDOW);
+    const narrow = mount(<InstalledView />);
+    expect(narrow.querySelector('[data-slot="skeleton"]')).not.toBeNull();
+    expect(cells(narrow)).toHaveLength(4);
+
+    roomIs(1400);
+    expect(cells(mount(<InstalledView />))).toHaveLength(8);
+  });
+
+  it("spans the empty row across the columns on screen", () => {
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [],
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    joinAnswered();
+    roomIs(AT_MINIMUM_WINDOW);
+    const narrow = mount(<InstalledView />);
+    const empty = cells(narrow);
+    expect(empty).toHaveLength(1);
+    expect(empty[0].colSpan).toBe(4);
+
+    roomIs(1400);
+    expect(cells(mount(<InstalledView />))[0].colSpan).toBe(8);
+  });
+
   // Every Badge is shrink-0 and whitespace-nowrap, so a strip of them that
   // cannot wrap set the name column's min-content width, which beats the
   // cell's max-width under an automatic table layout. A fork badge names
