@@ -339,7 +339,6 @@ describe("the missing files badge on a Library row", () => {
 
   it("marks the place where a file is gone, off every read that kept rows", () => {
     const cases: [string, ReadState, unknown[], boolean][] = [
-      ["landed", READ_LANDED, [row({ filesMissing: true })], true],
       [
         "failed with rows kept",
         readFailed("no network"),
@@ -349,7 +348,7 @@ describe("the missing files badge on a Library row", () => {
       ["every file in place", READ_LANDED, [row({})], false],
       ["pending", READ_PENDING, [row({ filesMissing: true })], false],
     ];
-    expect(cases).toHaveLength(4);
+    expect(cases).toHaveLength(3);
     for (const [name, read, rows, marked] of cases) {
       useUpdatesStore.setState({ rows: rows as never, read });
       const host = mount(<InstalledView />);

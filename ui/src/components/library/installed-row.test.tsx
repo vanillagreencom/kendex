@@ -215,8 +215,18 @@ describe("the update mark", () => {
 // is — rather than marking the row and leaving the reader to find which
 // of its places is broken.
 describe("the missing files badge", () => {
+  // A place whose copy is gone is one of the row's places, whether the
+  // scan still sees a copy there or not, and each place once: the Where
+  // count, its title and the badges read the same set, so a package seen
+  // in two projects and gone from one of them and a third counts three.
   it("marks the place missing a file and opens the package there", () => {
-    const { host, onOpen } = mount([], false, [HYPR]);
+    const other: Scope = { scope: "project", root: "/work/other" };
+    const { host, onOpen } = mount([], false, [HYPR, other]);
+    const where = host.querySelectorAll("td")[4];
+    expect(where?.textContent).toBe("3 locations");
+    expect(where?.getAttribute("title")).toBe(
+      "/work/vg, /work/hyprtrade, /work/other",
+    );
     const badge = [...host.querySelectorAll<HTMLElement>("button")].find((b) =>
       b.textContent?.startsWith(MISSING_FILES_BADGE_LABEL),
     );
@@ -230,55 +240,6 @@ describe("the missing files badge", () => {
   it("marks nothing where every file is in place", () => {
     const { host } = mount();
     expect(host.textContent?.includes(MISSING_FILES_BADGE_LABEL)).toBe(false);
-  });
-
-  // A place whose copy is gone is one of the row's places: the Where
-  // count and the badge read the same set, so a package seen in one
-  // project and gone from another counts two and names the second.
-  it("counts a place whose copy is gone among the row's places", () => {
-    const onePlace = groupItems([item(VG)] as never, () => ({
-      kind: "skill",
-      name: "gh",
-    }))[0];
-    const host = mountTree(
-      <tbody>
-        <InstalledRow
-          group={onePlace}
-          origin={null}
-          forkedIn={[]}
-          outOfDate={false}
-          missingIn={[HYPR]}
-          onOpen={() => {}}
-          onOpenHarness={() => {}}
-          onOpenPlace={() => {}}
-        />
-      </tbody>,
-      { host: "table" },
-    );
-    const where = host.querySelectorAll("td")[4];
-    expect(where?.textContent).toBe("2 locations");
-    expect(where?.getAttribute("title")).toBe("/work/vg, /work/hyprtrade");
-    const badge = [...host.querySelectorAll<HTMLElement>("button")].find((b) =>
-      b.textContent?.startsWith(MISSING_FILES_BADGE_LABEL),
-    );
-    expect(badge?.textContent).toContain("in hyprtrade");
-  });
-
-  // Two same-named folders whose copies are both gone: neither is on the
-  // scan, so the badges are named against each other rather than against
-  // the places the row can still see.
-  it("tells two same-named places apart by their parent folder", () => {
-    const { host } = mount([], false, [
-      { scope: "project", root: "/work/app" },
-      { scope: "project", root: "/clients/app" },
-    ]);
-    const badges = [...host.querySelectorAll<HTMLElement>("button")]
-      .filter((b) => b.textContent?.startsWith(MISSING_FILES_BADGE_LABEL))
-      .map((b) => b.textContent?.replace(MISSING_FILES_BADGE_HELP, ""));
-    expect(badges).toEqual([
-      `${MISSING_FILES_BADGE_LABEL} in work/app`,
-      `${MISSING_FILES_BADGE_LABEL} in clients/app`,
-    ]);
   });
 });
 

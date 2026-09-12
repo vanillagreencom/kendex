@@ -1132,11 +1132,8 @@ describe("the package page's file actions", () => {
       const host = await openPage(VG, elsewhere, {});
       expect(back, name).not.toHaveBeenCalled();
       expect(host.textContent, name).toContain(MISSING_FILES_NOTICE_TITLE);
-      const buttons = Array.from(host.querySelectorAll("button")).map(
-        (button) => button.textContent,
-      );
-      expect(buttons, name).toContain(REPAIR_LABEL);
-      expect(buttons, name).not.toContain(OPEN_IN_LABEL);
+      expect(buttons(host), name).toContain(REPAIR_LABEL);
+      expect(buttons(host), name).not.toContain(OPEN_IN_LABEL);
     }
   });
 

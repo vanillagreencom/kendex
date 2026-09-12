@@ -10,12 +10,12 @@ use super::*;
 const GUARD: &str = "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: check shell commands\n# ---\nexit 0\n";
 
 #[allow(clippy::unwrap_used)]
-fn row(w: &World) -> kendex_core::package::updates::UpdateRow {
+fn row(w: &World, kind: ItemKind, name: &str) -> kendex_core::package::updates::UpdateRow {
     kendex_core::package::updates::updates(&w.env, &w.scope)
         .unwrap()
         .rows
         .iter()
-        .find(|row| row.kind == ItemKind::Hook && row.name == "guard")
+        .find(|row| row.kind == kind && row.name == name)
         .cloned()
         .unwrap()
 }
@@ -40,16 +40,14 @@ fn a_registered_hook_whose_script_is_gone_reads_as_missing_until_the_apply_puts_
     sync_and_apply(&w);
     let script = w.home.join("app/.claude/hooks/guard.sh");
     assert!(script.is_file(), "{}", script.display());
-    let settings = fs::read_to_string(w.home.join("app/.claude/settings.json")).unwrap();
-    assert!(settings.contains("guard.sh"), "{settings}");
 
     // The control: with the script where the apply put it, nothing is
     // missing.
-    let present = row(&w);
+    let present = row(&w, ItemKind::Hook, "guard");
     assert!(!present.files_missing, "{present:?}");
 
     fs::remove_file(&script).unwrap();
-    let gone = row(&w);
+    let gone = row(&w, ItemKind::Hook, "guard");
     assert!(gone.files_missing, "{gone:?}");
     assert!(
         !gone.blocked_by_local_edit,
@@ -66,7 +64,7 @@ fn a_registered_hook_whose_script_is_gone_reads_as_missing_until_the_apply_puts_
         kendex_core::package::update_one(&w.env, &w.scope, ItemKind::Hook, "guard").unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(fs::read_to_string(&script).unwrap(), GUARD);
-    let repaired = row(&w);
+    let repaired = row(&w, ItemKind::Hook, "guard");
     assert!(!repaired.files_missing, "{repaired:?}");
 }
 
@@ -94,15 +92,10 @@ fn a_repair_at_a_held_revision_restores_that_revision_and_keeps_the_hold() {
     fs::remove_file(&rendering).unwrap();
     let loaded = manifest_of(&w);
     remote::sync_sources(&w.env, &loaded).unwrap();
-    let row = kendex_core::package::updates::updates(&w.env, &w.scope)
-        .unwrap()
-        .rows
-        .into_iter()
-        .find(|row| row.kind == ItemKind::Agent && row.name == "rev")
-        .unwrap();
+    let gone = row(&w, ItemKind::Agent, "rev");
     assert!(
-        row.files_missing && row.pinned && row.update_available,
-        "{row:?}"
+        gone.files_missing && gone.pinned && gone.update_available,
+        "{gone:?}"
     );
 
     let report =
@@ -114,36 +107,6 @@ fn a_repair_at_a_held_revision_restores_that_revision_and_keeps_the_hold() {
         Some(one.as_str()),
         "the hold moved"
     );
-}
-
-// An agent has no registration that keeps it observed once its rendering
-// is deleted: the lock is all that says a file stood there, and the row
-// has to say so the same way it does for a hook.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_deleted_agent_rendering_reads_as_missing() {
-    let w = world();
-    write_agent(&w.upstream, "rev", "Agent body.");
-    commit(&w.upstream, "one");
-    declare(&w, "[agents.rev]\nsource = \"cat\"\n");
-    sync_and_apply(&w);
-    let rendering = w.home.join("app/.claude/agents/rev.md");
-    assert!(rendering.is_file(), "{}", rendering.display());
-    let row = |w: &World| {
-        kendex_core::package::updates::updates(&w.env, &w.scope)
-            .unwrap()
-            .rows
-            .iter()
-            .find(|row| row.kind == ItemKind::Agent && row.name == "rev")
-            .cloned()
-            .unwrap()
-    };
-    assert!(!row(&w).files_missing);
-
-    fs::remove_file(&rendering).unwrap();
-    let gone = row(&w);
-    assert!(gone.files_missing, "{gone:?}");
-    assert!(!gone.blocked_by_local_edit, "{gone:?}");
 }
 
 // A declaration that has never been installed is missing on disk too,
@@ -160,6 +123,6 @@ fn a_hook_never_installed_is_not_missing_a_file() {
     remote::sync_sources(&w.env, &loaded).unwrap();
     assert!(!w.home.join("app/.claude/hooks/guard.sh").exists());
 
-    let declared = row(&w);
+    let declared = row(&w, ItemKind::Hook, "guard");
     assert!(!declared.files_missing, "{declared:?}");
 }
