@@ -260,11 +260,31 @@ printf 'not a map line\n' >"$restack_map_file"
 : >"$args_log"
 STUB_ARGS_LOG="$args_log" STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "1" "a restack map file that is not a hop record refuses"
-assert_eq "$(grep '^worktree-push:' "$run_err")" "worktree-push: restack-map-grammar file=$restack_map_file" \
-  "the refusal names the file whose grammar it could not apply"
+assert_eq "$(grep '^worktree-push:' "$run_err")" \
+  "worktree-push: restack-map-grammar file=$restack_map_file hops_applied=0" \
+  "the refusal names the file whose grammar it could not apply, and that no hop landed"
 assert_eq "$([[ -s "$args_log" ]] && echo ran || echo no)" "no" "the refusal lands before the push"
 assert_eq "$(state_json "$work")" "$junk_before" "the refused run leaves workflow state alone"
 assert_eq "$([[ -e "$restack_map_file" ]] && echo present || echo absent)" "present" "the unconsumed file is left in place"
+
+# Hops are written at their boundary, so a valid hop before a malformed one is
+# already in workflow state when the refusal lands. The refusal reports how
+# many landed: telling the operator nothing did would send them to re-apply
+# work that is done.
+work="$TMP_ROOT/work-restack-partial"
+reset_state "$work"
+printf 'rebase-hop:\nrebase-map: %s %s\nrebase-hop:\nnot a map line\n' "$OLD_A" "$NEW_A" >"$restack_map_file"
+: >"$args_log"
+STUB_ARGS_LOG="$args_log" STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC" "1" "a malformed hop after a valid one refuses"
+assert_eq "$(grep '^worktree-push:' "$run_err")" \
+  "worktree-push: restack-map-grammar file=$restack_map_file hops_applied=1" \
+  "the refusal reports the hop that did land"
+assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A:0:7}" \
+  "and that hop is in workflow state, as the count says"
+assert_eq "$([[ -s "$args_log" ]] && echo ran || echo no)" "no" "the refusal still lands before the push"
+assert_eq "$([[ -e "$restack_map_file" ]] && echo present || echo absent)" "present" \
+  "the whole file is kept, the applied hop included"
 
 # No record at all. The restack already made recorded SHAs stale wherever they
 # were written, so this refuses before the push and keeps the file; the message
@@ -283,6 +303,34 @@ assert_contains "$(cat "$run_err")" "Init the record and re-run, or remove the m
   "and sends the operator at the record, not at repairing one that does not exist"
 assert_eq "$([[ -s "$args_log" ]] && echo ran || echo no)" "no" "the unrecordable map refuses before the push"
 assert_eq "$([[ -e "$restack_map_file" ]] && echo present || echo absent)" "present" "the unrecorded file is left in place"
+
+# A record that exists but cannot be written: the hop is not recorded, and the
+# refusal says so under its own key with the count of what did land. chmod mode
+# bits do not bind root, so the denial is probed and the case skipped visibly
+# where it cannot take effect.
+work="$TMP_ROOT/work-restack-unwritable"
+reset_state "$work"
+unwritable_before="$(state_json "$work")"
+printf 'rebase-hop:\nrebase-map: %s %s\n' "$OLD_A" "$NEW_A" >"$restack_map_file"
+chmod a-w "$work/tmp"
+if touch "$work/tmp/.write-probe" 2>/dev/null; then
+  rm -f "$work/tmp/.write-probe"
+  chmod u+w "$work/tmp"
+  rm -f "$restack_map_file"
+  printf '  skip  %s\n' "unwritable-state case: chmod a-w does not deny writes here (running as root?)"
+else
+  : >"$args_log"
+  STUB_ARGS_LOG="$args_log" STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
+  chmod u+w "$work/tmp"
+  assert_eq "$RUN_RC" "1" "a hop that cannot be written refuses"
+  assert_eq "$(grep '^worktree-push:' "$run_err")" \
+    "worktree-push: restack-map-write issue=KEN-1 state=tmp/workflow-state-KEN-1.json file=$restack_map_file hops_applied=0" \
+    "the refusal names the unwritten hop and that none landed before it"
+  assert_eq "$(state_json "$work")" "$unwritable_before" "the unwritable state is left untouched"
+  assert_eq "$([[ -s "$args_log" ]] && echo ran || echo no)" "no" "the unwritten hop refuses before the push"
+  assert_eq "$([[ -e "$restack_map_file" ]] && echo present || echo absent)" "present" "the unrecorded file is kept"
+  rm -f "$restack_map_file"
+fi
 
 # A consumed file that cannot be deleted would be read again by a later run,
 # so the call fails rather than reporting success over a file it still owns.

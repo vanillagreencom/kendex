@@ -189,6 +189,19 @@ step() {
       commit_main .agents/engine.md
       ;;
     create) tool create topic ;;
+    # Two branch commits under one subject, the first one's patch landed on
+    # main under its own: the rebase drops one of the pair and the map cannot
+    # say which, so create refuses after un-shadowing the entry.
+    twins)
+      printf 'a\n' >"$WT/twin-a.txt"
+      git -C "$WT" add twin-a.txt
+      git -C "$WT" commit -q -m 'twin subject'
+      printf 'b\n' >"$WT/twin-b.txt"
+      git -C "$WT" add twin-b.txt
+      git -C "$WT" commit -q -m 'twin subject'
+      printf 'a\n' >"$MAIN/twin-a.txt"
+      commit_main twin-a.txt
+      ;;
     repair) tool repair-links "$WT" ;;
     # A commit of the worktree's own, away from the entry, for a rebase to carry.
     feature) printf 'branch work\n' >"$WT/feature.txt"; git -C "$WT" add feature.txt; git -C "$WT" commit -q -m 'feature work' ;;
@@ -308,6 +321,8 @@ err_text() {
     # A completed restack reports its rewritten commits; what pairs them is
     # worktree_create_restack.sh's contract, so the SHAs collapse here.
     map:*) printf 'worktree-rebase-count: %s;rebase-map:...' "${1#map:}" ;;
+    ambiguous) printf 'worktree-rebase-map-ambiguous: twin subject' ;;
+    map-unreadable) printf 'worktree-restack-map-unreadable: <wt>' ;;
     *+*) err_text "${1%%+*}"; printf ';'; err_text "${1#*+}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
@@ -325,6 +340,7 @@ ROWS="
 an entry shadowing a tracked subtree gets per-child links, not a parent link over assume-unchanged files|shadow|create topic|0|wt|-|$SHADOW_V1
 git can write the tracked subtree: a merge advancing the vendored file lands beside the links|shadow create advance|@merge|0|-|-|$SHADOW_V2
 create --reuse rebases the branch through the advanced vendored file and keeps the per-child layout|shadow create feature advance|create topic --reuse|0|wt|map:1|$SHADOW_V2
+a reuse whose map cannot be derived puts the links back before it refuses|shadow create twins legacy-link|create topic --reuse|1|-|ambiguous+map-unreadable|$SHADOW_V1
 the reuse refresh restores links the rebase dropped when main starts tracking a child under the entry|predated create feature track-link-child|create topic --reuse|0|wt|map:1|.agents=dir .agents/skills=dir .agents/skills/deep-research=dir .agents/skills/deep-research/SKILL.md=file:installed skill .agents/state.json=link(<main>/.agents/state.json) assume=- status=-
 fix-links on the per-child layout is idempotent and quiet|shadow create advance merge|fix-links @wt|0|restored|-|$SHADOW_V2
 a legacy parent link over tracked files heals to the per-child layout and clears the stale bit|shadow create advance merge legacy-link|fix-links @wt|0|restored|-|$SHADOW_V2

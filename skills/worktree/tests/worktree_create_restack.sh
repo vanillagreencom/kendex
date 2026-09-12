@@ -535,11 +535,11 @@ build map-mutant clean
 mkdir -p "$ROOT/pkg"
 cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
 mutant_script="$ROOT/pkg/worktree/scripts/worktree"
-assert_eq "$(grep -c 'emit_restack_rebase_map "\$WT_PATH" || exit 1' "$mutant_script")" "3" \
+assert_eq "$(grep -c 'emit_restack_rebase_map "\$WT_PATH"' "$mutant_script")" "3" \
   "control finds every restack map emission to remove"
-sed -i.bak 's/emit_restack_rebase_map "\$WT_PATH" || exit 1/: "no map"/' "$mutant_script"
+sed -i.bak 's/emit_restack_rebase_map "\$WT_PATH"/: "no map"/' "$mutant_script"
 rm -f "$mutant_script.bak"
-assert_eq "$(grep -c 'emit_restack_rebase_map "\$WT_PATH" || exit 1' "$mutant_script")" "0" \
+assert_eq "$(grep -c 'emit_restack_rebase_map "\$WT_PATH"' "$mutant_script")" "0" \
   "control removes them only from its private copy"
 mutant_rc=0
 (cd "$MAIN" && "$mutant_script" create "$ISSUE" --restack >"$ROOT/mutant.out" 2>"$ROOT/mutant.err") || mutant_rc=$?

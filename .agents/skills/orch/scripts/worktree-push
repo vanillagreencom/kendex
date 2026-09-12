@@ -39,8 +39,9 @@
 # leaving the record on Y — a commit the later restack rewrote away, so on no
 # branch. The file is deleted only once every hop is in workflow state.
 # Anything that stops a hop refuses before the push, where nothing new has gone
-# stale, and keeps the whole file; `--check-live-round` consumes nothing and
-# deletes nothing.
+# stale, and keeps the whole file, naming in `hops_applied` how many hops
+# reached workflow state before the refusal; `--check-live-round` consumes
+# nothing and deletes nothing.
 #
 # A fix round in flight is refused rather than reconciled: its record pins the
 # commit the delegated agent is working from, and the rebase this command runs
@@ -153,9 +154,9 @@ message() {
 	not-directory) printf 'The worktree directory does not resolve.\n' ;;
 	not-worktree) printf 'The directory is not a Git worktree.\n' ;;
 	restack-map-path) printf 'The worktree-private rebase-map file could not be resolved. No push ran.\n' ;;
-	restack-map-grammar) printf 'The restack rebase-map file is not a hop record this can apply: each hop opens with its own boundary line and holds at least one mapping. Nothing was reconciled and the file was kept. Read it, apply any rebase-map lines it holds with workflow-state update, and remove it. No push ran.\n' ;;
+	restack-map-grammar) printf 'The restack rebase-map file is not a hop record this can apply: each hop opens with its own boundary line and holds at least one mapping. hops_applied is how many complete hops before it reached workflow state, and the whole file was kept. Apply the rebase-map lines after those hops with workflow-state update, then remove the file. No push ran.\n' ;;
 	restack-map-nostate) printf 'No workflow state records this issue, so it holds no SHA a restack could have made stale and nothing can hold the map. Init the record and re-run, or remove the map file. No push ran.\n' ;;
-	restack-map-write) printf 'A restack hop was not recorded. Repair workflow state, then apply the file lines with workflow-state update before publishing recorded SHAs. No push ran.\n' ;;
+	restack-map-write) printf 'A restack hop was not recorded. hops_applied is how many hops before it reached workflow state, and the whole file was kept. Repair workflow state, then apply the rebase-map lines after those hops with workflow-state update before publishing recorded SHAs. No push ran.\n' ;;
 	restack-map-clear) printf 'The reconciled restack rebase-map file could not be removed, so a later run would read it again. Remove it, then re-run. No push ran.\n' ;;
 	state-resolve) printf 'Workflow state could not be resolved. No push ran.\n' ;;
 	state-answer) printf 'The workflow-state existence result is invalid. No push ran.\n' ;;
@@ -167,8 +168,8 @@ message() {
 	live-round) printf 'The active fix round has no dev-return receipt. Land its receipt or stamp a fresh dev_round_id before rebasing.\n' ;;
 	temp-file) printf 'The push output could not be captured. No push ran.\n' ;;
 	map-scan) printf 'The push output could not be scanned. Recorded SHAs are not reconciled.\n' ;;
-	map-sha) printf 'A rebase-map SHA is invalid. Recorded SHAs are not reconciled.\n' ;;
-	map-build) printf 'The rebase map could not be assembled. Recorded SHAs are not reconciled.\n' ;;
+	map-sha) printf 'A rebase-map SHA is invalid. The mappings that map carries are not reconciled.\n' ;;
+	map-build) printf 'The rebase map could not be assembled. The mappings it carries are not reconciled.\n' ;;
 	map-write) printf 'The rebase map was not recorded. A retry cannot recover it. Repair workflow state, then apply the replayed rebase-map lines with workflow-state update before publishing recorded SHAs.\n' ;;
 	esac
 }
@@ -407,11 +408,11 @@ restack_hops=0
 # and once more at end of file, so the last hop is not left unapplied.
 reconcile_restack_hop() {
 	[[ "$restack_hop_open" == true ]] || return 0
-	[[ -n "$restack_hop_lines" ]] || fail restack-map-grammar "file=$restack_map_file"
+	[[ -n "$restack_hop_lines" ]] || fail restack-map-grammar "file=$restack_map_file" "hops_applied=$restack_hops"
 	parse_map_lines "$restack_hop_lines" \
-		|| fail "${MAP_FAIL_ARGS[@]}" "file=$restack_map_file"
+		|| fail "${MAP_FAIL_ARGS[@]}" "file=$restack_map_file" "hops_applied=$restack_hops"
 	reconcile_map restack-reconcile "$MAP_JSON" \
-		|| fail restack-map-write "issue=$issue" "state=$state_file" "file=$restack_map_file"
+		|| fail restack-map-write "issue=$issue" "state=$state_file" "file=$restack_map_file" "hops_applied=$restack_hops"
 	restack_hops=$((restack_hops + 1))
 	restack_hop_lines=''
 }
@@ -430,14 +431,14 @@ if [[ -e "$restack_map_file" ]]; then
 		'rebase-map: '*)
 			# A mapping outside a hop has no order, so the file is not a record
 			# this can apply rather than one hop it may guess at.
-			[[ "$restack_hop_open" == true ]] || fail restack-map-grammar "file=$restack_map_file"
+			[[ "$restack_hop_open" == true ]] || fail restack-map-grammar "file=$restack_map_file" "hops_applied=$restack_hops"
 			restack_hop_lines="${restack_hop_lines:+$restack_hop_lines$'\n'}$restack_line"
 			;;
-		*) fail restack-map-grammar "file=$restack_map_file" ;;
+		*) fail restack-map-grammar "file=$restack_map_file" "hops_applied=$restack_hops" ;;
 		esac
 	done <"$restack_map_file"
 	reconcile_restack_hop
-	[[ "$restack_hops" -gt 0 ]] || fail restack-map-grammar "file=$restack_map_file"
+	[[ "$restack_hops" -gt 0 ]] || fail restack-map-grammar "file=$restack_map_file" "hops_applied=$restack_hops"
 	rm -f -- "$restack_map_file" || fail restack-map-clear "file=$restack_map_file"
 fi
 

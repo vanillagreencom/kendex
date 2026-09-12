@@ -2328,10 +2328,19 @@ case "${1:-}" in
               worktree_message restack-unauthorized "$WT_PATH" "No rewritten push was authorized." >&2
               exit 1
             fi
-            emit_restack_rebase_map "$WT_PATH" || exit 1
+            # This block un-shadowed the configured symlinks so git could
+            # detach, and a refusal here is a terminal path of create: put the
+            # links back before leaving, as every other arm below does.
+            if ! emit_restack_rebase_map "$WT_PATH"; then
+              restore_unshadowed_worktree_setup "$WT_PATH"
+              exit 1
+            fi
             finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID" || exit 1
           elif REBASE_OUTPUT="$(git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" 2>&1)"; then
-            emit_restack_rebase_map "$WT_PATH" || exit 1
+            if ! emit_restack_rebase_map "$WT_PATH"; then
+              restore_unshadowed_worktree_setup "$WT_PATH"
+              exit 1
+            fi
             finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID" || exit 1
           else
             # Capture conflict details before any abort erases the rebase state.
