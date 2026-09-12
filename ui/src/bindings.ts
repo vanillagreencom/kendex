@@ -5101,7 +5101,10 @@ export type TemplateInstall = {
 	 *  were.
 	 */
 	subscribed: string[],
-	/**  Packages declared, by kind and name. */
+	/**
+	 *  Packages installed, by kind and name: each declared in the
+	 *  destination's manifest and rendered by an add that committed.
+	 */
 	declared: string[],
 	/**  Copies written into the destination's own local packages. */
 	copied: string[],

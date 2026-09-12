@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use crate::env::Env;
 use crate::manifest::Manifest;
 use crate::model::Scope;
-use crate::source::{SourceState, source_config};
+use crate::source::{SourceState, source_config_for};
 use crate::source_read::SealedSource;
 
 use super::desired::DesiredState;
@@ -147,7 +147,7 @@ fn origin(
         }
     };
     let read = SealedSource::open(&ready.root).and_then(|sealed| {
-        let config = source_config(&sealed, crate::source::repo_leaf(&ready.provenance))?;
+        let config = source_config_for(&sealed, &ready.provenance)?;
         // A plugin-registry catalog's sets are its plugins, and enumerating
         // their members is the only read that can fail for one — the config
         // below reports nothing about a plugin whose items will not list. A

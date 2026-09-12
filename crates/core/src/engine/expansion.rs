@@ -14,7 +14,7 @@ use crate::env::Env;
 use crate::lock::Reason;
 use crate::manifest::{ItemDecl, Manifest};
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::source::{SourceConfig, SourceState, source_config};
+use crate::source::{SourceConfig, SourceState, source_config_for};
 use crate::source_read::SealedSource;
 
 use super::desired::{DesiredState, target_harnesses};
@@ -324,9 +324,8 @@ impl Catalogs<'_> {
         // failures. `origin::origin` is the wider one, and a failure shape
         // added here has to be added there too or a sweep keeps answering
         // that a catalog reads.
-        let leaf = crate::source::repo_leaf(&ready.provenance);
         let opened = SealedSource::open(&ready.root)
-            .and_then(|sealed| Ok((source_config(&sealed, leaf)?, sealed)));
+            .and_then(|sealed| Ok((source_config_for(&sealed, &ready.provenance)?, sealed)));
         let (config, sealed) = match opened {
             Ok(opened) => opened,
             // The removal pass reads the mark and stays quiet, because this

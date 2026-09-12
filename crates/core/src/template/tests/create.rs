@@ -52,6 +52,11 @@ pub(super) fn seeded() -> Project {
     // The person's own package, captured into the project's local source.
     let local = root.join(crate::source::LOCAL_SOURCE_DIR);
     skill(&local.join("skills"), "house-style", "my own bytes");
+    file_item(
+        &local.join("commands"),
+        "preview.md",
+        "---\ndescription: preview the site\n---\nCommand body.\n",
+    );
     // Content nothing manages: the local opt-in's candidates.
     skill(&root.join(".claude/skills"), "stray", "unmanaged bytes");
     file_item(
@@ -68,6 +73,7 @@ pub(super) fn seeded() -> Project {
              [sources.cat]\n{}\n\
              [skills.gh]\nsource = \"cat\"\n\
              [skills.house-style]\nsource = \"local\"\n\
+             [commands.preview]\nsource = \"local\"\n\
              [commands.note]\nsource = \"cat\"\nenabled = false\n\
              [skill-instructions]\n\"gh\" = \"read this first\"\n\
              [bot-instructions]\nreviewers = [\"one\"]\n",
@@ -84,6 +90,7 @@ pub(super) fn seeded() -> Project {
     for (kind, name, source) in [
         (ItemKind::Skill, "gh", "cat"),
         (ItemKind::Skill, "house-style", "local"),
+        (ItemKind::Command, "preview", "local"),
         (ItemKind::Command, "note", "cat"),
     ] {
         lock.entries.insert(

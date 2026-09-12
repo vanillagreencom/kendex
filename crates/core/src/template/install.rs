@@ -138,7 +138,8 @@ pub struct TemplateInstall {
     /// The repositories subscribed to along the way, in the order they
     /// were.
     pub subscribed: Vec<String>,
-    /// Packages declared, by kind and name.
+    /// Packages installed, by kind and name: each declared in the
+    /// destination's manifest and rendered by an add that committed.
     pub declared: Vec<String>,
     /// Copies written into the destination's own local packages.
     pub copied: Vec<String>,
@@ -608,10 +609,6 @@ fn subscription_for(personal: &Manifest, repo: &str) -> Option<String> {
 #[derive(Default)]
 struct Landing {
     install: TemplateInstall,
-    /// How many plans this run committed. A plan is one transaction — it
-    /// applies whole or rolls back — so this counts writes that are on
-    /// disk.
-    committed: usize,
 }
 
 impl Landing {
@@ -629,15 +626,23 @@ impl Landing {
         if crate::apply::execute(env, plan)?.applied == 0 {
             return Ok(());
         }
-        self.committed += 1;
         wrote(&mut self.install);
         Ok(())
     }
 
-    /// Whether anything this run did is on disk. What decides between an
-    /// install that refused and one that stopped part-way.
+    /// Whether a package this run installed is in the destination. What
+    /// decides between an install that refused and one that stopped
+    /// part-way.
+    ///
+    /// A package went in when the add that declares and renders it
+    /// committed. The writes before that — a subscription, a copy into
+    /// the destination's local slot — are what a member needs before it
+    /// can go in, not a member gone in: a run whose add refuses after
+    /// them has put no package into the place, and reporting it as one
+    /// that stopped part-way would tell a person that some of the
+    /// template is installed when none of it is.
     fn anything_landed(&self) -> bool {
-        self.committed > 0
+        !self.install.declared.is_empty()
     }
 
     /// Whether this run has already declared that package.
@@ -656,9 +661,9 @@ impl Landing {
     }
 }
 
-/// What a failing step does to the run: nothing landed yet, so the
-/// failure is the whole answer; or something did, and the account of it
-/// travels back with the reason it stopped.
+/// What a failing step does to the run: no package went in yet, so the
+/// failure is the whole answer; or one did, and the account of it travels
+/// back with the reason it stopped.
 ///
 /// A template install is several writes and only the per-scope
 /// transactions are atomic, so a person whose third step failed still has
@@ -825,10 +830,11 @@ pub fn install(
 /// different bytes is a refusal naming it — this never writes over content
 /// somebody else owns.
 ///
-/// The run's record is handed in rather than made here. What this commits
-/// is on disk whatever happens next, so a refusal in the rendering below
-/// cannot take the account of it away: there is one record for the
-/// install, and this step has no copy of its own to drop.
+/// The run's record is handed in rather than made here. The copies are
+/// what the members need before the add below can install them, and
+/// their declarations enter the record with that add: a refusal in the
+/// rendering leaves the copied bytes and their declarations in place and
+/// counts no package from this step as gone in.
 fn install_local(
     env: &Env,
     template: &Template,
@@ -905,7 +911,6 @@ fn install_local(
     let plan = Plan::landed(destination.clone(), ops)?;
     landed.commit(env, &plan, |install| {
         install.copied.extend(copied);
-        install.declared.extend(declared);
     })?;
     // The declarations are in; rendering them is the ordinary apply every
     // other install ends on.
@@ -916,42 +921,30 @@ fn install_local(
             source: Some(LOCAL_SOURCE_NAME.to_owned()),
             harnesses,
             method,
-            skills: resolution
-                .copies
-                .iter()
-                .filter(|copy| copy.kind == ItemKind::Skill)
-                .map(|copy| copy.name.clone())
-                .collect(),
-            agents: resolution
-                .copies
-                .iter()
-                .filter(|copy| copy.kind == ItemKind::Agent)
-                .map(|copy| copy.name.clone())
-                .collect(),
-            hooks: resolution
-                .copies
-                .iter()
-                .filter(|copy| copy.kind == ItemKind::Hook)
-                .map(|copy| copy.name.clone())
-                .collect(),
-            commands: resolution
-                .copies
-                .iter()
-                .filter(|copy| copy.kind == ItemKind::Command)
-                .map(|copy| copy.name.clone())
-                .collect(),
-            mcp_servers: resolution
-                .copies
-                .iter()
-                .filter(|copy| copy.kind == ItemKind::McpServer)
-                .map(|copy| copy.name.clone())
-                .collect(),
+            skills: copies_of(resolution, ItemKind::Skill),
+            agents: copies_of(resolution, ItemKind::Agent),
+            hooks: copies_of(resolution, ItemKind::Hook),
+            commands: copies_of(resolution, ItemKind::Command),
+            mcp_servers: copies_of(resolution, ItemKind::McpServer),
             ..AddRequest::default()
         },
     )?;
-    landed.commit(env, &report.plan, |_| {})?;
+    landed.commit(env, &report.plan, |install| {
+        install.declared.extend(declared);
+    })?;
     landed.install.notes.extend(report.notes);
     Ok(())
+}
+
+/// The names of the template's own copies of one kind, as the add that
+/// renders them from the local slot wants them.
+fn copies_of(resolution: &Resolution, kind: ItemKind) -> Vec<String> {
+    resolution
+        .copies
+        .iter()
+        .filter(|copy| copy.kind == kind)
+        .map(|copy| copy.name.clone())
+        .collect()
 }
 
 /// The writes that carry the terms the copied bytes came under into the

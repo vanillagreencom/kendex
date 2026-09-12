@@ -161,13 +161,21 @@ fn installing_twice_leaves_the_same_project() {
         unreachable!("built as a project scope")
     };
 
-    let landed = install(&project.env, &template, &target, None, None).unwrap();
+    let landed = install(
+        &project.env,
+        &template,
+        &target,
+        Some(vec![HarnessId::Claude]),
+        None,
+    )
+    .unwrap();
     assert_eq!(landed.subscribed, ["cat"].map(|_| project_repo(&project)));
     let declared = landed.declared.join(", ");
     for wanted in [
         "skill gh",
         "command note",
         "skill house-style",
+        "command preview",
         "skill stray",
     ] {
         assert!(declared.contains(wanted), "{declared}");
@@ -179,12 +187,23 @@ fn installing_twice_leaves_the_same_project() {
         .join("skills/house-style/SKILL.md");
     assert!(copied.is_file(), "{}", copied.display());
     assert!(!copied.is_symlink());
+    // A copied command is rendered from the local source like the skill
+    // beside it: the reserved source offers its commands by name.
+    let rendered = root.join(".claude/commands/preview.md");
+    assert!(rendered.is_file(), "{}", rendered.display());
     // The carried customization landed.
     let manifest = fs::read_to_string(root.join("kendex.toml")).unwrap();
     assert!(manifest.contains("read this first"), "{manifest}");
 
     let after_first = snapshot(root);
-    install(&project.env, &template, &target, None, None).unwrap();
+    install(
+        &project.env,
+        &template,
+        &target,
+        Some(vec![HarnessId::Claude]),
+        None,
+    )
+    .unwrap();
     assert_eq!(
         snapshot(root),
         after_first,
@@ -885,18 +904,19 @@ fn a_plugin_resolves_as_a_set_that_still_says_which_kind_it_is() {
     assert_eq!(after.members, Vec::new());
 }
 
-/// A refusal in the rendering after the copies are on disk answers with
-/// the copies and the reason it stopped, never as a total refusal.
+/// A refusal in the rendering after the copies are on disk is a refusal:
+/// no package went in, so the run does not answer as one that stopped
+/// part-way.
 ///
 /// The copy and its declaration commit in one plan and the rendering is a
-/// second one. The account of the first belongs to the run, not to the
-/// step that made it, so a step that refuses afterwards cannot take it
-/// away — a person told nothing landed would go looking for bytes that
-/// are in their project.
+/// second one. A copy in the local slot is what the member needs before
+/// it can be installed, not the member installed, and an account that
+/// counted it would tell a person some of the template is in a place
+/// that holds none of it.
 #[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_render_that_refuses_after_the_copy_committed_reports_the_copy() {
+fn a_render_that_refuses_after_the_copy_committed_is_a_refusal() {
     use std::os::unix::fs::PermissionsExt;
     let project = seeded();
     // Copies only: a marketplace group writes before them, and its own
@@ -939,10 +959,13 @@ fn a_render_that_refuses_after_the_copy_committed_reports_the_copy() {
 
     match denied {
         true => {
-            let landed = landed.unwrap();
-            assert_eq!(landed.copied, ["skill stray"], "{landed:?}");
-            assert!(landed.stopped.is_some(), "{landed:?}");
-            // And the bytes the account names are where it says they are.
+            let refused = landed.unwrap_err();
+            assert!(
+                matches!(refused, CoreError::RolledBack { .. }),
+                "{refused:?}"
+            );
+            // The copy stays where the committed plan put it, and the
+            // refusal, not an account, is what says nothing was rendered.
             let copied = root
                 .join(crate::source::LOCAL_SOURCE_DIR)
                 .join("skills/stray/SKILL.md");

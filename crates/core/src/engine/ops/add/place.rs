@@ -17,7 +17,7 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest::{LOCAL_SOURCE_NAME, Manifest};
 use crate::model::{ItemKind, Scope};
-use crate::source::{self, SourceConfig, list_items, source_config};
+use crate::source::{self, SourceConfig, list_items, source_config_for};
 use crate::source_read::SealedSource;
 
 /// The qualifier separator. `::` never appears in an item name, an
@@ -151,7 +151,7 @@ fn open<'cache>(
     if !cache.opened.contains_key(alias) {
         let ready = source::require_ready(env, scope, alias, manifest)?;
         let sealed = SealedSource::open(&ready.root)?;
-        let config = source_config(&sealed, source::repo_leaf(&ready.provenance))?;
+        let config = source_config_for(&sealed, &ready.provenance)?;
         cache.opened.insert(
             alias.to_owned(),
             Opened {
