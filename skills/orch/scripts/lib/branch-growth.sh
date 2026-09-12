@@ -125,11 +125,16 @@ BRANCH_SIZE_MIRROR=""
 # everything else literal. The list only adds: empty, or matching nothing, it
 # leaves every line where the built-in rule put it, which for a path that rule
 # does not name is production and the stricter allowance.
+#
+# The globs reach awk through the environment, not a `-v` assignment: awk
+# processes escape sequences in a `-v` value before the program sees it, so a
+# backslash in a configured glob would be rewritten, and rewritten differently
+# by gawk and mawk. An ENVIRON entry arrives byte for byte.
 branch_size_classified() {
   local worktree="$1" base_resolver="$2" commit="$3" render_roots="$4" test_paths="$5"
   local numstat measured
   branch_size_numstat "$worktree" "$base_resolver" "$commit" numstat || return 1
-  if ! measured="$(awk -F '\t' -v roots="$render_roots" -v test_paths="$test_paths" '
+  if ! measured="$(BRANCH_GROWTH_TEST_PATHS="$test_paths" awk -F '\t' -v roots="$render_roots" '
     function new_path(p,   open_at, close_at, prefix, suffix, moved) {
       if (index(p, " => ") == 0) return p
       open_at = index(p, "{")
@@ -193,7 +198,7 @@ branch_size_classified() {
     }
     BEGIN {
       nroots = split(roots, root, " ")
-      npats = split(test_paths, pattern, " ")
+      npats = split(ENVIRON["BRANCH_GROWTH_TEST_PATHS"], pattern, " ")
       for (i = 1; i <= npats; i++) pattern[i] = glob_to_regex(pattern[i])
     }
     NF == 0 || ($1 == "-" && $2 == "-") { next }
