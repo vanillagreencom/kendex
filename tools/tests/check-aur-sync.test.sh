@@ -26,7 +26,11 @@
 #           fine; `scriptlet` kendex naming an install scriptlet in both files with the
 #           file beside them (the AUR copy lacks it); `patch` two local
 #           sources in both files, one under a `name::` alias, both present;
-#           `patch-gone` the same with the aliased one absent; `changelog-gone`
+#           `patch-gone` the same with the aliased one absent; `patch-pinned`
+#           a local patch pinned to its real sha256 in both files;
+#           `patch-stale` the same pinned to a wrong digest (the files agree,
+#           makepkg would refuse); `aur-binary` a binary icon in both files
+#           with the AUR copy holding different bytes; `changelog-gone`
 #           a changelog named in both files and absent; `append` kendex's
 #           PKGBUILD growing depends with `depends+=` and its .SRCINFO not
 #           (makepkg honours it; a comparison that skipped it would call a
@@ -101,6 +105,30 @@ world() { # NAME — a fresh copy of the pristine world at $TMP/w-NAME, defect p
       header_line "$recipe/.SRCINFO" "$(printf '\tsha256sums = SKIP')" '^\tsha256sums = SKIP'
       printf -- '--- a\n+++ b\n' >"$recipe/fix.patch"
       [ "$name" = patch ] && printf 'notes\n' >"$recipe/notes.txt"
+      ;;
+    patch-pinned|patch-stale)
+      printf -- '--- a\n+++ b\n' >"$recipe/fix.patch"
+      if command -v sha256sum >/dev/null 2>&1; then sum="$(sha256sum "$recipe/fix.patch")"; else sum="$(shasum -a 256 "$recipe/fix.patch")"; fi
+      sum="${sum%% *}"
+      [ "$name" = patch-stale ] && sum="$AUR_WORLD_PLACEHOLDER"
+      header_line "$recipe/PKGBUILD" "source=('fix.patch')"
+      header_line "$recipe/PKGBUILD" "sha256sums=('$sum')" '^source='
+      header_line "$recipe/.SRCINFO" "$(printf '\tsource = fix.patch')"
+      header_line "$recipe/.SRCINFO" "$(printf '\tsha256sums = %s' "$sum")" '^\tsource = fix.patch'
+      ;;
+    aur-binary)
+      header_line "$recipe/PKGBUILD" "source=('icon.png')"
+      header_line "$recipe/PKGBUILD" "sha256sums=('SKIP')" '^source='
+      header_line "$recipe/.SRCINFO" "$(printf '\tsource = icon.png')"
+      header_line "$recipe/.SRCINFO" "$(printf '\tsha256sums = SKIP')" '^\tsource = icon.png'
+      printf '\211PNG\r\n\032\n\000\377' >"$recipe/icon.png"
+      git clone --quiet -- "$dir/aur/kendex.git" "$dir/seed"
+      cp -- "$recipe/PKGBUILD" "$recipe/.SRCINFO" "$dir/seed/"
+      printf '\211PNG\r\n\032\n\001\376' >"$dir/seed/icon.png"
+      git -C "$dir/seed" add --all
+      git -C "$dir/seed" -c user.name=aur -c user.email=aur@example.invalid commit --quiet -m 'other icon'
+      git -C "$dir/seed" push --quiet origin HEAD:master
+      rm -rf -- "$dir/seed"
       ;;
     changelog-gone)
       header_line "$recipe/PKGBUILD" 'changelog=ChangeLog'
@@ -180,6 +208,9 @@ scriptlet not yet on the AUR|scriptlet|--remote kendex|1|drift=3
 local sources present beside the recipe|patch|kendex|0|Arch PKGBUILD/.SRCINFO agree (kendex)
 local source absent|patch-gone|kendex|1|drift=1
 changelog absent|changelog-gone|kendex|1|drift=1
+local source pinned to its digest|patch-pinned|kendex|0|Arch PKGBUILD/.SRCINFO agree (kendex)
+local source with a stale digest|patch-stale|kendex|1|drift=1
+binary companion differs on the AUR|aur-binary|--remote kendex|1|drift=1
 depends+= with a stale .SRCINFO|append|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 depends[1]= with a stale .SRCINFO|indexed|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 declare in the header|declared|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
@@ -242,6 +273,22 @@ run "$dir" --remote kendex
 case "$OUT" in
   *'kendex: kendex.install is not published at all'*) ok "remote drift names the missing scriptlet" ;;
   *) bad "remote drift names the missing scriptlet" "$OUT" ;;
+esac
+
+# The stale-digest finding names the array, the file and both digests.
+dir="$(world patch-stale)"
+run "$dir" kendex
+case "$OUT" in
+  *"kendex: sha256sums[0] is $AUR_WORLD_PLACEHOLDER but fix.patch hashes to"*) ok "stale local digest names the pin and the file" ;;
+  *) bad "stale local digest names the pin and the file" "$OUT" ;;
+esac
+
+# A differing binary companion is reported by size, with no diff attempted.
+dir="$(world aur-binary)"
+run "$dir" --remote kendex
+case "$OUT" in
+  *'kendex: icon.png on the AUR is not this repo'\''s (10 bytes there, 10 here; binary, no diff)'*) ok "binary companion drift is reported without a text diff" ;;
+  *) bad "binary companion drift is reported without a text diff" "$OUT" ;;
 esac
 
 # The missing-file findings name the field and the file, aliases resolved.

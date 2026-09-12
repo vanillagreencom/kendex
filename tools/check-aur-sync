@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import hashlib
 import re
 import shlex
 import subprocess
@@ -384,6 +385,44 @@ def check_local(package: str, directory: Path) -> list[str]:
                 f"{package}: {key}={name} names no file in "
                 f"{directory.relative_to(ROOT)}"
             )
+    # A local source is also held to its pinned digest: the two files agree
+    # whether or not the patch was edited after the pin, and makepkg rejects
+    # a stale pin for every user.
+    problems.extend(local_source_digests(package, directory, pkgbuild))
+    return problems
+
+
+DIGESTS = {
+    "md5sums": "md5", "sha1sums": "sha1", "sha224sums": "sha224", "sha256sums": "sha256",
+    "sha384sums": "sha384", "sha512sums": "sha512", "b2sums": "blake2b",
+}
+
+
+def local_source_digests(package: str, directory: Path, pkgbuild) -> list[str]:
+    """Each local source entry against every digest array of its own suffix,
+    `SKIP` honoured; a file that is missing was reported already."""
+    problems = []
+    for key, values in pkgbuild.items():
+        if key != "source" and arch_field(key, ("source",)) is None:
+            continue
+        suffix = key[len("source"):]
+        for sums_key, algorithm in DIGESTS.items():
+            sums = pkgbuild.get(sums_key + suffix)
+            if sums is None:
+                continue
+            for index, value in enumerate(values):
+                name = local_source(value)
+                if name is None or index >= len(sums) or sums[index] == "SKIP":
+                    continue
+                path = directory / name
+                if not path.is_file():
+                    continue
+                actual = hashlib.new(algorithm, path.read_bytes()).hexdigest()
+                if actual != sums[index].lower():
+                    problems.append(
+                        f"{package}: {sums_key}{suffix}[{index}] is {sums[index]} but {name} "
+                        f"hashes to {actual}; re-pin it (updpkgsums) and regenerate .SRCINFO"
+                    )
     return problems
 
 
@@ -460,9 +499,20 @@ def check_remote(package: str, directory: Path, files: tuple[str, ...]) -> list[
             if not published.is_file():
                 problems.append(f"{package}: {name} is not published at all")
                 continue
-            want = (directory / name).read_text().splitlines(keepends=True)
-            have = published.read_text().splitlines(keepends=True)
-            if want == have:
+            want_bytes = (directory / name).read_bytes()
+            have_bytes = published.read_bytes()
+            if want_bytes == have_bytes:
+                continue
+            # A companion can be binary (an icon): compare bytes, and render a
+            # diff only when both sides are text.
+            try:
+                want = want_bytes.decode().splitlines(keepends=True)
+                have = have_bytes.decode().splitlines(keepends=True)
+            except UnicodeDecodeError:
+                problems.append(
+                    f"{package}: {name} on the AUR is not this repo's "
+                    f"({len(have_bytes)} bytes there, {len(want_bytes)} here; binary, no diff)"
+                )
                 continue
             diff = "".join(
                 difflib.unified_diff(
