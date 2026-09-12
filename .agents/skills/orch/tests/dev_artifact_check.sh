@@ -468,15 +468,19 @@ run_check --file "$WAITD/never.json" --wait 2 --interval 1
 elapsed=$(( $(date +%s) - start_epoch ))
 assert_eq "$(observe "rc=1 verdict=wait") held=$([[ "$elapsed" -ge 2 ]] && echo true || echo false)" "rc=1 verdict=wait held=true" "--wait holds to its deadline and returns verdict wait (${elapsed}s)" "$ERR"
 
-echo "=== a probe that fails mid-wait refuses on a keyed line, never as \"wait\" ==="
+echo "=== a probe that fails refuses on a keyed line, in both modes ==="
 # WHAT THE ROWS PLANT: a helper that RAN and exited nonzero, which is where
 # errexit ends the script and where bash does reach the EXIT trap. That is not
 # fork exhaustion, and no row here claims to be: when a SIMPLE command cannot
 # fork, bash ends the shell with status 127 and runs no trap, so no keyed line
-# lands and none can be pinned. These rows pin the two reachable halves — a
-# verdict the poll could not read refuses on its own keyed line instead of
-# polling on as "wait", and a helper that failed has its status named by the
-# EXIT trap. One helper is shadowed per row, so a row fails the probe it names.
+# lands and none can be pinned. These rows pin the reachable halves — a verdict
+# the check could not read refuses on its own keyed line rather than polling on
+# as "wait" or passing back a rejection status with nothing said, in the
+# blocking mode AND in the single-shot mode acceptance runs on every wake, and
+# a helper that failed has its status named by the EXIT trap. One helper is
+# shadowed per row, so a row fails the probe it names. The inverse, an ordinary
+# rejection with a readable verdict staying exit 1, is the missing-artifact row
+# in the stable-shape table above.
 PROBE_SHIMS="$TMP_ROOT/probe-shims"
 for probe_cmd in sleep jq; do
   mkdir -p "$PROBE_SHIMS/$probe_cmd"
@@ -485,18 +489,21 @@ for probe_cmd in sleep jq; do
 done
 NEVER="$TMP_ROOT/probe-never.json"
 probe_table() {
-  local row label probe expect
+  local row label probe args expect
   for row in "$@"; do
-    IFS='^' read -r label probe expect <<<"$row"
+    IFS='^' read -r label probe args expect <<<"$row"
     SHIM_PATH="$PROBE_SHIMS/$probe"
-    run_check --file "$NEVER" --wait 20 --interval 1
+    # shellcheck disable=SC2086
+    run_check $args
     SHIM_PATH=""
     assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
   done
 }
+WAITING="--file $NEVER --wait 20 --interval 1"
 probe_table \
-  "a sleep that cannot run ends the wait with its own status, keyed^sleep^rc=254 stderr_first~dev-artifact-check:+exit=254=true" \
-  "an unreadable verdict refuses instead of polling on^jq^rc=2 stderr_first~dev-artifact-check:+verdict-unreadable+file=$NEVER=true"
+  "a sleep that cannot run ends the wait with its own status, keyed^sleep^$WAITING^rc=254 stderr_first~dev-artifact-check:+exit=254=true" \
+  "an unreadable verdict refuses instead of polling on^jq^$WAITING^rc=2 stderr_first~dev-artifact-check:+verdict-unreadable+file=$NEVER=true" \
+  "single-shot refuses the same way, not as a bare rejection^jq^--file $NEVER^rc=2 stderr_first~dev-artifact-check:+verdict-unreadable+file=$NEVER=true"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

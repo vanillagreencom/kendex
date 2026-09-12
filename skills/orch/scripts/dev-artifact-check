@@ -906,6 +906,24 @@ if (( wait_secs > 0 )); then
     sleep "$sleep_for"
   done
 fi
+# Single-shot mode, which is acceptance Check A on every orchestrator wake, is
+# guarded exactly as the --wait loop above guards each poll. A check_once that
+# aborted part-way returns a rejection status with nothing on stdout, and
+# passing that straight to `finish` would report a rejection the caller can
+# read no verdict from, with no keyed line either. An ordinary rejection that
+# does carry a readable verdict stays an ordinary rejection.
 rc=0
-check_once || rc=$?
-finish "$rc"
+out="$(check_once)" || rc=$?
+(( rc != 2 )) || finish 2
+if (( rc == 0 || rc == 1 )); then
+  verdict="$(jq -r '.verdict // "wait"' <<<"$out" 2>/dev/null)" || verdict=""
+  if [[ -z "$verdict" ]]; then
+    message verdict-unreadable >&2
+    finish 2
+  fi
+  printf '%s\n' "$out"
+  finish "$rc"
+fi
+# Any other status is an abort this tail cannot describe: leave REPORTED clear
+# so on_exit names it.
+exit "$rc"
