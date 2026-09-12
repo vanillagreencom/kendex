@@ -12,8 +12,9 @@
 #
 # Packages: kendex, kendex-bin, kendex-git (all three when none is named).
 #
-# A run copies PKGBUILD, .SRCINFO and every scriptlet the recipe names
-# (tools/check-aur-sync --print-files) from packaging/arch/<package>/ into a
+# A run copies PKGBUILD, .SRCINFO and every companion file the recipe names,
+# scriptlets and local sources such as a patch (tools/check-aur-sync
+# --print-files), from packaging/arch/<package>/ into a
 # clone of the AUR repository, commits what changed and pushes it. Pushing
 # needs the AUR account's SSH key; a dry run clones over HTTPS and needs none.
 # Edit recipes here: publication overwrites direct AUR edits.
@@ -181,9 +182,9 @@ for package in "${packages[@]}"; do
     continue
   fi
 
-  # The recipe's own file set: a scriptlet it names ships beside it, or every
-  # AUR build fails on the missing file. check-aur-sync refused a name with
-  # no file at the top of this run.
+  # The recipe's own file set: a scriptlet or a local source it names ships
+  # beside it, or every AUR build fails on the missing file. check-aur-sync
+  # refused a name with no file at the top of this run.
   if ! files="$("$check" --print-files "$package")"; then
     say unreadable "$package" "the recipe's file set could not be read" >&2
     status=1

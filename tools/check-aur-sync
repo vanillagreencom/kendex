@@ -17,8 +17,9 @@ Every refusal opens with one keyed line, `check-aur-sync: <key>=<value>`:
 to decide whether a release's downloads exist and match the recipe. A `git+`
 source is left out of both: it resolves whether or not a release exists,
 which is why kendex-git prints nothing and is never deferred. --print-files
-is the file set a recipe publishes: PKGBUILD, .SRCINFO and every scriptlet
-(`install=`, `changelog=`) it names, which the remote check compares too.
+is the file set a recipe publishes: PKGBUILD, .SRCINFO, every scriptlet
+(`install=`, `changelog=`) and every local `source` entry (a patch) it names,
+which the remote check compares too and the local check requires to exist.
 """
 
 from __future__ import annotations
@@ -339,32 +340,71 @@ def check_local(package: str, directory: Path) -> list[str]:
             compare(f"{package}/{name}", splits[name], srcsplits[name], split_keys)
         )
 
-    # A scriptlet named in the header or by a package_* override must ship
-    # beside the recipe, or every AUR build of it fails on the missing file.
-    scriptlets = list(pkgbuild.get("install", []))
-    for values in splits.values():
-        scriptlets.extend(values.get("install", []))
-    for scriptlet in scriptlets:
-        if not (directory / scriptlet).is_file():
+    # A scriptlet named in the header or by a package_* override, and a local
+    # source (a patch), must ship beside the recipe, or every AUR build of it
+    # fails on the missing file.
+    named: list[tuple[str, str]] = []
+    for fields in (pkgbuild, *splits.values()):
+        for key in ("install", "changelog"):
+            named.extend((key, name) for name in fields.get(key, []))
+    for key, values in pkgbuild.items():
+        if key == "source" or arch_field(key, ("source",)) is not None:
+            for value in values:
+                name = local_source(value)
+                if name is not None:
+                    named.append((key, name))
+    seen: set[tuple[str, str]] = set()
+    for key, name in named:
+        if (key, name) in seen:
+            continue
+        seen.add((key, name))
+        if not (directory / name).is_file():
             problems.append(
-                f"{package}: install={scriptlet} names no file in "
+                f"{package}: {key}={name} names no file in "
                 f"{directory.relative_to(ROOT)}"
             )
     return problems
 
 
-def recipe_files(directory: Path) -> tuple[str, ...]:
-    """Every file the recipe publishes: the two makepkg reads, then each
-    scriptlet the PKGBUILD names, in order and once. A scriptlet left behind
-    makes every AUR build of the package fail on the missing file."""
-    pkgbuild, splits = parse_pkgbuild(directory / "PKGBUILD")
-    files = ["PKGBUILD", ".SRCINFO"]
+REMOTE_SCHEMES = ("http://", "https://", "ftp://", "file://", "git://", "git+", "hg+", "svn+", "bzr+", "fossil+")
+
+
+def local_source(value: str) -> str | None:
+    """The file beside the recipe a `source` entry names, or None for a URL.
+    makepkg reads `name::source`; a local entry is a bare filename, so the
+    part after any alias is what must exist in the package directory."""
+    source = value.split("::", 1)[-1]
+    if source.startswith(REMOTE_SCHEMES) or "://" in source:
+        return None
+    return source
+
+
+def companion_files(pkgbuild, splits) -> list[str]:
+    """Every file the recipe needs beside PKGBUILD and .SRCINFO, in order
+    and once: each scriptlet (`install=`, `changelog=`) and each local
+    `source` entry (a patch, a desktop file). Any of them left behind makes
+    every AUR build of the package fail on the missing file."""
+    files: list[str] = []
     for fields in (pkgbuild, *splits.values()):
         for key in ("install", "changelog"):
             for name in fields.get(key, []):
                 if name not in files:
                     files.append(name)
-    return tuple(files)
+    for key, values in pkgbuild.items():
+        if key != "source" and arch_field(key, ("source",)) is None:
+            continue
+        for value in values:
+            name = local_source(value)
+            if name is not None and name not in files:
+                files.append(name)
+    return files
+
+
+def recipe_files(directory: Path) -> tuple[str, ...]:
+    """Every file the recipe publishes: the two makepkg reads, then its
+    companion files."""
+    pkgbuild, splits = parse_pkgbuild(directory / "PKGBUILD")
+    return ("PKGBUILD", ".SRCINFO", *companion_files(pkgbuild, splits))
 
 
 def check_remote(package: str, directory: Path, files: tuple[str, ...]) -> list[str]:
