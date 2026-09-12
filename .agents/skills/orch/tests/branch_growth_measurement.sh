@@ -98,7 +98,7 @@ measure_tripwire() {
     --worktree "$wt" --kind implement --issue KEN-GROWTH --round-id 1-1 \
     --branch growth --commit "$(git -C "$wt" rev-parse HEAD)" --validate pass --no-summary)"
   printf '%s %s\n' \
-    "$(sed 's/^dev-round-write: growth-limit current=\([0-9]*\) .*/\1/;t;d' <<<"$refusal")" \
+    "$(sed -n 's/^dev-round-write: growth-limit current=\([0-9]*\) .*/\1/p' <<<"$refusal")" \
     "$(jq -r '.baseline_lines' "$artifact")"
 }
 
