@@ -528,22 +528,6 @@ describe("a package whose rendering is gone everywhere", () => {
     expect(host.textContent).not.toContain(NOTHING_INSTALLED);
   });
 
-  // The words come off the row a record seeded, which core fills for
-  // exactly the rows the scan could not see — so the same author-text
-  // search that found the package while its files existed still finds it.
-  it("shows and searches the declared words when no copy is left", () => {
-    scanIs([]);
-    joinAnswered([{ ...seeded, summary: "about gh" }] as never);
-    useUpdatesStore.setState({
-      rows: [row({ filesMissing: true })] as never,
-      read: READ_LANDED,
-    });
-    expect(mount(<InstalledView />).textContent).toContain("about gh");
-
-    useNavStore.setState({ search: "about gh" });
-    expect(names(mount(<InstalledView />))).toContain("gh");
-  });
-
   // The badge on a row names every place the package is missing in,
   // because the fact is about the package wherever it is. The row's own
   // click is about the table on screen: narrowed to one project, a reader

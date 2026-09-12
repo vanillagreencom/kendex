@@ -14,7 +14,6 @@ import {
   groupsOfKind,
   groupVendor,
   type ItemFilter,
-  type ItemPlace,
   installationAt,
   installedCount,
   installedCountByKind,
@@ -262,7 +261,7 @@ describe("groupItems by package identity", () => {
       installedCount(groupItems([native, rule, instruction], () => hook)),
     ).toBe(1);
     expect(
-      installedCountByKind([native, rule, instruction], {}, () => hook, []).get(
+      installedCountByKind([native, rule, instruction], {}, () => hook).get(
         "hook",
       ),
     ).toBe(1);
@@ -634,7 +633,6 @@ describe("installedCountByKind", () => {
       [item({}), item({ name: "x" }), item({ kind: "agent" })],
       {},
       unrecorded,
-      [],
     );
     expect(counts.get("skill")).toBe(2);
     expect(counts.get("agent")).toBe(1);
@@ -649,7 +647,6 @@ describe("installedCountByKind", () => {
       ],
       {},
       unrecorded,
-      [],
     );
     expect(counts.get("skill")).toBe(1);
   });
@@ -661,22 +658,17 @@ describe("installedCountByKind", () => {
       item({ name: "over-there", scope: { scope: "project", root: "/p" } }),
     ];
     expect(
-      installedCountByKind(items, { harness: "claude" }, unrecorded, []).get(
+      installedCountByKind(items, { harness: "claude" }, unrecorded).get(
         "skill",
       ),
     ).toBe(2);
     expect(
-      installedCountByKind(items, { scope: "global" }, unrecorded, []).get(
-        "skill",
-      ),
+      installedCountByKind(items, { scope: "global" }, unrecorded).get("skill"),
     ).toBe(2);
     expect(
-      installedCountByKind(
-        items,
-        { scope: { project: "/p" } },
-        unrecorded,
-        [],
-      ).get("skill"),
+      installedCountByKind(items, { scope: { project: "/p" } }, unrecorded).get(
+        "skill",
+      ),
     ).toBe(1);
   });
 
@@ -685,55 +677,9 @@ describe("installedCountByKind", () => {
   // groups hands back the wire order instead.
   it("hands the kinds back in the order the app shows them in", () => {
     const items = KINDS.map((kind) => item({ kind, name: `one-${kind}` }));
-    expect([...installedCountByKind(items, {}, unrecorded, []).keys()]).toEqual(
+    expect([...installedCountByKind(items, {}, unrecorded).keys()]).toEqual(
       KINDS,
     );
-  });
-
-  // The badge's click opens the Library on this same place, and that list
-  // draws a row per recorded package whose rendering is gone. A badge
-  // counting the scan alone would state a number the table it opens
-  // contradicts.
-  it("counts a recorded package whose rendering is gone, where the place admits it", () => {
-    const gone = [
-      {
-        kind: "skill",
-        name: "deploy",
-        scope: { scope: "global" },
-        filesMissing: true,
-      } as never,
-    ];
-    const cases: [string, ItemPlace, number | undefined][] = [
-      ["the place it is in", { scope: "global" }, 1],
-      ["another place", { scope: { project: "/p" } }, undefined],
-      // A row with no copy names no tool, and the Library withholds it
-      // under a harness narrowing for that reason.
-      ["a place naming a tool", { harness: "claude" }, undefined],
-    ];
-    expect(cases).toHaveLength(3);
-    for (const [name, place, count] of cases)
-      expect(
-        installedCountByKind([], place, unrecorded, gone).get("skill"),
-        name,
-      ).toBe(count);
-  });
-
-  // One package, whether the scan sees it or a record alone does.
-  it("counts a package the scan sees and a record calls missing once", () => {
-    const recorded: PackageOf = (one) => ({ kind: one.kind, name: one.name });
-    const gone = [
-      {
-        kind: "skill",
-        name: "deploy",
-        scope: { scope: "global" },
-        filesMissing: true,
-      } as never,
-    ];
-    expect(
-      installedCountByKind([item({})], { scope: "global" }, recorded, gone).get(
-        "skill",
-      ),
-    ).toBe(1);
   });
 
   it("leaves out a kind the place holds nothing of", () => {
@@ -741,7 +687,6 @@ describe("installedCountByKind", () => {
       [item({ kind: "agent" })],
       {},
       unrecorded,
-      [],
     );
     expect(counts.has("skill")).toBe(false);
   });

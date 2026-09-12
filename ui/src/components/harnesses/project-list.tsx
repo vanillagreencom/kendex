@@ -54,7 +54,6 @@ import {
 } from "@/lib/derive";
 import { scopeNames } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
-import { useMissingRows, useMissingUncounted } from "@/lib/missing-files";
 import { checksStanding } from "@/lib/package-checks";
 import {
   packagesUncounted,
@@ -404,20 +403,10 @@ export function ProjectList() {
   const changesRead = useProjectChangesStore((s) => s.read);
   const items = result?.items ?? [];
   const packageOf = usePackageIndex();
-  // The packages whose rendering is gone, which the Library draws a row
-  // for: a card's kind badge opens that list, so it counts the same set —
-  // and states no number at all until they have answered.
-  const missingRows = useMissingRows();
-  const missingUncounted = useMissingUncounted();
   // The badges count packages and their clicks open the Library on the same
   // narrowing, so both wait on the one read that says which installations
   // are one package.
-  // Either read leaves the badges without a number: the identity join
-  // says which installations are one package, and the missing rows say
-  // which packages are here with nothing observed of them.
-  const uncounted =
-    packagesUncounted(usePackagesKnown(), usePackagesRead()) ??
-    missingUncounted;
+  const uncounted = packagesUncounted(usePackagesKnown(), usePackagesRead());
   const projects = settings?.projects ?? [];
   // What a place is called where it is named ALONE, away from its card: a
   // card's menu opens dialogs that say which place's files an action
@@ -450,14 +439,7 @@ export function ProjectList() {
           subtitle="Works in every project on this computer"
           counts={
             packageOf
-              ? [
-                  ...installedCountByKind(
-                    items,
-                    personal,
-                    packageOf,
-                    missingRows ?? [],
-                  ).entries(),
-                ]
+              ? [...installedCountByKind(items, personal, packageOf).entries()]
               : []
           }
           uncounted={uncounted}
@@ -514,7 +496,6 @@ export function ProjectList() {
                           items,
                           place,
                           packageOf,
-                          missingRows ?? [],
                         ).entries(),
                       ]
                     : []

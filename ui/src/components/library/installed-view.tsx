@@ -48,7 +48,6 @@ import {
   usePackagesEverKnown,
   usePackagesKnown,
   usePackagesRead,
-  useSeededSummaryIndex,
   useSummaryIndex,
 } from "@/lib/package-identity";
 import { everyPlace, scopeKey } from "@/lib/scope";
@@ -224,10 +223,6 @@ export function InstalledView() {
   // counts. A package the scan cannot see at all has no observation to
   // group, so these are what put its row on this list.
   const missingRows = useMissingRows();
-  // The words the author wrote about a package no copy of which is left:
-  // core answers for exactly those rows out of the record, since there is
-  // no file to read them off.
-  const seededSummaryOf = useSeededSummaryIndex();
   // Every group the table holds, before any narrowing.
   const everywhere = useMemo(
     () =>
@@ -235,10 +230,9 @@ export function InstalledView() {
         ? withRecordedMissing(
             groupItems(result.items, packageOf, summaryOf),
             missingRows ?? [],
-            seededSummaryOf,
           )
         : [],
-    [result, packageOf, summaryOf, missingRows, seededSummaryOf],
+    [result, packageOf, summaryOf, missingRows],
   );
   // Read from those, never from the filtered set: a standing answers for
   // the package, so narrowing the table to one project must not change
@@ -285,7 +279,6 @@ export function InstalledView() {
     let grouped = withRecordedMissing(
       groupItems(filtered, packageOf, summaryOf),
       missingUnder(missingRows ?? [], narrowing),
-      seededSummaryOf,
     ).filter((group) => groupMatches(group, search));
     // Narrowed after grouping: the kind on screen is the package's, and a
     // tool that stores a hook as a rule would otherwise drop out of its
@@ -322,7 +315,6 @@ export function InstalledView() {
     editedAnywhere,
     here,
     missingRows,
-    seededSummaryOf,
   ]);
 
   // Every place the table's rows stand in, read off those rows rather than

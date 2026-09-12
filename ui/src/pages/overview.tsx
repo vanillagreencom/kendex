@@ -19,15 +19,9 @@ import {
   SCAN_STALE_TITLE,
 } from "@/lib/copy";
 import { MARKETPLACES_UNCHECKED_DETAIL } from "@/lib/copy-marketplaces";
-import {
-  groupItems,
-  installedCount,
-  recentItems,
-  withRecordedMissing,
-} from "@/lib/derive";
+import { groupItems, installedCount, recentItems } from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
-import { useMissingRows } from "@/lib/missing-files";
 import {
   usePackageIndex,
   usePackagesKnown,
@@ -65,11 +59,7 @@ export function OverviewPage() {
   // line; the failure itself gets its own row below, so their absence
   // never has to stand in for "couldn't check".
   const editedPackages = updateRows.filter((row) => row.blockedByLocalEdit);
-  // The one read behind both the row below and the Installed tile: a
-  // package whose rendering is gone is still installed — its record says
-  // so and the Library draws a row for it — so the number and the row
-  // cannot describe different machines.
-  const missingPackages = useMissingRows();
+  const missingPackages = updateRows.filter((row) => row.filesMissing);
   const updatesError = useUpdatesStore((s) => s.read.error);
   // Only a landed read may put a number on the page. `rows` survives a
   // failed re-check as last-known facts, which is enough for the edited
@@ -105,14 +95,8 @@ export function OverviewPage() {
   const packagesKnown = usePackagesKnown();
   const packagesRead = usePackagesRead();
   const groups = useMemo(
-    () =>
-      result && packageOf
-        ? withRecordedMissing(
-            groupItems(result.items, packageOf),
-            missingPackages ?? [],
-          )
-        : [],
-    [result, packageOf, missingPackages],
+    () => (result && packageOf ? groupItems(result.items, packageOf) : []),
+    [result, packageOf],
   );
 
   const scanAgain = (
@@ -150,9 +134,7 @@ export function OverviewPage() {
 
   const rows = attentionRows({
     editedPackages,
-    // Nothing to report where no read has answered for them: a row saying
-    // a package's files are gone is a definite claim.
-    missingPackages: missingPackages ?? [],
+    missingPackages,
     result,
     updatesError,
     updates,
@@ -241,22 +223,14 @@ export function OverviewPage() {
                 />
                 {/* Counted in the Library's unit — packages, not
                     installations — so the number matches the table the
-                    click lands on, and only once both reads that decide
-                    that table's rows have answered. A number taken before
-                    the identity join would count installations under a
-                    label that says packages; one taken before the rows
-                    naming packages whose rendering is gone would leave
-                    those out, and this page counts them as missing files
-                    two rows above. One kept from an earlier answer is
-                    last-known, and says so rather than passing as
-                    current. */}
+                    click lands on, and only once the read that says which
+                    installations are one package has answered. A number
+                    taken before it would count installations under a label
+                    that says packages; one kept from an earlier answer is
+                    last-known, and says so rather than passing as current. */}
                 <StatTile
                   label="Installed"
-                  value={
-                    packagesKnown && missingPackages
-                      ? installedCount(groups)
-                      : null
-                  }
+                  value={packagesKnown ? installedCount(groups) : null}
                   detail={
                     packagesRead.status === "failed"
                       ? PACKAGES_UNCHECKED_DETAIL

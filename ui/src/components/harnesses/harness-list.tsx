@@ -3,7 +3,6 @@ import { HarnessRow } from "@/components/harnesses/harness-row";
 import { Button } from "@/components/ui/button";
 import { installedCountByKind } from "@/lib/derive";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
-import { useMissingRows, useMissingUncounted } from "@/lib/missing-files";
 import {
   packagesUncounted,
   usePackageIndex,
@@ -31,18 +30,10 @@ export function HarnessList() {
   const settings = useSettingsStore((s) => s.settings);
   const setHarnessRoot = useSettingsStore((s) => s.setHarnessRoot);
   const packageOf = usePackageIndex();
-  // Handed over rather than left out: which of these a place holding a
-  // harness admits is `missingUnder`'s to answer, not this row's.
-  const missingRows = useMissingRows();
-  const missingUncounted = useMissingUncounted();
   // The badges count packages and their clicks open the Library on the same
   // narrowing, so both wait on the one read that says which installations
   // are one package.
-  // Either read leaves the badges without a number, for the reason the
-  // project cards state.
-  const uncounted =
-    packagesUncounted(usePackagesKnown(), usePackagesRead()) ??
-    missingUncounted;
+  const uncounted = packagesUncounted(usePackagesKnown(), usePackagesRead());
 
   const anyDetected = ALL_HARNESSES.some((id) =>
     result?.harnesses.some((h) => h.harness === id),
@@ -86,12 +77,7 @@ export function HarnessList() {
             // No index means no count, which `uncounted` says in the
             // badges' place.
             const counts = packageOf
-              ? installedCountByKind(
-                  result?.items ?? [],
-                  place,
-                  packageOf,
-                  missingRows ?? [],
-                )
+              ? installedCountByKind(result?.items ?? [], place, packageOf)
               : new Map();
             return (
               <HarnessRow

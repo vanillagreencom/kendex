@@ -8,11 +8,7 @@ import type {
   UpdateRow,
 } from "@/bindings";
 import { KINDS } from "@/lib/labels";
-import type {
-  PackageOf,
-  SummaryOf,
-  SummaryOfPackage,
-} from "@/lib/package-identity";
+import type { PackageOf, SummaryOf } from "@/lib/package-identity";
 import { sameScope, scopeKey } from "@/lib/scope";
 
 export type ScopeSelection = "all" | "global" | { project: string };
@@ -250,13 +246,9 @@ const byRowOrder = (a: ItemGroup, b: ItemGroup): number =>
 /** The rows for packages with no copy left that a narrowing admits.
  *
  *  Such a row carries no tool and no tags — there is no copy to carry them
- *  — so a narrowing by either is a question it cannot answer, and counting
- *  or drawing the package under it would be a wrong answer rather than a
- *  missing one. Its place it does carry, so that narrowing it does answer.
- *
- *  The one judge for that rule, because two surfaces ask it: the Library's
- *  list, and the per-kind badges whose click opens that list. A second copy
- *  is how a badge comes to read "2 skills" over a table of three rows. */
+ *  — so a narrowing by either is a question it cannot answer, and drawing
+ *  the package under it would be a wrong answer rather than a missing one.
+ *  Its place it does carry, so that narrowing it does answer. */
 export function missingUnder(
   missing: UpdateRow[],
   filter: ItemFilter,
@@ -283,11 +275,6 @@ export function missingUnder(
 export function withRecordedMissing(
   groups: ItemGroup[],
   missing: UpdateRow[],
-  /** What the author says a package with no copy left does, out of the row
-   *  a record seeded for it. Defaulted because it is display text: a caller
-   *  that only counts rows has no use for it, while every caller that draws
-   *  or searches one passes it. */
-  summaryOf: SummaryOfPackage = () => null,
 ): ItemGroup[] {
   const added = new Map<string, ItemGroup>();
   const seen = new Set(groups.map((group) => group.key));
@@ -302,12 +289,9 @@ export function withRecordedMissing(
       package: { kind: row.kind, name: row.name },
       kind: row.kind,
       name: row.name,
-      // The words of the declaration this row was seeded from. There is no
-      // copy on disk to read them off, which is why core answers for
-      // exactly these rows out of the record instead — and a search for
-      // what the author wrote must keep finding the package while its
-      // files are gone.
-      summary: summaryOf(row),
+      // The author's words reach a row through the copy on disk, and there
+      // is no copy.
+      summary: null,
       installations: [],
       harnesses: [],
       tags: [],
@@ -418,23 +402,13 @@ export function installedCountByKind(
   items: ObservedItem[],
   place: ItemPlace,
   packageOf: PackageOf,
-  /** The packages whose rendering a record says is gone, which the Library
-   *  draws a row for. Required rather than defaulted: a badge that quietly
-   *  left them out is exactly the disagreement this argument exists to
-   *  stop, and {@link missingUnder} is what decides which of them this
-   *  place admits. */
-  missing: UpdateRow[],
 ): Map<ItemKind, number> {
   const tally = new Map<ItemKind, number>();
-  const narrowing: ItemFilter = {
+  const here = filterItems(items, {
     scope: place.scope ?? "all",
     harness: place.harness,
-  };
-  const here = filterItems(items, narrowing);
-  for (const group of withRecordedMissing(
-    groupItems(here, packageOf),
-    missingUnder(missing, narrowing),
-  )) {
+  });
+  for (const group of groupItems(here, packageOf)) {
     tally.set(group.kind, (tally.get(group.kind) ?? 0) + 1);
   }
   // Handed back in the app's kind order, not the grouping's: the badges sit
