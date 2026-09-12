@@ -317,6 +317,7 @@ unit_record() {
     release) output='target/<triple>/release' ;;
     target) output='target' ;;
     modules) ecosystem=javascript; output='node_modules' ;;
+    ui-modules) ecosystem=javascript; output='ui/node_modules' ;;
     next) ecosystem=javascript; output='.next' ;;
     *)
       printf 'UNKNOWN-UNIT:%s' "$unit"
@@ -356,6 +357,7 @@ out_text() {
     js-preview) report eligible preview modules next ;;
     release-only) report eligible preview release ;;
     debug-only) report eligible preview debug ;;
+    cargo-and-ui) report eligible preview debug release ui-modules ;;
     cargo-and-next) report eligible preview debug release next ;;
     cargo-and-modules) report eligible preview debug release modules ;;
     empty) report eligible preview ;;
@@ -370,6 +372,7 @@ err_text() {
     no-layout) printf 'worktree-output-prune-no-layout: worktree=<wt> reason=no-ecosystem-marker' ;;
     lock-held) unit_record kept debug lock-held ;;
     debug-live-holder) unit_record kept debug live-holder ;;
+    ui-unprobed) unit_record kept ui-modules holder-probe-unavailable ;;
     live-holder) unit_record kept modules live-holder ;;
     symlink) unit_record kept modules symlink ;;
     tracked) unit_record kept next tracked ;;
@@ -396,7 +399,8 @@ err_text() {
     lease-held) printf 'worktree-output-prune-lease-blocked: worktree=<wt> state=held' ;;
     head-moved) printf 'worktree-output-prune-head-moved: worktree=<wt>' ;;
     flag-orphan) printf 'worktree-cleanup-targets-flag-orphan: --apply' ;;
-    stale-rejected) printf 'worktree-cleanup-targets-stale: --stale' ;;
+    stale-rejected) printf 'worktree-cleanup-targets-lease-flag: --stale' ;;
+    ttl-rejected) printf 'worktree-cleanup-targets-lease-flag: --ttl-minutes' ;;
     days-invalid) printf 'worktree-cleanup-days-invalid: 0' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
@@ -448,6 +452,7 @@ case "$(uname -s)" in
     # A Cargo profile needs no holder probe: its build lock answers, so the
     # executing artifact goes unnoticed and the profile is pruned.
     P_EXE_OUT=cargo-preview;        P_EXE_ERR=-
+    P_NESTED_OUT=cargo-preview;     P_NESTED_ERR=ui-unprobed
     ;;
   *)
     P_APPLY_OUT=both-apply;         P_APPLY_ERR=-
@@ -458,6 +463,7 @@ case "$(uname -s)" in
     P_SYMLINK_OUT=cargo-and-next;   P_SYMLINK_ERR=symlink
     P_TRACKED_OUT=cargo-and-modules; P_TRACKED_ERR=tracked
     P_EXE_OUT=release-only;         P_EXE_ERR=debug-live-holder
+    P_NESTED_OUT=cargo-and-ui;      P_NESTED_ERR=-
     ;;
 esac
 
@@ -482,6 +488,7 @@ a claimed guard lease keeps the whole worktree|cargo tree cargo-out claim|cleanu
 a HEAD that moves mid-run deletes nothing|cargo tree cargo-out drift|cleanup --targets-only --apply|0|-|head-moved|$CARGO_TREE
 --apply outside the mode is refused before anything is inspected|cargo tree cargo-out|cleanup --apply|1|-|flag-orphan|$CARGO_TREE
 --stale is refused in a mode that never releases a lease|cargo tree cargo-out|cleanup --targets-only --stale|1|-|stale-rejected|$CARGO_TREE
+--ttl-minutes is refused too, rather than accepted and ignored|cargo tree cargo-out|cleanup --targets-only --ttl-minutes 1|1|-|ttl-rejected|$CARGO_TREE
 a zero retention window is refused|cargo tree cargo-out|cleanup --targets-only --older-than-days 0|1|-|days-invalid|$CARGO_TREE
 "
 
@@ -569,10 +576,10 @@ assert_match "$(WORKTREE_SCRIPT="$UNGUARDED/worktree" run 'cleanup --targets-onl
   "rc=0 out=$(out_text cargo-preview) err=$UNREADABLE_WARNING branch=present left=$CARGO_TREE" \
   'the preview still runs when the session guard cannot be run'
 
-# A profile a previous prune already emptied holds nothing but its lock. Its
-# reclaimable figure is whatever a directory and an empty file occupy on this
-# filesystem — never below zero, which is what it read while tree_info
-# subtracted a directory's allocation it had never added.
+# A profile a previous prune already emptied holds nothing but its lock, and the
+# survey never tallies what a prune keeps, so its reclaimable figure is exactly
+# zero. It read minus one directory's allocation while the measurement subtracted
+# a directory it had never added.
 build emptied-profile cargo tree cargo-out
 rm -rf -- "${WT:?}/target/debug/deps" "${WT:?}/target/$TRIPLE/release/deps"
 age "$WT/target"
@@ -592,9 +599,9 @@ python3 - "$RACING/worktree-output-prune" "$WT/target/debug/deps/big.o" <<'RACE'
 import pathlib, sys
 engine, victim = pathlib.Path(sys.argv[1]), sys.argv[2]
 body = engine.read_text()
-anchor = "            info = (Path(parent) / name).lstat()\n"
+anchor = "                info = path.lstat()\n"
 assert body.count(anchor) == 1, body.count(anchor)
-raced = "            if str(Path(parent) / name) == %r:\n                os.unlink(%r)\n%s" % (
+raced = "                if str(path) == %r:\n                    os.unlink(%r)\n%s" % (
     victim,
     victim,
     anchor,
@@ -611,38 +618,79 @@ assert_match "$(WORKTREE_SCRIPT="$RACING/worktree" run 'cleanup --targets-only')
   "rc=0 out=$(out_text release-only) err=$(unit_record kept debug changed) branch=present left=$RACED_LEFT" \
   'one unit racing a build is kept and the rest of the worktree is still swept'
 
-# Ctrl-C during a multi-minute apply would strand a cleanup lease this mode's
-# own --stale refusal cannot clear. The git copy blocks the engine inside the
-# claimed window, so the signal lands there every run.
-build interrupted-apply cargo tree cargo-out
-mkdir -p "$ROOT/slowgit"
-{
-  printf '#!/usr/bin/env bash\nset -uo pipefail\n'
-  printf 'for arg in "$@"; do\n'
-  printf '  if [[ "$arg" == ls-files ]]; then\n'
-  printf '    : >%q\n' "$ROOT/engine-running"
-  printf '    sleep 60\n  fi\ndone\n'
-  printf 'exec %q "$@"\n' "$(command -v git)"
-} >"$ROOT/slowgit/git"
-chmod +x "$ROOT/slowgit/git"
-# Bash sets SIGINT to ignore in an asynchronous command of a non-interactive
-# shell, and exec carries an ignored disposition through; `trap - INT` puts the
-# default back so the signal reaches the trap under test.
-(trap - INT; cd "$MAIN" && exec env PATH="$ROOT/slowgit:$PATH" "$WORKTREE_SCRIPT" \
-  cleanup --targets-only --apply >"$ROOT/out" 2>"$ROOT/err") &
-INTERRUPTED=$!
-ROW_PIDS+=("$INTERRUPTED")
-await "$ROOT/engine-running"
-kill -INT "$INTERRUPTED" 2>/dev/null || true
-INTERRUPT_RC=0
-wait "$INTERRUPTED" || INTERRUPT_RC=$?
-LEASE_AFTER_SIGNAL=0
-"$SESSION_GUARD" status "$WT" --repo "$MAIN" >/dev/null 2>&1 || LEASE_AFTER_SIGNAL=$?
-assert_eq "rc=$INTERRUPT_RC lease=$LEASE_AFTER_SIGNAL err=$(alias_text <"$ROOT/err")" \
-  'rc=130 lease=3 err=worktree-output-prune-interrupted: signal=INT' \
-  'an interrupted apply releases its cleanup lease'
-cleanup_row_pids
+# A manifest in a subdirectory, which is how this repository installs its UI.
+# Both halves matter: the subdirectory's output is found, and the walk that
+# finds it stays inside the worktree.
+build nested-root cargo tree cargo-out
+mkdir -p "$WT/ui/node_modules/left-pad"
+printf '{"name":"ui"}\n' >"$WT/ui/package.json"
+printf '{"lockfileVersion":3}\n' >"$WT/ui/package-lock.json"
+fill "$WT/ui/node_modules/left-pad/index.js" 20480
+age "$WT/ui/node_modules"
+# A marker outside the worktree, beside it, which no walk of the worktree reaches.
+mkdir -p "$ROOT/outside/node_modules"
+printf '{"name":"outside"}\n' >"$ROOT/outside/package.json"
+printf '{"lockfileVersion":3}\n' >"$ROOT/outside/package-lock.json"
+fill "$ROOT/outside/node_modules/blob" 20480
+age "$ROOT/outside/node_modules"
+NESTED_LEFT="$DOT,$CARGO_SRC,$BASE,$CARGO_OUT,ui,ui/node_modules"
+NESTED_LEFT="$NESTED_LEFT,ui/node_modules/left-pad,ui/node_modules/left-pad/index.js"
+NESTED_LEFT="$NESTED_LEFT,ui/package-lock.json,ui/package.json"
+assert_match "$(run 'cleanup --targets-only')" \
+  "rc=0 out=$(out_text "$P_NESTED_OUT") err=$(err_text "$P_NESTED_ERR") branch=present left=$NESTED_LEFT" \
+  'a manifest in a subdirectory has its output found'
+assert_eq "$(test -e "$ROOT/outside/node_modules/blob" && echo present)" present \
+  'the walk reaches no marker outside the worktree'
 
+# A lock file only bun writes, and one only npm writes. Before they were data in
+# the row, a checkout carrying either read as no-layout and reclaimed nothing.
+for lockfile in bun.lock npm-shrinkwrap.json; do
+  build "lock-$lockfile" js-nolock tree js-out
+  printf '{}\n' >"$WT/$lockfile"
+  LOCK_LEFT="$DOT,$NEXT_OUT,$BASE,$MODULES_OUT,package.json,$lockfile"
+  LOCK_LEFT="$(printf '%s' "$LOCK_LEFT" | tr ',' '\n' | sort | paste -s -d ',' -)"
+  assert_match "$(run 'cleanup --targets-only')" \
+    "rc=0 out=$(out_text "$P_JS_OUT") err=$(err_text "$P_JS_ERR") branch=present left=$LOCK_LEFT" \
+    "a checkout whose only lock file is $lockfile is a JavaScript project"
+done
+
+# A symlinked profile beside an ordinary one. The symlink is still never
+# followed, and it is no longer skipped without a word.
+build symlinked-profile cargo tree cargo-out
+mkdir -p "$ROOT/shared-profile"
+: >"$ROOT/shared-profile/.cargo-lock"
+fill "$ROOT/shared-profile/big.o" 20480
+rm -rf -- "${WT:?}/target/debug"
+ln -s "$ROOT/shared-profile" "$WT/target/debug"
+age "$WT/target" "$ROOT/shared-profile"
+SYMLINK_PROFILE_LEFT="$DOT,$CARGO_SRC,$BASE,target,target/<triple>,target/<triple>/release"
+SYMLINK_PROFILE_LEFT="$SYMLINK_PROFILE_LEFT,target/<triple>/release/.cargo-lock"
+SYMLINK_PROFILE_LEFT="$SYMLINK_PROFILE_LEFT,target/<triple>/release/deps"
+SYMLINK_PROFILE_LEFT="$SYMLINK_PROFILE_LEFT,target/<triple>/release/deps/big.o,target/debug"
+assert_match "$(run 'cleanup --targets-only')" \
+  "rc=0 out=$(out_text release-only) err=$(unit_record kept debug symlink) branch=present left=$SYMLINK_PROFILE_LEFT" \
+  'a symlinked profile is named, not skipped in silence, and its sibling is still pruned'
+
+# A file in the unit whose twin lives outside it. Deleting the unit frees
+# nothing of it, so it is not reclaimable — pnpm installs its node_modules this
+# way by default, from a store outside the worktree.
+build outside-hardlink cargo tree cargo-out
+run 'cleanup --targets-only' >/dev/null
+BEFORE_LINK="$(summary_bytes)"
+build outside-hardlink-twin cargo tree cargo-out
+mkdir -p "$ROOT/store"
+ln "$WT/target/debug/deps/big.o" "$ROOT/store/big.o"
+age "$WT/target"
+run 'cleanup --targets-only' >/dev/null
+AFTER_LINK="$(summary_bytes)"
+if [[ "$AFTER_LINK" -lt "$BEFORE_LINK" && "$AFTER_LINK" -gt 0 ]]; then
+  PASS=$((PASS + 1))
+  printf '  ok    a file linked from outside the sweep is not reported as reclaimable\n'
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  a file linked from outside the sweep is not reported as reclaimable\n        with no outside link: %s\n        with one:            %s\n' \
+    "$BEFORE_LINK" "$AFTER_LINK"
+fi
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

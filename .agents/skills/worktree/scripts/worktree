@@ -2585,10 +2585,14 @@ case "${1:-}" in
   cleanup)
     CLEANUP_STALE=false
     CLEANUP_TTL_MINUTES="$SESSION_GUARD_DEFAULT_TTL_MINUTES"
+    # The last lease flag supplied. Both describe releasing a stale lease, which
+    # only the removal path does, so output_prune_validate refuses whichever one
+    # accompanies --targets-only rather than accepting it and ignoring it.
+    CLEANUP_LEASE_FLAG=""
     shift || true
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        --stale) CLEANUP_STALE=true; shift ;;
+        --stale) CLEANUP_STALE=true; CLEANUP_LEASE_FLAG="--stale"; shift ;;
         --ttl-minutes)
           if [[ $# -lt 2 ]]; then
             worktree_message cleanup-ttl-required "--ttl-minutes" "Error: --ttl-minutes requires a value" >&2
@@ -2599,6 +2603,7 @@ case "${1:-}" in
             exit 1
           fi
           CLEANUP_TTL_MINUTES="$2"
+          CLEANUP_LEASE_FLAG="--ttl-minutes"
           shift 2
           ;;
         *)

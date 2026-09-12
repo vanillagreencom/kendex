@@ -32,7 +32,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import List, NamedTuple, Optional, Tuple
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 try:
     import fcntl
@@ -86,7 +86,14 @@ LAYOUTS = (
     Layout(
         name="javascript",
         marker="package.json",
-        siblings=("package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb"),
+        siblings=(
+            "package-lock.json",
+            "npm-shrinkwrap.json",
+            "pnpm-lock.yaml",
+            "yarn.lock",
+            "bun.lockb",
+            "bun.lock",
+        ),
         outputs=(
             Output(path="node_modules", lock=None),
             Output(path=".next", lock=None),
@@ -99,14 +106,24 @@ class Unit(NamedTuple):
     """One independently prunable directory and the lock that guards it."""
 
     ecosystem: str
-    output: str
     directory: Path
     lock: Optional[Path]
 
 
-class TreeInfo(NamedTuple):
+class Links(NamedTuple):
+    """One inode as the sweep has seen it: links found, size, and its own count."""
+
+    here: int
+    blocks: int
+    nlink: int
+    directory: bool
+
+
+class Tally(NamedTuple):
+    """One unit's measurement: its newest modification time and its inodes."""
+
     newest_mtime: float
-    allocated_bytes: int
+    inodes: Dict[Tuple[int, int], Links]
 
 
 class InspectionIncomplete(RuntimeError):
@@ -160,42 +177,132 @@ def tracks_content(worktree: Path, relative_path: str) -> bool:
     return bool(listed.stdout)
 
 
-def identifies(worktree: Path, layout: Layout) -> bool:
-    if not (worktree / layout.marker).is_file():
+def identifies(directory: Path, layout: Layout) -> bool:
+    if not (directory / layout.marker).is_file():
         return False
     if not layout.siblings:
         return True
-    return any((worktree / sibling).is_file() for sibling in layout.siblings)
+    return any((directory / sibling).is_file() for sibling in layout.siblings)
+
+
+def package_roots(worktree: Path) -> Tuple[Tuple[Path, Layout], ...]:
+    """Every directory under the worktree a layout identifies, with that layout.
+
+    A repository's manifest does not have to sit at its root. This one installs
+    its UI with `npm ci --prefix ui`, so ui/package.json and ui/node_modules are
+    where the JavaScript output is, and a root-only test reclaims none of it. The
+    walk prunes at .git, at every dotted directory, and at the first segment of
+    every output path any layout owns, so it never descends into build output
+    looking for a manifest and, following no symlink, never leaves the worktree.
+    One directory can be two roots when it carries two markers; each contributes
+    its own layout's outputs.
+    """
+    pruned = {".git"}
+    for layout in LAYOUTS:
+        for output in layout.outputs:
+            pruned.add(output.path.split("/", 1)[0])
+    found: List[Tuple[Path, Layout]] = []
+    for parent, dirs, _files in os.walk(worktree, followlinks=False, onerror=walk_error):
+        dirs[:] = sorted(name for name in dirs if name not in pruned and not name.startswith("."))
+        for layout in LAYOUTS:
+            if identifies(Path(parent), layout):
+                found.append((Path(parent), layout))
+    return tuple(found)
 
 
 def walk_error(error: OSError) -> None:
     raise error
 
 
-def tree_info(directory: Path) -> TreeInfo:
-    """Newest modification time and allocated bytes under `directory`.
+def survey(unit: Unit, collect: bool) -> Optional[Tally]:
+    """The newest modification time under the unit, and what a prune would free.
 
-    Hardlinked artifacts are counted once: cargo hardlinks a profile's
-    binaries, so counting every link would report several times the space a
-    removal actually returns.
+    `collect` says whether to tally inodes as well as time. The retention pass
+    wants the time alone; the pass that reports bytes wants both, and running one
+    traversal either way keeps a single walk of the verb.
+
+    What the prune keeps is never tallied: a lock-bearing unit keeps its own
+    directory and its lock, so a profile a previous prune already emptied reports
+    nothing rather than the cost of the shell left standing.
+
+    None says a name vanished from under the walk. os.walk's onerror covers a
+    listdir that fails; the lstat of a name it has already reported is outside
+    that reach, and a build unlinking an artifact between the two is ordinary on
+    the machine this mode exists for. One unit racing is that unit's keep, never
+    the end of the worktree's sweep.
     """
-    # The directory itself is counted first, because retained_bytes subtracts
-    # it: a profile holding nothing but its lock would otherwise report a
-    # negative figure on any filesystem where a directory occupies blocks.
-    root = directory.lstat()
-    newest = root.st_mtime
-    allocated = root.st_blocks * 512
-    seen = {(root.st_dev, root.st_ino)}
-    for parent, dirs, files in os.walk(directory, followlinks=False, onerror=walk_error):
-        newest = max(newest, os.lstat(parent).st_mtime)
-        for name in dirs + files:
-            info = (Path(parent) / name).lstat()
-            newest = max(newest, info.st_mtime)
-            key = (info.st_dev, info.st_ino)
-            if key not in seen:
-                seen.add(key)
-                allocated += info.st_blocks * 512
-    return TreeInfo(newest_mtime=newest, allocated_bytes=allocated)
+    inodes: Dict[Tuple[int, int], Links] = {}
+
+    def tally(info: os.stat_result) -> None:
+        key = (info.st_dev, info.st_ino)
+        seen = inodes.get(key)
+        if seen is None:
+            inodes[key] = Links(
+                here=1,
+                blocks=info.st_blocks * 512,
+                nlink=info.st_nlink,
+                directory=stat.S_ISDIR(info.st_mode),
+            )
+        else:
+            inodes[key] = seen._replace(here=seen.here + 1)
+
+    try:
+        root = unit.directory.lstat()
+        newest = root.st_mtime
+        if collect and unit.lock is None:
+            tally(root)
+        for parent, dirs, files in os.walk(unit.directory, followlinks=False, onerror=walk_error):
+            newest = max(newest, os.lstat(parent).st_mtime)
+            for name in dirs + files:
+                path = Path(parent) / name
+                info = path.lstat()
+                newest = max(newest, info.st_mtime)
+                if collect and path != unit.lock:
+                    tally(info)
+        return Tally(newest_mtime=newest, inodes=inodes)
+    except FileNotFoundError:
+        return None
+
+
+class Ledger:
+    """Blocks per inode across the sweep, each attributed to one unit.
+
+    A hardlinked file is freed only when its last link goes. pnpm installs by
+    hardlinking from a global store, so a node_modules tree can be almost
+    entirely links whose twins live outside the worktree: deleting it frees
+    nothing, and reporting its size as reclaimable would be the wrong number for
+    the one decision this report informs. An inode therefore counts only once the
+    sweep has seen every link st_nlink reports, and it counts for the first unit
+    that saw it, so an inode two units share is not counted twice in the total.
+
+    Only units that survived every check are absorbed, so a link sitting in a
+    unit this sweep keeps holds its inode back from the units it does prune.
+
+    A directory's st_nlink counts its entries rather than hardlinks to it, so
+    directories count on sight.
+    """
+
+    def __init__(self) -> None:
+        self._seen: Dict[Tuple[int, int], Links] = {}
+        self._owner: Dict[Tuple[int, int], Path] = {}
+
+    def absorb(self, unit: Unit, tally: Tally) -> None:
+        for key, links in tally.inodes.items():
+            seen = self._seen.get(key)
+            if seen is None:
+                self._seen[key] = links
+                self._owner[key] = unit.directory
+            else:
+                self._seen[key] = seen._replace(here=seen.here + links.here)
+
+    def totals(self) -> Dict[Path, int]:
+        """Reclaimable bytes per owning unit, in one pass over the inodes."""
+        out: Dict[Path, int] = {}
+        for key, links in self._seen.items():
+            if links.directory or links.here >= links.nlink:
+                owner = self._owner[key]
+                out[owner] = out.get(owner, 0) + links.blocks
+        return out
 
 
 def process_holders() -> Tuple[Tuple[str, ...], int]:
@@ -245,28 +352,52 @@ def held_under(holders: Tuple[str, ...], directory: Path) -> bool:
     return any(held == str(directory) or held.startswith(prefix) for held in holders)
 
 
-def lock_units(root: Path, lock_name: str) -> Tuple[Tuple[Path, Path], ...]:
+class Profiles(NamedTuple):
+    """Prunable profile directories, and the symlinked candidates refused.
+
+    A symlinked profile or a symlinked lock is never pruned — the tree it points
+    at may be shared — and never refused in silence either: discover reports each
+    one, because a path kept without a reason is the silent keep this mode's
+    report exists to end.
+    """
+
+    units: Tuple[Tuple[Path, Path], ...]
+    symlinked: Tuple[Path, ...]
+
+
+def lock_units(root: Path, lock_name: str) -> Profiles:
     """Directories under `root`, one and two levels down, holding `lock_name`.
 
     Two levels because a cross-compiled profile sits at
-    target/<triple>/<profile> while a host profile sits at target/<profile>. A
-    symlinked directory or lock is skipped here and never reaches the prune.
+    target/<triple>/<profile> while a host profile sits at target/<profile>.
+    Holding the lock is what makes a directory a candidate: a symlinked
+    directory without one is no more a profile than an ordinary directory
+    without one, and neither is reported.
     """
-    found: List[Tuple[Path, Path]] = []
+    units: List[Tuple[Path, Path]] = []
+    symlinked: List[Path] = []
+
+    def consider(directory: Path) -> bool:
+        """True when the directory is a candidate, prunable or refused."""
+        lock = directory / lock_name
+        if not lock.is_file():
+            return False
+        if directory.is_symlink() or lock.is_symlink():
+            symlinked.append(directory)
+        else:
+            units.append((directory, lock))
+        return True
+
     for depth1 in sorted(root.iterdir()):
-        if depth1.is_symlink() or not depth1.is_dir():
+        if not depth1.is_dir():
             continue
-        lock = depth1 / lock_name
-        if lock.is_file() and not lock.is_symlink():
-            found.append((depth1, lock))
+        if consider(depth1) or depth1.is_symlink():
             continue
         for depth2 in sorted(depth1.iterdir()):
-            if depth2.is_symlink() or not depth2.is_dir():
+            if not depth2.is_dir():
                 continue
-            lock = depth2 / lock_name
-            if lock.is_file() and not lock.is_symlink():
-                found.append((depth2, lock))
-    return tuple(found)
+            consider(depth2)
+    return Profiles(units=tuple(units), symlinked=tuple(symlinked))
 
 
 def prune(unit: Unit) -> None:
@@ -282,23 +413,6 @@ def prune(unit: Unit) -> None:
             shutil.rmtree(child)
 
 
-def retained_bytes(unit: Unit) -> int:
-    """Bytes a prune of this unit leaves behind: none, or the unit's own
-    directory and the lock it keeps. Subtracted from the unit's size so a
-    preview and an apply report the same figure for the same tree."""
-    if unit.lock is None:
-        return 0
-    total = 0
-    seen = set()
-    for path in (unit.directory, unit.lock):
-        info = path.lstat()
-        key = (info.st_dev, info.st_ino)
-        if key not in seen:
-            seen.add(key)
-            total += info.st_blocks * 512
-    return total
-
-
 def relative(worktree: Path, directory: Path) -> str:
     return directory.relative_to(worktree).as_posix()
 
@@ -309,20 +423,6 @@ def reportable(text: str) -> bool:
     cannot be reported is not pruned: a deletion nobody can read about is
     exactly what the byte report exists to prevent."""
     return all(ord(character) >= 0x20 for character in text)
-
-
-def measure(unit: Unit) -> Optional[TreeInfo]:
-    """The unit's size, or None when a name vanished from under the walk.
-
-    os.walk's onerror covers a listdir that fails; the lstat of a name it has
-    already reported is outside that reach, and a build unlinking an artifact
-    between the two is ordinary on the machine this mode exists for. One unit
-    racing is that unit's keep, never the end of the worktree's sweep.
-    """
-    try:
-        return tree_info(unit.directory)
-    except FileNotFoundError:
-        return None
 
 
 def keep(worktree: Path, unit: Unit, reason: str) -> None:
@@ -337,14 +437,15 @@ def keep(worktree: Path, unit: Unit, reason: str) -> None:
 
 def discover(worktree: Path) -> Tuple[Unit, ...]:
     """Every prunable unit in the worktree, reporting each path it keeps."""
-    layouts = tuple(layout for layout in LAYOUTS if identifies(worktree, layout))
-    if not layouts:
+    roots = package_roots(worktree)
+    if not roots:
         emit("err", "no-layout", reason="no-ecosystem-marker")
         return ()
     units: List[Unit] = []
-    for layout in layouts:
+    for root, layout in roots:
         for output in layout.outputs:
-            path = worktree / output.path
+            path = root / output.path
+            shown = relative(worktree, path)
             kept = None
             if path.is_symlink():
                 kept = "symlink"
@@ -353,27 +454,32 @@ def discover(worktree: Path) -> Tuple[Unit, ...]:
             elif not path.is_dir():
                 kept = "not-a-directory"
             # A resolved worktree root plus a resolved output path differ only
-            # through a symlinked ancestor, which a multi-segment row can have.
+            # through a symlinked ancestor, which a nested root can have.
             elif path.resolve() != path:
                 kept = "outside-worktree"
-            elif tracks_content(worktree, output.path):
+            elif tracks_content(worktree, shown):
                 kept = "tracked"
             if kept is not None:
-                emit("err", "kept", ecosystem=layout.name, output=output.path, reason=kept)
+                emit("err", "kept", ecosystem=layout.name, output=shown, reason=kept)
                 continue
             if output.lock is None:
-                units.append(Unit(layout.name, output.path, path, None))
+                units.append(Unit(layout.name, path, None))
                 continue
-            found = lock_units(path, output.lock)
-            if not found:
-                emit("err", "kept", ecosystem=layout.name, output=output.path, reason="no-lock-unit")
+            profiles = lock_units(path, output.lock)
+            for directory in profiles.symlinked:
+                emit("err", "kept", ecosystem=layout.name,
+                     output=relative(worktree, directory), reason="symlink")
+            if not profiles.units:
+                if not profiles.symlinked:
+                    emit("err", "kept", ecosystem=layout.name, output=shown,
+                         reason="no-lock-unit")
                 continue
-            for directory, lock in found:
+            for directory, lock in profiles.units:
                 if not reportable(relative(worktree, directory)):
-                    emit("err", "kept", ecosystem=layout.name, output=output.path,
+                    emit("err", "kept", ecosystem=layout.name, output=shown,
                          reason="unreportable-unit-name")
                     continue
-                units.append(Unit(layout.name, output.path, directory, lock))
+                units.append(Unit(layout.name, directory, lock))
     return tuple(units)
 
 
@@ -398,44 +504,44 @@ def run(worktree: Path, head: str, older_than_days: int, apply_prune: bool) -> i
     if not head_unchanged(worktree, head):
         return HEAD_MOVED
     cutoff = time.time() - older_than_days * 86400
-    aged: List[Tuple[Unit, TreeInfo]] = []
+    aged: List[Unit] = []
     for unit in discover(worktree):
-        info = measure(unit)
-        if info is None or info.newest_mtime > cutoff:
-            keep(worktree, unit, "changed" if info is None else "recent")
+        measured = survey(unit, collect=False)
+        if measured is None or measured.newest_mtime > cutoff:
+            keep(worktree, unit, "changed" if measured is None else "recent")
             continue
-        aged.append((unit, info))
+        aged.append(unit)
 
     probe_available = Path("/proc/self").exists()
     uninspected = 0
     total = 0
     pruned = 0
     with contextlib.ExitStack() as stack:
-        locked: List[Tuple[Unit, TreeInfo]] = []
-        for unit, info in aged:
+        locked: List[Unit] = []
+        for unit in aged:
             if unit.lock is None:
-                locked.append((unit, info))
+                locked.append(unit)
                 continue
             reason = hold_lock(stack, unit)
             if reason is not None:
                 keep(worktree, unit, reason)
                 continue
-            locked.append((unit, info))
+            locked.append(unit)
 
         # Locks first: a build starting now blocks on one already held, so the
         # holder scan below reads a settled set of processes.
         holders: Tuple[str, ...] = ()
         if probe_available:
             holders, uninspected = process_holders()
-        idle: List[Tuple[Unit, TreeInfo]] = []
-        for unit, info in locked:
+        idle: List[Unit] = []
+        for unit in locked:
             if not probe_available and unit.lock is None:
                 keep(worktree, unit, "holder-probe-unavailable")
                 continue
             if held_under(holders, unit.directory):
                 keep(worktree, unit, "live-holder")
                 continue
-            idle.append((unit, info))
+            idle.append(unit)
 
         if not head_unchanged(worktree, head):
             return HEAD_MOVED
@@ -443,15 +549,22 @@ def run(worktree: Path, head: str, older_than_days: int, apply_prune: bool) -> i
             raise InspectionIncomplete(
                 "unsafe-deletion", "symlink-safe recursive deletion is unavailable"
             )
-        for unit, info in idle:
-            # Re-measured under the lock: the first measurement raced anything
-            # that was still writing here.
-            settled = measure(unit)
-            if settled is None or settled.newest_mtime > cutoff:
+        # The re-measurement under the lock is also the one that tallies bytes,
+        # so only a unit that survived every check reaches the ledger and the
+        # figures are whole before the first record goes out.
+        ledger = Ledger()
+        settled: List[Unit] = []
+        for unit in idle:
+            tally = survey(unit, collect=True)
+            if tally is None or tally.newest_mtime > cutoff:
                 keep(worktree, unit, "changed")
                 continue
+            ledger.absorb(unit, tally)
+            settled.append(unit)
+        reclaimable = ledger.totals()
+        for unit in settled:
             output = relative(worktree, unit.directory)
-            reclaimed = info.allocated_bytes - retained_bytes(unit)
+            reclaimed = reclaimable.get(unit.directory, 0)
             total += reclaimed
             pruned += 1
             if not apply_prune:

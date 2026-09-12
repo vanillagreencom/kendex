@@ -292,8 +292,15 @@ reporting bytes per output path and naming a reason for every path it keeps.
 It recognizes Cargo (target/, one prunable unit per profile directory holding a
 .cargo-lock, which is held while that unit is pruned and is the one file left
 behind) and JavaScript (node_modules/ and .next/ beside a package.json and a
-package manager's lock file, each removed whole). A repository matching no
-layout is a reported no-op, not an error.
+package manager's lock file, each removed whole). A marker does not have to sit
+at the worktree root: every directory carrying one is its own root, found by a
+walk that never descends into build output and never follows a symlink out of
+the worktree. A repository matching no layout is a reported no-op, not an error.
+
+Reported bytes are what the sweep would actually free. A hardlinked file counts
+only once every link to it is inside what this sweep prunes, so a pnpm
+node_modules linked from a global store reports the space its removal returns
+rather than the size of the tree.
 
 It keeps an output path, naming the reason, when the path is a symlink, is not
 a directory, resolves outside the worktree, or has tracked content under it;
@@ -307,8 +314,11 @@ present or HEAD moves mid-run.
 
 --apply claims each worktree through the session guard for the duration of the
 delete and refuses outright when that guard is unavailable; the preview needs
-no lease because it writes nothing. Only this mode needs python3, and an
-interrupted --apply releases its lease before it stops.
+no lease because it writes nothing. Only this mode needs python3. An --apply
+that does not reach its own end, interrupted or killed, leaves its lease behind
+and the next sweep then refuses that worktree: clear it with
+  worktree-session-guard release <worktree> --force
+since this mode never takes --stale.
 
 Options:
   --stale             Also collect worktrees whose guard lease is past the TTL

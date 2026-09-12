@@ -61,16 +61,19 @@ output_prune_parse_flag() {
   return 0
 }
 
-# The cross-flag rules. --apply and --older-than-days mean nothing outside the
-# targets-only mode, and that mode never releases a lease, so --stale has no
-# place in it: a claimed worktree is a live session whichever sweep is running.
+# The cross-flag rules, one each way. --apply and --older-than-days mean nothing
+# outside the targets-only mode. The removal path's lease flags mean nothing
+# inside it: a claimed worktree is a live session whichever sweep is running, so
+# this mode never releases a lease and the TTL that measures a stale one has
+# nothing to measure. Accepting either silently is the option ignored without a
+# word that this refusal exists to end.
 output_prune_validate() {
   if [[ "$OUTPUT_PRUNE_MODE" != true && -n "$OUTPUT_PRUNE_MODE_FLAG" ]]; then
     worktree_message cleanup-targets-flag-orphan "$OUTPUT_PRUNE_MODE_FLAG" "Error: $OUTPUT_PRUNE_MODE_FLAG is only valid with --targets-only" >&2
     exit 1
   fi
-  if [[ "$OUTPUT_PRUNE_MODE" == true && "$CLEANUP_STALE" == true ]]; then
-    worktree_message cleanup-targets-stale "--stale" "Error: --targets-only never releases a session guard lease, so it cannot take --stale" >&2
+  if [[ "$OUTPUT_PRUNE_MODE" == true && -n "$CLEANUP_LEASE_FLAG" ]]; then
+    worktree_message cleanup-targets-lease-flag "$CLEANUP_LEASE_FLAG" "Error: --targets-only never releases a session guard lease, so it cannot take $CLEANUP_LEASE_FLAG" >&2
     exit 1
   fi
 }
@@ -104,40 +107,12 @@ output_prune_render() {
   return 0
 }
 
-# The worktree this sweep currently holds a cleanup lease on, and the owner it
-# took it under. A signal is the one exit the loop does not control, and this
-# mode refuses --stale by design, so a stranded lease waits out the guard's TTL
-# unless the trap below hands it back.
-OUTPUT_PRUNE_CLAIMED=""
-OUTPUT_PRUNE_OWNER=""
-
-# Hand back the lease this sweep is holding. Idempotent: the loop calls it on
-# every path it controls and the trap calls it for the one it does not.
-output_prune_release() {
-  local wt="$OUTPUT_PRUNE_CLAIMED"
-  [[ -n "$wt" ]] || return 0
-  OUTPUT_PRUNE_CLAIMED=""
-  if ! "$SESSION_GUARD" release "$wt" --owner "$OUTPUT_PRUNE_OWNER" >/dev/null 2>&1; then
-    worktree_message output-prune-lease-stranded "worktree=$wt owner=$OUTPUT_PRUNE_OWNER" "Error: the prune's cleanup lease could not be released. This mode never takes --stale, so clear it with: $SESSION_GUARD release \"$wt\" --force" >&2
-    return 1
-  fi
-  return 0
-}
-
-# Stop the sweep on a signal, having handed the lease back first.
-output_prune_interrupted() {
-  trap - INT TERM EXIT
-  output_prune_release || true
-  worktree_message output-prune-interrupted "signal=$1" "Interrupted; the prune stopped and released its cleanup lease." >&2
-  exit "$2"
-}
-
 # Prune build output from each named worktree. Every worktree either reports
 # what it pruned or names the reason it was kept; nothing passes silently.
 # Returns 1 only when an inspection could not complete — a worktree kept for a
 # stated reason is a result, not a failure, exactly as it is on the removal path.
 output_prune_sweep() {
-  local failed=false wt="" head="" rc=0 report=""
+  local failed=false wt="" head="" rc=0 report="" owner="" claimed=false
   local -a engine_args=()
   if [[ ! -x "$OUTPUT_PRUNE_ENGINE" ]]; then
     worktree_message output-prune-engine-missing "$OUTPUT_PRUNE_ENGINE" "Error: the prune engine is missing or not executable; nothing was inspected." >&2
@@ -155,9 +130,6 @@ output_prune_sweep() {
     worktree_message output-prune-guard-unavailable "$SESSION_GUARD" "Error: --apply claims each worktree through the session guard, which is missing or not executable; nothing was inspected. Drop --apply to preview, which writes nothing." >&2
     return 1
   fi
-  trap 'output_prune_interrupted INT 130' INT
-  trap 'output_prune_interrupted TERM 143' TERM
-  trap output_prune_release EXIT
   for wt in "$@"; do
     # The prune is pinned to this commit: a checkout swapped under it is a
     # different repository, and the engine refuses when HEAD no longer matches.
@@ -192,14 +164,15 @@ output_prune_sweep() {
     # Hold the lease for the duration of the deletion, so a session claiming
     # this worktree mid-prune is made to wait rather than starting a build into
     # a directory being emptied. A preview writes nothing and takes no lease.
-    OUTPUT_PRUNE_OWNER="output-prune-$$"
+    claimed=false
+    owner="output-prune-$$"
     if [[ "$OUTPUT_PRUNE_APPLY" == true ]]; then
-      if ! "$SESSION_GUARD" claim "$wt" --owner "$OUTPUT_PRUNE_OWNER" >/dev/null 2>&1; then
+      if ! "$SESSION_GUARD" claim "$wt" --owner "$owner" >/dev/null 2>&1; then
         worktree_message output-prune-claim-failed "worktree=$wt" "Skipped (could not claim the worktree for the duration of the prune): $wt" >&2
         failed=true
         continue
       fi
-      OUTPUT_PRUNE_CLAIMED="$wt"
+      claimed=true
     fi
     engine_args=(--worktree "$wt" --head "$head" --older-than-days "$OUTPUT_PRUNE_DAYS")
     if [[ "$OUTPUT_PRUNE_APPLY" == true ]]; then
@@ -225,8 +198,12 @@ output_prune_sweep() {
         failed=true
         ;;
     esac
-    output_prune_release || failed=true
+    if [[ "$claimed" == true ]]; then
+      if ! "$SESSION_GUARD" release "$wt" --owner "$owner" >/dev/null 2>&1; then
+        worktree_message output-prune-lease-stranded "worktree=$wt owner=$owner" "Error: the prune finished but its cleanup lease could not be released. This mode never takes --stale, so clear it with: $SESSION_GUARD release \"$wt\" --force" >&2
+        failed=true
+      fi
+    fi
   done
-  trap - INT TERM EXIT
   [[ "$failed" == false ]]
 }
