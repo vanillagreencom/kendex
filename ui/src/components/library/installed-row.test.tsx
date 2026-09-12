@@ -14,7 +14,16 @@ import {
 import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
 import { groupItems } from "@/lib/derive";
 import { mount as mountTree } from "@/test/dom";
-import { InstalledRow } from "./installed-row";
+import { type InstalledColumns, InstalledRow } from "./installed-row";
+
+// A row drawn with the room for everything it can say. Which columns
+// the table can afford is `installed-view.tsx`'s answer, not a row's.
+const EVERY_COLUMN: InstalledColumns = {
+  tags: true,
+  harnesses: true,
+  from: true,
+  updated: true,
+};
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
 const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
@@ -171,6 +180,7 @@ describe("the words a Library row's badges stand for", () => {
     const host = mountTree(
       <tbody>
         <InstalledRow
+          columns={EVERY_COLUMN}
           group={bundled}
           origin={null}
           forkedIn={[]}
@@ -255,6 +265,7 @@ describe("the other things a Library row names", () => {
     const host = mountTree(
       <tbody>
         <InstalledRow
+          columns={EVERY_COLUMN}
           group={groupItems([item(VG)] as never, () => null)[0]}
           origin={{
             origin: "marketplace",
@@ -294,6 +305,7 @@ describe("the other things a Library row names", () => {
     const host = mountTree(
       <tbody>
         <InstalledRow
+          columns={EVERY_COLUMN}
           group={group}
           origin={null}
           forkedIn={[]}
@@ -329,6 +341,7 @@ const mount = (
   const host = mountTree(
     <tbody>
       <InstalledRow
+        columns={EVERY_COLUMN}
         group={group}
         origin={null}
         forkedIn={forkedIn}

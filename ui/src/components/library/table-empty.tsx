@@ -15,12 +15,17 @@ import {
  *  filter is what is hiding the rows and clearing it is the way out. An
  *  empty library with no narrowing at all points at Marketplaces. */
 export function TableEmptyRow({
+  span,
   hasAnyItems,
   place,
   onClearFilters,
   onBrowse,
   onAddPackages,
 }: {
+  /** How many columns the table is drawing, which varies with its room —
+   *  a cell spanning more than the header has leaves the message off
+   *  centre and stretches the table past its own last column. */
+  span: number;
   hasAnyItems: boolean;
   /** The one place this table is narrowed to, and what it is called, where
    *  it is narrowed to one. Null for every wider view — including the
@@ -32,7 +37,7 @@ export function TableEmptyRow({
 }) {
   return (
     <TableRow>
-      <TableCell colSpan={8} className="py-10">
+      <TableCell colSpan={span} className="py-10">
         {place !== null ? (
           <div className="flex flex-col items-center gap-3 text-center">
             <div>

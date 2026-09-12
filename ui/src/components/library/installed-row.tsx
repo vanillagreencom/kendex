@@ -43,8 +43,18 @@ const STATUS_TONES: Record<GroupStatus, "good" | "warning" | "critical"> = {
   broken: "critical",
 };
 
+/** The columns this row draws only where the table has room for them —
+ *  `installed-view.tsx` decides, once, for every row. */
+export interface InstalledColumns {
+  tags: boolean;
+  harnesses: boolean;
+  from: boolean;
+  updated: boolean;
+}
+
 export function InstalledRow({
   group,
+  columns,
   origin,
   forkedIn,
   outOfDate,
@@ -55,6 +65,7 @@ export function InstalledRow({
   onOpenFrom,
 }: {
   group: ItemGroup;
+  columns: InstalledColumns;
   origin: Origin | null;
   /** The places whose copy is the reader's own fork. A fork belongs to the
    *  place it was made in, like every other per-place fact. */
@@ -109,7 +120,7 @@ export function InstalledRow({
     >
       {/* Cells are nowrap by default; the description is the one column that
           wants to wrap rather than run out of the row and get cut mid-word. */}
-      <TableCell className="max-w-[22rem] font-medium whitespace-normal">
+      <TableCell className="max-w-72 font-medium whitespace-normal">
         <span className="flex items-start gap-2">
           {/* The list says nothing about customization: whether a package
               is changed, and where, is the package page's to say. */}
@@ -217,24 +228,28 @@ export function InstalledRow({
       <TableCell className="align-top text-muted-foreground">
         {kindLabel(group.kind)}
       </TableCell>
-      <TableCell className="align-top">
-        <TagBadges tags={group.tags} />
-      </TableCell>
-      <TableCell>
-        <span className="flex flex-wrap gap-1">
-          {/* A chip names a harness, so it opens that harness's own view
-              of what is installed for it. */}
-          {group.harnesses.map((h) => (
-            <HarnessBadge
-              key={h}
-              harness={h as HarnessId}
-              compact
-              onOpen={() => onOpenHarness(h as HarnessId)}
-            />
-          ))}
-          <SharedFilesBadge files={shared} />
-        </span>
-      </TableCell>
+      {columns.tags ? (
+        <TableCell className="align-top">
+          <TagBadges tags={group.tags} />
+        </TableCell>
+      ) : null}
+      {columns.harnesses ? (
+        <TableCell>
+          <span className="flex flex-wrap gap-1">
+            {/* A chip names a harness, so it opens that harness's own view
+                of what is installed for it. */}
+            {group.harnesses.map((h) => (
+              <HarnessBadge
+                key={h}
+                harness={h as HarnessId}
+                compact
+                onOpen={() => onOpenHarness(h as HarnessId)}
+              />
+            ))}
+            <SharedFilesBadge files={shared} />
+          </span>
+        </TableCell>
+      ) : null}
       {/* A place names a thing, so it opens it — but only where the cell
           names one place. "3 locations" is a count, and the places behind
           it are listed on the package's own page. */}
@@ -254,22 +269,33 @@ export function InstalledRow({
       {/* Same rule for where the copy came from: a marketplace's name
           opens the marketplace. "Your own" and "Not managed" name no
           marketplace, so they stay text. */}
-      <TableCell title={originTitle(origin)} className="text-muted-foreground">
-        {onOpenFrom && originLabel(origin) ? (
-          <button
-            type="button"
-            className="hover:underline"
-            onClick={onOpenFrom}
-          >
-            {originLabel(origin)}
-          </button>
-        ) : (
-          originLabel(origin) || "—"
-        )}
-      </TableCell>
-      <TableCell className="text-right text-xs text-muted-foreground">
-        {group.modifiedAt != null ? <Ago at={group.modifiedAt * 1000} /> : "—"}
-      </TableCell>
+      {columns.from ? (
+        <TableCell
+          title={originTitle(origin)}
+          className="text-muted-foreground"
+        >
+          {onOpenFrom && originLabel(origin) ? (
+            <button
+              type="button"
+              className="hover:underline"
+              onClick={onOpenFrom}
+            >
+              {originLabel(origin)}
+            </button>
+          ) : (
+            originLabel(origin) || "—"
+          )}
+        </TableCell>
+      ) : null}
+      {columns.updated ? (
+        <TableCell className="text-right text-xs text-muted-foreground">
+          {group.modifiedAt != null ? (
+            <Ago at={group.modifiedAt * 1000} />
+          ) : (
+            "—"
+          )}
+        </TableCell>
+      ) : null}
       {/* A dot, not a word: seven rows of "Active" say nothing the colour
           doesn't, and the words are back on hover for anyone who wants them. */}
       <TableCell>

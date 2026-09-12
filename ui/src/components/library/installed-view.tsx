@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { ItemKind, Scope, Tag } from "@/bindings";
-import { InstalledRow } from "@/components/library/installed-row";
+import {
+  type InstalledColumns,
+  InstalledRow,
+} from "@/components/library/installed-row";
 import { InstalledSkeleton } from "@/components/library/installed-skeleton";
 import { LibraryFilters } from "@/components/library/library-filters";
 import { TableEmptyRow } from "@/components/library/table-empty";
@@ -42,6 +45,7 @@ import {
   useSummaryIndex,
 } from "@/lib/package-identity";
 import { everyPlace, scopeKey } from "@/lib/scope";
+import { afforded, type ColumnBudget, useRoom } from "@/lib/table-room";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
 import {
@@ -60,6 +64,53 @@ import {
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { projectsOf } from "@/stores/settings-projects";
+
+/** Every optional column this table has to draw. Unlike the marketplace
+ *  table, whose pages declare different sets, the Library's list is one
+ *  page and always asks for all four. */
+const DECLARED: InstalledColumns = {
+  tags: true,
+  harnesses: true,
+  from: true,
+  updated: true,
+};
+
+// What each column costs the table: the width its own header declares,
+// which is the whole of it — these widths are border-box, so the cell's
+// padding is already inside them. Name declares none, taking what is left;
+// what it costs is the ceiling its cell carries, which is also the width
+// at which a package name and the summary under it read in full.
+//
+// Below the kept sum the table still lays out, by squeezing every column
+// toward its content: the harness chips stack to a second line and the row
+// grows. That is a squashed table rather than a cut one, but it is not a
+// designed width, so a column goes rather than shrinks. The kept sum is
+// what the columns below cost inside the room a 900px window leaves this
+// table — the narrowest window kendex opens, less the sidebar and its
+// border, the page gutters `PAGE_GUTTER` draws at that viewport, and the
+// scroller's reserved scrollbar lane.
+const NAME_ROOM = 288; // `max-w-72` on the name cell
+
+/** How many columns are drawn at every width. Name, Type, Where and Status
+ *  are what a reader needs to tell one row from another and decide about
+ *  it: what the package is called, what kind of thing it is, which place
+ *  holds it — the list spans every place on the machine, so two rows of one
+ *  package are told apart by nothing else — and whether it is working. */
+const KEPT_COLUMNS = 4;
+
+/** What the kept columns cost, and what each of the rest costs against
+ *  what is left over.
+ *
+ *  The tools a package is installed for are the first back, because the row
+ *  says that nowhere else. The tags are the last, because the filter bar
+ *  above the table asks the same question. Nothing that goes is out of
+ *  reach: each of these four has its own filter above the table, and the
+ *  row's own page lists every one of them for that package. */
+const BUDGET: ColumnBudget<keyof InstalledColumns> = {
+  kept: NAME_ROOM + 112 + 112 + 80,
+  optional: { harnesses: 160, from: 128, updated: 112, tags: 160 },
+  order: ["harnesses", "from", "updated", "tags"],
+};
 
 /** "Installed": everything on this machine, filterable. A row opens the
  *  package's own page; the filters and scroll position live in a store so
@@ -119,6 +170,12 @@ export function InstalledView() {
   const setSearch = useNavStore((s) => s.setSearch);
   const projects = scopeChoices(result, scope);
   const scroller = useRef<HTMLDivElement | null>(null);
+  const roomRef = useRef<HTMLDivElement>(null);
+  const room = useRoom(roomRef);
+  const columns = useMemo(() => afforded(room, DECLARED, BUDGET), [room]);
+  // What the empty row has to span, and the width the placeholder rows are
+  // drawn at: the columns on screen, not the ones the table could draw.
+  const drawn = KEPT_COLUMNS + Object.values(columns).filter(Boolean).length;
   // Every scope's manifest, so a row can say whether you have changed the
   // package wherever it is installed — not only in the scope last edited.
   const loadAll = useEditorStore((s) => s.loadAll);
@@ -319,96 +376,112 @@ export function InstalledView() {
             ref={scroller}
             className="min-w-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]"
           >
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>{TAGS_ROW_LABEL}</TableHead>
-                  <TableHead>Harnesses</TableHead>
-                  <TableHead>Where</TableHead>
-                  <TableHead>From</TableHead>
-                  <TableHead className="text-right">Updated</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {groups.map((group) => {
-                  const primary = group.installations[0];
-                  // The origin and the place that recorded it, read as one
-                  // row: a marketplace source is an alias declared at a
-                  // place, so pairing this row's alias with another place's
-                  // scope can address a subscription that exists at neither.
-                  const record = provenanceFor(
-                    provenance,
-                    groupRef(group),
-                    groupScopes(group),
-                  );
-                  const origin = record?.origin ?? null;
-                  // The pair a marketplace is addressed by, taken from the
-                  // one row: the alias, and the place that declared it.
-                  const from =
-                    record && record.origin.origin === "marketplace"
-                      ? { scope: record.scope, source: record.origin.source }
-                      : null;
-                  return (
-                    <InstalledRow
-                      key={group.key}
-                      group={group}
-                      origin={origin}
-                      forkedIn={standingsFor(group)
-                        .filter((s) => s.why === "forked")
-                        .map((s) => s.scope)}
-                      outOfDate={outOfDateAnywhere?.(group) ?? false}
-                      missingIn={missingIn?.(group) ?? []}
-                      onOpen={(scope) => {
-                        const where = scope ?? primary?.scope;
-                        if (!where) return;
-                        goToPackage({
-                          ...groupRef(group),
-                          scope: where,
-                        });
-                      }}
-                      onOpenHarness={(harness) => narrowTo({ harness })}
-                      onOpenPlace={(where) =>
-                        narrowTo({ scope: selectionOf(where) })
-                      }
-                      // Only a marketplace has a page to open: a package
-                      // the reader wrote, and one nothing manages, name
-                      // none. The subscription is addressed with the same
-                      // row's own scope, which is the place that declared
-                      // the alias.
-                      onOpenFrom={
-                        from
-                          ? () =>
-                              goToMarketplace(
-                                subscription(from.scope, from.source),
-                              )
-                          : undefined
+            {/* The room the table has is the room the page gives it, which
+                no column it draws can change: this block fills the
+                scroller's content box whatever the table inside it does,
+                so measuring it cannot chase itself. */}
+            <div ref={roomRef}>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead className="w-28">Type</TableHead>
+                    {columns.tags ? (
+                      <TableHead className="w-40">{TAGS_ROW_LABEL}</TableHead>
+                    ) : null}
+                    {columns.harnesses ? (
+                      <TableHead className="w-40">Harnesses</TableHead>
+                    ) : null}
+                    <TableHead className="w-28">Where</TableHead>
+                    {columns.from ? (
+                      <TableHead className="w-32">From</TableHead>
+                    ) : null}
+                    {columns.updated ? (
+                      <TableHead className="w-28 text-right">Updated</TableHead>
+                    ) : null}
+                    <TableHead className="w-20">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {groups.map((group) => {
+                    const primary = group.installations[0];
+                    // The origin and the place that recorded it, read as one
+                    // row: a marketplace source is an alias declared at a
+                    // place, so pairing this row's alias with another place's
+                    // scope can address a subscription that exists at neither.
+                    const record = provenanceFor(
+                      provenance,
+                      groupRef(group),
+                      groupScopes(group),
+                    );
+                    const origin = record?.origin ?? null;
+                    // The pair a marketplace is addressed by, taken from the
+                    // one row: the alias, and the place that declared it.
+                    const from =
+                      record && record.origin.origin === "marketplace"
+                        ? { scope: record.scope, source: record.origin.source }
+                        : null;
+                    return (
+                      <InstalledRow
+                        key={group.key}
+                        group={group}
+                        columns={columns}
+                        origin={origin}
+                        forkedIn={standingsFor(group)
+                          .filter((s) => s.why === "forked")
+                          .map((s) => s.scope)}
+                        outOfDate={outOfDateAnywhere?.(group) ?? false}
+                        missingIn={missingIn?.(group) ?? []}
+                        onOpen={(scope) => {
+                          const where = scope ?? primary?.scope;
+                          if (!where) return;
+                          goToPackage({
+                            ...groupRef(group),
+                            scope: where,
+                          });
+                        }}
+                        onOpenHarness={(harness) => narrowTo({ harness })}
+                        onOpenPlace={(where) =>
+                          narrowTo({ scope: selectionOf(where) })
+                        }
+                        // Only a marketplace has a page to open: a package
+                        // the reader wrote, and one nothing manages, name
+                        // none. The subscription is addressed with the same
+                        // row's own scope, which is the place that declared
+                        // the alias.
+                        onOpenFrom={
+                          from
+                            ? () =>
+                                goToMarketplace(
+                                  subscription(from.scope, from.source),
+                                )
+                            : undefined
+                        }
+                      />
+                    );
+                  })}
+                  {scanning ? <InstalledSkeleton columns={columns} /> : null}
+                  {!scanning &&
+                  !packagesUnreadable &&
+                  !packagesStale &&
+                  groups.length === 0 ? (
+                    <TableEmptyRow
+                      span={drawn}
+                      hasAnyItems={hasAnyItems}
+                      place={placeName}
+                      onClearFilters={clearFilters}
+                      onBrowse={() => goToMarketplaces()}
+                      // Browsing on this place's behalf, so the guided
+                      // install opens on it rather than asking again where
+                      // the reader already said.
+                      onAddPackages={() =>
+                        onePlace && goToMarketplaces("packages", onePlace)
                       }
                     />
-                  );
-                })}
-                {scanning ? <InstalledSkeleton /> : null}
-                {!scanning &&
-                !packagesUnreadable &&
-                !packagesStale &&
-                groups.length === 0 ? (
-                  <TableEmptyRow
-                    hasAnyItems={hasAnyItems}
-                    place={placeName}
-                    onClearFilters={clearFilters}
-                    onBrowse={() => goToMarketplaces()}
-                    // Browsing on this place's behalf, so the guided
-                    // install opens on it rather than asking again where
-                    // the reader already said.
-                    onAddPackages={() =>
-                      onePlace && goToMarketplaces("packages", onePlace)
-                    }
-                  />
-                ) : null}
-              </TableBody>
-            </Table>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </div>
           </div>
         </div>
       </div>

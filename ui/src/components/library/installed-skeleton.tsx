@@ -1,3 +1,4 @@
+import type { InstalledColumns } from "@/components/library/installed-row";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TableCell, TableRow } from "@/components/ui/table";
 
@@ -18,8 +19,12 @@ const NAME_WIDTHS = [
 
 /** What the table shows before the first scan lands. A table that says
  *  "Nothing installed yet" while it is still counting is telling the reader
- *  something false about their machine. */
-export function InstalledSkeleton() {
+ *  something false about their machine.
+ *
+ *  It draws the columns the table is drawing, one placeholder each: a
+ *  placeholder row wider or narrower than the header it sits under is a
+ *  loading state that moves the columns when the rows arrive. */
+export function InstalledSkeleton({ columns }: { columns: InstalledColumns }) {
   return (
     <>
       {NAME_WIDTHS.map((width) => (
@@ -36,21 +41,32 @@ export function InstalledSkeleton() {
           <TableCell>
             <Skeleton className="h-3.5 w-14" />
           </TableCell>
+          {columns.tags ? (
+            <TableCell>
+              <Skeleton className="h-3.5 w-16" />
+            </TableCell>
+          ) : null}
+          {columns.harnesses ? (
+            <TableCell>
+              <span className="flex gap-1">
+                <Skeleton className="h-5 w-6 rounded-md" />
+                <Skeleton className="h-5 w-6 rounded-md" />
+              </span>
+            </TableCell>
+          ) : null}
           <TableCell>
             <Skeleton className="h-3.5 w-16" />
           </TableCell>
-          <TableCell>
-            <span className="flex gap-1">
-              <Skeleton className="h-5 w-6 rounded-md" />
-              <Skeleton className="h-5 w-6 rounded-md" />
-            </span>
-          </TableCell>
-          <TableCell>
-            <Skeleton className="h-3.5 w-16" />
-          </TableCell>
-          <TableCell>
-            <Skeleton className="ml-auto h-3 w-12" />
-          </TableCell>
+          {columns.from ? (
+            <TableCell>
+              <Skeleton className="h-3.5 w-16" />
+            </TableCell>
+          ) : null}
+          {columns.updated ? (
+            <TableCell>
+              <Skeleton className="ml-auto h-3 w-12" />
+            </TableCell>
+          ) : null}
           <TableCell>
             <Skeleton className="mx-auto size-2 rounded-full" />
           </TableCell>

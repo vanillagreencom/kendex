@@ -15,6 +15,7 @@ import {
   MISSING_FILES_BADGE_LABEL,
   PACKAGES_CHECK_FAILED_TITLE,
   PACKAGES_UNCONFIRMED_TITLE,
+  TAGS_ROW_LABEL,
   TRY_AGAIN_LABEL,
 } from "@/lib/copy";
 import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
@@ -33,7 +34,7 @@ import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { useUpdatesStore } from "@/stores/updates";
-import { mount } from "@/test/dom";
+import { mount, roomIs } from "@/test/dom";
 import { joinAnswered } from "@/test/identity-join";
 import { observed } from "@/test/observed";
 
@@ -969,5 +970,62 @@ describe("the Library while the identity read has not answered", () => {
     expect(rows(host)).toBe(0);
     expect(host.textContent).toContain("no lock");
     expect(host.textContent).toContain("—");
+  });
+});
+
+// The table's room is the page's, and the Library draws eight columns: at
+// the 900x600 minimum window kendex opens, all eight used to run off the
+// right edge, taking the health dot with them — so the reader at the
+// supported minimum could not see which package needed attention.
+describe("the columns a narrow Library table keeps", () => {
+  /** The room the table has at the 900px minimum window: the window less
+   *  the sidebar and its border (`w-56` plus `border-r`, `sidebar.tsx`,
+   *  which carries no responsive variant), the page gutters (`PAGE_GUTTER`
+   *  is `px-5 md:px-8 2xl:px-12`, and a 900px viewport is past Tailwind's
+   *  768px `md`, so `px-8`) and the scroller's reserved scrollbar lane
+   *  (`pr-2`). */
+  const AT_MINIMUM_WINDOW = 900 - 225 - 64 - 8;
+
+  const heads = (host: HTMLElement): string[] =>
+    [...host.querySelectorAll("thead th")].map(
+      (cell) => cell.textContent?.trim() ?? "",
+    );
+
+  beforeEach(() => {
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED });
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [installed(VG)],
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    joinAnswered();
+    useLibraryViewStore.setState({ ...NO_FILTERS });
+    useNavStore.setState({ libraryScope: "all", search: "" });
+  });
+
+  it("keeps Status at the minimum window and every column at a wide one", () => {
+    roomIs(AT_MINIMUM_WINDOW);
+    const narrow = mount(<InstalledView />);
+    expect(heads(narrow)).toEqual(["Name", "Type", "Where", "Status"]);
+    // The column is on screen, and so is the row's own reading of it.
+    expect(narrow.querySelector("tbody tr")?.textContent).toContain("Active");
+
+    roomIs(1400);
+    const wide = mount(<InstalledView />);
+    expect(heads(wide)).toEqual([
+      "Name",
+      "Type",
+      TAGS_ROW_LABEL,
+      "Harnesses",
+      "Where",
+      "From",
+      "Updated",
+      "Status",
+    ]);
   });
 });
